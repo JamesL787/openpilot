@@ -109,6 +109,19 @@ def _quick_start_curve(x: float) -> float:
   return x ** 0.5
 
 
+def _torque_lpf_tau(torque_cmd: float, prev_torque_cmd: float) -> float:
+  torque_delta = abs(float(torque_cmd) - float(prev_torque_cmd))
+
+  if torque_delta > 0.50:
+    return 0.05
+  elif torque_delta > 0.20:
+    return 0.10
+  elif torque_delta > 0.05:
+    return 0.13
+  else:
+    return 0.17
+
+
 class CarController(CarControllerBase, MadsCarController, GasInterceptorCarController, IntelligentCruiseButtonManagementInterface):
   def __init__(self, dbc_names, CP, CP_SP):
     CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
@@ -146,6 +159,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.pitch = 0.0
 
     self.torque_lpf = 0.0
+    self.prev_torque_cmd = 0.0
 
     # Driver override behavior (EPS modified cars only):
     # - On driver steering (steeringPressed rising edge): ramp torque down to 0 over override_ramp_down_s.
@@ -223,6 +237,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
             # Holding phase: keep torque at zero as long as the driver continues to steer.
             self.override_state = "holding"
             self.torque_lpf = 0.0
+            self.prev_torque_cmd = 0.0
             torque_cmd = 0.0
 
         else:
@@ -249,8 +264,9 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
               self.override_state = "normal"
 
           if self.override_state == "normal":
-            # Normal operation: apply LPF smoothing at all speeds.
-            tau = 0.15
+            # Rate-aware LPF: faster response when command is changing rapidly
+            tau = float(_torque_lpf_tau(torque_cmd, self.prev_torque_cmd))
+            self.prev_torque_cmd = float(torque_cmd)
             alpha = DT_CTRL / (tau + DT_CTRL)
 
             if torque_cmd * self.torque_lpf < 0.0:
@@ -273,6 +289,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
 
     else:
       self.torque_lpf = 0.0
+      self.prev_torque_cmd = 0.0
       self.last_torque = 0.0
       self.driver_override_until_nanos = 0
       self.steering_pressed_prev = False
