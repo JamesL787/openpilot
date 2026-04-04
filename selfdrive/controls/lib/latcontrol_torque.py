@@ -167,11 +167,11 @@ class LatControlTorque(LatControl):
 
     # unwind bleed
     if abs(setpoint) < abs(measurement):
-    self.pid.i *= 0.5
+      self.pid.i *= 0.5
 
     # wrong-direction reset
     if error * self.pid.i < 0:
-    self.pid.i = 0.0
+      self.pid.i = 0.0
 
     freeze_integrator = steer_limited_by_safety or CS.steeringPressed or CS.vEgo < 5
     output_lataccel = self.pid.update(
