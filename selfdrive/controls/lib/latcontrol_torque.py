@@ -17,7 +17,8 @@ KI = 0.1
 KD = 0.0
 
 INTERP_SPEEDS = [1, 1.5, 2.0, 3.0, 5.0, 7.5, 10, 15, 18, 22, 30]
-KP_INTERP     = [250, 225, 100, 40, 30, 10, 5, 3.2, 2.7, 1.8, KP]
+KP_INTERP = [120, 100, 60, 25, 15, 10, 5, 3.2, 2.7, 1.8, 1.0]  # try lower gain at low speed band, see if turn-in/unwind stop saturating TODO: tune this
+#KP_INTERP     = [250, 225, 100, 40, 30, 10, 5, 3.2, 2.7, 1.8, KP]
 
 LP_FILTER_CUTOFF_HZ = 1.2
 LAT_ACCEL_REQUEST_BUFFER_SECONDS = 1.0
@@ -36,7 +37,8 @@ FRICTION_BLEND_START_MS = FRICTION_BLEND_START_MPH * MPH_TO_MS
 FRICTION_BLEND_END_MS = FRICTION_BLEND_END_MPH * MPH_TO_MS
 
 LOW_SPEED_X = [0, 10, 20, 30] # Force low speed FSD-lite turns
-LOW_SPEED_Y = [40, 20, 10, 5]
+LOW_SPEED_Y = [6, 4, 2, 1]   # was [40, 20, 10, 5] TODO: check if low speed jerkiness goes away
+legacy_low_speed_factor = np.interp(CS.vEgo, LOW_SPEED_X, LOW_SPEED_Y
 LOW_SPEED_CUTOFF_MPH = 15.0
 LOW_SPEED_CUTOFF_MS = LOW_SPEED_CUTOFF_MPH * MPH_TO_MS
 
@@ -50,6 +52,8 @@ class LatControlTorque(LatControl):
     self.torque_params = CP.lateralTuning.torque.as_builder()
     self.torque_from_lateral_accel = CI.torque_from_lateral_accel()
     self.lateral_accel_from_torque = CI.lateral_accel_from_torque()
+
+    self.setpoint_filter = FirstOrderFilter(0.0, 0.3, self.dt) #smooth setpoint
 
     # Restore feedforward gain behavior when available.
     kf = float(getattr(self.torque_params, "kf", 0.5))
@@ -139,17 +143,22 @@ class LatControlTorque(LatControl):
 
     # Restore the legacy low-speed curvature scaling only at very low speeds.
     legacy_low_speed_factor = np.interp(CS.vEgo, LOW_SPEED_X, LOW_SPEED_Y) ** 2
-    legacy_low_speed_blend = np.interp(CS.vEgo, [0.0, LOW_SPEED_CUTOFF_MS], [1.0, 0.0])
+    legacy_low_speed_blend = np.interp(CS.vEgo, [0.0, 5.0], [1.0, 0.0 #try tighten fade out
+    #legacy_low_speed_blend = np.interp(CS.vEgo, [0.0, LOW_SPEED_CUTOFF_MS], [1.0, 0.0])
     low_speed_factor = float(legacy_low_speed_factor * legacy_low_speed_blend)
 
+    # Try removing late spikey torque at lower speeds
+    jerk_scale = np.interp(CS.vEgo, [0, 10, 20], [0.3, 0.6, 1.0])
+              
     # Latency-compensated setpoint with low-speed curvature assist.
-    setpoint = lat_delay * desired_lateral_jerk + expected_lateral_accel + low_speed_factor * desired_curvature
+    setpoint = lat_delay * desired_lateral_jerk * jerk_scale + expected_lateral_accel + low_speed_factor * desired_curvature
     measurement = measurement + low_speed_factor * measured_curvature
 
     # Measurement rate for optional D usage (KD currently 0.0, but behavior remains correct).
     measurement_rate = float(self.measurement_rate_filter.update((measurement - self.previous_measurement) / self.dt))
     self.previous_measurement = measurement
 
+    setpoint = self.setpoint_filter.update(setpoint) #smooth setpoint
     error = setpoint - measurement
 
     # Feedforward in lateral-accel space (gravity-adjusted, with latAccelOffset bias correction).
