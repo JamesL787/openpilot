@@ -142,7 +142,7 @@ class LatControlTorque(LatControl):
 
     # Restore the legacy low-speed curvature scaling only at very low speeds.
     legacy_low_speed_factor = np.interp(CS.vEgo, LOW_SPEED_X, LOW_SPEED_Y) #** 2 Dont square this
-    legacy_low_speed_blend = np.interp(CS.vEgo, [0.0, 5.0], [1.0, 0.0 #try tighten fade out
+    legacy_low_speed_blend = np.interp(CS.vEgo, [0.0, 5.0], [1.0, 0.0] #try tighten fade out
     #legacy_low_speed_blend = np.interp(CS.vEgo, [0.0, LOW_SPEED_CUTOFF_MS], [1.0, 0.0])
     low_speed_factor = float(legacy_low_speed_factor * legacy_low_speed_blend)
 
