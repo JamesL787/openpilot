@@ -4,7 +4,9 @@ from collections import deque
 import numpy as np
 
 from cereal import log
+from opendbc.car.honda.values import CAR
 from opendbc.car.lateral import FRICTION_THRESHOLD, get_friction
+from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 from openpilot.common.constants import ACCELERATION_DUE_TO_GRAVITY
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
@@ -45,10 +47,13 @@ FRICTION_BLEND_END_MS = FRICTION_BLEND_END_MPH * MPH_TO_MS
 
 VERSION = 2
 
+CLARITY_UNWIND_RATE_THRESHOLD = 0.05
+
 
 class LatControlTorque(LatControl):
   def __init__(self, CP, CP_SP, CI, dt):
     super().__init__(CP, CP_SP, CI, dt)
+    self.is_clarity_eps_modified = CP.carFingerprint == CAR.HONDA_CLARITY and bool(getattr(CP_SP, "flags", 0) & HondaFlagsSP.EPS_MODIFIED.value)
 
     self.torque_params = CP.lateralTuning.torque.as_builder()
     self.torque_from_lateral_accel = CI.torque_from_lateral_accel()
@@ -191,6 +196,15 @@ class LatControlTorque(LatControl):
       freeze_integrator=freeze_integrator,
     )
     output_torque = self.torque_from_lateral_accel(output_lataccel, self.torque_params)
+
+    # On the modified Clarity rack, let the EPS self-center once the requested
+    # turn is already relaxing and the wheel is naturally coming off angle.
+    # TODO: Validate this unwind clamp against fresh route logs and remove or
+    # refine it once we confirm whether it helps real-world turn exits.
+    naturally_unwinding = measurement * measurement_rate < -CLARITY_UNWIND_RATE_THRESHOLD
+    still_holding_turn = output_torque * measurement > 0.0
+    if self.is_clarity_eps_modified and abs(setpoint) < abs(measurement) and naturally_unwinding and still_holding_turn:
+      output_torque = 0.0
 
     # Extension hook (kept compatible with your earlier signature expectations).
     pid_log, output_torque = self.extension.update(
