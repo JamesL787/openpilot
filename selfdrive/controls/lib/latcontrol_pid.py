@@ -1,4 +1,5 @@
 import math
+from collections import deque
 
 from cereal import log
 from opendbc.car.honda.carcontroller import get_civic_bosch_modified_steering_pressed as get_eps_modified_steering_pressed
@@ -58,6 +59,11 @@ def get_civic_bosch_modified_pid_output_alpha(desired_angle_deg: float, desired_
   return min(max(1.0 - smoothing, 0.14), 1.0)
 
 
+def get_clarity_output_moving_average(output_torque: float, output_torque_hist: deque[float]) -> float:
+  output_torque_hist.append(output_torque)
+  return sum(output_torque_hist) / len(output_torque_hist)
+
+
 class LatControlPID(LatControl):
   def __init__(self, CP, CI, dt):
     super().__init__(CP, CI, dt)
@@ -70,6 +76,7 @@ class LatControlPID(LatControl):
     self.eps_modified_steering_pressed_filter_s = 0.0
     self.eps_modified_steering_pressed_prev = False
     self.prev_output_torque = 0.0
+    self.clarity_output_torque_hist = deque(maxlen=5)
     self.prev_angle_steers_des_no_offset = 0.0
     self._dt = dt
     self._des_angle_rate_lim = 0.0
@@ -98,6 +105,7 @@ class LatControlPID(LatControl):
       self.eps_modified_steering_pressed_filter_s = 0.0
       self.eps_modified_steering_pressed_prev = False
       self.prev_output_torque = 0.0
+      self.clarity_output_torque_hist.clear()
       self._des_angle_rate_lim = angle_steers_des_no_offset
 
     else:
@@ -124,6 +132,10 @@ class LatControlPID(LatControl):
       if self.is_clarity_eps_modified:
         desired_angle_delta = angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
         output_torque *= _clarity_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)
+        output_torque = get_clarity_output_moving_average(
+          output_torque,
+          self.clarity_output_torque_hist,
+        )
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       pid_log.active = True
