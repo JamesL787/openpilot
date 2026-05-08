@@ -12,6 +12,7 @@ import pyray as rl
 
 from openpilot.common.basedir import BASEDIR
 from openpilot.selfdrive.ui.ui_state import ui_state
+from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.sunnypilot.lib.utils import NoElideButtonAction
@@ -30,6 +31,7 @@ class TorqueSettingsLayout(Widget):
     self._back_button = NavButton(tr("Back"))
     self._back_button.set_click_callback(back_btn_callback)
     self._torque_version_dialog: TreeOptionDialog | None = None
+    self._honda_firestar_dialog: TreeOptionDialog | None = None
     self.cached_torque_versions = {}
     self._load_versions()
     items = self._initialize_items()
@@ -45,6 +47,12 @@ class TorqueSettingsLayout(Widget):
       description="Select the version of Torque Control Tune to use.",
       action_item=NoElideButtonAction(tr("SELECT")),
       callback=self._show_torque_version_dialog,
+    )
+    self._honda_firestar_tune = ListItemSP(
+      title=tr("Honda StarPilot Tune"),
+      description="Select the Honda StarPilot stock or Firestar (5B) tune variant.",
+      action_item=NoElideButtonAction(tr("SELECT")),
+      callback=self._show_honda_firestar_dialog,
     )
     self._self_tune_toggle = toggle_item_sp(
       param="LiveTorqueParamsToggle",
@@ -96,6 +104,7 @@ class TorqueSettingsLayout(Widget):
 
     items = [
       self._torque_control_versions,
+      self._honda_firestar_tune,
       self._self_tune_toggle,
       self._relaxed_tune_toggle,
       self._custom_tune_toggle,
@@ -127,6 +136,19 @@ class TorqueSettingsLayout(Widget):
     self._torque_lat_accel_factor.set_title(lambda: tr("Lateral Acceleration Factor") + " (" + title_text + ")")
     self._torque_friction.set_title(lambda: tr("Friction") + " (" + title_text + ")")
     self._torque_control_versions.action_item.set_value(self._get_current_torque_version_label())
+    self._honda_firestar_tune.action_item.set_value(self._get_current_honda_firestar_label())
+    torque_version = self._get_current_torque_version()
+    is_honda_eps_modified = (
+      ui_state.CP is not None and
+      ui_state.CP_SP is not None and
+      bool(ui_state.CP_SP.flags & HondaFlagsSP.EPS_MODIFIED.value)
+    )
+    self._honda_firestar_tune.set_visible(
+      ui_state.is_offroad() and
+      is_honda_eps_modified and
+      ui_state.params.get_bool("EnforceTorqueControl") and
+      math.isclose(torque_version or 0.0, 2.0, rel_tol=1e-5)
+    )
 
   def _render(self, rect):
     self._back_button.set_position(self._rect.x, self._rect.y + 20)
@@ -138,13 +160,22 @@ class TorqueSettingsLayout(Widget):
   def show_event(self):
     self._scroller.show_event()
 
-  def _get_current_torque_version_label(self):
+  def _get_current_torque_version(self):
     current_val_bytes = ui_state.params.get("TorqueControlTune")
     if current_val_bytes is None:
+      return None
+
+    try:
+      return float(current_val_bytes)
+    except (ValueError, TypeError):
+      return None
+
+  def _get_current_torque_version_label(self):
+    current_val = self._get_current_torque_version()
+    if current_val is None:
       return tr("Default")
 
     try:
-      current_val = float(current_val_bytes)
       for label, info in self.cached_torque_versions.items():
         if math.isclose(float(info["version"]), current_val, rel_tol=1e-5):
           return label
@@ -152,6 +183,11 @@ class TorqueSettingsLayout(Widget):
       pass
 
     return tr("Default")
+
+  def _get_current_honda_firestar_label(self):
+    if not ui_state.params.get_bool("HondaTorqueFirestarTune"):
+      return tr("Stock tune")
+    return tr("Firestar Tune")
 
   def _show_torque_version_dialog(self):
     options_map = {}
@@ -189,3 +225,26 @@ class TorqueSettingsLayout(Widget):
       on_exit=handle_selection,
     )
     gui_app.push_widget(self._torque_version_dialog)
+
+  def _show_honda_firestar_dialog(self):
+    nodes = [TreeNode(tr("Stock tune")), TreeNode(tr("Firestar Tune"))]
+    folders = [TreeFolder("", nodes)]
+    current_label = self._get_current_honda_firestar_label()
+
+    def handle_selection(result: int):
+      if result == DialogResult.CONFIRM and self._honda_firestar_dialog:
+        selected_ref = self._honda_firestar_dialog.selection_ref
+        if selected_ref == tr("Stock tune"):
+          ui_state.params.remove("HondaTorqueFirestarTune")
+        elif selected_ref == tr("Firestar Tune"):
+          ui_state.params.put("HondaTorqueFirestarTune", "1")
+      self._honda_firestar_dialog = None
+
+    self._honda_firestar_dialog = TreeOptionDialog(
+      tr("Select Honda StarPilot Tune"),
+      folders,
+      current_ref=current_label,
+      option_font_weight=FontWeight.UNIFONT,
+      on_exit=handle_selection,
+    )
+    gui_app.push_widget(self._honda_firestar_dialog)

@@ -143,6 +143,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"BlinkerPauseLateralControl", {PERSISTENT | BACKUP, INT, "0"}},
     {"Brightness", {PERSISTENT | BACKUP, INT, "0"}},
     {"ClarityAnglePIDControl", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"HondaTorqueFirestarTune", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"CarList", {PERSISTENT, JSON}},
     {"CarParamsSP", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, BYTES}},
     {"CarParamsSPCache", {CLEAR_ON_MANAGER_START, BYTES}},

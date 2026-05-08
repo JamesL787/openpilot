@@ -10,12 +10,14 @@ import cereal.messaging as messaging
 from cereal import log, custom
 
 from opendbc.car import structs
+from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD
 from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
 from openpilot.sunnypilot.modeld_v2.modeld_base import ModelStateBase
 from openpilot.sunnypilot.selfdrive.controls.lib.blinker_pause_lateral import BlinkerPauseLateral
+from openpilot.selfdrive.controls.lib.latcontrol_torque_starpilot import LatControlTorque as LatControlTorqueStarpilot
 from openpilot.sunnypilot.selfdrive.controls.lib.latcontrol_torque_v0 import LatControlTorque as LatControlTorqueV0
 
 
@@ -35,12 +37,35 @@ class ControlsExt(ModelStateBase):
     self.pm_services_ext = ['carControlSP']
 
   def initialize_lateral_control(self, lac, CI, dt):
-    enforce_torque_control = self.params.get_bool("EnforceTorqueControl")
-    torque_versions = self.params.get("TorqueControlTune")
-    if not enforce_torque_control:
-      if self.CP.lateralTuning.which() == 'torque':
-        return LatControlTorqueV0(self.CP, self.CP_SP, CI, dt)  # FIXME-SP: revert when upstream fixes tuning issues with v1
+    if self.CP.lateralTuning.which() != 'torque':
       return lac
+
+    honda_eps_modified = bool(getattr(self.CP_SP, "flags", 0) & HondaFlagsSP.EPS_MODIFIED.value)
+    enforce_torque_control = self.params.get_bool("EnforceTorqueControl")
+    torque_versions_raw = self.params.get("TorqueControlTune")
+    try:
+      torque_versions = float(torque_versions_raw) if torque_versions_raw is not None else 0.0
+    except (TypeError, ValueError):
+      torque_versions = 0.0
+
+    # Honda EPS_MODIFIED keeps a local torque-controller selector so the new controller can ship
+    # alongside the existing v2 controller without changing any other torque platform behavior.
+    if honda_eps_modified:
+      if not enforce_torque_control:
+        return lac
+
+      if torque_versions == 2.0:
+        return LatControlTorqueStarpilot(
+          self.CP,
+          self.CP_SP,
+          CI,
+          dt,
+          honda_firestar=self.params.get_bool("HondaTorqueFirestarTune"),
+        )
+      return lac
+
+    if not enforce_torque_control:
+      return LatControlTorqueV0(self.CP, self.CP_SP, CI, dt)  # FIXME-SP: revert when upstream fixes tuning issues with v1
 
     if torque_versions == 0.0:  # v0
       return LatControlTorqueV0(self.CP, self.CP_SP, CI, dt)

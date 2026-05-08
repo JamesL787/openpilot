@@ -220,6 +220,10 @@
     "title": "Enable Custom Torque Tuning",
     "description": "Enables custom tuning for Torque lateral control"
   },
+  "ClarityAnglePIDControl": {
+    "title": "Angle PID Lateral Control",
+    "description": "Use the experimental angle-space PID controller for Honda EPS_MODIFIED cars."
+  },
   "DevUIInfo": {
     "title": "Developer UI Info",
     "description": ""
@@ -293,6 +297,10 @@
   "EnforceTorqueControl": {
     "title": "Enforce Torque Control",
     "description": "Enable this to enforce sunnypilot to steer with Torque lateral control."
+  },
+  "HondaTorqueFirestarTune": {
+    "title": "Honda StarPilot Tune",
+    "description": "Select the Firestar (5B) variant for the Honda StarPilot torque controller."
   },
   "ExperimentalMode": {
     "title": "Experimental Mode",
@@ -1286,6 +1294,10 @@
       {
         "value": "",
         "label": "Default"
+      },
+      {
+        "value": 2.0,
+        "label": "Honda StarPilot"
       },
       {
         "value": 1.0,

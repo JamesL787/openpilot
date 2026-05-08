@@ -26,7 +26,7 @@ class CarInterface(CarInterfaceBase):
 
   def update(self, can_packets):
     ret, ret_sp = super().update(can_packets)
-    # For EPS_MODIFIED Clarity: publish filtered steeringPressed so selfdrived/MADS see the
+    # For EPS_MODIFIED Hondas: publish filtered steeringPressed so selfdrived/MADS see the
     # debounced value rather than raw Honda threshold (which spikes on EPS column-load).
     # CarController.eps_filtered_steer_pressed is set each apply() cycle (one frame behind
     # update(), ~10ms lag at 100Hz). Both live in card.py so no cross-process issue.
@@ -410,6 +410,13 @@ class CarInterface(CarInterfaceBase):
       stock_cp.steerActuatorDelay = 0.3
       stock_cp.lateralParams.torqueBP, stock_cp.lateralParams.torqueV = [[0, 239], [0, 239]]
       CarInterfaceBase.configure_torque_tune(candidate, stock_cp.lateralTuning)
+
+    honda_angle_pid_enabled = (ret.flags & HondaFlagsSP.EPS_MODIFIED) and Params().get_bool("ClarityAnglePIDControl")
+    if honda_angle_pid_enabled:
+      stock_cp.lateralTuning.init('pid')
+      stock_cp.lateralTuning.pid.kpBP, stock_cp.lateralTuning.pid.kpV = [[0.], [0.04]]
+      stock_cp.lateralTuning.pid.kiBP, stock_cp.lateralTuning.pid.kiV = [[0.], [0.05]]
+      stock_cp.lateralTuning.pid.kf = 0.000075
 
     if candidate in HONDA_BOSCH:
       pass

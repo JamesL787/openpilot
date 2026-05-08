@@ -7,6 +7,7 @@ See the LICENSE.md file in the root directory for more details.
 from cereal import car
 from enum import IntEnum
 
+from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.sunnypilot.widgets.list_view import toggle_item_sp, simple_button_item_sp, option_item_sp, LineSeparatorSP
@@ -96,14 +97,13 @@ class SteeringLayout(Widget):
       title=lambda: tr("Neural Network Lateral Control (NNLC)"),
       description=""
     )
-    self._clarity_angle_pid_toggle = toggle_item_sp(
+    self._honda_angle_pid_toggle = toggle_item_sp(
       param="ClarityAnglePIDControl",
       title=lambda: tr("Angle PID Lateral Control"),
-      description=lambda: tr("Use the experimental angle-space PID controller for Honda Clarity EPS_MODIFIED. "
+      description=lambda: tr("Use the experimental angle-space PID controller for Honda EPS_MODIFIED cars. "
                              "OFF (default) uses the torque controller with carcontroller LPF. "
                              "Requires restart to take effect."),
     )
-
     items = [
       self._mads_toggle,
       self._mads_settings_button,
@@ -119,7 +119,7 @@ class SteeringLayout(Widget):
       LineSeparatorSP(40),
       self._nnlc_toggle,
       LineSeparatorSP(40),
-      self._clarity_angle_pid_toggle,
+      self._honda_angle_pid_toggle,
     ]
     return items
 
@@ -155,8 +155,12 @@ class SteeringLayout(Widget):
     self._torque_control_toggle.action_item.set_enabled(ui_state.is_offroad() and torque_allowed and not nnlc_enabled)
     self._torque_customization_button.action_item.set_enabled(self._torque_control_toggle.action_item.get_state())
 
-    is_clarity = ui_state.CP is not None and ui_state.CP.carFingerprint == "HONDA_CLARITY"
-    self._clarity_angle_pid_toggle.action_item.set_enabled(ui_state.is_offroad() and is_clarity)
+    is_honda_eps_modified = (
+      ui_state.CP is not None and
+      ui_state.CP_SP is not None and
+      bool(ui_state.CP_SP.flags & HondaFlagsSP.EPS_MODIFIED.value)
+    )
+    self._honda_angle_pid_toggle.action_item.set_enabled(ui_state.is_offroad() and is_honda_eps_modified)
 
   def _render(self, rect):
     if self._current_panel == PanelType.LANE_CHANGE:
