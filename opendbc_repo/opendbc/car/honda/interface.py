@@ -24,17 +24,6 @@ class CarInterface(CarInterfaceBase):
 
   DRIVABLE_GEARS = (structs.CarState.GearShifter.sport,)
 
-  def update(self, can_packets):
-    ret, ret_sp = super().update(can_packets)
-    # For EPS_MODIFIED Hondas: publish filtered steeringPressed so selfdrived/MADS see the
-    # debounced value rather than raw Honda threshold (which spikes on EPS column-load).
-    # CarController.eps_filtered_steer_pressed is set each apply() cycle (one frame behind
-    # update(), ~10ms lag at 100Hz). Both live in card.py so no cross-process issue.
-    cc = getattr(self, 'CC', None)
-    if cc is not None and getattr(cc, 'eps_mod_flag', False):
-      ret.steeringPressed = cc.eps_filtered_steer_pressed
-    return ret, ret_sp
-
   @staticmethod
   def get_pid_accel_limits(CP, CP_SP, current_speed, cruise_speed):
     if CP.carFingerprint in HONDA_BOSCH:
