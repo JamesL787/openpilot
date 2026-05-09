@@ -51,6 +51,20 @@ class LatControlPID(LatControl):
       CP.carFingerprint == HONDA.HONDA_CLARITY and
       bool(getattr(CP_SP, "flags", 0) & HondaFlagsSP.EPS_MODIFIED.value)
     )
+    if self.is_clarity_eps_modified:
+      # All EPS Modified gain values live here, gated on the hardware flag.
+      # kP=0.03, kI=0.01: proven clean-data baseline (routes 48/49: 10.8% integrator
+      #   wind-up, 86% clean frames, zero driver override needed through turns).
+      #   kI=0.05 (prior value in interface.py) caused 28.9% wind-up and constant
+      #   turn overshoot on city routes.
+      # kf=1.3768e-5: Phase 2 empirical calibration (-8.2% from 1.5e-5 baseline),
+      #   measured on routes 48/49 using pure-feedforward frames.
+      self.pid = PIDController(
+        ([0.], [0.03]),
+        ([0.], [0.01]),
+        pos_limit=self.steer_max, neg_limit=-self.steer_max,
+      )
+      self.ff_factor = 1.3768e-5
     self.eps_modified_steering_pressed_filter_s = 0.0
     self.eps_modified_steering_pressed_prev = False
     self.prev_output_torque = 0.0
