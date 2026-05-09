@@ -516,7 +516,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
 
     if CC.latActive:
       if self.is_clarity_eps_modified:
-        self.steering_pressed_filter_s, steering_pressed = get_civic_bosch_modified_steering_pressed(
+        self.steering_pressed_filter_s, steering_pressed = get_eps_modified_steering_pressed(
           raw_steering_pressed,
           float(getattr(CS.out, "steeringTorque", 0.0)),
           float(torque_cmd),
