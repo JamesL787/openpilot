@@ -403,8 +403,11 @@ class CarInterface(CarInterfaceBase):
     honda_angle_pid_enabled = (ret.flags & HondaFlagsSP.EPS_MODIFIED) and Params().get_bool("ClarityAnglePIDControl")
     if honda_angle_pid_enabled:
       stock_cp.lateralTuning.init('pid')
-      stock_cp.lateralTuning.pid.kpBP, stock_cp.lateralTuning.pid.kpV = [[0.], [0.04]]
-      stock_cp.lateralTuning.pid.kiBP, stock_cp.lateralTuning.pid.kiV = [[0.], [0.05]]
+      # kI reduced 0.05→0.01: kI=0.05 caused chronic integrator wind-up (28.9% of frames)
+      # on city routes, leading to consistent turn overshoot and driver override on every turn.
+      # kI=0.01 matches the proven clean-data baseline (routes 48/49, 10.8% wind-up).
+      stock_cp.lateralTuning.pid.kpBP, stock_cp.lateralTuning.pid.kpV = [[0.], [0.03]]
+      stock_cp.lateralTuning.pid.kiBP, stock_cp.lateralTuning.pid.kiV = [[0.], [0.01]]
       stock_cp.lateralTuning.pid.kf = 0.000075
 
     if candidate in HONDA_BOSCH:
