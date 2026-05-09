@@ -1,7 +1,7 @@
 import math
 
 from cereal import log
-from opendbc.car.honda.carcontroller import get_civic_bosch_modified_steering_pressed as get_eps_modified_steering_pressed
+from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.common.pid import PIDController
@@ -73,6 +73,9 @@ class LatControlPID(LatControl):
     self.prev_angle_steers_des_no_offset = 0.0
     self._dt = dt
     self._des_angle_rate_lim = 0.0
+    # LPF on output scale to prevent phase-boundary flicker (alpha=0.3 → ~0.03/frame max,
+    # ~6 frames / 60 ms to fully transition across a phase boundary).
+    self._output_scale_lpf = 1.0
 
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited, lat_delay, calibrated_pose, model_data, starpilot_toggles):
     pid_log = log.ControlsState.LateralPIDState.new_message()
@@ -99,6 +102,7 @@ class LatControlPID(LatControl):
       self.eps_modified_steering_pressed_prev = False
       self.prev_output_torque = 0.0
       self._des_angle_rate_lim = angle_steers_des_no_offset
+      self._output_scale_lpf = 1.0
 
     else:
       # offset does not contribute to resistive torque
@@ -123,7 +127,9 @@ class LatControlPID(LatControl):
 
       if self.is_clarity_eps_modified:
         desired_angle_delta = angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
-        output_torque *= _clarity_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)
+        raw_scale = _clarity_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)
+        self._output_scale_lpf += 0.3 * (raw_scale - self._output_scale_lpf)
+        output_torque *= self._output_scale_lpf
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       pid_log.active = True
