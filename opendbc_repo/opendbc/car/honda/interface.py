@@ -400,13 +400,6 @@ class CarInterface(CarInterfaceBase):
       stock_cp.lateralParams.torqueBP, stock_cp.lateralParams.torqueV = [[0, 239], [0, 239]]
       CarInterfaceBase.configure_torque_tune(candidate, stock_cp.lateralTuning)
 
-    honda_angle_pid_enabled = (ret.flags & HondaFlagsSP.EPS_MODIFIED) and Params().get_bool("ClarityAnglePIDControl")
-    if honda_angle_pid_enabled:
-      stock_cp.lateralTuning.init('pid')
-      stock_cp.lateralTuning.pid.kpBP, stock_cp.lateralTuning.pid.kpV = [[0.], [0.04]]
-      stock_cp.lateralTuning.pid.kiBP, stock_cp.lateralTuning.pid.kiV = [[0.], [0.05]]
-      stock_cp.lateralTuning.pid.kf = 0.000075
-
     if candidate in HONDA_BOSCH:
       pass
     else:
