@@ -370,12 +370,10 @@ class CarInterface(CarInterfaceBase):
       stock_cp.lateralParams.torqueBP, stock_cp.lateralParams.torqueV = [[0, 1663], [0, 1663]]
       angle_pid_enabled = (ret.flags & HondaFlagsSP.EPS_MODIFIED) and Params().get_bool("ClarityAnglePIDControl")
       if angle_pid_enabled:
-        # Only initialize the tuning type here. All EPS Modified PID gain values
-        # (kP, kI, kF) are applied inside LatControlPID when is_clarity_eps_modified=True.
         stock_cp.lateralTuning.init('pid')
-        stock_cp.lateralTuning.pid.kpBP, stock_cp.lateralTuning.pid.kpV = [[0.], [0.]]
-        stock_cp.lateralTuning.pid.kiBP, stock_cp.lateralTuning.pid.kiV = [[0.], [0.]]
-        stock_cp.lateralTuning.pid.kf = 0.00006  # upstream Honda default; overridden in LatControlPID
+        stock_cp.lateralTuning.pid.kpBP, stock_cp.lateralTuning.pid.kpV = [[0.], [0.03]]
+        stock_cp.lateralTuning.pid.kiBP, stock_cp.lateralTuning.pid.kiV = [[0.], [0.01]]
+        stock_cp.lateralTuning.pid.kf = 0.00001377
       else:
         CarInterfaceBase.configure_torque_tune(candidate, stock_cp.lateralTuning)
 
@@ -404,13 +402,10 @@ class CarInterface(CarInterfaceBase):
 
     honda_angle_pid_enabled = (ret.flags & HondaFlagsSP.EPS_MODIFIED) and Params().get_bool("ClarityAnglePIDControl")
     if honda_angle_pid_enabled:
-      # Ensure pid tuning type is initialized. Gain values (kP, kI, kF) are NOT set here —
-      # they are applied inside LatControlPID when is_clarity_eps_modified=True, keeping all
-      # EPS Modified tuning co-located with the EPS Modified controller logic.
       stock_cp.lateralTuning.init('pid')
-      stock_cp.lateralTuning.pid.kpBP, stock_cp.lateralTuning.pid.kpV = [[0.], [0.]]
-      stock_cp.lateralTuning.pid.kiBP, stock_cp.lateralTuning.pid.kiV = [[0.], [0.]]
-      stock_cp.lateralTuning.pid.kf = 0.00006  # upstream Honda default; overridden in LatControlPID
+      stock_cp.lateralTuning.pid.kpBP, stock_cp.lateralTuning.pid.kpV = [[0.], [0.04]]
+      stock_cp.lateralTuning.pid.kiBP, stock_cp.lateralTuning.pid.kiV = [[0.], [0.05]]
+      stock_cp.lateralTuning.pid.kf = 0.000075
 
     if candidate in HONDA_BOSCH:
       pass
