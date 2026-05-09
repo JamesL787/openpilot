@@ -59,6 +59,9 @@ class LatControlPID(LatControl):
     # Rate-limit the model-desired angle so 10Hz path model updates don't cause
     # instantaneous 10-20° jumps → P spikes → torque jerks at intersections.
     self._des_angle_rate_lim = 0.0
+    # LPF on output scale to prevent phase-boundary flicker (alpha=0.3 → ~0.03/frame max,
+    # ~6 frames / 60 ms to fully transition across a phase boundary).
+    self._output_scale_lpf = 1.0
 
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, calibrated_pose, curvature_limited, lat_delay):
     pid_log = log.ControlsState.LateralPIDState.new_message()
@@ -91,6 +94,7 @@ class LatControlPID(LatControl):
       self.prev_output_torque = 0.0
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
       self._des_angle_rate_lim = angle_steers_des_no_offset
+      self._output_scale_lpf = 1.0
 
     else:
       # offset does not contribute to resistive torque
@@ -120,7 +124,9 @@ class LatControlPID(LatControl):
         # near-zero speed and produce absurd commands (observed ±159° desired angle)
         low_speed_scale = max(min((CS.vEgo - 1.5) / 3.5, 1.0), 0.0)
         output_torque *= low_speed_scale
-        output_torque *= _clarity_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)
+        raw_scale = _clarity_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)
+        self._output_scale_lpf += 0.3 * (raw_scale - self._output_scale_lpf)
+        output_torque *= self._output_scale_lpf
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       pid_log.active = True
