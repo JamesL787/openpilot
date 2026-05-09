@@ -13,22 +13,29 @@ def _clarity_pid_output_scale(desired_angle_deg: float, desired_angle_delta_deg:
   speed_weight = min(max((v_ego - 4.0) / 10.0, 0.0), 1.0)
   center_speed_weight = 0.65 + (0.35 * speed_weight)
   center_weight = min(max((16.0 - abs_angle) / 16.0, 0.0), 1.0)
+  mid_turn_weight = min(max((abs_angle - 10.0) / 10.0, 0.0), 1.0)
   angle_weight = min(max((abs_angle - 16.0) / 12.0, 0.0), 1.0)
   phase = desired_angle_deg * desired_angle_delta_deg
-
   is_left = desired_angle_deg > 0.0
-  center_taper = 0.30
-  base_scale = 0.08 if is_left else 0.10
-  # Turn-in amplification removed: it pushed scale above 1.0 and caused consistent overshoot
-  # (47-62% of turn frames steered past target in log analysis).
-  unwind_scale = 0.25 if is_left else 0.32
+  center_taper = 0.1764
+  mid_turn_scale = 0.1200 if is_left else 0.0150
+  mid_turn_turn_in_scale = -0.5500 if is_left else -0.0524
+  mid_turn_unwind_scale = -0.0743 if is_left else -0.0842
+  base_scale = 0.0722 if is_left else 0.0972
+  turn_in_scale = -0.0799 if is_left else 0.0888
+  unwind_scale = 0.1600 if is_left else 0.2000
 
   scale = 1.0 - (center_speed_weight * center_weight * center_taper)
+  scale += speed_weight * mid_turn_weight * mid_turn_scale
   scale += speed_weight * angle_weight * base_scale
-  if phase < -0.2:
+  if phase > 0.2:
+    scale += speed_weight * mid_turn_weight * mid_turn_turn_in_scale
+    scale += speed_weight * angle_weight * turn_in_scale
+  elif phase < -0.2:
+    scale += speed_weight * mid_turn_weight * mid_turn_unwind_scale
     scale -= speed_weight * angle_weight * unwind_scale
 
-  return max(scale, 0.68)
+  return max(scale, 0.6863)
 
 
 class LatControlPID(LatControl):
