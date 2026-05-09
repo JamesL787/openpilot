@@ -16,13 +16,13 @@ def _clarity_pid_output_scale(desired_angle_deg: float, desired_angle_delta_deg:
   angle_weight = min(max((abs_angle - 16.0) / 12.0, 0.0), 1.0)
   phase = desired_angle_deg * desired_angle_delta_deg
   is_left = desired_angle_deg > 0.0
-  center_taper = 0.40
-  mid_turn_scale = 0.00 if is_left else -0.10
-  mid_turn_turn_in_scale = -0.80 if is_left else -0.08
-  mid_turn_unwind_scale = -0.08 if is_left else -0.08
-  base_scale = 0.08 if is_left else 0.10
-  turn_in_scale = 0.00 if is_left else 0.12
-  unwind_scale = 0.14 if is_left else 0.18
+  center_taper = 0.1764
+  mid_turn_scale = 0.1200 if is_left else 0.0150
+  mid_turn_turn_in_scale = -0.5500 if is_left else -0.0524
+  mid_turn_unwind_scale = -0.0743 if is_left else -0.0842
+  base_scale = 0.0722 if is_left else 0.0972
+  turn_in_scale = -0.0799 if is_left else 0.0888
+  unwind_scale = 0.1600 if is_left else 0.2000
 
   scale = 1.0 - (center_speed_weight * center_weight * center_taper)
   scale += speed_weight * mid_turn_weight * mid_turn_scale
@@ -34,7 +34,7 @@ def _clarity_pid_output_scale(desired_angle_deg: float, desired_angle_delta_deg:
     scale += speed_weight * mid_turn_weight * mid_turn_unwind_scale
     scale -= speed_weight * angle_weight * unwind_scale
 
-  return max(scale, 0.60)
+  return max(scale, 0.6863)
 
 
 def get_civic_bosch_modified_pid_output_alpha(desired_angle_deg: float, desired_angle_delta_deg: float,
