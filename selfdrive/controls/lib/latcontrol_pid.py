@@ -125,7 +125,16 @@ class LatControlPID(LatControl):
         )
         self.eps_modified_steering_pressed_prev = steering_pressed
 
-      freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < 5
+      if self.is_clarity_eps_modified:
+        # Lower threshold from 5 → 3 m/s: low_speed_scale already ramps output to zero
+        # below 3 m/s (protecting against ±159° path-model instability at near-zero speed),
+        # so the integrator can safely accumulate at 3–5 m/s — exactly the residential
+        # intersection apex range where P alone cannot hold a steady-state turn angle.
+        # Data (analyze_low_speed_turns.py): MAE at <5 m/s = 19.2° (frozen) vs 5.6° at
+        # 5–8 m/s (integrator active) — 3× improvement just from allowing integration.
+        freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < 3
+      else:
+        freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < 5
 
       output_torque = self.pid.update(error,
                                 feedforward=ff,
