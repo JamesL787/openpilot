@@ -17,13 +17,13 @@ def _clarity_pid_output_scale(desired_angle_deg: float, desired_angle_delta_deg:
   angle_weight = min(max((abs_angle - 16.0) / 12.0, 0.0), 1.0)
   phase = desired_angle_deg * desired_angle_delta_deg
   is_left = desired_angle_deg > 0.0
-  center_taper = 0.1809
-  mid_turn_scale = 0.0707 if is_left else 0.0238
-  mid_turn_turn_in_scale = -0.3000 if is_left else -0.0728
-  mid_turn_unwind_scale = 0.0008 if is_left else -0.0680
-  base_scale = -0.0282 if is_left else 0.0739
-  turn_in_scale = -0.0500 if is_left else 0.1143
-  unwind_scale = 0.1003 if is_left else 0.2119
+  center_taper = 0.1764
+  mid_turn_scale = 0.1200 if is_left else 0.0150
+  mid_turn_turn_in_scale = -0.5500 if is_left else -0.0524
+  mid_turn_unwind_scale = -0.0743 if is_left else -0.0842
+  base_scale = 0.0722 if is_left else 0.0972
+  turn_in_scale = -0.0799 if is_left else 0.0888
+  unwind_scale = 0.1600 if is_left else 0.2000
 
   scale = 1.0 - (center_speed_weight * center_weight * center_taper)
   scale += speed_weight * mid_turn_weight * mid_turn_scale
@@ -35,7 +35,7 @@ def _clarity_pid_output_scale(desired_angle_deg: float, desired_angle_delta_deg:
     scale += speed_weight * mid_turn_weight * mid_turn_unwind_scale
     scale -= speed_weight * angle_weight * unwind_scale
 
-  return max(scale, 0.5759)
+  return max(scale, 0.6863)
 
 
 class LatControlPID(LatControl):
@@ -57,14 +57,14 @@ class LatControlPID(LatControl):
       #   wind-up, 86% clean frames, zero driver override needed through turns).
       #   kI=0.05 (prior value in interface.py) caused 28.9% wind-up and constant
       #   turn overshoot on city routes.
-      # kf=1.2004e-5: Phase 3 DE optimisation (-12.8% from 1.377e-5 Phase 2 value),
-      #   fit on routes 48+49+0c (256K frames, city+highway mixed).
+      # kf=1.3768e-5: Phase 2 empirical calibration (-8.2% from 1.5e-5 baseline),
+      #   measured on routes 48/49 using pure-feedforward frames.
       self.pid = PIDController(
         ([0.], [0.03]),
         ([0.], [0.01]),
         pos_limit=self.steer_max, neg_limit=-self.steer_max,
       )
-      self.ff_factor = 1.2004e-5
+      self.ff_factor = 1.3768e-5
     self.eps_modified_steering_pressed_filter_s = 0.0
     self.eps_modified_steering_pressed_prev = False
     self.prev_output_torque = 0.0
