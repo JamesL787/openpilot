@@ -5,17 +5,31 @@ from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
 from opendbc.car.honda.values import CAR as HONDA
 from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
+from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.pid import PIDController
 
+# Phase scale for tanh transition: units are deg × (deg/frame).
+# At angle=15°, filtered_delta=0.3°/frame → tanh(15×0.3/4.0)=tanh(1.125)=0.81 (strong turn-in signal).
+# At noise level, filtered_delta≈0.02°/frame → tanh(15×0.02/4.0)=tanh(0.075)=0.07 (near-zero — no chatter).
+CLARITY_PID_PHASE_SCALE = 4.0
 
-def _clarity_pid_output_scale(desired_angle_deg: float, desired_angle_delta_deg: float, v_ego: float) -> float:
+
+def _clarity_pid_output_scale(desired_angle_deg: float, filtered_angle_delta_deg: float, v_ego: float) -> float:
   abs_angle = abs(desired_angle_deg)
   speed_weight = min(max((v_ego - 4.0) / 10.0, 0.0), 1.0)
   center_speed_weight = 0.65 + (0.35 * speed_weight)
   center_weight = min(max((16.0 - abs_angle) / 16.0, 0.0), 1.0)
   mid_turn_weight = min(max((abs_angle - 10.0) / 10.0, 0.0), 1.0)
   angle_weight = min(max((abs_angle - 16.0) / 12.0, 0.0), 1.0)
-  phase = desired_angle_deg * desired_angle_delta_deg
+  # Continuous tanh phase weights replace the hard ±0.2 threshold.
+  # Hard thresholds caused ~43 phase crossings/second in logged data (scale→output
+  # correlation 0.435), producing the felt mid-turn oscillation/roughness.
+  # tanh gives near-zero weight for noise-level deltas and near-unity for genuine
+  # turn-in/unwind, with no discrete switching boundary to chatter across.
+  phase_val = math.tanh(desired_angle_deg * filtered_angle_delta_deg / CLARITY_PID_PHASE_SCALE)
+  turn_in_weight = max(phase_val, 0.0)
+  unwind_weight = max(-phase_val, 0.0)
+
   is_left = desired_angle_deg > 0.0
   center_taper = 0.1764
   mid_turn_scale = 0.1200 if is_left else 0.0150
@@ -28,12 +42,10 @@ def _clarity_pid_output_scale(desired_angle_deg: float, desired_angle_delta_deg:
   scale = 1.0 - (center_speed_weight * center_weight * center_taper)
   scale += speed_weight * mid_turn_weight * mid_turn_scale
   scale += speed_weight * angle_weight * base_scale
-  if phase > 0.2:
-    scale += speed_weight * mid_turn_weight * mid_turn_turn_in_scale
-    scale += speed_weight * angle_weight * turn_in_scale
-  elif phase < -0.2:
-    scale += speed_weight * mid_turn_weight * mid_turn_unwind_scale
-    scale -= speed_weight * angle_weight * unwind_scale
+  scale += speed_weight * mid_turn_weight * mid_turn_turn_in_scale * turn_in_weight
+  scale += speed_weight * angle_weight * turn_in_scale * turn_in_weight
+  scale += speed_weight * mid_turn_weight * mid_turn_unwind_scale * unwind_weight
+  scale -= speed_weight * angle_weight * unwind_scale * unwind_weight
 
   return max(scale, 0.6863)
 
@@ -73,9 +85,13 @@ class LatControlPID(LatControl):
     # Rate-limit the model-desired angle so 10Hz path model updates don't cause
     # instantaneous 10-20° jumps → P spikes → torque jerks at intersections.
     self._des_angle_rate_lim = 0.0
-    # LPF on output scale to prevent phase-boundary flicker (alpha=0.3 → ~0.03/frame max,
-    # ~6 frames / 60 ms to fully transition across a phase boundary).
-    self._output_scale_lpf = 1.0
+    # LPF on desired-angle delta before phase computation.
+    # Raw one-frame delta was chattering across the ±0.2 phase threshold ~43×/s
+    # (measured from PKL logs), driving scale oscillation and felt mid-turn roughness.
+    # 2Hz cutoff: genuine turn-in evolves over ~10+ frames (well below 2Hz);
+    # frame-to-frame noise is ~50Hz — fully rejected.
+    # Mirrors jerk_filter in latcontrol_torque_starpilot (1.2Hz), adapted for angle space.
+    self._des_angle_delta_filter = FirstOrderFilter(0.0, 1.0 / (2.0 * math.pi * 2.0), dt)
 
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, calibrated_pose, curvature_limited, lat_delay):
     pid_log = log.ControlsState.LateralPIDState.new_message()
@@ -108,7 +124,7 @@ class LatControlPID(LatControl):
       self.prev_output_torque = 0.0
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
       self._des_angle_rate_lim = angle_steers_des_no_offset
-      self._output_scale_lpf = 1.0
+      self._des_angle_delta_filter.x = 0.0
 
     else:
       # offset does not contribute to resistive torque
@@ -142,14 +158,17 @@ class LatControlPID(LatControl):
                                 freeze_integrator=freeze_integrator)
 
       if self.is_clarity_eps_modified:
-        desired_angle_delta = angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
+        raw_delta = angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
+        # Pre-filter delta before phase computation: eliminates the ~43 threshold
+        # crossings/second that caused scale chatter and mid-turn roughness.
+        # With a smooth filtered_delta, the tanh phase weights change gradually —
+        # no separate output LPF needed.
+        filtered_delta = self._des_angle_delta_filter.update(raw_delta)
         # Ramp output to zero below 3 m/s: path model desired angles are unreliable at
         # near-zero speed and produce absurd commands (observed ±159° desired angle)
         low_speed_scale = max(min((CS.vEgo - 1.5) / 3.5, 1.0), 0.0)
         output_torque *= low_speed_scale
-        raw_scale = _clarity_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)
-        self._output_scale_lpf += 0.3 * (raw_scale - self._output_scale_lpf)
-        output_torque *= self._output_scale_lpf
+        output_torque *= _clarity_pid_output_scale(angle_steers_des_no_offset, filtered_delta, CS.vEgo)
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       pid_log.active = True
