@@ -9,9 +9,10 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.pid import PIDController
 
 # Phase scale for tanh transition: units are deg × (deg/frame).
-# At angle=15°, filtered_delta=0.3°/frame → tanh(15×0.3/4.0)=tanh(1.125)=0.81 (strong turn-in signal).
-# At noise level, filtered_delta≈0.02°/frame → tanh(15×0.02/4.0)=tanh(0.075)=0.07 (near-zero — no chatter).
-CLARITY_PID_PHASE_SCALE = 4.0
+# The desired-angle delta already has a 2 Hz LPF, so this only softens the
+# turn-in/unwind handoff instead of stacking another chatter filter.
+CLARITY_PID_PHASE_SCALE = 6.0
+CLARITY_PID_TURN_IN_SCALE_MULT = 0.75
 
 
 def _clarity_pid_output_scale(desired_angle_deg: float, filtered_angle_delta_deg: float, v_ego: float) -> float:
@@ -33,10 +34,10 @@ def _clarity_pid_output_scale(desired_angle_deg: float, filtered_angle_delta_deg
   is_left = desired_angle_deg > 0.0
   center_taper = 0.1764
   mid_turn_scale = 0.1200 if is_left else 0.0150
-  mid_turn_turn_in_scale = -0.5500 if is_left else -0.0524
+  mid_turn_turn_in_scale = (-0.5500 if is_left else -0.0524) * CLARITY_PID_TURN_IN_SCALE_MULT
   mid_turn_unwind_scale = -0.0743 if is_left else -0.0842
   base_scale = 0.0722 if is_left else 0.0972
-  turn_in_scale = -0.0799 if is_left else 0.0888
+  turn_in_scale = (-0.0799 if is_left else 0.0888) * CLARITY_PID_TURN_IN_SCALE_MULT
   unwind_scale = 0.1600 if is_left else 0.2000
 
   scale = 1.0 - (center_speed_weight * center_weight * center_taper)

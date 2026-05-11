@@ -11,7 +11,7 @@ from opendbc.car.gm.values import CAR as GM
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.car.helpers import convert_to_capnp
-from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
+from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID, _clarity_pid_output_scale
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.latcontrol_torque_starpilot import (
   get_clarity_nidec_ff_scale,
@@ -207,3 +207,17 @@ class TestControlsExt:
 
     assert firestar_ff < stock_ff
     assert firestar_friction > stock_friction
+
+
+  def test_clarity_pid_output_scale_keeps_tiny_delta_stable(self):
+    neutral = _clarity_pid_output_scale(10.0, 0.0, 4.6)
+    tiny_delta = _clarity_pid_output_scale(10.0, 0.01, 4.6)
+
+    assert abs(tiny_delta - neutral) < 1e-3
+
+  def test_clarity_pid_output_scale_softens_turn_in_without_flattening(self):
+    neutral = _clarity_pid_output_scale(12.0, 0.0, 9.0)
+    turn_in = _clarity_pid_output_scale(12.0, 0.35, 9.0)
+
+    assert turn_in < neutral
+    assert turn_in > 0.95
