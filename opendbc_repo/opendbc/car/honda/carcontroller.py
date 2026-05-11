@@ -158,8 +158,8 @@ def get_eps_modified_steering_pressed(raw_pressed: bool, steering_torque: float,
   #   cmd ≈ 0   → OP not steering; driver torque is intentional
   #   positive  → driver same-dir OR EPS column-load artifact
   #               For EPS_MODIFIED the positive case is almost always the artifact on
-  #               sustained turns, so we DRAIN the accumulator instead of filling it.
-  #               This prevents false triggers on curves lasting more than ~1.6 s.
+  #               sustained turns, so we force release instead of letting a latched
+  #               press survive through turn-in.
 
   if not raw_pressed:
     filter_s = max(0.0, filter_s - 8.0 * DT_CTRL)
@@ -181,8 +181,10 @@ def get_eps_modified_steering_pressed(raw_pressed: bool, steering_torque: float,
     return filter_s, filter_s >= trigger_s
 
   # Same-direction torque while OP is actively steering → EPS column-load artifact.
-  # Drain the accumulator so a long curve never trips the filter.
-  filter_s = max(0.0, filter_s - 3.0 * DT_CTRL)
+  # Force release so same-sign help cannot freeze the integrator mid-turn.
+  # TODO: if we need to keep same-direction help as a distinct signal, split this into
+  # a separate assisting state instead of reusing steeringPressed.
+  filter_s = max(0.0, filter_s - 8.0 * DT_CTRL)
   return filter_s, False
 
 
