@@ -179,6 +179,8 @@ class DynamicExperimentalController:
     self._has_standstill = False
     self._mpc_fcw_crash_cnt = 0
     self._standstill_count = 0
+    self.stop_sign_confirmed = False
+    self._stop_sign_release_count = 0
     # debug
     self._endpoint_x = float('inf')
     self._expected_distance = 0.0
@@ -377,12 +379,41 @@ class DynamicExperimentalController:
     self.set_mpc_fcw_crash_cnt()
 
     self._update_calculations(sm)
+    self._update_stop_sign_confirmation(sm)
 
-    if self._CP.radarUnavailable:
+    if self.stop_sign_confirmed:
+      self._mode_manager.request_mode('blended', confidence=1.0, emergency=True)
+    elif self._CP.radarUnavailable:
       self._radarless_mode()
     else:
       self._radar_mode()
 
     self._mode_manager.update()
-    self._active = sm['selfdriveState'].experimentalMode and self._enabled
+    self._active = (sm['selfdriveState'].experimentalMode or self.stop_sign_confirmed) and self._enabled
     self._frame += 1
+
+  def _update_stop_sign_confirmation(self, sm: messaging.SubMaster) -> None:
+    car_state = sm['carState']
+    car_control = sm['carControl']
+    model_should_stop = bool(getattr(sm['modelV2'].action, 'shouldStop', False))
+    long_active = bool(getattr(car_control, "longActive", False))
+    pedal_override = bool(getattr(car_state, "gasPressed", False) or getattr(car_state, "brakePressed", False))
+
+    if not self._enabled or not long_active or pedal_override:
+      self.stop_sign_confirmed = False
+      self._stop_sign_release_count = 0
+      return
+
+    if model_should_stop:
+      self.stop_sign_confirmed = True
+      self._stop_sign_release_count = 0
+      return
+
+    if self.stop_sign_confirmed:
+      if car_state.standstill:
+        self._stop_sign_release_count = 0
+      else:
+        self._stop_sign_release_count += 1
+        if self._stop_sign_release_count >= int(0.5 / DT_MDL):
+          self.stop_sign_confirmed = False
+          self._stop_sign_release_count = 0

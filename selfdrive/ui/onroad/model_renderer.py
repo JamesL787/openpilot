@@ -7,7 +7,9 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.selfdrive.locationd.calibrationd import HEIGHT_INIT
 from openpilot.selfdrive.ui.ui_state import ui_state
-from openpilot.system.ui.lib.application import gui_app
+from openpilot.selfdrive.ui.sunnypilot.onroad.developer_ui import DeveloperUiState
+from openpilot.system.ui.lib.application import gui_app, FontWeight
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.lib.shader_polygon import draw_polygon, Gradient
 from openpilot.system.ui.widgets import Widget
 
@@ -55,6 +57,7 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
     self._lane_line_probs = np.zeros(4, dtype=np.float32)
     self._road_edge_stds = np.zeros(2, dtype=np.float32)
     self._lead_vehicles = [LeadVehicle(), LeadVehicle()]
+    self._stop_sign_font = gui_app.font(FontWeight.BOLD)
     self._path_offset_z = HEIGHT_INIT[0]
     self._counter = -1
     self._camera_offset = ui_state.params.get("CameraOffset", return_default=True) if ui_state.active_bundle else 0.0
@@ -293,6 +296,7 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
 
     if ui_state.rainbow_path:
       self.rainbow_path.draw_rainbow_path(self._rect, self._path)
+      self._draw_stop_sign(sm)
       return
 
     if self._experimental_mode:
@@ -312,6 +316,8 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
         stops=[0.0, 0.5, 1.0],
       )
       draw_polygon(self._rect, self._path.projected_points, gradient=gradient)
+
+    self._draw_stop_sign(sm)
 
   def _draw_lead_indicator(self):
     # Draw lead vehicles if available
@@ -422,6 +428,51 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
       right_screen = right_screen[:, keep]
 
     return np.vstack((left_screen.T, right_screen[:, ::-1].T)).astype(np.float32)
+
+  def _draw_stop_sign(self, sm):
+    if not bool(getattr(sm['longitudinalPlanSP'], "redLight", False)):
+      return
+
+    pos_x = np.array(sm['modelV2'].position.x, dtype=np.float32)
+    pos_z = np.array(sm['modelV2'].position.z, dtype=np.float32)
+    if pos_x.size == 0 or pos_z.size == 0:
+      return
+
+    stop_idx = min(32, pos_x.size - 1, pos_z.size - 1)
+    stop_distance = float(pos_x[stop_idx])
+    stop_point = self._map_to_screen(stop_distance, 0.0, float(pos_z[stop_idx]) + self._path_offset_z)
+    if stop_point is None:
+      return
+
+    center = rl.Vector2(stop_point[0], stop_point[1] - 12.0)
+    outer_radius = 34.0
+    inner_radius = 28.0
+    rotation = 22.5
+
+    rl.draw_poly(center, 8, outer_radius, rotation, rl.Color(255, 255, 255, 255))
+    rl.draw_poly(center, 8, inner_radius, rotation, rl.Color(201, 34, 49, 240))
+
+    stop_text = "STOP"
+    stop_text_size = 18
+    text_size = measure_text_cached(self._stop_sign_font, stop_text, stop_text_size)
+    text_pos = rl.Vector2(center.x - text_size.x / 2, center.y - text_size.y / 2 - 1)
+    rl.draw_text_ex(self._stop_sign_font, stop_text, rl.Vector2(text_pos.x + 1, text_pos.y + 1), stop_text_size, 0, rl.Color(0, 0, 0, 200))
+    rl.draw_text_ex(self._stop_sign_font, stop_text, text_pos, stop_text_size, 0, rl.WHITE)
+
+    show_metrics = ui_state.params.get_bool("ShowDebugInfo") or ui_state.developer_ui in (
+      DeveloperUiState.BOTTOM,
+      DeveloperUiState.RIGHT,
+      DeveloperUiState.BOTH,
+    )
+    if not show_metrics:
+      return
+
+    distance_text = f"{round(stop_distance * (1.0 if ui_state.is_metric else 3.28084))}{' m' if ui_state.is_metric else ' ft'}"
+    distance_size = 20
+    distance_size_px = measure_text_cached(self._stop_sign_font, distance_text, distance_size)
+    distance_pos = rl.Vector2(center.x - distance_size_px.x / 2, center.y - outer_radius - distance_size_px.y - 4)
+    rl.draw_text_ex(self._stop_sign_font, distance_text, rl.Vector2(distance_pos.x + 1, distance_pos.y + 1), distance_size, 0, rl.Color(0, 0, 0, 200))
+    rl.draw_text_ex(self._stop_sign_font, distance_text, distance_pos, distance_size, 0, rl.WHITE)
 
   @staticmethod
   def _hsla_to_color(h, s, l, a):

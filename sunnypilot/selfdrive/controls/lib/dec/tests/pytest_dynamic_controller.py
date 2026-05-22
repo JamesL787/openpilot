@@ -15,16 +15,24 @@ class MockCarState:
     self.vEgo = vEgo
     self.vCruise = vCruise
     self.standstill = standstill
+    self.gasPressed = False
+    self.brakePressed = False
 
 class MockModelData:
-  def __init__(self, valid=True):
+  def __init__(self, valid=True, should_stop=False):
     size = 33 if valid else 10  # incomplete if invalid
     self.position = type("Pos", (), {"x": [0.0] * size})()
     self.orientation = type("Ori", (), {"x": [0.0] * size})()
+    self.action = type("Action", (), {"shouldStop": should_stop})()
 
 class MockSelfDriveState:
-  def __init__(self, experimentalMode=False):
+  def __init__(self, experimentalMode=False, enabled=True):
     self.experimentalMode = experimentalMode
+    self.enabled = enabled
+
+class MockCarControl:
+  def __init__(self, longActive=True):
+    self.longActive = longActive
 
 class MockParams:
   def get_bool(self, name):
@@ -37,6 +45,7 @@ def default_sm():
     'radarState': MockRadarState(status=1.0),
     'modelV2': MockModelData(valid=True),
     'selfdriveState': MockSelfDriveState(experimentalMode=True),
+    'carControl': MockCarControl(longActive=True),
   }
   return sm
 
@@ -92,3 +101,17 @@ def test_radarless_slowdown_triggers_blended(mock_cp, mock_mpc, default_sm):
     controller.update(default_sm)
 
   assert controller.mode() == "blended"
+
+def test_stop_sign_latches_and_releases_on_pedal(mock_cp, mock_mpc, default_sm):
+  controller = DynamicExperimentalController(mock_cp, mock_mpc, params=MockParams())
+  default_sm['modelV2'] = MockModelData(valid=True, should_stop=True)
+  default_sm['carState'].standstill = False
+
+  controller.update(default_sm)
+  assert controller.stop_sign_confirmed
+  assert controller.active()
+
+  default_sm['modelV2'] = MockModelData(valid=True, should_stop=False)
+  default_sm['carState'].gasPressed = True
+  controller.update(default_sm)
+  assert not controller.stop_sign_confirmed

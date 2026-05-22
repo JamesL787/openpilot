@@ -37,7 +37,7 @@ class LongitudinalPlannerSP:
     self.output_a_target = 0.
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
-    experimental_mode = sm['selfdriveState'].experimentalMode
+    experimental_mode = sm['selfdriveState'].experimentalMode or self.dec.stop_sign_confirmed
     if not self.dec.active():
       return experimental_mode
 
@@ -93,7 +93,7 @@ class LongitudinalPlannerSP:
     dec = longitudinalPlanSP.dec
     dec.state = DecState.blended if self.dec.mode() == 'blended' else DecState.acc
     dec.enabled = self.dec.enabled()
-    dec.active = self.dec.active()
+    dec.active = self.dec.active() or self.dec.stop_sign_confirmed
 
     # Smart Cruise Control
     smartCruiseControl = longitudinalPlanSP.smartCruiseControl
@@ -137,5 +137,7 @@ class LongitudinalPlannerSP:
     e2eAlerts = longitudinalPlanSP.e2eAlerts
     e2eAlerts.greenLightAlert = self.e2e_alerts_helper.green_light_alert
     e2eAlerts.leadDepartAlert = self.e2e_alerts_helper.lead_depart_alert
+
+    longitudinalPlanSP.redLight = bool(self.dec.stop_sign_confirmed)
 
     pm.send('longitudinalPlanSP', plan_sp_send)
