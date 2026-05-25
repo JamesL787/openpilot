@@ -10,6 +10,9 @@ import numpy as np
 from opendbc.car import structs
 from opendbc.car.can_definitions import CanData
 from opendbc.sunnypilot.car import create_gas_interceptor_command
+from opendbc.sunnypilot.car.honda.accel_controller import GasProfileController
+
+DriveMode = structs.CarStateSP.DriveMode
 
 
 class GasInterceptorCarController:
@@ -19,14 +22,16 @@ class GasInterceptorCarController:
 
     self.gas = 0.
     self.interceptor_gas_cmd = 0.
+    self._gas_profile = GasProfileController()
 
   def update(self, CC: structs.CarControl, CS: structs.CarState, gas: float, brake: float, wind_brake: float,
              packer, frame: int) -> list[CanData]:
     can_sends = []
 
     if self.CP_SP.enableGasInterceptor:
-      # way too aggressive at low speed without this
-      gas_mult = np.interp(CS.out.vEgo, [0., 10.], [0.4, 1.0])
+      drive_mode = getattr(getattr(CS, 'out_sp', None), 'driveMode', DriveMode.unknown)
+      gas_mult, mode_changed = self._gas_profile.get_gas_multiplier(CS.out.vEgo, drive_mode)
+
       # send exactly zero if apply_gas is zero. Interceptor will send the max between read value and apply_gas.
       # This prevents unexpected pedal range rescaling
       # Sending non-zero gas when OP is not enabled will cause the PCM not to respond to throttle as expected
