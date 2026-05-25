@@ -170,3 +170,10 @@ class CarControlSP:
 @auto_dataclass
 class CarStateSP:
   speedLimit: float = auto_field()
+  driveMode: 'CarStateSP.DriveMode' = field(default_factory=lambda: CarStateSP.DriveMode.unknown)
+
+  class DriveMode(StrEnum):
+    unknown = auto()
+    normal = auto()
+    eco = auto()
+    sport = auto()

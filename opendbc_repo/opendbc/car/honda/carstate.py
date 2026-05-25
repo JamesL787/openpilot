@@ -256,6 +256,21 @@ class CarState(CarStateBase, CarStateExt):
       *create_button_events(self.cruise_setting, prev_cruise_setting, SETTINGS_BUTTONS_DICT),
     ]
 
+    if self.CP.carFingerprint == CAR.HONDA_CLARITY:
+      # Drive mode detection:
+      # CLARITY_DRIVE_MODE (0x1DC) byte[6]: explicit three-state machine, bus 1, requires proxy board firmware update
+      #   0x00 = normal, 0x10 = sport, 0x30 = eco — all states explicit when Set 1 active
+      # CRUISE_PARAMS (0x37C) ECO_MODE bit: PCM eco flag, bus 0, always visible without new proxy board firmware update
+      #   fallback eco source when on old proxy board firmware; normal is derived (else) in that case
+      # Eco and sport are mutually exclusive — car always transitions through normal between them.
+      drive_mode_state = cp.vl["CLARITY_DRIVE_MODE"]["DRIVE_MODE_STATE"]
+      if drive_mode_state == 0x10:
+        ret_sp.driveMode = structs.CarStateSP.DriveMode.sport
+      elif drive_mode_state == 0x30 or cp.vl["CRUISE_PARAMS"]["ECO_MODE"]:
+        ret_sp.driveMode = structs.CarStateSP.DriveMode.eco
+      else:
+        ret_sp.driveMode = structs.CarStateSP.DriveMode.normal
+
     CarStateExt.update(self, ret, ret_sp, can_parsers)
 
     return ret, ret_sp
