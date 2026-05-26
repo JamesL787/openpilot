@@ -180,7 +180,7 @@ def test_known_params_metadata():
   and that critical parameters (like LongitudinalPersonality) have their options and constraints preserved.
 
   Expected:
-  'LongitudinalPersonality' should have 3 options (Aggressive, Standard, Relaxed).
+  'LongitudinalPersonality' should have 4 options (Aggressive, Standard, Relaxed, Econ).
   'CustomAccLongPressIncrement' should have min=1, max=10, step=1.
   """
   with open(METADATA_PATH) as f:
@@ -190,9 +190,10 @@ def test_known_params_metadata():
   lp = metadata.get("LongitudinalPersonality")
   assert lp is not None
   assert "options" in lp
-  assert len(lp["options"]) == 3
+  assert len(lp["options"]) == 4
   assert lp["options"][0]["label"] == "Aggressive"
   assert lp["options"][0]["value"] == 0
+  assert lp["options"][3]["label"] == "Econ"
 
   # Check a numeric param
   acc_long = metadata.get("CustomAccLongPressIncrement")

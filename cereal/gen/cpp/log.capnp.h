@@ -8,7 +8,7 @@
 
 #ifndef CAPNP_VERSION
 #error "CAPNP_VERSION is not defined, is capnp/generated-header-support.h missing?"
-#elif CAPNP_VERSION != 1000001
+#elif CAPNP_VERSION != 1004000
 #error "Version mismatch between generated code and library headers.  You must use the same version of the Cap'n Proto compiler and library."
 #endif
 
@@ -134,6 +134,7 @@ enum class LongitudinalPersonality_d692e23d1a247d99: uint16_t {
   AGGRESSIVE,
   STANDARD,
   RELAXED,
+  ECON,
 };
 CAPNP_DECLARE_ENUM(LongitudinalPersonality, d692e23d1a247d99);
 CAPNP_DECLARE_SCHEMA(e71008caeb3fb65c);
@@ -1648,7 +1649,7 @@ struct LongitudinalPlan {
   struct Deprecated;
 
   struct _capnpPrivate {
-    CAPNP_DECLARE_STRUCT_HEADER(e00b5b3eba12876c, 11, 6)
+    CAPNP_DECLARE_STRUCT_HEADER(e00b5b3eba12876c, 11, 10)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -1663,7 +1664,7 @@ struct LongitudinalPlan::Deprecated {
   class Pipeline;
 
   struct _capnpPrivate {
-    CAPNP_DECLARE_STRUCT_HEADER(f241315ad87f2721, 11, 6)
+    CAPNP_DECLARE_STRUCT_HEADER(f241315ad87f2721, 11, 10)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -3115,7 +3116,7 @@ public:
 #endif  // !CAPNP_LITE
 
   template <typename Key2 = ::capnp::AnyPointer, typename Value2 = ::capnp::AnyPointer>
-  typename Map<Key2, Value2>::Reader asGeneric() {
+  typename Map<Key2, Value2>::Reader asGeneric() const {
     return typename Map<Key2, Value2>::Reader(_reader);
   }
 
@@ -3209,7 +3210,7 @@ public:
 #endif  // !CAPNP_LITE
 
   template <typename Key2 = ::capnp::AnyPointer, typename Value2 = ::capnp::AnyPointer>
-  typename Map<Key2, Value2>::Entry::Reader asMapGeneric() {
+  typename Map<Key2, Value2>::Entry::Reader asMapGeneric() const {
     return typename Map<Key2, Value2>::Entry::Reader(_reader);
   }
 
@@ -10937,6 +10938,18 @@ public:
 
   inline bool getAllowBrake() const;
 
+  inline bool hasLeadTrajectoryX0() const;
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader getLeadTrajectoryX0() const;
+
+  inline bool hasLeadTrajectoryV0() const;
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader getLeadTrajectoryV0() const;
+
+  inline bool hasLeadTrajectoryX1() const;
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader getLeadTrajectoryX1() const;
+
+  inline bool hasLeadTrajectoryV1() const;
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader getLeadTrajectoryV1() const;
+
 private:
   ::capnp::_::StructReader _reader;
   template <typename, ::capnp::Kind>
@@ -11021,6 +11034,38 @@ public:
 
   inline bool getAllowBrake();
   inline void setAllowBrake(bool value);
+
+  inline bool hasLeadTrajectoryX0();
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder getLeadTrajectoryX0();
+  inline void setLeadTrajectoryX0( ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader value);
+  inline void setLeadTrajectoryX0(::kj::ArrayPtr<const float> value);
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder initLeadTrajectoryX0(unsigned int size);
+  inline void adoptLeadTrajectoryX0(::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>&& value);
+  inline ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>> disownLeadTrajectoryX0();
+
+  inline bool hasLeadTrajectoryV0();
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder getLeadTrajectoryV0();
+  inline void setLeadTrajectoryV0( ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader value);
+  inline void setLeadTrajectoryV0(::kj::ArrayPtr<const float> value);
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder initLeadTrajectoryV0(unsigned int size);
+  inline void adoptLeadTrajectoryV0(::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>&& value);
+  inline ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>> disownLeadTrajectoryV0();
+
+  inline bool hasLeadTrajectoryX1();
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder getLeadTrajectoryX1();
+  inline void setLeadTrajectoryX1( ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader value);
+  inline void setLeadTrajectoryX1(::kj::ArrayPtr<const float> value);
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder initLeadTrajectoryX1(unsigned int size);
+  inline void adoptLeadTrajectoryX1(::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>&& value);
+  inline ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>> disownLeadTrajectoryX1();
+
+  inline bool hasLeadTrajectoryV1();
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder getLeadTrajectoryV1();
+  inline void setLeadTrajectoryV1( ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader value);
+  inline void setLeadTrajectoryV1(::kj::ArrayPtr<const float> value);
+  inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder initLeadTrajectoryV1(unsigned int size);
+  inline void adoptLeadTrajectoryV1(::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>&& value);
+  inline ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>> disownLeadTrajectoryV1();
 
 private:
   ::capnp::_::StructBuilder _builder;
@@ -34870,6 +34915,158 @@ inline bool LongitudinalPlan::Builder::getAllowBrake() {
 inline void LongitudinalPlan::Builder::setAllowBrake(bool value) {
   _builder.setDataField<bool>(
       ::capnp::bounded<14>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LongitudinalPlan::Reader::hasLeadTrajectoryX0() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline bool LongitudinalPlan::Builder::hasLeadTrajectoryX0() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader LongitudinalPlan::Reader::getLeadTrajectoryX0() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::get(_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder LongitudinalPlan::Builder::getLeadTrajectoryX0() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::get(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline void LongitudinalPlan::Builder::setLeadTrajectoryX0( ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), value);
+}
+inline void LongitudinalPlan::Builder::setLeadTrajectoryX0(::kj::ArrayPtr<const float> value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder LongitudinalPlan::Builder::initLeadTrajectoryX0(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::init(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), size);
+}
+inline void LongitudinalPlan::Builder::adoptLeadTrajectoryX0(
+    ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>> LongitudinalPlan::Builder::disownLeadTrajectoryX0() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::disown(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+
+inline bool LongitudinalPlan::Reader::hasLeadTrajectoryV0() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS).isNull();
+}
+inline bool LongitudinalPlan::Builder::hasLeadTrajectoryV0() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader LongitudinalPlan::Reader::getLeadTrajectoryV0() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::get(_reader.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder LongitudinalPlan::Builder::getLeadTrajectoryV0() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::get(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+inline void LongitudinalPlan::Builder::setLeadTrajectoryV0( ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), value);
+}
+inline void LongitudinalPlan::Builder::setLeadTrajectoryV0(::kj::ArrayPtr<const float> value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder LongitudinalPlan::Builder::initLeadTrajectoryV0(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::init(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), size);
+}
+inline void LongitudinalPlan::Builder::adoptLeadTrajectoryV0(
+    ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>> LongitudinalPlan::Builder::disownLeadTrajectoryV0() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::disown(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+
+inline bool LongitudinalPlan::Reader::hasLeadTrajectoryX1() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS).isNull();
+}
+inline bool LongitudinalPlan::Builder::hasLeadTrajectoryX1() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader LongitudinalPlan::Reader::getLeadTrajectoryX1() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::get(_reader.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder LongitudinalPlan::Builder::getLeadTrajectoryX1() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::get(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+inline void LongitudinalPlan::Builder::setLeadTrajectoryX1( ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), value);
+}
+inline void LongitudinalPlan::Builder::setLeadTrajectoryX1(::kj::ArrayPtr<const float> value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder LongitudinalPlan::Builder::initLeadTrajectoryX1(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::init(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), size);
+}
+inline void LongitudinalPlan::Builder::adoptLeadTrajectoryX1(
+    ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>> LongitudinalPlan::Builder::disownLeadTrajectoryX1() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::disown(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+
+inline bool LongitudinalPlan::Reader::hasLeadTrajectoryV1() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS).isNull();
+}
+inline bool LongitudinalPlan::Builder::hasLeadTrajectoryV1() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader LongitudinalPlan::Reader::getLeadTrajectoryV1() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::get(_reader.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder LongitudinalPlan::Builder::getLeadTrajectoryV1() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::get(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS));
+}
+inline void LongitudinalPlan::Builder::setLeadTrajectoryV1( ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS), value);
+}
+inline void LongitudinalPlan::Builder::setLeadTrajectoryV1(::kj::ArrayPtr<const float> value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>::Builder LongitudinalPlan::Builder::initLeadTrajectoryV1(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::init(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS), size);
+}
+inline void LongitudinalPlan::Builder::adoptLeadTrajectoryV1(
+    ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>> LongitudinalPlan::Builder::disownLeadTrajectoryV1() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::disown(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS));
 }
 
 inline bool LongitudinalPlan::Deprecated::Reader::getLateralValid() const {

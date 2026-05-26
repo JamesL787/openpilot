@@ -643,6 +643,10 @@
       {
         "value": 2,
         "label": "Relaxed"
+      },
+      {
+        "value": 3,
+        "label": "Econ"
       }
     ]
   },
