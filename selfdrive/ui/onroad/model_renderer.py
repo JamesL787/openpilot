@@ -430,7 +430,12 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
     return np.vstack((left_screen.T, right_screen[:, ::-1].T)).astype(np.float32)
 
   def _draw_stop_sign(self, sm):
-    if not bool(getattr(sm['longitudinalPlanSP'], "redLight", False)):
+    stop_active = bool(
+      getattr(sm['longitudinalPlanSP'], "redLight", False)
+      or getattr(sm['longitudinalPlan'], "shouldStop", False)
+      or getattr(sm['modelV2'].action, "shouldStop", False)
+    )
+    if not stop_active:
       return
 
     pos_x = np.array(sm['modelV2'].position.x, dtype=np.float32)
