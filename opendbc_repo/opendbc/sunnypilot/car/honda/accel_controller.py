@@ -22,7 +22,7 @@ DriveMode = structs.CarStateSP.DriveMode
 # NORMAL still feels ~1.18x ECO and SPORT ~1.20x ECO (combined OP cmd × Honda remap).
 # Retune when cleaner log available (flat road, OP engaged, 60s per mode at cruise).
 _GAS_BP_ECO    = [0.,  6., 15.]
-_GAS_V_ECO     = [0.10, 0.40, 0.55]
+_GAS_V_ECO     = [0.09, 0.37, 0.51]
 
 _GAS_BP_NORMAL = [0.,  6., 15.]
 _GAS_V_NORMAL  = [0.09, 0.35, 0.50]
