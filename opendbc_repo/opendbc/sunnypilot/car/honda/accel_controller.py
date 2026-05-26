@@ -11,7 +11,8 @@ from opendbc.car import structs
 
 DriveMode = structs.CarStateSP.DriveMode
 
-# ECO is the reference baseline — Honda's PCM applies the least torque per unit APP.
+# ECO is the reference baseline — Honda's PCM already remaps throttle response by
+# drive mode, so these curves only do a partial correction on top of that stock behavior.
 # NORMAL and SPORT partially compensate for Honda's per-mode torque remap so OP
 # doesn't double-amplify it, while preserving meaningful mode character.
 #
@@ -21,14 +22,14 @@ DriveMode = structs.CarStateSP.DriveMode
 # Full correction would equalize all modes — instead we apply ~50% correction so
 # NORMAL still feels ~1.18x ECO and SPORT ~1.20x ECO (combined OP cmd × Honda remap).
 # Retune when cleaner log available (flat road, OP engaged, 60s per mode at cruise).
-_GAS_BP_ECO    = [0.,  6., 15.]
-_GAS_V_ECO     = [0.09, 0.37, 0.51]
+_GAS_BP_ECO    = [0.,  3.,  6., 10., 15., 20.]
+_GAS_V_ECO     = [0.07, 0.22, 0.28, 0.37, 0.39, 0.39]
 
-_GAS_BP_NORMAL = [0.,  6., 15.]
-_GAS_V_NORMAL  = [0.09, 0.35, 0.50]
+_GAS_BP_NORMAL = [0.,  3.,  6., 10., 15., 20.]
+_GAS_V_NORMAL  = [0.09, 0.22, 0.35, 0.43, 0.50, 0.50]
 
-_GAS_BP_SPORT  = [0.,  6., 15.]
-_GAS_V_SPORT   = [0.08, 0.32, 0.46]
+_GAS_BP_SPORT  = [0.,  3.,  6., 10., 15., 20.]
+_GAS_V_SPORT   = [0.08, 0.20, 0.32, 0.40, 0.46, 0.46]
 
 
 class GasProfileController:
