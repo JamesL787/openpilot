@@ -27,13 +27,44 @@ BO_ 892 CRUISE_PARAMS: 8 PCM
  SG_ COUNTER : 61|2@0+ (1,0) [0|3] "" EON
 
 BO_ 904 HV_MODE_STATUS: 8 PCM
+ SG_ EV_RANGE_BUFFER_COARSE : 7|8@0+ (1,0) [0|255] "" EON
+ SG_ HV_MODE_STATE : 15|8@0+ (1,0) [0|255] "" EON
  SG_ HV_ACTIVE : 9|1@0+ (1,0) [0|1] "" EON
  SG_ HV_CHARGE_REQUEST : 8|1@0+ (1,0) [0|1] "" EON
- SG_ HV_REGEN_ACTIVE : 45|1@0+ (1,0) [0|1] "" EON
+ SG_ EV_RANGE_BUFFER_FINE : 39|16@0+ (1,0) [0|65535] "" EON
 
-CM_ SG_ 904 HV_ACTIVE "byte[1] bit1: 1=HV/engine-charge mode, 0=EV-only. NOTE: bit positions at 50,54 in older DBC were wrong (byte[6] is always 0x00).";
-CM_ SG_ 904 HV_CHARGE_REQUEST "byte[1] bit0: toggles between 0x01/0x02 states (sub-mode flag, exact semantics TBD from regen correlation).";
-CM_ SG_ 904 HV_REGEN_ACTIVE "byte[5] bit5 (0x20): 1=regen brake charge active, 0=no regen.";
+VAL_ 904 HV_MODE_STATE 0 "ev_or_idle" 1 "transition_or_charge_request" 2 "hv_drive_or_generator_active" ;
+
+CM_ SG_ 904 EV_RANGE_BUFFER_COARSE "byte[0]: coarse EV range/buffer bucket. Observed values walk 0x13, 0x0C, 0x0B, ... down to 0x02 across captures. Likely the coarse EV range reserve used by HV mode, not a counter.";
+CM_ SG_ 904 HV_MODE_STATE "byte[1]: persistent EV/HV powertrain mode state. Latest check_route shows values 0x00/0x01/0x02; longer route also shows 0x04/0x05/0x07/0x08/0x09/0x0A/0x0C. States 0x02 and 0x0C strongly correlate with 0x183 bytes[0:2] HV power activity.";
+CM_ SG_ 904 HV_ACTIVE "byte[1] bit1: set for state 0x02. NOTE: bit positions at 50,54 in older DBC were wrong (byte[6] is usually 0x00). Prefer HV_MODE_STATE for persistent mode logic.";
+CM_ SG_ 904 HV_CHARGE_REQUEST "byte[1] bit0: set for state 0x01/0x05/0x07/0x09. Exact charge-request semantics TBD from dedicated HV-charge captures.";
+CM_ SG_ 904 EV_RANGE_BUFFER_FINE "bytes[4:6]: fine EV range/buffer value. It drops in 0x388[1]=0x01 with 0x183[0:2]=0, then rises in 0x388[1]=0x02 when 0x183[0:2] and the 0x17C 0x01/0x20 pattern indicate generator/HV-power activity. byte[5] is not a counter; low 5 bits are always zero in current logs.";
+
+BO_ 387 CLARITY_HV_POWER: 8 PCM
+ SG_ HV_POWER_A : 7|16@0+ (1,0) [0|65535] "" EON
+ SG_ HV_POWER_B : 23|16@0+ (1,0) [0|65535] "" EON
+ SG_ HV_POWER_C : 39|16@0+ (1,0) [0|65535] "" EON
+ SG_ CHECKSUM : 59|4@0+ (1,0) [0|15] "" EON
+ SG_ COUNTER : 61|2@0+ (1,0) [0|3] "" EON
+
+CM_ BO_ 387 "Clarity-specific high-rate HV power/torque frame (~98Hz). bytes[0:2] are the strongest refill/generator signature; bytes[2:4] and [4:6] are a paired estimate that is equal-ish when bytes[0:2]=0 and diverges during generator/refill activity. Units and exact physical meanings TBD.";
+CM_ SG_ 387 HV_POWER_A "bytes[0:2] unsigned primary HV refill/generator correlate. Zero during 0x388[1]=0x01 buffer draw; active during 0x388[1]=0x02/0x0C refill windows. Refill steps consistently occur with this value nonzero except when the buffer is already bottomed.";
+CM_ SG_ 387 HV_POWER_B "bytes[2:4] unsigned paired estimate. When HV_POWER_A is zero, B and C are nearly equal in EV/idle/generator-ready states; when A is active, B is typically much larger than C and roughly tracks A at a lower scale.";
+CM_ SG_ 387 HV_POWER_C "bytes[4:6] unsigned paired estimate. Usually near HV_POWER_B when HV_POWER_A is zero; often falls to low/zero while HV_POWER_A/HV_POWER_B remain active during 0x388[1]=0x02 refill/decel windows.";
+
+BO_ 399 CLARITY_DRIVE_TORQUE_STATUS: 7 PCM
+ SG_ DRIVE_TORQUE_A : 7|16@0- (1,0) [-32768|32767] "" EON
+ SG_ DRIVE_TORQUE_B : 23|16@0- (1,0) [-32768|32767] "" EON
+ SG_ DRIVE_TORQUE_STATUS : 39|8@0+ (1,0) [0|255] "" EON
+ SG_ SET_ME_X01 : 47|8@0+ (1,0) [0|255] "" EON
+ SG_ CHECKSUM : 55|4@0+ (1,0) [0|15] "" EON
+ SG_ COUNTER : 57|2@0+ (1,0) [0|3] "" EON
+
+CM_ BO_ 399 "Clarity-specific high-rate drive torque/status frame (~98Hz). bytes[0:2] and [2:4] are signed dynamic values that swing positive/negative with traction/regen-like activity, not engine RPM. Exact units TBD.";
+CM_ SG_ 399 DRIVE_TORQUE_A "bytes[0:2] signed. Latest check_route: positive during tractive bursts, negative during regen/decel; not reliable as an engine-on detector.";
+CM_ SG_ 399 DRIVE_TORQUE_B "bytes[2:4] signed. Smaller paired dynamic value; exact semantics TBD.";
+CM_ SG_ 399 DRIVE_TORQUE_STATUS "byte[4]: status byte for this drive torque frame. Observed mostly 0x00 in latest check_route and mostly 0x08 in longer route, so do not treat as engine-on by itself.";
 
 BO_ 545 ECON_STATUS: 6 XXX
  SG_ ECON_ON_2 : 37|2@0+ (1,0) [0|3] "" EON
@@ -67,8 +98,8 @@ CM_ "0x039 (25Hz): 3-byte, 8 unique payloads — unknown, possibly VSA/stability
 CM_ "0x138 (98Hz): 8-byte, ~10k unique — high-rate powertrain signal near GAS_PEDAL_2; possible motor inverter data";
 CM_ "0x13B (98Hz): 7-byte, ~8.7k unique — high-rate, same cluster as 0x138";
 CM_ "0x14A (98Hz): 8-byte, ~9.5k unique — high-rate; byte[1]=byte[6]=0x49 constant, possible PCU signal";
-CM_ "0x183 (98Hz): 8-byte, ~5.2k unique — two 16-bit values close in magnitude (e.g. 0x0AA6/0x0AB7 = 2726/2743 * 0.1); likely motor commanded vs actual torque (Nm*0.1) or current";
-CM_ "0x18F (98Hz): 7-byte, ~12k unique — signed 16-bit at bytes[0:2] (e.g. 0xFFDD = -35); likely motor RPM or torque with sign";
+CM_ "0x183 now decoded above as CLARITY_HV_POWER: high-rate HV/generator power-ish frame, strongest current fingerprint for 0x388[1]=0x02/0x0C activity";
+CM_ "0x18F now decoded above as CLARITY_DRIVE_TORQUE_STATUS: signed traction/regen-ish values, not RPM and not a standalone HV-mode detector";
 CM_ "0x199 (98Hz): 8-byte, 72 unique — mostly static with rolling counter; bytes[5:7] switches between 0x3000 and 0x8019";
 CM_ "0x1AC (49Hz): 8-byte, 4 unique — byte[0:2]=0x7FFF constant (32767, signed center value), rolling counter only; likely EPS or motor reference signal at max positive";
 CM_ "0x1B9 (49Hz): 5-byte, ~7.8k unique — high unique count at 49Hz, likely a 32-bit sensor value";
