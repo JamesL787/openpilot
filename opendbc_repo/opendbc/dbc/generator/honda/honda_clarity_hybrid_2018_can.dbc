@@ -62,18 +62,10 @@ CM_ SG_ 387 HV_POWER_B "bytes[2:4] unsigned paired estimate. When HV_POWER_A is 
 CM_ SG_ 387 HV_POWER_C "bytes[4:6] unsigned paired estimate. Usually near HV_POWER_B when HV_POWER_A is zero; often falls to low/zero while HV_POWER_A/HV_POWER_B remain active during 0x388[1]=0x02 refill/decel windows.";
 CM_ SG_ 387 HV_POWER_STATUS "byte[6]: status byte observed as mostly 0x00 with 0x80/0x30 variants in current captures. Correlates should be checked against explicit HV Charge, engine start/stop, and buffer depletion events before assigning physical meaning.";
 
-BO_ 399 CLARITY_DRIVE_TORQUE_STATUS: 7 PCM
- SG_ DRIVE_TORQUE_A : 7|16@0- (1,0) [-32768|32767] "" EON
- SG_ DRIVE_TORQUE_B : 23|16@0- (1,0) [-32768|32767] "" EON
- SG_ DRIVE_TORQUE_STATUS : 39|8@0+ (1,0) [0|255] "" EON
- SG_ SET_ME_X01 : 47|8@0+ (1,0) [0|255] "" EON
- SG_ CHECKSUM : 55|4@0+ (1,0) [0|15] "" EON
- SG_ COUNTER : 57|2@0+ (1,0) [0|3] "" EON
-
-CM_ BO_ 399 "Clarity-specific high-rate drive torque/status frame (~98Hz). bytes[0:2] and [2:4] are signed dynamic values that swing positive/negative with traction/regen-like activity, not engine RPM. Exact units TBD.";
-CM_ SG_ 399 DRIVE_TORQUE_A "bytes[0:2] signed. Latest check_route: positive during tractive bursts, negative during regen/decel; not reliable as an engine-on detector.";
-CM_ SG_ 399 DRIVE_TORQUE_B "bytes[2:4] signed. Smaller paired dynamic value; exact semantics TBD.";
-CM_ SG_ 399 DRIVE_TORQUE_STATUS "byte[4]: status byte for this drive torque frame. Observed mostly 0x00 in latest check_route and mostly 0x08 in longer route, so do not treat as engine-on by itself.";
+CM_ "0x18F (399) CLARITY_DRIVE_TORQUE_STATUS: NOT declared as BO_ — conflicts with common Honda STEER_STATUS at same ID.";
+CM_ "  bytes[0:2] signed DRIVE_TORQUE_A: positive during tractive bursts, negative during regen/decel, not RPM.";
+CM_ "  bytes[2:4] signed DRIVE_TORQUE_B: smaller paired dynamic value, semantics TBD.";
+CM_ "  byte[4] DRIVE_TORQUE_STATUS: mostly 0x00 in short routes, 0x08 in longer routes — not engine-on detector.";
 
 BO_ 545 ECON_STATUS: 6 XXX
  SG_ ECON_ON_2 : 37|2@0+ (1,0) [0|3] "" EON
