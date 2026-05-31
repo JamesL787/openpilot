@@ -11,23 +11,22 @@ from opendbc.car import structs
 
 DriveMode = structs.CarStateSP.DriveMode
 
-# Design intent: drive mode changes how OP drives, not normalize PCM remap.
-#   ECO:    40% less gas than NORMAL — genuinely gentle, conserves battery/fuel.
-#           Honda's PCM ECO is already conservative; this stacks on top of that.
-#   NORMAL: Baseline — OP behaves like a normal car.
-#   SPORT:  ~8% more gas than NORMAL — modestly assertive. Honda's SPORT PCM already
-#           amplifies throttle response so this doesn't need to be dramatic.
+# Design intent: drive mode changes how OP drives, stacking on Honda's PCM per-mode remap.
+#   ECO:    Conservative but not sluggish. Stacks on PCM ECO for a genuinely gentle feel.
+#   NORMAL: Comfortable everyday baseline — noticeably more responsive than ECO.
+#   SPORT:  Modestly assertive. Honda's PCM SPORT already amplifies throttle; this adds
+#           a small additional step without being aggressive.
 #
 # Previous design tried to cancel Honda's per-mode PCM remap so OP drove identically
 # across all modes — that made ECO as aggressive as SPORT, defeating the point.
 _GAS_BP_ECO    = [0.,  3.,  6., 10., 15., 20.]
-_GAS_V_ECO     = [0.05, 0.13, 0.21, 0.26, 0.30, 0.30]
+_GAS_V_ECO     = [0.11, 0.25, 0.38, 0.46, 0.53, 0.53]
 
 _GAS_BP_NORMAL = [0.,  3.,  6., 10., 15., 20.]
-_GAS_V_NORMAL  = [0.09, 0.22, 0.35, 0.43, 0.50, 0.50]
+_GAS_V_NORMAL  = [0.12, 0.27, 0.41, 0.50, 0.58, 0.58]
 
 _GAS_BP_SPORT  = [0.,  3.,  6., 10., 15., 20.]
-_GAS_V_SPORT   = [0.10, 0.24, 0.38, 0.46, 0.54, 0.54]
+_GAS_V_SPORT   = [0.13, 0.29, 0.44, 0.53, 0.61, 0.61]
 
 
 class GasProfileController:
