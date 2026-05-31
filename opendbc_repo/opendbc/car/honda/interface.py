@@ -357,7 +357,7 @@ class CarInterface(CarInterfaceBase):
         stock_cp.lateralTuning.pid.kf = 0.000024
 
     elif candidate == CAR.HONDA_CLARITY:
-      stock_cp.lateralParams.torqueBP, stock_cp.lateralParams.torqueV = [[0, 900], [0, 900]]
+      stock_cp.lateralParams.torqueBP, stock_cp.lateralParams.torqueV = [[0, 1663], [0, 1663]]
       stock_cp.steerAtStandstill = True
       stock_cp.autoResumeSng = True
       stock_cp.minEnableSpeed = -1.0
