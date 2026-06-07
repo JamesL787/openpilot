@@ -97,13 +97,9 @@ def fill_driver_data(msg, model_output, ds_suffix):
   msg.facePosition = model_output[f'face_descs_{ds_suffix}'][0, 3:5].tolist()
   msg.facePositionStd = model_output[f'face_descs_{ds_suffix}_std'][0, 3:5].tolist()
   msg.faceProb = model_output[f'face_prob_{ds_suffix}'][0, 0].item()
-  msg.leftEyeProb = model_output[f'left_eye_prob_{ds_suffix}'][0, 0].item()
-  msg.rightEyeProb = model_output[f'right_eye_prob_{ds_suffix}'][0, 0].item()
-  msg.leftBlinkProb = model_output[f'left_blink_prob_{ds_suffix}'][0, 0].item()
-  msg.rightBlinkProb = model_output[f'right_blink_prob_{ds_suffix}'][0, 0].item()
-  msg.sunglassesProb = model_output[f'sunglasses_prob_{ds_suffix}'][0, 0].item()
+  msg.eyesVisibleProb = model_output[f'eyes_visible_prob_{ds_suffix}'][0, 0].item()
+  msg.eyesClosedProb = model_output[f'eyes_closed_prob_{ds_suffix}'][0, 0].item()
   msg.phoneProb = model_output[f'using_phone_prob_{ds_suffix}'][0, 0].item()
-  msg.sleepProb = model_output[f'sleep_prob_{ds_suffix}'][0, 0].item()
 
 def get_driverstate_packet(model_output, frame_id: int, location_ts: int, exec_time: float, gpu_exec_time: float):
   msg = messaging.new_message('driverStateV2', valid=True)
