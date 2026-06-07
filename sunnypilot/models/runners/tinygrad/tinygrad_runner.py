@@ -1,4 +1,6 @@
 import pickle
+import functools
+import sys
 
 import numpy as np
 from openpilot.sunnypilot.models.runners.constants import NumpyDict, ModelType, ShapeDict, CUSTOM_MODEL_PATH, SliceDict
@@ -8,6 +10,30 @@ from openpilot.sunnypilot.models.split_model_constants import SplitModelConstant
 from openpilot.sunnypilot.modeld_v2.constants import ModelConstants
 
 from tinygrad.tensor import Tensor
+
+
+def _patch_tinygrad_metal_on_linux() -> None:
+  if sys.platform == "darwin":
+    return
+
+  from tinygrad import device as tinygrad_device
+
+  if getattr(tinygrad_device._Device.__get_canonicalized_item, "_nrd_metal_patched", False):
+    return
+
+  orig_get_canonicalized_item = tinygrad_device._Device.__get_canonicalized_item
+
+  @functools.cache
+  def _get_canonicalized_item(self, ix: str):
+    if ix.split(":", 1)[0].upper() == "METAL":
+      ix = "CPU"
+    return orig_get_canonicalized_item(self, ix)
+
+  _get_canonicalized_item._nrd_metal_patched = True  # type: ignore[attr-defined]
+  tinygrad_device._Device.__get_canonicalized_item = _get_canonicalized_item
+
+
+_patch_tinygrad_metal_on_linux()
 
 
 class TinygradRunner(ModelRunner, SupercomboTinygrad, PolicyTinygrad, VisionTinygrad, OffPolicyTinygrad, OnPolicyTinygrad):

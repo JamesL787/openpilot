@@ -18,6 +18,9 @@ from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.label import UnifiedLabel
 from openpilot.system.ui.widgets.scroller import NavScroller
 
+DEEP_RL_BUNDLES = {"OPM16DEEP", "RL", "RLV1"}
+DEEP_RL_FOLDER = "Deep/RL Models"
+
 class CurrentModelInfo(Widget):
   def __init__(self):
     super().__init__()
@@ -77,6 +80,8 @@ class ModelsLayoutMici(NavScroller):
     folders = {}
     for bundle in bundles:
       folder = next((override.value for override in bundle.overrides if override.key == "folder"), "")
+      if not folder and getattr(bundle, "internalName", "").upper() in DEEP_RL_BUNDLES:
+        folder = DEEP_RL_FOLDER
       folders.setdefault(folder, []).append(bundle)
 
     if favorites:
@@ -104,7 +109,7 @@ class ModelsLayoutMici(NavScroller):
     default_btn.set_click_callback(self._select_default)
     folder_buttons.append(default_btn)
 
-    visible_folders = {"release models", "master models", "favorites", "deep rl models", "deep rl", "drl"}
+    visible_folders = {"release models", "master models", "favorites", "deep rl models", "deep/rl models", "deep rl", "deep/rl", "drl"}
     for folder in sorted(folders.keys(), key=lambda f: max((bundle.index for bundle in folders[f]), default=-1), reverse=True):
       if folder.lower() in visible_folders:
         btn = BigButton(folder.lower())

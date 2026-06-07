@@ -7,9 +7,25 @@ USBGPU_VID = 0xADD1
 USBGPU_PID = 0x0001
 
 
+def _fallback_tg_input_devices():
+  device = 'QCOM' if Path('/sys/bus/usb/devices').exists() else 'CPU'
+  return {
+    'selfdrive.modeld.modeld': {
+      'default': {'WARP_DEV': device, 'QUEUE_DEV': device},
+      'usbgpu': {'WARP_DEV': device, 'QUEUE_DEV': 'AMD'},
+    },
+    'selfdrive.modeld.dmonitoringmodeld': {
+      'default': {'DEV': device},
+    },
+  }
+
+
 def get_tg_input_devices(process_name: str, usbgpu: bool):
-  with open(TG_INPUT_DEVICES_PATH) as f:
-    return json.load(f)[process_name]['default' if not usbgpu else 'usbgpu']
+  try:
+    with open(TG_INPUT_DEVICES_PATH) as f:
+      return json.load(f)[process_name]['default' if not usbgpu else 'usbgpu']
+  except (FileNotFoundError, KeyError, json.JSONDecodeError):
+    return _fallback_tg_input_devices()[process_name]['default' if not usbgpu else 'usbgpu']
 
 def modeld_pkl_path(usbgpu: bool):
   prefix = 'big_' if usbgpu else ''

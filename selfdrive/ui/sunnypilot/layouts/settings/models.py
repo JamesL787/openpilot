@@ -27,6 +27,9 @@ from openpilot.system.ui.sunnypilot.widgets.list_view import ListItemSP, toggle_
 from openpilot.system.ui.sunnypilot.widgets.progress_bar import progress_item
 from openpilot.system.ui.sunnypilot.widgets.tree_dialog import TreeOptionDialog, TreeNode, TreeFolder
 
+DEEP_RL_BUNDLES = {"OPM16DEEP", "RL", "RLV1"}
+DEEP_RL_FOLDER = "Deep/RL Models"
+
 if gui_app.sunnypilot_ui():
   from openpilot.system.ui.sunnypilot.widgets.list_view import button_item_sp as button_item
 
@@ -206,7 +209,10 @@ class ModelsLayout(Widget):
     bundles = self.model_manager.availableBundles
     folders = {}
     for bundle in bundles:
-      folders.setdefault(next((ov_ride.value for ov_ride in bundle.overrides if ov_ride.key == "folder"), ""), []).append(bundle)
+      folder = next((ov_ride.value for ov_ride in bundle.overrides if ov_ride.key == "folder"), "")
+      if not folder and getattr(bundle, "internalName", "").upper() in DEEP_RL_BUNDLES:
+        folder = DEEP_RL_FOLDER
+      folders.setdefault(folder, []).append(bundle)
 
     folders_list = [TreeFolder("", [TreeNode("Default", {'display_name': f"{DEFAULT_MODEL} (Default)", 'short_name': "Default"})])]
     for folder, folder_bundles in sorted(folders.items(), key=lambda x: max((bundle.index for bundle in x[1]), default=-1), reverse=True):
