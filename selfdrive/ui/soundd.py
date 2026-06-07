@@ -28,6 +28,7 @@ AMBIENT_DB = 24 # DB where MIN_VOLUME is applied
 DB_SCALE = 30 # AMBIENT_DB + DB_SCALE is where MAX_VOLUME is applied
 
 VOLUME_BASE = 20
+FEEDBACK_GUARD_DB = 44  # SPL ceiling: mic feedback starts above this; cap volume before it can loop
 if HARDWARE.get_device_type() == "tizi":
   AMBIENT_DB = 30
   VOLUME_BASE = 10
@@ -152,6 +153,10 @@ class Soundd(QuietMode):
       self.selfdrive_timeout_alert = False
 
   def calculate_volume(self, weighted_db):
+    # Cap input SPL to break the mic→speaker→mic feedback loop:
+    # if the mic is picking up our own speaker (feedback), weighted_db climbs
+    # above FEEDBACK_GUARD_DB. Clamp input before it can drive volume higher.
+    weighted_db = min(weighted_db, FEEDBACK_GUARD_DB)
     volume = ((weighted_db - AMBIENT_DB) / DB_SCALE) * (MAX_VOLUME - MIN_VOLUME) + MIN_VOLUME
     return math.pow(VOLUME_BASE, (np.clip(volume, MIN_VOLUME, MAX_VOLUME) - 1))
 
@@ -177,8 +182,14 @@ class Soundd(QuietMode):
 
         self.load_param()
 
-        # Always update volume, even when alert is playing
-        if sm.updated['soundPressure']:
+        # Update volume from mic SPL only when warningImmediate is NOT actively ramping.
+        # During a warningImmediate the speaker is loud enough to drive the mic into
+        # feedback: SPL rises → calculate_volume returns max → sound gets louder → repeat.
+        # Gate the SPL update here so the ramp logic below is the sole volume authority
+        # while warningImmediate is running.
+        warning_ramping = (self.current_alert == AudibleAlert.warningImmediate and
+                           (time.monotonic() - self.ramp_start_time) < ALERT_RAMP_TIME)
+        if sm.updated['soundPressure'] and not warning_ramping:
           self.spl_filter_weighted.update(sm["soundPressure"].soundPressureWeightedDb)
           self.current_volume = self.calculate_volume(float(self.spl_filter_weighted.x))
 
