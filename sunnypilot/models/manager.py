@@ -218,7 +218,7 @@ class ModelManagerSP:
 
       self.active_bundle = self.selected_bundle
       self.active_bundle.status = custom.ModelManagerSP.DownloadStatus.downloaded
-      self.params.put("ModelManager_ActiveBundle", self.active_bundle.to_dict(), block=True)
+      self.params.put("ModelManager_ActiveBundle", self.active_bundle.to_dict())
       self.selected_bundle = None
 
     except Exception:
