@@ -91,14 +91,18 @@ def parse_model_output(model_output):
         parsed[f'{key}_{ds_suffix}'] = sigmoid(model_output[source])
   return parsed
 
+def _mean_output_prob(model_output, ds_suffix, *keys):
+  values = [model_output[f'{key}_{ds_suffix}'][0, 0].item() for key in keys if f'{key}_{ds_suffix}' in model_output]
+  return float(np.mean(values)) if values else 0.0
+
 def fill_driver_data(msg, model_output, ds_suffix):
   msg.faceOrientation = model_output[f'face_descs_{ds_suffix}'][0, :3].tolist()
   msg.faceOrientationStd = model_output[f'face_descs_{ds_suffix}_std'][0, :3].tolist()
   msg.facePosition = model_output[f'face_descs_{ds_suffix}'][0, 3:5].tolist()
   msg.facePositionStd = model_output[f'face_descs_{ds_suffix}_std'][0, 3:5].tolist()
   msg.faceProb = model_output[f'face_prob_{ds_suffix}'][0, 0].item()
-  msg.eyesVisibleProb = model_output[f'eyes_visible_prob_{ds_suffix}'][0, 0].item()
-  msg.eyesClosedProb = model_output[f'eyes_closed_prob_{ds_suffix}'][0, 0].item()
+  msg.eyesVisibleProb = _mean_output_prob(model_output, ds_suffix, 'eyes_visible_prob', 'left_eye_prob', 'right_eye_prob')
+  msg.eyesClosedProb = _mean_output_prob(model_output, ds_suffix, 'eyes_closed_prob', 'left_blink_prob', 'right_blink_prob')
   msg.phoneProb = model_output[f'using_phone_prob_{ds_suffix}'][0, 0].item()
 
 def get_driverstate_packet(model_output, frame_id: int, location_ts: int, exec_time: float, gpu_exec_time: float):
