@@ -16,10 +16,13 @@ def _patch_tinygrad_metal_on_linux() -> None:
 
   from tinygrad import device as tinygrad_device
 
-  if getattr(tinygrad_device._Device.__get_canonicalized_item, "_nrd_metal_patched", False):
-    return
+  get_item_name = "_Device__get_canonicalized_item"
+  if not hasattr(tinygrad_device._Device, get_item_name):
+    get_item_name = "__get_canonicalized_item"
 
-  orig_get_canonicalized_item = tinygrad_device._Device.__get_canonicalized_item
+  orig_get_canonicalized_item = getattr(tinygrad_device._Device, get_item_name)
+  if getattr(orig_get_canonicalized_item, "_nrd_metal_patched", False):
+    return
 
   @functools.cache
   def _get_canonicalized_item(self, ix: str):
@@ -28,7 +31,7 @@ def _patch_tinygrad_metal_on_linux() -> None:
     return orig_get_canonicalized_item(self, ix)
 
   _get_canonicalized_item._nrd_metal_patched = True  # type: ignore[attr-defined]
-  tinygrad_device._Device.__get_canonicalized_item = _get_canonicalized_item
+  setattr(tinygrad_device._Device, get_item_name, _get_canonicalized_item)
 
 
 _patch_tinygrad_metal_on_linux()
