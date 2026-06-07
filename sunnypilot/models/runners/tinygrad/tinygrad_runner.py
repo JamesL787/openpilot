@@ -1,5 +1,5 @@
-import pickle
 import functools
+import pickle
 import sys
 
 import numpy as np
@@ -8,8 +8,6 @@ from openpilot.sunnypilot.models.runners.model_runner import ModelRunner
 from openpilot.sunnypilot.models.runners.tinygrad.model_types import PolicyTinygrad, VisionTinygrad, SupercomboTinygrad, OffPolicyTinygrad, OnPolicyTinygrad
 from openpilot.sunnypilot.models.split_model_constants import SplitModelConstants
 from openpilot.sunnypilot.modeld_v2.constants import ModelConstants
-
-from tinygrad.tensor import Tensor
 
 
 def _patch_tinygrad_metal_on_linux() -> None:
@@ -34,6 +32,8 @@ def _patch_tinygrad_metal_on_linux() -> None:
 
 
 _patch_tinygrad_metal_on_linux()
+
+from tinygrad.tensor import Tensor
 
 
 class TinygradRunner(ModelRunner, SupercomboTinygrad, PolicyTinygrad, VisionTinygrad, OffPolicyTinygrad, OnPolicyTinygrad):

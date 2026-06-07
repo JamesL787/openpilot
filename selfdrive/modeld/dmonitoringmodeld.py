@@ -75,8 +75,20 @@ def parse_model_output(model_output):
     face_descs = model_output[f'face_descs_{ds_suffix}']
     parsed[f'face_descs_{ds_suffix}'] = face_descs[:, :-6]
     parsed[f'face_descs_{ds_suffix}_std'] = safe_exp(face_descs[:, -6:])
-    for key in ['face_prob', 'left_eye_prob', 'right_eye_prob','left_blink_prob', 'right_blink_prob', 'sunglasses_prob', 'using_phone_prob', 'sleep_prob']:
-      parsed[f'{key}_{ds_suffix}'] = sigmoid(model_output[f'{key}_{ds_suffix}'])
+    key_aliases = {
+      'face_prob': ('face_prob',),
+      'left_eye_prob': ('left_eye_prob', 'eyes_visible_prob'),
+      'right_eye_prob': ('right_eye_prob', 'eyes_visible_prob'),
+      'left_blink_prob': ('left_blink_prob', 'eyes_closed_prob'),
+      'right_blink_prob': ('right_blink_prob', 'eyes_closed_prob'),
+      'sunglasses_prob': ('sunglasses_prob',),
+      'using_phone_prob': ('using_phone_prob',),
+      'sleep_prob': ('sleep_prob',),
+    }
+    for key, aliases in key_aliases.items():
+      source = next((f'{alias}_{ds_suffix}' for alias in aliases if f'{alias}_{ds_suffix}' in model_output), None)
+      if source is not None:
+        parsed[f'{key}_{ds_suffix}'] = sigmoid(model_output[source])
   return parsed
 
 def fill_driver_data(msg, model_output, ds_suffix):
