@@ -28,7 +28,6 @@ AMBIENT_DB = 24 # DB where MIN_VOLUME is applied
 DB_SCALE = 30 # AMBIENT_DB + DB_SCALE is where MAX_VOLUME is applied
 
 VOLUME_BASE = 20
-FEEDBACK_GUARD_DB = 44  # SPL ceiling: mic feedback starts above this; cap volume before it can loop
 if HARDWARE.get_device_type() == "tizi":
   AMBIENT_DB = 30
   VOLUME_BASE = 10
@@ -64,7 +63,15 @@ if HARDWARE.get_device_type() == "tizi":
     AudibleAlert.disengage: ("disengage_tizi.wav", 1, MAX_VOLUME),
   })
 
-def check_selfdrive_timeout_alert(sm):
+def check_selfdrive_timeout_alert(sm, ever_valid: bool):
+  # Only fire if selfdriveState was previously valid and then went missing.
+  # Boot-time absence (model init lag on v2026.001.000+) must not trigger
+  # warningImmediate — the model may take >5s to initialize, causing
+  # warningImmediate to ramp to MAX_VOLUME, which feeds back through the
+  # tici mic and locks into a sustained squeal until manually stopped.
+  if not ever_valid:
+    return False
+
   ss_missing = time.monotonic() - sm.recv_time['selfdriveState']
 
   if ss_missing > SELFDRIVE_STATE_TIMEOUT:
@@ -88,6 +95,7 @@ class Soundd(QuietMode):
     self.ramp_start_time = 0.
 
     self.selfdrive_timeout_alert = False
+    self.selfdrive_state_ever_valid = False  # boot-guard: don't fire timeout alert before first valid message
 
     self.spl_filter_weighted = FirstOrderFilter(0, 2.5, FILTER_DT, initialized=False)
 
@@ -143,9 +151,10 @@ class Soundd(QuietMode):
 
   def get_audible_alert(self, sm):
     if sm.updated['selfdriveState']:
+      self.selfdrive_state_ever_valid = True
       new_alert = sm['selfdriveState'].alertSound.raw
       self.update_alert(new_alert)
-    elif check_selfdrive_timeout_alert(sm):
+    elif check_selfdrive_timeout_alert(sm, self.selfdrive_state_ever_valid):
       self.update_alert(AudibleAlert.warningImmediate)
       self.selfdrive_timeout_alert = True
     elif self.selfdrive_timeout_alert:
@@ -153,10 +162,6 @@ class Soundd(QuietMode):
       self.selfdrive_timeout_alert = False
 
   def calculate_volume(self, weighted_db):
-    # Cap input SPL to break the mic→speaker→mic feedback loop:
-    # if the mic is picking up our own speaker (feedback), weighted_db climbs
-    # above FEEDBACK_GUARD_DB. Clamp input before it can drive volume higher.
-    weighted_db = min(weighted_db, FEEDBACK_GUARD_DB)
     volume = ((weighted_db - AMBIENT_DB) / DB_SCALE) * (MAX_VOLUME - MIN_VOLUME) + MIN_VOLUME
     return math.pow(VOLUME_BASE, (np.clip(volume, MIN_VOLUME, MAX_VOLUME) - 1))
 
@@ -182,14 +187,14 @@ class Soundd(QuietMode):
 
         self.load_param()
 
-        # Update volume from mic SPL only when warningImmediate is NOT actively ramping.
-        # During a warningImmediate the speaker is loud enough to drive the mic into
-        # feedback: SPL rises → calculate_volume returns max → sound gets louder → repeat.
-        # Gate the SPL update here so the ramp logic below is the sole volume authority
-        # while warningImmediate is running.
-        warning_ramping = (self.current_alert == AudibleAlert.warningImmediate and
-                           (time.monotonic() - self.ramp_start_time) < ALERT_RAMP_TIME)
-        if sm.updated['soundPressure'] and not warning_ramping:
+        # Gate SPL-based volume updates while any alert sound is actively playing.
+        # The mic picks up the speaker output, micd reports high SPL, and
+        # calculate_volume drives volume higher — a feedback loop. By not updating
+        # volume while sound is outputting we break the loop without disabling
+        # ambient noise compensation during silent periods.
+        sound_playing = (self.current_alert != AudibleAlert.none and
+                         self.current_sound_frame < len(self.loaded_sounds.get(self.current_alert, [])))
+        if sm.updated['soundPressure'] and not sound_playing:
           self.spl_filter_weighted.update(sm["soundPressure"].soundPressureWeightedDb)
           self.current_volume = self.calculate_volume(float(self.spl_filter_weighted.x))
 
