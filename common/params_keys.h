@@ -200,6 +200,10 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ModelManager_LastSyncTime", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, INT, "0"}},
     {"ModelManager_ModelsCache", {PERSISTENT | BACKUP, JSON}},
 
+    // USB GPU status (modeld runtime)
+    {"UsbGpuCompiled", {CLEAR_ON_MANAGER_START, BOOL}},
+    {"UsbGpuPresent", {CLEAR_ON_MANAGER_START, BOOL}},
+
     // Neural Network Lateral Control
     {"NeuralNetworkLateralControl", {PERSISTENT | BACKUP, BOOL, "0"}},
 

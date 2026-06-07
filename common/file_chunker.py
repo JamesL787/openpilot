@@ -10,9 +10,13 @@ def get_chunk_name(name, idx, num_chunks):
 def get_manifest_path(name):
   return f"{name}.chunkmanifest"
 
-def get_chunk_paths(path, file_size):
-  num_chunks = math.ceil(file_size / CHUNK_SIZE)
+def _chunk_paths(path, num_chunks):
   return [get_manifest_path(path)] + [get_chunk_name(path, i, num_chunks) for i in range(num_chunks)]
+
+
+def get_chunk_targets(path, file_size):
+  num_chunks = math.ceil(file_size / CHUNK_SIZE)
+  return _chunk_paths(path, num_chunks)
 
 def chunk_file(path, targets):
   manifest_path, *chunk_paths = targets
@@ -25,6 +29,15 @@ def chunk_file(path, targets):
       f.write(data[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE])
   Path(manifest_path).write_text(str(len(chunk_paths)))
   os.remove(path)
+
+
+def get_existing_chunks(path):
+  if os.path.isfile(path):
+    return [path]
+  if os.path.isfile(manifest := get_manifest_path(path)):
+    num_chunks = int(Path(manifest).read_text().strip())
+    return _chunk_paths(path, num_chunks)
+  raise FileNotFoundError(path)
 
 
 def read_file_chunked(path):

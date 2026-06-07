@@ -17,7 +17,7 @@ from openpilot.system.hardware.hw import Paths
 
 from cereal import messaging, custom
 from openpilot.sunnypilot.models.fetcher import ModelFetcher
-from openpilot.sunnypilot.models.helpers import verify_file, get_active_bundle
+from openpilot.sunnypilot.models.helpers import get_active_bundle, validate_active_bundle, verify_file
 
 
 class ModelManagerSP:
@@ -169,6 +169,7 @@ class ModelManagerSP:
     while True:
       try:
         self.available_models = self.model_fetcher.get_available_bundles()
+        validate_active_bundle(self.params, self.available_models)
         self.active_bundle = get_active_bundle(self.params)
 
         if (index_to_download := self.params.get("ModelManager_DownloadIndex")) is not None:
@@ -182,8 +183,8 @@ class ModelManagerSP:
               self.selected_bundle = None
 
         if self.params.get("ModelManager_ClearCache"):
-            self.clear_model_cache()
-            self.params.remove("ModelManager_ClearCache")
+          self.clear_model_cache()
+          self.params.remove("ModelManager_ClearCache")
 
         self._report_status()
         rk.keep_time()
@@ -210,7 +211,10 @@ class ModelManagerSP:
     model_dir = Paths.model_root()
     try:
       for filename in os.listdir(model_dir):
-        if filename not in active_files:
+        base = filename.split('.chunk')[0] if '.chunk' in filename else filename
+        if filename.endswith(".json") or filename.startswith("driving_models"):
+          continue
+        if base not in active_files and filename not in active_files:
           file_path = os.path.join(model_dir, filename)
           if os.path.isfile(file_path):
             os.remove(file_path)

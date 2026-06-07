@@ -20,7 +20,6 @@ def get_tinygrad_ref():
         return f.read().strip()
     return ref
   except Exception as e:
-    print(f"Error getting tinygrad_repo ref: {e}")
     return None
 
 

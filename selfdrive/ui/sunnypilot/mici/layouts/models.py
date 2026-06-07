@@ -104,8 +104,9 @@ class ModelsLayoutMici(NavScroller):
     default_btn.set_click_callback(self._select_default)
     folder_buttons.append(default_btn)
 
+    visible_folders = {"release models", "master models", "favorites", "deep rl models", "deep rl", "drl"}
     for folder in sorted(folders.keys(), key=lambda f: max((bundle.index for bundle in folders[f]), default=-1), reverse=True):
-      if folder.lower() in ["release models", "master models", "favorites"]:
+      if folder.lower() in visible_folders:
         btn = BigButton(folder.lower())
         btn.set_click_callback(lambda f=folder: self._select_folder(f))
         if folder.lower() == "favorites":
@@ -199,4 +200,3 @@ class ModelsLayoutMici(NavScroller):
       self.current_model_info.info_header.set_text(tr("progress") + self._download_progress)
       self.current_model_info.info_header._shimmer = True
       self.current_model_info.info_text.set_text(f"{progress/count:.2f}%")
-

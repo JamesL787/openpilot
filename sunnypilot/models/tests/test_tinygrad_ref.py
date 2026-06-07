@@ -1,4 +1,5 @@
 import requests
+import pytest
 
 from openpilot.sunnypilot.models.tinygrad_ref import get_tinygrad_ref
 from openpilot.sunnypilot.models.fetcher import ModelFetcher
@@ -13,6 +14,8 @@ def fetch_tinygrad_ref():
 
 def test_tinygrad_ref():
   current_ref = get_tinygrad_ref()
+  if current_ref is None:
+    pytest.skip("tinygrad_repo is vendored as source in this checkout, not a git repo")
   remote_ref = fetch_tinygrad_ref()
   assert remote_ref == current_ref, (
     f"""tinygrad_repo ref does not match remote tinygrad_ref of current compiled driving models json.
