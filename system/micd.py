@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import subprocess
 import numpy as np
 from functools import cache
 import threading
@@ -7,6 +8,29 @@ from cereal import messaging
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.utils import retry
 from openpilot.common.swaglog import cloudlog
+
+# On tici (sdm845/tavil), opening a capture stream causes the Qualcomm ADSP
+# to activate an AEC (acoustic echo cancellation) routing path that connects
+# TERT_MI2S_TX (mic) directly into MultiMedia1 (speaker output) at the codec
+# level — a hardware loopback completely independent of soundd. This was
+# harmless when rawAudioData had no consumers, but model port work that
+# subscribed to rawAudioData caused the ADSP to keep this path active,
+# and alsactl persisted it across reboots.
+# Disable the loopback explicitly after every stream open.
+_LOOPBACK_NUMID = 729  # 'MultiMedia1 Mixer TERT_MI2S_TX'
+
+def _disable_mic_loopback() -> None:
+  try:
+    result = subprocess.run(
+      ["amixer", "-c", "0", "cset", f"numid={_LOOPBACK_NUMID}", "off"],
+      capture_output=True, timeout=2
+    )
+    if result.returncode == 0:
+      cloudlog.info("micd: disabled TERT_MI2S_TX→MultiMedia1 hardware loopback")
+    else:
+      cloudlog.warning(f"micd: loopback disable failed: {result.stderr.decode().strip()}")
+  except Exception as e:
+    cloudlog.warning(f"micd: loopback disable exception: {e}")
 
 RATE = 10
 FFT_SAMPLES = 1600 # 100ms
@@ -107,6 +131,7 @@ class Mic:
 
     with self.get_stream(sd) as stream:
       cloudlog.info(f"micd stream started: {stream.samplerate=} {stream.channels=} {stream.dtype=} {stream.device=}, {stream.blocksize=}")
+      _disable_mic_loopback()
       while True:
         self.update()
 
