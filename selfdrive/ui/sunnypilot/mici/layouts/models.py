@@ -18,8 +18,6 @@ from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.label import UnifiedLabel
 from openpilot.system.ui.widgets.scroller import NavScroller
 
-DEEP_RL_BUNDLES = {"OPM16DEEP", "RL", "RLV1"}
-
 class CurrentModelInfo(Widget):
   def __init__(self):
     super().__init__()
@@ -79,8 +77,6 @@ class ModelsLayoutMici(NavScroller):
     folders = {}
     for bundle in bundles:
       folder = next((override.value for override in bundle.overrides if override.key == "folder"), "")
-      if not folder and bundle.internalName in DEEP_RL_BUNDLES:
-        folder = "deep rl models"
       folders.setdefault(folder, []).append(bundle)
 
     if favorites:
@@ -109,7 +105,7 @@ class ModelsLayoutMici(NavScroller):
     folder_buttons.append(default_btn)
 
     for folder in sorted(folders.keys(), key=lambda f: max((bundle.index for bundle in folders[f]), default=-1), reverse=True):
-      if folder.lower() in ["release models", "master models", "favorites", "deep rl models"]:
+      if folder.lower() in ["release models", "master models", "favorites"]:
         btn = BigButton(folder.lower())
         btn.set_click_callback(lambda f=folder: self._select_folder(f))
         if folder.lower() == "favorites":
@@ -203,3 +199,4 @@ class ModelsLayoutMici(NavScroller):
       self.current_model_info.info_header.set_text(tr("progress") + self._download_progress)
       self.current_model_info.info_header._shimmer = True
       self.current_model_info.info_text.set_text(f"{progress/count:.2f}%")
+

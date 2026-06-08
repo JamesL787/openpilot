@@ -5,12 +5,8 @@ from openpilot.common.basedir import BASEDIR
 
 def get_tinygrad_ref():
   repo_path = os.path.join(BASEDIR, "tinygrad_repo")
-  ref_file = os.path.join(repo_path, ".tinygrad_ref")
   git_path = os.path.join(repo_path, ".git")
   try:
-    if os.path.isfile(ref_file):
-      with open(ref_file) as f:
-        return f.read().strip()
     if os.path.isdir(git_path):
       git_dir = git_path
     else:

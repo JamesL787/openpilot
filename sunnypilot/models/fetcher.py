@@ -5,7 +5,6 @@ This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
 
-import os
 import time
 
 import requests
@@ -117,10 +116,7 @@ class ModelCache:
 
 class ModelFetcher:
   """Handles fetching and caching of model data from remote source"""
-  MODEL_URL = os.environ.get(
-    "SUNNYPILOT_MODEL_URL",
-    "https://github.com/JamesL787/openpilot/releases/download/deep-rl-models-2026-06-07/driving_models_private.json",
-  )
+  MODEL_URL = "https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_v16.json"
 
   def __init__(self, params: Params):
     self.params = params
