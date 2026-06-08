@@ -27,6 +27,8 @@ from openpilot.system.ui.sunnypilot.widgets.list_view import ListItemSP, toggle_
 from openpilot.system.ui.sunnypilot.widgets.progress_bar import progress_item
 from openpilot.system.ui.sunnypilot.widgets.tree_dialog import TreeOptionDialog, TreeNode, TreeFolder
 
+DEEP_RL_BUNDLES = {"OPM16DEEP", "RL", "RLV1"}
+
 if gui_app.sunnypilot_ui():
   from openpilot.system.ui.sunnypilot.widgets.list_view import button_item_sp as button_item
 
@@ -202,16 +204,28 @@ class ModelsLayout(Widget):
   def _bundle_to_node(bundle):
     return TreeNode(bundle.ref, {'display_name': bundle.displayName, 'short_name': bundle.internalName})
 
+  @staticmethod
+  def _folder_display_name(folder: str, folder_bundles: list) -> str:
+    if folder:
+      return folder
+    if any(bundle.internalName in DEEP_RL_BUNDLES for bundle in folder_bundles):
+      return "Deep/RL Models"
+    return folder
+
   def _get_folders(self, favorites):
     bundles = self.model_manager.availableBundles
     folders = {}
     for bundle in bundles:
-      folders.setdefault(next((ov_ride.value for ov_ride in bundle.overrides if ov_ride.key == "folder"), ""), []).append(bundle)
+      folder = next((ov_ride.value for ov_ride in bundle.overrides if ov_ride.key == "folder"), "")
+      if not folder and bundle.internalName in DEEP_RL_BUNDLES:
+        folder = "Deep/RL Models"
+      folders.setdefault(folder, []).append(bundle)
 
     folders_list = [TreeFolder("", [TreeNode("Default", {'display_name': f"{DEFAULT_MODEL} (Default)", 'short_name': "Default"})])]
     for folder, folder_bundles in sorted(folders.items(), key=lambda x: max((bundle.index for bundle in x[1]), default=-1), reverse=True):
       folder_bundles.sort(key=lambda bundle: bundle.index, reverse=True)
-      name = folder + (f" - (Updated: {m.group(1)})" if folder_bundles and (m := re.search(r'\(([^)]*)\)[^(]*$', folder_bundles[0].displayName)) else "")
+      display_folder = self._folder_display_name(folder, folder_bundles)
+      name = display_folder + (f" - (Updated: {m.group(1)})" if folder_bundles and (m := re.search(r'\(([^)]*)\)[^(]*$', folder_bundles[0].displayName)) else "")
       folders_list.append(TreeFolder(name, [self._bundle_to_node(bundle) for bundle in folder_bundles]))
 
     if favorites and (fav_bundles := [bundle for bundle in bundles if bundle.ref in favorites]):
