@@ -26,8 +26,7 @@ class Ops(FastEnum):
 
   # uops that aren't rendered
   NOOP = auto(); REWRITE_ERROR = auto()
-  # FUNCTION has a TUPLE body and is gradient-able; CALL is an opaque kernel invocation
-  PARAM = auto(); FUNCTION = auto(); CALL = auto(); PATCH = auto()
+  PARAM = auto(); CALL = auto()
 
   # renderer
   # LINEAR is a list of UOps, SOURCE has a str arg that's human readable, BINARY has bytes arg that's compiled
@@ -38,10 +37,7 @@ class Ops(FastEnum):
   SINK = auto(); AFTER = auto(); GROUP = auto()
 
   # vector creation / item selection
-  GEP = auto(); STACK = auto()
-
-  # tuple/gettuple for function with multiple returns
-  TUPLE = auto(); GETTUPLE = auto()
+  GEP = auto(); VECTORIZE = auto()
 
   # ** 3 -- load/store **
 
@@ -54,18 +50,17 @@ class Ops(FastEnum):
   # ** 4 -- math **
 
   # tensor core math op, not elementwise
-  WMMA = auto(); SHAPED_WMMA = auto()
+  WMMA = auto()
 
   # UnaryOps
   CAST = auto(); BITCAST = auto(); EXP2 = auto(); LOG2 = auto(); SIN = auto()
   SQRT = auto(); RECIPROCAL = auto(); NEG = auto(); TRUNC = auto()
 
   # BinaryOps
-  ADD = auto(); MUL = auto(); SHL = auto(); SHR = auto(); CDIV = auto(); MAX = auto(); CMOD = auto()
+  ADD = auto(); MUL = auto(); SHL = auto(); SHR = auto(); IDIV = auto(); MAX = auto(); MOD = auto()
   CMPLT = auto(); CMPNE = auto(); CMPEQ = auto()
   XOR = auto(); OR = auto(); AND = auto()
   THREEFRY = auto(); SUB = auto(); FDIV = auto(); POW = auto()
-  FLOORDIV = auto(); FLOORMOD = auto()
 
   # TernaryOps
   WHERE = auto(); MULACC = auto()
@@ -73,7 +68,7 @@ class Ops(FastEnum):
   # ** 5 -- control flow / consts / custom **
 
   # control flow ops
-  BARRIER = auto(); RANGE = auto(); IF = auto(); END = auto(); ENDIF = auto(); WAIT = auto()
+  BARRIER = auto(); RANGE = auto(); IF = auto(); END = auto(); ENDIF = auto()
 
   # consts. VCONST is a vectorized const
   VCONST = auto(); CONST = auto()
@@ -81,13 +76,10 @@ class Ops(FastEnum):
   # CUSTOM/CUSTOMI are used to output strings into codegen. the I makes the string inline
   CUSTOM = auto(); CUSTOMI = auto()
 
-  # INS is a machine instruction
-  INS = auto()
-
   # ** 6 -- ops that don't exist in programs **
 
   # tensor graph ops
-  UNIQUE = auto(); DEVICE = auto()
+  UNIQUE = auto(); DEVICE = auto(); ASSIGN = auto()
 
   # local unique
   LUNIQUE = auto()
@@ -96,22 +88,22 @@ class Ops(FastEnum):
   CONTIGUOUS = auto(); CONTIGUOUS_BACKWARD = auto(); DETACH = auto()
 
   # buffer ops
-  STAGE = auto(); COPY = auto(); BUFFER = auto(); BUFFER_VIEW = auto(); MSELECT = auto(); MSTACK = auto(); CUSTOM_FUNCTION = auto()
+  BUFFERIZE = auto(); COPY = auto(); BUFFER = auto(); BUFFER_VIEW = auto(); MSELECT = auto(); MSTACK = auto(); ENCDEC = auto()
 
   # the core 6 movement ops! these only exist in the tensor graph
   RESHAPE = auto(); PERMUTE = auto(); EXPAND = auto(); PAD = auto(); SHRINK = auto(); FLIP = auto()
   MULTI = auto()  # MULTI is really a movement op
 
   # reduce
-  REDUCE = auto(); ALLREDUCE = auto()
+  REDUCE_AXIS = auto(); REDUCE = auto(); ALLREDUCE = auto()
 
   # expander ops
-  UNROLL = auto(); CONTRACT = auto(); VCAT = auto(); PTRCAT = auto()
+  UNROLL = auto(); CONTRACT = auto(); CAT = auto(); PTRCAT = auto()
 
 class GroupOp:
   Unary = {Ops.EXP2, Ops.LOG2, Ops.SIN, Ops.SQRT, Ops.RECIPROCAL, Ops.NEG, Ops.TRUNC}
-  Binary = {Ops.ADD, Ops.MUL, Ops.CDIV, Ops.MAX, Ops.CMOD, Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ,
-            Ops.XOR, Ops.SHL, Ops.SHR, Ops.OR, Ops.AND, Ops.THREEFRY, Ops.SUB, Ops.FDIV, Ops.POW, Ops.FLOORDIV, Ops.FLOORMOD}
+  Binary = {Ops.ADD, Ops.MUL, Ops.IDIV, Ops.MAX, Ops.MOD, Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ,
+            Ops.XOR, Ops.SHL, Ops.SHR, Ops.OR, Ops.AND, Ops.THREEFRY, Ops.SUB, Ops.FDIV, Ops.POW}
   Ternary = {Ops.WHERE, Ops.MULACC}
   ALU = set.union(Unary, Binary, Ternary)
 
@@ -138,6 +130,6 @@ class GroupOp:
   Comparison = {Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ}
 
   # do not preserve f(0) = 0
-  UnsafePad = {Ops.RECIPROCAL, Ops.LOG2, Ops.EXP2, Ops.CDIV, Ops.POW, Ops.FLOORDIV}
+  UnsafePad = {Ops.RECIPROCAL, Ops.LOG2, Ops.EXP2, Ops.IDIV, Ops.POW}
 
   All = set(Ops)

@@ -4,7 +4,8 @@ from tinygrad.device import Buffer, Device
 from tinygrad.helpers import Context, getenv, from_mv
 from tinygrad.dtype import dtypes
 from tinygrad.tensor import Tensor, _to_np_dtype
-from tinygrad.engine.realize import BufferXfer, get_runner, ExecItem
+from tinygrad.engine.realize import BufferXfer, get_runner
+from tinygrad.engine.schedule import ExecItem
 from tinygrad.uop.ops import UOp, Ops
 from tinygrad.engine.jit import apply_graph_to_jit
 
@@ -19,8 +20,8 @@ def gen_prg(device, inputs_cnt):
     s = fst[0]
     for i in range(1, inputs_cnt): s = s.bitwise_xor(fst[i])
 
-    linear = s.schedule_linear()
-    prg = get_runner(device, linear.src[-1].src[0])
+    si = s.schedule()[-1]
+    prg = get_runner(device, si.ast)
   cached_prgs[(device, inputs_cnt)] = prg
   return prg
 
@@ -84,7 +85,7 @@ def run_jit(jis, all_buffers, input_buffers, var_vals):
   with Context(DEBUG=0):
     for rawbuf in all_buffers:
       if rawbuf in input_buffers: continue
-      mv = memoryview(bytearray(rawbuf.nbytes))
+      mv = memoryview(bytearray(rawbuf.size * rawbuf.dtype.itemsize))
       ctypes.memset(from_mv(mv), 0, len(mv))
       rawbuf.copyin(mv)
 

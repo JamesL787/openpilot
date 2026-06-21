@@ -1,6 +1,7 @@
 from tinygrad import Tensor, Device, TinyJit, dtypes
+from tinygrad.helpers import getenv
 
-GPUS = Device[Device.DEFAULT].count()
+GPUS = getenv("GPUS", 4) # TODO: expose a way in tinygrad to access this
 N = 6144
 
 @TinyJit

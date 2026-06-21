@@ -3,7 +3,7 @@ import gc, inspect
 import unittest
 import numpy as np
 from tinygrad.device import Buffer
-from tinygrad.engine.realize import run_linear
+from tinygrad.engine.realize import run_schedule
 from tinygrad.uop.ops import UOp
 from tinygrad.tensor import Tensor
 
@@ -60,7 +60,7 @@ class TestGC(unittest.TestCase):
     init = bufs_allocated()
     x = Tensor.ones(256).contiguous().realize()
     y = Tensor.ones(5, 5).contiguous()
-    y.schedule_linear()
+    y.schedule()
     del x
     del y
     self.assertEqual(bufs_allocated()-init, 0)
@@ -69,8 +69,9 @@ class TestGC(unittest.TestCase):
     init = bufs_allocated()
     x = Tensor.ones(256).contiguous().realize()
     y = x+Tensor.ones(256).contiguous()
+    ys = y.schedule()
     del x
-    run_linear(*y.linear_with_vars())
+    run_schedule(ys)
     self.assertEqual(bufs_allocated()-init, 1)
     del y
     self.assertEqual(bufs_allocated()-init, 0)

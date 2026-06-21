@@ -23,7 +23,7 @@ ERRORS RAISED (lower priority - at least users know):
 """
 import unittest
 import numpy as np
-from tinygrad import Tensor, TinyJit, Device
+from tinygrad import Tensor, TinyJit
 from tinygrad.engine.jit import JitError
 from tinygrad.helpers import JIT
 
@@ -66,6 +66,7 @@ class TestJitFootguns(unittest.TestCase):
 
     This requires multiple kernels to trigger because single-kernel JITs don't get graphed ("only one kernel doesn't graph").
     """
+    from tinygrad import Device
     if Device[Device.DEFAULT].graph is None or JIT != 1:
       self.skipTest("test requires JIT graph support")
 
@@ -109,15 +110,6 @@ class TestJitFootguns(unittest.TestCase):
       new_buf, first = f(buf, frame)
       self.assertEqual(first.numpy().item(), expected_first)
       buf = new_buf
-
-  def test_intra_kernel_output_input_aliasing(self):
-    """JIT must copy aliased input when output buffer is fed back as input (read-write race in same kernel)."""
-    N = 1 << 20
-    f = TinyJit(lambda buf, new: buf[N//2:].cat(new), prune=True)
-    buf = Tensor.zeros(N, dtype='int32').contiguous().realize()
-    for i in range(10):
-      buf = f(buf, Tensor(np.ones(N//2, dtype=np.int32)*(i+1)))
-      np.testing.assert_array_equal(buf[:N//2].numpy(), np.full(N//2, i, dtype=np.int32))
 
   def test_slice_assign_works_without_realize(self):
     """Slice assign then read from same buffer - pending assigns are side-realized."""
@@ -332,25 +324,6 @@ class TestJitFootguns(unittest.TestCase):
     f(Tensor([1, 2, 3, 4]), Tensor([True, False, True, False]))  # warmup
     with self.assertRaises(JitError):
       f(Tensor([1, 2, 3, 4]), Tensor([True, False, True, False]))  # capture - .item() raises
-
-  def test_masked_select_static_size_jittable(self):
-    @TinyJit
-    def f(x, mask): return x.masked_select(mask, size=4, fill_value=-1).realize()
-
-    for _ in range(3):
-      np.testing.assert_equal(f(Tensor([1, 2, 3, 4]), Tensor([True, False, True, False])).numpy(), [1, 3, -1, -1])
-      np.testing.assert_equal(f(Tensor([5, 6, 7, 8]), Tensor([False, True, True, True])).numpy(), [6, 7, 8, -1])
-      np.testing.assert_equal(f(Tensor([9, 8, 7, 6]), Tensor([True, True, True, True])).numpy(), [9, 8, 7, 6])
-      np.testing.assert_equal(f(Tensor([1, 1, 1, 1]), Tensor([False, False, False, False])).numpy(), [-1, -1, -1, -1])
-
-  def test_nonzero_static_size_jittable(self):
-    @TinyJit
-    def f(x): return x.nonzero(size=3, fill_value=-1).realize()
-
-    for _ in range(3):
-      np.testing.assert_equal(f(Tensor([1, 0, 2, 0, 3])).numpy(), [[0], [2], [4]])
-      np.testing.assert_equal(f(Tensor([0, 0, 5, 0, 0])).numpy(), [[2], [-1], [-1]])
-      np.testing.assert_equal(f(Tensor([0, 0, 0, 0, 0])).numpy(), [[-1], [-1], [-1]])
 
   def test_tolist_bakes_in_values(self):
     """.tolist() raises error during JIT capture (would bake in values)."""

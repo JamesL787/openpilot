@@ -1,203 +1,232 @@
 # mypy: disable-error-code="empty-body"
 from __future__ import annotations
 import ctypes
-from typing import Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias
 from tinygrad.runtime.support.c import _IO, _IOW, _IOR, _IOWR
 from tinygrad.runtime.support import c
 dll = c.DLL('corefoundation', 'CoreFoundation')
-CFStringEncoding: TypeAlias = ctypes.c_uint32
-CFStringBuiltInEncodings: TypeAlias = ctypes.c_uint32
-_anonenum0: dict[int, str] = {(kCFStringEncodingMacRoman:=0): 'kCFStringEncodingMacRoman', (kCFStringEncodingWindowsLatin1:=1280): 'kCFStringEncodingWindowsLatin1', (kCFStringEncodingISOLatin1:=513): 'kCFStringEncodingISOLatin1', (kCFStringEncodingNextStepLatin:=2817): 'kCFStringEncodingNextStepLatin', (kCFStringEncodingASCII:=1536): 'kCFStringEncodingASCII', (kCFStringEncodingUnicode:=256): 'kCFStringEncodingUnicode', (kCFStringEncodingUTF8:=134217984): 'kCFStringEncodingUTF8', (kCFStringEncodingNonLossyASCII:=3071): 'kCFStringEncodingNonLossyASCII', (kCFStringEncodingUTF16:=256): 'kCFStringEncodingUTF16', (kCFStringEncodingUTF16BE:=268435712): 'kCFStringEncodingUTF16BE', (kCFStringEncodingUTF16LE:=335544576): 'kCFStringEncodingUTF16LE', (kCFStringEncodingUTF32:=201326848): 'kCFStringEncodingUTF32', (kCFStringEncodingUTF32BE:=402653440): 'kCFStringEncodingUTF32BE', (kCFStringEncodingUTF32LE:=469762304): 'kCFStringEncodingUTF32LE'}
-CFTypeID: TypeAlias = ctypes.c_uint64
-@dll.bind(CFTypeID)
+CFStringEncoding: TypeAlias = Annotated[int, ctypes.c_uint32]
+CFStringBuiltInEncodings: TypeAlias = Annotated[int, ctypes.c_uint32]
+class _anonenum0(Annotated[int, ctypes.c_uint32], c.Enum): pass
+kCFStringEncodingMacRoman = _anonenum0.define('kCFStringEncodingMacRoman', 0)
+kCFStringEncodingWindowsLatin1 = _anonenum0.define('kCFStringEncodingWindowsLatin1', 1280)
+kCFStringEncodingISOLatin1 = _anonenum0.define('kCFStringEncodingISOLatin1', 513)
+kCFStringEncodingNextStepLatin = _anonenum0.define('kCFStringEncodingNextStepLatin', 2817)
+kCFStringEncodingASCII = _anonenum0.define('kCFStringEncodingASCII', 1536)
+kCFStringEncodingUnicode = _anonenum0.define('kCFStringEncodingUnicode', 256)
+kCFStringEncodingUTF8 = _anonenum0.define('kCFStringEncodingUTF8', 134217984)
+kCFStringEncodingNonLossyASCII = _anonenum0.define('kCFStringEncodingNonLossyASCII', 3071)
+kCFStringEncodingUTF16 = _anonenum0.define('kCFStringEncodingUTF16', 256)
+kCFStringEncodingUTF16BE = _anonenum0.define('kCFStringEncodingUTF16BE', 268435712)
+kCFStringEncodingUTF16LE = _anonenum0.define('kCFStringEncodingUTF16LE', 335544576)
+kCFStringEncodingUTF32 = _anonenum0.define('kCFStringEncodingUTF32', 201326848)
+kCFStringEncodingUTF32BE = _anonenum0.define('kCFStringEncodingUTF32BE', 402653440)
+kCFStringEncodingUTF32LE = _anonenum0.define('kCFStringEncodingUTF32LE', 469762304)
+
+CFTypeID: TypeAlias = Annotated[int, ctypes.c_uint64]
+@dll.bind
 def CFStringGetTypeID() -> CFTypeID: ...
-class struct___CFString(c.Struct): pass
-CFStringRef: TypeAlias = c.POINTER[struct___CFString]
-class struct___CFAllocator(c.Struct): pass
+class struct___CFAllocator(ctypes.Structure): pass
 CFAllocatorRef: TypeAlias = c.POINTER[struct___CFAllocator]
-ConstStr255Param: TypeAlias = c.POINTER[ctypes.c_ubyte]
-@dll.bind(CFStringRef, CFAllocatorRef, ConstStr255Param, CFStringEncoding)
+ConstStr255Param: TypeAlias = c.POINTER[Annotated[int, ctypes.c_ubyte]]
+class struct___CFString(ctypes.Structure): pass
+CFStringRef: TypeAlias = c.POINTER[struct___CFString]
+@dll.bind
 def CFStringCreateWithPascalString(alloc:CFAllocatorRef, pStr:ConstStr255Param, encoding:CFStringEncoding) -> CFStringRef: ...
-@dll.bind(CFStringRef, CFAllocatorRef, c.POINTER[ctypes.c_char], CFStringEncoding)
-def CFStringCreateWithCString(alloc:CFAllocatorRef, cStr:c.POINTER[ctypes.c_char], encoding:CFStringEncoding) -> CFStringRef: ...
-UInt8: TypeAlias = ctypes.c_ubyte
-CFIndex: TypeAlias = ctypes.c_int64
-Boolean: TypeAlias = ctypes.c_ubyte
-@dll.bind(CFStringRef, CFAllocatorRef, c.POINTER[UInt8], CFIndex, CFStringEncoding, Boolean)
+@dll.bind
+def CFStringCreateWithCString(alloc:CFAllocatorRef, cStr:c.POINTER[Annotated[bytes, ctypes.c_char]], encoding:CFStringEncoding) -> CFStringRef: ...
+UInt8: TypeAlias = Annotated[int, ctypes.c_ubyte]
+CFIndex: TypeAlias = Annotated[int, ctypes.c_int64]
+Boolean: TypeAlias = Annotated[int, ctypes.c_ubyte]
+@dll.bind
 def CFStringCreateWithBytes(alloc:CFAllocatorRef, bytes:c.POINTER[UInt8], numBytes:CFIndex, encoding:CFStringEncoding, isExternalRepresentation:Boolean) -> CFStringRef: ...
-UniChar: TypeAlias = ctypes.c_uint16
-@dll.bind(CFStringRef, CFAllocatorRef, c.POINTER[UniChar], CFIndex)
+UniChar: TypeAlias = Annotated[int, ctypes.c_uint16]
+@dll.bind
 def CFStringCreateWithCharacters(alloc:CFAllocatorRef, chars:c.POINTER[UniChar], numChars:CFIndex) -> CFStringRef: ...
-@dll.bind(CFStringRef, CFAllocatorRef, ConstStr255Param, CFStringEncoding, CFAllocatorRef)
+@dll.bind
 def CFStringCreateWithPascalStringNoCopy(alloc:CFAllocatorRef, pStr:ConstStr255Param, encoding:CFStringEncoding, contentsDeallocator:CFAllocatorRef) -> CFStringRef: ...
-@dll.bind(CFStringRef, CFAllocatorRef, c.POINTER[ctypes.c_char], CFStringEncoding, CFAllocatorRef)
-def CFStringCreateWithCStringNoCopy(alloc:CFAllocatorRef, cStr:c.POINTER[ctypes.c_char], encoding:CFStringEncoding, contentsDeallocator:CFAllocatorRef) -> CFStringRef: ...
-@dll.bind(CFStringRef, CFAllocatorRef, c.POINTER[UInt8], CFIndex, CFStringEncoding, Boolean, CFAllocatorRef)
+@dll.bind
+def CFStringCreateWithCStringNoCopy(alloc:CFAllocatorRef, cStr:c.POINTER[Annotated[bytes, ctypes.c_char]], encoding:CFStringEncoding, contentsDeallocator:CFAllocatorRef) -> CFStringRef: ...
+@dll.bind
 def CFStringCreateWithBytesNoCopy(alloc:CFAllocatorRef, bytes:c.POINTER[UInt8], numBytes:CFIndex, encoding:CFStringEncoding, isExternalRepresentation:Boolean, contentsDeallocator:CFAllocatorRef) -> CFStringRef: ...
-@dll.bind(CFStringRef, CFAllocatorRef, c.POINTER[UniChar], CFIndex, CFAllocatorRef)
+@dll.bind
 def CFStringCreateWithCharactersNoCopy(alloc:CFAllocatorRef, chars:c.POINTER[UniChar], numChars:CFIndex, contentsDeallocator:CFAllocatorRef) -> CFStringRef: ...
 @c.record
 class CFRange(c.Struct):
   SIZE = 16
-  location: int
-  length: int
-CFRange.register_fields([('location', CFIndex, 0), ('length', CFIndex, 8)])
-@dll.bind(CFStringRef, CFAllocatorRef, CFStringRef, CFRange)
+  location: Annotated[CFIndex, 0]
+  length: Annotated[CFIndex, 8]
+@dll.bind
 def CFStringCreateWithSubstring(alloc:CFAllocatorRef, str:CFStringRef, range:CFRange) -> CFStringRef: ...
-@dll.bind(CFStringRef, CFAllocatorRef, CFStringRef)
+@dll.bind
 def CFStringCreateCopy(alloc:CFAllocatorRef, theString:CFStringRef) -> CFStringRef: ...
-class struct___CFDictionary(c.Struct): pass
+class struct___CFDictionary(ctypes.Structure): pass
 CFDictionaryRef: TypeAlias = c.POINTER[struct___CFDictionary]
-@dll.bind(CFStringRef, CFAllocatorRef, CFDictionaryRef, CFStringRef)
+@dll.bind
 def CFStringCreateWithFormat(alloc:CFAllocatorRef, formatOptions:CFDictionaryRef, format:CFStringRef) -> CFStringRef: ...
-@dll.bind(CFStringRef, CFAllocatorRef, CFDictionaryRef, CFStringRef, ctypes.c_int32)
-def CFStringCreateWithFormatAndArguments(alloc:CFAllocatorRef, formatOptions:CFDictionaryRef, format:CFStringRef, arguments:int) -> CFStringRef: ...
-class struct___CFError(c.Struct): pass
+@dll.bind
+def CFStringCreateWithFormatAndArguments(alloc:CFAllocatorRef, formatOptions:CFDictionaryRef, format:CFStringRef, arguments:Annotated[int, ctypes.c_int32]) -> CFStringRef: ...
+class struct___CFError(ctypes.Structure): pass
 CFErrorRef: TypeAlias = c.POINTER[struct___CFError]
-@dll.bind(CFStringRef, CFAllocatorRef, CFDictionaryRef, CFStringRef, CFStringRef, c.POINTER[CFErrorRef])
+@dll.bind
 def CFStringCreateStringWithValidatedFormat(alloc:CFAllocatorRef, formatOptions:CFDictionaryRef, validFormatSpecifiers:CFStringRef, format:CFStringRef, errorPtr:c.POINTER[CFErrorRef]) -> CFStringRef: ...
-@dll.bind(CFStringRef, CFAllocatorRef, CFDictionaryRef, CFStringRef, CFStringRef, ctypes.c_int32, c.POINTER[CFErrorRef])
-def CFStringCreateStringWithValidatedFormatAndArguments(alloc:CFAllocatorRef, formatOptions:CFDictionaryRef, validFormatSpecifiers:CFStringRef, format:CFStringRef, arguments:int, errorPtr:c.POINTER[CFErrorRef]) -> CFStringRef: ...
+@dll.bind
+def CFStringCreateStringWithValidatedFormatAndArguments(alloc:CFAllocatorRef, formatOptions:CFDictionaryRef, validFormatSpecifiers:CFStringRef, format:CFStringRef, arguments:Annotated[int, ctypes.c_int32], errorPtr:c.POINTER[CFErrorRef]) -> CFStringRef: ...
 CFMutableStringRef: TypeAlias = c.POINTER[struct___CFString]
-@dll.bind(CFMutableStringRef, CFAllocatorRef, CFIndex)
+@dll.bind
 def CFStringCreateMutable(alloc:CFAllocatorRef, maxLength:CFIndex) -> CFMutableStringRef: ...
-@dll.bind(CFMutableStringRef, CFAllocatorRef, CFIndex, CFStringRef)
+@dll.bind
 def CFStringCreateMutableCopy(alloc:CFAllocatorRef, maxLength:CFIndex, theString:CFStringRef) -> CFMutableStringRef: ...
-@dll.bind(CFMutableStringRef, CFAllocatorRef, c.POINTER[UniChar], CFIndex, CFIndex, CFAllocatorRef)
+@dll.bind
 def CFStringCreateMutableWithExternalCharactersNoCopy(alloc:CFAllocatorRef, chars:c.POINTER[UniChar], numChars:CFIndex, capacity:CFIndex, externalCharactersAllocator:CFAllocatorRef) -> CFMutableStringRef: ...
-@dll.bind(CFIndex, CFStringRef)
+@dll.bind
 def CFStringGetLength(theString:CFStringRef) -> CFIndex: ...
-@dll.bind(UniChar, CFStringRef, CFIndex)
+@dll.bind
 def CFStringGetCharacterAtIndex(theString:CFStringRef, idx:CFIndex) -> UniChar: ...
-@dll.bind(None, CFStringRef, CFRange, c.POINTER[UniChar])
+@dll.bind
 def CFStringGetCharacters(theString:CFStringRef, range:CFRange, buffer:c.POINTER[UniChar]) -> None: ...
-StringPtr: TypeAlias = c.POINTER[ctypes.c_ubyte]
-@dll.bind(Boolean, CFStringRef, StringPtr, CFIndex, CFStringEncoding)
+StringPtr: TypeAlias = c.POINTER[Annotated[int, ctypes.c_ubyte]]
+@dll.bind
 def CFStringGetPascalString(theString:CFStringRef, buffer:StringPtr, bufferSize:CFIndex, encoding:CFStringEncoding) -> Boolean: ...
-@dll.bind(Boolean, CFStringRef, c.POINTER[ctypes.c_char], CFIndex, CFStringEncoding)
-def CFStringGetCString(theString:CFStringRef, buffer:c.POINTER[ctypes.c_char], bufferSize:CFIndex, encoding:CFStringEncoding) -> Boolean: ...
-ConstStringPtr: TypeAlias = c.POINTER[ctypes.c_ubyte]
-@dll.bind(ConstStringPtr, CFStringRef, CFStringEncoding)
+@dll.bind
+def CFStringGetCString(theString:CFStringRef, buffer:c.POINTER[Annotated[bytes, ctypes.c_char]], bufferSize:CFIndex, encoding:CFStringEncoding) -> Boolean: ...
+ConstStringPtr: TypeAlias = c.POINTER[Annotated[int, ctypes.c_ubyte]]
+@dll.bind
 def CFStringGetPascalStringPtr(theString:CFStringRef, encoding:CFStringEncoding) -> ConstStringPtr: ...
-@dll.bind(c.POINTER[ctypes.c_char], CFStringRef, CFStringEncoding)
-def CFStringGetCStringPtr(theString:CFStringRef, encoding:CFStringEncoding) -> c.POINTER[ctypes.c_char]: ...
-@dll.bind(c.POINTER[UniChar], CFStringRef)
+@dll.bind
+def CFStringGetCStringPtr(theString:CFStringRef, encoding:CFStringEncoding) -> c.POINTER[Annotated[bytes, ctypes.c_char]]: ...
+@dll.bind
 def CFStringGetCharactersPtr(theString:CFStringRef) -> c.POINTER[UniChar]: ...
-@dll.bind(CFIndex, CFStringRef, CFRange, CFStringEncoding, UInt8, Boolean, c.POINTER[UInt8], CFIndex, c.POINTER[CFIndex])
+@dll.bind
 def CFStringGetBytes(theString:CFStringRef, range:CFRange, encoding:CFStringEncoding, lossByte:UInt8, isExternalRepresentation:Boolean, buffer:c.POINTER[UInt8], maxBufLen:CFIndex, usedBufLen:c.POINTER[CFIndex]) -> CFIndex: ...
-class struct___CFData(c.Struct): pass
+class struct___CFData(ctypes.Structure): pass
 CFDataRef: TypeAlias = c.POINTER[struct___CFData]
-@dll.bind(CFStringRef, CFAllocatorRef, CFDataRef, CFStringEncoding)
+@dll.bind
 def CFStringCreateFromExternalRepresentation(alloc:CFAllocatorRef, data:CFDataRef, encoding:CFStringEncoding) -> CFStringRef: ...
-@dll.bind(CFDataRef, CFAllocatorRef, CFStringRef, CFStringEncoding, UInt8)
+@dll.bind
 def CFStringCreateExternalRepresentation(alloc:CFAllocatorRef, theString:CFStringRef, encoding:CFStringEncoding, lossByte:UInt8) -> CFDataRef: ...
-@dll.bind(CFStringEncoding, CFStringRef)
+@dll.bind
 def CFStringGetSmallestEncoding(theString:CFStringRef) -> CFStringEncoding: ...
-@dll.bind(CFStringEncoding, CFStringRef)
+@dll.bind
 def CFStringGetFastestEncoding(theString:CFStringRef) -> CFStringEncoding: ...
-@dll.bind(CFStringEncoding)
+@dll.bind
 def CFStringGetSystemEncoding() -> CFStringEncoding: ...
-@dll.bind(CFIndex, CFIndex, CFStringEncoding)
+@dll.bind
 def CFStringGetMaximumSizeForEncoding(length:CFIndex, encoding:CFStringEncoding) -> CFIndex: ...
-@dll.bind(Boolean, CFStringRef, c.POINTER[ctypes.c_char], CFIndex)
-def CFStringGetFileSystemRepresentation(string:CFStringRef, buffer:c.POINTER[ctypes.c_char], maxBufLen:CFIndex) -> Boolean: ...
-@dll.bind(CFIndex, CFStringRef)
+@dll.bind
+def CFStringGetFileSystemRepresentation(string:CFStringRef, buffer:c.POINTER[Annotated[bytes, ctypes.c_char]], maxBufLen:CFIndex) -> Boolean: ...
+@dll.bind
 def CFStringGetMaximumSizeOfFileSystemRepresentation(string:CFStringRef) -> CFIndex: ...
-@dll.bind(CFStringRef, CFAllocatorRef, c.POINTER[ctypes.c_char])
-def CFStringCreateWithFileSystemRepresentation(alloc:CFAllocatorRef, buffer:c.POINTER[ctypes.c_char]) -> CFStringRef: ...
-CFStringCompareFlags: TypeAlias = ctypes.c_uint64
-_anonenum1: dict[int, str] = {(kCFCompareCaseInsensitive:=1): 'kCFCompareCaseInsensitive', (kCFCompareBackwards:=4): 'kCFCompareBackwards', (kCFCompareAnchored:=8): 'kCFCompareAnchored', (kCFCompareNonliteral:=16): 'kCFCompareNonliteral', (kCFCompareLocalized:=32): 'kCFCompareLocalized', (kCFCompareNumerically:=64): 'kCFCompareNumerically', (kCFCompareDiacriticInsensitive:=128): 'kCFCompareDiacriticInsensitive', (kCFCompareWidthInsensitive:=256): 'kCFCompareWidthInsensitive', (kCFCompareForcedOrdering:=512): 'kCFCompareForcedOrdering'}
-CFComparisonResult: TypeAlias = ctypes.c_int64
-class struct___CFLocale(c.Struct): pass
+@dll.bind
+def CFStringCreateWithFileSystemRepresentation(alloc:CFAllocatorRef, buffer:c.POINTER[Annotated[bytes, ctypes.c_char]]) -> CFStringRef: ...
+CFStringCompareFlags: TypeAlias = Annotated[int, ctypes.c_uint64]
+class _anonenum1(Annotated[int, ctypes.c_uint32], c.Enum): pass
+kCFCompareCaseInsensitive = _anonenum1.define('kCFCompareCaseInsensitive', 1)
+kCFCompareBackwards = _anonenum1.define('kCFCompareBackwards', 4)
+kCFCompareAnchored = _anonenum1.define('kCFCompareAnchored', 8)
+kCFCompareNonliteral = _anonenum1.define('kCFCompareNonliteral', 16)
+kCFCompareLocalized = _anonenum1.define('kCFCompareLocalized', 32)
+kCFCompareNumerically = _anonenum1.define('kCFCompareNumerically', 64)
+kCFCompareDiacriticInsensitive = _anonenum1.define('kCFCompareDiacriticInsensitive', 128)
+kCFCompareWidthInsensitive = _anonenum1.define('kCFCompareWidthInsensitive', 256)
+kCFCompareForcedOrdering = _anonenum1.define('kCFCompareForcedOrdering', 512)
+
+class struct___CFLocale(ctypes.Structure): pass
 CFLocaleRef: TypeAlias = c.POINTER[struct___CFLocale]
-@dll.bind(CFComparisonResult, CFStringRef, CFStringRef, CFRange, CFStringCompareFlags, CFLocaleRef)
+CFComparisonResult: TypeAlias = Annotated[int, ctypes.c_int64]
+@dll.bind
 def CFStringCompareWithOptionsAndLocale(theString1:CFStringRef, theString2:CFStringRef, rangeToCompare:CFRange, compareOptions:CFStringCompareFlags, locale:CFLocaleRef) -> CFComparisonResult: ...
-@dll.bind(CFComparisonResult, CFStringRef, CFStringRef, CFRange, CFStringCompareFlags)
+@dll.bind
 def CFStringCompareWithOptions(theString1:CFStringRef, theString2:CFStringRef, rangeToCompare:CFRange, compareOptions:CFStringCompareFlags) -> CFComparisonResult: ...
-@dll.bind(CFComparisonResult, CFStringRef, CFStringRef, CFStringCompareFlags)
+@dll.bind
 def CFStringCompare(theString1:CFStringRef, theString2:CFStringRef, compareOptions:CFStringCompareFlags) -> CFComparisonResult: ...
-@dll.bind(Boolean, CFStringRef, CFStringRef, CFRange, CFStringCompareFlags, CFLocaleRef, c.POINTER[CFRange])
+@dll.bind
 def CFStringFindWithOptionsAndLocale(theString:CFStringRef, stringToFind:CFStringRef, rangeToSearch:CFRange, searchOptions:CFStringCompareFlags, locale:CFLocaleRef, result:c.POINTER[CFRange]) -> Boolean: ...
-@dll.bind(Boolean, CFStringRef, CFStringRef, CFRange, CFStringCompareFlags, c.POINTER[CFRange])
+@dll.bind
 def CFStringFindWithOptions(theString:CFStringRef, stringToFind:CFStringRef, rangeToSearch:CFRange, searchOptions:CFStringCompareFlags, result:c.POINTER[CFRange]) -> Boolean: ...
-class struct___CFArray(c.Struct): pass
+class struct___CFArray(ctypes.Structure): pass
 CFArrayRef: TypeAlias = c.POINTER[struct___CFArray]
-@dll.bind(CFArrayRef, CFAllocatorRef, CFStringRef, CFStringRef, CFRange, CFStringCompareFlags)
+@dll.bind
 def CFStringCreateArrayWithFindResults(alloc:CFAllocatorRef, theString:CFStringRef, stringToFind:CFStringRef, rangeToSearch:CFRange, compareOptions:CFStringCompareFlags) -> CFArrayRef: ...
-@dll.bind(CFRange, CFStringRef, CFStringRef, CFStringCompareFlags)
+@dll.bind
 def CFStringFind(theString:CFStringRef, stringToFind:CFStringRef, compareOptions:CFStringCompareFlags) -> CFRange: ...
-@dll.bind(Boolean, CFStringRef, CFStringRef)
+@dll.bind
 def CFStringHasPrefix(theString:CFStringRef, prefix:CFStringRef) -> Boolean: ...
-@dll.bind(Boolean, CFStringRef, CFStringRef)
+@dll.bind
 def CFStringHasSuffix(theString:CFStringRef, suffix:CFStringRef) -> Boolean: ...
-@dll.bind(CFRange, CFStringRef, CFIndex)
+@dll.bind
 def CFStringGetRangeOfComposedCharactersAtIndex(theString:CFStringRef, theIndex:CFIndex) -> CFRange: ...
-class struct___CFCharacterSet(c.Struct): pass
+class struct___CFCharacterSet(ctypes.Structure): pass
 CFCharacterSetRef: TypeAlias = c.POINTER[struct___CFCharacterSet]
-@dll.bind(Boolean, CFStringRef, CFCharacterSetRef, CFRange, CFStringCompareFlags, c.POINTER[CFRange])
+@dll.bind
 def CFStringFindCharacterFromSet(theString:CFStringRef, theSet:CFCharacterSetRef, rangeToSearch:CFRange, searchOptions:CFStringCompareFlags, result:c.POINTER[CFRange]) -> Boolean: ...
-@dll.bind(None, CFStringRef, CFRange, c.POINTER[CFIndex], c.POINTER[CFIndex], c.POINTER[CFIndex])
+@dll.bind
 def CFStringGetLineBounds(theString:CFStringRef, range:CFRange, lineBeginIndex:c.POINTER[CFIndex], lineEndIndex:c.POINTER[CFIndex], contentsEndIndex:c.POINTER[CFIndex]) -> None: ...
-@dll.bind(None, CFStringRef, CFRange, c.POINTER[CFIndex], c.POINTER[CFIndex], c.POINTER[CFIndex])
+@dll.bind
 def CFStringGetParagraphBounds(string:CFStringRef, range:CFRange, parBeginIndex:c.POINTER[CFIndex], parEndIndex:c.POINTER[CFIndex], contentsEndIndex:c.POINTER[CFIndex]) -> None: ...
-CFOptionFlags: TypeAlias = ctypes.c_uint64
-UTF32Char: TypeAlias = ctypes.c_uint32
-@dll.bind(CFIndex, CFStringRef, CFIndex, CFRange, CFOptionFlags, CFLocaleRef, c.POINTER[UTF32Char])
+CFOptionFlags: TypeAlias = Annotated[int, ctypes.c_uint64]
+UTF32Char: TypeAlias = Annotated[int, ctypes.c_uint32]
+@dll.bind
 def CFStringGetHyphenationLocationBeforeIndex(string:CFStringRef, location:CFIndex, limitRange:CFRange, options:CFOptionFlags, locale:CFLocaleRef, character:c.POINTER[UTF32Char]) -> CFIndex: ...
-@dll.bind(Boolean, CFLocaleRef)
+@dll.bind
 def CFStringIsHyphenationAvailableForLocale(locale:CFLocaleRef) -> Boolean: ...
-@dll.bind(CFStringRef, CFAllocatorRef, CFArrayRef, CFStringRef)
+@dll.bind
 def CFStringCreateByCombiningStrings(alloc:CFAllocatorRef, theArray:CFArrayRef, separatorString:CFStringRef) -> CFStringRef: ...
-@dll.bind(CFArrayRef, CFAllocatorRef, CFStringRef, CFStringRef)
+@dll.bind
 def CFStringCreateArrayBySeparatingStrings(alloc:CFAllocatorRef, theString:CFStringRef, separatorString:CFStringRef) -> CFArrayRef: ...
-SInt32: TypeAlias = ctypes.c_int32
-@dll.bind(SInt32, CFStringRef)
+SInt32: TypeAlias = Annotated[int, ctypes.c_int32]
+@dll.bind
 def CFStringGetIntValue(str:CFStringRef) -> SInt32: ...
-@dll.bind(ctypes.c_double, CFStringRef)
-def CFStringGetDoubleValue(str:CFStringRef) -> float: ...
-@dll.bind(None, CFMutableStringRef, CFStringRef)
+@dll.bind
+def CFStringGetDoubleValue(str:CFStringRef) -> Annotated[float, ctypes.c_double]: ...
+@dll.bind
 def CFStringAppend(theString:CFMutableStringRef, appendedString:CFStringRef) -> None: ...
-@dll.bind(None, CFMutableStringRef, c.POINTER[UniChar], CFIndex)
+@dll.bind
 def CFStringAppendCharacters(theString:CFMutableStringRef, chars:c.POINTER[UniChar], numChars:CFIndex) -> None: ...
-@dll.bind(None, CFMutableStringRef, ConstStr255Param, CFStringEncoding)
+@dll.bind
 def CFStringAppendPascalString(theString:CFMutableStringRef, pStr:ConstStr255Param, encoding:CFStringEncoding) -> None: ...
-@dll.bind(None, CFMutableStringRef, c.POINTER[ctypes.c_char], CFStringEncoding)
-def CFStringAppendCString(theString:CFMutableStringRef, cStr:c.POINTER[ctypes.c_char], encoding:CFStringEncoding) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFDictionaryRef, CFStringRef)
+@dll.bind
+def CFStringAppendCString(theString:CFMutableStringRef, cStr:c.POINTER[Annotated[bytes, ctypes.c_char]], encoding:CFStringEncoding) -> None: ...
+@dll.bind
 def CFStringAppendFormat(theString:CFMutableStringRef, formatOptions:CFDictionaryRef, format:CFStringRef) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFDictionaryRef, CFStringRef, ctypes.c_int32)
-def CFStringAppendFormatAndArguments(theString:CFMutableStringRef, formatOptions:CFDictionaryRef, format:CFStringRef, arguments:int) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFIndex, CFStringRef)
+@dll.bind
+def CFStringAppendFormatAndArguments(theString:CFMutableStringRef, formatOptions:CFDictionaryRef, format:CFStringRef, arguments:Annotated[int, ctypes.c_int32]) -> None: ...
+@dll.bind
 def CFStringInsert(str:CFMutableStringRef, idx:CFIndex, insertedStr:CFStringRef) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFRange)
+@dll.bind
 def CFStringDelete(theString:CFMutableStringRef, range:CFRange) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFRange, CFStringRef)
+@dll.bind
 def CFStringReplace(theString:CFMutableStringRef, range:CFRange, replacement:CFStringRef) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFStringRef)
+@dll.bind
 def CFStringReplaceAll(theString:CFMutableStringRef, replacement:CFStringRef) -> None: ...
-@dll.bind(CFIndex, CFMutableStringRef, CFStringRef, CFStringRef, CFRange, CFStringCompareFlags)
+@dll.bind
 def CFStringFindAndReplace(theString:CFMutableStringRef, stringToFind:CFStringRef, replacementString:CFStringRef, rangeToSearch:CFRange, compareOptions:CFStringCompareFlags) -> CFIndex: ...
-@dll.bind(None, CFMutableStringRef, c.POINTER[UniChar], CFIndex, CFIndex)
+@dll.bind
 def CFStringSetExternalCharactersNoCopy(theString:CFMutableStringRef, chars:c.POINTER[UniChar], length:CFIndex, capacity:CFIndex) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFStringRef, CFIndex, CFIndex)
+@dll.bind
 def CFStringPad(theString:CFMutableStringRef, padString:CFStringRef, length:CFIndex, indexIntoPad:CFIndex) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFStringRef)
+@dll.bind
 def CFStringTrim(theString:CFMutableStringRef, trimString:CFStringRef) -> None: ...
-@dll.bind(None, CFMutableStringRef)
+@dll.bind
 def CFStringTrimWhitespace(theString:CFMutableStringRef) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFLocaleRef)
+@dll.bind
 def CFStringLowercase(theString:CFMutableStringRef, locale:CFLocaleRef) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFLocaleRef)
+@dll.bind
 def CFStringUppercase(theString:CFMutableStringRef, locale:CFLocaleRef) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFLocaleRef)
+@dll.bind
 def CFStringCapitalize(theString:CFMutableStringRef, locale:CFLocaleRef) -> None: ...
-CFStringNormalizationForm: TypeAlias = ctypes.c_int64
-_anonenum2: dict[int, str] = {(kCFStringNormalizationFormD:=0): 'kCFStringNormalizationFormD', (kCFStringNormalizationFormKD:=1): 'kCFStringNormalizationFormKD', (kCFStringNormalizationFormC:=2): 'kCFStringNormalizationFormC', (kCFStringNormalizationFormKC:=3): 'kCFStringNormalizationFormKC'}
-@dll.bind(None, CFMutableStringRef, CFStringNormalizationForm)
+CFStringNormalizationForm: TypeAlias = Annotated[int, ctypes.c_int64]
+class _anonenum2(Annotated[int, ctypes.c_uint32], c.Enum): pass
+kCFStringNormalizationFormD = _anonenum2.define('kCFStringNormalizationFormD', 0)
+kCFStringNormalizationFormKD = _anonenum2.define('kCFStringNormalizationFormKD', 1)
+kCFStringNormalizationFormC = _anonenum2.define('kCFStringNormalizationFormC', 2)
+kCFStringNormalizationFormKC = _anonenum2.define('kCFStringNormalizationFormKC', 3)
+
+@dll.bind
 def CFStringNormalize(theString:CFMutableStringRef, theForm:CFStringNormalizationForm) -> None: ...
-@dll.bind(None, CFMutableStringRef, CFStringCompareFlags, CFLocaleRef)
+@dll.bind
 def CFStringFold(theString:CFMutableStringRef, theFlags:CFStringCompareFlags, theLocale:CFLocaleRef) -> None: ...
-@dll.bind(Boolean, CFMutableStringRef, c.POINTER[CFRange], CFStringRef, Boolean)
+@dll.bind
 def CFStringTransform(string:CFMutableStringRef, range:c.POINTER[CFRange], transform:CFStringRef, reverse:Boolean) -> Boolean: ...
 try: kCFStringTransformStripCombiningMarks = CFStringRef.in_dll(dll, 'kCFStringTransformStripCombiningMarks') # type: ignore
 except (ValueError,AttributeError): pass
@@ -231,83 +260,86 @@ try: kCFStringTransformToUnicodeName = CFStringRef.in_dll(dll, 'kCFStringTransfo
 except (ValueError,AttributeError): pass
 try: kCFStringTransformStripDiacritics = CFStringRef.in_dll(dll, 'kCFStringTransformStripDiacritics') # type: ignore
 except (ValueError,AttributeError): pass
-@dll.bind(Boolean, CFStringEncoding)
+@dll.bind
 def CFStringIsEncodingAvailable(encoding:CFStringEncoding) -> Boolean: ...
-@dll.bind(c.POINTER[CFStringEncoding])
+@dll.bind
 def CFStringGetListOfAvailableEncodings() -> c.POINTER[CFStringEncoding]: ...
-@dll.bind(CFStringRef, CFStringEncoding)
+@dll.bind
 def CFStringGetNameOfEncoding(encoding:CFStringEncoding) -> CFStringRef: ...
-@dll.bind(ctypes.c_uint64, CFStringEncoding)
-def CFStringConvertEncodingToNSStringEncoding(encoding:CFStringEncoding) -> int: ...
-@dll.bind(CFStringEncoding, ctypes.c_uint64)
-def CFStringConvertNSStringEncodingToEncoding(encoding:int) -> CFStringEncoding: ...
-UInt32: TypeAlias = ctypes.c_uint32
-@dll.bind(UInt32, CFStringEncoding)
+@dll.bind
+def CFStringConvertEncodingToNSStringEncoding(encoding:CFStringEncoding) -> Annotated[int, ctypes.c_uint64]: ...
+@dll.bind
+def CFStringConvertNSStringEncodingToEncoding(encoding:Annotated[int, ctypes.c_uint64]) -> CFStringEncoding: ...
+UInt32: TypeAlias = Annotated[int, ctypes.c_uint32]
+@dll.bind
 def CFStringConvertEncodingToWindowsCodepage(encoding:CFStringEncoding) -> UInt32: ...
-@dll.bind(CFStringEncoding, UInt32)
+@dll.bind
 def CFStringConvertWindowsCodepageToEncoding(codepage:UInt32) -> CFStringEncoding: ...
-@dll.bind(CFStringEncoding, CFStringRef)
+@dll.bind
 def CFStringConvertIANACharSetNameToEncoding(theString:CFStringRef) -> CFStringEncoding: ...
-@dll.bind(CFStringRef, CFStringEncoding)
+@dll.bind
 def CFStringConvertEncodingToIANACharSetName(encoding:CFStringEncoding) -> CFStringRef: ...
-@dll.bind(CFStringEncoding, CFStringEncoding)
+@dll.bind
 def CFStringGetMostCompatibleMacStringEncoding(encoding:CFStringEncoding) -> CFStringEncoding: ...
 @c.record
 class CFStringInlineBuffer(c.Struct):
   SIZE = 184
-  buffer: c.Array[ctypes.c_uint16, Literal[64]]
-  theString: c.POINTER[struct___CFString]
-  directUniCharBuffer: c.POINTER[ctypes.c_uint16]
-  directCStringBuffer: c.POINTER[ctypes.c_char]
-  rangeToBuffer: CFRange
-  bufferedRangeStart: int
-  bufferedRangeEnd: int
-CFStringInlineBuffer.register_fields([('buffer', c.Array[UniChar, Literal[64]], 0), ('theString', CFStringRef, 128), ('directUniCharBuffer', c.POINTER[UniChar], 136), ('directCStringBuffer', c.POINTER[ctypes.c_char], 144), ('rangeToBuffer', CFRange, 152), ('bufferedRangeStart', CFIndex, 168), ('bufferedRangeEnd', CFIndex, 176)])
+  buffer: Annotated[c.Array[UniChar, Literal[64]], 0]
+  theString: Annotated[CFStringRef, 128]
+  directUniCharBuffer: Annotated[c.POINTER[UniChar], 136]
+  directCStringBuffer: Annotated[c.POINTER[Annotated[bytes, ctypes.c_char]], 144]
+  rangeToBuffer: Annotated[CFRange, 152]
+  bufferedRangeStart: Annotated[CFIndex, 168]
+  bufferedRangeEnd: Annotated[CFIndex, 176]
 CFTypeRef: TypeAlias = ctypes.c_void_p
-@dll.bind(None, CFTypeRef)
+@dll.bind
 def CFShow(obj:CFTypeRef) -> None: ...
-@dll.bind(None, CFStringRef)
+@dll.bind
 def CFShowStr(str:CFStringRef) -> None: ...
-@dll.bind(CFStringRef, c.POINTER[ctypes.c_char])
-def __CFStringMakeConstantString(cStr:c.POINTER[ctypes.c_char]) -> CFStringRef: ...
+@dll.bind
+def __CFStringMakeConstantString(cStr:c.POINTER[Annotated[bytes, ctypes.c_char]]) -> CFStringRef: ...
 CFMutableDataRef: TypeAlias = c.POINTER[struct___CFData]
-@dll.bind(CFTypeID)
+@dll.bind
 def CFDataGetTypeID() -> CFTypeID: ...
-@dll.bind(CFDataRef, CFAllocatorRef, c.POINTER[UInt8], CFIndex)
+@dll.bind
 def CFDataCreate(allocator:CFAllocatorRef, bytes:c.POINTER[UInt8], length:CFIndex) -> CFDataRef: ...
-@dll.bind(CFDataRef, CFAllocatorRef, c.POINTER[UInt8], CFIndex, CFAllocatorRef)
+@dll.bind
 def CFDataCreateWithBytesNoCopy(allocator:CFAllocatorRef, bytes:c.POINTER[UInt8], length:CFIndex, bytesDeallocator:CFAllocatorRef) -> CFDataRef: ...
-@dll.bind(CFDataRef, CFAllocatorRef, CFDataRef)
+@dll.bind
 def CFDataCreateCopy(allocator:CFAllocatorRef, theData:CFDataRef) -> CFDataRef: ...
-@dll.bind(CFMutableDataRef, CFAllocatorRef, CFIndex)
+@dll.bind
 def CFDataCreateMutable(allocator:CFAllocatorRef, capacity:CFIndex) -> CFMutableDataRef: ...
-@dll.bind(CFMutableDataRef, CFAllocatorRef, CFIndex, CFDataRef)
+@dll.bind
 def CFDataCreateMutableCopy(allocator:CFAllocatorRef, capacity:CFIndex, theData:CFDataRef) -> CFMutableDataRef: ...
-@dll.bind(CFIndex, CFDataRef)
+@dll.bind
 def CFDataGetLength(theData:CFDataRef) -> CFIndex: ...
-@dll.bind(c.POINTER[UInt8], CFDataRef)
+@dll.bind
 def CFDataGetBytePtr(theData:CFDataRef) -> c.POINTER[UInt8]: ...
-@dll.bind(c.POINTER[UInt8], CFMutableDataRef)
+@dll.bind
 def CFDataGetMutableBytePtr(theData:CFMutableDataRef) -> c.POINTER[UInt8]: ...
-@dll.bind(None, CFDataRef, CFRange, c.POINTER[UInt8])
+@dll.bind
 def CFDataGetBytes(theData:CFDataRef, range:CFRange, buffer:c.POINTER[UInt8]) -> None: ...
-@dll.bind(None, CFMutableDataRef, CFIndex)
+@dll.bind
 def CFDataSetLength(theData:CFMutableDataRef, length:CFIndex) -> None: ...
-@dll.bind(None, CFMutableDataRef, CFIndex)
+@dll.bind
 def CFDataIncreaseLength(theData:CFMutableDataRef, extraLength:CFIndex) -> None: ...
-@dll.bind(None, CFMutableDataRef, c.POINTER[UInt8], CFIndex)
+@dll.bind
 def CFDataAppendBytes(theData:CFMutableDataRef, bytes:c.POINTER[UInt8], length:CFIndex) -> None: ...
-@dll.bind(None, CFMutableDataRef, CFRange, c.POINTER[UInt8], CFIndex)
+@dll.bind
 def CFDataReplaceBytes(theData:CFMutableDataRef, range:CFRange, newBytes:c.POINTER[UInt8], newLength:CFIndex) -> None: ...
-@dll.bind(None, CFMutableDataRef, CFRange)
+@dll.bind
 def CFDataDeleteBytes(theData:CFMutableDataRef, range:CFRange) -> None: ...
-CFDataSearchFlags: TypeAlias = ctypes.c_uint64
-_anonenum3: dict[int, str] = {(kCFDataSearchBackwards:=1): 'kCFDataSearchBackwards', (kCFDataSearchAnchored:=2): 'kCFDataSearchAnchored'}
-@dll.bind(CFRange, CFDataRef, CFDataRef, CFRange, CFDataSearchFlags)
+CFDataSearchFlags: TypeAlias = Annotated[int, ctypes.c_uint64]
+class _anonenum3(Annotated[int, ctypes.c_uint32], c.Enum): pass
+kCFDataSearchBackwards = _anonenum3.define('kCFDataSearchBackwards', 1)
+kCFDataSearchAnchored = _anonenum3.define('kCFDataSearchAnchored', 2)
+
+@dll.bind
 def CFDataFind(theData:CFDataRef, dataToFind:CFDataRef, searchRange:CFRange, compareOptions:CFDataSearchFlags) -> CFRange: ...
-__COREFOUNDATION_CFSTRING__ = 1
-kCFStringEncodingInvalidId = (0xffffffff)
+c.init_records()
+__COREFOUNDATION_CFSTRING__ = 1 # type: ignore
+kCFStringEncodingInvalidId = (0xffffffff) # type: ignore
 CF_FORMAT_FUNCTION = lambda F,A: __attribute__((format(CFString, F, A))) # type: ignore
 CF_FORMAT_ARGUMENT = lambda A: __attribute__((format_arg(A))) # type: ignore
-__kCFStringInlineBufferLength = 64
-__COREFOUNDATION_CFDATA__ = 1
+__kCFStringInlineBufferLength = 64 # type: ignore
+__COREFOUNDATION_CFDATA__ = 1 # type: ignore

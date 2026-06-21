@@ -1,34 +1,36 @@
 from typing import cast
 from dataclasses import replace
 import itertools
-from tinygrad.helpers import DISABLE_FAST_IDIV, DEVECTORIZE, TRANSCENDENTAL, SPEC, DEBUG, VIZ, IMAGE, NOOPT, EMULATED_DTYPES, NOLOCALS, USE_TC
-from tinygrad.helpers import ALLOW_TF32, TracingKey, Context, panic
-from tinygrad.uop.ops import PatternMatcher, graph_rewrite, UOp, pm_lower_index_dtype, Ops, UPat, track_rewrites, KernelInfo, ProgramInfo
-from tinygrad.uop.render import pyrender
-from tinygrad.uop.spec import type_verify, spec_tensor, spec_program
-from tinygrad.renderer import Renderer, Estimates
-from tinygrad.dtype import dtypes
+from tinygrad.helpers import DISABLE_FAST_IDIV, EMULATED_DTYPES, DEVECTORIZE, TRANSCENDENTAL, SPEC, DEBUG, VIZ, IMAGE, TracingKey, Context
+from tinygrad.uop.ops import PatternMatcher, graph_rewrite, UOp, pm_lower_index_dtype, Ops, UPat, track_rewrites, KernelInfo, pyrender
+from tinygrad.uop.spec import type_verify, program_spec, kernel_spec
+from tinygrad.renderer import Renderer, ProgramSpec
+from tinygrad.dtype import dtypes, promo_lattice
+from tinygrad.device import is_dtype_supported
+from tinygrad.helpers import panic
+from tinygrad.codegen.opt import Opt
 
 # import all pattern matchers here
 from tinygrad.codegen.gpudims import pm_add_gpudims
 from tinygrad.uop.symbolic import sym, symbolic_simple, gep_pushing, symbolic, pm_move_where_on_load
-from tinygrad.uop.decompositions import get_late_rewrite_patterns, get_transcendental_patterns, pm_dtype_decomps
+from tinygrad.uop.decompositions import get_late_rewrite_patterns, get_transcendental_patterns, pm_float_decomp, pm_long_decomp
 from tinygrad.codegen.late.expander import expander, pm_pre_expander, pm_group_for_reduce
 from tinygrad.codegen.late.devectorizer import load_store_folding, load_store_indexing, devectorize, pm_reduce, \
-  ReduceContext, correct_load_store, pm_render, pm_add_loads, pm_make_images
-from tinygrad.codegen.opt.postrange import apply_opts
-from tinygrad.codegen.late.gater import pm_move_gates_from_index
+  ReduceContext, correct_load_store, pm_render, pm_add_loads
+from tinygrad.codegen.opt.postrange import apply_opts, pm_make_images
 from tinygrad.codegen.simplify import pm_simplify_ranges, pm_flatten_range, pm_split_ranges, pm_load_collapse
-from tinygrad.schedule.rangeify import pm_add_buffers_local, rangeify_codegen, pm_mops, pm_syntactic_sugar, pm_store_ranges
+from tinygrad.schedule.rangeify import pm_add_buffers_local, rangeify_codegen, pm_mops, pm_syntactic_sugar
 from tinygrad.codegen.late.linearizer import CFGContext, pm_split_ends, pm_add_control_flow, linearize
 
-def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
-  if VIZ: graph_rewrite(ast, PatternMatcher([]), name="View Base AST")
-  if DEBUG >= 5: print(pyrender(ast))
-  if SPEC: type_verify(ast, spec_tensor)
+def full_rewrite_to_sink(sink:UOp, ren:Renderer|None=None, optimize:bool=True) -> UOp:
+  if ren is None: ren = Renderer()
+
+  if VIZ: graph_rewrite(sink, PatternMatcher([]), name="View Base AST")
+  if DEBUG >= 5: print(pyrender(sink))
+  if SPEC: type_verify(sink, kernel_spec)
 
   # preprocess
-  sink = graph_rewrite(ast, pm_mops+pm_syntactic_sugar+pm_store_ranges, ctx=itertools.count(1000), name="early movement ops", bottom_up=True)
+  sink = graph_rewrite(sink, pm_mops+pm_syntactic_sugar, name="early movement ops", bottom_up=True)
 
   # first we optimize
   if optimize:
@@ -42,10 +44,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
     sink = graph_rewrite(sink, sym+pm_flatten_range, name="initial symbolic")
 
     # optimize (schedule) the AST
-    sink = graph_rewrite(sink, pm_flatten_range+pm_simplify_ranges, ctx={}, name="simplify ranges")
+    sink = graph_rewrite(sink, pm_simplify_ranges, name="simplify ranges")
+
+    # create image buffers
+    if IMAGE == 1 and ren.device in {"QCOM", "CL"}: sink = graph_rewrite(sink, pm_make_images, name="create image buffers", bottom_up=True)
 
     # do postrange optimization, BEAM or hand_coded_optimizations
-    sink = apply_opts(sink, ren, beam=ast.arg.beam)
+    sink = apply_opts(sink, ren)
 
   # ** expander (expand_rewrite) **
   sink = graph_rewrite(sink, sym+pm_move_where_on_load, name="postopt symbolic")
@@ -68,10 +73,6 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
   # add loads
   sink = graph_rewrite(sink, pm_add_loads, name="** add loads (code)")
 
-  # create image buffers
-  if IMAGE and ren.target.device in {"QCOM", "CL", "PYTHON", "NULL"}:
-    sink = graph_rewrite(sink, pm_make_images, name="create image buffers", bottom_up=True, ctx=ren.target.arch)
-
   # devectorize (TODO: does this need opts?)
   if DEVECTORIZE >= 2: pm_devectorize = sym+load_store_folding+load_store_indexing
   elif DEVECTORIZE: pm_devectorize = sym+devectorize+load_store_folding+correct_load_store+load_store_indexing
@@ -79,7 +80,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
   if DEVECTORIZE >= 0: sink = graph_rewrite(sink, pm_devectorize, ctx=ren, name="devectorize")
 
   # lower the index dtype to a concrete int
-  sink = graph_rewrite(sink, pm_lower_index_dtype+load_store_indexing+gep_pushing, name="lower all index dtypes")
+  sink = graph_rewrite(sink, pm_lower_index_dtype+load_store_indexing+gep_pushing, ctx=ren.device, name="lower all index dtypes")
   sink = graph_rewrite(sink, symbolic, name="post index symbolic")
 
   # optional pre matcher
@@ -87,24 +88,23 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
 
   # decompositions
   supported_ops = tuple(ren.code_for_op.keys())
-  pm_decomp = symbolic_simple+get_late_rewrite_patterns(supported_ops, bool(DISABLE_FAST_IDIV))
+  pm_decomp = symbolic_simple+get_late_rewrite_patterns(supported_ops, ren.device, bool(DISABLE_FAST_IDIV))
   pm_transcendental = symbolic_simple+get_transcendental_patterns(supported_ops, TRANSCENDENTAL>=2)
-  sink = graph_rewrite(sink, pm_decomp, ctx=ren.target, name="decompositions")
-  sink = graph_rewrite(sink, pm_dtype_decomps, ctx=(set(), ren.target), name="decomp dtypes")
-  sink = graph_rewrite(sink, pm_transcendental, name="transcendental")
-
-  # move gates from unrenderable INVALID where
-  sink = graph_rewrite(sink, pm_move_gates_from_index, name="move gates from index")
+  sink = graph_rewrite(sink, pm_decomp, ctx=ren.device, name="decompositions")
+  if not is_dtype_supported(dtypes.long, ren.device) or dtypes.long in EMULATED_DTYPES.tolist(dtypes):
+    sink = graph_rewrite(sink, pm_long_decomp, name="decomp long -> int", bottom_up=True)
+  for fr, to in [(fr, next((to for to in promo_lattice[fr] if is_dtype_supported(to, ren.device)), dtypes.float))
+                 for fr in EMULATED_DTYPES.tolist(dtypes) if fr in dtypes.floats]:
+    sink = graph_rewrite(sink, pm_float_decomp, ctx=(fr, to), name=f"decomp {fr} -> {to}", bottom_up=True)
+  sink = graph_rewrite(sink, pm_transcendental, ctx=ren.device, name="transcendental")
 
   # final rules for the renderer (without sym)
   extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
   pm_final_rewrite = pm_decomp+pm_render+extra_matcher+pm_split_ends
-  sink = graph_rewrite(sink, pm_final_rewrite, ctx=ren.target, name="final rewrite")
+  sink = graph_rewrite(sink, pm_final_rewrite, ctx=ren.device, name="final rewrite")
 
   # this was the linearizer
   sink = graph_rewrite(sink, pm_add_control_flow, ctx=CFGContext(sink), name="add control flow", bottom_up=True)
-
-  if VIZ: graph_rewrite(sink, PatternMatcher([]), name="View Output AST")
 
   # return the rewritten sink
   return sink
@@ -113,8 +113,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
 pm_linearize_cleanups = PatternMatcher([
   # if statements are not allowed in the graph
   (UPat((Ops.IF, Ops.ENDIF)), lambda: panic(RuntimeError, "if not allowed in graph")),
-  # gated STORE becomes IF-STORE-ENDIF. this is the only use of IF-ENDIF
-  (UPat(Ops.STORE, name="u", src=(UPat(Ops.INDEX).or_casted(), UPat(), UPat(name="gate", dtype=dtypes.bool))),
+  # gated INDEX becomes IF-STORE-ENDIF. this is the only use of IF-ENDIF
+  (UPat(Ops.STORE, name="u", src=(UPat(Ops.INDEX, src=(UPat(), UPat(), UPat(name="gate", dtype=dtypes.bool))).or_casted(), UPat())),
    lambda u, gate: (u, [mif:=UOp(Ops.IF, src=(gate, u.src[0])), u, UOp(Ops.ENDIF, src=(mif,))]))
 ])
 
@@ -131,22 +131,12 @@ def line_rewrite(lst:list[UOp], pm:PatternMatcher) -> list[UOp]:
 
 def do_linearize(prg:UOp, sink:UOp) -> UOp:
   lst = line_rewrite(linearize(sink), pm_linearize_cleanups)
-  if SPEC: type_verify(lst, spec_program)
+  if SPEC: type_verify(lst, program_spec)
   return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
-
-def do_estimates(prg:UOp, sink:UOp, lin:UOp) -> UOp|None:
-  if sink.arg.estimates is not None: return None
-  return prg.replace(src=(sink.replace(arg=replace(sink.arg, estimates=Estimates.from_uops(lin.src, ignore_indexing=True))),)+prg.src[1:])
-
-def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp:
-  binary = ctx.asm(prg, lin)
-  src = "\n".join(str(u.arg) for u in lin.src)
-  return prg.replace(src=prg.src[:3]+(UOp(Ops.SOURCE, arg=src), UOp(Ops.BINARY, arg=binary)))
 
 def do_render(ctx:Renderer, prg:UOp, lin:UOp) -> UOp:
   src = ctx.render(list(lin.src))
-  new_arg = replace(prg.arg, aux=tuple(ctx.aux(list(lin.src)))) if ctx.has_aux else prg.arg
-  return prg.replace(src=prg.src + (UOp(Ops.SOURCE, arg=src),), arg=new_arg)
+  return prg.replace(src=prg.src + (UOp(Ops.SOURCE, arg=src),), arg=ctx.aux(list(lin.src)) if ctx.has_aux else prg.arg)
 
 def do_compile(ctx:Renderer, prg:UOp, source:UOp) -> UOp|None:
   lib = ctx.compiler.compile_cached(source.arg)
@@ -154,39 +144,38 @@ def do_compile(ctx:Renderer, prg:UOp, source:UOp) -> UOp|None:
 
 pm_to_program = PatternMatcher([
   (UPat(Ops.PROGRAM, src=(UPat(Ops.SINK, name="sink"), UPat(Ops.DEVICE)), name="prg"), do_linearize),
-  (UPat(Ops.PROGRAM, src=(UPat(Ops.SINK, name="sink"), UPat(Ops.DEVICE), UPat(Ops.LINEAR, name="lin")), name="prg"), do_estimates),
-  (UPat(Ops.PROGRAM, src=(UPat(), UPat(Ops.DEVICE), UPat(Ops.LINEAR, src=UPat(Ops.INS), name="lin")), name="prg"), do_assemble),
   (UPat(Ops.PROGRAM, src=(UPat(), UPat(Ops.DEVICE), UPat(Ops.LINEAR, name="lin")), name="prg"), do_render),
   (UPat(Ops.PROGRAM, src=(UPat(), UPat(Ops.DEVICE), UPat(Ops.LINEAR), UPat(Ops.SOURCE, name="source")), name="prg"), do_compile),
 ])
 
-@track_rewrites(name=lambda ast,renderer,ret,**kwargs: TracingKey(ret.src[0].arg.name,(ret.src[0].arg.function_name, ast), ret=renderer), replay=True)
 @Context(ALLOW_DEVICE_USAGE=0)
-def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+@track_rewrites(name=lambda *args,ret,**kwargs: TracingKey(ret.name, (ret.function_name, ret.ast), ret=ret), replay=True)
+def get_program(ast:UOp, renderer:Renderer, opts:list[Opt]|None=None) -> ProgramSpec:
   """
-  Transform an AST into a compiled PROGRAM. May trigger BEAM search.
+  Transform an AST into a ProgramSpec. May trigger BEAM search.
 
   Args:
-    ast: The Ops.SINK/Ops.PROGRAM rooted AST
+    ast: The Ops.SINK rooted AST
     renderer: The renderer used to generate the code
 
   Returns:
-    The Ops.PROGRAM with SINK/DEVICE/LINEAR/SOURCE/BINARY.
+    The ProgramSpec of the program.
   """
+
   if ast.op is Ops.PROGRAM: prg = ast
   elif ast.op is Ops.SINK:
-    assert isinstance(ast.arg, KernelInfo), "requires KernelInfo on arg to to_program"
+    # rewrite to prg
+    assert isinstance(ast.arg, KernelInfo), "requires KernelInfo on arg to get_program"
+    if opts is not None:
+      # TODO: should this be here?
+      assert ast.arg.opts_to_apply is None, "can't apply opts if there's already opts to apply"
+      ast = ast.replace(arg=replace(ast.arg, opts_to_apply=tuple(opts)))
     full_sink = full_rewrite_to_sink(ast, renderer, optimize=ast.tag is None)
-    prg = UOp(Ops.PROGRAM, src=(full_sink, UOp(Ops.DEVICE, arg=renderer.target.device)), arg=ProgramInfo.from_sink(full_sink))
-  else: raise RuntimeError(f"can't call to_program on {ast.op}")
-  if not isinstance(prg.arg, ProgramInfo): prg = prg.replace(arg=ProgramInfo.from_sink(prg.src[0]))
-  prg = graph_rewrite(prg, pm_to_program, ctx=renderer, name="linearize/render")
-  if VIZ: graph_rewrite(prg, PatternMatcher([]), name="View Program")
-  return prg
+    prg = UOp(Ops.PROGRAM, src=(full_sink, UOp(Ops.DEVICE, arg=renderer.device)))
+  else:
+    raise RuntimeError(f"can't call get_program on {ast.op}")
 
-to_program_cache: dict[tuple, UOp] = {}
-def to_program(ast:UOp, renderer:Renderer) -> UOp:
-  config = (NOOPT, DEVECTORIZE, EMULATED_DTYPES, NOLOCALS, USE_TC, IMAGE, DISABLE_FAST_IDIV, TRANSCENDENTAL, ALLOW_TF32)
-  key = (ast.key, type(renderer), renderer.target, *[x.value for x in config])
-  if (prg:=to_program_cache.get(key)) is None: to_program_cache[key] = prg = do_to_program(ast, renderer)
-  return prg
+  prg = graph_rewrite(prg, pm_to_program, ctx=renderer, name="linearize/render")
+
+  # create the ProgramSpec
+  return ProgramSpec.from_uop(prg)

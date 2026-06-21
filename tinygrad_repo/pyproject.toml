@@ -19,26 +19,20 @@ build-backend = "setuptools.build_meta"
 include-package-data = true
 packages = [
   'tinygrad',
+  'tinygrad.apps',
   'tinygrad.codegen',
   'tinygrad.codegen.opt',
   'tinygrad.codegen.late',
   'tinygrad.engine',
-  'tinygrad.llm',
   'tinygrad.mixin',
   'tinygrad.nn',
   'tinygrad.renderer',
-  'tinygrad.renderer.amd',
   'tinygrad.runtime',
   'tinygrad.runtime.autogen',
   'tinygrad.runtime.autogen.am',
-  'tinygrad.runtime.autogen.amd',
-  'tinygrad.runtime.autogen.amd.rdna3',
-  'tinygrad.runtime.autogen.amd.rdna4',
-  'tinygrad.runtime.autogen.amd.cdna',
   'tinygrad.runtime.graph',
   'tinygrad.runtime.support',
   'tinygrad.runtime.support.am',
-  'tinygrad.runtime.support.mlx',
   'tinygrad.runtime.support.nv',
   'tinygrad.schedule',
   'tinygrad.uop',
@@ -51,8 +45,8 @@ tinygrad = ["py.typed"]
 
 
 [project.optional-dependencies]
-# arm = ["unicorn"]
-# triton = ["triton-nightly>=2.1.0.dev20231014192330"]
+arm = ["unicorn"]
+triton = ["triton-nightly>=2.1.0.dev20231014192330"]
 linting = [
   "pylint",
   "mypy==1.19.1",
@@ -75,7 +69,7 @@ testing_minimal = [
   "hypothesis>=6.148.9",
   "z3-solver<4.15.4",  # 4.15.4 has a segfault when creating many z3.Context()
 ]
-testing_unit = ["tinygrad[testing_minimal]", "tqdm", "safetensors", "tabulate", "openai", "gguf>=0.18", "capstone"]
+testing_unit = ["tinygrad[testing_minimal]", "tqdm", "safetensors", "tabulate", "openai", "ggml-python"]
 testing = [
   "tinygrad[testing_unit]",
   "pillow",
@@ -93,6 +87,7 @@ testing = [
   "networkx",
   "nibabel",
   "bottle",
+  "capstone",
   "pycocotools",
   "boto3",
   "pandas",
@@ -112,9 +107,9 @@ docs = [
 [tool.mutmut]
 paths_to_mutate = ["tinygrad/"]
 do_not_mutate = [
+  "tinygrad/apps/*",
   "tinygrad/codegen/*",
   "tinygrad/engine/*",
-  "tinygrad/llm/*",
   "tinygrad/nn/*",
   "tinygrad/renderer/*",
   "tinygrad/runtime/*",
@@ -146,8 +141,6 @@ strict_equality = true
 [[tool.mypy.overrides]]
 module = "extra.*"
 follow_imports = "skip"
-
-
 
 [tool.pytest.ini_options]
 norecursedirs = [
@@ -251,8 +244,7 @@ select = [
   "F541",
   "F841",
 ]
-"tinygrad/runtime/autogen/**/*.py" = ["E501", "F401", "E731", "F821", "A006", "A002", "F811", "F822"]
-"test/amd/**/*.py" = ["F403", "F405"]
+"tinygrad/runtime/autogen/**/*.py" = ["E501", "F401", "E722", "E731", "F821", "A006", "A002", "F811"]
 
 [tool.ruff.format]
 exclude = ["*"]

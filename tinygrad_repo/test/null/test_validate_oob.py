@@ -48,12 +48,12 @@ class TestValidateOOB(unittest.TestCase):
     with Context(CHECK_OOB=1, SPEC=2):
       buf = UOp(Ops.PARAM, dtypes.int.ptr(16), (), 0)
       v = Variable("v", 0, 20)
-      to_uops_list([buf.index(v.valid(v < 16), ptr=True).store(0)])  # valid
+      to_uops_list([buf.index(v.valid(v < 16)).store(0)])  # valid
       with self.assertRaises(RuntimeError):
-        to_uops_list([buf.index(v.valid(v < 20), ptr=True).store(0)])  # oob
+        to_uops_list([buf.index(v.valid(v < 20)).store(0)])  # oob
 
   # ALU ops in index
-  def test_floordiv(self):
+  def test_idiv(self):
     with Context(CHECK_OOB=1, SPEC=2):
       buf = UOp(Ops.PARAM, dtypes.int.ptr(16), (), 0)
       to_uops_list([buf.index(UOp.range(32, 0, AxisType.GLOBAL) // 2, ptr=True).load(dtype=dtypes.int)])  # 0..15 valid
@@ -126,7 +126,7 @@ class TestValidateOOB(unittest.TestCase):
       buf0 = UOp(Ops.PARAM, dtypes.int.ptr(16), (), 0)
       buf1 = UOp(Ops.PARAM, dtypes.int.ptr(64), (), 1)
       r = UOp.range(42, 0, AxisType.GLOBAL)
-      ld0 = buf0.index(r.valid(r < 8), ptr=True).load(dtype=dtypes.int).cast(dtypes.weakint)
+      ld0 = buf0.index(r.valid(r < 8), ptr=True).load(dtype=dtypes.int).cast(dtypes.index)
       to_uops_list([buf1.index((ld0 * 2).valid((ld0 >= 0) & (ld0 < 32)), ptr=True).load(dtype=dtypes.int)])  # valid
       with self.assertRaises(RuntimeError):
         to_uops_list([buf1.index((ld0 * 2).valid((ld0 >= 0) & (ld0 < 64)), ptr=True).load(dtype=dtypes.int)])  # oob
@@ -135,7 +135,7 @@ class TestValidateOOB(unittest.TestCase):
     with Context(CHECK_OOB=1, SPEC=2):
       buf_bool = UOp(Ops.PARAM, dtypes.bool.ptr(16), (), 0)
       buf_int = UOp(Ops.PARAM, dtypes.int.ptr(8), (), 1)
-      gidx = UOp(Ops.SPECIAL, dtypes.weakint, (UOp.const(dtypes.weakint, 16),), "gidx0")
+      gidx = UOp(Ops.SPECIAL, dtypes.index, (UOp.const(dtypes.index, 16),), "gidx0")
       ld_bool = buf_bool.index(gidx, ptr=True).load()
       with self.assertRaises(RuntimeError):
         to_uops_list([buf_int.index(gidx.valid(ld_bool), ptr=True).load()])  # gidx 0..15, buf_int size 8
@@ -154,7 +154,7 @@ class TestValidateOOB(unittest.TestCase):
 
       gate = (gidx<400) & (lidx<8)
 
-      local_store = sbuf.index(lidx.valid(lidx<8)).store(UOp.const(dtypes.uint, 1))
+      local_store = UOp(Ops.STORE, dtypes.void, (sbuf.index(lidx, lidx<8), UOp.const(dtypes.uint, 1)))
 
       barrier = UOp(Ops.BARRIER, dtypes.void, (local_store,))
       if_barrier = UOp(Ops.IF, dtypes.void, (gate, barrier))

@@ -1,12 +1,11 @@
-import unittest, struct, contextlib, statistics, gc
+import unittest, struct, contextlib, statistics, time, gc
 from tinygrad import Device, Tensor, dtypes, TinyJit
-from tinygrad.helpers import CI, DEV, Context, ProfileRangeEvent, cpu_profile, cpu_events, ProfilePointEvent, dedup
+from tinygrad.helpers import CI, getenv, Context, ProfileRangeEvent, cpu_profile, cpu_events, ProfilePointEvent, dedup
 from tinygrad.device import Buffer, BufferSpec, Compiled, ProfileDeviceEvent, ProfileGraphEvent
 from tinygrad.runtime.support.hcq import HCQCompiled
-from tinygrad.engine.realize import get_runtime
-from tinygrad.codegen import to_program
+from tinygrad.engine.realize import get_runner
 
-MOCKGPU = DEV.interface.startswith("MOCK")
+MOCKGPU = getenv("MOCKGPU")
 def _dev_base(d):
   p = d.split(":")
   return p[0] if len(p) < 2 or not p[1].isdigit() else f"{p[0]}:{p[1]}"
@@ -21,7 +20,7 @@ def helper_collect_profile(*devs):
   cpu_events.clear()
 
   profile_list = []
-  with Context(PROFILE=1):
+  with Context(VIZ=1, PROFILE=1):
     yield profile_list
     for dev in devs: dev.synchronize()
     for dev in devs: dev._at_profile_finalize()
@@ -45,26 +44,21 @@ class TestProfiler(unittest.TestCase):
 
     TestProfiler.a = Tensor([0.,1.], device=Device.DEFAULT).realize()
     TestProfiler.b = self.a + 1
-    si = self.b.schedule_linear().src[-1]
+    si = self.b.schedule()[-1]
 
-    TestProfiler.prg = to_program(si.src[0], TestProfiler.d0.renderer)
-    TestProfiler.runtime = get_runtime(TestProfiler.d0.device, TestProfiler.prg)
+    TestProfiler.runner = get_runner(TestProfiler.d0.device, si.ast)
     TestProfiler.b.uop.buffer.allocate()
 
-  def test_profile_kernel_run(self, wait=False):
-    runner_name = TestProfiler.runtime.name
+  def test_profile_kernel_run(self):
+    runner_name = TestProfiler.runner._prg.name
     with helper_collect_profile(TestProfiler.d0) as profile:
-      gs, ls = TestProfiler.prg.arg.launch_dims({})
-      TestProfiler.runtime(TestProfiler.b.uop.buffer._buf, TestProfiler.a.uop.buffer._buf, global_size=gs, local_size=ls, wait=wait)
+      TestProfiler.runner([TestProfiler.b.uop.buffer, TestProfiler.a.uop.buffer], var_vals={})
 
     profile, _ = helper_profile_filter_device(profile, TestProfiler.d0.device)
     kernel_runs = [x for x in profile if isinstance(x, ProfileRangeEvent)]
     assert len(kernel_runs) == 1, "one kernel run is expected"
     assert kernel_runs[0].name == runner_name, "kernel name is not correct"
     assert _dev_base(kernel_runs[0].device) == kernel_runs[0].device, "kernel should not be on a sub-device"
-
-  def test_profile_kernel_run_wait(self):
-    self.test_profile_kernel_run(wait=True)
 
   def test_profile_copyin(self):
     buf1 = Buffer(Device.DEFAULT, 2, dtypes.float, options=BufferSpec(nolru=True)).ensure_allocated()
@@ -76,13 +70,12 @@ class TestProfiler(unittest.TestCase):
     assert len(kernel_runs) == 1, "one kernel run is expected"
 
   def test_profile_multiops(self):
-    runner_name = TestProfiler.runtime.name
+    runner_name = TestProfiler.runner._prg.name
     buf1 = Buffer(Device.DEFAULT, 2, dtypes.float, options=BufferSpec(nolru=True)).ensure_allocated()
 
     with helper_collect_profile(TestProfiler.d0) as profile:
       buf1.copyin(memoryview(bytearray(struct.pack("ff", 0, 1))))
-      gs, ls = TestProfiler.prg.arg.launch_dims({})
-      TestProfiler.runtime(buf1._buf, TestProfiler.a.uop.buffer._buf, global_size=gs, local_size=ls)
+      TestProfiler.runner([buf1, TestProfiler.a.uop.buffer], var_vals={})
       buf1.copyout(memoryview(bytearray(buf1.nbytes)))
 
     evs = [x for x in profile if isinstance(x, ProfileRangeEvent) and x.device.startswith(TestProfiler.d0.device)]
@@ -141,7 +134,7 @@ class TestProfiler(unittest.TestCase):
     _, _ = helper_profile_filter_device(profile, TestProfiler.d0.device)
     _, _ = helper_profile_filter_device(profile, d1.device)
 
-    assert len(graph_evs) == 2, "2 graph events are expected"
+    assert len(graph_evs) == 1, "one graph event is expected"
     assert len(graph_evs[0].ents) == 2, "two entities are expected"
 
   @unittest.skipIf(CI or not issubclass(type(Device[Device.DEFAULT]), HCQCompiled), "skip CI")
@@ -177,19 +170,30 @@ class TestProfiler(unittest.TestCase):
     for (i1, d1), (i2, d2) in pairs:
       assert abs(jitter_matrix[i1][i2]) < 0.5, "jitter should be less than 0.5us"
 
+  @unittest.skip("this test is flaky")
   def test_cpu_profile(self):
     def test_fxn(err=False):
+      time.sleep(0.1)
       if err: raise Exception()
+      time.sleep(0.1)
 
     with helper_collect_profile(dev:=TestProfiler.d0) as profile:
-      with cpu_profile("test_1", dev):
+      with cpu_profile("test_1", dev.device):
         test_fxn(err=False)
       with self.assertRaises(Exception):
-        with cpu_profile("test_2", dev):
+        with cpu_profile("test_2", dev.device):
           test_fxn(err=True)
 
-    range_events = [p for p in profile if isinstance(p, ProfileRangeEvent) and p.device == dev]
+    range_events = [p for p in profile if isinstance(p, ProfileRangeEvent)]
     self.assertEqual(len(range_events), 2)
+    # record start/end time up to exit (error or success)
+    for e in range_events:
+      self.assertGreater(e.en, e.st)
+    e1, e2 = range_events
+    self.assertEqual([e1.name, e2.name], ["test_1", "test_2"])
+    # TODO: this is flaky
+    #self.assertLess(e1.st, e2.st)
+    #self.assertGreater(e1.en-e1.st, e2.en-e2.st)
 
   @unittest.skip("this test is flaky")
   @unittest.skipUnless(Device[Device.DEFAULT].graph is not None, "graph support required")

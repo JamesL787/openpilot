@@ -6,7 +6,7 @@ from tinygrad.device import is_dtype_supported
 from tinygrad.uop.ops import Ops, UOp
 from tinygrad.renderer.ptx import PTXRenderer
 from tinygrad.renderer.nir import NIRRenderer
-from tinygrad.codegen import to_program
+from tinygrad.engine.realize import get_program
 from tinygrad.dtype import DType
 
 x_init = np.random.randn(1,3).astype(np.float32)
@@ -62,13 +62,12 @@ class TestIdxUpcast(unittest.TestCase):
     for src in ast.src:
       if (ret:=self._find_op(src, op)) is not None: return ret
   def _schedule_render(self, a: Tensor):
-    linear, _ = a.linear_with_vars()
-    for si in linear.src:
-      ast = si.src[0]
-      if ast.op is Ops.SINK:
-        renderer = Device[si.src[1].buffer.device].renderer
-        prg = to_program(ast, renderer)
-        return tuple(prg.src[2].src)
+    schedule, _ = a.schedule_with_vars()
+    for s in schedule:
+      if s.ast.op is Ops.SINK:
+        renderer = Device[s.bufs[0].device].renderer
+        prg = get_program(s.ast, renderer)
+        return prg.uops
 
   def _assert(self, dtype: DType, a: Tensor):
     uops = self._schedule_render(a)
@@ -108,15 +107,19 @@ class TestIdxUpcast(unittest.TestCase):
     uops = self._schedule_render(a)
     assert all(uop.dtype is not dtypes.long for uop in uops)
 
+  def test_arange_raise_overflow(self):
+    with self.assertRaises(ValueError):
+      self._schedule_render(Tensor.arange(2**33, dtype=dtypes.int))
+
   @unittest.skipIf(is_dtype_supported(dtypes.long), "int64 is supported")
   def test_int64_unsupported_overflow_sym(self):
-    with self.assertRaises((KeyError, RuntimeError)):
+    with self.assertRaises(KeyError):
       self.do_op_then_assert(dtypes.long, 2048, 2048, UOp.variable("dim3", 1, 2048).bind(32))
 
   @unittest.skipIf(is_dtype_supported(dtypes.long), "int64 is supported")
   @unittest.expectedFailure  # bug in gpu dims limiting
   def test_int64_unsupported_overflow(self):
-    with self.assertRaises((KeyError, RuntimeError)):
+    with self.assertRaises(KeyError):
       self.do_op_then_assert(dtypes.long, 2048, 2048, 2048)
 
   @unittest.skip("This is kept for reference, it requires large memory to run")
@@ -158,70 +161,6 @@ class TestTensorUnique(unittest.TestCase):
     c = a * 2
     Tensor.realize(b,c)
     self.assertIs(b.uop.buffer, c.uop.buffer)
-
-class TestRand(unittest.TestCase):
-  def test_rand_large_tensor(self):
-    # large tensor rand (num > uint32.max) should not crash in frontend
-    Tensor.manual_seed(0)
-    Tensor.rand(2**17, 2**17).schedule_linear()
-    Tensor.rand(2**17, 2**17).schedule_linear()
-    Tensor.rand(2**17, 2**17).schedule_linear()
-
-class TestTensorConstLike(unittest.TestCase):
-  def test_const_like_shape(self):
-    t = Tensor.ones(3, 4)
-    c = t.const_like(0)
-    self.assertEqual(c.shape, (3, 4))
-    self.assertEqual(c.dtype, t.dtype)
-
-  def test_const_like_multi_device(self):
-    devs = ("NULL:0", "NULL:1")
-    t = Tensor.ones(8, 4).shard(devs, axis=0)
-    c = t.const_like(5)
-    self.assertEqual(c.shape, (8, 4))
-    self.assertEqual(c.device, t.device)
-    self.assertEqual(c.uop.axis, 0)
-
-  def test_full_like_device_on_multi_raises(self):
-    t = Tensor.ones(8, 4).shard(("NULL:0", "NULL:1"), axis=0)
-    with self.assertRaises(RuntimeError): t.full_like(5, device="NULL")
-
-class TestTensorDevice(unittest.TestCase):
-  def test_create_from_single_device_tuple(self):
-    (Tensor([1.0], device=(Device.DEFAULT,)) + Tensor([2.0])).realize()
-
-class TestTensorPad(unittest.TestCase):
-  # padding int tensor with float-only value (like -inf) must promote dtype to fit value
-  def test_pad_int_with_neg_inf(self):
-    t = Tensor.arange(9).reshape(1, 1, 3, 3)
-    self.assertEqual(t.dtype, dtypes.int)
-    r = t.pad((1, 2, 0, -1), value=-float('inf'))
-    self.assertEqual(r.dtype, dtypes.float)
-    self.assertEqual(r.shape, (1, 1, 2, 6))
-
-class TestTensorDeviceMismatch(unittest.TestCase):
-  def test_gather(self):
-    x = Tensor.empty(3, 4, device="NULL")
-    idx = Tensor.zeros(3, 4, dtype=dtypes.int32, device="NULL:1")
-    with self.assertRaises(RuntimeError): x.gather(0, idx)
-  def test_scatter_index(self):
-    x = Tensor.zeros(3, 4, device="NULL")
-    idx = Tensor.zeros(3, 4, dtype=dtypes.int32, device="NULL:1")
-    src = Tensor.ones(3, 4, device="NULL")
-    with self.assertRaises(RuntimeError): x.scatter(0, idx, src)
-  def test_scatter_src(self):
-    x = Tensor.zeros(3, 4, device="NULL")
-    idx = Tensor.zeros(3, 4, dtype=dtypes.int32, device="NULL")
-    src = Tensor.ones(3, 4, device="NULL:1")
-    with self.assertRaises(RuntimeError): x.scatter(0, idx, src)
-  def test_getitem_tensor_index(self):
-    x = Tensor.empty(4, 5, device="NULL")
-    idx = Tensor([0, 1], dtype=dtypes.int32, device="NULL:1")
-    with self.assertRaises(RuntimeError): x[idx]
-  def test_sparse_categorical_crossentropy(self):
-    x = Tensor.zeros(2, 3, device="NULL")
-    Y = Tensor([0, 1], dtype=dtypes.int32, device="NULL:1")
-    with self.assertRaises(RuntimeError): x.sparse_categorical_crossentropy(Y)
 
 if __name__ == '__main__':
   unittest.main()

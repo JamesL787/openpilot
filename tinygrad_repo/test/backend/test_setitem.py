@@ -36,6 +36,18 @@ class TestSetitem(unittest.TestCase):
     t[:3] *= 10
     self.assertListEqual(t.tolist(), [0, 10, 20, 3, 4, 5, 6, 7, 8, 9])
 
+  def test_setitem_into_unrealized(self):
+    t = Tensor.arange(4).reshape(2, 2)
+    t[1] = 5
+    np.testing.assert_allclose(t.numpy(), [[0, 1], [5, 5]])
+
+  def test_setitem_into_unrealized_sliced_compute(self):
+    # base computation contains SHRINK from prior slicing (like QR decomposition pattern)
+    a = Tensor.arange(6, dtype=dtypes.float).reshape(2, 3)
+    w = a[0] + a[1]  # unrealized ADD with SHRINK in graph: [3, 5, 7]
+    w[1] = 99
+    np.testing.assert_allclose(w.numpy(), [3, 99, 7])
+
   def test_setitem_fancy_on_unrealized_view(self):
     # fancy indexing setitem on unrealized SHRINK view (triggered infinite loop in graph_rewrite)
     base = Tensor.arange(20, dtype=dtypes.float).reshape(4, 5)
@@ -56,6 +68,10 @@ class TestSetitem(unittest.TestCase):
   def test_setitem_dtype_mismatch(self):
     t = Tensor.zeros(6, dtype=dtypes.float).contiguous().realize()
     with self.assertRaises(RuntimeError): t[2:4] = Tensor([1, 2], dtype=dtypes.int)
+
+  def test_setitem_into_noncontiguous(self):
+    t = Tensor.ones(4)
+    with self.assertRaises(RuntimeError): t[1] = 5
 
   def test_setitem_chained_indexing(self):
     # N[i][j] must work the same as N[i, j]
@@ -146,8 +162,6 @@ class TestSetitem(unittest.TestCase):
     @TinyJit
     def f(t:Tensor, a:Tensor):
       t[2:4, 3:5] = a
-      # NOTE: without return t or an explicit realize, it's lazy and not captured
-      return t
 
     for i in range(1, 6):
       t = Tensor.zeros(6, 6).contiguous().realize()
@@ -205,20 +219,6 @@ class TestSetitem(unittest.TestCase):
     n[:, ind_1.numpy(), :, ind_2.numpy(), :] = v.numpy()
     np.testing.assert_equal(t.numpy(), n)
 
-  def test_setitem_tensor_int_indexing(self):
-    t = Tensor.zeros(4, 3, dtype=dtypes.int).contiguous()
-    t[Tensor([0, 2]), 0] = Tensor([99, 88], dtype=dtypes.int)
-    n = np.zeros((4, 3), dtype=np.int32)
-    n[[0, 2], 0] = [99, 88]
-    np.testing.assert_equal(t.numpy(), n)
-
-  def test_setitem_tensor_slice_indexing(self):
-    t = Tensor.zeros(4, 3, dtype=dtypes.int).contiguous()
-    t[Tensor([0, 2]), :2] = Tensor([[10, 20], [30, 40]], dtype=dtypes.int)
-    n = np.zeros((4, 3), dtype=np.int32)
-    n[[0, 2], :2] = [[10, 20], [30, 40]]
-    np.testing.assert_equal(t.numpy(), n)
-
   def test_setitem_2d_tensor_indexing(self):
     t = Tensor.zeros(2, dtype=dtypes.int).contiguous()
     index = Tensor([[0, 1], [1,0]])
@@ -251,11 +251,8 @@ class TestSetitem(unittest.TestCase):
     s1 = t.sum()
     t[3:].assign(2.0)
     s2 = t.sum()
-    try:
-      np.testing.assert_allclose([s0.item(), s1.item(), s2.item()], [0.0, 3.0, 9.0])
-    except AssertionError:
-      # TODO: broken now, lazy sums all see final buffer state
-      np.testing.assert_allclose([s0.item(), s1.item(), s2.item()], [9.0, 9.0, 9.0])
+    # TODO: s0 and s1 see final buffer state, should be [0.0, 3.0, 9.0]
+    np.testing.assert_allclose([s0.item(), s1.item(), s2.item()], [9.0, 9.0, 9.0])
 
     # eager version
     t = Tensor.zeros(6).contiguous().realize()
@@ -276,11 +273,8 @@ class TestSetitem(unittest.TestCase):
     a.assign(new_a)
     b.assign(new_b)
     np.testing.assert_allclose(a.numpy(), [4, 6, 8, 10])
-    try:
-      np.testing.assert_allclose(b.numpy(), [0, 2, 4, 6])
-    except AssertionError:
-      # TODO: broken now, new_b sees mutated a
-      np.testing.assert_allclose(b.numpy(), [8, 12, 16, 20])
+    # TODO: new_b sees mutated a, should be [0, 2, 4, 6]
+    np.testing.assert_allclose(b.numpy(), [8, 12, 16, 20])
 
     # eager version
     a = Tensor.arange(4, dtype=dtypes.float).contiguous().realize()
@@ -292,13 +286,6 @@ class TestSetitem(unittest.TestCase):
     np.testing.assert_allclose(a.numpy(), [4, 6, 8, 10])
     np.testing.assert_allclose(b.numpy(), [0, 2, 4, 6])
 
-  def test_setitem_multiple_disjoint_on_invalid(self):
-    z = Tensor.invalids(10, dtype="int").realize()
-    z[2:5] = 2
-    z[6:7] = 3
-    z.realize()
-    self.assertListEqual(z[2:5].tolist(), [2, 2, 2])
-    self.assertListEqual(z[6:7].tolist(), [3])
 
 class TestWithGrad(unittest.TestCase):
   def test_no_requires_grad_works(self):
@@ -306,65 +293,17 @@ class TestWithGrad(unittest.TestCase):
     x = Tensor.rand(8)
     z[:3] = x
 
+  def test_set_into_requires_grad(self):
+    z = Tensor.rand(8, 8, requires_grad=True)
+    x = Tensor.rand(8)
+    with self.assertRaises(NotImplementedError):
+      z[:3] = x
+
   def test_set_with_requires_grad(self):
-    z = Tensor.ones(8, 8)
-    x = Tensor.rand(8, 8, requires_grad=True)
-    z[:] = x
-    z.sum().backward()
-    np.testing.assert_allclose(x.grad.numpy(), np.ones((8, 8)))
-
-  def test_set_nonleaf_requires_grad(self):
-    x = Tensor([1.0, 2.0, 3.0, 4.0], requires_grad=True)
-    z = x * 2
-    z[:2] = Tensor([10.0, 20.0])
-    z.sum().backward()
-    np.testing.assert_allclose(x.grad.numpy(), [0, 0, 2, 2])
-
-  def test_set_overlapping_requires_grad(self):
-    z = Tensor.zeros(6, requires_grad=True)
-    x = Tensor.ones(4, requires_grad=True)
-    y = Tensor.ones(4, requires_grad=True) * 2
-    z[:4] = x
-    z[2:] = y
-    z.sum().backward()
-    np.testing.assert_allclose(x.grad.numpy(), [1, 1, 0, 0])
-    np.testing.assert_allclose(y.grad.numpy(), np.ones(4))
-
-  def test_set_iadd_requires_grad(self):
-    z = Tensor([1.0, 2.0, 3.0, 4.0], requires_grad=True)
-    x = Tensor([10.0, 20.0], requires_grad=True)
-    z[:2] += x
-    z.sum().backward()
-    np.testing.assert_allclose(z.grad.numpy(), np.ones(4))
-    np.testing.assert_allclose(x.grad.numpy(), np.ones(2))
-
-  def test_set_used_before_setitem(self):
-    z = Tensor([1.0, 2.0, 3.0, 4.0], requires_grad=True)
-    _ = z.sum()
-    with self.assertRaises(RuntimeError):
-      z[:2] = Tensor([0.0, 0.0])
-
-  def test_setitem_raises_with_unrealized_downstream(self):
-    x = Tensor([1.0, 2.0, 3.0, 4.0]).realize()
-    _y = x * 2.0
-    with self.assertRaises(RuntimeError):
-      x[0] = 99.0
-
-  def test_setitem_raises_on_unrealized_compute_base(self):
-    # y has a compute (unrealized) base; tmp is a view of y. eager: tmp would follow y's mutation. lazy: tmp keeps the old MUL graph.
-    x = Tensor([1.0, 2.0, 3.0, 4.0]).realize()
-    y = x * 2.0
-    _tmp = y[:1]
-    with self.assertRaises(RuntimeError):
-      y[0] = 99.0
-
-  def test_setitem_raises_on_aliased_uop(self):
-    # two Tensor objects sharing the exact same unrealized uop. setitem on one updates its uop, the other keeps the stale graph reference.
-    x = Tensor([1.0, 2.0, 3.0, 4.0]).realize()
-    y = x * 2.0
-    _z = Tensor(y.uop)
-    with self.assertRaises(RuntimeError):
-      y[0] = 99.0
+    z = Tensor.rand(8, 8)
+    x = Tensor.rand(8, requires_grad=True)
+    with self.assertRaises(NotImplementedError):
+      z[:3] = x
 
 class TestSetitemLoop(unittest.TestCase):
   def test_arange(self):

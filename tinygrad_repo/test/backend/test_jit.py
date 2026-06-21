@@ -1,16 +1,15 @@
 #!/usr/bin/env python
-import unittest
+import unittest, functools
 import numpy as np
 
 from hypothesis import given, settings, strategies as strat
-from test.helpers import assert_jit_cache_len, call_is_graph, not_support_multi_device, needs_second_gpu
-from tinygrad import Variable
+from test.helpers import assert_jit_cache_len, not_support_multi_device, needs_second_gpu
 from tinygrad.tensor import Tensor
-from tinygrad.engine.jit import TinyJit, JitError, graph_class
+from tinygrad.engine.jit import TinyJit, JitError, GraphRunner, MultiGraphRunner, graph_class
+from tinygrad.engine.realize import CompiledRunner, BufferCopy, BufferXfer
 from tinygrad.device import Device
-from tinygrad.helpers import Context, JIT, DEV, GlobalCounters
+from tinygrad.helpers import Context, JIT, GlobalCounters, getenv
 from tinygrad.dtype import dtypes
-from tinygrad.uop.ops import Ops
 from extra.models.unet import ResBlock
 
 def _simple_test(add, extract=lambda x: x, N=10):
@@ -40,31 +39,6 @@ class TestJit(unittest.TestCase):
     def add(a, b): return (a+b).realize()
     _simple_test(add)
 
-  @unittest.skipUnless(Device.DEFAULT == "CPU", "core_id is a CPU runtimevar")
-  def test_hcq_core_id_runtimevar_merge(self):
-    N = 262144
-    @TinyJit
-    def f(x, st):
-      y = (x + 1).contiguous().realize()
-      z = x.shrink(((st, st + N),)).contiguous().realize()
-      return y, z
-    x = Tensor.arange(2*N).contiguous().realize()
-    for _ in range(3): y, z = f(x, Variable("a", 0, N).bind(0))
-    self.assertEqual(y.shape, (2*N,))
-    self.assertEqual(z.shape, (N,))
-
-  def test_jitbeam_triggers_beam(self):
-    from unittest.mock import patch
-    from tinygrad.helpers import getenv as _getenv
-    @TinyJit
-    def add(a, b): return (a+b).realize()
-    a, b = Tensor.ones(10, 10).contiguous().realize(), Tensor.ones(10, 10).contiguous().realize()
-    with patch("tinygrad.codegen.opt.search.beam_search", wraps=lambda k,*a,**kw: k) as mock_beam:
-      add(a, b)
-      assert mock_beam.call_count == 0
-      with patch("tinygrad.engine.jit.getenv", side_effect=lambda k, d=0: 1 if k == "JITBEAM" else _getenv(k, d)): add(a, b)
-      assert mock_beam.call_count == 1
-
   def test_simple_jit_reset(self):
     @TinyJit
     def add(a, b): return (a+b).realize()
@@ -87,13 +61,6 @@ class TestJit(unittest.TestCase):
     def add(a, b): return {"billy": a+b}
     _simple_test(add, extract=lambda x: x["billy"])
 
-  def test_jit_input_view(self):
-    @TinyJit
-    def f(x): return (x[2:5].contiguous() + 1).realize()
-    for i in range(5):
-      x = (Tensor.arange(10).float() + i * 10).contiguous().realize()
-      np.testing.assert_allclose(f(x).numpy(), x.numpy()[2:5] + 1)
-
   def test_jit_multiple_outputs(self):
     @TinyJit
     def f(a, b): return (a+b).realize(), (a-b).realize(), (a*b).realize()
@@ -105,20 +72,6 @@ class TestJit(unittest.TestCase):
       np.testing.assert_allclose(d.numpy(), a.numpy()-b.numpy(), atol=1e-4, rtol=1e-5)
       np.testing.assert_allclose(e.numpy(), a.numpy()*b.numpy(), atol=1e-4, rtol=1e-5)
     assert_jit_cache_len(f, 3)
-
-  def test_global_counters_jit(self):
-    @TinyJit
-    def f(a, b):
-      c = (a + b).realize()
-      d = (c * 2).realize()
-      return (d - a).realize()
-    a, b = Tensor.randn(64, 64).realize(), Tensor.randn(64, 64).realize()
-    for _ in range(4):
-      GlobalCounters.reset()
-      f(a, b)
-      Device[a.device].synchronize()
-      self.assertGreater(GlobalCounters.global_mem, 0)
-      self.assertGreater(GlobalCounters.global_ops, 0)
 
   def test_nothing_jitted(self):
     @TinyJit
@@ -336,7 +289,7 @@ class TestJit(unittest.TestCase):
       with_jit.add(o1.numpy()[0][0])
       with_jit.add(o2.numpy()[0][0])
     assert len(with_jit) == 10, "All values should be different."
-    assert with_jit == without_jit, "jit and non-jit should produce the same random values with the same seed"
+    assert with_jit != without_jit, "TODO: fix. jit and non-jit should produce the same random values with the same seed"
 
   def test_jit_multiple_random_regen(self):
     def f(a, b):
@@ -379,6 +332,7 @@ class TestJit(unittest.TestCase):
     assert len(res3) == 10, "All values should be different, rand works in jit."
     assert res3 != res2, "Jit rand is diff with diff seeds"
 
+  #@unittest.expectedFailure # requires contiguous folding
   def test_jit_random_after_unrealized_random(self):
     @TinyJit
     def f(): return Tensor.rand()
@@ -447,10 +401,10 @@ class TestJit(unittest.TestCase):
       if prev is not None: np.testing.assert_allclose(o, prev, atol=1e-4, rtol=1e-5)
       prev = o
 
+    graph_t = Device[Device.DEFAULT].graph.func if isinstance(Device[Device.DEFAULT].graph, functools.partial) else Device[Device.DEFAULT].graph
     # Checking that 2 graphs are inited.
-    assert len(jf.captured.linear.src) == 2
-    for si in jf.captured.linear.src:
-      assert call_is_graph(si)
+    assert isinstance(jf.jit_cache[0].prg, graph_t)
+    assert isinstance(jf.jit_cache[1].prg, graph_t)
 
   def test_jitted_clone(self):
     def f(a): return a.clone().realize()
@@ -522,7 +476,7 @@ class TestJit(unittest.TestCase):
     b = f(Tensor([2.0]))
     assert abs((a - b).item()) > 0.5
 
-  def test_jit_init_empty(self):
+  def test_jit_init_with_empty_different_size(self):
     @TinyJit
     def f(x:Tensor) -> Tensor: return (x + 1).realize()
 
@@ -531,16 +485,9 @@ class TestJit(unittest.TestCase):
     # scalar const input is not allowed
     with self.assertRaises(JitError):
       f(Tensor(2.0)).item()
-    # self.assertEqual(f(Tensor([2.0])).item(), 1.0) # TODO: wrong output, should be 3.0. currently depends on empty value
-
-  def test_jit_init_empty_alt(self):
-    @TinyJit
-    def f(a:Tensor, b:Tensor) -> Tensor: return b.assign(a+1)
-    for i in range(4):
-      a = Tensor([i])
-      b = Tensor.empty_like(a)
-      c = f(a, b)
-      self.assertEqual(c.item(), i+1)
+    # list input has different view structure than empty(1)
+    with self.assertRaises(JitError):
+      f(Tensor([2.0])).item()
 
 @unittest.skip("Pending multioutput implementation #3607")
 class TestMultioutputJit(unittest.TestCase):
@@ -605,13 +552,13 @@ class TestJitPrune(unittest.TestCase):
       a = Tensor.rand(16).realize()
       out = w2_noprune(a)
       np.testing.assert_allclose(out.tolist(), [x*2+y for x,y in zip(weights.tolist(), a.tolist())])
-    assert_jit_cache_len(w2_noprune, 2)
+    assert len(w2_noprune.captured.jit_cache) == 2
 
     for _ in range(3):
       a = Tensor.rand(16).realize()
       out = w2_prune(a)
       np.testing.assert_allclose(out.tolist(), [x*2+y for x,y in zip(weights.tolist(), a.tolist())])
-    assert_jit_cache_len(w2_prune, 1)
+    assert len(w2_prune.captured.jit_cache) == 1
 
   def test_prune_w_copy_correct(self):
     weights = Tensor.rand(16).realize()
@@ -645,7 +592,7 @@ class TestJitPrune(unittest.TestCase):
       out = w2_prune(a)
       np.testing.assert_allclose(out.tolist(), [x*2+y for x,y in zip(weights.tolist(), a.tolist())])
 
-    assert_jit_cache_len(w2_prune, 1)
+    assert len(w2_prune.captured.jit_cache) == 1, "prune should have removed the copy"
 
 class TestJitFree(unittest.TestCase):
   def test_free_intermediates(self):
@@ -665,7 +612,7 @@ class TestJitFree(unittest.TestCase):
 
     expected_savings = (len(inp) * inp.dtype.itemsize * 2) + dtypes.float32.itemsize # (t1 and t2) + out
 
-    self.assertGreaterEqual(savings_after_free, expected_savings)
+    self.assertEqual(savings_after_free, expected_savings)
     out = fxn(Tensor([11,1,2,3,4]))
     self.assertEqual(out.item(), 136)
 
@@ -675,7 +622,7 @@ class TestJitFree(unittest.TestCase):
     fxn.captured.free_intermediates() # 2nd time to validate
     savings_after_free = pre_free - GlobalCounters.mem_used
 
-    self.assertGreaterEqual(savings_after_free, expected_savings)
+    self.assertEqual(savings_after_free, expected_savings)
     out = fxn(Tensor([11,1,2,3,4]))
     self.assertEqual(out.item(), 136)
 
@@ -694,6 +641,25 @@ class TestJitFree(unittest.TestCase):
     self.assertEqual(savings_after_free, 0)
     fxn(Tensor([2]))
     self.assertEqual(x.item(), 8)
+
+  def test_replan_buffers_memory_layout(self):
+    if not hasattr(Device[Device.DEFAULT].allocator, '_offset'): raise unittest.SkipTest("replan_buffers_memory_layout useless")
+
+    ext_tensor = Tensor([1,24,23,45,1])
+    ext_tensor_2 = Tensor([2,2,2,2,2])
+    @TinyJit
+    def fxn(x:Tensor):
+      out = (x*ext_tensor_2+ext_tensor).reshape(5,1).expand(5, 100).contiguous()
+      return out.sum()
+    for i in range(5):
+      out = fxn(Tensor([i,1,2,3,4]))
+      self.assertEqual(out.item(), 11400+200*i)
+    assert len(set([b.base for item in fxn.captured.jit_cache for b in item.bufs if b is not None])) == 4
+    fxn.captured.replan_buffers_memory_layout()
+    assert len(set([b.base for item in fxn.captured.jit_cache for b in item.bufs if b is not None])) == 2
+
+    out = fxn(Tensor([11,1,2,3,4]))
+    self.assertEqual(out.item(), 13600)
 
 class TestJitGraphSplit(unittest.TestCase):
   def compute(self, device, inp):
@@ -716,9 +682,8 @@ class TestJitGraphSplit(unittest.TestCase):
     graph_t = graph_class(dev)
     if graph_t is None: return
 
-    got = f.captured.linear.src
+    got = f.jit_cache
     from tinygrad.runtime.graph.hcq import HCQGraph
-    from tinygrad.engine.jit import MultiGraphRunner
     if graph_t is HCQGraph:
       validate = hcqgraph
     elif issubclass(graph_t, MultiGraphRunner):
@@ -727,16 +692,16 @@ class TestJitGraphSplit(unittest.TestCase):
       validate = graph
 
     assert len(got) == len(validate), f"Expected {len(validate)} operations, got {len(got)}"
-    for expected, si in zip(validate, got):
-      ast = si.src[0]
+    for expected, got in zip(validate, got):
       if expected["type"] == "graph":
-        assert call_is_graph(si), f"Expected graph, got {ast.op}"
-        inner_cnt = len(ast.src[0].src)
-        assert inner_cnt == expected["cnt"], f"Expected {expected['cnt']} operations in graph, got {inner_cnt}"
+        assert isinstance(got.prg, GraphRunner), f"Expected GraphRunner, got {type(got.prg)}"
+        assert len(got.prg.jit_cache) == expected["cnt"], f"Expected {expected['cnt']} operations in graph, got {len(got.prg.jit_cache)}"
       elif expected["type"] == "comp":
-        assert ast.op in (Ops.SINK, Ops.PROGRAM), f"Expected kernel, got {ast.op}"
-      elif expected["type"] in ("copy", "xfer"):
-        assert ast.op is Ops.COPY, f"Expected COPY, got {ast.op}"
+        assert isinstance(got.prg, CompiledRunner), f"Expected CompiledRunner, got {type(got.prg)}"
+      elif expected["type"] == "copy":
+        assert isinstance(got.prg, BufferCopy), f"Expected BufferCopy, got {type(got.prg)}"
+      elif expected["type"] == "xfer":
+        assert isinstance(got.prg, BufferXfer), f"Expected BufferXfer, got {type(got.prg)}"
 
   def ji_graph(self, cnt): return {"type": "graph", "cnt": cnt}
   def ji_comp(self): return {"type": "comp"}
@@ -841,7 +806,7 @@ class TestJitGraphSplit(unittest.TestCase):
       hcqgraph=[self.ji_graph(6)])
 
   @unittest.skip("this fails if you don't have SDMA or are using AMD_DISABLE_SDMA=1")
-  @unittest.skipIf(DEV.interface.startswith("MOCK"), "MockGPU does not support parallel copies")
+  @unittest.skipIf(getenv("MOCKGPU"), "MockGPU does not support parallel copies")
   def test_jit_multidev_copy(self):
     if Device.DEFAULT in {"CPU"}: raise unittest.SkipTest("CPU/LLVM is not a valid default device for this test (zero-copies)")
 

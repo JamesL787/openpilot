@@ -1,17 +1,16 @@
-import unittest, ctypes, struct, os, random, numpy as np, time
+import unittest, ctypes, struct, os, random, numpy as np
 from tinygrad import Device, Tensor, dtypes
-from tinygrad.helpers import mv_address, DEBUG, DEV
-from test.helpers import slow, replace_opts
+from tinygrad.helpers import getenv, mv_address, DEBUG
+from test.helpers import slow
 from tinygrad.device import Buffer, BufferSpec
 from tinygrad.runtime.support.hcq import HCQCompiled, HCQBuffer
 from tinygrad.runtime.autogen import libc
 from tinygrad.runtime.support.system import PCIIfaceBase
-from tinygrad.engine.realize import get_runtime
-from tinygrad.codegen import to_program
+from tinygrad.engine.realize import get_runner, CompiledRunner, get_program
 from tinygrad.codegen.opt import Opt, OptOps
 from tinygrad import Variable
 
-MOCKGPU = DEV.interface.startswith("MOCK")
+MOCKGPU = getenv("MOCKGPU")
 
 @unittest.skipUnless(issubclass(type(Device[Device.DEFAULT]), HCQCompiled), "HCQ device required to run")
 class TestHCQ(unittest.TestCase):
@@ -20,14 +19,13 @@ class TestHCQ(unittest.TestCase):
     TestHCQ.d0 = Device[Device.DEFAULT]
     TestHCQ.a = Tensor([0.,1.], device=Device.DEFAULT).realize()
     TestHCQ.b = self.a + 1
-    si = self.b.schedule_linear().src[-1]
+    si = self.b.schedule()[-1]
 
-    TestHCQ.prg = to_program(si.src[0], TestHCQ.d0.renderer)
-    TestHCQ.runtime = get_runtime(TestHCQ.d0.device, TestHCQ.prg)
+    TestHCQ.runner = get_runner(TestHCQ.d0.device, si.ast)
     TestHCQ.b.uop.buffer.allocate()
 
-    TestHCQ.kernargs_ba_ptr = TestHCQ.runtime.fill_kernargs([TestHCQ.b.uop.buffer._buf, TestHCQ.a.uop.buffer._buf])
-    TestHCQ.kernargs_ab_ptr = TestHCQ.runtime.fill_kernargs([TestHCQ.a.uop.buffer._buf, TestHCQ.b.uop.buffer._buf])
+    TestHCQ.kernargs_ba_ptr = TestHCQ.runner._prg.fill_kernargs([TestHCQ.b.uop.buffer._buf, TestHCQ.a.uop.buffer._buf])
+    TestHCQ.kernargs_ab_ptr = TestHCQ.runner._prg.fill_kernargs([TestHCQ.a.uop.buffer._buf, TestHCQ.b.uop.buffer._buf])
 
   def setUp(self):
     TestHCQ.d0.synchronize()
@@ -78,7 +76,7 @@ class TestHCQ(unittest.TestCase):
         TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
         TestHCQ.d0.timeline_value += 1
 
-  @unittest.skipIf(Device.DEFAULT == "CPU" or (DEV.interface == "MOCKPCI" and DEV.device == "AMD"), "Can't handle async update on CPU/MOCKPCI device")
+  @unittest.skipIf(Device.DEFAULT in {"CPU"}, "Can't handle async update on CPU device")
   def test_wait_late_set(self):
     for queue_type in [TestHCQ.d0.hw_compute_queue_t, TestHCQ.d0.hw_copy_queue_t]:
       if queue_type is None: continue
@@ -115,7 +113,7 @@ class TestHCQ(unittest.TestCase):
 
   # Test exec
   def test_exec_one_kernel(self):
-    TestHCQ.d0.hw_compute_queue_t().exec(TestHCQ.runtime, TestHCQ.kernargs_ba_ptr, TestHCQ.prg.arg.global_size, TestHCQ.prg.arg.local_size) \
+    TestHCQ.d0.hw_compute_queue_t().exec(TestHCQ.runner._prg, TestHCQ.kernargs_ba_ptr, TestHCQ.runner.p.global_size, TestHCQ.runner.p.local_size) \
                                    .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
 
     TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
@@ -129,8 +127,8 @@ class TestHCQ(unittest.TestCase):
 
     q = TestHCQ.d0.hw_compute_queue_t()
     q.wait(TestHCQ.d0.timeline_signal, virt_val - 1) \
-     .exec(TestHCQ.runtime, TestHCQ.kernargs_ba_ptr, TestHCQ.prg.arg.global_size, TestHCQ.prg.arg.local_size) \
-     .exec(TestHCQ.runtime, TestHCQ.kernargs_ab_ptr, TestHCQ.prg.arg.global_size, TestHCQ.prg.arg.local_size) \
+     .exec(TestHCQ.runner._prg, TestHCQ.kernargs_ba_ptr, TestHCQ.runner.p.global_size, TestHCQ.runner.p.local_size) \
+     .exec(TestHCQ.runner._prg, TestHCQ.kernargs_ab_ptr, TestHCQ.runner.p.global_size, TestHCQ.runner.p.local_size) \
      .signal(TestHCQ.d0.timeline_signal, virt_val)
 
     for _ in range(100):
@@ -142,11 +140,11 @@ class TestHCQ(unittest.TestCase):
 
   @unittest.skipIf(Device.DEFAULT in {"CPU"}, "No globals/locals on LLVM/CPU")
   def test_exec_update(self):
-    sint_global = (Variable("sint_global", 0, 0xffffffff, dtypes.uint32),) + tuple(TestHCQ.prg.arg.global_size[1:])
-    sint_local = (Variable("sint_local", 0, 0xffffffff, dtypes.uint32),) + tuple(TestHCQ.prg.arg.local_size[1:])
+    sint_global = (Variable("sint_global", 0, 0xffffffff, dtypes.uint32),) + tuple(TestHCQ.runner.p.global_size[1:])
+    sint_local = (Variable("sint_local", 0, 0xffffffff, dtypes.uint32),) + tuple(TestHCQ.runner.p.local_size[1:])
 
     q = TestHCQ.d0.hw_compute_queue_t()
-    q.exec(TestHCQ.runtime, TestHCQ.kernargs_ba_ptr, sint_global, sint_local) \
+    q.exec(TestHCQ.runner._prg, TestHCQ.kernargs_ba_ptr, sint_global, sint_local) \
      .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value)
 
     q.submit(TestHCQ.d0, {sint_global[0].expr: 1, sint_local[0].expr: 1})
@@ -165,19 +163,18 @@ class TestHCQ(unittest.TestCase):
 
     a = Tensor.randint((3, 3, 3), dtype=dtypes.int, device=Device.DEFAULT).realize()
     b = a + 1
-    si = b.schedule_linear().src[-1]
+    si = b.schedule()[-1]
 
-    prg = to_program(replace_opts(si.src[0], [Opt(op=OptOps.LOCAL, axis=0, arg=3) for _ in range(3)]), TestHCQ.d0.renderer)
-    runtime = get_runtime(Device.DEFAULT, prg)
+    runner = CompiledRunner(get_program(si.ast, TestHCQ.d0.renderer, opts=[Opt(op=OptOps.LOCAL, axis=0, arg=3) for _ in range(3)]))
 
     zb = Buffer(Device.DEFAULT, 3 * 3 * 3, dtypes.int, options=BufferSpec(cpu_access=True, nolru=True)).ensure_allocated()
     zt = Buffer(Device.DEFAULT, 3 * 3 * 3, dtypes.int, options=BufferSpec(cpu_access=True, nolru=True)).ensure_allocated()
     ctypes.memset(zb._buf.va_addr, 0, zb.nbytes)
-    kernargs = runtime.fill_kernargs([zt._buf, zb._buf])
+    kernargs = runner._prg.fill_kernargs([zt._buf, zb._buf])
 
     q = TestHCQ.d0.hw_compute_queue_t()
     q.memory_barrier() \
-     .exec(runtime, kernargs, (1,1,1), virt_local) \
+     .exec(runner._prg, kernargs, (1,1,1), virt_local) \
      .signal(TestHCQ.d0.timeline_signal, virt_val)
 
     for x in range(1, 4):
@@ -197,7 +194,7 @@ class TestHCQ(unittest.TestCase):
     if TestHCQ.d0.hw_copy_queue_t is None: self.skipTest("device does not support copy queue")
 
     TestHCQ.d0.hw_copy_queue_t().wait(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value - 1) \
-                                .copy(TestHCQ.b.uop.buffer._buf, TestHCQ.a.uop.buffer._buf, 8) \
+                                .copy(TestHCQ.b.uop.buffer._buf.va_addr, TestHCQ.a.uop.buffer._buf.va_addr, 8) \
                                 .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
 
     TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
@@ -215,7 +212,7 @@ class TestHCQ(unittest.TestCase):
     ctypes.memset(buf2._buf.va_addr, 1, sz)
 
     TestHCQ.d0.hw_copy_queue_t().wait(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value - 1) \
-                                .copy(buf1._buf, buf2._buf, sz) \
+                                .copy(buf1._buf.va_addr, buf2._buf.va_addr, sz) \
                                 .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
 
     TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
@@ -239,7 +236,7 @@ class TestHCQ(unittest.TestCase):
         for j in range(32): buf2_q_view[min(max(i + j - 16, 0), (sz // 8) - 1)] = random.randint(0, 0xffffffffffffffff)
 
       TestHCQ.d0.hw_copy_queue_t().wait(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value - 1) \
-                                  .copy(buf1._buf, buf2._buf, sz) \
+                                  .copy(buf1._buf.va_addr, buf2._buf.va_addr, sz) \
                                   .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
 
       TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
@@ -255,7 +252,7 @@ class TestHCQ(unittest.TestCase):
     virt_dest_addr = Variable("virt_dest_addr", 0, 0xffffffffffffffff, dtypes.uint64)
 
     q = TestHCQ.d0.hw_copy_queue_t().wait(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value - 1) \
-                                    .copy(HCQBuffer(virt_dest_addr, 8), HCQBuffer(virt_src_addr, 8), 8) \
+                                    .copy(virt_dest_addr, virt_src_addr, 8) \
                                     .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value)
 
     q.submit(TestHCQ.d0, {virt_src_addr.expr: TestHCQ.a.uop.buffer._buf.va_addr, virt_dest_addr.expr: TestHCQ.b.uop.buffer._buf.va_addr})
@@ -278,7 +275,7 @@ class TestHCQ(unittest.TestCase):
     ctypes.memset(buf2._buf.va_addr, 1, sz)
 
     q = TestHCQ.d0.hw_copy_queue_t().wait(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value - 1) \
-                                    .copy(HCQBuffer(virt_dest_addr, sz), HCQBuffer(virt_src_addr, sz), sz) \
+                                    .copy(virt_dest_addr, virt_src_addr, sz) \
                                     .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value)
 
     q.submit(TestHCQ.d0, {virt_src_addr.expr: buf2._buf.va_addr, virt_dest_addr.expr: buf1._buf.va_addr})
@@ -331,7 +328,7 @@ class TestHCQ(unittest.TestCase):
   def test_speed_exec_time(self):
     sig_st, sig_en = TestHCQ.d0.new_signal(), TestHCQ.d0.new_signal()
     TestHCQ.d0.hw_compute_queue_t().timestamp(sig_st) \
-                                   .exec(TestHCQ.runtime, TestHCQ.kernargs_ba_ptr, TestHCQ.prg.arg.global_size, TestHCQ.prg.arg.local_size) \
+                                   .exec(TestHCQ.runner._prg, TestHCQ.kernargs_ba_ptr, TestHCQ.runner.p.global_size, TestHCQ.runner.p.local_size) \
                                    .timestamp(sig_en) \
                                    .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
 
@@ -353,7 +350,7 @@ class TestHCQ(unittest.TestCase):
 
     sig_st, sig_en = TestHCQ.d0.new_signal(), TestHCQ.d0.new_signal()
     TestHCQ.d0.hw_copy_queue_t().timestamp(sig_st) \
-                                .copy(a._buf, b._buf, SZ) \
+                                .copy(a._buf.va_addr, b._buf.va_addr, SZ) \
                                 .timestamp(sig_en) \
                                 .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
 
@@ -380,7 +377,7 @@ class TestHCQ(unittest.TestCase):
 
     sig_st, sig_en = TestHCQ.d0.new_signal(), TestHCQ.d0.new_signal()
     TestHCQ.d0.hw_copy_queue_t().timestamp(sig_st) \
-                                .copy(a._buf, b._buf, SZ) \
+                                .copy(a._buf.va_addr, b._buf.va_addr, SZ) \
                                 .timestamp(sig_en) \
                                 .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
 
@@ -419,7 +416,7 @@ class TestHCQ(unittest.TestCase):
       ctypes.memset(buf2._buf.va_addr, i, 1)
 
       TestHCQ.d0.hw_copy_queue_t().wait(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value - 1) \
-                                  .copy(buf1._buf, buf2._buf, 1) \
+                                  .copy(buf1._buf.va_addr, buf2._buf.va_addr, 1) \
                                   .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
       TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
       TestHCQ.d0.timeline_value += 1
@@ -437,8 +434,8 @@ class TestHCQ(unittest.TestCase):
       ctypes.memset(buf3._buf.va_addr, i, 1)
 
       TestHCQ.d0.hw_copy_queue_t().wait(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value - 1) \
-                                  .copy(buf1._buf, buf3._buf, 1) \
-                                  .copy(buf2._buf, buf1._buf, 1) \
+                                  .copy(buf1._buf.va_addr, buf3._buf.va_addr, 1) \
+                                  .copy(buf2._buf.va_addr, buf1._buf.va_addr, 1) \
                                   .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
       TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
       TestHCQ.d0.timeline_value += 1
@@ -460,8 +457,8 @@ class TestHCQ(unittest.TestCase):
       ctypes.memset(buf3._buf.va_addr, i, 1)
 
       TestHCQ.d0.hw_copy_queue_t().wait(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value - 1) \
-                                  .copy(buf1._buf, buf3._buf, 1) \
-                                  .copy(buf2._buf, buf1._buf, 1) \
+                                  .copy(buf1._buf.va_addr, buf3._buf.va_addr, 1) \
+                                  .copy(buf2._buf.va_addr, buf1._buf.va_addr, 1) \
                                   .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
       TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
       TestHCQ.d0.timeline_value += 1
@@ -471,13 +468,12 @@ class TestHCQ(unittest.TestCase):
   def test_memory_barrier(self):
     a = Tensor([0, 1], device=Device.DEFAULT, dtype=dtypes.int8).realize()
     b = a + 1
-    prg = to_program(b.schedule_linear().src[-1].src[0], TestHCQ.d0.renderer)
-    runtime = get_runtime(TestHCQ.d0.device, prg)
+    runner = get_runner(TestHCQ.d0.device, b.schedule()[-1].ast)
 
     buf1 = Buffer(Device.DEFAULT, 2, dtypes.int8, options=BufferSpec(nolru=True)).ensure_allocated()
     buf2 = Buffer(Device.DEFAULT, 2, dtypes.int8, options=BufferSpec(cpu_access=True, nolru=True)).ensure_allocated()
 
-    kernargs_ptr = runtime.fill_kernargs([buf1._buf, buf2._buf])
+    kernargs_ptr = runner._prg.fill_kernargs([buf1._buf, buf2._buf])
 
     for i in range(255):
       ctypes.memset(buf2._buf.va_addr, i, 2)
@@ -485,7 +481,7 @@ class TestHCQ(unittest.TestCase):
       # Need memory_barrier after direct write to vram
       TestHCQ.d0.hw_compute_queue_t().wait(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value - 1) \
                                      .memory_barrier() \
-                                     .exec(runtime, kernargs_ptr, prg.arg.global_size, prg.arg.local_size) \
+                                     .exec(runner._prg, kernargs_ptr, runner.p.global_size, runner.p.local_size) \
                                      .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
       TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
       TestHCQ.d0.timeline_value += 1
@@ -509,50 +505,13 @@ class TestHCQ(unittest.TestCase):
       TestHCQ.d0.timeline_value += 1
 
       TestHCQ.d0.hw_copy_queue_t().wait(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value - 1) \
-                                  .copy(buf1._buf, buf3._buf, 1) \
-                                  .copy(buf2._buf, buf1._buf, 1) \
+                                  .copy(buf1._buf.va_addr, buf3._buf.va_addr, 1) \
+                                  .copy(buf2._buf.va_addr, buf1._buf.va_addr, 1) \
                                   .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
       TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
       TestHCQ.d0.timeline_value += 1
 
       assert buf2.as_memoryview()[0] == i
-
-  def test_write(self):
-    buf = Buffer(Device.DEFAULT, 4, dtypes.uint32, options=BufferSpec(cpu_access=True, nolru=True)).ensure_allocated()
-
-    try:
-      TestHCQ.d0.hw_compute_queue_t().write(buf._buf, 0x42) \
-                                     .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
-    except NotImplementedError: self.skipTest("write not implemented")
-
-    TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
-    TestHCQ.d0.timeline_value += 1
-
-    assert buf.as_memoryview().cast("I")[0] == 0x42
-
-  def test_poll_bit_set(self):
-    buf = Buffer(Device.DEFAULT, 4, dtypes.uint32, options=BufferSpec(cpu_access=True, nolru=True)).ensure_allocated()
-
-    try:
-      TestHCQ.d0.hw_compute_queue_t().write(buf._buf, 0x01000000, b64=False) \
-                                     .poll_bit(buf._buf, 0x01000000, 0x01000000) \
-                                     .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
-    except NotImplementedError: self.skipTest("write/poll_bit not implemented")
-
-    TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
-    TestHCQ.d0.timeline_value += 1
-
-  def test_poll_bit_clear(self):
-    buf = Buffer(Device.DEFAULT, 4, dtypes.uint32, options=BufferSpec(cpu_access=True, nolru=True)).ensure_allocated()
-
-    try:
-      TestHCQ.d0.hw_compute_queue_t().write(buf._buf, 0xFE000000, b64=False) \
-                                     .poll_bit(buf._buf, 0, 0x01000000) \
-                                     .signal(TestHCQ.d0.timeline_signal, TestHCQ.d0.timeline_value).submit(TestHCQ.d0)
-    except NotImplementedError: self.skipTest("write/poll_bit not implemented")
-
-    TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value)
-    TestHCQ.d0.timeline_value += 1
 
   def test_map_cpu_buffer_to_device(self):
     if Device[Device.DEFAULT].hw_copy_queue_t is None: self.skipTest("skip device without copy queue")
@@ -572,14 +531,14 @@ class TestHCQ(unittest.TestCase):
       d.allocator.map(cpu_buffer._buf)
 
       d.hw_copy_queue_t().wait(d.timeline_signal, d.timeline_value - 1) \
-                         .copy(local_buf._buf, cpu_buffer._buf, sz) \
+                         .copy(local_buf._buf.va_addr, cpu_buffer._buf.va_addr, sz) \
                          .signal(d.timeline_signal, d.timeline_value).submit(d)
       d.timeline_signal.wait(d.timeline_value)
       d.timeline_value += 1
 
       np.testing.assert_equal(cpu_buffer.numpy(), local_buf.numpy(), "failed")
 
-  @unittest.skipUnless(MOCKGPU and not (DEV.device == "AMD" and DEV.interface == "MOCKPCI"), "Emulate this on MOCKGPU to check the path in CI")
+  @unittest.skipUnless(MOCKGPU, "Emulate this on MOCKGPU to check the path in CI")
   def test_on_device_hang(self):
     if not hasattr(self.d0, 'on_device_hang'): self.skipTest("device does not have on_device_hang")
 
@@ -621,33 +580,6 @@ class TestHCQ(unittest.TestCase):
       np.testing.assert_equal(buf1.numpy(), buf2.numpy(), "p2p failed")
     _check_copy("AMD", "NV")
     _check_copy("NV", "AMD")
-
-  def test_speed_cross_device_rdma_copy_bandwidth(self):
-    try: d1 = Device[f"{Device.DEFAULT}:7"]
-    except Exception: self.skipTest("no multidevice, test skipped")
-
-    if TestHCQ.d0.peer_group == d1.peer_group: self.skipTest("devices in same peer group, no RDMA path")
-
-    SZ = 200_000_000
-    a = Buffer(Device.DEFAULT, SZ, dtypes.uint8, options=BufferSpec(nolru=True)).allocate()
-    b = Buffer(f"{Device.DEFAULT}:7", SZ, dtypes.uint8, options=BufferSpec(nolru=True)).allocate()
-
-    # warmup
-    TestHCQ.d0.allocator._transfer(a._buf, b._buf, SZ, src_dev=d1, dest_dev=TestHCQ.d0)
-    TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value - 1)
-    d1.timeline_signal.wait(d1.timeline_value - 1)
-
-    st = time.perf_counter()
-    TestHCQ.d0.allocator._transfer(a._buf, b._buf, SZ, src_dev=d1, dest_dev=TestHCQ.d0)
-    TestHCQ.d0.timeline_signal.wait(TestHCQ.d0.timeline_value - 1)
-    d1.timeline_signal.wait(d1.timeline_value - 1)
-    et_ms = (time.perf_counter() - st) * 1e3
-
-    gb_s = ((SZ / 1e9) / et_ms) * 1e3
-    print(f"cross device rdma copy: {et_ms:.2f} ms, {gb_s:.2f} GB/s")
-    assert 1 <= gb_s <= 100
-
-    np.testing.assert_equal(a.numpy(), b.numpy(), "failed")
 
 if __name__ == "__main__":
   unittest.main()
