@@ -154,7 +154,7 @@ def cuMemHostAlloc(pp, bytesize: int, flags: int) -> int:
 def cuMemFreeHost(p: ctypes.c_void_p) -> int: return cuMemFree_v2(p)
 
 def cuMemcpyDtoDAsync_v2(dst, src, bytesize: int, stream: Any) -> int:
-  ctypes.memmove(dst.value, src.value, bytesize)
+  ctypes.memmove(dst if isinstance(dst, int) else dst.value, src if isinstance(src, int) else src.value, bytesize)
   return orig_cuda.CUDA_SUCCESS
 
 def cuFuncSetAttribute(hfunc, attrib: int, value: int) -> int:
@@ -168,4 +168,8 @@ def cuGetErrorString(error: int, pStr) -> int:
   buf = ctypes.create_string_buffer(error_str)
   # Set the pointer to point to our error string buffer
   pStr._obj.value = ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))
+  return orig_cuda.CUDA_SUCCESS
+
+def cuDeviceGetCount(count) -> int:
+  count._obj.value = 1
   return orig_cuda.CUDA_SUCCESS

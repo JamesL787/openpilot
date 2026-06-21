@@ -4,7 +4,9 @@ from functools import partial
 from tinygrad import nn, dtypes, Tensor, Device, TinyJit, Variable
 from tinygrad.helpers import getenv, CI, OSX
 from tinygrad.device import is_dtype_supported
-from tinygrad.engine.realize import CompiledRunner
+from tinygrad.codegen import to_program
+
+from tinygrad.uop.ops import Ops
 from tinygrad.renderer.ptx import PTXRenderer
 from tinygrad.renderer.nir import NIRRenderer
 from test.helpers import not_support_multi_device, needs_second_gpu
@@ -62,7 +64,7 @@ def equal_distribution(tiny_func, torch_func=None, numpy_func=None, shape=(40, 4
   return (numpy_func is None or (kstest(x1, y) >= alpha and kstest(x2, y) >= alpha)) and \
     (torch_func is None or (kstest(x1, z) >= alpha and kstest(x2, z) >= alpha))
 
-def normal_test(func, shape=(20, 23), alpha=0.05): return equal_distribution(func, numpy_func=lambda x: np.random.randn(*x), shape=shape, alpha=alpha)
+def normal_test(func, shape=(20, 45), alpha=0.05): return equal_distribution(func, numpy_func=lambda x: np.random.randn(*x), shape=shape, alpha=alpha)
 
 class TestRandomness(unittest.TestCase):
   def test_rand(self):
@@ -117,12 +119,13 @@ class TestRandomness(unittest.TestCase):
 
   @unittest.skipIf(isinstance(Device[Device.DEFAULT].renderer, (NIRRenderer, PTXRenderer)), "PTX and NIR use pointer arithmetic")
   def test_threefry_doesnt_use_long(self):
-    sched = Tensor.rand(20).schedule()
-    for si in sched:
-      si.lower()
-      if isinstance(si.prg, CompiledRunner):
-        for u in si.prg.p.uops:
-          self.assertNotIn(u.dtype, {dtypes.long, dtypes.ulong}, msg=f"long found in {si.prg.p.name}")
+    linear = Tensor.rand(20).schedule_linear()
+    for call in linear.src:
+      ast = call.src[0]
+      if ast.op is Ops.SINK:
+        prg = to_program(ast, renderer=Device[Device.DEFAULT].renderer)
+        for u in tuple(prg.src[2].src):
+          self.assertNotIn(u.dtype, {dtypes.long, dtypes.ulong}, msg=f"long found in {prg.arg.name}")
 
   def test_threefry_against_reference_full(self):
     Tensor.manual_seed(1337)
@@ -131,29 +134,32 @@ class TestRandomness(unittest.TestCase):
     """
     key0 = 1337
     key1 = int.from_bytes(hashlib.sha256(int(0).to_bytes(4)).digest(), "big") & 0xffffffff
-    values = jax.extend.random.threefry_2x32((np.uint32(key1), np.uint32(key0)), np.arange(20, dtype=np.uint32))
+    # derive new key for the counter offset (c_low=0, c_high=0 for first call)
+    new_key_values = jax.extend.random.threefry_2x32((np.uint32(key1), np.uint32(key0)), np.array([0, 0], dtype=np.uint32))
+    new_key = (np.uint32(new_key_values[0]), np.uint32(new_key_values[1]))
+    values = jax.extend.random.threefry_2x32(new_key, np.arange(20, dtype=np.uint32))
     values = (values >> (32 - 23)) | np.array(1, dtype=np.float32).view(np.uint32)
-    values =  values.view(np.float32) - 1
+    values = values.view(np.float32) - 1
     print(f"[{', '.join(f'{v}' for v in values)}]")
     """
-    jr = np.array([0.9073467254638672, 0.8235964775085449, 0.6872662305831909, 0.9920015335083008, 0.4941047430038452,
-                   0.3108327388763428, 0.09639489650726318, 0.004686474800109863, 0.8435229063034058, 0.824237585067749,
-                   0.5873836278915405, 0.4232727289199829, 0.2530076503753662, 0.40300023555755615, 0.03966474533081055,
-                   0.27904558181762695, 0.9150195121765137, 0.48057758808135986, 0.23821306228637695, 0.7676635980606079], dtype=np.float32)
+    jr = np.array([0.45735931396484375, 0.6311527490615845, 0.15571284294128418, 0.8149417638778687, 0.7862188816070557,
+                   0.8008807897567749, 0.568588376045227, 0.9852620363235474, 0.42314577102661133, 0.9811755418777466,
+                   0.38059568405151367, 0.09186363220214844, 0.9497315883636475, 0.5826880931854248, 0.3796330690383911,
+                   0.5610522031784058, 0.16122901439666748, 0.3732343912124634, 0.9795231819152832, 0.3280656337738037], dtype=np.float32)
     r = Tensor.rand(20).numpy()
     np.testing.assert_allclose(r, jr, atol=1e-5, rtol=1e-5)
 
-    # next 20, np.arange(20, 40, dtype=np.uint32)
-    jr = np.array([0.7444133758544922, 0.7713677883148193, 0.8233780860900879, 0.43871235847473145, 0.517757773399353,
-                   0.6437174081802368, 0.967403769493103, 0.26167726516723633, 0.6825339794158936, 0.14966607093811035,
-                   0.28920769691467285, 0.017063498497009277, 0.2627382278442383, 0.9525482654571533, 0.9351049661636353,
-                   0.43904995918273926, 0.043945908546447754, 0.6616791486740112, 0.6667773723602295, 0.5228077173233032], dtype=np.float32)
+    # next 20 (c_low=20, c_high=0)
+    jr = np.array([0.09199333190917969, 0.9130761623382568, 0.7048608064651489, 0.22254979610443115, 0.0014830827713012695,
+                   0.37023448944091797, 0.7790107727050781, 0.7484984397888184, 0.7524604797363281, 0.19875383377075195,
+                   0.48537540435791016, 0.10002851486206055, 0.5369305610656738, 0.3294715881347656, 0.5246957540512085,
+                   0.7659651041030884, 0.7949080467224121, 0.34988296031951904, 0.9798505306243896, 0.2599533796310425], dtype=np.float32)
     r = Tensor.rand(20).numpy()
     np.testing.assert_allclose(r, jr, atol=1e-5, rtol=1e-5)
 
-    # next 10, np.arange(40, 50, dtype=np.uint32)
-    jr = np.array([0.9614430665969849, 0.059279561042785645, 0.01909029483795166, 0.47882091999053955, 0.9677121639251709,
-                   0.36863112449645996, 0.3102607727050781, 0.06608951091766357, 0.35329878330230713, 0.26518797874450684], dtype=np.float32)
+    # next 10 (c_low=40, c_high=0)
+    jr = np.array([0.3198714256286621, 0.7984923124313354, 0.320881724357605, 0.4716068506240845, 0.7323365211486816,
+                   0.9663800001144409, 0.13873648643493652, 0.16062307357788086, 0.49300849437713623, 0.10077548027038574], dtype=np.float32)
     r = Tensor.rand(10).numpy()
     np.testing.assert_allclose(r, jr, atol=1e-5, rtol=1e-5)
 
@@ -184,24 +190,24 @@ class TestRandomness(unittest.TestCase):
 
     Tensor.rand(1).realize()
 
-    s = Tensor.rand(20).schedule()
-    s2 = Tensor.rand(20).schedule()
+    s = Tensor.rand(20).schedule_linear().src
+    s2 = Tensor.rand(20).schedule_linear().src
 
     assert len(s) == len(s2), f"{len(s)} != {len(s2)}"
     for x,y in zip(s, s2):
-      if not (x.ast == y.ast):
-        print(f"{x.ast} != {y.ast}")
+      if not (x.src[0] == y.src[0]):
+        print(f"{x.src[0]} != {y.src[0]}")
 
     Tensor.rand(1, device=f"{Device.DEFAULT}:1").realize()
 
-    s3 = Tensor.rand(20, device=f"{Device.DEFAULT}:1").schedule()
-    s4 = Tensor.rand(20, device=f"{Device.DEFAULT}:1").schedule()
+    s3 = Tensor.rand(20, device=f"{Device.DEFAULT}:1").schedule_linear().src
+    s4 = Tensor.rand(20, device=f"{Device.DEFAULT}:1").schedule_linear().src
 
     assert len(s3) == len(s4), f"{len(s3)} != {len(s4)}"
     assert len(s2) == len(s4), f"{len(s)} != {len(s3)}"
     for x,y in zip(s3, s4):
-      if not (x.ast == y.ast):
-        print(f"{x.ast} != {y.ast}")
+      if not (x.src[0] == y.src[0]):
+        print(f"{x.src[0]} != {y.src[0]}")
 
   @unittest.skipUnless(is_dtype_supported(dtypes.bfloat16), "need bfloat16 support")
   def test_rand_bfloat16(self):
@@ -301,17 +307,26 @@ class TestRandomness(unittest.TestCase):
     with self.assertRaises(TypeError): Tensor.randint((3, 4), low=0, high=3.5)
     with self.assertRaises(TypeError): Tensor.randint((3, 4), low=1, high=3, dtype="float")
     with self.assertRaises(TypeError): Tensor.randint((3, 4), low=0, high=3, dtype=dtypes.float32)
+    # check low < high
+    with self.assertRaises(ValueError): Tensor.randint((3, 4), low=10, high=5)
+    with self.assertRaises(ValueError): Tensor.randint((3, 4), low=10, high=10)
+    np.testing.assert_array_equal(Tensor.randint(16, low=5, high=6).numpy(), 5)
 
   def test_normal(self):
     self.assertTrue(normal_test(Tensor.normal))
     self.assertTrue(equal_distribution(Tensor.normal, lambda x: torch.nn.init.normal_(torch.empty(x), mean=0, std=1),
                                                       lambda x: np.random.normal(loc=0, scale=1, size=x)))
+    # check std >= 0
+    with self.assertRaises(ValueError): Tensor.normal((3, 4), mean=0, std=-1)
 
   def test_uniform(self):
     self.assertFalse(normal_test(Tensor.uniform))
     self.assertTrue(equal_distribution(Tensor.uniform, lambda x: torch.nn.init.uniform_(torch.empty(x)), lambda x: np.random.uniform(size=x)))
     self.assertTrue(equal_distribution(partial(Tensor.uniform, low=-100, high=100, dtype=dtypes.int32),
                                        numpy_func=lambda x: np.random.randint(low=-100, high=100, size=x)))
+    # check low < high
+    with self.assertRaises(ValueError): Tensor.uniform((3, 4), low=5.0, high=3.0)
+    with self.assertRaises(ValueError): Tensor.uniform((3, 4), low=1.0, high=1.0)
 
   def test_scaled_uniform(self):
     self.assertFalse(normal_test(Tensor.scaled_uniform))
@@ -324,7 +339,7 @@ class TestRandomness(unittest.TestCase):
                                                               lambda x: np.random.uniform(-1, 1, size=x) * math.sqrt(6 / (x[0] + math.prod(x[1:])))))
 
   def test_kaiming_uniform(self):
-    for shape in [(32, 16, 3, 3), (20, 44), (3, 15, 35)]:
+    for shape in [(32, 16, 3, 3), (20, 44), (5, 15, 35)]:
       self.assertTrue(equal_distribution(Tensor.kaiming_uniform, lambda x: torch.nn.init.kaiming_uniform_(torch.empty(x)), shape=shape))
 
   def test_kaiming_normal(self):
@@ -346,7 +361,7 @@ class TestRandomness(unittest.TestCase):
     _check_with_torch(w=[0.231, 0., 1., 0.5], num_samples=300, replacement=True)
     _check_with_torch(w=[[0.2, 0.8]], num_samples=300, replacement=True)  # 2D but only 1 row
     _check_with_torch(w=[[0.453, 0., 1., 0.81], [0.1, 0.8, 0., 0.1]], num_samples=300, replacement=True)
-    # no-replacement isn't supported, unless taking only one sample
+    # no-replacement
     w = [0.1, 0.9]
     self.assertRaises(AssertionError, lambda: Tensor(w).multinomial(100, replacement=False))
 
@@ -357,6 +372,24 @@ class TestRandomness(unittest.TestCase):
     torch_samples = [torch.tensor(w).multinomial(1, replacement=False).item() for _ in range(1000)]
     self.assertTrue(equal_distribution(lambda *_: Tensor(tiny_samples), lambda _: torch.tensor(torch_samples)))
 
+    w = list(range(32))
+    s1 = Tensor(w).multinomial(5, replacement=False).numpy()
+    self.assertEqual(len(set(s1.tolist())), 5)
+    s2 = Tensor(w).multinomial(5, replacement=False).numpy()
+    self.assertFalse(np.array_equal(s1, s2))
+    full = Tensor(w).multinomial(len(w), replacement=False).numpy()
+    self.assertEqual(sorted(full.tolist()), w)
+
+    w = [0.1, 0.2, 0.3, 0.4]
+    @TinyJit
+    def sample_three(): return Tensor(w).multinomial(3, replacement=False).realize()
+
+    tiny_draws = np.array([sample_three().numpy() for _ in range(1000)])
+    torch_draws = np.array([torch.tensor(w).multinomial(3, replacement=False).numpy() for _ in range(1000)])
+    for pos in range(3):
+      self.assertTrue(equal_distribution(lambda *_: Tensor(tiny_draws[:, pos]), lambda _: torch.tensor(torch_draws[:, pos])))
+
+  @unittest.skip("this test is flaky")
   def test_multinomial_counterexample(self):
     tiny_res = Tensor([0.3, 0.6, 0.1]).multinomial(4000, replacement=True)
     torch_res = torch.tensor([0.3, 0.6, 0.1]).multinomial(4000, replacement=True)
@@ -383,6 +416,21 @@ class TestRandomness(unittest.TestCase):
     # NOTE: this fails if property propagates deeper than stack limit
     for _ in range(833): Tensor.rand(1)
     Tensor.rand(1).realize()
+
+  def test_random_counter_overflow(self):
+    device = Device.DEFAULT
+    Tensor.manual_seed(1337)
+    Tensor.rand(1).realize()
+
+    Tensor._device_rng_counters[device].assign(Tensor([dtypes.uint32.max - 5, 0], device=device, dtype=dtypes.uint32)).realize()
+
+    Tensor.rand(10).realize()
+    c = Tensor._device_rng_counters[device].numpy()
+    np.testing.assert_allclose(c, [4, 1])
+
+    Tensor.rand(10).realize()
+    c = Tensor._device_rng_counters[device].numpy()
+    np.testing.assert_allclose(c, [14, 1])
 
 # TODO: still fails with MAX_KERNEL_BUFFERS
 @unittest.skipIf(Device.DEFAULT == "WEBGPU" and not OSX, "WEBGPU Vulkan can only run kernels with up to 10 buffers")

@@ -6,7 +6,6 @@ from openpilot.common.basedir import BASEDIR
 def get_tinygrad_ref():
   repo_path = os.path.join(BASEDIR, "tinygrad_repo")
   git_path = os.path.join(repo_path, ".git")
-  ref_path = os.path.join(repo_path, "TINYGRAD_REF")
   try:
     if os.path.isdir(git_path):
       git_dir = git_path
@@ -21,11 +20,7 @@ def get_tinygrad_ref():
         return f.read().strip()
     return ref
   except Exception as e:
-    try:
-      with open(ref_path) as f:
-        return f.read().strip()
-    except Exception:
-      print(f"Error getting tinygrad_repo ref: {e}")
+    print(f"Error getting tinygrad_repo ref: {e}")
     return None
 
 
