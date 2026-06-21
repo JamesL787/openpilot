@@ -43,6 +43,20 @@ class TestRegistration:
       assert register() == dongle
       assert not m.called
 
+  def test_persist_recovers_unregistered_param(self, mocker):
+    # A stale UnregisteredDevice param should not mask a valid persisted dongle id.
+    self._generate_keys()
+
+    dongle = "DONGLE_ID_123"
+    m = mocker.patch("openpilot.system.athena.registration.api_get", autospec=True)
+    self.params.put("DongleId", UNREGISTERED_DONGLE_ID, block=True)
+    with open(self.dongle_id, "w") as f:
+      f.write(dongle)
+
+    assert register() == dongle
+    assert self.params.get("DongleId") == dongle
+    assert not m.called
+
   def test_no_keys(self, mocker):
     # missing pubkey
     m = mocker.patch("openpilot.system.athena.registration.api_get", autospec=True)
