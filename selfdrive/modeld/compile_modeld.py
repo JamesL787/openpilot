@@ -10,12 +10,10 @@ from collections import namedtuple, defaultdict
 import numpy as np
 
 def _patch_tinygrad_fetch_fw():
-  from tinygrad import helpers
-  if not hasattr(helpers, "fetch_fw"):
-    return
   import hashlib
   import pathlib
   import zstandard
+  from tinygrad import helpers
   _orig = helpers.fetch_fw
   def fetch_fw(path, name, sha256):
     p = pathlib.Path(f"/lib/firmware/{path}/{name}.zst")
