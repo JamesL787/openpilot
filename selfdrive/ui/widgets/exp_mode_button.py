@@ -29,7 +29,7 @@ class ExperimentalModeButton(Widget):
     self.mode_variant = get_mode_banner_variant(self.params, ui_state.params_memory)
 
   def _handle_mouse_release(self, _):
-    super()._handle_mouse_release(_)
+    # Toggle experimental mode directly instead of using callback
     new_mode = not self.experimental_mode
     self.params.put_bool("ExperimentalMode", new_mode)
     self.experimental_mode = new_mode
