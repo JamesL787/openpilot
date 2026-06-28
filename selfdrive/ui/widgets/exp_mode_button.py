@@ -7,6 +7,7 @@ from openpilot.system.ui.widgets import Widget
 from openpilot.selfdrive.ui.lib.mode_banner import ModeBannerVariant, draw_mode_banner_gradient, get_mode_banner_variant
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.starpilot.common.experimental_state import requested_experimental_mode
+from openpilot.system.hardware import swaglog
 
 
 class ExperimentalModeButton(Widget):
@@ -29,11 +30,13 @@ class ExperimentalModeButton(Widget):
     self.mode_variant = get_mode_banner_variant(self.params, ui_state.params_memory)
 
   def _handle_mouse_release(self, _):
+    swaglog.info(f"ExperimentalModeButton clicked: toggling from {self.experimental_mode}")
     # Toggle experimental mode directly instead of using callback
     new_mode = not self.experimental_mode
     self.params.put_bool("ExperimentalMode", new_mode)
     self.experimental_mode = new_mode
     self.mode_variant = get_mode_banner_variant(self.params, ui_state.params_memory)
+    swaglog.info(f"ExperimentalModeButton toggled to {new_mode}")
 
   def _render(self, rect):
     rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
