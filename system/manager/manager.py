@@ -68,7 +68,7 @@ STARPILOT_PARAM_CANONICALIZATION_MIGRATION_FLAG = Path("/data") / "starpilot_par
 STARPILOT_PC_ROOT_MIGRATION_FLAG = Path("/data") / "starpilot_pc_root_v1"
 STARPILOT_PARAMS_CACHE_MIGRATION_FLAG = Path("/data") / "starpilot_params_cache_v1"
 STARPILOT_LEGACY_CACHE_MARKER_KEYS = ("RemapCancelToDistance",)
-NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_tuning_defaults_v1"
+NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_tuning_defaults_v2"
 STARPILOT_REMOVED_PARAM_KEYS = ("CoastUpToLeads", "HumanAcceleration", "HumanFollowing", "PrioritizeSmoothFollowing")
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
@@ -673,9 +673,44 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
 
   seeded_keys: list[str] = []
   desired_bool_values = {
-    "HondaTorqueLowPassFilter": True,
-    "HondaUnwindLookahead": True,
+    "HondaDriverAssistDuringOverride": True,
     "HondaNotchEnabled": True,
+    "HondaSteerDeltaLimiter": False,
+    "HondaTorqueLowPassFilter": True,
+    "HondaUnwindFreeze": False,
+    "HondaUnwindLookahead": True,
+    "NrdrIncreaseOverrideTolerance": False,
+  }
+  desired_float_values = {
+    "HondaCenterBoostThreshold": 3.0,
+    "HondaCenterScale": 0.5,
+    "HondaLpfTauHighway": 0.1,
+    "HondaLpfTauLowSpeed": 0.1,
+    "HondaLpfTauStandard": 0.1,
+    "HondaNotchFreq": 7.5,
+    "HondaNotchQ": 1.5,
+    "HondaOverrideFadeDownSecs": 0.1,
+    "HondaOverrideFadeUpSecs": 1.5,
+    "HondaSteerDeltaDown": 3.0,
+    "HondaSteerDeltaUp": 3.0,
+    "HondaUnwindBoostSeconds": 1.0,
+    "HondaUnwindFfMultiplier": 2.0,
+  }
+  desired_int_values = {
+    "HondaCenterBoostMinSpeed": 50,
+    "HondaOverrideTorqueScale": 0,
+    "LatFScaleHighway": 100,
+    "LatFScaleLowSpeed": 100,
+    "LatFScaleStandard": 100,
+    "LatIScaleHighway": 200,
+    "LatIScaleLowSpeed": 100,
+    "LatIScaleStandard": 135,
+    "LatPScaleHighway": 200,
+    "LatPScaleLowSpeed": 100,
+    "LatPScaleStandard": 135,
+    "NrdrDriverOverrideThreshold": 2400,
+    "NrdrMinSteerSpeed": 0,
+    "NrdrOverrideThresholdCenterBoost": 1200,
   }
 
   for key, value in desired_bool_values.items():
@@ -685,13 +720,22 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     params_cache.put_bool(key, value)
     seeded_keys.append(key)
 
-  if not _has_persisted_param_file(params, "HondaOverrideFadeDownSecs") and not _has_persisted_param_file(params_cache, "HondaOverrideFadeDownSecs"):
-    params.put_float("HondaOverrideFadeDownSecs", 0.1)
-    params_cache.put_float("HondaOverrideFadeDownSecs", 0.1)
-    seeded_keys.append("HondaOverrideFadeDownSecs")
+  for key, value in desired_float_values.items():
+    if _has_persisted_param_file(params, key) or _has_persisted_param_file(params_cache, key):
+      continue
+    params.put_float(key, value)
+    params_cache.put_float(key, value)
+    seeded_keys.append(key)
+
+  for key, value in desired_int_values.items():
+    if _has_persisted_param_file(params, key) or _has_persisted_param_file(params_cache, key):
+      continue
+    params.put_int(key, value)
+    params_cache.put_int(key, value)
+    seeded_keys.append(key)
 
   if seeded_keys:
-    cloudlog.warning(f"Applied one-time NRDR Honda tuning default migration for {seeded_keys}")
+    cloudlog.warning(f"Applied one-time NRDR Honda tuning defaults for {seeded_keys}")
 
   try:
     NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
