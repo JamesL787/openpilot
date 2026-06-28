@@ -6,8 +6,15 @@ from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
 from openpilot.selfdrive.ui.lib.mode_banner import ModeBannerVariant, draw_mode_banner_gradient, get_mode_banner_variant
 from openpilot.selfdrive.ui.ui_state import ui_state
-from openpilot.starpilot.common.experimental_state import requested_experimental_mode
-from openpilot.system.hardware import swaglog
+from openpilot.starpilot.common.experimental_state import (
+  requested_experimental_mode,
+  next_manual_ce_status,
+  next_manual_cc_status,
+  sync_manual_ce_state,
+  sync_manual_cc_state,
+  CEStatus,
+  CCStatus,
+)
 
 
 class ExperimentalModeButton(Widget):
@@ -30,13 +37,25 @@ class ExperimentalModeButton(Widget):
     self.mode_variant = get_mode_banner_variant(self.params, ui_state.params_memory)
 
   def _handle_mouse_release(self, _):
-    swaglog.info(f"ExperimentalModeButton clicked: toggling from {self.experimental_mode}")
-    # Toggle experimental mode directly instead of using callback
-    new_mode = not self.experimental_mode
-    self.params.put_bool("ExperimentalMode", new_mode)
-    self.experimental_mode = new_mode
+    # Handle conditional modes or direct toggle based on which mode is enabled
+    if self.params.get_bool("ConditionalExperimental"):
+      current_status = ui_state.params_memory.get_int("CEStatus", default=CEStatus["OFF"])
+      override_value = next_manual_ce_status(current_status, self.experimental_mode)
+      ui_state.params_memory.put_int("CEStatus", override_value)
+      sync_manual_ce_state(self.params, override_value)
+      self.experimental_mode = override_value == CEStatus["USER_OVERRIDDEN"]
+    elif self.params.get_bool("ConditionalChill"):
+      current_status = ui_state.params_memory.get_int("CCStatus", default=CCStatus["OFF"])
+      override_value = next_manual_cc_status(current_status, self.experimental_mode)
+      ui_state.params_memory.put_int("CCStatus", override_value)
+      sync_manual_cc_state(self.params, override_value)
+      self.experimental_mode = override_value == CCStatus["USER_EXPERIMENTAL"]
+    else:
+      # Direct toggle for regular experimental mode
+      new_mode = not self.experimental_mode
+      self.params.put_bool("ExperimentalMode", new_mode)
+      self.experimental_mode = new_mode
     self.mode_variant = get_mode_banner_variant(self.params, ui_state.params_memory)
-    swaglog.info(f"ExperimentalModeButton toggled to {new_mode}")
 
   def _render(self, rect):
     rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
