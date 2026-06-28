@@ -298,8 +298,13 @@ class CarController(CarControllerBase):
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_robust_prev = False
     self.bosch_last_gas = 0.0
-    self.bosch_gas_factor = self.param_store.get_float("HondaGasFactorParams", default=1.0)
-    self.bosch_wind_factor = self.param_store.get_float("HondaWindFactorParams", default=1.0)
+    if self.CP.carFingerprint in HONDA_BOSCH:
+      self.bosch_gas_factor = self.param_store.get_float("HondaGasFactorParams", default=1.0)
+      self.bosch_wind_factor = self.param_store.get_float("HondaWindFactorParams", default=1.0)
+    else:
+      # NRDR keeps Nidec gas-interceptor gains static; Bosch live learning stays above.
+      self.bosch_gas_factor = 1.0
+      self.bosch_wind_factor = 1.0
     self.bosch_wind_factor_before_brake = self.bosch_wind_factor
     self.bosch_gas_factor_before_gasmax = self.bosch_gas_factor
     self.bosch_wind_factor_before_gasmax = self.bosch_wind_factor
@@ -554,22 +559,6 @@ class CarController(CarControllerBase):
           self.brake = apply_brake / self.params.NIDEC_BRAKE_MAX
 
           if self.CP.enableGasInterceptorDEPRECATED:
-            gas_error = actuators.accel - CS.out.aEgo
-
-            if not CS.out.gasPressed and actuators.longControlState == LongCtrlState.pid:
-              if gas_error != 0.0 and gas > 0.0:
-                self.bosch_gas_factor = float(np.clip(self.bosch_gas_factor + gas_error / 150.0 * (gas * 4.8), 0.1, 3.0))
-              if gas_error != 0.0 and not CS.out.brakePressed and CS.out.vEgo > 0.0:
-                wind_adjust = 1.0 + (wind_brake * 4.8) / 1000.0
-                if gas_error > 0.0:
-                  self.bosch_wind_factor = float(np.clip(self.bosch_wind_factor * wind_adjust, 0.1, 5.0))
-                else:
-                  self.bosch_wind_factor = float(np.clip(self.bosch_wind_factor / wind_adjust, 0.1, 5.0))
-              if gas <= 0.0:
-                self.bosch_wind_factor = max(self.bosch_wind_factor, self.bosch_wind_factor_before_brake)
-              else:
-                self.bosch_wind_factor_before_brake = self.bosch_wind_factor
-
             gas_mult = float(np.interp(CS.out.vEgo, [0.0, 10.0], [0.4, 1.0]))
             if CC.longActive:
               gas_interceptor_command = float(np.clip(
