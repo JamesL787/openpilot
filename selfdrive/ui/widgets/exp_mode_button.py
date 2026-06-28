@@ -32,11 +32,14 @@ class ExperimentalModeButton(Widget):
     self.chill_pixmap = gui_app.texture("icons/couch.png", self.img_width, self.img_width)
     self.experimental_pixmap = gui_app.texture("icons/experimental_grey.png", self.img_width, self.img_width)
 
+    # Set up click callback for toggle behavior
+    self.set_click_callback(self._on_toggle)
+
   def show_event(self):
     self.experimental_mode = requested_experimental_mode(self.params, ui_state.params_memory)
     self.mode_variant = get_mode_banner_variant(self.params, ui_state.params_memory)
 
-  def _handle_mouse_release(self, _):
+  def _on_toggle(self):
     # Handle conditional modes or direct toggle based on which mode is enabled
     if self.params.get_bool("ConditionalExperimental"):
       current_status = ui_state.params_memory.get_int("CEStatus", default=CEStatus["OFF"])
