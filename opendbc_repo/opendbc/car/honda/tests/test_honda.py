@@ -9,6 +9,7 @@ from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.carcontroller import (
   CarController,
   get_civic_bosch_modified_steering_pressed,
+  get_eps_modified_steering_pressed,
   get_civic_bosch_modified_torque_lpf_tau,
   get_honda_bosch_wind_brake_mps2,
   update_honda_bosch_live_learning,
@@ -74,6 +75,19 @@ class TestHondaFingerprint:
   def test_modified_civic_steering_pressed_filter_allows_opposing_driver_torque_quickly(self):
     filter_s, pressed = get_civic_bosch_modified_steering_pressed(True, -1500.0, 0.8, 0.10, False)
     assert pressed
+
+  def test_eps_modified_steering_pressed_filter_matches_nrdr_thresholds(self):
+    filter_s, pressed = get_eps_modified_steering_pressed(True, 1500.0, 0.8, 0.27, False)
+    assert pressed
+    assert filter_s == pytest.approx(0.28)
+
+    filter_s, pressed = get_eps_modified_steering_pressed(True, -1500.0, 0.8, 0.0, False)
+    assert pressed
+    assert filter_s == pytest.approx(1.0)
+
+    filter_s, pressed = get_eps_modified_steering_pressed(False, 1500.0, 0.8, 1.0, True)
+    assert not pressed
+    assert filter_s == pytest.approx(0.0)
 
   def test_honda_bosch_wind_brake_curve_matches_reference_points(self):
     assert get_honda_bosch_wind_brake_mps2(0.0) == pytest.approx(0.0)

@@ -3,6 +3,7 @@ import numpy as np
 
 from opendbc.can import CANPacker
 from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, DT_CTRL, create_gas_interceptor_command, rate_limit, make_tester_present_msg, structs
+from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda import hondacan
 from opendbc.car.honda.values import (
   CAR,
@@ -88,6 +89,72 @@ def get_civic_bosch_modified_steering_pressed(
     steering_pressed = filter_s > 0.04 and was_pressed
 
   return filter_s, steering_pressed
+
+
+def get_eps_modified_steering_pressed(
+  raw_pressed: bool, steering_torque: float, torque_cmd: float, filter_s: float, previous_pressed: bool
+) -> tuple[float, bool]:
+  if not raw_pressed:
+    return 0.0, False
+
+  torque_product = float(steering_torque) * float(torque_cmd)
+  torque_cmd_abs = abs(float(torque_cmd))
+  if previous_pressed or torque_cmd_abs < 0.10 or torque_product < 0.0:
+    return 1.0, True
+
+  filter_s = min(1.0, filter_s + DT_CTRL)
+  return filter_s, filter_s >= 0.28
+
+
+def torque_lpf_tau(v_ego: float, low_tau: float, standard_tau: float, highway_tau: float) -> float:
+  if v_ego < 25.0 * CV.MPH_TO_MS:
+    return low_tau
+  if v_ego < 50.0 * CV.MPH_TO_MS:
+    return standard_tau
+  return highway_tau
+
+
+def notch_biquad_coeffs(f0: float, q: float, fs: float) -> tuple[float, float, float, float, float]:
+  q = max(q, 0.1)
+  w0 = 2.0 * math.pi * (f0 / fs)
+  cos_w0 = math.cos(w0)
+  alpha = math.sin(w0) / (2.0 * q)
+  b0 = 1.0
+  b1 = -2.0 * cos_w0
+  b2 = 1.0
+  a0 = 1.0 + alpha
+  a1 = -2.0 * cos_w0
+  a2 = 1.0 - alpha
+  return b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0
+
+
+class NotchFilter:
+  def __init__(self, fs: float):
+    self.fs = fs
+    self.f0 = 0.0
+    self.q = 0.0
+    self.b0 = 1.0
+    self.b1 = 0.0
+    self.b2 = 0.0
+    self.a1 = 0.0
+    self.a2 = 0.0
+    self.z1 = 0.0
+    self.z2 = 0.0
+
+  def reset(self):
+    self.z1 = 0.0
+    self.z2 = 0.0
+
+  def update(self, x: float, f0: float, q: float) -> float:
+    if f0 != self.f0 or q != self.q:
+      self.f0 = f0
+      self.q = q
+      self.b0, self.b1, self.b2, self.a1, self.a2 = notch_biquad_coeffs(f0, q, self.fs)
+
+    y = self.b0 * x + self.z1
+    self.z1 = self.b1 * x - self.a1 * y + self.z2
+    self.z2 = self.b2 * x - self.a2 * y
+    return y
 
 
 def get_honda_bosch_wind_brake_mps2(v_ego: float) -> float:
@@ -224,7 +291,10 @@ class CarController(CarControllerBase):
     self.brake = 0.0
     self.last_torque = 0.0
     self.torque_lpf = 0.0
+    self.notch_filter = NotchFilter(1.0 / DT_CTRL)
     self.prev_torque_cmd = 0.0
+    self.override_ramp = 1.0
+    self.lat_active_prev = False
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_robust_prev = False
     self.bosch_last_gas = 0.0
@@ -239,7 +309,8 @@ class CarController(CarControllerBase):
     return self.CP.carFingerprint == CAR.HONDA_CIVIC_BOSCH and bool(self.CP.flags & HondaFlags.EPS_MODIFIED)
 
   def _filtered_steering_pressed(self, CS, torque_cmd: float) -> bool:
-    self.steering_pressed_filter_s, steering_pressed = get_civic_bosch_modified_steering_pressed(
+    filter_fn = get_civic_bosch_modified_steering_pressed if self._modified_civic_standard_active() else get_eps_modified_steering_pressed
+    self.steering_pressed_filter_s, steering_pressed = filter_fn(
       bool(CS.out.steeringPressed),
       float(getattr(CS.out, "steeringTorque", 0.0)),
       float(torque_cmd),
@@ -249,7 +320,98 @@ class CarController(CarControllerBase):
     self.steering_pressed_robust_prev = steering_pressed
     return steering_pressed
 
+  def _get_live_tuning_params(self):
+    return {
+      "override_fade_down_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeDownSecs", default=0.0), 0.0, 10.0)),
+      "override_fade_up_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeUpSecs", default=1.5), 0.0, 10.0)),
+      "override_torque_scale": float(np.clip(self.param_store.get_int("HondaOverrideTorqueScale", default=0), 0, 100)) / 100.0,
+      "driver_assist_during_override": self.param_store.get_bool("HondaDriverAssistDuringOverride", default=True),
+      "torque_lpf_enabled": self.param_store.get_bool("HondaTorqueLowPassFilter", default=False),
+      "lpf_tau_low": float(np.clip(self.param_store.get_float("HondaLpfTauLowSpeed", default=0.1), 0.0, 5.0)),
+      "lpf_tau_standard": float(np.clip(self.param_store.get_float("HondaLpfTauStandard", default=0.1), 0.0, 5.0)),
+      "lpf_tau_highway": float(np.clip(self.param_store.get_float("HondaLpfTauHighway", default=0.1), 0.0, 5.0)),
+      "notch_enabled": self.param_store.get_bool("HondaNotchEnabled", default=False),
+      "notch_freq": float(np.clip(self.param_store.get_float("HondaNotchFreq", default=7.5), 1.0, 20.0)),
+      "notch_q": float(np.clip(self.param_store.get_float("HondaNotchQ", default=1.5), 0.1, 10.0)),
+      "steer_delta_limiter_enabled": self.param_store.get_bool("HondaSteerDeltaLimiter", default=False),
+      "steer_delta_up": float(np.clip(self.param_store.get_float("HondaSteerDeltaUp", default=3.0), 0.0, 100.0)),
+      "steer_delta_down": float(np.clip(self.param_store.get_float("HondaSteerDeltaDown", default=3.0), 0.0, 100.0)),
+      "increase_override_tolerance": self.param_store.get_bool("NrdrIncreaseOverrideTolerance", default=False),
+      "min_steer_speed": float(np.clip(self.param_store.get_int("NrdrMinSteerSpeed", default=0), 0, 45)) * CV.MPH_TO_MS,
+    }
+
+  def _update_steering_torque(self, CC, CS, live):
+    torque_cmd = float(CC.actuators.torque) if CC.latActive else 0.0
+    steering_pressed = False
+    below_min_steer_speed = CS.out.vEgo < live["min_steer_speed"]
+
+    if below_min_steer_speed:
+      torque_cmd = 0.0
+    raw_torque_cmd = torque_cmd
+
+    if CC.latActive:
+      if live["increase_override_tolerance"] or self._modified_civic_standard_active():
+        steering_pressed = self._filtered_steering_pressed(CS, torque_cmd)
+      else:
+        steering_pressed = bool(CS.out.steeringPressed)
+
+      if not self.lat_active_prev:
+        self.override_ramp = 0.0
+
+      if steering_pressed:
+        fade_down_s = live["override_fade_down_s"]
+        if fade_down_s <= 0.0:
+          self.override_ramp = live["override_torque_scale"]
+        else:
+          self.override_ramp = max(live["override_torque_scale"], self.override_ramp - DT_CTRL / fade_down_s)
+      else:
+        fade_up_s = live["override_fade_up_s"]
+        self.override_ramp = 1.0 if fade_up_s <= 0.0 else min(1.0, self.override_ramp + DT_CTRL / fade_up_s)
+
+      torque_cmd *= self.override_ramp
+
+      if live["torque_lpf_enabled"]:
+        tau = torque_lpf_tau(CS.out.vEgo, live["lpf_tau_low"], live["lpf_tau_standard"], live["lpf_tau_highway"])
+        alpha = DT_CTRL / (tau + DT_CTRL)
+        self.torque_lpf = alpha * torque_cmd + (1.0 - alpha) * self.torque_lpf
+        torque_cmd = self.torque_lpf
+      elif self._modified_civic_standard_active() and not steering_pressed:
+        tau = get_civic_bosch_modified_torque_lpf_tau(raw_torque_cmd, self.prev_torque_cmd, CS.out.vEgo)
+        alpha = DT_CTRL / (tau + DT_CTRL)
+        self.torque_lpf = alpha * torque_cmd + (1.0 - alpha) * self.torque_lpf
+        self.prev_torque_cmd = raw_torque_cmd
+        torque_cmd = self.torque_lpf
+      else:
+        self.torque_lpf = 0.0 if steering_pressed else torque_cmd
+
+      if live["notch_enabled"]:
+        torque_cmd = self.notch_filter.update(torque_cmd, live["notch_freq"], live["notch_q"])
+      else:
+        self.notch_filter.reset()
+
+      if not self._modified_civic_standard_active() or live["torque_lpf_enabled"] or steering_pressed:
+        self.prev_torque_cmd = torque_cmd
+    else:
+      self.override_ramp = 0.0
+      self.torque_lpf = 0.0
+      self.notch_filter.reset()
+      self.prev_torque_cmd = 0.0
+      self.steering_pressed_filter_s = 0.0
+      self.steering_pressed_robust_prev = False
+
+    if live["steer_delta_limiter_enabled"]:
+      limited_torque = rate_limit(torque_cmd, self.last_torque, -live["steer_delta_down"] * DT_CTRL, live["steer_delta_up"] * DT_CTRL)
+    else:
+      limited_torque = torque_cmd
+
+    self.last_torque = limited_torque
+    self.lat_active_prev = CC.latActive
+
+    lkas_active = CC.latActive and (not live["driver_assist_during_override"] or not steering_pressed) and not below_min_steer_speed
+    return limited_torque, lkas_active, steering_pressed
+
   def update(self, CC, CS, now_nanos, starpilot_toggles):
+    live = self._get_live_tuning_params()
     actuators = CC.actuators
     hud_control = CC.hudControl
     hud_v_cruise = hud_control.setSpeed / CS.v_cruise_factor if hud_control.speedVisible else 255
@@ -266,30 +428,8 @@ class CarController(CarControllerBase):
       accel = 0.0
       gas, brake = 0.0, 0.0
 
-    torque_cmd = float(actuators.torque)
-    filtered_steering_pressed = bool(CS.out.steeringPressed)
-    if self._modified_civic_standard_active():
-      if CC.latActive:
-        filtered_steering_pressed = self._filtered_steering_pressed(CS, torque_cmd)
-        if filtered_steering_pressed:
-          self.torque_lpf = 0.0
-          self.prev_torque_cmd = 0.0
-          torque_cmd = 0.0
-        else:
-          tau = get_civic_bosch_modified_torque_lpf_tau(torque_cmd, self.prev_torque_cmd, CS.out.vEgo)
-          alpha = DT_CTRL / (tau + DT_CTRL)
-          self.torque_lpf = alpha * torque_cmd + ((1.0 - alpha) * self.torque_lpf)
-          self.prev_torque_cmd = torque_cmd
-          torque_cmd = self.torque_lpf
-      else:
-        self.torque_lpf = 0.0
-        self.prev_torque_cmd = 0.0
-        self.steering_pressed_filter_s = 0.0
-        self.steering_pressed_robust_prev = False
-
-    # *** rate limit steer ***
-    limited_torque = rate_limit(torque_cmd, self.last_torque, -self.params.STEER_DELTA_DOWN * DT_CTRL, self.params.STEER_DELTA_UP * DT_CTRL)
-    self.last_torque = limited_torque
+    # *** rate limit / filter steer ***
+    limited_torque, lkas_active, filtered_steering_pressed = self._update_steering_torque(CC, CS, live)
 
     # *** apply brake hysteresis ***
     pre_limit_brake, self.braking, self.brake_steady = actuator_hysteresis(brake, self.braking, self.brake_steady, CS.out.vEgo, self.CP.carFingerprint)
@@ -314,7 +454,7 @@ class CarController(CarControllerBase):
         can_sends.append(make_tester_present_msg(0x18DAB0F1, self.CAN.pt, suppress_response=True))
 
     # Send steering command.
-    can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, CC.latActive, self.tja_control))
+    can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, lkas_active, self.tja_control))
 
     # wind brake from air resistance decel at high speed
     wind_brake = float(np.interp(CS.out.vEgo, [0.0, 2.3, 35.0], [0.001, 0.002, 0.15]))

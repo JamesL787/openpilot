@@ -314,6 +314,393 @@
         "step": 0.1,
         "parent_key": "QOLLateral",
         "settings_tier": "simple"
+      },
+      {
+        "key": "HondaCenterScale",
+        "label": "Honda Center Boost",
+        "description": "Adds extra correction near center. Useful when straight roads feel too soft.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 5.0,
+        "step": 0.01,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaCenterBoostThreshold",
+        "label": "Honda Center Boost Threshold",
+        "description": "Angle band where center boost is active.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 10.0,
+        "step": 0.1,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaCenterBoostMinSpeed",
+        "label": "Honda Center Boost Minimum Speed",
+        "description": "Disables center boost below this speed.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 90.0,
+        "step": 1.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaUnwindFreeze",
+        "label": "Honda Unwind Integrator Freeze",
+        "description": "Freezes the PID integrator while steering returns toward center.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaUnwindLookahead",
+        "label": "Honda Unwind Lookahead",
+        "description": "Uses the planned path to start unwind behavior earlier.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaUnwindBoostSeconds",
+        "label": "Honda Unwind Boost Duration",
+        "description": "Limits how long the low-speed unwind feedforward boost is held.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 3.0,
+        "step": 0.1,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaUnwindFfMultiplier",
+        "label": "Honda Unwind Feedforward Multiplier",
+        "description": "Peak low-speed feedforward multiplier during unwind.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 1.0,
+        "max": 4.0,
+        "step": 0.1,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LatPScaleLowSpeed",
+        "label": "Low Speed Proportional Scale",
+        "description": "Scales P below 25 mph. Higher is tighter; lower is softer.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 500.0,
+        "step": 5.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LatIScaleLowSpeed",
+        "label": "Low Speed Integral Scale",
+        "description": "Scales I below 25 mph. Higher removes steady-state error faster.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 500.0,
+        "step": 5.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LatFScaleLowSpeed",
+        "label": "Low Speed Feedforward Scale",
+        "description": "Scales feedforward below 25 mph. 100% preserves the tuned value.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 500.0,
+        "step": 5.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LatPScaleStandard",
+        "label": "Standard Speed Proportional Scale",
+        "description": "Scales P from 25 to 50 mph.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 500.0,
+        "step": 5.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LatIScaleStandard",
+        "label": "Standard Speed Integral Scale",
+        "description": "Scales I from 25 to 50 mph.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 500.0,
+        "step": 5.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LatFScaleStandard",
+        "label": "Standard Speed Feedforward Scale",
+        "description": "Scales feedforward from 25 to 50 mph. 100% preserves the tuned value.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 500.0,
+        "step": 5.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LatPScaleHighway",
+        "label": "Highway Proportional Scale",
+        "description": "Scales P above 50 mph.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 500.0,
+        "step": 5.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LatIScaleHighway",
+        "label": "Highway Integral Scale",
+        "description": "Scales I above 50 mph.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 500.0,
+        "step": 5.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LatFScaleHighway",
+        "label": "Highway Feedforward Scale",
+        "description": "Scales feedforward above 50 mph. 100% preserves the tuned value.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 500.0,
+        "step": 5.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrIncreaseOverrideTolerance",
+        "label": "Increase Driver Override Hysteresis",
+        "description": "Filters short same-direction driver torque spikes.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrDriverOverrideThreshold",
+        "label": "Driver Override Threshold",
+        "description": "Raw torque threshold for driver steering. 1200 is stock Honda scale.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 100.0,
+        "max": 5000.0,
+        "step": 100.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrOverrideThresholdCenterBoost",
+        "label": "Center Override Threshold",
+        "description": "Override threshold used inside the center boost angle band.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 100.0,
+        "max": 5000.0,
+        "step": 100.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaDriverAssistDuringOverride",
+        "label": "Pass-through Assist During Override",
+        "description": "Drop LKAS torque while the driver is steering.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaOverrideFadeDownSecs",
+        "label": "Override Fade Down",
+        "description": "Seconds to fade steering torque down during override.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 10.0,
+        "step": 0.1,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaOverrideFadeUpSecs",
+        "label": "Override Fade Up",
+        "description": "Seconds to fade steering torque back after override.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 10.0,
+        "step": 0.1,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaOverrideTorqueScale",
+        "label": "Override Torque Retain",
+        "description": "Torque retained after override fade down.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 100.0,
+        "step": 1.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaTorqueLowPassFilter",
+        "label": "Honda Torque Low Pass Filter",
+        "description": "Smooths steering torque with speed-banded tau values.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaLpfTauLowSpeed",
+        "label": "Low Speed LPF Tau",
+        "description": "Low-pass tau below 25 mph.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 5.0,
+        "step": 0.01,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaLpfTauStandard",
+        "label": "Standard Speed LPF Tau",
+        "description": "Low-pass tau from 25 to 50 mph.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 5.0,
+        "step": 0.01,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaLpfTauHighway",
+        "label": "Highway LPF Tau",
+        "description": "Low-pass tau above 50 mph.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 5.0,
+        "step": 0.01,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaNotchEnabled",
+        "label": "Honda Notch Filter",
+        "description": "Removes a narrow EPS chatter band.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaNotchFreq",
+        "label": "Honda Notch Frequency",
+        "description": "Frequency removed from the torque command.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 1.0,
+        "max": 20.0,
+        "step": 0.1,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaNotchQ",
+        "label": "Honda Notch Q",
+        "description": "Width of the removed frequency band. Higher is narrower.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.1,
+        "max": 10.0,
+        "step": 0.1,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaSteerDeltaLimiter",
+        "label": "Honda Steer Delta Limiter",
+        "description": "Legacy rate limiter for requested steering torque.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaSteerDeltaUp",
+        "label": "Honda Steer Delta Up",
+        "description": "Maximum upward steering torque rate.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 100.0,
+        "step": 0.1,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "HondaSteerDeltaDown",
+        "label": "Honda Steer Delta Down",
+        "description": "Maximum downward steering torque rate.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 100.0,
+        "step": 0.1,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrMinSteerSpeed",
+        "label": "Minimum Steer Speed",
+        "description": "No steering torque is commanded below this speed. 0 is stock.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 45.0,
+        "step": 1.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
       }
     ]
   },
@@ -373,7 +760,7 @@
       {
         "key": "CustomAccelProfile0MPH",
         "label": "0 mph",
-        "description": "Max acceleration in m/s² at the fixed 0 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 0 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -386,7 +773,7 @@
       {
         "key": "CustomAccelProfile11MPH",
         "label": "11 mph",
-        "description": "Max acceleration in m/s² at the fixed 11 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 11 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -399,7 +786,7 @@
       {
         "key": "CustomAccelProfile22MPH",
         "label": "22 mph",
-        "description": "Max acceleration in m/s² at the fixed 22 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 22 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -412,7 +799,7 @@
       {
         "key": "CustomAccelProfile34MPH",
         "label": "34 mph",
-        "description": "Max acceleration in m/s² at the fixed 34 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 34 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -425,7 +812,7 @@
       {
         "key": "CustomAccelProfile45MPH",
         "label": "45 mph",
-        "description": "Max acceleration in m/s² at the fixed 45 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 45 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -438,7 +825,7 @@
       {
         "key": "CustomAccelProfile56MPH",
         "label": "56 mph",
-        "description": "Max acceleration in m/s² at the fixed 56 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 56 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -451,7 +838,7 @@
       {
         "key": "CustomAccelProfile89MPH",
         "label": "89 mph",
-        "description": "Max acceleration in m/s² at the fixed 89 mph breakpoint.",
+        "description": "Max acceleration in m/s\u00b2 at the fixed 89 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1182,7 +1569,7 @@
       {
         "key": "CustomCruise",
         "label": "Cruise Interval",
-        "description": "How much the set speed increases or decreases for each + or – cruise control button press.",
+        "description": "How much the set speed increases or decreases for each + or \u2013 cruise control button press.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 1.0,
@@ -1193,7 +1580,7 @@
       {
         "key": "CustomCruiseLong",
         "label": "Cruise Interval (Hold)",
-        "description": "How much the set speed increases or decreases while holding the + or – cruise control buttons.",
+        "description": "How much the set speed increases or decreases while holding the + or \u2013 cruise control buttons.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 1.0,
@@ -1730,7 +2117,7 @@
       },
       {
         "key": "Offset1",
-        "label": "Speed Offset (0–24 mph)",
+        "label": "Speed Offset (0\u201324 mph)",
         "description": "How much to offset posted speed-limits between 0 and 24 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -1741,7 +2128,7 @@
       },
       {
         "key": "Offset2",
-        "label": "Speed Offset (25–34 mph)",
+        "label": "Speed Offset (25\u201334 mph)",
         "description": "How much to offset posted speed-limits between 25 and 34 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -1752,7 +2139,7 @@
       },
       {
         "key": "Offset3",
-        "label": "Speed Offset (35–44 mph)",
+        "label": "Speed Offset (35\u201344 mph)",
         "description": "How much to offset posted speed-limits between 35 and 44 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -1763,7 +2150,7 @@
       },
       {
         "key": "Offset4",
-        "label": "Speed Offset (45–54 mph)",
+        "label": "Speed Offset (45\u201354 mph)",
         "description": "How much to offset posted speed-limits between 45 and 54 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -1774,7 +2161,7 @@
       },
       {
         "key": "Offset5",
-        "label": "Speed Offset (55–64 mph)",
+        "label": "Speed Offset (55\u201364 mph)",
         "description": "How much to offset posted speed-limits between 55 and 64 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -1785,7 +2172,7 @@
       },
       {
         "key": "Offset6",
-        "label": "Speed Offset (65–74 mph)",
+        "label": "Speed Offset (65\u201374 mph)",
         "description": "How much to offset posted speed-limits between 65 and 74 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -1796,7 +2183,7 @@
       },
       {
         "key": "Offset7",
-        "label": "Speed Offset (75–99 mph)",
+        "label": "Speed Offset (75\u201399 mph)",
         "description": "How much to offset posted speed-limits between 75 and 99 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2508,7 +2895,7 @@
       {
         "key": "WarningImmediateVolume",
         "label": "Warning Immediate Volume",
-        "description": "Set the volume for the loudest warnings that require urgent attention.\n\nExamples include: \"DISENGAGE IMMEDIATELY — Driver Distracted\", \"DISENGAGE IMMEDIATELY — Driver Unresponsive\".",
+        "description": "Set the volume for the loudest warnings that require urgent attention.\n\nExamples include: \"DISENGAGE IMMEDIATELY \u2014 Driver Distracted\", \"DISENGAGE IMMEDIATELY \u2014 Driver Unresponsive\".",
         "data_type": "int",
         "ui_type": "numeric",
         "min": 25.0,
@@ -2574,7 +2961,7 @@
       {
         "key": "LoudBlindspotAlertWhenDisengaged",
         "label": "Blind Spot Alert When Disengaged",
-        "description": "Play the loud blind spot alert while lateral control is off or paused. Useful when steering pauses on turn signal, since the lane-change state machine is inactive then.",
+        "description": "Play the loud blind spot alert while lateral control is off or paused.\n\nUseful when steering pauses on turn signal, since the lane-change state machine is inactive then.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "CustomAlerts",
@@ -2767,7 +3154,7 @@
       {
         "key": "IgnoreIgnitionLine",
         "label": "Use CAN Ignition Only",
-        "description": "Use Panda firmware that ignores the physical ignition line and starts from CAN ignition only.\n\nRequires a Panda flash. Use this only on vehicles with reliable CAN ignition when the harness box reports false ignition.",
+        "description": "Use CAN ignition only and ignore the physical ignition line in Panda firmware.\n\nRequires a Panda flash. Use this only on vehicles with reliable CAN ignition when the harness box reports false ignition.",
         "data_type": "bool",
         "ui_type": "toggle",
         "settings_tier": "simple"
@@ -2839,7 +3226,7 @@
       {
         "key": "SubaruSNGManualParkingBrake",
         "label": "Stop and Go for Manual Parking Brake",
-        "description": "Use the manual-parking-brake Subaru stop-and-go strategy. Enable this for supported Subaru Global models with a manual handbrake. Keep it off on models with an electric parking brake.",
+        "description": "Use the manual-parking-brake Subaru stop-and-go strategy.\n\nEnable this for supported Subaru Global models with a manual handbrake. Keep it off on models with an electric parking brake.",
         "data_type": "bool",
         "ui_type": "toggle",
         "settings_tier": "simple"
