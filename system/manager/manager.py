@@ -68,6 +68,7 @@ STARPILOT_PARAM_CANONICALIZATION_MIGRATION_FLAG = Path("/data") / "starpilot_par
 STARPILOT_PC_ROOT_MIGRATION_FLAG = Path("/data") / "starpilot_pc_root_v1"
 STARPILOT_PARAMS_CACHE_MIGRATION_FLAG = Path("/data") / "starpilot_params_cache_v1"
 STARPILOT_LEGACY_CACHE_MARKER_KEYS = ("RemapCancelToDistance",)
+NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_tuning_defaults_v1"
 STARPILOT_REMOVED_PARAM_KEYS = ("CoastUpToLeads", "HumanAcceleration", "HumanFollowing", "PrioritizeSmoothFollowing")
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
@@ -666,6 +667,39 @@ def migrate_traffic_follow_default(params: Params, params_cache: Params) -> None
     cloudlog.exception(f"Failed to write migration flag: {STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG}")
 
 
+def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> None:
+  if NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG.exists():
+    return
+
+  seeded_keys: list[str] = []
+  desired_bool_values = {
+    "HondaTorqueLowPassFilter": True,
+    "HondaUnwindLookahead": True,
+    "HondaNotchEnabled": True,
+  }
+
+  for key, value in desired_bool_values.items():
+    if _has_persisted_param_file(params, key) or _has_persisted_param_file(params_cache, key):
+      continue
+    params.put_bool(key, value)
+    params_cache.put_bool(key, value)
+    seeded_keys.append(key)
+
+  if not _has_persisted_param_file(params, "HondaOverrideFadeDownSecs") and not _has_persisted_param_file(params_cache, "HondaOverrideFadeDownSecs"):
+    params.put_float("HondaOverrideFadeDownSecs", 0.1)
+    params_cache.put_float("HondaOverrideFadeDownSecs", 0.1)
+    seeded_keys.append("HondaOverrideFadeDownSecs")
+
+  if seeded_keys:
+    cloudlog.warning(f"Applied one-time NRDR Honda tuning default migration for {seeded_keys}")
+
+  try:
+    NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+  except Exception:
+    cloudlog.exception(f"Failed to write migration flag: {NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG}")
+
+
 def _read_raw_param_bytes(params: Params, key: str | bytes):
   try:
     path = params.get_param_path(key)
@@ -887,6 +921,7 @@ def manager_init() -> None:
   migrate_cluster_offset_default(params, params_cache)
   migrate_traffic_mode_smooth_defaults(params, params_cache)
   migrate_traffic_follow_default(params, params_cache)
+  migrate_nrdr_honda_tuning_defaults(params, params_cache)
   last_timing = _log_boot_timing("manager_init", "starpilot_migrations", manager_init_start, last_timing)
 
   # set unset params to their default value

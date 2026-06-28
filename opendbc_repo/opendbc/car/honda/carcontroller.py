@@ -326,7 +326,7 @@ class CarController(CarControllerBase):
       "override_fade_up_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeUpSecs", default=1.5), 0.0, 10.0)),
       "override_torque_scale": float(np.clip(self.param_store.get_int("HondaOverrideTorqueScale", default=0), 0, 100)) / 100.0,
       "driver_assist_during_override": self.param_store.get_bool("HondaDriverAssistDuringOverride", default=True),
-      "torque_lpf_enabled": self.param_store.get_bool("HondaTorqueLowPassFilter", default=False),
+      "torque_lpf_enabled": self.param_store.get_bool("HondaTorqueLowPassFilter", default=True),
       "lpf_tau_low": float(np.clip(self.param_store.get_float("HondaLpfTauLowSpeed", default=0.1), 0.0, 5.0)),
       "lpf_tau_standard": float(np.clip(self.param_store.get_float("HondaLpfTauStandard", default=0.1), 0.0, 5.0)),
       "lpf_tau_highway": float(np.clip(self.param_store.get_float("HondaLpfTauHighway", default=0.1), 0.0, 5.0)),
