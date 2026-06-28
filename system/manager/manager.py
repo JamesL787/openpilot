@@ -69,6 +69,7 @@ STARPILOT_PC_ROOT_MIGRATION_FLAG = Path("/data") / "starpilot_pc_root_v1"
 STARPILOT_PARAMS_CACHE_MIGRATION_FLAG = Path("/data") / "starpilot_params_cache_v1"
 STARPILOT_LEGACY_CACHE_MARKER_KEYS = ("RemapCancelToDistance",)
 NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_tuning_defaults_v2"
+NRDR_KONIK_DEFAULT_MIGRATION_FLAG = Path("/data") / "nrdr_konik_default_v1"
 STARPILOT_REMOVED_PARAM_KEYS = ("CoastUpToLeads", "HumanAcceleration", "HumanFollowing", "PrioritizeSmoothFollowing")
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
@@ -744,6 +745,26 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     cloudlog.exception(f"Failed to write migration flag: {NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG}")
 
 
+def migrate_nrdr_konik_default(params: Params, params_cache: Params) -> None:
+  if NRDR_KONIK_DEFAULT_MIGRATION_FLAG.exists():
+    return
+
+  try:
+    params.put_bool("UseKonikServer", True)
+    params_cache.put_bool("UseKonikServer", True)
+    params.remove("KonikDongleId")
+    params_cache.remove("KonikDongleId")
+    cloudlog.warning("Applied one-time NRDR Konik server default migration")
+  except Exception:
+    cloudlog.exception("Failed to apply NRDR Konik server default migration")
+
+  try:
+    NRDR_KONIK_DEFAULT_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    NRDR_KONIK_DEFAULT_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+  except Exception:
+    cloudlog.exception(f"Failed to write migration flag: {NRDR_KONIK_DEFAULT_MIGRATION_FLAG}")
+
+
 def _read_raw_param_bytes(params: Params, key: str | bytes):
   try:
     path = params.get_param_path(key)
@@ -966,6 +987,7 @@ def manager_init() -> None:
   migrate_traffic_mode_smooth_defaults(params, params_cache)
   migrate_traffic_follow_default(params, params_cache)
   migrate_nrdr_honda_tuning_defaults(params, params_cache)
+  migrate_nrdr_konik_default(params, params_cache)
   last_timing = _log_boot_timing("manager_init", "starpilot_migrations", manager_init_start, last_timing)
 
   # set unset params to their default value
