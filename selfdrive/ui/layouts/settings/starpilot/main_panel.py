@@ -11,7 +11,6 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPan
 from openpilot.selfdrive.ui.layouts.settings.starpilot.sounds import StarPilotSoundsLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.driving_model import StarPilotDrivingModelLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.longitudinal import StarPilotLongitudinalLayout
-from openpilot.selfdrive.ui.layouts.settings.starpilot.lateral import StarPilotLateralLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.maps import StarPilotMapsLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.system_settings import StarPilotSystemLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.appearance import StarPilotAppearanceLayout
@@ -29,7 +28,7 @@ class StarPilotLayout(Widget):
     {
       "title": "Driving Controls",
       "icon": "steering",
-      "buttons": [("Driving Model", "DRIVING_MODEL", "aicar"), ("Gas / Brake", "LONGITUDINAL", "road"), ("Steering", "LATERAL", "steering")],
+      "buttons": [("DRIVING MODEL", "DRIVING_MODEL", "aicar"), ("GAS / BRAKE", "LONGITUDINAL", "road")],
     },
     {
       "title": "Map Data",
@@ -73,7 +72,6 @@ class StarPilotLayout(Widget):
       StarPilotPanelType.SYSTEM: StarPilotPanelInfo(tr_noop("System Settings"), StarPilotSystemLayout()),
       StarPilotPanelType.DRIVING_MODEL: StarPilotPanelInfo(tr_noop("Driving Model"), StarPilotDrivingModelLayout()),
       StarPilotPanelType.LONGITUDINAL: StarPilotPanelInfo(tr_noop("Gas / Brake"), StarPilotLongitudinalLayout()),
-      StarPilotPanelType.LATERAL: StarPilotPanelInfo(tr_noop("Steering"), StarPilotLateralLayout()),
       StarPilotPanelType.MAPS: StarPilotPanelInfo(tr_noop("Map Data"), StarPilotMapsLayout()),
       StarPilotPanelType.VISUALS: StarPilotPanelInfo(tr_noop("Appearance"), StarPilotAppearanceLayout()),
       StarPilotPanelType.VEHICLE: StarPilotPanelInfo(tr_noop("Vehicle Settings"), StarPilotVehicleSettingsLayout()),
@@ -83,7 +81,6 @@ class StarPilotLayout(Widget):
       StarPilotPanelType.LONGITUDINAL,
       StarPilotPanelType.SOUNDS,
       StarPilotPanelType.SYSTEM,
-      StarPilotPanelType.LATERAL,
       StarPilotPanelType.MAPS,
       StarPilotPanelType.VISUALS,
       StarPilotPanelType.VEHICLE,
@@ -192,7 +189,6 @@ class StarPilotLayout(Widget):
       "SYSTEM": StarPilotPanelType.SYSTEM,
       "DRIVING_MODEL": StarPilotPanelType.DRIVING_MODEL,
       "LONGITUDINAL": StarPilotPanelType.LONGITUDINAL,
-      "LATERAL": StarPilotPanelType.LATERAL,
       "MAPS": StarPilotPanelType.MAPS,
       "VISUALS": StarPilotPanelType.VISUALS,
       "VEHICLE": StarPilotPanelType.VEHICLE,
