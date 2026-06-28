@@ -12,6 +12,7 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType
 
 from opendbc.car.chrysler.values import pacifica_hybrid_aol_stock_acc_mode
 from opendbc.car.gm.values import GMFlags
+from opendbc.car.honda.values import HondaFlags
 
 from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper, DT_CTRL
@@ -59,6 +60,10 @@ def commanded_torque_at_max_for_saturation(CP, output: float) -> bool:
   torque_controller = (CP.steerControlType == car.CarParams.SteerControlType.torque and
                        CP.lateralTuning.which() == "torque")
   return torque_controller and abs(output) > 0.99
+
+
+def suppress_steer_saturated_alert(CP: car.CarParams) -> bool:
+  return CP.brand == "honda" and bool(CP.flags & HondaFlags.EPS_MODIFIED.value)
 
 
 def should_loud_blindspot_alert_without_lateral(CS, sm, starpilot_toggles) -> bool:
@@ -651,7 +656,7 @@ class SelfdriveD:
       turning = abs(desired_lateral_accel) > 1.0
       commanded_torque_at_max = commanded_torque_at_max_for_saturation(self.CP, lac.output)
       # TODO: lac.saturated includes speed and other checks, should be pulled out
-      if undershooting and turning and (lac.saturated or commanded_torque_at_max):
+      if undershooting and turning and (lac.saturated or commanded_torque_at_max) and not suppress_steer_saturated_alert(self.CP):
         now = time.monotonic()
         cooldown_active = switchback_mode_enabled and switchback_mode_cooldown > 0.0
         if not cooldown_active or (now - self.last_steer_saturated_alert_time) >= switchback_mode_cooldown:
