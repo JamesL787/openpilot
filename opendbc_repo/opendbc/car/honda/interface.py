@@ -200,8 +200,15 @@ class CarInterface(CarInterfaceBase):
         ret.longitudinalActuatorDelay = 0.4
 
     elif candidate == CAR.HONDA_CLARITY:
-      ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 2560], [0, 2560]]
-      ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.8], [0.24]]
+      if eps_modified:
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 1663], [0, 1663]]
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.03], [0.01]]
+        ret.lateralTuning.pid.kf = 0.000012
+        ret.steerAtStandstill, ret.autoResumeSng = True, True
+        ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
+      else:
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 2560], [0, 2560]]
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.8], [0.24]]
       ret.stopAccel = 0.0
 
     elif candidate == CAR.ACURA_RDX:
