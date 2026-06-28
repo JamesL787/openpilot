@@ -11,6 +11,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPan
 from openpilot.selfdrive.ui.layouts.settings.starpilot.sounds import StarPilotSoundsLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.driving_model import StarPilotDrivingModelLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.longitudinal import StarPilotLongitudinalLayout
+from openpilot.selfdrive.ui.layouts.settings.starpilot.lateral import StarPilotLateralLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.maps import StarPilotMapsLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.system_settings import StarPilotSystemLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.appearance import StarPilotAppearanceLayout
@@ -28,7 +29,7 @@ class StarPilotLayout(Widget):
     {
       "title": "Driving Controls",
       "icon": "steering",
-      "buttons": [("DRIVING MODEL", "DRIVING_MODEL", "aicar"), ("GAS / BRAKE", "LONGITUDINAL", "road")],
+      "buttons": [("Driving Model", "DRIVING_MODEL", "aicar"), ("Gas / Brake", "LONGITUDINAL", "road"), ("Steering", "LATERAL", "steering")],
     },
     {
       "title": "Map Data",
@@ -72,6 +73,7 @@ class StarPilotLayout(Widget):
       StarPilotPanelType.SYSTEM: StarPilotPanelInfo(tr_noop("System Settings"), StarPilotSystemLayout()),
       StarPilotPanelType.DRIVING_MODEL: StarPilotPanelInfo(tr_noop("Driving Model"), StarPilotDrivingModelLayout()),
       StarPilotPanelType.LONGITUDINAL: StarPilotPanelInfo(tr_noop("Gas / Brake"), StarPilotLongitudinalLayout()),
+      StarPilotPanelType.LATERAL: StarPilotPanelInfo(tr_noop("Steering"), StarPilotLateralLayout()),
       StarPilotPanelType.MAPS: StarPilotPanelInfo(tr_noop("Map Data"), StarPilotMapsLayout()),
       StarPilotPanelType.VISUALS: StarPilotPanelInfo(tr_noop("Appearance"), StarPilotAppearanceLayout()),
       StarPilotPanelType.VEHICLE: StarPilotPanelInfo(tr_noop("Vehicle Settings"), StarPilotVehicleSettingsLayout()),
@@ -79,6 +81,7 @@ class StarPilotLayout(Widget):
 
     self._setup_sub_panels(
       StarPilotPanelType.LONGITUDINAL,
+      StarPilotPanelType.LATERAL,
       StarPilotPanelType.SOUNDS,
       StarPilotPanelType.SYSTEM,
       StarPilotPanelType.MAPS,

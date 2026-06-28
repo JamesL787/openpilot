@@ -37,7 +37,7 @@ DARK_CORE_COLOR = rl.Color(12, 10, 18, 190)
 
 class PanelType(IntEnum):
   STARPILOT = 0
-  STEERING = 1
+  NRDR = 1
   DEVICE = 2
   NETWORK = 3
   TOGGLES = 4
@@ -73,7 +73,7 @@ class SettingsLayout(Widget):
 
     self._panels = {
       PanelType.STARPILOT: PanelInfo(tr_noop("StarPilot"), StarPilotLayout()),
-      PanelType.STEERING: PanelInfo(tr_noop("Steering"), StarPilotLateralLayout()),
+      PanelType.NRDR: PanelInfo(tr_noop("NRDR Tuning"), StarPilotLateralLayout()),
       PanelType.DEVICE: PanelInfo(tr_noop("Device"), DeviceLayout()),
       PanelType.NETWORK: PanelInfo(tr_noop("Network"), NetworkUI(wifi_manager)),
       PanelType.TOGGLES: PanelInfo(tr_noop("Toggles"), TogglesLayout()),
