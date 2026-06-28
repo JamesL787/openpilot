@@ -28,6 +28,13 @@ class ExperimentalModeButton(Widget):
     self.experimental_mode = requested_experimental_mode(self.params, ui_state.params_memory)
     self.mode_variant = get_mode_banner_variant(self.params, ui_state.params_memory)
 
+  def _handle_mouse_release(self, _):
+    super()._handle_mouse_release(_)
+    new_mode = not self.experimental_mode
+    self.params.put_bool("ExperimentalMode", new_mode)
+    self.experimental_mode = new_mode
+    self.mode_variant = get_mode_banner_variant(self.params, ui_state.params_memory)
+
   def _render(self, rect):
     rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
     draw_mode_banner_gradient(rect, self.mode_variant, 0xCC if self.is_pressed else 0xFF)
