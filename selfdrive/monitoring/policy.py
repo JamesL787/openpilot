@@ -48,20 +48,22 @@ class DRIVER_MONITOR_SETTINGS:
     # https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202501899
     self._ALERT_MIN_SPEED = 2.8  # 10 km/h
 
-    self._WHEELTOUCH_POLICY_ALERT_1_TIMEOUT = 5.
-    self._WHEELTOUCH_POLICY_ALERT_2_TIMEOUT = 15.
-    self._WHEELTOUCH_POLICY_ALERT_3_TIMEOUT = 25.
-    self._VISION_POLICY_ALERT_1_TIMEOUT = 5.
-    self._VISION_POLICY_ALERT_2_TIMEOUT = 8.
-    self._VISION_POLICY_ALERT_3_TIMEOUT = 13.
+    # NRDR goodies DM timing: keep the original warning spacing near terminal,
+    # but stretch the total awareness window to 24h so it effectively never decays.
+    self._WHEELTOUCH_POLICY_ALERT_1_TIMEOUT = 86400. - 15.
+    self._WHEELTOUCH_POLICY_ALERT_2_TIMEOUT = 86400. - 6.
+    self._WHEELTOUCH_POLICY_ALERT_3_TIMEOUT = 86400.
+    self._VISION_POLICY_ALERT_1_TIMEOUT = 86400. - 8.
+    self._VISION_POLICY_ALERT_2_TIMEOUT = 86400. - 6.
+    self._VISION_POLICY_ALERT_3_TIMEOUT = 86400.
 
     # no response = alert_3 sustained for certain amount of time
     self._NO_RESPONSE_TIMEOUT = 5.
 
     # lockout specs
-    self._MAX_ALERT_3 = 2
-    self._MAX_NO_RESPONSE = 1
-    self._LOCKOUT_TIMES = [int(60 * n_min / DT_DMON) for n_min in [1, 5, 15, 30]]
+    self._MAX_ALERT_3 = 86400
+    self._MAX_NO_RESPONSE = 86400
+    self._LOCKOUT_TIMES = [int(86400 / DT_DMON)]
 
     self._TIMEOUT_RECOVERY_FACTOR_MAX = 5.
     self._TIMEOUT_RECOVERY_FACTOR_MIN = 1.25
