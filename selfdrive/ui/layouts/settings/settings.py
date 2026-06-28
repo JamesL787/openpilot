@@ -5,6 +5,7 @@ from collections.abc import Callable
 from openpilot.selfdrive.ui.layouts.settings.developer import DeveloperLayout
 from openpilot.selfdrive.ui.layouts.settings.device import DeviceLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.lateral import StarPilotLateralLayout
+from openpilot.selfdrive.ui.layouts.settings.starpilot.nrdr_tuning import NRDRTuningLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.main_panel import StarPilotLayout
 from openpilot.selfdrive.ui.layouts.settings.software import SoftwareLayout
 from openpilot.selfdrive.ui.layouts.settings.toggles import TogglesLayout
@@ -73,7 +74,7 @@ class SettingsLayout(Widget):
 
     self._panels = {
       PanelType.STARPILOT: PanelInfo(tr_noop("StarPilot"), StarPilotLayout()),
-      PanelType.NRDR: PanelInfo(tr_noop("NRDR Tuning"), StarPilotLateralLayout()),
+      PanelType.NRDR: PanelInfo(tr_noop("NRDR Tuning"), NRDRTuningLayout()),
       PanelType.DEVICE: PanelInfo(tr_noop("Device"), DeviceLayout()),
       PanelType.NETWORK: PanelInfo(tr_noop("Network"), NetworkUI(wifi_manager)),
       PanelType.TOGGLES: PanelInfo(tr_noop("Toggles"), TogglesLayout()),
