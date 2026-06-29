@@ -1,4 +1,5 @@
 from cereal import car
+import math
 import numpy as np
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
@@ -6,6 +7,7 @@ from openpilot.common.pid import PIDController
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.controls.lib.longcontrol_vehicle_tunes import LongControlVehicleTuning
+from openpilot.selfdrive.controls.lib.nrdr_long_tune import LongTune
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 clip = np.clip
@@ -20,6 +22,58 @@ NEGATIVE_TARGET_CREEP_GUARD_DECEL = 0.40
 MODE_TRANSITION_MAX_DECEL = 4.0
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
+
+_ACCEL_DUE_TO_GRAVITY = 9.81  # m/s^2
+STOPPING_HARD_HOLD_FLOOR = -1.0  # m/s^2; hardcoded safety cap, never a tune field
+
+
+def compute_stopping_accel(last_output_accel, stop_accel, stopping_decel_rate,
+                            v_ego, v_ego_stopping, hold_accel, phase_switch_v,
+                            proximity_scale_m, pitch_margin, drel_filtered, pitch):
+  """Two-phase stopping-ramp shape (Bundle D / L2 port from nrdr-nightly).
+
+  INERT above v_ego_stopping — reproduces the stock monotonic ramp so highway
+  behavior is unchanged. drel_filtered=inf disables proximity scaling (scale=1.0).
+  pitch=nan disables grade compensation.
+  """
+  if not math.isfinite(last_output_accel):
+    last_output_accel = 0.0
+
+  # INERT above v_ego_stopping
+  if not (math.isfinite(v_ego) and v_ego <= v_ego_stopping):
+    out = last_output_accel
+    if out > stop_accel:
+      out = min(out, 0.0)
+      out -= stopping_decel_rate * DT_CTRL
+    return out
+
+  v_clamped = max(0.0, v_ego)
+  speed_scale = float(np.interp(v_clamped, [0.0, 0.3, max(0.3 + 1e-6, v_ego_stopping)],
+                                [0.3, 0.7, 1.0]))
+
+  prox_scale = 1.0
+  if math.isfinite(drel_filtered) and proximity_scale_m > 0.0:
+    prox_scale = min(1.0, max(0.0, drel_filtered) / proximity_scale_m)
+
+  rate_eff = stopping_decel_rate * speed_scale * prox_scale
+
+  at_standstill = v_ego <= phase_switch_v
+
+  if not at_standstill:
+    target = hold_accel
+  else:
+    pitch_term = 0.0
+    if math.isfinite(pitch):
+      pitch_term = -_ACCEL_DUE_TO_GRAVITY * math.sin(pitch) * pitch_margin
+    pitch_aware_floor = hold_accel + pitch_term
+    target = min(pitch_aware_floor, STOPPING_HARD_HOLD_FLOOR)
+    target = max(target, stop_accel)
+
+  out = last_output_accel
+  if out > target:
+    out = min(out, 0.0)
+    out = max(target, out - rate_eff * DT_CTRL)
+  return out
 
 def apply_deadzone(error, deadzone):
   if error > deadzone:
@@ -126,6 +180,7 @@ class LongControl:
     self.last_output_accel = 0.0
     self.stop_release_counter = 0
     self.vehicle_tuning = LongControlVehicleTuning(CP)
+    self._long_tune = LongTune()
 
   def update_mpc_mode(self, experimental_mode):
     new_mode = 'blended' if experimental_mode else 'acc'
@@ -244,10 +299,27 @@ class LongControl:
       output_accel = 0.
 
     elif self.long_control_state == LongCtrlState.stopping:
-      output_accel = self.last_output_accel
-      if output_accel > starpilot_toggles.stopAccel:
-        output_accel = min(output_accel, 0.0)
-        output_accel -= starpilot_toggles.stoppingDecelRate * DT_CTRL
+      self._long_tune.refresh()
+      st = self._long_tune.stopping
+      if st.get("l2_enable", 1.0) >= 0.5:
+        output_accel = compute_stopping_accel(
+          last_output_accel=self.last_output_accel,
+          stop_accel=starpilot_toggles.stopAccel,
+          stopping_decel_rate=starpilot_toggles.stoppingDecelRate,
+          v_ego=CS.vEgo,
+          v_ego_stopping=starpilot_toggles.vEgoStopping,
+          hold_accel=st.get("hold_accel", -0.6),
+          phase_switch_v=st.get("phase_switch_v", 0.15),
+          proximity_scale_m=st.get("proximity_scale_m", 8.0),
+          pitch_margin=st.get("pitch_margin", 0.0),
+          drel_filtered=float("inf"),
+          pitch=float("nan"),
+        )
+      else:
+        output_accel = self.last_output_accel
+        if output_accel > starpilot_toggles.stopAccel:
+          output_accel = min(output_accel, 0.0)
+          output_accel -= starpilot_toggles.stoppingDecelRate * DT_CTRL
       output_accel = self._apply_moving_stop_target_follow(output_accel, a_target, should_stop, CS, starpilot_toggles)
       self.reset(preserve_stop_release=True)
 

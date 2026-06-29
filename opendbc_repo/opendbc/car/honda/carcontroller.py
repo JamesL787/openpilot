@@ -440,7 +440,10 @@ class CarController(CarControllerBase):
     pre_limit_brake, self.braking, self.brake_steady = actuator_hysteresis(brake, self.braking, self.brake_steady, CS.out.vEgo, self.CP.carFingerprint)
 
     # *** rate limit after the enable check ***
-    self.brake_last = rate_limit(pre_limit_brake, self.brake_last, -2.0, DT_CTRL)
+    # 3x faster ramp during following so brake_last clears the wind_brake offset quickly;
+    # gentler during stopping to avoid jerk at standstill.
+    _brake_rate_up = 0.3 if actuators.longControlState == LongCtrlState.stopping else 3.0
+    self.brake_last = rate_limit(pre_limit_brake, self.brake_last, -2.0, _brake_rate_up * DT_CTRL)
 
     # vehicle hud display, wait for one update from 10Hz 0x304 msg
     alert_fcw, alert_steer_required = process_hud_alert(hud_control.visualAlert)
