@@ -430,7 +430,11 @@ class Updater:
     run(["git", "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"], OVERLAY_MERGED)
 
     branch = self.target_branch
-    git_fetch_output = run_with_offroad_abort(["git", "fetch", "origin", branch], self.params, OVERLAY_MERGED)
+    # Shallow (depth=1) fetch: the device only needs the current tip to run. Without --depth on a
+    # shallow clone, git pulls the full history between the shallow boundary and the new tip, which
+    # for branches with committed binaries (ONNX models, panda firmware, prebuilt UI) can be >1GB of
+    # dead intermediate versions. depth=1 transfers only the final-state delta (typically a few MB).
+    git_fetch_output = run_with_offroad_abort(["git", "fetch", "--depth=1", "origin", branch], self.params, OVERLAY_MERGED)
     cloudlog.info("git fetch success: %s", git_fetch_output)
 
     cloudlog.info("git reset in progress")
