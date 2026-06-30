@@ -298,7 +298,7 @@ class Controls:
 
     self.sm = messaging.SubMaster(['liveDelay', 'liveParameters', 'liveTorqueParameters', 'modelV2', 'selfdriveState',
                                    'liveCalibration', 'livePose', 'longitudinalPlan', 'lateralManeuverPlan', 'carState', 'carOutput',
-                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance'], poll='selfdriveState')
+                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance', 'radarState'], poll='selfdriveState')
     self.pm = messaging.PubMaster(['carControl', 'controlsState'])
 
     self.steer_limited_by_safety = False
@@ -426,7 +426,8 @@ class Controls:
     pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, CS.vEgo, CS.vCruise * CV.KPH_TO_MS)
     self.LoC.experimental_mode = bool(self.sm['selfdriveState'].experimentalMode)
     long_pitch = float(self.calibrated_pose.orientation.xyz[1]) if self.calibrated_pose is not None else None
-    long_drel = float(long_plan.leadTrajectoryX0[0]) if (long_plan.hasLead and len(long_plan.leadTrajectoryX0) > 0) else None
+    lead_one = self.sm['radarState'].leadOne
+    long_drel = float(lead_one.dRel) if lead_one.status else None
     actuators.accel = float(min(self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits,
                                                 self.starpilot_toggles, has_lead=long_plan.hasLead,
                                                 traffic_mode_enabled=self.sm['starpilotCarState'].trafficModeEnabled,
