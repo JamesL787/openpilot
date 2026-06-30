@@ -14,7 +14,7 @@ from opendbc.car.honda.carcontroller import (
   get_honda_bosch_wind_brake_mps2,
   update_honda_bosch_live_learning,
 )
-from opendbc.car.honda.hondacan import create_lkas_hud
+from opendbc.car.honda.hondacan import create_brake_command, create_lkas_hud
 from opendbc.car.honda.fingerprints import FW_VERSIONS
 from opendbc.car.honda.values import CAR, DBC, HONDA_BOSCH, HONDA_BOSCH_TJA_CONTROL, CarControllerParams, HondaFlags, HondaSafetyFlags, \
                                      HondaStarPilotFlags
@@ -199,6 +199,37 @@ class TestHondaFingerprint:
     torque_cp = CarInterface.get_params(CAR.HONDA_CLARITY, gen_empty_fingerprint(), car_fw, False, False, False, torque_toggles)
 
     assert torque_cp.lateralTuning.which() == "torque"
+
+  def test_honda_clarity_is_marked_hybrid(self):
+    CP = CarInterface.get_non_essential_params(CAR.HONDA_CLARITY)
+
+    assert CP.flags & HondaFlags.HYBRID
+
+  def test_honda_clarity_brake_command_uses_hybrid_signals(self):
+    class FakePacker:
+      @staticmethod
+      def make_can_msg(name, bus, values):
+        return name, bus, values
+
+    CAN = SimpleNamespace(pt=0)
+
+    _, _, values = create_brake_command(
+      FakePacker(),
+      CAN,
+      apply_brake=159,
+      pump_on=True,
+      pcm_override=True,
+      pcm_cancel_cmd=False,
+      fcw=False,
+      car_fingerprint=CAR.HONDA_CLARITY,
+      stock_brake={"CHIME": 0},
+      honda_flags=HondaFlags.HYBRID,
+    )
+
+    assert values["COMPUTER_BRAKE_HYBRID"] == 159
+    assert values["BRAKE_PUMP_REQUEST_HYBRID"] is True
+    assert "COMPUTER_BRAKE" not in values
+    assert "BRAKE_PUMP_REQUEST" not in values
 
   def test_canfd_bosch_alpha_long_is_available(self):
     toggles = get_test_toggles()
