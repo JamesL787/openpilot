@@ -57,6 +57,7 @@ class HondaSafetyFlags(IntFlag):
   RADARLESS = 8
   BOSCH_CANFD = 16
   GAS_INTERCEPTOR = 32
+  NIDEC_HYBRID = 64
 
 
 class HondaFlags(IntFlag):
