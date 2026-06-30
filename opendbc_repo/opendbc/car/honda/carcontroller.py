@@ -341,6 +341,7 @@ class CarController(CarControllerBase):
       "steer_delta_limiter_enabled": self.param_store.get_bool("HondaSteerDeltaLimiter", default=False),
       "steer_delta_up": float(np.clip(self.param_store.get_float("HondaSteerDeltaUp", default=3.0), 0.0, 100.0)),
       "steer_delta_down": float(np.clip(self.param_store.get_float("HondaSteerDeltaDown", default=3.0), 0.0, 100.0)),
+      "stopping_decel_rate": float(np.clip(self.param_store.get_int("HondaStoppingDecelRate", default=30), 0, 100)) / 100.0,
       "increase_override_tolerance": self.param_store.get_bool("NrdrIncreaseOverrideTolerance", default=False),
       "min_steer_speed": float(np.clip(self.param_store.get_int("NrdrMinSteerSpeed", default=0), 0, 45)) * CV.MPH_TO_MS,
     }
@@ -440,9 +441,7 @@ class CarController(CarControllerBase):
     pre_limit_brake, self.braking, self.brake_steady = actuator_hysteresis(brake, self.braking, self.brake_steady, CS.out.vEgo, self.CP.carFingerprint)
 
     # *** rate limit after the enable check ***
-    # 3x faster ramp during following so brake_last clears the wind_brake offset quickly;
-    # gentler during stopping to avoid jerk at standstill.
-    _brake_rate_up = 0.3 if actuators.longControlState == LongCtrlState.stopping else 3.0
+    _brake_rate_up = live["stopping_decel_rate"] if actuators.longControlState == LongCtrlState.stopping else 3.0
     self.brake_last = rate_limit(pre_limit_brake, self.brake_last, -2.0, _brake_rate_up * DT_CTRL)
 
     # vehicle hud display, wait for one update from 10Hz 0x304 msg

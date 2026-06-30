@@ -16,7 +16,7 @@ stopping (Bundle D / L2 - longcontrol two-phase stopping shape):
   hold_accel         [-1.0, -0.3] default -0.6 - gentle Phase-A hold target while still rolling.
   phase_switch_v     [0.05, 0.5] default 0.15 - vEgo (m/s) below which true standstill declared.
   proximity_scale_m  [2.0, 20.0] default 8.0 - inert when no valid lead (dRel=inf, scale=1.0).
-  pitch_margin       [0.0, 2.0] default 0.0 - grade compensation multiplier (0 = disabled here).
+  pitch_margin       [0.0, 2.0] default 1.0 - grade compensation multiplier.
 """
 import json
 import math
@@ -30,7 +30,7 @@ _STOPPING_CLAMPS = {
   "hold_accel": (-0.6, -1.0, -0.3),
   "phase_switch_v": (0.15, 0.05, 0.5),
   "proximity_scale_m": (8.0, 2.0, 20.0),
-  "pitch_margin": (0.0, 0.0, 2.0),
+  "pitch_margin": (1.0, 0.0, 2.0),
 }
 
 
