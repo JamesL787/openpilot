@@ -303,6 +303,15 @@ def update_manifest(base_manifest: Path, workspace: Path, source_map: dict) -> d
       "released": "2026-06-17",
       "community_favorite": False,
     })
+  if not any(model.get("id") == "deeprl33" for model in models):
+    models.append({
+      "id": "deeprl33",
+      "name": "Deep RL 3 V3 👀📡",
+      "version": "v15",
+      "series": "OP Series",
+      "released": "2026-06-30",
+      "community_favorite": False,
+    })
   multipart_handoff = []
   for model in models:
     source = source_map.get(model["id"], {})
@@ -365,6 +374,7 @@ def main() -> int:
     base = load_json(args.base_manifest)
     versions = {model["id"]: model["version"] for model in base.get("models", base)}
   versions.setdefault("deeprl3v2", "v15")
+  versions.setdefault("deeprl33", "v15")
 
   for model_id in model_ids:
     if model_id not in source_map:

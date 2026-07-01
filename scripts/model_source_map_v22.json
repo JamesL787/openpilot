@@ -51,6 +51,7 @@
   "op16dv2": {"ref": "0a628146d1a9a314e329e2c0b5de20e6223211e4", "input_format": "split"},
   "rlv1dl": {"ref": "38c0e3c95de5b63b56ecbbe507abc49b9b0091a3", "input_format": "split"},
   "deeprl3": {"ref": "a1060427b9b3ac1d11cbad05380929ea8235840a", "input_format": "split"},
+  "deeprl33": {"ref": "01cae008f5846ccc138adf4f604346a0e9bd5fe2", "input_format": "supercombo"},
   "ms2": {"ref": "d70b13931793bc0e4d8efd36128dd66f227a3f81", "input_format": "split"},
   "pp222": {"ref": "50c78a9dd670a305ca898b96245cadbc2ecdc1a6", "input_format": "split"},
   "ds222": {"ref": "5ff0e48f90d662d8c9d5061adc63e90c198c9b81", "input_format": "split"},
