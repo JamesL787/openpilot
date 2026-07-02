@@ -330,14 +330,36 @@ class Controls:
     self.sm = self.sm.extend(['liveDelay', 'starpilotCarState', 'starpilotPlan'])
 
     self.starpilot_toggles = get_starpilot_toggles()
+    self.learn_steer_ratio = True
+    self.learn_stiffness = True
+    self.learn_angle_offset = True
+    self.nrdr_live_torque_params = False
+    self.nrdr_custom_torque_params = False
+    self.nrdr_torque_friction = 0.0
+    self.nrdr_torque_lat_accel_factor = 0.0
+    self.update_nrdr_autotune_params()
     self.ecu_disable_failed = False
     self.ecu_disable_failed_checked = not self.CP.openpilotLongitudinalControl
 
     if self.CP.lateralTuning.which() == "torque" and (self.starpilot_toggles.nnff or self.starpilot_toggles.nnff_lite):
       self.LaC = LatControlNNFF(self.CP, self.CI, DT_CTRL)
 
+  def update_nrdr_autotune_params(self):
+    self.learn_steer_ratio = self.params.get_bool("NrdrLearnSteerRatio", default=True)
+    self.learn_stiffness = self.params.get_bool("NrdrLearnStiffness", default=True)
+    self.learn_angle_offset = self.params.get_bool("NrdrLearnAngleOffset", default=True)
+    self.nrdr_live_torque_params = self.params.get_bool("LiveTorqueParamsToggle")
+    self.nrdr_custom_torque_params = self.params.get_bool("CustomTorqueParams") and self.params.get_bool("TorqueParamsOverrideEnabled")
+    torque_tune = self.CP.lateralTuning.torque if self.CP.lateralTuning.which() == "torque" else None
+    default_friction = torque_tune.friction if torque_tune is not None else 0.0
+    default_lat_accel_factor = torque_tune.latAccelFactor if torque_tune is not None else 0.0
+    self.nrdr_torque_friction = self.params.get_float("TorqueParamsOverrideFriction", return_default=True, default=default_friction)
+    self.nrdr_torque_lat_accel_factor = self.params.get_float("TorqueParamsOverrideLatAccelFactor", return_default=True, default=default_lat_accel_factor)
+
   def update(self):
     self.sm.update(15)
+    if self.sm.frame % int(1.0 / DT_CTRL) == 0:
+      self.update_nrdr_autotune_params()
     if self.sm.updated["liveCalibration"]:
       self.pose_calibrator.feed_live_calib(self.sm['liveCalibration'])
     if self.sm.updated["livePose"]:
@@ -367,28 +389,34 @@ class Controls:
 
     # Update VehicleModel
     lp = self.sm['liveParameters']
-    x = max(lp.stiffnessFactor, 0.1)
-    sr = max(lp.steerRatio, 0.1)
+    x = max(lp.stiffnessFactor if self.learn_stiffness else 1.0, 0.1)
+    sr = max(lp.steerRatio if self.learn_steer_ratio else self.CP.steerRatio, 0.1)
     if self.CP.carFingerprint == GM_CAR.CHEVROLET_BOLT_CC_2017:
       sr *= get_bolt_2017_steer_ratio_scale(CS.vEgo)
     elif self.CP.carFingerprint == GM_CAR.CHEVROLET_BOLT_CC_2018_2021:
       sr *= BOLT_2018_2021_STEER_RATIO_TEST_SCALE
     self.VM.update_params(x, sr)
 
-    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
+    angle_offset = lp.angleOffsetDeg if self.learn_angle_offset else 0.0
+    steer_angle_without_offset = math.radians(CS.steeringAngleDeg - angle_offset)
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
     # Update Torque Params
     if self.CP.lateralTuning.which() == 'torque':
       torque_params = self.sm['liveTorqueParameters']
-      force_auto_tune = getattr(self.starpilot_toggles, "force_auto_tune", False)
-      use_live_params = self.sm.all_checks(['liveTorqueParameters']) and (torque_params.useParams or force_auto_tune)
+      force_auto_tune = getattr(self.starpilot_toggles, "force_auto_tune", False) or self.nrdr_live_torque_params
+      force_auto_tune_off = getattr(self.starpilot_toggles, "force_auto_tune_off", False) and not self.nrdr_live_torque_params
+      use_live_params = self.sm.all_checks(['liveTorqueParameters']) and not force_auto_tune_off and (torque_params.useParams or force_auto_tune)
       use_custom_torque_params = (
         getattr(self.starpilot_toggles, "use_custom_latAccelFactor", False) or
-        getattr(self.starpilot_toggles, "use_custom_friction", False)
+        getattr(self.starpilot_toggles, "use_custom_friction", False) or
+        self.nrdr_custom_torque_params
       )
       if use_live_params or use_custom_torque_params:
         lat_accel_factor, lat_accel_offset, friction = get_torque_control_params(self.CP, torque_params, self.starpilot_toggles, use_live_params)
+        if self.nrdr_custom_torque_params:
+          lat_accel_factor = self.nrdr_torque_lat_accel_factor
+          friction = self.nrdr_torque_friction
         self.LaC.update_live_torque_params(lat_accel_factor, lat_accel_offset, friction)
 
     long_plan = self.sm['longitudinalPlan']

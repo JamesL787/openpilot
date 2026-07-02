@@ -10,6 +10,7 @@ from openpilot.common.pid import PIDController
 from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
+from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
 
@@ -227,6 +228,7 @@ class LatControlPID(LatControl):
     self.dt = dt
     self.params = Params()
     self.frame = -1
+    self.tune_learner = TuneLearner(dt, self.steer_max)
     self.lat_p_scale_low = 1.0
     self.lat_p_scale_standard = 1.35
     self.lat_p_scale_highway = 2.0
@@ -286,6 +288,7 @@ class LatControlPID(LatControl):
       self.prev_output_torque = 0.0
 
     else:
+      self.frame += 1
       desired_angle_delta = angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
       phase = angle_steers_des_no_offset * desired_angle_delta
 
@@ -358,7 +361,6 @@ class LatControlPID(LatControl):
                                 freeze_integrator=freeze_integrator)
 
       if self.is_clarity_eps_modified:
-        self.frame += 1
         if self.frame % 300 == 0:
           self.lat_p_scale_low = _get_param_float(self.params, "LatPScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_p_scale_standard = _get_param_float(self.params, "LatPScaleStandard", 1.35, 0.0, 5.0, scale=100.0)
@@ -406,6 +408,17 @@ class LatControlPID(LatControl):
                                                                  output_torque, self.prev_output_torque)
         output_torque = self.prev_output_torque + (output_alpha * (output_torque - self.prev_output_torque))
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
+
+      output_torque += self.tune_learner.apply(CS.vEgo, angle_steers_des)
+      output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
+
+      paramsd_ok = bool(
+        getattr(params, "valid", True) and
+        getattr(params, "angleOffsetValid", True) and
+        getattr(params, "steerRatioValid", True) and
+        getattr(params, "stiffnessFactorValid", True)
+      )
+      self.tune_learner.learn(CS.vEgo, angle_steers_des, error, float(CS.steeringRateDeg), steering_pressed, paramsd_ok, self.frame)
 
       pid_log.active = True
       pid_log.p = float(self.pid.p)

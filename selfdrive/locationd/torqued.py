@@ -32,7 +32,9 @@ MAX_FILTER_DECAY = 250
 LAT_ACC_THRESHOLD = 1
 STEER_BUCKET_BOUNDS = [(-0.5, -0.3), (-0.3, -0.2), (-0.2, -0.1), (-0.1, 0), (0, 0.1), (0.1, 0.2), (0.2, 0.3), (0.3, 0.5)]
 MIN_BUCKET_POINTS = np.array([100, 300, 500, 500, 500, 500, 300, 100])
+RELAXED_MIN_BUCKET_POINTS = np.array([1, 200, 300, 500, 500, 300, 200, 1])
 MIN_ENGAGE_BUFFER = 2  # secs
+PARAMS_UPDATE_PERIOD = 5.0
 
 VERSION = 1  # bump this to invalidate old parameter caches
 ALLOWED_CARS = ['toyota', 'hyundai', 'rivian', 'honda']
@@ -54,6 +56,10 @@ class TorqueBuckets(PointBuckets):
 
 class TorqueEstimator(ParameterEstimator):
   def __init__(self, CP, decimated=False, track_all_points=False):
+    self.CP = CP
+    self.params = Params()
+    self.decimated = decimated
+    self.frame = -1
     self.hist_len = int(HISTORY / DT_MDL)
     self.lag = 0.0
     self.track_all_points = track_all_points  # for offline analysis, without max lateral accel or max steer torque filters
@@ -80,6 +86,7 @@ class TorqueEstimator(ParameterEstimator):
       self.offline_friction = CP.lateralTuning.torque.friction
       self.offline_latAccelFactor = CP.lateralTuning.torque.latAccelFactor
 
+    self.update_nrdr_torque_params(force=True)
     self.calibrator = PoseCalibrator()
 
     self.reset()
@@ -97,9 +104,8 @@ class TorqueEstimator(ParameterEstimator):
     self.max_friction = (1.0 + self.friction_sanity) * self.offline_friction
 
     # try to restore cached params
-    params = Params()
-    params_cache = params.get("CarParamsPrevRoute")
-    torque_cache = params.get("LiveTorqueParameters")
+    params_cache = self.params.get("CarParamsPrevRoute")
+    torque_cache = self.params.get("LiveTorqueParameters")
     if params_cache is not None and torque_cache is not None:
       try:
         with log.Event.from_bytes(torque_cache) as log_evt:
@@ -119,11 +125,34 @@ class TorqueEstimator(ParameterEstimator):
           cloudlog.info("restored torque params from cache")
       except Exception:
         cloudlog.exception("failed to restore cached torque params")
-        params.remove("LiveTorqueParameters")
+        self.params.remove("LiveTorqueParameters")
 
     self.filtered_params = {}
     for param in initial_params:
       self.filtered_params[param] = FirstOrderFilter(initial_params[param], self.decay, DT_MDL)
+
+  def update_nrdr_torque_params(self, force=False):
+    if not force and self.frame % int(PARAMS_UPDATE_PERIOD / DT_MDL) != 0:
+      self.frame += 1
+      return
+
+    enforce_torque_control = self.params.get_bool("EnforceTorqueControl")
+    custom_torque_params = self.params.get_bool("CustomTorqueParams")
+    torque_override_enabled = self.params.get_bool("TorqueParamsOverrideEnabled")
+
+    if enforce_torque_control:
+      if self.params.get_bool("LiveTorqueParamsRelaxedToggle"):
+        self.min_bucket_points = RELAXED_MIN_BUCKET_POINTS / (10 if self.decimated else 1)
+        self.factor_sanity = 0.5 if self.decimated else 1.0
+        self.friction_sanity = 0.8 if self.decimated else 1.0
+
+      if custom_torque_params:
+        self.offline_latAccelFactor = self.params.get_float("TorqueParamsOverrideLatAccelFactor", return_default=True, default=self.offline_latAccelFactor)
+        self.offline_friction = self.params.get_float("TorqueParamsOverrideFriction", return_default=True, default=self.offline_friction)
+
+      self.use_params = self.params.get_bool("LiveTorqueParamsToggle") and not (custom_torque_params and torque_override_enabled)
+
+    self.frame += 1
 
   @staticmethod
   def get_restore_key(CP, version):
@@ -269,6 +298,8 @@ def main(demo=False):
         if sm.updated[which]:
           t = sm.logMonoTime[which] * 1e-9
           estimator.handle_log(t, which, sm[which])
+
+    estimator.update_nrdr_torque_params()
 
     # 4Hz driven by livePose
     if sm.frame % 5 == 0:
