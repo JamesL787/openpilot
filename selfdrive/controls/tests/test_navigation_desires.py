@@ -430,6 +430,36 @@ def test_nudgeless_only_when_engaged_requires_nudge_when_aol_only():
   assert helper.lane_change_direction == LaneChangeDirection.left
 
 
+def test_lane_change_nudge_uses_raw_torque_threshold():
+  helper = DesireHelper()
+  toggles = make_toggles(nudgeless_lane_change_only_when_engaged=True)
+
+  for _ in range(2):
+    helper.update(
+      make_car_state(leftBlinker=True),
+      True,
+      0.0,
+      make_plan(),
+      toggles,
+      controls_enabled=False,
+    )
+
+  assert helper.lane_change_state == LaneChangeState.preLaneChange
+  assert helper.lane_change_direction == LaneChangeDirection.left
+
+  helper.update(
+    make_car_state(leftBlinker=True, steeringPressed=False, steeringTorque=1300.0),
+    True,
+    0.0,
+    make_plan(),
+    toggles,
+    controls_enabled=False,
+  )
+
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+  assert helper.lane_change_direction == LaneChangeDirection.left
+
+
 def test_nav_desires_nudgeless_only_when_engaged_blocks_keep_when_aol_only():
   helper = DesireHelper()
   helper.nav_desires_allowed = True

@@ -12,6 +12,7 @@ LaneChangeDirection = log.LaneChangeDirection
 
 LANE_CHANGE_SPEED_MIN = 20 * CV.MPH_TO_MS
 LANE_CHANGE_TIME_MAX = 10.
+LANE_CHANGE_NUDGE_TORQUE_THRESHOLD = 1200
 NAV_TURN_DISTANCE_SPEED_BREAKPOINTS = [0.0, 5.0, 10.0]
 NAV_TURN_DISTANCE_BREAKPOINTS = [20.0, 25.0, 30.0]
 NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS = [0.0, 15.0, 30.0]
@@ -271,7 +272,10 @@ class DesireHelper:
         # Update lane change direction
         self.lane_change_direction = self.get_lane_change_direction(carstate)
 
-        torque_applied = carstate.steeringPressed and \
+        # Keep lane-change nudge sensitivity aligned with the old raw torque threshold,
+        # even if steeringPressed is raised elsewhere for driver override filtering.
+        torque_nudged = carstate.steeringPressed or abs(carstate.steeringTorque) > LANE_CHANGE_NUDGE_TORQUE_THRESHOLD
+        torque_applied = torque_nudged and \
                          ((carstate.steeringTorque > 0 and self.lane_change_direction == LaneChangeDirection.left) or
                           (carstate.steeringTorque < 0 and self.lane_change_direction == LaneChangeDirection.right))
 
