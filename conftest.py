@@ -36,7 +36,6 @@ def _prepend_host_pytest_runtime() -> None:
 _prepend_host_pytest_runtime()
 
 from openpilot.common.prefix import OpenpilotPrefix
-from openpilot.system.manager import manager
 from openpilot.system.hardware import TICI, HARDWARE
 
 # TODO: pytest-cpp doesn't support FAIL, and we need to create test translations in sessionstart
@@ -77,6 +76,19 @@ def clean_env():
   os.environ.update(starting_env)
 
 
+def _cleanup_started_processes() -> None:
+  try:
+    from openpilot.system.manager import manager
+  except ModuleNotFoundError as e:
+    # Host-side macOS pytest can run without the full generated longitudinal MPC tree.
+    # Treat cleanup as best-effort in that environment instead of failing test teardown.
+    if "c_generated_code" not in str(e):
+      raise
+    return
+
+  manager.manager_cleanup()
+
+
 @pytest.fixture(scope="function", autouse=True)
 def openpilot_function_fixture(request):
   with clean_env():
@@ -90,7 +102,7 @@ def openpilot_function_fixture(request):
       assert "OPENPILOT_PREFIX" in os.environ and prefix == os.environ["OPENPILOT_PREFIX"]
 
     # cleanup any started processes
-    manager.manager_cleanup()
+    _cleanup_started_processes()
 
     # some processes disable gc for performance, re-enable here
     if not gc.isenabled():
