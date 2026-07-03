@@ -82,6 +82,7 @@ class HondaFlags(IntFlag):
   HYBRID = 2048
   BOSCH_TJA_CONTROL = 4096
   EPS_MODIFIED = 8192
+  HYBRID_ALT_BRAKEHOLD = 16384  # some Nidec hybrids report brake hold via BRAKE_HOLD_HYBRID_ALT instead of VSA_STATUS
 
 
 # Car button codes

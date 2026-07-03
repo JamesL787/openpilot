@@ -320,6 +320,9 @@ class CarInterface(CarInterfaceBase):
       ret.safetyConfigs[-1].safetyParam |= HondaSafetyFlags.GAS_INTERCEPTOR.value
     if (ret.flags & HondaFlags.NIDEC) and (ret.flags & HondaFlags.HYBRID):
       ret.safetyConfigs[-1].safetyParam |= HondaSafetyFlags.NIDEC_HYBRID.value
+      # some Nidec hybrids report brake hold via BRAKE_HOLD_HYBRID_ALT instead of VSA_STATUS
+      if 0x223 in fingerprint[CAN.pt]:
+        ret.flags |= HondaFlags.HYBRID_ALT_BRAKEHOLD.value
     if ret.openpilotLongitudinalControl and candidate in HONDA_BOSCH:
       ret.safetyConfigs[-1].safetyParam |= HondaSafetyFlags.BOSCH_LONG.value
     if candidate in HONDA_BOSCH_RADARLESS:
