@@ -580,7 +580,7 @@ class CarController(CarControllerBase):
         )
 
       steering_available = CS.out.cruiseState.available and CS.out.vEgo > self.CP.minSteerSpeed
-      reduced_steering = filtered_steering_pressed
+      reduced_steering = CS.out.steeringPressed
       can_sends.extend(
         hondacan.create_lkas_hud(
           self.packer, self.CAN.lkas, self.CP, hud_control, CC.latActive, steering_available, reduced_steering, alert_steer_required, CS.lkas_hud
