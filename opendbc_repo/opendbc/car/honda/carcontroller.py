@@ -388,7 +388,7 @@ class CarController(CarControllerBase):
         self.prev_torque_cmd = raw_torque_cmd
         torque_cmd = self.torque_lpf
       else:
-        self.torque_lpf = 0.0 if steering_pressed else torque_cmd
+        self.torque_lpf = torque_cmd
 
       if live["notch_enabled"]:
         torque_cmd = self.notch_filter.update(torque_cmd, live["notch_freq"], live["notch_q"])
@@ -579,7 +579,7 @@ class CarController(CarControllerBase):
           hondacan.create_acc_hud(self.packer, self.CAN.pt, self.CP, CC.enabled, pcm_speed, pcm_accel, hud_control, hud_v_cruise, CS.is_metric, CS.acc_hud)
         )
 
-      steering_available = CS.out.cruiseState.available and CS.out.vEgo > self.CP.minSteerSpeed
+      steering_available = CS.out.cruiseState.available and CS.out.vEgo > max(self.params.STEER_GLOBAL_MIN_SPEED, self.CP.minSteerSpeed)
       reduced_steering = CS.out.steeringPressed
       can_sends.extend(
         hondacan.create_lkas_hud(
