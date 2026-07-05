@@ -330,7 +330,7 @@ class CarController(CarControllerBase):
       "override_fade_down_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeDownSecs", default=0.0), 0.0, 10.0)),
       "override_fade_up_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeUpSecs", default=1.5), 0.0, 10.0)),
       "override_torque_scale": float(np.clip(self.param_store.get_int("HondaOverrideTorqueScale", default=0), 0, 100)) / 100.0,
-      "driver_assist_during_override": self.param_store.get_bool("HondaDriverAssistDuringOverride", default=True),
+      "driver_assist_during_override": self.param_store.get_bool("HondaDriverAssistDuringOverride", default=False),
       "torque_lpf_enabled": self.param_store.get_bool("HondaTorqueLowPassFilter", default=True),
       "lpf_tau_low": float(np.clip(self.param_store.get_float("HondaLpfTauLowSpeed", default=0.1), 0.0, 5.0)),
       "lpf_tau_standard": float(np.clip(self.param_store.get_float("HondaLpfTauStandard", default=0.1), 0.0, 5.0)),
@@ -413,7 +413,7 @@ class CarController(CarControllerBase):
     self.last_torque = limited_torque
     self.lat_active_prev = CC.latActive
 
-    lkas_active = CC.latActive and (not live["driver_assist_during_override"] or not steering_pressed) and not below_min_steer_speed
+    lkas_active = CC.latActive and (live["driver_assist_during_override"] or not steering_pressed) and not below_min_steer_speed
     return limited_torque, lkas_active, steering_pressed
 
   def update(self, CC, CS, now_nanos, starpilot_toggles):
