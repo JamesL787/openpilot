@@ -332,6 +332,12 @@ class VehicleSettingsManagerView(PanelManagerView):
       "get_state": lambda: self._controller._params.get_bool("DisableOpenpilotLongitudinal"),
       "set_state": lambda s: self._controller._on_toggle("DisableOpenpilotLongitudinal"),
     })
+    toggles.append({
+      "title": tr("Disable Seatbelt Check"),
+      "subtitle": tr("Do not block openpilot engagement when the driver seatbelt signal reports unlatched."),
+      "get_state": lambda: self._controller._params.get_bool("DisableSeatbeltCheck"),
+      "set_state": lambda s: self._controller._on_toggle("DisableSeatbeltCheck"),
+    })
 
     if cs.isGM and (cs.hasPedal or cs.canUsePedal):
       toggles.append({

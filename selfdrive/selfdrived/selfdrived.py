@@ -417,9 +417,6 @@ class SelfdriveD:
 
       self.events.add_from_msg(car_events)
 
-      if self.enabled and self.sm["carControl"].latActive and CS.steeringPressed:
-        self.events.add(EventName.steerOverride)
-
       self.prev_pedal_long_active = add_tesla_preap_starpilot_events(
         self.CP, CS, self.sm['starpilotCarState'], self.starpilot_events, self.prev_pedal_long_active
       )

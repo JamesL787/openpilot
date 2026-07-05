@@ -5,6 +5,7 @@ from opendbc.car.chrysler.values import RAM_DT
 from opendbc.car.gm.values import CAR as GM_CAR, GMFlags, SDGM_CAR
 from opendbc.car.interfaces import MAX_CTRL_SPEED
 
+from openpilot.common.params import Params
 from openpilot.selfdrive.selfdrived.events import Events
 
 ButtonType = structs.CarState.ButtonEvent.Type
@@ -59,6 +60,7 @@ GM_STANDSTILL_BRAKE_CAMERA_CARS = {
 class CarSpecificEvents:
   def __init__(self, CP: structs.CarParams):
     self.CP = CP
+    self.params = Params()
 
     self.steering_unpressed = 0
     self.low_speed_alert = False
@@ -197,7 +199,7 @@ class CarSpecificEvents:
 
     if CS.doorOpen:
       events.add(EventName.doorOpen)
-    if CS.seatbeltUnlatched:
+    if CS.seatbeltUnlatched and not self.params.get_bool("DisableSeatbeltCheck"):
       events.add(EventName.seatbeltNotLatched)
     if CS.gearShifter != GearShifter.drive and (extra_gears is None or
        CS.gearShifter not in extra_gears):
