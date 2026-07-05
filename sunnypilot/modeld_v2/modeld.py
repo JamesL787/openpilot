@@ -39,9 +39,43 @@ from openpilot.sunnypilot.modeld_v2.camera_offset_helper import CameraOffsetHelp
 
 from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
 from openpilot.sunnypilot.modeld_v2.modeld_base import ModelStateBase
-from openpilot.sunnypilot.models.helpers import get_active_bundle
+from openpilot.sunnypilot.models.helpers import get_active_bundle, get_bundle_model_version, get_bundle_overrides, sync_bundle_model_version
+from openpilot.sunnypilot.models.runners.constants import ModelType
 
 PROCESS_NAME = "selfdrive.modeld.modeld_tinygrad"
+
+
+def _load_pkl_compat(data: bytes):
+  from tinygrad.uop.ops import UOpMetaClass, UOp, Ops, buffers
+  from tinygrad.dtype import dtypes
+  try:
+    from tinygrad.uop.ops import ParamArg
+  except ImportError:
+    ParamArg = None
+  ops_slice = getattr(Ops, "SLICE", None)
+  _orig_call = UOpMetaClass.__call__
+
+  def _compat_call(cls, op, dtype=dtypes.void, src=(), arg=None, tag=None, metadata=None, _buffer=None):
+    if ops_slice is not None and _buffer is not None and op is ops_slice:
+      created = _orig_call(cls, op, dtype, src, arg, tag, metadata)
+      buffers[created] = _buffer
+      return created
+    if ParamArg is not None and op is Ops.PARAM and isinstance(arg, int):
+      arg = ParamArg(arg)
+    if op is Ops.PERMUTE and len(src) >= 2 and src[0].op is Ops.NOOP:
+      op = Ops.RESHAPE
+      shape_uop = src[1]
+      if shape_uop.op is Ops.CONST and hasattr(shape_uop.dtype, 'count') and shape_uop.dtype.count > 1 and isinstance(shape_uop.arg, tuple):
+        src = (src[0], UOp(Ops.STACK, shape_uop.dtype, tuple(UOp(Ops.CONST, dtypes.weakint, (), arg=v) for v in shape_uop.arg)))
+    if op is Ops.CUSTOM and hasattr(dtype, 'count') and dtype.count > 1 and not isinstance(arg, str):
+      op = Ops.CONST
+    return _orig_call(cls, op, dtype, src, arg, tag, metadata, _buffer if op is Ops.BUFFER else None)
+
+  UOpMetaClass.__call__ = _compat_call
+  try:
+    return pickle.loads(data)
+  finally:
+    UOpMetaClass.__call__ = _orig_call
 
 
 def _pkl_exists(path):
@@ -61,6 +95,27 @@ def _find_driving_pkl(bundle):
   pkl_path = os.path.join(model_root, pkl_name)
   if _pkl_exists(pkl_path):
     return pkl_path
+
+
+def _uses_split_artifacts(bundle) -> bool:
+  if bundle is None:
+    return False
+  split_types = {ModelType.vision, ModelType.policy, ModelType.offPolicy, ModelType.onPolicy}
+  artifact_names = {model.artifact.fileName for model in bundle.models if model.artifact.fileName}
+  return len(artifact_names) > 1 and any(getattr(model.type, 'raw', model.type) in split_types for model in bundle.models)
+
+
+def _resolve_mirrored_param(params: Params, primary: str, secondary: str) -> str:
+  primary_default = params.get_default_value(primary) or ""
+  secondary_default = params.get_default_value(secondary) or ""
+  primary_val = params.get(primary, return_default=True) or ""
+  secondary_val = params.get(secondary, return_default=True) or ""
+
+  if secondary_val and secondary_val != secondary_default:
+    return str(secondary_val)
+  if primary_val and primary_val != primary_default:
+    return str(primary_val)
+  return ""
 
 
 class FrameMeta:
@@ -86,16 +141,68 @@ class ModelState(ModelStateBase):
     else:
       model_bundle = get_active_bundle()
     self.generation = model_bundle.generation if model_bundle is not None else None
-    overrides = {override.key: override.value for override in model_bundle.overrides} if model_bundle else {}
+    overrides = get_bundle_overrides(model_bundle)
+    params = Params()
 
     self.LAT_SMOOTH_SECONDS = float(overrides.get('lat', ".0"))
     self.LONG_SMOOTH_SECONDS = float(overrides.get('long', ".0"))
     self.MIN_LAT_CONTROL_SPEED = 0.3
     self.PLANPLUS_CONTROL: float = 1.0
+    self.policy_generation = self._resolve_policy_generation(model_bundle, overrides, params)
+    self.is_v14 = self.policy_generation == "v14"
+    self.is_v15 = self.policy_generation == "v15"
+    sync_bundle_model_version(params, model_bundle)
+    self._split_runner = False
 
-    pkl_path = _find_driving_pkl(model_bundle)
-    assert pkl_path is not None, "No driving pkl found — all models must be compiled with compile_modeld.py"
-    self._init_combined(pkl_path, cam_w, cam_h, model_bundle)
+    if _uses_split_artifacts(model_bundle):
+      self._init_split_runner()
+    else:
+      pkl_path = _find_driving_pkl(model_bundle)
+      assert pkl_path is not None, "No driving pkl found — all models must be compiled with compile_modeld.py"
+      self._init_combined(pkl_path, cam_w, cam_h, model_bundle)
+
+  def _resolve_policy_generation(self, bundle, overrides: dict[str, str], params: Params) -> str:
+    bundle_version = get_bundle_model_version(bundle, overrides)
+    if bundle_version:
+      return bundle_version
+
+    explicit = _resolve_mirrored_param(params, "ModelVersion", "DrivingModelVersion")
+    return explicit.strip().lower() if explicit else "v11"
+
+  def _init_split_runner(self):
+    from openpilot.sunnypilot.modeld_v2.warp import Warp
+    from openpilot.sunnypilot.models.runners.helpers import get_model_runner
+
+    self._split_runner = True
+    self.model_runner = get_model_runner()
+    self.constants = self.model_runner.constants
+    buffer_length = 5 if self.model_runner.is_20hz else 2
+    self.warp = Warp(buffer_length)
+    self.prev_desire = np.zeros(self.constants.DESIRE_LEN, dtype=np.float32)
+    self.numpy_inputs = {}
+    self.temporal_buffers = {}
+    self.temporal_idxs_map = {}
+
+    for key, shape in self.model_runner.input_shapes.items():
+      if key in self.model_runner.vision_input_names:
+        continue
+      self.numpy_inputs[key] = np.zeros(shape, dtype=np.float32)
+      if len(shape) != 3 or shape[1] <= 1:
+        continue
+
+      buffer_history_len = shape[1] * 4 if shape[1] < 99 else shape[1]
+      feature_len = shape[2]
+      features_buffer_shape = self.model_runner.input_shapes.get('features_buffer')
+      if shape[1] in (24, 25) and features_buffer_shape is not None and features_buffer_shape[1] == 24:
+        buffer_history_len = (features_buffer_shape[1] + 1) * 4
+        step = int(-buffer_history_len / shape[1])
+        self.temporal_idxs_map[key] = np.arange(step, step * (shape[1] + 1), step)[::-1]
+      elif shape[1] == 25:
+        skip = buffer_history_len // shape[1]
+        self.temporal_idxs_map[key] = np.arange(buffer_history_len)[-1 - (skip * (shape[1] - 1))::skip]
+      elif shape[1] >= 99:
+        self.temporal_idxs_map[key] = np.arange(shape[1])
+      self.temporal_buffers[key] = np.zeros((1, buffer_history_len, feature_len), dtype=np.float32)
 
   def _init_combined(self, pkl_path, cam_w, cam_h, bundle):
     from tinygrad.tensor import Tensor
@@ -106,7 +213,7 @@ class ModelState(ModelStateBase):
     from openpilot.common.file_chunker import read_file_chunked
 
     cloudlog.warning(f"loading combined pkl: {pkl_path}")
-    jits = pickle.loads(read_file_chunked(pkl_path))
+    jits = _load_pkl_compat(read_file_chunked(pkl_path))
 
     self.DEV = Device.DEFAULT
 
@@ -124,7 +231,7 @@ class ModelState(ModelStateBase):
     else:
       vision_metadata = metadata['vision']
       policy_keys = [k for k in metadata if k != 'vision']
-      if policy_keys == ['policy']:
+      if len(policy_keys) == 1 and policy_keys[0] in ('policy', 'on_policy'):
         self._combined_model_type = 'split'
       else:
         self._combined_model_type = 'multi_policy'
@@ -133,6 +240,8 @@ class ModelState(ModelStateBase):
       self._policy_slices_list = [metadata[k]['output_slices'] for k in policy_keys]
       self.policy_output_slices = self._policy_slices_list[0]
       self._has_on_policy = any('on' in k.lower() for k in policy_keys)
+      on_policy_key = next((k for k in policy_keys if 'on' in k.lower()), None)
+      self._on_policy_has_plan = on_policy_key is not None and 'plan' in metadata[on_policy_key]['output_slices']
       first_policy_metadata = metadata[policy_keys[0]]
       vision_input_shapes = vision_metadata['input_shapes']
       policy_input_shapes = first_policy_metadata['input_shapes']
@@ -174,6 +283,8 @@ class ModelState(ModelStateBase):
 
   @property
   def vision_input_names(self) -> list[str]:
+    if self._split_runner:
+      return self.model_runner.vision_input_names
     return self._vision_input_names
 
   @property
@@ -182,6 +293,9 @@ class ModelState(ModelStateBase):
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
                 inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
+    if self._split_runner:
+      return self._run_split_runner(bufs, transforms, inputs, prepare_only)
+
     from tinygrad.tensor import Tensor
 
     for key in bufs.keys():
@@ -196,7 +310,7 @@ class ModelState(ModelStateBase):
     inputs[desire_key][0] = 0
     self.numpy_inputs[desire_key][:] = np.where(inputs[desire_key] - self.prev_desire > .99, inputs[desire_key], 0)
     self.prev_desire[:] = inputs[desire_key]
-    for key in ('traffic_convention', 'lateral_control_params'):
+    for key in ('traffic_convention', 'lateral_control_params', 'action_t'):
       if key in self.numpy_inputs and key in inputs:
         self.numpy_inputs[key][:] = inputs[key]
 
@@ -224,7 +338,7 @@ class ModelState(ModelStateBase):
         policy_output = raw_outputs[i + 1].numpy().flatten()
         policy_sliced = {k: policy_output[np.newaxis, v] for k, v in policy_slices.items()}
         parsed = self.parser.parse_policy_outputs(policy_sliced)
-        if 'off' in self._policy_keys[i] and self._has_on_policy:
+        if 'off' in self._policy_keys[i] and self._on_policy_has_plan:
           parsed.pop('plan', None)
         outputs.update(parsed)
 
@@ -238,8 +352,68 @@ class ModelState(ModelStateBase):
 
     return outputs
 
+  def _run_split_runner(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
+                        inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
+    desire_key = self.desire_key
+    inputs[desire_key][0] = 0
+    new_desire = np.where(inputs[desire_key] - self.prev_desire > .99, inputs[desire_key], 0)
+    self.prev_desire[:] = inputs[desire_key]
+
+    self.temporal_buffers[desire_key][0, :-1] = self.temporal_buffers[desire_key][0, 1:]
+    self.temporal_buffers[desire_key][0, -1] = new_desire
+
+    if self.temporal_buffers[desire_key].shape[1] > self.numpy_inputs[desire_key].shape[1]:
+      skip = self.temporal_buffers[desire_key].shape[1] // self.numpy_inputs[desire_key].shape[1]
+      self.numpy_inputs[desire_key][:] = self.temporal_buffers[desire_key][0].reshape(
+        self.numpy_inputs[desire_key].shape[0], self.numpy_inputs[desire_key].shape[1], skip, -1).max(axis=2)
+    else:
+      self.numpy_inputs[desire_key][:] = self.temporal_buffers[desire_key][0, self.temporal_idxs_map[desire_key]]
+
+    for key in self.numpy_inputs:
+      if key in inputs and key != desire_key:
+        self.numpy_inputs[key][:] = inputs[key]
+
+    imgs_tensors = self.warp.process(bufs, transforms)
+    for name, tensor in imgs_tensors.items():
+      self.model_runner.inputs[name] = tensor
+    self.model_runner.prepare_inputs(self.numpy_inputs)
+
+    if prepare_only:
+      return None
+
+    outputs = self.model_runner.run_model()
+
+    if 'features_buffer' in self.temporal_buffers and 'hidden_state' in outputs:
+      self.temporal_buffers['features_buffer'][0, :-1] = self.temporal_buffers['features_buffer'][0, 1:]
+      self.temporal_buffers['features_buffer'][0, -1] = outputs['hidden_state'][0, :]
+      self.numpy_inputs['features_buffer'][:] = self.temporal_buffers['features_buffer'][0, self.temporal_idxs_map['features_buffer']]
+
+    if 'desired_curvature' in outputs and 'prev_desired_curv' in self.temporal_buffers:
+      self.temporal_buffers['prev_desired_curv'][0, :-1] = self.temporal_buffers['prev_desired_curv'][0, 1:]
+      self.temporal_buffers['prev_desired_curv'][0, -1, :] = outputs['desired_curvature'][0, :] if not self.mlsim else 0
+      self.numpy_inputs['prev_desired_curv'][:] = self.temporal_buffers['prev_desired_curv'][0, self.temporal_idxs_map['prev_desired_curv']]
+
+    return outputs
+
   def get_action_from_model(self, model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
                             lat_action_t: float, long_action_t: float, v_ego: float) -> log.ModelDataV2.Action:
+    if 'action' in model_output:
+      desired_accel = model_output['action'][0, 1]
+      if self.is_v14:
+        desired_curvature = model_output['action'][0, 0] / 100.0
+      else:
+        desired_curvature = model_output['action'][0, 0] / (max(1.0, v_ego))**2
+      should_stop = v_ego < 0.3 and desired_accel < 0.1
+      desired_accel = smooth_value(desired_accel, prev_action.desiredAcceleration, self.LONG_SMOOTH_SECONDS)
+      if self.generation is not None and self.generation >= 10:
+        if v_ego > self.MIN_LAT_CONTROL_SPEED:
+          desired_curvature = smooth_value(desired_curvature, prev_action.desiredCurvature, self.LAT_SMOOTH_SECONDS)
+        else:
+          desired_curvature = prev_action.desiredCurvature
+      return log.ModelDataV2.Action(desiredCurvature=float(desired_curvature),
+                                    desiredAcceleration=float(desired_accel),
+                                    shouldStop=bool(should_stop))
+
     plan = model_output['plan'][0]
     desired_accel, should_stop = get_accel_from_plan(plan[:, Plan.VELOCITY][:, 0], plan[:, Plan.ACCELERATION][:, 0], self.constants.T_IDXS,
                                                      action_t=long_action_t)
@@ -399,13 +573,23 @@ def main(demo=False):
 
     bufs = {name: buf_extra if 'big' in name else buf_main for name in model.vision_input_names}
     transforms = {name: model_transform_extra if 'big' in name else model_transform_main for name in model.vision_input_names}
-    inputs:dict[str, np.ndarray] = {
+    frame_delay = DT_MDL
+    action_delay = DT_MDL / 2
+    lat_action_t = lat_delay + frame_delay + action_delay
+    long_action_t = long_delay + frame_delay + action_delay
+    inputs: dict[str, np.ndarray] = {
       model.desire_key: vec_desire,
       'traffic_convention': traffic_convention,
+      'action_t': np.array([lat_action_t, long_action_t], dtype=np.float32),
     }
 
     if 'lateral_control_params' in model.numpy_inputs:
       inputs['lateral_control_params'] = np.array([v_ego, lat_delay], dtype=np.float32)
+    if 'prev_action' in model.numpy_inputs:
+      inputs['prev_action'] = np.array([
+        prev_action.desiredCurvature * max(1.0, v_ego) ** 2,
+        prev_action.desiredAcceleration,
+      ], dtype=np.float32)
 
     mt1 = time.perf_counter()
     model_output = model.run(bufs, transforms, inputs, prepare_only)
@@ -418,7 +602,7 @@ def main(demo=False):
       posenet_send = messaging.new_message('cameraOdometry')
       mdv2sp_send = messaging.new_message('modelDataV2SP')
 
-      action = model.get_action_from_model(model_output, prev_action, lat_delay + DT_MDL, long_delay + DT_MDL, v_ego)
+      action = model.get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego)
       prev_action = action
       fill_model_msg(drivingdata_send, modelv2_send, model_output, action,
                      publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,

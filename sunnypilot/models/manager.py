@@ -17,7 +17,7 @@ from openpilot.system.hardware.hw import Paths
 
 from cereal import messaging, custom
 from openpilot.sunnypilot.models.fetcher import ModelFetcher
-from openpilot.sunnypilot.models.helpers import get_active_bundle, validate_active_bundle, verify_file
+from openpilot.sunnypilot.models.helpers import get_active_bundle, sync_bundle_model_version, validate_active_bundle, verify_file
 
 
 class ModelManagerSP:
@@ -130,6 +130,57 @@ class ModelManagerSP:
       os.remove(base_path)
     del self._download_start_times[artifact.fileName]
 
+  async def _download_starpilot_multipart(self, base_url: str, base_path: str, artifact) -> None:
+    from openpilot.common.file_chunker import get_manifest_path, get_chunk_name
+
+    temp_paths: list[str] = []
+    self._download_start_times[artifact.fileName] = time.monotonic()
+
+    try:
+      for i in range(100):
+        chunk_url = f"{base_url}.p{i:02d}"
+        temp_path = f"{base_path}.p{i:02d}.tmp"
+        async with aiohttp.ClientSession() as session:
+          async with session.get(chunk_url) as response:
+            if response.status == 404:
+              if i == 0:
+                raise FileNotFoundError
+              break
+            response.raise_for_status()
+
+            chunk_size = int(response.headers.get("content-length", 0))
+            chunk_downloaded = 0
+            with open(temp_path, 'wb') as f:
+              async for data in response.content.iter_chunked(self._chunk_size):
+                f.write(data)
+                chunk_downloaded += len(data)
+                if self.params.get("ModelManager_DownloadIndex") is None:
+                  raise Exception("Download cancelled")
+                intra = chunk_downloaded / max(chunk_size, 1)
+                progress = min(99, i * 50 + intra * 50)
+                artifact.downloadProgress.status = custom.ModelManagerSP.DownloadStatus.downloading
+                artifact.downloadProgress.progress = progress
+                artifact.downloadProgress.eta = self._calculate_eta(artifact.fileName, max(progress, 1))
+                self._sync_artifact_progress(artifact)
+                self._report_status()
+        temp_paths.append(temp_path)
+
+      num_chunks = len(temp_paths)
+      if num_chunks == 0:
+        raise FileNotFoundError
+
+      for i, temp_path in enumerate(temp_paths):
+        os.replace(temp_path, get_chunk_name(base_path, i, num_chunks))
+      with open(get_manifest_path(base_path), 'w') as f:
+        f.write(str(num_chunks))
+      if os.path.isfile(base_path):
+        os.remove(base_path)
+    finally:
+      for temp_path in temp_paths:
+        if os.path.isfile(temp_path):
+          os.remove(temp_path)
+      self._download_start_times.pop(artifact.fileName, None)
+
   async def _process_artifact(self, artifact, destination_path: str) -> None:
     if not artifact.downloadUri.uri:
       return None
@@ -151,7 +202,10 @@ class ModelManagerSP:
       try:
         await self._download_chunked(url, full_path, artifact)
       except (FileNotFoundError, aiohttp.ClientResponseError):
-        await self._download_file(url, full_path, artifact)
+        try:
+          await self._download_starpilot_multipart(url, full_path, artifact)
+        except (FileNotFoundError, aiohttp.ClientResponseError):
+          await self._download_file(url, full_path, artifact)
 
       if not await verify_file(full_path, expected_hash):
         raise ValueError(f"Hash validation failed for {filename}")
@@ -218,6 +272,7 @@ class ModelManagerSP:
 
       self.active_bundle = self.selected_bundle
       self.active_bundle.status = custom.ModelManagerSP.DownloadStatus.downloaded
+      sync_bundle_model_version(self.params, self.active_bundle)
       self.params.put("ModelManager_ActiveBundle", self.active_bundle.to_dict(), block=True)
       self.selected_bundle = None
 

@@ -10,6 +10,39 @@ from openpilot.sunnypilot.modeld_v2.constants import ModelConstants
 from tinygrad.tensor import Tensor
 
 
+def _load_pkl_compat(data: bytes):
+  from tinygrad.uop.ops import UOpMetaClass, UOp, Ops, buffers
+  from tinygrad.dtype import dtypes
+  try:
+    from tinygrad.uop.ops import ParamArg
+  except ImportError:
+    ParamArg = None
+  ops_slice = getattr(Ops, "SLICE", None)
+  _orig_call = UOpMetaClass.__call__
+
+  def _compat_call(cls, op, dtype=dtypes.void, src=(), arg=None, tag=None, metadata=None, _buffer=None):
+    if ops_slice is not None and _buffer is not None and op is ops_slice:
+      created = _orig_call(cls, op, dtype, src, arg, tag, metadata)
+      buffers[created] = _buffer
+      return created
+    if ParamArg is not None and op is Ops.PARAM and isinstance(arg, int):
+      arg = ParamArg(arg)
+    if op is Ops.PERMUTE and len(src) >= 2 and src[0].op is Ops.NOOP:
+      op = Ops.RESHAPE
+      shape_uop = src[1]
+      if shape_uop.op is Ops.CONST and hasattr(shape_uop.dtype, 'count') and shape_uop.dtype.count > 1 and isinstance(shape_uop.arg, tuple):
+        src = (src[0], UOp(Ops.STACK, shape_uop.dtype, tuple(UOp(Ops.CONST, dtypes.weakint, (), arg=v) for v in shape_uop.arg)))
+    if op is Ops.CUSTOM and hasattr(dtype, 'count') and dtype.count > 1 and not isinstance(arg, str):
+      op = Ops.CONST
+    return _orig_call(cls, op, dtype, src, arg, tag, metadata, _buffer if op is Ops.BUFFER else None)
+
+  UOpMetaClass.__call__ = _compat_call
+  try:
+    return pickle.loads(data)
+  finally:
+    UOpMetaClass.__call__ = _orig_call
+
+
 class TinygradRunner(ModelRunner, SupercomboTinygrad, PolicyTinygrad, VisionTinygrad, OffPolicyTinygrad, OnPolicyTinygrad):
   """
   A ModelRunner implementation for executing Tinygrad models.
@@ -40,7 +73,7 @@ class TinygradRunner(ModelRunner, SupercomboTinygrad, PolicyTinygrad, VisionTiny
     with open(model_pkl_path, "rb") as f:
       try:
         # Load the compiled Tinygrad model runner function
-        self.model_run = pickle.load(f)
+        self.model_run = _load_pkl_compat(f.read())
       except FileNotFoundError as e:
         # Provide a helpful error message if the model was built for a different platform
         assert "/dev/kgsl-3d0" not in str(e), "Model was built on C3 or C3X, but is being loaded on PC"
@@ -113,14 +146,15 @@ class TinygradSplitRunner(ModelRunner):
       policy_output = self.policy_runner.run_model()
       outputs.update(policy_output)
 
+    on_policy_output = self.on_policy_runner.run_model() if self.on_policy_runner else None
+
     if self.off_policy_runner:
       off_policy_output = self.off_policy_runner.run_model()
-      if self.on_policy_runner:
+      if on_policy_output is not None and 'plan' in on_policy_output:
         off_policy_output.pop('plan', None)
       outputs.update(off_policy_output)
 
-    if self.on_policy_runner:
-      on_policy_output = self.on_policy_runner.run_model()
+    if on_policy_output is not None:
       outputs.update(on_policy_output)
 
     if 'planplus' in outputs and 'plan' in outputs:

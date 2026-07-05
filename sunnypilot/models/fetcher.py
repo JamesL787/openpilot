@@ -5,6 +5,7 @@ This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
 
+import os
 import time
 
 import requests
@@ -14,6 +15,11 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.models.helpers import is_bundle_version_compatible
 
 from cereal import custom
+
+
+STARPILOT_MODELS_BASE_URL = "https://raw.githubusercontent.com/firestar5683/StarPilot-Resources/Models"
+STARPILOT_VERSIONS_URL = "https://raw.githubusercontent.com/firestar5683/StarPilot-Resources/Versions/model_names_v22.json"
+STARPILOT_DEEP_RL_MODEL_IDS = ("rlv1dl", "deeprl3", "deeprl33", "drl", "tobyrl", "deeprl3v2")
 
 
 class ModelParser:
@@ -46,7 +52,7 @@ class ModelParser:
   @staticmethod
   def _parse_overrides(overrides_data: dict[str, str]) -> list[custom.ModelManagerSP.Override]:
     overrides = []
-    for key, value in overrides_data.items():
+    for key, value in (overrides_data or {}).items():
       override = custom.ModelManagerSP.Override()
       override.key = key
       override.value = value
@@ -66,7 +72,7 @@ class ModelParser:
     model_bundle.runner = bundle.get("runner", custom.ModelManagerSP.Runner.snpe)
     model_bundle.is20hz = bundle.get("is_20hz", False)
     model_bundle.minimumSelectorVersion = int(bundle["minimum_selector_version"])
-    model_bundle.overrides = ModelParser._parse_overrides(bundle.get("overrides", {}))
+    model_bundle.overrides = ModelParser._parse_overrides(bundle.get("overrides") or {})
     model_bundle.ref = bundle.get("ref")
 
     return model_bundle
@@ -116,12 +122,79 @@ class ModelCache:
 
 class ModelFetcher:
   """Handles fetching and caching of model data from remote source"""
-  MODEL_URL = "https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_v17.json"
+  MODEL_URL = os.environ.get(
+    "SUNNYPILOT_MODEL_URL",
+    "https://github.com/JamesL787/openpilot/releases/download/deep-rl-models-2026-06-07/driving_models_private.json",
+  )
 
   def __init__(self, params: Params):
     self.params = params
     self.model_cache = ModelCache(params)
     self.model_parser = ModelParser()
+
+  @staticmethod
+  def _clean_model_name(name: str) -> str:
+    return str(name or "").encode("ascii", "ignore").decode("ascii").strip()
+
+  @staticmethod
+  def _starpilot_artifact_sha256(model_id: str) -> str:
+    response = requests.get(f"{STARPILOT_MODELS_BASE_URL}/{model_id}_driving_tinygrad.pkl.sha256", timeout=10)
+    response.raise_for_status()
+    return response.text.strip().split()[0].lower()
+
+  def _augment_with_starpilot_models(self, json_data: dict) -> dict:
+    bundles = json_data.get("bundles", [])
+    existing = {str(bundle.get("short_name", "")).lower() for bundle in bundles}
+    next_index = max((int(bundle.get("index", 0)) for bundle in bundles), default=0) + 1
+
+    response = requests.get(STARPILOT_VERSIONS_URL, timeout=10)
+    response.raise_for_status()
+    payload = response.json()
+    models = payload.get("models", payload)
+
+    for model in models:
+      model_id = str(model.get("id") or "").strip().lower()
+      if model_id not in STARPILOT_DEEP_RL_MODEL_IDS or model_id in existing:
+        continue
+
+      filename = f"{model_id}_driving_tinygrad.pkl"
+      try:
+        sha256 = self._starpilot_artifact_sha256(model_id)
+      except Exception as e:
+        cloudlog.warning(f"Skipping StarPilot model {model_id}: could not fetch artifact hash: {e}")
+        continue
+
+      bundles.append({
+        "index": next_index,
+        "short_name": model_id.upper(),
+        "display_name": self._clean_model_name(model.get("name")) or model_id.upper(),
+        "generation": "12",
+        "environment": "development",
+        "runner": "tinygrad",
+        "is_20hz": True,
+        "minimum_selector_version": "15",
+        "overrides": {
+          "folder": "Deep/RL Models",
+          "version": str(model.get("version") or "v15"),
+          "lat": ".0",
+          "long": ".3",
+        },
+        "ref": f"starpilot-resources-{model_id}",
+        "models": [{
+          "type": "supercombo",
+          "artifact": {
+            "file_name": filename,
+            "download_uri": {
+              "url": f"{STARPILOT_MODELS_BASE_URL}/{filename}",
+              "sha256": sha256,
+            },
+          },
+        }],
+      })
+      existing.add(model_id)
+      next_index += 1
+
+    return json_data
 
   def _fetch_and_cache_models(self) -> list[custom.ModelManagerSP.ModelBundle] | None:
     """Fetches fresh model data from remote and updates cache.
@@ -139,6 +212,10 @@ class ModelFetcher:
       response.raise_for_status()
 
       json_data = response.json()
+      try:
+        json_data = self._augment_with_starpilot_models(json_data)
+      except Exception as e:
+        cloudlog.warning(f"Unable to add StarPilot model catalog entries: {e}")
       self.model_cache.set(json_data)
       cloudlog.debug("Successfully updated models cache")
       return self.model_parser.parse_models(json_data)

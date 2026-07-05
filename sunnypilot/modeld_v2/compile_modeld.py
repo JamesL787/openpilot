@@ -59,8 +59,10 @@ def make_split_input_queues(vision_input_shapes, policy_input_shapes, frame_skip
     'tfm': np.zeros((3, 3), dtype=np.float32),
     'big_tfm': np.zeros((3, 3), dtype=np.float32),
   }
+  if 'action_t' in policy_input_shapes:
+    npy['action_t'] = np.zeros(tc, dtype=np.float32)
 
-  handled = {'features_buffer', desire_key, 'traffic_convention'}
+  handled = {'features_buffer', desire_key, 'traffic_convention', 'action_t'}
   for key, shape in policy_input_shapes.items():
     if key in handled:
       continue

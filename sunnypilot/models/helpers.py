@@ -24,6 +24,7 @@ CUSTOM_MODEL_PATH = Paths.model_root()
 METADATA_PATH = Path(__file__).parent / '../models/supercombo_metadata.pkl'
 ModelManager = custom.ModelManagerSP
 _LAST_VALIDATED_RAW = None
+MODEL_VERSION_OVERRIDE_KEYS = ("model_version", "version", "behavior_version")
 
 
 def _compute_hash(file_path: str) -> str | None:
@@ -115,9 +116,11 @@ def validate_active_bundle(params: Params, available_bundles: list[custom.ModelM
   if active_bundle is None or _bundle_needs_reset(active_bundle, available_bundles):
     cloudlog.warning("Active model bundle invalid; resetting to default")
     params.remove("ModelManager_ActiveBundle")
+    sync_bundle_model_version(params, None)
     params.put("ModelRunnerTypeCache", int(custom.ModelManagerSP.Runner.stock), block=True)
     _LAST_VALIDATED_RAW = None
   else:
+    sync_bundle_model_version(params, active_bundle)
     _LAST_VALIDATED_RAW = raw_bundle
 
 
@@ -145,6 +148,31 @@ def get_active_model_runner(params: Params | None = None, force_check: bool = Fa
     params.put("ModelRunnerTypeCache", int(runner_type), block=True)
 
   return runner_type
+
+
+def get_bundle_overrides(bundle: custom.ModelManagerSP.ModelBundle | None) -> dict[str, str]:
+  return {override.key: override.value for override in bundle.overrides} if bundle else {}
+
+
+def get_bundle_model_version(bundle: custom.ModelManagerSP.ModelBundle | None, overrides: dict[str, str] | None = None) -> str:
+  if bundle is None:
+    return "v11"
+
+  overrides = overrides if overrides is not None else get_bundle_overrides(bundle)
+  for key in MODEL_VERSION_OVERRIDE_KEYS:
+    if value := overrides.get(key):
+      return str(value).strip().lower()
+
+  if bundle.generation >= 12:
+    return "v15"
+  return "v11"
+
+
+def sync_bundle_model_version(params: Params, bundle: custom.ModelManagerSP.ModelBundle | None) -> str:
+  model_version = get_bundle_model_version(bundle)
+  params.put("ModelVersion", model_version)
+  params.put("DrivingModelVersion", model_version)
+  return model_version
 
 
 def _get_model():
