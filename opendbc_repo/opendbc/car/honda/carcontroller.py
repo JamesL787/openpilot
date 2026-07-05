@@ -308,6 +308,9 @@ class CarController(CarControllerBase):
     self.bosch_wind_factor_before_brake = self.bosch_wind_factor
     self.bosch_gas_factor_before_gasmax = self.bosch_gas_factor
     self.bosch_wind_factor_before_gasmax = self.bosch_wind_factor
+    self.last_accel_cmd = 0.0
+    self.last_accel_sign = 0
+    self.sign_change_counter = 0
     self.pitch = 0.0
 
   def _modified_civic_standard_active(self) -> bool:
@@ -341,7 +344,9 @@ class CarController(CarControllerBase):
       "steer_delta_limiter_enabled": self.param_store.get_bool("HondaSteerDeltaLimiter", default=False),
       "steer_delta_up": float(np.clip(self.param_store.get_float("HondaSteerDeltaUp", default=3.0), 0.0, 100.0)),
       "steer_delta_down": float(np.clip(self.param_store.get_float("HondaSteerDeltaDown", default=3.0), 0.0, 100.0)),
+      "live_learning_gas": self.param_store.get_bool("HondaLiveLearningGas", default=self.CP.carFingerprint in HONDA_BOSCH),
       "stopping_decel_rate": float(np.clip(self.param_store.get_int("HondaStoppingDecelRate", default=30), 0, 100)) / 100.0,
+      "ecu_matched_long": self.param_store.get_bool("NrdrHondaEcuMatchedLong", default=False),
       "increase_override_tolerance": self.param_store.get_bool("NrdrIncreaseOverrideTolerance", default=False),
       "min_steer_speed": float(np.clip(self.param_store.get_int("NrdrMinSteerSpeed", default=0), 0, 45)) * CV.MPH_TO_MS,
     }
@@ -429,10 +434,32 @@ class CarController(CarControllerBase):
 
     if CC.longActive:
       accel = actuators.accel
-      gas, brake = compute_gas_brake(actuators.accel, CS.out.vEgo, self.CP.carFingerprint)
+      ecu_matched = live["ecu_matched_long"] and self.CP.carFingerprint not in HONDA_BOSCH
+      accel_cmd = float(actuators.accel)
+      if ecu_matched:
+        accel_cmd = float(np.clip(accel_cmd, self.last_accel_cmd - 0.06, self.last_accel_cmd + 0.05))
+      self.last_accel_cmd = accel_cmd
+      gas, brake = compute_gas_brake(accel_cmd + hill_brake, CS.out.vEgo, self.CP.carFingerprint)
+
+      if ecu_matched:
+        coast_db = float(np.interp(CS.out.vEgo, [2.5, 10.0, 20.0, 30.0], [0.08, 0.06, 0.03, 0.005]))
+        if gas < coast_db and brake < coast_db:
+          gas, brake = 0.0, 0.0
+
+        accel_sign = 1 if accel_cmd > 0.05 else (-1 if accel_cmd < -0.05 else 0)
+        if accel_sign != 0 and accel_sign != self.last_accel_sign and self.last_accel_sign != 0:
+          self.sign_change_counter = 20
+        if self.sign_change_counter > 0:
+          gas, brake = 0.0, 0.0
+          self.sign_change_counter -= 1
+        if accel_sign != 0:
+          self.last_accel_sign = accel_sign
     else:
       accel = 0.0
       gas, brake = 0.0, 0.0
+      self.last_accel_cmd = 0.0
+      self.last_accel_sign = 0
+      self.sign_change_counter = 0
 
     # *** rate limit / filter steer ***
     limited_torque, lkas_active, filtered_steering_pressed = self._update_steering_torque(CC, CS, live)
@@ -505,7 +532,7 @@ class CarController(CarControllerBase):
           if self.CP.carFingerprint not in HONDA_BOSCH_RADARLESS:
             gas_pedal_force += wind_brake_mps2 * self.bosch_wind_factor
 
-            if actuators.longControlState == LongCtrlState.pid and not CS.out.gasPressed:
+            if live["live_learning_gas"] and actuators.longControlState == LongCtrlState.pid and not CS.out.gasPressed:
               gas_error = self.accel - CS.out.aEgo
 
               if gas_error != 0.0 and gas_pedal_force > 0.0:
@@ -559,6 +586,19 @@ class CarController(CarControllerBase):
           )
           self.apply_brake_last = apply_brake
           self.brake = apply_brake / self.params.NIDEC_BRAKE_MAX
+
+          if live["live_learning_gas"] and self.CP.enableGasInterceptorDEPRECATED:
+            self.bosch_gas_factor, self.bosch_wind_factor, self.bosch_wind_factor_before_brake = update_honda_bosch_live_learning(
+              self.bosch_gas_factor,
+              self.bosch_wind_factor,
+              self.bosch_wind_factor_before_brake,
+              actuators.accel,
+              CS.out.aEgo,
+              gas,
+              wind_brake * 4.8,
+              CS.out.brakePressed,
+              CS.out.vEgo,
+            )
 
           if self.CP.enableGasInterceptorDEPRECATED:
             gas_mult = float(np.interp(CS.out.vEgo, [0.0, 10.0], [0.4, 1.0]))

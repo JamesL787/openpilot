@@ -1,6 +1,8 @@
 from cereal import car
 import math
+from types import SimpleNamespace
 import numpy as np
+from openpilot.common.params import Params
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.common.pid import PIDController
@@ -169,6 +171,7 @@ def long_control_state_trans_old_long(CP, active, long_control_state, v_ego, v_t
 class LongControl:
   def __init__(self, CP):
     self.CP = CP
+    self.params = Params()
     self.long_control_state = LongCtrlState.off
     self.experimental_mode = False
     self.pid = PIDController((CP.longitudinalTuning.kpBP, CP.longitudinalTuning.kpV),
@@ -182,8 +185,16 @@ class LongControl:
     self.last_output_accel = 0.0
     self.stop_release_counter = 0
     self.vehicle_tuning = LongControlVehicleTuning(CP)
+    self.frame = 0
     self._drel_window: list[float] = []
     self._drel_filtered = float("inf")
+    self.is_honda = CP.brand == "honda"
+    self.honda_long_pid_tune_scale = 1.0
+    self.honda_scale_excludes_kf = True
+    self.honda_stop_accel = -2.0
+    self.honda_stopping_decel_rate = 0.3
+    self.honda_v_ego_starting = 0.5
+    self.honda_v_ego_stopping = 0.5
     self._long_tune = LongTune()
 
   def update_mpc_mode(self, experimental_mode):
@@ -219,7 +230,35 @@ class LongControl:
     if not preserve_stop_release:
       self.stop_release_counter = 0
 
-  def _stop_release_ready(self, CS, a_target, should_stop, has_lead, starpilot_toggles):
+  def _read_honda_long_params(self):
+    if not self.is_honda:
+      return
+
+    self.honda_long_pid_tune_scale = float(np.clip(self.params.get_int("LongPidTuneScale", default=100), 0, 500)) / 100.0
+    self.honda_scale_excludes_kf = self.params.get_bool("StaticFeedforwardLong", default=True)
+    self.honda_stop_accel = float(np.clip(self.params.get_float("HondaStopAccel", default=-2.0), -10.0, 0.0))
+    self.honda_stopping_decel_rate = float(np.clip(self.params.get_float("HondaStoppingDecelRateLong", default=0.3), 0.0, 5.0))
+    self.honda_v_ego_starting = float(np.clip(self.params.get_float("HondaVEgoStarting", default=0.5), 0.0, 5.0))
+    self.honda_v_ego_stopping = float(np.clip(self.params.get_float("HondaVEgoStopping", default=0.5), 0.0, 5.0))
+
+  def _get_runtime_long_tuning(self, starpilot_toggles):
+    long_tuning = SimpleNamespace(
+      startAccel=starpilot_toggles.startAccel,
+      stopAccel=starpilot_toggles.stopAccel,
+      stoppingDecelRate=starpilot_toggles.stoppingDecelRate,
+      vEgoStarting=starpilot_toggles.vEgoStarting,
+      vEgoStopping=starpilot_toggles.vEgoStopping,
+    )
+
+    if self.is_honda:
+      long_tuning.stopAccel = self.honda_stop_accel
+      long_tuning.stoppingDecelRate = self.honda_stopping_decel_rate
+      long_tuning.vEgoStarting = self.honda_v_ego_starting
+      long_tuning.vEgoStopping = self.honda_v_ego_stopping
+
+    return long_tuning
+
+  def _stop_release_ready(self, CS, a_target, should_stop, has_lead, v_ego_starting):
     if self.long_control_state != LongCtrlState.stopping:
       self.stop_release_counter = 0
       return True
@@ -228,7 +267,7 @@ class LongControl:
       self.stop_release_counter = 0
       return False
 
-    if CS.vEgo > starpilot_toggles.vEgoStarting:
+    if CS.vEgo > v_ego_starting:
       self.stop_release_counter = int(round(STOPPING_RELEASE_HYSTERESIS / DT_CTRL))
       return True
 
@@ -249,8 +288,8 @@ class LongControl:
     return self.stop_release_counter >= int(round(STOPPING_RELEASE_HYSTERESIS / DT_CTRL))
 
   @staticmethod
-  def _apply_moving_stop_target_follow(output_accel, a_target, should_stop, CS, starpilot_toggles):
-    follow_min_speed = max(1.5, starpilot_toggles.vEgoStopping + 1.0)
+  def _apply_moving_stop_target_follow(output_accel, a_target, should_stop, CS, v_ego_stopping):
+    follow_min_speed = max(1.5, v_ego_stopping + 1.0)
     if not should_stop or CS.brakePressed or CS.vEgo <= follow_min_speed:
       return output_accel
     if a_target >= output_accel - MOVING_STOP_FOLLOW_MIN_GAP:
@@ -305,14 +344,19 @@ class LongControl:
   def update(self, active, CS, a_target, should_stop, accel_limits, starpilot_toggles, has_lead=False,
              traffic_mode_enabled=False, profile_max_accel=0.0, pitch=None, drel=None):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
+    if self.frame % 300 == 0:
+      self._read_honda_long_params()
+    self.frame += 1
+
+    long_tuning = self._get_runtime_long_tuning(starpilot_toggles)
     self.pid.neg_limit = accel_limits[0]
     self.pid.pos_limit = accel_limits[1]
     drel_filtered = self._update_drel_filter(drel)
 
-    allow_stopping_release = self._stop_release_ready(CS, a_target, should_stop, has_lead, starpilot_toggles)
+    allow_stopping_release = self._stop_release_ready(CS, a_target, should_stop, has_lead, long_tuning.vEgoStarting)
     self.long_control_state = long_control_state_trans(self.CP, active, self.long_control_state, CS.vEgo,
                                                        should_stop, CS.brakePressed,
-                                                       CS.cruiseState.standstill, starpilot_toggles,
+                                                       CS.cruiseState.standstill, long_tuning,
                                                        allow_stopping_release=allow_stopping_release)
     if self.long_control_state == LongCtrlState.off:
       self.reset()
@@ -324,10 +368,10 @@ class LongControl:
       if st.get("l2_enable", 1.0) >= 0.5:
         output_accel = compute_stopping_accel(
           last_output_accel=self.last_output_accel,
-          stop_accel=starpilot_toggles.stopAccel,
-          stopping_decel_rate=starpilot_toggles.stoppingDecelRate,
+          stop_accel=long_tuning.stopAccel,
+          stopping_decel_rate=long_tuning.stoppingDecelRate,
           v_ego=CS.vEgo,
-          v_ego_stopping=starpilot_toggles.vEgoStopping,
+          v_ego_stopping=long_tuning.vEgoStopping,
           hold_accel=st.get("hold_accel", -0.6),
           phase_switch_v=st.get("phase_switch_v", 0.15),
           proximity_scale_m=st.get("proximity_scale_m", 8.0),
@@ -337,27 +381,27 @@ class LongControl:
         )
       else:
         output_accel = self.last_output_accel
-        if output_accel > starpilot_toggles.stopAccel:
+        if output_accel > long_tuning.stopAccel:
           output_accel = min(output_accel, 0.0)
-          output_accel -= starpilot_toggles.stoppingDecelRate * DT_CTRL
-      output_accel = self._apply_moving_stop_target_follow(output_accel, a_target, should_stop, CS, starpilot_toggles)
+          output_accel -= long_tuning.stoppingDecelRate * DT_CTRL
+      output_accel = self._apply_moving_stop_target_follow(output_accel, a_target, should_stop, CS, long_tuning.vEgoStopping)
       self.reset(preserve_stop_release=True)
 
     elif self.long_control_state == LongCtrlState.starting:
       if traffic_mode_enabled:
         # Traffic Mode has its own soft launch curve (a_target); bypass the raw
         # StartAccel kick used elsewhere so launches stay within the traffic cap.
-        output_accel = clip(a_target, 0.0, starpilot_toggles.startAccel)
+        output_accel = clip(a_target, 0.0, long_tuning.startAccel)
       elif getattr(starpilot_toggles, "custom_accel_profile", False):
-        output_accel = clip(a_target, 0.0, starpilot_toggles.startAccel)
+        output_accel = clip(a_target, 0.0, long_tuning.startAccel)
       elif has_lead and a_target <= LEAD_GAP_SETTLE_MAX_START_ACCEL:
-        output_accel = clip(a_target, 0.0, starpilot_toggles.startAccel)
+        output_accel = clip(a_target, 0.0, long_tuning.startAccel)
       elif profile_max_accel > 0.0:
         # Keep the StartAccel friction-overcoming shove, but cap it at the selected
         # acceleration profile's launch ceiling so Eco launches soft and Sport hard.
-        output_accel = min(starpilot_toggles.startAccel, profile_max_accel)
+        output_accel = min(long_tuning.startAccel, profile_max_accel)
       else:
-        output_accel = starpilot_toggles.startAccel
+        output_accel = long_tuning.startAccel
       self.reset()
 
     else:  # LongCtrlState.pid
@@ -380,6 +424,11 @@ class LongControl:
       )
       raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward,
                                          freeze_integrator=freeze_integrator)
+      if self.is_honda:
+        if self.honda_scale_excludes_kf:
+          raw_output_accel = (raw_output_accel - self.pid.f) * self.honda_long_pid_tune_scale + self.pid.f
+        else:
+          raw_output_accel *= self.honda_long_pid_tune_scale
       raw_output_accel = self._cap_positive_output_on_negative_target(raw_output_accel, a_target, error, CS)
       raw_output_accel = self.vehicle_tuning.apply_pedal_long_brake_bias(raw_output_accel, a_target, CS)
 
@@ -409,6 +458,11 @@ class LongControl:
 
   def update_old_long(self, active, CS, long_plan, accel_limits, t_since_plan, starpilot_toggles):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
+    if self.frame % 300 == 0:
+      self._read_honda_long_params()
+    self.frame += 1
+
+    long_tuning = self._get_runtime_long_tuning(starpilot_toggles)
     # Interp control trajectory
     speeds = long_plan.speeds
     if len(speeds) == CONTROL_N:
@@ -431,23 +485,23 @@ class LongControl:
     output_accel = self.last_output_accel
     self.long_control_state = long_control_state_trans_old_long(self.CP, active, self.long_control_state, CS.vEgo,
                                                                 v_target, v_target_1sec, CS.brakePressed,
-                                                                CS.cruiseState.standstill, starpilot_toggles)
+                                                                CS.cruiseState.standstill, long_tuning)
 
     if self.long_control_state == LongCtrlState.off:
       self.reset_old_long(CS.vEgo)
       output_accel = 0.
 
     elif self.long_control_state == LongCtrlState.stopping:
-      if output_accel > starpilot_toggles.stopAccel:
+      if output_accel > long_tuning.stopAccel:
         output_accel = min(output_accel, 0.0)
-        output_accel -= starpilot_toggles.stoppingDecelRate * DT_CTRL
+        output_accel -= long_tuning.stoppingDecelRate * DT_CTRL
       self.reset_old_long(CS.vEgo)
 
     elif self.long_control_state == LongCtrlState.starting:
       if getattr(starpilot_toggles, "custom_accel_profile", False):
-        output_accel = clip(a_target, 0.0, starpilot_toggles.startAccel)
+        output_accel = clip(a_target, 0.0, long_tuning.startAccel)
       else:
-        output_accel = starpilot_toggles.startAccel
+        output_accel = long_tuning.startAccel
       self.reset_old_long(CS.vEgo)
 
     elif self.long_control_state == LongCtrlState.pid:
@@ -469,6 +523,11 @@ class LongControl:
       output_accel = self.pid.update(error_deadzone, speed=CS.vEgo,
                                      feedforward=feedforward,
                                      freeze_integrator=freeze_integrator)
+      if self.is_honda:
+        if self.honda_scale_excludes_kf:
+          output_accel = (output_accel - self.pid.f) * self.honda_long_pid_tune_scale + self.pid.f
+        else:
+          output_accel *= self.honda_long_pid_tune_scale
 
     self.last_output_accel = clip(output_accel, accel_limits[0], accel_limits[1])
 
