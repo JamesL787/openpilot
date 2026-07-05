@@ -61,15 +61,15 @@ int main(int argc, char *argv[]) {
   setMainWindow(&w);
   a.installEventFilter(&w);
 
-  // Pin the UI to cores 0-3 + 6-7 AFTER startup, i.e. everything EXCEPT the two
-  // safety-critical loops: core 4 (card/controlsd, SCHED_FIFO) and core 5 (selfdrived).
-  // The UI stays off those so a UI stall can't preempt them, but adding big cores 6-7
-  // gives the render + EGL updater threads enough CPU headroom that GL buffers cycle
-  // reliably (starved little-core-only rendering widened the DequeueBuffer deadlock
-  // window). Done after MainWindow init so restart recovery can still use all cores;
-  // the per-second reaffine in UIState::update keeps it pinned thereafter.
+  // Pin the UI to the little cores (0-3) AFTER startup. The realtime control
+  // loop (card/controlsd) runs SCHED_FIFO on core 4; this keeps the steady-state
+  // UI off it so a UI stall can't preempt the control loop. Deliberately done
+  // after MainWindow init so startup — and crucially restart recovery — can use
+  // all cores; pinning before init starved the restarting UI on the contended
+  // little cores and stretched recovery from ~30s to minutes. The per-second
+  // reaffine in UIState::update keeps it pinned thereafter.
   if (!Hardware::PC()) {
-    util::set_core_affinity({0, 1, 2, 3, 6, 7});
+    util::set_core_affinity({0, 1, 2, 3});
   }
 
   return a.exec();
