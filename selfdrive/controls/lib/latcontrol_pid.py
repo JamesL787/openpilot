@@ -14,12 +14,11 @@ from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
 
-# nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio (~17.24,
-# the lock-to-lock average) - which over-commands where the rack quickens at large angle and
-# under-commands near center. Measured effective ratio vs |steering-wheel angle| tapers from
-# the learned ~17.2 near center down to ~15.5 out at angle, then plateaus.
+# nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio.
+# Log-derived test curve: higher effective ratio near center, tapering down as the rack
+# quickens at larger steering angles, then holding the high-angle plateau.
 NRDR_STEER_RATIO_ANGLE_BP = [0.0, 75.0, 150.0, 250.0]  # |steering-wheel angle|, deg
-NRDR_STEER_RATIO_V = [17.24, 16.6, 15.9, 15.5]         # effective steer ratio at each break
+NRDR_STEER_RATIO_V = [18.5, 17.4, 16.0, 15.6]          # effective steer ratio at each break
 
 
 CENTER_TAPER_FADE_TAU = 0.25
