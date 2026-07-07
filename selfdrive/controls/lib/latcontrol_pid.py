@@ -14,6 +14,14 @@ from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
 
+# nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio (~17.24,
+# the lock-to-lock average) - which over-commands where the rack quickens at large angle and
+# under-commands near center. Measured effective ratio vs |steering-wheel angle| tapers from
+# the learned ~17.2 near center down to ~15.5 out at angle, then plateaus.
+NRDR_STEER_RATIO_ANGLE_BP = [0.0, 75.0, 150.0, 250.0]  # |steering-wheel angle|, deg
+NRDR_STEER_RATIO_V = [17.24, 16.6, 15.9, 15.5]         # effective steer ratio at each break
+
+
 CENTER_TAPER_FADE_TAU = 0.25
 UNWIND_LOOKAHEAD_MIN_IDX = 5
 UNWIND_LOOKAHEAD_SECONDS = 1.0
@@ -268,6 +276,11 @@ class LatControlPID(LatControl):
     pid_log = log.ControlsState.LateralPIDState.new_message()
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
+
+    if self.is_clarity_eps_modified:
+      # NRDR: apply the variable-rack taper before curvature->angle conversion. controlsd
+      # refreshes VM every frame, so this per-frame override cannot compound.
+      VM.sR = float(np.interp(abs(CS.steeringAngleDeg), NRDR_STEER_RATIO_ANGLE_BP, NRDR_STEER_RATIO_V))
 
     angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
     angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
