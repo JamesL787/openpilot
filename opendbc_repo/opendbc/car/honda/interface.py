@@ -362,7 +362,7 @@ class CarInterface(CarInterfaceBase):
       ret.flags |= HondaFlagsSP.HAS_CAMERA_MESSAGES.value
 
     if candidate == CAR.HONDA_CLARITY:
-      stock_cp.lateralParams.torqueBP, stock_cp.lateralParams.torqueV = [[0, 1663], [0, 1663]]
+      stock_cp.lateralParams.torqueBP, stock_cp.lateralParams.torqueV = [[0, 3840], [0, 3840]]
       # Lateral tune lives here (was UI scales P/I 60/80/100, kf 20/30/50 on a 0.03 / 0.01 / 1.2e-5
       # base). Speed-banded the stock way: interpolate across 0 / 25 / 50 mph. The UI P/I/F scales
       # default to a neutral 100% and act as fine-trim on top.
