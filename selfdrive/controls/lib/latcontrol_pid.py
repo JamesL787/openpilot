@@ -18,7 +18,7 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 # Latest upstream nrdr-nightly curve: keep center anchored, then taper to the
 # measured high-angle effective ratio and let np.interp hold the plateau.
 NRDR_STEER_RATIO_ANGLE_BP = [0.0, 250.0]  # |steering-wheel angle|, deg
-NRDR_STEER_RATIO_V = [18.50, 12.74]       # effective steer ratio at each break
+NRDR_STEER_RATIO_V = [17.00, 12.74]       # effective steer ratio at each break
 
 
 CENTER_TAPER_FADE_TAU = 0.25
