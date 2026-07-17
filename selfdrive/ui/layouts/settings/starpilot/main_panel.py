@@ -192,6 +192,7 @@ class StarPilotLayout(Widget):
       "SYSTEM": StarPilotPanelType.SYSTEM,
       "DRIVING_MODEL": StarPilotPanelType.DRIVING_MODEL,
       "LONGITUDINAL": StarPilotPanelType.LONGITUDINAL,
+      "LATERAL": StarPilotPanelType.LATERAL,
       "MAPS": StarPilotPanelType.MAPS,
       "VISUALS": StarPilotPanelType.VISUALS,
       "VEHICLE": StarPilotPanelType.VEHICLE,
