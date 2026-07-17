@@ -74,7 +74,7 @@ class SettingsLayout(Widget):
 
     self._panels = {
       PanelType.STARPILOT: PanelInfo(tr_noop("StarPilot"), StarPilotLayout()),
-      PanelType.NRDR: PanelInfo(tr_noop("NRDR Tuning"), NRDRTuningLayout()),
+      PanelType.NRDR: PanelInfo(tr_noop("NRDR"), NRDRTuningLayout()),
       PanelType.DEVICE: PanelInfo(tr_noop("Device"), DeviceLayout()),
       PanelType.NETWORK: PanelInfo(tr_noop("Network"), NetworkUI(wifi_manager)),
       PanelType.TOGGLES: PanelInfo(tr_noop("Toggles"), TogglesLayout()),
@@ -85,6 +85,8 @@ class SettingsLayout(Widget):
     # Connect the custom-panel depth callback for hierarchical back navigation
     self._panels[PanelType.STARPILOT].instance.set_depth_callback(self.set_panel_depth)
     self._panels[PanelType.STARPILOT].instance.set_settings_layout(self)
+    self._panels[PanelType.NRDR].instance.set_navigate_callback(lambda _: self.set_panel_depth(1))
+    self._panels[PanelType.NRDR].instance.set_back_callback(lambda: self.set_panel_depth(0))
 
     self._font_medium = gui_app.font(FontWeight.MEDIUM)
     self._close_icon = gui_app.texture("icons/backspace.png", CLOSE_ICON_SIZE, CLOSE_ICON_SIZE)
@@ -111,8 +113,9 @@ class SettingsLayout(Widget):
   def _handle_back_navigation(self):
     if self._panel_depth > 0:
       self._panel_depth -= 1
-      if hasattr(self._panels[PanelType.STARPILOT].instance, 'navigate_back'):
-        self._panels[PanelType.STARPILOT].instance.navigate_back()
+      current_panel = self._panels[self._current_panel].instance
+      if hasattr(current_panel, 'navigate_back'):
+        current_panel.navigate_back()
     else:
       if self._close_callback:
         self._close_callback()

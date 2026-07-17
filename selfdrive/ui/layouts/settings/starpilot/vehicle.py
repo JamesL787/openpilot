@@ -334,7 +334,7 @@ class VehicleSettingsManagerView(PanelManagerView):
     })
     toggles.append({
       "title": tr("Disable Seatbelt Check"),
-      "subtitle": tr("Do not block openpilot engagement when the driver seatbelt signal reports unlatched."),
+      "subtitle": tr("Allow openpilot engagement when the driver seatbelt signal reports unlatched."),
       "get_state": lambda: self._controller._params.get_bool("DisableSeatbeltCheck"),
       "set_state": lambda s: self._controller._on_toggle("DisableSeatbeltCheck"),
     })
