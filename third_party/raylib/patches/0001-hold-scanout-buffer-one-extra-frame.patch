@@ -1,0 +1,52 @@
+diff --git a/src/platforms/rcore_comma.c b/src/platforms/rcore_comma.c
+index 42f76d45..8646fe87 100644
+--- a/src/platforms/rcore_comma.c
++++ b/src/platforms/rcore_comma.c
+@@ -113,6 +113,7 @@ struct drm_platform {
+ struct gbm_platform {
+   struct gbm_device *device;
+   struct gbm_surface *surface;
++  struct gbm_bo *old_bo;
+   struct gbm_bo *current_bo;
+   struct gbm_bo *next_bo;
+   uint32_t current_fb;
+@@ -924,6 +925,13 @@ void SwapScreenBuffer(void) {
+   eglSwapBuffers(platform.egl.display, platform.egl.surface);
+ 
+   platform.gbm.next_bo = gbm_surface_lock_front_buffer(platform.gbm.surface);
++  if (!platform.gbm.next_bo && platform.gbm.old_bo) {
++    // The surface has no third buffer to spare; degrade to releasing the front buffer
++    // immediately (the previous behavior) rather than stalling.
++    gbm_surface_release_buffer(platform.gbm.surface, platform.gbm.old_bo);
++    platform.gbm.old_bo = NULL;
++    platform.gbm.next_bo = gbm_surface_lock_front_buffer(platform.gbm.surface);
++  }
+   if (!platform.gbm.next_bo) {
+     TRACELOG(LOG_WARNING, "COMMA: Failed to get rendered buffer object");
+     return;
+@@ -956,10 +964,23 @@ void SwapScreenBuffer(void) {
+   }
+   vblank_id = v.reply.sequence;
+ 
+-  if (platform.gbm.current_bo) {
+-    gbm_surface_release_buffer(platform.gbm.surface, platform.gbm.current_bo);
++  // Hold the outgoing front buffer for one extra frame instead of releasing it now.
++  // drmWaitVBlank returns at the next vblank whether or not the queued flip actually
++  // latched there: the downstream SDE driver applies flips from a nonblocking commit
++  // worker, and under CPU load a flip can miss its vblank. Releasing the front buffer
++  // early hands it straight back to EGL as the next render target while the display is
++  // still scanning it out, which shows up as an intermittent tear line across the
++  // screen. Releasing the grandparent instead is safe by construction: the kernel
++  // rejects a new page flip with EBUSY while one is pending, so this frame's flip
++  // being accepted proves the previous flip latched and the grandparent buffer is off
++  // screen. (DRM_MODE_PAGE_FLIP_EVENT would be the canonical fix, but event delivery
++  // on the 4.9 msm/SDE kernel has a use-after-free - _sde_crtc_complete_flip via
++  // sde_encoder_phys_cmd_pp_rd_ptr_irq - that oopses or hard-locks the device.)
++  if (platform.gbm.old_bo) {
++    gbm_surface_release_buffer(platform.gbm.surface, platform.gbm.old_bo);
+   }
+ 
++  platform.gbm.old_bo = platform.gbm.current_bo;
+   platform.gbm.current_bo = platform.gbm.next_bo;
+ }
+ 

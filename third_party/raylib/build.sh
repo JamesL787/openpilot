@@ -48,14 +48,15 @@ fi
 
 cd raylib_repo
 
-COMMIT=${1:-3425bd9d1fb292ede4d80f97a1f4f258f614cffc}
+COMMIT=${1:-caa64e15ac20a47804a8048029c921ac091fef12}
 git fetch origin $COMMIT
 git reset --hard $COMMIT
 git clean -xdff .
+git apply "$DIR/patches/0001-hold-scanout-buffer-one-extra-frame.patch"
 
 cd src
 
-make -j$(nproc) PLATFORM=$RAYLIB_PLATFORM RAYLIB_RELEASE_PATH=$INSTALL_DIR
+make -j$(nproc) PLATFORM=$RAYLIB_PLATFORM RAYLIB_RELEASE_PATH=$INSTALL_DIR CUSTOM_CFLAGS="-DSUPPORT_FILEFORMAT_JPG=1"
 cp raylib.h raymath.h rlgl.h $INSTALL_H_DIR/
 echo "raylib development files installed/updated in $INSTALL_H_DIR"
 
