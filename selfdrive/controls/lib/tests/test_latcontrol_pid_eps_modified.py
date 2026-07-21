@@ -67,6 +67,20 @@ def test_variable_rack_taper_stays_clarity_only():
     assert not _controller(candidate, MODIFIED_FW).is_clarity_eps_modified
 
 
+def test_clarity_pi_banding_does_not_leak_onto_other_racks():
+  # 1.35/2.0 is Clarity tuning; nrdr-nightly runs a neutral 1.0 on every band for every car.
+  clarity = _controller(CAR.HONDA_CLARITY, MODIFIED_FW)
+  assert (clarity.lat_p_scale_standard, clarity.lat_p_scale_highway) == (1.35, 2.0)
+  assert (clarity.lat_i_scale_standard, clarity.lat_i_scale_highway) == (1.35, 2.0)
+
+  for candidate in (CAR.HONDA_CRV_5G, CAR.HONDA_INSIGHT, CAR.HONDA_CIVIC, CAR.HONDA_CIVIC_BOSCH):
+    lat = _controller(candidate, MODIFIED_FW)
+    scales = (lat.lat_p_scale_low, lat.lat_p_scale_standard, lat.lat_p_scale_highway,
+              lat.lat_i_scale_low, lat.lat_i_scale_standard, lat.lat_i_scale_highway,
+              lat.lat_f_scale_low, lat.lat_f_scale_standard, lat.lat_f_scale_highway)
+    assert scales == (1.0,) * 9, f"{candidate} should run neutral band scales, got {scales}"
+
+
 def test_non_honda_never_takes_the_eps_modified_path():
   CP = _params(CAR.HONDA_CLARITY, MODIFIED_FW)
   CP.brand = "toyota"

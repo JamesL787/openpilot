@@ -252,6 +252,13 @@ class LatControlPID(LatControl):
     self.lat_f_scale_low = 1.0
     self.lat_f_scale_standard = 1.0
     self.lat_f_scale_highway = 1.0
+    if not self.is_clarity_eps_modified:
+      # The 1.35/2.0 P/I banding above (and the matching LatPScale*/LatIScale* defaults in
+      # params_keys.h) is Clarity tuning from "Backport NRDR Clarity EPS tuning". nrdr-nightly runs
+      # a neutral 1.0 on every band for every car, so that is what the other modified-EPS Hondas get
+      # -- the Clarity curve must not leak onto racks it was never tuned against.
+      self.lat_p_scale_standard = self.lat_p_scale_highway = 1.0
+      self.lat_i_scale_standard = self.lat_i_scale_highway = 1.0
     self.center_taper_high = 0.5
     self.center_boost_threshold = 3.0
     self.center_boost_min_speed = 50.0
@@ -390,15 +397,18 @@ class LatControlPID(LatControl):
 
       if self.is_eps_modified:
         if self.frame % 300 == 0:
-          self.lat_p_scale_low = _get_param_float(self.params, "LatPScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
-          self.lat_p_scale_standard = _get_param_float(self.params, "LatPScaleStandard", 1.35, 0.0, 5.0, scale=100.0)
-          self.lat_p_scale_highway = _get_param_float(self.params, "LatPScaleHighway", 2.0, 0.0, 5.0, scale=100.0)
-          self.lat_i_scale_low = _get_param_float(self.params, "LatIScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
-          self.lat_i_scale_standard = _get_param_float(self.params, "LatIScaleStandard", 1.35, 0.0, 5.0, scale=100.0)
-          self.lat_i_scale_highway = _get_param_float(self.params, "LatIScaleHighway", 2.0, 0.0, 5.0, scale=100.0)
-          self.lat_f_scale_low = _get_param_float(self.params, "LatFScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
-          self.lat_f_scale_standard = _get_param_float(self.params, "LatFScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
-          self.lat_f_scale_highway = _get_param_float(self.params, "LatFScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
+          # The Lat*Scale sliders ship Clarity-tuned defaults (135/200), so they are only read on the
+          # Clarity. Every other modified-EPS Honda keeps nrdr-nightly's neutral 1.0 banding.
+          if self.is_clarity_eps_modified:
+            self.lat_p_scale_low = _get_param_float(self.params, "LatPScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
+            self.lat_p_scale_standard = _get_param_float(self.params, "LatPScaleStandard", 1.35, 0.0, 5.0, scale=100.0)
+            self.lat_p_scale_highway = _get_param_float(self.params, "LatPScaleHighway", 2.0, 0.0, 5.0, scale=100.0)
+            self.lat_i_scale_low = _get_param_float(self.params, "LatIScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
+            self.lat_i_scale_standard = _get_param_float(self.params, "LatIScaleStandard", 1.35, 0.0, 5.0, scale=100.0)
+            self.lat_i_scale_highway = _get_param_float(self.params, "LatIScaleHighway", 2.0, 0.0, 5.0, scale=100.0)
+            self.lat_f_scale_low = _get_param_float(self.params, "LatFScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
+            self.lat_f_scale_standard = _get_param_float(self.params, "LatFScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
+            self.lat_f_scale_highway = _get_param_float(self.params, "LatFScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
           self.center_taper_high = _get_param_float(self.params, "HondaCenterScale", 0.5, 0.0, 5.0)
           self.center_boost_threshold = _get_param_float(self.params, "HondaCenterBoostThreshold", 3.0, 0.0, 10.0)
           self.center_boost_min_speed = _get_param_float(self.params, "HondaCenterBoostMinSpeed", 50.0, 0.0, 90.0)
