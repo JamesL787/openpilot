@@ -228,6 +228,10 @@ class LatControlPID(LatControl):
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_clarity_eps_modified = CP.carFingerprint == HONDA.HONDA_CLARITY and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_subaru_impreza = CP.carFingerprint in SUBARU_IMPREZA_CARS
+    # NRDR: every modified-EPS Honda (Civic 39990-TBA, CR-V 5G 39990-TLA, Insight 39990-TXM,
+    # Clarity 39990-TRW) runs the live tune. Only the variable-rack taper below stays Clarity-only,
+    # since NRDR_STEER_RATIO_V is measured off the Clarity rack.
+    self.is_eps_modified = self.is_honda_pid_lateral and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.prev_angle_steers_des_no_offset = 0.0
     self.modified_civic_steering_pressed_filter_s = 0.0
     self.modified_civic_steering_pressed_prev = False
@@ -316,7 +320,7 @@ class LatControlPID(LatControl):
       ff = self.ff_factor * self.get_steer_feedforward(angle_steers_des_no_offset, CS.vEgo)
       abs_angle_des = abs(angle_steers_des_no_offset)
       unwind_predicted = False
-      if self.is_clarity_eps_modified:
+      if self.is_eps_modified:
         unwind_ff_boost = float(np.interp(CS.vEgo, [0.0, 10.0], [self.unwind_ff_multiplier, 1.0]))
         steering_rate_unwind_ff = angle_steers_des_no_offset * float(CS.steeringRateDeg) < -1.0
         ff_unwind_weight = min(max(-phase / 0.5, 0.0), 1.0)
@@ -359,7 +363,7 @@ class LatControlPID(LatControl):
           self.modified_civic_steering_pressed_prev,
         )
         self.modified_civic_steering_pressed_prev = steering_pressed
-      elif self.is_clarity_eps_modified:
+      elif self.is_eps_modified:
         self.eps_modified_steering_pressed_filter_s, steering_pressed = get_eps_modified_steering_pressed(
           bool(CS.steeringPressed),
           float(getattr(CS, "steeringTorque", 0.0)),
@@ -369,10 +373,10 @@ class LatControlPID(LatControl):
         )
         self.eps_modified_steering_pressed_prev = steering_pressed
 
-      freeze_threshold = 2.0 if self.is_clarity_eps_modified else 5.0
+      freeze_threshold = 2.0 if self.is_eps_modified else 5.0
       freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < freeze_threshold
       unwind_detected = phase < UNWIND_FREEZE_PHASE_THRESHOLD and abs_angle_des < UNWIND_FREEZE_ANGLE_NEAR_CENTER
-      if self.is_clarity_eps_modified and self.unwind_freeze_enabled and (unwind_detected or unwind_predicted):
+      if self.is_eps_modified and self.unwind_freeze_enabled and (unwind_detected or unwind_predicted):
         freeze_integrator = True
 
       output_torque = self.pid.update(error,
@@ -380,7 +384,11 @@ class LatControlPID(LatControl):
                                 speed=CS.vEgo,
                                 freeze_integrator=freeze_integrator)
 
-      if self.is_clarity_eps_modified:
+      # The Civic Bosch testing ground applies its own hardcoded center taper below; let it own the
+      # output scale so the two tapers can never compound.
+      civic_bosch_testing_ground = self.is_civic_bosch_modified and civic_bosch_modified_lateral_testing_ground_active()
+
+      if self.is_eps_modified:
         if self.frame % 300 == 0:
           self.lat_p_scale_low = _get_param_float(self.params, "LatPScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_p_scale_standard = _get_param_float(self.params, "LatPScaleStandard", 1.35, 0.0, 5.0, scale=100.0)
@@ -411,16 +419,17 @@ class LatControlPID(LatControl):
           center_taper_scale = 0.0
         else:
           center_taper_scale = float(self.center_taper_scale.update(1.0))
-        output_torque *= _clarity_eps_pid_output_scale(
-          angle_steers_des_no_offset,
-          desired_angle_delta,
-          float(CS.steeringRateDeg),
-          CS.vEgo,
-          center_taper_scale,
-          self.center_taper_high,
-          self.center_boost_threshold,
-          self.center_boost_min_speed * _MPH_TO_MS,
-        )
+        if not civic_bosch_testing_ground:
+          output_torque *= _clarity_eps_pid_output_scale(
+            angle_steers_des_no_offset,
+            desired_angle_delta,
+            float(CS.steeringRateDeg),
+            CS.vEgo,
+            center_taper_scale,
+            self.center_taper_high,
+            self.center_boost_threshold,
+            self.center_boost_min_speed * _MPH_TO_MS,
+          )
 
       if self.is_subaru_impreza:
         raw_output_torque = self.pid.p + self.pid.i + self.pid.d + self.pid.f
@@ -428,7 +437,7 @@ class LatControlPID(LatControl):
 
       output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
-      if self.is_civic_bosch_modified and civic_bosch_modified_lateral_testing_ground_active():
+      if civic_bosch_testing_ground:
         output_torque *= get_civic_bosch_modified_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)
         output_alpha = get_civic_bosch_modified_pid_output_alpha(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo,
                                                                  output_torque, self.prev_output_torque)

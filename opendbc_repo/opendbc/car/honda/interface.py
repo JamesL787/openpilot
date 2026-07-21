@@ -111,6 +111,10 @@ class CarInterface(CarInterfaceBase):
       ret.stoppingDecelRate = 0.1
     ret.vEgoStarting = ret.vEgoStopping
 
+    # NRDR speed bands for the modified-EPS lateral tunes: 0 / 25 / 50 mph. The UI P/I/F scales
+    # default to a neutral 100% and fine-trim on top of these.
+    nrdr_tune_bp = [0., 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS]
+
     if candidate == CAR.HONDA_CIVIC:
       if eps_modified:
         # stock request input values:     0x0000, 0x00DE, 0x014D, 0x01EF, 0x0290, 0x0377, 0x0454, 0x0610, 0x06EE
@@ -119,22 +123,42 @@ class CarInterface(CarInterfaceBase):
         # stock filter output values:     0x009F, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108
         # modified filter output values:  0x009F, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0400, 0x0480
         # note: max request allowed is 4096, but request is capped at 3840 in firmware, so modifications result in 2x max
-        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 2560, 8000], [0, 2560, 3840]]
-        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.3], [0.1]]
+        # NRDR 39990-TBA-C120 linear-max: the modded table ramps linearly to the 3840 firmware cap, so
+        # the piecewise breakpoints collapse to a single ramp and the gains drop to match.
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
+        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [nrdr_tune_bp, [0.06, 0.081, 0.12]]
+        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [nrdr_tune_bp, [0.02, 0.027, 0.04]]
+        ret.lateralTuning.pid.kf = 0.000012  # 50% kf (was 0.000024)
+        ret.steerAtStandstill, ret.autoResumeSng = True, True
+        ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
       else:
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 2560], [0, 2560]]
         ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[1.1], [0.33]]
 
     elif candidate in (CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CIVIC_BOSCH_DIESEL):
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
-      ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.8], [0.24]]
+      if eps_modified:
+        # NOTE: only reaches the controller on the DIESEL variant. interfaces.py force-selects the
+        # torque controller for a modified-EPS HONDA_CIVIC_BOSCH (petrol), and configure_torque_tune()
+        # then overwrites lateralTuning, so these PID gains are discarded for that platform.
+        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [nrdr_tune_bp, [0.06, 0.081, 0.12]]
+        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [nrdr_tune_bp, [0.02, 0.027, 0.04]]
+        ret.lateralTuning.pid.kf = 0.000012  # 50% kf (was 0.000024)
+        ret.steerAtStandstill, ret.autoResumeSng = True, True
+        ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
+      else:
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.8], [0.24]]
       if candidate == CAR.HONDA_CIVIC_BOSCH:
           CarControllerParams.BOSCH_GAS_LOOKUP_V = [0, 750]
 
     elif candidate == CAR.HONDA_CIVIC_2022:
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
-      ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [[0, 10], [0.05, 0.5]]
-      ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [[0, 10], [0.0125, 0.125]]
+      if eps_modified:
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 2564, 8000], [0, 2564, 3840]]
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.3], [0.09]]  # 2.5x Modded EPS
+      else:
+        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [[0, 10], [0.05, 0.5]]
+        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [[0, 10], [0.0125, 0.125]]
 
     elif candidate == CAR.HONDA_ACCORD:
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
@@ -164,8 +188,13 @@ class CarInterface(CarInterfaceBase):
         # stock request input values:     0x0000, 0x00DB, 0x01BB, 0x0296, 0x0377, 0x0454, 0x0532, 0x0610, 0x067F
         # stock request output values:    0x0000, 0x0500, 0x0A15, 0x0E6D, 0x1100, 0x1200, 0x129A, 0x134D, 0x1400
         # modified request output values: 0x0000, 0x0500, 0x0A15, 0x0E6D, 0x1100, 0x1200, 0x1ACD, 0x239A, 0x2800
-        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 2560, 10000], [0, 2560, 3840]]
-        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.21], [0.07]]
+        # NRDR 39990-TLA-A040 linear-max: linear ramp to the 3840 cap, so the piecewise breakpoints
+        # collapse and the gains drop to match.
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.06], [0.02]]
+        ret.lateralTuning.pid.kf = 0.000024
+        ret.steerAtStandstill, ret.autoResumeSng = True, True
+        ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
       else:
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
         ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.64], [0.192]]
@@ -257,8 +286,16 @@ class CarInterface(CarInterfaceBase):
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.38], [0.11]]
 
     elif candidate in (CAR.HONDA_INSIGHT, CAR.HONDA_NBOX_2G):
-      ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
-      ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.6], [0.18]]
+      if eps_modified:
+        # NRDR 39990-TXM-A040 linear-max: linear ramp to the 3840 cap.
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.06], [0.02]]
+        ret.lateralTuning.pid.kf = 0.000024
+        ret.steerAtStandstill, ret.autoResumeSng = True, True
+        ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
+      else:
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.6], [0.18]]
 
     elif candidate in (CAR.HONDA_E, CAR.HONDA_E_ADVANCE):
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
