@@ -18,7 +18,7 @@ from opendbc.car.common.basedir import BASEDIR
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.common.simple_kalman import KF1D, get_kalman_gain
 from opendbc.car.gm.values import CAR as GM
-from opendbc.car.honda.values import CAR as HONDA, HONDA_BOSCH, HondaFlags, HondaSafetyFlags, HondaStarPilotFlags
+from opendbc.car.honda.values import CAR as HONDA, HONDA_BOSCH, HondaSafetyFlags, HondaStarPilotFlags
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import CAR as HYUNDAI, CANFD_CAR, HyundaiFlags, HyundaiStarPilotFlags, HyundaiStarPilotSafetyFlags, ALT_BUS_LDA_BUTTON_CARS
 from opendbc.car.mock.values import CAR as MOCK
@@ -187,15 +187,11 @@ class CarInterfaceBase(ABC):
     ret.rotationalInertia = scale_rot_inertia(ret.mass, ret.wheelbase)
     ret.tireStiffnessFront, ret.tireStiffnessRear = scale_tire_stiffness(ret.mass, ret.wheelbase, ret.centerToFront, ret.tireStiffnessFactor)
 
+    # NRDR: modified-EPS Hondas stay on the angle-space PID controller (matching nrdr-nightly, where
+    # every Honda runs lateralTuning.pid). Only an explicit user toggle switches to torque.
     toggles_to_check = ("force_torque_controller", "nnff", "nnff_lite")
-    modified_civic_force_torque = (
-      candidate == HONDA.HONDA_CIVIC_BOSCH and
-      bool(ret.flags & HondaFlags.EPS_MODIFIED)
-    )
-    if ret.steerControlType != structs.CarParams.SteerControlType.angle and (
-      any(getattr(starpilot_toggles, toggle, False) for toggle in toggles_to_check) or
-      modified_civic_force_torque
-    ):
+    if ret.steerControlType != structs.CarParams.SteerControlType.angle and \
+       any(getattr(starpilot_toggles, toggle, False) for toggle in toggles_to_check):
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
     return ret

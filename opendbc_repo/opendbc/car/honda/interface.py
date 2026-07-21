@@ -138,9 +138,6 @@ class CarInterface(CarInterfaceBase):
     elif candidate in (CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CIVIC_BOSCH_DIESEL):
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
       if eps_modified:
-        # NOTE: only reaches the controller on the DIESEL variant. interfaces.py force-selects the
-        # torque controller for a modified-EPS HONDA_CIVIC_BOSCH (petrol), and configure_torque_tune()
-        # then overwrites lateralTuning, so these PID gains are discarded for that platform.
         ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [nrdr_tune_bp, [0.06, 0.081, 0.12]]
         ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [nrdr_tune_bp, [0.02, 0.027, 0.04]]
         ret.lateralTuning.pid.kf = 0.000012  # 50% kf (was 0.000024)

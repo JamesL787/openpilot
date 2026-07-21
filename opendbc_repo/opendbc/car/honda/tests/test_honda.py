@@ -186,6 +186,17 @@ class TestHondaFingerprint:
 
     assert not CP.dashcamOnly
     assert CP.flags & HondaFlags.EPS_MODIFIED
+    # NRDR: modified-EPS Hondas run the angle-space PID controller, as they do on nrdr-nightly
+    assert CP.lateralTuning.which() == "pid"
+    assert list(CP.lateralTuning.pid.kpV) == pytest.approx([0.06, 0.081, 0.12])
+    assert list(CP.lateralTuning.pid.kiV) == pytest.approx([0.02, 0.027, 0.04])
+
+  def test_force_torque_toggle_still_overrides_modified_eps_pid(self):
+    torque_toggles = SimpleNamespace(force_torque_controller=True, nnff=False, nnff_lite=False)
+    car_fw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=b'39990-TGG,A020\x00\x00', address=0x18DA30F1, subAddress=0)]
+
+    CP = CarInterface.get_params(CAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), car_fw, False, False, False, torque_toggles)
+
     assert CP.lateralTuning.which() == "torque"
 
   def test_honda_clarity_supports_pid_and_torque_paths(self):
