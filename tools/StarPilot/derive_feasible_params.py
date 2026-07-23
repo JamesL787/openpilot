@@ -43,6 +43,14 @@ KNOWN_READ_ONLY = {
     "openpilotMinutes", "CompletedTrainingVersion"
 }
 
+# Raylib builds some related keys from speed-band suffixes instead of spelling
+# each complete parameter name as a string literal.
+KNOWN_DYNAMIC_UI_KEYS = {
+    "LatFScaleHighway", "LatFScaleLowSpeed", "LatFScaleStandard",
+    "LatIScaleHighway", "LatIScaleLowSpeed", "LatIScaleStandard",
+    "LatPScaleHighway", "LatPScaleLowSpeed", "LatPScaleStandard",
+}
+
 def extract_registered_keys(params_path: str) -> set:
     """Extracts all legally registered parameter keys from common/params_keys.h"""
     registered_keys = set()
@@ -71,7 +79,7 @@ def extract_registered_keys(params_path: str) -> set:
 def extract_ui_string_literals(ui_dirs: list) -> set:
     """Recursively walks UI directories to extract every string literal."""
     ui_strings = set()
-    valid_extensions = ('.cc', '.h', '.cpp', '.hpp', '.qml')
+    valid_extensions = ('.cc', '.h', '.cpp', '.hpp', '.qml', '.py')
 
     for directory in ui_dirs:
         if not os.path.exists(directory):
@@ -83,8 +91,8 @@ def extract_ui_string_literals(ui_dirs: list) -> set:
                 if file.endswith(valid_extensions):
                     filepath = os.path.join(root, file)
                     with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                        # Extract all "StringLiterals" block
-                        matches = re.findall(r'\"([A-Za-z0-9_]+)\"', f.read())
+                        # Extract complete C++ and Python string literals.
+                        matches = re.findall(r'[\"\']([A-Za-z0-9_]+)[\"\']', f.read())
                         ui_strings.update(matches)
 
     return ui_strings
@@ -97,7 +105,7 @@ def main():
     ui_strings = extract_ui_string_literals(UI_DIRECTORIES)
 
     # 2. Intersect
-    feasible_keys = registered_keys.intersection(ui_strings)
+    feasible_keys = registered_keys.intersection(ui_strings | KNOWN_DYNAMIC_UI_KEYS)
 
     # 3. Filter Read-Only
     editable_keys = feasible_keys - KNOWN_READ_ONLY

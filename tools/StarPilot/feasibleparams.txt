@@ -1,9 +1,9 @@
 Dynamically Derived Feasible Param Candidates (The Golden List)
 ===============================================================
 
-Total globally registered C++ keys:  559
-Total explicit UI string references: 460
-Total Editable/Toggleable targets:   423
+Total globally registered C++ keys:  587
+Total explicit UI string references: 491
+Total Editable/Toggleable targets:   451
 
 AccelerationPath
 AccelerationProfile
@@ -38,6 +38,7 @@ BlindSpotMetrics
 BlindSpotPath
 BootLogo
 BorderMetrics
+BorderWidth
 CCMLaunchAssist
 CCMLead
 CCMSetSpeedMargin
@@ -81,6 +82,7 @@ DeviceManagement
 DeviceShutdown
 DisableOnroadUploads
 DisableOpenpilotLongitudinal
+DisableSeatbeltCheck
 DisableWideRoad
 DiscordUsername
 DisengageOnAccelerator
@@ -101,6 +103,7 @@ DrivingModelVersion
 DynamicPathWidth
 DynamicPedalsOnUI
 EVTuning
+EnableTorqueBarWidget
 EngageVolume
 ExperimentalMode
 ExperimentalModeConfirmed
@@ -116,14 +119,13 @@ ForceTorqueController
 FrogsGoMoosTweak
 GMDashSpoofOffsets
 GMPedalLongitudinal
-HKGRemoteStartBootsComma
-IgnoreIgnitionLine
 GoatScream
 GoatScreamCriticalAlerts
 GreenLightAlert
 GsmApn
 GsmMetered
 GsmRoaming
+HKGRemoteStartBootsComma
 HasAcceptedTerms
 HideAlerts
 HideChangingLanesBanner
@@ -141,6 +143,7 @@ HondaCenterBoostMinSpeed
 HondaCenterBoostThreshold
 HondaCenterScale
 HondaDriverAssistDuringOverride
+HondaLiveLearningGas
 HondaLpfTauHighway
 HondaLpfTauLowSpeed
 HondaLpfTauStandard
@@ -153,11 +156,16 @@ HondaOverrideTorqueScale
 HondaSteerDeltaDown
 HondaSteerDeltaLimiter
 HondaSteerDeltaUp
+HondaStopAccel
+HondaStoppingDecelRate
+HondaStoppingDecelRateLong
 HondaTorqueLowPassFilter
 HondaUnwindBoostSeconds
 HondaUnwindFfMultiplier
 HondaUnwindFreeze
 HondaUnwindLookahead
+HondaVEgoStarting
+HondaVEgoStopping
 HumanLaneChanges
 IconPack
 IgnoreIgnitionLine
@@ -175,12 +183,14 @@ IsLdwEnabled
 IsMetric
 IsRHD
 IsRHDOverride
+JeepBrakeHold
 KonikDongleId
 LKASButtonControl
 LaneChangeSmoothing
 LaneChangeTime
 LaneChanges
 LaneDetectionWidth
+LaneLinesColor
 LaneLinesWidth
 LanguageSetting
 LatFScaleHighway
@@ -206,6 +216,7 @@ LockDoorsTimer
 LongCancelButtonControl
 LongDistanceButtonControl
 LongModeButtonControl
+LongPidTuneScale
 LongPitch
 LongStarButtonControl
 LongitudinalActuatorDelay
@@ -240,9 +251,17 @@ NoLogging
 NoUploads
 NostalgiaMode
 NrdrDriverOverrideThreshold
+NrdrHondaEcuMatchedLong
 NrdrIncreaseOverrideTolerance
+NrdrLearnAngleOffset
+NrdrLearnSteerRatio
+NrdrLearnStiffness
 NrdrMinSteerSpeed
 NrdrOverrideThresholdCenterBoost
+NrdrTuneLearner
+NrdrTuneLearnerRate
+NrdrTuneLearnerReset
+NrdrTuneLearnerStrength
 NudgelessLaneChange
 NumericalTemp
 Offroad_ExcessiveActuation
@@ -256,7 +275,9 @@ Offset7
 OneLaneChange
 OnroadDistanceButton
 OpenpilotEnabledToggle
+PathColor
 PathEdgeWidth
+PathEdgesColor
 PathWidth
 PauseAOLOnBrake
 PauseLateralOnSignal
@@ -265,7 +286,6 @@ PedalsOnUI
 PersistChillState
 PersistExperimentalState
 PreferredSchedule
-PrioritizeSmoothFollowing
 PromptDistractedVolume
 PromptVolume
 QOLLateral
@@ -278,6 +298,7 @@ RandomEvents
 RandomThemes
 RandomThemesHolidays
 RecordAudio
+RecordAudioFeedback
 RecordFront
 RecordFrontLock
 RecoveryPower
@@ -315,6 +336,7 @@ SLCLookaheadLower
 SLCMapboxFiller
 SLCOverride
 SLCPriority
+SLCPriority1
 SLCPriority2
 SNGHack
 SafeMode
@@ -331,6 +353,7 @@ ShowCCMStatus
 ShowCEMStatus
 ShowCPU
 ShowCSCStatus
+ShowDebugInfo
 ShowGPU
 ShowIP
 ShowMemoryUsage
@@ -364,14 +387,16 @@ StandardJerkSpeedDecrease
 StandardPersonalityProfile
 StandbyMode
 StarButtonControl
+StarPilotApiToken
+StarPilotDongleId
 StarPilotFavoriteSlots
 StartAccel
 StartAccelStock
 StartupMessageBottom
 StartupMessageTop
+StaticFeedforwardLong
 StaticPedalsOnUI
 SteerDelay
-SteerDelayModeMigrated
 SteerDelayStock
 SteerFriction
 SteerFrictionStock
@@ -427,6 +452,7 @@ VoltSNG
 WarningImmediateVolume
 WarningSoftVolume
 WeatherPresets
+WeatherToken
 WheelControls
 WheelIcon
 WheelSpeed
