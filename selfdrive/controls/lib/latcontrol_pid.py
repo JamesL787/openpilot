@@ -10,6 +10,7 @@ from openpilot.common.pid import PIDController
 from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
+from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
@@ -253,6 +254,9 @@ class LatControlPID(LatControl):
     self.unwind_ff_multiplier = 2.0
     self.unwind_boost_cap_s = 1.0
     self.unwind_boost_elapsed = 0.0
+    self.lat_stiction = LatStiction(dt, self.steer_max)
+    self.lat_stiction_enabled = False
+    self.prev_saturated = False
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
@@ -298,6 +302,8 @@ class LatControlPID(LatControl):
       self.center_taper_scale.x = 1.0
       self.unwind_boost_elapsed = 0.0
       self.prev_output_torque = 0.0
+      self.prev_saturated = False
+      self.lat_stiction.reset()
 
     else:
       self.frame += 1
@@ -390,6 +396,7 @@ class LatControlPID(LatControl):
           self.unwind_lookahead_enabled = _get_param_bool(self.params, "HondaUnwindLookahead")
           self.unwind_ff_multiplier = _get_param_float(self.params, "HondaUnwindFfMultiplier", 2.0, 1.0, 4.0)
           self.unwind_boost_cap_s = _get_param_float(self.params, "HondaUnwindBoostSeconds", 1.0, 0.0, 3.0)
+          self.lat_stiction_enabled = _get_param_bool(self.params, "NrdrLatStiction")
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
         i_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_i_scale_low, self.lat_i_scale_standard, self.lat_i_scale_highway)
@@ -432,6 +439,16 @@ class LatControlPID(LatControl):
       )
       self.tune_learner.learn(CS.vEgo, angle_steers_des, error, float(CS.steeringRateDeg), steering_pressed, paramsd_ok, self.frame)
 
+      # nrdr stiction output stage:
+      if self.lat_stiction_enabled:
+        des_rate_degs = desired_angle_delta / self.dt
+        lane_change_stiction = bool(getattr(CS, "leftBlinker", False) or getattr(CS, "rightBlinker", False))
+        output_torque = float(self.lat_stiction.update(
+          active, CS.vEgo, error, des_rate_degs, float(CS.steeringRateDeg), output_torque,
+          steering_pressed, lane_change_stiction, self.prev_saturated))
+      else:
+        self.lat_stiction.reset()
+
       pid_log.active = True
       pid_log.p = float(self.pid.p)
       pid_log.i = float(self.pid.i)
@@ -440,5 +457,6 @@ class LatControlPID(LatControl):
       pid_log.saturated = bool(self._check_saturation(self.steer_max - abs(output_torque) < 1e-3, CS, steer_limited_by_safety, curvature_limited))
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
       self.prev_output_torque = float(output_torque)
+      self.prev_saturated = bool(pid_log.saturated)
 
     return output_torque, angle_steers_des, pid_log

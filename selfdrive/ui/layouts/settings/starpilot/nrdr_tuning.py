@@ -155,6 +155,11 @@ class NRDRTuningLayout(_SettingsPage):
       ),
     ]
 
+    stiction_rows = [
+      toggle("NrdrLatStiction", "Lateral Stiction", "Emulate high-torque EPS breakaway friction: hold steering output flat between "
+                                                     "corrections instead of tracking small dither. Clarity EPS only."),
+    ]
+
     override_rows = [
       toggle("NrdrIncreaseOverrideTolerance", "Override Hysteresis", "Double the override tolerance after steering input leaves center."),
       value(
@@ -242,6 +247,7 @@ class NRDRTuningLayout(_SettingsPage):
       *pid_sections,
       SettingSection(title=tr_noop("Live Parameters / Auto Tuning"), rows=learning_rows),
       SettingSection(title=tr_noop("Center / Unwind"), rows=center_rows),
+      SettingSection(title=tr_noop("Lateral Stiction"), rows=stiction_rows),
       SettingSection(title=tr_noop("Driver Override"), rows=override_rows),
       SettingSection(title=tr_noop("Filters / Limits"), rows=filter_rows),
     ]

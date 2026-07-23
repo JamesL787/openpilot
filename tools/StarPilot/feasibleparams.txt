@@ -1,9 +1,9 @@
 Dynamically Derived Feasible Param Candidates (The Golden List)
 ===============================================================
 
-Total globally registered C++ keys:  587
-Total explicit UI string references: 491
-Total Editable/Toggleable targets:   451
+Total globally registered C++ keys:  588
+Total explicit UI string references: 492
+Total Editable/Toggleable targets:   452
 
 AccelerationPath
 AccelerationProfile
@@ -253,6 +253,7 @@ NostalgiaMode
 NrdrDriverOverrideThreshold
 NrdrHondaEcuMatchedLong
 NrdrIncreaseOverrideTolerance
+NrdrLatStiction
 NrdrLearnAngleOffset
 NrdrLearnSteerRatio
 NrdrLearnStiffness

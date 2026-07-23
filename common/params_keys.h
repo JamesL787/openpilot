@@ -333,6 +333,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrTuneLearnerReset", {PERSISTENT, BOOL, "0", "0", 2}},
     {"NrdrTuneLearnerStrength", {PERSISTENT, INT, "10", "10", 2}},
     {"NrdrTuneLearnerRate", {PERSISTENT, INT, "30", "30", 2}},
+    {"NrdrLatStiction", {PERSISTENT, BOOL, "0", "0", 2}},              // emulated EPS breakaway hold/move output stage (NRDR_LATERAL_STICTION.md); Clarity EPS only
     {"NrdrTuneLearnerMap", {PERSISTENT | DONT_LOG, BYTES}},
     {"ForceFingerprint", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ForceOffroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
