@@ -34,6 +34,15 @@ class StaticClassifierNet:
     return self.probabilities
 
 
+class ToggleParams:
+  def __init__(self, enabled):
+    self.enabled = enabled
+
+  def get_bool(self, key):
+    assert key == "VASMEnabled"
+    return self.enabled
+
+
 def daemon_with_history(current_speed, entries):
   daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
   daemon.published_speed_limit_mph = current_speed
@@ -69,6 +78,64 @@ def test_disconnect_camera_releases_client_state():
   assert daemon.client is None
   assert daemon.stream_type is None
   assert daemon.stream_name == ""
+
+
+def test_vasm_coexistence_mode_is_conditional(monkeypatch):
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.params = ToggleParams(False)
+  daemon.coexistence_mode = False
+  daemon.last_coexistence_param_refresh_at = -float("inf")
+  daemon.temporal_tracking_enabled = slv.TEMPORAL_TRACKING_ENABLED
+  daemon.track_detector_interval = slv.TRACK_DETECTOR_INTERVAL
+  daemon.detector_classifier_expansions = slv.DETECTOR_CLASSIFIER_EXPANSIONS
+  daemon.latest_detector_proposal = None
+  daemon.proposal_track = None
+  monkeypatch.setattr(slv, "PC", True)
+
+  daemon._update_coexistence_mode(0.0)
+  assert not daemon.coexistence_mode
+  assert daemon.detector_classifier_expansions == slv.DETECTOR_CLASSIFIER_EXPANSIONS
+  assert daemon._detector_interval(slv.INFERENCE_INTERVAL) == slv.INFERENCE_INTERVAL
+
+  daemon.params.enabled = True
+  daemon._update_coexistence_mode(slv.COEXISTENCE_PARAM_REFRESH_SECONDS + 0.1)
+  assert daemon.coexistence_mode
+  assert daemon.temporal_tracking_enabled
+  assert daemon.detector_classifier_expansions == slv.COEXISTENCE_DETECTOR_CLASSIFIER_EXPANSIONS
+  assert daemon._detector_interval(slv.INFERENCE_INTERVAL) == slv.COEXISTENCE_TRACK_DETECTOR_INTERVAL
+
+  daemon.params.enabled = False
+  daemon._update_coexistence_mode(2 * slv.COEXISTENCE_PARAM_REFRESH_SECONDS + 0.2)
+  assert not daemon.coexistence_mode
+  assert daemon.temporal_tracking_enabled == slv.TEMPORAL_TRACKING_ENABLED
+  assert daemon.detector_classifier_expansions == slv.DETECTOR_CLASSIFIER_EXPANSIONS
+
+
+def test_enter_parked_preserves_published_limit_and_clears_transient_work():
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.current_frame_bgr = np.ones((2, 2, 3), dtype=np.uint8)
+  daemon.latest_detector_proposal = object()
+  daemon.proposal_track = object()
+  daemon.pending_auto_bookmark = object()
+  daemon.pending_training_capture = object()
+  daemon.followup_until = 100.0
+  daemon.published_speed_limit_mph = 55
+  published = []
+  telemetry = []
+  daemon._publish_status = lambda status, clear_speed=False: published.append((status, clear_speed))
+  daemon._publish_runtime_telemetry = lambda now, phase, force=False: telemetry.append((now, phase, force))
+
+  daemon._enter_parked(10.0)
+
+  assert daemon.current_frame_bgr is None
+  assert daemon.latest_detector_proposal is None
+  assert daemon.proposal_track is None
+  assert daemon.pending_auto_bookmark is None
+  assert daemon.pending_training_capture is None
+  assert daemon.followup_until == 0.0
+  assert daemon.published_speed_limit_mph == 55
+  assert published == [("Idle - parked", False)]
+  assert telemetry == [(10.0, "parked", True)]
 
 
 def test_receive_frame_does_not_retain_vision_buffer(monkeypatch):

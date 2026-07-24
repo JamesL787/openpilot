@@ -17,7 +17,7 @@ from opendbc.car.hyundai.carcontroller import CarController, Ioniq6LongitudinalT
                                              direct_angle_request_allowed, get_angle_smoothing_alpha, \
                                              should_use_ev6_gt_line_stop_direct_tracking
 from opendbc.car.hyundai.carstate import CarState, decode_canfd_camera_lead, decode_ioniq_6_blindspot_radar_state
-from opendbc.car.hyundai.interface import CarInterface
+from opendbc.car.hyundai.interface import CarInterface, KIA_EV9_ACCEL_MAX
 from opendbc.car.hyundai import hyundaican, hyundaicanfd
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.radar_interface import MRREVO14F_RADAR_START_ADDR, MRR30_RADAR_START_ADDR, MRR35_RADAR_START_ADDR, \
@@ -26,7 +26,7 @@ from opendbc.car.hyundai.values import CAMERA_SCC_CAR, CANFD_CAR, CAN_GEARS, CAR
                                          HYBRID_CAR, EV_CAR, FW_QUERY_CONFIG, LEGACY_SAFETY_MODE_CAR, CANFD_FUZZY_WHITELIST, \
                                          UNSUPPORTED_LONGITUDINAL_CAR, PLATFORM_CODE_ECUS, HYUNDAI_VERSION_REQUEST_LONG, \
                                          LEGACY_LONGITUDINAL_CAR, DBC, HyundaiFlags, get_platform_codes, HyundaiSafetyFlags, \
-                                         HyundaiStarPilotSafetyFlags, Buttons, kia_ev6_gt_line_longitudinal_tuning
+                                         HyundaiStarPilotSafetyFlags, Buttons, CarControllerParams, kia_ev6_gt_line_longitudinal_tuning
 
 LongCtrlState = CarControl.Actuators.LongControlState
 from opendbc.car.hyundai.fingerprints import FW_VERSIONS
@@ -697,6 +697,12 @@ class TestHyundaiFingerprint:
     assert CP.stopAccel == pytest.approx(-1.5)
     assert CP.stoppingDecelRate == pytest.approx(0.5)
 
+  def test_elantra_hev_2024_longitudinal_delay_matches_observed_response(self):
+    toggles = get_test_toggles()
+    CP = CarInterface.get_params(CAR.HYUNDAI_ELANTRA_HEV_2024, gen_empty_fingerprint(), [], True, False, False, toggles)
+
+    assert CP.longitudinalActuatorDelay == pytest.approx(0.22)
+
   def test_kia_niro_phev_2022_longitudinal_params_soften_final_stop_hold(self):
     toggles = get_test_toggles()
     CP = CarInterface.get_params(CAR.KIA_NIRO_PHEV_2022, gen_empty_fingerprint(), [], True, False, False, toggles)
@@ -1111,6 +1117,10 @@ class TestHyundaiFingerprint:
     assert CP.startAccel == pytest.approx(0.2)
     assert CP.vEgoStarting == pytest.approx(0.5)
     assert CP.longitudinalActuatorDelay == pytest.approx(0.3)
+    assert CarInterface.get_pid_accel_limits(CP, 0.0, 0.0)[1] == pytest.approx(KIA_EV9_ACCEL_MAX)
+
+    ioniq_6_cp = CarInterface.get_params(CAR.HYUNDAI_IONIQ_6, gen_empty_fingerprint(), [], True, False, False, toggles)
+    assert CarInterface.get_pid_accel_limits(ioniq_6_cp, 0.0, 0.0)[1] == pytest.approx(CarControllerParams.ACCEL_MAX)
 
   def test_ioniq_6_longitudinal_tuning_helper_matches_dynamic_profile(self):
     state = Ioniq6LongitudinalTuningState()

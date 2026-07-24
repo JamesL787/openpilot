@@ -603,6 +603,7 @@ class CarInterface(CarInterfaceBase):
           ret.longitudinalTuning.kpV = [0.095, 0.085, 0.065, 0.050]
           ret.longitudinalTuning.kiV = [0.07, 0.10, 0.15, 0.24]
           ret.longitudinalTuning.kfDEPRECATED = 0.20
+          ret.longitudinalActuatorDelay = 0.6
         else:
           ret.longitudinalTuning.kfDEPRECATED = 0.25
 

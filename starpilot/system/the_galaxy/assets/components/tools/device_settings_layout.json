@@ -38,15 +38,13 @@
       {
         "key": "SteerDelay",
         "label": "Actuator Delay",
-        "description": "Exact full delay between steering command and vehicle response.",
+        "description": "Actuator Delay",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.01,
         "max": 1.0,
         "step": 0.01,
         "precision": 2,
-        "disabled_when_key_true": "UseAutoSteerDelay",
-        "disabled_reason": "Auto-learned delay is enabled.",
         "parent_key": "AdvancedLateralTune",
         "settings_tier": "advanced"
       },
@@ -741,9 +739,9 @@
         "description": "Add trailer weight to vehicle mass for tow-aware gas, brake, and conservative lateral assist. Enter the loaded trailer weight in pounds.",
         "data_type": "int",
         "ui_type": "numeric",
-        "min": 0,
-        "max": 15000,
-        "step": 500,
+        "min": 0.0,
+        "max": 15000.0,
+        "step": 500.0,
         "parent_key": "AdvancedLongitudinalTune",
         "settings_tier": "advanced"
       },
@@ -760,7 +758,7 @@
       {
         "key": "CustomAccelProfile0MPH",
         "label": "0 mph",
-        "description": "Max acceleration in m/s\u00b2 at the fixed 0 mph breakpoint.",
+        "description": "Max acceleration in m/s² at the fixed 0 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -773,7 +771,7 @@
       {
         "key": "CustomAccelProfile11MPH",
         "label": "11 mph",
-        "description": "Max acceleration in m/s\u00b2 at the fixed 11 mph breakpoint.",
+        "description": "Max acceleration in m/s² at the fixed 11 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -786,7 +784,7 @@
       {
         "key": "CustomAccelProfile22MPH",
         "label": "22 mph",
-        "description": "Max acceleration in m/s\u00b2 at the fixed 22 mph breakpoint.",
+        "description": "Max acceleration in m/s² at the fixed 22 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -799,7 +797,7 @@
       {
         "key": "CustomAccelProfile34MPH",
         "label": "34 mph",
-        "description": "Max acceleration in m/s\u00b2 at the fixed 34 mph breakpoint.",
+        "description": "Max acceleration in m/s² at the fixed 34 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -812,7 +810,7 @@
       {
         "key": "CustomAccelProfile45MPH",
         "label": "45 mph",
-        "description": "Max acceleration in m/s\u00b2 at the fixed 45 mph breakpoint.",
+        "description": "Max acceleration in m/s² at the fixed 45 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -825,7 +823,7 @@
       {
         "key": "CustomAccelProfile56MPH",
         "label": "56 mph",
-        "description": "Max acceleration in m/s\u00b2 at the fixed 56 mph breakpoint.",
+        "description": "Max acceleration in m/s² at the fixed 56 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -838,7 +836,7 @@
       {
         "key": "CustomAccelProfile89MPH",
         "label": "89 mph",
-        "description": "Max acceleration in m/s\u00b2 at the fixed 89 mph breakpoint.",
+        "description": "Max acceleration in m/s² at the fixed 89 mph breakpoint.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1569,7 +1567,7 @@
       {
         "key": "CustomCruise",
         "label": "Cruise Interval",
-        "description": "How much the set speed increases or decreases for each + or \u2013 cruise control button press.",
+        "description": "How much the set speed increases or decreases for each + or – cruise control button press.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 1.0,
@@ -1580,7 +1578,7 @@
       {
         "key": "CustomCruiseLong",
         "label": "Cruise Interval (Hold)",
-        "description": "How much the set speed increases or decreases while holding the + or \u2013 cruise control buttons.",
+        "description": "How much the set speed increases or decreases while holding the + or – cruise control buttons.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 1.0,
@@ -1693,7 +1691,6 @@
         "min": 0.0,
         "max": 3.0,
         "step": 0.01,
-        "parent_key": "LowVisibilityOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1704,7 +1701,6 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 10.0,
-        "parent_key": "LowVisibilityOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1716,7 +1712,6 @@
         "min": 0.0,
         "max": 99.0,
         "step": 1.0,
-        "parent_key": "LowVisibilityOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1728,7 +1723,6 @@
         "min": 0.0,
         "max": 99.0,
         "step": 1.0,
-        "parent_key": "LowVisibilityOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1749,7 +1743,6 @@
         "min": 0.0,
         "max": 3.0,
         "step": 0.01,
-        "parent_key": "RainOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1760,7 +1753,6 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 10.0,
-        "parent_key": "RainOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1772,7 +1764,6 @@
         "min": 0.0,
         "max": 99.0,
         "step": 1.0,
-        "parent_key": "RainOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1784,7 +1775,6 @@
         "min": 0.0,
         "max": 99.0,
         "step": 1.0,
-        "parent_key": "RainOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1805,7 +1795,6 @@
         "min": 0.0,
         "max": 3.0,
         "step": 0.01,
-        "parent_key": "RainStormOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1816,7 +1805,6 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 10.0,
-        "parent_key": "RainStormOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1828,7 +1816,6 @@
         "min": 0.0,
         "max": 99.0,
         "step": 1.0,
-        "parent_key": "RainStormOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1840,7 +1827,6 @@
         "min": 0.0,
         "max": 99.0,
         "step": 1.0,
-        "parent_key": "RainStormOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1861,7 +1847,6 @@
         "min": 0.0,
         "max": 3.0,
         "step": 0.01,
-        "parent_key": "SnowOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1872,7 +1857,6 @@
         "ui_type": "numeric",
         "min": 0.0,
         "max": 10.0,
-        "parent_key": "SnowOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1884,7 +1868,6 @@
         "min": 0.0,
         "max": 99.0,
         "step": 1.0,
-        "parent_key": "SnowOffsets",
         "settings_tier": "simple"
       },
       {
@@ -1896,7 +1879,6 @@
         "min": 0.0,
         "max": 99.0,
         "step": 1.0,
-        "parent_key": "SnowOffsets",
         "settings_tier": "simple"
       },
       {
@@ -2117,7 +2099,7 @@
       },
       {
         "key": "Offset1",
-        "label": "Speed Offset (0\u201324 mph)",
+        "label": "Speed Offset (0–24 mph)",
         "description": "How much to offset posted speed-limits between 0 and 24 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2128,7 +2110,7 @@
       },
       {
         "key": "Offset2",
-        "label": "Speed Offset (25\u201334 mph)",
+        "label": "Speed Offset (25–34 mph)",
         "description": "How much to offset posted speed-limits between 25 and 34 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2139,7 +2121,7 @@
       },
       {
         "key": "Offset3",
-        "label": "Speed Offset (35\u201344 mph)",
+        "label": "Speed Offset (35–44 mph)",
         "description": "How much to offset posted speed-limits between 35 and 44 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2150,7 +2132,7 @@
       },
       {
         "key": "Offset4",
-        "label": "Speed Offset (45\u201354 mph)",
+        "label": "Speed Offset (45–54 mph)",
         "description": "How much to offset posted speed-limits between 45 and 54 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2161,7 +2143,7 @@
       },
       {
         "key": "Offset5",
-        "label": "Speed Offset (55\u201364 mph)",
+        "label": "Speed Offset (55–64 mph)",
         "description": "How much to offset posted speed-limits between 55 and 64 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2172,7 +2154,7 @@
       },
       {
         "key": "Offset6",
-        "label": "Speed Offset (65\u201374 mph)",
+        "label": "Speed Offset (65–74 mph)",
         "description": "How much to offset posted speed-limits between 65 and 74 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2183,7 +2165,7 @@
       },
       {
         "key": "Offset7",
-        "label": "Speed Offset (75\u201399 mph)",
+        "label": "Speed Offset (75–99 mph)",
         "description": "How much to offset posted speed-limits between 75 and 99 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2472,7 +2454,6 @@
         "description": "On-screen gas and brake indicators.\n\nDynamic: Opacity changes according to how much openpilot is accelerating or braking\nStatic: Full when active, dim when not",
         "data_type": "bool",
         "ui_type": "toggle",
-        "is_parent_toggle": true,
         "parent_key": "CustomUI",
         "settings_tier": "simple"
       },
@@ -2780,6 +2761,15 @@
         "ui_type": "toggle",
         "parent_key": "AdvancedCustomUI",
         "settings_tier": "simple"
+      },
+      {
+        "key": "HideLeadMarker",
+        "label": "Hide Lead Marker",
+        "description": "Hide the lead-vehicle marker from the driving screen.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedCustomUI",
+        "settings_tier": "advanced"
       }
     ]
   },
@@ -2895,7 +2885,7 @@
       {
         "key": "WarningImmediateVolume",
         "label": "Warning Immediate Volume",
-        "description": "Set the volume for the loudest warnings that require urgent attention.\n\nExamples include: \"DISENGAGE IMMEDIATELY \u2014 Driver Distracted\", \"DISENGAGE IMMEDIATELY \u2014 Driver Unresponsive\".",
+        "description": "Set the volume for the loudest warnings that require urgent attention.\n\nExamples include: \"DISENGAGE IMMEDIATELY — Driver Distracted\", \"DISENGAGE IMMEDIATELY — Driver Unresponsive\".",
         "data_type": "int",
         "ui_type": "numeric",
         "min": 25.0,
@@ -3169,7 +3159,7 @@
       },
       {
         "key": "RemoteStartBootsComma",
-        "label": "Remote Start Boots Comma (GM)",
+        "label": "Remote Start Boots comma",
         "description": "Use the remote-start GM panda firmware at boot.\n\nRequired for GM remote-start startup signal behavior.",
         "data_type": "bool",
         "ui_type": "toggle",
@@ -3177,7 +3167,7 @@
       },
       {
         "key": "HKGRemoteStartBootsComma",
-        "label": "Remote Start Boots Comma (HKG)",
+        "label": "EV Remote Climate",
         "description": "Use the remote-climate Hyundai/Kia/Genesis CAN-FD panda firmware at boot.\n\nRequired for EV remote-climate startup signal behavior.",
         "data_type": "bool",
         "ui_type": "toggle",
@@ -3209,7 +3199,7 @@
       },
       {
         "key": "JeepBrakeHold",
-        "label": "Jeep Brake Hold",
+        "label": "Brake Hold",
         "description": "Hold the brakes after Jeep ACC times out at a stop, then send resume when traffic moves again.",
         "data_type": "bool",
         "ui_type": "toggle",

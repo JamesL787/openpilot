@@ -10,6 +10,7 @@ from openpilot.common.pid import PIDController
 from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
+from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import SUBARU_IMPREZA_CARS, get_subaru_impreza_pid_output_scale
 from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
@@ -226,6 +227,7 @@ class LatControlPID(LatControl):
     self.honda_lateral_pid_ki_scale = 1.0
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_clarity_eps_modified = CP.carFingerprint == HONDA.HONDA_CLARITY and bool(CP.flags & HondaFlags.EPS_MODIFIED)
+    self.is_subaru_impreza = CP.carFingerprint in SUBARU_IMPREZA_CARS
     self.prev_angle_steers_des_no_offset = 0.0
     self.modified_civic_steering_pressed_filter_s = 0.0
     self.modified_civic_steering_pressed_prev = False
@@ -419,7 +421,12 @@ class LatControlPID(LatControl):
           self.center_boost_threshold,
           self.center_boost_min_speed * _MPH_TO_MS,
         )
-        output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
+
+      if self.is_subaru_impreza:
+        raw_output_torque = self.pid.p + self.pid.i + self.pid.d + self.pid.f
+        output_torque = raw_output_torque * get_subaru_impreza_pid_output_scale(error)
+
+      output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       if self.is_civic_bosch_modified and civic_bosch_modified_lateral_testing_ground_active():
         output_torque *= get_civic_bosch_modified_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)

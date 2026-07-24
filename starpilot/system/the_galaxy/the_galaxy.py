@@ -92,6 +92,7 @@ GITLAB_API = "https://gitlab.com/api/v4"
 GITLAB_SUBMISSIONS_PROJECT_ID = "71992109"
 GITLAB_TOKEN = os.environ.get("GITLAB_TOKEN", "")
 LEGACY_LATERAL_METHOD_API_PREFIX = "/api/" + "".join(("f", "t", "m"))
+VASM_CONFIGURATION_KEYS = {"VASMEnabled", "VASMConfidenceThreshold", "VASMSmoothSeconds", "VASMAnnotationConfig"}
 
 GALAXY_DEPS_PATH = "/data/galaxy_deps"
 LEGACY_GALAXY_DEPS_PATH = "/data/" + "".join(chr(code) for code in (112, 111, 110, 100)) + "_deps"
@@ -959,6 +960,10 @@ _TROUBLESHOOT_ADVANCED_LATERAL_KEYS = [
   "ForceAutoTune",
   "ForceAutoTuneOff",
   "ForceTorqueController",
+  "CameraOffset",
+  "LaneCentering",
+  "LaneCenteringE2EAuthority",
+  "LaneCenterOffset",
 ]
 
 _TROUBLESHOOT_ADVANCED_LONGITUDINAL_KEYS = [
@@ -2549,6 +2554,60 @@ def _safe_params_get_bool(key, default=False):
   except Exception:
     return bool(default)
 
+def _normalize_vasm_config(data):
+  if not isinstance(data, dict):
+    raise ValueError("Configuration must be a JSON object.")
+
+  try:
+    width = int(data.get("width", 0))
+    height = int(data.get("height", 0))
+  except (TypeError, ValueError) as exc:
+    raise ValueError("Invalid camera dimensions.") from exc
+  if not (1 <= width <= 8192 and 1 <= height <= 8192):
+    raise ValueError("Camera dimensions are out of range.")
+
+  def normalize_polygon(key):
+    polygon = data.get(key, [])
+    if not isinstance(polygon, list) or len(polygon) > 64:
+      raise ValueError(f"{key} must contain at most 64 points.")
+    if polygon and len(polygon) < 3:
+      raise ValueError(f"{key} requires at least 3 points.")
+
+    normalized = []
+    for point in polygon:
+      if not isinstance(point, (list, tuple)) or len(point) != 2:
+        raise ValueError(f"{key} contains an invalid point.")
+      try:
+        x, y = float(point[0]), float(point[1])
+      except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} contains a non-numeric point.") from exc
+      if not (math.isfinite(x) and math.isfinite(y) and 0 <= x <= width and 0 <= y <= height):
+        raise ValueError(f"{key} contains a point outside the camera frame.")
+      normalized.append([round(x), round(y)])
+    return normalized
+
+  config = {
+    "width": width,
+    "height": height,
+    "poly_left": normalize_polygon("poly_left"),
+    "poly_right": normalize_polygon("poly_right"),
+  }
+  if not config["poly_left"] and not config["poly_right"]:
+    raise ValueError("At least one window polygon is required.")
+  return config
+
+
+def _decode_json_object(value):
+  if isinstance(value, bytes):
+    value = value.decode("utf-8", errors="replace")
+  if isinstance(value, str):
+    try:
+      value = json.loads(value)
+    except json.JSONDecodeError:
+      return {}
+  return value if isinstance(value, dict) else {}
+
+
 def _is_blank_param_raw(raw_value):
   if raw_value is None:
     return True
@@ -2868,6 +2927,20 @@ def _resolve_troubleshoot_default_value(key, value_type, default_values):
       return _coerce_param_value(stock_default_raw, safe_type)
 
   return _coerce_param_value(default_raw_value, safe_type)
+
+def _normalize_troubleshoot_current_display_value(key, current_value, default_value):
+  if key != "SteerDelay":
+    return current_value
+
+  try:
+    full_current_delay = full_lateral_delay(float(current_value))
+    numeric_default = float(default_value)
+  except (TypeError, ValueError):
+    return current_value
+
+  if math.isfinite(full_current_delay) and math.isfinite(numeric_default) and math.isclose(full_current_delay, numeric_default, abs_tol=1e-6):
+    return default_value
+  return current_value
 
 def _normalize_live_delay_status(status):
   status_text = str(status or "").strip().lower()
@@ -3198,6 +3271,7 @@ def _build_troubleshoot_section_payload(section_definition, value_types, default
     try:
       current_value = _resolve_troubleshoot_current_value(key, value_type, default_values)
       default_value = _resolve_troubleshoot_default_value(key, value_type, default_values)
+      current_value = _normalize_troubleshoot_current_display_value(key, current_value, default_value)
     except Exception:
       current_value = "Unavailable"
       default_value = "n/a"
@@ -3908,6 +3982,8 @@ def setup(app):
       "/assets/components/tools/device_settings.js",
       "/assets/components/tools/device_settings.css",
       "/assets/components/tools/device_settings_layout.json",
+      "/assets/components/tools/v_asm.js",
+      "/assets/components/tools/v_asm.css",
       "/assets/components/tools/toggles.js",
     }:
       response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -4366,6 +4442,9 @@ def setup(app):
 
       if key == "AutomaticUpdates" and params.get_bool("IsOnroad"):
         return jsonify({"error": "Cannot change Automatic Updates while driving."}), 403
+
+      if key in VASM_CONFIGURATION_KEYS and params.get_bool("IsOnroad"):
+        return jsonify({"error": "Cannot change V-ASM configuration while driving."}), 403
 
       if key in PANDA_FIRMWARE_TOGGLE_KEYS and params.get_bool("IsOnroad"):
         return jsonify({"error": "Cannot flash Panda firmware while driving."}), 403
@@ -5866,7 +5945,12 @@ def setup(app):
     if not route_names:
       return jsonify({"error": "No routes were selected."}), 400
 
-    started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS)
+    try:
+      segment_ranges = flm_workspace.normalize_segment_ranges(route_names, data.get("segmentRanges", {}))
+    except (TypeError, ValueError) as error:
+      return jsonify({"error": str(error)}), 400
+
+    started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS, segment_ranges)
     if not started:
       return jsonify({"error": "Failed to start FLM analysis."}), 500
 
@@ -7359,6 +7443,61 @@ def setup(app):
     update_starpilot_toggles()
     HARDWARE.reboot()
     return jsonify({"success": True, "message": "Toggles reset to default StarPilot values. Rebooting..."})
+
+  @app.route("/api/v_asm/snapshot", methods=["GET"])
+  def v_asm_snapshot():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Snapshot only available while offroad."}), 409
+
+    for footage_path in FOOTAGE_PATHS:
+      if not os.path.isdir(footage_path):
+        continue
+      try:
+        entries = sorted((e for e in os.listdir(footage_path) if utilities.SEGMENT_RE.fullmatch(e)), reverse=True)
+      except OSError:
+        continue
+      for entry in entries[:3]:
+        camera_file = os.path.join(footage_path, entry, "dcamera.hevc")
+        if not os.path.isfile(camera_file):
+          continue
+        for seek_time in ("5", "2", None):
+          command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", camera_file]
+          if seek_time is not None:
+            command.extend(["-ss", seek_time])
+          command.extend(["-frames:v", "1", "-q:v", "2", "-f", "image2pipe", "-vcodec", "mjpeg", "-"])
+          try:
+            result = subprocess.run(command, capture_output=True, check=True, timeout=5, stdin=subprocess.DEVNULL)
+            return Response(result.stdout, mimetype="image/jpeg")
+          except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+    return jsonify({"error": "No driver camera footage available."}), 404
+
+  @app.route("/api/v_asm/config", methods=["GET"])
+  def v_asm_get_config():
+    return jsonify(_decode_json_object(params.get("VASMAnnotationConfig")))
+
+  @app.route("/api/v_asm/config", methods=["POST"])
+  def v_asm_save_config():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot change V-ASM configuration while driving."}), 409
+    try:
+      config = _normalize_vasm_config(request.get_json(silent=True))
+    except ValueError as exc:
+      return jsonify({"error": str(exc)}), 400
+
+    params.put("VASMAnnotationConfig", config)
+    params.put_bool("VASMEnabled", True)
+    update_starpilot_toggles()
+    return jsonify({"success": True, "message": "Annotation config saved. V-ASM enabled."})
+
+  @app.route("/api/v_asm/config", methods=["DELETE"])
+  def v_asm_delete_config():
+    if params.get_bool("IsOnroad"):
+      return jsonify({"error": "Cannot change V-ASM configuration while driving."}), 409
+    params.put_bool("VASMEnabled", False)
+    params.put("VASMAnnotationConfig", {})
+    update_starpilot_toggles()
+    return jsonify({"success": True, "message": "Annotation config cleared. V-ASM disabled."})
 
   @app.route("/mapbox-help/<path:filename>", methods=["GET"])
   def serve_mapbox_help(filename):
