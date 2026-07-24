@@ -246,8 +246,8 @@ class DesireHelper:
                      or bool(getattr(starpilotPlan, "stopSignConfirmed", False)))
     if carstate.standstill or not one_blinker:
       self.turn_stop_hold = False
-    elif stop_imminent:
-      self.turn_stop_hold = True
+    else:
+      self.turn_stop_hold = stop_imminent
 
     cruise_state = getattr(carstate, "cruiseState", None)
     controls_enabled = bool(getattr(cruise_state, "enabled", False)) if controls_enabled is None else bool(controls_enabled)
