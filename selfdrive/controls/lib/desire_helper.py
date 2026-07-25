@@ -19,7 +19,6 @@ NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS = [0.0, 15.0, 30.0]
 NAV_KEEP_DISTANCE_BREAKPOINTS = [25.0, 90.0, 160.0]
 NAV_KEEP_AMBIGUOUS_SPLIT_DISTANCE_SCALE = 0.6
 NAV_KEEP_SMALL_SPLIT_MAX_OTHER_LANES = 2
-STOP_IMMINENT_DEBOUNCE_S = 0.3  # stop_imminent must be sustained this long before latching turn_stop_hold
 
 DESIRES = {
   LaneChangeDirection.none: {
@@ -62,11 +61,6 @@ class DesireHelper:
     self.keep_pulse_timer = 0.0
     self.prev_one_blinker = False
     self.desire = log.Desire.none
-
-    self.turn_stop_hold = False
-    self.stop_imminent_s = 0.0
-    self.turn_stop_hold_used = False
-    self.prev_turn_blinker_direction = LaneChangeDirection.none
 
     self.lane_change_completed = False
 
@@ -245,57 +239,6 @@ class DesireHelper:
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
     below_lane_change_speed = v_ego < starpilot_toggles.minimum_lane_change_speed
 
-    if carstate.leftBlinker and not carstate.rightBlinker:
-      turn_blinker_direction = LaneChangeDirection.left
-    elif carstate.rightBlinker and not carstate.leftBlinker:
-      turn_blinker_direction = LaneChangeDirection.right
-    else:
-      turn_blinker_direction = LaneChangeDirection.none
-    # A direct left<->right swap with no observed off-frame in between still starts a new turn;
-    # one_blinker alone stays True through that swap and would let the old direction's one-shot
-    # leak into the new turn.
-    blinker_direction_changed = (one_blinker and self.prev_turn_blinker_direction != LaneChangeDirection.none
-                                  and turn_blinker_direction != self.prev_turn_blinker_direction)
-
-    stop_imminent = (bool(getattr(starpilotPlan, "redLight", False))
-                     or bool(getattr(starpilotPlan, "forcingStop", False))
-                     or bool(getattr(starpilotPlan, "stopSignConfirmed", False)))
-    # Only the turn-desire-eligible window (speed/blinker/toggle) can latch or spend the one-shot,
-    # so a stop flag blipping while still above turn speed can't burn the shot before it matters.
-    turn_desire_window = lateral_active and one_blinker and below_lane_change_speed and starpilot_toggles.use_turn_desires
-
-    if not one_blinker or blinker_direction_changed:
-      # Full reset: a new blinker cycle (or a direction swap) gets its own fresh shot at holding.
-      self.turn_stop_hold = False
-      self.turn_stop_hold_used = False
-      self.stop_imminent_s = 0.0
-    elif carstate.standstill:
-      # Reaching a full stop already blocks the turn desire on its own (see the standstill check
-      # below), so the hold has done its job for this blinker cycle -- spend the one-shot and zero
-      # the debounce timer. Without this, a stop flag that's still true while parked at the sign
-      # (the normal case) keeps accumulating stop_imminent_s, and the instant you start moving
-      # again with turn_stop_hold_used freshly False, the debounce is already satisfied and the
-      # hold immediately re-latches, suppressing the turn desire right as the turn starts.
-      self.turn_stop_hold = False
-      self.turn_stop_hold_used = True
-      self.stop_imminent_s = 0.0
-    else:
-      self.stop_imminent_s = self.stop_imminent_s + DT_MDL if stop_imminent else 0.0
-      if not turn_desire_window:
-        self.turn_stop_hold = False
-      elif not stop_imminent:
-        # Release immediately: a stale hold must never outlive the stop flag that set it. Mark the
-        # one-shot as spent so a noisy re-flag of the SAME stop later in this turn (redLight/
-        # forcingStop/stopSignConfirmed pulsing on and off, observed on real drives) can't chop the
-        # desire into pieces again -- one hold-and-release per blinker cycle is enough.
-        if self.turn_stop_hold:
-          self.turn_stop_hold_used = True
-        self.turn_stop_hold = False
-      elif not self.turn_stop_hold_used and self.stop_imminent_s >= STOP_IMMINENT_DEBOUNCE_S:
-        self.turn_stop_hold = True
-
-    self.prev_turn_blinker_direction = turn_blinker_direction
-
     cruise_state = getattr(carstate, "cruiseState", None)
     controls_enabled = bool(getattr(cruise_state, "enabled", False)) if controls_enabled is None else bool(controls_enabled)
     nudgeless_enabled = self._nudgeless_enabled(starpilot_toggles, controls_enabled)
@@ -378,8 +321,12 @@ class DesireHelper:
 
     self.prev_one_blinker = one_blinker
 
-    if lateral_active and one_blinker and below_lane_change_speed and not carstate.standstill \
-        and starpilot_toggles.use_turn_desires and not self.turn_stop_hold:
+    # NRDR: no standstill gate and no stop-hold latch. The blinker latches the turn intent all the
+    # way through a stop-sign/red-light stop and completes it on proceed; it releases on blinker-off.
+    # Upstream d4c911f58c re-added the standstill gate and layered a turn_stop_hold latch on top to
+    # stop the model creeping past stop lines; on this car that suppressed the turn desire through
+    # the whole low-speed turn instead. Removed deliberately -- do not reintroduce from upstream.
+    if lateral_active and one_blinker and below_lane_change_speed and starpilot_toggles.use_turn_desires:
       self.turn_direction = TurnDirection.turnLeft if carstate.leftBlinker else TurnDirection.turnRight
       self.desire = TURN_DESIRES[self.turn_direction]
     else:
