@@ -16,11 +16,37 @@ from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
 
+# Effective steer-ratio curves, keyed explicitly by fingerprint.
+#
+# paramsd estimates one near-center scalar (it only observes steering angles below
+# 45 degrees), so it cannot learn a rack's off-center taper. These curves replace
+# that scalar for explicitly mapped VGR cars only, on measured wheel angle (stable;
+# avoids the desired-angle circular dependency). Every other car keeps its normal
+# CP.steerRatio behavior.
+
 # nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio.
-# Latest upstream nrdr-nightly curve: keep center anchored, then taper to the
-# measured high-angle effective ratio and let np.interp hold the plateau.
-NRDR_STEER_RATIO_ANGLE_BP = [0.0, 250.0]  # |steering-wheel angle|, deg
-NRDR_STEER_RATIO_V = [17.00, 12.74]       # effective steer ratio at each break
+# Keep center anchored, then taper to the measured high-angle effective ratio and let
+# np.interp hold the plateau.
+NRDR_CLARITY_SR_CURVE_BP = [0.0, 250.0]  # |steering-wheel angle|, deg
+NRDR_CLARITY_SR_CURVE_V = [17.00, 12.74]  # effective steer ratio at each break
+
+NRDR_CRV_5G_SR_CURVE_BP = [0., 50., 100., 150., 175., 200.]
+NRDR_CRV_5G_SR_CURVE_V = [18.10, 17.80, 16.30, 15.30, 14.90, 14.60]
+
+# Model-corrected effective ratio from Peter's 10th-gen Civic Bosch telemetry.
+# The tail is strongly supported by repeatable left/right, cross-route samples;
+# the near-center anchor is intentionally conservative while paramsd convergence
+# and tire-stiffness-factor coverage are expanded.
+NRDR_CIVIC_BOSCH_SR_CURVE_BP = [0., 25., 50., 75., 100., 125., 150., 175., 200., 225., 250., 275.]
+NRDR_CIVIC_BOSCH_SR_CURVE_V = [15.25, 15.10, 14.60, 14.10, 13.75, 13.50, 13.25, 13.10, 13.00, 12.90, 12.75, 12.65]
+
+NRDR_SR_CURVE_BY_FP = {
+  "HONDA_CLARITY": (NRDR_CLARITY_SR_CURVE_BP, NRDR_CLARITY_SR_CURVE_V),
+  "HONDA_CRV_5G": (NRDR_CRV_5G_SR_CURVE_BP, NRDR_CRV_5G_SR_CURVE_V),
+  "HONDA_CIVIC_BOSCH": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
+  # Temporary 10th-gen family fallback until Nidec-specific telemetry is available.
+  "HONDA_CIVIC": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
+}
 
 
 CENTER_TAPER_FADE_TAU = 0.25
@@ -229,9 +255,12 @@ class LatControlPID(LatControl):
     self.is_clarity_eps_modified = CP.carFingerprint == HONDA.HONDA_CLARITY and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_subaru_impreza = CP.carFingerprint in SUBARU_IMPREZA_CARS
     # NRDR: every modified-EPS Honda (Civic 39990-TBA, CR-V 5G 39990-TLA, Insight 39990-TXM,
-    # Clarity 39990-TRW) runs the live tune. Only the variable-rack taper below stays Clarity-only,
-    # since NRDR_STEER_RATIO_V is measured off the Clarity rack.
+    # Clarity 39990-TRW) runs the live tune.
     self.is_eps_modified = self.is_honda_pid_lateral and bool(CP.flags & HondaFlags.EPS_MODIFIED)
+    # Optional per-fingerprint VGR curve, independent of EPS_MODIFIED (the rack's geometry does not
+    # change with the firmware). There is deliberately no global fallback: applying one car's measured
+    # curve to an unmapped rack would corrupt its curvature->angle conversion.
+    self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
     self.prev_angle_steers_des_no_offset = 0.0
     self.modified_civic_steering_pressed_filter_s = 0.0
     self.modified_civic_steering_pressed_prev = False
@@ -293,10 +322,12 @@ class LatControlPID(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    if self.is_clarity_eps_modified:
+    if self.sr_curve is not None:
       # NRDR: apply the variable-rack taper before curvature->angle conversion. controlsd
-      # refreshes VM every frame, so this per-frame override cannot compound.
-      VM.sR = float(np.interp(abs(CS.steeringAngleDeg), NRDR_STEER_RATIO_ANGLE_BP, NRDR_STEER_RATIO_V))
+      # refreshes VM every frame, so this per-frame override cannot compound. Only the
+      # explicitly mapped fingerprints override VehicleModel; all other cars keep normal behavior.
+      sr_bp, sr_v = self.sr_curve
+      VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
 
     angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
     angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
