@@ -19,6 +19,7 @@ NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS = [0.0, 15.0, 30.0]
 NAV_KEEP_DISTANCE_BREAKPOINTS = [25.0, 90.0, 160.0]
 NAV_KEEP_AMBIGUOUS_SPLIT_DISTANCE_SCALE = 0.6
 NAV_KEEP_SMALL_SPLIT_MAX_OTHER_LANES = 2
+STOP_IMMINENT_DEBOUNCE_S = 0.3  # stop_imminent must be sustained this long before latching turn_stop_hold
 
 DESIRES = {
   LaneChangeDirection.none: {
@@ -63,6 +64,8 @@ class DesireHelper:
     self.desire = log.Desire.none
 
     self.turn_stop_hold = False
+    self.stop_imminent_s = 0.0
+    self.turn_stop_hold_used = False
 
     self.lane_change_completed = False
 
@@ -244,10 +247,22 @@ class DesireHelper:
     stop_imminent = (bool(getattr(starpilotPlan, "redLight", False))
                      or bool(getattr(starpilotPlan, "forcingStop", False))
                      or bool(getattr(starpilotPlan, "stopSignConfirmed", False)))
+    self.stop_imminent_s = self.stop_imminent_s + DT_MDL if stop_imminent else 0.0
+
     if carstate.standstill or not one_blinker:
+      # Full reset: a new blinker cycle gets its own fresh shot at holding through a stop.
       self.turn_stop_hold = False
-    else:
-      self.turn_stop_hold = stop_imminent
+      self.turn_stop_hold_used = False
+    elif not stop_imminent:
+      # Release immediately: a stale hold must never outlive the stop flag that set it. Mark the
+      # one-shot as spent so a noisy re-flag of the SAME stop later in this turn (redLight/
+      # forcingStop/stopSignConfirmed pulsing on and off, observed on real drives) can't chop the
+      # desire into pieces again -- one hold-and-release per blinker cycle is enough.
+      if self.turn_stop_hold:
+        self.turn_stop_hold_used = True
+      self.turn_stop_hold = False
+    elif not self.turn_stop_hold_used and self.stop_imminent_s >= STOP_IMMINENT_DEBOUNCE_S:
+      self.turn_stop_hold = True
 
     cruise_state = getattr(carstate, "cruiseState", None)
     controls_enabled = bool(getattr(cruise_state, "enabled", False)) if controls_enabled is None else bool(controls_enabled)
