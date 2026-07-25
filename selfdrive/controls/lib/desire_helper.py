@@ -321,12 +321,7 @@ class DesireHelper:
 
     self.prev_one_blinker = one_blinker
 
-    # NRDR: no standstill gate and no stop-hold latch. The blinker latches the turn intent all the
-    # way through a stop-sign/red-light stop and completes it on proceed; it releases on blinker-off.
-    # Upstream d4c911f58c re-added the standstill gate and layered a turn_stop_hold latch on top to
-    # stop the model creeping past stop lines; on this car that suppressed the turn desire through
-    # the whole low-speed turn instead. Removed deliberately -- do not reintroduce from upstream.
-    if lateral_active and one_blinker and below_lane_change_speed and starpilot_toggles.use_turn_desires:
+    if lateral_active and one_blinker and below_lane_change_speed and not carstate.standstill and starpilot_toggles.use_turn_desires:
       self.turn_direction = TurnDirection.turnLeft if carstate.leftBlinker else TurnDirection.turnRight
       self.desire = TURN_DESIRES[self.turn_direction]
     else:
