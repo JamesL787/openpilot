@@ -66,6 +66,7 @@ class DesireHelper:
     self.turn_stop_hold = False
     self.stop_imminent_s = 0.0
     self.turn_stop_hold_used = False
+    self.prev_turn_blinker_direction = LaneChangeDirection.none
 
     self.lane_change_completed = False
 
@@ -244,25 +245,56 @@ class DesireHelper:
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
     below_lane_change_speed = v_ego < starpilot_toggles.minimum_lane_change_speed
 
+    if carstate.leftBlinker and not carstate.rightBlinker:
+      turn_blinker_direction = LaneChangeDirection.left
+    elif carstate.rightBlinker and not carstate.leftBlinker:
+      turn_blinker_direction = LaneChangeDirection.right
+    else:
+      turn_blinker_direction = LaneChangeDirection.none
+    # A direct left<->right swap with no observed off-frame in between still starts a new turn;
+    # one_blinker alone stays True through that swap and would let the old direction's one-shot
+    # leak into the new turn.
+    blinker_direction_changed = (one_blinker and self.prev_turn_blinker_direction != LaneChangeDirection.none
+                                  and turn_blinker_direction != self.prev_turn_blinker_direction)
+
     stop_imminent = (bool(getattr(starpilotPlan, "redLight", False))
                      or bool(getattr(starpilotPlan, "forcingStop", False))
                      or bool(getattr(starpilotPlan, "stopSignConfirmed", False)))
-    self.stop_imminent_s = self.stop_imminent_s + DT_MDL if stop_imminent else 0.0
+    # Only the turn-desire-eligible window (speed/blinker/toggle) can latch or spend the one-shot,
+    # so a stop flag blipping while still above turn speed can't burn the shot before it matters.
+    turn_desire_window = lateral_active and one_blinker and below_lane_change_speed and starpilot_toggles.use_turn_desires
 
-    if carstate.standstill or not one_blinker:
-      # Full reset: a new blinker cycle gets its own fresh shot at holding through a stop.
+    if not one_blinker or blinker_direction_changed:
+      # Full reset: a new blinker cycle (or a direction swap) gets its own fresh shot at holding.
       self.turn_stop_hold = False
       self.turn_stop_hold_used = False
-    elif not stop_imminent:
-      # Release immediately: a stale hold must never outlive the stop flag that set it. Mark the
-      # one-shot as spent so a noisy re-flag of the SAME stop later in this turn (redLight/
-      # forcingStop/stopSignConfirmed pulsing on and off, observed on real drives) can't chop the
-      # desire into pieces again -- one hold-and-release per blinker cycle is enough.
-      if self.turn_stop_hold:
-        self.turn_stop_hold_used = True
+      self.stop_imminent_s = 0.0
+    elif carstate.standstill:
+      # Reaching a full stop already blocks the turn desire on its own (see the standstill check
+      # below), so the hold has done its job for this blinker cycle -- spend the one-shot and zero
+      # the debounce timer. Without this, a stop flag that's still true while parked at the sign
+      # (the normal case) keeps accumulating stop_imminent_s, and the instant you start moving
+      # again with turn_stop_hold_used freshly False, the debounce is already satisfied and the
+      # hold immediately re-latches, suppressing the turn desire right as the turn starts.
       self.turn_stop_hold = False
-    elif not self.turn_stop_hold_used and self.stop_imminent_s >= STOP_IMMINENT_DEBOUNCE_S:
-      self.turn_stop_hold = True
+      self.turn_stop_hold_used = True
+      self.stop_imminent_s = 0.0
+    else:
+      self.stop_imminent_s = self.stop_imminent_s + DT_MDL if stop_imminent else 0.0
+      if not turn_desire_window:
+        self.turn_stop_hold = False
+      elif not stop_imminent:
+        # Release immediately: a stale hold must never outlive the stop flag that set it. Mark the
+        # one-shot as spent so a noisy re-flag of the SAME stop later in this turn (redLight/
+        # forcingStop/stopSignConfirmed pulsing on and off, observed on real drives) can't chop the
+        # desire into pieces again -- one hold-and-release per blinker cycle is enough.
+        if self.turn_stop_hold:
+          self.turn_stop_hold_used = True
+        self.turn_stop_hold = False
+      elif not self.turn_stop_hold_used and self.stop_imminent_s >= STOP_IMMINENT_DEBOUNCE_S:
+        self.turn_stop_hold = True
+
+    self.prev_turn_blinker_direction = turn_blinker_direction
 
     cruise_state = getattr(carstate, "cruiseState", None)
     controls_enabled = bool(getattr(cruise_state, "enabled", False)) if controls_enabled is None else bool(controls_enabled)
