@@ -652,10 +652,18 @@ def main(demo=False):
     if 'lateral_control_params' in model.numpy_inputs:
       inputs['lateral_control_params'] = lateral_control_params
 
+    # An in-flight lane change must keep the desire history alive even after the blinker cancels.
+    # A 3-blink tap routinely expires mid-maneuver, and flushing desire_q there wipes the
+    # lane-change pulse the model is still acting on, so the car abandons the change and settles
+    # back into the original lane. Hold the falling edge off until the maneuver actually ends;
+    # the stale-desire flush then still happens, just at completion instead of mid-change.
+    lane_change_in_progress = DH.lane_change_state in (log.LaneChangeState.laneChangeStarting,
+                                                       log.LaneChangeState.laneChangeFinishing)
+
     mt1 = time.perf_counter()
     model_output = model.run(
       bufs, transforms, inputs, prepare_only,
-      blinker_on=bool(sm["carState"].leftBlinker or sm["carState"].rightBlinker),
+      blinker_on=bool(sm["carState"].leftBlinker or sm["carState"].rightBlinker) or lane_change_in_progress,
     )
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
