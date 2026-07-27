@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import datetime
+import glob
+import os
+import shutil
+import subprocess
+
 import pyray as rl
 
+from openpilot.common.basedir import BASEDIR
+from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.multilang import tr, tr_noop
+from openpilot.system.ui.widgets import DialogResult
+from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
+from openpilot.system.ui.widgets.html_render import HtmlModal
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherSettingsView,
@@ -15,6 +26,12 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
 
 
 PANEL_STYLE = DEFAULT_PANEL_STYLE
+
+TUNE_REPORT_PATH = "/data/nrdr_tune_report.txt"
+TUNE_REPORT_TMP = TUNE_REPORT_PATH + ".tmp"
+MEDIA_ROOT = "/data/media/0"
+# This device records to realdata_konik, not realdata.
+RLOG_GLOBS = (f"{MEDIA_ROOT}/realdata_konik/*/rlog.zst", f"{MEDIA_ROOT}/realdata_konik/*/rlog.bz2")
 
 
 class NRDRManagerView(AetherSettingsView):
@@ -65,8 +82,104 @@ class NRDRManagerView(AetherSettingsView):
 
 
 class NRDRTuningLayout(_SettingsPage):
+  # ── Tune Report (ported from nrdr-nightly) ──
+  # Runs tune_report.py over this device's rlogs in a background process and shows the result.
+  # Read-only and param-free, so nothing here needs a device rebuild.
+
+  def _scanning(self) -> bool:
+    return self._scan_proc is not None
+
+  def _on_tune_report_scan(self):
+    if self._scanning():
+      return
+
+    paths = []
+    for pattern in RLOG_GLOBS:
+      paths.extend(sorted(glob.glob(pattern)))
+    if not paths:
+      gui_app.push_widget(HtmlModal(text=tr("No drive logs found in /data/media/0/realdata_konik.")))
+      return
+
+    try:
+      self._scan_fh = open(TUNE_REPORT_TMP, "w")
+      self._scan_proc = subprocess.Popen(
+        ["python3", os.path.join(BASEDIR, "tune_report.py"), *paths],
+        stdout=self._scan_fh,
+        stderr=subprocess.STDOUT,
+        cwd=BASEDIR,
+      )
+    except Exception as e:
+      if self._scan_fh is not None:
+        self._scan_fh.close()
+        self._scan_fh = None
+      self._scan_proc = None
+      gui_app.push_widget(HtmlModal(text=tr("Could not start the tune report scan.") + f"<br><br>{e}"))
+
+  def _poll_tune_report_scan(self):
+    if self._scan_proc is None or self._scan_proc.poll() is None:
+      return
+
+    if self._scan_fh is not None:
+      self._scan_fh.close()
+      self._scan_fh = None
+    self._scan_proc = None
+
+    # Keep the output either way: on failure it holds the traceback, which is what you want to read.
+    try:
+      os.replace(TUNE_REPORT_TMP, TUNE_REPORT_PATH)
+    except OSError:
+      pass
+
+    self._show_tune_report()
+
+  def _show_tune_report(self):
+    if not os.path.exists(TUNE_REPORT_PATH):
+      gui_app.push_widget(HtmlModal(text=tr("No tune report yet. Press SCAN to analyze the drive logs on this device.")))
+      return
+
+    stamp = datetime.datetime.fromtimestamp(os.path.getmtime(TUNE_REPORT_PATH)).strftime("%d-%b-%Y %H:%M:%S").upper()
+    text = f"<b>{stamp}</b><br><br>"
+    try:
+      with open(TUNE_REPORT_PATH) as f:
+        text += f.read().replace("\n", "<br>")
+    except Exception:
+      pass
+    gui_app.push_widget(HtmlModal(text=text))
+
+  def _on_tune_report_delete(self):
+    gui_app.push_widget(ConfirmDialog(
+      tr("Delete ALL dashcam media in /data/media/0? This permanently erases every recorded drive on the "
+         "device and cannot be undone."),
+      tr("Delete"),
+      tr("Cancel"),
+      callback=self._on_tune_report_delete_confirmed,
+    ))
+
+  def _on_tune_report_delete_confirmed(self, result: DialogResult):
+    if result != DialogResult.CONFIRM:
+      return
+    try:
+      entries = os.listdir(MEDIA_ROOT)
+    except OSError:
+      entries = []
+    for entry in entries:
+      path = os.path.join(MEDIA_ROOT, entry)
+      try:
+        if os.path.isdir(path) and not os.path.islink(path):
+          shutil.rmtree(path, ignore_errors=True)
+        else:
+          os.remove(path)
+      except OSError:
+        pass
+
+  def _update_state(self):
+    super()._update_state()
+    self._poll_tune_report_scan()
+
   def __init__(self):
     super().__init__()
+    self._scan_proc: subprocess.Popen | None = None
+    self._scan_fh = None
     p = self._params
 
     def toggle(key: str, title: str, subtitle: str, *, visible=None) -> SettingRow:
@@ -243,7 +356,35 @@ class NRDRTuningLayout(_SettingsPage):
       ),
     ]
 
+    tune_report_rows = [
+      SettingRow(
+        "TuneReportScan", "action", tr_noop("Tune Report"),
+        subtitle=tr_noop("Analyze this device's drive logs and report, per speed band and turn direction, how "
+                         "well the lateral tune is tracking. Scanning a full day of logs can take a few minutes."),
+        action_text=tr_noop("SCAN"),
+        # action_text is rendered as a plain string, so the running state shows via the
+        # disabled subtitle instead; enabled=False also blocks a second launch.
+        enabled=lambda: not self._scanning(),
+        disabled_label=tr_noop("Scanning drive logs... the report opens automatically when it finishes."),
+        on_click=self._on_tune_report_scan,
+      ),
+      SettingRow(
+        "TuneReportView", "action", tr_noop("View Tune Report"),
+        subtitle=tr_noop("Show the report from the last scan."),
+        action_text=tr_noop("VIEW"),
+        on_click=self._show_tune_report,
+      ),
+      SettingRow(
+        "TuneReportDelete", "action", tr_noop("Delete Dashcam Media"),
+        subtitle=tr_noop("Permanently wipe every recorded drive in /data/media/0. This cannot be undone."),
+        action_text=tr_noop("DELETE"),
+        action_danger=True,
+        on_click=self._on_tune_report_delete,
+      ),
+    ]
+
     lateral_sections = [
+      SettingSection(title=tr_noop("Tune Report"), rows=tune_report_rows),
       *pid_sections,
       SettingSection(title=tr_noop("Live Parameters / Auto Tuning"), rows=learning_rows),
       SettingSection(title=tr_noop("Center / Unwind"), rows=center_rows),
