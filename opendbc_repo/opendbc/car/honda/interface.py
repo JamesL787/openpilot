@@ -231,8 +231,15 @@ class CarInterface(CarInterfaceBase):
     elif candidate == CAR.HONDA_CLARITY:
       if eps_modified:
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
-        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.03], [0.01]]
-        ret.lateralTuning.pid.kf = 0.000012
+        # nrdr-nightly tune. The speed banding lives HERE now (smoothly interpolated across
+        # 0 / 25 / 50 mph) rather than in the runtime LatPScale/LatIScale params, which are
+        # neutralized to 100% and act as fine-trim on top. Do not re-band in both places.
+        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [nrdr_tune_bp, [0.036, 0.048, 0.060]]
+        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [nrdr_tune_bp, [0.012, 0.016, 0.020]]
+        # kf is banded too, but this schema has no kfBP/kfV (nightly added them as capnp
+        # fields @5/@6). Rather than change cereal, the Clarity kf curve lives as constants in
+        # latcontrol_pid.py; this scalar is the fallback for anything not on that path.
+        ret.lateralTuning.pid.kf = 3.6e-6
         ret.steerAtStandstill, ret.autoResumeSng = True, True
         ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
       else:

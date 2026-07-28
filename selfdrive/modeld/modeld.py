@@ -277,6 +277,7 @@ class ModelState:
     self.off_policy_enabled = "off_policy" in self.policy_order
     self.off_policy_numpy_inputs = dict(self.numpy_inputs) if self.off_policy_enabled else {}
     self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
+    self.prev_blinker_on = False
     self.parser = Parser()
     self.aux_parser = Parser(ignore_missing=True)
     self.frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
@@ -361,7 +362,7 @@ class ModelState:
     return parsed
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
-          inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
+          inputs: dict[str, np.ndarray], prepare_only: bool, blinker_on: bool = False) -> dict[str, np.ndarray] | None:
     frames: dict[str, Tensor] = {}
     for key, buf in bufs.items():
       ptr = np.frombuffer(buf.data, dtype=np.uint8).ctypes.data
@@ -371,6 +372,17 @@ class ModelState:
           ptr, (self.frame_buf_size,), dtype="uint8", device=self.WARP_DEV,
         )
       frames[key] = self._blob_cache[cache_key]
+
+    # A desire is edge-triggered into the model input, but the compiled policy keeps
+    # roughly five seconds of desire history in ``desire_q`` and max-pools it.  When
+    # the blinker cancels, old turn/lane-change pulses would otherwise remain
+    # actionable until that history ages out. Flush only on the blinker falling edge;
+    # a turn desire going to zero at a standstill is intentional and must not flush
+    # the history or alter the existing resume behavior.
+    blinker_released = self.prev_blinker_on and not blinker_on
+    self.prev_blinker_on = blinker_on
+    if blinker_released and "desire_q" in self.input_queues:
+      self.input_queues["desire_q"].assign(0)
 
     inputs[self.desire_key][0] = 0
     self.numpy_inputs[self.desire_key].fill(0)
@@ -640,8 +652,19 @@ def main(demo=False):
     if 'lateral_control_params' in model.numpy_inputs:
       inputs['lateral_control_params'] = lateral_control_params
 
+    # An in-flight lane change must keep the desire history alive even after the blinker cancels.
+    # A 3-blink tap routinely expires mid-maneuver, and flushing desire_q there wipes the
+    # lane-change pulse the model is still acting on, so the car abandons the change and settles
+    # back into the original lane. Hold the falling edge off until the maneuver actually ends;
+    # the stale-desire flush then still happens, just at completion instead of mid-change.
+    lane_change_in_progress = DH.lane_change_state in (log.LaneChangeState.laneChangeStarting,
+                                                       log.LaneChangeState.laneChangeFinishing)
+
     mt1 = time.perf_counter()
-    model_output = model.run(bufs, transforms, inputs, prepare_only)
+    model_output = model.run(
+      bufs, transforms, inputs, prepare_only,
+      blinker_on=bool(sm["carState"].leftBlinker or sm["carState"].rightBlinker) or lane_change_in_progress,
+    )
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
 
