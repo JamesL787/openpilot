@@ -22,6 +22,13 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 NRDR_STEER_RATIO_ANGLE_BP = [0.0, 250.0]  # |steering-wheel angle|, deg
 NRDR_STEER_RATIO_V = [17.00, 12.74]       # effective steer ratio at each break
 
+# nrdr-nightly's speed-banded Clarity feedforward. Nightly carries this as kfBP/kfV on
+# lateralTuning.pid, but those are capnp fields @5/@6 that this fork's car.capnp does not have,
+# so the curve lives here instead of forcing a cereal schema change and rebuild. kp/ki band the
+# normal way through kpBP/kpV in interface.py, which this schema does support.
+NRDR_CLARITY_KF_SPEED_BP = [0.0, 25.0 * 0.44704, 50.0 * 0.44704]  # m/s
+NRDR_CLARITY_KF_V = [4.8e-6, 3.6e-6, 6.0e-6]
+
 
 CENTER_TAPER_FADE_TAU = 0.25
 UNWIND_LOOKAHEAD_MIN_IDX = 5
@@ -240,11 +247,11 @@ class LatControlPID(LatControl):
     self.frame = -1
     self.tune_learner = TuneLearner(dt, self.steer_max)
     self.lat_p_scale_low = 1.0
-    self.lat_p_scale_standard = 1.35
-    self.lat_p_scale_highway = 2.0
+    self.lat_p_scale_standard = 1.0
+    self.lat_p_scale_highway = 1.0
     self.lat_i_scale_low = 1.0
-    self.lat_i_scale_standard = 1.35
-    self.lat_i_scale_highway = 2.0
+    self.lat_i_scale_standard = 1.0
+    self.lat_i_scale_highway = 1.0
     self.lat_f_scale_low = 1.0
     self.lat_f_scale_standard = 1.0
     self.lat_f_scale_highway = 1.0
@@ -313,7 +320,11 @@ class LatControlPID(LatControl):
       phase = angle_steers_des_no_offset * desired_angle_delta
 
       # offset does not contribute to resistive torque
-      ff = self.ff_factor * self.get_steer_feedforward(angle_steers_des_no_offset, CS.vEgo)
+      if self.is_clarity_eps_modified:
+        ff_factor = float(np.interp(CS.vEgo, NRDR_CLARITY_KF_SPEED_BP, NRDR_CLARITY_KF_V))
+      else:
+        ff_factor = self.ff_factor
+      ff = ff_factor * self.get_steer_feedforward(angle_steers_des_no_offset, CS.vEgo)
       abs_angle_des = abs(angle_steers_des_no_offset)
       unwind_predicted = False
       if self.is_clarity_eps_modified:
@@ -383,11 +394,11 @@ class LatControlPID(LatControl):
       if self.is_clarity_eps_modified:
         if self.frame % 300 == 0:
           self.lat_p_scale_low = _get_param_float(self.params, "LatPScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
-          self.lat_p_scale_standard = _get_param_float(self.params, "LatPScaleStandard", 1.35, 0.0, 5.0, scale=100.0)
-          self.lat_p_scale_highway = _get_param_float(self.params, "LatPScaleHighway", 2.0, 0.0, 5.0, scale=100.0)
+          self.lat_p_scale_standard = _get_param_float(self.params, "LatPScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
+          self.lat_p_scale_highway = _get_param_float(self.params, "LatPScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_i_scale_low = _get_param_float(self.params, "LatIScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
-          self.lat_i_scale_standard = _get_param_float(self.params, "LatIScaleStandard", 1.35, 0.0, 5.0, scale=100.0)
-          self.lat_i_scale_highway = _get_param_float(self.params, "LatIScaleHighway", 2.0, 0.0, 5.0, scale=100.0)
+          self.lat_i_scale_standard = _get_param_float(self.params, "LatIScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
+          self.lat_i_scale_highway = _get_param_float(self.params, "LatIScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_low = _get_param_float(self.params, "LatFScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_standard = _get_param_float(self.params, "LatFScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_highway = _get_param_float(self.params, "LatFScaleHighway", 1.0, 0.0, 5.0, scale=100.0)

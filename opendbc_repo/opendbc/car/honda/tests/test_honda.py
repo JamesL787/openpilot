@@ -5,6 +5,7 @@ import pytest
 from opendbc.car import structs
 from opendbc.car.structs import CarParams
 from opendbc.car import gen_empty_fingerprint
+from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.carcontroller import (
   CarController,
@@ -187,10 +188,15 @@ class TestHondaFingerprint:
     assert not pid_cp.dashcamOnly
     assert pid_cp.flags & HondaFlags.EPS_MODIFIED
     assert pid_cp.lateralTuning.which() == "pid"
-    assert list(pid_cp.lateralParams.torqueBP) == [0, 2560]
-    assert list(pid_cp.lateralParams.torqueV) == [0, 2560]
-    assert list(pid_cp.lateralTuning.pid.kpV) == pytest.approx([0.8])
-    assert list(pid_cp.lateralTuning.pid.kiV) == pytest.approx([0.24])
+    # Modified EPS: 3840 command range, and the nrdr-nightly speed-banded tune interpolated
+    # across 0 / 25 / 50 mph. The runtime LatPScale/LatIScale params are neutral 100% so they
+    # trim this rather than re-banding it.
+    assert list(pid_cp.lateralParams.torqueBP) == [0, 3840]
+    assert list(pid_cp.lateralParams.torqueV) == [0, 3840]
+    assert list(pid_cp.lateralTuning.pid.kpV) == pytest.approx([0.036, 0.048, 0.060])
+    assert list(pid_cp.lateralTuning.pid.kiV) == pytest.approx([0.012, 0.016, 0.020])
+    assert list(pid_cp.lateralTuning.pid.kpBP) == pytest.approx([0.0, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS])
+    assert list(pid_cp.lateralTuning.pid.kiBP) == pytest.approx([0.0, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS])
     assert pid_cp.autoResumeSng
     assert pid_cp.minEnableSpeed == pytest.approx(-1.0)
     assert pid_cp.stopAccel == pytest.approx(0.0)
