@@ -137,3 +137,40 @@ class TestClarityNNFFModel:
       m = json.load(f)
     assert m["model_test_loss"] < 5e-4, "expected nrdr's 2026-07-28 model (loss 3.9e-4)"
     assert "training_metadata" in m
+
+
+class TestClarityHybridLogType:
+  """controlsd assigns cs.lateralControlState.<union> from CP.lateralTuning.which().
+
+  This design keeps that at 'pid', so the hybrid must always hand back a
+  LateralPIDState. Returning NNFF's LateralTorqueState makes the assignment raise
+  and takes controlsd down on the first frame above the activation speed.
+  """
+
+  def test_torque_state_cannot_be_published_as_pid_state(self):
+    from cereal import log
+    cs = log.ControlsState.new_message()
+    torque_log = log.ControlsState.LateralTorqueState.new_message()
+    with pytest.raises(Exception):
+      cs.lateralControlState.pidState = torque_log
+
+  def test_pid_state_publishes_cleanly(self):
+    from cereal import log
+    cs = log.ControlsState.new_message()
+    pid_log = log.ControlsState.LateralPIDState.new_message()
+    pid_log.output = 0.42
+    cs.lateralControlState.pidState = pid_log
+    assert cs.lateralControlState.which() == "pidState"
+
+  def test_hybrid_returns_pid_shaped_log_at_every_blend(self):
+    """Guards the actual bug: the controller must not hand back nnff_log.
+
+    Read as text rather than imported -- the LatControl chain needs the
+    device-built native extensions.
+    """
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "latcontrol_clarity_hybrid.py")
+    with open(path) as f:
+      src = f.read()
+    assert "out_log = pid_log" in src
+    assert "out_log = nnff_log" not in src

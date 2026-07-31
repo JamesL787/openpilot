@@ -159,10 +159,18 @@ class LatControlClarityHybrid(LatControl):
     blend = self._update_blend(active, target, lane_change_state)
 
     output = float((1.0 - blend) * float(pid_output) + blend * float(nnff_output))
-    out_log = nnff_log if blend >= 0.5 else pid_log
+
+    # Always publish the PID-shaped log. controlsd picks the controlsState union from
+    # CP.lateralTuning.which(), and this design deliberately leaves that as 'pid';
+    # handing back NNFF's LateralTorqueState makes that assignment raise
+    # ("expected structValue.getSchema() == structType"), killing controlsd on the
+    # first frame above the activation speed. p/i/d/f therefore describe the PID half,
+    # which runs every frame regardless of blend, while output carries the blended
+    # command actually sent to the car.
+    out_log = pid_log
     out_log.output = output
     out_log.active = active
-    out_log.saturated = pid_log.saturated if blend < 0.5 else nnff_log.saturated
+    out_log.saturated = bool(nnff_log.saturated if blend >= 0.5 else pid_log.saturated)
 
     # Do not carry a hidden integrator charge across a controller handoff. P and
     # feedforward still run every frame, while the inactive controller's I stays neutral.
