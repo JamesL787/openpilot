@@ -51,9 +51,18 @@ class LatControlClarityHybrid(LatControl):
     self.pid_controller = LatControlPID(CP, CI, dt)
 
     # Only this private copy becomes a torque car, purely so NNFF has torque params.
-    with structs.CarParams.from_bytes(CP.to_bytes()) as reader:
-      CP_torque = reader.as_builder()
-    CarInterfaceBase.configure_torque_tune(CP_torque.carFingerprint, CP_torque.lateralTuning)
+    # controlsd hands us a capnp Reader (messaging.log_from_bytes), which has no
+    # to_bytes(); a Builder has no as_builder(). Normalise both, and hand NNFF a
+    # Reader because it calls CP.lateralTuning.torque.as_builder() itself.
+    # as_builder() deep-copies, so the shared CarParams is still never mutated.
+    if hasattr(CP, "as_builder"):          # Reader (the controlsd path)
+      self._torque_cp_builder = CP.as_builder()
+    else:                                  # Builder (tests, direct construction)
+      self._torque_cp_builder = CP.as_reader().as_builder()
+    CarInterfaceBase.configure_torque_tune(self._torque_cp_builder.carFingerprint,
+                                           self._torque_cp_builder.lateralTuning)
+    # keep the builder referenced: the reader is a view onto its memory
+    CP_torque = self._torque_cp_builder.as_reader()
     self.nnff_controller = LatControlNNFF(CP_torque, CI, dt)
     # controlsd's live-torque-params block needs a torque-union CarParams; ours stays
     # 'pid', so expose the private copy for it to read.

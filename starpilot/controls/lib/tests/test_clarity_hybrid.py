@@ -226,3 +226,50 @@ class TestClarityHybridIntegration:
     assert 'getattr(self.LaC, "torque_carparams", self.CP)' in cd
     assert "get_torque_control_params(lat_cp," in cd
     assert "get_torque_control_params(self.CP," not in cd
+
+
+class TestClarityHybridCapnpTypes:
+  """controlsd builds self.CP with messaging.log_from_bytes -> a capnp Reader.
+  Every earlier test used get_params(), which returns a Builder, so two
+  construction-time crashes hid here:
+    Reader  has no to_bytes()
+    Builder has no as_builder()  (and LatControlNNFF calls torque.as_builder())
+  """
+
+  @staticmethod
+  def _ctor_logic(CP):
+    """Mirror of LatControlClarityHybrid.__init__'s CarParams handling."""
+    if hasattr(CP, "as_builder"):
+      tb = CP.as_builder()
+    else:
+      tb = CP.as_reader().as_builder()
+    CarInterfaceBase.configure_torque_tune(tb.carFingerprint, tb.lateralTuning)
+    return tb, tb.as_reader()
+
+  def test_reader_carparams_is_what_controlsd_passes(self):
+    CP_b = _clarity_cp()
+    with structs.CarParams.from_bytes(CP_b.to_bytes()) as CP_reader:
+      assert not hasattr(CP_reader, "to_bytes"), "if this ever gains to_bytes, revisit the ctor"
+      assert hasattr(CP_reader, "as_builder")
+
+  @pytest.mark.parametrize("as_reader", [False, True])
+  def test_ctor_handles_both_capnp_types_and_nnff_can_consume_it(self, as_reader):
+    CP_b = _clarity_cp()
+    if as_reader:
+      with structs.CarParams.from_bytes(CP_b.to_bytes()) as CP:
+        tb, CP_torque = self._ctor_logic(CP)
+        assert CP_torque.lateralTuning.which() == "torque"
+        CP_torque.lateralTuning.torque.as_builder()      # what LatControlNNFF does
+        assert CP.lateralTuning.which() == "pid"          # shared CP untouched
+    else:
+      tb, CP_torque = self._ctor_logic(CP_b)
+      assert CP_torque.lateralTuning.which() == "torque"
+      CP_torque.lateralTuning.torque.as_builder()
+      assert CP_b.lateralTuning.which() == "pid"
+
+  def test_ctor_keeps_the_builder_referenced(self):
+    """as_reader() is a view onto the builder's memory; dropping the builder
+    would leave NNFF reading freed memory."""
+    src = _read(LIB, "latcontrol_clarity_hybrid.py")
+    assert "self._torque_cp_builder" in src
+    assert "self._torque_cp_builder.as_reader()" in src
