@@ -160,6 +160,40 @@ class NRDRTuningLayout(_SettingsPage):
                                                      "corrections instead of tracking small dither. Clarity EPS only."),
     ]
 
+    hybrid_rows = [
+      toggle("NrdrClarityHybrid", "Clarity PID/NNFF Hybrid", "Blend the neural lateral model in above a set speed, keeping PID at low speed and "
+                                                             "through every lane change. Off runs the plain Clarity PID everywhere. "
+                                                             "Clarity only. Requires a restart to take effect."),
+      toggle("NrdrNnlcEnabled", "Enable Neural Model (NNFF)", "Allow the neural half of the hybrid. Off keeps PID active at all speeds without "
+                                                              "leaving the hybrid. Applies live.",
+             visible=lambda: p.get_bool("NrdrClarityHybrid")),
+      value(
+        "NrdrNnlcActivationSpeed", "Activate Neural Model Above", "Center speed of the 6 mph handoff. At 30 mph, PID is full through 27 mph and "
+                                                                  "the neural model is full from 33 mph.",
+        lambda: f"{p.get_int('NrdrNnlcActivationSpeed')} mph",
+        lambda: self._show_slider("NrdrNnlcActivationSpeed", 0, 100, unit=" mph", title="Activate Neural Model Above"),
+        visible=lambda: p.get_bool("NrdrClarityHybrid") and p.get_bool("NrdrNnlcEnabled"),
+      ),
+      value(
+        "NrdrNnlcKpGain", "Neural Kp Gain", "Proportional feedback gain of the neural controller. 100% gives kp = 1.0.",
+        lambda: f"{p.get_int('NrdrNnlcKpGain')}%",
+        lambda: self._show_slider("NrdrNnlcKpGain", 0, 300, step=5, unit="%", title="Neural Kp Gain"),
+        visible=lambda: p.get_bool("NrdrClarityHybrid") and p.get_bool("NrdrNnlcEnabled"),
+      ),
+      value(
+        "NrdrNnlcKfGain", "Neural Kf Gain", "Neural-model feedforward gain. 50% gives kf = 0.5.",
+        lambda: f"{p.get_int('NrdrNnlcKfGain')}%",
+        lambda: self._show_slider("NrdrNnlcKfGain", 0, 300, step=5, unit="%", title="Neural Kf Gain"),
+        visible=lambda: p.get_bool("NrdrClarityHybrid") and p.get_bool("NrdrNnlcEnabled"),
+      ),
+      value(
+        "NrdrNnlcKiGain", "Neural Ki Gain", "Integral feedback gain of the neural controller. 10% gives ki = 0.1.",
+        lambda: f"{p.get_int('NrdrNnlcKiGain')}%",
+        lambda: self._show_slider("NrdrNnlcKiGain", 0, 300, step=5, unit="%", title="Neural Ki Gain"),
+        visible=lambda: p.get_bool("NrdrClarityHybrid") and p.get_bool("NrdrNnlcEnabled"),
+      ),
+    ]
+
     override_rows = [
       toggle("NrdrIncreaseOverrideTolerance", "Override Hysteresis", "Double the override tolerance after steering input leaves center."),
       value(
@@ -248,6 +282,7 @@ class NRDRTuningLayout(_SettingsPage):
       SettingSection(title=tr_noop("Live Parameters / Auto Tuning"), rows=learning_rows),
       SettingSection(title=tr_noop("Center / Unwind"), rows=center_rows),
       SettingSection(title=tr_noop("Lateral Stiction"), rows=stiction_rows),
+      SettingSection(title=tr_noop("Clarity PID/NNFF Hybrid"), rows=hybrid_rows),
       SettingSection(title=tr_noop("Driver Override"), rows=override_rows),
       SettingSection(title=tr_noop("Filters / Limits"), rows=filter_rows),
     ]

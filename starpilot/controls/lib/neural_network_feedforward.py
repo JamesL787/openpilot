@@ -9,6 +9,7 @@ from collections import deque
 from difflib import SequenceMatcher
 
 from cereal import log
+from opendbc.car.lateral import FRICTION_THRESHOLD, get_friction
 from openpilot.common.constants import ACCELERATION_DUE_TO_GRAVITY
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
@@ -176,6 +177,9 @@ class LatControlNNFF(LatControl):
     self.pid = PIDController(1.0, 0.3, 0.0, pos_limit=self.steer_max, neg_limit=-self.steer_max, rate=1/self.dt)
     self.torque_from_lateral_accel = CI.torque_from_lateral_accel()
     self.steering_angle_deadzone_deg = self.torque_params.steeringAngleDeadzoneDeg
+    # Opt-in, set by LatControlClarityHybrid. Every other car keeps the legacy
+    # friction-override line, so this port cannot change their behaviour.
+    self.torque_space_friction_override = False
 
     # Instantaneous lateral jerk changes very rapidly, making it not useful on its own,
     # however, we can "look ahead" to the future planned lateral jerk in order to gauge
@@ -317,7 +321,14 @@ class LatControlNNFF(LatControl):
 
           # apply friction override for cars with low NN friction response
           if self.nn_friction_override:
-            pid_log.error += self.torque_from_lateral_accel(0.0, self.torque_params)
+            if self.torque_space_friction_override:
+              # nrdr/sunnypilot NNLC behaviour: add real friction in torque space.
+              # The legacy line below evaluates to exactly 0.0 for a linear
+              # torque_from_lateral_accel (every Honda), so the override is a no-op there.
+              pid_log.error += get_friction(friction_input, lateral_accel_deadzone,
+                                            FRICTION_THRESHOLD, self.torque_params)
+            else:
+              pid_log.error += self.torque_from_lateral_accel(0.0, self.torque_params)
         else:
           torque_from_measurement = self.torque_from_lateral_accel(measurement, self.torque_params)
           torque_from_setpoint = self.torque_from_lateral_accel(setpoint, self.torque_params)

@@ -30,6 +30,7 @@ from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 from openpilot.starpilot.controls.lib.neural_network_feedforward import LatControlNNFF
+from openpilot.starpilot.controls.lib.latcontrol_clarity_hybrid import LatControlClarityHybrid
 
 State = log.SelfdriveState.OpenpilotState
 LaneChangeState = log.LaneChangeState
@@ -341,6 +342,15 @@ class Controls:
 
     if self.CP.lateralTuning.which() == "torque" and (self.starpilot_toggles.nnff or self.starpilot_toggles.nnff_lite):
       self.LaC = LatControlNNFF(self.CP, self.CI, DT_CTRL)
+
+    # NRDR Clarity PID/NNFF hybrid. Opt-in and Clarity-only: PID owns low speed and
+    # every lane change, NNFF owns high speed. Read once here rather than live, so
+    # turning it off returns the car to the plain LatControlPID selected above --
+    # the shared CarParams is never mutated, so that path is bit-for-bit unchanged.
+    # Changing this param therefore needs a restart to take effect.
+    if (str(self.CP.carFingerprint) == "HONDA_CLARITY" and self.CP.lateralTuning.which() == 'pid'
+        and self.params.get_bool("NrdrClarityHybrid", default=False)):
+      self.LaC = LatControlClarityHybrid(self.CP, self.CI, DT_CTRL)
 
   def update_nrdr_autotune_params(self):
     self.learn_steer_ratio = self.params.get_bool("NrdrLearnSteerRatio", default=True)

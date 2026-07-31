@@ -334,6 +334,12 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrTuneLearnerStrength", {PERSISTENT, INT, "10", "10", 2}},
     {"NrdrTuneLearnerRate", {PERSISTENT, INT, "30", "30", 2}},
     {"NrdrLatStiction", {PERSISTENT, BOOL, "0", "0", 2}},              // emulated EPS breakaway hold/move output stage (NRDR_LATERAL_STICTION.md); Clarity EPS only
+    {"NrdrClarityHybrid", {PERSISTENT, BOOL, "0", "0", 2}},            // master gate: Clarity PID/NNFF hybrid. OFF = plain angle-space LatControlPID. Restart to apply
+    {"NrdrNnlcEnabled", {PERSISTENT, BOOL, "1", "1", 2}},              // hybrid: allow the NNFF half (OFF = PID at all speeds). Live
+    {"NrdrNnlcActivationSpeed", {PERSISTENT, INT, "30", "30", 2}},     // mph; centre of the 6 mph PID -> NNFF handoff. Live
+    {"NrdrNnlcKpGain", {PERSISTENT, INT, "100", "100", 3}},            // NNFF feedback proportional gain, percent of 1.0. Live
+    {"NrdrNnlcKfGain", {PERSISTENT, INT, "50", "50", 3}},              // NNFF neural feedforward gain, percent of 1.0. Live
+    {"NrdrNnlcKiGain", {PERSISTENT, INT, "10", "10", 3}},              // NNFF feedback integral gain, percent of 1.0. Live
     {"NrdrTuneLearnerMap", {PERSISTENT | DONT_LOG, BYTES}},
     {"ForceFingerprint", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ForceOffroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
