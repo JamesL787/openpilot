@@ -114,49 +114,6 @@ def torque_lpf_tau(v_ego: float, low_tau: float, standard_tau: float, highway_ta
   return highway_tau
 
 
-def notch_biquad_coeffs(f0: float, q: float, fs: float) -> tuple[float, float, float, float, float]:
-  q = max(q, 0.1)
-  w0 = 2.0 * math.pi * (f0 / fs)
-  cos_w0 = math.cos(w0)
-  alpha = math.sin(w0) / (2.0 * q)
-  b0 = 1.0
-  b1 = -2.0 * cos_w0
-  b2 = 1.0
-  a0 = 1.0 + alpha
-  a1 = -2.0 * cos_w0
-  a2 = 1.0 - alpha
-  return b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0
-
-
-class NotchFilter:
-  def __init__(self, fs: float):
-    self.fs = fs
-    self.f0 = 0.0
-    self.q = 0.0
-    self.b0 = 1.0
-    self.b1 = 0.0
-    self.b2 = 0.0
-    self.a1 = 0.0
-    self.a2 = 0.0
-    self.z1 = 0.0
-    self.z2 = 0.0
-
-  def reset(self):
-    self.z1 = 0.0
-    self.z2 = 0.0
-
-  def update(self, x: float, f0: float, q: float) -> float:
-    if f0 != self.f0 or q != self.q:
-      self.f0 = f0
-      self.q = q
-      self.b0, self.b1, self.b2, self.a1, self.a2 = notch_biquad_coeffs(f0, q, self.fs)
-
-    y = self.b0 * x + self.z1
-    self.z1 = self.b1 * x - self.a1 * y + self.z2
-    self.z2 = self.b2 * x - self.a2 * y
-    return y
-
-
 def get_honda_bosch_wind_brake_mps2(v_ego: float) -> float:
   return float(np.interp(v_ego, [0.0, 13.4, 22.4, 31.3, 40.2], [0.000, 0.049, 0.136, 0.267, 0.441]))
 
@@ -291,7 +248,6 @@ class CarController(CarControllerBase):
     self.brake = 0.0
     self.last_torque = 0.0
     self.torque_lpf = 0.0
-    self.notch_filter = NotchFilter(1.0 / DT_CTRL)
     self.prev_torque_cmd = 0.0
     self.override_ramp = 1.0
     self.lat_active_prev = False
@@ -338,9 +294,6 @@ class CarController(CarControllerBase):
       "lpf_tau_low": float(np.clip(self.param_store.get_float("HondaLpfTauLowSpeed", default=0.1), 0.0, 5.0)),
       "lpf_tau_standard": float(np.clip(self.param_store.get_float("HondaLpfTauStandard", default=0.1), 0.0, 5.0)),
       "lpf_tau_highway": float(np.clip(self.param_store.get_float("HondaLpfTauHighway", default=0.1), 0.0, 5.0)),
-      "notch_enabled": self.param_store.get_bool("HondaNotchEnabled", default=False),
-      "notch_freq": float(np.clip(self.param_store.get_float("HondaNotchFreq", default=7.5), 1.0, 20.0)),
-      "notch_q": float(np.clip(self.param_store.get_float("HondaNotchQ", default=1.5), 0.1, 10.0)),
       "steer_delta_limiter_enabled": self.param_store.get_bool("HondaSteerDeltaLimiter", default=False),
       "steer_delta_up": float(np.clip(self.param_store.get_float("HondaSteerDeltaUp", default=3.0), 0.0, 100.0)),
       "steer_delta_down": float(np.clip(self.param_store.get_float("HondaSteerDeltaDown", default=3.0), 0.0, 100.0)),
@@ -395,17 +348,11 @@ class CarController(CarControllerBase):
       else:
         self.torque_lpf = torque_cmd
 
-      if live["notch_enabled"]:
-        torque_cmd = self.notch_filter.update(torque_cmd, live["notch_freq"], live["notch_q"])
-      else:
-        self.notch_filter.reset()
-
       if not self._modified_civic_standard_active() or live["torque_lpf_enabled"] or steering_pressed:
         self.prev_torque_cmd = torque_cmd
     else:
       self.override_ramp = 0.0
       self.torque_lpf = 0.0
-      self.notch_filter.reset()
       self.prev_torque_cmd = 0.0
       self.steering_pressed_filter_s = 0.0
       self.steering_pressed_robust_prev = False

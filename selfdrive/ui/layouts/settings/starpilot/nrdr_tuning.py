@@ -244,19 +244,6 @@ class NRDRTuningLayout(_SettingsPage):
         lambda: self._show_slider("HondaLpfTauHighway", 0.0, 5.0, step=0.01, value_type="float", title="LPF Tau: Highway"),
         visible=lambda: p.get_bool("HondaTorqueLowPassFilter"),
       ),
-      toggle("HondaNotchEnabled", "Notch Filter", "Remove a narrow EPS chatter band without broad low-pass lag."),
-      value(
-        "HondaNotchFreq", "Notch Frequency", "Frequency removed from the steering command.",
-        lambda: f"{p.get_float('HondaNotchFreq'):.1f} Hz",
-        lambda: self._show_slider("HondaNotchFreq", 1.0, 20.0, step=0.1, unit=" Hz", value_type="float", title="Notch Frequency"),
-        visible=lambda: p.get_bool("HondaNotchEnabled"),
-      ),
-      value(
-        "HondaNotchQ", "Notch Q", "Width of the removed band. Higher values are narrower.",
-        lambda: f"{p.get_float('HondaNotchQ'):.1f}",
-        lambda: self._show_slider("HondaNotchQ", 0.1, 10.0, step=0.1, value_type="float", title="Notch Q"),
-        visible=lambda: p.get_bool("HondaNotchEnabled"),
-      ),
       toggle("HondaSteerDeltaLimiter", "Steer Delta Limiter", "Legacy torque rate limiter. Leave off unless testing."),
       value(
         "HondaSteerDeltaUp", "Steer Delta Up", "Maximum upward steering torque rate.",
