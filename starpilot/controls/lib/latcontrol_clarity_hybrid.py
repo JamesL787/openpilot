@@ -55,6 +55,9 @@ class LatControlClarityHybrid(LatControl):
       CP_torque = reader.as_builder()
     CarInterfaceBase.configure_torque_tune(CP_torque.carFingerprint, CP_torque.lateralTuning)
     self.nnff_controller = LatControlNNFF(CP_torque, CI, dt)
+    # controlsd's live-torque-params block needs a torque-union CarParams; ours stays
+    # 'pid', so expose the private copy for it to read.
+    self.torque_carparams = CP_torque
     # nrdr's model sets friction_override, and their NNLC answers it with real
     # torque-space friction. Our legacy override line evaluates to exactly 0.0 for
     # Honda's linear mapping, so opt this instance into the nrdr behaviour.
@@ -74,6 +77,13 @@ class LatControlClarityHybrid(LatControl):
 
   def update_live_torque_params(self, latAccelFactor, latAccelOffset, friction):
     self.nnff_controller.update_live_torque_params(latAccelFactor, latAccelOffset, friction)
+
+  def update_live_delay(self, lat_delay):
+    # controlsd only forwards this when the controller exposes it; the base LatControl
+    # does not, so without this the NNFF half would never see the learned lag.
+    for controller in (self.pid_controller, self.nnff_controller):
+      if hasattr(controller, "update_live_delay"):
+        controller.update_live_delay(lat_delay)
 
   # --- live settings -------------------------------------------------------
   def _read_int(self, key: str, default: float) -> float:
@@ -104,7 +114,7 @@ class LatControlClarityHybrid(LatControl):
     ki = float(np.clip(self._read_int("NrdrNnlcKiGain", 10.0) / 100.0, 0.0, 3.0))
     self.nnff_controller.pid._k_p = [[0.0], [kp]]
     self.nnff_controller.pid._k_i = [[0.0], [ki]]
-    self.nnff_controller.pid.k_f = kf
+    self.nnff_controller.ff_gain = kf
 
   @staticmethod
   def _lane_change_state(model_data):

@@ -180,6 +180,10 @@ class LatControlNNFF(LatControl):
     # Opt-in, set by LatControlClarityHybrid. Every other car keeps the legacy
     # friction-override line, so this port cannot change their behaviour.
     self.torque_space_friction_override = False
+    # Feedforward gain. common/pid.py's PIDController has no k_f concept (its third
+    # positional is k_d), so the gain is applied here instead. 1.0 keeps every other
+    # car exactly as before; the Clarity hybrid overrides it from NrdrNnlcKfGain.
+    self.ff_gain = 1.0
 
     # Instantaneous lateral jerk changes very rapidly, making it not useful on its own,
     # however, we can "look ahead" to the future planned lateral jerk in order to gauge
@@ -348,7 +352,7 @@ class LatControlNNFF(LatControl):
 
       freeze_integrator = steer_limited_by_safety or CS.steeringPressed or CS.vEgo < 5
       output_torque = self.pid.update(pid_log.error,
-                                      feedforward=ff,
+                                      feedforward=ff * self.ff_gain,
                                       speed=CS.vEgo,
                                       freeze_integrator=freeze_integrator)
 

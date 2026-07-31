@@ -174,3 +174,55 @@ class TestClarityHybridLogType:
       src = f.read()
     assert "out_log = pid_log" in src
     assert "out_log = nnff_log" not in src
+
+
+def _read(*parts):
+  path = os.path.join(*parts)
+  with open(path) as f:
+    return f.read()
+
+
+LIB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(LIB)))
+
+
+class TestClarityHybridIntegration:
+  """controlsd only reaches a controller through specific hooks. These pin the ones
+  that silently do nothing if the hybrid forgets to expose them."""
+
+  def test_pid_controller_has_no_k_f_so_ff_gain_is_required(self):
+    """Guards bug #4: setting pid.k_f created a dead attribute and the Kf slider
+    did nothing. common/pid.py's third positional is k_d, not k_f."""
+    from openpilot.common.pid import PIDController
+    pid = PIDController(1.0, 0.3, 0.0)
+    assert not hasattr(pid, "k_f")
+    assert hasattr(pid, "k_d")
+
+  def test_hybrid_scales_feedforward_via_ff_gain_not_k_f(self):
+    src = _read(LIB, "latcontrol_clarity_hybrid.py")
+    assert "ff_gain = kf" in src
+    assert "pid.k_f" not in src
+
+  def test_nnff_defines_and_applies_ff_gain(self):
+    src = _read(LIB, "neural_network_feedforward.py")
+    assert "self.ff_gain = 1.0" in src, "default must be 1.0 so other cars are unchanged"
+    assert "feedforward=ff * self.ff_gain" in src
+
+  def test_hybrid_forwards_live_delay(self):
+    """Guards bug #3: base LatControl has no update_live_delay, so controlsd's
+    hasattr() check skips it entirely unless the hybrid defines it."""
+    from openpilot.selfdrive.controls.lib import latcontrol
+    assert not hasattr(latcontrol.LatControl, "update_live_delay")
+    src = _read(LIB, "latcontrol_clarity_hybrid.py")
+    assert "def update_live_delay" in src
+
+  def test_hybrid_exposes_torque_carparams_for_live_torque_params(self):
+    """Guards bug #2: controlsd gates live torque params on lateralTuning=='torque',
+    which this design pins to 'pid', and get_torque_control_params() would raise on
+    a pid-union CP."""
+    src = _read(LIB, "latcontrol_clarity_hybrid.py")
+    assert "self.torque_carparams = CP_torque" in src
+    cd = _read(REPO, "selfdrive", "controls", "controlsd.py")
+    assert 'getattr(self.LaC, "torque_carparams", self.CP)' in cd
+    assert "get_torque_control_params(lat_cp," in cd
+    assert "get_torque_control_params(self.CP," not in cd

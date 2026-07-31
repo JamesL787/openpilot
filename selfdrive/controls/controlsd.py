@@ -403,7 +403,12 @@ class Controls:
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
     # Update Torque Params
-    if self.CP.lateralTuning.which() == 'torque':
+    # The Clarity hybrid keeps self.CP on the pid union but still runs an NNFF half
+    # that needs live torque params, so read them from the controller's own torque
+    # CarParams when it exposes one. get_torque_control_params() dereferences
+    # lateralTuning.torque and would raise on a pid-union CP.
+    lat_cp = getattr(self.LaC, "torque_carparams", self.CP)
+    if lat_cp.lateralTuning.which() == 'torque':
       torque_params = self.sm['liveTorqueParameters']
       force_auto_tune = getattr(self.starpilot_toggles, "force_auto_tune", False)
       use_live_params = self.sm.all_checks(['liveTorqueParameters']) and (torque_params.useParams or force_auto_tune)
@@ -412,7 +417,7 @@ class Controls:
         getattr(self.starpilot_toggles, "use_custom_friction", False)
       )
       if use_live_params or use_custom_torque_params:
-        lat_accel_factor, lat_accel_offset, friction = get_torque_control_params(self.CP, torque_params, self.starpilot_toggles, use_live_params)
+        lat_accel_factor, lat_accel_offset, friction = get_torque_control_params(lat_cp, torque_params, self.starpilot_toggles, use_live_params)
         self.LaC.update_live_torque_params(lat_accel_factor, lat_accel_offset, friction)
 
     long_plan = self.sm['longitudinalPlan']
