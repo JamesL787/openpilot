@@ -273,3 +273,57 @@ class TestClarityHybridCapnpTypes:
     src = _read(LIB, "latcontrol_clarity_hybrid.py")
     assert "self._torque_cp_builder" in src
     assert "self._torque_cp_builder.as_reader()" in src
+
+
+class TestClarityVariableRackCurve:
+  """nrdr a954d153e7 (2026-07-31) Clarity variable-rack steer-ratio curve.
+
+  Ported onto this fork's constant names (NRDR_STEER_RATIO_ANGLE_BP/_V). Read as
+  text: the latcontrol_pid import chain needs the device-built native extensions.
+  """
+
+  @staticmethod
+  def _curve():
+    src = _read(REPO, "selfdrive", "controls", "lib", "latcontrol_pid.py")
+    ns: dict = {}
+    buf, grab = "", False
+    for line in src.splitlines():
+      if line.startswith("NRDR_STEER_RATIO_"):
+        grab = True
+      if grab:
+        buf += line + "\n"
+        if line.rstrip().endswith("]"):
+          try:
+            exec(buf, ns)  # noqa: S102 - trusted repo source
+            buf, grab = "", False
+          except SyntaxError:
+            pass
+    return ns["NRDR_STEER_RATIO_ANGLE_BP"], ns["NRDR_STEER_RATIO_V"]
+
+  def test_curve_is_well_formed_and_physical(self):
+    bp, v = self._curve()
+    assert len(bp) == len(v) == 25
+    assert all(b > a for a, b in zip(bp, bp[1:], strict=False)), "breakpoints must increase"
+    # a variable rack never gets quicker with angle
+    assert all(b <= a + 1e-12 for a, b in zip(v, v[1:], strict=False)), "ratio must be non-increasing"
+
+  def test_matches_nrdrs_own_assertions(self):
+    """The three interpolation points nrdr pins in their own test."""
+    bp, v = self._curve()
+    assert np.interp(70.0, bp, v) == 17.604
+    assert np.interp(90.0, bp, v) == 16.093333333333334
+    assert np.interp(100.0, bp, v) == 15.940
+
+  def test_tail_rejoins_the_road_proven_curve(self):
+    """90 deg onward is the previous curve, except Honda's corrected 450 deg spec."""
+    bp, v = self._curve()
+    assert np.interp(140.0, bp, v) == 15.400
+    assert np.interp(200.0, bp, v) == 14.300
+    assert np.interp(300.0, bp, v) == 13.400
+    assert np.interp(450.0, bp, v) == 12.720
+    assert np.interp(600.0, bp, v) == 12.720, "must hold the plateau past the last breakpoint"
+
+  def test_center_ratio_replaced_the_old_two_point_taper(self):
+    bp, v = self._curve()
+    assert np.interp(0.0, bp, v) == pytest.approx(19.680)
+    assert np.interp(0.0, bp, v) > 17.0, "old two-point curve anchored center at 17.00"
