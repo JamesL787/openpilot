@@ -193,10 +193,12 @@ class TestHondaFingerprint:
     # trim this rather than re-banding it.
     assert list(pid_cp.lateralParams.torqueBP) == [0, 3840]
     assert list(pid_cp.lateralParams.torqueV) == [0, 3840]
-    assert list(pid_cp.lateralTuning.pid.kpV) == pytest.approx([0.036, 0.048, 0.060])
-    assert list(pid_cp.lateralTuning.pid.kiV) == pytest.approx([0.012, 0.016, 0.020])
-    assert list(pid_cp.lateralTuning.pid.kpBP) == pytest.approx([0.0, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS])
-    assert list(pid_cp.lateralTuning.pid.kiBP) == pytest.approx([0.0, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS])
+    # nrdr 36e97ec6c2: 50% low-speed trim baked in, hard step at 25 mph
+    assert list(pid_cp.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
+    assert list(pid_cp.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
+    _low_max = 25.0 * CV.MPH_TO_MS
+    assert list(pid_cp.lateralTuning.pid.kpBP) == pytest.approx([0.0, _low_max - 1e-3, _low_max, 50.0 * CV.MPH_TO_MS])
+    assert list(pid_cp.lateralTuning.pid.kiBP) == pytest.approx([0.0, _low_max - 1e-3, _low_max, 50.0 * CV.MPH_TO_MS])
     assert pid_cp.autoResumeSng
     assert pid_cp.minEnableSpeed == pytest.approx(-1.0)
     assert pid_cp.stopAccel == pytest.approx(0.0)
@@ -326,3 +328,26 @@ class TestHondaFingerprint:
 
     assert hrv3g_cp.longitudinalActuatorDelay == pytest.approx(0.4)
     assert accord_cp.longitudinalActuatorDelay == pytest.approx(0.5)
+
+  def test_clarity_low_speed_pid_trim_matches_nrdr(self):
+    """nrdr 36e97ec6c2 halves kp/ki below 25 mph, with a hard step at 25 mph.
+
+    That half previously lived only as a written param value on nrdr's device, so
+    it was invisible in the repo when this tune was first ported.
+    """
+    import numpy as np
+    fw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=b'39990-TRW,A020\x00\x00', address=0x18DA30F1, subAddress=0)]
+    CP = CarInterface.get_params(CAR.HONDA_CLARITY, gen_empty_fingerprint(), fw, False, False, False, get_test_toggles())
+    pid = CP.lateralTuning.pid
+    assert list(pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
+    assert list(pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
+
+    std = 25.0 * CV.MPH_TO_MS
+    just_below = np.interp(std - 1e-2, pid.kpBP, pid.kpV)   # clear of the 1e-3 step
+    at_std = np.interp(std, pid.kpBP, pid.kpV)
+    # the 25 mph handoff is a step, exactly 2x, not a ramp
+    assert just_below == pytest.approx(0.024, rel=1e-3)
+    assert at_std == pytest.approx(0.048, rel=1e-3)
+    assert just_below == pytest.approx(0.5 * at_std, rel=1e-3)
+    # at and above 25 mph the tune is unchanged from before the trim
+    assert np.interp(50.0 * CV.MPH_TO_MS, pid.kpBP, pid.kpV) == pytest.approx(0.060)

@@ -26,8 +26,11 @@ NRDR_STEER_RATIO_V = [17.00, 12.74]       # effective steer ratio at each break
 # lateralTuning.pid, but those are capnp fields @5/@6 that this fork's car.capnp does not have,
 # so the curve lives here instead of forcing a cereal schema change and rebuild. kp/ki band the
 # normal way through kpBP/kpV in interface.py, which this schema does support.
-NRDR_CLARITY_KF_SPEED_BP = [0.0, 25.0 * 0.44704, 50.0 * 0.44704]  # m/s
-NRDR_CLARITY_KF_V = [4.8e-6, 3.6e-6, 6.0e-6]
+# nrdr 2026-07-29 (36e97ec6c2) halves kf below 25 mph alongside kp/ki, with a
+# near-duplicate breakpoint just under 25 mph so the handoff to the unchanged
+# standard-speed tune is hard rather than ramped. Mirrors their kfBP/kfV exactly.
+NRDR_CLARITY_KF_SPEED_BP = [0.0, 25.0 * 0.44704 - 1e-3, 25.0 * 0.44704, 50.0 * 0.44704]  # m/s
+NRDR_CLARITY_KF_V = [2.4e-6, 1.8e-6, 3.6e-6, 6.0e-6]
 
 
 CENTER_TAPER_FADE_TAU = 0.25

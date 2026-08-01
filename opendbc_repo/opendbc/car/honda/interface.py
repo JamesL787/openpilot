@@ -205,12 +205,20 @@ class CarInterface(CarInterfaceBase):
     elif candidate == CAR.HONDA_CLARITY:
       if eps_modified:
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
-        # nrdr-nightly tune. The speed banding lives HERE now (smoothly interpolated across
-        # 0 / 25 / 50 mph) rather than in the runtime LatPScale/LatIScale params, which are
-        # neutralized to 100% and act as fine-trim on top. Do not re-band in both places.
-        _bp = [0., 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS]
-        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [_bp, [0.036, 0.048, 0.060]]
-        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [_bp, [0.012, 0.016, 0.020]]
+        # nrdr-nightly tune. The speed banding lives HERE now rather than in the runtime
+        # LatPScale/LatIScale params, which are neutralized to 100% and act as fine-trim on
+        # top. Do not re-band in both places.
+        #
+        # nrdr 2026-07-29 (36e97ec6c2) bakes in their road-tested 50% low-speed trim: below
+        # 25 mph kp/ki/kf are half the standard-speed tune. That half previously lived only
+        # as a written param value on their device, so it was invisible in the repo when this
+        # tune was first ported on 07-27 -- our copy of the interface values was exact, but
+        # their car was running half of it under 25 mph. The near-duplicate breakpoint just
+        # below 25 mph reproduces their hard handoff to the unchanged standard-speed tune.
+        _low_max = 25. * CV.MPH_TO_MS
+        _bp = [0., _low_max - 1e-3, _low_max, 50. * CV.MPH_TO_MS]
+        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [_bp, [0.018, 0.024, 0.048, 0.060]]
+        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [_bp, [0.006, 0.008, 0.016, 0.020]]
         # kf is banded too, but this schema has no kfBP/kfV (nightly added them as capnp
         # fields @5/@6). Rather than change cereal, the Clarity kf curve lives as constants in
         # latcontrol_pid.py; this scalar is the fallback for anything not on that path.
