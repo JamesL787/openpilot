@@ -148,10 +148,12 @@ class TestClarityHybridLogType:
   """
 
   def test_torque_state_cannot_be_published_as_pid_state(self):
+    import capnp
+
     from cereal import log
     cs = log.ControlsState.new_message()
     torque_log = log.ControlsState.LateralTorqueState.new_message()
-    with pytest.raises(Exception):
+    with pytest.raises(capnp.KjException):
       cs.lateralControlState.pidState = torque_log
 
   def test_pid_state_publishes_cleanly(self):
@@ -294,7 +296,7 @@ class TestClarityVariableRackCurve:
         buf += line + "\n"
         if line.rstrip().endswith("]"):
           try:
-            exec(buf, ns)  # noqa: S102 - trusted repo source
+            exec(buf, ns)  # trusted repo source
             buf, grab = "", False
           except SyntaxError:
             pass
