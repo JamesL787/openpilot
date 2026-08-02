@@ -114,6 +114,8 @@ class CarInterface(CarInterfaceBase):
     # NRDR speed bands for the modified-EPS lateral tunes: 0 / 25 / 50 mph. The UI P/I/F scales
     # default to a neutral 100% and fine-trim on top of these.
     nrdr_tune_bp = [0., 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS]
+    clarity_low_max = 25. * CV.MPH_TO_MS
+    clarity_matched_bp = [0., clarity_low_max - 1e-3, clarity_low_max, 50. * CV.MPH_TO_MS]
 
     if candidate == CAR.HONDA_CIVIC:
       if eps_modified:
@@ -138,9 +140,12 @@ class CarInterface(CarInterfaceBase):
     elif candidate in (CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CIVIC_BOSCH_DIESEL):
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
       if eps_modified:
-        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [nrdr_tune_bp, [0.06, 0.081, 0.12]]
-        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [nrdr_tune_bp, [0.02, 0.027, 0.04]]
-        ret.lateralTuning.pid.kf = 0.000012  # 50% kf (was 0.000024)
+        # Match the current road-tested Clarity controller gains while retaining the C020
+        # command range and Civic-specific rack model. The near-duplicate 25 mph breakpoint
+        # reproduces the Clarity's hard low-speed-to-standard handoff.
+        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [clarity_matched_bp, [0.018, 0.024, 0.048, 0.060]]
+        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [clarity_matched_bp, [0.006, 0.008, 0.016, 0.020]]
+        ret.lateralTuning.pid.kf = 3.6e-6
         ret.steerAtStandstill, ret.autoResumeSng = True, True
         ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
       else:
@@ -231,11 +236,10 @@ class CarInterface(CarInterfaceBase):
     elif candidate == CAR.HONDA_CLARITY:
       if eps_modified:
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
-        # nrdr-nightly tune. The speed banding lives HERE now (smoothly interpolated across
-        # 0 / 25 / 50 mph) rather than in the runtime LatPScale/LatIScale params, which are
-        # neutralized to 100% and act as fine-trim on top. Do not re-band in both places.
-        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [nrdr_tune_bp, [0.036, 0.048, 0.060]]
-        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [nrdr_tune_bp, [0.012, 0.016, 0.020]]
+        # Keep night-star-testing synchronized with the current nrdr-clarity-backport tune.
+        # The near-duplicate breakpoint implements the road-tested 50% trim below 25 mph.
+        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [clarity_matched_bp, [0.018, 0.024, 0.048, 0.060]]
+        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [clarity_matched_bp, [0.006, 0.008, 0.016, 0.020]]
         # kf is banded too, but this schema has no kfBP/kfV (nightly added them as capnp
         # fields @5/@6). Rather than change cereal, the Clarity kf curve lives as constants in
         # latcontrol_pid.py; this scalar is the fallback for anything not on that path.

@@ -189,8 +189,14 @@ class TestHondaFingerprint:
     assert CP.flags & HondaFlags.EPS_MODIFIED
     # NRDR: modified-EPS Hondas run the angle-space PID controller, as they do on nrdr-nightly
     assert CP.lateralTuning.which() == "pid"
-    assert list(CP.lateralTuning.pid.kpV) == pytest.approx([0.06, 0.081, 0.12])
-    assert list(CP.lateralTuning.pid.kiV) == pytest.approx([0.02, 0.027, 0.04])
+    clarity_matched_bp = [0.0, 25.0 * CV.MPH_TO_MS - 1e-3, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS]
+    assert list(CP.lateralParams.torqueBP) == [0, 4096]
+    assert list(CP.lateralParams.torqueV) == [0, 4096]
+    assert list(CP.lateralTuning.pid.kpBP) == pytest.approx(clarity_matched_bp)
+    assert list(CP.lateralTuning.pid.kiBP) == pytest.approx(clarity_matched_bp)
+    assert list(CP.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
+    assert list(CP.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
+    assert CP.lateralTuning.pid.kf == pytest.approx(3.6e-6)
 
   def test_force_torque_toggle_still_overrides_modified_eps_pid(self):
     torque_toggles = SimpleNamespace(force_torque_controller=True, nnff=False, nnff_lite=False)
@@ -209,15 +215,16 @@ class TestHondaFingerprint:
     assert not pid_cp.dashcamOnly
     assert pid_cp.flags & HondaFlags.EPS_MODIFIED
     assert pid_cp.lateralTuning.which() == "pid"
-    # Modified EPS: 3840 command range, and the nrdr-nightly speed-banded tune interpolated
-    # across 0 / 25 / 50 mph. The runtime LatPScale/LatIScale params are neutral 100% so they
-    # trim this rather than re-banding it.
+    # Modified EPS: 3840 command range and the road-tested hard handoff at 25 mph. The runtime
+    # LatPScale/LatIScale params are neutral 100% so they trim rather than re-band this curve.
     assert list(pid_cp.lateralParams.torqueBP) == [0, 3840]
     assert list(pid_cp.lateralParams.torqueV) == [0, 3840]
-    assert list(pid_cp.lateralTuning.pid.kpV) == pytest.approx([0.036, 0.048, 0.060])
-    assert list(pid_cp.lateralTuning.pid.kiV) == pytest.approx([0.012, 0.016, 0.020])
-    assert list(pid_cp.lateralTuning.pid.kpBP) == pytest.approx([0.0, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS])
-    assert list(pid_cp.lateralTuning.pid.kiBP) == pytest.approx([0.0, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS])
+    clarity_matched_bp = [0.0, 25.0 * CV.MPH_TO_MS - 1e-3, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS]
+    assert list(pid_cp.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
+    assert list(pid_cp.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
+    assert list(pid_cp.lateralTuning.pid.kpBP) == pytest.approx(clarity_matched_bp)
+    assert list(pid_cp.lateralTuning.pid.kiBP) == pytest.approx(clarity_matched_bp)
+    assert pid_cp.lateralTuning.pid.kf == pytest.approx(3.6e-6)
     assert pid_cp.autoResumeSng
     assert pid_cp.minEnableSpeed == pytest.approx(-1.0)
     assert pid_cp.stopAccel == pytest.approx(0.0)

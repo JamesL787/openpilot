@@ -12,7 +12,13 @@ import pytest
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
 from opendbc.car import structs
-from selfdrive.controls.lib.latcontrol_pid import NRDR_SR_CURVE_BY_FP, LatControlPID
+from openpilot.selfdrive.controls.lib.latcontrol_pid import (
+  NRDR_CLARITY_KF_SPEED_BP,
+  NRDR_CLARITY_KF_V,
+  NRDR_SR_CURVE_BY_FP,
+  LatControlPID,
+  get_nrdr_clarity_matched_kf,
+)
 
 CarParams = structs.CarParams
 
@@ -75,11 +81,13 @@ def test_unmapped_racks_keep_the_learned_steer_ratio():
     assert _controller(candidate, MODIFIED_FW).sr_curve is None
 
 
-def test_clarity_pi_banding_does_not_leak_onto_other_racks():
-  # 1.35/2.0 is Clarity tuning; nrdr-nightly runs a neutral 1.0 on every band for every car.
+def test_modified_eps_runtime_scales_remain_neutral():
+  # P/I/F speed banding is baked into the base tune; runtime scales must not apply it again.
   clarity = _controller(CAR.HONDA_CLARITY, MODIFIED_FW)
-  assert (clarity.lat_p_scale_standard, clarity.lat_p_scale_highway) == (1.35, 2.0)
-  assert (clarity.lat_i_scale_standard, clarity.lat_i_scale_highway) == (1.35, 2.0)
+  clarity_scales = (clarity.lat_p_scale_low, clarity.lat_p_scale_standard, clarity.lat_p_scale_highway,
+                    clarity.lat_i_scale_low, clarity.lat_i_scale_standard, clarity.lat_i_scale_highway,
+                    clarity.lat_f_scale_low, clarity.lat_f_scale_standard, clarity.lat_f_scale_highway)
+  assert clarity_scales == (1.0,) * 9
 
   for candidate in (CAR.HONDA_CRV_5G, CAR.HONDA_INSIGHT, CAR.HONDA_CIVIC, CAR.HONDA_CIVIC_BOSCH):
     lat = _controller(candidate, MODIFIED_FW)
@@ -93,3 +101,20 @@ def test_non_honda_never_takes_the_eps_modified_path():
   CP = _params(CAR.HONDA_CLARITY, MODIFIED_FW)
   CP.brand = "toyota"
   assert not LatControlPID(CP, STUB_CI, 0.01).is_eps_modified
+
+
+def test_clarity_and_c020_share_the_current_feedforward_curve():
+  low_max = 25.0 * 0.44704
+  assert NRDR_CLARITY_KF_SPEED_BP == pytest.approx([0.0, low_max - 1e-3, low_max, 50.0 * 0.44704])
+  assert NRDR_CLARITY_KF_V == pytest.approx([2.4e-6, 1.8e-6, 3.6e-6, 6.0e-6])
+  assert get_nrdr_clarity_matched_kf(0.0) == pytest.approx(2.4e-6)
+  assert get_nrdr_clarity_matched_kf(low_max - 1e-3) == pytest.approx(1.8e-6)
+  assert get_nrdr_clarity_matched_kf(low_max) == pytest.approx(3.6e-6)
+  assert get_nrdr_clarity_matched_kf(50.0 * 0.44704) == pytest.approx(6.0e-6)
+
+  clarity = _controller(CAR.HONDA_CLARITY, MODIFIED_FW)
+  c020 = _controller(CAR.HONDA_CIVIC_BOSCH, MODIFIED_FW)
+  assert clarity.is_clarity_eps_modified
+  assert c020.is_civic_bosch_modified
+  assert clarity.ff_factor == pytest.approx(3.6e-6)
+  assert c020.ff_factor == pytest.approx(3.6e-6)
