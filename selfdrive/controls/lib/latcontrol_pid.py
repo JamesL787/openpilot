@@ -48,15 +48,14 @@ NRDR_SR_CURVE_BY_FP = {
   "HONDA_CIVIC": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
 }
 
-# Current nrdr-clarity-backport speed-banded feedforward. Apply this same curve to the
-# modified C020 path paired with the matched firmware calibration. The duplicate-near-25
-# breakpoint preserves the road-tested hard handoff instead of interpolating across it.
-NRDR_CLARITY_KF_SPEED_BP = [0.0, 25.0 * 0.44704 - 1e-3, 25.0 * 0.44704, 50.0 * 0.44704]  # m/s
-NRDR_CLARITY_KF_V = [2.4e-6, 1.8e-6, 3.6e-6, 6.0e-6]
+# NRDR modified-EPS speed-banded feedforward shared by Clarity and Civic Bosch. The
+# duplicate-near-25 breakpoint preserves the road-tested hard handoff.
+NRDR_MODIFIED_EPS_KF_SPEED_BP = [0.0, 25.0 * 0.44704 - 1e-3, 25.0 * 0.44704, 50.0 * 0.44704]  # m/s
+NRDR_MODIFIED_EPS_KF_V = [2.4e-6, 1.8e-6, 3.6e-6, 6.0e-6]
 
 
-def get_nrdr_clarity_matched_kf(v_ego: float) -> float:
-  return float(np.interp(v_ego, NRDR_CLARITY_KF_SPEED_BP, NRDR_CLARITY_KF_V))
+def get_nrdr_modified_eps_kf(v_ego: float) -> float:
+  return float(np.interp(v_ego, NRDR_MODIFIED_EPS_KF_SPEED_BP, NRDR_MODIFIED_EPS_KF_V))
 
 
 CENTER_TAPER_FADE_TAU = 0.25
@@ -359,7 +358,7 @@ class LatControlPID(LatControl):
 
       # offset does not contribute to resistive torque
       if self.is_clarity_eps_modified or self.is_civic_bosch_modified:
-        ff_factor = get_nrdr_clarity_matched_kf(CS.vEgo)
+        ff_factor = get_nrdr_modified_eps_kf(CS.vEgo)
       else:
         ff_factor = self.ff_factor
       ff = ff_factor * self.get_steer_feedforward(angle_steers_des_no_offset, CS.vEgo)
