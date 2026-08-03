@@ -260,6 +260,7 @@ class LatControlPID(LatControl):
     self.is_honda_pid_lateral = CP.brand == "honda"
     self.honda_lateral_pid_kp_scale = 1.0
     self.honda_lateral_pid_ki_scale = 1.0
+    self.is_civic_modified = CP.carFingerprint == HONDA.HONDA_CIVIC and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_clarity_eps_modified = CP.carFingerprint == HONDA.HONDA_CLARITY and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_subaru_impreza = CP.carFingerprint in SUBARU_IMPREZA_CARS
@@ -357,7 +358,7 @@ class LatControlPID(LatControl):
       phase = angle_steers_des_no_offset * desired_angle_delta
 
       # offset does not contribute to resistive torque
-      if self.is_clarity_eps_modified or self.is_civic_bosch_modified:
+      if self.is_clarity_eps_modified or self.is_civic_bosch_modified or self.is_civic_modified:
         ff_factor = get_nrdr_modified_eps_kf(CS.vEgo)
       else:
         ff_factor = self.ff_factor

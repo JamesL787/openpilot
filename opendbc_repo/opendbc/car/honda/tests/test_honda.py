@@ -148,10 +148,13 @@ class TestHondaFingerprint:
     assert civic_cp.flags & HondaFlags.EPS_MODIFIED
     assert list(civic_cp.lateralParams.torqueBP) == [0, 3840]
     assert list(civic_cp.lateralParams.torqueV) == [0, 3840]
-    # speed-banded across 0 / 25 / 50 mph
-    assert list(civic_cp.lateralTuning.pid.kpV) == pytest.approx([0.06, 0.081, 0.12])
-    assert list(civic_cp.lateralTuning.pid.kiV) == pytest.approx([0.02, 0.027, 0.04])
-    assert civic_cp.lateralTuning.pid.kf == pytest.approx(0.000012)
+    # shares the modified-EPS Bosch tune: four-point handoff at 25 mph
+    civic_matched_bp = [0.0, 25.0 * CV.MPH_TO_MS - 1e-3, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS]
+    assert list(civic_cp.lateralTuning.pid.kpBP) == pytest.approx(civic_matched_bp)
+    assert list(civic_cp.lateralTuning.pid.kiBP) == pytest.approx(civic_matched_bp)
+    assert list(civic_cp.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
+    assert list(civic_cp.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
+    assert civic_cp.lateralTuning.pid.kf == pytest.approx(3.6e-6)
     assert civic_cp.steerAtStandstill
     assert civic_cp.minSteerSpeed == pytest.approx(-1.0)
 

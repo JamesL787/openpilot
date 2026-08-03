@@ -111,10 +111,6 @@ class CarInterface(CarInterfaceBase):
       ret.stoppingDecelRate = 0.1
     ret.vEgoStarting = ret.vEgoStopping
 
-    # NRDR speed bands for the modified-EPS lateral tunes: 0 / 25 / 50 mph. The UI P/I/F scales
-    # default to a neutral 100% and fine-trim on top of these.
-    nrdr_tune_bp = [0., 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS]
-
     if candidate == CAR.HONDA_CIVIC:
       if eps_modified:
         # stock request input values:     0x0000, 0x00DE, 0x014D, 0x01EF, 0x0290, 0x0377, 0x0454, 0x0610, 0x06EE
@@ -123,12 +119,13 @@ class CarInterface(CarInterfaceBase):
         # stock filter output values:     0x009F, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108
         # modified filter output values:  0x009F, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0400, 0x0480
         # note: max request allowed is 4096, but request is capped at 3840 in firmware, so modifications result in 2x max
-        # NRDR 39990-TBA-C120 linear-max: the modded table ramps linearly to the 3840 firmware cap, so
-        # the piecewise breakpoints collapse to a single ramp and the gains drop to match.
+        # NRDR 39990-TBA-C120 linear-max: the modded table ramps linearly to the 3840 firmware cap,
+        # so the piecewise breakpoints collapse to a single ramp.
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
-        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [nrdr_tune_bp, [0.06, 0.081, 0.12]]
-        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [nrdr_tune_bp, [0.02, 0.027, 0.04]]
-        ret.lateralTuning.pid.kf = 0.000012  # 50% kf (was 0.000024)
+        # Shares the modified-EPS Bosch tune: four-point handoff at 25 mph.
+        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [[0., 25. * CV.MPH_TO_MS - 1e-3, 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS], [0.018, 0.024, 0.048, 0.060]]
+        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [[0., 25. * CV.MPH_TO_MS - 1e-3, 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS], [0.006, 0.008, 0.016, 0.020]]
+        ret.lateralTuning.pid.kf = 3.6e-6
         ret.steerAtStandstill, ret.autoResumeSng = True, True
         ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
       else:
