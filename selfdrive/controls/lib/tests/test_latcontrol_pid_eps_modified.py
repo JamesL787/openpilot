@@ -13,11 +13,11 @@ from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
 from opendbc.car import structs
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
-  NRDR_CLARITY_KF_SPEED_BP,
-  NRDR_CLARITY_KF_V,
+  NRDR_MODIFIED_EPS_KF_SPEED_BP,
+  NRDR_MODIFIED_EPS_KF_V,
   NRDR_SR_CURVE_BY_FP,
   LatControlPID,
-  get_nrdr_clarity_matched_kf,
+  get_nrdr_modified_eps_kf,
 )
 
 CarParams = structs.CarParams
@@ -105,12 +105,12 @@ def test_non_honda_never_takes_the_eps_modified_path():
 
 def test_clarity_and_c020_share_the_current_feedforward_curve():
   low_max = 25.0 * 0.44704
-  assert NRDR_CLARITY_KF_SPEED_BP == pytest.approx([0.0, low_max - 1e-3, low_max, 50.0 * 0.44704])
-  assert NRDR_CLARITY_KF_V == pytest.approx([2.4e-6, 1.8e-6, 3.6e-6, 6.0e-6])
-  assert get_nrdr_clarity_matched_kf(0.0) == pytest.approx(2.4e-6)
-  assert get_nrdr_clarity_matched_kf(low_max - 1e-3) == pytest.approx(1.8e-6)
-  assert get_nrdr_clarity_matched_kf(low_max) == pytest.approx(3.6e-6)
-  assert get_nrdr_clarity_matched_kf(50.0 * 0.44704) == pytest.approx(6.0e-6)
+  assert NRDR_MODIFIED_EPS_KF_SPEED_BP == pytest.approx([0.0, low_max - 1e-3, low_max, 50.0 * 0.44704])
+  assert NRDR_MODIFIED_EPS_KF_V == pytest.approx([2.4e-6, 1.8e-6, 3.6e-6, 6.0e-6])
+  assert get_nrdr_modified_eps_kf(0.0) == pytest.approx(2.4e-6)
+  assert get_nrdr_modified_eps_kf(low_max - 1e-3) == pytest.approx(1.8e-6)
+  assert get_nrdr_modified_eps_kf(low_max) == pytest.approx(3.6e-6)
+  assert get_nrdr_modified_eps_kf(50.0 * 0.44704) == pytest.approx(6.0e-6)
 
   clarity = _controller(CAR.HONDA_CLARITY, MODIFIED_FW)
   c020 = _controller(CAR.HONDA_CIVIC_BOSCH, MODIFIED_FW)
