@@ -229,6 +229,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ConditionalExperimental", {PERSISTENT, BOOL, "1", "0", 1, SETTINGS_SIMPLE}},
     {"CurvatureData", {PERSISTENT | DONT_LOG, JSON, "{}", "{}"}},
     {"CurveSpeedController", {PERSISTENT, BOOL, "1", "0", 1, SETTINGS_SIMPLE}},
+    // Static lateral-accel target for the curve speed controller, m/s^2 (slider 1.5..3.0).
+    {"CurveSpeedLateralAccel", {PERSISTENT, FLOAT, "2.0", "2.0", 2, SETTINGS_SIMPLE}},
     {"CustomAlerts", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"CustomAccelProfile", {PERSISTENT, BOOL, "0", "0", 3}},
     {"CustomAccelProfileInitialized", {PERSISTENT, BOOL, "0", "0", 3}},

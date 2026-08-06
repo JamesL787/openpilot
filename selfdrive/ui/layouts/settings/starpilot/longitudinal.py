@@ -661,21 +661,13 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
     # ── 4. Adaptive Speed Controls Rows (CES + CSC + CCM) ──
     self._curve_speed_controller_rows = [
-      SettingRow("CalibratedLatAccel", "value", tr_noop("Calibrated Lateral Accel"),
-                 subtitle=tr_noop("The learned lateral acceleration from collected driving data. Higher values allow faster cornering."),
-                 get_value=lambda: f"{self._params_memory.get_float('CalibratedLateralAcceleration'):.2f} m/s",
-                 on_click=None,
-                 visible=csc_on),
-      SettingRow("CalibrationProgress", "value", tr_noop("Calibration Progress"),
-                 subtitle=tr_noop("How much curve data has been collected. Normal for the value to stay low."),
-                 get_value=lambda: f"{self._params_memory.get_float('CalibrationProgress'):.2f}%",
-                 on_click=None,
-                 visible=csc_on),
-      SettingRow("ResetCurve", "action", tr_noop("Reset Curve Data"),
-                 subtitle=tr_noop("Reset collected user data for Curve Speed Controller."),
-                 action_text=tr_noop("Reset"),
-                 action_danger=True,
-                 on_click=self._reset_curve_data,
+      SettingRow("CurveSpeedLateralAccel", "value", tr_noop("Curve Lateral Accel"),
+                 subtitle=tr_noop("Lateral acceleration allowed through curves. Higher values corner faster; "
+                                  "lower values slow down earlier and harder."),
+                 get_value=lambda: f"{self._params.get_float('CurveSpeedLateralAccel'):.1f} m/s²",
+                 on_click=lambda: self._show_slider("CurveSpeedLateralAccel", 1.5, 3.0, step=0.1,
+                                                    unit=" m/s²", value_type="float",
+                                                    title=tr_noop("Curve Lateral Accel")),
                  visible=csc_on),
     ]
 
@@ -977,15 +969,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
     dialog = MultiOptionDialog(tr("Conditional Drive Mode"), options, current, callback=on_select)
     gui_app.push_widget(dialog)
-
-  def _reset_curve_data(self):
-    def on_close(res):
-      if res == DialogResult.CONFIRM:
-        self._params.put_float("CalibratedLateralAcceleration", 2.00)
-        self._params.remove("CalibrationProgress")
-        self._params.remove("CurvatureData")
-
-    gui_app.push_widget(ConfirmDialog(tr_noop("Reset Curve Data?"), tr_noop("Confirm"), callback=on_close))
 
   def _reset_profile(self, profile: str):
     def on_close(res):
