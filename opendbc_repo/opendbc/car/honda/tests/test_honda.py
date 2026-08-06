@@ -9,9 +9,7 @@ from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.carcontroller import (
   CarController,
-  get_civic_bosch_modified_steering_pressed,
   get_eps_modified_steering_pressed,
-  get_civic_bosch_modified_torque_lpf_tau,
   get_honda_bosch_wind_brake_mps2,
   update_honda_bosch_live_learning,
 )
@@ -50,32 +48,6 @@ class TestHondaFingerprint:
 
   def test_tja_bosch_only(self):
     assert set(HONDA_BOSCH_TJA_CONTROL).issubset(set(HONDA_BOSCH)), "Nidec car found in TJA control list"
-
-  def test_modified_civic_torque_lpf_tau_reacts_to_sign_change(self):
-    assert get_civic_bosch_modified_torque_lpf_tau(0.7, -0.1, 25.0) == 0.10
-    assert get_civic_bosch_modified_torque_lpf_tau(0.02, -0.01, 8.0) == 0.28
-    assert get_civic_bosch_modified_torque_lpf_tau(0.02, 0.01, 12.0) == 0.28
-    assert get_civic_bosch_modified_torque_lpf_tau(0.02, 0.01, 20.0) == 0.20
-    assert get_civic_bosch_modified_torque_lpf_tau(0.02, 0.01, 25.0) == 0.16
-    assert get_civic_bosch_modified_torque_lpf_tau(0.30, 0.0, 12.0) == 0.16
-    assert get_civic_bosch_modified_torque_lpf_tau(0.30, 0.0, 20.0) == 0.13
-
-  def test_modified_civic_steering_pressed_filter_rejects_short_same_direction_spikes(self):
-    filter_s, pressed = get_civic_bosch_modified_steering_pressed(True, 1500.0, 0.8, 0.01, False)
-    assert not pressed
-    assert filter_s > 0.01
-
-    filter_s = 0.79
-    filter_s, pressed = get_civic_bosch_modified_steering_pressed(True, 1500.0, 0.8, filter_s, False)
-    assert not pressed
-
-    filter_s = 0.80
-    filter_s, pressed = get_civic_bosch_modified_steering_pressed(True, 1500.0, 0.8, filter_s, False)
-    assert pressed
-
-  def test_modified_civic_steering_pressed_filter_allows_opposing_driver_torque_quickly(self):
-    filter_s, pressed = get_civic_bosch_modified_steering_pressed(True, -1500.0, 0.8, 0.10, False)
-    assert pressed
 
   def test_eps_modified_steering_pressed_filter_matches_nrdr_thresholds(self):
     filter_s, pressed = get_eps_modified_steering_pressed(True, 1500.0, 0.8, 0.27, False)

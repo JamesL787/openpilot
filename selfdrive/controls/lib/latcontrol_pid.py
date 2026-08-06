@@ -2,7 +2,7 @@ import math
 import numpy as np
 
 from cereal import log
-from opendbc.car.honda.carcontroller import get_civic_bosch_modified_steering_pressed, get_eps_modified_steering_pressed
+from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
@@ -272,8 +272,6 @@ class LatControlPID(LatControl):
     # curve to an unmapped rack would corrupt its curvature->angle conversion.
     self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
     self.prev_angle_steers_des_no_offset = 0.0
-    self.modified_civic_steering_pressed_filter_s = 0.0
-    self.modified_civic_steering_pressed_prev = False
     self.eps_modified_steering_pressed_filter_s = 0.0
     self.eps_modified_steering_pressed_prev = False
     self.prev_output_torque = 0.0
@@ -342,8 +340,6 @@ class LatControlPID(LatControl):
       output_torque = 0.0
       pid_log.active = False
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
-      self.modified_civic_steering_pressed_filter_s = 0.0
-      self.modified_civic_steering_pressed_prev = False
       self.eps_modified_steering_pressed_filter_s = 0.0
       self.eps_modified_steering_pressed_prev = False
       self.center_taper_scale.x = 1.0
@@ -399,16 +395,9 @@ class LatControlPID(LatControl):
         ff *= 1.0 + ff_unwind_weight * max(unwind_ff_boost - 1.0, 0.0)
 
       steering_pressed = CS.steeringPressed
-      if self.is_civic_bosch_modified:
-        self.modified_civic_steering_pressed_filter_s, steering_pressed = get_civic_bosch_modified_steering_pressed(
-          bool(CS.steeringPressed),
-          float(getattr(CS, "steeringTorque", 0.0)),
-          float(self.prev_output_torque),
-          self.modified_civic_steering_pressed_filter_s,
-          self.modified_civic_steering_pressed_prev,
-        )
-        self.modified_civic_steering_pressed_prev = steering_pressed
-      elif self.is_eps_modified:
+      # Civic Bosch used to take a graded detector of its own here. It now shares the generic
+      # modified-EPS one with the Clarity, so override feel is identical across the cars.
+      if self.is_eps_modified:
         self.eps_modified_steering_pressed_filter_s, steering_pressed = get_eps_modified_steering_pressed(
           bool(CS.steeringPressed),
           float(getattr(CS, "steeringTorque", 0.0)),

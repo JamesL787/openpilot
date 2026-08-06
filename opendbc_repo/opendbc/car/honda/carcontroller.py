@@ -29,74 +29,6 @@ VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
 
 
-def get_civic_bosch_modified_torque_lpf_tau(torque_cmd: float, prev_torque_cmd: float, v_ego: float) -> float:
-  torque_delta = abs(float(torque_cmd) - float(prev_torque_cmd))
-  torque_cmd_abs = abs(float(torque_cmd))
-  sign_change = (float(torque_cmd) * float(prev_torque_cmd)) < 0.0
-  highway = v_ego > (50.0 * 0.44704)
-  low_speed = v_ego < (30.0 * 0.44704)
-
-  if highway:
-    if torque_cmd_abs < 0.12:
-      return 0.18 if sign_change else 0.16
-    if sign_change and torque_delta > 0.15:
-      return 0.10
-    return 0.12
-
-  if sign_change and torque_cmd_abs < 0.25:
-    return 0.28 if low_speed else 0.22
-
-  # Extra damping for the tiny near-center commands where both modified EPS
-  # firmwares still show hunting and escalating sway.
-  if torque_cmd_abs < 0.12:
-    return 0.28 if low_speed else 0.20
-
-  if low_speed:
-    if torque_delta > 0.50:
-      return 0.14
-    elif torque_delta > 0.20:
-      return 0.16
-    elif torque_delta > 0.05:
-      return 0.18
-    else:
-      return 0.22
-
-  if torque_delta > 0.50:
-    return 0.12
-  elif torque_delta > 0.20:
-    return 0.13
-  elif torque_delta > 0.05:
-    return 0.15
-  else:
-    return 0.18
-
-
-def get_civic_bosch_modified_steering_pressed(
-  raw_pressed: bool, steering_torque: float, torque_cmd: float, filter_s: float, was_pressed: bool
-) -> tuple[float, bool]:
-  torque_product = steering_torque * torque_cmd
-  torque_cmd_abs = abs(torque_cmd)
-
-  if raw_pressed:
-    if torque_product < 0.0:
-      trigger_s = 0.08 if was_pressed else 0.10
-      rise_rate = 1.0
-    elif torque_cmd_abs < 0.10:
-      trigger_s = 0.20 if was_pressed else 0.24
-      rise_rate = 0.75
-    else:
-      trigger_s = 0.70 if was_pressed else 0.80
-      rise_rate = 0.50
-
-    filter_s = min(1.0, filter_s + (rise_rate * DT_CTRL))
-    steering_pressed = filter_s >= trigger_s
-  else:
-    filter_s = max(0.0, filter_s - 8.0 * DT_CTRL)
-    steering_pressed = filter_s > 0.04 and was_pressed
-
-  return filter_s, steering_pressed
-
-
 def get_eps_modified_steering_pressed(
   raw_pressed: bool, steering_torque: float, torque_cmd: float, filter_s: float, previous_pressed: bool
 ) -> tuple[float, bool]:
@@ -631,7 +563,6 @@ class CarController(CarControllerBase):
     self.last_torque = 0.0
     self.torque_lpf = 0.0
     self.notch_filter = NotchFilter(1.0 / DT_CTRL)
-    self.prev_torque_cmd = 0.0
     self.override_ramp = 1.0
     self.lat_active_prev = False
     self.steering_pressed_filter_s = 0.0
@@ -660,12 +591,13 @@ class CarController(CarControllerBase):
     self.sign_change_counter = 0
     self.pitch = 0.0
 
-  def _modified_civic_standard_active(self) -> bool:
-    return self.CP.carFingerprint == CAR.HONDA_CIVIC_BOSCH and bool(self.CP.flags & HondaFlags.EPS_MODIFIED)
-
   def _filtered_steering_pressed(self, CS, torque_cmd: float) -> bool:
-    filter_fn = get_civic_bosch_modified_steering_pressed if self._modified_civic_standard_active() else get_eps_modified_steering_pressed
-    self.steering_pressed_filter_s, steering_pressed = filter_fn(
+    # Every modified-EPS Honda -- Clarity, Civic and Civic Bosch -- shares this detector:
+    # instant latch on opposing or near-zero-command driver torque, 0.28 s on same-direction
+    # torque, instant release. Civic Bosch previously had a graded variant of its own with a
+    # 1.60 s same-direction trip and a decaying release; it was removed rather than left
+    # unrouted, so there is no second override path to fall out of sync.
+    self.steering_pressed_filter_s, steering_pressed = get_eps_modified_steering_pressed(
       bool(CS.out.steeringPressed),
       float(getattr(CS.out, "steeringTorque", 0.0)),
       float(torque_cmd),
@@ -708,7 +640,10 @@ class CarController(CarControllerBase):
     raw_torque_cmd = torque_cmd
 
     if CC.latActive:
-      if live["increase_override_tolerance"] or self._modified_civic_standard_active():
+      # Clarity's behaviour, now shared by every modified-EPS Honda: the command path uses raw
+      # steeringPressed and only debounces when NrdrIncreaseOverrideTolerance is explicitly on.
+      # Civic Bosch used to force the filter on here regardless; that exception is gone.
+      if live["increase_override_tolerance"]:
         steering_pressed = self._filtered_steering_pressed(CS, torque_cmd)
       else:
         steering_pressed = bool(CS.out.steeringPressed)
@@ -728,16 +663,14 @@ class CarController(CarControllerBase):
 
       torque_cmd *= self.override_ramp
 
+      # One LPF for every modified-EPS Honda: the NRDR speed-banded tau, live-tuned through
+      # HondaLpfTau{LowSpeed,Standard,Highway}. Civic Bosch used to fall back to a hardcoded
+      # curve of its own when this toggle was off, which meant "disable the low-pass filter"
+      # silently selected a different low-pass filter on that car. Off now means off.
       if live["torque_lpf_enabled"]:
         tau = torque_lpf_tau(CS.out.vEgo, live["lpf_tau_low"], live["lpf_tau_standard"], live["lpf_tau_highway"])
         alpha = DT_CTRL / (tau + DT_CTRL)
         self.torque_lpf = alpha * torque_cmd + (1.0 - alpha) * self.torque_lpf
-        torque_cmd = self.torque_lpf
-      elif self._modified_civic_standard_active() and not steering_pressed:
-        tau = get_civic_bosch_modified_torque_lpf_tau(raw_torque_cmd, self.prev_torque_cmd, CS.out.vEgo)
-        alpha = DT_CTRL / (tau + DT_CTRL)
-        self.torque_lpf = alpha * torque_cmd + (1.0 - alpha) * self.torque_lpf
-        self.prev_torque_cmd = raw_torque_cmd
         torque_cmd = self.torque_lpf
       else:
         self.torque_lpf = torque_cmd
@@ -747,13 +680,10 @@ class CarController(CarControllerBase):
       else:
         self.notch_filter.reset()
 
-      if not self._modified_civic_standard_active() or live["torque_lpf_enabled"] or steering_pressed:
-        self.prev_torque_cmd = torque_cmd
     else:
       self.override_ramp = 0.0
       self.torque_lpf = 0.0
       self.notch_filter.reset()
-      self.prev_torque_cmd = 0.0
       self.steering_pressed_filter_s = 0.0
       self.steering_pressed_robust_prev = False
 
