@@ -517,6 +517,14 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     # ── 2. Advanced Actuators Rows ──
     adv = self._advanced_enabled
     self._advanced_rows = [
+      SettingRow("NrdrModelLeadTrajectory", "toggle", tr_noop("Model Lead Trajectory"),
+                 subtitle=tr_noop("Experimental. Plan against the driving model's predicted lead path "
+                                  "instead of extrapolating the lead's current acceleration forward. "
+                                  "Can brake earlier for a lead that keeps slowing, and react less to "
+                                  "brief lead braking. Civic Bosch only."),
+                 get_state=lambda: self._params.get_bool("NrdrModelLeadTrajectory"),
+                 set_state=lambda v: self._params.put_bool("NrdrModelLeadTrajectory", v),
+                 visible=lambda: adv() and self._is_civic_bosch()),
       SettingRow("EVTuning", "toggle", tr_noop("EV Tuning"),
                  subtitle=tr_noop("Acceleration tuning for EV and direct-drive vehicles."),
                  get_state=lambda: self._params.get_bool("EVTuning"),
@@ -977,6 +985,16 @@ class StarPilotLongitudinalLayout(_SettingsPage):
           self._params.remove(profile + key)
 
     gui_app.push_widget(ConfirmDialog(tr_noop("Reset to Defaults?"), tr_noop("Confirm"), callback=on_close))
+
+  def _is_civic_bosch(self) -> bool:
+    """True only on a Civic Bosch. CP comes from CarParamsPersistent, so this is False until
+    the car has been seen once -- the experimental row simply stays hidden until then."""
+    try:
+      from openpilot.selfdrive.ui.ui_state import ui_state
+      cp = getattr(ui_state, "CP", None)
+      return cp is not None and str(cp.carFingerprint) == "HONDA_CIVIC_BOSCH"
+    except Exception:
+      return False
 
   def _is_metric(self) -> bool:
     return self._params.get_bool("IsMetric")

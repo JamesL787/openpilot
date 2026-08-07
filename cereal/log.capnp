@@ -1282,6 +1282,13 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
 
   solverExecutionTime @35 :Float32;
 
+  # Lead trajectories the MPC solved against (13 points at T_IDXS). Slot numbers match
+  # commaai/openpilot#37824 so the schemas stay compatible if that lands upstream.
+  leadTrajectoryX0 @40 :List(Float32);
+  leadTrajectoryV0 @41 :List(Float32);
+  leadTrajectoryX1 @42 :List(Float32);
+  leadTrajectoryV1 @43 :List(Float32);
+
   enum LongitudinalPlanSource {
     cruise @0;
     lead0 @1;

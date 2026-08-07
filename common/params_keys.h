@@ -310,6 +310,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LongPidTuneScale", {PERSISTENT, INT, "100", "100", 2}},
     {"LongPitch", {PERSISTENT, BOOL, "1", "0", 2, SETTINGS_SIMPLE}},
     {"NrdrHondaEcuMatchedLong", {PERSISTENT, BOOL, "0", "0", 2}},
+    // Experimental: feed the MPC the model's predicted lead horizon instead of extrapolating
+    // one instant forward. Civic Bosch only. See commaai/openpilot#37824.
+    {"NrdrModelLeadTrajectory", {PERSISTENT, BOOL, "0", "0", 3}},
     {"RemoteStartBootsComma", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"RemapCancelToDistance", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"NAPAdaptiveAccel", {PERSISTENT, BOOL, "1", "1", 0, SETTINGS_SIMPLE}},
