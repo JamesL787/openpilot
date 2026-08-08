@@ -580,7 +580,7 @@ class CarController(CarControllerBase):
       "stopping_decel_rate": float(np.clip(self.param_store.get_int("HondaStoppingDecelRate", default=30), 0, 100)) / 100.0,
       "ecu_matched_long": self.param_store.get_bool("NrdrHondaEcuMatchedLong", default=False),
       "increase_override_tolerance": self.param_store.get_bool("NrdrIncreaseOverrideTolerance", default=False),
-      "min_steer_speed": float(np.clip(self.param_store.get_int("NrdrMinSteerSpeed", default=0), 0, 45)) * CV.MPH_TO_MS,
+      "min_steer_speed": float(np.clip(self.param_store.get_int("NrdrMinSteerSpeed", default=1), 0, 45)) * CV.MPH_TO_MS,
     }
 
   def _update_steering_torque(self, CC, CS, live):
