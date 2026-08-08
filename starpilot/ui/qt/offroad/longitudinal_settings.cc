@@ -1070,7 +1070,6 @@ void StarPilotLongitudinalPanel::updateToggles() {
 
       else if (key == "StoppingDecelRate" || key == "VEgoStarting" || key == "VEgoStopping") {
         setVisible &= !parent->isGM || !params.getBool("ExperimentalGMTune");
-        setVisible &= !parent->isToyota || !params.getBool("FrogsGoMoosTweak");
       }
     }
 

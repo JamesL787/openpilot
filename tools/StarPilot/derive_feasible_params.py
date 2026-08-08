@@ -51,6 +51,10 @@ KNOWN_DYNAMIC_UI_KEYS = {
     "LatPScaleHighway", "LatPScaleLowSpeed", "LatPScaleStandard",
 }
 
+GALAXY_ONLY_PARAMS = {
+    "LatSmoothSeconds", "LongSmoothSeconds",
+}
+
 def extract_registered_keys(params_path: str) -> set:
     """Extracts all legally registered parameter keys from common/params_keys.h"""
     registered_keys = set()
@@ -108,7 +112,7 @@ def main():
     feasible_keys = registered_keys.intersection(ui_strings | KNOWN_DYNAMIC_UI_KEYS)
 
     # 3. Filter Read-Only
-    editable_keys = feasible_keys - KNOWN_READ_ONLY
+    editable_keys = (feasible_keys | GALAXY_ONLY_PARAMS) - KNOWN_READ_ONLY
 
     # 4. Export
     output_path = os.path.join(os.path.dirname(__file__), 'feasibleparams.txt')
