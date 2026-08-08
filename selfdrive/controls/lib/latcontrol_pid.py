@@ -25,10 +25,22 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 # CP.steerRatio behavior.
 
 # nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio.
-# Keep center anchored, then taper to the measured high-angle effective ratio and let
-# np.interp hold the plateau.
-NRDR_CLARITY_SR_CURVE_BP = [0.0, 250.0]  # |steering-wheel angle|, deg
-NRDR_CLARITY_SR_CURVE_V = [17.00, 12.74]  # effective steer ratio at each break
+#
+# Values from nrdr a954d153e7 (2026-07-31), "Blend learned Clarity steer ratio into
+# proven tail", carried over from nrdr-clarity-backport. Replaces the old two-point
+# [0, 250] -> [17.00, 12.74] taper that this branch still had.
+#
+# The <= 70 degree section is the sample-weighted, non-increasing fit of the measured
+# 5 degree bins. The noisy 5-10 degree rise is capped at the 0-5 degree median, and every
+# later upward violation is pooled with its neighbour(s) instead of being allowed to create
+# an unphysical ratio increase. A smoothstep-sampled 70-90 degree handoff rejoins the
+# previous road-proven curve at exactly its existing 90 degree value; 90 degrees onward is
+# unchanged except for the corrected Honda end-to-end specification of 12.72 at 450 degrees.
+NRDR_CLARITY_SR_CURVE_BP = [0., 2.5, 7.5, 12.5, 17.5, 22.5, 27.5, 32.5, 37.5, 42.5, 47.5, 52.5, 57.5,
+                            62.5, 67.5, 70., 75., 80., 85., 90., 100., 140., 200., 300., 450.]  # |wheel angle|, deg
+NRDR_CLARITY_SR_CURVE_V = [19.680, 19.680, 19.680, 19.680, 19.344, 19.344, 19.307, 19.151, 18.406, 18.406,
+                           18.406, 18.087, 17.999, 17.999, 17.710, 17.604, 17.222, 16.706, 16.308, 16.093333333333334,
+                           15.940, 15.400, 14.300, 13.400, 12.720]
 
 NRDR_CRV_5G_SR_CURVE_BP = [0., 50., 100., 150., 175., 200.]
 NRDR_CRV_5G_SR_CURVE_V = [18.10, 17.80, 16.30, 15.30, 14.90, 14.60]
