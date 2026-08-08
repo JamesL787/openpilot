@@ -53,6 +53,16 @@ NRDR_SR_CURVE_BY_FP = {
 NRDR_MODIFIED_EPS_KF_SPEED_BP = [0.0, 25.0 * 0.44704 - 1e-3, 25.0 * 0.44704, 50.0 * 0.44704]  # m/s
 NRDR_MODIFIED_EPS_KF_V = [2.4e-6, 1.8e-6, 3.6e-6, 6.0e-6]
 
+# Cars carrying the shared modified-EPS tune (the four-point kp/ki in interface.py). They all
+# take the banded feedforward above; every other car keeps the scalar kf from CarParams.
+# Kept as a set so adding a car is one entry rather than another term in an or-chain.
+NRDR_MODIFIED_EPS_KF_CARS = frozenset({
+  "HONDA_CLARITY",
+  "HONDA_CIVIC",
+  "HONDA_CIVIC_BOSCH",
+  "HONDA_INSIGHT",
+})
+
 
 def get_nrdr_modified_eps_kf(v_ego: float) -> float:
   return float(np.interp(v_ego, NRDR_MODIFIED_EPS_KF_SPEED_BP, NRDR_MODIFIED_EPS_KF_V))
@@ -260,9 +270,9 @@ class LatControlPID(LatControl):
     self.is_honda_pid_lateral = CP.brand == "honda"
     self.honda_lateral_pid_kp_scale = 1.0
     self.honda_lateral_pid_ki_scale = 1.0
-    self.is_civic_modified = CP.carFingerprint == HONDA.HONDA_CIVIC and bool(CP.flags & HondaFlags.EPS_MODIFIED)
+    self.is_modified_eps_kf_car = (str(CP.carFingerprint) in NRDR_MODIFIED_EPS_KF_CARS
+                                   and bool(CP.flags & HondaFlags.EPS_MODIFIED))
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
-    self.is_clarity_eps_modified = CP.carFingerprint == HONDA.HONDA_CLARITY and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_subaru_impreza = CP.carFingerprint in SUBARU_IMPREZA_CARS
     # NRDR: every modified-EPS Honda (Civic 39990-TBA, CR-V 5G 39990-TLA, Insight 39990-TXM,
     # Clarity 39990-TRW) runs the live tune.
@@ -354,7 +364,7 @@ class LatControlPID(LatControl):
       phase = angle_steers_des_no_offset * desired_angle_delta
 
       # offset does not contribute to resistive torque
-      if self.is_clarity_eps_modified or self.is_civic_bosch_modified or self.is_civic_modified:
+      if self.is_modified_eps_kf_car:
         ff_factor = get_nrdr_modified_eps_kf(CS.vEgo)
       else:
         ff_factor = self.ff_factor

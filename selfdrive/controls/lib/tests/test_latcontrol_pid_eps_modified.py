@@ -114,7 +114,8 @@ def test_clarity_and_c020_share_the_current_feedforward_curve():
 
   clarity = _controller(CAR.HONDA_CLARITY, MODIFIED_FW)
   c020 = _controller(CAR.HONDA_CIVIC_BOSCH, MODIFIED_FW)
-  assert clarity.is_clarity_eps_modified
+  assert clarity.is_modified_eps_kf_car
+  assert c020.is_modified_eps_kf_car
   assert c020.is_civic_bosch_modified
   assert clarity.ff_factor == pytest.approx(3.6e-6)
   assert c020.ff_factor == pytest.approx(3.6e-6)

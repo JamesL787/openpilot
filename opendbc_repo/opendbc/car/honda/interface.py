@@ -287,9 +287,24 @@ class CarInterface(CarInterfaceBase):
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.38], [0.11]]
 
-    elif candidate in (CAR.HONDA_INSIGHT, CAR.HONDA_NBOX_2G):
+    elif candidate == CAR.HONDA_INSIGHT:
       if eps_modified:
         # NRDR 39990-TXM-A040 linear-max: linear ramp to the 3840 cap.
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
+        # Shares the modified-EPS Clarity tune: four-point handoff at 25 mph.
+        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [[0., 25. * CV.MPH_TO_MS - 1e-3, 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS], [0.018, 0.024, 0.048, 0.060]]
+        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [[0., 25. * CV.MPH_TO_MS - 1e-3, 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS], [0.006, 0.008, 0.016, 0.020]]
+        ret.lateralTuning.pid.kf = 3.6e-6
+        ret.steerAtStandstill, ret.autoResumeSng = True, True
+        ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
+      else:
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]  # TODO: determine if there is a dead zone at the top end
+        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.6], [0.18]]
+
+    elif candidate == CAR.HONDA_NBOX_2G:
+      # JDM kei car, unrelated to the modified-EPS fleet. Left on the pre-split tune it
+      # shared with the Insight rather than moved onto the Clarity numbers untested.
+      if eps_modified:
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
         ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.06], [0.02]]
         ret.lateralTuning.pid.kf = 0.000024
