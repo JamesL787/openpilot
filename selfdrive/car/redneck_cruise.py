@@ -29,6 +29,9 @@ LEAD_DEPARTURE_BOOST_MAX_MS = 1.5 * CV.MPH_TO_MS
 LEAD_DEPARTURE_BOOST_FACTOR = 0.35
 LEAD_DEPARTURE_PLAN_POINTS = 3
 
+HONDA_MINIMUM_SET_SPEED_MPH = 25
+HONDA_MINIMUM_SET_SPEED_KPH = 40
+
 CRUISE_BUTTON_TIMERS = {
   int(ButtonType.decelCruise): 0,
   int(ButtonType.accelCruise): 0,
@@ -123,7 +126,11 @@ def get_lead_departure_boost_ms(speed_cluster_ms: float, lead_distance_m: float,
   return min(boost_ms, LEAD_DEPARTURE_BOOST_MAX_MS)
 
 
-def get_minimum_set_speed(is_metric: bool) -> int:
+def get_minimum_set_speed(is_metric: bool, brand: str = "") -> int:
+  # Honda stock ACC will not hold a set speed below 25 mph, so asking for less
+  # just spams DECEL_SET into a floor the car ignores.
+  if brand == "honda":
+    return HONDA_MINIMUM_SET_SPEED_KPH if is_metric else HONDA_MINIMUM_SET_SPEED_MPH
   return 30 if is_metric else 20
 
 
@@ -173,7 +180,7 @@ class RedneckCruise:
 
     self.v_target_ms_last = apply_hysteresis(v_target_ms, self.v_target_ms_last, HYST_GAP * ms_conv)
     self.v_target = round(self.v_target_ms_last * speed_conv)
-    self.v_cruise_min = get_minimum_set_speed(is_metric)
+    self.v_cruise_min = get_minimum_set_speed(is_metric, getattr(self.CP, "brand", ""))
     self.v_cruise_cluster = round(CS.cruiseState.speedCluster * speed_conv)
 
   def _update_readiness(self, CS: car.CarState, CC: car.CarControl) -> None:

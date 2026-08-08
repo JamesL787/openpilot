@@ -224,6 +224,13 @@ class CarInterfaceBase(ABC):
         if any(0x35E in bus_fingerprint for bus_fingerprint in fingerprint.values()):
           fp_ret.flags |= int(HondaStarPilotFlags.HAS_CAMERA_MESSAGES)
 
+        # Bosch keeps stock ACC (and its radar) while openpilot steers the set speed
+        # with cruise button presses. Every Honda pt DBC defines SCM_BUTTONS.
+        fp_ret.redneckCruiseAvailable = candidate in HONDA_BOSCH
+        if fp_ret.redneckCruiseAvailable and params.get_bool("RedneckCruise") and \
+            not CP.openpilotLongitudinalControl:
+          fp_ret.pcmCruiseSpeed = False
+
       elif platform in HYUNDAI:
         if candidate in CANFD_CAR:
           hda2 = Ecu.adas in [fw.ecu for fw in car_fw]

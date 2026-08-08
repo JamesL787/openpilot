@@ -50,6 +50,9 @@ class CarState(CarStateBase):
 
     self.brake_error_msg = "HYBRID_BRAKE_ERROR" if CP.flags & HondaFlags.HYBRID else "STANDSTILL"
 
+    # Written by card.py each frame; read by the carcontroller to spam cruise buttons
+    self.redneck_send_button = 0
+
     self.steer_status_values = defaultdict(lambda: "UNKNOWN", can_define.dv["STEER_STATUS"]["STEER_STATUS"])
 
     self.brake_switch_prev = False

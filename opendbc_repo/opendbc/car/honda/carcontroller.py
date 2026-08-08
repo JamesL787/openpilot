@@ -512,6 +512,7 @@ class CarController(CarControllerBase):
     self.apply_brake_last = 0
     self.last_pump_ts = 0.0
     self.stopping_counter = 0
+    self.last_button_frame = 0
 
     self.accel = 0.0
     self.speed = 0.0
@@ -743,6 +744,17 @@ class CarController(CarControllerBase):
         can_sends.append(hondacan.spam_buttons_command(self.packer, self.CAN, CruiseButtons.CANCEL, self.CP.carFingerprint))
       elif CC.cruiseControl.resume:
         can_sends.append(hondacan.spam_buttons_command(self.packer, self.CAN, CruiseButtons.RES_ACCEL, self.CP.carFingerprint))
+      else:
+        # Redneck cruise: stock ACC keeps the radar and does the actual following,
+        # openpilot only walks its set speed with button presses. card.py decides
+        # the direction; 0 means hold. Rate limited to 20 Hz like the stock stalk.
+        redneck_button = {
+          1: CruiseButtons.RES_ACCEL,
+          2: CruiseButtons.DECEL_SET,
+        }.get(getattr(CS, "redneck_send_button", 0))
+        if redneck_button is not None and (self.frame - self.last_button_frame) * DT_CTRL > 0.05:
+          can_sends.append(hondacan.spam_buttons_command(self.packer, self.CAN, redneck_button, self.CP.carFingerprint))
+          self.last_button_frame = self.frame
 
     else:
       # Send gas and brake commands.
