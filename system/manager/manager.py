@@ -709,7 +709,7 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "LatPScaleLowSpeed": 100,
     "LatPScaleStandard": 135,
     "NrdrDriverOverrideThreshold": 2400,
-    "NrdrMinSteerSpeed": 0,
+    "NrdrMinSteerSpeed": 1,
     "NrdrOverrideThresholdCenterBoost": 1200,
   }
 

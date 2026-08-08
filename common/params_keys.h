@@ -500,7 +500,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ModelManifestVersion", {PERSISTENT, STRING, "", "", 1}},
     {"NrdrDriverOverrideThreshold", {PERSISTENT, INT, "2400", "2400", 2}},
     {"NrdrIncreaseOverrideTolerance", {PERSISTENT, BOOL, "0", "0", 2}},
-    {"NrdrMinSteerSpeed", {PERSISTENT, INT, "0", "0", 2}},
+    {"NrdrMinSteerSpeed", {PERSISTENT, INT, "1", "1", 2}},
     {"NrdrOverrideThresholdCenterBoost", {PERSISTENT, INT, "1200", "1200", 2}},
     {"NavigationUI", {PERSISTENT, BOOL, "1", "0", 1, SETTINGS_SIMPLE}},
     {"NNFF", {PERSISTENT, BOOL, "0", "0", 2}},
