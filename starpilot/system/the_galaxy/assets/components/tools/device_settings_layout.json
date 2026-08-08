@@ -660,39 +660,6 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "HondaNotchEnabled",
-        "label": "Honda Notch Filter",
-        "description": "Removes a narrow EPS chatter band.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "HondaNotchFreq",
-        "label": "Honda Notch Frequency",
-        "description": "Frequency removed from the torque command.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 1.0,
-        "max": 20.0,
-        "step": 0.1,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "HondaNotchQ",
-        "label": "Honda Notch Q",
-        "description": "Width of the removed frequency band. Higher is narrower.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 0.1,
-        "max": 10.0,
-        "step": 0.1,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "HondaSteerDeltaLimiter",
         "label": "Honda Steer Delta Limiter",
         "description": "Legacy rate limiter for requested steering torque.",

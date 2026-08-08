@@ -677,7 +677,6 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
   seeded_keys: list[str] = []
   desired_bool_values = {
     "HondaDriverAssistDuringOverride": False,
-    "HondaNotchEnabled": True,
     "HondaSteerDeltaLimiter": False,
     "HondaTorqueLowPassFilter": True,
     "HondaUnwindFreeze": False,
@@ -690,8 +689,6 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "HondaLpfTauHighway": 0.1,
     "HondaLpfTauLowSpeed": 0.1,
     "HondaLpfTauStandard": 0.1,
-    "HondaNotchFreq": 7.5,
-    "HondaNotchQ": 1.5,
     "HondaOverrideFadeDownSecs": 0.1,
     "HondaOverrideFadeUpSecs": 1.5,
     "HondaSteerDeltaDown": 3.0,

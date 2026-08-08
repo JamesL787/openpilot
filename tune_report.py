@@ -211,7 +211,7 @@ def _suggest(kind, band_name, scale_knob, tau_knob, phase):
     s = (f"Logs show PID values might be overtuned at this speed (the controller is hunting). "
          f"Suggestion: lower {scale_knob} by about 10%, or add a touch more filtering "
          f"({tau_knob} +0.01-0.02).")
-    return s + " If it feels like a narrow buzz rather than a sway, check the Notch Filter frequency instead."
+    return s + " If it feels like a narrow buzz rather than a sway, more filtering is the lever to reach for."
   if kind == "undertuned":
     if phase == "STR":
       return ("Logs show the tune is too soft for straight-line driving at this speed. "
