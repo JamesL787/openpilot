@@ -1,9 +1,9 @@
 Dynamically Derived Feasible Param Candidates (The Golden List)
 ===============================================================
 
-Total globally registered C++ keys:  588
-Total explicit UI string references: 492
-Total Editable/Toggleable targets:   452
+Total globally registered C++ keys:  606
+Total explicit UI string references: 500
+Total Editable/Toggleable targets:   462
 
 AccelerationPath
 AccelerationProfile
@@ -116,9 +116,9 @@ ForceStandstill
 ForceStopDistanceOffset
 ForceStops
 ForceTorqueController
-FrogsGoMoosTweak
 GMDashSpoofOffsets
 GMPedalLongitudinal
+GalaxyDeveloperMode
 GoatScream
 GoatScreamCriticalAlerts
 GreenLightAlert
@@ -147,9 +147,6 @@ HondaLiveLearningGas
 HondaLpfTauHighway
 HondaLpfTauLowSpeed
 HondaLpfTauStandard
-HondaNotchEnabled
-HondaNotchFreq
-HondaNotchQ
 HondaOverrideFadeDownSecs
 HondaOverrideFadeUpSecs
 HondaOverrideTorqueScale
@@ -186,6 +183,8 @@ IsRHDOverride
 JeepBrakeHold
 KonikDongleId
 LKASButtonControl
+LaneChangeCloseGap
+LaneChangeCloseGapSeconds
 LaneChangeSmoothing
 LaneChangeTime
 LaneChanges
@@ -202,6 +201,7 @@ LatIScaleStandard
 LatPScaleHighway
 LatPScaleLowSpeed
 LatPScaleStandard
+LatSmoothSeconds
 LateralResumeDelay
 LateralTune
 LeadDepartingAlert
@@ -218,6 +218,7 @@ LongDistanceButtonControl
 LongModeButtonControl
 LongPidTuneScale
 LongPitch
+LongSmoothSeconds
 LongStarButtonControl
 LongitudinalActuatorDelay
 LongitudinalActuatorDelayStock
@@ -250,6 +251,7 @@ NavigationUI
 NoLogging
 NoUploads
 NostalgiaMode
+NrdrClarityHybrid
 NrdrDriverOverrideThreshold
 NrdrHondaEcuMatchedLong
 NrdrIncreaseOverrideTolerance
@@ -258,6 +260,11 @@ NrdrLearnAngleOffset
 NrdrLearnSteerRatio
 NrdrLearnStiffness
 NrdrMinSteerSpeed
+NrdrNnlcActivationSpeed
+NrdrNnlcEnabled
+NrdrNnlcKfGain
+NrdrNnlcKiGain
+NrdrNnlcKpGain
 NrdrOverrideThresholdCenterBoost
 NrdrTuneLearner
 NrdrTuneLearnerRate
@@ -276,6 +283,9 @@ Offset7
 OneLaneChange
 OnroadDistanceButton
 OpenpilotEnabledToggle
+PIPPreviewEnabled
+PIPPreviewShowOnBSM
+PIPPreviewShowOnBlinker
 PathColor
 PathEdgeWidth
 PathEdgesColor

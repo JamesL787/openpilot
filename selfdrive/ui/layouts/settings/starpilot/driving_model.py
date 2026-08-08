@@ -820,19 +820,19 @@ class StarPilotDrivingModelLayout(_SettingsPage):
     default_key = self._params.get_default_value("Model") or self._params.get_default_value("DrivingModel")
     if isinstance(default_key, bytes):
       default_key = default_key.decode("utf-8", errors="ignore")
-    return canonical_model_key(str(default_key or "").strip()) or "sc2"
+    return canonical_model_key(str(default_key or "").strip()) or "rdf"
 
   def _default_model_name(self) -> str:
     default_name = self._params.get_default_value("DrivingModelName")
     if isinstance(default_name, bytes):
       default_name = default_name.decode("utf-8", errors="ignore")
-    return _clean_model_name(default_name or "") or "South Carolina"
+    return _clean_model_name(default_name or "") or "Regret Driven Framework"
 
   def _default_model_version(self) -> str:
     default_version = self._params.get_default_value("ModelVersion") or self._params.get_default_value("DrivingModelVersion")
     if isinstance(default_version, bytes):
       default_version = default_version.decode("utf-8", errors="ignore")
-    return str(default_version or "").strip() or "v11"
+    return str(default_version or "").strip() or "v15"
 
   def _current_selected_key(self) -> str:
     current_key = self._params.get("Model", encoding="utf-8") or self._params.get("DrivingModel", encoding="utf-8") or ""

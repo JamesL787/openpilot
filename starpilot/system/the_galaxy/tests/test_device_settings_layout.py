@@ -50,7 +50,17 @@ def test_galaxy_layout_contains_basic_mode_controls():
     "HumanLaneChanges",
     "QOLLongitudinal",
   } <= sections["Longitudinal (Speed & Following)"].keys()
+  assert "RedneckCruise" not in sections["Longitudinal (Speed & Following)"].keys()
+  assert sections["Developer"]["RedneckCruise"]["parent_key"] == "GalaxyDeveloperMode"
   assert {"GalaxyDeveloperMode", "UseOldUI"} <= sections["Developer"].keys()
+
+
+def test_curve_speed_controller_no_lead_toggle_is_nested_under_csc():
+  csc_no_lead = _params_by_section(_layout())["Longitudinal (Speed & Following)"]["CurveSpeedControllerNoLead"]
+
+  assert csc_no_lead["parent_key"] == "CurveSpeedController"
+  assert csc_no_lead["data_type"] == "bool"
+  assert _declared_default("CurveSpeedControllerNoLead") == "0"
 
 
 def test_every_galaxy_setting_has_a_shared_settings_tier():
@@ -78,11 +88,14 @@ def test_requested_simple_and_advanced_settings_tiers():
     "Wheel Controls",
     "Device & Data",
   ):
-    assert {param["settings_tier"] for param in sections[section_name].values()} == {"simple"}
+    params = sections[section_name].values()
+    if section_name == "Visual (Display & UI)":
+      params = [param for param in params if not param["key"].startswith("PIPPreview")]
+    assert {param["settings_tier"] for param in params} == {"simple"}
 
   for key in ("AlwaysOnLateral", "LaneChanges", "QOLLateral"):
     assert lateral[key]["settings_tier"] == "simple"
-  for key in ("AdvancedLateralTune", "LateralTune", "NavDesiresAllowed"):
+  for key in ("AdvancedLateralTune", "LateralTune", "NavDesiresAllowed", "NavLanePositioningAllowed"):
     assert lateral[key]["settings_tier"] == "advanced"
 
   for key in (
@@ -109,11 +122,13 @@ def test_requested_simple_and_advanced_settings_tiers():
   assert developer["GalaxyDeveloperMode"]["settings_tier"] == "simple"
   assert developer["UseOldUI"]["settings_tier"] == "simple"
   assert developer["DeveloperUI"]["settings_tier"] == "advanced"
+  assert developer["RedneckCruise"]["settings_tier"] == "advanced"
 
 
 def test_hidden_feature_defaults_remain_enabled():
   assert _declared_default("GalaxyDeveloperMode") == "0"
   assert _declared_default("NavDesiresAllowed") == "1"
+  assert _declared_default("NavLanePositioningAllowed") == "0"
   assert _declared_default("NavLongitudinalAllowed") == "1"
 
   for key in (
@@ -142,3 +157,28 @@ def test_vasm_is_default_off_and_configured_only_in_galaxy():
     REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/lateral.py",
   )
   assert all("VASM" not in path.read_text(encoding="utf-8") for path in physical_settings)
+
+
+def test_pip_preview_is_under_driving_screen_widgets_and_configured_only_in_galaxy():
+  sections = _params_by_section(_layout())
+  visual = sections["Visual (Display & UI)"]
+
+  assert {"PIPPreviewEnabled", "PIPPreviewShowOnBlinker", "PIPPreviewShowOnBSM"} <= visual.keys()
+  assert visual["PIPPreviewEnabled"]["parent_key"] == "CustomUI"
+  assert visual["PIPPreviewShowOnBlinker"]["parent_key"] == "PIPPreviewEnabled"
+  assert visual["PIPPreviewShowOnBSM"]["parent_key"] == "PIPPreviewEnabled"
+  assert visual["PIPPreviewEnabled"]["settings_tier"] == "advanced"
+  assert visual["PIPPreviewShowOnBlinker"]["settings_tier"] == "advanced"
+  assert visual["PIPPreviewShowOnBSM"]["settings_tier"] == "advanced"
+
+  assert _declared_default("PIPPreviewEnabled") == "0"
+  assert _declared_default("PIPPreviewShowOnBlinker") == "0"
+  assert _declared_default("PIPPreviewShowOnBSM") == "0"
+  assert '"{\\"width\\":1928,\\"height\\":1208,\\"center_left\\":[315,548],\\"center_right\\":[1571,539],\\"crop_size\\":580}"' in PARAM_KEYS_PATH.read_text(encoding="utf-8")
+
+  physical_settings = (
+    REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/aethergrid.py",
+    REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/lateral.py",
+    REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/appearance.py",
+  )
+  assert all("PIPPreview" not in path.read_text(encoding="utf-8") for path in physical_settings)
