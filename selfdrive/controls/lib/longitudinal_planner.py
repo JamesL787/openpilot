@@ -510,6 +510,23 @@ def get_accel_from_plan(speeds, accels, action_t=DT_MDL, vEgoStopping=0.05):
 
 
 class LongitudinalPlanner:
+  def _model_lead_trajectory_active(self) -> bool:
+    """Civic Bosch plus NrdrModelLeadTrajectory. Re-read about once a second so the toggle
+    applies without a restart; never touches params on cars the feature does not apply to."""
+    if not self._model_lead_traj_car:
+      return False
+
+    self._model_lead_traj_frame += 1
+    if self._model_lead_traj_params is None or self._model_lead_traj_frame % 100 == 0:
+      try:
+        from openpilot.common.params import Params
+        if self._model_lead_traj_params is None:
+          self._model_lead_traj_params = Params()
+        self._model_lead_traj_enabled = self._model_lead_traj_params.get_bool("NrdrModelLeadTrajectory")
+      except Exception:
+        self._model_lead_traj_enabled = False
+    return self._model_lead_traj_enabled
+
   def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
     self.mpc = LongitudinalMpc(dt=dt)
@@ -526,6 +543,14 @@ class LongitudinalPlanner:
     self.nap_adaptive_accel = False
     self._preap_params = None
     self._preap_param_frame = 0
+
+    # Experimental: feed the MPC the model's predicted lead horizon instead of extrapolating
+    # a single instant forward (commaai/openpilot#37824). Civic Bosch only, behind a param.
+    # Anything else leaves model_leads=None and the MPC keeps its existing extrapolation.
+    self._model_lead_traj_car = CP.brand == "honda" and str(CP.carFingerprint) == "HONDA_CIVIC_BOSCH"
+    self._model_lead_traj_enabled = False
+    self._model_lead_traj_frame = 0
+    self._model_lead_traj_params = None
 
     self.generation = None
 
@@ -2170,6 +2195,8 @@ class LongitudinalPlanner:
     dec_mpc_mode = self.get_mpc_mode()
     if not self.mlsim:
       self.mpc.mode = dec_mpc_mode
+    model_leads = sm['modelV2'].leadsV3 if self._model_lead_trajectory_active() else None
+
     # Hand the forced stop to the solver as a position. The obstacle sits STOP_DISTANCE
     # beyond the line because the safe-distance term already includes it — placing it on
     # the line parks us short. Below that the existing v_cruise=0 path finishes the stop,
@@ -2183,7 +2210,7 @@ class LongitudinalPlanner:
                     personality=personality, tracking_lead=lead_control_active,
                     optional_far_lead_comfort=True,
                     smooth_duplicate_vision=nonurgent_duplicate_vision_follow and not panic_bypass,
-                    stop_x=force_stop_x)
+                    model_leads=model_leads, stop_x=force_stop_x)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
@@ -2859,6 +2886,13 @@ class LongitudinalPlanner:
     longitudinalPlan.hasLead = sm['radarState'].leadOne.status
     longitudinalPlan.longitudinalPlanSource = self.mpc.source
     longitudinalPlan.fcw = self.fcw
+
+    # Lead trajectories the MPC actually solved against, for offline comparison of the
+    # extrapolated path against the model-predicted one.
+    longitudinalPlan.leadTrajectoryX0 = self.mpc.lead_xv_0[:, 0].tolist()
+    longitudinalPlan.leadTrajectoryV0 = self.mpc.lead_xv_0[:, 1].tolist()
+    longitudinalPlan.leadTrajectoryX1 = self.mpc.lead_xv_1[:, 0].tolist()
+    longitudinalPlan.leadTrajectoryV1 = self.mpc.lead_xv_1[:, 1].tolist()
 
     longitudinalPlan.aTarget = float(self.output_a_target)
     force_stop_handoff = bool(

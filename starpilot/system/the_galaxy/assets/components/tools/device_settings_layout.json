@@ -1118,6 +1118,18 @@
         "settings_tier": "simple"
       },
       {
+        "key": "CurveSpeedLateralAccel",
+        "label": "Curve Lateral Accel",
+        "description": "Lateral acceleration allowed through curves, in m/s². Higher values corner faster; lower values slow down earlier and harder.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 1.5,
+        "max": 3.0,
+        "step": 0.1,
+        "parent_key": "CurveSpeedController",
+        "settings_tier": "simple"
+      },
+      {
         "key": "ResetCurveData",
         "label": "Reset Curve Data",
         "description": "Clear learned Curve Speed Controller data and begin training again from the default lateral acceleration.",
@@ -2323,6 +2335,15 @@
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "SpeedLimitController",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrModelLeadTrajectory",
+        "label": "Model Lead Trajectory",
+        "description": "Experimental. Plan against the driving model's predicted lead path instead of extrapolating the lead's current acceleration forward. Can brake earlier for a lead that keeps slowing, and react less to brief lead braking. Civic Bosch only.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune",
         "settings_tier": "advanced"
       }
     ]

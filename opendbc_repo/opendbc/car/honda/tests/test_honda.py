@@ -9,9 +9,7 @@ from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.carcontroller import (
   CarController,
-  get_civic_bosch_modified_steering_pressed,
   get_eps_modified_steering_pressed,
-  get_civic_bosch_modified_torque_lpf_tau,
   get_honda_bosch_wind_brake_mps2,
   update_honda_bosch_live_learning,
 )
@@ -50,32 +48,6 @@ class TestHondaFingerprint:
 
   def test_tja_bosch_only(self):
     assert set(HONDA_BOSCH_TJA_CONTROL).issubset(set(HONDA_BOSCH)), "Nidec car found in TJA control list"
-
-  def test_modified_civic_torque_lpf_tau_reacts_to_sign_change(self):
-    assert get_civic_bosch_modified_torque_lpf_tau(0.7, -0.1, 25.0) == 0.10
-    assert get_civic_bosch_modified_torque_lpf_tau(0.02, -0.01, 8.0) == 0.28
-    assert get_civic_bosch_modified_torque_lpf_tau(0.02, 0.01, 12.0) == 0.28
-    assert get_civic_bosch_modified_torque_lpf_tau(0.02, 0.01, 20.0) == 0.20
-    assert get_civic_bosch_modified_torque_lpf_tau(0.02, 0.01, 25.0) == 0.16
-    assert get_civic_bosch_modified_torque_lpf_tau(0.30, 0.0, 12.0) == 0.16
-    assert get_civic_bosch_modified_torque_lpf_tau(0.30, 0.0, 20.0) == 0.13
-
-  def test_modified_civic_steering_pressed_filter_rejects_short_same_direction_spikes(self):
-    filter_s, pressed = get_civic_bosch_modified_steering_pressed(True, 1500.0, 0.8, 0.01, False)
-    assert not pressed
-    assert filter_s > 0.01
-
-    filter_s = 0.79
-    filter_s, pressed = get_civic_bosch_modified_steering_pressed(True, 1500.0, 0.8, filter_s, False)
-    assert not pressed
-
-    filter_s = 0.80
-    filter_s, pressed = get_civic_bosch_modified_steering_pressed(True, 1500.0, 0.8, filter_s, False)
-    assert pressed
-
-  def test_modified_civic_steering_pressed_filter_allows_opposing_driver_torque_quickly(self):
-    filter_s, pressed = get_civic_bosch_modified_steering_pressed(True, -1500.0, 0.8, 0.10, False)
-    assert pressed
 
   def test_eps_modified_steering_pressed_filter_matches_nrdr_thresholds(self):
     filter_s, pressed = get_eps_modified_steering_pressed(True, 1500.0, 0.8, 0.27, False)
@@ -136,17 +108,27 @@ class TestHondaFingerprint:
     assert b'39990-TGG,A020\x00\x00' in FW_VERSIONS[CAR.HONDA_CIVIC_BOSCH][(CarParams.Ecu.eps, 0x18DA30F1, None)]
     assert b'39990-TLA,A040\x00\x00' in FW_VERSIONS[CAR.HONDA_CRV_5G][(CarParams.Ecu.eps, 0x18DA30F1, None)]
 
-  def test_modified_eps_candidates_keep_support_and_restore_upstream_tunes(self):
+  def test_modified_eps_candidates_keep_support_and_apply_nrdr_linear_max_tunes(self):
+    # The NRDR linear-max RWD images (39990-TBA-C120 Civic, 39990-TLA-A040 CR-V 5G) ramp linearly to
+    # the 3840 firmware cap, so the piecewise stock breakpoints collapse to a single ramp and the
+    # gains drop to match. See eps_tools/rwd/.
     toggles = SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False)
 
     civic_fw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=b'39990-TBA,A030\x00\x00', address=0x18DA30F1, subAddress=0)]
     civic_cp = CarInterface.get_params(CAR.HONDA_CIVIC, gen_empty_fingerprint(), civic_fw, False, False, False, toggles)
     assert not civic_cp.dashcamOnly
     assert civic_cp.flags & HondaFlags.EPS_MODIFIED
-    assert list(civic_cp.lateralParams.torqueBP) == [0, 2560, 8000]
-    assert list(civic_cp.lateralParams.torqueV) == [0, 2560, 3840]
-    assert list(civic_cp.lateralTuning.pid.kpV) == pytest.approx([0.3])
-    assert list(civic_cp.lateralTuning.pid.kiV) == pytest.approx([0.1])
+    assert list(civic_cp.lateralParams.torqueBP) == [0, 3840]
+    assert list(civic_cp.lateralParams.torqueV) == [0, 3840]
+    # shares the modified-EPS Bosch tune: four-point handoff at 25 mph
+    civic_matched_bp = [0.0, 25.0 * CV.MPH_TO_MS - 1e-3, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS]
+    assert list(civic_cp.lateralTuning.pid.kpBP) == pytest.approx(civic_matched_bp)
+    assert list(civic_cp.lateralTuning.pid.kiBP) == pytest.approx(civic_matched_bp)
+    assert list(civic_cp.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
+    assert list(civic_cp.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
+    assert civic_cp.lateralTuning.pid.kf == pytest.approx(3.6e-6)
+    assert civic_cp.steerAtStandstill
+    assert civic_cp.minSteerSpeed == pytest.approx(-1.0)
 
     civic_bosch_fw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=b'39990-TGG,A020\x00\x00', address=0x18DA30F1, subAddress=0)]
     civic_bosch_cp = CarInterface.get_params(CAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), civic_bosch_fw, False, False, False, toggles)
@@ -164,10 +146,13 @@ class TestHondaFingerprint:
     crv_cp = CarInterface.get_params(CAR.HONDA_CRV_5G, gen_empty_fingerprint(), crv_fw, False, False, False, toggles)
     assert not crv_cp.dashcamOnly
     assert crv_cp.flags & HondaFlags.EPS_MODIFIED
-    assert list(crv_cp.lateralParams.torqueBP) == [0, 2560, 10000]
-    assert list(crv_cp.lateralParams.torqueV) == [0, 2560, 3840]
-    assert list(crv_cp.lateralTuning.pid.kpV) == pytest.approx([0.21])
-    assert list(crv_cp.lateralTuning.pid.kiV) == pytest.approx([0.07])
+    assert list(crv_cp.lateralParams.torqueBP) == [0, 3840]
+    assert list(crv_cp.lateralParams.torqueV) == [0, 3840]
+    assert list(crv_cp.lateralTuning.pid.kpV) == pytest.approx([0.06])
+    assert list(crv_cp.lateralTuning.pid.kiV) == pytest.approx([0.02])
+    assert crv_cp.lateralTuning.pid.kf == pytest.approx(0.000024)
+    assert crv_cp.steerAtStandstill
+    assert crv_cp.minSteerSpeed == pytest.approx(-1.0)
 
   def test_modified_civic_bosch_keeps_official_support(self):
     toggles = SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False)
@@ -177,6 +162,23 @@ class TestHondaFingerprint:
 
     assert not CP.dashcamOnly
     assert CP.flags & HondaFlags.EPS_MODIFIED
+    # NRDR: modified-EPS Hondas run the angle-space PID controller, as they do on nrdr-nightly
+    assert CP.lateralTuning.which() == "pid"
+    clarity_matched_bp = [0.0, 25.0 * CV.MPH_TO_MS - 1e-3, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS]
+    assert list(CP.lateralParams.torqueBP) == [0, 4096]
+    assert list(CP.lateralParams.torqueV) == [0, 4096]
+    assert list(CP.lateralTuning.pid.kpBP) == pytest.approx(clarity_matched_bp)
+    assert list(CP.lateralTuning.pid.kiBP) == pytest.approx(clarity_matched_bp)
+    assert list(CP.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
+    assert list(CP.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
+    assert CP.lateralTuning.pid.kf == pytest.approx(3.6e-6)
+
+  def test_force_torque_toggle_still_overrides_modified_eps_pid(self):
+    torque_toggles = SimpleNamespace(force_torque_controller=True, nnff=False, nnff_lite=False)
+    car_fw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=b'39990-TGG,A020\x00\x00', address=0x18DA30F1, subAddress=0)]
+
+    CP = CarInterface.get_params(CAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), car_fw, False, False, False, torque_toggles)
+
     assert CP.lateralTuning.which() == "torque"
 
   def test_honda_clarity_supports_pid_and_torque_paths(self):
@@ -188,17 +190,16 @@ class TestHondaFingerprint:
     assert not pid_cp.dashcamOnly
     assert pid_cp.flags & HondaFlags.EPS_MODIFIED
     assert pid_cp.lateralTuning.which() == "pid"
-    # Modified EPS: 3840 command range, and the nrdr-nightly speed-banded tune interpolated
-    # across 0 / 25 / 50 mph. The runtime LatPScale/LatIScale params are neutral 100% so they
-    # trim this rather than re-banding it.
+    # Modified EPS: 3840 command range and the road-tested hard handoff at 25 mph. The runtime
+    # LatPScale/LatIScale params are neutral 100% so they trim rather than re-band this curve.
     assert list(pid_cp.lateralParams.torqueBP) == [0, 3840]
     assert list(pid_cp.lateralParams.torqueV) == [0, 3840]
-    # nrdr 36e97ec6c2: 50% low-speed trim baked in, hard step at 25 mph
+    clarity_matched_bp = [0.0, 25.0 * CV.MPH_TO_MS - 1e-3, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS]
     assert list(pid_cp.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
     assert list(pid_cp.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
-    _low_max = 25.0 * CV.MPH_TO_MS
-    assert list(pid_cp.lateralTuning.pid.kpBP) == pytest.approx([0.0, _low_max - 1e-3, _low_max, 50.0 * CV.MPH_TO_MS])
-    assert list(pid_cp.lateralTuning.pid.kiBP) == pytest.approx([0.0, _low_max - 1e-3, _low_max, 50.0 * CV.MPH_TO_MS])
+    assert list(pid_cp.lateralTuning.pid.kpBP) == pytest.approx(clarity_matched_bp)
+    assert list(pid_cp.lateralTuning.pid.kiBP) == pytest.approx(clarity_matched_bp)
+    assert pid_cp.lateralTuning.pid.kf == pytest.approx(3.6e-6)
     assert pid_cp.autoResumeSng
     assert pid_cp.minEnableSpeed == pytest.approx(-1.0)
     assert pid_cp.stopAccel == pytest.approx(0.0)
@@ -328,26 +329,3 @@ class TestHondaFingerprint:
 
     assert hrv3g_cp.longitudinalActuatorDelay == pytest.approx(0.4)
     assert accord_cp.longitudinalActuatorDelay == pytest.approx(0.5)
-
-  def test_clarity_low_speed_pid_trim_matches_nrdr(self):
-    """nrdr 36e97ec6c2 halves kp/ki below 25 mph, with a hard step at 25 mph.
-
-    That half previously lived only as a written param value on nrdr's device, so
-    it was invisible in the repo when this tune was first ported.
-    """
-    import numpy as np
-    fw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=b'39990-TRW,A020\x00\x00', address=0x18DA30F1, subAddress=0)]
-    CP = CarInterface.get_params(CAR.HONDA_CLARITY, gen_empty_fingerprint(), fw, False, False, False, get_test_toggles())
-    pid = CP.lateralTuning.pid
-    assert list(pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
-    assert list(pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
-
-    std = 25.0 * CV.MPH_TO_MS
-    just_below = np.interp(std - 1e-2, pid.kpBP, pid.kpV)   # clear of the 1e-3 step
-    at_std = np.interp(std, pid.kpBP, pid.kpV)
-    # the 25 mph handoff is a step, exactly 2x, not a ramp
-    assert just_below == pytest.approx(0.024, rel=1e-3)
-    assert at_std == pytest.approx(0.048, rel=1e-3)
-    assert just_below == pytest.approx(0.5 * at_std, rel=1e-3)
-    # at and above 25 mph the tune is unchanged from before the trim
-    assert np.interp(50.0 * CV.MPH_TO_MS, pid.kpBP, pid.kpV) == pytest.approx(0.060)

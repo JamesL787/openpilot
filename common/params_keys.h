@@ -234,6 +234,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CurvatureData", {PERSISTENT | DONT_LOG, JSON, "{}", "{}"}},
     {"CurveSpeedController", {PERSISTENT, BOOL, "1", "0", 1, SETTINGS_SIMPLE}},
     {"CurveSpeedControllerNoLead", {PERSISTENT, BOOL, "0", "0", 1, SETTINGS_SIMPLE}},
+    // Static lateral-accel target for the curve speed controller, m/s^2 (slider 1.5..3.0).
+    {"CurveSpeedLateralAccel", {PERSISTENT, FLOAT, "2.0", "2.0", 2, SETTINGS_SIMPLE}},
     {"CustomAlerts", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"CustomAccelProfile", {PERSISTENT, BOOL, "0", "0", 3}},
     {"CustomAccelProfileInitialized", {PERSISTENT, BOOL, "0", "0", 3}},
@@ -313,6 +315,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LongPidTuneScale", {PERSISTENT, INT, "100", "100", 2}},
     {"LongPitch", {PERSISTENT, BOOL, "1", "0", 2, SETTINGS_SIMPLE}},
     {"NrdrHondaEcuMatchedLong", {PERSISTENT, BOOL, "0", "0", 2}},
+    // Experimental: feed the MPC the model's predicted lead horizon instead of extrapolating
+    // one instant forward. Civic Bosch only. See commaai/openpilot#37824.
+    {"NrdrModelLeadTrajectory", {PERSISTENT, BOOL, "0", "0", 3}},
     {"RemoteStartBootsComma", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"RemapCancelToDistance", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"NAPAdaptiveAccel", {PERSISTENT, BOOL, "1", "1", 0, SETTINGS_SIMPLE}},
@@ -339,12 +344,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrTuneLearnerStrength", {PERSISTENT, INT, "10", "10", 2}},
     {"NrdrTuneLearnerRate", {PERSISTENT, INT, "30", "30", 2}},
     {"NrdrLatStiction", {PERSISTENT, BOOL, "0", "0", 2}},              // emulated EPS breakaway hold/move output stage (NRDR_LATERAL_STICTION.md); Clarity EPS only
-    {"NrdrClarityHybrid", {PERSISTENT, BOOL, "0", "0", 2}},            // master gate: Clarity PID/NNFF hybrid. OFF = plain angle-space LatControlPID. Restart to apply
-    {"NrdrNnlcEnabled", {PERSISTENT, BOOL, "1", "1", 2}},              // hybrid: allow the NNFF half (OFF = PID at all speeds). Live
-    {"NrdrNnlcActivationSpeed", {PERSISTENT, INT, "30", "30", 2}},     // mph; centre of the 6 mph PID -> NNFF handoff. Live
-    {"NrdrNnlcKpGain", {PERSISTENT, INT, "100", "100", 3}},            // NNFF feedback proportional gain, percent of 1.0. Live
-    {"NrdrNnlcKfGain", {PERSISTENT, INT, "50", "50", 3}},              // NNFF neural feedforward gain, percent of 1.0. Live
-    {"NrdrNnlcKiGain", {PERSISTENT, INT, "10", "10", 3}},              // NNFF feedback integral gain, percent of 1.0. Live
     {"NrdrTuneLearnerMap", {PERSISTENT | DONT_LOG, BYTES}},
     {"ForceFingerprint", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ForceOffroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},

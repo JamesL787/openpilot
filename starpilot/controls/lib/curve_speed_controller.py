@@ -4,134 +4,57 @@ import numpy as np
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
 
-from openpilot.starpilot.common.starpilot_variables import CITY_SPEED_LIMIT, CRUISING_SPEED, DEFAULT_LATERAL_ACCELERATION, PLANNER_TIME
+from openpilot.starpilot.common.starpilot_variables import CITY_SPEED_LIMIT, DEFAULT_LATERAL_ACCELERATION
 
-CALIBRATION_PROGRESS_THRESHOLD = 10 / DT_MDL
 CSC_MIN_SPEED = CITY_SPEED_LIMIT * CV.MPH_TO_MS
 CSC_MAX_DECEL_RATE = 1.5
-MAX_CURVATURE = 0.1
-MIN_CURVATURE = 0.001
-PERCENTILE = 90
-ROUNDING_PRECISION = 5
-STEP = 0.001
+
+# Static lateral-accel target, m/s^2. The settings slider spans LAT_ACCEL_MIN..LAT_ACCEL_MAX
+# in 0.1 steps; the clamp here is the defense against a hand-edited param.
+LAT_ACCEL_PARAM = "CurveSpeedLateralAccel"
+LAT_ACCEL_MIN = 1.5
+LAT_ACCEL_MAX = 3.0
+
+# Re-read the param about once a second; log_data() runs at DT_MDL whenever CSC is not
+# actively holding a curve target, so this is the cheap place to pick up live edits.
+PARAM_REFRESH_FRAMES = int(round(1.0 / DT_MDL))
 
 
 class CurveSpeedController:
   def __init__(self, StarPilotVCruise):
     self.starpilot_planner = StarPilotVCruise.starpilot_planner
 
+    # Retained for the cscTraining field starpilot_planner publishes. The controller no
+    # longer learns, so it is permanently False.
     self.enable_training = False
     self.target_set = False
+    self.target = 0.0
 
-    self.training_timer = 0
-
-    curvature_data = self.starpilot_planner.params.get("CurvatureData")
-    self.curvature_data = self._normalize_curvature_data(curvature_data)
-
-    self.required_curvatures = [str(round(road_curvature, ROUNDING_PRECISION)) for road_curvature in np.arange(MIN_CURVATURE, MAX_CURVATURE + STEP, STEP)]
-
+    self._frame = 0
+    self.lateral_acceleration = DEFAULT_LATERAL_ACCELERATION
     self.update_lateral_acceleration()
 
-  @staticmethod
-  def _bucket_curvature(road_curvature):
-    clipped_curvature = float(np.clip(road_curvature, MIN_CURVATURE, MAX_CURVATURE))
-    bucket_index = round((clipped_curvature - MIN_CURVATURE) / STEP)
-    bucketed_curvature = MIN_CURVATURE + (bucket_index * STEP)
-    return str(round(bucketed_curvature, ROUNDING_PRECISION))
+  def update_lateral_acceleration(self):
+    """Read the static lateral-accel target from params, clamped to the slider's range."""
+    try:
+      raw = self.starpilot_planner.params.get_float(LAT_ACCEL_PARAM)
+    except Exception:
+      raw = None
 
-  @classmethod
-  def _normalize_curvature_data(cls, curvature_data):
-    if not isinstance(curvature_data, dict):
-      return {}
+    value = DEFAULT_LATERAL_ACCELERATION if raw is None else float(raw)
 
-    normalized = {}
-    for key, value in curvature_data.items():
-      if not isinstance(value, dict):
-        continue
+    if not np.isfinite(value):
+      value = DEFAULT_LATERAL_ACCELERATION
 
-      try:
-        raw_curvature = abs(float(key))
-        average = float(value["average"])
-        count = int(value["count"])
-      except (KeyError, TypeError, ValueError):
-        continue
-
-      if count <= 0:
-        continue
-
-      bucket = cls._bucket_curvature(raw_curvature)
-      if bucket in normalized:
-        existing = normalized[bucket]
-        total_count = existing["count"] + count
-        normalized[bucket] = {
-          "average": ((existing["average"] * existing["count"]) + (average * count)) / total_count,
-          "count": total_count,
-        }
-      else:
-        normalized[bucket] = {
-          "average": average,
-          "count": count,
-        }
-
-    return normalized
+    self.lateral_acceleration = float(np.clip(value, LAT_ACCEL_MIN, LAT_ACCEL_MAX))
 
   def log_data(self, v_ego, sm):
-    self.enable_training = v_ego > CRUISING_SPEED
-    self.enable_training &= not self.starpilot_planner.tracking_lead
-    self.enable_training &= not sm["carControl"].longActive
+    """No learning. Kept as the periodic refresh hook so slider edits apply without a restart."""
+    self.enable_training = False
 
-    if self.enable_training:
-      self.training_timer += DT_MDL
-
-      if self.training_timer >= PLANNER_TIME and self.starpilot_planner.driving_in_curve and not (sm["carState"].leftBlinker or sm["carState"].rightBlinker):
-        lateral_acceleration = abs(self.starpilot_planner.lateral_acceleration)
-        road_curvature = self._bucket_curvature(abs(self.starpilot_planner.road_curvature))
-
-        key = road_curvature
-        if key in self.curvature_data:
-          data = self.curvature_data[key]
-
-          average = data["average"]
-          count = data["count"]
-
-          self.curvature_data[key] = {
-            "average": ((average * count) + lateral_acceleration) / (count + 1),
-            "count": count + 1
-          }
-        else:
-          self.curvature_data[key] = {
-            "average": lateral_acceleration,
-            "count": 1
-          }
-
-        self.update_lateral_acceleration()
-      else:
-        self.enable_training = False
-
-    elif self.training_timer >= PLANNER_TIME:
-      progress = 0.0
-      for key in self.required_curvatures:
-        if key in self.curvature_data:
-          progress += min(self.curvature_data[key]["count"] / CALIBRATION_PROGRESS_THRESHOLD, 1.0)
-
-      self.starpilot_planner.params.put_nonblocking("CalibrationProgress", (progress / len(self.required_curvatures)) * 100)
-      self.starpilot_planner.params.put_nonblocking("CurvatureData", self.curvature_data)
-
-      self.enable_training = False
-      self.training_timer = 0
-
-    else:
-      self.enable_training = False
-      self.training_timer = 0
-
-  def update_lateral_acceleration(self):
-    if self.curvature_data:
-      all_samples = [data["average"] for data in self.curvature_data.values()]
-      self.lateral_acceleration = float(np.percentile(all_samples, PERCENTILE))
-    else:
-      self.lateral_acceleration = DEFAULT_LATERAL_ACCELERATION
-
-    self.starpilot_planner.params.put_nonblocking("CalibratedLateralAcceleration", self.lateral_acceleration)
+    self._frame += 1
+    if self._frame % PARAM_REFRESH_FRAMES == 0:
+      self.update_lateral_acceleration()
 
   def update_target(self, v_ego):
     lateral_acceleration = self.lateral_acceleration

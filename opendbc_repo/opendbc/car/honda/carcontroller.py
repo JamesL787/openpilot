@@ -1,4 +1,10 @@
+import json
 import math
+import os
+import threading
+from collections import deque
+from queue import Empty, Queue
+
 import numpy as np
 
 from opendbc.can import CANPacker
@@ -21,74 +27,6 @@ from openpilot.common.params import Params
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
-
-
-def get_civic_bosch_modified_torque_lpf_tau(torque_cmd: float, prev_torque_cmd: float, v_ego: float) -> float:
-  torque_delta = abs(float(torque_cmd) - float(prev_torque_cmd))
-  torque_cmd_abs = abs(float(torque_cmd))
-  sign_change = (float(torque_cmd) * float(prev_torque_cmd)) < 0.0
-  highway = v_ego > (50.0 * 0.44704)
-  low_speed = v_ego < (30.0 * 0.44704)
-
-  if highway:
-    if torque_cmd_abs < 0.12:
-      return 0.18 if sign_change else 0.16
-    if sign_change and torque_delta > 0.15:
-      return 0.10
-    return 0.12
-
-  if sign_change and torque_cmd_abs < 0.25:
-    return 0.28 if low_speed else 0.22
-
-  # Extra damping for the tiny near-center commands where both modified EPS
-  # firmwares still show hunting and escalating sway.
-  if torque_cmd_abs < 0.12:
-    return 0.28 if low_speed else 0.20
-
-  if low_speed:
-    if torque_delta > 0.50:
-      return 0.14
-    elif torque_delta > 0.20:
-      return 0.16
-    elif torque_delta > 0.05:
-      return 0.18
-    else:
-      return 0.22
-
-  if torque_delta > 0.50:
-    return 0.12
-  elif torque_delta > 0.20:
-    return 0.13
-  elif torque_delta > 0.05:
-    return 0.15
-  else:
-    return 0.18
-
-
-def get_civic_bosch_modified_steering_pressed(
-  raw_pressed: bool, steering_torque: float, torque_cmd: float, filter_s: float, was_pressed: bool
-) -> tuple[float, bool]:
-  torque_product = steering_torque * torque_cmd
-  torque_cmd_abs = abs(torque_cmd)
-
-  if raw_pressed:
-    if torque_product < 0.0:
-      trigger_s = 0.08 if was_pressed else 0.10
-      rise_rate = 1.0
-    elif torque_cmd_abs < 0.10:
-      trigger_s = 0.20 if was_pressed else 0.24
-      rise_rate = 0.75
-    else:
-      trigger_s = 0.70 if was_pressed else 0.80
-      rise_rate = 0.50
-
-    filter_s = min(1.0, filter_s + (rise_rate * DT_CTRL))
-    steering_pressed = filter_s >= trigger_s
-  else:
-    filter_s = max(0.0, filter_s - 8.0 * DT_CTRL)
-    steering_pressed = filter_s > 0.04 and was_pressed
-
-  return filter_s, steering_pressed
 
 
 def get_eps_modified_steering_pressed(
@@ -226,6 +164,339 @@ def process_hud_alert(hud_alert):
   return alert_fcw, alert_steer_required
 
 
+
+# Sidecar path for fingerprint + version metadata (does NOT touch params_keys.h)
+LEARNER_META_PATH = "/data/honda_learner_meta.json"
+
+# Bump when learner semantics change so persisted values are discarded
+LEARN_VERSION = 2
+
+# Learner tick cadence: update() runs every 2 controller frames at 100 Hz → 0.02 s per tick
+_LEARNER_DT = 2 * DT_CTRL  # 0.02 s
+
+# Lag alignment: typical longitudinalActuatorDelay ~0.5 s → 25 learner ticks
+_LAG_TICKS = 25  # 25 * 0.02 s = 0.50 s
+
+# Quasi-steady gate: reject samples where the command is actively changing
+# |Δaccel_cmd| / dt must be < 0.3 m/s³ across the deque window
+_ACCEL_RATE_THRESH = 0.3  # m/s³
+
+# G4 soft relative clamps (relative to nominal 1.0)
+_HARD_LO = 0.6
+_HARD_HI = 1.6
+_SOFT_LO = 0.8
+_SOFT_HI = 1.25
+_DECAY_RATE_PER_MIN = 0.01  # fraction/min decayed toward 1.0 while outside soft band
+_DECAY_PER_TICK = _DECAY_RATE_PER_MIN / 60.0 * _LEARNER_DT
+
+# Applied-factor first-order filter (rc ~7.5 s nominal)
+_FACTOR_FILTER_RC = 7.5
+_FACTOR_FILTER_ALPHA = _LEARNER_DT / (_FACTOR_FILTER_RC + _LEARNER_DT)
+
+# Hill/saturation deadband
+_PITCH_DEADBAND = 0.02   # rad
+_BRAKE_ADDON_DEADBAND = 1.0  # m/s²
+
+
+class LongGasLearner:
+  """
+  Lag-aligned gas/wind factor learner with torqued-grade safety rails (G1 + G4).
+
+  Separation of concerns:
+  - raw_gasfactor / raw_windfactor: the learned integrators (persisted)
+  - gasfactor / windfactor: slow-filtered applied values (initialized from persisted; no startup transient)
+  - All param reads/writes handled externally; this class is pure logic.
+
+  Tick cadence:
+    Called every 2 controller frames (frame % 2 == 0) at 100 Hz → DT = 0.02 s.
+    Deque depth 25 → 25 × 0.02 s = 0.50 s lag alignment (matches longitudinalActuatorDelay).
+  """
+
+  def __init__(self, init_gasfactor: float, init_windfactor: float, car_fingerprint: str):
+    # Clamp + NaN-guard on load
+    init_gasfactor = self._safe_clamp(init_gasfactor)
+    init_windfactor = self._safe_clamp(init_windfactor, lo=_HARD_LO, hi=_HARD_HI)
+
+    # Learned integrators (raw, before filter)
+    self.raw_gasfactor = init_gasfactor
+    self.raw_windfactor = init_windfactor
+
+    # Applied factors (FirstOrderFilter outputs)
+    # Initialize at loaded value → no startup transient
+    self.gasfactor = init_gasfactor
+    self.windfactor = init_windfactor
+
+    self.car_fingerprint = car_fingerprint
+
+    # MVL telemetry: latest lag-aligned gas error (carcontroller mirrors this into
+    # actuators.speed via temp_errorlogging, matching mvl-boston's debug channel).
+    self.last_gas_error = 0.0
+
+    # Deque of accel commands (length = _LAG_TICKS + 1 for rate check)
+    self._accel_deque: deque = deque(maxlen=_LAG_TICKS + 1)
+
+    # Anti-windup shadow sentinels (stores raw integrator value before maxgas/brake boundary)
+    self.gasfactor_before_maxgas = init_gasfactor
+    self.windfactor_before_maxgas = init_windfactor
+    self.windfactor_before_brake = init_windfactor
+
+    # Track engagement state for deque reset
+    self._was_engaged = False
+
+  @staticmethod
+  def _safe_clamp(v: float, lo: float = _HARD_LO, hi: float = _HARD_HI) -> float:
+    """NaN/inf guard + absolute hard clamp. Returns 1.0 on non-finite."""
+    if not math.isfinite(v):
+      return 1.0
+    return float(np.clip(v, lo, hi))
+
+  @staticmethod
+  def _decay_toward_nominal(v: float) -> float:
+    """Decay v toward 1.0 by one tick's worth if outside soft band."""
+    if v < _SOFT_LO or v > _SOFT_HI:
+      if v < 1.0:
+        v = min(1.0, v + _DECAY_PER_TICK)
+      else:
+        v = max(1.0, v - _DECAY_PER_TICK)
+    return v
+
+  def reset_deque(self, accel_cmd: float):
+    """Reset lag deque on engagement edge or gasPressed."""
+    self._accel_deque.clear()
+    # Pre-fill with current command so lagged ref is valid immediately
+    for _ in range(_LAG_TICKS + 1):
+      self._accel_deque.append(accel_cmd)
+
+  def update(self,
+             accel_cmd: float,
+             a_ego: float,
+             gas_pedal_force: float,
+             wind_brake_ms2: float,
+             long_active: bool,
+             long_pid: bool,
+             gas_pressed: bool,
+             brake_pressed: bool,
+             v_ego: float,
+             at_standstill: bool,
+             pitch: float,
+             brake_addon: float,
+             at_accel_max: bool):
+    """
+    One learner tick (called at the 2-frame cadence, NOT every frame).
+
+    Returns: (gasfactor_applied, windfactor_applied)
+    Always returns finite values — NaN cannot propagate.
+    """
+    engaged = long_active and long_pid
+
+    # Engagement-edge or gasPressed reset
+    if (not self._was_engaged and engaged) or gas_pressed:
+      self.reset_deque(accel_cmd)
+    self._was_engaged = engaged
+
+    # Push current command into deque
+    self._accel_deque.append(accel_cmd)
+
+    # Only learn when conditions are right
+    should_learn = (
+      engaged
+      and not gas_pressed
+      and not brake_pressed
+      and not at_standstill
+    )
+
+    if should_learn and len(self._accel_deque) == _LAG_TICKS + 1:
+      # Lag-aligned reference: the command that was current ~0.5 s ago
+      lagged_accel = self._accel_deque[0]
+
+      # Quasi-steady gate: check that command has not been changing rapidly
+      oldest = self._accel_deque[0]
+      newest = self._accel_deque[-1]
+      accel_rate = abs(newest - oldest) / (_LAG_TICKS * _LEARNER_DT)
+      quasi_steady = accel_rate < _ACCEL_RATE_THRESH
+
+      # Hill / saturation deadband (G4 rail 7)
+      pitch_ok = abs(pitch) < _PITCH_DEADBAND
+      brake_addon_ok = abs(brake_addon) < _BRAKE_ADDON_DEADBAND
+      condition_ok = quasi_steady and pitch_ok and brake_addon_ok
+
+      if condition_ok:
+        gas_error = lagged_accel - a_ego
+        self.last_gas_error = float(gas_error)
+
+        # --- gasfactor update (gas_pedal_force > 0 gate) ---
+        if gas_error != 0.0 and gas_pedal_force > 0.0:
+          if self.car_fingerprint in ("HONDA_INSIGHT", "HONDA_CIVIC_BOSCH"):  # gas pedal reacts too slowly
+            learn_speed = 150.0
+          elif self.car_fingerprint in ("ACURA_RDX_3G", "ACURA_RDX_3G_MMR"):  # Prevent overreacting to turbo lag
+            learn_speed = 300.0
+          else:
+            learn_speed = 50.0
+          self.raw_gasfactor = np.clip(
+            self.raw_gasfactor + gas_error / learn_speed * gas_pedal_force,
+            _HARD_LO, _HARD_HI
+          )
+
+        # --- windfactor update ---
+        if gas_error != 0.0 and v_ego > 0.0:
+          if self.car_fingerprint in ("ACURA_RDX_3G", "ACURA_RDX_3G_MMR"):  # Faster reaction
+            wind_learn_speed = 100.0
+          else:
+            wind_learn_speed = 1000.0
+          wind_adjust = 1.0 + wind_brake_ms2 / wind_learn_speed
+          self.raw_windfactor = np.clip(
+            self.raw_windfactor * (wind_adjust if gas_error > 0.0 else 1.0 / wind_adjust),
+            _HARD_LO, _HARD_HI
+          )
+
+    # Anti-windup shadows — operate on lagged command as well (G1 requirement)
+    # Use gas_pedal_force (computed from lagged-or-current path) for saturation check
+    if gas_pedal_force <= 0.0:
+      # Braking: don't reduce windfactor, allow increases
+      self.raw_windfactor = max(self.raw_windfactor, self.windfactor_before_brake)
+    else:
+      self.windfactor_before_brake = self.raw_windfactor
+
+    if at_accel_max:
+      # Saturation: don't increase gasfactor or windfactor
+      self.raw_gasfactor = min(self.raw_gasfactor, self.gasfactor_before_maxgas)
+      self.raw_windfactor = min(self.raw_windfactor, self.windfactor_before_maxgas)
+      # G4 saturation-decay: slightly decay gasfactor when clipped at BOSCH_ACCEL_MAX
+      self.raw_gasfactor = max(_HARD_LO, self.raw_gasfactor - _DECAY_PER_TICK)
+    else:
+      self.gasfactor_before_maxgas = self.raw_gasfactor
+      self.windfactor_before_maxgas = self.raw_windfactor
+
+    # G4 NaN/inf guard on raw integrators
+    if not math.isfinite(self.raw_gasfactor):
+      self.raw_gasfactor = 1.0
+      self.gasfactor_before_maxgas = 1.0
+    if not math.isfinite(self.raw_windfactor):
+      self.raw_windfactor = 1.0
+      self.windfactor_before_maxgas = 1.0
+      self.windfactor_before_brake = 1.0
+
+    # G4 decay-back toward nominal while outside soft band
+    self.raw_gasfactor = self._decay_toward_nominal(self.raw_gasfactor)
+    self.raw_windfactor = self._decay_toward_nominal(self.raw_windfactor)
+
+    # Hard clamp (belt-and-suspenders)
+    self.raw_gasfactor = float(np.clip(self.raw_gasfactor, _HARD_LO, _HARD_HI))
+    self.raw_windfactor = float(np.clip(self.raw_windfactor, _HARD_LO, _HARD_HI))
+
+    # G4 slow FirstOrderFilter between raw integrator and applied factor
+    # Alpha = DT / (RC + DT), ~7.5 s time constant
+    self.gasfactor = _FACTOR_FILTER_ALPHA * self.raw_gasfactor + (1.0 - _FACTOR_FILTER_ALPHA) * self.gasfactor
+    self.windfactor = _FACTOR_FILTER_ALPHA * self.raw_windfactor + (1.0 - _FACTOR_FILTER_ALPHA) * self.windfactor
+
+    # Final NaN guard on applied factors — safety absolute last resort
+    if not math.isfinite(self.gasfactor):
+      self.gasfactor = 1.0
+    if not math.isfinite(self.windfactor):
+      self.windfactor = 1.0
+
+    return self.gasfactor, self.windfactor
+
+
+def _load_learner_meta(car_fingerprint: str) -> tuple[float, float]:
+  """
+  Load persisted gasfactor/windfactor from Params, verifying fingerprint + LEARN_VERSION
+  from the sidecar JSON. Returns (1.0, 1.0) on any mismatch or error.
+
+  The sidecar JSON is written atomically (temp-then-rename) and carries:
+    {"car_fingerprint": "...", "learn_version": 2}
+
+  Note: does NOT touch params_keys.h (boot-brick trap on this fork).
+  """
+  try:
+    params = Params()
+    raw_gas = params.get("HondaGasFactorParams")
+    raw_wind = params.get("HondaWindFactorParams")
+
+    if raw_gas is None or raw_wind is None:
+      return 1.0, 1.0
+
+    # Read sidecar for fingerprint + version check
+    try:
+      with open(LEARNER_META_PATH, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+      if meta.get("car_fingerprint") != car_fingerprint:
+        return 1.0, 1.0
+      if meta.get("learn_version") != LEARN_VERSION:
+        return 1.0, 1.0
+    except (OSError, json.JSONDecodeError, KeyError):
+      # No sidecar or corrupt → treat as fresh (reset to nominal)
+      return 1.0, 1.0
+
+    # Parse param values
+    if isinstance(raw_gas, bytes):
+      raw_gas = raw_gas.decode("utf-8")
+    if isinstance(raw_wind, bytes):
+      raw_wind = raw_wind.decode("utf-8")
+
+    gas = float(raw_gas)
+    wind = float(raw_wind)
+
+    if not math.isfinite(gas) or not math.isfinite(wind):
+      return 1.0, 1.0
+
+    gas = float(np.clip(gas, _HARD_LO, _HARD_HI))
+    wind = float(np.clip(wind, _HARD_LO, _HARD_HI))
+    return gas, wind
+
+  except Exception:
+    return 1.0, 1.0
+
+
+def _write_learner_meta_atomic(car_fingerprint: str):
+  """
+  Atomically write sidecar JSON (temp-then-rename pattern from nrdr_long_tune.py).
+  Only writes the metadata — actual factor values live in Params.
+  No-ops silently on /data write failures (device may have read-only fs).
+  """
+  try:
+    meta = {
+      "car_fingerprint": car_fingerprint,
+      "learn_version": LEARN_VERSION,
+    }
+    tmp = LEARNER_META_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+      json.dump(meta, f, indent=2, sort_keys=True)
+      f.write("\n")
+      f.flush()
+      os.fsync(f.fileno())
+    os.replace(tmp, LEARNER_META_PATH)
+  except OSError:
+    pass
+
+
+
+
+class HondaParamWriter:
+  def __init__(self):
+    self._params = Params()
+    self._queue = Queue()
+    self._thread = threading.Thread(target=self._run, name="honda-param-writer", daemon=True)
+    self._thread.start()
+
+  def put_many(self, values):
+    self._queue.put({key: float(value) for key, value in values.items()})
+
+  def _run(self):
+    while True:
+      pending = self._queue.get()
+
+      # Collapse queued snapshots so delayed writes keep only the newest value per key.
+      try:
+        while True:
+          pending.update(self._queue.get_nowait())
+      except Empty:
+        pass
+
+      for key, value in pending.items():
+        self._params.put(key, value)
+
+
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -241,6 +512,7 @@ class CarController(CarControllerBase):
     self.apply_brake_last = 0
     self.last_pump_ts = 0.0
     self.stopping_counter = 0
+    self.last_button_frame = 0
 
     self.accel = 0.0
     self.speed = 0.0
@@ -248,7 +520,6 @@ class CarController(CarControllerBase):
     self.brake = 0.0
     self.last_torque = 0.0
     self.torque_lpf = 0.0
-    self.prev_torque_cmd = 0.0
     self.override_ramp = 1.0
     self.lat_active_prev = False
     self.steering_pressed_filter_s = 0.0
@@ -264,17 +535,26 @@ class CarController(CarControllerBase):
     self.bosch_wind_factor_before_brake = self.bosch_wind_factor
     self.bosch_gas_factor_before_gasmax = self.bosch_gas_factor
     self.bosch_wind_factor_before_gasmax = self.bosch_wind_factor
+
+    # nrdr-nightly Bosch long learner. Drives the HONDA_BOSCH gas path below; the Nidec
+    # gas-interceptor path keeps the simpler bosch_*_factor fields above. Nightly's BrakeMemory is
+    # deliberately NOT ported: nothing in nightly ever calls its update() and the brake PID that
+    # would feed it is disabled, so it is dead code there.
+    self.param_writer = HondaParamWriter()
+    init_gas, init_wind = _load_learner_meta(CP.carFingerprint)
+    self._learner = LongGasLearner(init_gas, init_wind, CP.carFingerprint)
     self.last_accel_cmd = 0.0
     self.last_accel_sign = 0
     self.sign_change_counter = 0
     self.pitch = 0.0
 
-  def _modified_civic_standard_active(self) -> bool:
-    return self.CP.carFingerprint == CAR.HONDA_CIVIC_BOSCH and bool(self.CP.flags & HondaFlags.EPS_MODIFIED)
-
   def _filtered_steering_pressed(self, CS, torque_cmd: float) -> bool:
-    filter_fn = get_civic_bosch_modified_steering_pressed if self._modified_civic_standard_active() else get_eps_modified_steering_pressed
-    self.steering_pressed_filter_s, steering_pressed = filter_fn(
+    # Every modified-EPS Honda -- Clarity, Civic and Civic Bosch -- shares this detector:
+    # instant latch on opposing or near-zero-command driver torque, 0.28 s on same-direction
+    # torque, instant release. Civic Bosch previously had a graded variant of its own with a
+    # 1.60 s same-direction trip and a decaying release; it was removed rather than left
+    # unrouted, so there is no second override path to fall out of sync.
+    self.steering_pressed_filter_s, steering_pressed = get_eps_modified_steering_pressed(
       bool(CS.out.steeringPressed),
       float(getattr(CS.out, "steeringTorque", 0.0)),
       float(torque_cmd),
@@ -314,7 +594,10 @@ class CarController(CarControllerBase):
     raw_torque_cmd = torque_cmd
 
     if CC.latActive:
-      if live["increase_override_tolerance"] or self._modified_civic_standard_active():
+      # Clarity's behaviour, now shared by every modified-EPS Honda: the command path uses raw
+      # steeringPressed and only debounces when NrdrIncreaseOverrideTolerance is explicitly on.
+      # Civic Bosch used to force the filter on here regardless; that exception is gone.
+      if live["increase_override_tolerance"]:
         steering_pressed = self._filtered_steering_pressed(CS, torque_cmd)
       else:
         steering_pressed = bool(CS.out.steeringPressed)
@@ -334,26 +617,21 @@ class CarController(CarControllerBase):
 
       torque_cmd *= self.override_ramp
 
+      # One LPF for every modified-EPS Honda: the NRDR speed-banded tau, live-tuned through
+      # HondaLpfTau{LowSpeed,Standard,Highway}. Civic Bosch used to fall back to a hardcoded
+      # curve of its own when this toggle was off, which meant "disable the low-pass filter"
+      # silently selected a different low-pass filter on that car. Off now means off.
       if live["torque_lpf_enabled"]:
         tau = torque_lpf_tau(CS.out.vEgo, live["lpf_tau_low"], live["lpf_tau_standard"], live["lpf_tau_highway"])
         alpha = DT_CTRL / (tau + DT_CTRL)
         self.torque_lpf = alpha * torque_cmd + (1.0 - alpha) * self.torque_lpf
         torque_cmd = self.torque_lpf
-      elif self._modified_civic_standard_active() and not steering_pressed:
-        tau = get_civic_bosch_modified_torque_lpf_tau(raw_torque_cmd, self.prev_torque_cmd, CS.out.vEgo)
-        alpha = DT_CTRL / (tau + DT_CTRL)
-        self.torque_lpf = alpha * torque_cmd + (1.0 - alpha) * self.torque_lpf
-        self.prev_torque_cmd = raw_torque_cmd
-        torque_cmd = self.torque_lpf
       else:
         self.torque_lpf = torque_cmd
 
-      if not self._modified_civic_standard_active() or live["torque_lpf_enabled"] or steering_pressed:
-        self.prev_torque_cmd = torque_cmd
     else:
       self.override_ramp = 0.0
       self.torque_lpf = 0.0
-      self.prev_torque_cmd = 0.0
       self.steering_pressed_filter_s = 0.0
       self.steering_pressed_robust_prev = False
 
@@ -466,6 +744,17 @@ class CarController(CarControllerBase):
         can_sends.append(hondacan.spam_buttons_command(self.packer, self.CAN, CruiseButtons.CANCEL, self.CP.carFingerprint))
       elif CC.cruiseControl.resume:
         can_sends.append(hondacan.spam_buttons_command(self.packer, self.CAN, CruiseButtons.RES_ACCEL, self.CP.carFingerprint))
+      else:
+        # Redneck cruise: stock ACC keeps the radar and does the actual following,
+        # openpilot only walks its set speed with button presses. card.py decides
+        # the direction; 0 means hold. Rate limited to 20 Hz like the stock stalk.
+        redneck_button = {
+          1: CruiseButtons.RES_ACCEL,
+          2: CruiseButtons.DECEL_SET,
+        }.get(getattr(CS, "redneck_send_button", 0))
+        if redneck_button is not None and (self.frame - self.last_button_frame) * DT_CTRL > 0.05:
+          can_sends.append(hondacan.spam_buttons_command(self.packer, self.CAN, redneck_button, self.CP.carFingerprint))
+          self.last_button_frame = self.frame
 
     else:
       # Send gas and brake commands.
@@ -473,52 +762,43 @@ class CarController(CarControllerBase):
         ts = self.frame * DT_CTRL
 
         if self.CP.carFingerprint in HONDA_BOSCH:
+          # nrdr-nightly Bosch gas path. The extra-brake PID is disabled there, so brake_addon is
+          # a constant 0.0 and only feeds the learner's gating deadband.
+          brake_addon = 0.0
           self.accel = float(np.clip(accel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX))
-          gas_pedal_force = self.accel + hill_brake
+          gas_pedal_force = accel + wind_brake_mps2 * self._learner.windfactor + hill_brake
 
-          if self.CP.carFingerprint not in HONDA_BOSCH_RADARLESS:
-            gas_pedal_force += wind_brake_mps2 * self.bosch_wind_factor
+          if live["live_learning_gas"]:
+            self._learner.update(
+              accel_cmd=accel,
+              a_ego=CS.out.aEgo,
+              gas_pedal_force=gas_pedal_force,
+              wind_brake_ms2=wind_brake_mps2,
+              long_active=CC.longActive,
+              long_pid=(actuators.longControlState == LongCtrlState.pid),
+              gas_pressed=CS.out.gasPressed,
+              brake_pressed=CS.out.brakePressed,
+              v_ego=CS.out.vEgo,
+              at_standstill=(CS.out.vEgo <= 0.0),
+              pitch=self.pitch,
+              brake_addon=float(brake_addon),
+              at_accel_max=(gas_pedal_force >= self.params.BOSCH_ACCEL_MAX),
+            )
 
-            if live["live_learning_gas"] and actuators.longControlState == LongCtrlState.pid and not CS.out.gasPressed:
-              gas_error = self.accel - CS.out.aEgo
-
-              if gas_error != 0.0 and gas_pedal_force > 0.0:
-                if self.CP.carFingerprint == CAR.HONDA_INSIGHT:
-                  gas_learn_speed = 150.0
-                elif self.CP.carFingerprint in (CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR):
-                  gas_learn_speed = 300.0
-                else:
-                  gas_learn_speed = 50.0
-                self.bosch_gas_factor = float(np.clip(self.bosch_gas_factor + gas_error / gas_learn_speed * gas_pedal_force, 0.1, 3.0))
-
-              if gas_error != 0.0 and not CS.out.brakePressed and CS.out.vEgo > 0.0:
-                wind_learn_speed = 100.0 if self.CP.carFingerprint in (CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR) else 1000.0
-                wind_adjust = 1.0 + wind_brake_mps2 / wind_learn_speed
-                if gas_error > 0.0:
-                  self.bosch_wind_factor = float(np.clip(self.bosch_wind_factor * wind_adjust, 0.1, 3.0))
-                else:
-                  self.bosch_wind_factor = float(np.clip(self.bosch_wind_factor / wind_adjust, 0.1, 3.0))
-
-              if gas_pedal_force <= 0.0:
-                self.bosch_wind_factor = max(self.bosch_wind_factor, self.bosch_wind_factor_before_brake)
-              else:
-                self.bosch_wind_factor_before_brake = self.bosch_wind_factor
-
-              if gas_pedal_force >= self.params.BOSCH_ACCEL_MAX:
-                self.bosch_gas_factor = min(self.bosch_gas_factor, self.bosch_gas_factor_before_gasmax)
-                self.bosch_wind_factor = min(self.bosch_wind_factor, self.bosch_wind_factor_before_gasmax)
-              else:
-                self.bosch_gas_factor_before_gasmax = self.bosch_gas_factor
-                self.bosch_wind_factor_before_gasmax = self.bosch_wind_factor
-
-          self.gas = float(np.interp(gas_pedal_force * self.bosch_gas_factor, self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V))
+          # Anchor the learned gain at min_gas so gasfactor scales the offset from the pedal-on
+          # threshold rather than shifting where gas starts.
+          min_gas = self.params.BOSCH_GAS_LOOKUP_BP[0]
+          self.gas = float(np.interp((gas_pedal_force - min_gas) * self._learner.gasfactor + min_gas,
+                                     self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V))
+          # limit gas ramp to 60 units per frame, matches stock. Higher sometimes causes powertrain
+          # to ignore gas command.
           self.gas = min(self.gas, max(60.0, self.bosch_last_gas + 60.0))
           self.bosch_last_gas = self.gas
 
           stopping = actuators.longControlState == LongCtrlState.stopping
           self.stopping_counter = self.stopping_counter + 1 if stopping else 0
           can_sends.extend(
-            hondacan.create_acc_commands(self.packer, self.CAN, CC.enabled, CC.longActive, self.accel, self.gas, self.stopping_counter, self.CP.carFingerprint)
+            hondacan.create_acc_commands(self.packer, self.CAN, CC.enabled, CC.longActive, self.accel, self.gas, self.stopping_counter, self.CP.carFingerprint, gas_pedal_force)
           )
         else:
           apply_brake = np.clip(self.brake_last - wind_brake, 0.0, 1.0)
@@ -588,8 +868,18 @@ class CarController(CarControllerBase):
             self.gas = pcm_accel / self.params.NIDEC_GAS_MAX
 
     if self.frame > 0 and self.frame % 6000 == 0:
-      self.param_store.put_float("HondaGasFactorParams", self.bosch_gas_factor)
-      self.param_store.put_float("HondaWindFactorParams", self.bosch_wind_factor)
+      if self.CP.carFingerprint in HONDA_BOSCH:
+        # Persist the raw integrators (not the filtered applied values) so the next boot
+        # resumes from the actual learned position, plus the fingerprint/version sidecar.
+        self.param_writer.put_many({
+          "HondaGasFactorParams": self._learner.raw_gasfactor,
+          "HondaWindFactorParams": self._learner.raw_windfactor,
+        })
+        _write_learner_meta_atomic(self.CP.carFingerprint)
+      else:
+        # Nidec gas-interceptor path keeps its own simple factors.
+        self.param_store.put_float("HondaGasFactorParams", self.bosch_gas_factor)
+        self.param_store.put_float("HondaWindFactorParams", self.bosch_wind_factor)
 
     new_actuators = actuators.as_builder()
     new_actuators.speed = self.speed

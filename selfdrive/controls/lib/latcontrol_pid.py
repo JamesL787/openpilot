@@ -2,7 +2,8 @@ import math
 import numpy as np
 
 from cereal import log
-from opendbc.car.honda.carcontroller import get_civic_bosch_modified_steering_pressed, get_eps_modified_steering_pressed
+from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
+from opendbc.car.honda.interface import NRDR_INSIGHT_SR_ANGLE_BP, NRDR_INSIGHT_SR_V
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
@@ -16,10 +17,19 @@ from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
 
+# Effective steer-ratio curves, keyed explicitly by fingerprint.
+#
+# paramsd estimates one near-center scalar (it only observes steering angles below
+# 45 degrees), so it cannot learn a rack's off-center taper. These curves replace
+# that scalar for explicitly mapped VGR cars only, on measured wheel angle (stable;
+# avoids the desired-angle circular dependency). Every other car keeps its normal
+# CP.steerRatio behavior.
+
 # nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio.
+#
 # Values from nrdr a954d153e7 (2026-07-31), "Blend learned Clarity steer ratio into
-# proven tail", ported onto this fork's constant names. Replaces the old two-point
-# [0, 250] -> [17.00, 12.74] taper.
+# proven tail", carried over from nrdr-clarity-backport. Replaces the old two-point
+# [0, 250] -> [17.00, 12.74] taper that this branch still had.
 #
 # The <= 70 degree section is the sample-weighted, non-increasing fit of the measured
 # 5 degree bins. The noisy 5-10 degree rise is capped at the 0-5 degree median, and every
@@ -27,21 +37,49 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 # an unphysical ratio increase. A smoothstep-sampled 70-90 degree handoff rejoins the
 # previous road-proven curve at exactly its existing 90 degree value; 90 degrees onward is
 # unchanged except for the corrected Honda end-to-end specification of 12.72 at 450 degrees.
-NRDR_STEER_RATIO_ANGLE_BP = [0., 2.5, 7.5, 12.5, 17.5, 22.5, 27.5, 32.5, 37.5, 42.5, 47.5, 52.5, 57.5,
-                             62.5, 67.5, 70., 75., 80., 85., 90., 100., 140., 200., 300., 450.]  # |wheel angle|, deg
-NRDR_STEER_RATIO_V = [19.680, 19.680, 19.680, 19.680, 19.344, 19.344, 19.307, 19.151, 18.406, 18.406,
-                      18.406, 18.087, 17.999, 17.999, 17.710, 17.604, 17.222, 16.706, 16.308, 16.093333333333334,
-                      15.940, 15.400, 14.300, 13.400, 12.720]
+NRDR_CLARITY_SR_CURVE_BP = [0., 2.5, 7.5, 12.5, 17.5, 22.5, 27.5, 32.5, 37.5, 42.5, 47.5, 52.5, 57.5,
+                            62.5, 67.5, 70., 75., 80., 85., 90., 100., 140., 200., 300., 450.]  # |wheel angle|, deg
+NRDR_CLARITY_SR_CURVE_V = [19.680, 19.680, 19.680, 19.680, 19.344, 19.344, 19.307, 19.151, 18.406, 18.406,
+                           18.406, 18.087, 17.999, 17.999, 17.710, 17.604, 17.222, 16.706, 16.308, 16.093333333333334,
+                           15.940, 15.400, 14.300, 13.400, 12.720]
 
-# nrdr-nightly's speed-banded Clarity feedforward. Nightly carries this as kfBP/kfV on
-# lateralTuning.pid, but those are capnp fields @5/@6 that this fork's car.capnp does not have,
-# so the curve lives here instead of forcing a cereal schema change and rebuild. kp/ki band the
-# normal way through kpBP/kpV in interface.py, which this schema does support.
-# nrdr 2026-07-29 (36e97ec6c2) halves kf below 25 mph alongside kp/ki, with a
-# near-duplicate breakpoint just under 25 mph so the handoff to the unchanged
-# standard-speed tune is hard rather than ramped. Mirrors their kfBP/kfV exactly.
-NRDR_CLARITY_KF_SPEED_BP = [0.0, 25.0 * 0.44704 - 1e-3, 25.0 * 0.44704, 50.0 * 0.44704]  # m/s
-NRDR_CLARITY_KF_V = [2.4e-6, 1.8e-6, 3.6e-6, 6.0e-6]
+NRDR_CRV_5G_SR_CURVE_BP = [0., 50., 100., 150., 175., 200.]
+NRDR_CRV_5G_SR_CURVE_V = [18.10, 17.80, 16.30, 15.30, 14.90, 14.60]
+
+# Model-corrected effective ratio from Peter's 10th-gen Civic Bosch telemetry.
+# The tail is strongly supported by repeatable left/right, cross-route samples;
+# the near-center anchor is intentionally conservative while paramsd convergence
+# and tire-stiffness-factor coverage are expanded.
+NRDR_CIVIC_BOSCH_SR_CURVE_BP = [0., 25., 50., 75., 100., 125., 150., 175., 200., 225., 250., 275.]
+NRDR_CIVIC_BOSCH_SR_CURVE_V = [15.25, 15.10, 14.60, 14.10, 13.75, 13.50, 13.25, 13.10, 13.00, 12.90, 12.75, 12.65]
+
+NRDR_SR_CURVE_BY_FP = {
+  "HONDA_CLARITY": (NRDR_CLARITY_SR_CURVE_BP, NRDR_CLARITY_SR_CURVE_V),
+  "HONDA_CRV_5G": (NRDR_CRV_5G_SR_CURVE_BP, NRDR_CRV_5G_SR_CURVE_V),
+  "HONDA_CIVIC_BOSCH": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
+  # Temporary 10th-gen family fallback until Nidec-specific telemetry is available.
+  "HONDA_CIVIC": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
+  "HONDA_INSIGHT": (NRDR_INSIGHT_SR_ANGLE_BP, NRDR_INSIGHT_SR_V),
+}
+
+# NRDR modified-EPS speed-banded feedforward shared by Clarity and Civic Bosch. The
+# duplicate-near-25 breakpoint preserves the road-tested hard handoff.
+NRDR_MODIFIED_EPS_KF_SPEED_BP = [0.0, 25.0 * 0.44704 - 1e-3, 25.0 * 0.44704, 50.0 * 0.44704]  # m/s
+NRDR_MODIFIED_EPS_KF_V = [2.4e-6, 1.8e-6, 3.6e-6, 6.0e-6]
+
+# Cars carrying the shared modified-EPS tune (the four-point kp/ki in interface.py). They all
+# take the banded feedforward above; every other car keeps the scalar kf from CarParams.
+# Kept as a set so adding a car is one entry rather than another term in an or-chain.
+NRDR_MODIFIED_EPS_KF_CARS = frozenset({
+  "HONDA_CLARITY",
+  "HONDA_CIVIC",
+  "HONDA_CIVIC_BOSCH",
+  "HONDA_INSIGHT",
+})
+
+
+def get_nrdr_modified_eps_kf(v_ego: float) -> float:
+  return float(np.interp(v_ego, NRDR_MODIFIED_EPS_KF_SPEED_BP, NRDR_MODIFIED_EPS_KF_V))
 
 
 CENTER_TAPER_FADE_TAU = 0.25
@@ -246,12 +284,18 @@ class LatControlPID(LatControl):
     self.is_honda_pid_lateral = CP.brand == "honda"
     self.honda_lateral_pid_kp_scale = 1.0
     self.honda_lateral_pid_ki_scale = 1.0
+    self.is_modified_eps_kf_car = (str(CP.carFingerprint) in NRDR_MODIFIED_EPS_KF_CARS
+                                   and bool(CP.flags & HondaFlags.EPS_MODIFIED))
     self.is_civic_bosch_modified = CP.carFingerprint == HONDA.HONDA_CIVIC_BOSCH and bool(CP.flags & HondaFlags.EPS_MODIFIED)
-    self.is_clarity_eps_modified = CP.carFingerprint == HONDA.HONDA_CLARITY and bool(CP.flags & HondaFlags.EPS_MODIFIED)
     self.is_subaru_impreza = CP.carFingerprint in SUBARU_IMPREZA_CARS
+    # NRDR: every modified-EPS Honda (Civic 39990-TBA, CR-V 5G 39990-TLA, Insight 39990-TXM,
+    # Clarity 39990-TRW) runs the live tune.
+    self.is_eps_modified = self.is_honda_pid_lateral and bool(CP.flags & HondaFlags.EPS_MODIFIED)
+    # Optional per-fingerprint VGR curve, independent of EPS_MODIFIED (the rack's geometry does not
+    # change with the firmware). There is deliberately no global fallback: applying one car's measured
+    # curve to an unmapped rack would corrupt its curvature->angle conversion.
+    self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
     self.prev_angle_steers_des_no_offset = 0.0
-    self.modified_civic_steering_pressed_filter_s = 0.0
-    self.modified_civic_steering_pressed_prev = False
     self.eps_modified_steering_pressed_filter_s = 0.0
     self.eps_modified_steering_pressed_prev = False
     self.prev_output_torque = 0.0
@@ -303,10 +347,12 @@ class LatControlPID(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    if self.is_clarity_eps_modified:
+    if self.sr_curve is not None:
       # NRDR: apply the variable-rack taper before curvature->angle conversion. controlsd
-      # refreshes VM every frame, so this per-frame override cannot compound.
-      VM.sR = float(np.interp(abs(CS.steeringAngleDeg), NRDR_STEER_RATIO_ANGLE_BP, NRDR_STEER_RATIO_V))
+      # refreshes VM every frame, so this per-frame override cannot compound. Only the
+      # explicitly mapped fingerprints override VehicleModel; all other cars keep normal behavior.
+      sr_bp, sr_v = self.sr_curve
+      VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
 
     angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
     angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
@@ -318,8 +364,6 @@ class LatControlPID(LatControl):
       output_torque = 0.0
       pid_log.active = False
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
-      self.modified_civic_steering_pressed_filter_s = 0.0
-      self.modified_civic_steering_pressed_prev = False
       self.eps_modified_steering_pressed_filter_s = 0.0
       self.eps_modified_steering_pressed_prev = False
       self.center_taper_scale.x = 1.0
@@ -334,14 +378,14 @@ class LatControlPID(LatControl):
       phase = angle_steers_des_no_offset * desired_angle_delta
 
       # offset does not contribute to resistive torque
-      if self.is_clarity_eps_modified:
-        ff_factor = float(np.interp(CS.vEgo, NRDR_CLARITY_KF_SPEED_BP, NRDR_CLARITY_KF_V))
+      if self.is_modified_eps_kf_car:
+        ff_factor = get_nrdr_modified_eps_kf(CS.vEgo)
       else:
         ff_factor = self.ff_factor
       ff = ff_factor * self.get_steer_feedforward(angle_steers_des_no_offset, CS.vEgo)
       abs_angle_des = abs(angle_steers_des_no_offset)
       unwind_predicted = False
-      if self.is_clarity_eps_modified:
+      if self.is_eps_modified:
         unwind_ff_boost = float(np.interp(CS.vEgo, [0.0, 10.0], [self.unwind_ff_multiplier, 1.0]))
         steering_rate_unwind_ff = angle_steers_des_no_offset * float(CS.steeringRateDeg) < -1.0
         ff_unwind_weight = min(max(-phase / 0.5, 0.0), 1.0)
@@ -375,16 +419,9 @@ class LatControlPID(LatControl):
         ff *= 1.0 + ff_unwind_weight * max(unwind_ff_boost - 1.0, 0.0)
 
       steering_pressed = CS.steeringPressed
-      if self.is_civic_bosch_modified:
-        self.modified_civic_steering_pressed_filter_s, steering_pressed = get_civic_bosch_modified_steering_pressed(
-          bool(CS.steeringPressed),
-          float(getattr(CS, "steeringTorque", 0.0)),
-          float(self.prev_output_torque),
-          self.modified_civic_steering_pressed_filter_s,
-          self.modified_civic_steering_pressed_prev,
-        )
-        self.modified_civic_steering_pressed_prev = steering_pressed
-      elif self.is_clarity_eps_modified:
+      # Civic Bosch used to take a graded detector of its own here. It now shares the generic
+      # modified-EPS one with the Clarity, so override feel is identical across the cars.
+      if self.is_eps_modified:
         self.eps_modified_steering_pressed_filter_s, steering_pressed = get_eps_modified_steering_pressed(
           bool(CS.steeringPressed),
           float(getattr(CS, "steeringTorque", 0.0)),
@@ -394,10 +431,10 @@ class LatControlPID(LatControl):
         )
         self.eps_modified_steering_pressed_prev = steering_pressed
 
-      freeze_threshold = 2.0 if self.is_clarity_eps_modified else 5.0
+      freeze_threshold = 2.0 if self.is_eps_modified else 5.0
       freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < freeze_threshold
       unwind_detected = phase < UNWIND_FREEZE_PHASE_THRESHOLD and abs_angle_des < UNWIND_FREEZE_ANGLE_NEAR_CENTER
-      if self.is_clarity_eps_modified and self.unwind_freeze_enabled and (unwind_detected or unwind_predicted):
+      if self.is_eps_modified and self.unwind_freeze_enabled and (unwind_detected or unwind_predicted):
         freeze_integrator = True
 
       output_torque = self.pid.update(error,
@@ -405,8 +442,16 @@ class LatControlPID(LatControl):
                                 speed=CS.vEgo,
                                 freeze_integrator=freeze_integrator)
 
-      if self.is_clarity_eps_modified:
+      # The Civic Bosch testing ground applies its own hardcoded center taper below; let it own the
+      # output scale so the two tapers can never compound.
+      civic_bosch_testing_ground = self.is_civic_bosch_modified and civic_bosch_modified_lateral_testing_ground_active()
+
+      if self.is_eps_modified:
         if self.frame % 300 == 0:
+          # Lat*Scale are pure user fine-trim now: every modified-EPS car gets its banding from
+          # kpBP/kpV in interface.py, and these params default to a neutral 100. The old
+          # Clarity-only gate here existed because they defaulted 135/200 and would otherwise
+          # leak the Clarity curve onto Civic/CR-V/Insight; that premise is gone.
           self.lat_p_scale_low = _get_param_float(self.params, "LatPScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_p_scale_standard = _get_param_float(self.params, "LatPScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_p_scale_highway = _get_param_float(self.params, "LatPScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
@@ -436,16 +481,17 @@ class LatControlPID(LatControl):
           center_taper_scale = 0.0
         else:
           center_taper_scale = float(self.center_taper_scale.update(1.0))
-        output_torque *= _clarity_eps_pid_output_scale(
-          angle_steers_des_no_offset,
-          desired_angle_delta,
-          float(CS.steeringRateDeg),
-          CS.vEgo,
-          center_taper_scale,
-          self.center_taper_high,
-          self.center_boost_threshold,
-          self.center_boost_min_speed * _MPH_TO_MS,
-        )
+        if not civic_bosch_testing_ground:
+          output_torque *= _clarity_eps_pid_output_scale(
+            angle_steers_des_no_offset,
+            desired_angle_delta,
+            float(CS.steeringRateDeg),
+            CS.vEgo,
+            center_taper_scale,
+            self.center_taper_high,
+            self.center_boost_threshold,
+            self.center_boost_min_speed * _MPH_TO_MS,
+          )
 
       if self.is_subaru_impreza:
         raw_output_torque = self.pid.p + self.pid.i + self.pid.d + self.pid.f
@@ -453,7 +499,7 @@ class LatControlPID(LatControl):
 
       output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
-      if self.is_civic_bosch_modified and civic_bosch_modified_lateral_testing_ground_active():
+      if civic_bosch_testing_ground:
         output_torque *= get_civic_bosch_modified_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)
         output_alpha = get_civic_bosch_modified_pid_output_alpha(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo,
                                                                  output_torque, self.prev_output_torque)

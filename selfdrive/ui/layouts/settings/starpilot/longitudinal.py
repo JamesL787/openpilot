@@ -525,6 +525,14 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     # ── 2. Advanced Actuators Rows ──
     adv = self._advanced_enabled
     self._advanced_rows = [
+      SettingRow("NrdrModelLeadTrajectory", "toggle", tr_noop("Model Lead Trajectory"),
+                 subtitle=tr_noop("Experimental. Plan against the driving model's predicted lead path "
+                                  "instead of extrapolating the lead's current acceleration forward. "
+                                  "Can brake earlier for a lead that keeps slowing, and react less to "
+                                  "brief lead braking. Civic Bosch only."),
+                 get_state=lambda: self._params.get_bool("NrdrModelLeadTrajectory"),
+                 set_state=lambda v: self._params.put_bool("NrdrModelLeadTrajectory", v),
+                 visible=lambda: adv() and self._is_civic_bosch()),
       SettingRow("EVTuning", "toggle", tr_noop("EV Tuning"),
                  subtitle=tr_noop("Acceleration tuning for EV and direct-drive vehicles."),
                  get_state=lambda: self._params.get_bool("EVTuning"),
@@ -669,21 +677,13 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
     # ── 4. Adaptive Speed Controls Rows (CES + CSC + CCM) ──
     self._curve_speed_controller_rows = [
-      SettingRow("CalibratedLatAccel", "value", tr_noop("Calibrated Lateral Accel"),
-                 subtitle=tr_noop("The learned lateral acceleration from collected driving data. Higher values allow faster cornering."),
-                 get_value=lambda: f"{self._params_memory.get_float('CalibratedLateralAcceleration'):.2f} m/s",
-                 on_click=None,
-                 visible=csc_on),
-      SettingRow("CalibrationProgress", "value", tr_noop("Calibration Progress"),
-                 subtitle=tr_noop("How much curve data has been collected. Normal for the value to stay low."),
-                 get_value=lambda: f"{self._params_memory.get_float('CalibrationProgress'):.2f}%",
-                 on_click=None,
-                 visible=csc_on),
-      SettingRow("ResetCurve", "action", tr_noop("Reset Curve Data"),
-                 subtitle=tr_noop("Reset collected user data for Curve Speed Controller."),
-                 action_text=tr_noop("Reset"),
-                 action_danger=True,
-                 on_click=self._reset_curve_data,
+      SettingRow("CurveSpeedLateralAccel", "value", tr_noop("Curve Lateral Accel"),
+                 subtitle=tr_noop("Lateral acceleration allowed through curves. Higher values corner faster; "
+                                  "lower values slow down earlier and harder."),
+                 get_value=lambda: f"{self._params.get_float('CurveSpeedLateralAccel'):.1f} m/s²",
+                 on_click=lambda: self._show_slider("CurveSpeedLateralAccel", 1.5, 3.0, step=0.1,
+                                                    unit=" m/s²", value_type="float",
+                                                    title=tr_noop("Curve Lateral Accel")),
                  visible=csc_on),
     ]
 
@@ -986,15 +986,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     dialog = MultiOptionDialog(tr("Conditional Drive Mode"), options, current, callback=on_select)
     gui_app.push_widget(dialog)
 
-  def _reset_curve_data(self):
-    def on_close(res):
-      if res == DialogResult.CONFIRM:
-        self._params.put_float("CalibratedLateralAcceleration", 2.00)
-        self._params.remove("CalibrationProgress")
-        self._params.remove("CurvatureData")
-
-    gui_app.push_widget(ConfirmDialog(tr_noop("Reset Curve Data?"), tr_noop("Confirm"), callback=on_close))
-
   def _reset_profile(self, profile: str):
     def on_close(res):
       if res == DialogResult.CONFIRM:
@@ -1002,6 +993,16 @@ class StarPilotLongitudinalLayout(_SettingsPage):
           self._params.remove(profile + key)
 
     gui_app.push_widget(ConfirmDialog(tr_noop("Reset to Defaults?"), tr_noop("Confirm"), callback=on_close))
+
+  def _is_civic_bosch(self) -> bool:
+    """True only on a Civic Bosch. CP comes from CarParamsPersistent, so this is False until
+    the car has been seen once -- the experimental row simply stays hidden until then."""
+    try:
+      from openpilot.selfdrive.ui.ui_state import ui_state
+      cp = getattr(ui_state, "CP", None)
+      return cp is not None and str(cp.carFingerprint) == "HONDA_CIVIC_BOSCH"
+    except Exception:
+      return False
 
   def _is_metric(self) -> bool:
     return self._params.get_bool("IsMetric")

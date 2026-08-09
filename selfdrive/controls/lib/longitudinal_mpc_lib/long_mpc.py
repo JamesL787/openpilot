@@ -15,7 +15,11 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.controls.lib.lead_behavior import get_tracked_lead_catchup_bias, is_radarless_matched_follow_window
 # WARNING: imports outside of constants will not trigger a rebuild
-from openpilot.selfdrive.modeld.constants import index_function
+from openpilot.selfdrive.modeld.constants import index_function, ModelConstants
+
+# Horizon the model predicts leads over: [0, 2, 4, 6, 8, 10] s, 6 points.
+LEAD_T_IDXS_MODEL = np.array(ModelConstants.LEAD_T_IDXS)
+LEAD_TRAJ_LEN = ModelConstants.LEAD_TRAJ_LEN
 
 if __name__ == '__main__':  # generating code
   from openpilot.third_party.acados.acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
@@ -414,6 +418,8 @@ class LongitudinalMpc:
     self.solver.cost_set(N, "yref", self.yref[N][:COST_E_DIM])
     self.x_sol = np.zeros((N+1, X_DIM))
     self.u_sol = np.zeros((N,1))
+    self.lead_xv_0 = np.zeros((N+1, 2))
+    self.lead_xv_1 = np.zeros((N+1, 2))
     self.params = np.zeros((N+1, PARAM_DIM))
     for i in range(N+1):
       self.solver.set(i, 'x', np.zeros(X_DIM))
@@ -570,10 +576,53 @@ class LongitudinalMpc:
     lead_xv = np.column_stack((x_lead_traj, v_lead_traj))
     return lead_xv
 
+  @staticmethod
+  def model_lead_trajectory(lead, model_lead, v_ego):
+    """Lead trajectory taken from the model's predicted horizon instead of extrapolated.
+
+    Anchored at the radar's h=0 so measured distance and speed still set the near field;
+    only the shape beyond h=0 comes from the model. This lets the MPC see a lead that the
+    model expects to keep decelerating (red light) or keep accelerating (cut-in), instead
+    of assuming its acceleration decays to zero. See commaai/openpilot#37824.
+
+    Returns None if the model output is unusable, so the caller falls back to extrapolation.
+    """
+    mx = np.asarray(model_lead.x, dtype=np.float64)
+    mv = np.asarray(model_lead.v, dtype=np.float64)
+    if mx.size != LEAD_TRAJ_LEN or mv.size != LEAD_TRAJ_LEN:
+      return None
+    if not (np.all(np.isfinite(mx)) and np.all(np.isfinite(mv))):
+      return None
+
+    x_traj = float(lead.dRel) + (mx - mx[0])
+    v_traj = float(lead.vLead) + (mv - mv[0])
+
+    # Same crash guard as the extrapolated path: MPC will not converge if an immediate
+    # crash is expected, so lift h=0 to the minimum distance still brakeable.
+    v_lead_0 = float(v_traj[0])
+    min_x_lead = ((v_ego + v_lead_0) / 2) * (v_ego - v_lead_0) / (-ACCEL_MIN * 2)
+    x_traj[0] = max(x_traj[0], min_x_lead)
+    v_traj = np.clip(v_traj, 0.0, 1e8)
+
+    # maximum.accumulate keeps x monotonic after interpolation; a lead that closes on us
+    # is expressed through v, never through x going backwards.
+    x_mpc = np.maximum.accumulate(np.interp(T_IDXS, LEAD_T_IDXS_MODEL, x_traj))
+    v_mpc = np.interp(T_IDXS, LEAD_T_IDXS_MODEL, v_traj)
+    return np.column_stack((x_mpc, v_mpc))
+
   def process_lead(self, lead, tracking_lead=True, t_follow=None, *, lead_index=0,
-                   smooth_duplicate_vision=False):
+                   smooth_duplicate_vision=False, model_lead=None):
     v_ego = self.x0[1]
     lead_active = lead is not None and lead.status and tracking_lead
+
+    # Experimental model-trajectory path. Gated upstream in the planner (Civic Bosch +
+    # NrdrModelLeadTrajectory); model_lead is None otherwise, so every other car falls
+    # through to the extrapolation below completely unchanged.
+    if model_lead is not None and lead_active and float(getattr(model_lead, "prob", 0.0)) > 0.5:
+      lead_xv = self.model_lead_trajectory(lead, model_lead, v_ego)
+      if lead_xv is not None:
+        return lead_xv
+
     if lead_active:
       x_lead = lead.dRel
       v_lead = lead.vLead
@@ -845,15 +894,22 @@ class LongitudinalMpc:
   def update(self, radarstate, v_cruise, x, v, a, j, danger_factor, t_follow,
              personality=log.LongitudinalPersonality.standard, tracking_lead=True,
              optional_far_lead_comfort=True, smooth_duplicate_vision=False,
-             stop_x=None):
+             model_leads=None, stop_x=None):
     v_ego = self.x0[1]
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
     self.status = tracking_lead and (lead_one.status or lead_two.status)
+    model_lead_0 = model_leads[0] if model_leads is not None and len(model_leads) > 0 else None
+    model_lead_1 = model_leads[1] if model_leads is not None and len(model_leads) > 1 else None
     lead_xv_0 = self.process_lead(lead_one, tracking_lead, t_follow=t_follow, lead_index=0,
-                                  smooth_duplicate_vision=smooth_duplicate_vision)
+                                  smooth_duplicate_vision=smooth_duplicate_vision,
+                                  model_lead=model_lead_0)
     lead_xv_1 = self.process_lead(lead_two, tracking_lead, t_follow=t_follow, lead_index=1,
-                                  smooth_duplicate_vision=smooth_duplicate_vision)
+                                  smooth_duplicate_vision=smooth_duplicate_vision,
+                                  model_lead=model_lead_1)
+    # Published for offline analysis of the trajectories the MPC actually solved against.
+    self.lead_xv_0 = lead_xv_0
+    self.lead_xv_1 = lead_xv_1
 
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance

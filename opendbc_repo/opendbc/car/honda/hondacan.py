@@ -76,14 +76,17 @@ def create_brake_command(packer, CAN, apply_brake, pump_on, pcm_override, pcm_ca
   return packer.make_can_msg("BRAKE_COMMAND", CAN.pt, values)
 
 
-def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_counter, car_fingerprint):
+def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_counter, car_fingerprint, gas_force):
   commands = []
   min_gas_accel = CarControllerParams.BOSCH_GAS_LOOKUP_BP[0]
 
   control_on = 5 if enabled else 0
-  gas_command = gas if active and accel > min_gas_accel else -30000
+  gas_command = gas if active and gas_force > min_gas_accel else -30000
   accel_command = accel if active else 0
-  braking = 1 if active and accel < min_gas_accel else 0
+  # nrdr: stock brake-bit computation. Using gas_force (accel + wind + hill feedforward) here
+  # jittered BRAKE_REQUEST/BRAKE_LIGHTS around light decel on the radar Bosch. Keep comma's
+  # accel-based logic at the stock -0.2 threshold, independent of the gas lookup BP.
+  braking = 1 if active and accel < -0.2 else 0
   standstill = 1 if active and stopping_counter > 0 else 0
   standstill_release = 1 if active and stopping_counter == 0 else 0
 
@@ -91,6 +94,7 @@ def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_count
   acc_control_values = {
     'ACCEL_COMMAND': accel_command,
     'STANDSTILL': standstill,
+    'BRAKE_REQUEST': braking,
   }
 
   if car_fingerprint in HONDA_BOSCH_RADARLESS:
@@ -104,7 +108,6 @@ def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_count
       "CONTROL_ON": control_on,
       "GAS_COMMAND": gas_command,  # used for gas
       "BRAKE_LIGHTS": braking,
-      "BRAKE_REQUEST": braking,
       "STANDSTILL_RELEASE": standstill_release,
     })
     acc_control_on_values = {
