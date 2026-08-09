@@ -3,6 +3,7 @@ import numpy as np
 
 from cereal import log
 from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
+from opendbc.car.honda.interface import NRDR_INSIGHT_SR_ANGLE_BP, NRDR_INSIGHT_SR_V
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
@@ -58,6 +59,7 @@ NRDR_SR_CURVE_BY_FP = {
   "HONDA_CIVIC_BOSCH": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
   # Temporary 10th-gen family fallback until Nidec-specific telemetry is available.
   "HONDA_CIVIC": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
+  "HONDA_INSIGHT": (NRDR_INSIGHT_SR_ANGLE_BP, NRDR_INSIGHT_SR_V),
 }
 
 # NRDR modified-EPS speed-banded feedforward shared by Clarity and Civic Bosch. The

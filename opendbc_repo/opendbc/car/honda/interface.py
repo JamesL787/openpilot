@@ -13,6 +13,16 @@ from opendbc.car.interfaces import CarInterfaceBase
 
 TransmissionType = structs.CarParams.TransmissionType
 
+# First-pass Insight variable-rack steer-ratio curve from the night-star SR extract.
+# Breakpoints are |steering-angle| bin midpoints in degrees; values are the fitted SR
+# medians for those bins. The curve is consumed by latcontrol_pid for HONDA_INSIGHT.
+NRDR_INSIGHT_SR_ANGLE_BP = [0., 7.5, 12.5, 17.5, 22.5, 27.5, 32.5, 37.5, 47.5, 52.5,
+                            57.5, 62.5, 67.5, 72.5, 77.5, 82.5, 87.5, 92.5, 97.5,
+                            102.5, 107.5, 112.5, 117.5, 212.5, 217.5, 257.5, 450.]
+NRDR_INSIGHT_SR_V = [18.632, 18.632, 18.632, 18.632, 18.632, 18.627, 18.627, 17.719, 17.719, 17.719,
+                     17.680, 17.680, 17.401, 17.401, 17.401, 17.401, 17.401, 17.401, 17.401,
+                     17.256, 17.256, 17.256, 17.004, 15.855, 15.855, 15.855, 15.855]
+
 
 class CarInterface(CarInterfaceBase):
   CarState = CarState
