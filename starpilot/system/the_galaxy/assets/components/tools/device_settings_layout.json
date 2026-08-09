@@ -1118,6 +1118,18 @@
         "settings_tier": "simple"
       },
       {
+        "key": "CurveSpeedLateralAccel",
+        "label": "Curve Lateral Accel",
+        "description": "Lateral acceleration allowed through curves, in m/s². Higher values corner faster; lower values slow down earlier and harder.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 1.5,
+        "max": 3.0,
+        "step": 0.1,
+        "parent_key": "CurveSpeedController",
+        "settings_tier": "simple"
+      },
+      {
         "key": "ResetCurveData",
         "label": "Reset Curve Data",
         "description": "Clear learned Curve Speed Controller data and begin training again from the default lateral acceleration.",
