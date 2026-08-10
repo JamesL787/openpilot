@@ -149,12 +149,13 @@ function launch {
 
   function prebuilt_runtime_compatible {
     python3 - <<'PY'
-import hashlib
 import importlib
 import os
 from pathlib import Path
 import sys
 import time
+
+from openpilot.common.file_chunker import file_chunked_exists
 
 start = time.monotonic()
 last = start
@@ -195,57 +196,6 @@ for mod in mods:
 
 repo_root = Path.cwd().parents[1]
 
-def join_chunked_artifacts(root):
-  """Rebuild artifacts that are too big for git and ship split into .chunkNNofMM parts.
-
-  Without this the required-files check below fails on a fresh checkout, prebuilt is declared
-  incompatible, and every single boot pays for a full local build. Joining is idempotent and
-  verified against the shipped .sha256, so a truncated or half-written join is discarded
-  rather than trusted.
-  """
-  joined = []
-  for first in sorted(root.glob("**/*.chunk01of*")):
-    target = first.parent / first.name.split(".chunk01of")[0]
-    if target.is_file():
-      continue
-    manifest = Path(f"{target}.chunkmanifest")
-    try:
-      count = int(manifest.read_text().strip())
-    except (OSError, ValueError):
-      continue
-    parts = [Path(f"{target}.chunk{i:02d}of{count:02d}") for i in range(1, count + 1)]
-    if not all(p.is_file() for p in parts):
-      continue
-    want = ""
-    sha_file = Path(f"{target}.sha256")
-    try:
-      want = sha_file.read_text().split()[0].strip()
-    except (OSError, IndexError):
-      pass
-    tmp = target.with_name(f".{target.name}.joining")
-    digest = hashlib.sha256()
-    try:
-      with tmp.open("wb") as out:
-        for part in parts:
-          with part.open("rb") as src:
-            for block in iter(lambda s=src: s.read(1024 * 1024), b""):
-              out.write(block)
-              digest.update(block)
-      if want and digest.hexdigest() != want:
-        emit(f"SP_BOOT_TIMING prebuilt_compat chunk_join_sha_mismatch {target.name}")
-        tmp.unlink(missing_ok=True)
-        continue
-      tmp.replace(target)
-      joined.append(target.name)
-    except OSError as exc:
-      emit(f"SP_BOOT_TIMING prebuilt_compat chunk_join_failed {target.name}: {exc}")
-      tmp.unlink(missing_ok=True)
-  if joined:
-    emit(f"SP_BOOT_TIMING prebuilt_compat chunk_join joined={','.join(joined)}")
-
-join_chunked_artifacts(repo_root)
-log_step("chunk_join")
-
 required_files = [
   repo_root / "selfdrive/modeld/models/driving_tinygrad.pkl",
   repo_root / "selfdrive/modeld/models/dmonitoring_model_metadata.pkl",
@@ -260,8 +210,12 @@ required_files = [
   repo_root / "opendbc_repo/opendbc/dbc/gm_global_a_powertrain_generated.dbc",
 ]
 
+# Large artifacts ship split into .chunkNNofMM parts, and modeld reads them through
+# read_file_chunked() without ever assembling them. Use the same chunk-aware predicate here:
+# a bare is_file() reports them missing, which declares prebuilt incompatible and makes every
+# boot pay for a full local build.
 for path in required_files:
-  if not path.is_file():
+  if not file_chunked_exists(path):
     raise FileNotFoundError(f"Missing prebuilt runtime artifact: {path}")
 log_step("required_files")
 PY
