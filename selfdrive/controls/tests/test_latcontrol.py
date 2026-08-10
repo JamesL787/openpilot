@@ -22,6 +22,10 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   LatControlPID,
   get_civic_bosch_modified_pid_output_alpha,
   get_civic_bosch_modified_pid_output_scale,
+  NRDR_CLARITY_VGR_ANGLE_BP,
+  NRDR_CLARITY_VGR_LINEAR_BP,
+  NRDR_CLARITY_VGR_REL_LOCAL,
+  NRDR_VGR_INVERSE_BY_FP,
 )
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   clear_flm_runtime_overrides,
@@ -198,6 +202,45 @@ class TestLatControl:
 
     starpilot_toggles = SimpleNamespace()
     return controller, VM, CS, params, starpilot_toggles
+
+  def test_clarity_vgr_inverse_map(self):
+    import numpy as np
+    from itertools import pairwise
+
+    linear_bp, angle_bp = NRDR_VGR_INVERSE_BY_FP["HONDA_CLARITY"]
+    assert (linear_bp, angle_bp) == (NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP)
+    assert len(angle_bp) == len(linear_bp) == len(NRDR_CLARITY_VGR_REL_LOCAL)
+    # Both axes must be strictly increasing or np.interp is not a bijection.
+    assert all(left < right for left, right in pairwise(angle_bp))
+    assert all(left < right for left, right in pairwise(linear_bp))
+    assert angle_bp[0] == 0.0 and linear_bp[0] == 0.0
+
+    def solve(angle_linear):
+      return float(np.interp(abs(angle_linear), linear_bp, angle_bp))
+
+    # The rack is constant below ~16 deg, so the map must be an exact no-op there:
+    # near-center behavior stays bit-identical to a plain constant-ratio model.
+    for angle in (0.0, 1.0, 5.0, 10.0, 16.0):
+      assert solve(angle) == pytest.approx(angle, abs=1e-6)
+
+    # Off-center the rack is quicker, so less wheel angle is needed than a constant
+    # ratio would ask for. Never more.
+    for angle in (30.0, 60.0, 100.0, 200.0, 400.0):
+      assert solve(angle) < angle
+    assert solve(103.083) == pytest.approx(95.805, abs=0.05)
+
+    # The local ratio is flat 1.0 at center, falls to a 1.2000x span, and holds it to lock.
+    assert NRDR_CLARITY_VGR_REL_LOCAL[0] == 1.0
+    assert NRDR_CLARITY_VGR_REL_LOCAL[-1] == pytest.approx(1.0 / 1.2, abs=5e-4)
+    assert all(left >= right - 1e-9 for left, right in pairwise(NRDR_CLARITY_VGR_REL_LOCAL))
+
+    # LINEAR_BP is the integral of 1/rel_local, not angle/rel_local. Guard the difference:
+    # a pointwise division would put the 95.805 deg knot at 114.8 rather than 103.1.
+    assert linear_bp[angle_bp.index(95.805)] == pytest.approx(103.083, abs=0.05)
+    assert angle_bp[-1] / NRDR_CLARITY_VGR_REL_LOCAL[-1] > linear_bp[-1] + 1.0
+
+    # Only explicitly traced fingerprints may carry an inverse map.
+    assert set(NRDR_VGR_INVERSE_BY_FP) == {"HONDA_CLARITY"}
 
   def test_bolt_2017_testing_ground_scale_curve(self):
     assert get_bolt_2017_base_torque_scale(0.1) == 1.0

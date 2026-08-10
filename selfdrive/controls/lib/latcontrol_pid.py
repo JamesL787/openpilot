@@ -62,6 +62,52 @@ NRDR_SR_CURVE_BY_FP = {
   "HONDA_INSIGHT": (NRDR_INSIGHT_SR_ANGLE_BP, NRDR_INSIGHT_SR_V),
 }
 
+# Firmware-derived VGR inverse map (measured, not fitted).
+#
+# The Clarity EPS image 39990-TRW-A020 carries the rack's variable-gear-ratio curve as two
+# 30-point big-endian int16 tables, gains in Q14 (unity 0x4000 = 16384):
+#     A   X @0x130A8  Y @0x1306C   position map: raw pinion angle -> published CAN angle
+#     B   X @0x13120  Y @0x130E4   local (differential) steer-ratio gain
+# FUN_0001fe26 computes  published = (raw << 14) / interp(|raw|, A)  and writes 0xFFF87280;
+# the interpolator's bypass path forces 0x4000, which is what fixes the Q14 scaling.
+# Cross-checks: differentiating A reproduces B to 0.08%; the gold CCP flash dump is
+# byte-identical here; and a live SRAM snapshot (raw 0xFFF87284 = -78 -> published
+# 0xFFF87280 = -79) matches the near-centre gain of 0.9890.
+#
+# B is the LOCAL ratio (d(theta)/d(delta)). VehicleModel uses sR as a SECANT ratio
+# (delta = theta / sR), so converting between them is an integral, not a division:
+#     delta(theta) = integral(0..theta) d(phi) / SR_local(phi)
+# LINEAR_BP is that integral expressed in centre-ratio units - i.e. the angle a
+# constant-ratio model would have asked for to reach the same road-wheel angle. It is
+# therefore anchor-free: it scales automatically with whatever sR paramsd has learned.
+# Inverting is one interpolation, no fixed-point iteration:
+#     theta_des = interp(theta_linear, LINEAR_BP, ANGLE_BP)
+# Breakpoints at 50/68/87 deg are resampled from the continuous firmware curve (Honda's own
+# spacing chords too coarsely through the transition, worth ~0.29 deg at 50 deg).
+NRDR_CLARITY_VGR_ANGLE_BP = [0.000, 4.052, 8.104, 12.102, 16.201, 20.205,
+                             24.299, 28.299, 32.296, 40.194, 50.000, 59.571,
+                             68.000, 78.095, 87.000, 95.805, 104.440, 140.000,
+                             200.000, 300.000, 450.000]  # |wheel angle|, deg
+NRDR_CLARITY_VGR_LINEAR_BP = [0.000, 4.052, 8.104, 12.102, 16.201, 20.208,
+                              24.316, 28.346, 32.397, 40.504, 50.818, 61.193,
+                              70.587, 82.162, 92.605, 103.083, 113.438, 156.111,
+                              228.111, 348.113, 528.115]  # constant-ratio equivalent, deg
+# Local ratio relative to centre, for reference only - LINEAR_BP already integrates it.
+# 1.000 flat to ~16 deg, falling to 0.833 (a 1.2000x span) and flat again past ~105 deg.
+NRDR_CLARITY_VGR_REL_LOCAL = [1.000, 1.000, 1.000, 1.000, 1.000, 0.998,
+                              0.995, 0.990, 0.983, 0.966, 0.936, 0.909,
+                              0.886, 0.859, 0.847, 0.834, 0.833, 0.833,
+                              0.833, 0.833, 0.833]
+
+# Only fingerprints whose EPS image has been read and traced belong here. The Insight
+# (39990-TXM-A040) B table is a 0.0043% copy of the Clarity's, but its A pairing is not yet
+# confirmed in Ghidra, and the Civic splits by EPS firmware (C020 has the same A/B structure,
+# A030/TEG-A010 carry a single combined map with ~6x the ripple) which carState does not
+# report - so neither is enabled here yet.
+NRDR_VGR_INVERSE_BY_FP = {
+  "HONDA_CLARITY": (NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP),
+}
+
 # NRDR modified-EPS speed-banded feedforward shared by Clarity and Civic Bosch. The
 # duplicate-near-25 breakpoint preserves the road-tested hard handoff.
 NRDR_MODIFIED_EPS_KF_SPEED_BP = [0.0, 25.0 * 0.44704 - 1e-3, 25.0 * 0.44704, 50.0 * 0.44704]  # m/s
@@ -295,6 +341,7 @@ class LatControlPID(LatControl):
     # change with the firmware). There is deliberately no global fallback: applying one car's measured
     # curve to an unmapped rack would corrupt its curvature->angle conversion.
     self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
+    self.vgr_inverse = NRDR_VGR_INVERSE_BY_FP.get(str(CP.carFingerprint))
     self.prev_angle_steers_des_no_offset = 0.0
     self.eps_modified_steering_pressed_filter_s = 0.0
     self.eps_modified_steering_pressed_prev = False
@@ -347,14 +394,26 @@ class LatControlPID(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    if self.sr_curve is not None:
-      # NRDR: apply the variable-rack taper before curvature->angle conversion. controlsd
-      # refreshes VM every frame, so this per-frame override cannot compound. Only the
-      # explicitly mapped fingerprints override VehicleModel; all other cars keep normal behavior.
-      sr_bp, sr_v = self.sr_curve
-      VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
+    if self.vgr_inverse is not None:
+      # Firmware VGR path. VehicleModel keeps the scalar sR paramsd learned (controlsd sets it
+      # every frame), so it returns the angle a constant-ratio rack would need; the measured rack
+      # curve is then inverted to get the angle this rack actually needs. Solving at the DESIRED
+      # angle is what the old path could not do: selecting sR at the MEASURED angle only agrees
+      # when theta_meas == theta_des, and it lets a measurement wobble move the target
+      # (a spurious d(theta_des)/d(theta_meas) term inside the loop).
+      linear_bp, angle_bp = self.vgr_inverse
+      angle_linear = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
+      angle_steers_des_no_offset = math.copysign(float(np.interp(abs(angle_linear), linear_bp, angle_bp)),
+                                                 angle_linear)
+    else:
+      if self.sr_curve is not None:
+        # NRDR: apply the variable-rack taper before curvature->angle conversion. controlsd
+        # refreshes VM every frame, so this per-frame override cannot compound. Only the
+        # explicitly mapped fingerprints override VehicleModel; all other cars keep normal behavior.
+        sr_bp, sr_v = self.sr_curve
+        VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
 
-    angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
+      angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
     angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     error = angle_steers_des - CS.steeringAngleDeg
 
