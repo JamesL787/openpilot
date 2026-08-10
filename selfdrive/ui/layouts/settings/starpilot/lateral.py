@@ -312,8 +312,8 @@ class StarPilotLateralLayout(_SettingsPage):
       ),
       SettingRow(
         "SteerRatio", "value", tr_noop("Steer Ratio"),
-        subtitle=tr_noop("Relationship between steering wheel and road-wheel angle."),
-        get_value=lambda: f"{p.get_float('SteerRatio'):.1f}",
+        subtitle=tr_noop("Wheel-to-road-wheel angle. At the stock value openpilot learns it while you drive; any other value pins it."),
+        get_value=lambda: self._get_steer_ratio_display(),
         on_click=lambda: self._show_slider("SteerRatio", max(0.01, cs.steerRatio) * 0.5, max(0.01, cs.steerRatio) * 1.5, step=0.01, value_type="float"),
         visible=lambda: alt_on() and cs.steerRatio != 0,
       ),
@@ -363,6 +363,30 @@ class StarPilotLateralLayout(_SettingsPage):
       panel_style=PANEL_STYLE,
     )
     self._wire_sub_panels()
+
+  def _get_steer_ratio_display(self) -> str:
+    """Show whether the ratio is learned or pinned, and what stock is.
+
+    Mirrors use_custom_steerRatio in starpilot_variables: the slider only overrides the
+    learner when it differs from stock, and ForceAutoTune/Off flip that - but both of those
+    are gated on torque cars, so a PID car ignores them.
+    """
+    p = self._params
+    cs = starpilot_state.car_state
+    value = p.get_float("SteerRatio")
+    stock = p.get_float("SteerRatioStock") or cs.steerRatio
+
+    torque_tune = cs.isTorqueCar and not cs.isAngleCar
+    if torque_tune and p.get_bool("ForceAutoTuneOff"):
+      custom = True
+    elif torque_tune and p.get_bool("ForceAutoTune"):
+      custom = False
+    else:
+      custom = bool(stock) and round(value, 2) != round(stock, 2)
+
+    if not custom:
+      return tr("Learned") if not stock else f"{tr('Learned')} · {stock:.2f}"
+    return f"{value:.2f} · {tr('stock')} {stock:.2f}"
 
   def _on_pause_lateral_speed_clicked(self):
     def on_speed_close(res, val):
