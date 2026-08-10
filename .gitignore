@@ -69,7 +69,9 @@ cppcheck_report.txt
 comma*.sh
 
 selfdrive/modeld/models/*.pkl
-!selfdrive/modeld/models/driving_tinygrad.pkl
+# driving_tinygrad.pkl is too big for git and ships as .chunkNNofMM parts (which are not
+# *.pkl, so they stay tracked). The assembled file is generated at launch - keep it ignored
+# so a stray `git add -A` on a device cannot stage 126 MB of build output.
 !selfdrive/modeld/models/driving_vision_tinygrad.pkl
 !selfdrive/modeld/models/driving_policy_tinygrad.pkl
 !selfdrive/modeld/models/driving_vision_metadata.pkl
