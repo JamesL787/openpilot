@@ -10,6 +10,16 @@ from opendbc.car.car_helpers import interfaces
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.chrysler.values import CAR as CHRYSLER
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
+from opendbc.car.honda.steer_ratio import (
+  HONDA_VGR_INVERSE_BY_PROFILE,
+  HONDA_VGR_PROFILE_BY_FW,
+  NRDR_CLARITY_VGR_ANGLE_BP,
+  NRDR_CLARITY_VGR_LINEAR_BP,
+  NRDR_CLARITY_VGR_REL_LOCAL,
+  NRDR_INSIGHT_TXM_A040_VGR_ANGLE_BP,
+  NRDR_INSIGHT_TXM_A040_VGR_LINEAR_BP,
+  NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL,
+)
 from opendbc.car.toyota.values import CAR as TOYOTA
 from opendbc.car.nissan.values import CAR as NISSAN
 from opendbc.car.gm.values import CAR as GM
@@ -22,10 +32,6 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   LatControlPID,
   get_civic_bosch_modified_pid_output_alpha,
   get_civic_bosch_modified_pid_output_scale,
-  NRDR_CLARITY_VGR_ANGLE_BP,
-  NRDR_CLARITY_VGR_LINEAR_BP,
-  NRDR_CLARITY_VGR_REL_LOCAL,
-  NRDR_VGR_INVERSE_BY_FP,
 )
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   clear_flm_runtime_overrides,
@@ -207,7 +213,7 @@ class TestLatControl:
     import numpy as np
     from itertools import pairwise
 
-    linear_bp, angle_bp = NRDR_VGR_INVERSE_BY_FP["HONDA_CLARITY"]
+    linear_bp, angle_bp = HONDA_VGR_INVERSE_BY_PROFILE["clarity_trw_a020"]
     assert (linear_bp, angle_bp) == (NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP)
     assert len(angle_bp) == len(linear_bp) == len(NRDR_CLARITY_VGR_REL_LOCAL)
     # Both axes must be strictly increasing or np.interp is not a bijection.
@@ -218,8 +224,8 @@ class TestLatControl:
     def solve(angle_linear):
       return float(np.interp(abs(angle_linear), linear_bp, angle_bp))
 
-    # The rack is constant below ~16 deg, so the map must be an exact no-op there:
-    # near-center behavior stays bit-identical to a plain constant-ratio model.
+    # The rack is constant below ~16 deg, so the map must be an exact no-op
+    # near center.
     for angle in (0.0, 1.0, 5.0, 10.0, 16.0):
       assert solve(angle) == pytest.approx(angle, abs=1e-6)
 
@@ -234,13 +240,33 @@ class TestLatControl:
     assert NRDR_CLARITY_VGR_REL_LOCAL[-1] == pytest.approx(1.0 / 1.2, abs=5e-4)
     assert all(left >= right - 1e-9 for left, right in pairwise(NRDR_CLARITY_VGR_REL_LOCAL))
 
-    # LINEAR_BP is the integral of 1/rel_local, not angle/rel_local. Guard the difference:
-    # a pointwise division would put the 95.805 deg knot at 114.8 rather than 103.1.
+    # LINEAR_BP is the integral of 1/rel_local, not angle/rel_local.
     assert linear_bp[angle_bp.index(95.805)] == pytest.approx(103.083, abs=0.05)
     assert angle_bp[-1] / NRDR_CLARITY_VGR_REL_LOCAL[-1] > linear_bp[-1] + 1.0
 
-    # Only explicitly traced fingerprints may carry an inverse map.
-    assert set(NRDR_VGR_INVERSE_BY_FP) == {"HONDA_CLARITY"}
+    assert set(HONDA_VGR_PROFILE_BY_FW) == {"39990-TRW-A020", "39990-TBA-C020", "39990-TXM-A040"}
+    assert len(HONDA_VGR_INVERSE_BY_PROFILE) == 3
+
+  def test_insight_vgr_uses_primary_angle_table(self):
+    from itertools import pairwise
+
+    linear_bp, angle_bp = HONDA_VGR_INVERSE_BY_PROFILE["insight_txm_a040"]
+    assert (linear_bp, angle_bp) == (NRDR_INSIGHT_TXM_A040_VGR_LINEAR_BP,
+                                     NRDR_INSIGHT_TXM_A040_VGR_ANGLE_BP)
+    assert len(angle_bp) == len(linear_bp) == len(NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL)
+    assert all(left < right for left, right in pairwise(angle_bp))
+    assert all(left < right for left, right in pairwise(linear_bp))
+
+    # TXM-A040's primary position path is flat through raw 4.3 degrees, then
+    # reaches a 20989/17613 = 1.1917x center-to-lock ratio.  These endpoints
+    # distinguish it from the adjacent rate table and the previously crossed
+    # X/Y pairing.
+    center_plateau_end = 43 * (1 << 14) / 17613 / 10
+    assert linear_bp[angle_bp.index(center_plateau_end)] == pytest.approx(center_plateau_end)
+    assert NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL[-1] == pytest.approx(17613 / 20989)
+    assert linear_bp[-1] == pytest.approx(5515 * (1 << 14) / 17613 / 10)
+    assert angle_bp[-1] == pytest.approx(5515 * (1 << 14) / 20989 / 10)
+    assert angle_bp[-1] < linear_bp[-1]
 
   def test_bolt_2017_testing_ground_scale_curve(self):
     assert get_bolt_2017_base_torque_scale(0.1) == 1.0

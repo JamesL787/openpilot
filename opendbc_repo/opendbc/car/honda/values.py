@@ -84,6 +84,11 @@ class HondaFlags(IntFlag):
   EPS_MODIFIED = 8192
   HYBRID_ALT_BRAKEHOLD = 16384  # some Nidec hybrids report brake hold via BRAKE_HOLD_HYBRID_ALT instead of VSA_STATUS
 
+  # Exact EPS firmware profiles with traced variable-gear-ratio tables.
+  VGR_CLARITY_TRW_A020 = 32768
+  VGR_CIVIC_TBA_C020 = 65536
+  VGR_INSIGHT_TXM_A040 = 131072
+
 
 # Car button codes
 class CruiseButtons:

@@ -3,7 +3,7 @@ import numpy as np
 
 from cereal import log
 from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
-from opendbc.car.honda.interface import NRDR_INSIGHT_SR_ANGLE_BP, NRDR_INSIGHT_SR_V
+from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
@@ -16,97 +16,6 @@ from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
-
-# Effective steer-ratio curves, keyed explicitly by fingerprint.
-#
-# paramsd estimates one near-center scalar (it only observes steering angles below
-# 45 degrees), so it cannot learn a rack's off-center taper. These curves replace
-# that scalar for explicitly mapped VGR cars only, on measured wheel angle (stable;
-# avoids the desired-angle circular dependency). Every other car keeps its normal
-# CP.steerRatio behavior.
-
-# nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio.
-#
-# Values from nrdr a954d153e7 (2026-07-31), "Blend learned Clarity steer ratio into
-# proven tail", carried over from nrdr-clarity-backport. Replaces the old two-point
-# [0, 250] -> [17.00, 12.74] taper that this branch still had.
-#
-# The <= 70 degree section is the sample-weighted, non-increasing fit of the measured
-# 5 degree bins. The noisy 5-10 degree rise is capped at the 0-5 degree median, and every
-# later upward violation is pooled with its neighbour(s) instead of being allowed to create
-# an unphysical ratio increase. A smoothstep-sampled 70-90 degree handoff rejoins the
-# previous road-proven curve at exactly its existing 90 degree value; 90 degrees onward is
-# unchanged except for the corrected Honda end-to-end specification of 12.72 at 450 degrees.
-NRDR_CLARITY_SR_CURVE_BP = [0., 2.5, 7.5, 12.5, 17.5, 22.5, 27.5, 32.5, 37.5, 42.5, 47.5, 52.5, 57.5,
-                            62.5, 67.5, 70., 75., 80., 85., 90., 100., 140., 200., 300., 450.]  # |wheel angle|, deg
-NRDR_CLARITY_SR_CURVE_V = [19.680, 19.680, 19.680, 19.680, 19.344, 19.344, 19.307, 19.151, 18.406, 18.406,
-                           18.406, 18.087, 17.999, 17.999, 17.710, 17.604, 17.222, 16.706, 16.308, 16.093333333333334,
-                           15.940, 15.400, 14.300, 13.400, 12.720]
-
-NRDR_CRV_5G_SR_CURVE_BP = [0., 50., 100., 150., 175., 200.]
-NRDR_CRV_5G_SR_CURVE_V = [18.10, 17.80, 16.30, 15.30, 14.90, 14.60]
-
-# Model-corrected effective ratio from Peter's 10th-gen Civic Bosch telemetry.
-# The tail is strongly supported by repeatable left/right, cross-route samples;
-# the near-center anchor is intentionally conservative while paramsd convergence
-# and tire-stiffness-factor coverage are expanded.
-NRDR_CIVIC_BOSCH_SR_CURVE_BP = [0., 25., 50., 75., 100., 125., 150., 175., 200., 225., 250., 275.]
-NRDR_CIVIC_BOSCH_SR_CURVE_V = [15.25, 15.10, 14.60, 14.10, 13.75, 13.50, 13.25, 13.10, 13.00, 12.90, 12.75, 12.65]
-
-NRDR_SR_CURVE_BY_FP = {
-  "HONDA_CLARITY": (NRDR_CLARITY_SR_CURVE_BP, NRDR_CLARITY_SR_CURVE_V),
-  "HONDA_CRV_5G": (NRDR_CRV_5G_SR_CURVE_BP, NRDR_CRV_5G_SR_CURVE_V),
-  "HONDA_CIVIC_BOSCH": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
-  # Temporary 10th-gen family fallback until Nidec-specific telemetry is available.
-  "HONDA_CIVIC": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
-  "HONDA_INSIGHT": (NRDR_INSIGHT_SR_ANGLE_BP, NRDR_INSIGHT_SR_V),
-}
-
-# Firmware-derived VGR inverse map (measured, not fitted).
-#
-# The Clarity EPS image 39990-TRW-A020 carries the rack's variable-gear-ratio curve as two
-# 30-point big-endian int16 tables, gains in Q14 (unity 0x4000 = 16384):
-#     A   X @0x130A8  Y @0x1306C   position map: raw pinion angle -> published CAN angle
-#     B   X @0x13120  Y @0x130E4   local (differential) steer-ratio gain
-# FUN_0001fe26 computes  published = (raw << 14) / interp(|raw|, A)  and writes 0xFFF87280;
-# the interpolator's bypass path forces 0x4000, which is what fixes the Q14 scaling.
-# Cross-checks: differentiating A reproduces B to 0.08%; the gold CCP flash dump is
-# byte-identical here; and a live SRAM snapshot (raw 0xFFF87284 = -78 -> published
-# 0xFFF87280 = -79) matches the near-centre gain of 0.9890.
-#
-# B is the LOCAL ratio (d(theta)/d(delta)). VehicleModel uses sR as a SECANT ratio
-# (delta = theta / sR), so converting between them is an integral, not a division:
-#     delta(theta) = integral(0..theta) d(phi) / SR_local(phi)
-# LINEAR_BP is that integral expressed in centre-ratio units - i.e. the angle a
-# constant-ratio model would have asked for to reach the same road-wheel angle. It is
-# therefore anchor-free: it scales automatically with whatever sR paramsd has learned.
-# Inverting is one interpolation, no fixed-point iteration:
-#     theta_des = interp(theta_linear, LINEAR_BP, ANGLE_BP)
-# Breakpoints at 50/68/87 deg are resampled from the continuous firmware curve (Honda's own
-# spacing chords too coarsely through the transition, worth ~0.29 deg at 50 deg).
-NRDR_CLARITY_VGR_ANGLE_BP = [0.000, 4.052, 8.104, 12.102, 16.201, 20.205,
-                             24.299, 28.299, 32.296, 40.194, 50.000, 59.571,
-                             68.000, 78.095, 87.000, 95.805, 104.440, 140.000,
-                             200.000, 300.000, 450.000]  # |wheel angle|, deg
-NRDR_CLARITY_VGR_LINEAR_BP = [0.000, 4.052, 8.104, 12.102, 16.201, 20.208,
-                              24.316, 28.346, 32.397, 40.504, 50.818, 61.193,
-                              70.587, 82.162, 92.605, 103.083, 113.438, 156.111,
-                              228.111, 348.113, 528.115]  # constant-ratio equivalent, deg
-# Local ratio relative to centre, for reference only - LINEAR_BP already integrates it.
-# 1.000 flat to ~16 deg, falling to 0.833 (a 1.2000x span) and flat again past ~105 deg.
-NRDR_CLARITY_VGR_REL_LOCAL = [1.000, 1.000, 1.000, 1.000, 1.000, 0.998,
-                              0.995, 0.990, 0.983, 0.966, 0.936, 0.909,
-                              0.886, 0.859, 0.847, 0.834, 0.833, 0.833,
-                              0.833, 0.833, 0.833]
-
-# Only fingerprints whose EPS image has been read and traced belong here. The Insight
-# (39990-TXM-A040) B table is a 0.0043% copy of the Clarity's, but its A pairing is not yet
-# confirmed in Ghidra, and the Civic splits by EPS firmware (C020 has the same A/B structure,
-# A030/TEG-A010 carry a single combined map with ~6x the ripple) which carState does not
-# report - so neither is enabled here yet.
-NRDR_VGR_INVERSE_BY_FP = {
-  "HONDA_CLARITY": (NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP),
-}
 
 # NRDR modified-EPS speed-banded feedforward shared by Clarity and Civic Bosch. The
 # duplicate-near-25 breakpoint preserves the road-tested hard handoff.
@@ -337,11 +246,9 @@ class LatControlPID(LatControl):
     # NRDR: every modified-EPS Honda (Civic 39990-TBA, CR-V 5G 39990-TLA, Insight 39990-TXM,
     # Clarity 39990-TRW) runs the live tune.
     self.is_eps_modified = self.is_honda_pid_lateral and bool(CP.flags & HondaFlags.EPS_MODIFIED)
-    # Optional per-fingerprint VGR curve, independent of EPS_MODIFIED (the rack's geometry does not
-    # change with the firmware). There is deliberately no global fallback: applying one car's measured
-    # curve to an unmapped rack would corrupt its curvature->angle conversion.
-    self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
-    self.vgr_inverse = NRDR_VGR_INVERSE_BY_FP.get(str(CP.carFingerprint))
+    # VGR is selected by exact EPS firmware. There is intentionally no
+    # vehicle-family fallback: another rack's table is not interchangeable.
+    self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
     self.prev_angle_steers_des_no_offset = 0.0
     self.eps_modified_steering_pressed_filter_s = 0.0
     self.eps_modified_steering_pressed_prev = False
@@ -406,13 +313,6 @@ class LatControlPID(LatControl):
       angle_steers_des_no_offset = math.copysign(float(np.interp(abs(angle_linear), linear_bp, angle_bp)),
                                                  angle_linear)
     else:
-      if self.sr_curve is not None:
-        # NRDR: apply the variable-rack taper before curvature->angle conversion. controlsd
-        # refreshes VM every frame, so this per-frame override cannot compound. Only the
-        # explicitly mapped fingerprints override VehicleModel; all other cars keep normal behavior.
-        sr_bp, sr_v = self.sr_curve
-        VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
-
       angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
     angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     error = angle_steers_des - CS.steeringAngleDeg
