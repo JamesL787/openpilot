@@ -47,17 +47,16 @@ def main() -> int:
   if "action_t" in model.npy:
     model.npy["action_t"][:] = [0.15, 0.25]
 
-  warp_output = model.warp_enqueue(
+  warped = model.warp_enqueue(
     **{key: model.input_queues[key] for key in model.warp_input_keys},
     frame=frames[0],
     big_frame=frames[1],
   )
-  policy_queues = {key: model.input_queues[key] for key in model.policy_input_keys}
-  if model.policy_uses_warped:
-    outputs = model.run_policy(**policy_queues, warped=warp_output)
+  policy_inputs = {key: model.input_queues[key] for key in model.policy_input_keys}
+  if model.image_history_pipeline == "policy":
+    outputs = model.run_policy(**policy_inputs, warped=warped)
   else:
-    img, big_img = warp_output
-    outputs = model.run_policy(**policy_queues, img=img, big_img=big_img)
+    outputs = model.run_policy(**policy_inputs, img=warped[0], big_img=warped[1])
   arrays = [output.numpy().flatten() for output in outputs]
   if model.model_type == "supercombo":
     parsed = model.parser.parse_outputs(model.slice_outputs(arrays[0], model.output_slices))
