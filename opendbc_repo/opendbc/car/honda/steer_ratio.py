@@ -109,21 +109,30 @@ def _build_vgr_position_inverse(raw_x, raw_y, raw_units_per_degree=10.0, max_raw
   return linear_bp, angle_bp, relative_ratio
 
 
-# Clarity 39990-TRW-A020, B table at 0x13120/0x130E4.
-_CLARITY_B_X = [0, 40, 80, 120, 160, 200, 240, 280, 320, 400, 600, 800, 1000, 1100,
-                1140, 1180, 1220, 1260, 1300, 1340, 1380, 1420, 1460, 1500, 1800,
-                2100, 2400, 2700, 3000, 9000]
-_CLARITY_B_Y = [16204, 16204, 16204, 16204, 16205, 16229, 16284, 16368, 16481, 16783,
-                17825, 18866, 19421, 19445, 19445, 19445, 19445, 19445, 19445, 19445,
-                19445, 19445, 19445, 19445, 19445, 19445, 19445, 19445, 19445, 19445]
+# Clarity 39990-TRW-A020 primary angle table, X at 0x130A8 / Y at 0x1306C.
+# Same layout as the C020: a four-pointer block (here at 0x1FFB0) feeding two lookups,
+# A first then B.  The PC-relative loads at 0x1FE88/0x1FE8A resolve to 0x1306C/0x130A8
+# (A) and those at 0x1FE98/0x1FE9A to 0x130E4/0x13120 (B), matching the C020 order where
+# A divides the position and B divides the rate input.  Y[0] is exactly 16384 = 2**14,
+# i.e. unity at centre, which the B table's 16204 is not.
+_CLARITY_POSITION_X = [0, 40, 80, 119, 158, 198, 237, 277, 317, 398,
+                       604, 820, 1047, 1164, 1210, 1257, 1305, 1352, 1398, 1447,
+                       1493, 1540, 1588, 1634, 1989, 2344, 2700, 3056, 3413, 5020]
+_CLARITY_POSITION_Y = [16384, 16174, 16173, 16247, 16179, 16220, 16180, 16209, 16231, 16303,
+                       16506, 16812, 17177, 17352, 17411, 17473, 17538, 17600, 17644, 17705,
+                       17749, 17792, 17843, 17885, 18130, 18303, 18439, 18547, 18645, 18952]
 
-# Civic Bosch Sport 39990-TBA-C020, B table at 0x13120/0x130E4.
-_CIVIC_C020_B_X = [0, 40, 80, 120, 160, 200, 240, 280, 320, 400, 600, 800, 1000, 1100,
-                   1140, 1180, 1220, 1260, 1300, 1340, 1380, 1420, 1460, 1500, 1800,
-                   2100, 2400, 2700, 3000, 9000]
-_CIVIC_C020_B_Y = [20677, 20677, 20677, 20677, 20677, 20677, 20840, 20840, 20840, 21004,
-                   21660, 22643, 23462, 23953, 24117, 24281, 24281, 24445, 24609, 24609,
-                   24773, 24773, 24773, 24936, 24936, 24936, 24936, 24936, 24936, 24936]
+# Civic Bosch Sport 39990-TBA-C020 primary angle table, X at 0x130A8 / Y at 0x1306C.
+# FUN_0001f212 loads four table pointers from 0x1F2D4: this A pair, then the B pair at
+# 0x13120/0x130E4.  Only A divides the position -- `(iVar12 << 0xe) / sVar5`, where
+# iVar12 is the angle from FUN_0001f444 and sVar5 is the A lookup.  B divides a
+# separate input on the rate path, so it is not the position curve.
+_CIVIC_C020_POSITION_X = [0, 52, 103, 153, 203, 254, 305, 357, 407, 511,
+                          771, 1046, 1334, 1482, 1542, 1602, 1661, 1722, 1782, 1844,
+                          1904, 1965, 2025, 2086, 2540, 2997, 3451, 3907, 4363, 5731]
+_CIVIC_C020_POSITION_Y = [20647, 20647, 20597, 20720, 20637, 20769, 20786, 20795, 20784, 20850,
+                          21053, 21413, 21856, 22060, 22150, 22243, 22306, 22380, 22450, 22546,
+                          22605, 22672, 22724, 22780, 23110, 23379, 23550, 23708, 23827, 24070]
 
 # Honda Insight 39990-TXM-A040 primary angle table.  The stock SH-2A image
 # loads Y from 0x11338 and X from 0x11374 at 0x1e1fc/0x1e1fe, interpolates at
@@ -138,24 +147,10 @@ _INSIGHT_TXM_A040_POSITION_Y = [17613, 17613, 18022, 17886, 17971, 17981, 17988,
                                 19692, 19745, 19798, 19839, 20113, 20317, 20474, 20593, 20702, 20989]
 
 
-# Keep the reviewed/resampled Clarity inverse map unchanged.  It is derived
-# from the same B table, with extra knots through the transition to avoid the
-# coarse firmware chords; this change only moves its selection from vehicle
-# fingerprint to exact EPS firmware.
-NRDR_CLARITY_VGR_ANGLE_BP = [0.000, 4.052, 8.104, 12.102, 16.201, 20.205,
-                             24.299, 28.299, 32.296, 40.194, 50.000, 59.571,
-                             68.000, 78.095, 87.000, 95.805, 104.440, 140.000,
-                             200.000, 300.000, 450.000]
-NRDR_CLARITY_VGR_LINEAR_BP = [0.000, 4.052, 8.104, 12.102, 16.201, 20.208,
-                              24.316, 28.346, 32.397, 40.504, 50.818, 61.193,
-                              70.587, 82.162, 92.605, 103.083, 113.438, 156.111,
-                              228.111, 348.113, 528.115]
-NRDR_CLARITY_VGR_REL_LOCAL = [1.000, 1.000, 1.000, 1.000, 1.000, 0.998,
-                              0.995, 0.990, 0.983, 0.966, 0.936, 0.909,
-                              0.886, 0.859, 0.847, 0.834, 0.833, 0.833,
-                              0.833, 0.833, 0.833]
-NRDR_CIVIC_C020_VGR_LINEAR_BP, NRDR_CIVIC_C020_VGR_ANGLE_BP, NRDR_CIVIC_C020_VGR_REL_LOCAL = _build_vgr_inverse(
-  _CIVIC_C020_B_X, _CIVIC_C020_B_Y)
+NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP, NRDR_CLARITY_VGR_REL_LOCAL = _build_vgr_position_inverse(
+  _CLARITY_POSITION_X, _CLARITY_POSITION_Y)
+NRDR_CIVIC_C020_VGR_LINEAR_BP, NRDR_CIVIC_C020_VGR_ANGLE_BP, NRDR_CIVIC_C020_VGR_REL_LOCAL = _build_vgr_position_inverse(
+  _CIVIC_C020_POSITION_X, _CIVIC_C020_POSITION_Y)
 NRDR_INSIGHT_TXM_A040_VGR_LINEAR_BP, NRDR_INSIGHT_TXM_A040_VGR_ANGLE_BP, NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL = _build_vgr_position_inverse(
   _INSIGHT_TXM_A040_POSITION_X, _INSIGHT_TXM_A040_POSITION_Y)
 
