@@ -86,9 +86,11 @@
       {
         "key": "SteerRatio",
         "label": "Steer Ratio",
-        "description": "Steer Ratio",
+        "description": "Relationship between steering wheel and road-wheel angle, overriding the car's value. Sets the centre ratio only; on a Honda with a known EPS firmware the variable-ratio profile still shapes it off-centre. Leave at the car default unless you have measured your own.",
         "data_type": "float",
         "ui_type": "numeric",
+        "min": 5.0,
+        "max": 25.0,
         "step": 0.01,
         "precision": 2,
         "parent_key": "AdvancedLateralTune",
