@@ -3,7 +3,8 @@ import numpy as np
 
 from cereal import log
 from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
-from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse
+from opendbc.car.honda.steer_ratio import (get_honda_vgr_inverse, get_honda_vgr_learning_inverse,
+                                           vgr_linear_to_physical)
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
@@ -249,6 +250,9 @@ class LatControlPID(LatControl):
     # VGR is selected by exact EPS firmware. There is intentionally no
     # vehicle-family fallback: another rack's table is not interchangeable.
     self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
+    # Whether paramsd observes the dewarped angle for this rack, which decides which
+    # coordinate params.angleOffsetDeg is in. Must track paramsd exactly.
+    self.vgr_offset_is_linear = get_honda_vgr_learning_inverse(CP.flags) is not None
     self.prev_angle_steers_des_no_offset = 0.0
     self.eps_modified_steering_pressed_filter_s = 0.0
     self.eps_modified_steering_pressed_prev = False
@@ -308,13 +312,22 @@ class LatControlPID(LatControl):
       # angle is what the old path could not do: selecting sR at the MEASURED angle only agrees
       # when theta_meas == theta_des, and it lets a measurement wobble move the target
       # (a spurious d(theta_des)/d(theta_meas) term inside the loop).
-      linear_bp, angle_bp = self.vgr_inverse
-      angle_linear = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
-      angle_steers_des_no_offset = math.copysign(float(np.interp(abs(angle_linear), linear_bp, angle_bp)),
-                                                 angle_linear)
+      linear_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
+      if self.vgr_offset_is_linear:
+        # paramsd observes the dewarped angle for this rack, so its offset is a
+        # centre-equivalent quantity: apply it BEFORE the map, alongside the angle it was
+        # learned against. Adding it afterwards would mix a centre-equivalent offset into
+        # a physical angle, which are different units once the rack is nonlinear.
+        angle_steers_des_no_offset = vgr_linear_to_physical(linear_des_no_offset, self.vgr_inverse)
+        angle_steers_des = vgr_linear_to_physical(linear_des_no_offset + params.angleOffsetDeg, self.vgr_inverse)
+      else:
+        # paramsd still learns this rack's offset in the published coordinate, so it has
+        # to be added after the map or the two would disagree.
+        angle_steers_des_no_offset = vgr_linear_to_physical(linear_des_no_offset, self.vgr_inverse)
+        angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     else:
       angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
-    angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
+      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     error = angle_steers_des - CS.steeringAngleDeg
 
     pid_log.steeringAngleDesiredDeg = angle_steers_des

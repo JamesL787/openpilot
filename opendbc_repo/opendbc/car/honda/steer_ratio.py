@@ -172,3 +172,74 @@ def get_honda_vgr_inverse(flags):
     if int(flags) & flag:
       return inverse
   return None
+
+
+# Profiles whose centre-equivalent coordinate has been checked against road data, and so
+# are allowed to change what paramsd learns.  The Clarity's slip-corrected effective ratio
+# was measured across 7 routes / 23k samples and tracks this map from 5 to 200 degrees
+# (predicted 18.0/17.7/16.8 against measured 18.7/17.6/16.3 at 5-10/40-80/80-200), with a
+# centre near 17.8.  The C020 and Insight maps are traced but have no such validation, so
+# they keep the previous behaviour until someone drives them.
+HONDA_VGR_LEARNING_FLAGS = (HondaFlags.VGR_CLARITY_TRW_A020,)
+
+
+def get_honda_vgr_learning_inverse(flags):
+  """VGR map to use when converting a published angle into the coordinate paramsd learns in.
+
+  Deliberately narrower than get_honda_vgr_inverse(): returning None here only means the
+  learner keeps observing the published angle, which is what every car did before.
+  """
+  for flag in HONDA_VGR_LEARNING_FLAGS:
+    if int(flags) & int(flag):
+      return HONDA_VGR_INVERSE_BY_FLAG[int(flag)]
+  return None
+
+
+# Two coordinates, and it matters which one a value is in:
+#
+#   linear    centre-equivalent steering angle.  What VehicleModel produces from a
+#             curvature using a single steer ratio, and the coordinate a steer ratio
+#             and an angle offset are only meaningful in.
+#   physical  the angle the EPS publishes as 0x14A STEER_ANGLE, i.e. what
+#             CS.steeringAngleDeg carries.  The A table maps linear -> physical.
+#
+# Vehicle dynamics and parameter learning belong in linear; actuator feedback and
+# angle-indexed actuator maps belong in physical.
+
+def vgr_linear_to_physical(linear_deg: float, inverse) -> float:
+  """Centre-equivalent angle -> the angle the EPS will publish."""
+  if inverse is None:
+    return linear_deg
+  linear_bp, angle_bp = inverse
+  return math.copysign(float(_interp(abs(linear_deg), linear_bp, angle_bp)), linear_deg)
+
+
+def vgr_physical_to_linear(physical_deg: float, inverse) -> float:
+  """Published EPS angle -> centre-equivalent angle.  Inverse of the above.
+
+  Both breakpoint arrays are monotonically increasing, so the same interpolation
+  run with the axes swapped is an exact inverse at the knots.
+  """
+  if inverse is None:
+    return physical_deg
+  linear_bp, angle_bp = inverse
+  return math.copysign(float(_interp(abs(physical_deg), angle_bp, linear_bp)), physical_deg)
+
+
+def _interp(x, xp, fp):
+  # Local so this module stays importable without numpy on the car-port side.
+  if x <= xp[0]:
+    return fp[0]
+  if x >= xp[-1]:
+    return fp[-1]
+  lo, hi = 0, len(xp) - 1
+  while hi - lo > 1:
+    mid = (lo + hi) // 2
+    if xp[mid] <= x:
+      lo = mid
+    else:
+      hi = mid
+  span = xp[hi] - xp[lo]
+  if span <= 0:
+    return fp[lo]
+  return fp[lo] + (fp[hi] - fp[lo]) * (x - xp[lo]) / span
