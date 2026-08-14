@@ -735,6 +735,48 @@
         "step": 1.0,
         "parent_key": "LateralTune",
         "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrTuneLearner",
+        "label": "2D Online Tune Learner",
+        "description": "Learn a speed-and-angle feedforward trim map while driving.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrTuneLearnerStrength",
+        "label": "Tune Learner Strength",
+        "description": "Maximum learned trim authority as a percent of full steering output.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 30.0,
+        "step": 1.0,
+        "parent_key": "NrdrTuneLearner",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrTuneLearnerRate",
+        "label": "Tune Learner Rate",
+        "description": "Learning speed. Zero freezes learning while retaining the saved map.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 100.0,
+        "step": 1.0,
+        "parent_key": "NrdrTuneLearner",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrTuneLearnerReset",
+        "label": "Reset Tune Learner Map",
+        "description": "Clear the saved 2D trim map. This switch clears after controls process it.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
       }
     ]
   },
