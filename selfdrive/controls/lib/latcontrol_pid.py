@@ -3,8 +3,7 @@ import numpy as np
 
 from cereal import log
 from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
-from opendbc.car.honda.steer_ratio import (get_honda_vgr_inverse, get_honda_vgr_learning_inverse,
-                                           vgr_linear_to_physical)
+from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_linear_to_physical
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
@@ -22,6 +21,58 @@ from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
+
+# Clarity measured effective-ratio schedule, selected at the MEASURED steering angle.
+#
+# This is the curve from 4f3271d6af ("Restore old curve but keep hybrid blend", 2026-07-27),
+# the last road-tested shape before a954d153e7 blended the learned near-centre values in and
+# pulled centre up to 19.68. That blend, and the firmware position map that replaced it in
+# bbff8499/fbf4c5fa, both command more angle near centre than this does -- and the car
+# oversteered at the low speeds where essentially all of its turning happens.
+#
+# Why this beats the firmware position map is now understood. The Clarity has a dual-pinion
+# rack: the EPS motor sits on the static-ratio pinion and measures rack travel through its
+# resolver, while the steering wheel drives the VGR pinion. The position table is the
+# conversion the EPS needs between those two -- rack to steering wheel -- and it tapers
+# 1.157x (Y 16384 -> 18952). What VehicleModel needs is steering wheel to ROAD wheel, and
+# the rack-to-roadwheel half (tie rods, steering arms, Ackermann, compliance, tyres) is
+# downstream of the EPS and absent from the table. Measured wheel-angle-to-yaw taper is
+# 1.440x, so the map alone supplies only ~80% of the needed taper, leaves the ratio too
+# high at angle, and over-commands. This curve is fitted across the whole chain.
+NRDR_CLARITY_SR_CURVE_BP = [0., 6., 12., 20., 24., 26., 28., 30., 32., 34., 36., 38., 40., 48., 70.,
+                            100., 140., 200., 300., 450.]  # |wheel angle|, deg
+NRDR_CLARITY_SR_CURVE_V = [18.340, 18.340, 18.290, 18.095, 18.062, 17.993, 17.843, 17.641, 17.418, 17.178,
+                           16.978, 16.840, 16.780, 16.720, 16.400, 15.940, 15.400, 14.300, 13.400, 12.740]
+
+# CR-V 5G road-measured curve, carried over unchanged from 4f3271d6af.  This rack is not
+# in HONDA_VGR_PROFILE_BY_FW, so it had been running a flat paramsd scalar with no taper
+# at all since the firmware-map work landed.
+NRDR_CRV_5G_SR_CURVE_BP = [0., 50., 100., 150., 175., 200.]  # |wheel angle|, deg
+NRDR_CRV_5G_SR_CURVE_V = [18.10, 17.80, 16.30, 15.30, 14.90, 14.60]
+
+# Insight two-point road-tested profile from nrdr upstream (36e203995a).  No multi-knot
+# Insight measurement has ever existed on this branch, so this is the only road data for
+# the car.  The outer breakpoint is derived the same way upstream derives it -- the
+# Clarity's 250 deg sample point scaled by this rack's lock angle -- rather than
+# transcribed, so it stays identical to the source by construction.
+NRDR_CLARITY_LOCK_ANGLE = 2.41 * 180.0
+NRDR_INSIGHT_LOCK_ANGLE = 2.54 * 180.0
+NRDR_TWO_POINT_OUTER_FRACTION = 250.0 / NRDR_CLARITY_LOCK_ANGLE
+NRDR_INSIGHT_SR_CURVE_BP = [0.0, NRDR_INSIGHT_LOCK_ANGLE * NRDR_TWO_POINT_OUTER_FRACTION]  # |wheel angle|, deg
+NRDR_INSIGHT_SR_CURVE_V = [16.82, 12.58]
+
+# Road-measured effective-ratio curves, by fingerprint.  A car listed here uses its
+# measured curve and does NOT use the firmware VGR map: the EPS position table only
+# describes rack-to-steering-wheel (the VGR pinion), and misses the rack-to-roadwheel
+# linkage, so on its own it under-tapers and over-commands at angle.  A car absent from
+# this dict falls through to the firmware map if it has one, then to a flat CP.steerRatio.
+# HONDA_CIVIC_BOSCH is deliberately absent: its two candidate measurements disagree by
+# 13% at centre, so it stays on the firmware map until that is resolved.
+NRDR_SR_CURVE_BY_FP = {
+  "HONDA_CLARITY": (NRDR_CLARITY_SR_CURVE_BP, NRDR_CLARITY_SR_CURVE_V),
+  "HONDA_CRV_5G": (NRDR_CRV_5G_SR_CURVE_BP, NRDR_CRV_5G_SR_CURVE_V),
+  "HONDA_INSIGHT": (NRDR_INSIGHT_SR_CURVE_BP, NRDR_INSIGHT_SR_CURVE_V),
+}
 
 # NRDR modified-EPS speed-banded feedforward shared by Clarity and Civic Bosch. The
 # duplicate-near-25 breakpoint preserves the road-tested hard handoff.
@@ -252,12 +303,14 @@ class LatControlPID(LatControl):
     # NRDR: every modified-EPS Honda (Civic 39990-TBA, CR-V 5G 39990-TLA, Insight 39990-TXM,
     # Clarity 39990-TRW) runs the live tune.
     self.is_eps_modified = self.is_honda_pid_lateral and bool(CP.flags & HondaFlags.EPS_MODIFIED)
-    # VGR is selected by exact EPS firmware. There is intentionally no
-    # vehicle-family fallback: another rack's table is not interchangeable.
-    self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
-    # Whether paramsd observes the dewarped angle for this rack, which decides which
-    # coordinate params.angleOffsetDeg is in. Must track paramsd exactly.
-    self.vgr_offset_is_linear = get_honda_vgr_learning_inverse(CP.flags) is not None
+    # A car with a road-measured curve uses it. The firmware position map is a partial
+    # correction (rack-to-steering-wheel only) and is the fallback for a mapped rack that
+    # has no measured curve yet -- currently just the Civic Bosch.
+    self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
+    # VGR is selected by exact EPS firmware, and only for a car with no measured curve.
+    # There is intentionally no vehicle-family fallback: another rack's table is not
+    # interchangeable.
+    self.vgr_inverse = None if self.sr_curve is not None else get_honda_vgr_inverse(CP.flags)
     self.is_rav4_tss2 = CP.carFingerprint in RAV4_TSS2_CARS
     self.prev_angle_steers_des_no_offset = 0.0
     self.eps_modified_steering_pressed_filter_s = 0.0
@@ -311,7 +364,18 @@ class LatControlPID(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    if self.vgr_inverse is not None:
+    if self.sr_curve is not None:
+      # Road-measured effective ratio, selected at the MEASURED angle. Fitted from steering
+      # wheel angle to achieved yaw rate, so it spans the whole chain: VGR pinion, rack,
+      # linkage, Ackermann, compliance and tyres. The firmware position map covers only the
+      # first of those -- 1.157x of the Clarity's measured 1.440x taper -- which is why using
+      # it alone leaves the ratio too high at angle and over-commands. controlsd refreshes VM
+      # every frame, so this override cannot compound.
+      sr_bp, sr_v = self.sr_curve
+      VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
+      angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
+      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
+    elif self.vgr_inverse is not None:
       # Firmware VGR path. VehicleModel keeps the scalar sR paramsd learned (controlsd sets it
       # every frame), so it returns the angle a constant-ratio rack would need; the measured rack
       # curve is then inverted to get the angle this rack actually needs. Solving at the DESIRED
@@ -319,18 +383,8 @@ class LatControlPID(LatControl):
       # when theta_meas == theta_des, and it lets a measurement wobble move the target
       # (a spurious d(theta_des)/d(theta_meas) term inside the loop).
       linear_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
-      if self.vgr_offset_is_linear:
-        # paramsd observes the dewarped angle for this rack, so its offset is a
-        # centre-equivalent quantity: apply it BEFORE the map, alongside the angle it was
-        # learned against. Adding it afterwards would mix a centre-equivalent offset into
-        # a physical angle, which are different units once the rack is nonlinear.
-        angle_steers_des_no_offset = vgr_linear_to_physical(linear_des_no_offset, self.vgr_inverse)
-        angle_steers_des = vgr_linear_to_physical(linear_des_no_offset + params.angleOffsetDeg, self.vgr_inverse)
-      else:
-        # paramsd still learns this rack's offset in the published coordinate, so it has
-        # to be added after the map or the two would disagree.
-        angle_steers_des_no_offset = vgr_linear_to_physical(linear_des_no_offset, self.vgr_inverse)
-        angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
+      angle_steers_des_no_offset = vgr_linear_to_physical(linear_des_no_offset, self.vgr_inverse)
+      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     else:
       angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
       angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg

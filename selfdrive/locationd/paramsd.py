@@ -13,7 +13,6 @@ from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 from openpilot.common.swaglog import cloudlog
 
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
-from opendbc.car.honda.steer_ratio import get_honda_vgr_learning_inverse, vgr_physical_to_linear
 
 MAX_ANGLE_OFFSET_DELTA = 20 * DT_MDL  # Max 20 deg/s
 ROLL_MAX_DELTA = np.radians(20.0) * DT_MDL  # 20deg in 1 second is well within curvature limits
@@ -37,9 +36,6 @@ def resolve_vehicle_model_params(learned_steer_ratio: float, learned_stiffness: 
 
 class VehicleParamsLearner:
   def __init__(self, CP: car.CarParams, steer_ratio: float, stiffness_factor: float, angle_offset: float, P_initial: np.ndarray | None = None):
-    # Only set on a car whose exact EPS firmware is identified; None otherwise, which
-    # makes the coordinate conversions below exact passthroughs.
-    self.vgr_inverse = get_honda_vgr_learning_inverse(CP.flags) if CP.brand == "honda" else None
     self.kf = CarKalman(GENERATED_DIR)
 
     self.x_initial = CarKalman.initial_x.copy()
@@ -131,16 +127,8 @@ class VehicleParamsLearner:
       self.calibrator.feed_live_calib(msg)
 
     elif which == 'carState':
-      # The EKF models one constant steer ratio, so it has to observe a
-      # centre-equivalent angle.  On a car with an identified variable-ratio EPS the
-      # published angle is not that: it has already been through the firmware's
-      # position map, so feeding it in directly makes the learned scalar absorb the
-      # rack's nonlinearity instead of describing the rack's centre.  Undo the map
-      # first.  Cars without a profile get an exact passthrough.
-      steering_angle = vgr_physical_to_linear(msg.steeringAngleDeg, self.vgr_inverse)
+      steering_angle = msg.steeringAngleDeg
 
-      # Gate on the dewarped angle so the linear-region window means the same thing
-      # on every car.
       in_linear_region = abs(steering_angle) < 45
       self.observed_speed = msg.vEgo
       self.active = self.observed_speed > MIN_ACTIVE_SPEED and in_linear_region
