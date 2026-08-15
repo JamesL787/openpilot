@@ -211,6 +211,7 @@ def test_curve_speed_controller_stays_enabled_with_a_lead_by_default():
   ("long_active", "gas_pressed"),
   [(False, False), (True, True)],
 )
+@pytest.mark.skip(reason="this build replaces the CSC learner with a static CurveSpeedLateralAccel param, so curvature_data/training_timer do not exist (see ba1530965f)")
 def test_curve_speed_controller_learns_when_speed_is_manually_controlled(long_active, gas_pressed):
   planner, vcruise = make_vcruise(road_curvature=0.02)
   sm = make_sm(standstill=False)
@@ -230,6 +231,7 @@ def test_curve_speed_controller_learns_when_speed_is_manually_controlled(long_ac
   assert not vcruise.csc_controlling_speed
 
 
+@pytest.mark.skip(reason="this build replaces the CSC learner with a static CurveSpeedLateralAccel param, so curvature_data/training_timer do not exist (see ba1530965f)")
 def test_curve_speed_controller_persists_data_after_leaving_curve():
   planner, vcruise = make_vcruise(road_curvature=0.02)
   sm = make_sm(standstill=False)
