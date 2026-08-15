@@ -16,6 +16,7 @@ from opendbc.car.honda.steer_ratio import (
   NRDR_CLARITY_VGR_ANGLE_BP,
   NRDR_CLARITY_VGR_LINEAR_BP,
   NRDR_CLARITY_VGR_REL_LOCAL,
+  _CLARITY_POSITION_Y,
   NRDR_INSIGHT_TXM_A040_VGR_ANGLE_BP,
   NRDR_INSIGHT_TXM_A040_VGR_LINEAR_BP,
   NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL,
@@ -252,25 +253,41 @@ class TestLatControl:
     def solve(angle_linear):
       return float(np.interp(abs(angle_linear), linear_bp, angle_bp))
 
-    # The rack is constant below ~16 deg, so the map must be an exact no-op
-    # near center.
-    for angle in (0.0, 1.0, 5.0, 10.0, 16.0):
-      assert solve(angle) == pytest.approx(angle, abs=1e-6)
+    # This is position table A, whose Y is a Q14 divisor with Y[0] = 2**14 = unity at
+    # centre. Near centre it is close to identity but NOT an exact no-op: Y dips below
+    # 2**14 over the first few knots, so the map runs slightly ABOVE identity there.
+    # (The old "exact no-op below 16 deg" assertion described rate table B, and stayed
+    # behind when the position table replaced it.)
+    assert solve(0.0) == 0.0
+    for angle in (1.0, 5.0, 10.0, 16.0, 30.0):
+      assert solve(angle) == pytest.approx(angle, rel=0.015)
+      assert solve(angle) > angle
 
-    # Off-center the rack is quicker, so less wheel angle is needed than a constant
-    # ratio would ask for. Never more.
-    for angle in (30.0, 60.0, 100.0, 200.0, 400.0):
+    # The crossover is near 48 deg. Past it the rack is quicker, so less wheel angle is
+    # needed than a constant ratio would ask for, and the gap widens monotonically.
+    assert solve(48.0) > 48.0 and solve(49.0) < 49.0
+    for angle in (60.0, 100.0, 200.0, 400.0):
       assert solve(angle) < angle
-    assert solve(103.083) == pytest.approx(95.805, abs=0.05)
+    assert solve(100.0) == pytest.approx(95.804, abs=0.05)
+    assert solve(400.0) == pytest.approx(349.392, abs=0.05)
 
-    # The local ratio is flat 1.0 at center, falls to a 1.2000x span, and holds it to lock.
+    # The local ratio is exactly 1.0 at centre. Over the first ~24 deg the measured table
+    # is noisy and the ratio wobbles inside a narrow band above unity; past that it falls
+    # monotonically to the table's full-scale taper. Assert the band and the monotonic
+    # tail separately rather than pretending the whole curve is monotonic.
     assert NRDR_CLARITY_VGR_REL_LOCAL[0] == 1.0
-    assert NRDR_CLARITY_VGR_REL_LOCAL[-1] == pytest.approx(1.0 / 1.2, abs=5e-4)
-    assert all(left >= right - 1e-9 for left, right in pairwise(NRDR_CLARITY_VGR_REL_LOCAL))
+    assert all(1.0 <= r <= 1.0131 for lin, r in zip(linear_bp, NRDR_CLARITY_VGR_REL_LOCAL) if lin <= 24.0)
+    tail = [r for lin, r in zip(linear_bp, NRDR_CLARITY_VGR_REL_LOCAL) if lin > 24.0]
+    assert all(left >= right - 1e-9 for left, right in pairwise(tail))
+    assert min(NRDR_CLARITY_VGR_REL_LOCAL) == NRDR_CLARITY_VGR_REL_LOCAL[-1]
 
-    # LINEAR_BP is the integral of 1/rel_local, not angle/rel_local.
-    assert linear_bp[angle_bp.index(95.805)] == pytest.approx(103.083, abs=0.05)
-    assert angle_bp[-1] / NRDR_CLARITY_VGR_REL_LOCAL[-1] > linear_bp[-1] + 1.0
+    # Tie the endpoint to the raw firmware values so this cannot drift away from the
+    # table it is meant to describe: rel_local[-1] is exactly Y[0]/Y[-1].
+    assert NRDR_CLARITY_VGR_REL_LOCAL[-1] == pytest.approx(_CLARITY_POSITION_Y[0] / _CLARITY_POSITION_Y[-1], abs=1e-6)
+
+    # LINEAR_BP is the integral of 1/rel_local. For the position table the final knot
+    # reduces exactly to angle_bp[-1] / rel_local[-1].
+    assert linear_bp[-1] == pytest.approx(angle_bp[-1] / NRDR_CLARITY_VGR_REL_LOCAL[-1], abs=1e-6)
 
     assert set(HONDA_VGR_PROFILE_BY_FW) == {"39990-TRW-A020", "39990-TBA-C020", "39990-TXM-A040"}
     assert len(HONDA_VGR_INVERSE_BY_PROFILE) == 3
