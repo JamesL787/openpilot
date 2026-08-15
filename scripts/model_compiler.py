@@ -44,10 +44,7 @@ MODEL_CONTEXT_FREQ = 5
 # artifacts such as a 104.4 MB PKL are split before they reach the remote.
 REPOSITORY_FILE_LIMIT = 100_000_000
 DEFAULT_MULTIPART_SIZE = 95 * 1024 * 1024
-USBGPU_PROBE_ATTEMPTS = 3
-USBGPU_PROBE_TIMEOUT = 10
-
-
+USBGPU_PROBE_ATTEMPTS = 10
 def build_compile_env(*, supercombo: bool = False) -> dict[str, str]:
   env = os.environ.copy()
   existing_pythonpath = env.get("PYTHONPATH", "")
@@ -67,54 +64,21 @@ def build_compile_env(*, supercombo: bool = False) -> dict[str, str]:
     except (TypeError, ValueError):
       env[key] = default
   if supercombo:
-    # The unified RDF/supercombo build must use upstream compile defaults;
-    # carrying the legacy QCOM tuning into this path breaks the HCQ timeline.
+    # Unified supercombo artifacts must use upstream compile defaults. The
+    # legacy QCOM tuning causes a reproducible HCQ timeline failure here.
     env.pop("QCOM_PRIORITY", None)
   return env
 
 
-def wait_for_external_gpu(compile_env: dict[str, str]) -> None:
-  """Wait for the USB GPU's PCIe link before starting the large model build.
+def wait_for_external_gpu() -> None:
+  """Use openpilot's Chestnut link probe before starting a USB-GPU build."""
+  from openpilot.system.hardware.chestnut.flash import link_up
 
-  The dock can enumerate on USB before its PCIe link has finished training.
-  OpenPilot probes the tinygrad device in a short-lived process and retries;
-  doing the same here avoids making the model compiler lose its one chance at
-  initialization while keeping all non-GPU builds unchanged.
-  """
-  probe = [sys.executable, "-c", "from tinygrad.device import Device; Device[Device.DEFAULT]; import os; os._exit(0)"]
-  probe_env = {**compile_env, "DEV": "USB+AMD"}
-  diagnostics: list[str] = []
-
-  for attempt in range(USBGPU_PROBE_ATTEMPTS):
-    if attempt:
-      time.sleep(1)
-    try:
-      result = subprocess.run(
-        probe,
-        cwd=REPO_ROOT,
-        env=probe_env,
-        capture_output=True,
-        text=True,
-        timeout=USBGPU_PROBE_TIMEOUT,
-        check=False,
-      )
-    except subprocess.TimeoutExpired as exc:
-      partial = exc.stderr or exc.stdout or ""
-      if isinstance(partial, bytes):
-        partial = partial.decode(errors="replace")
-      partial = partial.strip()
-      diagnostics.append(
-        f"probe timed out after {USBGPU_PROBE_TIMEOUT}s" + (f": {partial[-2000:]}" if partial else "")
-      )
-      continue
-
-    if result.returncode == 0:
+  for _ in range(USBGPU_PROBE_ATTEMPTS):
+    if link_up():
       return
-    detail = (result.stderr or result.stdout).strip()
-    diagnostics.append((detail[-2000:] if detail else f"probe exited with status {result.returncode}"))
-
-  detail = diagnostics[-1] if diagnostics else "unknown error"
-  raise RuntimeError(f"External GPU PCIe link was not ready after {USBGPU_PROBE_ATTEMPTS} probes: {detail}")
+    time.sleep(1)
+  raise RuntimeError("Chestnut not ready; external GPU PCIe link did not come up")
 
 
 def parse_args() -> argparse.Namespace:
@@ -569,7 +533,7 @@ def compile_driving(
       "TC_OPT": "2",
     })
     command.append("--out-of-band")
-    wait_for_external_gpu(compile_env)
+    wait_for_external_gpu()
   subprocess.run(command, cwd=REPO_ROOT, env=compile_env, check=True)
   return output_path
 

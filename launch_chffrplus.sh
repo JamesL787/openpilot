@@ -155,7 +155,7 @@ from pathlib import Path
 import sys
 import time
 
-from openpilot.common.file_chunker import file_chunked_exists
+from openpilot.common.file_chunker import get_existing_chunks
 
 start = time.monotonic()
 last = start
@@ -195,13 +195,14 @@ for mod in mods:
   log_step(f"import:{mod}")
 
 repo_root = Path.cwd().parents[1]
-
-required_files = [
+required_model_artifacts = [
   repo_root / "selfdrive/modeld/models/driving_tinygrad.pkl",
   repo_root / "selfdrive/modeld/models/dmonitoring_model_metadata.pkl",
   repo_root / "selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl",
   repo_root / "selfdrive/modeld/models/dm_warp_1928x1208_tinygrad.pkl",
   repo_root / "selfdrive/modeld/models/dm_warp_1344x760_tinygrad.pkl",
+]
+required_files = [
   repo_root / "selfdrive/pandad/pandad_api_impl.so",
   repo_root / "selfdrive/controls/lib/lateral_mpc_lib/c_generated_code/acados_ocp_solver_pyx.so",
   repo_root / "selfdrive/controls/lib/lateral_mpc_lib/c_generated_code/libacados_ocp_solver_lat.so",
@@ -210,12 +211,19 @@ required_files = [
   repo_root / "opendbc_repo/opendbc/dbc/gm_global_a_powertrain_generated.dbc",
 ]
 
-# Large artifacts ship split into .chunkNNofMM parts, and modeld reads them through
-# read_file_chunked() without ever assembling them. Use the same chunk-aware predicate here:
-# a bare is_file() reports them missing, which declares prebuilt incompatible and makes every
-# boot pay for a full local build.
+for path in required_model_artifacts:
+  try:
+    artifact_paths = [Path(p) for p in get_existing_chunks(path)]
+  except Exception as e:
+    raise FileNotFoundError(f"Missing prebuilt runtime artifact: {path}") from e
+  missing_chunks = [p for p in artifact_paths if not p.is_file()]
+  if missing_chunks:
+    missing = ", ".join(str(p) for p in missing_chunks)
+    raise FileNotFoundError(f"Missing prebuilt runtime artifact chunks for {path}: {missing}")
+log_step("required_model_artifacts")
+
 for path in required_files:
-  if not file_chunked_exists(path):
+  if not path.is_file():
     raise FileNotFoundError(f"Missing prebuilt runtime artifact: {path}")
 log_step("required_files")
 PY

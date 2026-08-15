@@ -370,9 +370,10 @@ class Car:
       # and StarPilotCarParams (pandad ORs both safetyParams together)
       # Use the pre-init longitudinal state here, since Hyundai init() may already
       # flip CP.openpilotLongitudinalControl to False as part of the fallback.
-      if was_openpilot_long and self.params.get_bool("EcuDisableFailed"):
+      if was_openpilot_long and self.CP.brand in ("hyundai", "nissan") and self.params.get_bool("EcuDisableFailed"):
         # ECU disable failed/rejected - switch to lateral-only mode with stock ACC
-        LONG_FLAG = 4  # HyundaiSafetyFlags.LONG
+        # Keep this local to avoid importing every brand's values into card.py.
+        LONG_FLAG = 4 if self.CP.brand == "hyundai" else 2 if self.CP.brand == "nissan" else 0
         for cfg in self.CP.safetyConfigs:
           cfg.safetyParam &= ~LONG_FLAG
         for cfg in self.FPCP.safetyConfigs:
@@ -433,10 +434,13 @@ class Car:
       starpilot_plan = self.sm['starpilotPlan']
       starpilot_target_speed = float(starpilot_plan.vCruise)
       if self.starpilot_toggles.speed_limit_controller:
-        slc_target_speed = max(
-          float(starpilot_plan.slcOverriddenSpeed),
-          float(starpilot_plan.slcSpeedLimit) + float(starpilot_plan.slcSpeedLimitOffset),
+        overridden_speed = float(starpilot_plan.slcOverriddenSpeed)
+        slc_limit = float(starpilot_plan.slcSpeedLimit) + float(starpilot_plan.slcSpeedLimitOffset)
+        allow_lower_override = (
+          getattr(self.starpilot_toggles, "redneck_cruise", False) and
+          getattr(self.starpilot_toggles, "speed_limit_controller_override_set_speed", False)
         )
+        slc_target_speed = overridden_speed if allow_lower_override and overridden_speed > 0 else max(overridden_speed, slc_limit)
 
     # Use acceleration projection only when SLC has no resolved target.
     if self.CP.openpilotLongitudinalControl and slc_target_speed <= 0.0:

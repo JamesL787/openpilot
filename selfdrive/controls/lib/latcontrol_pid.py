@@ -12,7 +12,12 @@ from openpilot.common.pid import PIDController
 from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
-from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import SUBARU_IMPREZA_CARS, get_subaru_impreza_pid_output_scale
+from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
+  RAV4_TSS2_CARS,
+  SUBARU_IMPREZA_CARS,
+  get_rav4_tss2_pid_output,
+  get_subaru_impreza_pid_output_scale,
+)
 from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
@@ -253,6 +258,7 @@ class LatControlPID(LatControl):
     # Whether paramsd observes the dewarped angle for this rack, which decides which
     # coordinate params.angleOffsetDeg is in. Must track paramsd exactly.
     self.vgr_offset_is_linear = get_honda_vgr_learning_inverse(CP.flags) is not None
+    self.is_rav4_tss2 = CP.carFingerprint in RAV4_TSS2_CARS
     self.prev_angle_steers_des_no_offset = 0.0
     self.eps_modified_steering_pressed_filter_s = 0.0
     self.eps_modified_steering_pressed_prev = False
@@ -470,6 +476,11 @@ class LatControlPID(LatControl):
         output_torque = raw_output_torque * get_subaru_impreza_pid_output_scale(error)
 
       output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
+
+      if self.is_rav4_tss2:
+        output_torque = get_rav4_tss2_pid_output(output_torque, self.prev_output_torque,
+                                                angle_steers_des_no_offset, CS.vEgo)
+        output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       if civic_bosch_testing_ground:
         output_torque *= get_civic_bosch_modified_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)

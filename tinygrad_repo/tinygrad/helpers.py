@@ -1,7 +1,7 @@
 from __future__ import annotations
 import time
 START_TIME = time.perf_counter()
-import os, functools, platform, re, contextlib, operator, hashlib, pickle, sqlite3, tempfile, pathlib, string, ctypes, sys, gzip, getpass, gc
+import os, functools, platform, re, contextlib, operator, hashlib, pickle, sqlite3, tempfile, pathlib, string, ctypes, sys, gzip, getpass, gc, io
 from collections import defaultdict
 import subprocess, shutil, math, types, copyreg, inspect, importlib, decimal, itertools, difflib
 from dataclasses import dataclass, field, replace
@@ -492,7 +492,8 @@ def _decompress_zstd(data:bytes) -> bytes:
     from compression.zstd import decompress
     return decompress(data)
   from zstandard import ZstdDecompressor
-  return ZstdDecompressor().decompress(data)
+  with ZstdDecompressor().stream_reader(io.BytesIO(data)) as reader:
+    return reader.read()
 
 def fetch_fw(path:str, name:str, sha256:str) -> bytes:
   if (p:=pathlib.Path(f"/lib/firmware/{path}/{name}.zst")).is_file():

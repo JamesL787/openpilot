@@ -13,6 +13,7 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType
 from opendbc.car.chrysler.values import pacifica_hybrid_aol_stock_acc_mode
 from opendbc.car.gm.values import GMFlags
 from opendbc.car.honda.values import HondaFlags
+from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR
 
 from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper, DT_CTRL
@@ -60,7 +61,8 @@ IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
 def commanded_torque_at_max_for_saturation(CP, output: float) -> bool:
   torque_controller = (CP.steerControlType == car.CarParams.SteerControlType.torque and
                        CP.lateralTuning.which() == "torque")
-  return torque_controller and abs(output) > 0.99
+  has_controller_grace = CP.carFingerprint == HYUNDAI_CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN
+  return torque_controller and not has_controller_grace and abs(output) > 0.99
 
 
 def suppress_steer_saturated_alert(CP: car.CarParams) -> bool:
@@ -68,8 +70,7 @@ def suppress_steer_saturated_alert(CP: car.CarParams) -> bool:
 
 
 def should_loud_blindspot_alert_without_lateral(CS, sm, starpilot_toggles, combined_left_bsm=None, combined_right_bsm=None) -> bool:
-  if not (getattr(starpilot_toggles, "loud_blindspot_alert", False) and
-          getattr(starpilot_toggles, "loud_blindspot_alert_when_disengaged", False)):
+  if not getattr(starpilot_toggles, "loud_blindspot_alert_when_disengaged", False):
     return False
 
   combined_left_bsm = CS.leftBlindspot if combined_left_bsm is None else combined_left_bsm
@@ -99,6 +100,11 @@ def should_loud_blindspot_alert_without_lateral(CS, sm, starpilot_toggles, combi
 def get_starpilot_alert_filters(current_alert_types: list[str], clear_event_types: set[str], starpilot_events: Events) -> tuple[list[str], set[str]]:
   starpilot_alert_types = list(current_alert_types)
   starpilot_clear_event_types = set(clear_event_types)
+
+  if int(StarPilotEventName.lkasEnable) in starpilot_events.names:
+    if ET.WARNING not in starpilot_alert_types:
+      starpilot_alert_types.append(ET.WARNING)
+    starpilot_clear_event_types.discard(ET.WARNING)
 
   # This alert is explicitly allowed while lateral is paused/off. The state
   # machine only exposes WARNING while active/AOL, so let this warning through.

@@ -189,9 +189,16 @@ class CarInterfaceBase(ABC):
 
     # NRDR: modified-EPS Hondas stay on the angle-space PID controller (matching nrdr-nightly, where
     # every Honda runs lateralTuning.pid). Only an explicit user toggle switches to torque.
-    toggles_to_check = ("force_torque_controller", "nnff", "nnff_lite")
-    if ret.steerControlType != structs.CarParams.SteerControlType.angle and \
-       any(getattr(starpilot_toggles, toggle, False) for toggle in toggles_to_check):
+    force_torque_controller = bool(getattr(starpilot_toggles, "force_torque_controller", False))
+    toggles_to_check = ("nnff", "nnff_lite")
+    # ForceTorqueController converts PID-based paths to torque control. It must
+    # not reinitialize cars that already selected torque control: those paths
+    # may have vehicle-specific torque tuning applied in their interface.
+    force_torque_conversion = force_torque_controller and ret.lateralTuning.which() != "torque"
+    if ret.steerControlType != structs.CarParams.SteerControlType.angle and (
+      force_torque_conversion or
+      any(getattr(starpilot_toggles, toggle, False) for toggle in toggles_to_check)
+    ):
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
     return ret
@@ -245,7 +252,7 @@ class CarInterfaceBase(ABC):
           fp_ret.pcmCruiseSpeed = False
           CP.openpilotLongitudinalControl = True
 
-        hyundai_has_lda_button = (
+        hyundai_has_lda_button = not (CP.flags & HyundaiFlags.CANFD) and (
           0x391 in fingerprint[0] or
           0x50C in fingerprint[0] or
           candidate in ALT_BUS_LDA_BUTTON_CARS or

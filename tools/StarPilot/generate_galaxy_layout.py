@@ -25,6 +25,16 @@ DROPDOWN_MAPPING = {
 # Custom controls implemented outside the tuple vectors in Qt settings panels.
 # Inject these so regenerated galaxy layouts retain equivalent functionality.
 INJECTED_SECTION_PARAMS = {
+    "Longitudinal (Speed & Following)": [
+        {
+            "key": "CEOpenRoad",
+            "label": "Open Road",
+            "description": "Keep Experimental Mode active on an open road after reaching the set speed when no lead vehicle is detected. This can help the model anticipate braking sooner.",
+            "data_type": "bool",
+            "ui_type": "toggle",
+            "parent_key": "ConditionalExperimental",
+        },
+    ],
     "Vehicle": [
         {
             "key": "CarMake",
@@ -61,8 +71,10 @@ INJECTED_SECTION_PARAMS = {
 
 # Keys explicitly hidden from The Galaxy's generic settings UI.
 HIDDEN_KEYS = {
+    "CustomAlerts",
     "HumanAcceleration",
-    "DisableWideRoad",
+    "HideLeadMarker",
+    "HideSpeedLimit",
     "LockDoorsTimer",
     "NewLongAPI",
     "ToyotaDoors",
@@ -73,6 +85,18 @@ HIDDEN_SECTION_NAMES = {"Model & Customization"}
 
 # Keys that are boolean toggles despite ambiguous defaults in starpilot_variables.py.
 FORCE_BOOL_KEYS = {"EVTuning"}
+
+# These fields are intentionally allowed to differ from the Qt source. Galaxy
+# has its own copy, nesting, and browser-only behavior for otherwise shared
+# params, so regeneration must not discard those overrides.
+GALAXY_OVERRIDE_FIELDS = {
+    "label",
+    "description",
+    "parent_key",
+    "is_parent_toggle",
+    "disabled_when_key_true",
+    "disabled_reason",
+}
 
 
 def get_param_settings_tiers():
@@ -105,6 +129,9 @@ def apply_settings_tiers(layout):
             resolving.add(key)
 
             parent_key = params_by_key.get(key, {}).get("parent_key")
+            if parent_key == "GalaxyDeveloperMode":
+                resolved[key] = "advanced"
+                return resolved[key]
             own_tier = PARAM_SETTINGS_TIERS.get(key)
             if parent_key:
                 parent_tier = resolve_tier(parent_key, resolving)
@@ -183,7 +210,6 @@ PARENT_KEYS_MAPPING = {
     },
     "sounds_settings.cc": {
         "alertVolumeControlKeys": "AlertVolumeControl",
-        "customAlertsKeys": "CustomAlerts"
     },
     "theme_settings.cc": {
         "customThemeKeys": "CustomTheme"
@@ -601,8 +627,14 @@ def parse_cpp_file(filename):
 
 
 def merge_layouts(existing_layout, generated_layout):
-    existing_sections = {section["name"]: section for section in existing_layout}
     generated_sections = {section["name"]: section for section in generated_layout}
+    existing_keys = {
+        param["key"]
+        for section in existing_layout
+        for param in section.get("params", [])
+        if "key" in param
+    }
+    merged_keys = set(existing_keys)
 
     merged_layout = []
 
@@ -625,16 +657,21 @@ def merge_layouts(existing_layout, generated_layout):
         for param in existing_params:
             key = param["key"]
             if key in generated_by_key:
-                merged_params.append(generated_by_key[key])
+                merged_param = dict(param)
+                for field, value in generated_by_key[key].items():
+                    if field not in GALAXY_OVERRIDE_FIELDS and field != "settings_tier":
+                        merged_param[field] = value
+                merged_params.append(merged_param)
             else:
                 merged_params.append(param)
             seen_keys.add(key)
 
         for param in generated_params:
             key = param["key"]
-            if key not in seen_keys:
+            if key not in seen_keys and key not in merged_keys:
                 merged_params.append(param)
                 seen_keys.add(key)
+                merged_keys.add(key)
 
         merged_section = dict(section)
         merged_section["icon"] = generated.get("icon", section.get("icon"))
@@ -648,7 +685,8 @@ def merge_layouts(existing_layout, generated_layout):
 
     return merged_layout
 
-def main():
+
+def generate_layout(existing_layout=None):
     generated_layout = []
     for cat in CATEGORIES:
         items = parse_cpp_file(cat["file"])
@@ -662,15 +700,22 @@ def main():
                 "icon": cat["icon"],
                 "params": items
             })
+
+    layout = generated_layout if existing_layout is None else merge_layouts(existing_layout, generated_layout)
+    return apply_settings_tiers(layout)
+
+def main():
     output_path = os.path.join(REPO_ROOT, "starpilot/system/the_galaxy/assets/components/tools/device_settings_layout.json")
-    layout = generated_layout
+    existing_layout = None
     if os.path.exists(output_path):
         with open(output_path, 'r', encoding='utf-8') as f:
             existing_layout = json.load(f)
-        layout = merge_layouts(existing_layout, generated_layout)
-    layout = apply_settings_tiers(layout)
+    layout = generate_layout(existing_layout)
+    if layout == existing_layout:
+        return
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(layout, f, indent=2, ensure_ascii=False)
+        f.write("\n")
 
 if __name__ == '__main__':
     main()

@@ -25,13 +25,16 @@ from openpilot.starpilot.common.starpilot_variables import MODELS_PATH
 
 MANIFEST_CANDIDATES = ("v23",)
 MODEL_NAMESPACE_SUFFIX = "3"
-DEFAULT_MODEL_KEY = "rdf"
+DEFAULT_MODEL_KEY = "rdf43"
 LOCAL_MODEL_PREFIX = "local-"
 LOCAL_MODEL_SERIES = "Local Series"
 ARTIFACT_URLS_CACHE = ".model_artifact_urls.json"
 ARTIFACT_METADATA_CACHE = ".model_artifacts.json"
 MODEL_KEY_CANONICAL_MAP = {
   "sc": "sc2",
+  # The original bundled RDF key remains valid after the bundled default moves
+  # to the v23 RDF V4 artifact.
+  "rdf": DEFAULT_MODEL_KEY,
 }
 LEGACY_DRIVING_PREFIXES = (
   "driving_",
@@ -64,8 +67,6 @@ def is_local_model_key(model_key: str) -> bool:
 
 def is_driving_artifact_file(filename: str) -> bool:
   """Match both namespaced unified artifacts and pre-v23 split driving files."""
-  if filename.startswith(LOCAL_MODEL_PREFIX):
-    return False
   return "_driving_" in filename or filename.startswith(LEGACY_DRIVING_PREFIXES)
 
 
@@ -624,7 +625,7 @@ class ModelManager:
         default_name = (
           self.available_model_names[default_index]
           if default_index is not None and default_index < len(self.available_model_names)
-          else "Regret Driven Framework"
+          else "Regret Driven Framework V4"
         )
         default_version = (
           self.model_versions[default_index]
