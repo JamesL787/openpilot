@@ -2433,6 +2433,15 @@
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",
         "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrHondaEcuMatchedLong",
+        "label": "Nidec ECU-Matched Long",
+        "description": "Honda Nidec only, and not with a gas pedal interceptor — has no effect on Bosch cars or interceptor-equipped cars. Shape Honda gas and brake commands closer to the stock Nidec ECU.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
       }
     ]
   },

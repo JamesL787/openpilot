@@ -382,7 +382,9 @@ class NRDRTuningLayout(_SettingsPage):
     ]
 
     long_control_rows = [
-      toggle("NrdrHondaEcuMatchedLong", "Nidec ECU-Matched Long", "Shape Honda gas and brake commands closer to the stock Nidec ECU."),
+      toggle("NrdrHondaEcuMatchedLong", "Nidec ECU-Matched Long",
+             "Shape Honda gas and brake commands closer to the stock Nidec ECU.",
+             visible=self._is_honda_nidec),
       toggle("HondaLiveLearningGas", "Live Learning Gas", "Adapt Honda gas and wind compensation factors while driving."),
       value(
         "HondaStoppingDecelRate", "Honda Stopping Decel Rate", "Brake command rate used by Honda carcontroller while stopping.",
@@ -441,6 +443,28 @@ class NRDRTuningLayout(_SettingsPage):
       panel_style=PANEL_STYLE,
     )
     self._wire_sub_panels()
+
+  def _is_honda_nidec(self) -> bool:
+    """True only on a Honda running the Nidec longitudinal path.
+
+    Mirrors the carcontroller gate exactly -- Nidec only, and not with a pedal interceptor --
+    so the row is hidden on the cars where the toggle would do nothing. CP comes from
+    CarParamsPersistent, so this is False until the car has been seen once and the row
+    simply stays hidden until then. The Galaxy layout has no car-conditional field, so its
+    copy of this row says "Honda Nidec only" in the description instead.
+    """
+    try:
+      from openpilot.selfdrive.ui.ui_state import ui_state
+      from opendbc.car.honda.values import CAR as HONDA_CAR, HONDA_BOSCH
+      cp = getattr(ui_state, "CP", None)
+      if cp is None:
+        return False
+      if getattr(cp, "enableGasInterceptorDEPRECATED", False):
+        return False
+      fingerprint = str(cp.carFingerprint)
+      return fingerprint in {str(c) for c in HONDA_CAR} and fingerprint not in {str(c) for c in HONDA_BOSCH}
+    except Exception:
+      return False
 
   def navigate_back(self):
     self._go_back()

@@ -659,7 +659,12 @@ class CarController(CarControllerBase):
 
     if CC.longActive:
       accel = actuators.accel
-      ecu_matched = live["ecu_matched_long"] and self.CP.carFingerprint not in HONDA_BOSCH
+      # Nidec only, and not with a pedal interceptor: the interceptor bypasses the stock PCM
+      # accel path entirely (pcm_accel is forced to 0) and rebuilds its own command from gas
+      # and brake with its own gas_mult, gas factor and wind compensation. Shaping those to
+      # the factory ECU's ramp rates would be matching an ECU that is no longer in the loop.
+      ecu_matched = (live["ecu_matched_long"] and self.CP.carFingerprint not in HONDA_BOSCH
+                     and not self.CP.enableGasInterceptorDEPRECATED)
       accel_cmd = float(actuators.accel)
       if ecu_matched:
         accel_cmd = float(np.clip(accel_cmd, self.last_accel_cmd - 0.06, self.last_accel_cmd + 0.05))
