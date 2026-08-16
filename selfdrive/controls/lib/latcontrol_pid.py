@@ -45,10 +45,27 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 #
 # The old 12.74 tail came from a claimed Honda end-to-end spec of 12.72 at lock. Neither the
 # firmware table nor the road data supports it: both put lock near 14.8-14.9.
-NRDR_CLARITY_SR_CURVE_BP = [0., 10., 20., 30., 45., 60., 80., 100., 130., 160.,
-                            200., 250., 300., 360., 450.]  # |wheel angle|, deg
-NRDR_CLARITY_SR_CURVE_V = [17.248, 17.248, 17.248, 17.248, 17.096, 16.937, 16.628, 16.274,
-                           15.843, 15.559, 15.323, 15.133, 14.995, 14.886, 14.752]
+NRDR_CLARITY_SR_CURVE_BP = [0., 25., 40., 55., 80., 110., 150., 205., 295., 380.,
+                            450.]  # |wheel angle|, deg
+NRDR_CLARITY_SR_CURVE_V = [17.890, 17.873, 17.507, 17.458, 16.846, 16.202, 15.637, 15.174,
+                           14.759, 14.441, 14.345]
+
+# Civic Bosch (EPS 39990-TBA-C020) road-measured curve, from Peter's 152-segment extract
+# (6824 accepted samples) processed with the same slip/roll-corrected estimator. Reliable
+# bins only: the 5-15 and 15-25 deg bins are dropped because they RISE off centre, which a
+# variable-ratio rack cannot do -- that is the near-centre yaw-rate SNR floor, not geometry.
+# Beyond 220 deg, where Peter has no data, the tail follows the C020 position table's shape.
+#
+# This replaces the firmware VGR map for this car. The map's taper (1.166x) is close to the
+# measurement (1.140x over 32-220 deg), but the map only supplies a shape to warp paramsd's
+# scalar with, while this is the absolute ratio measured end to end, same as the Clarity.
+#
+# It also settles the 15.25-vs-17.24 disagreement: against Peter's data the 15.25-centre
+# curve is within 2.5% while the 17.24 two-point profile is 6.4% off and tapers 1.459x,
+# failing with the same +10% centre / -15% outer signature an uncorrected kinematic fit
+# always produces.
+NRDR_CIVIC_BOSCH_SR_CURVE_BP = [0., 32., 50., 75., 110., 155., 220., 300., 400.]  # |wheel angle|, deg
+NRDR_CIVIC_BOSCH_SR_CURVE_V = [14.960, 14.960, 14.910, 14.740, 14.210, 13.630, 13.120, 12.904, 12.774]
 
 # CR-V 5G road-measured curve, carried over unchanged from 4f3271d6af.  This rack is not
 # in HONDA_VGR_PROFILE_BY_FW, so it had been running a flat paramsd scalar with no taper
@@ -72,10 +89,9 @@ NRDR_INSIGHT_SR_CURVE_V = [16.82, 12.58]
 # describes rack-to-steering-wheel (the VGR pinion), and misses the rack-to-roadwheel
 # linkage, so on its own it under-tapers and over-commands at angle.  A car absent from
 # this dict falls through to the firmware map if it has one, then to a flat CP.steerRatio.
-# HONDA_CIVIC_BOSCH is deliberately absent: its two candidate measurements disagree by
-# 13% at centre, so it stays on the firmware map until that is resolved.
 NRDR_SR_CURVE_BY_FP = {
   "HONDA_CLARITY": (NRDR_CLARITY_SR_CURVE_BP, NRDR_CLARITY_SR_CURVE_V),
+  "HONDA_CIVIC_BOSCH": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
   "HONDA_CRV_5G": (NRDR_CRV_5G_SR_CURVE_BP, NRDR_CRV_5G_SR_CURVE_V),
   "HONDA_INSIGHT": (NRDR_INSIGHT_SR_CURVE_BP, NRDR_INSIGHT_SR_CURVE_V),
 }
