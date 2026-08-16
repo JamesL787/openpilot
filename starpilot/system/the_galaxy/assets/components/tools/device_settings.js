@@ -449,6 +449,16 @@ function formatSliderValue(val, stepStr, precisionInt, key) {
     return v === 1 ? "1 hour" : `${v} hours`
   }
 
+  // Landing exactly on the car's stock ratio hands it back to the learner; any other
+  // value pins it. Label that one point instead of showing a bare number, matching the
+  // raylib slider. Half-step tolerance so 0.01 resolution cannot skip past it.
+  if (key === "SteerRatio") {
+    const stock = Number.parseFloat(state.values.SteerRatioStock)
+    const stepNum = Number.parseFloat(stepStr)
+    const tol = Math.max(Math.abs(Number.isFinite(stepNum) ? stepNum : 0.01) * 0.5, 1e-4)
+    if (Number.isFinite(stock) && stock > 0 && Math.abs(v - stock) <= tol) return "Default · Learning"
+  }
+
   const volumeKeys = [
     "BelowSteerSpeedVolume", "DisengageVolume", "EngageVolume", "PromptVolume",
     "PromptDistractedVolume", "RefuseVolume",
