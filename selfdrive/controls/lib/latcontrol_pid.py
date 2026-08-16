@@ -22,27 +22,33 @@ from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
 
-# Clarity measured effective-ratio schedule, selected at the MEASURED steering angle.
+# Clarity effective-ratio schedule: EPS position-table shape, scaled to road measurement.
 #
-# This is the curve from 4f3271d6af ("Restore old curve but keep hybrid blend", 2026-07-27),
-# the last road-tested shape before a954d153e7 blended the learned near-centre values in and
-# pulled centre up to 19.68. That blend, and the firmware position map that replaced it in
-# bbff8499/fbf4c5fa, both command more angle near centre than this does -- and the car
-# oversteered at the low speeds where essentially all of its turning happens.
+# Derived 2026-08-15 and it replaces the 4f3271d6af road fit, which tapered 1.440x. Two
+# independent sources say that was roughly twice the real taper:
 #
-# Why this beats the firmware position map is now understood. The Clarity has a dual-pinion
-# rack: the EPS motor sits on the static-ratio pinion and measures rack travel through its
-# resolver, while the steering wheel drives the VGR pinion. The position table is the
-# conversion the EPS needs between those two -- rack to steering wheel -- and it tapers
-# 1.157x (Y 16384 -> 18952). What VehicleModel needs is steering wheel to ROAD wheel, and
-# the rack-to-roadwheel half (tie rods, steering arms, Ackermann, compliance, tyres) is
-# downstream of the EPS and absent from the table. Measured wheel-angle-to-yaw taper is
-# 1.440x, so the map alone supplies only ~80% of the needed taper, leaves the ratio too
-# high at angle, and over-commands. This curve is fitted across the whole chain.
-NRDR_CLARITY_SR_CURVE_BP = [0., 6., 12., 20., 24., 26., 28., 30., 32., 34., 36., 38., 40., 48., 70.,
-                            100., 140., 200., 300., 450.]  # |wheel angle|, deg
-NRDR_CLARITY_SR_CURVE_V = [18.340, 18.340, 18.290, 18.095, 18.062, 17.993, 17.843, 17.641, 17.418, 17.178,
-                           16.978, 16.840, 16.780, 16.720, 16.400, 15.940, 15.400, 14.300, 13.400, 12.740]
+#   * The EPS position table (Y 16384 -> 18952) tapers 1.157x centre to lock.
+#   * Corrected road data over 3392 samples tapers 1.161x over the same span.
+#
+# The old fit inverted KINEMATIC steering (atan(L*curv)), which assumes no tyre slip and so
+# overstates the ratio by 1/(L*curvature_factor(u)) -- about 1.02x at 10 mph but 1.37x at
+# 55 mph. Because speed correlates with angle (highway is small-angle, parking is large),
+# that inflated the near-centre bins far more than the outer ones and manufactured taper the
+# rack does not have. Solving VehicleModel's own equation instead, theta = (curv - roll_comp)
+# * sR / curvature_factor(u), removes it.
+#
+# Shape comes from the firmware table because it is dense and noise-free; the absolute level
+# is a weighted least-squares fit to the measured bins (n/IQR^2 weighting, reliable bins from
+# 32 to 330 deg only). Residual is within 2.5% at every measured point. Below ~30 deg the
+# yaw-rate estimate is unusable -- IQR reaches 15-23% and the medians go non-physical -- so
+# the curve is held flat there rather than fitted.
+#
+# The old 12.74 tail came from a claimed Honda end-to-end spec of 12.72 at lock. Neither the
+# firmware table nor the road data supports it: both put lock near 14.8-14.9.
+NRDR_CLARITY_SR_CURVE_BP = [0., 10., 20., 30., 45., 60., 80., 100., 130., 160.,
+                            200., 250., 300., 360., 450.]  # |wheel angle|, deg
+NRDR_CLARITY_SR_CURVE_V = [17.248, 17.248, 17.248, 17.248, 17.096, 16.937, 16.628, 16.274,
+                           15.843, 15.559, 15.323, 15.133, 14.995, 14.886, 14.752]
 
 # CR-V 5G road-measured curve, carried over unchanged from 4f3271d6af.  This rack is not
 # in HONDA_VGR_PROFILE_BY_FW, so it had been running a flat paramsd scalar with no taper
