@@ -255,7 +255,6 @@ class NRDRTuningLayout(_SettingsPage):
         lambda: self._show_slider("HondaCenterScale", 0.0, 5.0, step=0.05, value_type="float", title="Center Scale"),
       ),
       toggle("HondaUnwindFreeze", "Unwind Integrator Freeze", "Freeze the PID integrator while steering naturally returns toward center."),
-      toggle("HondaUnwindLookahead", "Unwind Lookahead", "Use model path lookahead to begin unwind behavior earlier."),
       value(
         "HondaUnwindBoostSeconds", "Unwind Boost Duration", "Maximum duration of the low-speed unwind feedforward boost.",
         lambda: f"{p.get_float('HondaUnwindBoostSeconds'):.1f}s",

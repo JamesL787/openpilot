@@ -10,7 +10,6 @@ from openpilot.common.params import Params
 from openpilot.common.pid import PIDController
 from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
-from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   RAV4_TSS2_CARS,
   SUBARU_IMPREZA_CARS,
@@ -19,7 +18,6 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
 )
 from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
-from openpilot.selfdrive.modeld.constants import ModelConstants
 
 
 # Clarity effective-ratio schedule: EPS position-table shape, scaled to road measurement.
@@ -117,10 +115,22 @@ def get_nrdr_modified_eps_kf(v_ego: float) -> float:
 
 
 CENTER_TAPER_FADE_TAU = 0.25
-UNWIND_LOOKAHEAD_MIN_IDX = 5
-UNWIND_LOOKAHEAD_SECONDS = 1.0
-UNWIND_LOOKAHEAD_MIN_LAT_ACCEL = 0.3
 UNWIND_BOOST_FADE_S = 0.3
+
+# Below this speed the phase SIGN is held rather than recomputed. phase is
+# angle * d(angle), and d(angle) is a frame-to-frame difference of the desired angle, so
+# at a crawl it is dominated by model jitter and the sign chatters -- which would flip
+# every consumer below between turn-in and unwind scaling. Magnitude still comes from the
+# current frame; only the direction latches. Adopted from nrdr-development-new a9afab2866.
+PHASE_SWITCH_MIN_SPEED = 0.5 * 0.44704  # m/s; _MPH_TO_MS is defined below this point
+
+
+def phase_with_latch(angle_deg: float, angle_delta_deg: float, v_ego: float,
+                     direction: float) -> tuple[float, float]:
+  phase = angle_deg * angle_delta_deg
+  if phase != 0.0 and (v_ego > PHASE_SWITCH_MIN_SPEED or direction == 0.0):
+    direction = 1.0 if phase > 0.0 else -1.0
+  return abs(phase) * direction, direction
 UNWIND_FREEZE_PHASE_THRESHOLD = -0.2
 UNWIND_FREEZE_ANGLE_NEAR_CENTER = 8.0
 _MPH_TO_MS = 0.44704
@@ -150,14 +160,13 @@ def scale_lateral_pid_gain_values(values, scale: float) -> list[float]:
   return [float(value) * scale for value in values]
 
 
-def get_civic_bosch_modified_pid_output_scale(desired_angle_deg: float, desired_angle_delta_deg: float, v_ego: float) -> float:
+def get_civic_bosch_modified_pid_output_scale(desired_angle_deg: float, phase: float, v_ego: float) -> float:
   abs_angle = abs(desired_angle_deg)
   speed_weight = min(max((v_ego - 4.0) / 10.0, 0.0), 1.0)
   center_speed_weight = 0.70 + (0.30 * speed_weight)
   center_weight = min(max((18.0 - abs_angle) / 18.0, 0.0), 1.0)
   mid_turn_weight = min(max((abs_angle - 10.0) / 10.0, 0.0), 1.0)
   angle_weight = min(max((abs_angle - 18.0) / 10.0, 0.0), 1.0)
-  phase = desired_angle_deg * desired_angle_delta_deg
 
   is_left = desired_angle_deg > 0.0
   center_taper = 0.32
@@ -210,19 +219,6 @@ def _lat_pid_scale_banded(v_ego: float, low: float, standard: float, highway: fl
   return highway
 
 
-def _sign(x: float) -> float:
-  return 1.0 if x > 0.0 else (-1.0 if x < 0.0 else 0.0)
-
-
-def _lookahead_release(future_vals, current_val) -> float:
-  if not future_vals:
-    return current_val
-  same_sign = [v for v in future_vals if _sign(v) == _sign(current_val)]
-  if len(same_sign) < len(future_vals):
-    return 0.0
-  return min(same_sign + [current_val], key=lambda x: abs(x))
-
-
 def _get_param_float(params, key, default, min_value=None, max_value=None, scale=1.0):
   try:
     value = params.get(key)
@@ -254,7 +250,7 @@ def _get_param_bool(params, key, default=False):
 
 def _clarity_eps_pid_output_scale(
   desired_angle_deg: float,
-  desired_angle_delta_deg: float,
+  phase: float,
   steering_rate_deg: float,
   v_ego: float,
   center_taper_scale: float,
@@ -266,7 +262,6 @@ def _clarity_eps_pid_output_scale(
   speed_weight = min(max((v_ego - 4.0) / 10.0, 0.0), 1.0)
   mid_turn_weight = min(max((abs_angle - 10.0) / 10.0, 0.0), 1.0)
   angle_weight = min(max((abs_angle - 16.0) / 12.0, 0.0), 1.0)
-  phase = desired_angle_deg * desired_angle_delta_deg
   is_left = desired_angle_deg > 0.0
 
   low_speed_unwind_weight = min(max(1.0 - (v_ego / (15.0 * _MPH_TO_MS)), 0.0), 1.0)
@@ -355,8 +350,8 @@ class LatControlPID(LatControl):
     self.center_taper_high = 0.5
     self.center_boost_threshold = 3.0
     self.center_boost_min_speed = 50.0
+    self.phase_direction = 0.0
     self.unwind_freeze_enabled = False
-    self.unwind_lookahead_enabled = False
     self.unwind_ff_multiplier = 2.0
     self.unwind_boost_cap_s = 1.0
     self.unwind_boost_elapsed = 0.0
@@ -429,7 +424,8 @@ class LatControlPID(LatControl):
     else:
       self.frame += 1
       desired_angle_delta = angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
-      phase = angle_steers_des_no_offset * desired_angle_delta
+      phase, self.phase_direction = phase_with_latch(angle_steers_des_no_offset, desired_angle_delta,
+                                                      CS.vEgo, self.phase_direction)
 
       # offset does not contribute to resistive torque
       if self.is_modified_eps_kf_car:
@@ -438,7 +434,6 @@ class LatControlPID(LatControl):
         ff_factor = self.ff_factor
       ff = ff_factor * self.get_steer_feedforward(angle_steers_des_no_offset, CS.vEgo)
       abs_angle_des = abs(angle_steers_des_no_offset)
-      unwind_predicted = False
       if self.is_eps_modified:
         unwind_ff_boost = float(np.interp(CS.vEgo, [0.0, 10.0], [self.unwind_ff_multiplier, 1.0]))
         steering_rate_unwind_ff = angle_steers_des_no_offset * float(CS.steeringRateDeg) < -1.0
@@ -446,19 +441,6 @@ class LatControlPID(LatControl):
         if steering_rate_unwind_ff and abs_angle_des > 5.0:
           ff_unwind_weight = max(ff_unwind_weight, 0.5)
 
-        predicted_unwind_weight = 0.0
-        if self.unwind_lookahead_enabled and model_data is not None and len(model_data.acceleration.y) >= CONTROL_N:
-          lat_accels = list(model_data.acceleration.y)
-          if len(lat_accels) > UNWIND_LOOKAHEAD_MIN_IDX:
-            current_la = float(lat_accels[0])
-            upper_idx = next((i for i, t in enumerate(ModelConstants.T_IDXS) if t > UNWIND_LOOKAHEAD_SECONDS), len(lat_accels))
-            future = [float(v) for v in lat_accels[UNWIND_LOOKAHEAD_MIN_IDX:upper_idx]]
-            lookahead_la = _lookahead_release(future, current_la)
-            if abs(current_la) > UNWIND_LOOKAHEAD_MIN_LAT_ACCEL:
-              predicted_unwind_weight = min(max(1.0 - abs(lookahead_la) / abs(current_la), 0.0), 1.0)
-              unwind_predicted = lookahead_la == 0.0 or predicted_unwind_weight > 0.5
-
-        ff_unwind_weight = max(ff_unwind_weight, predicted_unwind_weight)
 
         if ff_unwind_weight > 0.0:
           self.unwind_boost_elapsed += self.dt
@@ -488,7 +470,7 @@ class LatControlPID(LatControl):
       freeze_threshold = 2.0 if self.is_eps_modified else 5.0
       freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < freeze_threshold
       unwind_detected = phase < UNWIND_FREEZE_PHASE_THRESHOLD and abs_angle_des < UNWIND_FREEZE_ANGLE_NEAR_CENTER
-      if self.is_eps_modified and self.unwind_freeze_enabled and (unwind_detected or unwind_predicted):
+      if self.is_eps_modified and self.unwind_freeze_enabled and unwind_detected:
         freeze_integrator = True
 
       output_torque = self.pid.update(error,
@@ -519,7 +501,6 @@ class LatControlPID(LatControl):
           self.center_boost_threshold = _get_param_float(self.params, "HondaCenterBoostThreshold", 3.0, 0.0, 10.0)
           self.center_boost_min_speed = _get_param_float(self.params, "HondaCenterBoostMinSpeed", 50.0, 0.0, 90.0)
           self.unwind_freeze_enabled = _get_param_bool(self.params, "HondaUnwindFreeze")
-          self.unwind_lookahead_enabled = _get_param_bool(self.params, "HondaUnwindLookahead")
           self.unwind_ff_multiplier = _get_param_float(self.params, "HondaUnwindFfMultiplier", 2.0, 1.0, 4.0)
           self.unwind_boost_cap_s = _get_param_float(self.params, "HondaUnwindBoostSeconds", 1.0, 0.0, 3.0)
           self.lat_stiction_enabled = _get_param_bool(self.params, "NrdrLatStiction")
@@ -538,7 +519,7 @@ class LatControlPID(LatControl):
         if not civic_bosch_testing_ground:
           output_torque *= _clarity_eps_pid_output_scale(
             angle_steers_des_no_offset,
-            desired_angle_delta,
+            phase,
             float(CS.steeringRateDeg),
             CS.vEgo,
             center_taper_scale,
@@ -559,7 +540,7 @@ class LatControlPID(LatControl):
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       if civic_bosch_testing_ground:
-        output_torque *= get_civic_bosch_modified_pid_output_scale(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo)
+        output_torque *= get_civic_bosch_modified_pid_output_scale(angle_steers_des_no_offset, phase, CS.vEgo)
         output_alpha = get_civic_bosch_modified_pid_output_alpha(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo,
                                                                  output_torque, self.prev_output_torque)
         output_torque = self.prev_output_torque + (output_alpha * (output_torque - self.prev_output_torque))

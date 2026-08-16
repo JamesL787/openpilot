@@ -408,7 +408,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HondaUnwindBoostSeconds", {PERSISTENT, FLOAT, "1.0", "1.0", 2}},
     {"HondaUnwindFfMultiplier", {PERSISTENT, FLOAT, "2.0", "2.0", 2}},
     {"HondaUnwindFreeze", {PERSISTENT, BOOL, "0", "0", 2}},
-    {"HondaUnwindLookahead", {PERSISTENT, BOOL, "0", "0", 2}},
     {"HumanLaneChanges", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"IconPack", {PERSISTENT, STRING, "stock", "stock", 0}},
     {"IconToDownload", {CLEAR_ON_MANAGER_START, STRING, "", ""}},

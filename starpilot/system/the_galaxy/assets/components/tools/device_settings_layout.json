@@ -462,15 +462,6 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "HondaUnwindLookahead",
-        "label": "Honda Unwind Lookahead",
-        "description": "Uses the planned path to start unwind behavior earlier.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "HondaUnwindBoostSeconds",
         "label": "Honda Unwind Boost Duration",
         "description": "Limits how long the low-speed unwind feedforward boost is held.",

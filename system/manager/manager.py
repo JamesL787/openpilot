@@ -814,7 +814,6 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "HondaSteerDeltaLimiter": False,
     "HondaTorqueLowPassFilter": True,
     "HondaUnwindFreeze": False,
-    "HondaUnwindLookahead": True,
     "NrdrIncreaseOverrideTolerance": False,
   }
   desired_float_values = {
