@@ -529,14 +529,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     # ── 2. Advanced Actuators Rows ──
     adv = self._advanced_enabled
     self._advanced_rows = [
-      SettingRow("NrdrModelLeadTrajectory", "toggle", tr_noop("Model Lead Trajectory"),
-                 subtitle=tr_noop("Experimental. Plan against the driving model's predicted lead path "
-                                  "instead of extrapolating the lead's current acceleration forward. "
-                                  "Can brake earlier for a lead that keeps slowing, and react less to "
-                                  "brief lead braking. Civic Bosch only."),
-                 get_state=lambda: self._params.get_bool("NrdrModelLeadTrajectory"),
-                 set_state=lambda v: self._params.put_bool("NrdrModelLeadTrajectory", v),
-                 visible=lambda: adv() and self._is_civic_bosch()),
       SettingRow("EVTuning", "toggle", tr_noop("EV Tuning"),
                  subtitle=tr_noop("Acceleration tuning for EV and direct-drive vehicles."),
                  get_state=lambda: self._params.get_bool("EVTuning"),
@@ -594,6 +586,25 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     ]
 
     # ── 3. Speed Limit Controller (SLC) Rows ──
+    # Radarless Honda Bosch longitudinal. Its own section so the header reads as a group;
+    # SettingSection.visible hides the header too on cars this does not apply to.
+    self._bosch_long_rows = [
+      SettingRow("NrdrBlotV2", "toggle", tr_noop("BLoTv2 Supervisor"),
+                 subtitle=tr_noop("Experimental. Tracks how much deceleration the lead actually needs, "
+                                  "softens the solver's jerk cost when it has to respond, and pads "
+                                  "following time when the lead is slowing. Never commands acceleration "
+                                  "itself."),
+                 get_state=lambda: self._params.get_bool("NrdrBlotV2"),
+                 set_state=lambda v: self._params.put_bool("NrdrBlotV2", v)),
+      SettingRow("NrdrModelLeadTrajectory", "toggle", tr_noop("Model Lead Trajectory"),
+                 subtitle=tr_noop("Experimental. Plan against the driving model's predicted lead path "
+                                  "instead of extrapolating the lead's current acceleration forward. "
+                                  "Can brake earlier for a lead that keeps slowing, and react less to "
+                                  "brief lead braking."),
+                 get_state=lambda: self._params.get_bool("NrdrModelLeadTrajectory"),
+                 set_state=lambda v: self._params.put_bool("NrdrModelLeadTrajectory", v)),
+    ]
+
     self._slc_rows = [
       SettingRow("SLCFallback", "value", tr_noop("Fallback Speed"),
                  subtitle="",
@@ -849,7 +860,9 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     )
     self._sub_panels["advanced"] = AetherSettingsView(
       self,
-      [SettingSection(title="", rows=self._advanced_rows)],
+      [SettingSection(title="", rows=self._advanced_rows),
+       SettingSection(tr_noop("Bosch Long"), self._bosch_long_rows,
+                      visible=lambda: self._advanced_enabled() and self._is_civic_bosch())],
       header_title=tr_noop("Advanced Actuators"),
       header_subtitle=tr_noop("Adjust actuator delay, EV/Truck tuning, and launch/stop speeds/rates."),
       parent_toggle=pt_advanced,

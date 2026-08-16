@@ -2426,12 +2426,31 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "BoschLong",
+        "label": "Bosch Long",
+        "description": "Longitudinal features for radarless Honda Bosch. These plan against the driving model rather than a radar track, so they only apply on those cars.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "is_parent_toggle": true,
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrBlotV2",
+        "label": "BLoTv2 Supervisor",
+        "description": "Experimental, Civic Bosch only. Tracks how much deceleration the lead actually needs, softens the solver's jerk cost when it has to respond, and pads following time when the lead is slowing. Never commands acceleration itself.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "BoschLong",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NrdrModelLeadTrajectory",
         "label": "Model Lead Trajectory",
         "description": "Experimental. Plan against the driving model's predicted lead path instead of extrapolating the lead's current acceleration forward. Can brake earlier for a lead that keeps slowing, and react less to brief lead braking. Civic Bosch only.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "AdvancedLongitudinalTune",
+        "parent_key": "BoschLong",
         "settings_tier": "advanced"
       },
       {
