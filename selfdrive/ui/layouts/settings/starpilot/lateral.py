@@ -314,7 +314,12 @@ class StarPilotLateralLayout(_SettingsPage):
         "SteerRatio", "value", tr_noop("Steer Ratio"),
         subtitle=tr_noop("Wheel-to-road-wheel angle. At the stock value openpilot learns it while you drive; any other value pins it."),
         get_value=lambda: self._get_steer_ratio_display(),
-        on_click=lambda: self._show_slider("SteerRatio", max(0.01, cs.steerRatio) * 0.5, max(0.01, cs.steerRatio) * 1.5, step=0.01, value_type="float"),
+        # Landing exactly on stock hands the ratio back to the learner, so label that point
+        # instead of showing a bare number. format_adjustor_value matches within half a
+        # step, so 0.01 resolution cannot skip past it.
+        on_click=lambda: self._show_slider("SteerRatio", max(0.01, cs.steerRatio) * 0.5, max(0.01, cs.steerRatio) * 1.5,
+                                           step=0.01, value_type="float",
+                                           labels={self._steer_ratio_stock(): tr("Default · Learning")}),
         visible=lambda: alt_on() and cs.steerRatio != 0,
       ),
     ]
@@ -363,6 +368,10 @@ class StarPilotLateralLayout(_SettingsPage):
       panel_style=PANEL_STYLE,
     )
     self._wire_sub_panels()
+
+  def _steer_ratio_stock(self) -> float:
+    """The per-car stock ratio -- the one value that leaves the learner in charge."""
+    return float(self._params.get_float("SteerRatioStock") or starpilot_state.car_state.steerRatio)
 
   def _get_steer_ratio_display(self) -> str:
     """Show whether the ratio is learned or pinned, and what stock is.

@@ -840,7 +840,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
     self._sub_panels["csc"] = AetherSettingsView(
       self,
-      [SettingSection(tr("Curve Speed Controller"), self._curve_speed_controller_rows)],
+      [SettingSection(title="", rows=self._curve_speed_controller_rows)],
       header_title=tr("Curve Speed Controller"),
       header_subtitle=tr("Configure speed control on curves and reset collected calibration data."),
       parent_toggle=pt_csc,
