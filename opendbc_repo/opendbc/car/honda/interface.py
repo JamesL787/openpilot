@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import numpy as np
+from openpilot.common.params import Params, UnknownKeyName
 from opendbc.car import get_safety_config, structs, uds
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.disable_ecu import disable_ecu
@@ -44,9 +45,14 @@ class CarInterface(CarInterfaceBase):
         cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
       ret.safetyConfigs = cfgs
 
-      # HONDA_CIVIC_BOSCH has a firmware-correct RadarInterface (16-slot Bosch-A object bank, RX-only);
-      # every other Bosch platform still has no parsed radar DBC, so radar stays unavailable there.
-      ret.radarUnavailable = candidate != CAR.HONDA_CIVIC_BOSCH
+      # HONDA_CIVIC_BOSCH has a firmware-correct RadarInterface (16-slot Bosch-A object bank, RX-only),
+      # but it stays gated behind a tester toggle (NrdrBoschARadar) rather than going default-on: every
+      # other Bosch platform still has no parsed radar DBC and keeps radarUnavailable=True regardless.
+      try:
+        bosch_a_radar_tryout = Params().get_bool("NrdrBoschARadar")
+      except UnknownKeyName:
+        bosch_a_radar_tryout = False
+      ret.radarUnavailable = not (candidate == CAR.HONDA_CIVIC_BOSCH and bosch_a_radar_tryout)
       # Disable the radar and let openpilot control longitudinal
       # WARNING: THIS DISABLES AEB!
       # If Bosch radarless, this blocks ACC messages from the camera

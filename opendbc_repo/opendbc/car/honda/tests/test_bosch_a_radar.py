@@ -18,6 +18,18 @@ from opendbc.car.honda.radar_interface import (
   _bosch_a_ols_vrel,
 )
 from opendbc.car.honda.values import CAR
+from openpilot.common.params import Params
+
+# Tester toggle: CP is computed once at import time below (many helpers in this module close over
+# it), which runs before any pytest fixture could -- so this has to be plain top-level code, not a
+# fixture. teardown_module() restores it once every test in this file has run (mirrors
+# gm/tests/test_gm.py's put_bool/finally pattern for params-gated _get_params behavior).
+Params().put_bool("NrdrBoschARadar", True)
+
+
+def teardown_module(module):
+  Params().remove("NrdrBoschARadar")
+
 
 CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
 BUS = CanBus(CP).radar
