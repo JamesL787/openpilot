@@ -7,7 +7,7 @@ from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.honda.hondacan import CanBus
 from opendbc.car.honda.values import CarControllerParams, HondaFlags, CAR, HONDA_BOSCH, HONDA_BOSCH_CANFD, \
                                                  HONDA_NIDEC_ALT_SCM_MESSAGES, HONDA_BOSCH_RADARLESS, HondaSafetyFlags
-from opendbc.car.honda.steer_ratio import get_honda_vgr_profile, HONDA_VGR_PROFILE_FLAGS
+from opendbc.car.honda.steer_ratio import get_honda_vgr_profile, HONDA_VGR_PROFILE_FLAGS, normalize_honda_eps_fw
 from opendbc.car.honda.carcontroller import CarController
 from opendbc.car.honda.carstate import CarState
 from opendbc.car.honda.radar_interface import RadarInterface
@@ -104,9 +104,12 @@ class CarInterface(CarInterfaceBase):
       ret.longitudinalTuning.kiV = [1.2, 0.8, 0.5]
 
     eps_modified = False
+    is_c120_modified_eps = False
     for fw in car_fw:
       if fw.ecu == "eps" and b"," in fw.fwVersion:
         eps_modified = True
+        if normalize_honda_eps_fw(fw.fwVersion) == "39990-TBA-C120":
+          is_c120_modified_eps = True
 
     if eps_modified:
       ret.flags |= HondaFlags.EPS_MODIFIED.value
@@ -134,7 +137,7 @@ class CarInterface(CarInterfaceBase):
         # stock filter output values:     0x009F, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108
         # modified filter output values:  0x009F, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0108, 0x0400, 0x0480
         # note: max request allowed is 4096, but request is capped at 3840 in firmware, so modifications result in 2x max
-        # NRDR 39990-TBA-C120 linear-max: the modded table ramps linearly to the 3840 firmware cap,
+        # NRDR 39990-TBA,A030 linear-max: the modded table ramps linearly to the 3840 firmware cap,
         # so the piecewise breakpoints collapse to a single ramp.
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
         # Shares the modified-EPS Bosch tune: four-point handoff at 25 mph.
@@ -157,6 +160,12 @@ class CarInterface(CarInterfaceBase):
         ret.lateralTuning.pid.kf = 3.6e-6
         ret.steerAtStandstill, ret.autoResumeSng = True, True
         ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
+        if is_c120_modified_eps:
+          # NRDR 39990-TBA-C120 linear-max: the modded table ramps linearly to the 3840
+          # firmware cap, so the piecewise breakpoints collapse to a single ramp. C020 is
+          # left on the 4096 range above -- its native command range and rack model are
+          # retained -- this only applies to the C120 image specifically.
+          ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
       else:
         ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.8], [0.24]]
       if candidate == CAR.HONDA_CIVIC_BOSCH:
