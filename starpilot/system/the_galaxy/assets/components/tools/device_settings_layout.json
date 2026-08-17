@@ -802,6 +802,15 @@
         "ui_type": "toggle",
         "parent_key": "LateralTune",
         "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrLatStiction",
+        "label": "Lateral Stiction",
+        "description": "Emulate high-torque EPS breakaway friction: hold steering output flat between corrections instead of tracking small dither. Clarity EPS only.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
       }
     ]
   },
