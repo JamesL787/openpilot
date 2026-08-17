@@ -9,10 +9,15 @@ from opendbc.car.can_definitions import CanData
 from opendbc.car.honda.hondacan import CanBus
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.radar_interface import (
+  BOSCH_A_AZIMUTH_SCALE_RAD,
   BOSCH_A_AUX_IDS,
   BOSCH_A_DBC_NAME,
+  BOSCH_A_FREQ_HZ,
   BOSCH_A_MAIN_IDS,
   BOSCH_A_NUM_SLOTS,
+  BOSCH_A_STALE_S,
+  BOSCH_A_SWEEP_END_MSG,
+  BOSCH_A_TRIGGER_MSG,
   _bosch_a_aux_id,
   _bosch_a_main_base,
   _bosch_a_ols_vrel,
@@ -58,8 +63,14 @@ def make_f2(frame_idx=0, life=0):
   return bytes([B0, B1, 0, 0, 0, 0, 0, 0])
 
 
-def make_f3(frame_idx=0):
-  return bytes([0, (frame_idx & 0xF) << 1, 0, 0, 0, 0, 0, 0])
+def make_f3(frame_idx=0, edge_a_raw=0, edge_b_raw=0, sigma_a_raw=0):
+  B0 = (edge_a_raw >> 3) & 0xFF
+  B1 = ((edge_a_raw & 0x7) << 5) | ((frame_idx & 0xF) << 1)
+  B2 = (edge_b_raw >> 3) & 0xFF
+  B3 = (edge_b_raw & 0x7) << 5
+  B4 = (sigma_a_raw >> 2) & 0xFF
+  B5 = (sigma_a_raw & 0x3) << 6
+  return bytes([B0, B1, B2, B3, B4, B5, 0, 0])
 
 
 def make_aux(frame_idx=0, rawc9=0, rawca=0):
@@ -155,12 +166,16 @@ class TestDbcBitGeometry:
       assert get_raw_value(dat, msg.sigs['FRAME_IDX']) == b[1] & 0x0F
       assert get_raw_value(dat, msg.sigs['LIFECYCLE_RAW']) == (b[0] << 4) | (b[1] >> 4)
 
-  def test_f3_frame_idx(self):
+  def test_f3_fields(self):
     msg = self.dbc.msgs[0x283]
     rng = random.Random(3)
     for _ in range(500):
       b = [rng.randint(0, 255) for _ in range(8)]
-      assert get_raw_value(bytes(b), msg.sigs['FRAME_IDX']) == (b[1] >> 1) & 0x0F
+      dat = bytes(b)
+      assert get_raw_value(dat, msg.sigs['AZIMUTH_EDGE_A_RAW']) == (b[0] << 3) | (b[1] >> 5)
+      assert get_raw_value(dat, msg.sigs['FRAME_IDX']) == (b[1] >> 1) & 0x0F
+      assert get_raw_value(dat, msg.sigs['AZIMUTH_EDGE_B_RAW']) == (b[2] << 3) | (b[3] >> 5)
+      assert get_raw_value(dat, msg.sigs['AZIMUTH_EDGE_SIGMA_A_RAW']) == (b[4] << 2) | (b[5] >> 6)
 
   def test_aux_fields(self):
     msg = self.dbc.msgs[0x2C8]
@@ -169,8 +184,8 @@ class TestDbcBitGeometry:
       b = [rng.randint(0, 255) for _ in range(8)]
       dat = bytes(b)
       assert get_raw_value(dat, msg.sigs['FRAME_IDX']) == (b[1] >> 1) & 0x0F
-      assert get_raw_value(dat, msg.sigs['RAWC9_RAW']) == (b[4] << 2) | (b[5] >> 6)
-      assert get_raw_value(dat, msg.sigs['RAWCA_RAW']) == (b[6] << 2) | (b[7] >> 6)
+      assert get_raw_value(dat, msg.sigs['AZIMUTH_EDGE_SIGMA_B_RAW']) == (b[4] << 2) | (b[5] >> 6)
+      assert get_raw_value(dat, msg.sigs['AZIMUTH_AUX_PARAM_RAW']) == (b[6] << 2) | (b[7] >> 6)
 
 
 # --- 3. range / azimuth extraction + invalid sentinels ------------------------------------------------
@@ -196,8 +211,7 @@ class TestRangeAzimuth:
     ri = make_radar_interface()
     rr = ri.update(sweep(0, 0, 0x7, 1000, 1024 + 100, 1, 0))  # raw_angle > center -> right of center
     d = 0.05712 * 1000 - 3.0
-    az_deg = 0.032 * 100
-    expected_y = -d * math.sin(math.radians(az_deg))
+    expected_y = -d * math.sin(100.0 / 2048.0)
     assert rr.points[0].yRel == pytest.approx(expected_y)
     assert rr.points[0].yRel < 0
 
@@ -374,26 +388,35 @@ class TestAuxiliary:
     ri = make_radar_interface()
     rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, aux_frame_idx=0, rawc9=123, rawca=456))
     st = ri._slots[0]
-    assert st.aux_raw_c9 == 123
-    assert st.aux_raw_ca == 456
+    assert st.aux_edge_sigma_raw == 123
+    assert st.aux_param_raw == 456
 
   def test_aux_mismatched_cycle_not_attached_but_point_still_emitted(self):
     ri = make_radar_interface()
     rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, aux_frame_idx=5, rawc9=123, rawca=456))
     assert len(rr.points) == 1  # point emitted regardless of aux mismatch
     st = ri._slots[0]
-    assert math.isnan(st.aux_raw_c9) and math.isnan(st.aux_raw_ca)  # never attached
+    assert math.isnan(st.aux_edge_sigma_raw) and math.isnan(st.aux_param_raw)  # never attached
 
   def test_aux_absent_does_not_suppress_point(self):
     ri = make_radar_interface()
     rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=False))
     assert len(rr.points) == 1
 
-  def test_aux_rawca_invalid_sentinel(self):
+  def test_aux_param_invalid_sentinel(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, aux_frame_idx=0, rawc9=1, rawca=0x3FF))
     st = ri._slots[0]
-    assert math.isnan(st.aux_raw_ca)
+    assert st.aux_edge_sigma_raw == 1
+    assert math.isnan(st.aux_param_raw)
+
+  def test_sigma_does_not_share_aux_param_invalid_sentinel(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    aux_frame_idx=0, rawc9=0x3FF, rawca=500))
+    st = ri._slots[0]
+    assert st.aux_edge_sigma_raw == 0x3FF
+    assert st.aux_param_raw == 500
 
 
 # --- 9. missing CAN frame within a cycle does not kill an existing point -------------------------------
@@ -456,6 +479,22 @@ def test_stale_bus_clears_points_and_flags_temporary_unavailable():
 def test_no_can_data_returns_none_without_crash():
   ri = make_radar_interface()
   assert ri.update([]) is None
+
+
+def test_bosch_a_azimuth_scale_is_exact_firmware_scale():
+  assert BOSCH_A_AZIMUTH_SCALE_RAD == pytest.approx(1.0 / 2048.0)
+
+
+def test_bosch_a_observed_sweep_end_and_publish_trigger_are_distinct():
+  # 0x297 is the observed final object-family frame, but 0x2FF intentionally
+  # remains the publish trigger while companion data is optional.
+  assert BOSCH_A_TRIGGER_MSG == 0x2FF
+  assert BOSCH_A_SWEEP_END_MSG == 0x297
+
+
+def test_bosch_a_timing_contract():
+  assert BOSCH_A_FREQ_HZ == 15
+  assert BOSCH_A_STALE_S == pytest.approx(0.20)
 
 
 # --- misc integration: DBC wiring -------------------------------------------------------------------

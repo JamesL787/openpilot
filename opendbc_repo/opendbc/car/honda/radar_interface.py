@@ -39,12 +39,19 @@ BOSCH_A_MAIN_IDS = [[_bosch_a_main_base(s) + i for i in range(4)] for s in range
 BOSCH_A_AUX_IDS = [_bosch_a_aux_id(s) for s in range(BOSCH_A_NUM_SLOTS)]
 BOSCH_A_ALL_IDS = [addr for ids in BOSCH_A_MAIN_IDS for addr in ids] + BOSCH_A_AUX_IDS
 
-# Trigger on the highest-numbered main frame (slot 15's f3, 0x2FF): an assumed ascending transmit order
-# within a sweep, matching the "trigger on the last ID" pattern used elsewhere in this codebase (Toyota,
-# Hyundai, GM). Not a firmware-proven fact -- confirm against a live capture before relying on exact
-# emit timing; the accumulate-until-trigger design below tolerates the order being wrong (it just widens
-# the emit window across more update() batches), it just won't be pace-optimal.
+# Publish RadarPoints when the last MAIN object frame arrives. Passive captures prove that slot 15's
+# companion frame, 0x297, follows 0x2FF and is the final observed object-family frame in a full sweep:
+#
+#   ... 0x2FC, 0x2FD, 0x2FE, 0x2FF, 0x297
+#
+# Keep 0x2FF as the RadarPoint trigger while the companion data remains optional/debug-only. Making
+# 0x297 the sole trigger would allow one dropped auxiliary frame to suppress an otherwise-valid point
+# update, contrary to the parser's "aux never gates validity" contract.
 BOSCH_A_TRIGGER_MSG = BOSCH_A_MAIN_IDS[BOSCH_A_NUM_SLOTS - 1][3]
+BOSCH_A_SWEEP_END_MSG = BOSCH_A_AUX_IDS[BOSCH_A_NUM_SLOTS - 1]  # 0x297
+
+# Observed coherent Bosch-A sweep cadence is ~14.5-16 Hz in the available captures.
+BOSCH_A_FREQ_HZ = 15
 
 # Range: f0 raw_range (12-bit, B2:B3 high nibble) -> meters. Firmware q16 = 8*raw_range; physical
 # calibration keeps slope/offset as named, replay-refinable constants (do not add a second radar/camera
@@ -52,8 +59,13 @@ BOSCH_A_TRIGGER_MSG = BOSCH_A_MAIN_IDS[BOSCH_A_NUM_SLOTS - 1][3]
 BOSCH_A_RANGE_SCALE_M = 0.05712
 BOSCH_A_RANGE_OFFSET_M = -3.0
 
-# Azimuth: f0 raw_angle (11-bit, B4:B5 high 3 bits) -> degrees, offset-binary about 1024.
-BOSCH_A_AZIMUTH_SCALE_DEG = 0.032
+# Azimuth: f0 raw_angle (11-bit, B4:B5 high 3 bits), offset-binary about 1024.
+#
+# The f3 angular-edge pair independently closes the exact center-angle scale:
+#   azimuth_rad = (raw_angle - 1024) / 2048
+#
+# This supersedes the older empirical 0.032 deg/count fit.
+BOSCH_A_AZIMUTH_SCALE_RAD = 1.0 / 2048.0
 BOSCH_A_AZIMUTH_CENTER = 1024
 
 # Invalid sentinels (section 3/4/5/6 of the spec).
@@ -61,18 +73,17 @@ BOSCH_A_STATUS_INVALID = 0xF
 BOSCH_A_RANGE_RAW_INVALID = 0xFFF
 BOSCH_A_ANGLE_RAW_INVALID = 0x7FF
 BOSCH_A_LIFE_INVALID = 0xFFF
-BOSCH_A_AUX_RAW_INVALID = 0x3FF  # rawCA invalid sentinel (section 12); also used to gate rawC9 debug state
+# Only the second 10-bit companion numeric has the explicit 0x3FF invalid sentinel.
+# The matched angular-edge sigma/error field does NOT use this sentinel as a validity gate.
+BOSCH_A_AUX_PARAM_RAW_INVALID = 0x3FF
 
 # vRel OLS history window -- a TUNING constant (max samples retained per live incarnation), NOT a
 # recovered firmware value. Start simple; replay/unit tests decide if a KF or alpha-beta layer is needed.
 BOSCH_A_VREL_MAX_SAMPLES = 8
 
-# Staleness gate -- TUNING constant, reused plumbing pattern (not a firmware fact): if the whole bus goes
-# quiet (no trigger frame) this long, drop every live point rather than freezing a phantom lead. Also
-# used per-slot: a slot with no coherent observation for this long is dropped even while the bus overall
-# stays live (e.g. the firmware genuinely stopped transmitting that slot's IDs without ever sending an
-# explicit invalid/sentinel observation).
-BOSCH_A_STALE_S = 0.15  # ~3 missed 20 Hz sweeps
+# Staleness gate -- TUNING constant, reused plumbing pattern (not a firmware fact). At the observed
+# ~15 Hz cadence, 0.20 s is approximately three missed sweeps.
+BOSCH_A_STALE_S = 0.20
 
 
 @dataclass
@@ -83,17 +94,21 @@ class _BoschASlotState:
   prev_life: int | None = None
   last_seen_nanos: int | None = None
   samples: deque = field(default_factory=lambda: deque(maxlen=BOSCH_A_VREL_MAX_SAMPLES))
-  # Auxiliary enrichment (section 12) -- debug/telemetry only, never a RadarPoint validity gate.
-  aux_raw_c9: float = float('nan')
-  aux_raw_ca: float = float('nan')
+
+  # Fine angular companion data -- telemetry/debug only for now, never a RadarPoint validity gate.
+  # edge_sigma_raw is the second member of the matched f3/f5 angular-edge uncertainty pair.
+  # aux_param_raw has an explicit invalid sentinel but its exact covariance/normalization semantic
+  # remains unresolved.
+  aux_edge_sigma_raw: float = float('nan')
+  aux_param_raw: float = float('nan')
 
   def reset(self):
     self.prev_valid = False
     self.prev_frame_idx = None
     self.prev_life = None
     self.samples.clear()
-    self.aux_raw_c9 = float('nan')
-    self.aux_raw_ca = float('nan')
+    self.aux_edge_sigma_raw = float('nan')
+    self.aux_param_raw = float('nan')
 
 
 def _bosch_a_ols_vrel(samples: deque) -> float:
@@ -123,7 +138,7 @@ def _bosch_a_ols_vrel(samples: deque) -> float:
 
 
 def _create_bosch_a_can_parser(CP):
-  messages = [(addr, 20) for addr in BOSCH_A_ALL_IDS]
+  messages = [(addr, BOSCH_A_FREQ_HZ) for addr in BOSCH_A_ALL_IDS]
   # Bus.radar selects the Bosch-A DBC; the object/fusion feed itself is
   # physically on the camera-side ACC-CAN.
   return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, CanBus(CP).camera)
@@ -233,15 +248,17 @@ class RadarInterface(RadarInterfaceBase):
       angle_raw = int(v0['AZIMUTH_RAW'])
       life = int(v2['LIFECYCLE_RAW'])
 
-      # Auxiliary enrichment: attach only when its own cycle index matches this observation's. A
-      # missing/stale/off-cycle aux frame must never suppress an otherwise-good RadarPoint (section 2).
+      # Fine angular companion: attach only when its own cycle index matches this observation's.
+      # Missing/stale/off-cycle companion data must never suppress an otherwise-good RadarPoint.
       if aux in updated_messages:
         av = self.rcp.vl[aux]
         if int(av['FRAME_IDX']) == idx0:
-          raw_c9 = av['RAWC9_RAW']
-          raw_ca = av['RAWCA_RAW']
-          st.aux_raw_c9 = raw_c9
-          st.aux_raw_ca = raw_ca if raw_ca != BOSCH_A_AUX_RAW_INVALID else float('nan')
+          edge_sigma_raw = av['AZIMUTH_EDGE_SIGMA_B_RAW']
+          aux_param_raw = av['AZIMUTH_AUX_PARAM_RAW']
+          st.aux_edge_sigma_raw = edge_sigma_raw
+          st.aux_param_raw = (
+            aux_param_raw if aux_param_raw != BOSCH_A_AUX_PARAM_RAW_INVALID else float('nan')
+          )
 
       object_valid = (status != BOSCH_A_STATUS_INVALID and range_raw != BOSCH_A_RANGE_RAW_INVALID and
                       angle_raw != BOSCH_A_ANGLE_RAW_INVALID and life != BOSCH_A_LIFE_INVALID)
@@ -269,8 +286,7 @@ class RadarInterface(RadarInterfaceBase):
       # else: CONTINUE -- same trackId, history retained.
 
       dRel = BOSCH_A_RANGE_SCALE_M * range_raw + BOSCH_A_RANGE_OFFSET_M
-      azimuth_deg = BOSCH_A_AZIMUTH_SCALE_DEG * (angle_raw - BOSCH_A_AZIMUTH_CENTER)
-      azimuth_rad = math.radians(azimuth_deg)
+      azimuth_rad = BOSCH_A_AZIMUTH_SCALE_RAD * (angle_raw - BOSCH_A_AZIMUTH_CENTER)
       yRel = -dRel * math.sin(azimuth_rad)
 
       st.samples.append((now_s, dRel))
