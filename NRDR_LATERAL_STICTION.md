@@ -1,7 +1,7 @@
 # Lateral Stiction
 
 This optional final-stage torque state machine emulates the breakaway friction of
-high-torque EPS units. It is available for the modified Honda Clarity EPS through
+high-torque EPS units. It is available for NRDR's modified-EPS Hondas through
 the off-by-default `NrdrLatStiction` parameter.
 
 In HOLD, output remains at a captured torque while a slow integrator winds against

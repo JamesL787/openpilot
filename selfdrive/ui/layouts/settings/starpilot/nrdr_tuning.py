@@ -269,7 +269,7 @@ class NRDRTuningLayout(_SettingsPage):
 
     stiction_rows = [
       toggle("NrdrLatStiction", "Lateral Stiction", "Emulate high-torque EPS breakaway friction: hold steering output flat between "
-                                                     "corrections instead of tracking small dither. Clarity EPS only."),
+                                                     "corrections instead of tracking small dither. For NRDR's modified-EPS Hondas."),
     ]
 
 
