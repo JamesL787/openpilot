@@ -194,7 +194,8 @@ class TestRangeAzimuth:
   def test_range_scale_and_offset(self):
     ri = make_radar_interface()
     raw_range = 1000
-    rr = ri.update(sweep(0, 0, 0x7, raw_range, 1024, 1, 0))
+    ri.update(sweep(0, 0, 0x7, raw_range, 1024, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, raw_range, 1024, 3, 50_000_000))
     assert rr.points[0].dRel == pytest.approx(0.05712 * raw_range - 3.0)
 
   def test_range_invalid_sentinel_0xfff(self):
@@ -209,7 +210,8 @@ class TestRangeAzimuth:
 
   def test_yrel_sign_right_of_center_is_negative(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024 + 100, 1, 0))  # raw_angle > center -> right of center
+    ri.update(sweep(0, 0, 0x7, 1000, 1024 + 100, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 + 100, 3, 50_000_000))  # raw_angle > center -> right of center
     d = 0.05712 * 1000 - 3.0
     expected_y = -d * math.sin(100.0 / 2048.0)
     assert rr.points[0].yRel == pytest.approx(expected_y)
@@ -217,12 +219,14 @@ class TestRangeAzimuth:
 
   def test_yrel_sign_left_of_center_is_positive(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024 - 100, 1, 0))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024 - 100, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 - 100, 3, 50_000_000))
     assert rr.points[0].yRel > 0
 
   def test_yrel_zero_on_boresight(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000))
     assert rr.points[0].yRel == pytest.approx(0.0, abs=1e-9)
 
 
@@ -239,10 +243,46 @@ class TestObjectValid:
     rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 0xFFF, 0))
     assert len(rr.points) == 0
 
-  def test_all_valid_emits_point(self):
+  def test_first_valid_sample_is_withheld(self):
     ri = make_radar_interface()
     rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    assert len(rr.points) == 0
+
+  def test_invalid_observation_does_not_mature_or_preserve_birth_history(self):
+    ri = make_radar_interface()
+    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    assert len(rr.points) == 0
+    rr = ri.update(sweep(0, 1, 0xF, 1000, 1024, 3, 50_000_000))
+    assert len(rr.points) == 0
+    rr = ri.update(sweep(0, 2, 0x7, 1000, 1024, 1, 100_000_000))
+    assert len(rr.points) == 0
+
+  def test_incomplete_observation_does_not_mature_or_add_history(self):
+    ri = make_radar_interface()
+    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    assert len(rr.points) == 0
+
+    f0, f1, f2, f3 = BOSCH_A_MAIN_IDS[0]
+    _, _, _, trig_f3 = BOSCH_A_MAIN_IDS[15]
+    frames = [
+      CanData(f0, make_f0(1, 0x7, 1010, 1024), BUS),
+      CanData(f1, make_f1(1), BUS),
+      CanData(f2, make_f2(1, 3), BUS),
+      CanData(trig_f3, make_f3(1), BUS),
+    ]
+    rr = ri.update([(50_000_000, frames)])
+    assert len(rr.points) == 0
+
+    rr = ri.update(sweep(0, 2, 0x7, 1020, 1024, 5, 100_000_000))
     assert len(rr.points) == 1
+    assert math.isfinite(rr.points[0].vRel)
+
+  def test_second_same_incarnation_sample_emits_finite_derivative(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+    assert len(rr.points) == 1
+    assert math.isfinite(rr.points[0].vRel)
     assert rr.points[0].measured is True
     assert math.isnan(rr.points[0].aRel)
     assert math.isnan(rr.points[0].yvRel)
@@ -253,14 +293,16 @@ class TestObjectValid:
 class TestLifecycle:
   def test_normal_plus_2_continuity_keeps_trackid(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    t0 = rr.points[0].trackId
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+    t0 = rr.points[0].trackId
+    rr = ri.update(sweep(0, 2, 0x7, 1020, 1024, 5, 100_000_000))
     assert rr.points[0].trackId == t0
 
   def test_continuity_across_dropped_sweeps(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
     t0 = rr.points[0].trackId
     # 3 sweeps missed: frame_idx jumps from 0 to 4, life must jump by 2*4=8 to stay the same incarnation
     rr = ri.update(sweep(0, 4, 0x7, 1040, 1024, 9, 200_000_000))
@@ -268,7 +310,8 @@ class TestLifecycle:
 
   def test_frame_idx_wraps_mod_16(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 14, 0x7, 1000, 1024, 1, 0))
+    ri.update(sweep(0, 14, 0x7, 1000, 1024, 1, 0))
+    rr = ri.update(sweep(0, 15, 0x7, 1005, 1024, 3, 50_000_000))
     t0 = rr.points[0].trackId
     # frame_idx wraps 14 -> 1 (delta = (1-14)&0xF = 3), life must advance by 6
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 7, 150_000_000))
@@ -276,7 +319,8 @@ class TestLifecycle:
 
   def test_life_wraps_mod_4096_stays_same_incarnation(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 14, 0x7, 1000, 1024, 4094, 0))
+    ri.update(sweep(0, 14, 0x7, 1000, 1024, 4094, 0))
+    rr = ri.update(sweep(0, 15, 0x7, 1005, 1024, 0, 50_000_000))
     t0 = rr.points[0].trackId
     # frame_idx 14 -> 0 (delta=2), life 4094 -> 2 ((2-4094)&0xFFF == 4 == 2*2)
     rr = ri.update(sweep(0, 0, 0x7, 1010, 1024, 2, 100_000_000))
@@ -284,30 +328,39 @@ class TestLifecycle:
 
   def test_in_place_replacement_no_invalid_gap_gets_new_trackid(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
     t0 = rr.points[0].trackId
-    # frame_idx advances normally (+1) but life restarts at an unrelated odd value -> NOT +2*frame_delta
-    rr = ri.update(sweep(0, 1, 0x7, 50, 1024, 5, 50_000_000))
+    # frame_idx advances normally (+1) but life jumps by an unrelated odd amount -> NOT +2*frame_delta
+    rr = ri.update(sweep(0, 2, 0x7, 50, 1024, 7, 100_000_000))
+    assert len(rr.points) == 0  # replacement birth sample is withheld
+    rr = ri.update(sweep(0, 3, 0x7, 50, 1024, 9, 150_000_000))
     assert len(rr.points) == 1
     assert rr.points[0].trackId != t0
 
   def test_replacement_does_not_assume_life_restarts_at_1_3_5(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
     t0 = rr.points[0].trackId
     # a "replacement" that happens to restart life at a big/even value must still be treated as a
     # replacement (not death) because it fails the frame/life identity, regardless of the new value's parity
-    rr = ri.update(sweep(0, 1, 0x7, 50, 1024, 4000, 50_000_000))
+    rr = ri.update(sweep(0, 2, 0x7, 50, 1024, 4000, 100_000_000))
+    assert len(rr.points) == 0  # replacement birth sample is withheld
+    rr = ri.update(sweep(0, 3, 0x7, 50, 1024, 4002, 150_000_000))
     assert rr.points[0].trackId != t0
     assert len(rr.points) == 1
 
   def test_death_then_rebirth_gets_fresh_trackid(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
     t0 = rr.points[0].trackId
     rr = ri.update(sweep(0, 1, 0xF, 1000, 1024, 3, 50_000_000))  # death
     assert len(rr.points) == 0
-    rr = ri.update(sweep(0, 2, 0x7, 1000, 1024, 1, 100_000_000))  # rebirth
+    rr = ri.update(sweep(0, 2, 0x7, 1000, 1024, 1, 100_000_000))  # rebirth, first sample withheld
+    assert len(rr.points) == 0
+    rr = ri.update(sweep(0, 3, 0x7, 1000, 1024, 3, 150_000_000))
     assert len(rr.points) == 1
     assert rr.points[0].trackId != t0
 
@@ -319,7 +372,10 @@ def test_trackid_never_reused_across_many_births():
   seen_ids = set()
   t = 0
   for i in range(10):
-    rr = ri.update(sweep(0, i % 16, 0x7, 1000, 1024, 1, t))  # life=1 every time -> always a new incarnation after the first
+    frame_idx = (2 * i) % 16
+    ri.update(sweep(0, frame_idx, 0x7, 1000, 1024, 1, t))
+    t += 50_000_000
+    rr = ri.update(sweep(0, (frame_idx + 1) % 16, 0x7, 1000, 1024, 3, t))
     t += 50_000_000
     tid = rr.points[0].trackId
     assert tid not in seen_ids
@@ -333,7 +389,7 @@ class TestVrel:
   def test_first_sighting_vrel_is_zero(self):
     ri = make_radar_interface()
     rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    assert rr.points[0].vRel == 0.0
+    assert len(rr.points) == 0
 
   def test_decreasing_range_gives_negative_vrel(self):
     ri = make_radar_interface()
@@ -376,8 +432,10 @@ class TestVrel:
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0))
     rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000))  # fast closing
     assert rr.points[0].vRel < -1000  # implausible-fast, but exercises the derivative
-    # replacement: life breaks identity -> fresh incarnation, vRel must reset to first-sighting (0.0)
+    # replacement: life breaks identity -> fresh incarnation; its first sample is withheld.
     rr = ri.update(sweep(0, 2, 0x7, 500, 1024, 99, 100_000_000))
+    assert len(rr.points) == 0
+    rr = ri.update(sweep(0, 3, 0x7, 500, 1024, 101, 150_000_000))
     assert rr.points[0].vRel == 0.0
 
 
@@ -393,14 +451,16 @@ class TestAuxiliary:
 
   def test_aux_mismatched_cycle_not_attached_but_point_still_emitted(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, aux_frame_idx=5, rawc9=123, rawca=456))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, aux_frame_idx=5, rawc9=123, rawca=456))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True, aux_frame_idx=5, rawc9=123, rawca=456))
     assert len(rr.points) == 1  # point emitted regardless of aux mismatch
     st = ri._slots[0]
     assert math.isnan(st.aux_edge_sigma_raw) and math.isnan(st.aux_param_raw)  # never attached
 
   def test_aux_absent_does_not_suppress_point(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=False))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=False))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=False))
     assert len(rr.points) == 1
 
   def test_aux_param_invalid_sentinel(self):
@@ -423,7 +483,8 @@ class TestAuxiliary:
 
 def test_incomplete_main_frame_set_leaves_existing_point_untouched():
   ri = make_radar_interface()
-  rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+  ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+  rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
   assert len(rr.points) == 1
   t0 = rr.points[0].trackId
 
@@ -443,7 +504,8 @@ def test_incomplete_main_frame_set_leaves_existing_point_untouched():
 
 def test_incoherent_frame_index_across_main_frames_is_skipped():
   ri = make_radar_interface()
-  rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+  ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+  rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
   t0 = rr.points[0].trackId
 
   f0, f1, f2, f3 = BOSCH_A_MAIN_IDS[0]
@@ -464,7 +526,8 @@ def test_incoherent_frame_index_across_main_frames_is_skipped():
 
 def test_stale_bus_clears_points_and_flags_temporary_unavailable():
   ri = make_radar_interface()
-  rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+  ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+  rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
   assert len(rr.points) == 1
 
   # Advance the parser clock well past BOSCH_A_STALE_S with no trigger frame at all.

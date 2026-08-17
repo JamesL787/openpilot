@@ -292,16 +292,24 @@ class RadarInterface(RadarInterfaceBase):
       st.samples.append((now_s, dRel))
       vRel = _bosch_a_ols_vrel(st.samples)
 
-      if slot not in self.pts:
+      # A birth observation has no range-rate yet. Keep it as lifecycle-clean history, but do not
+      # publish a RadarPoint until a second coherent observation of the same incarnation supplies
+      # a finite derivative. This keeps synthetic/zero first-sighting velocity out of radard and
+      # makes maturity depend on parser observations rather than radard update timing.
+      matured = len(st.samples) >= 2 and math.isfinite(vRel)
+      if matured and slot not in self.pts:
         self.pts[slot] = structs.RadarData.RadarPoint()
         self.pts[slot].trackId = st.track_id
         self.pts[slot].aRel = float('nan')
         self.pts[slot].yvRel = float('nan')
 
-      self.pts[slot].dRel = dRel
-      self.pts[slot].yRel = yRel
-      self.pts[slot].vRel = vRel
-      self.pts[slot].measured = True
+      if matured:
+        self.pts[slot].dRel = dRel
+        self.pts[slot].yRel = yRel
+        self.pts[slot].vRel = vRel
+        self.pts[slot].measured = True
+      else:
+        self.pts.pop(slot, None)
 
       st.prev_valid = True
       st.prev_frame_idx = idx0
