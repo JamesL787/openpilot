@@ -197,7 +197,9 @@ class CAR(Platforms):
       HondaCarDocs("Honda Civic Hatchback 2019-21", "All", min_steer_speed=12. * CV.MPH_TO_MS),
     ],
     CarSpecs(mass=1326, wheelbase=2.7, steerRatio=15.38, centerToFrontRatio=0.4),  # steerRatio: 10.93 is end-to-end spec
-    {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated'},
+    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
+    # RX-parse only; no CAN authority is taken, so factory AEB/CMBS stays fully live.
+    {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.radar: 'honda_bosch_a_radar'},
   )
   HONDA_CIVIC_BOSCH_DIESEL = HondaBoschPlatformConfig(
     [],  # don't show in docs
