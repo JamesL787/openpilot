@@ -124,7 +124,9 @@ def _bosch_a_ols_vrel(samples: deque) -> float:
 
 def _create_bosch_a_can_parser(CP):
   messages = [(addr, 20) for addr in BOSCH_A_ALL_IDS]
-  return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, CanBus(CP).radar)
+  # Bus.radar selects the Bosch-A DBC; the object/fusion feed itself is
+  # physically on the camera-side ACC-CAN.
+  return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, CanBus(CP).camera)
 
 
 class RadarInterface(RadarInterfaceBase):

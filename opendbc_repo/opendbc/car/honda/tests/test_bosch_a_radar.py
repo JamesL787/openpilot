@@ -32,7 +32,7 @@ def teardown_module(module):
 
 
 CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
-BUS = CanBus(CP).radar
+BUS = CanBus(CP).camera
 
 
 # --- synthetic frame builders (inverse of the spec's raw-byte formulas) -----------------------------
@@ -465,3 +465,11 @@ def test_civic_bosch_radar_dbc_wired_and_available():
   ri = make_radar_interface()
   assert ri.bosch_a_radar is True
   assert ri.rcp is not None
+
+
+def test_civic_bosch_object_feed_uses_camera_side_acc_can():
+  ri = make_radar_interface()
+  can = CanBus(CP)
+
+  assert ri.rcp.bus == can.camera
+  assert ri.rcp.bus != can.radar
