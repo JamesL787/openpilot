@@ -71,6 +71,7 @@ class Track:
     self.K_C = kalman_params.C
     self.K_K = kalman_params.K
     self.kf = KF1D([[v_lead], [0.0]], self.K_A, self.K_C, self.K_K)
+    self.velocity_seeded = False
 
     self.leadTrackID = 0
 
@@ -87,8 +88,14 @@ class Track:
     self.vLead = v_lead
     self.measured = measured   # measured or estimate
 
-    # computed velocity and accelerations
-    if self.cnt > 0:
+    # A newly born radar point may have a synthetic first vRel=0 while its range-rate
+    # history is warming up (Bosch-A does this deliberately after lifecycle changes).
+    # Do not interpret the first-to-second sample jump as lead acceleration. Seed the
+    # filter from the second actual velocity sample, then begin filtering normally.
+    if self.cnt == 1 and not self.velocity_seeded:
+      self.kf.set_x([[self.vLead], [0.0]])
+      self.velocity_seeded = True
+    elif self.cnt > 1:
       self.kf.update(self.vLead)
 
     self.vLeadK = float(self.kf.x[SPEED][0])
