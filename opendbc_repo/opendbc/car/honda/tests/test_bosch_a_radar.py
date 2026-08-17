@@ -539,6 +539,23 @@ def test_stale_bus_clears_points_and_flags_temporary_unavailable():
   assert rr.errors.radarUnavailableTemporary is True
 
 
+def test_stale_bus_clears_pending_birth_history_before_maturity():
+  ri = make_radar_interface()
+  rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
+  assert len(rr.points) == 0
+  assert len(ri._slots[0].samples) == 1
+
+  # The birth has started, but no RadarPoint exists yet. A silent bus must still clear the pending
+  # lifecycle/history state rather than allowing it to survive indefinitely.
+  f0, _, _, _ = BOSCH_A_MAIN_IDS[0]
+  rr = ri.update([(300_000_000, [CanData(f0, make_f0(1, 0x7, 1000, 1024), BUS)])])
+  assert rr is not None
+  assert len(rr.points) == 0
+  assert rr.errors.radarUnavailableTemporary is True
+  assert not ri._slots[0].prev_valid
+  assert len(ri._slots[0].samples) == 0
+
+
 def test_no_can_data_returns_none_without_crash():
   ri = make_radar_interface()
   assert ri.update([]) is None

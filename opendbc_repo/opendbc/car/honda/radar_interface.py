@@ -178,7 +178,7 @@ class RadarInterface(RadarInterfaceBase):
     self.updated_messages.update(vls)
 
     if self.trigger_msg not in self.updated_messages:
-      if self.bosch_a_radar and self.pts and self._last_trigger_nanos >= 0:
+      if self.bosch_a_radar and self._last_trigger_nanos >= 0:
         now = self.rcp._last_update_nanos
         if (now - self._last_trigger_nanos) * 1e-9 > BOSCH_A_STALE_S:
           return self._bosch_a_stale_radardata()
