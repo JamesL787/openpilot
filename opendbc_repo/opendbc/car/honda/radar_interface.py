@@ -73,6 +73,8 @@ BOSCH_A_STATUS_INVALID = 0xF
 BOSCH_A_RANGE_RAW_INVALID = 0xFFF
 BOSCH_A_ANGLE_RAW_INVALID = 0x7FF
 BOSCH_A_LIFE_INVALID = 0xFFF
+BOSCH_A_TRACK_ID_MIN = 1
+BOSCH_A_TRACK_ID_MAX = 0x3F
 # Only the second 10-bit companion numeric has the explicit 0x3FF invalid sentinel.
 # The matched angular-edge sigma/error field does NOT use this sentinel as a validity gate.
 BOSCH_A_AUX_PARAM_RAW_INVALID = 0x3FF
@@ -88,12 +90,7 @@ BOSCH_A_STALE_S = 0.20
 
 @dataclass
 class _BoschASlotState:
-  track_id: int | None = None
-  prev_valid: bool = False
-  prev_frame_idx: int | None = None
-  prev_life: int | None = None
   last_seen_nanos: int | None = None
-  samples: deque = field(default_factory=lambda: deque(maxlen=BOSCH_A_VREL_MAX_SAMPLES))
 
   # Fine angular companion data -- telemetry/debug only for now, never a RadarPoint validity gate.
   # edge_sigma_raw is the second member of the matched f3/f5 angular-edge uncertainty pair.
@@ -103,12 +100,20 @@ class _BoschASlotState:
   aux_param_raw: float = float('nan')
 
   def reset(self):
-    self.prev_valid = False
-    self.prev_frame_idx = None
-    self.prev_life = None
-    self.samples.clear()
+    self.last_seen_nanos = None
     self.aux_edge_sigma_raw = float('nan')
     self.aux_param_raw = float('nan')
+
+
+@dataclass
+class _BoschATrackState:
+  """Persistent state for one Bosch CAN object identity, independent of wire slot."""
+  track_id: int
+  prev_frame_idx: int | None = None
+  prev_life: int | None = None
+  last_seen_nanos: int | None = None
+  wire_slot: int | None = None
+  samples: deque = field(default_factory=lambda: deque(maxlen=BOSCH_A_VREL_MAX_SAMPLES))
 
 
 def _bosch_a_ols_vrel(samples: deque) -> float:
@@ -158,7 +163,8 @@ class RadarInterface(RadarInterfaceBase):
       self.rcp = _create_bosch_a_can_parser(CP)
       self.trigger_msg = BOSCH_A_TRIGGER_MSG
       self._slots = [_BoschASlotState() for _ in range(BOSCH_A_NUM_SLOTS)]
-      self._next_track_id = 0
+      self._tracks: dict[int, _BoschATrackState] = {}
+      self._slot_track_ids: list[int | None] = [None] * BOSCH_A_NUM_SLOTS
       self._last_trigger_nanos = -1
     else:
       # Nidec
@@ -190,9 +196,11 @@ class RadarInterface(RadarInterfaceBase):
 
   def _bosch_a_stale_radardata(self):
     # Whole-bus silence: clear every live point/history and emit an EMPTY RadarData (not None) so
-    # radard drops any lead within a cycle instead of freezing a phantom. trackIds are not reused even
-    # across a staleness clear -- a slot that revives later gets a fresh incarnation and trackId.
+    # radard drops any lead within a cycle instead of freezing a phantom. The next observation starts
+    # a fresh incarnation for its CAN identity.
     self.pts.clear()
+    self._tracks.clear()
+    self._slot_track_ids = [None] * BOSCH_A_NUM_SLOTS
     for slot_state in self._slots:
       slot_state.reset()
     self._last_trigger_nanos = -1
@@ -201,6 +209,18 @@ class RadarInterface(RadarInterfaceBase):
       stale.errors.canError = True
     stale.errors.radarUnavailableTemporary = True
     return stale
+
+  def _bosch_a_retire_track(self, track_id: int):
+    self._tracks.pop(track_id, None)
+    self.pts.pop(track_id, None)
+    for slot, slot_track_id in enumerate(self._slot_track_ids):
+      if slot_track_id == track_id:
+        self._slot_track_ids[slot] = None
+
+  def _bosch_a_retire_stale_tracks(self, now: int):
+    for track_id, track in list(self._tracks.items()):
+      if track.last_seen_nanos is not None and (now - track.last_seen_nanos) * 1e-9 > BOSCH_A_STALE_S:
+        self._bosch_a_retire_track(track_id)
 
   def _update(self, updated_messages):
     if self.bosch_a_radar:
@@ -214,7 +234,9 @@ class RadarInterface(RadarInterfaceBase):
 
     now = self.rcp._last_update_nanos
     self._last_trigger_nanos = now
-    now_s = now * 1e-9
+    self._bosch_a_retire_stale_tracks(now)
+
+    observations = []
 
     for slot in range(BOSCH_A_NUM_SLOTS):
       f0, f1, f2, f3 = BOSCH_A_MAIN_IDS[slot]
@@ -223,13 +245,8 @@ class RadarInterface(RadarInterfaceBase):
 
       if not (f0 in updated_messages and f1 in updated_messages and
               f2 in updated_messages and f3 in updated_messages):
-        # Incomplete main-frame set this cycle: a missing CAN frame must NOT be treated as a lifecycle
-        # mismatch or a death/replacement decision (section 8). Leave the existing point/history alone,
-        # except for the per-slot staleness gate (a slot that has been silent -- not merely
-        # partially-assembled this one cycle -- for BOSCH_A_STALE_S is dropped).
-        if st.prev_valid and st.last_seen_nanos is not None and (now - st.last_seen_nanos) * 1e-9 > BOSCH_A_STALE_S:
-          self.pts.pop(slot, None)
-          st.reset()
+        # Incomplete main-frame set: a missing CAN frame must not be treated as a lifecycle mismatch or
+        # death/replacement. Logical tracks are retired independently by their global staleness gate.
         continue
 
       v0 = self.rcp.vl[f0]
@@ -247,6 +264,9 @@ class RadarInterface(RadarInterfaceBase):
       range_raw = int(v0['RANGE_RAW'])
       angle_raw = int(v0['AZIMUTH_RAW'])
       life = int(v2['LIFECYCLE_RAW'])
+      track_id = int(v3['TRACK_ID'])
+      track_id_valid = BOSCH_A_TRACK_ID_MIN <= track_id <= BOSCH_A_TRACK_ID_MAX
+      st.last_seen_nanos = now
 
       # Fine angular companion: attach only when its own cycle index matches this observation's.
       # Missing/stale/off-cycle companion data must never suppress an otherwise-good RadarPoint.
@@ -263,60 +283,111 @@ class RadarInterface(RadarInterfaceBase):
       object_valid = (status != BOSCH_A_STATUS_INVALID and range_raw != BOSCH_A_RANGE_RAW_INVALID and
                       angle_raw != BOSCH_A_ANGLE_RAW_INVALID and life != BOSCH_A_LIFE_INVALID)
 
-      if not object_valid:
-        # DEATH: a coherent completed observation that fails validity retires the point/history.
-        if st.prev_valid:
-          self.pts.pop(slot, None)
-        st.reset()
+      observations.append({
+        'slot': slot,
+        'frame_idx': idx0,
+        'life': life,
+        'track_id': track_id,
+        'track_id_valid': track_id_valid,
+        'object_valid': object_valid,
+      })
+
+    # First collapse duplicate wire observations of one CAN identity. The dictionary is also the
+    # output uniqueness boundary: one valid Bosch identity can never create two RadarPoints.
+    valid_by_id = {}
+    for observation in observations:
+      if not (observation['object_valid'] and observation['track_id_valid']):
+        continue
+      track_id = observation['track_id']
+      current = valid_by_id.get(track_id)
+      if current is None:
+        valid_by_id[track_id] = observation
         continue
 
+      # Prefer the wire slot currently associated with the persistent state. If neither candidate is
+      # preferred, retain the lower slot for deterministic handling of a malformed duplicate frame.
+      track = self._tracks.get(track_id)
+      current_score = (0 if track is not None and track.wire_slot == current['slot'] else 1, current['slot'])
+      candidate_score = (0 if track is not None and track.wire_slot == observation['slot'] else 1,
+                         observation['slot'])
+      if candidate_score < current_score:
+        valid_by_id[track_id] = observation
+
+    valid_ids = set(valid_by_id)
+
+    # A coherent invalid/replacement observation retires the old occupant of that wire slot, but only
+    # after considering every slot in this trigger window. This ordering is important during migration:
+    # an old slot may emit 0xFF while the same persistent identity is already valid on its new slot.
+    retire_ids = set()
+    for observation in observations:
+      old_id = self._slot_track_ids[observation['slot']]
+      if old_id is None or old_id in valid_ids:
+        continue
+      old_track = self._tracks.get(old_id)
+      if old_track is not None and old_track.wire_slot == observation['slot']:
+        retire_ids.add(old_id)
+    for track_id in retire_ids:
+      self._bosch_a_retire_track(track_id)
+
+    for track_id, observation in sorted(valid_by_id.items(), key=lambda item: item[1]['slot']):
+      slot = observation['slot']
+      idx0 = observation['frame_idx']
+      life = observation['life']
+      track = self._tracks.get(track_id)
+      if track is None:
+        track = _BoschATrackState(track_id=track_id)
+        self._tracks[track_id] = track
+
       same_incarnation = False
-      if st.prev_valid:
-        frame_delta = (idx0 - st.prev_frame_idx) & 0xF
-        life_delta = (life - st.prev_life) & 0xFFF
-        same_incarnation = (life_delta == 2 * frame_delta)
+      if track.prev_frame_idx is not None and track.prev_life is not None:
+        frame_delta = (idx0 - track.prev_frame_idx) & 0xF
+        life_delta = (life - track.prev_life) & 0xFFF
+        same_incarnation = life_delta == 2 * frame_delta
 
-      if not st.prev_valid or not same_incarnation:
-        # BIRTH (no prior valid observation) or IN-PLACE REPLACEMENT (lifecycle identity broken):
-        # allocate a fresh, never-reused trackId and clear all dRel/vRel history.
-        st.track_id = self._next_track_id
-        self._next_track_id += 1
-        st.samples.clear()
-        self.pts.pop(slot, None)
-      # else: CONTINUE -- same trackId, history retained.
+      if not same_incarnation:
+        # The CAN identity remains the externally-visible key, but a lifecycle discontinuity starts a
+        # new incarnation and must not inherit the previous object's range-rate history.
+        track.samples.clear()
+        self.pts.pop(track_id, None)
 
+      v0 = self.rcp.vl[BOSCH_A_MAIN_IDS[slot][0]]
+      range_raw = int(v0['RANGE_RAW'])
+      angle_raw = int(v0['AZIMUTH_RAW'])
       dRel = BOSCH_A_RANGE_SCALE_M * range_raw + BOSCH_A_RANGE_OFFSET_M
       azimuth_rad = BOSCH_A_AZIMUTH_SCALE_RAD * (angle_raw - BOSCH_A_AZIMUTH_CENTER)
       yRel = -dRel * math.sin(azimuth_rad)
 
-      st.samples.append((now_s, dRel))
-      vRel = _bosch_a_ols_vrel(st.samples)
+      now_s = now * 1e-9
+      track.samples.append((now_s, dRel))
+      vRel = _bosch_a_ols_vrel(track.samples)
 
-      # A birth observation has no range-rate yet. Keep it as lifecycle-clean history, but do not
-      # publish a RadarPoint until a second coherent observation of the same incarnation supplies
-      # a finite derivative. This keeps synthetic/zero first-sighting velocity out of radard and
-      # makes maturity depend on parser observations rather than radard update timing.
-      matured = len(st.samples) >= 2 and math.isfinite(vRel)
-      if matured and slot not in self.pts:
-        self.pts[slot] = structs.RadarData.RadarPoint()
-        self.pts[slot].trackId = st.track_id
-        self.pts[slot].aRel = float('nan')
-        self.pts[slot].yvRel = float('nan')
+      # A birth observation has no range-rate yet. Keep it as history, but do not publish a RadarPoint
+      # until a second coherent observation of the same CAN identity supplies a finite derivative.
+      matured = len(track.samples) >= 2 and math.isfinite(vRel)
+      if matured and track_id not in self.pts:
+        self.pts[track_id] = structs.RadarData.RadarPoint()
+        self.pts[track_id].trackId = track_id
+        self.pts[track_id].aRel = float('nan')
+        self.pts[track_id].yvRel = float('nan')
 
       if matured:
-        self.pts[slot].dRel = dRel
-        self.pts[slot].yRel = yRel
-        self.pts[slot].vRel = vRel
-        self.pts[slot].measured = True
+        self.pts[track_id].dRel = dRel
+        self.pts[track_id].yRel = yRel
+        self.pts[track_id].vRel = vRel
+        self.pts[track_id].measured = True
       else:
-        self.pts.pop(slot, None)
+        self.pts.pop(track_id, None)
 
-      st.prev_valid = True
-      st.prev_frame_idx = idx0
-      st.prev_life = life
-      st.last_seen_nanos = now
+      track.prev_frame_idx = idx0
+      track.prev_life = life
+      track.last_seen_nanos = now
+      track.wire_slot = slot
+      for old_slot, old_id in enumerate(self._slot_track_ids):
+        if old_slot != slot and old_id == track_id:
+          self._slot_track_ids[old_slot] = None
+      self._slot_track_ids[slot] = track_id
 
-    ret.points = list(self.pts.values())
+    ret.points = [self.pts[track_id] for track_id in sorted(self.pts)]
     return ret
 
   def _update_nidec(self, updated_messages):

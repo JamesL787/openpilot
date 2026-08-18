@@ -63,14 +63,14 @@ def make_f2(frame_idx=0, life=0):
   return bytes([B0, B1, 0, 0, 0, 0, 0, 0])
 
 
-def make_f3(frame_idx=0, edge_a_raw=0, edge_b_raw=0, sigma_a_raw=0):
+def make_f3(frame_idx=0, edge_a_raw=0, edge_b_raw=0, sigma_a_raw=0, track_id=0xFF):
   B0 = (edge_a_raw >> 3) & 0xFF
   B1 = ((edge_a_raw & 0x7) << 5) | ((frame_idx & 0xF) << 1)
   B2 = (edge_b_raw >> 3) & 0xFF
   B3 = (edge_b_raw & 0x7) << 5
   B4 = (sigma_a_raw >> 2) & 0xFF
   B5 = (sigma_a_raw & 0x3) << 6
-  return bytes([B0, B1, B2, B3, B4, B5, 0, 0])
+  return bytes([B0, B1, B2, B3, B4, B5, track_id & 0xFF, 0])
 
 
 def make_aux(frame_idx=0, rawc9=0, rawca=0):
@@ -82,23 +82,28 @@ def make_aux(frame_idx=0, rawc9=0, rawca=0):
   return bytes([0, B1, 0, 0, B4, B5, B6, B7])
 
 
+def make_main_frames(slot, frame_idx, status, range_raw, angle_raw, life, track_id=1):
+  f0, f1, f2, f3 = BOSCH_A_MAIN_IDS[slot]
+  return [
+    CanData(f0, make_f0(frame_idx, status, range_raw, angle_raw), BUS),
+    CanData(f1, make_f1(frame_idx), BUS),
+    CanData(f2, make_f2(frame_idx, life), BUS),
+    CanData(f3, make_f3(frame_idx, track_id=track_id), BUS),
+  ]
+
+
 def make_radar_interface():
   return CarInterface.RadarInterface(CP)
 
 
 def sweep(slot, frame_idx, status, range_raw, angle_raw, life, t_nanos, with_aux=False, aux_frame_idx=None,
-          rawc9=0, rawca=0, extra_slots=()):
+          rawc9=0, rawca=0, extra_slots=(), track_id=1):
   """Build one update() input: a full main-frame set for `slot` (+ optional aux), plus the trigger
   frame (slot 15's f3) so update() always processes the cycle unless the caller is testing slot 15
   itself or an incomplete-frame scenario via extra_slots."""
   f0, f1, f2, f3 = BOSCH_A_MAIN_IDS[slot]
   aux = BOSCH_A_AUX_IDS[slot]
-  frames = [
-    CanData(f0, make_f0(frame_idx, status, range_raw, angle_raw), BUS),
-    CanData(f1, make_f1(frame_idx), BUS),
-    CanData(f2, make_f2(frame_idx, life), BUS),
-    CanData(f3, make_f3(frame_idx), BUS),
-  ]
+  frames = make_main_frames(slot, frame_idx, status, range_raw, angle_raw, life, track_id)
   if with_aux:
     frames.append(CanData(aux, make_aux(aux_frame_idx if aux_frame_idx is not None else frame_idx, rawc9, rawca), BUS))
   if slot != BOSCH_A_NUM_SLOTS - 1:
@@ -176,6 +181,39 @@ class TestDbcBitGeometry:
       assert get_raw_value(dat, msg.sigs['FRAME_IDX']) == (b[1] >> 1) & 0x0F
       assert get_raw_value(dat, msg.sigs['AZIMUTH_EDGE_B_RAW']) == (b[2] << 3) | (b[3] >> 5)
       assert get_raw_value(dat, msg.sigs['AZIMUTH_EDGE_SIGMA_A_RAW']) == (b[4] << 2) | (b[5] >> 6)
+
+  def test_track_id_is_f3_byte6_and_does_not_overlap_existing_fields(self):
+    def affected_bits(signal):
+      bits = set()
+      for byte in range(8):
+        for bit in range(8):
+          data = bytearray(8)
+          data[byte] = 1 << bit
+          if get_raw_value(bytes(data), signal) != 0:
+            bits.add((byte, bit))
+      return bits
+
+    expected_bits = {(6, bit) for bit in range(8)}
+    f3_ids = [BOSCH_A_MAIN_IDS[slot][3] for slot in range(BOSCH_A_NUM_SLOTS)]
+    for message_id in f3_ids:
+      msg = self.dbc.msgs[message_id]
+      track_id = msg.sigs['TRACK_ID']
+      assert track_id.start_bit == 55
+      assert track_id.size == 8
+      assert track_id.is_little_endian is False
+      assert affected_bits(track_id) == expected_bits
+
+      existing_bits = set()
+      for name, signal in msg.sigs.items():
+        if name != 'TRACK_ID':
+          existing_bits |= affected_bits(signal)
+      assert not existing_bits & expected_bits
+
+    rng = random.Random(33)
+    msg = self.dbc.msgs[BOSCH_A_MAIN_IDS[0][3]]
+    for _ in range(500):
+      data = bytes(rng.randint(0, 255) for _ in range(8))
+      assert get_raw_value(data, msg.sigs['TRACK_ID']) == data[6]
 
   def test_aux_fields(self):
     msg = self.dbc.msgs[0x2C8]
@@ -326,7 +364,7 @@ class TestLifecycle:
     rr = ri.update(sweep(0, 0, 0x7, 1010, 1024, 2, 100_000_000))
     assert rr.points[0].trackId == t0
 
-  def test_in_place_replacement_no_invalid_gap_gets_new_trackid(self):
+  def test_in_place_replacement_no_invalid_gap_resets_history_but_keeps_can_id(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
@@ -336,7 +374,7 @@ class TestLifecycle:
     assert len(rr.points) == 0  # replacement birth sample is withheld
     rr = ri.update(sweep(0, 3, 0x7, 50, 1024, 9, 150_000_000))
     assert len(rr.points) == 1
-    assert rr.points[0].trackId != t0
+    assert rr.points[0].trackId == t0
 
   def test_replacement_does_not_assume_life_restarts_at_1_3_5(self):
     ri = make_radar_interface()
@@ -348,10 +386,11 @@ class TestLifecycle:
     rr = ri.update(sweep(0, 2, 0x7, 50, 1024, 4000, 100_000_000))
     assert len(rr.points) == 0  # replacement birth sample is withheld
     rr = ri.update(sweep(0, 3, 0x7, 50, 1024, 4002, 150_000_000))
-    assert rr.points[0].trackId != t0
+    assert rr.points[0].trackId == t0
+    assert rr.points[0].vRel == 0.0
     assert len(rr.points) == 1
 
-  def test_death_then_rebirth_gets_fresh_trackid(self):
+  def test_death_then_rebirth_reuses_can_id_with_clean_history(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
@@ -362,25 +401,26 @@ class TestLifecycle:
     assert len(rr.points) == 0
     rr = ri.update(sweep(0, 3, 0x7, 1000, 1024, 3, 150_000_000))
     assert len(rr.points) == 1
-    assert rr.points[0].trackId != t0
+    assert rr.points[0].trackId == t0
 
 
-# --- 6. trackId never reused, monotonically increasing ------------------------------------------------
+# --- 6. CAN track identity is the RadarPoint identity -----------------------------------------------
 
-def test_trackid_never_reused_across_many_births():
+def test_trackid_comes_from_can_and_is_not_synthetic():
   ri = make_radar_interface()
   seen_ids = set()
   t = 0
   for i in range(10):
     frame_idx = (2 * i) % 16
-    ri.update(sweep(0, frame_idx, 0x7, 1000, 1024, 1, t))
+    can_track_id = i + 1
+    ri.update(sweep(0, frame_idx, 0x7, 1000, 1024, 1, t, track_id=can_track_id))
     t += 50_000_000
-    rr = ri.update(sweep(0, (frame_idx + 1) % 16, 0x7, 1000, 1024, 3, t))
+    rr = ri.update(sweep(0, (frame_idx + 1) % 16, 0x7, 1000, 1024, 3, t, track_id=can_track_id))
     t += 50_000_000
     tid = rr.points[0].trackId
     assert tid not in seen_ids
     seen_ids.add(tid)
-  assert seen_ids == set(range(10))
+  assert seen_ids == set(range(1, 11))
 
 
 # --- 7. vRel derivative sign -------------------------------------------------------------------------
@@ -427,7 +467,7 @@ class TestVrel:
     samples = deque([(0.0, 5.0), (0.0, 6.0)])
     assert _bosch_a_ols_vrel(samples) == 0.0
 
-  def test_incarnation_does_not_carry_velocity_into_new_track(self):
+  def test_incarnation_does_not_carry_velocity_across_lifecycle_break(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0))
     rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000))  # fast closing
@@ -543,7 +583,7 @@ def test_stale_bus_clears_pending_birth_history_before_maturity():
   ri = make_radar_interface()
   rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
   assert len(rr.points) == 0
-  assert len(ri._slots[0].samples) == 1
+  assert len(ri._tracks[1].samples) == 1
 
   # The birth has started, but no RadarPoint exists yet. A silent bus must still clear the pending
   # lifecycle/history state rather than allowing it to survive indefinitely.
@@ -552,8 +592,82 @@ def test_stale_bus_clears_pending_birth_history_before_maturity():
   assert rr is not None
   assert len(rr.points) == 0
   assert rr.errors.radarUnavailableTemporary is True
-  assert not ri._slots[0].prev_valid
-  assert len(ri._slots[0].samples) == 0
+  assert not ri._tracks
+
+
+# --- 11. persistent CAN identity is separate from wire-slot assembly -------------------------------
+
+class TestPersistentCanIdentity:
+  def test_same_slot_same_can_identity_is_stable(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, track_id=42))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=42))
+    assert len(rr.points) == 1
+    assert rr.points[0].trackId == 42
+    assert set(ri._tracks) == {42}
+
+  def test_slot_migration_preserves_identity_and_ols_history(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, track_id=23))
+    rr = ri.update(sweep(1, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=23))
+    assert len(rr.points) == 1
+    assert rr.points[0].trackId == 23
+    assert len(ri._tracks[23].samples) == 2
+    assert ri._tracks[23].wire_slot == 1
+
+  def test_slot_zero_one_zero_keeps_one_logical_track(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, track_id=17))
+    ri.update(sweep(1, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=17))
+    rr = ri.update(sweep(0, 2, 0x7, 1020, 1024, 5, 100_000_000, track_id=17))
+    assert len(rr.points) == 1
+    assert [point.trackId for point in rr.points] == [17]
+    assert len(ri._tracks) == 1
+    assert len(ri._tracks[17].samples) == 3
+    assert ri._tracks[17].wire_slot == 0
+
+  def test_two_wire_slots_with_different_ids_publish_two_points(self):
+    ri = make_radar_interface()
+    first_extra = make_main_frames(1, 0, 0x7, 1400, 1024, 11, track_id=22)
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, extra_slots=first_extra, track_id=11))
+    second_extra = make_main_frames(1, 1, 0x7, 1410, 1024, 13, track_id=22)
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000,
+                         extra_slots=second_extra, track_id=11))
+    assert {point.trackId for point in rr.points} == {11, 22}
+    assert len(rr.points) == 2
+
+  @pytest.mark.parametrize('track_id', [0, 0xFF, 0x40, 0xA5])
+  def test_invalid_can_identity_never_creates_logical_track(self, track_id):
+    ri = make_radar_interface()
+    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, track_id=track_id))
+    assert len(rr.points) == 0
+    assert not ri._tracks
+
+  def test_track_id_reuse_after_death_starts_with_clean_history(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, track_id=9))
+    rr = ri.update(sweep(0, 1, 0x7, 1900, 1024, 3, 50_000_000, track_id=9))
+    assert rr.points[0].trackId == 9
+    rr = ri.update(sweep(0, 2, 0xF, 1900, 1024, 5, 100_000_000, track_id=9))
+    assert len(rr.points) == 0
+    rr = ri.update(sweep(0, 3, 0x7, 1000, 1024, 1, 150_000_000, track_id=9))
+    assert len(rr.points) == 0
+    rr = ri.update(sweep(0, 4, 0x7, 1000, 1024, 3, 200_000_000, track_id=9))
+    assert len(rr.points) == 1
+    assert rr.points[0].trackId == 9
+    assert rr.points[0].vRel == 0.0
+
+  def test_lifecycle_discontinuity_keeps_can_id_but_clears_derivative(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, track_id=31))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, track_id=31))
+    assert rr.points[0].vRel < 0
+    rr = ri.update(sweep(0, 2, 0x7, 500, 1024, 99, 100_000_000, track_id=31))
+    assert len(rr.points) == 0
+    rr = ri.update(sweep(0, 3, 0x7, 500, 1024, 101, 150_000_000, track_id=31))
+    assert len(rr.points) == 1
+    assert rr.points[0].trackId == 31
+    assert rr.points[0].vRel == 0.0
 
 
 def test_no_can_data_returns_none_without_crash():
