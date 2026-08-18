@@ -158,10 +158,6 @@ HondaStopAccel
 HondaStoppingDecelRate
 HondaStoppingDecelRateLong
 HondaTorqueLowPassFilter
-HondaUnwindBoostSeconds
-HondaUnwindFfMultiplier
-HondaUnwindFreeze
-HondaUnwindLookahead
 HondaVEgoStarting
 HondaVEgoStopping
 HumanLaneChanges

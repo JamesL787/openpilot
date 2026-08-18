@@ -254,17 +254,6 @@ class NRDRTuningLayout(_SettingsPage):
         lambda: f"{p.get_float('HondaCenterScale'):.2f}",
         lambda: self._show_slider("HondaCenterScale", 0.0, 5.0, step=0.05, value_type="float", title="Center Scale"),
       ),
-      toggle("HondaUnwindFreeze", "Unwind Integrator Freeze", "Freeze the PID integrator while steering naturally returns toward center."),
-      value(
-        "HondaUnwindBoostSeconds", "Unwind Boost Duration", "Maximum duration of the low-speed unwind feedforward boost.",
-        lambda: f"{p.get_float('HondaUnwindBoostSeconds'):.1f}s",
-        lambda: self._show_slider("HondaUnwindBoostSeconds", 0.0, 3.0, step=0.1, unit="s", value_type="float", title="Unwind Boost Duration"),
-      ),
-      value(
-        "HondaUnwindFfMultiplier", "Unwind FF Multiplier", "Peak low-speed feedforward multiplier during unwind.",
-        lambda: f"{p.get_float('HondaUnwindFfMultiplier'):.1f}x",
-        lambda: self._show_slider("HondaUnwindFfMultiplier", 1.0, 4.0, step=0.1, unit="x", value_type="float", title="Unwind FF Multiplier"),
-      ),
     ]
 
     stiction_rows = [
@@ -374,7 +363,7 @@ class NRDRTuningLayout(_SettingsPage):
       SettingSection(title=tr_noop("Tune Report"), rows=tune_report_rows),
       *pid_sections,
       SettingSection(title=tr_noop("Live Parameters / Auto Tuning"), rows=learning_rows),
-      SettingSection(title=tr_noop("Center / Unwind"), rows=center_rows),
+      SettingSection(title=tr_noop("Center"), rows=center_rows),
       SettingSection(title=tr_noop("Lateral Stiction"), rows=stiction_rows),
       SettingSection(title=tr_noop("Driver Override"), rows=override_rows),
       SettingSection(title=tr_noop("Filters / Limits"), rows=filter_rows),

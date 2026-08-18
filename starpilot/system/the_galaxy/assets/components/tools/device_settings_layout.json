@@ -453,39 +453,6 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "HondaUnwindFreeze",
-        "label": "Honda Unwind Integrator Freeze",
-        "description": "Freezes the PID integrator while steering returns toward center.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "HondaUnwindBoostSeconds",
-        "label": "Honda Unwind Boost Duration",
-        "description": "Limits how long the low-speed unwind feedforward boost is held.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 0.0,
-        "max": 3.0,
-        "step": 0.1,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "HondaUnwindFfMultiplier",
-        "label": "Honda Unwind Feedforward Multiplier",
-        "description": "Peak low-speed feedforward multiplier during unwind.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 1.0,
-        "max": 4.0,
-        "step": 0.1,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "LatPScaleLowSpeed",
         "label": "Low Speed Proportional Scale",
         "description": "Scales P below 25 mph. Higher is tighter; lower is softer.",
