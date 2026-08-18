@@ -638,7 +638,8 @@ class TestPersistentCanIdentity:
     rr = ri.update(sweep(0, 2, 0x7, 1500, 1024, 5, 100_000_000, track_id=63))
     assert set(ri._tracks) == {2, 63}
     assert len(ri._tracks[2].samples) == 2
-    assert [point.trackId for point in rr.points] == [2]
+    assert len(rr.points) == 0
+    assert 2 not in ri.pts
 
     rr = ri.update(sweep(0, 3, 0x7, 1020, 1024, 7, 150_000_000, track_id=2))
     assert [point.trackId for point in rr.points] == [2]

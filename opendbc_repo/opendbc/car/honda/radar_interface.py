@@ -322,10 +322,19 @@ class RadarInterface(RadarInterfaceBase):
       if candidate_score < current_score:
         valid_by_id[track_id] = observation
 
+    valid_ids = set(valid_by_id)
     for track_id, observation in sorted(valid_by_id.items(), key=lambda item: item[1]['slot']):
       slot = observation['slot']
       idx0 = observation['frame_idx']
       life = observation['life']
+
+      # A wire-slot replacement ends publication for the old occupant, but not its persistent
+      # identity/history. If the old ID is still valid in another slot this sweep, keep its point;
+      # otherwise hide it until that ID returns or reaches its own stale deadline.
+      old_id = self._slot_track_ids[slot]
+      if old_id is not None and old_id != track_id and old_id not in valid_ids:
+        self.pts.pop(old_id, None)
+
       track = self._tracks.get(track_id)
       if track is None:
         track = _BoschATrackState(track_id=track_id)
