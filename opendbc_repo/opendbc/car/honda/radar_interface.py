@@ -297,6 +297,15 @@ class RadarInterface(RadarInterfaceBase):
     valid_by_id = {}
     for observation in observations:
       if not (observation['object_valid'] and observation['track_id_valid']):
+        # An invalid observation ends publication for the object currently occupying this wire slot,
+        # but it does not immediately destroy the persistent state. The object may be multiplexed to
+        # another slot or may return before the per-identity stale deadline; a later lifecycle break
+        # or staleness expiry will clear its derivative history.
+        ids_to_hide = {self._slot_track_ids[observation['slot']]}
+        if observation['track_id_valid']:
+          ids_to_hide.add(observation['track_id'])
+        for invalid_id in ids_to_hide - {None}:
+          self.pts.pop(invalid_id, None)
         continue
       track_id = observation['track_id']
       current = valid_by_id.get(track_id)
@@ -312,22 +321,6 @@ class RadarInterface(RadarInterfaceBase):
                          observation['slot'])
       if candidate_score < current_score:
         valid_by_id[track_id] = observation
-
-    valid_ids = set(valid_by_id)
-
-    # A coherent invalid/replacement observation retires the old occupant of that wire slot, but only
-    # after considering every slot in this trigger window. This ordering is important during migration:
-    # an old slot may emit 0xFF while the same persistent identity is already valid on its new slot.
-    retire_ids = set()
-    for observation in observations:
-      old_id = self._slot_track_ids[observation['slot']]
-      if old_id is None or old_id in valid_ids:
-        continue
-      old_track = self._tracks.get(old_id)
-      if old_track is not None and old_track.wire_slot == observation['slot']:
-        retire_ids.add(old_id)
-    for track_id in retire_ids:
-      self._bosch_a_retire_track(track_id)
 
     for track_id, observation in sorted(valid_by_id.items(), key=lambda item: item[1]['slot']):
       slot = observation['slot']

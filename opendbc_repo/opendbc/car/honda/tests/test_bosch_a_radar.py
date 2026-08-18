@@ -417,9 +417,8 @@ def test_trackid_comes_from_can_and_is_not_synthetic():
     t += 50_000_000
     rr = ri.update(sweep(0, (frame_idx + 1) % 16, 0x7, 1000, 1024, 3, t, track_id=can_track_id))
     t += 50_000_000
-    tid = rr.points[0].trackId
-    assert tid not in seen_ids
-    seen_ids.add(tid)
+    assert can_track_id in {point.trackId for point in rr.points}
+    seen_ids.add(can_track_id)
   assert seen_ids == set(range(1, 11))
 
 
@@ -625,6 +624,26 @@ class TestPersistentCanIdentity:
     assert len(ri._tracks) == 1
     assert len(ri._tracks[17].samples) == 3
     assert ri._tracks[17].wire_slot == 0
+
+  def test_same_slot_replacement_preserves_returning_identity_history(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, track_id=2))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=2))
+    assert [point.trackId for point in rr.points] == [2]
+    assert len(ri._tracks[2].samples) == 2
+
+    # Bosch can put a different persistent object in the same wire slot while the slot's lifecycle
+    # counter continues. The old logical track is not dead: retain its state until its own staleness
+    # deadline so it can resume without a synthetic birth or an OLS reset.
+    rr = ri.update(sweep(0, 2, 0x7, 1500, 1024, 5, 100_000_000, track_id=63))
+    assert set(ri._tracks) == {2, 63}
+    assert len(ri._tracks[2].samples) == 2
+    assert [point.trackId for point in rr.points] == [2]
+
+    rr = ri.update(sweep(0, 3, 0x7, 1020, 1024, 7, 150_000_000, track_id=2))
+    assert [point.trackId for point in rr.points] == [2]
+    assert len(ri._tracks[2].samples) == 3
+    assert math.isfinite(rr.points[0].vRel)
 
   def test_two_wire_slots_with_different_ids_publish_two_points(self):
     ri = make_radar_interface()
