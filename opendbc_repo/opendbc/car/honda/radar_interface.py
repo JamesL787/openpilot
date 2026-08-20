@@ -452,12 +452,11 @@ class RadarInterface(RadarInterfaceBase):
 
       track.samples.append((now_s, dRel))
       ols_vrel = _bosch_a_ols_vrel(track.samples)
-      # AUX is the preferred source when its raw quality is acceptable.  If u10 is high but U11 is
-      # an interior bounded candidate, it can still rescue an OLS range-reset spike.  Do not rescue
-      # with a rail (U11=0 or 1728), because those are exactly the values that can represent an
-      # uncertain/saturated candidate.  With no bounded rescue, hide this observation rather than
-      # exposing a large synthetic closing speed to downstream lead control.
-      direct_vrel_unqualified = _bosch_a_direct_vrel(direct_vrel_raw)
+      # AUX is authoritative only when both U11 and its U10 quality value pass validation. High-U10
+      # values include the observed saturated/unavailable states 0x3FE/0x3FF, so they must never
+      # rescue an OLS outlier merely because U11 is inside its finite numeric domain. If neither
+      # source is trustworthy, hide this observation rather than exposing a large synthetic closing
+      # speed to downstream lead control.
       ols_outlier = abs(ols_vrel) > BOSCH_A_MAX_OLS_VREL_MPS
       sample_count = len(track.samples)
       if ols_outlier:
@@ -467,9 +466,6 @@ class RadarInterface(RadarInterfaceBase):
         track.samples.append((now_s, dRel))
       if direct_vrel is not None:
         vRel = direct_vrel
-      elif (ols_outlier and direct_vrel_unqualified is not None and
-            direct_vrel_raw not in (0, BOSCH_A_DIRECT_VREL_MAX_RAW)):
-        vRel = direct_vrel_unqualified
       elif ols_outlier:
         self.pts.pop(track_id, None)
         track.prev_frame_idx = idx0

@@ -272,7 +272,7 @@ class TestDbcBitGeometry:
     for slot in range(BOSCH_A_NUM_SLOTS):
       for frame in ('F0', 'F1', 'F2'):
         msg = self.dbc.msgs[BOSCH_A_MAIN_IDS[slot][int(frame[-1])]]
-        for logical_id, (start_bit, size) in zip(ids_by_frame[frame][slot], positions[frame]):
+        for logical_id, (start_bit, size) in zip(ids_by_frame[frame][slot], positions[frame], strict=True):
           signal = msg.sigs[f'FW_LID_{logical_id}_RAW']
           assert signal.start_bit == start_bit
           assert signal.size == size
@@ -514,9 +514,12 @@ class TestVrel:
     assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) == pytest.approx(13.5)
     assert _bosch_a_direct_vrel(1729) is None
     assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID) is None
+    assert _bosch_a_direct_vrel(0x7FF) is None
     assert _bosch_a_direct_vrel(None) is None
     assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW) == pytest.approx(-13.5)
     assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 1) is None
+    assert _bosch_a_direct_vrel(864, 0x3FE) is None
+    assert _bosch_a_direct_vrel(864, 0x3FF) is None
 
   def test_high_aux_uncertainty_falls_back_to_ols(self):
     ri = make_radar_interface()
@@ -528,15 +531,15 @@ class TestVrel:
     assert rr.points[0].vRel == pytest.approx((10 * (BOSCH_A_RANGE_SCALE_M)) / 0.05)
     assert rr.points[0].vRel != pytest.approx(-13.5)
 
-  def test_interior_high_uncertainty_aux_rescues_ols_outlier(self):
+  def test_interior_high_uncertainty_aux_does_not_rescue_ols_outlier(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, with_aux=False))
     ri.update(sweep(0, 1, 0x7, 1945, 1024, 3, 70_000_000, with_aux=False))
     rr = ri.update(sweep(0, 2, 0x7, 1889, 1024, 5, 140_000_000, with_aux=True,
                          direct_vrel_raw=554, direct_vrel_uncertainty_raw=437))
-    # The range slope is intentionally an OLS outlier while the AUX candidate is interior and
-    # bounded.  Keep the native candidate rather than exposing the synthetic large closing speed.
-    assert rr.points[0].vRel == pytest.approx((554 - 864) / 64.0)
+    # The range slope is intentionally an OLS outlier. U11 is interior, but U10 says the native
+    # candidate is too uncertain to authorize. Neither untrusted velocity may be published.
+    assert len(rr.points) == 0
     assert len(ri._tracks[1].samples) == 1
 
   def test_first_sighting_vrel_is_zero(self):
@@ -606,7 +609,7 @@ class TestVrel:
 class TestAuxiliary:
   def test_aux_matching_cycle_is_attached(self):
     ri = make_radar_interface()
-    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, aux_frame_idx=0, rawc9=123, rawca=456))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, aux_frame_idx=0, rawc9=123, rawca=456))
     st = ri._slots[0]
     assert st.logical_00c9_raw == 123
     assert st.logical_00ca_raw == 456
