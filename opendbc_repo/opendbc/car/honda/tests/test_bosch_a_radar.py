@@ -18,6 +18,7 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_FREQ_HZ,
   BOSCH_A_MAIN_IDS,
   BOSCH_A_NUM_SLOTS,
+  BOSCH_A_RANGE_RATIO_INVALID,
   BOSCH_A_RANGE_SCALE_M,
   BOSCH_A_STALE_S,
   BOSCH_A_SWEEP_END_MSG,
@@ -25,7 +26,8 @@ from opendbc.car.honda.radar_interface import (
   _bosch_a_aux_id,
   _bosch_a_direct_vrel,
   _bosch_a_main_base,
-  _bosch_a_ols_vrel,
+  _bosch_a_range_ratio,
+  _bosch_a_range_ratio_vrel,
 )
 from opendbc.car.honda.values import CAR
 from openpilot.common.params import Params
@@ -47,19 +49,20 @@ BUS = CanBus(CP).camera
 
 # --- synthetic frame builders (inverse of the spec's raw-byte formulas) -----------------------------
 
-def make_f0(frame_idx=0, status=0x7, range_raw=0, angle_raw=0):
+def make_f0(frame_idx=0, status=0x7, range_raw=0, angle_raw=0, range_sigma_raw=1):
   # inverse of raw_angle = (B4 << 3) | (B5 >> 5): B4 carries the top 8 bits, B5's top 3 bits carry the
   # bottom 3 bits of the 11-bit angle (the decoder ignores B5's low 5 bits entirely).
+  B0 = (range_sigma_raw & 0x7F) << 1
   B3 = (frame_idx & 0xF) | ((range_raw & 0xF) << 4)
   B2 = (range_raw >> 4) & 0xFF
   B1 = (status & 0xF) << 4
   B5 = (angle_raw & 0x7) << 5
   B4 = (angle_raw >> 3) & 0xFF
-  return bytes([0, B1, B2, B3, B4, B5, 0, 0])
+  return bytes([B0, B1, B2, B3, B4, B5, 0, 0])
 
 
-def make_f1(frame_idx=0):
-  return bytes([0, 0, 0, (frame_idx & 0xF) << 1, 0, 0, 0, 0])
+def make_f1(frame_idx=0, existence_raw=126):
+  return bytes([0, 0, 0, (frame_idx & 0xF) << 1, 0, existence_raw & 0x7F, 0, 0])
 
 
 def make_f2(frame_idx=0, life=0):
@@ -91,11 +94,12 @@ def make_aux(frame_idx=0, rawc9=0, rawca=0, direct_vrel_raw=BOSCH_A_DIRECT_VREL_
   return bytes([B0, B1, B2, B3, B4, B5, B6, B7])
 
 
-def make_main_frames(slot, frame_idx, status, range_raw, angle_raw, life, track_id=1):
+def make_main_frames(slot, frame_idx, status, range_raw, angle_raw, life, track_id=1,
+                     range_sigma_raw=1, existence_raw=126):
   f0, f1, f2, f3 = BOSCH_A_MAIN_IDS[slot]
   return [
-    CanData(f0, make_f0(frame_idx, status, range_raw, angle_raw), BUS),
-    CanData(f1, make_f1(frame_idx), BUS),
+    CanData(f0, make_f0(frame_idx, status, range_raw, angle_raw, range_sigma_raw), BUS),
+    CanData(f1, make_f1(frame_idx, existence_raw), BUS),
     CanData(f2, make_f2(frame_idx, life), BUS),
     CanData(f3, make_f3(frame_idx, track_id=track_id), BUS),
   ]
@@ -106,14 +110,17 @@ def make_radar_interface():
 
 
 def sweep(slot, frame_idx, status, range_raw, angle_raw, life, t_nanos, with_aux=False, aux_frame_idx=None,
-          rawc9=0, rawca=0, extra_slots=(), track_id=1, direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID,
-          direct_vrel_uncertainty_raw=0x3FF):
+          rawc9=0, rawca=BOSCH_A_RANGE_RATIO_INVALID, extra_slots=(), track_id=1, direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID,
+          direct_vrel_uncertainty_raw=0x3FF, range_sigma_raw=1, existence_raw=126):
   """Build one update() input: a full main-frame set for `slot` (+ optional aux), plus the trigger
   frame (slot 15's f3) so update() always processes the cycle unless the caller is testing slot 15
   itself or an incomplete-frame scenario via extra_slots."""
   f0, f1, f2, f3 = BOSCH_A_MAIN_IDS[slot]
   aux = BOSCH_A_AUX_IDS[slot]
-  frames = make_main_frames(slot, frame_idx, status, range_raw, angle_raw, life, track_id)
+  frames = make_main_frames(
+    slot, frame_idx, status, range_raw, angle_raw, life, track_id,
+    range_sigma_raw=range_sigma_raw, existence_raw=existence_raw,
+  )
   if with_aux:
     frames.append(CanData(aux, make_aux(aux_frame_idx if aux_frame_idx is not None else frame_idx, rawc9, rawca,
                                         direct_vrel_raw, direct_vrel_uncertainty_raw), BUS))
@@ -237,6 +244,20 @@ class TestDbcBitGeometry:
       assert get_raw_value(dat, msg.sigs['REL_VELOCITY_UNCERTAINTY_RAW']) == (b[2] << 2) | (b[3] >> 6)
       assert get_raw_value(dat, msg.sigs['FW_LID_00C9_RAW']) == (b[4] << 2) | (b[5] >> 6)
       assert get_raw_value(dat, msg.sigs['FW_LID_00CA_RAW']) == (b[6] << 2) | (b[7] >> 6)
+      assert get_raw_value(dat, msg.sigs['AZIMUTH_EDGE_SIGMA_B_RAW']) == (b[4] << 2) | (b[5] >> 6)
+      assert get_raw_value(dat, msg.sigs['RANGE_RATIO_RAW']) == (b[6] << 2) | (b[7] >> 6)
+
+  def test_semantic_quality_aliases_exist_on_every_slot(self):
+    for slot in range(BOSCH_A_NUM_SLOTS):
+      f0, f1, f2, _ = BOSCH_A_MAIN_IDS[slot]
+      aux = BOSCH_A_AUX_IDS[slot]
+      assert self.dbc.msgs[f0].sigs['RANGE_SIGMA_RAW'].size == 7
+      assert self.dbc.msgs[f1].sigs['OBJECT_EXISTENCE_PROBABILITY_RAW'].size == 7
+      assert self.dbc.msgs[f1].sigs['ANGULAR_WIDTH_RAW'].size == 11
+      assert self.dbc.msgs[f2].sigs['NORMALIZED_CLOSING_RAW'].size == 10
+      assert self.dbc.msgs[f2].sigs['NORMALIZED_CLOSING_SIGMA_RAW'].size == 7
+      assert self.dbc.msgs[aux].sigs['AZIMUTH_EDGE_SIGMA_B_RAW'].size == 10
+      assert self.dbc.msgs[aux].sigs['RANGE_RATIO_RAW'].size == 10
 
   def test_descriptor_backed_raw_fields_cover_all_unmapped_main_bits(self):
     f0_ids = [
@@ -295,9 +316,14 @@ class TestDbcBitGeometry:
           assert not covered & bits
           covered |= bits
 
+        semantic_aliases = {
+          'RANGE_SIGMA_RAW', 'OBJECT_EXISTENCE_PROBABILITY_RAW',
+          'ANGULAR_WIDTH_RAW', 'ANGULAR_WIDTH_DEG',
+          'NORMALIZED_CLOSING_RAW', 'NORMALIZED_CLOSING', 'NORMALIZED_CLOSING_SIGMA_RAW',
+        }
         existing_bits = set()
         for name, signal in msg.sigs.items():
-          if not name.startswith('FW_LID_'):
+          if not name.startswith('FW_LID_') and name not in semantic_aliases:
             existing_bits |= affected_bits(signal)
         assert not existing_bits & covered
 
@@ -501,7 +527,7 @@ def test_trackid_comes_from_can_and_is_not_synthetic():
 # --- 7. vRel derivative sign -------------------------------------------------------------------------
 
 class TestVrel:
-  def test_direct_aux_vrel_is_preferred_over_ols(self):
+  def test_direct_aux_vrel_is_preferred_over_range_derivative(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
                     direct_vrel_raw=800, direct_vrel_uncertainty_raw=80))
@@ -521,26 +547,45 @@ class TestVrel:
     assert _bosch_a_direct_vrel(864, 0x3FE) is None
     assert _bosch_a_direct_vrel(864, 0x3FF) is None
 
-  def test_high_aux_uncertainty_falls_back_to_ols(self):
+  def test_high_aux_uncertainty_falls_back_to_adjacent_accepted_range_rate(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=False))
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
                          direct_vrel_raw=0, direct_vrel_uncertainty_raw=1023))
-    # The raw U11 value would decode to -13.5 m/s, but u10=1023 is a saturated/high-uncertainty
-    # candidate.  The valid adjacent range change remains usable through the OLS fallback.
-    assert rr.points[0].vRel == pytest.approx((10 * (BOSCH_A_RANGE_SCALE_M)) / 0.05)
+    # High U10 prevents U11 authority, but the adjacent derivative is computed only between
+    # accepted ranges and cannot be contaminated by a rejected range reset.
+    assert rr.points[0].vRel == pytest.approx((10 * BOSCH_A_RANGE_SCALE_M) / 0.05)
     assert rr.points[0].vRel != pytest.approx(-13.5)
 
-  def test_interior_high_uncertainty_aux_does_not_rescue_ols_outlier(self):
+  def test_fast_clean_range_rate_is_not_rejected_by_old_ols_cap(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, with_aux=False))
     ri.update(sweep(0, 1, 0x7, 1945, 1024, 3, 70_000_000, with_aux=False))
     rr = ri.update(sweep(0, 2, 0x7, 1889, 1024, 5, 140_000_000, with_aux=True,
                          direct_vrel_raw=554, direct_vrel_uncertainty_raw=437))
-    # The range slope is intentionally an OLS outlier. U11 is interior, but U10 says the native
-    # candidate is too uncertain to authorize. Neither untrusted velocity may be published.
-    assert len(rr.points) == 0
-    assert len(ri._tracks[1].samples) == 1
+    assert len(rr.points) == 1
+    assert rr.points[0].vRel == pytest.approx((1889 - 1945) * BOSCH_A_RANGE_SCALE_M / 0.07)
+    assert len(ri._tracks[1].samples) == 3
+
+  def test_range_ratio_conversion_and_sentinel(self):
+    assert _bosch_a_range_ratio(500) == pytest.approx(1.0)
+    assert _bosch_a_range_ratio(509) == pytest.approx(1.009)
+    assert _bosch_a_range_ratio(BOSCH_A_RANGE_RATIO_INVALID) is None
+    assert _bosch_a_range_ratio(None) is None
+    assert _bosch_a_range_ratio_vrel(600, 10.0, 0.1) == pytest.approx(-10.0)
+
+  @pytest.mark.parametrize(
+    ('direct_raw', 'range_raw', 'rawca', 'expected'),
+    [(0, 974, 528, -13.5), (BOSCH_A_DIRECT_VREL_MAX_RAW, 1027, 472, 13.5)],
+  )
+  def test_range_ratio_does_not_extend_direct_vrel_rails(self, direct_raw, range_raw, rawca, expected):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=direct_raw, direct_vrel_uncertainty_raw=80, rawca=500))
+    rr = ri.update(sweep(0, 1, 0x7, range_raw, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=direct_raw, direct_vrel_uncertainty_raw=80, rawca=rawca))
+    assert len(rr.points) == 1
+    assert rr.points[0].vRel == pytest.approx(expected)
 
   def test_first_sighting_vrel_is_zero(self):
     ri = make_radar_interface()
@@ -567,22 +612,6 @@ class TestVrel:
     d2 = 0.05712 * 1010 - 3.0
     assert rr.points[0].vRel == pytest.approx((d2 - d1) / 0.05)
 
-  def test_ols_helper_matches_closed_form_two_point(self):
-    from collections import deque
-    samples = deque([(0.0, 10.0), (0.1, 12.0)])
-    assert _bosch_a_ols_vrel(samples) == pytest.approx(20.0)
-
-  def test_ols_helper_three_point_linear(self):
-    from collections import deque
-    # perfectly linear d = 5 + 3*t -> slope must recover exactly 3.0
-    samples = deque([(0.0, 5.0), (0.1, 5.3), (0.2, 5.6)])
-    assert _bosch_a_ols_vrel(samples) == pytest.approx(3.0)
-
-  def test_ols_helper_degenerate_dt_returns_zero(self):
-    from collections import deque
-    samples = deque([(0.0, 5.0), (0.0, 6.0)])
-    assert _bosch_a_ols_vrel(samples) == 0.0
-
   def test_incarnation_does_not_carry_velocity_across_lifecycle_break(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0))
@@ -594,14 +623,48 @@ class TestVrel:
     rr = ri.update(sweep(0, 3, 0x7, 500, 1024, 101, 150_000_000))
     assert rr.points[0].vRel == 0.0
 
-  def test_discontinuous_range_is_not_published_as_a_native_velocity_observation(self):
+  def test_discontinuous_range_coasts_last_accepted_point_unmeasured(self):
     ri = make_radar_interface()
-    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, direct_vrel_raw=864))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True, direct_vrel_raw=864))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=864, direct_vrel_uncertainty_raw=80, rawca=500))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=80, rawca=500))
     assert len(rr.points) == 1
-    rr = ri.update(sweep(0, 2, 0x7, 100, 1024, 5, 100_000_000, with_aux=True, direct_vrel_raw=864))
-    assert len(rr.points) == 0
+    accepted_drel = rr.points[0].dRel
+
+    rr = ri.update(sweep(0, 2, 0x7, 100, 1024, 5, 100_000_000, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=612, rawca=509,
+                         range_sigma_raw=4, existence_raw=0))
+    assert len(rr.points) == 1
+    assert rr.points[0].dRel == pytest.approx(accepted_drel)
+    assert rr.points[0].measured is False
     assert len(ri._tracks[1].samples) == 2
+
+  def test_exact_peter_reset_sequence_never_rebases_on_rejected_ranges(self):
+    ri = make_radar_interface()
+    rows = [
+      # range_raw, U11, U10, range sigma, existence, 00CA
+      (203, 713, 136, 2, 3, 512),
+      (198, 740, 92, 2, 76, 510),
+      (64, 463, 612, 4, 0, 509),
+      (82, 554, 437, 4, 0, 508),
+      (96, 727, 101, 2, 0, 508),
+      (102, 795, 31, 1, 0, 508),
+    ]
+    times = [0, 70_696_000, 120_413_000, 200_552_000, 260_482_000, 331_286_000]
+
+    rr = None
+    for i, ((range_raw, u11, u10, sigma, existence, rawca), t_nanos) in enumerate(zip(rows, times, strict=True)):
+      rr = ri.update(sweep(
+        0, (11 + i) & 0xF, 0x9, range_raw, 1024, 5 + 2 * i, t_nanos,
+        with_aux=True, direct_vrel_raw=u11, direct_vrel_uncertainty_raw=u10,
+        rawca=rawca, range_sigma_raw=sigma, existence_raw=existence, track_id=23,
+      ))
+
+    assert rr is not None
+    assert len(rr.points) == 0
+    assert len(ri._tracks[23].samples) == 2
+    assert ri._tracks[23].samples[-1][1] == pytest.approx(8.30976)
 
 
 # --- 8. auxiliary tag join: enrichment only, never gates validity -------------------------------------
