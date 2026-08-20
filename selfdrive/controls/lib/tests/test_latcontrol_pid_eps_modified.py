@@ -10,14 +10,8 @@ from opendbc.car.honda.steer_ratio import (
 from opendbc.car.honda.values import CAR
 from opendbc.car import structs
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
-  NRDR_CLARITY_LEGACY_CENTER_RATIO,
-  NRDR_CLARITY_LEGACY_OUTER_ANGLE,
-  NRDR_CLARITY_LEGACY_OUTER_RATIO,
   NRDR_MODIFIED_EPS_KF_SPEED_BP,
   NRDR_MODIFIED_EPS_KF_V,
-  NRDR_CLARITY_SR_CURVE_BP,
-  NRDR_CLARITY_SR_CURVE_V,
-  NRDR_SR_CURVE_BY_FP,
   LatControlPID,
   get_nrdr_modified_eps_kf,
 )
@@ -76,50 +70,7 @@ def test_exact_eps_firmware_selects_only_its_vgr_profile(candidate, fw_version, 
   car_params = _params(candidate, fw_version)
   lat = LatControlPID(car_params, STUB_CI, 0.01)
   assert lat.vgr_inverse is HONDA_VGR_INVERSE_BY_PROFILE[profile]
-  assert lat.sr_curve is None
-
-
-def test_exact_clarity_firmware_uses_the_latest_firmware_legacy_handoff():
-  lat = _controller(CAR.HONDA_CLARITY, b'39990-TRW,A020\x00\x00')
-  assert lat.firmware_legacy_sr_curve is not None
-  assert lat.firmware_legacy_sr_curve.valid
-
-
-def test_clarity_uses_nrdr_two_point_ratio_and_modified_eps_base_pid():
-  assert NRDR_CLARITY_SR_CURVE_BP == [0.0, NRDR_CLARITY_LEGACY_OUTER_ANGLE]
-  assert NRDR_CLARITY_SR_CURVE_V == [NRDR_CLARITY_LEGACY_CENTER_RATIO, NRDR_CLARITY_LEGACY_OUTER_RATIO]
-
-  CP = _params(CAR.HONDA_CLARITY, MODIFIED_FW)
-  assert list(CP.lateralParams.torqueBP) == [0.0, 3840.0]
-  assert list(CP.lateralTuning.pid.kpBP) == pytest.approx([0.0, 25.0 * 0.44704 - 1e-3, 25.0 * 0.44704, 50.0 * 0.44704])
-  assert list(CP.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
-  assert list(CP.lateralTuning.pid.kiBP) == pytest.approx([0.0, 25.0 * 0.44704 - 1e-3, 25.0 * 0.44704, 50.0 * 0.44704])
-  assert list(CP.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
-  assert CP.lateralTuning.pid.kf == pytest.approx(3.6e-6)
-
-
-def test_clarity_lane_change_uses_outer_ratio_endpoint():
-  class StubVehicleModel:
-    sR = 18.5
-
-    def get_steer_from_curvature(self, curvature, _v_ego, _roll):
-      return curvature * self.sR
-
-  lat = _controller(CAR.HONDA_CLARITY, b'39990-TRW,A020\x00\x00')
-  cs = SimpleNamespace(
-    steeringAngleDeg=0.0,
-    steeringRateDeg=0.0,
-    vEgo=20.0,
-    steeringPressed=False,
-    steeringTorque=0.0,
-    leftBlinker=True,
-    rightBlinker=False,
-  )
-  params = SimpleNamespace(angleOffsetDeg=0.0, roll=0.0)
-  vm = StubVehicleModel()
-  _, desired_angle, _ = lat.update(False, cs, vm, params, False, -0.01, False, 0.0, None, None, TOGGLES)
-  assert desired_angle == pytest.approx(12.72 * 0.01 * 180.0 / 3.141592653589793)
-  assert vm.sR == pytest.approx(18.5)
+  assert not hasattr(lat, "sr_curve")
 
 
 @pytest.mark.parametrize("candidate", [CAR.HONDA_CLARITY, CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_INSIGHT,
@@ -127,7 +78,7 @@ def test_clarity_lane_change_uses_outer_ratio_endpoint():
 def test_unknown_eps_firmware_keeps_fixed_vehicle_model_ratio(candidate):
   lat = _controller(candidate, STOCK_FW)
   assert lat.vgr_inverse is None
-  assert lat.sr_curve == NRDR_SR_CURVE_BY_FP.get(str(candidate))
+  assert not hasattr(lat, "sr_curve")
 
 
 def test_modified_eps_runtime_scales_remain_neutral():

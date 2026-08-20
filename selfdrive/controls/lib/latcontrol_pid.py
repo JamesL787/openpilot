@@ -3,11 +3,7 @@ import numpy as np
 
 from cereal import log
 from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
-from opendbc.car.honda.steer_ratio import (
-  FirmwareLegacySteerRatioCurve,
-  get_honda_vgr_inverse,
-  vgr_linear_to_physical,
-)
+from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_linear_to_physical
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
@@ -24,14 +20,33 @@ from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 
 
-# Clarity's latest NRDR profile is a two-point effective ratio: 18.50 at centre and
-# 12.72 at the 250-degree outer reference. During a lane change, the source profile
-# explicitly uses that outer endpoint rather than selecting a ratio from measured angle.
-NRDR_CLARITY_LEGACY_CENTER_RATIO = 18.50
-NRDR_CLARITY_LEGACY_OUTER_RATIO = 12.72
-NRDR_CLARITY_LEGACY_OUTER_ANGLE = 250.0
-NRDR_CLARITY_SR_CURVE_BP = [0.0, NRDR_CLARITY_LEGACY_OUTER_ANGLE]  # |wheel angle|, deg
-NRDR_CLARITY_SR_CURVE_V = [NRDR_CLARITY_LEGACY_CENTER_RATIO, NRDR_CLARITY_LEGACY_OUTER_RATIO]
+# Clarity effective-ratio schedule: EPS position-table shape, scaled to road measurement.
+#
+# Derived 2026-08-15 and it replaces the 4f3271d6af road fit, which tapered 1.440x. Two
+# independent sources say that was roughly twice the real taper:
+#
+#   * The EPS position table (Y 16384 -> 18952) tapers 1.157x centre to lock.
+#   * Corrected road data over 3392 samples tapers 1.161x over the same span.
+#
+# The old fit inverted KINEMATIC steering (atan(L*curv)), which assumes no tyre slip and so
+# overstates the ratio by 1/(L*curvature_factor(u)) -- about 1.02x at 10 mph but 1.37x at
+# 55 mph. Because speed correlates with angle (highway is small-angle, parking is large),
+# that inflated the near-centre bins far more than the outer ones and manufactured taper the
+# rack does not have. Solving VehicleModel's own equation instead, theta = (curv - roll_comp)
+# * sR / curvature_factor(u), removes it.
+#
+# Shape comes from the firmware table because it is dense and noise-free; the absolute level
+# is a weighted least-squares fit to the measured bins (n/IQR^2 weighting, reliable bins from
+# 32 to 330 deg only). Residual is within 2.5% at every measured point. Below ~30 deg the
+# yaw-rate estimate is unusable -- IQR reaches 15-23% and the medians go non-physical -- so
+# the curve is held flat there rather than fitted.
+#
+# The old 12.74 tail came from a claimed Honda end-to-end spec of 12.72 at lock. Neither the
+# firmware table nor the road data supports it: both put lock near 14.8-14.9.
+NRDR_CLARITY_SR_CURVE_BP = [0., 25., 40., 55., 80., 110., 150., 205., 295., 380.,
+                            450.]  # |wheel angle|, deg
+NRDR_CLARITY_SR_CURVE_V = [17.890, 17.873, 17.507, 17.458, 16.846, 16.202, 15.637, 15.174,
+                           14.759, 14.441, 14.345]
 
 # Civic Bosch (EPS 39990-TBA-C020) road-measured curve, from Peter's 152-segment extract
 # (6824 accepted samples) processed with the same slip/roll-corrected estimator. Reliable
@@ -100,6 +115,7 @@ def get_nrdr_modified_eps_kf(v_ego: float) -> float:
 
 
 CENTER_TAPER_FADE_TAU = 0.25
+UNWIND_BOOST_FADE_S = 0.3
 
 # Below this speed the phase SIGN is held rather than recomputed. phase is
 # angle * d(angle), and d(angle) is a frame-to-frame difference of the desired angle, so
@@ -115,6 +131,8 @@ def phase_with_latch(angle_deg: float, angle_delta_deg: float, v_ego: float,
   if phase != 0.0 and (v_ego > PHASE_SWITCH_MIN_SPEED or direction == 0.0):
     direction = 1.0 if phase > 0.0 else -1.0
   return abs(phase) * direction, direction
+UNWIND_FREEZE_PHASE_THRESHOLD = -0.2
+UNWIND_FREEZE_ANGLE_NEAR_CENTER = 8.0
 _MPH_TO_MS = 0.44704
 _LAT_SCALE_LOW_MAX = 25.0 * _MPH_TO_MS
 _LAT_SCALE_STD_MAX = 50.0 * _MPH_TO_MS
@@ -302,20 +320,14 @@ class LatControlPID(LatControl):
     # NRDR: every modified-EPS Honda (Civic 39990-TBA, CR-V 5G 39990-TLA, Insight 39990-TXM,
     # Clarity 39990-TRW) runs the live tune.
     self.is_eps_modified = self.is_honda_pid_lateral and bool(CP.flags & HondaFlags.EPS_MODIFIED)
-    self.is_clarity = CP.carFingerprint == HONDA.HONDA_CLARITY
-    # Exact firmware VGR takes precedence over the road curve. Unknown firmware keeps the
-    # road-measured effective-ratio curve, while an exact mapped rack without one falls back
-    # to the firmware map. There is intentionally no vehicle-family fallback.
-    self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
-    self.sr_curve = None if self.vgr_inverse is not None else NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
-    self.firmware_legacy_sr_curve = None
-    if self.vgr_inverse is not None and self.is_clarity:
-      self.firmware_legacy_sr_curve = FirmwareLegacySteerRatioCurve(
-        self.vgr_inverse,
-        NRDR_CLARITY_LEGACY_CENTER_RATIO,
-        NRDR_CLARITY_LEGACY_OUTER_RATIO,
-        NRDR_CLARITY_LEGACY_OUTER_ANGLE,
-      )
+    # A car with a road-measured curve uses it. The firmware position map is a partial
+    # correction (rack-to-steering-wheel only) and is the fallback for a mapped rack that
+    # has no measured curve yet -- currently just the Civic Bosch.
+    self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
+    # VGR is selected by exact EPS firmware, and only for a car with no measured curve.
+    # There is intentionally no vehicle-family fallback: another rack's table is not
+    # interchangeable.
+    self.vgr_inverse = None if self.sr_curve is not None else get_honda_vgr_inverse(CP.flags)
     self.is_rav4_tss2 = CP.carFingerprint in RAV4_TSS2_CARS
     self.prev_angle_steers_des_no_offset = 0.0
     self.eps_modified_steering_pressed_filter_s = 0.0
@@ -335,12 +347,16 @@ class LatControlPID(LatControl):
     self.lat_f_scale_low = 1.0
     self.lat_f_scale_standard = 1.0
     self.lat_f_scale_highway = 1.0
-    self.center_taper_high = 1.0
+    self.center_taper_high = 0.5
     self.center_boost_threshold = 3.0
     self.center_boost_min_speed = 50.0
     self.phase_direction = 0.0
+    self.unwind_freeze_enabled = False
+    self.unwind_ff_multiplier = 2.0
+    self.unwind_boost_cap_s = 1.0
+    self.unwind_boost_elapsed = 0.0
     self.lat_stiction = LatStiction(dt, self.steer_max)
-    self.lat_stiction_enabled = self.is_eps_modified
+    self.lat_stiction_enabled = False
     self.prev_saturated = False
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
@@ -365,29 +381,7 @@ class LatControlPID(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    lane_change_endpoint = self.is_clarity and bool(getattr(CS, "leftBlinker", False) or getattr(CS, "rightBlinker", False))
-    if lane_change_endpoint:
-      # Match NRDR's lane-change endpoint behavior: use the 12.72 ratio directly at
-      # the 250-degree profile endpoint, including when exact VGR firmware is present.
-      previous_ratio = VM.sR
-      try:
-        VM.sR = NRDR_CLARITY_LEGACY_OUTER_RATIO
-        angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
-      finally:
-        VM.sR = previous_ratio
-      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
-    elif self.firmware_legacy_sr_curve is not None:
-      # Solve in the learned centre-equivalent coordinate, then apply the deterministic
-      # firmware/legacy handoff. Steering feedback is not used to select the target curve.
-      previous_ratio = VM.sR
-      try:
-        VM.sR = NRDR_CLARITY_LEGACY_CENTER_RATIO
-        linear_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
-      finally:
-        VM.sR = previous_ratio
-      angle_steers_des_no_offset = self.firmware_legacy_sr_curve.desired_angle(linear_des_no_offset)
-      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
-    elif self.sr_curve is not None:
+    if self.sr_curve is not None:
       # Road-measured effective ratio, selected at the MEASURED angle. Fitted from steering
       # wheel angle to achieved yaw rate, so it spans the whole chain: VGR pinion, rack,
       # linkage, Ackermann, compliance and tyres. The firmware position map covers only the
@@ -422,6 +416,7 @@ class LatControlPID(LatControl):
       self.eps_modified_steering_pressed_filter_s = 0.0
       self.eps_modified_steering_pressed_prev = False
       self.center_taper_scale.x = 1.0
+      self.unwind_boost_elapsed = 0.0
       self.prev_output_torque = 0.0
       self.prev_saturated = False
       self.lat_stiction.reset()
@@ -438,6 +433,26 @@ class LatControlPID(LatControl):
       else:
         ff_factor = self.ff_factor
       ff = ff_factor * self.get_steer_feedforward(angle_steers_des_no_offset, CS.vEgo)
+      abs_angle_des = abs(angle_steers_des_no_offset)
+      if self.is_eps_modified:
+        unwind_ff_boost = float(np.interp(CS.vEgo, [0.0, 10.0], [self.unwind_ff_multiplier, 1.0]))
+        steering_rate_unwind_ff = angle_steers_des_no_offset * float(CS.steeringRateDeg) < -1.0
+        ff_unwind_weight = min(max(-phase / 0.5, 0.0), 1.0)
+        if steering_rate_unwind_ff and abs_angle_des > 5.0:
+          ff_unwind_weight = max(ff_unwind_weight, 0.5)
+
+
+        if ff_unwind_weight > 0.0:
+          self.unwind_boost_elapsed += self.dt
+        else:
+          self.unwind_boost_elapsed = 0.0
+        if self.unwind_boost_cap_s > 0.0:
+          fade = min(UNWIND_BOOST_FADE_S, self.unwind_boost_cap_s)
+          time_gate = min(max((self.unwind_boost_cap_s - self.unwind_boost_elapsed) / fade, 0.0), 1.0)
+        else:
+          time_gate = 0.0
+        ff_unwind_weight *= time_gate
+        ff *= 1.0 + ff_unwind_weight * max(unwind_ff_boost - 1.0, 0.0)
 
       steering_pressed = CS.steeringPressed
       # Civic Bosch used to take a graded detector of its own here. It now shares the generic
@@ -453,8 +468,10 @@ class LatControlPID(LatControl):
         self.eps_modified_steering_pressed_prev = steering_pressed
 
       freeze_threshold = 2.0 if self.is_eps_modified else 5.0
-      freeze_integrator = (steer_limited_by_safety or steering_pressed or CS.vEgo < freeze_threshold
-                           or (self.lat_stiction_enabled and self.lat_stiction.freeze_integrator))
+      freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < freeze_threshold
+      unwind_detected = phase < UNWIND_FREEZE_PHASE_THRESHOLD and abs_angle_des < UNWIND_FREEZE_ANGLE_NEAR_CENTER
+      if self.is_eps_modified and self.unwind_freeze_enabled and unwind_detected:
+        freeze_integrator = True
 
       output_torque = self.pid.update(error,
                                 feedforward=ff,
@@ -480,9 +497,12 @@ class LatControlPID(LatControl):
           self.lat_f_scale_low = _get_param_float(self.params, "LatFScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_standard = _get_param_float(self.params, "LatFScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_highway = _get_param_float(self.params, "LatFScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
-          self.center_taper_high = _get_param_float(self.params, "HondaCenterScale", 1.0, 0.0, 5.0)
+          self.center_taper_high = _get_param_float(self.params, "HondaCenterScale", 0.5, 0.0, 5.0)
           self.center_boost_threshold = _get_param_float(self.params, "HondaCenterBoostThreshold", 3.0, 0.0, 10.0)
           self.center_boost_min_speed = _get_param_float(self.params, "HondaCenterBoostMinSpeed", 50.0, 0.0, 90.0)
+          self.unwind_freeze_enabled = _get_param_bool(self.params, "HondaUnwindFreeze")
+          self.unwind_ff_multiplier = _get_param_float(self.params, "HondaUnwindFfMultiplier", 2.0, 1.0, 4.0)
+          self.unwind_boost_cap_s = _get_param_float(self.params, "HondaUnwindBoostSeconds", 1.0, 0.0, 3.0)
           self.lat_stiction_enabled = _get_param_bool(self.params, "NrdrLatStiction")
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
@@ -541,16 +561,9 @@ class LatControlPID(LatControl):
       if self.lat_stiction_enabled:
         des_rate_degs = desired_angle_delta / self.dt
         lane_change_stiction = bool(getattr(CS, "leftBlinker", False) or getattr(CS, "rightBlinker", False))
-        stiction_limited = bool(
-          curvature_limited
-          or self.prev_saturated
-          or abs(output_torque) >= self.steer_max - 1e-3
-          or getattr(CS, "steerFaultTemporary", False)
-          or getattr(CS, "steerFaultPermanent", False)
-        )
         output_torque = float(self.lat_stiction.update(
           active, CS.vEgo, error, des_rate_degs, float(CS.steeringRateDeg), output_torque,
-          steering_pressed, lane_change_stiction, stiction_limited))
+          steering_pressed, lane_change_stiction, self.prev_saturated))
       else:
         self.lat_stiction.reset()
 

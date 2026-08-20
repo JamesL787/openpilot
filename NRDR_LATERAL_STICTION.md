@@ -2,7 +2,7 @@
 
 This optional final-stage torque state machine emulates the breakaway friction of
 high-torque EPS units. It is available for NRDR's modified-EPS Hondas through
-the default-on `NrdrLatStiction` parameter.
+the off-by-default `NrdrLatStiction` parameter.
 
 In HOLD, output remains at a captured torque while a slow integrator winds against
 standing error, preventing steering-command dither from reaching the transparent

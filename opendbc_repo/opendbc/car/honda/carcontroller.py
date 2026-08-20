@@ -567,7 +567,7 @@ class CarController(CarControllerBase):
   def _get_live_tuning_params(self):
     return {
       "override_fade_down_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeDownSecs", default=0.0), 0.0, 10.0)),
-      "override_fade_up_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeUpSecs", default=1.0), 0.0, 10.0)),
+      "override_fade_up_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeUpSecs", default=1.5), 0.0, 10.0)),
       "override_torque_scale": float(np.clip(self.param_store.get_int("HondaOverrideTorqueScale", default=0), 0, 100)) / 100.0,
       "driver_assist_during_override": self.param_store.get_bool("HondaDriverAssistDuringOverride", default=False),
       "torque_lpf_enabled": self.param_store.get_bool("HondaTorqueLowPassFilter", default=True),
