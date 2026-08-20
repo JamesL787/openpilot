@@ -3,13 +3,11 @@ import argparse
 import os
 import sys
 
-import cv2
 import numpy as np
 import pygame
 
 import cereal.messaging as messaging
 from openpilot.common.basedir import BASEDIR
-from openpilot.common.transformations.camera import DEVICE_CAMERAS
 from openpilot.tools.replay.lib.ui_helpers import (UP,
                                          BLACK, GREEN,
                                          YELLOW, Calibration,
@@ -17,14 +15,18 @@ from openpilot.tools.replay.lib.ui_helpers import (UP,
                                          maybe_update_radar_points, plot_lead,
                                          plot_model,
                                          pygame_modules_have_loaded)
-from msgq.visionipc import VisionIpcClient, VisionStreamType
+from openpilot.tools.replay.lib.radar_debug import radar_track_roles, radar_track_summary
 
 os.environ['BASEDIR'] = BASEDIR
 
 ANGLE_SCALE = 5.0
 
-def ui_thread(addr):
-  cv2.setNumThreads(1)
+def ui_thread(addr, no_camera=False):
+  if not no_camera:
+    import cv2
+    from openpilot.common.transformations.camera import DEVICE_CAMERAS
+    from msgq.visionipc import VisionIpcClient, VisionStreamType
+    cv2.setNumThreads(1)
   pygame.init()
   pygame.font.init()
   assert pygame_modules_have_loaded()
@@ -36,26 +38,46 @@ def ui_thread(addr):
   hor_mode = True if max_height < 960+300 else hor_mode
 
   if hor_mode:
-    size = (640+384+640, 960)
+    logical_size = (640+384+640, 960)
     write_x = 5
     write_y = 680
   else:
-    size = (640+384, 960+300)
+    logical_size = (640+384, 960+300)
     write_x = 645
     write_y = 970
 
+  # Draw at the established logical resolution, then fit the complete layout
+  # into the available desktop.  A fixed 1664px-wide horizontal window was
+  # extending past smaller Mac displays and clipping the plot headers.
+  display_size = (
+    min(logical_size[0], max(800, disp_info.current_w - 20)),
+    min(logical_size[1], max(600, disp_info.current_h - 80)),
+  )
   pygame.display.set_caption("openpilot debug UI")
-  screen = pygame.display.set_mode(size, pygame.DOUBLEBUF)
+  window = pygame.display.set_mode(display_size, pygame.DOUBLEBUF)
+  screen = pygame.Surface(logical_size).convert()
 
-  alert1_font = pygame.font.SysFont("arial", 30)
-  alert2_font = pygame.font.SysFont("arial", 20)
-  info_font = pygame.font.SysFont("arial", 15)
+  alert1_font = pygame.font.SysFont("arial", 24)
+  alert2_font = pygame.font.SysFont("arial", 16)
+  info_font = pygame.font.SysFont("arial", 13)
+  radar_label_font = pygame.font.SysFont("arial", 10)
 
   camera_surface = pygame.surface.Surface((640, 480), 0, 24).convert()
   top_down_surface = pygame.surface.Surface((UP.lidar_x, UP.lidar_y), 0, 8)
+  radar_palette = [(0, 0, 0)] * 256
+  radar_palette[1] = (255, 40, 40)       # selected lead
+  radar_palette[2] = (0, 255, 64)        # measured non-lead
+  radar_palette[3] = (40, 120, 255)      # left adjacent lead
+  radar_palette[4] = (255, 220, 0)       # stopped adjacent object
+  radar_palette[5] = (255, 150, 0)       # second lead
+  radar_palette[6] = (190, 80, 255)      # right adjacent lead
+  radar_palette[7] = (150, 150, 150)     # estimated/non-measured
+  radar_palette[110] = (110, 110, 110)   # vehicle outline
+  top_down_surface.set_palette(radar_palette)
 
-  sm = messaging.SubMaster(['carState', 'longitudinalPlan', 'carControl', 'radarState', 'liveCalibration', 'controlsState',
-                            'selfdriveState', 'liveTracks', 'modelV2', 'liveParameters', 'roadCameraState'], addr=addr)
+  sm = messaging.SubMaster(['carState', 'carParams', 'longitudinalPlan', 'carControl', 'radarState',
+                            'starpilotRadarState', 'liveCalibration', 'controlsState', 'selfdriveState',
+                            'liveTracks', 'modelV2', 'liveParameters', 'roadCameraState'], addr=addr)
 
   img = np.zeros((480, 640, 3), dtype='uint8')
   imgff = None
@@ -99,7 +121,8 @@ def ui_thread(addr):
 
   draw_plots = init_plots(plot_arr, name_to_arr_idx, plot_xlims, plot_ylims, plot_names, plot_colors, plot_styles)
 
-  vipc_client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
+  vipc_client = None if no_camera else VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
+  last_radar_frame = None
   while True:
     for event in pygame.event.get():
       if event.type == pygame.QUIT:
@@ -111,31 +134,38 @@ def ui_thread(addr):
     top_down = top_down_surface, lid_overlay
 
     # ***** frame *****
-    if not vipc_client.is_connected():
-      vipc_client.connect(True)
-
-    yuv_img_raw = vipc_client.recv()
-    if yuv_img_raw is None or not yuv_img_raw.data.any():
-      continue
+    yuv_img_raw = None
+    if not no_camera:
+      if not vipc_client.is_connected():
+        vipc_client.connect(True)
+      yuv_img_raw = vipc_client.recv()
 
     sm.update(0)
 
-    camera = DEVICE_CAMERAS[("tici", str(sm['roadCameraState'].sensor))]
+    have_camera = yuv_img_raw is not None and bool(yuv_img_raw.data.any())
+    intrinsic_matrix = None
+    calib_scale = None
+    if have_camera:
+      camera = DEVICE_CAMERAS[("tici", str(sm['roadCameraState'].sensor))]
 
-    imgff = np.frombuffer(yuv_img_raw.data, dtype=np.uint8).reshape((len(yuv_img_raw.data) // vipc_client.stride, vipc_client.stride))
-    num_px = vipc_client.width * vipc_client.height
-    rgb = cv2.cvtColor(imgff[:vipc_client.height * 3 // 2, :vipc_client.width], cv2.COLOR_YUV2RGB_NV12)
+      imgff = np.frombuffer(yuv_img_raw.data, dtype=np.uint8).reshape((len(yuv_img_raw.data) // vipc_client.stride, vipc_client.stride))
+      num_px = vipc_client.width * vipc_client.height
+      rgb = cv2.cvtColor(imgff[:vipc_client.height * 3 // 2, :vipc_client.width], cv2.COLOR_YUV2RGB_NV12)
 
-    qcam = "QCAM" in os.environ
-    bb_scale = (528 if qcam else camera.fcam.width) / 640.
-    calib_scale = camera.fcam.width / 640.
-    zoom_matrix = np.asarray([
-        [bb_scale, 0., 0.],
-        [0., bb_scale, 0.],
-        [0., 0., 1.]])
-    cv2.warpAffine(rgb, zoom_matrix[:2], (img.shape[1], img.shape[0]), dst=img, flags=cv2.WARP_INVERSE_MAP)
-
-    intrinsic_matrix = camera.fcam.intrinsics
+      qcam = "QCAM" in os.environ
+      bb_scale = (528 if qcam else camera.fcam.width) / 640.
+      calib_scale = camera.fcam.width / 640.
+      zoom_matrix = np.asarray([
+          [bb_scale, 0., 0.],
+          [0., bb_scale, 0.],
+          [0., 0., 1.]])
+      cv2.warpAffine(rgb, zoom_matrix[:2], (img.shape[1], img.shape[0]), dst=img, flags=cv2.WARP_INVERSE_MAP)
+      intrinsic_matrix = camera.fcam.intrinsics
+    else:
+      # Rlogs do not necessarily have a VisionIPC camera producer. Keep the
+      # replay plots and radar map alive instead of dropping the entire tick.
+      img.fill(0)
+      num_px = 0
 
     w = sm['controlsState'].lateralControlState.which()
     if w == 'lqrStateDEPRECATED':
@@ -170,7 +200,20 @@ def ui_thread(addr):
       plot_lead(sm['radarState'], top_down)
 
     # draw all radar points
-    maybe_update_radar_points(sm['liveTracks'].points, top_down[1])
+    # This is a diagnostic viewer.  A slowed replay can fail SubMaster's
+    # normal frequency-validity check even though it is delivering a useful
+    # received payload, so use seen rather than valid for visualization.
+    radar_state = sm['radarState'] if sm.seen['radarState'] else None
+    starpilot_radar_state = sm['starpilotRadarState'] if sm.seen['starpilotRadarState'] else None
+    roles = radar_track_roles(radar_state, starpilot_radar_state)
+    radar_points = sm['liveTracks'].points if sm.seen['liveTracks'] else []
+    radar_labels = maybe_update_radar_points(radar_points, top_down[1], roles)
+    radar_summary = radar_track_summary(radar_points, roles)
+    radar_frame = int(sm.recv_frame['liveTracks'])
+    radar_fresh = bool(sm.updated['liveTracks'])
+    radar_frame_delta = 0 if last_radar_frame is None else radar_frame - last_radar_frame
+    if radar_fresh:
+      last_radar_frame = radar_frame
 
     if sm.updated['liveCalibration'] and num_px:
       rpyCalib = np.asarray(sm['liveCalibration'].rpyCalib)
@@ -194,13 +237,30 @@ def ui_thread(addr):
     pygame.surfarray.blit_array(*top_down)
     screen.blit(top_down[0], (640, 0))
 
-    SPACING = 25
+    for label in radar_labels:
+      if label["track_id"] < 0:
+        continue
+      text = radar_label_font.render(str(label["track_id"]), True, (255, 255, 255))
+      screen.blit(text, (640 + label["x"] + 5, label["y"] - 6))
 
+    fingerprint = ""
+    if sm.valid.get('carParams', False):
+      fingerprint = str(sm['carParams'].carFingerprint)
+    radar_name = "BOSCH-A" if "CIVIC_BOSCH" in fingerprint else "RADAR"
+    lead_ids = radar_summary["role_ids"]
+    lead_id = lead_ids["leadOne"][0] if lead_ids["leadOne"] else "-"
+    left_id = lead_ids["leadLeft"][0] if lead_ids["leadLeft"] else "-"
+    right_id = lead_ids["leadRight"][0] if lead_ids["leadRight"] else "-"
     lines = [
       info_font.render("ENABLED", True, GREEN if sm['selfdriveState'].enabled else BLACK),
       info_font.render("SPEED: " + str(round(sm['carState'].vEgo, 1)) + " m/s", True, YELLOW),
       info_font.render("LONG CONTROL STATE: " + str(sm['controlsState'].longControlState), True, YELLOW),
       info_font.render("LONG MPC SOURCE: " + str(sm['longitudinalPlan'].longitudinalPlanSource), True, YELLOW),
+      None,
+      info_font.render(f"{radar_name}: {radar_summary['count']} tracks / {radar_summary['measured']} measured", True, GREEN),
+      info_font.render(f"RADAR FRAME: {radar_frame} ({'FRESH' if radar_fresh else 'HOLD'}, Δ{radar_frame_delta})", True, GREEN),
+      info_font.render(f"LEAD IDS: {lead_id}  L:{left_id} R:{right_id}", True, GREEN),
+      info_font.render("TRACK IDS: " + ",".join(map(str, radar_summary["track_ids"])) if radar_summary["track_ids"] else "TRACK IDS: -", True, GREEN),
       None,
       info_font.render("ANGLE OFFSET (AVG): " + str(round(sm['liveParameters'].angleOffsetAverageDeg, 2)) + " deg", True, YELLOW),
       info_font.render("ANGLE OFFSET (INSTANT): " + str(round(sm['liveParameters'].angleOffsetDeg, 2)) + " deg", True, YELLOW),
@@ -208,11 +268,15 @@ def ui_thread(addr):
       info_font.render("STEER RATIO: " + str(round(sm['liveParameters'].steerRatio, 2)), True, YELLOW)
     ]
 
+    # Keep the expanded Bosch telemetry visible in both portrait and
+    # horizontal layouts without letting the bottom entries fall off-screen.
+    spacing = min(25, max(16, (screen.get_height() - write_y - 10) // max(1, len(lines) - 1)))
     for i, line in enumerate(lines):
       if line is not None:
-        screen.blit(line, (write_x, write_y + i * SPACING))
+        screen.blit(line, (write_x, write_y + i * spacing))
 
     # this takes time...vsync or something
+    window.blit(pygame.transform.scale(screen, display_size), (0, 0))
     pygame.display.flip()
 
 def get_arg_parser():
@@ -222,6 +286,8 @@ def get_arg_parser():
 
   parser.add_argument("ip_address", nargs="?", default="127.0.0.1",
                       help="The ip address on which to receive zmq messages.")
+  parser.add_argument("--no-camera", action="store_true",
+                      help="Run from MSGQ/ZMQ logs without waiting for a VisionIPC camera stream.")
 
   parser.add_argument("--frame-address", default=None,
                       help="The frame address (fully qualified ZMQ endpoint for frames) on which to receive zmq messages.")
@@ -234,4 +300,4 @@ if __name__ == "__main__":
     os.environ["ZMQ"] = "1"
     messaging.reset_context()
 
-  ui_thread(args.ip_address)
+  ui_thread(args.ip_address, no_camera=args.no_camera)

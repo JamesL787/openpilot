@@ -12,13 +12,18 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_AZIMUTH_SCALE_RAD,
   BOSCH_A_AUX_IDS,
   BOSCH_A_DBC_NAME,
+  BOSCH_A_DIRECT_VREL_INVALID,
+  BOSCH_A_DIRECT_VREL_MAX_RAW,
+  BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW,
   BOSCH_A_FREQ_HZ,
   BOSCH_A_MAIN_IDS,
   BOSCH_A_NUM_SLOTS,
+  BOSCH_A_RANGE_SCALE_M,
   BOSCH_A_STALE_S,
   BOSCH_A_SWEEP_END_MSG,
   BOSCH_A_TRIGGER_MSG,
   _bosch_a_aux_id,
+  _bosch_a_direct_vrel,
   _bosch_a_main_base,
   _bosch_a_ols_vrel,
 )
@@ -73,13 +78,17 @@ def make_f3(frame_idx=0, edge_a_raw=0, edge_b_raw=0, sigma_a_raw=0, track_id=0xF
   return bytes([B0, B1, B2, B3, B4, B5, track_id & 0xFF, 0])
 
 
-def make_aux(frame_idx=0, rawc9=0, rawca=0):
-  B1 = (frame_idx & 0xF) << 1
+def make_aux(frame_idx=0, rawc9=0, rawca=0, direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID,
+             direct_vrel_uncertainty_raw=0x3FF):
+  B0 = (direct_vrel_raw >> 3) & 0xFF
+  B1 = ((direct_vrel_raw & 0x7) << 5) | ((frame_idx & 0xF) << 1)
+  B2 = (direct_vrel_uncertainty_raw >> 2) & 0xFF
+  B3 = (direct_vrel_uncertainty_raw & 0x3) << 6
   B5 = (rawc9 & 0x3) << 6
   B4 = (rawc9 >> 2) & 0xFF
   B7 = (rawca & 0x3) << 6
   B6 = (rawca >> 2) & 0xFF
-  return bytes([0, B1, 0, 0, B4, B5, B6, B7])
+  return bytes([B0, B1, B2, B3, B4, B5, B6, B7])
 
 
 def make_main_frames(slot, frame_idx, status, range_raw, angle_raw, life, track_id=1):
@@ -97,7 +106,8 @@ def make_radar_interface():
 
 
 def sweep(slot, frame_idx, status, range_raw, angle_raw, life, t_nanos, with_aux=False, aux_frame_idx=None,
-          rawc9=0, rawca=0, extra_slots=(), track_id=1):
+          rawc9=0, rawca=0, extra_slots=(), track_id=1, direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID,
+          direct_vrel_uncertainty_raw=0x3FF):
   """Build one update() input: a full main-frame set for `slot` (+ optional aux), plus the trigger
   frame (slot 15's f3) so update() always processes the cycle unless the caller is testing slot 15
   itself or an incomplete-frame scenario via extra_slots."""
@@ -105,7 +115,8 @@ def sweep(slot, frame_idx, status, range_raw, angle_raw, life, t_nanos, with_aux
   aux = BOSCH_A_AUX_IDS[slot]
   frames = make_main_frames(slot, frame_idx, status, range_raw, angle_raw, life, track_id)
   if with_aux:
-    frames.append(CanData(aux, make_aux(aux_frame_idx if aux_frame_idx is not None else frame_idx, rawc9, rawca), BUS))
+    frames.append(CanData(aux, make_aux(aux_frame_idx if aux_frame_idx is not None else frame_idx, rawc9, rawca,
+                                        direct_vrel_raw, direct_vrel_uncertainty_raw), BUS))
   if slot != BOSCH_A_NUM_SLOTS - 1:
     _, _, _, trig_f3 = BOSCH_A_MAIN_IDS[BOSCH_A_NUM_SLOTS - 1]
     frames.append(CanData(trig_f3, make_f3(frame_idx), BUS))
@@ -222,8 +233,73 @@ class TestDbcBitGeometry:
       b = [rng.randint(0, 255) for _ in range(8)]
       dat = bytes(b)
       assert get_raw_value(dat, msg.sigs['FRAME_IDX']) == (b[1] >> 1) & 0x0F
-      assert get_raw_value(dat, msg.sigs['AZIMUTH_EDGE_SIGMA_B_RAW']) == (b[4] << 2) | (b[5] >> 6)
-      assert get_raw_value(dat, msg.sigs['AZIMUTH_AUX_PARAM_RAW']) == (b[6] << 2) | (b[7] >> 6)
+      assert get_raw_value(dat, msg.sigs['REL_VELOCITY_RAW']) == (b[0] << 3) | (b[1] >> 5)
+      assert get_raw_value(dat, msg.sigs['REL_VELOCITY_UNCERTAINTY_RAW']) == (b[2] << 2) | (b[3] >> 6)
+      assert get_raw_value(dat, msg.sigs['FW_LID_00C9_RAW']) == (b[4] << 2) | (b[5] >> 6)
+      assert get_raw_value(dat, msg.sigs['FW_LID_00CA_RAW']) == (b[6] << 2) | (b[7] >> 6)
+
+  def test_descriptor_backed_raw_fields_cover_all_unmapped_main_bits(self):
+    f0_ids = [
+      ['25', '26', '28', '29'], ['34', '35', '37', '38'], ['43', '44', '46', '47'],
+      ['52', '53', '55', '56'], ['61', '62', '64', '65'], ['70', '71', '73', '74'],
+      ['7F', '80', '82', '83'], ['8E', '8F', '91', '92'], ['9D', '9E', 'A0', 'A1'],
+      ['AC', 'AD', 'AF', 'B0'], ['BB', 'BC', 'BE', 'BF'], ['CA', 'CB', 'CD', 'CE'],
+      ['D9', 'DA', 'DC', 'DD'], ['E8', 'E9', 'EB', 'EC'], ['F7', 'F8', 'FA', 'FB'],
+      ['06', '07', '09', '0A'],
+    ]
+    f1_ids = [
+      ['2B', '18', '2C', '19', '2D'], ['3A', '23', '3B', '24', '3C'], ['49', '2E', '4A', '2F', '4B'],
+      ['58', '39', '59', '3A', '5A'], ['67', '44', '68', '45', '69'], ['76', '4F', '77', '50', '78'],
+      ['85', '5A', '86', '5B', '87'], ['94', '65', '95', '66', '96'], ['A3', '70', 'A4', '71', 'A5'],
+      ['B2', '7B', 'B3', '7C', 'B4'], ['C1', '86', 'C2', '87', 'C3'], ['D0', '91', 'D1', '92', 'D2'],
+      ['DF', '9C', 'E0', '9D', 'E1'], ['EE', 'A7', 'EF', 'A8', 'F0'], ['FD', 'B2', 'FE', 'B3', 'FF'],
+      ['0C', 'BD', '0D', 'BE', '0E'],
+    ]
+    f2_ids = [
+      ['2F', '1A', '30', '1B', '1C'], ['3E', '25', '3F', '26', '27'], ['4D', '30', '4E', '31', '32'],
+      ['5C', '3B', '5D', '3C', '3D'], ['6B', '46', '6C', '47', '48'], ['7A', '51', '7B', '52', '53'],
+      ['89', '5C', '8A', '5D', '5E'], ['98', '67', '99', '68', '69'], ['A7', '72', 'A8', '73', '74'],
+      ['B6', '7D', 'B7', '7E', '7F'], ['C5', '88', 'C6', '89', '8A'], ['D4', '93', 'D5', '94', '95'],
+      ['E3', '9E', 'E4', '9F', 'A0'], ['F2', 'A9', 'F3', 'AA', 'AB'], ['01', 'B4', '02', 'B5', 'B6'],
+      ['10', 'BF', '11', 'C0', 'C1'],
+    ]
+    positions = {
+      'F0': [(44, 4), (11, 2), (7, 7), (55, 8)],
+      'F1': [(46, 7), (23, 11), (15, 8), (39, 9), (7, 6)],
+      'F2': [(29, 1), (23, 10), (46, 7), (39, 9), (55, 9)],
+    }
+    ids_by_frame = {'F0': f0_ids, 'F1': f1_ids, 'F2': f2_ids}
+    for slot in range(BOSCH_A_NUM_SLOTS):
+      for frame in ('F0', 'F1', 'F2'):
+        msg = self.dbc.msgs[BOSCH_A_MAIN_IDS[slot][int(frame[-1])]]
+        for logical_id, (start_bit, size) in zip(ids_by_frame[frame][slot], positions[frame]):
+          signal = msg.sigs[f'FW_LID_{logical_id}_RAW']
+          assert signal.start_bit == start_bit
+          assert signal.size == size
+          assert signal.is_little_endian is False
+
+        def affected_bits(signal):
+          bits = set()
+          for byte in range(8):
+            for bit in range(8):
+              data = bytearray(8)
+              data[byte] = 1 << bit
+              if get_raw_value(bytes(data), signal) != 0:
+                bits.add((byte, bit))
+          return bits
+
+        fields = [msg.sigs[f'FW_LID_{logical_id}_RAW'] for logical_id in ids_by_frame[frame][slot]]
+        covered = set()
+        for signal in fields:
+          bits = affected_bits(signal)
+          assert not covered & bits
+          covered |= bits
+
+        existing_bits = set()
+        for name, signal in msg.sigs.items():
+          if not name.startswith('FW_LID_'):
+            existing_bits |= affected_bits(signal)
+        assert not existing_bits & covered
 
 
 # --- 3. range / azimuth extraction + invalid sentinels ------------------------------------------------
@@ -251,7 +327,7 @@ class TestRangeAzimuth:
     ri.update(sweep(0, 0, 0x7, 1000, 1024 + 100, 1, 0))
     rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 + 100, 3, 50_000_000))  # raw_angle > center -> right of center
     d = 0.05712 * 1000 - 3.0
-    expected_y = -d * math.sin(100.0 / 2048.0)
+    expected_y = -d * math.tan(100.0 / 2048.0)
     assert rr.points[0].yRel == pytest.approx(expected_y)
     assert rr.points[0].yRel < 0
 
@@ -425,6 +501,44 @@ def test_trackid_comes_from_can_and_is_not_synthetic():
 # --- 7. vRel derivative sign -------------------------------------------------------------------------
 
 class TestVrel:
+  def test_direct_aux_vrel_is_preferred_over_ols(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=800, direct_vrel_uncertainty_raw=80))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=800, direct_vrel_uncertainty_raw=80))
+    assert rr.points[0].vRel == pytest.approx((800 - 864) / 64.0)
+
+  def test_direct_aux_vrel_domain_and_sentinel(self):
+    assert _bosch_a_direct_vrel(0) == pytest.approx(-13.5)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) == pytest.approx(13.5)
+    assert _bosch_a_direct_vrel(1729) is None
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID) is None
+    assert _bosch_a_direct_vrel(None) is None
+    assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW) == pytest.approx(-13.5)
+    assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 1) is None
+
+  def test_high_aux_uncertainty_falls_back_to_ols(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=False))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=0, direct_vrel_uncertainty_raw=1023))
+    # The raw U11 value would decode to -13.5 m/s, but u10=1023 is a saturated/high-uncertainty
+    # candidate.  The valid adjacent range change remains usable through the OLS fallback.
+    assert rr.points[0].vRel == pytest.approx((10 * (BOSCH_A_RANGE_SCALE_M)) / 0.05)
+    assert rr.points[0].vRel != pytest.approx(-13.5)
+
+  def test_interior_high_uncertainty_aux_rescues_ols_outlier(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, with_aux=False))
+    ri.update(sweep(0, 1, 0x7, 1945, 1024, 3, 70_000_000, with_aux=False))
+    rr = ri.update(sweep(0, 2, 0x7, 1889, 1024, 5, 140_000_000, with_aux=True,
+                         direct_vrel_raw=554, direct_vrel_uncertainty_raw=437))
+    # The range slope is intentionally an OLS outlier while the AUX candidate is interior and
+    # bounded.  Keep the native candidate rather than exposing the synthetic large closing speed.
+    assert rr.points[0].vRel == pytest.approx((554 - 864) / 64.0)
+    assert len(ri._tracks[1].samples) == 1
+
   def test_first_sighting_vrel_is_zero(self):
     ri = make_radar_interface()
     rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
@@ -433,21 +547,21 @@ class TestVrel:
   def test_decreasing_range_gives_negative_vrel(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1900, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000))
     assert rr.points[0].vRel < 0
 
   def test_increasing_range_gives_positive_vrel(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1100, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
     assert rr.points[0].vRel > 0
 
   def test_vrel_magnitude_two_sample(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1100, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
     d1 = 0.05712 * 1000 - 3.0
-    d2 = 0.05712 * 1100 - 3.0
+    d2 = 0.05712 * 1010 - 3.0
     assert rr.points[0].vRel == pytest.approx((d2 - d1) / 0.05)
 
   def test_ols_helper_matches_closed_form_two_point(self):
@@ -469,13 +583,22 @@ class TestVrel:
   def test_incarnation_does_not_carry_velocity_across_lifecycle_break(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000))  # fast closing
-    assert rr.points[0].vRel < -1000  # implausible-fast, but exercises the derivative
+    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000))
+    assert rr.points[0].vRel < 0
     # replacement: life breaks identity -> fresh incarnation; its first sample is withheld.
     rr = ri.update(sweep(0, 2, 0x7, 500, 1024, 99, 100_000_000))
     assert len(rr.points) == 0
     rr = ri.update(sweep(0, 3, 0x7, 500, 1024, 101, 150_000_000))
     assert rr.points[0].vRel == 0.0
+
+  def test_discontinuous_range_is_not_published_as_a_native_velocity_observation(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, direct_vrel_raw=864))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True, direct_vrel_raw=864))
+    assert len(rr.points) == 1
+    rr = ri.update(sweep(0, 2, 0x7, 100, 1024, 5, 100_000_000, with_aux=True, direct_vrel_raw=864))
+    assert len(rr.points) == 0
+    assert len(ri._tracks[1].samples) == 2
 
 
 # --- 8. auxiliary tag join: enrichment only, never gates validity -------------------------------------
@@ -485,8 +608,8 @@ class TestAuxiliary:
     ri = make_radar_interface()
     rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, aux_frame_idx=0, rawc9=123, rawca=456))
     st = ri._slots[0]
-    assert st.aux_edge_sigma_raw == 123
-    assert st.aux_param_raw == 456
+    assert st.logical_00c9_raw == 123
+    assert st.logical_00ca_raw == 456
 
   def test_aux_mismatched_cycle_not_attached_but_point_still_emitted(self):
     ri = make_radar_interface()
@@ -494,7 +617,7 @@ class TestAuxiliary:
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True, aux_frame_idx=5, rawc9=123, rawca=456))
     assert len(rr.points) == 1  # point emitted regardless of aux mismatch
     st = ri._slots[0]
-    assert math.isnan(st.aux_edge_sigma_raw) and math.isnan(st.aux_param_raw)  # never attached
+    assert math.isnan(st.logical_00c9_raw) and math.isnan(st.logical_00ca_raw)  # never attached
 
   def test_aux_absent_does_not_suppress_point(self):
     ri = make_radar_interface()
@@ -506,16 +629,16 @@ class TestAuxiliary:
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, aux_frame_idx=0, rawc9=1, rawca=0x3FF))
     st = ri._slots[0]
-    assert st.aux_edge_sigma_raw == 1
-    assert math.isnan(st.aux_param_raw)
+    assert st.logical_00c9_raw == 1
+    assert math.isnan(st.logical_00ca_raw)
 
   def test_sigma_does_not_share_aux_param_invalid_sentinel(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
                     aux_frame_idx=0, rawc9=0x3FF, rawca=500))
     st = ri._slots[0]
-    assert st.aux_edge_sigma_raw == 0x3FF
-    assert st.aux_param_raw == 500
+    assert st.logical_00c9_raw == 0x3FF
+    assert st.logical_00ca_raw == 500
 
 
 # --- 9. missing CAN frame within a cycle does not kill an existing point -------------------------------
@@ -666,7 +789,7 @@ class TestPersistentCanIdentity:
   def test_track_id_reuse_after_death_starts_with_clean_history(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, track_id=9))
-    rr = ri.update(sweep(0, 1, 0x7, 1900, 1024, 3, 50_000_000, track_id=9))
+    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000, track_id=9))
     assert rr.points[0].trackId == 9
     rr = ri.update(sweep(0, 2, 0xF, 1900, 1024, 5, 100_000_000, track_id=9))
     assert len(rr.points) == 0
@@ -680,7 +803,7 @@ class TestPersistentCanIdentity:
   def test_lifecycle_discontinuity_keeps_can_id_but_clears_derivative(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, track_id=31))
-    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, track_id=31))
+    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000, track_id=31))
     assert rr.points[0].vRel < 0
     rr = ri.update(sweep(0, 2, 0x7, 500, 1024, 99, 100_000_000, track_id=31))
     assert len(rr.points) == 0

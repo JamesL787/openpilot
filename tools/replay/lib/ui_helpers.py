@@ -7,8 +7,6 @@ import pygame
 
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-from openpilot.common.transformations.camera import get_view_frame_from_calib_frame
-from openpilot.selfdrive.controls.radard import RADAR_TO_CAMERA
 
 
 RED = (255, 0, 0)
@@ -31,6 +29,11 @@ METER_WIDTH = 20
 
 class Calibration:
   def __init__(self, num_px, rpy, intrinsic, calib_scale):
+    # Keep the replay radar-only path usable on a host without the optional
+    # native transformation extension. Camera calibration is only needed when
+    # a VisionIPC frame is actually available.
+    from openpilot.common.transformations.camera import get_view_frame_from_calib_frame
+
     self.intrinsic = intrinsic
     self.extrinsics_matrix = get_view_frame_from_calib_frame(rpy[0], rpy[1], rpy[2], 0.0)[:,:3]
     self.zoom = calib_scale
@@ -104,6 +107,27 @@ def init_plots(arr, name_to_arr_idx, plot_xlims, plot_ylims, plot_names, plot_co
   canvas = FigureCanvasAgg(fig)
 
   fig.set_facecolor((0.2, 0.2, 0.2))
+  fig.subplots_adjust(left=0.075, right=0.995, top=0.975, bottom=0.035, hspace=0.16)
+
+  # Keep the plot headers readable inside the fixed-width replay panel.  The
+  # full signal names are still present in the source/plot data; these compact
+  # labels prevent the header from running off-screen on smaller displays.
+  title_aliases = {
+    "gas": "gas",
+    "computer_gas": "cg",
+    "user_brake": "ub",
+    "computer_brake": "cb",
+    "angle_steers": "steer",
+    "angle_steers_des": "des",
+    "angle_steers_k": "k",
+    "steer_torque": "tq",
+    "v_ego": "v",
+    "v_override": "ovrd",
+    "v_pid": "pid",
+    "v_cruise": "cruise",
+    "a_ego": "a",
+    "a_target": "tgt",
+  }
 
   axs = []
   for pn in range(len(plot_ylims)):
@@ -123,10 +147,11 @@ def init_plots(arr, name_to_arr_idx, plot_xlims, plot_ylims, plot_names, plot_co
       plots.append(plot)
       idxs.append(name_to_arr_idx[item])
       plot_select.append(i)
-    axs[i].set_title(", ".join(f"{nm} ({cl})"
-                               for (nm, cl) in zip(pl_list, plot_colors[i], strict=False)), fontsize=10)
-    axs[i].tick_params(axis="x", colors="white")
-    axs[i].tick_params(axis="y", colors="white")
+    title = " ".join(f"{title_aliases.get(nm, nm)}[{cl}]"
+                      for (nm, cl) in zip(pl_list, plot_colors[i], strict=False))
+    axs[i].set_title(title, loc="left", fontsize=7, pad=1, color="white")
+    axs[i].tick_params(axis="x", colors="white", labelsize=7, pad=1)
+    axs[i].tick_params(axis="y", colors="white", labelsize=7, pad=1)
     axs[i].title.set_color("white")
 
     if i < len(plot_ylims) - 1:
@@ -155,6 +180,11 @@ def pygame_modules_have_loaded():
 def plot_model(m, img, calibration, top_down):
   if calibration is None or top_down is None:
     return
+
+  # Importing radard pulls in the host's native transformation extension. The
+  # replay inspector can run from rlogs without that extension, so defer this
+  # camera-only constant until model projection is actually requested.
+  from openpilot.selfdrive.controls.radard import RADAR_TO_CAMERA
 
   for lead in m.leadsV3:
     if lead.prob < 0.5:
@@ -192,18 +222,44 @@ def plot_lead(rs, top_down):
     top_down[1][px_left:px_right, py] = find_color(top_down[0], RED)
 
 
-def maybe_update_radar_points(lt, lid_overlay):
-  ar_pts = []
-  if lt is not None:
-    ar_pts = {}
-    for track in lt:
-      ar_pts[track.trackId] = [track.dRel, track.yRel, track.vRel, track.aRel]
-  for pt in ar_pts.values():
+def maybe_update_radar_points(lt, lid_overlay, roles=None):
+  """Draw radar points and return screen-space metadata for optional labels.
+
+  ``trackId`` is the native persistent identity for the Bosch-A parser.  The
+  optional role map is supplied by the replay inspector and never affects
+  control or radar publication.
+  """
+  from openpilot.tools.replay.lib.radar_debug import radar_track_style
+
+  points = []
+  for track in lt or ():
+    try:
+      track_id = int(track.trackId)
+    except (AttributeError, TypeError, ValueError):
+      track_id = -1
+    measured = bool(getattr(track, "measured", False))
+    d_rel = float(getattr(track, "dRel", float("nan")))
+    y_rel = float(getattr(track, "yRel", float("nan")))
+    v_rel = float(getattr(track, "vRel", float("nan")))
+
     # negative here since radar is left positive
-    px, py = to_topdown_pt(pt[0], -pt[1])
-    if px != -1:
-      lid_overlay[px - 4:px + 4, py - 4:py + 4] = 0
-      lid_overlay[px - 2:px + 2, py - 2:py + 2] = 255
+    px, py = to_topdown_pt(d_rel, -y_rel)
+    if px == -1:
+      continue
+
+    role, palette_index = radar_track_style(track_id, measured, roles)
+    lid_overlay[px - 4:px + 4, py - 4:py + 4] = palette_index
+    lid_overlay[px - 2:px + 2, py - 2:py + 2] = palette_index
+    points.append({
+      "track_id": track_id,
+      "d_rel": d_rel,
+      "y_rel": y_rel,
+      "v_rel": v_rel,
+      "role": role,
+      "x": px,
+      "y": py,
+    })
+  return points
 
 def get_blank_lid_overlay(UP):
   lid_overlay = np.zeros((UP.lidar_x, UP.lidar_y), 'uint8')

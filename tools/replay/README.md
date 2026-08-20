@@ -98,6 +98,33 @@ For the StarPilot host workflow, the combined desktop launcher is:
 ./onroad --c3 <route-name>
 ```
 
+### Radar investigation viewer
+
+`ui.py` is the debug viewer with the camera, plots, top-down radar map, and
+control-state panel. In this fork it also labels native radar `trackId` values,
+highlights the selected and adjacent leads, and reports liveTracks freshness.
+For rlog-only replay, use `--no-camera` so the radar map and plots do not wait
+for a VisionIPC camera stream:
+
+```bash
+# terminal 1: publish the route/log messages
+ZMQ=1 tools/replay/replay <route-name> --headless --no-vipc
+
+# terminal 2: display the radar/control investigation view
+PYTHONPATH=. .venv/bin/python tools/replay/ui.py --no-camera
+```
+
+If the checkout has a prebuilt Linux `msgq` module, build the host module once
+before starting the viewer on macOS:
+
+```bash
+PATH=.venv/bin:$PATH .venv/bin/python -m SCons -C msgq_repo msgq/ipc_pyx.so
+```
+
+Without `--no-camera`, the viewer also consumes the `camerad` VisionIPC stream
+and shows the camera pane. This viewer is diagnostic only; it does not modify
+radar parsing or longitudinal control.
+
 ## Work with plotjuggler
 If you want to use replay with plotjuggler, you can stream messages by running:
 

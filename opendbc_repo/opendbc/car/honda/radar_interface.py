@@ -77,7 +77,33 @@ BOSCH_A_TRACK_ID_MIN = 1
 BOSCH_A_TRACK_ID_MAX = 0x3F
 # Only the second 10-bit companion numeric has the explicit 0x3FF invalid sentinel.
 # The matched angular-edge sigma/error field does NOT use this sentinel as a validity gate.
-BOSCH_A_AUX_PARAM_RAW_INVALID = 0x3FF
+BOSCH_A_LOGICAL_00CA_INVALID = 0x3FF
+
+# The synchronized AUX frame contains an 11-bit offset-binary velocity-like field and a 10-bit
+# companion quality/uncertainty field.  The byte locations are now decoded in the DBC.  The exact
+# Bosch descriptor name is still being verified, so keep the conversion constants isolated here.
+# Capture validation shows active values in [0, 1728], with 0x7FE used as the inactive sentinel.
+BOSCH_A_DIRECT_VREL_INVALID = 0x7FE
+BOSCH_A_DIRECT_VREL_MIN_RAW = 0
+BOSCH_A_DIRECT_VREL_MAX_RAW = 1728
+BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
+BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / 64.0
+# Empirical raw-quality policy: active captures with u10 <= 255 are the only band where the
+# velocity-like candidate is consistently useful.  This is deliberately not presented as a Bosch
+# physical unit or descriptor constant; it keeps saturated/high-uncertainty AUX values from becoming
+# authoritative velocity measurements.
+BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW = 255
+
+# These are safety/tuning gates, not recovered Bosch constants.  They prevent a dropped or reset
+# range sample from poisoning the OLS fallback when AUX is unavailable.  A valid native AUX velocity
+# remains authoritative when present.
+BOSCH_A_MAX_RANGE_RATE_MPS = 50.0
+# An OLS result beyond this bound is not allowed to become an acceleration/braking input merely
+# because the raw range step stayed just below the adjacent-sample gate.  This is a parser safety
+# policy, not a Bosch physical limit.  The bounded AUX candidate can rescue an interior high-u10
+# value; a railed/invalid candidate causes the observation to be withheld instead.
+BOSCH_A_MAX_OLS_VREL_MPS = 20.0
+BOSCH_A_USE_TAN_LATERAL_PROJECTION = True
 
 # vRel OLS history window -- a TUNING constant (max samples retained per live incarnation), NOT a
 # recovered firmware value. Start simple; replay/unit tests decide if a KF or alpha-beta layer is needed.
@@ -92,17 +118,20 @@ BOSCH_A_STALE_S = 0.20
 class _BoschASlotState:
   last_seen_nanos: int | None = None
 
-  # Fine angular companion data -- telemetry/debug only for now, never a RadarPoint validity gate.
-  # edge_sigma_raw is the second member of the matched f3/f5 angular-edge uncertainty pair.
-  # aux_param_raw has an explicit invalid sentinel but its exact covariance/normalization semantic
-  # remains unresolved.
-  aux_edge_sigma_raw: float = float('nan')
-  aux_param_raw: float = float('nan')
+  # Firmware logical-ID companion data -- telemetry/debug only for now, never a RadarPoint validity
+  # gate. 0x00C9 has a firmware transform but no proven physical meaning; 0x00CA has an explicit
+  # invalid sentinel and its physical meaning remains unresolved.
+  logical_00c9_raw: float = float('nan')
+  logical_00ca_raw: float = float('nan')
+  direct_vrel_raw: int | None = None
+  direct_vrel_uncertainty_raw: int | None = None
 
   def reset(self):
     self.last_seen_nanos = None
-    self.aux_edge_sigma_raw = float('nan')
-    self.aux_param_raw = float('nan')
+    self.logical_00c9_raw = float('nan')
+    self.logical_00ca_raw = float('nan')
+    self.direct_vrel_raw = None
+    self.direct_vrel_uncertainty_raw = None
 
 
 @dataclass
@@ -140,6 +169,28 @@ def _bosch_a_ols_vrel(samples: deque) -> float:
   if denom == 0.0:
     return 0.0
   return (N * Std - St * Sd) / denom
+
+
+def _bosch_a_direct_vrel(raw_value: int | float | None,
+                         uncertainty_raw: int | float | None = None) -> float | None:
+  """Decode the capture-validated AUX relative-velocity candidate.
+
+  None means that AUX was absent/invalid and the caller should use the OLS fallback.  The [0, 1728]
+  active domain is deliberately enforced here because values above the observed +13.5 m/s rail have
+  not appeared on active objects; 0x7FE is the observed inactive sentinel.
+  """
+  if raw_value is None:
+    return None
+  raw = int(raw_value)
+  if raw == BOSCH_A_DIRECT_VREL_INVALID:
+    return None
+  if not BOSCH_A_DIRECT_VREL_MIN_RAW <= raw <= BOSCH_A_DIRECT_VREL_MAX_RAW:
+    return None
+  # u10 is retained as a raw quality indicator because its physical units remain unresolved.  The
+  # conservative threshold is evidence-backed tuning, not a recovered firmware validity rule.
+  if uncertainty_raw is not None and int(uncertainty_raw) > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW:
+    return None
+  return (raw - BOSCH_A_DIRECT_VREL_CENTER_RAW) * BOSCH_A_DIRECT_VREL_SCALE_MPS
 
 
 def _create_bosch_a_can_parser(CP):
@@ -267,18 +318,24 @@ class RadarInterface(RadarInterfaceBase):
       track_id = int(v3['TRACK_ID'])
       track_id_valid = BOSCH_A_TRACK_ID_MIN <= track_id <= BOSCH_A_TRACK_ID_MAX
       st.last_seen_nanos = now
+      direct_vrel_raw = None
+      direct_vrel_uncertainty_raw = None
 
       # Fine angular companion: attach only when its own cycle index matches this observation's.
       # Missing/stale/off-cycle companion data must never suppress an otherwise-good RadarPoint.
       if aux in updated_messages:
         av = self.rcp.vl[aux]
         if int(av['FRAME_IDX']) == idx0:
-          edge_sigma_raw = av['AZIMUTH_EDGE_SIGMA_B_RAW']
-          aux_param_raw = av['AZIMUTH_AUX_PARAM_RAW']
-          st.aux_edge_sigma_raw = edge_sigma_raw
-          st.aux_param_raw = (
-            aux_param_raw if aux_param_raw != BOSCH_A_AUX_PARAM_RAW_INVALID else float('nan')
+          direct_vrel_raw = int(av['REL_VELOCITY_RAW'])
+          direct_vrel_uncertainty_raw = int(av['REL_VELOCITY_UNCERTAINTY_RAW'])
+          logical_00c9_raw = av['FW_LID_00C9_RAW']
+          logical_00ca_raw = av['FW_LID_00CA_RAW']
+          st.logical_00c9_raw = logical_00c9_raw
+          st.logical_00ca_raw = (
+            logical_00ca_raw if logical_00ca_raw != BOSCH_A_LOGICAL_00CA_INVALID else float('nan')
           )
+          st.direct_vrel_raw = direct_vrel_raw
+          st.direct_vrel_uncertainty_raw = direct_vrel_uncertainty_raw
 
       object_valid = (status != BOSCH_A_STATUS_INVALID and range_raw != BOSCH_A_RANGE_RAW_INVALID and
                       angle_raw != BOSCH_A_ANGLE_RAW_INVALID and life != BOSCH_A_LIFE_INVALID)
@@ -290,6 +347,8 @@ class RadarInterface(RadarInterfaceBase):
         'track_id': track_id,
         'track_id_valid': track_id_valid,
         'object_valid': object_valid,
+        'direct_vrel_raw': direct_vrel_raw,
+        'direct_vrel_uncertainty_raw': direct_vrel_uncertainty_raw,
       })
 
     # First collapse duplicate wire observations of one CAN identity. The dictionary is also the
@@ -357,15 +416,77 @@ class RadarInterface(RadarInterfaceBase):
       angle_raw = int(v0['AZIMUTH_RAW'])
       dRel = BOSCH_A_RANGE_SCALE_M * range_raw + BOSCH_A_RANGE_OFFSET_M
       azimuth_rad = BOSCH_A_AZIMUTH_SCALE_RAD * (angle_raw - BOSCH_A_AZIMUTH_CENTER)
-      yRel = -dRel * math.sin(azimuth_rad)
+      # The firmware's internal geometry path uses tan(angle) for a forward-axis distance.  The
+      # Bosch object range is consumed as that forward-axis quantity here, so use the same projection
+      # rather than treating it as radial/slant range.  Keep the switch explicit while the final
+      # output bridge remains under static review.
+      lateral_projection = math.tan if BOSCH_A_USE_TAN_LATERAL_PROJECTION else math.sin
+      yRel = -dRel * lateral_projection(azimuth_rad)
 
       now_s = now * 1e-9
+      direct_vrel_raw = observation['direct_vrel_raw']
+      direct_vrel = _bosch_a_direct_vrel(direct_vrel_raw,
+                                         observation['direct_vrel_uncertainty_raw'])
+
+      # Do not let a discontinuous range sample poison either the OLS history or the published point.
+      # When AUX is valid, the native candidate is used as the velocity measurement; when it is not,
+      # OLS remains a compatibility fallback, but only for physically bounded adjacent samples.
+      range_discontinuity = False
+      if track.samples:
+        previous_time, previous_range = track.samples[-1]
+        dt = now_s - previous_time
+        if dt <= 0.0 or abs((dRel - previous_range) / dt) > BOSCH_A_MAX_RANGE_RATE_MPS:
+          range_discontinuity = True
+
+      if range_discontinuity:
+        self.pts.pop(track_id, None)
+        track.prev_frame_idx = idx0
+        track.prev_life = life
+        track.last_seen_nanos = now
+        track.wire_slot = slot
+        for old_slot, old_id in enumerate(self._slot_track_ids):
+          if old_slot != slot and old_id == track_id:
+            self._slot_track_ids[old_slot] = None
+        self._slot_track_ids[slot] = track_id
+        continue
+
       track.samples.append((now_s, dRel))
-      vRel = _bosch_a_ols_vrel(track.samples)
+      ols_vrel = _bosch_a_ols_vrel(track.samples)
+      # AUX is the preferred source when its raw quality is acceptable.  If u10 is high but U11 is
+      # an interior bounded candidate, it can still rescue an OLS range-reset spike.  Do not rescue
+      # with a rail (U11=0 or 1728), because those are exactly the values that can represent an
+      # uncertain/saturated candidate.  With no bounded rescue, hide this observation rather than
+      # exposing a large synthetic closing speed to downstream lead control.
+      direct_vrel_unqualified = _bosch_a_direct_vrel(direct_vrel_raw)
+      ols_outlier = abs(ols_vrel) > BOSCH_A_MAX_OLS_VREL_MPS
+      sample_count = len(track.samples)
+      if ols_outlier:
+        # The current range has already been classified as an OLS outlier.  Keep it as the new
+        # baseline for a later derivative, but never retain the poisoned multi-sample fit.
+        track.samples.clear()
+        track.samples.append((now_s, dRel))
+      if direct_vrel is not None:
+        vRel = direct_vrel
+      elif (ols_outlier and direct_vrel_unqualified is not None and
+            direct_vrel_raw not in (0, BOSCH_A_DIRECT_VREL_MAX_RAW)):
+        vRel = direct_vrel_unqualified
+      elif ols_outlier:
+        self.pts.pop(track_id, None)
+        track.prev_frame_idx = idx0
+        track.prev_life = life
+        track.last_seen_nanos = now
+        track.wire_slot = slot
+        for old_slot, old_id in enumerate(self._slot_track_ids):
+          if old_slot != slot and old_id == track_id:
+            self._slot_track_ids[old_slot] = None
+        self._slot_track_ids[slot] = track_id
+        continue
+      else:
+        vRel = ols_vrel
 
       # A birth observation has no range-rate yet. Keep it as history, but do not publish a RadarPoint
       # until a second coherent observation of the same CAN identity supplies a finite derivative.
-      matured = len(track.samples) >= 2 and math.isfinite(vRel)
+      matured = sample_count >= 2 and math.isfinite(vRel)
       if matured and track_id not in self.pts:
         self.pts[track_id] = structs.RadarData.RadarPoint()
         self.pts[track_id].trackId = track_id
