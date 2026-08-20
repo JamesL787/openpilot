@@ -39,6 +39,14 @@ class TestHondaFingerprint:
 
     assert cmds[0][2]["SOLID_LANES"] is True
 
+  def test_civic_bosch_stopping_defaults_are_carparams_derived(self):
+    CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
+
+    assert CP.stopAccel == pytest.approx(-2.0)
+    assert CP.stoppingDecelRate == pytest.approx(0.1)
+    assert CP.vEgoStarting == pytest.approx(0.5)
+    assert CP.vEgoStopping == pytest.approx(0.5)
+
   def test_fw_version_format(self):
     # Asserts all FW versions follow an expected format
     for fw_by_ecu in FW_VERSIONS.values():

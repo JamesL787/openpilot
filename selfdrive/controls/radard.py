@@ -14,6 +14,8 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.common.simple_kalman import KF1D
 from openpilot.selfdrive.controls.lib.desire_helper import LaneChangeDirection, LaneChangeState
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
+from opendbc.car.honda.radar_interface import BOSCH_A_FREQ_HZ
+from opendbc.car.honda.values import CAR as HONDA_CAR
 
 
 # Default lead acceleration decay set to 50% at 1s
@@ -29,6 +31,8 @@ RADAR_TO_CENTER = 2.7   # (deprecated) RADAR is ~ 2.7m ahead from center of car
 RADAR_TO_CAMERA = 1.52  # RADAR is ~ 1.5m ahead from center of mesh frame
 G90_RADAR_LOW_SPEED_MAX_DIST = 12.0
 G90_RADAR_LOW_SPEED_MAX_Y = 0.6
+CIVIC_BOSCH_RADAR_TS = 1.0 / BOSCH_A_FREQ_HZ
+CIVIC_BOSCH_LOW_SPEED_MIN_COUNT = 3
 
 # Adjacent-lane stopped-vehicle detector, used as a stop-line hint on red-light
 # approaches. The qualifier is the DECELERATION HISTORY, not the current speed: roadside
@@ -79,7 +83,8 @@ class Track:
     self.rest_frames = 0
     self.seen_moving = False
 
-  def update(self, d_rel: float, y_rel: float, v_rel: float, v_lead: float, measured: float):
+  def update(self, d_rel: float, y_rel: float, v_rel: float, v_lead: float, measured: bool,
+             measurement_update: bool | None = None):
     # relative values, copy
     self.dRel = d_rel   # LONG_DIST
     self.yRel = y_rel   # -LAT_DIST
@@ -87,35 +92,44 @@ class Track:
     self.vLead = v_lead
     self.measured = measured   # measured or estimate
 
+    # `measurement_update` is separate from the published measured bit so legacy radar sources keep
+    # their existing behaviour. Civic Bosch emits real measurements at ~15 Hz while radard is driven
+    # at the ~20 Hz model rate; duplicate liveTracks payloads must not be absorbed twice.
+    if measurement_update is None:
+      # Preserve the historical Track.update behaviour for direct/legacy callers. The radar source
+      # adapter supplies an explicit False only for a duplicate Civic Bosch payload.
+      measurement_update = True
+
     # computed velocity and accelerations
-    if self.cnt > 0:
+    if measurement_update and self.cnt > 0:
       self.kf.update(self.vLead)
 
     self.vLeadK = float(self.kf.x[SPEED][0])
     self.aLeadK = float(self.kf.x[ACCEL][0])
 
-    # Learn if constant acceleration
-    if abs(self.aLeadK) < 0.5:
-      self.aLeadTau.x = min(max(self.aLeadTau.x, 1e-2) * 1.1, _LEAD_ACCEL_TAU)
-    else:
-      self.aLeadTau.update(0.0)
+    if measurement_update:
+      # Learn if constant acceleration
+      if abs(self.aLeadK) < 0.5:
+        self.aLeadTau.x = min(max(self.aLeadTau.x, 1e-2) * 1.1, _LEAD_ACCEL_TAU)
+      else:
+        self.aLeadTau.update(0.0)
 
-    # Track the moving -> stopped transition. Only sustained runs count, so one noisy
-    # speed sample can neither arm nor trip the detector.
-    if self.vLead > ADJACENT_STOP_MOVING_V:
-      self.moving_frames += 1
-      self.rest_frames = 0
-      if self.moving_frames >= ADJACENT_STOP_MOVING_FRAMES:
-        self.seen_moving = True
-    elif abs(self.vLead) < ADJACENT_STOP_REST_V:
-      self.moving_frames = 0
-      self.rest_frames += 1
-    else:
-      # coasting between the two bands: hold state, restart both runs
-      self.moving_frames = 0
-      self.rest_frames = 0
+      # Track the moving -> stopped transition. Only sustained runs count, so one noisy
+      # speed sample can neither arm nor trip the detector.
+      if self.vLead > ADJACENT_STOP_MOVING_V:
+        self.moving_frames += 1
+        self.rest_frames = 0
+        if self.moving_frames >= ADJACENT_STOP_MOVING_FRAMES:
+          self.seen_moving = True
+      elif abs(self.vLead) < ADJACENT_STOP_REST_V:
+        self.moving_frames = 0
+        self.rest_frames += 1
+      else:
+        # coasting between the two bands: hold state, restart both runs
+        self.moving_frames = 0
+        self.rest_frames = 0
 
-    self.cnt += 1
+      self.cnt += 1
 
   def get_RadarState(self, model_prob: float = 0.0):
     return {
@@ -199,6 +213,11 @@ def g90_low_speed_radar_lead_sane(track: Track, v_ego: float) -> bool:
           abs(track.yRel) < G90_RADAR_LOW_SPEED_MAX_Y)
 
 
+def civic_bosch_low_speed_radar_lead_sane(track: Track, v_ego: float) -> bool:
+  """Require a few real Bosch sweeps before a radar-only low-speed takeover."""
+  return track.cnt >= CIVIC_BOSCH_LOW_SPEED_MIN_COUNT and track.potential_low_speed_lead(v_ego)
+
+
 def track_matches_vision(track: Track, lead: capnp._DynamicStructReader, v_ego: float, *,
                          dist_scale: float, dist_floor: float, vel_limit: float,
                          y_std_scale: float, y_floor: float) -> bool:
@@ -278,7 +297,7 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
              model_v_ego: float, model_data: capnp._DynamicStructReader, standstill: bool,
              starpilot_plan: capnp._DynamicStructReader, starpilot_toggles: SimpleNamespace,
              low_speed_override: bool = True, g90_radar_filter: bool = False, lead_prob: float | None = None,
-             preferred_track_id: int = -1) -> dict[str, Any]:
+             preferred_track_id: int = -1, civic_bosch_radar: bool = False) -> dict[str, Any]:
   lead_detection_probability = float(getattr(starpilot_toggles, "lead_detection_probability", 0.35))
   filtered_lead_prob = float(lead_msg.prob if lead_prob is None else lead_prob)
 
@@ -298,8 +317,48 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
   if low_speed_override:
     if g90_radar_filter:
       low_speed_tracks = [c for c in tracks.values() if g90_low_speed_radar_lead_sane(c, v_ego)]
+    elif civic_bosch_radar:
+      low_speed_tracks = [c for c in tracks.values() if civic_bosch_low_speed_radar_lead_sane(c, v_ego)]
     else:
       low_speed_tracks = [c for c in tracks.values() if c.potential_low_speed_lead(v_ego)]
+
+    model_lead_available = ready and filtered_lead_prob > lead_detection_probability
+
+    # Keep a previously selected Bosch radar track through ordinary model-probability fluctuations
+    # when it is still coherent. If the model has a valid lead, the old track must still agree with
+    # that lead; no model lead leaves the mature radar track eligible for continuity.
+    if civic_bosch_radar:
+      preferred_track = tracks.get(preferred_track_id)
+      if (preferred_track is not None and civic_bosch_low_speed_radar_lead_sane(preferred_track, v_ego)):
+        preferred_matches_model = (not model_lead_available or
+                                   track_matches_vision(preferred_track, lead_msg, v_ego,
+                                                        dist_scale=0.25, dist_floor=5.0,
+                                                        vel_limit=10.0, y_std_scale=1.0, y_floor=1.0))
+        preferred_is_current = (not lead_dict.get('status', False) or
+                                lead_dict.get('radarTrackId', -1) == preferred_track_id or
+                                (lead_dict.get('status', False) and not lead_dict.get('radar', False)))
+        if preferred_is_current and preferred_matches_model:
+          lead_dict = preferred_track.get_RadarState(filtered_lead_prob)
+
+    def candidate_is_established(candidate: Track) -> bool:
+      if not civic_bosch_radar:
+        return True
+      if candidate.cnt < CIVIC_BOSCH_LOW_SPEED_MIN_COUNT:
+        return False
+      if not lead_dict.get('status', False):
+        # A mature centered Bosch point may provide the radar-only low-speed lead.
+        return True
+      if lead_dict.get('radarTrackId', -1) == candidate.identifier:
+        return True
+      # Do not replace an established lead with an unrelated closer point when there is no model
+      # evidence to arbitrate them. A different candidate may take over only after it agrees with
+      # the available model lead; radar-only takeover remains possible when lead_dict is invalid.
+      return (model_lead_available and
+              track_matches_vision(candidate, lead_msg, v_ego,
+                                   dist_scale=0.25, dist_floor=5.0,
+                                   vel_limit=10.0, y_std_scale=1.0, y_floor=1.0))
+
+    low_speed_tracks = [c for c in low_speed_tracks if candidate_is_established(c)]
     if len(low_speed_tracks) > 0:
       closest_track = min(low_speed_tracks, key=lambda c: c.dRel)
 
@@ -351,18 +410,24 @@ def get_adjacent_stopped(tracks: dict[int, Track], model_data: capnp._DynamicStr
 
 
 class RadarD:
-  def __init__(self, radar_ts: float = DT_MDL, delay: float = 0.0, g90_radar_filter: bool = False):
+  def __init__(self, radar_ts: float = DT_MDL, delay: float = 0.0, g90_radar_filter: bool = False,
+               civic_bosch_radar: bool = False):
     self.current_time = 0.0
 
     self.tracks: dict[int, Track] = {}
-    self.kalman_params = KalmanParams(radar_ts)
+    self.civic_bosch_radar = civic_bosch_radar
+    # The lead KF consumes Bosch measurements at the physical radar cadence. Lead probability
+    # filters, however, consume modelV2 leads every model cycle and must retain model-loop timing.
+    kf_dt = CIVIC_BOSCH_RADAR_TS if self.civic_bosch_radar else radar_ts
+    self.kalman_params = KalmanParams(kf_dt)
     self.g90_radar_filter = g90_radar_filter
-    self.lead_prob_filters = [FirstOrderFilter(0.0, 0.2, radar_ts) for _ in range(2)]
+    self.lead_prob_filters = [FirstOrderFilter(0.0, 0.2, DT_MDL) for _ in range(2)]
     self.prev_lead_track_ids = [-1, -1]
 
     self.v_ego = 0.0
     self.v_ego_hist = deque([0.0], maxlen=int(round(delay / DT_MDL)) + 1)
     self.last_v_ego_frame = -1
+    self._last_tracks_frame = -1
 
     self.radar_state: capnp._DynamicStructBuilder | None = None
     self.radar_state_valid = False
@@ -381,6 +446,11 @@ class RadarD:
       self.v_ego_hist.append(self.v_ego)
       self.last_v_ego_frame = sm.recv_frame['carState']
 
+    radar_fresh = True
+    if self.civic_bosch_radar:
+      radar_fresh = sm.recv_frame['liveTracks'] != self._last_tracks_frame
+      self._last_tracks_frame = sm.recv_frame['liveTracks']
+
     ar_pts = {pt.trackId: [pt.dRel, pt.yRel, pt.vRel, pt.measured] for pt in rr.points}
 
     # *** remove missing points from meta data ***
@@ -396,7 +466,11 @@ class RadarD:
       # create the track if it doesn't exist or it's a new track
       if ids not in self.tracks:
         self.tracks[ids] = Track(ids, v_lead, self.kalman_params)
-      self.tracks[ids].update(rpt[0], rpt[1], rpt[2], v_lead, rpt[3])
+      measured = rpt[3] if not self.civic_bosch_radar else bool(rpt[3] and radar_fresh)
+      # Non-Bosch sources retain the historical per-model-cycle update semantics. Only Civic Bosch
+      # suppresses duplicate measurement updates when liveTracks has not advanced.
+      measurement_update = True if not self.civic_bosch_radar else measured
+      self.tracks[ids].update(rpt[0], rpt[1], rpt[2], v_lead, measured, measurement_update)
 
     # *** publish radarState ***
     self.radar_state_valid = sm.all_checks()
@@ -424,11 +498,13 @@ class RadarD:
       self.radar_state.leadOne = get_lead(self.v_ego, self.ready, self.tracks, leads_v3[0], model_v_ego, sm['modelV2'],
                                           sm['carState'].standstill, sm['starpilotPlan'], self.starpilot_toggles, low_speed_override=True,
                                           g90_radar_filter=self.g90_radar_filter, lead_prob=self.lead_prob_filters[0].x,
-                                          preferred_track_id=self.prev_lead_track_ids[0])
+                                          preferred_track_id=self.prev_lead_track_ids[0],
+                                          civic_bosch_radar=self.civic_bosch_radar)
       self.radar_state.leadTwo = get_lead(self.v_ego, self.ready, self.tracks, leads_v3[1], model_v_ego, sm['modelV2'],
                                           sm['carState'].standstill, sm['starpilotPlan'], self.starpilot_toggles, low_speed_override=False,
                                           g90_radar_filter=self.g90_radar_filter, lead_prob=self.lead_prob_filters[1].x,
-                                          preferred_track_id=self.prev_lead_track_ids[1])
+                                          preferred_track_id=self.prev_lead_track_ids[1],
+                                          civic_bosch_radar=self.civic_bosch_radar)
 
       for i, lead in enumerate((self.radar_state.leadOne, self.radar_state.leadTwo)):
         if lead.status and getattr(lead, "radar", False):
@@ -481,7 +557,10 @@ def main() -> None:
     radar_ts = DT_MDL
 
   g90_radar_filter = CP.brand == "hyundai" and CP.carFingerprint == "GENESIS_G90"
-  RD = RadarD(radar_ts=radar_ts, delay=CP.radarDelay, g90_radar_filter=g90_radar_filter)
+  civic_bosch_radar = (CP.brand == "honda" and CP.carFingerprint == HONDA_CAR.HONDA_CIVIC_BOSCH and
+                       not CP.radarUnavailable)
+  RD = RadarD(radar_ts=radar_ts, delay=CP.radarDelay, g90_radar_filter=g90_radar_filter,
+              civic_bosch_radar=civic_bosch_radar)
 
   sm = sm.extend(['starpilotPlan'])
   pm = pm.extend(['starpilotRadarState'])

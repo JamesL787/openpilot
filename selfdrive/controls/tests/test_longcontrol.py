@@ -6,6 +6,7 @@ import pytest
 import openpilot.selfdrive.controls.lib.longcontrol as longcontrol
 import openpilot.selfdrive.controls.lib.longcontrol_vehicle_tunes as vehicle_tunes
 from opendbc.car.gm.values import CAR, GMFlags
+from opendbc.car.honda.values import CAR as HONDA_CAR
 from opendbc.car.subaru.values import CAR as SUBARU_CAR
 from opendbc.car.toyota.values import CAR as TOYOTA_CAR
 from openpilot.selfdrive.controls.lib.longcontrol import (
@@ -40,6 +41,83 @@ def make_longcontrol_cp(**overrides):
     setattr(CP, key, value)
 
   return CP
+
+
+class _DefaultHondaParams:
+  def get_int(self, _key, **kwargs):
+    return kwargs.get("default", 0)
+
+  def get_bool(self, _key, **kwargs):
+    return kwargs.get("default", False)
+
+  def get_float(self, _key, **kwargs):
+    return kwargs.get("default", 0.0)
+
+
+class _OverrideHondaParams(_DefaultHondaParams):
+  values = {
+    "HondaStopAccel": -1.25,
+    "HondaStoppingDecelRateLong": 0.7,
+    "HondaVEgoStarting": 0.8,
+    "HondaVEgoStopping": 0.6,
+  }
+
+  def get_float(self, key, **kwargs):
+    return self.values.get(key, kwargs.get("default", 0.0))
+
+
+def make_honda_bosch_cp():
+  return make_longcontrol_cp(
+    brand="honda",
+    carFingerprint=HONDA_CAR.HONDA_CIVIC_BOSCH,
+    stopAccel=-2.0,
+    stoppingDecelRate=0.1,
+    vEgoStarting=0.5,
+    vEgoStopping=0.5,
+  )
+
+
+def test_honda_stopping_defaults_follow_civic_bosch_carparams():
+  cp = make_honda_bosch_cp()
+  lc = LongControl(cp)
+  lc.params = _DefaultHondaParams()
+  lc._read_honda_long_params()
+
+  assert lc.honda_stop_accel == pytest.approx(cp.stopAccel)
+  assert lc.honda_stopping_decel_rate == pytest.approx(0.1)
+  assert lc.honda_v_ego_starting == pytest.approx(cp.vEgoStarting)
+  assert lc.honda_v_ego_stopping == pytest.approx(cp.vEgoStopping)
+
+
+def test_honda_saved_stopping_params_still_override_carparams():
+  cp = make_honda_bosch_cp()
+  lc = LongControl(cp)
+  lc.params = _OverrideHondaParams()
+  lc._read_honda_long_params()
+
+  assert lc.honda_stop_accel == pytest.approx(-1.25)
+  assert lc.honda_stopping_decel_rate == pytest.approx(0.7)
+  assert lc.honda_v_ego_starting == pytest.approx(0.8)
+  assert lc.honda_v_ego_stopping == pytest.approx(0.6)
+
+
+def test_non_civic_honda_stopping_defaults_preserve_legacy_fallbacks():
+  cp = make_longcontrol_cp(
+    brand="honda",
+    carFingerprint=HONDA_CAR.HONDA_CLARITY,
+    stopAccel=0.0,
+    stoppingDecelRate=0.1,
+    vEgoStarting=0.5,
+    vEgoStopping=0.5,
+  )
+  lc = LongControl(cp)
+  lc.params = _DefaultHondaParams()
+  lc._read_honda_long_params()
+
+  assert lc.honda_stop_accel == pytest.approx(-2.0)
+  assert lc.honda_stopping_decel_rate == pytest.approx(0.3)
+  assert lc.honda_v_ego_starting == pytest.approx(0.5)
+  assert lc.honda_v_ego_stopping == pytest.approx(0.5)
 
 
 class TestLongControlStateTransition:

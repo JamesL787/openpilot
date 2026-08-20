@@ -10,6 +10,7 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.controls.lib.longcontrol_vehicle_tunes import LongControlVehicleTuning
 from openpilot.selfdrive.controls.lib.nrdr_long_tune import LongTune
+from opendbc.car.honda.values import CAR as HONDA_CAR
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 clip = np.clip
@@ -193,12 +194,15 @@ class LongControl:
     self._drel_window: list[float] = []
     self._drel_filtered = float("inf")
     self.is_honda = CP.brand == "honda"
+    self.is_civic_bosch = self.is_honda and CP.carFingerprint == HONDA_CAR.HONDA_CIVIC_BOSCH
     self.honda_long_pid_tune_scale = 1.0
     self.honda_scale_excludes_kf = True
-    self.honda_stop_accel = -2.0
-    self.honda_stopping_decel_rate = 0.3
-    self.honda_v_ego_starting = 0.5
-    self.honda_v_ego_stopping = 0.5
+    # Civic Bosch's CarParams stopping values are the deployed tune. Preserve the legacy
+    # branch-wide fallbacks for other Hondas until they are independently reviewed.
+    self.honda_stop_accel = float(CP.stopAccel) if self.is_civic_bosch else -2.0
+    self.honda_stopping_decel_rate = float(CP.stoppingDecelRate) if self.is_civic_bosch else 0.3
+    self.honda_v_ego_starting = float(CP.vEgoStarting) if self.is_civic_bosch else 0.5
+    self.honda_v_ego_stopping = float(CP.vEgoStopping) if self.is_civic_bosch else 0.5
     self._long_tune = LongTune()
 
   def update_mpc_mode(self, experimental_mode):
@@ -240,10 +244,20 @@ class LongControl:
 
     self.honda_long_pid_tune_scale = float(np.clip(self.params.get_int("LongPidTuneScale", default=100), 0, 500)) / 100.0
     self.honda_scale_excludes_kf = self.params.get_bool("StaticFeedforwardLong", default=True)
-    self.honda_stop_accel = float(np.clip(self.params.get_float("HondaStopAccel", default=-2.0), -10.0, 0.0))
-    self.honda_stopping_decel_rate = float(np.clip(self.params.get_float("HondaStoppingDecelRateLong", default=0.3), 0.0, 5.0))
-    self.honda_v_ego_starting = float(np.clip(self.params.get_float("HondaVEgoStarting", default=0.5), 0.0, 5.0))
-    self.honda_v_ego_stopping = float(np.clip(self.params.get_float("HondaVEgoStopping", default=0.5), 0.0, 5.0))
+    default_stop_accel = self.CP.stopAccel if self.is_civic_bosch else -2.0
+    default_stopping_decel_rate = self.CP.stoppingDecelRate if self.is_civic_bosch else 0.3
+    default_v_ego_starting = self.CP.vEgoStarting if self.is_civic_bosch else 0.5
+    default_v_ego_stopping = self.CP.vEgoStopping if self.is_civic_bosch else 0.5
+    self.honda_stop_accel = float(np.clip(self.params.get_float("HondaStopAccel", default=default_stop_accel), -10.0, 0.0))
+    self.honda_stopping_decel_rate = float(np.clip(
+      self.params.get_float("HondaStoppingDecelRateLong", default=default_stopping_decel_rate), 0.0, 5.0,
+    ))
+    self.honda_v_ego_starting = float(np.clip(
+      self.params.get_float("HondaVEgoStarting", default=default_v_ego_starting), 0.0, 5.0,
+    ))
+    self.honda_v_ego_stopping = float(np.clip(
+      self.params.get_float("HondaVEgoStopping", default=default_v_ego_stopping), 0.0, 5.0,
+    ))
 
   def _get_runtime_long_tuning(self, starpilot_toggles):
     long_tuning = SimpleNamespace(
