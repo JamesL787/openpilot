@@ -350,17 +350,17 @@ class TestRangeAzimuth:
 
   def test_yrel_sign_right_of_center_is_negative(self):
     ri = make_radar_interface()
-    ri.update(sweep(0, 0, 0x7, 1000, 1024 + 100, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 + 100, 3, 50_000_000))  # raw_angle > center -> right of center
+    ri.update(sweep(0, 0, 0x7, 1000, 1024 - 100, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 - 100, 3, 50_000_000))  # raw_angle < center -> right of center
     d = 0.05712 * 1000 - 3.0
-    expected_y = -d * math.tan(100.0 / 2048.0)
+    expected_y = d * math.tan(-100.0 / 2048.0)
     assert rr.points[0].yRel == pytest.approx(expected_y)
     assert rr.points[0].yRel < 0
 
   def test_yrel_sign_left_of_center_is_positive(self):
     ri = make_radar_interface()
-    ri.update(sweep(0, 0, 0x7, 1000, 1024 - 100, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 - 100, 3, 50_000_000))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024 + 100, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 + 100, 3, 50_000_000))  # raw_angle > center -> left of center
     assert rr.points[0].yRel > 0
 
   def test_yrel_zero_on_boresight(self):

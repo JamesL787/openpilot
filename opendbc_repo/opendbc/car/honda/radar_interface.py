@@ -427,8 +427,14 @@ class RadarInterface(RadarInterfaceBase):
       # Bosch object range is consumed as that forward-axis quantity here, so use the same projection
       # rather than treating it as radial/slant range.  Keep the switch explicit while the final
       # output bridge remains under static review.
+      #
+      # Sign: AZIMUTH_RAW > center (positive azimuth_rad) is a LEFT-of-center detection in car frame's
+      # y axis (left is positive), matching the Nidec RadarPoint.yRel contract. Confirmed against real
+      # captures 2026-08-22: a stationary cluster of queued vehicles visible on the left in the road
+      # camera was rendering on the right in both the Qt and raylib radar-track overlays with the
+      # previously-flipped sign.
       lateral_projection = math.tan if BOSCH_A_USE_TAN_LATERAL_PROJECTION else math.sin
-      yRel = -dRel * lateral_projection(azimuth_rad)
+      yRel = dRel * lateral_projection(azimuth_rad)
 
       now_s = now * 1e-9
       direct_vrel_raw = observation['direct_vrel_raw']
