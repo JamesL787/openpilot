@@ -2427,8 +2427,8 @@
       },
       {
         "key": "NrdrBoschARadar",
-        "label": "Civic Bosch Radar (Tryout)",
-        "description": "Tester rollout, Civic Bosch only. Parses the car's own 16-slot Bosch-A radar CAN traffic into real leadOne/leadTwo tracks instead of treating the car as radarless. RX-only — never transmits on the radar bus, so factory AEB/CMBS is untouched. Overridden off while Bosch Long is on, since those features are built for radarless operation. Restart required to take effect. Leave off unless you were asked to try it.",
+        "label": "Civic Bosch Radar",
+        "description": "Civic Bosch only. Parses the car's own 16-slot Bosch-A radar CAN traffic into real leadOne/leadTwo tracks instead of treating the car as radarless. RX-only — never transmits on the radar bus, so factory AEB/CMBS is untouched. Overridden off while Bosch Long is on, since those features are built for radarless operation. Restart required to take effect.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",

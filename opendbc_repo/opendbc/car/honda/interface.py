@@ -46,11 +46,11 @@ class CarInterface(CarInterfaceBase):
       ret.safetyConfigs = cfgs
 
       # HONDA_BOSCH_A platforms (plain bosch_a harness: not CANFD, not radarless, not alt-radar) have
-      # a firmware-correct RadarInterface (16-slot Bosch-A object bank, RX-only), but it stays gated
-      # behind a tester toggle (NrdrBoschARadar) rather than going default-on: every other Bosch
-      # platform still has no parsed radar DBC and keeps radarUnavailable=True regardless.
+      # a firmware-correct RadarInterface (16-slot Bosch-A object bank, RX-only) and use it by
+      # default via NrdrBoschARadar: every other Bosch platform still has no parsed radar DBC and
+      # keeps radarUnavailable=True regardless.
       # BoschLong's model-based longitudinal features (BLoTv2, Model Lead Trajectory) are built
-      # for radarless operation, so a real Bosch-A radar track overrides the tryout toggle off.
+      # for radarless operation, so a real Bosch-A radar track overrides the toggle off.
       try:
         params = Params()
         bosch_a_radar_tryout = params.get_bool("NrdrBoschARadar") and not params.get_bool("BoschLong")
