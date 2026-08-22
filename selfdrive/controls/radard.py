@@ -33,6 +33,9 @@ G90_RADAR_LOW_SPEED_MAX_DIST = 12.0
 G90_RADAR_LOW_SPEED_MAX_Y = 0.6
 CIVIC_BOSCH_RADAR_TS = 1.0 / BOSCH_A_FREQ_HZ
 CIVIC_BOSCH_LOW_SPEED_MIN_COUNT = 3
+CIVIC_BOSCH_CHALLENGER_STALE_CYCLES = 2
+CIVIC_BOSCH_GROSS_DISTANCE_STALE_CYCLES = 3
+CIVIC_BOSCH_GROSS_DISTANCE_M = 25.0
 
 # Adjacent-lane stopped-vehicle detector, used as a stop-line hint on red-light
 # approaches. The qualifier is the DECELERATION HISTORY, not the current speed: roadside
@@ -200,6 +203,14 @@ def laplacian_pdf(x: float, mu: float, b: float):
   return math.exp(-abs(x-mu)/b)
 
 
+def vision_track_probability(track: Track, lead: capnp._DynamicStructReader, v_ego: float) -> float:
+  offset_vision_dist = lead.x[0] - RADAR_TO_CAMERA
+  prob_d = laplacian_pdf(track.dRel, offset_vision_dist, lead.xStd[0])
+  prob_y = laplacian_pdf(track.yRel, -lead.y[0], lead.yStd[0])
+  prob_v = laplacian_pdf(track.vRel + v_ego, lead.v[0], lead.vStd[0])
+  return prob_d * prob_y * prob_v
+
+
 def g90_radar_lead_lateral_sane(track: Track) -> bool:
   # The G90 extended radar channels can report close side ghosts in tight turns.
   # Keep the gate tight at close range, then widen gradually with distance.
@@ -244,14 +255,7 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, model_
   if not tracks:
     return None
 
-  def prob(c):
-    offset_vision_dist = lead.x[0] - RADAR_TO_CAMERA
-    prob_d = laplacian_pdf(c.dRel, offset_vision_dist, lead.xStd[0])
-    prob_y = laplacian_pdf(c.yRel, -lead.y[0], lead.yStd[0])
-    prob_v = laplacian_pdf(c.vRel + v_ego, lead.v[0], lead.vStd[0])
-    return prob_d * prob_y * prob_v
-
-  track = max(tracks.values(), key=prob)
+  track = max(tracks.values(), key=lambda candidate: vision_track_probability(candidate, lead, v_ego))
 
   # if no 'sane' match is found return -1
   # stationary radar points can be false positives
@@ -423,6 +427,9 @@ class RadarD:
     self.g90_radar_filter = g90_radar_filter
     self.lead_prob_filters = [FirstOrderFilter(0.0, 0.2, DT_MDL) for _ in range(2)]
     self.prev_lead_track_ids = [-1, -1]
+    self.preferred_stale_track_ids = [-1, -1]
+    self.preferred_challenger_stale_counts = [0, 0]
+    self.preferred_gross_distance_stale_counts = [0, 0]
 
     self.v_ego = 0.0
     self.v_ego_hist = deque([0.0], maxlen=int(round(delay / DT_MDL)) + 1)
@@ -436,6 +443,63 @@ class RadarD:
 
     self.starpilot_radar_state = custom.StarPilotRadarState.new_message()
     self.starpilot_toggles = get_starpilot_toggles()
+
+  def _reset_preferred_stale_evidence(self, lead_index: int, track_id: int = -1) -> None:
+    self.preferred_stale_track_ids[lead_index] = track_id
+    self.preferred_challenger_stale_counts[lead_index] = 0
+    self.preferred_gross_distance_stale_counts[lead_index] = 0
+
+  def _update_civic_bosch_preferred_staleness(self, lead_index: int, lead: capnp._DynamicStructReader,
+                                               lead_prob: float) -> None:
+    if not self.civic_bosch_radar:
+      return
+
+    preferred_id = self.prev_lead_track_ids[lead_index]
+    if self.preferred_stale_track_ids[lead_index] != preferred_id:
+      self._reset_preferred_stale_evidence(lead_index, preferred_id)
+
+    lead_detection_probability = float(getattr(self.starpilot_toggles, "lead_detection_probability", 0.35))
+    preferred_track = self.tracks.get(preferred_id)
+    if preferred_id < 0 or preferred_track is None or not self.ready or lead_prob <= lead_detection_probability:
+      self._reset_preferred_stale_evidence(lead_index, preferred_id)
+      return
+
+    strict_match = track_matches_vision(preferred_track, lead, self.v_ego,
+                                        dist_scale=0.25, dist_floor=5.0,
+                                        vel_limit=10.0, y_std_scale=1.0, y_floor=1.0)
+    relaxed_match = track_matches_vision(preferred_track, lead, self.v_ego,
+                                         dist_scale=0.40, dist_floor=8.0,
+                                         vel_limit=13.0, y_std_scale=2.0, y_floor=1.5)
+
+    # Arm A: a preferred track that no longer passes continuity may be stale when another live
+    # track has a better association score. Clearing preference never selects that challenger;
+    # the unchanged strict match path below remains the only way it can become a radar lead.
+    if relaxed_match:
+      self.preferred_challenger_stale_counts[lead_index] = 0
+    else:
+      best_track = max(self.tracks.values(), key=lambda candidate: vision_track_probability(candidate, lead, self.v_ego))
+      preferred_score = vision_track_probability(preferred_track, lead, self.v_ego)
+      best_score = vision_track_probability(best_track, lead, self.v_ego)
+      if best_track.identifier != preferred_id and best_score > preferred_score:
+        self.preferred_challenger_stale_counts[lead_index] += 1
+      else:
+        self.preferred_challenger_stale_counts[lead_index] = 0
+
+    # Arm B: gross absolute range disagreement is independent evidence of staleness, but a strict
+    # match is authoritative and resets the streak even when model uncertainty permits >25 m error.
+    distance_mismatch = abs(preferred_track.dRel - (lead.x[0] - RADAR_TO_CAMERA))
+    if strict_match:
+      self.preferred_gross_distance_stale_counts[lead_index] = 0
+    elif distance_mismatch > CIVIC_BOSCH_GROSS_DISTANCE_M:
+      self.preferred_gross_distance_stale_counts[lead_index] += 1
+    else:
+      self.preferred_gross_distance_stale_counts[lead_index] = 0
+
+    challenger_stale = self.preferred_challenger_stale_counts[lead_index] >= CIVIC_BOSCH_CHALLENGER_STALE_CYCLES
+    distance_stale = self.preferred_gross_distance_stale_counts[lead_index] >= CIVIC_BOSCH_GROSS_DISTANCE_STALE_CYCLES
+    if challenger_stale or distance_stale:
+      self.prev_lead_track_ids[lead_index] = -1
+      self._reset_preferred_stale_evidence(lead_index)
 
   def update(self, sm: messaging.SubMaster, rr: car.RadarData):
     self.ready = sm.seen['modelV2']
@@ -495,6 +559,8 @@ class RadarD:
         else:
           self.lead_prob_filters[i].update(lead_prob)
 
+        self._update_civic_bosch_preferred_staleness(i, leads_v3[i], self.lead_prob_filters[i].x)
+
       self.radar_state.leadOne = get_lead(self.v_ego, self.ready, self.tracks, leads_v3[0], model_v_ego, sm['modelV2'],
                                           sm['carState'].standstill, sm['starpilotPlan'], self.starpilot_toggles, low_speed_override=True,
                                           g90_radar_filter=self.g90_radar_filter, lead_prob=self.lead_prob_filters[0].x,
@@ -508,9 +574,13 @@ class RadarD:
 
       for i, lead in enumerate((self.radar_state.leadOne, self.radar_state.leadTwo)):
         if lead.status and getattr(lead, "radar", False):
-          self.prev_lead_track_ids[i] = int(getattr(lead, "radarTrackId", -1))
+          track_id = int(getattr(lead, "radarTrackId", -1))
+          if track_id != self.prev_lead_track_ids[i]:
+            self._reset_preferred_stale_evidence(i, track_id)
+          self.prev_lead_track_ids[i] = track_id
         elif (not lead.status) or (self.prev_lead_track_ids[i] not in self.tracks):
           self.prev_lead_track_ids[i] = -1
+          self._reset_preferred_stale_evidence(i)
 
     if self.ready and (self.starpilot_toggles.adjacent_lead_tracking or self.starpilot_toggles.human_lane_changes):
       self.starpilot_radar_state.leadLeft = get_adjacent_lead(self.tracks, sm['carState'].standstill, sm['modelV2'], left=True)

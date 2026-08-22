@@ -48,10 +48,10 @@ class FakeSubMaster:
     return True
 
 
-def make_track(track_id, d_rel, count):
+def make_track(track_id, d_rel, count, *, y_rel=0.0, v_rel=0.0):
   track = radard.Track(track_id, 0.0, radard.KalmanParams(radard.CIVIC_BOSCH_RADAR_TS))
   for _ in range(count):
-    track.update(d_rel, 0.0, 0.0, 0.0, True, True)
+    track.update(d_rel, y_rel, v_rel, v_rel, True, True)
   return track
 
 
@@ -74,6 +74,14 @@ def make_model_data():
 
 def make_plan():
   return SimpleNamespace(increasedStoppedDistance=0.0)
+
+
+def make_staleness_radar_d(*, civic_bosch_radar=True):
+  radar_d = radard.RadarD(civic_bosch_radar=civic_bosch_radar)
+  radar_d.ready = True
+  radar_d.v_ego = 0.0
+  radar_d.starpilot_toggles = make_toggles()
+  return radar_d
 
 
 def test_civic_bosch_duplicate_live_tracks_frame_does_not_update_kf(monkeypatch):
@@ -174,3 +182,220 @@ def test_bosch_preferred_lead_survives_model_probability_fluctuation():
     lead_prob=0.0, preferred_track_id=7, civic_bosch_radar=True,
   )
   assert lead['radarTrackId'] == 7
+
+
+def test_bosch_arm_a_clears_after_two_better_challenger_cycles():
+  radar_d = make_staleness_radar_d()
+  radar_d.tracks = {
+    27: make_track(27, 10.0, 5, y_rel=3.0),
+    38: make_track(38, 10.0, 5, y_rel=2.0),
+  }
+  radar_d.prev_lead_track_ids[0] = 27
+  lead = make_lead(10.0)
+
+  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  assert radar_d.prev_lead_track_ids[0] == 27
+  assert radar_d.preferred_challenger_stale_counts[0] == 1
+
+  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  assert radar_d.prev_lead_track_ids[0] == -1
+  assert radar_d.preferred_challenger_stale_counts[0] == 0
+
+
+def test_bosch_arm_a_clear_does_not_select_non_strict_challenger():
+  radar_d = make_staleness_radar_d()
+  radar_d.tracks = {
+    27: make_track(27, 10.0, 5, y_rel=3.0),
+    38: make_track(38, 10.0, 5, y_rel=2.0),
+  }
+  radar_d.prev_lead_track_ids[0] = 27
+  lead_msg = make_lead(10.0)
+
+  for _ in range(2):
+    radar_d._update_civic_bosch_preferred_staleness(0, lead_msg, 0.99)
+
+  lead = radard.get_lead(
+    0.0, True, radar_d.tracks, lead_msg, 0.0, make_model_data(), False, make_plan(), make_toggles(),
+    low_speed_override=False, lead_prob=0.99, preferred_track_id=radar_d.prev_lead_track_ids[0],
+    civic_bosch_radar=True,
+  )
+  assert lead['status']
+  assert not lead['radar']
+  assert lead['radarTrackId'] == -1
+
+
+def test_bosch_arm_a_resets_when_preferred_relaxed_match_recovers():
+  radar_d = make_staleness_radar_d()
+  preferred = make_track(27, 10.0, 5, y_rel=3.0)
+  radar_d.tracks = {
+    27: preferred,
+    38: make_track(38, 10.0, 5, y_rel=2.0),
+  }
+  radar_d.prev_lead_track_ids[0] = 27
+  lead = make_lead(10.0)
+
+  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  assert radar_d.preferred_challenger_stale_counts[0] == 1
+
+  preferred.yRel = 1.4  # strict lateral fail, existing relaxed lateral pass
+  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  assert radar_d.preferred_challenger_stale_counts[0] == 0
+
+  preferred.yRel = 3.0
+  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  assert radar_d.prev_lead_track_ids[0] == 27
+  assert radar_d.preferred_challenger_stale_counts[0] == 1
+
+
+def test_bosch_arm_b_clears_after_three_non_strict_gross_distance_cycles():
+  radar_d = make_staleness_radar_d()
+  radar_d.tracks = {53: make_track(53, 79.0, 5)}
+  radar_d.prev_lead_track_ids[0] = 53
+  lead = make_lead(110.0)
+
+  for expected_count in (1, 2):
+    radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+    assert radar_d.prev_lead_track_ids[0] == 53
+    assert radar_d.preferred_gross_distance_stale_counts[0] == expected_count
+
+  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  assert radar_d.prev_lead_track_ids[0] == -1
+  assert radar_d.preferred_gross_distance_stale_counts[0] == 0
+
+
+def test_bosch_arm_b_strict_match_resets_gross_distance_streak():
+  radar_d = make_staleness_radar_d()
+  radar_d.tracks = {46: make_track(46, 78.5, 5)}
+  radar_d.prev_lead_track_ids[0] = 46
+  lead = make_lead(104.0)  # 25.5 m mismatch, inside the 26 m strict allowance
+
+  for _ in range(4):
+    radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+    assert radar_d.prev_lead_track_ids[0] == 46
+    assert radar_d.preferred_gross_distance_stale_counts[0] == 0
+
+
+def test_bosch_stale_evidence_does_not_leak_to_new_preferred_id():
+  radar_d = make_staleness_radar_d()
+  radar_d.tracks = {
+    1: make_track(1, 10.0, 5, y_rel=3.0),
+    2: make_track(2, 10.0, 5, y_rel=2.0),
+    3: make_track(3, 10.0, 5, y_rel=3.0),
+  }
+  lead = make_lead(10.0)
+
+  radar_d.prev_lead_track_ids[0] = 1
+  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  assert radar_d.preferred_challenger_stale_counts[0] == 1
+
+  radar_d.prev_lead_track_ids[0] = 3
+  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  assert radar_d.prev_lead_track_ids[0] == 3
+  assert radar_d.preferred_stale_track_ids[0] == 3
+  assert radar_d.preferred_challenger_stale_counts[0] == 1
+
+
+def test_non_bosch_radar_does_not_apply_preferred_stale_logic():
+  radar_d = make_staleness_radar_d(civic_bosch_radar=False)
+  radar_d.tracks = {
+    27: make_track(27, 10.0, 5, y_rel=3.0),
+    38: make_track(38, 10.0, 5, y_rel=2.0),
+  }
+  radar_d.prev_lead_track_ids[0] = 27
+
+  for _ in range(4):
+    radar_d._update_civic_bosch_preferred_staleness(0, make_lead(10.0), 0.99)
+
+  assert radar_d.prev_lead_track_ids[0] == 27
+  assert radar_d.preferred_challenger_stale_counts == [0, 0]
+  assert radar_d.preferred_gross_distance_stale_counts == [0, 0]
+
+
+def test_bosch_duplicate_lead_preferences_keep_independent_stale_state():
+  radar_d = make_staleness_radar_d()
+  radar_d.tracks = {
+    24: make_track(24, 10.0, 5, y_rel=3.0),
+    44: make_track(44, 10.0, 5, y_rel=2.0),
+  }
+  radar_d.prev_lead_track_ids = [24, 24]
+  lead = make_lead(10.0)
+
+  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  radar_d._update_civic_bosch_preferred_staleness(1, lead, 0.99)
+  assert radar_d.prev_lead_track_ids == [24, 24]
+  assert radar_d.preferred_challenger_stale_counts == [1, 1]
+
+  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  assert radar_d.prev_lead_track_ids == [-1, 24]
+  radar_d._update_civic_bosch_preferred_staleness(1, lead, 0.99)
+  assert radar_d.prev_lead_track_ids == [-1, -1]
+
+
+def test_bosch_full_update_clears_stale_preference_then_strictly_reacquires(monkeypatch):
+  toggles = make_toggles()
+  monkeypatch.setattr(radard, "get_starpilot_toggles", lambda *_args: toggles)
+
+  radar_d = radard.RadarD(civic_bosch_radar=True)
+  sm = FakeSubMaster(live_tracks_frame=0)
+  lead = make_lead(10.0)
+  lead.xStd[0] = 10.0
+  sm._data['modelV2'].leadsV3 = [lead, make_lead(10.0, probability=0.0)]
+
+  frame = 0
+
+  def update(a_y_rel):
+    nonlocal frame
+    frame += 1
+    timestamp = frame * 50_000_000
+    sm.recv_frame['liveTracks'] = frame
+    sm.logMonoTime.update(modelV2=timestamp, carState=timestamp, liveTracks=timestamp)
+
+    rr = car.RadarData.new_message()
+    points = rr.init('points', 2)
+    for point, track_id, d_rel, y_rel in (
+      (points[0], 27, 10.0, a_y_rel),
+      (points[1], 38, 16.0, 0.5),
+    ):
+      point.trackId = track_id
+      point.dRel = d_rel
+      point.yRel = y_rel
+      point.vRel = 0.0
+      point.measured = True
+    radar_d.update(sm, rr)
+    return radar_d.radar_state.leadOne
+
+  # Establish ID27 through the unchanged strict path and mature ID38 enough to exercise the
+  # Civic-Bosch low-speed candidate path later.
+  for _ in range(3):
+    output = update(0.0)
+    assert output.radar and output.radarTrackId == 27
+  assert radar_d.prev_lead_track_ids[0] == 27
+  assert radar_d.preferred_stale_track_ids[0] == 27
+
+  # ID27 now fails relaxed lateral continuity. ID38 scores better, is mature and low-speed eligible,
+  # but fails the unchanged strict distance gate, so it must not replace the valid vision lead.
+  output = update(3.0)
+  assert radar_d.preferred_challenger_stale_counts[0] == 1
+  assert radar_d.civic_bosch_radar
+  assert radard.civic_bosch_low_speed_radar_lead_sane(radar_d.tracks[38], radar_d.v_ego)
+  assert not radard.track_matches_vision(radar_d.tracks[38], lead, radar_d.v_ego,
+                                         dist_scale=0.25, dist_floor=5.0,
+                                         vel_limit=10.0, y_std_scale=1.0, y_floor=1.0)
+  assert output.status and not output.radar and output.radarTrackId == -1
+  assert radar_d.prev_lead_track_ids[0] == 27
+
+  output = update(3.0)
+  assert output.status and not output.radar and output.radarTrackId == -1
+  assert radar_d.prev_lead_track_ids[0] == -1
+  assert radar_d.preferred_stale_track_ids[0] == -1
+  assert radar_d.preferred_challenger_stale_counts[0] == 0
+  assert radar_d.preferred_gross_distance_stale_counts[0] == 0
+
+  # When ID27 becomes a normal strict match again, it is legitimately reacquired and owns clean
+  # preference state; no evidence from the stale incarnation survives.
+  output = update(0.0)
+  assert output.radar and output.radarTrackId == 27
+  assert radar_d.prev_lead_track_ids[0] == 27
+  assert radar_d.preferred_stale_track_ids[0] == 27
+  assert radar_d.preferred_challenger_stale_counts[0] == 0
+  assert radar_d.preferred_gross_distance_stale_counts[0] == 0
