@@ -212,9 +212,9 @@ class CarInterface(CarInterfaceBase):
         # stock request input values:     0x0000, 0x00DB, 0x01BB, 0x0296, 0x0377, 0x0454, 0x0532, 0x0610, 0x067F
         # stock request output values:    0x0000, 0x0500, 0x0A15, 0x0E6D, 0x1100, 0x1200, 0x129A, 0x134D, 0x1400
         # modified request output values: 0x0000, 0x0500, 0x0A15, 0x0E6D, 0x1100, 0x1200, 0x1ACD, 0x239A, 0x2800
-        # NRDR 39990-TLA-A040 linear-max: linear ramp to the 3840 cap, so the piecewise breakpoints
-        # collapse and the gains drop to match.
-        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
+        # NRDR 39990-TLA-A040 linear-max: linear ramp to the 4096 cap, so the piecewise breakpoints
+        # collapse to a single segment. Matches nrdr's own CR-V 5G range.
+        ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]
         # NRDR modified-EPS tune, shared with the Clarity/Civics/Insight. The speed banding lives
         # HERE rather than in the runtime LatPScale/LatIScale params, which are neutralized to
         # 100% and act as fine-trim on top. Do not re-band in both places.
