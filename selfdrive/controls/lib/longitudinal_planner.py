@@ -531,23 +531,6 @@ class LongitudinalPlanner:
         self._model_lead_traj_enabled = False
     return self._model_lead_traj_enabled
 
-  def _blotv2_active(self) -> bool:
-    """Civic Bosch plus NrdrBlotV2. Re-read about once a second so the toggle applies
-    without a restart; never touches params on cars the feature does not apply to."""
-    if not self._model_lead_traj_car:
-      return False
-
-    self._blotv2_frame += 1
-    if self._blotv2_params is None or self._blotv2_frame % 100 == 0:
-      try:
-        from openpilot.common.params import Params
-        if self._blotv2_params is None:
-          self._blotv2_params = Params()
-        self._blotv2_enabled = self._blotv2_params.get_bool("NrdrBlotV2")
-      except Exception:
-        self._blotv2_enabled = False
-    return self._blotv2_enabled
-
   def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
     self.mpc = LongitudinalMpc(dt=dt)
@@ -569,9 +552,6 @@ class LongitudinalPlanner:
     # a single instant forward (commaai/openpilot#37824). Civic Bosch only, behind a param.
     # Anything else leaves model_leads=None and the MPC keeps its existing extrapolation.
     self._model_lead_traj_car = CP.brand == "honda" and str(CP.carFingerprint) == "HONDA_CIVIC_BOSCH"
-    self._blotv2_params = None
-    self._blotv2_enabled = False
-    self._blotv2_frame = 0
     self._blotv2 = BLoTv2Supervisor(dt)
     self._blotv2_policy = None
     self._model_lead_traj_enabled = False
@@ -2033,20 +2013,24 @@ class LongitudinalPlanner:
 
     # BLoTv2 supervisor (SpysyWeeb/Spysypilot BLoTv2). It never commands acceleration --
     # it returns a jerk-cost scale and a following-time pad, both bounded and slew limited.
+    # Gated on the same NrdrModelLeadTrajectory toggle as the lead-trajectory shaping
+    # below -- one user-facing switch for both, since BLoTv2 was designed assuming MLT.
     # Run it after effective_t_follow is final and after the follow policy has had its say,
     # so its pad is additive rather than competing with our own t_follow modifiers.
     self._blotv2_policy = None
-    if self._blotv2_active():
+    if self._model_lead_trajectory_active():
       model_leads_now = sm['modelV2'].leadsV3
       self._blotv2_policy = self._blotv2.update(
         LeadObservation.from_radar(self.lead_one if lead_one_active else None,
                                    sm.all_checks(['radarState'])),
         v_ego,
-        float(self.last_mpc_a_target) if getattr(self, 'last_mpc_a_target', None) is not None else 0.0,
+        float(self.output_a_target),
         effective_t_follow,
         model_predicted_acceleration(model_leads_now[0] if len(model_leads_now) > 0 else None),
       )
       effective_t_follow = float(self._blotv2_policy.t_follow)
+    else:
+      self._blotv2.reset()
 
     if self.is_preap and self.nap_adaptive_accel and lead_one_active:
       follow_limit = get_preap_follow_limit(v_ego)

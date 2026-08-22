@@ -22,7 +22,7 @@ class LeadObservation:
 
   @classmethod
   def from_radar(cls, lead: Any, service_valid: bool) -> "LeadObservation":
-    if not service_valid or lead is None or not bool(getattr(lead, "present", False)):
+    if not service_valid or lead is None or not bool(getattr(lead, "status", False)):
       return cls()
 
     try:

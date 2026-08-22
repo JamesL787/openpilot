@@ -49,8 +49,11 @@ class CarInterface(CarInterfaceBase):
       # a firmware-correct RadarInterface (16-slot Bosch-A object bank, RX-only), but it stays gated
       # behind a tester toggle (NrdrBoschARadar) rather than going default-on: every other Bosch
       # platform still has no parsed radar DBC and keeps radarUnavailable=True regardless.
+      # BoschLong's model-based longitudinal features (BLoTv2, Model Lead Trajectory) are built
+      # for radarless operation, so a real Bosch-A radar track overrides the tryout toggle off.
       try:
-        bosch_a_radar_tryout = Params().get_bool("NrdrBoschARadar")
+        params = Params()
+        bosch_a_radar_tryout = params.get_bool("NrdrBoschARadar") and not params.get_bool("BoschLong")
       except UnknownKeyName:
         bosch_a_radar_tryout = False
       ret.radarUnavailable = not (candidate in HONDA_BOSCH_A and bosch_a_radar_tryout)

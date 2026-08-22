@@ -325,7 +325,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // Experimental: feed the MPC the model's predicted lead horizon instead of extrapolating
     // one instant forward. Civic Bosch only. See commaai/openpilot#37824.
     {"BoschLong", {PERSISTENT, BOOL, "0", "0", 3}},
-    {"NrdrBlotV2", {PERSISTENT, BOOL, "0", "0", 3}},
     {"NrdrModelLeadTrajectory", {PERSISTENT, BOOL, "0", "0", 3}},
     // Tester rollout: parse the Civic Bosch's own 16-slot radar object bank into real leadOne/leadTwo
     // tracks instead of treating the car as radarless. RX-only, no CAN authority taken. Civic Bosch only.

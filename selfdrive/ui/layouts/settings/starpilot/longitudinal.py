@@ -589,18 +589,13 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     # Radarless Honda Bosch longitudinal. Its own section so the header reads as a group;
     # SettingSection.visible hides the header too on cars this does not apply to.
     self._bosch_long_rows = [
-      SettingRow("NrdrBlotV2", "toggle", tr_noop("BLoTv2 Supervisor"),
-                 subtitle=tr_noop("Experimental. Tracks how much deceleration the lead actually needs, "
-                                  "softens the solver's jerk cost when it has to respond, and pads "
-                                  "following time when the lead is slowing. Never commands acceleration "
-                                  "itself."),
-                 get_state=lambda: self._params.get_bool("NrdrBlotV2"),
-                 set_state=lambda v: self._params.put_bool("NrdrBlotV2", v)),
       SettingRow("NrdrModelLeadTrajectory", "toggle", tr_noop("Model Lead Trajectory"),
-                 subtitle=tr_noop("Experimental. Plan against the driving model's predicted lead path "
-                                  "instead of extrapolating the lead's current acceleration forward. "
-                                  "Can brake earlier for a lead that keeps slowing, and react less to "
-                                  "brief lead braking."),
+                 subtitle=tr_noop("Experimental. Plans against the driving model's predicted lead path "
+                                  "instead of extrapolating the lead's current acceleration forward, and "
+                                  "runs the BLoTv2 supervisor: tracks how much deceleration the lead "
+                                  "actually needs, softens the solver's jerk cost when it has to respond, "
+                                  "and pads following time when the lead is slowing. Never commands "
+                                  "acceleration itself."),
                  get_state=lambda: self._params.get_bool("NrdrModelLeadTrajectory"),
                  set_state=lambda v: self._params.put_bool("NrdrModelLeadTrajectory", v)),
     ]
