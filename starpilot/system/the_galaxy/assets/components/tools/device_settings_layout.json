@@ -2436,18 +2436,9 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "NrdrBlotV2",
-        "label": "BLoTv2 Supervisor",
-        "description": "Experimental, Civic Bosch only. Tracks how much deceleration the lead actually needs, softens the solver's jerk cost when it has to respond, and pads following time when the lead is slowing. Never commands acceleration itself.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "BoschLong",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "NrdrModelLeadTrajectory",
         "label": "Model Lead Trajectory",
-        "description": "Experimental. Plan against the driving model's predicted lead path instead of extrapolating the lead's current acceleration forward. Can brake earlier for a lead that keeps slowing, and react less to brief lead braking. Civic Bosch only.",
+        "description": "Experimental, Civic Bosch only. Plans against the driving model's predicted lead path instead of extrapolating the lead's current acceleration forward, and runs the BLoTv2 supervisor: tracks how much deceleration the lead actually needs, softens the solver's jerk cost when it has to respond, and pads following time when the lead is slowing. Never commands acceleration itself.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "BoschLong",

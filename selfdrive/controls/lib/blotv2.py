@@ -57,12 +57,6 @@ ONSET_RATE_DOWN = 0.5
 MIN_TTC = 3.5
 MIN_SPEED = 1.0
 
-# Standstill lead-departure pre-release.
-LEAD_DEPARTURE_SPEED = 0.3
-LEAD_MOVING_SPEED = 0.25
-LEAD_DEPARTURE_CONFIRM = 0.2
-LEAD_DEPARTURE_CANCEL = 0.2
-
 
 @dataclass(frozen=True, slots=True)
 class LongitudinalPolicy:
@@ -106,66 +100,6 @@ def model_predicted_acceleration(model_lead: Any) -> float | None:
   if horizon <= 0.0 or not all(math.isfinite(value) for value in (v0, v1, horizon)):
     return None
   return (v1 - v0) / horizon
-
-
-def model_predicted_speed(model_lead: Any, lead: LeadObservation) -> float | None:
-  """Anchor the model's first future speed delta to filtered radar speed."""
-  if not lead.present:
-    return None
-  try:
-    if model_lead is None or float(model_lead.prob) < MODEL_LEAD_PROB_MIN or len(model_lead.v) < 2:
-      return None
-    v0 = float(model_lead.v[0])
-    v1 = float(model_lead.v[1])
-  except (AttributeError, IndexError, TypeError, ValueError):
-    return None
-  if not all(math.isfinite(value) for value in (v0, v1)):
-    return None
-  return max(lead.speed + v1 - v0, 0.0)
-
-
-class LeadDeparturePreRelease:
-  """Release only the MPC stop intent when a lead departure is corroborated."""
-
-  def __init__(self, dt: float = DT_MDL):
-    self.dt = dt
-    self.reset()
-
-  def reset(self) -> None:
-    self._prediction_s = 0.0
-    self._cancel_s = 0.0
-    self._released = False
-
-  def update(self, active: bool, standstill: bool, lead: LeadObservation,
-             predicted_speed: float | None) -> bool:
-    if not (active and standstill and lead.present):
-      self.reset()
-      return False
-
-    if lead.speed > LEAD_MOVING_SPEED:
-      self._released = True
-      self._prediction_s = 0.0
-      self._cancel_s = 0.0
-      return True
-
-    prediction_valid = (
-      predicted_speed is not None
-      and math.isfinite(predicted_speed)
-      and predicted_speed > LEAD_DEPARTURE_SPEED
-    )
-    if prediction_valid:
-      self._prediction_s += self.dt
-      self._cancel_s = 0.0
-      if self._prediction_s + 1e-9 >= LEAD_DEPARTURE_CONFIRM:
-        self._released = True
-    else:
-      self._prediction_s = 0.0
-      if self._released:
-        self._cancel_s += self.dt
-        if self._cancel_s + 1e-9 >= LEAD_DEPARTURE_CANCEL:
-          self.reset()
-
-    return self._released
 
 
 class BLoTv2Supervisor:
