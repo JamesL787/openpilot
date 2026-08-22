@@ -20,33 +20,30 @@ from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 
 
-# Clarity effective-ratio schedule: EPS position-table shape, scaled to road measurement.
+# nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio.
 #
-# Derived 2026-08-15 and it replaces the 4f3271d6af road fit, which tapered 1.440x. Two
-# independent sources say that was roughly twice the real taper:
+# RESTORED 2026-08-19 from bbff849969^, the last state before the firmware VGR map work.
+# This is the shape the car demonstrably drove best on. Everything that replaced it --
+# the firmware position map (bbff8499/fbf4c5fa), the 393b2c11e2 road fit (18.340 centre),
+# the 0698635629 retaper (17.248) and the 536a9f6304 refit (17.890) -- was justified on
+# fit residual, and none of them drove better. From 90 degrees out this is bit-identical
+# to the 393b2c11e2 curve; the whole difference is a 7-10%% higher ratio inside 90 degrees.
 #
-#   * The EPS position table (Y 16384 -> 18952) tapers 1.157x centre to lock.
-#   * Corrected road data over 3392 samples tapers 1.161x over the same span.
+# Values from nrdr a954d153e7 (2026-07-31), "Blend learned Clarity steer ratio into
+# proven tail", carried over from nrdr-clarity-backport. Replaces the old two-point
+# [0, 250] -> [17.00, 12.74] taper that this branch still had.
 #
-# The old fit inverted KINEMATIC steering (atan(L*curv)), which assumes no tyre slip and so
-# overstates the ratio by 1/(L*curvature_factor(u)) -- about 1.02x at 10 mph but 1.37x at
-# 55 mph. Because speed correlates with angle (highway is small-angle, parking is large),
-# that inflated the near-centre bins far more than the outer ones and manufactured taper the
-# rack does not have. Solving VehicleModel's own equation instead, theta = (curv - roll_comp)
-# * sR / curvature_factor(u), removes it.
-#
-# Shape comes from the firmware table because it is dense and noise-free; the absolute level
-# is a weighted least-squares fit to the measured bins (n/IQR^2 weighting, reliable bins from
-# 32 to 330 deg only). Residual is within 2.5% at every measured point. Below ~30 deg the
-# yaw-rate estimate is unusable -- IQR reaches 15-23% and the medians go non-physical -- so
-# the curve is held flat there rather than fitted.
-#
-# The old 12.74 tail came from a claimed Honda end-to-end spec of 12.72 at lock. Neither the
-# firmware table nor the road data supports it: both put lock near 14.8-14.9.
-NRDR_CLARITY_SR_CURVE_BP = [0., 25., 40., 55., 80., 110., 150., 205., 295., 380.,
-                            450.]  # |wheel angle|, deg
-NRDR_CLARITY_SR_CURVE_V = [17.890, 17.873, 17.507, 17.458, 16.846, 16.202, 15.637, 15.174,
-                           14.759, 14.441, 14.345]
+# The <= 70 degree section is the sample-weighted, non-increasing fit of the measured
+# 5 degree bins. The noisy 5-10 degree rise is capped at the 0-5 degree median, and every
+# later upward violation is pooled with its neighbour(s) instead of being allowed to create
+# an unphysical ratio increase. A smoothstep-sampled 70-90 degree handoff rejoins the
+# previous road-proven curve at exactly its existing 90 degree value; 90 degrees onward is
+# unchanged except for the corrected Honda end-to-end specification of 12.72 at 450 degrees.
+NRDR_CLARITY_SR_CURVE_BP = [0., 2.5, 7.5, 12.5, 17.5, 22.5, 27.5, 32.5, 37.5, 42.5, 47.5, 52.5, 57.5,
+                            62.5, 67.5, 70., 75., 80., 85., 90., 100., 140., 200., 300., 450.]  # |wheel angle|, deg
+NRDR_CLARITY_SR_CURVE_V = [19.680, 19.680, 19.680, 19.680, 19.344, 19.344, 19.307, 19.151, 18.406, 18.406,
+                           18.406, 18.087, 17.999, 17.999, 17.710, 17.604, 17.222, 16.706, 16.308, 16.093333333333334,
+                           15.940, 15.400, 14.300, 13.400, 12.720]
 
 # Civic Bosch (EPS 39990-TBA-C020) road-measured curve, from Peter's 152-segment extract
 # (6824 accepted samples) processed with the same slip/roll-corrected estimator. Reliable
