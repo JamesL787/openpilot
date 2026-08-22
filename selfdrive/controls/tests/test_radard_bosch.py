@@ -4,6 +4,7 @@ import pytest
 
 from cereal import car
 from openpilot.selfdrive.controls import radard
+from opendbc.car.honda.values import CAR as HONDA_CAR
 
 
 def make_toggles():
@@ -82,6 +83,25 @@ def make_staleness_radar_d(*, civic_bosch_radar=True):
   radar_d.v_ego = 0.0
   radar_d.starpilot_toggles = make_toggles()
   return radar_d
+
+
+@pytest.mark.parametrize("candidate", [HONDA_CAR.HONDA_CIVIC_BOSCH, HONDA_CAR.HONDA_CRV_5G, HONDA_CAR.HONDA_INSIGHT])
+def test_bosch_a_platforms_enable_bosch_a_radard_semantics(candidate):
+  cp = SimpleNamespace(brand="honda", carFingerprint=candidate, radarUnavailable=False)
+  assert radard.is_bosch_a_radar_car(cp)
+
+
+def test_unavailable_bosch_a_radar_does_not_enable_bosch_a_radard_semantics():
+  cp = SimpleNamespace(brand="honda", carFingerprint=HONDA_CAR.HONDA_CRV_5G, radarUnavailable=True)
+  assert not radard.is_bosch_a_radar_car(cp)
+
+
+@pytest.mark.parametrize("candidate", [HONDA_CAR.HONDA_CIVIC_2022, HONDA_CAR.HONDA_ACCORD_11G])
+def test_non_bosch_a_platforms_do_not_enable_bosch_a_radard_semantics(candidate):
+  # radarless and CANFD Bosch platforms respectively -- same HONDA_BOSCH family, but excluded
+  # from HONDA_BOSCH_A regardless of radarUnavailable.
+  cp = SimpleNamespace(brand="honda", carFingerprint=candidate, radarUnavailable=False)
+  assert not radard.is_bosch_a_radar_car(cp)
 
 
 def test_civic_bosch_duplicate_live_tracks_frame_does_not_update_kf(monkeypatch):

@@ -15,7 +15,7 @@ from openpilot.common.simple_kalman import KF1D
 from openpilot.selfdrive.controls.lib.desire_helper import LaneChangeDirection, LaneChangeState
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 from opendbc.car.honda.radar_interface import BOSCH_A_FREQ_HZ
-from opendbc.car.honda.values import CAR as HONDA_CAR
+from opendbc.car.honda.values import HONDA_BOSCH_A
 
 
 # Default lead acceleration decay set to 50% at 1s
@@ -36,6 +36,11 @@ CIVIC_BOSCH_LOW_SPEED_MIN_COUNT = 3
 CIVIC_BOSCH_CHALLENGER_STALE_CYCLES = 2
 CIVIC_BOSCH_GROSS_DISTANCE_STALE_CYCLES = 3
 CIVIC_BOSCH_GROSS_DISTANCE_M = 25.0
+
+
+def is_bosch_a_radar_car(CP) -> bool:
+  return CP.brand == "honda" and CP.carFingerprint in HONDA_BOSCH_A and not CP.radarUnavailable
+
 
 # Adjacent-lane stopped-vehicle detector, used as a stop-line hint on red-light
 # approaches. The qualifier is the DECELERATION HISTORY, not the current speed: roadside
@@ -627,8 +632,7 @@ def main() -> None:
     radar_ts = DT_MDL
 
   g90_radar_filter = CP.brand == "hyundai" and CP.carFingerprint == "GENESIS_G90"
-  civic_bosch_radar = (CP.brand == "honda" and CP.carFingerprint == HONDA_CAR.HONDA_CIVIC_BOSCH and
-                       not CP.radarUnavailable)
+  civic_bosch_radar = is_bosch_a_radar_car(CP)
   RD = RadarD(radar_ts=radar_ts, delay=CP.radarDelay, g90_radar_filter=g90_radar_filter,
               civic_bosch_radar=civic_bosch_radar)
 

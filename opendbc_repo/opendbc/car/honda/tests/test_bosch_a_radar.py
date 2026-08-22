@@ -915,3 +915,33 @@ def test_civic_bosch_object_feed_uses_camera_side_acc_can():
 
   assert ri.rcp.bus == can.camera
   assert ri.rcp.bus != can.radar
+
+
+# Computed once at collection time, like CP above -- the openpilot_function_fixture in the root
+# conftest.py gives every test function its own fresh, isolated OpenpilotPrefix(), so a
+# get_non_essential_params() call made from *inside* a test body runs in an environment where the
+# NrdrBoschARadar=True set at module import time (before any fixture exists) was never written.
+# Computing these at module scope, in the same environment CP uses, sidesteps that entirely.
+_OPEN_BOSCH_A_CARS = [CAR.HONDA_CRV_5G, CAR.HONDA_CRV_HYBRID, CAR.HONDA_ACCORD, CAR.HONDA_INSIGHT, CAR.ACURA_RDX_3G]
+_OPEN_BOSCH_A_CPS = {car: CarInterface.get_non_essential_params(car) for car in _OPEN_BOSCH_A_CARS}
+
+# radarless and CANFD Bosch platforms respectively -- same HONDA_BOSCH family as Civic Bosch, but
+# excluded from HONDA_BOSCH_A, so the gate must stay closed regardless of the tester toggle.
+_CLOSED_BOSCH_A_CARS = [CAR.HONDA_CIVIC_2022, CAR.HONDA_ACCORD_11G]
+_CLOSED_BOSCH_A_CPS = {car: CarInterface.get_non_essential_params(car) for car in _CLOSED_BOSCH_A_CARS}
+
+
+@pytest.mark.parametrize("car", _OPEN_BOSCH_A_CARS)
+def test_bosch_a_gate_open_to_other_bosch_a_platforms(car):
+  cp = _OPEN_BOSCH_A_CPS[car]
+  assert cp.radarUnavailable is False
+  from opendbc.car.honda.radar_interface import RadarInterface
+  ri = RadarInterface(cp)
+  assert ri.bosch_a_radar is True
+  assert ri.rcp is not None
+
+
+@pytest.mark.parametrize("car", _CLOSED_BOSCH_A_CARS)
+def test_bosch_a_gate_stays_closed_for_non_bosch_a_platforms(car):
+  cp = _CLOSED_BOSCH_A_CPS[car]
+  assert cp.radarUnavailable is True
