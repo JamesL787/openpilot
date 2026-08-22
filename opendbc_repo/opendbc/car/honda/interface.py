@@ -203,8 +203,14 @@ class CarInterface(CarInterfaceBase):
         # NRDR 39990-TLA-A040 linear-max: linear ramp to the 3840 cap, so the piecewise breakpoints
         # collapse and the gains drop to match.
         ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 3840], [0, 3840]]
-        ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.06], [0.02]]
-        ret.lateralTuning.pid.kf = 0.000024
+        # NRDR modified-EPS tune, shared with the Clarity/Civics/Insight. The speed banding lives
+        # HERE rather than in the runtime LatPScale/LatIScale params, which are neutralized to
+        # 100% and act as fine-trim on top. Do not re-band in both places.
+        ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [[0., 25. * CV.MPH_TO_MS - 1e-3, 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS], [0.018, 0.024, 0.048, 0.060]]
+        ret.lateralTuning.pid.kiBP, ret.lateralTuning.pid.kiV = [[0., 25. * CV.MPH_TO_MS - 1e-3, 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS], [0.006, 0.008, 0.016, 0.020]]
+        # kf is banded too, in latcontrol_pid.py's NRDR_MODIFIED_EPS_KF_CARS path; this scalar
+        # is the fallback for anything not on that path.
+        ret.lateralTuning.pid.kf = 3.6e-6
         ret.steerAtStandstill, ret.autoResumeSng = True, True
         ret.minEnableSpeed, ret.minSteerSpeed = -1.0, -1.0
       else:

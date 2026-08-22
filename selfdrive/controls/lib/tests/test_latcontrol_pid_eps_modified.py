@@ -119,3 +119,19 @@ def test_clarity_and_c020_share_the_current_feedforward_curve():
   assert c020.is_civic_bosch_modified
   assert clarity.ff_factor == pytest.approx(3.6e-6)
   assert c020.ff_factor == pytest.approx(3.6e-6)
+
+
+def test_crv_5g_shares_the_clarity_modified_eps_tune():
+  # CR-V 5G runs the same NRDR modified-EPS hardware as Clarity/Civic Bosch, so it should
+  # get the same banded kp/ki/kf family instead of the old flat, unbanded values.
+  crv_5g = _controller(CAR.HONDA_CRV_5G, MODIFIED_FW)
+  assert crv_5g.is_modified_eps_kf_car
+  assert crv_5g.ff_factor == pytest.approx(3.6e-6)
+
+  low_max = 25.0 * 0.44704
+  expected_bp = [0.0, low_max - 1e-3, low_max, 50.0 * 0.44704]
+  cp = _params(CAR.HONDA_CRV_5G, MODIFIED_FW)
+  assert list(cp.lateralTuning.pid.kpBP) == pytest.approx(expected_bp)
+  assert list(cp.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
+  assert list(cp.lateralTuning.pid.kiBP) == pytest.approx(expected_bp)
+  assert list(cp.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
