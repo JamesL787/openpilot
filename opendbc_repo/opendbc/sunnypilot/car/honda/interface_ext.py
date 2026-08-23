@@ -1,7 +1,7 @@
 from openpilot.common.params import Params, UnknownKeyName
 from opendbc.car import structs
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.honda.values import CAR
+from opendbc.car.honda.values import CAR, HONDA_BOSCH_A
 
 
 TORQUE_MOD_PID_CARS = frozenset({
@@ -29,18 +29,17 @@ _PID_BP = [0.0, _LOW_SPEED - 1e-3, _LOW_SPEED, 50.0 * CV.MPH_TO_MS]
 _KP = [0.018, 0.024, 0.048, 0.060]
 _KI = [0.006, 0.008, 0.016, 0.020]
 _KF = [2.4e-6, 1.8e-6, 3.6e-6, 6.0e-6]
-_RADAR_FW = b"36802-TBA-A160"
 
 
-def _use_civic_bosch_radar(candidate, car_fw, docs: bool) -> bool:
-  if candidate != CAR.HONDA_CIVIC_BOSCH:
+def _use_bosch_a_radar(candidate, docs: bool) -> bool:
+  # TODO: remove this toggle+param once the 16-slot Bosch-A decoder (see radar_interface.py) has been
+  # field-validated across all HONDA_BOSCH_A platforms, then make radarUnavailable unconditional here.
+  if candidate not in HONDA_BOSCH_A:
     return False
-  if any(fw.ecu == structs.CarParams.Ecu.fwdRadar and _RADAR_FW in fw.fwVersion for fw in car_fw):
-    return True
   if docs:
     return False
   try:
-    return Params().get_bool("HondaCivicRadarTryout")
+    return Params().get_bool("NrdrBoschARadar")
   except UnknownKeyName:
     return False
 
@@ -69,7 +68,7 @@ def configure_honda_platform(cp: structs.CarParams, candidate, car_fw, docs: boo
     cp.autoResumeSng = True
     cp.minEnableSpeed = -1.0
 
-  if _use_civic_bosch_radar(candidate, car_fw, docs):
+  if _use_bosch_a_radar(candidate, docs):
     cp.radarUnavailable = False
 
 

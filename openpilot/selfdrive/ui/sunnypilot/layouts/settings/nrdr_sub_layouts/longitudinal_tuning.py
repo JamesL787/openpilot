@@ -201,15 +201,15 @@ class LongitudinalTuningLayout(Widget):
     )
 
     self._radar_tryout = toggle_item_sp(
-      param="HondaCivicRadarTryout",
-      title=lambda: tr("Try Honda Bosch Radar (Default: OFF)"),
+      param="NrdrBoschARadar",
+      title=lambda: tr("Try Honda Bosch-A Radar (Default: ON)"),
       description=lambda: tr(
-        "EXPERIMENTAL - Honda Bosch radar. When ON, openpilot reads the factory Bosch radar's fine-range objects (0x280) and treats this car " +
-        "like a fingerprint-matched radar car (radarUnavailable=False + the custom honda_civic_bosch_radar DBC). If you ALSO enable openpilot " +
+        "EXPERIMENTAL - Honda Bosch-A radar. When ON, openpilot reads the factory Bosch radar's 16-slot object bank and treats this car " +
+        "like a fingerprint-matched radar car (radarUnavailable=False + the custom honda_bosch_a_radar DBC). If you ALSO enable openpilot " +
         "experimental/alpha longitudinal, this radar WILL feed openpilot's lead tracking and command braking/acceleration - exactly like a " +
-        "matched car. With openpilot longitudinal OFF (stock ACC) it is perception only. The 0x280 decode is reverse-engineered and cross-car " +
-        "validated (~0.99) but NOT verified on your specific car: before enabling openpilot longitudinal, VALIDATE that lead distance and " +
-        "closing-rate match reality. Honda Civic Bosch only. Leave OFF if unsure."
+        "matched car. With openpilot longitudinal OFF (stock ACC) it is perception only. The decode is reverse-engineered and validated on " +
+        "Honda Civic Bosch; the other bosch_a-harness platforms (Accord, CR-V, CR-V Hybrid, Acura RDX, Insight, Honda e/e Advance, N-Box) " +
+        "share the same radar hardware/protocol but are less road-tested. Turn OFF if you want to rule this out while diagnosing a lead issue."
       ),
     )
 

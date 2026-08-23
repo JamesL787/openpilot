@@ -1,6 +1,6 @@
 import math
 
-from opendbc.car.honda.values import CAR as HONDA_CAR
+from opendbc.car.honda.values import HONDA_BOSCH_A
 from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot.nrdr.radar_core import CivicBoschKalmanParams, CivicBoschTrack
 
@@ -10,7 +10,7 @@ _RADAR_TO_CAMERA = 1.52
 
 class NrdrRadar:
   def __init__(self, CP):
-    self.active = CP.brand == "honda" and not CP.radarUnavailable and CP.carFingerprint == HONDA_CAR.HONDA_CIVIC_BOSCH
+    self.active = CP.brand == "honda" and not CP.radarUnavailable and CP.carFingerprint in HONDA_BOSCH_A
     self.last_tracks_frame = -1
 
   def kalman_params(self, default_class):
