@@ -19,8 +19,9 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.starpilot.common.cpu_throttle import device_cpu_throttle_factor
 from openpilot.system.hardware import PC
 
-RUNTIME_LOOP_HZ = 20
-INFERENCE_INTERVAL = 0.15
+RUNTIME_LOOP_HZ = 30
+# Cap steady detector work at 6 Hz while retaining the faster confirmation cadence.
+INFERENCE_INTERVAL = 1.0 / 6.0
 FOLLOWUP_INFERENCE_INTERVAL = 0.10
 FOLLOWUP_WINDOW_SECONDS = 2.0
 TEMPORAL_TRACKING_ENABLED = False
@@ -345,7 +346,7 @@ class SpeedLimitVisionDaemon:
       from openpilot.common.realtime import Ratekeeper
 
       self.messaging = messaging
-      self.pm = messaging.PubMaster(["userBookmark"])
+      self.pm = messaging.PubMaster(["visionSpeedLimitBookmark"])
       self.params = Params(return_defaults=True)
       self.params_memory = Params(memory=True)
       self.is_metric = self.params.get_bool("IsMetric")
@@ -408,6 +409,7 @@ class SpeedLimitVisionDaemon:
     self.debug_session_started_at = 0.0
     self.debug_session_unavailable = False
     self.last_logged_status = ""
+    self.last_published_stream = None
     self.last_logged_candidate = None
     self.last_runtime_telemetry_at = 0.0
     self.last_debug_heartbeat_at = 0.0
@@ -797,8 +799,8 @@ class SpeedLimitVisionDaemon:
     if not self.use_runtime or self.pm is None or self.messaging is None:
       return
     self.ignore_next_user_bookmark = True
-    msg = self.messaging.new_message("userBookmark", valid=True)
-    self.pm.send("userBookmark", msg)
+    msg = self.messaging.new_message("visionSpeedLimitBookmark", valid=True)
+    self.pm.send("visionSpeedLimitBookmark", msg)
 
   def _maybe_commit_auto_bookmark(self, now):
     pending = self.pending_auto_bookmark
@@ -997,7 +999,7 @@ class SpeedLimitVisionDaemon:
 
       if self.coexistence_mode:
         cpu_usage = list(self.sm["deviceState"].cpuUsagePercent) if self.sm is not None and self.sm.valid.get("deviceState", False) else []
-        factor = device_cpu_throttle_factor(cpu_usage, name="SpeedLimit")
+        factor = device_cpu_throttle_factor(cpu_usage, name="SpeedLimit", cores=SPEED_LIMIT_VISION_COEXISTENCE_AFFINITY_CORES)
         if factor > 1.05:
           self.last_cpu_busy = True
           interval *= factor
@@ -1348,7 +1350,7 @@ class SpeedLimitVisionDaemon:
       return max(interval, MEMORY_PRESSURE_CLASSIFICATION_INTERVAL)
     if self.coexistence_mode:
       cpu_usage = list(self.sm["deviceState"].cpuUsagePercent) if self.sm is not None and self.sm.valid.get("deviceState", False) else []
-      if device_cpu_throttle_factor(cpu_usage, name="SpeedLimit") > 1.05:
+      if device_cpu_throttle_factor(cpu_usage, name="SpeedLimit", cores=SPEED_LIMIT_VISION_COEXISTENCE_AFFINITY_CORES) > 1.05:
         return max(interval, TRACK_BUSY_CLASSIFICATION_INTERVAL)
     elif self._device_cpu_busy():
       return max(interval, TRACK_BUSY_CLASSIFICATION_INTERVAL)
@@ -2450,13 +2452,20 @@ class SpeedLimitVisionDaemon:
       self._clear_detection()
     if self.params_memory is None:
       return
-    self.params_memory.put("VisionSpeedLimitStatus", status)
-    if self.stream_name:
-      self.params_memory.put("VisionSpeedLimitStream", self.stream_name)
-    else:
-      self.params_memory.remove("VisionSpeedLimitStream")
-    if status != self.last_logged_status:
+
+    status_changed = status != self.last_logged_status
+    if status_changed:
+      self.params_memory.put("VisionSpeedLimitStatus", status)
       self.last_logged_status = status
+
+    if self.stream_name != self.last_published_stream:
+      if self.stream_name:
+        self.params_memory.put("VisionSpeedLimitStream", self.stream_name)
+      else:
+        self.params_memory.remove("VisionSpeedLimitStream")
+      self.last_published_stream = self.stream_name
+
+    if status_changed:
       self._write_debug_event("status", statusText=status)
 
   def _publish_runtime_telemetry(self, now, phase, force=False, **fields):

@@ -27,24 +27,24 @@ env_var_truthy() {
 usage() {
   cat <<'EOF'
 Usage:
-  ./onroad [jobs] [--c3 | --c4 | --raybig | --all | --replay-only] [--galaxy] [-nav] [--offroad] [-alert] [--cem] [--prefix name] <route-or-replay-args...>
+  ./onroad [jobs] [--c3 | --c4 | --all | --replay-only] [--galaxy] [-nav] [--offroad] [-alert] [--cem] [--prefix name] <route-or-replay-args...>
 
 Examples:
   ./onroad <route>
   ./onroad --c3 <route>
   ./onroad --c4 <route> --start 30
   ./onroad --c4 -nav <route>
-  ./onroad --raybig --nav --offroad --demo
+  ./onroad --c3 --nav --offroad --demo
   ./onroad --c4 --cem --demo
-  ./onroad --raybig --cem --demo
-  ./onroad --raybig --cem -alert --demo --no-loop
+  ./onroad --c3 --cem --demo
+  ./onroad --c3 --cem -alert --demo --no-loop
   ./onroad --all <route>
   ./onroad --replay-only --demo --no-vipc --no-loop
 
 Notes:
   - This is host/dev only. It uses the isolated host worktree and does not touch the device path.
   - A private comma connect route still requires tools/lib/auth.py before replay can download it.
-  - If no UI flag is provided, the route's logged device type selects the UI: mici/c4 -> c4, tici/tizi -> raybig unless UseOldUI was enabled.
+  - If no UI flag is provided, the route's logged device type selects the UI: mici/c4 -> c4, all big devices -> c3.
   - Use multiple UI flags together if you want more than one desktop UI at once.
   - --galaxy starts a local Galaxy web session with the same preview params and prints the localhost URL. It blocks replay's logged customReserved9 stream so Galaxy can own the live Testing Grounds publisher.
   - -nav injects a fake navigation demo stream and blocks replay from publishing navInstruction/navRoute.
@@ -101,13 +101,8 @@ parse_args() {
         UI_SELECTION_EXPLICIT=1
         shift
         ;;
-      --raybig)
-        UI_TARGETS+=(raybig)
-        UI_SELECTION_EXPLICIT=1
-        shift
-        ;;
       --all)
-        UI_TARGETS+=(c3 c4 raybig)
+        UI_TARGETS+=(c3 c4)
         UI_SELECTION_EXPLICIT=1
         shift
         ;;
@@ -183,7 +178,7 @@ expand_ui_targets() {
 
   case "${selection,,}" in
     all|"")
-      UI_TARGETS=(c3 c4 raybig)
+      UI_TARGETS=(c3 c4)
       return
       ;;
     none)
@@ -199,18 +194,18 @@ expand_ui_targets() {
   local raw=""
   for raw in "${raw_targets[@]}"; do
     case "${raw,,}" in
-      c3|c4|raybig)
+      c3|c4)
         normalized+=("${raw,,}")
         ;;
       *)
         echo "Unknown UI target in --ui: ${raw}" >&2
-        echo "Valid values: all, none, c3, c4, raybig" >&2
+        echo "Valid values: all, none, c3, c4" >&2
         exit 1
         ;;
     esac
   done
 
-  local ordered_targets=(c3 c4 raybig)
+  local ordered_targets=(c3 c4)
   local target=""
   for target in "${ordered_targets[@]}"; do
     local candidate=""
@@ -224,7 +219,7 @@ expand_ui_targets() {
 }
 
 dedupe_ui_targets() {
-  local ordered_targets=(c3 c4 raybig)
+  local ordered_targets=(c3 c4)
   local deduped=()
   local target=""
   for target in "${ordered_targets[@]}"; do
@@ -402,7 +397,6 @@ prepare_env() {
   export USE_WEBCAM=1
   export SP_C3_FAKE_WIFI=0
   export SP_C4_FAKE_WIFI=0
-  export SP_RAYBIG_FAKE_WIFI=0
   export SP_ALLOW_DESKTOP_FAKE_WIFI=0
   export SP_ONROAD_NAV_DEMO="${NAV_DEMO}"
   export SP_ONROAD_OFFROAD_DEMO="${OFFROAD_DEMO}"
@@ -448,7 +442,7 @@ build_replay() {
 }
 
 prepare_c3_runtime() {
-  SP_C3_COMPILE_ONLY=1 "${ROOT_DIR}/scripts/launch_ui_desktop.sh" "${jobs}"
+  SP_KEEP_DESKTOP_RUNTIME_ARTIFACTS=1 SP_C3_COMPILE_ONLY=1 "${ROOT_DIR}/scripts/launch_ui_c3_desktop.sh" "${jobs}"
 }
 
 prepare_python_ui_runtime() {
@@ -589,22 +583,6 @@ launch_galaxy() {
   echo "Access Galaxy with ${GALAXY_URL}"
 }
 
-launch_c3_ui() {
-  local os_ext="linux"
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    os_ext="macos"
-  fi
-
-  local host_ui="${ROOT_DIR}/selfdrive/ui/ui.${os_ext}"
-  if [[ ! -x "${host_ui}" ]]; then
-    echo "Missing ${host_ui}. C3 build did not produce the desktop binary." >&2
-    return 1
-  fi
-
-  "${host_ui}" &
-  UI_PIDS+=("$!")
-}
-
 launch_python_ui() {
   local big="$1"
   (
@@ -680,7 +658,7 @@ if [[ "${REPLAY_ONLY}" != "1" && "${UI_SELECTION_EXPLICIT}" == "0" && ${#UI_TARG
 fi
 
 if [[ "${REPLAY_ONLY}" != "1" && ${#UI_TARGETS[@]} -eq 0 ]]; then
-  echo "Select at least one UI with --c3, --c4, --raybig, or use --replay-only." >&2
+  echo "Select at least one UI with --c3, --c4, or use --replay-only." >&2
   exit 1
 fi
 
@@ -695,7 +673,7 @@ case " ${UI_TARGETS[*]-} " in
 esac
 
 case " ${UI_TARGETS[*]-} " in
-  *" c4 "*|*" raybig "*)
+  *" c4 "*)
     prepare_python_ui_runtime
     ;;
 esac
@@ -739,14 +717,11 @@ has_raylib=0
 for local_target in "${UI_TARGETS[@]}"; do
   case "${local_target}" in
     c3)
-      launch_c3_ui
+      launch_python_ui 1
+      has_raylib=1
       ;;
     c4)
       launch_python_ui 0
-      has_raylib=1
-      ;;
-    raybig)
-      launch_python_ui 1
       has_raylib=1
       ;;
   esac

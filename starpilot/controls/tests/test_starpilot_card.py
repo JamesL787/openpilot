@@ -73,10 +73,21 @@ def make_toggles(**overrides):
     "bookmark_via_cancel": False,
     "bookmark_via_cancel_long": False,
     "bookmark_via_cancel_very_long": False,
+    "experimental_mode_via_cancel": False,
+    "experimental_mode_via_cancel_long": False,
+    "experimental_mode_via_cancel_very_long": False,
+    "force_coast_via_cancel": False,
+    "force_coast_via_cancel_long": False,
+    "force_coast_via_cancel_very_long": False,
     "bookmark_via_lkas": False,
     "conditional_experimental_mode": False,
     "experimental_mode_via_lkas": False,
     "force_coast_via_lkas": False,
+    "pulse_and_glide_available": False,
+    "pulse_and_glide_via_cancel": False,
+    "pulse_and_glide_via_cancel_long": False,
+    "pulse_and_glide_via_cancel_very_long": False,
+    "pulse_and_glide_via_lkas": False,
     "lkas_allowed_for_aol": False,
     "main_cruise_aol_toggle": False,
     "main_cruise_slc_adopt": False,
@@ -90,13 +101,115 @@ def make_toggles(**overrides):
   return SimpleNamespace(**defaults)
 
 
-def make_car_state(available=False, enabled=False, button_events=None):
+def test_pulse_and_glide_requires_developer_access_and_active_longitudinal(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
+  sm = make_sm()
+  starpilot_car_state = SimpleNamespace(distancePressed=False)
+  toggles = make_toggles(
+    pulse_and_glide_available=True,
+    pulse_and_glide_via_lkas=True,
+  )
+
+  card.handle_button_event("lkas", sm, toggles)
+  assert card.pulse_and_glide is False
+
+  sm["carControl"].longActive = True
+  card.handle_button_event("lkas", sm, toggles)
+  assert card.pulse_and_glide is True
+
+  car_state = make_car_state(gas_pressed=True)
+  result = card.update(car_state, starpilot_car_state, sm, toggles)
+  assert result.pulseAndGlide is False
+
+
+def test_pulse_and_glide_consumes_native_cancel_when_mapped(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
+  sm = make_sm()
+  sm["carControl"].longActive = True
+  toggles = make_toggles(
+    pulse_and_glide_available=True,
+    pulse_and_glide_via_cancel=True,
+  )
+  starpilot_car_state = SimpleNamespace(distancePressed=False, cancelPressed=True)
+
+  press = make_car_state(button_events=[SimpleNamespace(type=spc.ButtonType.cancel, pressed=True)])
+  card.update(press, starpilot_car_state, sm, toggles)
+  assert press.buttonEvents == []
+
+  starpilot_car_state.cancelPressed = False
+  release = make_car_state(button_events=[SimpleNamespace(type=spc.ButtonType.cancel, pressed=False)])
+  result = card.update(release, starpilot_car_state, sm, toggles)
+
+  assert card.pulse_and_glide is True
+  assert result.pulseAndGlide is True
+  assert release.buttonEvents == []
+
+
+def test_pulse_and_glide_consumes_lkas_when_mapped(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
+  sm = make_sm()
+  sm["carControl"].longActive = True
+  toggles = make_toggles(
+    pulse_and_glide_available=True,
+    pulse_and_glide_via_lkas=True,
+  )
+  starpilot_car_state = SimpleNamespace(distancePressed=False)
+  car_state = make_car_state(button_events=[SimpleNamespace(type=spc.ButtonType.lkas, pressed=True)])
+
+  result = card.update(car_state, starpilot_car_state, sm, toggles)
+
+  assert card.pulse_and_glide is True
+  assert result.pulseAndGlide is True
+  assert car_state.buttonEvents == []
+
+
+def test_pulse_and_glide_long_cancel_consumes_release_after_threshold(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
+  sm = make_sm()
+  sm["carControl"].longActive = True
+  toggles = make_toggles(
+    pulse_and_glide_available=True,
+    pulse_and_glide_via_cancel_long=True,
+  )
+  starpilot_car_state = SimpleNamespace(distancePressed=False, cancelPressed=True)
+
+  for frame in range(card.long_press_threshold):
+    button_events = [SimpleNamespace(type=spc.ButtonType.cancel, pressed=True)] if frame == 0 else []
+    card.update(make_car_state(button_events=button_events), starpilot_car_state, sm, toggles)
+
+  assert card.pulse_and_glide is True
+
+  starpilot_car_state.cancelPressed = False
+  release = make_car_state(button_events=[SimpleNamespace(type=spc.ButtonType.cancel, pressed=False)])
+  card.update(release, starpilot_car_state, sm, toggles)
+
+  assert card.pulse_and_glide is True
+  assert release.buttonEvents == []
+
+
+def make_car_state(available=False, enabled=False, button_events=None, brake_pressed=False, gas_pressed=False):
   return SimpleNamespace(
     buttonEvents=button_events or [],
     cruiseState=SimpleNamespace(available=available, enabled=enabled),
     gearShifter=spc.GearShifter.drive,
-    brakePressed=False,
-    gasPressed=False,
+    brakePressed=brake_pressed,
+    gasPressed=gas_pressed,
     standstill=False,
     vEgo=15.0,
   )
@@ -104,6 +217,48 @@ def make_car_state(available=False, enabled=False, button_events=None):
 
 def make_wrapped_button_event(button_type, pressed):
   return SimpleNamespace(type=SimpleNamespace(raw=int(button_type)), pressed=pressed)
+
+
+@pytest.mark.parametrize(
+  ("car_fingerprint", "expect_normalized_release"),
+  (
+    (spc.HYUNDAI_CAR.HYUNDAI_ELANTRA_HEV_2024, True),
+    (spc.HYUNDAI_CAR.HYUNDAI_ELANTRA_2024, False),
+  ),
+)
+def test_distance_release_normalization_is_limited_to_reported_elantra_hybrid(
+    monkeypatch, tmp_path, car_fingerprint, expect_normalized_release,
+):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(
+    SimpleNamespace(brand="hyundai", carFingerprint=car_fingerprint),
+    SimpleNamespace(alternativeExperience=0),
+  )
+  toggles = make_toggles(
+    experimental_mode_via_distance=False,
+    bookmark_via_distance=False,
+    force_coast_via_distance=False,
+    pulse_and_glide_via_distance=False,
+    pause_lateral_via_distance=False,
+    pause_longitudinal_via_distance=False,
+    switchback_mode_via_distance=False,
+  )
+  sm = make_sm()
+  starpilot_car_state = SimpleNamespace(distancePressed=True)
+
+  card.update(make_car_state(), starpilot_car_state, sm, toggles)
+
+  starpilot_car_state.distancePressed = False
+  car_state = make_car_state(button_events=[SimpleNamespace(type=spc.ButtonType.unknown, pressed=False)])
+  card.update(car_state, starpilot_car_state, sm, toggles)
+
+  assert any(
+    be.type == spc.ButtonType.gapAdjustCruise and not be.pressed
+    for be in car_state.buttonEvents
+  ) is expect_normalized_release
 
 
 def test_honda_lkas_button_can_toggle_always_on_lateral(monkeypatch, tmp_path):
@@ -167,7 +322,7 @@ def test_sonata_hybrid_lkas_button_can_start_aol_before_normal_engagement(monkey
   car_state = make_car_state(available=False, enabled=False, button_events=[SimpleNamespace(type=spc.ButtonType.lkas, pressed=True)])
   starpilot_car_state = SimpleNamespace(distancePressed=False)
   sm = make_sm()
-  toggles = make_toggles(always_on_lateral=True, always_on_lateral_lkas=True)
+  toggles = make_toggles(always_on_lateral=True, always_on_lateral_lkas=True, lkas_allowed_for_aol=True)
 
   ret = card.update(car_state, starpilot_car_state, sm, toggles)
 
@@ -187,7 +342,7 @@ def test_sonata_hybrid_preserves_aol_latch_across_reverse(monkeypatch, tmp_path)
 
   starpilot_car_state = SimpleNamespace(distancePressed=False)
   sm = make_sm()
-  toggles = make_toggles(always_on_lateral=True, always_on_lateral_lkas=True)
+  toggles = make_toggles(always_on_lateral=True, always_on_lateral_lkas=True, lkas_allowed_for_aol=True)
 
   enabled_state = make_car_state(available=False, enabled=False, button_events=[SimpleNamespace(type=spc.ButtonType.lkas, pressed=True)])
   ret = card.update(enabled_state, starpilot_car_state, sm, toggles)

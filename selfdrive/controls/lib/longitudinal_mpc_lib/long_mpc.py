@@ -17,10 +17,6 @@ from openpilot.selfdrive.controls.lib.lead_behavior import get_tracked_lead_catc
 # WARNING: imports outside of constants will not trigger a rebuild
 from openpilot.selfdrive.modeld.constants import index_function, ModelConstants
 
-# Horizon the model predicts leads over: [0, 2, 4, 6, 8, 10] s, 6 points.
-LEAD_T_IDXS_MODEL = np.array(ModelConstants.LEAD_T_IDXS)
-LEAD_TRAJ_LEN = ModelConstants.LEAD_TRAJ_LEN
-
 if __name__ == '__main__':  # generating code
   from openpilot.third_party.acados.acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
 else:
@@ -142,6 +138,8 @@ LEAD_ACCEL_TAU = 1.5
 FCW_MIN_MODEL_PROB = 0.9
 FCW_MIN_CLOSING_SPEED = 0.5
 FCW_MAX_TTC = 4.0
+MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE = 0.5
+MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC = 7.0
 
 
 # Fewer timestamps don't hurt performance and lead to
@@ -153,8 +151,61 @@ T_IDXS_LST = [index_function(idx, max_val=MAX_T, max_idx=N) for idx in range(N+1
 T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
+LEAD_T_IDXS_MODEL = np.asarray(ModelConstants.LEAD_T_IDXS, dtype=np.float64)
+LEAD_TRAJ_LEN = ModelConstants.LEAD_TRAJ_LEN
 COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
+
+
+def build_model_lead_trajectory(model_lead, radar_lead, v_ego):
+  """Build a model-predicted lead path while preserving the raw h=0 anchor."""
+  if model_lead is None or radar_lead is None or not bool(getattr(radar_lead, "status", False)):
+    return None
+
+  try:
+    if float(model_lead.prob) <= 0.5:
+      return None
+    model_x = np.asarray(model_lead.x, dtype=np.float64)
+    model_v = np.asarray(model_lead.v, dtype=np.float64)
+  except (AttributeError, TypeError, ValueError):
+    return None
+
+  expected_len = len(LEAD_T_IDXS_MODEL)
+  if model_x.shape != (expected_len,) or model_v.shape != (expected_len,):
+    return None
+  if not np.all(np.isfinite(model_x)) or not np.all(np.isfinite(model_v)):
+    return None
+
+  raw_d_rel = float(getattr(radar_lead, "dRel", float("nan")))
+  raw_v_lead = float(getattr(radar_lead, "vLead", float("nan")))
+  if not np.isfinite(raw_d_rel) or not np.isfinite(raw_v_lead):
+    return None
+
+  # The model path is a comfort prediction, not the raw safety measurement.
+  # When the measured lead is already braking or the gap is closing quickly,
+  # keep the legacy raw-lead path so an optimistic model horizon cannot delay
+  # the first braking response.
+  raw_lead_brake = max(0.0, -float(getattr(radar_lead, "aLeadK", 0.0)))
+  closing_speed = max(0.0, float(v_ego) - raw_v_lead)
+  ttc = raw_d_rel / max(closing_speed, 1e-3) if closing_speed > 0.1 else float("inf")
+  if (raw_lead_brake > MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE or
+      (closing_speed > 0.75 and ttc < MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC)):
+    return None
+
+  # The model contributes future deltas only. This preserves raw lead source
+  # selection and keeps the current lead distance/speed safety anchor intact.
+  x_lead_traj = raw_d_rel + (model_x - model_x[0])
+  v_lead_traj = raw_v_lead + (model_v - model_v[0])
+  v_lead_traj = np.clip(v_lead_traj, 0.0, 1e8)
+
+  # Match the existing MPC convergence guard using the physical brake limit.
+  v_ego = float(v_ego)
+  min_x_lead = ((v_ego + v_lead_traj[0]) / 2.0) * (v_ego - v_lead_traj[0]) / (-ACCEL_MIN * 2.0)
+  x_lead_traj[0] = max(x_lead_traj[0], min_x_lead)
+
+  x_lead_mpc = np.maximum.accumulate(np.interp(T_IDXS, LEAD_T_IDXS_MODEL, x_lead_traj))
+  v_lead_mpc = np.interp(T_IDXS, LEAD_T_IDXS_MODEL, v_lead_traj)
+  return np.column_stack((x_lead_mpc, v_lead_mpc))
 
 
 def should_trigger_planner_fcw(lead, v_ego: float) -> bool:
@@ -615,13 +666,18 @@ class LongitudinalMpc:
     v_ego = self.x0[1]
     lead_active = lead is not None and lead.status and tracking_lead
 
-    # Experimental model-trajectory path. Gated upstream in the planner (Civic Bosch +
-    # NrdrModelLeadTrajectory); model_lead is None otherwise, so every other car falls
-    # through to the extrapolation below completely unchanged.
+    # Model-trajectory path. Runs unconditionally now, matching upstream; model_lead is
+    # only ever None when the model didn't produce a usable prediction this cycle, in
+    # which case this falls through to the extrapolation below.
     if model_lead is not None and lead_active and float(getattr(model_lead, "prob", 0.0)) > 0.5:
       lead_xv = self.model_lead_trajectory(lead, model_lead, v_ego)
       if lead_xv is not None:
         return lead_xv
+
+    if lead_active:
+      model_lead_xv = build_model_lead_trajectory(model_lead, lead, v_ego)
+      if model_lead_xv is not None:
+        return model_lead_xv
 
     if lead_active:
       x_lead = lead.dRel
@@ -911,19 +967,18 @@ class LongitudinalMpc:
   def update(self, radarstate, v_cruise, x, v, a, j, danger_factor, t_follow,
              personality=log.LongitudinalPersonality.standard, tracking_lead=True,
              optional_far_lead_comfort=True, smooth_duplicate_vision=False,
-             model_leads=None, stop_x=None, silverado_early_follow=False):
+             stop_x=None, silverado_early_follow=False, modelV2=None):
     v_ego = self.x0[1]
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
     self.status = tracking_lead and (lead_one.status or lead_two.status)
-    model_lead_0 = model_leads[0] if model_leads is not None and len(model_leads) > 0 else None
-    model_lead_1 = model_leads[1] if model_leads is not None and len(model_leads) > 1 else None
+    model_leads = getattr(modelV2, "leadsV3", ()) if modelV2 is not None else ()
     lead_xv_0 = self.process_lead(lead_one, tracking_lead, t_follow=t_follow, lead_index=0,
                                   smooth_duplicate_vision=smooth_duplicate_vision,
-                                  model_lead=model_lead_0)
+                                  model_lead=model_leads[0] if len(model_leads) > 0 else None)
     lead_xv_1 = self.process_lead(lead_two, tracking_lead, t_follow=t_follow, lead_index=1,
                                   smooth_duplicate_vision=smooth_duplicate_vision,
-                                  model_lead=model_lead_1)
+                                  model_lead=model_leads[1] if len(model_leads) > 1 else None)
     # Published for offline analysis of the trajectories the MPC actually solved against.
     self.lead_xv_0 = lead_xv_0
     self.lead_xv_1 = lead_xv_1

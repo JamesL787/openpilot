@@ -8,6 +8,71 @@ Ecu = CarParams.Ecu
 
 
 FW_VERSIONS = {
+  CAR.VOLKSWAGEN_ID3_MK1: {
+    (Ecu.srs, 0x715, None): [
+      b'\xf1\x871EA959655CD\xf1\x890366',
+    ],
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907572H \xf1\x890234',
+    ],
+  },
+  CAR.VOLKSWAGEN_ID3_MK2: {
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907567D \xf1\x890250',
+    ],
+  },
+  CAR.VOLKSWAGEN_ID4_MK1: {
+    (Ecu.srs, 0x715, None): [
+      b'\xf1\x871EA959655EA\xf1\x890376',
+      b'\xf1\x875WA959655R \xf1\x890717',
+    ],
+    (Ecu.eps, 0x712, None): [
+      b'\xf1\x871EA907144AQ\xf1\x895033\xf1\x82\x000_BH0A0_ON',
+    ],
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907572H \xf1\x890234',
+    ],
+  },
+  CAR.VOLKSWAGEN_ID4_MK2: {
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907567D \xf1\x890250',
+      b'\xf1\x871EA907567C \xf1\x890099',
+    ],
+  },
+  CAR.AUDI_Q4_MK1: {
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907572H \xf1\x890234',
+    ],
+  },
+  CAR.AUDI_Q4_MK2: {
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907567B \xf1\x890232',
+    ],
+  },
+  CAR.CUPRA_BORN_MK1: {
+    (Ecu.srs, 0x715, None): [
+      b'\xf1\x871EA959655EH\xf1\x890381',
+    ],
+    (Ecu.eps, 0x712, None): [
+      b'\xf1\x871EA907144AQ\xf1\x895033',
+    ],
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907572H \xf1\x890234',
+    ],
+  },
+  CAR.SKODA_ENYAQ_MK1: {
+    (Ecu.srs, 0x715, None): [
+      b'\xf1\x871EA959655EA\xf1\x890376',
+    ],
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907572H \xf1\x890234',
+    ],
+  },
+  CAR.SKODA_ENYAQ_MK2: {
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x871EA907567B \xf1\x890232',
+    ],
+  },
   CAR.VOLKSWAGEN_ARTEON_MK1: {
     (Ecu.engine, 0x7e0, None): [
       b'\xf1\x8704L906026TM\xf1\x896847',

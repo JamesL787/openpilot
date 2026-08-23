@@ -4,10 +4,12 @@ import pyray as rl
 from dataclasses import dataclass
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui.onroad.starpilot.torque_bar import TorqueBar
+from openpilot.selfdrive.ui.onroad.starpilot.rivian_lateral_mode import rivian_lateral_mode
 from openpilot.selfdrive.ui.mici.onroad.speed_limit_utils import resolve_display_speed_limit_ms
 from openpilot.selfdrive.ui.onroad.starpilot.navigation_card import NavigationCardRenderer
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.system.ui.lib.application import gui_app, FontWeight
+from openpilot.system.ui.lib.utils import draw_circle_gradient_compat
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
@@ -162,6 +164,7 @@ class HudRenderer(Widget):
 
     self._wheel_alpha_filter = FirstOrderFilter(0, 0.05, 1 / gui_app.target_fps)
     self._wheel_y_filter = FirstOrderFilter(0, 0.1, 1 / gui_app.target_fps)
+    self._wheel_tint: rl.Color | None = None
 
     self._set_speed_alpha_filter = FirstOrderFilter(0.0, 0.1, 1 / gui_app.target_fps)
     self._egpu_alpha_filter = FirstOrderFilter(0.0, 0.1, 1 / gui_app.target_fps)
@@ -185,10 +188,13 @@ class HudRenderer(Widget):
       self.is_cruise_set = False
       self.set_speed = SET_SPEED_NA
       self.speed = 0.0
+      self._wheel_tint = None
       return
 
     controls_state = sm['controlsState']
     car_state = sm['carState']
+    rivian_lateral_mode.update()
+    self._wheel_tint = rivian_lateral_mode.wheel_tint
 
     v_cruise_cluster = car_state.vCruiseCluster
     set_speed = (
@@ -198,8 +204,8 @@ class HudRenderer(Widget):
     if (engaged and not self._engaged and not ui_state.usbgpu_loading and ui_state.usbgpu_active is not True and
         sm.recv_frame['modelV2'] > ui_state.started_frame):
       self._small_model_engaged = True
-    if engaged and not self._engaged:
-      self._egpu_fade_time = rl.get_time()
+    if engaged != self._engaged:
+      self._egpu_fade_time = rl.get_time() if engaged else 0
     if (set_speed != self.set_speed and engaged) or (engaged and not self._engaged):
       self._set_speed_changed_time = rl.get_time()
     self._engaged = engaged
@@ -335,9 +341,7 @@ class HudRenderer(Widget):
     if icon is not self._egpu_icon:
       self._egpu_fade_time = rl.get_time()
       self._egpu_icon = icon
-    alpha = self._egpu_alpha_filter.update(
-      loading or (0 < rl.get_time() - self._egpu_fade_time < SET_SPEED_PERSISTENCE and self._engaged)
-    )
+    alpha = self._egpu_alpha_filter.update(loading or 0 < rl.get_time() - self._egpu_fade_time < SET_SPEED_PERSISTENCE)
     if alpha < 1e-2:
       return
 
@@ -380,7 +384,8 @@ class HudRenderer(Widget):
     origin = (wheel_txt.width / 2, wheel_txt.height / 2)
 
     # color and draw
-    color = rl.Color(255, 255, 255, int(self._wheel_alpha_filter.x))
+    base_color = self._wheel_tint if self._wheel_tint is not None and not self._show_wheel_critical else rl.Color(255, 255, 255, 255)
+    color = rl.Color(base_color.r, base_color.g, base_color.b, int(self._wheel_alpha_filter.x))
     rl.draw_texture_pro(wheel_txt, src_rect, dest_rect, origin, rotation, color)
 
     if self._show_wheel_critical:
@@ -402,8 +407,8 @@ class HudRenderer(Widget):
 
     # draw drop shadow
     circle_radius = 162 // 2
-    rl.draw_circle_gradient(int(x + circle_radius), int(y + circle_radius), circle_radius,
-                            rl.Color(0, 0, 0, int(255 / 2 * alpha)), rl.BLANK)
+    draw_circle_gradient_compat(x + circle_radius, y + circle_radius, circle_radius,
+                                rl.Color(0, 0, 0, int(255 / 2 * alpha)), rl.BLANK)
 
     set_speed_color = rl.Color(255, 255, 255, int(255 * 0.9 * alpha))
     max_color = rl.Color(255, 255, 255, int(255 * 0.9 * alpha))
@@ -624,7 +629,7 @@ class HudRenderer(Widget):
     center = rl.Vector2(button_rect.x + button_rect.width / 2, button_rect.y + button_rect.height / 2)
     radius = min(button_rect.width, button_rect.height) / 2
 
-    rl.draw_circle_gradient(int(center.x), int(center.y), radius, rl.Color(0, 0, 0, 90), rl.BLANK)
+    draw_circle_gradient_compat(center.x, center.y, radius, rl.Color(0, 0, 0, 90), rl.BLANK)
     rl.draw_circle(int(center.x), int(center.y), radius, fill)
     rl.draw_ring(center, radius - 6, radius, 0, 360, 48, outline)
 

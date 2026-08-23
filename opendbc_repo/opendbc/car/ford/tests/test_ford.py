@@ -4,9 +4,11 @@ from collections.abc import Iterable
 from hypothesis import settings, given, strategies as st
 from parameterized import parameterized
 
+from opendbc.car import gen_empty_fingerprint
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
-from opendbc.car.ford.values import CAR, FW_QUERY_CONFIG, FW_PATTERN, get_platform_codes
+from opendbc.car.ford.interface import CarInterface
+from opendbc.car.ford.values import CAR, FW_QUERY_CONFIG, FW_PATTERN, FordSafetyFlags, get_platform_codes, match_vin_to_car
 from opendbc.car.ford.fingerprints import FW_VERSIONS
 
 Ecu = CarParams.Ecu
@@ -20,6 +22,7 @@ ECU_ADDRESSES = {
   Ecu.engine: 0x7E0,       # Powertrain Control Module (PCM)
   Ecu.shiftByWire: 0x732,  # Gear Shift Module (GSM)
   Ecu.debug: 0x7D0,        # Accessory Protocol Interface Module (APIM)
+  Ecu.hud: 0x720,          # Instrument Cluster Module (ICM)
 }
 
 
@@ -41,6 +44,16 @@ ECU_PART_NUMBER = {
 
 
 class TestFordFW:
+  def test_vin_fallback(self):
+    def vin(wmi, vds, powertrain, year):
+      return f"{wmi}{vds}{powertrain}0{year}1234567"
+
+    assert match_vin_to_car(vin("2FM", "PK4A", "A", "N")) == {str(CAR.FORD_EDGE_MK2)}
+    assert match_vin_to_car(vin("3FM", "K1RA", "A", "M")) == {str(CAR.FORD_MUSTANG_MACH_E_MK1)}
+    assert match_vin_to_car(vin("1FT", "F1CA", "A", "M")) == {str(CAR.FORD_F_150_MK14)}
+    assert match_vin_to_car(vin("1FT", "F1CA", "L", "N")) == {str(CAR.FORD_F_150_LIGHTNING_MK1)}
+    assert match_vin_to_car("0" * 17) == set()
+
   def test_fw_query_config(self):
     for (ecu, addr, subaddr) in FW_QUERY_CONFIG.extra_ecus:
       assert ecu in ECU_ADDRESSES, "Unknown ECU"
@@ -50,9 +63,12 @@ class TestFordFW:
   @parameterized.expand(FW_VERSIONS.items())
   def test_fw_versions(self, car_model: str, fw_versions: dict[tuple[int, int, int | None], Iterable[bytes]]):
     for (ecu, addr, subaddr), fws in fw_versions.items():
-      assert ecu in ECU_PART_NUMBER, "Unexpected ECU"
+      assert ecu in ECU_ADDRESSES, "Unknown ECU"
       assert addr == ECU_ADDRESSES[ecu], "ECU address mismatch"
       assert subaddr is None, "Unexpected ECU subaddress"
+
+      if ecu not in ECU_PART_NUMBER:
+        continue
 
       for fw in fws:
         assert len(fw) == 24, "Expected ECU response to be 24 bytes"
@@ -140,3 +156,19 @@ class TestFordFW:
     live_fw[(0x760, None)] = {b"M1MC-2D053-XX\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"}
     candidates = FW_QUERY_CONFIG.match_fw_to_car_fuzzy(live_fw, '', {expected_fingerprint: offline_fw})
     assert len(candidates) == 0, "Should not match new model year hint"
+
+
+def test_mach_e_longitudinal_toggle_controls_stock_acc_selection():
+  stock = CarInterface.get_params(
+    CAR.FORD_MUSTANG_MACH_E_MK1, gen_empty_fingerprint(), [], False, False, False, None)
+  enhanced = CarInterface.get_params(
+    CAR.FORD_MUSTANG_MACH_E_MK1, gen_empty_fingerprint(), [], True, False, False, None)
+
+  assert stock.alphaLongitudinalAvailable
+  assert not stock.openpilotLongitudinalControl
+  assert stock.pcmCruise
+  assert not (stock.safetyConfigs[-1].safetyParam & FordSafetyFlags.LONG_CONTROL)
+
+  assert enhanced.alphaLongitudinalAvailable
+  assert enhanced.openpilotLongitudinalControl
+  assert enhanced.safetyConfigs[-1].safetyParam & FordSafetyFlags.LONG_CONTROL

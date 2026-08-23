@@ -4,6 +4,7 @@ import codecs
 import hashlib
 import json
 import os
+import platform
 import pickle
 import shutil
 import subprocess
@@ -45,6 +46,8 @@ MODEL_CONTEXT_FREQ = 5
 REPOSITORY_FILE_LIMIT = 100_000_000
 DEFAULT_MULTIPART_SIZE = 95 * 1024 * 1024
 USBGPU_PROBE_ATTEMPTS = 10
+
+
 def build_compile_env(*, supercombo: bool = False) -> dict[str, str]:
   env = os.environ.copy()
   existing_pythonpath = env.get("PYTHONPATH", "")
@@ -79,6 +82,13 @@ def wait_for_external_gpu() -> None:
       return
     time.sleep(1)
   raise RuntimeError("Chestnut not ready; external GPU PCIe link did not come up")
+
+
+def external_gpu_compile_command(command: list[str]) -> list[str]:
+  """Pin USB-GPU compilation to AGNOS' isolated CPU without changing host builds."""
+  if sys.platform == "linux" and platform.machine() == "aarch64":
+    return ["taskset", "-c", "7", *command]
+  return command
 
 
 def parse_args() -> argparse.Namespace:
@@ -534,6 +544,7 @@ def compile_driving(
     })
     command.append("--out-of-band")
     wait_for_external_gpu()
+    command = external_gpu_compile_command(command)
   subprocess.run(command, cwd=REPO_ROOT, env=compile_env, check=True)
   return output_path
 

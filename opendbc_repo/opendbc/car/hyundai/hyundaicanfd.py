@@ -183,6 +183,8 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
   else:
     lkas_values = copy.copy(control_values)
     lkas_values["LKA_AVAILABLE"] = 0
+    if CP.carFingerprint in (CAR.KIA_CARNIVAL_4TH_GEN, CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN):
+      lkas_values["DAMP_FACTOR"] = 100
 
   if lfa_base_values:
     # Preserve stock UI/status fields and only override the actuation-relevant signals.
@@ -256,7 +258,7 @@ def create_steering_messages(packer, CP, CAN, enabled, lat_active, apply_torque,
   ret = []
   if CP.flags & HyundaiFlags.CANFD_LKA_STEERING:
     lkas_msg = "LKAS_ALT" if CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT else "LKAS"
-    if CP.openpilotLongitudinalControl or send_lfa_status:
+    if (CP.openpilotLongitudinalControl and not CP.flags & HyundaiFlags.CAN_CANFD_BLENDED) or send_lfa_status:
       ret.append(packer.make_can_msg("LFA", CAN.ECAN, lfa_values))
     if lfa_only:
       return ret
@@ -818,7 +820,7 @@ def create_fca_warning_light(packer, CAN, frame):
   return ret
 
 
-def create_adrv_messages(packer, CAN, frame):
+def create_adrv_messages(packer, CAN, frame, blended_hda2=False):
   # messages needed to car happy after disabling
   # the ADAS Driving ECU to do longitudinal control
 
@@ -827,6 +829,9 @@ def create_adrv_messages(packer, CAN, frame):
   values = {
   }
   ret.append(packer.make_can_msg("ADRV_0x51", CAN.ACAN, values))
+
+  if blended_hda2:
+    return ret
 
   ret.extend(create_fca_warning_light(packer, CAN, frame))
 

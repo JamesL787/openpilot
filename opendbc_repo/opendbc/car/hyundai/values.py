@@ -481,7 +481,7 @@ class CAR(Platforms):
     [
       HyundaiCarDocs("Hyundai Palisade (without HDA II) 2023-25", "Highway Driving Assist",
                      car_parts=CarParts.common([CarHarness.hyundai_a])),
-      HyundaiCarDocs("Hyundai Palisade (with HDA II) 2023-24", "Highway Driving Assist II",
+      HyundaiCarDocs("Hyundai Palisade (with HDA II) 2023-25", "Highway Driving Assist II",
                      car_parts=CarParts.common([CarHarness.hyundai_r])),
       HyundaiCarDocs("Kia Telluride (without HDA II) 2023-25", "Highway Driving Assist",
                      car_parts=CarParts.common([CarHarness.hyundai_l])),
@@ -968,32 +968,27 @@ CANCEL_BUTTON_ENABLE_CARS = frozenset({
   CAR.HYUNDAI_PALISADE_2023,
 })
 
+CAN_CANFD_BLENDED_HDA2_LONGITUDINAL_CAR = frozenset({
+  CAR.HYUNDAI_PALISADE_2023,
+})
+
 KIA_EV6_GT_LINE_LONG_TUNING_VDS_PREFIXES = frozenset({
   "C4DLC",
 })
+KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID = "5"
 
 
-# These classic HKG platforms publish the LKAS button on CLU13 over the alt bus.
-# Keep G90 excluded until its alt-bus path is route-proven without the recent
-# engage/disengage regression.
-ALT_BUS_LDA_BUTTON_CARS = frozenset({
-  CAR.HYUNDAI_SONATA,
-})
-
-# On these Sonata layouts the alt-bus LKAS button pulses through the CLU13
-# steering-wheel-status field instead of the dedicated LKAS bit.
-ALT_BUS_LDA_BUTTON_SWL_STAT_CARS = frozenset({
-  CAR.HYUNDAI_SONATA,
-})
+ALT_BUS_LDA_BUTTON_CARS = frozenset()
+ALT_BUS_LDA_BUTTON_SWL_STAT_CARS = frozenset()
 
 
 def hyundai_cancel_button_enables_cruise(car_fingerprint) -> bool:
   return car_fingerprint in CANCEL_BUTTON_ENABLE_CARS
 
 
-def kia_ev6_gt_line_longitudinal_tuning(car_fingerprint, vin: str) -> bool:
-  return car_fingerprint == CAR.KIA_EV6 and isinstance(vin, str) and \
-    len(vin) == 17 and vin[3:8] in KIA_EV6_GT_LINE_LONG_TUNING_VDS_PREFIXES
+def kia_ev6_gt_line_longitudinal_tuning(car_fingerprint, vin: str, testing_ground_active: bool = False) -> bool:
+  vin_match = isinstance(vin, str) and len(vin) == 17 and vin[3:8] in KIA_EV6_GT_LINE_LONG_TUNING_VDS_PREFIXES
+  return car_fingerprint == CAR.KIA_EV6 and (vin_match or testing_ground_active)
 
 
 def get_platform_codes(fw_versions: list[bytes]) -> set[tuple[bytes, bytes | None]]:

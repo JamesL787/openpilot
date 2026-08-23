@@ -42,6 +42,10 @@ sys.modules.setdefault("openpilot.system.loggerd.uploader", loggerd_uploader)
 
 model_manager = ModuleType("openpilot.starpilot.assets.model_manager")
 model_manager.canonical_model_key = lambda value: str(value or "").strip().lower().replace(" ", "-")
+model_manager.external_gpu_available = lambda: False
+model_manager.is_builtin_model_key = lambda key: False
+model_manager.model_key_aliases = lambda key: ()
+model_manager.model_uses_external_gpu = lambda key: False
 sys.modules.setdefault("openpilot.starpilot.assets.model_manager", model_manager)
 
 starpilot_variables = ModuleType("openpilot.starpilot.common.starpilot_variables")
@@ -208,7 +212,42 @@ def _install_server_import_stubs():
       },
     ),
     FAVORITE_SLOTS_PARAM="FavoriteSlots",
+    SETTINGS_CATALOG_PATH=MODULE_DIR.parents[1] / "common/assets/device_settings_layout.json",
+    build_favorite_slot_options=lambda *args, **kwargs: [
+      {
+        "key": "__starpilot_favorite_action__:distance_decrease",
+        "label": "Distance - / SET",
+        "description": "Acts like a short press of the car's SET/- cruise button.",
+        "section": "Actions",
+        "action": "decelCruise",
+      },
+      {
+        "key": "__starpilot_favorite_action__:distance_increase",
+        "label": "Distance + / RES",
+        "description": "Acts like a short press of the car's RES/+ cruise button.",
+        "section": "Actions",
+        "action": "accelCruise",
+      },
+    ],
+    filter_favorite_slot_options=lambda options, capabilities=None: [
+      dict(option)
+      for option in options
+      if not option.get("requiresCapability") or (capabilities or {}).get(option["requiresCapability"], False)
+    ],
+    get_favorite_values=lambda items, params=None: {
+      (item if isinstance(item, str) else item.get("key")): (
+        bool(params.get_bool(item if isinstance(item, str) else item.get("key")))
+        if params is not None and hasattr(params, "get_bool")
+        else False
+      )
+      for item in items
+      if (item if isinstance(item, str) else (isinstance(item, dict) and item.get("key")))
+      and not str(item if isinstance(item, str) else item.get("key", "")).startswith("__starpilot_favorite_action__:")
+    },
     is_favorite_action_key=lambda key: str(key or "").startswith("__starpilot_favorite_action__:"),
+    load_settings_catalog=lambda layout_path=None: json.loads(
+      (Path(layout_path) if layout_path else MODULE_DIR.parents[1] / "common/assets/device_settings_layout.json").read_text()
+    ),
     normalize_favorite_slots=lambda *args, **kwargs: "",
     trigger_favorite_action=_trigger_stub_favorite_action,
   )
@@ -220,6 +259,7 @@ def _install_server_import_stubs():
   )
   for name, value in {
     "ACTIVE_THEME_PATH": Path("/tmp/dashboard-test-active-theme"),
+    "BUTTON_FUNCTIONS": {},
     "ERROR_LOGS_PATH": "/tmp/dashboard-test-errors",
     "EXCLUDED_KEYS": set(),
     "LEGACY_STARPILOT_PARAM_RENAMES": {},
@@ -582,6 +622,67 @@ def test_route_listing_uses_all_segment_times_when_segment_zero_was_touched(tmp_
   start, end = utilities._route_time_range(routes[0], 180)
   assert start == "2026-07-18T07:19:00"
   assert end == "2026-07-18T07:22:00"
+
+
+def test_route_listing_does_not_parse_logs_when_filesystem_time_is_valid(tmp_path, monkeypatch):
+  route_start = utilities.datetime(2026, 7, 18, 7, 19, 0)
+  route_name = "000011e3--6e01289631"
+  segment = tmp_path / f"{route_name}--0"
+  segment.mkdir()
+  (segment / "qlog.zst").write_bytes(b"placeholder")
+  segment_end = route_start.timestamp() + 60
+  os.utime(segment, (segment_end, segment_end))
+
+  def fail_if_read(_path):
+    raise AssertionError("valid filesystem timestamps must not decompress route logs")
+
+  monkeypatch.setattr(utilities, "_route_logged_start_time", fail_if_read)
+
+  routes = utilities._list_dashboard_routes([tmp_path])
+
+  assert routes[0]["startedAt"] == route_start
+  assert routes[0]["timeSource"] == utilities.DASHBOARD_TIME_SOURCE_FILESYSTEM
+
+
+def test_route_listing_applies_limit_before_parsing_old_logs(tmp_path, monkeypatch):
+  old_segment = tmp_path / "00000001--abcdef1234--0"
+  old_segment.mkdir()
+  (old_segment / "qlog.zst").write_bytes(b"placeholder")
+  stale_time = utilities.datetime(2025, 7, 18, 7, 20, 0).timestamp()
+  os.utime(old_segment, (stale_time, stale_time))
+
+  current_segment = tmp_path / "00000002--abcdef1234--0"
+  current_segment.mkdir()
+  current_time = utilities.datetime(2026, 7, 18, 7, 20, 0).timestamp()
+  os.utime(current_segment, (current_time, current_time))
+
+  def fail_if_read(_path):
+    raise AssertionError("routes outside the scan limit must not be parsed")
+
+  monkeypatch.setattr(utilities, "_route_logged_start_time", fail_if_read)
+
+  routes = utilities._list_dashboard_routes([tmp_path], limit=1)
+
+  assert [route["name"] for route in routes] == ["00000002--abcdef1234"]
+
+
+def test_route_listing_defers_offline_clock_repair_to_background_analysis(tmp_path, monkeypatch):
+  route_name = "000011e3--6e01289631"
+  segment = tmp_path / f"{route_name}--0"
+  segment.mkdir()
+  (segment / "qlog.zst").write_bytes(b"placeholder")
+
+  stale_time = utilities.datetime(2025, 7, 18, 7, 20, 0).timestamp()
+  os.utime(segment, (stale_time, stale_time))
+  def fail_if_read(_path):
+    raise AssertionError("dashboard route listing must not decompress logs")
+
+  monkeypatch.setattr(utilities, "_route_logged_start_time", fail_if_read)
+
+  routes = utilities._list_dashboard_routes([tmp_path])
+
+  assert routes[0]["startedAt"] is None
+  assert routes[0]["timeSource"] == ""
 
 
 def test_top_models_are_ranked_from_persisted_usage_not_favorites():
@@ -1550,6 +1651,24 @@ def _load_server_module():
   module = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(module)
   return module
+
+
+def test_clear_generated_build_state_preserves_prebuilts_and_user_data(tmp_path):
+  server = _load_server_module()
+  sconsign = tmp_path / ".sconsign.dblite"
+  generated = tmp_path / "cereal" / "gen" / "cpp" / "log.capnp.h"
+  prebuilt = tmp_path / "prebuilt"
+  user_model = tmp_path / "uncompiledmodels" / "custom.onnx"
+  for path in (sconsign, generated, prebuilt, user_model):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("test")
+
+  server._clear_generated_build_state(tmp_path)
+
+  assert not sconsign.exists()
+  assert not (tmp_path / "cereal" / "gen").exists()
+  assert prebuilt.read_text() == "test"
+  assert user_model.read_text() == "test"
 
 
 def test_troubleshoot_steer_delay_normalizes_vehicle_delay_for_display():

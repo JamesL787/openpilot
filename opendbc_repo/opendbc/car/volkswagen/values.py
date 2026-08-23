@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from enum import Enum, IntFlag, StrEnum
 
 from opendbc.car import Bus, CanBusBase, CarSpecs, DbcDict, PlatformConfig, Platforms, structs, uds
+from opendbc.car.lateral import CurvatureSteeringLimits
 from opendbc.can import CANDefine
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.docs_definitions import CarFootnote, CarHarness, CarDocs, CarParts, Column
@@ -101,6 +102,40 @@ class CarControllerParams:
         "laneAssistDeactivTrailer": 5,  # "Lane Assist: no function with trailer"
       }
 
+    elif CP.flags & VolkswagenFlags.MEB:
+      self.LDW_STEP = 10                  # LDW_02 message frequency 10Hz
+      self.ACC_HUD_STEP = 6
+      self.KLR_01_STEP = 6                # KLR_01 message frequency 17Hz
+      self.STEER_DRIVER_ALLOWANCE = 100   # Begin reducing steering power at 1.0 Nm driver torque
+      self.STEER_DRIVER_MAX = 300         # Reach minimum steering power at 3.0 Nm driver torque
+      self.STEERING_POWER_MAX = 50
+      self.STEERING_POWER_MIN = 4
+      self.STEERING_POWER_STEP = 2
+
+      self.CURVATURE_MAX = 0.195
+      self.CURVATURE_LIMITS = CurvatureSteeringLimits(self.CURVATURE_MAX)
+
+      self.ACCEL_INACTIVE = 3.01
+      self.JERK_LIMIT = 4.0
+
+      self.shifter_values = can_define.dv["Getriebe_11"]["GE_Fahrstufe"]
+      self.hca_status_values = can_define.dv["QFK_01"]["LatCon_HCA_Status"]
+
+      self.BUTTONS = [
+        Button(structs.CarState.ButtonEvent.Type.setCruise, "GRA_ACC_01", "GRA_Tip_Setzen", [1]),
+        Button(structs.CarState.ButtonEvent.Type.resumeCruise, "GRA_ACC_01", "GRA_Tip_Wiederaufnahme", [1]),
+        Button(structs.CarState.ButtonEvent.Type.accelCruise, "GRA_ACC_01", "GRA_Tip_Hoch", [1]),
+        Button(structs.CarState.ButtonEvent.Type.decelCruise, "GRA_ACC_01", "GRA_Tip_Runter", [1]),
+        Button(structs.CarState.ButtonEvent.Type.cancel, "GRA_ACC_01", "GRA_Abbrechen", [1]),
+        Button(structs.CarState.ButtonEvent.Type.gapAdjustCruise, "GRA_ACC_01", "GRA_Verstellung_Zeitluecke", [3]),
+      ]
+
+      self.LDW_MESSAGES = {
+        "none": 0,
+        "laneAssistTakeOverUrgent": 4,
+        "laneAssistTakeOver": 8,
+      }
+
     else:
       self.LDW_STEP = 10                  # LDW_02 message frequency 10Hz
       self.ACC_HUD_STEP = 6               # ACC_02 message frequency 16Hz
@@ -179,16 +214,21 @@ class WMI(StrEnum):
 
 class VolkswagenSafetyFlags(IntFlag):
   LONG_CONTROL = 1
+  MEB_ALT_CRC = 2
 
 
 class VolkswagenFlags(IntFlag):
   # Detected flags
   STOCK_HCA_PRESENT = 1
   KOMBI_PRESENT = 4
+  ALT_GEAR = 32
+  STOCK_KLR_PRESENT = 64
 
   # Static flags
   PQ = 2
   MLB = 8
+  MEB = 16
+  MEB_GEN2 = 128
 
 
 @dataclass
@@ -208,6 +248,19 @@ class VolkswagenMQBPlatformConfig(PlatformConfig):
   # on camera-integrated cars, as we lose too many ECUs to reliably identify the vehicle
   chassis_codes: set[str] = field(default_factory=set)
   wmis: set[WMI] = field(default_factory=set)
+
+
+@dataclass
+class VolkswagenMEBPlatformConfig(PlatformConfig):
+  dbc_dict: DbcDict = field(default_factory=lambda: {Bus.pt: 'vw_meb_generated', Bus.radar: 'vw_meb_generated'})
+  chassis_codes: set[str] = field(default_factory=set)
+  wmis: set[WMI] = field(default_factory=set)
+  model_years: set[str] = field(default_factory=set)
+
+  def init(self):
+    self.flags |= VolkswagenFlags.MEB
+    if self.flags & VolkswagenFlags.MEB_GEN2:
+      self.dbc_dict = {Bus.pt: 'vw_meb_2024_generated', Bus.radar: 'vw_meb_2024_generated'}
 
 
 @dataclass
@@ -265,7 +318,7 @@ class VWCarDocs(CarDocs):
 # FW_VERSIONS for that existing CAR.
 
 class CAR(Platforms):
-  config: VolkswagenMQBPlatformConfig | VolkswagenPQPlatformConfig
+  config: VolkswagenMLBPlatformConfig | VolkswagenMQBPlatformConfig | VolkswagenPQPlatformConfig | VolkswagenMEBPlatformConfig
 
   VOLKSWAGEN_ARTEON_MK1 = VolkswagenMQBPlatformConfig(
     [
@@ -326,6 +379,37 @@ class CAR(Platforms):
     VolkswagenCarSpecs(mass=1397, wheelbase=2.62),
     chassis_codes={"5G", "AU", "BA", "BE"},
     wmis={WMI.VOLKSWAGEN_MEXICO_CAR, WMI.VOLKSWAGEN_EUROPE_CAR},
+  )
+  VOLKSWAGEN_ID3_MK1 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Volkswagen ID.3 2020-23")],
+    VolkswagenCarSpecs(mass=1935, wheelbase=2.77),
+    chassis_codes={"E1"},
+    wmis={WMI.VOLKSWAGEN_EUROPE_CAR},
+    model_years={"L", "M", "N", "P"},
+  )
+  VOLKSWAGEN_ID3_MK2 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Volkswagen ID.3 2024-25")],
+    VolkswagenCarSpecs(mass=1935, wheelbase=2.77),
+    chassis_codes={"E1"},
+    wmis={WMI.VOLKSWAGEN_EUROPE_CAR},
+    model_years={"R", "S"},
+    flags=VolkswagenFlags.MEB_GEN2,
+  )
+  VOLKSWAGEN_ID4_MK1 = VolkswagenMEBPlatformConfig(
+    [
+      VWCarDocs("Volkswagen ID.4 2021-23"),
+      VWCarDocs("Volkswagen ID.5 2022-23"),
+    ],
+    VolkswagenCarSpecs(mass=2224, wheelbase=2.77),
+    chassis_codes={"E2"},
+    wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR, WMI.VOLKSWAGEN_EUROPE_SUV},
+  )
+  VOLKSWAGEN_ID4_MK2 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Volkswagen ID.4 2024-25")],
+    VolkswagenCarSpecs(mass=2224, wheelbase=2.77),
+    chassis_codes={"E8"},
+    wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR, WMI.VOLKSWAGEN_EUROPE_SUV},
+    flags=VolkswagenFlags.MEB_GEN2,
   )
   VOLKSWAGEN_JETTA_MK6 = VolkswagenPQPlatformConfig(
     [VWCarDocs("Volkswagen Jetta 2015-18")],
@@ -441,6 +525,21 @@ class CAR(Platforms):
     chassis_codes={"8U", "F3", "FS"},
     wmis={WMI.AUDI_EUROPE_MPV, WMI.AUDI_GERMANY_CAR},
   )
+  AUDI_Q4_MK1 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Audi Q4 e-tron 2021-23")],
+    VolkswagenCarSpecs(mass=1965, wheelbase=2.764),
+    chassis_codes={"FZ"},
+    wmis={WMI.AUDI_EUROPE_MPV},
+    model_years={"M", "N", "P"},
+  )
+  AUDI_Q4_MK2 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Audi Q4 e-tron 2024-25")],
+    VolkswagenCarSpecs(mass=1965, wheelbase=2.764),
+    chassis_codes={"FZ"},
+    wmis={WMI.AUDI_EUROPE_MPV},
+    model_years={"R", "S"},
+    flags=VolkswagenFlags.MEB_GEN2,
+  )
   PORSCHE_MACAN_MK1 = VolkswagenMLBPlatformConfig(
     [VWCarDocs("Porsche Macan 2017-24")],
     VolkswagenCarSpecs(mass=1895, wheelbase=2.81, steerRatio=16.2),
@@ -456,6 +555,27 @@ class CAR(Platforms):
     VolkswagenCarSpecs(mass=1300, wheelbase=2.64),
     chassis_codes={"5F"},
     wmis={WMI.SEAT},
+  )
+  CUPRA_BORN_MK1 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("CUPRA Born 2021-23")],
+    VolkswagenCarSpecs(mass=1956, wheelbase=2.766, steerRatio=15.9),
+    chassis_codes={"K1"},
+    wmis={WMI.SEAT},
+  )
+  SKODA_ENYAQ_MK1 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Škoda Enyaq 2021-23")],
+    VolkswagenCarSpecs(mass=1965, wheelbase=2.77),
+    chassis_codes={"NY"},
+    model_years={"M", "N", "P"},
+    wmis={WMI.SKODA},
+  )
+  SKODA_ENYAQ_MK2 = VolkswagenMEBPlatformConfig(
+    [VWCarDocs("Škoda Enyaq 2024-25")],
+    VolkswagenCarSpecs(mass=1965, wheelbase=2.77),
+    chassis_codes={"NY"},
+    model_years={"R", "S"},
+    wmis={WMI.SKODA},
+    flags=VolkswagenFlags.MEB_GEN2,
   )
   SKODA_FABIA_MK4 = VolkswagenMQBPlatformConfig(
     [VWCarDocs("Škoda Fabia 2022-23", footnotes=[Footnote.VW_MQB_A0])],
@@ -515,6 +635,7 @@ def match_fw_to_car_fuzzy(live_fw_versions, vin, offline_fw_versions) -> set[str
   # https://www.clubvw.org.au/vwreference/vwvin
   vin_obj = Vin(vin)
   chassis_code = vin_obj.vds[3:5]
+  model_year = vin_obj.vis[0] if vin_obj.vis else ""
 
   for platform in CAR:
     valid_ecus = set()
@@ -535,6 +656,8 @@ def match_fw_to_car_fuzzy(live_fw_versions, vin, offline_fw_versions) -> set[str
       continue
 
     if vin_obj.wmi in platform.config.wmis and chassis_code in platform.config.chassis_codes:
+      if platform.config.flags & VolkswagenFlags.MEB and platform.config.model_years and model_year not in platform.config.model_years:
+        continue
       candidates.add(platform)
 
   return {str(c) for c in candidates}
@@ -582,6 +705,7 @@ FW_QUERY_CONFIG = FwQueryConfig(
   non_essential_ecus={Ecu.eps: list(CAR)},
   extra_ecus=[(Ecu.fwdCamera, 0x74f, None)],
   match_fw_to_car_fuzzy=match_fw_to_car_fuzzy,
+  fuzzy_only_platforms={car for car in CAR if car.config.flags & VolkswagenFlags.MEB},
 )
 
 DBC = CAR.create_dbc_map()

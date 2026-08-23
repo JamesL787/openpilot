@@ -29,6 +29,7 @@ _services: dict[str, tuple] = {
   "temperatureSensor": (True, 2., 200),
   "gpsNMEA": (True, 9.),
   "deviceState": (True, 2., 1),
+  "chestnutState": (True, 10., 10),
   "touch": (True, 20., 1),
   "can": (True, 100., 2053, QueueSize.BIG),  # decimation gives ~3 msgs in a full segment
   "controlsState": (True, 100., 10, QueueSize.MEDIUM),
@@ -85,6 +86,7 @@ _services: dict[str, tuple] = {
   "rawAudioData": (False, 20.),
   "bookmarkButton": (True, 0., 1),
   "audioFeedback": (True, 0., 1),
+  "visionSpeedLimitBookmark": (False, 0., 1),
   "roadEncodeData": (False, 20., None, QueueSize.BIG),
   "driverEncodeData": (False, 20., None, QueueSize.BIG),
   "wideRoadEncodeData": (False, 20., None, QueueSize.BIG),

@@ -32,7 +32,6 @@ THEME_KEY_CONFIG = {
 COLOR_PRESETS = ["Stock", "#FFFFFF", "#178644", "#3B82F6", "#E63956", "#8B5CF6", "#F59E0B"]
 CAMERA_VIEWS = ["Auto", "Driver", "Standard", "Wide"]
 
-# Mirrors starpilot/ui/qt/offroad/developer_panel.cc:200-218.
 # Keys are the int values stored in DeveloperSidebarMetric{1..7}; values are the
 # human-readable labels shown in both the row value and the picker dialog.
 DEVELOPER_SIDEBAR_METRIC_OPTIONS: dict[int, str] = {

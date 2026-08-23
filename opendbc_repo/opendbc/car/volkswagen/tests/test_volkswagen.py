@@ -3,7 +3,7 @@ import re
 
 from opendbc.car.structs import CarParams
 from opendbc.car.volkswagen.interface import CarInterface
-from opendbc.car.volkswagen.values import CAR, FW_QUERY_CONFIG, WMI
+from opendbc.car.volkswagen.values import CAR, FW_QUERY_CONFIG, WMI, VolkswagenFlags, VolkswagenSafetyFlags
 from opendbc.car.volkswagen.fingerprints import FW_VERSIONS
 
 Ecu = CarParams.Ecu
@@ -14,6 +14,52 @@ SPARE_PART_FW_PATTERN = re.compile(b'\xf1\x87(?P<gateway>[0-9][0-9A-Z]{2})(?P<un
 
 
 class TestVolkswagenPlatformConfigs:
+  MEB_CARS = {car for car in CAR if car.config.flags & VolkswagenFlags.MEB}
+
+  @staticmethod
+  def _get_meb_params(car, gateway=True, alpha_long=False):
+    fingerprint = {bus: {} for bus in range(8)}
+    if gateway:
+      fingerprint[1][0x13D] = 32
+    return CarInterface.get_params(car, fingerprint, [], alpha_long, False, False, None)
+
+  def test_meb_platform_params(self):
+    for car in self.MEB_CARS:
+      cp = self._get_meb_params(car)
+      assert cp.flags & VolkswagenFlags.MEB
+      assert cp.transmissionType == CarParams.TransmissionType.direct
+      assert cp.steerControlType == CarParams.SteerControlType.curvatureDEPRECATED
+      assert cp.steerAtStandstill
+      assert cp.safetyConfigs[-1].safetyModel == CarParams.SafetyModel.volkswagenMeb
+      assert not cp.dashcamOnly
+      assert not cp.radarUnavailable
+
+      has_gen2_crc = bool(cp.safetyConfigs[-1].safetyParam & VolkswagenSafetyFlags.MEB_ALT_CRC)
+      assert has_gen2_crc == bool(car.config.flags & VolkswagenFlags.MEB_GEN2)
+
+  def test_meb_camera_harness_is_passive(self):
+    cp = self._get_meb_params(CAR.VOLKSWAGEN_ID4_MK1, gateway=False, alpha_long=True)
+    assert cp.dashcamOnly
+    assert cp.radarUnavailable
+    assert not cp.alphaLongitudinalAvailable
+    assert not cp.openpilotLongitudinalControl
+    assert not (cp.safetyConfigs[-1].safetyParam & VolkswagenSafetyFlags.LONG_CONTROL)
+
+  def test_meb_docs_assume_required_gateway_harness(self):
+    fingerprint = {bus: {} for bus in range(8)}
+    cp = CarInterface.get_params(CAR.VOLKSWAGEN_ID4_MK1, fingerprint, [], True, False, True, None)
+
+    assert cp.networkLocation == CarParams.NetworkLocation.gateway
+    assert not cp.dashcamOnly
+    assert cp.alphaLongitudinalAvailable
+
+  def test_meb_gateway_longitudinal(self):
+    cp = self._get_meb_params(CAR.VOLKSWAGEN_ID4_MK1, gateway=True, alpha_long=True)
+    assert cp.alphaLongitudinalAvailable
+    assert cp.openpilotLongitudinalControl
+    assert not cp.pcmCruise
+    assert cp.safetyConfigs[-1].safetyParam & VolkswagenSafetyFlags.LONG_CONTROL
+
   def test_taos_longitudinal_actuator_delay(self):
     taos_cp = CarInterface.get_non_essential_params(CAR.VOLKSWAGEN_TAOS_MK1)
     golf_cp = CarInterface.get_non_essential_params(CAR.VOLKSWAGEN_GOLF_MK7)
@@ -37,32 +83,39 @@ class TestVolkswagenPlatformConfigs:
         assert all(CHASSIS_CODE_PATTERN.match(cc) for cc in
                    platform.config.chassis_codes), "Bad chassis codes"
 
-        # No two platforms should share chassis codes
+        # Shared MEB chassis codes are valid only when VIN model-year sets are disjoint.
         for comp in CAR:
           if platform == comp:
             continue
-          assert set() == platform.config.chassis_codes & comp.config.chassis_codes, \
-                           f"Shared chassis codes: {comp}"
+          shared_chassis = platform.config.chassis_codes & comp.config.chassis_codes
+          if shared_chassis:
+            both_meb = platform.config.flags & VolkswagenFlags.MEB and comp.config.flags & VolkswagenFlags.MEB
+            disjoint_years = (getattr(platform.config, "model_years", set()) and getattr(comp.config, "model_years", set()) and
+                              not platform.config.model_years & comp.config.model_years)
+            assert both_meb and disjoint_years, f"Shared chassis codes: {comp}"
 
   def test_custom_fuzzy_fingerprinting(self, subtests):
     all_radar_fw = list({fw for ecus in FW_VERSIONS.values() for fw in ecus[Ecu.fwdRadar, 0x757, None]})
 
     for platform in CAR:
       with subtests.test(platform=platform.name):
+        model_years = getattr(platform.config, "model_years", set()) or {"0"}
         for wmi in WMI:
           for chassis_code in platform.config.chassis_codes | {"00"}:
-            vin = ["0"] * 17
-            vin[0:3] = wmi
-            vin[6:8] = chassis_code
-            vin = "".join(vin)
+            for model_year in model_years:
+              vin = ["0"] * 17
+              vin[0:3] = wmi
+              vin[6:8] = chassis_code
+              vin[9] = model_year
+              vin = "".join(vin)
 
-            # Check a few FW cases - expected, unexpected
-            for radar_fw in random.sample(all_radar_fw, 5) + [b'\xf1\x875Q0907572G \xf1\x890571', b'\xf1\x877H9907572AA\xf1\x890396']:
-              should_match = ((wmi in platform.config.wmis and chassis_code in platform.config.chassis_codes) and
-                              radar_fw in all_radar_fw)
+              # Check a few FW cases - expected, unexpected
+              for radar_fw in random.sample(all_radar_fw, 5) + [b'\xf1\x875Q0907572G \xf1\x890571', b'\xf1\x877H9907572AA\xf1\x890396']:
+                should_match = ((wmi in platform.config.wmis and chassis_code in platform.config.chassis_codes) and
+                                radar_fw in all_radar_fw)
 
-              live_fws = {(0x757, None): [radar_fw]}
-              matches = FW_QUERY_CONFIG.match_fw_to_car_fuzzy(live_fws, vin, FW_VERSIONS)
+                live_fws = {(0x757, None): [radar_fw]}
+                matches = FW_QUERY_CONFIG.match_fw_to_car_fuzzy(live_fws, vin, FW_VERSIONS)
 
-              expected_matches = {platform} if should_match else set()
-              assert expected_matches == matches, "Bad match"
+                expected_matches = {platform} if should_match else set()
+                assert expected_matches == matches, "Bad match"

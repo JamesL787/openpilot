@@ -22,8 +22,9 @@ from openpilot.starpilot.common.model_versions import (
 )
 from openpilot.starpilot.common.starpilot_utilities import delete_file
 from openpilot.starpilot.common.starpilot_variables import MODELS_PATH
+from openpilot.system.hardware.usb import chestnut_firmware_ready
 
-MANIFEST_CANDIDATES = ("v23",)
+MANIFEST_CANDIDATES = ("v24",)
 MODEL_NAMESPACE_SUFFIX = "3"
 DEFAULT_MODEL_KEY = "rdf43"
 LOCAL_MODEL_PREFIX = "local-"
@@ -98,6 +99,14 @@ def load_model_artifact_metadata(model_key: str) -> dict:
 
 def model_uses_external_gpu(model_key: str) -> bool:
   return bool(load_model_artifact_metadata(model_key).get("uses_external_gpu", False))
+
+
+def external_gpu_available() -> bool:
+  """Return whether the supported external GPU link is ready for modeld."""
+  try:
+    return bool(chestnut_firmware_ready())
+  except Exception:
+    return False
 
 
 class ModelManager:
@@ -377,6 +386,8 @@ class ModelManager:
       canonical_key = self._canonical_model_key(model_key)
       if canonical_key in blacklisted_keys or canonical_key in seen_keys:
         continue
+      if model_uses_external_gpu(canonical_key) and not external_gpu_available():
+        continue
 
       model_version = version_map.get(model_key) or version_map.get(canonical_key) or ""
       if not model_version and is_builtin_model_key(canonical_key):
@@ -484,6 +495,13 @@ class ModelManager:
       return
 
     selected = self._selected_model()
+    if model_uses_external_gpu(selected) and not external_gpu_available():
+      default_name = self._default_param_text("DrivingModelName") or "Regret Driven Framework V4"
+      default_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or "v15"
+      self._set_model_param_keys(DEFAULT_MODEL_KEY, default_name, default_version)
+      print(f"Model {selected} requires an external GPU; selected built-in model instead.")
+      return
+
     if is_builtin_model_key(selected):
       self._sync_selected_model_version()
       return
@@ -673,6 +691,11 @@ class ModelManager:
       self.downloading_model = False
       return
 
+    if model_uses_external_gpu(model_to_download) and not external_gpu_available():
+      handle_error(None, "External GPU required...", "This model requires a detected external GPU.", MODEL_DOWNLOAD_PARAM, DOWNLOAD_PROGRESS_PARAM, self.params_memory)
+      self.downloading_model = False
+      return
+
     # Local models have no upstream URL; a download attempt would 404 and then
     # delete_file() the artifact on verification failure.
     if is_local_model_key(model_to_download):
@@ -785,6 +808,9 @@ class ModelManager:
         return
 
       if is_local_model_key(model_key):
+        continue
+
+      if model_uses_external_gpu(model_key) and not external_gpu_available():
         continue
 
       artifact_format = artifact_format_map.get(model_key, "")

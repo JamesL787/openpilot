@@ -74,10 +74,11 @@ def test_select_ui_uses_c4_for_mici_routes():
   assert onroad_config.select_ui_target(_init_data("mici")) == "c4"
 
 
-def test_select_ui_uses_old_qt_only_when_big_route_logged_use_old_ui():
+def test_select_ui_uses_c3_for_all_big_routes():
   assert onroad_config.select_ui_target(_init_data("tici", {"UseOldUI": b"1"})) == "c3"
-  assert onroad_config.select_ui_target(_init_data("tici", {"TryRaylibUI": b"0"})) == "raybig"
-  assert onroad_config.select_ui_target(_init_data("tizi")) == "raybig"
+  assert onroad_config.select_ui_target(_init_data("tici", {"TryRaylibUI": b"0"})) == "c3"
+  assert onroad_config.select_ui_target(_init_data("tizi")) == "c3"
+  assert onroad_config.select_ui_target(None) == "c3"
 
 
 def test_seed_onroad_params_uses_logged_disabled_bool_and_desktop_overrides(monkeypatch):
