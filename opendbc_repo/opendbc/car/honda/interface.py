@@ -50,10 +50,17 @@ class CarInterface(CarInterfaceBase):
       # default via NrdrBoschARadar: every other Bosch platform still has no parsed radar DBC and
       # keeps radarUnavailable=True regardless.
       # BoschLong's model-based longitudinal features (BLoTv2, Model Lead Trajectory) are built
-      # for radarless operation, so a real Bosch-A radar track overrides the toggle off.
+      # for radarless operation, so a real Bosch-A radar track overrides the toggle off. Check
+      # NrdrModelLeadTrajectory directly too, not just its BoschLong parent: the parent/child
+      # relationship is UI-only grouping, not enforcement -- the two params persist independently,
+      # and _model_lead_trajectory_active() in longitudinal_planner.py activates MLT off
+      # NrdrModelLeadTrajectory alone. A device with BoschLong off but NrdrModelLeadTrajectory on
+      # would otherwise run MLT and the radar tryout at the same time, which is exactly the
+      # radar/radarless conflict this gate exists to prevent.
       try:
         params = Params()
-        bosch_a_radar_tryout = params.get_bool("NrdrBoschARadar") and not params.get_bool("BoschLong")
+        bosch_long_features_active = params.get_bool("BoschLong") or params.get_bool("NrdrModelLeadTrajectory")
+        bosch_a_radar_tryout = params.get_bool("NrdrBoschARadar") and not bosch_long_features_active
       except UnknownKeyName:
         bosch_a_radar_tryout = False
       ret.radarUnavailable = not (candidate in HONDA_BOSCH_A and bosch_a_radar_tryout)
