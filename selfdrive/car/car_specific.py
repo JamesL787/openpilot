@@ -77,7 +77,6 @@ class CarSpecificEvents:
     self.rivian_angle_params = None
     if self.rivian:
       try:
-        from openpilot.common.params import Params
         self.rivian_status_params = Params(memory=True)
         if self.rivian_angle_harness:
           self.rivian_angle_params = self.rivian_status_params
