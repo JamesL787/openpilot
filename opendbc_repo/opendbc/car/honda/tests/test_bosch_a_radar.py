@@ -15,6 +15,7 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_DIRECT_VREL_INVALID,
   BOSCH_A_DIRECT_VREL_MAX_RAW,
   BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW,
+  BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS,
   BOSCH_A_FREQ_HZ,
   BOSCH_A_MAIN_IDS,
   BOSCH_A_NUM_SLOTS,
@@ -335,7 +336,8 @@ class TestRangeAzimuth:
     ri = make_radar_interface()
     raw_range = 1000
     ri.update(sweep(0, 0, 0x7, raw_range, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, raw_range, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, raw_range, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].dRel == pytest.approx(0.05712 * raw_range - 3.0)
 
   def test_range_invalid_sentinel_0xfff(self):
@@ -351,7 +353,8 @@ class TestRangeAzimuth:
   def test_yrel_sign_right_of_center_is_negative(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024 - 100, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 - 100, 3, 50_000_000))  # raw_angle < center -> right of center
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 - 100, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))  # raw_angle < center -> right of center
     d = 0.05712 * 1000 - 3.0
     expected_y = d * math.tan(-100.0 / 2048.0)
     assert rr.points[0].yRel == pytest.approx(expected_y)
@@ -360,13 +363,15 @@ class TestRangeAzimuth:
   def test_yrel_sign_left_of_center_is_positive(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024 + 100, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 + 100, 3, 50_000_000))  # raw_angle > center -> left of center
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 + 100, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))  # raw_angle > center -> left of center
     assert rr.points[0].yRel > 0
 
   def test_yrel_zero_on_boresight(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].yRel == pytest.approx(0.0, abs=1e-9)
 
 
@@ -413,19 +418,19 @@ class TestObjectValid:
     rr = ri.update([(50_000_000, frames)])
     assert len(rr.points) == 0
 
-    rr = ri.update(sweep(0, 2, 0x7, 1020, 1024, 5, 100_000_000))
+    rr = ri.update(sweep(0, 2, 0x7, 1020, 1024, 5, 100_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert len(rr.points) == 1
     assert math.isfinite(rr.points[0].vRel)
 
-  def test_second_same_incarnation_sample_emits_finite_derivative(self):
+  def test_second_same_incarnation_sample_without_u11_or_ratio_does_not_publish(self):
+    # Neither native U11 nor the ratio field is available on either sample (no aux at all). The raw
+    # one-sweep range derivative that would previously have matured into a measured=True point is now
+    # never published: with no prior trusted velocity to coast, the point is withheld entirely.
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
-    assert len(rr.points) == 1
-    assert math.isfinite(rr.points[0].vRel)
-    assert rr.points[0].measured is True
-    assert math.isnan(rr.points[0].aRel)
-    assert math.isnan(rr.points[0].yvRel)
+    assert len(rr.points) == 0
 
 
 # --- 5. lifecycle continuity ---------------------------------------------------------------------------
@@ -434,60 +439,72 @@ class TestLifecycle:
   def test_normal_plus_2_continuity_keeps_trackid(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     t0 = rr.points[0].trackId
-    rr = ri.update(sweep(0, 2, 0x7, 1020, 1024, 5, 100_000_000))
+    rr = ri.update(sweep(0, 2, 0x7, 1020, 1024, 5, 100_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].trackId == t0
 
   def test_continuity_across_dropped_sweeps(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     t0 = rr.points[0].trackId
     # 3 sweeps missed: frame_idx jumps from 0 to 4, life must jump by 2*4=8 to stay the same incarnation
-    rr = ri.update(sweep(0, 4, 0x7, 1040, 1024, 9, 200_000_000))
+    rr = ri.update(sweep(0, 4, 0x7, 1040, 1024, 9, 200_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].trackId == t0
 
   def test_frame_idx_wraps_mod_16(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 14, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 15, 0x7, 1005, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 15, 0x7, 1005, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     t0 = rr.points[0].trackId
     # frame_idx wraps 14 -> 1 (delta = (1-14)&0xF = 3), life must advance by 6
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 7, 150_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 7, 150_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].trackId == t0
 
   def test_life_wraps_mod_4096_stays_same_incarnation(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 14, 0x7, 1000, 1024, 4094, 0))
-    rr = ri.update(sweep(0, 15, 0x7, 1005, 1024, 0, 50_000_000))
+    rr = ri.update(sweep(0, 15, 0x7, 1005, 1024, 0, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     t0 = rr.points[0].trackId
     # frame_idx 14 -> 0 (delta=2), life 4094 -> 2 ((2-4094)&0xFFF == 4 == 2*2)
-    rr = ri.update(sweep(0, 0, 0x7, 1010, 1024, 2, 100_000_000))
+    rr = ri.update(sweep(0, 0, 0x7, 1010, 1024, 2, 100_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].trackId == t0
 
   def test_in_place_replacement_no_invalid_gap_resets_history_but_keeps_can_id(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     t0 = rr.points[0].trackId
     # frame_idx advances normally (+1) but life jumps by an unrelated odd amount -> NOT +2*frame_delta
     rr = ri.update(sweep(0, 2, 0x7, 50, 1024, 7, 100_000_000))
     assert len(rr.points) == 0  # replacement birth sample is withheld
-    rr = ri.update(sweep(0, 3, 0x7, 50, 1024, 9, 150_000_000))
+    rr = ri.update(sweep(0, 3, 0x7, 50, 1024, 9, 150_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert len(rr.points) == 1
     assert rr.points[0].trackId == t0
 
   def test_replacement_does_not_assume_life_restarts_at_1_3_5(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     t0 = rr.points[0].trackId
     # a "replacement" that happens to restart life at a big/even value must still be treated as a
     # replacement (not death) because it fails the frame/life identity, regardless of the new value's parity
     rr = ri.update(sweep(0, 2, 0x7, 50, 1024, 4000, 100_000_000))
     assert len(rr.points) == 0  # replacement birth sample is withheld
-    rr = ri.update(sweep(0, 3, 0x7, 50, 1024, 4002, 150_000_000))
+    rr = ri.update(sweep(0, 3, 0x7, 50, 1024, 4002, 150_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].trackId == t0
     assert rr.points[0].vRel == 0.0
     assert len(rr.points) == 1
@@ -495,13 +512,15 @@ class TestLifecycle:
   def test_death_then_rebirth_reuses_can_id_with_clean_history(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     t0 = rr.points[0].trackId
     rr = ri.update(sweep(0, 1, 0xF, 1000, 1024, 3, 50_000_000))  # death
     assert len(rr.points) == 0
     rr = ri.update(sweep(0, 2, 0x7, 1000, 1024, 1, 100_000_000))  # rebirth, first sample withheld
     assert len(rr.points) == 0
-    rr = ri.update(sweep(0, 3, 0x7, 1000, 1024, 3, 150_000_000))
+    rr = ri.update(sweep(0, 3, 0x7, 1000, 1024, 3, 150_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert len(rr.points) == 1
     assert rr.points[0].trackId == t0
 
@@ -517,7 +536,8 @@ def test_trackid_comes_from_can_and_is_not_synthetic():
     can_track_id = i + 1
     ri.update(sweep(0, frame_idx, 0x7, 1000, 1024, 1, t, track_id=can_track_id))
     t += 50_000_000
-    rr = ri.update(sweep(0, (frame_idx + 1) % 16, 0x7, 1000, 1024, 3, t, track_id=can_track_id))
+    rr = ri.update(sweep(0, (frame_idx + 1) % 16, 0x7, 1000, 1024, 3, t, track_id=can_track_id,
+                         with_aux=True, direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     t += 50_000_000
     assert can_track_id in {point.trackId for point in rr.points}
     seen_ids.add(can_track_id)
@@ -555,14 +575,18 @@ class TestVrel:
     assert len(rr.points) == 0
     assert len(ri._tracks[1].samples) == 1
 
-  def test_fast_clean_range_rate_is_not_rejected_by_old_ols_cap(self):
+  def test_fast_clean_range_rate_without_u11_or_ratio_withholds_rather_than_synthesizes(self):
+    # This range rate (~-46 m/s) is well outside native U11's representable domain ([-13.5, 13.5]
+    # m/s), so it can only ever have come from the raw one-sweep derivative -- which is exactly the
+    # synthesized-measurement hazard this fix closes. With no aux at all (no U11, no ratio) and no
+    # prior trusted velocity to coast, the point is correctly withheld rather than published at a
+    # fabricated, out-of-band rate.
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, with_aux=False))
     ri.update(sweep(0, 1, 0x7, 1945, 1024, 3, 70_000_000, with_aux=False))
     rr = ri.update(sweep(0, 2, 0x7, 1889, 1024, 5, 140_000_000, with_aux=False))
-    assert len(rr.points) == 1
-    assert rr.points[0].vRel == pytest.approx((1889 - 1945) * BOSCH_A_RANGE_SCALE_M / 0.07)
-    assert len(ri._tracks[1].samples) == 3
+    assert len(rr.points) == 0
+    assert len(ri._tracks[1].samples) == 1  # only the birth sample; later cycles coast, not append
 
   def test_high_u10_live_vrel_coasts_recent_trusted_motion(self):
     ri = make_radar_interface()
@@ -645,32 +669,43 @@ class TestVrel:
   def test_decreasing_range_gives_negative_vrel(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=800, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].vRel < 0
 
   def test_increasing_range_gives_positive_vrel(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=928, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].vRel > 0
 
-  def test_vrel_magnitude_two_sample(self):
+  def test_vrel_reflects_native_u11_not_raw_range_derivative(self):
+    # The raw one-sweep (dRel-previous_range)/dt derivative is no longer an authoritative vRel source
+    # (see TestFallbackNeverPublishes below) -- confirm the published value tracks native U11 exactly,
+    # not the range-implied rate, even when the two would clearly disagree.
     ri = make_radar_interface()
-    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     d1 = 0.05712 * 1000 - 3.0
     d2 = 0.05712 * 1010 - 3.0
-    assert rr.points[0].vRel == pytest.approx((d2 - d1) / 0.05)
+    range_implied_vrel = (d2 - d1) / 0.05
+    assert range_implied_vrel != pytest.approx(0.0)
+    assert rr.points[0].vRel == pytest.approx(0.0)  # native U11 (864 -> 0 m/s), not the range rate
 
   def test_incarnation_does_not_carry_velocity_across_lifecycle_break(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0))
-    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000))
+    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000, with_aux=True,
+                        direct_vrel_raw=800, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].vRel < 0
     # replacement: life breaks identity -> fresh incarnation; its first sample is withheld.
     rr = ri.update(sweep(0, 2, 0x7, 500, 1024, 99, 100_000_000))
     assert len(rr.points) == 0
-    rr = ri.update(sweep(0, 3, 0x7, 500, 1024, 101, 150_000_000))
+    rr = ri.update(sweep(0, 3, 0x7, 500, 1024, 101, 150_000_000, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].vRel == 0.0
 
   def test_discontinuous_range_coasts_last_accepted_point_unmeasured(self):
@@ -717,6 +752,72 @@ class TestVrel:
     assert ri._tracks[23].samples[-1][1] == pytest.approx(8.30976)
 
 
+# --- 7b. residual vRel-authority fix: raw one-sweep fallback never becomes a published measurement ----
+# (U11 genuinely unavailable -- sentinel/out-of-range -- is a different path than the high-u10-but-live
+# case above; see radar_interface.py's u11_and_ratio_unavailable branch.)
+
+class TestFallbackNeverPublishes:
+  def test_invalid_u11_and_ratio_with_trusted_history_coasts_not_derivative(self):
+    """TEST 1: invalid U11 + unusable ratio + a recent trusted velocity on record. A large range jump
+    that would imply a big closing velocity via the raw derivative must not reach vRel/measured/KF --
+    it should coast the trusted value instead."""
+    ri = make_radar_interface()
+    # Establish trust: two qualified-U11 samples at a steady range.
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
+    assert rr.points[0].measured is True
+    assert rr.points[0].vRel == pytest.approx(0.0)
+
+    # Third sweep: U11 sentinel (unavailable), ratio invalid, and a range jump that -- via the raw
+    # (dRel-previous_range)/dt derivative -- would imply a closing velocity of about -17 m/s over 50ms.
+    # Deliberately kept under the 50 m/s generic range-rejection ceiling so this exercises the new
+    # u11_and_ratio_unavailable coast path specifically, not the pre-existing range_rejected path.
+    rr = ri.update(sweep(0, 2, 0x7, 985, 1024, 5, 100_000_000, with_aux=True,
+                         direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID, direct_vrel_uncertainty_raw=0,
+                         rawca=BOSCH_A_RANGE_RATIO_INVALID))
+    implied_fallback_vrel = (985 - 1000) * BOSCH_A_RANGE_SCALE_M / 0.05
+    assert implied_fallback_vrel == pytest.approx(-17.136)  # confirms the setup would poison, if reached
+    assert abs(implied_fallback_vrel) < BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS  # and clears range_rejected
+    assert len(rr.points) == 1
+    assert rr.points[0].measured is False
+    assert rr.points[0].vRel == pytest.approx(0.0)  # coasted trusted value, not the -17 m/s derivative
+    # The KF-facing measurement update never happened: last_trusted_vrel/age is untouched by this cycle.
+    assert ri._tracks[1].last_trusted_vrel == pytest.approx(0.0)
+    assert ri._tracks[1].last_trusted_vrel_nanos == 50_000_000
+
+  def test_invalid_u11_and_ratio_without_trusted_history_withholds_point(self):
+    """TEST 2: invalid U11 + unusable ratio + no prior trusted velocity. No fabricated point."""
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID, direct_vrel_uncertainty_raw=0))
+    rr = ri.update(sweep(0, 1, 0x7, 985, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID, direct_vrel_uncertainty_raw=0,
+                         rawca=BOSCH_A_RANGE_RATIO_INVALID))
+    assert len(rr.points) == 0
+
+  def test_invalid_u11_with_valid_ratio_still_publishes_via_ratio(self):
+    """TEST 3: invalid U11 + a valid ratio field. Untouched by this fix -- still publishes via
+    ratio_vrel, exactly as before. rawca=520 is chosen so the ratio-implied residual (~1.08m) clears
+    innovation checking, so this exercises the ratio_vrel publish path and not range_rejected."""
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID, direct_vrel_uncertainty_raw=0,
+                    rawca=500))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID, direct_vrel_uncertainty_raw=0,
+                         rawca=520))
+    d = 0.05712 * 1000 - 3.0
+    ratio = 0.5 + 0.001 * 520
+    residual = abs(d - d * ratio)
+    assert residual < 2.0  # clears innovation checking regardless of degraded status
+    assert len(rr.points) == 1
+    assert rr.points[0].measured is True
+    expected = d * (1.0 - ratio) / 0.05
+    assert rr.points[0].vRel == pytest.approx(expected)
+
+
 # --- 8. auxiliary tag join: enrichment only, never gates validity -------------------------------------
 
 class TestAuxiliary:
@@ -727,19 +828,37 @@ class TestAuxiliary:
     assert st.logical_00c9_raw == 123
     assert st.logical_00ca_raw == 456
 
-  def test_aux_mismatched_cycle_not_attached_but_point_still_emitted(self):
+  def test_aux_mismatched_cycle_not_attached_and_point_withheld_without_vrel_source(self):
+    # A mismatched aux frame_idx means the AUX payload (U11, ratio, and the c9/ca enrichment fields)
+    # is never attached for that cycle -- it's as if aux were absent. With no vRel source and no prior
+    # trusted velocity, the point is correctly withheld rather than synthesized from the range alone.
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True, aux_frame_idx=5, rawc9=123, rawca=456))
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True, aux_frame_idx=5, rawc9=123, rawca=456))
-    assert len(rr.points) == 1  # point emitted regardless of aux mismatch
+    assert len(rr.points) == 0
     st = ri._slots[0]
     assert math.isnan(st.logical_00c9_raw) and math.isnan(st.logical_00ca_raw)  # never attached
 
-  def test_aux_absent_does_not_suppress_point(self):
+  def test_aux_absent_without_trust_withholds_point(self):
+    # Aux absence alone no longer implies "fall back to the raw range derivative" -- with no U11, no
+    # ratio, and no prior trusted velocity to coast, the point is withheld rather than fabricated.
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=False))
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=False))
+    assert len(rr.points) == 0
+
+  def test_aux_absent_does_not_suppress_point_once_trust_is_established(self):
+    # A subsequent aux-absent sweep does NOT suppress a point once a recent trusted velocity exists --
+    # it coasts that trusted value (measured=False) rather than withholding the point outright.
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
+    ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
+              direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
+    rr = ri.update(sweep(0, 2, 0x7, 1000, 1024, 5, 100_000_000, with_aux=False))
     assert len(rr.points) == 1
+    assert rr.points[0].vRel == pytest.approx(0.0)
+    assert rr.points[0].measured is False
 
   def test_aux_param_invalid_sentinel(self):
     ri = make_radar_interface()
@@ -762,7 +881,8 @@ class TestAuxiliary:
 def test_incomplete_main_frame_set_leaves_existing_point_untouched():
   ri = make_radar_interface()
   ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-  rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+  rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                       direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
   assert len(rr.points) == 1
   t0 = rr.points[0].trackId
 
@@ -783,7 +903,8 @@ def test_incomplete_main_frame_set_leaves_existing_point_untouched():
 def test_incoherent_frame_index_across_main_frames_is_skipped():
   ri = make_radar_interface()
   ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-  rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+  rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                       direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
   t0 = rr.points[0].trackId
 
   f0, f1, f2, f3 = BOSCH_A_MAIN_IDS[0]
@@ -805,7 +926,8 @@ def test_incoherent_frame_index_across_main_frames_is_skipped():
 def test_stale_bus_clears_points_and_flags_temporary_unavailable():
   ri = make_radar_interface()
   ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
-  rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000))
+  rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                       direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
   assert len(rr.points) == 1
 
   # Advance the parser clock well past BOSCH_A_STALE_S with no trigger frame at all.
@@ -839,7 +961,8 @@ class TestPersistentCanIdentity:
   def test_same_slot_same_can_identity_is_stable(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, track_id=42))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=42))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=42, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert len(rr.points) == 1
     assert rr.points[0].trackId == 42
     assert set(ri._tracks) == {42}
@@ -847,7 +970,8 @@ class TestPersistentCanIdentity:
   def test_slot_migration_preserves_identity_and_ols_history(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, track_id=23))
-    rr = ri.update(sweep(1, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=23))
+    rr = ri.update(sweep(1, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=23, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert len(rr.points) == 1
     assert rr.points[0].trackId == 23
     assert len(ri._tracks[23].samples) == 2
@@ -856,8 +980,10 @@ class TestPersistentCanIdentity:
   def test_slot_zero_one_zero_keeps_one_logical_track(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, track_id=17))
-    ri.update(sweep(1, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=17))
-    rr = ri.update(sweep(0, 2, 0x7, 1020, 1024, 5, 100_000_000, track_id=17))
+    ri.update(sweep(1, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=17, with_aux=True,
+                    direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
+    rr = ri.update(sweep(0, 2, 0x7, 1020, 1024, 5, 100_000_000, track_id=17, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert len(rr.points) == 1
     assert [point.trackId for point in rr.points] == [17]
     assert len(ri._tracks) == 1
@@ -867,7 +993,8 @@ class TestPersistentCanIdentity:
   def test_same_slot_replacement_preserves_returning_identity_history(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, track_id=2))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=2))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, track_id=2, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert [point.trackId for point in rr.points] == [2]
     assert len(ri._tracks[2].samples) == 2
 
@@ -880,7 +1007,8 @@ class TestPersistentCanIdentity:
     assert len(rr.points) == 0
     assert 2 not in ri.pts
 
-    rr = ri.update(sweep(0, 3, 0x7, 1020, 1024, 7, 150_000_000, track_id=2))
+    rr = ri.update(sweep(0, 3, 0x7, 1020, 1024, 7, 150_000_000, track_id=2, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert [point.trackId for point in rr.points] == [2]
     assert len(ri._tracks[2].samples) == 3
     assert math.isfinite(rr.points[0].vRel)
@@ -889,9 +1017,12 @@ class TestPersistentCanIdentity:
     ri = make_radar_interface()
     first_extra = make_main_frames(1, 0, 0x7, 1400, 1024, 11, track_id=22)
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, extra_slots=first_extra, track_id=11))
-    second_extra = make_main_frames(1, 1, 0x7, 1410, 1024, 13, track_id=22)
+    second_extra = make_main_frames(1, 1, 0x7, 1410, 1024, 13, track_id=22) + [
+      CanData(BOSCH_A_AUX_IDS[1], make_aux(1, direct_vrel_raw=864, direct_vrel_uncertainty_raw=0), BUS),
+    ]
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000,
-                         extra_slots=second_extra, track_id=11))
+                         extra_slots=second_extra, track_id=11, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert {point.trackId for point in rr.points} == {11, 22}
     assert len(rr.points) == 2
 
@@ -905,13 +1036,15 @@ class TestPersistentCanIdentity:
   def test_track_id_reuse_after_death_starts_with_clean_history(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, track_id=9))
-    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000, track_id=9))
+    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000, track_id=9, with_aux=True,
+                        direct_vrel_raw=800, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].trackId == 9
     rr = ri.update(sweep(0, 2, 0xF, 1900, 1024, 5, 100_000_000, track_id=9))
     assert len(rr.points) == 0
     rr = ri.update(sweep(0, 3, 0x7, 1000, 1024, 1, 150_000_000, track_id=9))
     assert len(rr.points) == 0
-    rr = ri.update(sweep(0, 4, 0x7, 1000, 1024, 3, 200_000_000, track_id=9))
+    rr = ri.update(sweep(0, 4, 0x7, 1000, 1024, 3, 200_000_000, track_id=9, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert len(rr.points) == 1
     assert rr.points[0].trackId == 9
     assert rr.points[0].vRel == 0.0
@@ -919,11 +1052,13 @@ class TestPersistentCanIdentity:
   def test_lifecycle_discontinuity_keeps_can_id_but_clears_derivative(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, track_id=31))
-    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000, track_id=31))
+    rr = ri.update(sweep(0, 1, 0x7, 1990, 1024, 3, 50_000_000, track_id=31, with_aux=True,
+                        direct_vrel_raw=800, direct_vrel_uncertainty_raw=0))
     assert rr.points[0].vRel < 0
     rr = ri.update(sweep(0, 2, 0x7, 500, 1024, 99, 100_000_000, track_id=31))
     assert len(rr.points) == 0
-    rr = ri.update(sweep(0, 3, 0x7, 500, 1024, 101, 150_000_000, track_id=31))
+    rr = ri.update(sweep(0, 3, 0x7, 500, 1024, 101, 150_000_000, track_id=31, with_aux=True,
+                        direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     assert len(rr.points) == 1
     assert rr.points[0].trackId == 31
     assert rr.points[0].vRel == 0.0

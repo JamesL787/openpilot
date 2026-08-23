@@ -543,21 +543,54 @@ class RadarInterface(RadarInterfaceBase):
         self._slot_track_ids[slot] = track_id
         continue
 
+      # Native U11 is unavailable here (sentinel/out-of-range -- the high-u10-but-live case above
+      # already returned before this point) and the range-ratio field is unusable or degraded too.
+      # The remaining option is the raw one-sweep (dRel-previous_range)/dt derivative, which is
+      # structurally the same hazard the high-u10 case guards against: a synthesized rate becoming an
+      # authoritative measurement. Coast a recent trusted velocity instead, on the same terms as above,
+      # rather than publish it.
+      # A true birth observation (no previous accepted range yet) can never mature into a published
+      # point this cycle regardless of vRel source -- `matured` below requires a second sample -- so
+      # only intercept once a fallback derivative would actually have something to poison.
+      u11_and_ratio_unavailable = (direct_vrel is None and (ratio_vrel is None or degraded) and
+                                   previous_sample is not None)
+      if u11_and_ratio_unavailable:
+        trusted_fresh = (track.last_trusted_vrel is not None and track.last_trusted_vrel_nanos is not None and
+                         (now - track.last_trusted_vrel_nanos) * 1e-9 <= BOSCH_A_STALE_S)
+        if trusted_fresh:
+          point = self.pts.get(track_id)
+          if point is not None:
+            point.dRel = dRel
+            point.yRel = yRel
+            point.vRel = track.last_trusted_vrel
+            point.measured = False
+        else:
+          track.last_trusted_vrel = None
+          track.last_trusted_vrel_nanos = None
+          self.pts.pop(track_id, None)
+
+        # Do not let a coast-only range observation become a future derivative baseline.
+        track.prev_frame_idx = idx0
+        track.prev_life = life
+        track.last_seen_nanos = now
+        track.wire_slot = slot
+        for old_slot, old_id in enumerate(self._slot_track_ids):
+          if old_slot != slot and old_id == track_id:
+            self._slot_track_ids[old_slot] = None
+        self._slot_track_ids[slot] = track_id
+        continue
+
       track.samples.append((now_s, dRel))
       sample_count = len(track.samples)
 
-      # Prefer qualified native U11. A healthy range ratio is the second source; otherwise use only
-      # the adjacent derivative between accepted ranges. Do not extend U11 saturation rails with the
-      # ratio yet: capture validation improves the negative rail but regresses the positive rail.
+      # Prefer qualified native U11; otherwise the range-ratio field. The raw one-sweep derivative is
+      # never published as a measurement -- see the coast/drop branch above, which intercepts before
+      # this point whenever neither native U11 nor the ratio field is usable.
       if direct_vrel is not None:
         vRel = direct_vrel
-        trustworthy_vrel = True
-      elif ratio_vrel is not None and not degraded:
-        vRel = ratio_vrel
-        trustworthy_vrel = True
       else:
-        vRel = fallback_vrel
-        trustworthy_vrel = False
+        vRel = ratio_vrel
+      trustworthy_vrel = True
 
       # A birth observation has no range-rate yet. Keep it as history, but do not publish a RadarPoint
       # until a second coherent observation of the same CAN identity supplies a finite derivative.
