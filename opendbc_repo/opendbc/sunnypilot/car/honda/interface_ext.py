@@ -39,7 +39,7 @@ def _use_bosch_a_radar(candidate, docs: bool) -> bool:
   if docs:
     return False
   try:
-    return Params().get_bool("NrdrBoschARadar")
+    return Params().get_bool("HondaBoschARadar")
   except UnknownKeyName:
     return False
 

@@ -392,7 +392,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HondaStoppingDecelRateLong", {PERSISTENT | BACKUP, FLOAT, "0.3"}},
     {"HondaVEgoStopping", {PERSISTENT | BACKUP, FLOAT, "0.5"}},
     {"HondaVEgoStarting", {PERSISTENT | BACKUP, FLOAT, "0.5"}},
-    {"NrdrBoschARadar", {PERSISTENT | BACKUP, BOOL, "1"}},
+    {"HondaBoschARadar", {PERSISTENT | BACKUP, BOOL, "1"}},
 
     // Torque lateral control custom params
     {"CustomTorqueParams", {PERSISTENT | BACKUP , BOOL}},

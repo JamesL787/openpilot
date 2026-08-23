@@ -201,7 +201,7 @@ class LongitudinalTuningLayout(Widget):
     )
 
     self._radar_tryout = toggle_item_sp(
-      param="NrdrBoschARadar",
+      param="HondaBoschARadar",
       title=lambda: tr("Try Honda Bosch-A Radar (Default: ON)"),
       description=lambda: tr(
         "EXPERIMENTAL - Honda Bosch-A radar. When ON, openpilot reads the factory Bosch radar's 16-slot object bank and treats this car " +
