@@ -29,8 +29,6 @@ SEND_RAW_PRED = os.getenv("SEND_RAW_PRED")
 MODELS_DIR = Path(__file__).parent / "models"
 MODEL_PKL_PATH = MODELS_DIR / "dmonitoring_model_tinygrad.pkl"
 METADATA_PATH = MODELS_DIR / "dmonitoring_model_metadata.pkl"
-
-
 class ModelState:
   def __init__(self, cam_w: int, cam_h: int):
     self.device = get_tg_input_devices(PROCESS_NAME, usbgpu=False)["DEV"]
@@ -156,6 +154,7 @@ def main():
     buf = vipc_client.recv()
     if buf is None:
       continue
+
     if model_transform is None:
       camera = _os_fisheye if buf.width == _os_fisheye.width else _ar_ox_fisheye
       model_transform = np.linalg.inv(

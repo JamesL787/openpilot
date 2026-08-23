@@ -203,6 +203,6 @@ Compilation validates JIT capture/replay, pickle round-trip, finite outputs, met
 2. Confirm `modeld` stays running.
 3. Confirm finite `modelV2` path, lane-line, lead, pose, and action data.
 4. Confirm `driverStateV2` on both supported camera resolutions.
-5. Test download, selection, deletion, randomization, migration, and fallback in QT, raylib/mici, and Galaxy.
+5. Test download, selection, deletion, randomization, migration, and fallback in both device UIs and Galaxy.
 
 The built-in RDF artifact is `selfdrive/modeld/models/driving_tinygrad.pkl`. If migration cannot download the selected v23 artifact, StarPilot switches to that built-in model.

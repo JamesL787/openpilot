@@ -141,7 +141,7 @@ void main() {
 DEFAULT_TEXT_SIZE = 60
 DEFAULT_TEXT_COLOR = rl.Color(255, 255, 255, int(255 * 0.9))
 
-# Qt draws fonts accounting for ascent/descent differently, so compensate to match old styles
+# Compensate for ascent/descent so migrated layouts keep their established alignment.
 # The real scales for the fonts below range from 1.212 to 1.266
 FONT_SCALE = 1.242 if BIG_UI else 1.16
 
@@ -155,6 +155,7 @@ class FontWeight(StrEnum):
   BOLD = "Inter-Bold.fnt"
   SEMI_BOLD = "Inter-SemiBold.fnt"
   UNIFONT = "unifont.fnt"
+  BRAND = "como-heavy.fnt"
 
   # Small UI fonts
   DISPLAY_REGULAR = "Inter-Regular.fnt"
@@ -165,6 +166,11 @@ class FontWeight(StrEnum):
 def font_fallback(font: rl.Font) -> rl.Font:
   """Fall back to unifont for languages that require it."""
   if multilang.requires_unifont():
+    try:
+      if font.texture.id == gui_app.font(FontWeight.BRAND).texture.id:
+        return font
+    except (AttributeError, KeyError):
+      pass
     return gui_app.font(FontWeight.UNIFONT)
   return font
 
@@ -624,7 +630,7 @@ class GuiApplication:
       self._render_texture_width = max(1, int(round(self._scaled_width * self._pixel_scale_x)))
       self._render_texture_height = max(1, int(round(self._scaled_height * self._pixel_scale_y)))
 
-      # Keep raybig burn-in movement in final-frame composition. Translating the live EGL
+      # Keep big-UI burn-in movement in final-frame composition. Translating the live EGL
       # camera/widget pass can corrupt the camera presentation instead of shifting the UI.
       needs_render_texture = ((self._scale != 1.0 and not PC) or BURN_IN_MODE or RECORD or
                               MICI_FORCE_RENDER_TEXTURE or
@@ -1199,7 +1205,7 @@ class GuiApplication:
     rl.gui_set_style(rl.GuiControl.DEFAULT, rl.GuiControlProperty.BASE_COLOR_NORMAL, rl.color_to_int(rl.Color(50, 50, 50, 255)))
 
   def _patch_text_functions(self):
-    # Wrap pyray text APIs to apply a global text size scale so our px sizes match Qt
+    # Wrap pyray text APIs to apply a global text size scale.
     if not hasattr(rl, "_orig_draw_text_ex"):
       rl._orig_draw_text_ex = rl.draw_text_ex
 

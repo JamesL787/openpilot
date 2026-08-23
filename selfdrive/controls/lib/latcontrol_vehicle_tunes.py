@@ -73,6 +73,9 @@ BOLT_2017_CARS = (
   GM_CAR.CHEVROLET_BOLT_CC_2017,
 )
 BOLT_CARS = BOLT_2022_2023_CARS + BOLT_2018_2021_CARS + BOLT_2017_CARS
+HONDA_ACCORD_STEER_RATIO_SCALE = 14.0 / 16.33
+HONDA_ACCORD_TORQUE_KP = 0.8
+HONDA_ACCORD_TORQUE_KI = 0.15
 VOLT_STANDARD_CARS = (
   GM_CAR.CHEVROLET_VOLT,
   GM_CAR.CHEVROLET_VOLT_2019,
@@ -166,6 +169,7 @@ KONA_NON_SCC_CARS = (
 )
 PRIUS_CARS = (
   TOYOTA_CAR.TOYOTA_PRIUS,
+  TOYOTA_CAR.TOYOTA_PRIUS_RETROFIT,
 )
 
 CAMRY_CARS = (
@@ -180,6 +184,14 @@ SIENNA_4TH_GEN_CARS = (
   TOYOTA_CAR.TOYOTA_SIENNA_4TH_GEN,
 )
 
+TOYOTA_HIGHLANDER_TSS2_CARS = (
+  TOYOTA_CAR.TOYOTA_HIGHLANDER_TSS2,
+)
+
+TOYOTA_COROLLA_TSS2_CARS = (
+  TOYOTA_CAR.TOYOTA_COROLLA_TSS2,
+)
+
 LEXUS_IS_CARS = (
   TOYOTA_CAR.LEXUS_IS,
 )
@@ -192,7 +204,7 @@ RAM_1500_CARS = (
   CHRYSLER_CAR.RAM_1500_5TH_GEN,
 )
 
-RAM_1500_BASE_LAT_ACCEL_FACTOR_MULT = 1.20
+RAM_1500_BASE_LAT_ACCEL_FACTOR_MULT = 1.0
 
 GENESIS_GV70_FRICTION_THRESHOLD_GAIN = 0.12
 GENESIS_GV70_FRICTION_SPEED_ONSET = 8.0 * CV.MPH_TO_MS
@@ -227,12 +239,12 @@ GENESIS_G70_FRICTION_CENTER_LAT = 0.28
 GENESIS_G70_FRICTION_CENTER_LAT_WIDTH = 0.10
 GENESIS_G70_FRICTION_CALM_JERK = 0.35
 GENESIS_G70_FRICTION_CALM_JERK_WIDTH = 0.10
-GENESIS_G70_FRICTION_JERK_DEADZONE_MAX = 0.24
+GENESIS_G70_FRICTION_JERK_DEADZONE_MAX = 0.30
 GENESIS_G70_FRICTION_JERK_DEADZONE_LAT = 0.30
 GENESIS_G70_FRICTION_JERK_DEADZONE_LAT_WIDTH = 0.08
 GENESIS_G70_FRICTION_JERK_DEADZONE_SPEED = 12.0
 GENESIS_G70_FRICTION_JERK_DEADZONE_SPEED_WIDTH = 3.5
-GENESIS_G70_CENTER_OUTPUT_TAPER_MAX = 0.10
+GENESIS_G70_CENTER_OUTPUT_TAPER_MAX = 0.14
 GENESIS_G70_CENTER_OUTPUT_TAPER_LAT = 0.30
 GENESIS_G70_CENTER_OUTPUT_TAPER_LAT_WIDTH = 0.10
 GENESIS_G70_CENTER_OUTPUT_TAPER_SPEED = 18.0
@@ -255,14 +267,14 @@ GENESIS_G70_LOW_SPEED_OUTPUT_LIMIT_LAT = 0.14
 GENESIS_G70_LOW_SPEED_OUTPUT_LIMIT_LAT_WIDTH = 0.05
 GENESIS_G70_LOW_SPEED_OUTPUT_LIMIT_SPEED = 6.0
 GENESIS_G70_LOW_SPEED_OUTPUT_LIMIT_SPEED_WIDTH = 1.5
-GENESIS_G70_CURVE_UNWIND_OUTPUT_BOOST = 0.06
+GENESIS_G70_CURVE_UNWIND_OUTPUT_BOOST = 0.00
 GENESIS_G70_CURVE_UNWIND_SPEED = 18.0
 GENESIS_G70_CURVE_UNWIND_SPEED_WIDTH = 3.0
 GENESIS_G70_CURVE_UNWIND_LAT = 0.25
 GENESIS_G70_CURVE_UNWIND_LAT_WIDTH = 0.12
 GENESIS_G70_CURVE_UNWIND_JERK = 0.08
 GENESIS_G70_CURVE_UNWIND_JERK_WIDTH = 0.08
-GENESIS_G70_UNWIND_FF_REDUCTION_MAX = 0.20
+GENESIS_G70_UNWIND_FF_REDUCTION_MAX = 0.28
 GENESIS_G70_UNWIND_FF_OVERSHOOT = 0.12
 GENESIS_G70_UNWIND_FF_OVERSHOOT_WIDTH = 0.12
 GENESIS_G70_UNWIND_FF_JERK = 0.10
@@ -361,7 +373,7 @@ BOLT_2022_2023_LOW_SPEED_CENTER_OUTPUT_SPEED = 2.5
 BOLT_2022_2023_LOW_SPEED_CENTER_OUTPUT_SPEED_WIDTH = 0.7
 BOLT_2022_2023_LOW_SPEED_CENTER_OUTPUT_SPEED_MAX = 7.2
 BOLT_2022_2023_LOW_SPEED_CENTER_OUTPUT_SPEED_MAX_WIDTH = 0.5
-BOLT_2022_2023_CENTER_FRICTION_THRESHOLD_BUMP = 0.050
+BOLT_2022_2023_CENTER_FRICTION_THRESHOLD_BUMP = 0.080
 BOLT_2022_2023_CENTER_FRICTION_THRESHOLD_LAT = 0.18
 BOLT_2022_2023_CENTER_FRICTION_THRESHOLD_LAT_WIDTH = 0.06
 BOLT_2022_2023_CENTER_FRICTION_THRESHOLD_SPEED = 6.7
@@ -543,6 +555,24 @@ KIA_CARNIVAL_HIGHWAY_TRANSITION_JERK = 0.45
 KIA_CARNIVAL_HIGHWAY_TRANSITION_JERK_WIDTH = 0.15
 KIA_CARNIVAL_HIGHWAY_TRANSITION_LAT_CUTOFF = 1.20
 KIA_CARNIVAL_HIGHWAY_TRANSITION_LAT_WIDTH = 0.20
+KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_MAX = 0.34
+KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_SPEED = 15.0
+KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_SPEED_WIDTH = 2.0
+KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_SPEED_CUTOFF = 23.0
+KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_SPEED_CUTOFF_WIDTH = 2.0
+KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_LAT = 0.35
+KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_LAT_WIDTH = 0.18
+KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_JERK = 0.65
+KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_JERK_WIDTH = 0.25
+KIA_CARNIVAL_UNWIND_FF_REDUCTION_MAX = 0.45
+KIA_CARNIVAL_UNWIND_FF_SPEED = 15.0
+KIA_CARNIVAL_UNWIND_FF_SPEED_WIDTH = 2.0
+KIA_CARNIVAL_UNWIND_FF_SPEED_CUTOFF = 23.0
+KIA_CARNIVAL_UNWIND_FF_SPEED_CUTOFF_WIDTH = 2.0
+KIA_CARNIVAL_UNWIND_FF_OVERSHOOT = 0.20
+KIA_CARNIVAL_UNWIND_FF_OVERSHOOT_WIDTH = 0.12
+KIA_CARNIVAL_UNWIND_FF_JERK = 0.65
+KIA_CARNIVAL_UNWIND_FF_JERK_WIDTH = 0.25
 
 TUCSON_4TH_GEN_CENTER_TAPER_MAX = 0.44
 TUCSON_4TH_GEN_CENTER_TAPER_LAT = 0.28
@@ -684,6 +714,11 @@ IONIQ_5_LOW_SPEED_CENTER_LAT = 0.40
 IONIQ_5_LOW_SPEED_CENTER_LAT_WIDTH = 0.10
 IONIQ_5_LOW_SPEED_CENTER_JERK = 0.40
 IONIQ_5_LOW_SPEED_CENTER_JERK_WIDTH = 0.12
+IONIQ_5_FRICTION_JERK_DEADZONE_MAX = 0.36
+IONIQ_5_FRICTION_JERK_DEADZONE_LAT = 1.25
+IONIQ_5_FRICTION_JERK_DEADZONE_LAT_WIDTH = 0.35
+IONIQ_5_FRICTION_JERK_DEADZONE_SPEED = 18.0
+IONIQ_5_FRICTION_JERK_DEADZONE_SPEED_WIDTH = 3.0
 
 IONIQ_EV_OLD_BASE_LAT_ACCEL_FACTOR_MULT = 1.16
 IONIQ_EV_OLD_FF_REDUCTION_LEFT = 0.16
@@ -836,7 +871,7 @@ IONIQ_6_CURVY_TURN_IN_TRIM_LAT_START = 1.0
 IONIQ_6_CURVY_TURN_IN_TRIM_LAT_END = 2.5
 IONIQ_6_CURVY_TURN_IN_TRIM_LAT_ONSET_WIDTH = 0.18
 IONIQ_6_CURVY_TURN_IN_TRIM_LAT_CUTOFF_WIDTH = 0.30
-IONIQ_6_2023_UNWIND_FF_REDUCTION_MAX = 0.18
+IONIQ_6_2023_UNWIND_FF_REDUCTION_MAX = 0.24
 IONIQ_6_2023_UNWIND_FF_OVERSHOOT = 0.15
 IONIQ_6_2023_UNWIND_FF_OVERSHOOT_WIDTH = 0.18
 IONIQ_6_2023_UNWIND_FF_JERK = 0.10
@@ -1062,10 +1097,34 @@ SIENNA_4TH_GEN_HIGH_SPEED_OUTPUT_TAPER_ONSET_WIDTH = 2.0
 SIENNA_4TH_GEN_HIGH_SPEED_OUTPUT_TAPER_MAX_SPEED = 27.0
 SIENNA_4TH_GEN_HIGH_SPEED_OUTPUT_TAPER_MAX_SPEED_WIDTH = 3.0
 
+TOYOTA_COROLLA_TSS2_PHASE_SCALE = 0.12
+TOYOTA_COROLLA_TSS2_TURN_IN_FF_BOOST = 0.035
+TOYOTA_COROLLA_TSS2_UNWIND_FF_REDUCTION = 0.06
+TOYOTA_COROLLA_TSS2_CURVE_LAT_ONSET = 0.24
+TOYOTA_COROLLA_TSS2_CURVE_LAT_WIDTH = 0.10
+TOYOTA_COROLLA_TSS2_SPEED_ONSET = 4.0
+TOYOTA_COROLLA_TSS2_SPEED_ONSET_WIDTH = 1.5
+TOYOTA_COROLLA_TSS2_SPEED_CUTOFF = 24.0
+TOYOTA_COROLLA_TSS2_SPEED_CUTOFF_WIDTH = 3.0
+TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_MAX = 0.30
+TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_LAT = 0.18
+TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_LAT_WIDTH = 0.08
+TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_SPEED = 4.5
+TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_SPEED_WIDTH = 1.5
+
+TOYOTA_HIGHLANDER_TSS2_PHASE_SCALE = 0.12
+TOYOTA_HIGHLANDER_TSS2_UNWIND_FF_REDUCTION = 0.10
+TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_THRESHOLD_GAIN = 0.16
+TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_SCALE_REDUCTION = 0.10
+TOYOTA_HIGHLANDER_TSS2_UNWIND_OUTPUT_REDUCTION = 0.15
+TOYOTA_HIGHLANDER_TSS2_UNWIND_LAT_ONSET = 0.20
+TOYOTA_HIGHLANDER_TSS2_UNWIND_LAT_WIDTH = 0.08
+TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_ONSET = 3.0
+TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_WIDTH = 1.5
+TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_MAX = 15.0
+TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_MAX_WIDTH = 2.0
+
 LEXUS_IS_PHASE_SCALE = 0.10
-# The Lexus route still fell short during a clean high-speed turn-in while
-# already at the controller limit. Keep this correction small and phase-gated
-# so straight-line behavior and unwind tuning are unchanged.
 LEXUS_IS_TURN_IN_FF_BOOST_LEFT = 0.06
 LEXUS_IS_TURN_IN_FF_BOOST_RIGHT = 0.06
 LEXUS_IS_UNWIND_FF_REDUCTION_LEFT = 0.10
@@ -1088,6 +1147,14 @@ RAV4_TSS2_PID_CENTER_ANGLE = 14.0
 RAV4_TSS2_PID_CENTER_ANGLE_WIDTH = 3.0
 RAV4_TSS2_PID_OUTPUT_SCALE_MIN = 0.62
 RAV4_TSS2_PID_OUTPUT_ALPHA_MIN = 0.28
+RAV4_TSS2_CENTER_FRICTION_THRESHOLD_GAIN = 0.14
+RAV4_TSS2_CENTER_FRICTION_LAT = 0.30
+RAV4_TSS2_CENTER_FRICTION_LAT_WIDTH = 0.08
+RAV4_TSS2_CENTER_SPEED = 13.0
+RAV4_TSS2_CENTER_SPEED_WIDTH = 3.0
+RAV4_TSS2_CENTER_OUTPUT_TAPER_MAX = 0.12
+RAV4_TSS2_CENTER_OUTPUT_LAT = 0.30
+RAV4_TSS2_CENTER_OUTPUT_LAT_WIDTH = 0.08
 
 RAM_1500_TRANSITION_TAPER_MAX = 0.34
 RAM_1500_TRANSITION_SPEED_ONSET = 10.0
@@ -1104,6 +1171,13 @@ RAM_1500_PHASE_LAT_ONSET = 0.25
 RAM_1500_PHASE_LAT_WIDTH = 0.12
 RAM_1500_TURN_IN_FF_BOOST = 0.06
 RAM_1500_UNWIND_FF_REDUCTION = 0.05
+RAM_1500_CENTER_OUTPUT_TAPER_MAX = 0.12
+RAM_1500_CENTER_OUTPUT_TAPER_LAT = 0.24
+RAM_1500_CENTER_OUTPUT_TAPER_LAT_WIDTH = 0.08
+RAM_1500_CENTER_OUTPUT_TAPER_SPEED_ONSET = 5.5
+RAM_1500_CENTER_OUTPUT_TAPER_SPEED_ONSET_WIDTH = 1.5
+RAM_1500_CENTER_OUTPUT_TAPER_SPEED_MAX = 16.0
+RAM_1500_CENTER_OUTPUT_TAPER_SPEED_MAX_WIDTH = 2.0
 
 # The Kona route is exceptionally accurate below highway speed, but Pop V2
 # reverses the requested lateral acceleration roughly once per second at
@@ -1552,6 +1626,98 @@ def get_sienna_4th_gen_high_speed_output_taper_scale(v_ego: float) -> float:
   return 1.0 - SIENNA_4TH_GEN_HIGH_SPEED_OUTPUT_TAPER_MAX * onset * cutoff
 
 
+def get_toyota_corolla_tss2_ff_scale(desired_lateral_accel: float,
+                                     desired_lateral_jerk: float,
+                                     v_ego: float) -> float:
+  """Add a small, transition-only turn-in correction for Corolla TSS2 torque EPS."""
+  if desired_lateral_accel == 0.0:
+    return 1.0
+
+  phase = math.tanh((desired_lateral_accel * desired_lateral_jerk) /
+                    TOYOTA_COROLLA_TSS2_PHASE_SCALE)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  curve_weight = _sigmoid((abs(desired_lateral_accel) - TOYOTA_COROLLA_TSS2_CURVE_LAT_ONSET) /
+                          TOYOTA_COROLLA_TSS2_CURVE_LAT_WIDTH)
+  speed_weight = (_sigmoid((v_ego - TOYOTA_COROLLA_TSS2_SPEED_ONSET) /
+                           TOYOTA_COROLLA_TSS2_SPEED_ONSET_WIDTH) *
+                  _sigmoid((TOYOTA_COROLLA_TSS2_SPEED_CUTOFF - v_ego) /
+                           TOYOTA_COROLLA_TSS2_SPEED_CUTOFF_WIDTH))
+  boost = _flm_vehicle_knob("toyota_corolla_tss2.turn_in_ff_boost",
+                            TOYOTA_COROLLA_TSS2_TURN_IN_FF_BOOST)
+  unwind_reduction = _flm_vehicle_knob("toyota_corolla_tss2.unwind_ff_reduction",
+                                       TOYOTA_COROLLA_TSS2_UNWIND_FF_REDUCTION)
+  return 1.0 + curve_weight * speed_weight * (boost * turn_in_weight - unwind_reduction * unwind_weight)
+
+
+def get_toyota_corolla_tss2_center_output_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  """Taper only near-center crawl-speed torque during manual handoff."""
+  center_weight = _sigmoid((TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_LAT - abs(desired_lateral_accel)) /
+                           TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_LAT_WIDTH)
+  low_speed_weight = _sigmoid((TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_SPEED - v_ego) /
+                              TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_SPEED_WIDTH)
+  reduction = _flm_vehicle_knob("toyota_corolla_tss2.center_output_taper_max",
+                                TOYOTA_COROLLA_TSS2_CENTER_OUTPUT_TAPER_MAX) * center_weight * low_speed_weight
+  return max(1.0 - reduction, 0.65)
+
+
+def _toyota_highlander_tss2_unwind_weight(desired_lateral_accel: float,
+                                           desired_lateral_jerk: float,
+                                           v_ego: float) -> float:
+  phase = math.tanh((desired_lateral_accel * desired_lateral_jerk) /
+                    TOYOTA_HIGHLANDER_TSS2_PHASE_SCALE)
+  curve_weight = _sigmoid((abs(desired_lateral_accel) - TOYOTA_HIGHLANDER_TSS2_UNWIND_LAT_ONSET) /
+                          TOYOTA_HIGHLANDER_TSS2_UNWIND_LAT_WIDTH)
+  speed_weight = (_sigmoid((v_ego - TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_ONSET) /
+                           TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_WIDTH) *
+                  _sigmoid((TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_MAX - v_ego) /
+                           TOYOTA_HIGHLANDER_TSS2_UNWIND_SPEED_MAX_WIDTH))
+  return max(-phase, 0.0) * curve_weight * speed_weight
+
+
+def get_toyota_highlander_tss2_ff_scale(desired_lateral_accel: float,
+                                         desired_lateral_jerk: float,
+                                         v_ego: float) -> float:
+  reduction = _flm_vehicle_knob("toyota_highlander_tss2.unwind_ff_reduction",
+                                TOYOTA_HIGHLANDER_TSS2_UNWIND_FF_REDUCTION)
+  return 1.0 - reduction * _toyota_highlander_tss2_unwind_weight(
+    desired_lateral_accel, desired_lateral_jerk, v_ego,
+  )
+
+
+def get_toyota_highlander_tss2_friction_threshold(v_ego: float,
+                                                  desired_lateral_accel: float = 0.0,
+                                                  desired_lateral_jerk: float = 0.0) -> float:
+  gain = _flm_vehicle_knob("toyota_highlander_tss2.unwind_friction_threshold_gain",
+                           TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_THRESHOLD_GAIN)
+  return get_standard_friction_threshold(v_ego) * (
+    1.0 + gain * _toyota_highlander_tss2_unwind_weight(
+      desired_lateral_accel, desired_lateral_jerk, v_ego,
+    )
+  )
+
+
+def get_toyota_highlander_tss2_friction_scale(v_ego: float,
+                                              desired_lateral_accel: float,
+                                              desired_lateral_jerk: float) -> float:
+  reduction = _flm_vehicle_knob("toyota_highlander_tss2.unwind_friction_scale_reduction",
+                                TOYOTA_HIGHLANDER_TSS2_UNWIND_FRICTION_SCALE_REDUCTION)
+  return 1.0 - reduction * _toyota_highlander_tss2_unwind_weight(
+    desired_lateral_accel, desired_lateral_jerk, v_ego,
+  )
+
+
+def get_toyota_highlander_tss2_output_taper_scale(desired_lateral_accel: float,
+                                                  desired_lateral_jerk: float,
+                                                  v_ego: float) -> float:
+  """Slow low-speed unwind reversals without reducing turn-in authority."""
+  reduction = _flm_vehicle_knob("toyota_highlander_tss2.unwind_output_reduction",
+                                TOYOTA_HIGHLANDER_TSS2_UNWIND_OUTPUT_REDUCTION)
+  return 1.0 - reduction * _toyota_highlander_tss2_unwind_weight(
+    desired_lateral_accel, desired_lateral_jerk, v_ego,
+  )
+
+
 def get_lexus_is_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
   if desired_lateral_accel == 0.0:
     return 1.0
@@ -1588,6 +1754,30 @@ def get_rav4_tss2_pid_output(output_torque: float, prev_output_torque: float,
   return float(prev_output_torque + output_alpha * (limited_output - prev_output_torque))
 
 
+def _rav4_tss2_center_envelope(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _sigmoid((RAV4_TSS2_CENTER_SPEED - max(v_ego, 0.0)) /
+                          RAV4_TSS2_CENTER_SPEED_WIDTH)
+  center_weight = _sigmoid((RAV4_TSS2_CENTER_FRICTION_LAT - abs(desired_lateral_accel)) /
+                           RAV4_TSS2_CENTER_FRICTION_LAT_WIDTH)
+  return speed_weight * center_weight
+
+
+def get_rav4_tss2_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0,
+                                     desired_lateral_jerk: float = 0.0) -> float:
+  del desired_lateral_jerk
+  gain = _flm_vehicle_knob("toyota_rav4_tss2.center_friction_threshold_gain",
+                           RAV4_TSS2_CENTER_FRICTION_THRESHOLD_GAIN)
+  return get_standard_friction_threshold(v_ego) * (
+    1.0 + gain * _rav4_tss2_center_envelope(desired_lateral_accel, v_ego)
+  )
+
+
+def get_rav4_tss2_center_output_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  reduction = _flm_vehicle_knob("toyota_rav4_tss2.center_output_taper_max",
+                                RAV4_TSS2_CENTER_OUTPUT_TAPER_MAX)
+  return 1.0 - reduction * _rav4_tss2_center_envelope(desired_lateral_accel, v_ego)
+
+
 def get_ram_1500_transition_output_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
   speed_weight = float(np.interp(v_ego, [RAM_1500_TRANSITION_SPEED_ONSET, RAM_1500_TRANSITION_SPEED_FULL], [0.0, 1.0]))
   jerk_weight = float(np.interp(abs(desired_lateral_jerk),
@@ -1595,6 +1785,17 @@ def get_ram_1500_transition_output_scale(desired_lateral_accel: float, desired_l
   lat_weight = 1.0 - float(np.interp(abs(desired_lateral_accel),
                                      [RAM_1500_TRANSITION_LAT_FADE_START, RAM_1500_TRANSITION_LAT_FADE_END], [0.0, 1.0]))
   return 1.0 - (RAM_1500_TRANSITION_TAPER_MAX * speed_weight * jerk_weight * lat_weight)
+
+
+def get_ram_1500_center_output_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  """Damp only center corrections at low/mid speed, not turn authority."""
+  center_weight = _sigmoid((RAM_1500_CENTER_OUTPUT_TAPER_LAT - abs(desired_lateral_accel)) /
+                           RAM_1500_CENTER_OUTPUT_TAPER_LAT_WIDTH)
+  speed_onset = _sigmoid((v_ego - RAM_1500_CENTER_OUTPUT_TAPER_SPEED_ONSET) /
+                         RAM_1500_CENTER_OUTPUT_TAPER_SPEED_ONSET_WIDTH)
+  speed_cutoff = _sigmoid((RAM_1500_CENTER_OUTPUT_TAPER_SPEED_MAX - v_ego) /
+                          RAM_1500_CENTER_OUTPUT_TAPER_SPEED_MAX_WIDTH)
+  return 1.0 - (RAM_1500_CENTER_OUTPUT_TAPER_MAX * center_weight * speed_onset * speed_cutoff)
 
 
 def get_ram_1500_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
@@ -1798,6 +1999,10 @@ def _bolt_2017_high_speed_factor(v_ego: float) -> float:
 
 def get_bolt_2017_steer_ratio_scale(v_ego: float) -> float:
   return 1.0 + ((BOLT_2017_STEER_RATIO_TEST_SCALE - 1.0) * _bolt_2017_high_speed_factor(v_ego))
+
+
+def get_honda_accord_steer_ratio_scale(_v_ego: float) -> float:
+  return HONDA_ACCORD_STEER_RATIO_SCALE
 
 
 def get_bolt_2017_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
@@ -2442,6 +2647,41 @@ def get_kia_carnival_highway_transition_output_scale(desired_lateral_accel: floa
   return 1.0 - (KIA_CARNIVAL_HIGHWAY_TRANSITION_TAPER_MAX * speed_weight * jerk_weight * lat_weight)
 
 
+def get_kia_carnival_friction_jerk_deadzone(v_ego: float, desired_lateral_accel: float,
+                                            desired_lateral_jerk: float) -> float:
+  """Reduce abrupt friction reversals during mid-speed curve exits only."""
+  speed_weight = _sigmoid((v_ego - KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_SPEED) /
+                          KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_SPEED_WIDTH)
+  speed_cutoff = _sigmoid((KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_SPEED_CUTOFF - v_ego) /
+                          KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_SPEED_CUTOFF_WIDTH)
+  center_weight = _sigmoid((KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_LAT - abs(desired_lateral_accel)) /
+                           KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_LAT_WIDTH)
+  jerk_weight = _sigmoid((abs(desired_lateral_jerk) - KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_JERK) /
+                         KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_JERK_WIDTH)
+  return KIA_CARNIVAL_UNWIND_FRICTION_JERK_DEADZONE_MAX * speed_weight * speed_cutoff * center_weight * jerk_weight
+
+
+def get_kia_carnival_unwind_ff_scale(setpoint: float, measured_lateral_accel: float,
+                                     desired_lateral_jerk: float, v_ego: float) -> float:
+  """Remove stale turn feedforward when the measured response carries through an unwind."""
+  if setpoint * desired_lateral_jerk >= 0.0:
+    return 1.0
+
+  overshoot = max(abs(measured_lateral_accel) - abs(setpoint), 0.0)
+  if overshoot <= 0.0:
+    return 1.0
+
+  speed_weight = (_sigmoid((v_ego - KIA_CARNIVAL_UNWIND_FF_SPEED) /
+                           KIA_CARNIVAL_UNWIND_FF_SPEED_WIDTH) *
+                  _sigmoid((KIA_CARNIVAL_UNWIND_FF_SPEED_CUTOFF - v_ego) /
+                           KIA_CARNIVAL_UNWIND_FF_SPEED_CUTOFF_WIDTH))
+  overshoot_weight = _sigmoid((overshoot - KIA_CARNIVAL_UNWIND_FF_OVERSHOOT) /
+                              KIA_CARNIVAL_UNWIND_FF_OVERSHOOT_WIDTH)
+  jerk_weight = _sigmoid((abs(desired_lateral_jerk) - KIA_CARNIVAL_UNWIND_FF_JERK) /
+                         KIA_CARNIVAL_UNWIND_FF_JERK_WIDTH)
+  return 1.0 - (KIA_CARNIVAL_UNWIND_FF_REDUCTION_MAX * speed_weight * overshoot_weight * jerk_weight)
+
+
 def _tucson_4th_gen_center_weights(desired_lateral_accel: float, v_ego: float) -> tuple[float, float]:
   speed_weight = _sigmoid((TUCSON_4TH_GEN_CENTER_TAPER_SPEED_MAX - v_ego) / TUCSON_4TH_GEN_CENTER_TAPER_SPEED_WIDTH)
   center_weight = _sigmoid((TUCSON_4TH_GEN_CENTER_TAPER_LAT - abs(desired_lateral_accel)) / TUCSON_4TH_GEN_CENTER_TAPER_LAT_WIDTH)
@@ -2941,6 +3181,15 @@ def get_ioniq_5_low_speed_output_limit(desired_lateral_accel: float,
                   IONIQ_5_LOW_SPEED_OUTPUT_LIMIT_TURN_RELIEF * (1.0 - center_weight))
   limit = 1.0 - speed_weight * (1.0 - center_limit)
   return float(np.clip(limit, IONIQ_5_LOW_SPEED_OUTPUT_LIMIT_BASE, 1.0))
+
+
+def get_ioniq_5_friction_jerk_deadzone(v_ego: float, desired_lateral_accel: float) -> float:
+  """Suppress high-speed friction reversals without reducing steady-turn torque."""
+  speed_weight = _ioniq_5_sigmoid((max(v_ego, 0.0) - IONIQ_5_FRICTION_JERK_DEADZONE_SPEED) /
+                                  IONIQ_5_FRICTION_JERK_DEADZONE_SPEED_WIDTH)
+  curve_weight = _ioniq_5_sigmoid((IONIQ_5_FRICTION_JERK_DEADZONE_LAT - abs(desired_lateral_accel)) /
+                                   IONIQ_5_FRICTION_JERK_DEADZONE_LAT_WIDTH)
+  return IONIQ_5_FRICTION_JERK_DEADZONE_MAX * speed_weight * curve_weight
 
 
 def _ioniq_ev_old_sigmoid(x: float) -> float:

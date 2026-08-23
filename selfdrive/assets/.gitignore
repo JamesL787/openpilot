@@ -1,4 +1,4 @@
-*.cc
 fonts/*.fnt
 fonts/*.png
-translations_assets.qrc
+!fonts/como-heavy.fnt
+!fonts/como-heavy.png

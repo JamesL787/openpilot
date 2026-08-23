@@ -28,6 +28,11 @@ IONIQ_6_BLINDSPOT_LEFT_MASK = 0x10
 CANFD_CAMERA_LEAD_MIN_DISTANCE = 0.1
 ALT_BUS_LDA_BUTTON_BURST_DEBOUNCE_NS = int(1.3e9)
 
+CLASSIC_MEDIA_BUTTON_CARS = frozenset({
+  CAR.HYUNDAI_ELANTRA_2024,
+  CAR.HYUNDAI_ELANTRA_HEV_2024,
+})
+
 
 def get_non_scc_cruise_signals(CP) -> tuple[str, str, str, str, str, str]:
   if CP.flags & HyundaiFlags.EV:
@@ -233,7 +238,9 @@ class CarState(CarStateBase):
     return button_events
 
   def create_lkas_button_events(self, cp: CANParser, prev_lda_button: int) -> list[structs.CarState.ButtonEvent]:
-    if self.CP.carFingerprint == CAR.HYUNDAI_SONATA_HYBRID:
+    if self.CP.carFingerprint == CAR.HYUNDAI_SONATA:
+      self.lda_button = int(cp.vl["BCM_PO_11"]["LDA_BTN"]) if cp.ts_nanos["BCM_PO_11"]["LDA_BTN"] > 0 else 0
+    elif self.CP.carFingerprint == CAR.HYUNDAI_SONATA_HYBRID:
       self.lda_button = self.get_sonata_hybrid_lkas_button_state(cp)
     else:
       source_states = (
@@ -425,9 +432,6 @@ class CarState(CarStateBase):
                         *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
                         *lkas_button_events]
 
-    if getattr(self.FPCP, "flags", 0) & HyundaiStarPilotFlags.MAIN_CRUISE_STATE_TRACKING:
-      ret.cruiseState.available = self.update_main_cruise(ret)
-
     ret.blockPcmEnable = not self.recent_button_interaction()
 
     # low speed steer alert hysteresis logic (only for cars with steer cut off above 10 m/s)
@@ -438,6 +442,9 @@ class CarState(CarStateBase):
     ret.lowSpeedAlert = self.low_speed_alert
 
     fp_ret = custom.StarPilotCarState.new_message()
+    if self.CP.carFingerprint in CLASSIC_MEDIA_BUTTON_CARS:
+      fp_ret.modePressed = bool(cp.vl["GW_SWRC_PE"]["C_ModeSW"])
+      fp_ret.customPressed = bool(cp.vl["GW_SWRC_PE"]["C_MTSSW"])
 
     return ret, fp_ret
 
@@ -668,7 +675,7 @@ class CarState(CarStateBase):
         ("CGW2", 5),
         ("WHL_SPD11", 50),
         ("SAS11", 100),
-        ("SCC12", 50),
+        ("SCC12", 0 if CP.openpilotLongitudinalControl and CP.flags & HyundaiFlags.CANFD_LKA_STEERING else 50),
         ("EMS12", 100),
         ("EMS16", 100),
         ("LVR12", 100),
@@ -687,6 +694,9 @@ class CarState(CarStateBase):
       ("BCM_PO_11", 0),
       ("CLU13", 0),
     ]
+    if CP.carFingerprint in CLASSIC_MEDIA_BUTTON_CARS:
+      # Steering-wheel media switches are event-driven on the refresh Elantra.
+      msgs.append(("GW_SWRC_PE", 0))
     if CP.flags & HyundaiFlags.NON_SCC and not (CP.flags & HyundaiFlags.NON_SCC_NO_FCA):
       msgs.append(("FCA11", 0))  # Non-SCC trims can stop publishing FCA11; don't let it poison canValid
 

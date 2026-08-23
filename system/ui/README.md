@@ -12,6 +12,7 @@ Quick start:
   Set `BURN_IN_PREVENTION=0` to disable it or tune it with `BURN_IN_SHIFT_PIXELS`, `BURN_IN_SHIFT_INTERVAL`, and
   `BURN_IN_SHIFT_TRANSITION_SECONDS`. TICI/TIZI shift the completed frame through the offscreen presentation path;
   MICI uses direct shifting by default. Setting `WHITE_LUMINANCE_CAP` below `1.0` also enables the offscreen presentation path.
+* the C4 UI uses copied camera textures by default to avoid sampling camerad's reusable EGL buffers; set `MICI_FORCE_TEXTURE_CAMERA=0` to re-enable EGL for diagnostics
 * set `MICI_FORCE_RENDER_TEXTURE=1` to force the C4 UI through the offscreen presentation path for diagnostics
 * set `GRID=50` to show a 50-pixel alignment grid overlay
 * set `MAGIC_DEBUG=1` to show every dropped frames (only on device)
@@ -21,5 +22,5 @@ Quick start:
 
 Style guide:
 * All graphical elements should subclass [`Widget`](/system/ui/widgets/__init__.py).
-  * Prefer a stateful widget over a function for easy migration from QT
+  * Prefer a stateful widget over a function when it simplifies lifecycle management
 * All internal class variables and functions should be prefixed with `_`

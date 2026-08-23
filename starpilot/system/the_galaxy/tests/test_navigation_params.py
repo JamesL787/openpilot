@@ -1,4 +1,5 @@
 import json
+import sys
 
 from openpilot.common.params import ParamKeyType
 
@@ -8,11 +9,19 @@ from test_dashboard_stats import MODULE_DIR, _install_server_import_stubs
 def _load_server_module():
   import importlib.util
 
+  favorite_slots_name = "openpilot.starpilot.common.favorite_slots"
+  previous_favorite_slots = sys.modules.get(favorite_slots_name)
   _install_server_import_stubs()
-  spec = importlib.util.spec_from_file_location("navigation_params_server", MODULE_DIR / "the_galaxy.py")
-  module = importlib.util.module_from_spec(spec)
-  spec.loader.exec_module(module)
-  return module
+  try:
+    spec = importlib.util.spec_from_file_location("navigation_params_server", MODULE_DIR / "the_galaxy.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+  finally:
+    if previous_favorite_slots is None:
+      sys.modules.pop(favorite_slots_name, None)
+    else:
+      sys.modules[favorite_slots_name] = previous_favorite_slots
 
 
 the_galaxy = _load_server_module()
@@ -86,12 +95,10 @@ def _params_client(monkeypatch, values, device_type):
     the_galaxy,
     "_get_param_type_info",
     lambda: (
-      {"AlphaLongitudinalEnabled", "ForceOffroad", "UseOldUI", "TryRaylibUI"},
+      {"AlphaLongitudinalEnabled", "ForceOffroad"},
       {
         "AlphaLongitudinalEnabled": bool,
         "ForceOffroad": bool,
-        "UseOldUI": bool,
-        "TryRaylibUI": bool,
       },
     ),
   )
@@ -226,18 +233,26 @@ def test_configured_favorite_slot_values_only_reads_selected_keys(monkeypatch):
 
 
 def test_favorite_values_endpoint_returns_current_selected_value(monkeypatch):
-  client, _ = _params_client(monkeypatch, {"UseOldUI": False}, "tici")
-  monkeypatch.setattr(the_galaxy, "_get_favorite_slot_options", lambda: [{"key": "UseOldUI"}])
+  client, _ = _params_client(monkeypatch, {"ForceOffroad": False}, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_favorite_slot_options", lambda: [{"key": "ForceOffroad"}])
   monkeypatch.setattr(
     the_galaxy,
     "normalize_favorite_slots",
-    lambda *args, **kwargs: [{"enabled": True, "key": "UseOldUI"}],
+    lambda *args, **kwargs: [{"enabled": True, "key": "ForceOffroad"}],
   )
 
   response = client.get("/api/favorites/values")
 
   assert response.status_code == 200
-  assert response.get_json() == {"values": {"UseOldUI": False}}
+  assert response.get_json() == {"values": {"ForceOffroad": False}}
+
+
+def test_device_settings_layout_asset_is_served_from_common_catalog(monkeypatch):
+  client, _ = _params_client(monkeypatch, {}, "tici")
+
+  with client.get("/assets/components/tools/device_settings_layout.json") as response:
+    assert response.status_code == 200
+    assert response.get_json() == the_galaxy.load_settings_catalog()
 
 
 def test_favorite_slot_options_include_virtual_cruise_actions(monkeypatch):
@@ -251,6 +266,23 @@ def test_favorite_slot_options_include_virtual_cruise_actions(monkeypatch):
   assert "__starpilot_favorite_action__:distance_increase" in option_keys
 
 
+def test_rivian_angle_favorite_requires_detected_extreme_harness(monkeypatch):
+  options = [
+    {"key": "RivianAngleControl", "requiresCapability": "HasRivianAngleHarness"},
+    {"key": "NonGatedFavorite", "requiresCapability": ""},
+  ]
+  monkeypatch.setattr(the_galaxy, "_get_favorite_slot_options", lambda: options)
+
+  monkeypatch.setattr(the_galaxy, "_get_has_rivian_angle_harness", lambda: False)
+  assert [option["key"] for option in the_galaxy._get_available_favorite_slot_options()] == ["NonGatedFavorite"]
+
+  monkeypatch.setattr(the_galaxy, "_get_has_rivian_angle_harness", lambda: True)
+  assert [option["key"] for option in the_galaxy._get_available_favorite_slot_options()] == [
+    "RivianAngleControl",
+    "NonGatedFavorite",
+  ]
+
+
 def test_favorite_action_endpoint_increments_virtual_button_counter(monkeypatch):
   client, _ = _params_client(monkeypatch, {}, "tici")
   fake_memory = WritableFakeParams()
@@ -260,56 +292,6 @@ def test_favorite_action_endpoint_increments_virtual_button_counter(monkeypatch)
 
   assert response.status_code == 200
   assert fake_memory.get_int("FavoriteVirtualAccelCruiseCounter") == 1
-
-
-def test_use_old_ui_is_noop_on_c4_mici(monkeypatch):
-  client, fake_params = _params_client(monkeypatch, {"UseOldUI": False, "IsOnroad": False}, "mici")
-
-  response = client.put("/api/params", json={"key": "UseOldUI", "value": True})
-  payload = response.get_json()
-
-  assert response.status_code == 200
-  assert payload["updated"] == {"UseOldUI": False, "TryRaylibUI": False}
-  assert fake_params.values["UseOldUI"] is False
-  assert fake_params.writes == []
-
-
-def test_use_old_ui_writes_on_big_device_offroad(monkeypatch):
-  client, fake_params = _params_client(monkeypatch, {"UseOldUI": False, "TryRaylibUI": True, "IsOnroad": False}, "tici")
-
-  response = client.put("/api/params", json={"key": "UseOldUI", "value": True})
-  payload = response.get_json()
-
-  assert response.status_code == 200
-  assert payload["updated"] == {"UseOldUI": True, "TryRaylibUI": False}
-  assert fake_params.values["UseOldUI"] is True
-  assert fake_params.values["TryRaylibUI"] is False
-  assert fake_params.writes == [("UseOldUI", True), ("TryRaylibUI", False)]
-
-
-def test_use_old_ui_rejects_big_device_onroad_change(monkeypatch):
-  client, fake_params = _params_client(monkeypatch, {"UseOldUI": False, "TryRaylibUI": True, "IsOnroad": True}, "tici")
-
-  response = client.put("/api/params", json={"key": "UseOldUI", "value": True})
-
-  assert response.status_code == 403
-  assert response.get_json()["error"] == "Cannot change Use Old UI while driving."
-  assert fake_params.values["UseOldUI"] is False
-  assert fake_params.values["TryRaylibUI"] is True
-  assert fake_params.writes == []
-
-
-def test_legacy_try_raylib_ui_payload_updates_use_old_ui(monkeypatch):
-  client, fake_params = _params_client(monkeypatch, {"UseOldUI": True, "TryRaylibUI": False, "IsOnroad": False}, "tici")
-
-  response = client.put("/api/params", json={"key": "TryRaylibUI", "value": True})
-  payload = response.get_json()
-
-  assert response.status_code == 200
-  assert payload["updated"] == {"UseOldUI": False, "TryRaylibUI": True}
-  assert fake_params.values["UseOldUI"] is False
-  assert fake_params.values["TryRaylibUI"] is True
-  assert fake_params.writes == [("UseOldUI", False), ("TryRaylibUI", True)]
 
 
 def test_alpha_longitudinal_toggle_writes_and_requests_offroad_cycle(monkeypatch):

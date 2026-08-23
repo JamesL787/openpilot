@@ -111,6 +111,7 @@ class Soundd:
     self.openpilot_crashed_played = False
 
     self.auto_volume = 0
+    self.pending_stream_status = None
 
     self.previous_sound_pack = None
     self.previous_sound_source_signature = None
@@ -193,7 +194,7 @@ class Soundd:
 
   def callback(self, data_out: np.ndarray, frames: int, time, status) -> None:
     if status:
-      cloudlog.warning(f"soundd stream over/underflow: {status}")
+      self.pending_stream_status = status
     data_out[:frames, 0] = self.get_sound_data(frames)
 
   def update_alert(self, new_alert):
@@ -296,6 +297,11 @@ class Soundd:
 
         while True:
           sm.update(0)
+
+          if self.pending_stream_status is not None:
+            status = self.pending_stream_status
+            self.pending_stream_status = None
+            cloudlog.warning(f"soundd stream over/underflow: {status}")
 
           if sm.updated['soundPressure'] and self.current_alert == AudibleAlert.none: # only update volume filter when not playing alert
             self.spl_filter_weighted.update(sm["soundPressure"].soundPressureWeightedDb)

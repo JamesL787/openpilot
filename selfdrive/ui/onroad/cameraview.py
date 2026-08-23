@@ -6,7 +6,7 @@ import pyray as rl
 
 from msgq.visionipc import VisionIpcClient, VisionStreamType, VisionBuf
 from openpilot.common.swaglog import cloudlog
-from openpilot.system.hardware import PC, TICI
+from openpilot.system.hardware import HARDWARE, PC, TICI
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.egl import (
   init_egl, is_egl_initialized, finish_gl, create_egl_image, destroy_egl_image,
@@ -17,7 +17,17 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 
 CONNECTION_RETRY_INTERVAL = 0.2  # seconds between connection attempts
 STREAM_DISCOVERY_REFRESH_INTERVAL = 0.5  # seconds between nonblocking stream advertisements
-MICI_FORCE_TEXTURE_CAMERA = os.getenv("MICI_FORCE_TEXTURE_CAMERA", "0") == "1"
+
+
+def _default_force_texture_camera(device_type: str) -> bool:
+  return device_type == "mici"
+
+
+DEVICE_TYPE = HARDWARE.get_device_type()
+MICI_FORCE_TEXTURE_CAMERA = os.getenv(
+  "MICI_FORCE_TEXTURE_CAMERA",
+  "1" if _default_force_texture_camera(DEVICE_TYPE) else "0",
+) == "1"
 # One stale frame can be normal ring-buffer reuse; repeated consecutive regressions demote EGL.
 EGL_REGRESSIVE_FRAME_FALLBACK_THRESHOLD = 3
 

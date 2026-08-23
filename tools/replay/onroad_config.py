@@ -217,16 +217,13 @@ def logged_params(init_data: Any | None) -> dict[str, bytes]:
 
 def select_ui_target(init_data: Any | None) -> str:
   if init_data is None:
-    return "raybig"
+    return "c3"
 
   device_type = str(getattr(init_data, "deviceType", "")).lower()
   if device_type in {"mici", "c4"}:
     return "c4"
 
-  if device_type in {"tici", "tizi"} and logged_params(init_data).get("UseOldUI") == b"1":
-    return "c3"
-
-  return "raybig"
+  return "c3"
 
 
 def seed_logged_params(init_data: Any | None, params: Params) -> int:

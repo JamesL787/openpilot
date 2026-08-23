@@ -9,15 +9,18 @@ from opendbc.car.hyundai.values import HyundaiFlags, CAR, CarControllerParams, \
                                                    RADAR_LIVE_LONGITUDINAL_CAR, \
                                                    UNSUPPORTED_LONGITUDINAL_CAR, HyundaiSafetyFlags, \
                                                    LEGACY_LONGITUDINAL_CAR, \
+                                                   CAN_CANFD_BLENDED_HDA2_LONGITUDINAL_CAR, \
                                                    HyundaiStarPilotSafetyFlags, \
                                                    hyundai_cancel_button_enables_cruise, \
-                                                   kia_ev6_gt_line_longitudinal_tuning
+                                                   kia_ev6_gt_line_longitudinal_tuning, \
+                                                   KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID
 from opendbc.car.hyundai.radar_interface import get_radar_track_config, radar_tracks_available
 from opendbc.car.interfaces import CarInterfaceBase, ACCEL_MIN
 from opendbc.car.disable_ecu import disable_ecu, ecu_log
 from opendbc.car.hyundai.carcontroller import CarController
 from opendbc.car.hyundai.carstate import CarState
 from opendbc.car.hyundai.radar_interface import RadarInterface
+from openpilot.starpilot.common.testing_grounds import testing_ground
 
 ButtonType = structs.CarState.ButtonEvent.Type
 Ecu = structs.CarParams.Ecu
@@ -105,7 +108,8 @@ class CarInterface(CarInterfaceBase):
 
   @staticmethod
   def apply_post_fingerprint_params(CP: structs.CarParams, candidate, fingerprint, car_fw) -> None:
-    if kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, CP.carVin):
+    gt_line_testing_ground = testing_ground.use(KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID)
+    if kia_ev6_gt_line_longitudinal_tuning(CP.carFingerprint, CP.carVin, gt_line_testing_ground):
       apply_kia_ev6_gt_line_longitudinal_params(CP)
 
   @staticmethod
@@ -148,7 +152,8 @@ class CarInterface(CarInterfaceBase):
           ret.flags |= HyundaiFlags.CANFD_LKA_STEERING_ALT.value
         # This HDA II Carnival uses the alternate 0x1AA cruise-button frame even
         # though other LKA-steering platforms use 0x1CF.
-        if candidate == CAR.KIA_CARNIVAL_2025 and 0x1aa in fingerprint[CAN.ECAN] and 0x1cf not in fingerprint[CAN.ECAN]:
+        if candidate in (CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN) and \
+            0x1aa in fingerprint[CAN.ECAN] and 0x1cf not in fingerprint[CAN.ECAN]:
           ret.flags |= HyundaiFlags.CANFD_ALT_BUTTONS.value
       else:
         # no LKA steering
@@ -198,7 +203,8 @@ class CarInterface(CarInterfaceBase):
     else:
       # Shared configuration for non CAN-FD cars
       ret.alphaLongitudinalAvailable = candidate not in UNSUPPORTED_LONGITUDINAL_CAR or candidate in LEGACY_LONGITUDINAL_CAR
-      if ret.flags & HyundaiFlags.CAN_CANFD_BLENDED and ret.flags & HyundaiFlags.CANFD_LKA_STEERING:
+      if ret.flags & HyundaiFlags.CAN_CANFD_BLENDED and ret.flags & HyundaiFlags.CANFD_LKA_STEERING and \
+          candidate not in CAN_CANFD_BLENDED_HDA2_LONGITUDINAL_CAR:
         ret.alphaLongitudinalAvailable = False
       ret.enableBsm = 0x58b in fingerprint[CAN.ECAN]
 

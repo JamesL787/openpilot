@@ -13,6 +13,10 @@ from openpilot.starpilot.controls.lib.starpilot_vcruise import (
   get_lead_veto_distance,
   get_slc_lead_drop_relaxed_target,
 )
+from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
+  get_force_stop_distance_bias,
+  get_force_stop_handoff_distance,
+)
 from types import SimpleNamespace
 
 
@@ -114,6 +118,16 @@ def test_active_slc_control_target_does_not_require_set_speed_limit():
 def test_elantra_gets_lead_veto_margin_before_force_stop():
   assert get_lead_veto_distance(SimpleNamespace(carFingerprint="HYUNDAI_ELANTRA_2021")) == pytest.approx(90.0)
   assert get_lead_veto_distance(SimpleNamespace(carFingerprint="OTHER_CAR")) == pytest.approx(75.0)
+
+
+def test_camry_tss2_uses_closer_force_stop_handoff():
+  assert get_force_stop_handoff_distance("TOYOTA_CAMRY_TSS2") == pytest.approx(4.5)
+  assert get_force_stop_handoff_distance("TOYOTA_RAV4_TSS2") == pytest.approx(6.0)
+
+
+def test_camry_tss2_gets_forward_force_stop_bias_only():
+  assert get_force_stop_distance_bias("TOYOTA_CAMRY_TSS2") == pytest.approx(6.0)
+  assert get_force_stop_distance_bias("TOYOTA_RAV4_TSS2") == pytest.approx(0.0)
 
 
 def test_curve_speed_controller_holds_target_through_brief_detector_dropout():
@@ -247,6 +261,21 @@ def test_curve_speed_controller_persists_data_after_leaving_curve():
   vcruise.csc.log_data(20.0, sm)
 
   assert any(key == "CurvatureData" for key, _ in planner.params.writes)
+
+
+def test_curve_speed_controller_publishes_live_values_to_memory_params():
+  planner, vcruise = make_vcruise(road_curvature=0.02)
+  sm = make_sm(standstill=False)
+  sm["carControl"].longActive = False
+  planner.driving_in_curve = True
+  planner.lateral_acceleration = 2.4
+  vcruise.csc.training_timer = PLANNER_TIME
+
+  vcruise.csc.log_data(20.0, sm)
+
+  assert any(key == "CalibratedLateralAcceleration" for key, _ in planner.params_memory.writes)
+  assert any(key == "CalibrationProgress" for key, _ in planner.params_memory.writes)
+  assert planner.params_memory.values["CalibrationProgress"] > 0.0
 
 
 def test_curve_speed_controller_ramps_toward_curve_speed_at_bounded_rate():
@@ -478,6 +507,66 @@ def test_force_stop_stays_committed_while_moving_even_if_scene_opens():
   assert result == pytest.approx(0.0)
   assert vcruise.force_stop_timer >= 0.5
   assert vcruise.forcing_stop
+
+
+def test_force_stop_reanchors_when_model_reopens_path_without_stop_action():
+  planner, vcruise = make_vcruise(red_light=False, raw_model_stopped=False, forcing_stop=True)
+  planner.model_length = 40.0
+  vcruise.tracked_model_length = 10.0
+  sm = make_sm(standstill=False)
+  sm["modelV2"] = SimpleNamespace(action=SimpleNamespace(shouldStop=False))
+
+  result = update_vcruise(vcruise, sm, make_toggles(), now=0.0, v_ego=1.5)
+
+  assert vcruise.tracked_model_length == pytest.approx(40.0)
+  assert result > 5.0
+
+
+def test_force_stop_does_not_reanchor_committed_model_stop():
+  planner, vcruise = make_vcruise(red_light=False, raw_model_stopped=False, forcing_stop=True)
+  planner.model_length = 40.0
+  vcruise.tracked_model_length = 10.0
+  sm = make_sm(standstill=False)
+  sm["modelV2"] = SimpleNamespace(action=SimpleNamespace(shouldStop=True))
+
+  update_vcruise(vcruise, sm, make_toggles(), now=0.0, v_ego=1.5)
+
+  assert vcruise.tracked_model_length < 10.0
+
+
+def test_force_stop_releases_after_cem_light_clears_while_moving():
+  planner, vcruise = make_vcruise(red_light=True, raw_model_stopped=False, forcing_stop=True)
+  sm = make_sm(standstill=False)
+  toggles = make_toggles()
+
+  update_vcruise(vcruise, sm, toggles, now=0.0, v_ego=3.0)
+  assert vcruise.force_stop_from_light
+
+  planner.starpilot_cem.stop_light_detected = False
+  update_vcruise(vcruise, sm, toggles, now=0.25, v_ego=3.0)
+  assert vcruise.forcing_stop
+
+  result = update_vcruise(vcruise, sm, toggles, now=0.75, v_ego=3.0)
+  assert result == pytest.approx(20.0)
+  assert not vcruise.forcing_stop
+  assert not vcruise.force_stop_from_light
+
+
+def test_force_stop_light_release_ignores_coarse_stopped_model_horizon():
+  planner, vcruise = make_vcruise(red_light=True, raw_model_stopped=True, forcing_stop=True)
+  sm = make_sm(standstill=False)
+  toggles = make_toggles()
+
+  update_vcruise(vcruise, sm, toggles, now=0.0, v_ego=3.0)
+  planner.starpilot_cem.stop_light_detected = False
+
+  update_vcruise(vcruise, sm, toggles, now=0.25, v_ego=3.0)
+  assert vcruise.forcing_stop
+
+  result = update_vcruise(vcruise, sm, toggles, now=0.75, v_ego=3.0)
+  assert result == pytest.approx(20.0)
+  assert not vcruise.forcing_stop
+  assert not vcruise.force_stop_from_light
 
 
 def test_force_stop_turn_scene_veto_blocks_new_activation():

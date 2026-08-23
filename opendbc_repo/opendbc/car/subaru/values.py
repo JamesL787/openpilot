@@ -281,12 +281,10 @@ FW_QUERY_CONFIG = FwQueryConfig(
     Request(
       [StdQueries.TESTER_PRESENT_REQUEST, SUBARU_VERSION_REQUEST],
       [StdQueries.TESTER_PRESENT_RESPONSE, SUBARU_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.fwdCamera, Ecu.engine, Ecu.transmission],
+      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.engine, Ecu.transmission],
       logging=True,
     ),
     # Non-OBD requests
-    # Some Eyesight modules fail on TESTER_PRESENT_REQUEST
-    # TODO: check if this resolves the fingerprinting issue for the 2023 Ascent and other new Subaru cars
     Request(
       [SUBARU_VERSION_REQUEST],
       [SUBARU_VERSION_RESPONSE],
@@ -301,27 +299,21 @@ FW_QUERY_CONFIG = FwQueryConfig(
       logging=True,
     ),
     Request(
-      [StdQueries.DEFAULT_DIAGNOSTIC_REQUEST, StdQueries.TESTER_PRESENT_REQUEST, SUBARU_VERSION_REQUEST],
-      [StdQueries.DEFAULT_DIAGNOSTIC_RESPONSE, StdQueries.TESTER_PRESENT_RESPONSE, SUBARU_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.fwdCamera],
-      bus=0,
-      logging=True,
-    ),
-    Request(
       [StdQueries.TESTER_PRESENT_REQUEST, SUBARU_VERSION_REQUEST],
       [StdQueries.TESTER_PRESENT_RESPONSE, SUBARU_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.fwdCamera, Ecu.engine, Ecu.transmission],
+      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.engine, Ecu.transmission],
       bus=0,
     ),
     # GEN2 powertrain bus query
     Request(
       [StdQueries.TESTER_PRESENT_REQUEST, SUBARU_VERSION_REQUEST],
       [StdQueries.TESTER_PRESENT_RESPONSE, SUBARU_VERSION_RESPONSE],
-      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.fwdCamera, Ecu.engine, Ecu.transmission],
+      whitelist_ecus=[Ecu.abs, Ecu.eps, Ecu.engine, Ecu.transmission],
       bus=1,
       obd_multiplexing=False,
     ),
   ],
+  non_tester_present_ecus=[Ecu.fwdCamera],
   # We don't get the EPS from non-OBD queries on GEN2 cars. Note that we still attempt to match when it exists
   non_essential_ecus={
     Ecu.eps: list(CAR.with_flags(SubaruFlags.GLOBAL_GEN2)),
