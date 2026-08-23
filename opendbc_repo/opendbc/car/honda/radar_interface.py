@@ -91,11 +91,14 @@ BOSCH_A_DIRECT_VREL_MIN_RAW = 0
 BOSCH_A_DIRECT_VREL_MAX_RAW = 1728
 BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / 64.0
-# Empirical raw-quality policy: active captures with u10 <= 255 are the only band where the
-# velocity-like candidate is consistently useful.  This is deliberately not presented as a Bosch
-# physical unit or descriptor constant; it keeps saturated/high-uncertainty AUX values from becoming
-# authoritative velocity measurements.
-BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW = 255
+# Empirical raw-quality policy. U11 error against an independent range-derivative reference rises
+# with u10 in a graded way, not a cliff: replay evidence bins it roughly as 0-255 clean, 256-511 only
+# mildly degraded, 512-767 clearly degraded, 768+ worst. 511 is set at that mild/clear boundary so
+# U11 is still trusted directly through the mildly-degraded band; only u10 above this triggers the
+# high-u10 coast path below. This is deliberately not presented as a Bosch physical unit or
+# descriptor constant; it keeps saturated/high-uncertainty AUX values from becoming authoritative
+# velocity measurements.
+BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW = 511
 
 # Measurement-authority policy. These are replay-derived safety/tuning gates, not recovered Bosch
 # constants. Range innovation is measured from the previous accepted observation so a reset cannot
@@ -144,13 +147,15 @@ class _BoschATrackState:
   last_seen_nanos: int | None = None
   wire_slot: int | None = None
   samples: deque = field(default_factory=lambda: deque(maxlen=BOSCH_A_VREL_MAX_SAMPLES))
+  last_trusted_vrel: float | None = None
+  last_trusted_vrel_nanos: int | None = None
 
 
 def _bosch_a_direct_vrel(raw_value: int | float | None,
                          uncertainty_raw: int | float | None = None) -> float | None:
   """Decode the capture-validated AUX relative-velocity candidate.
 
-  None means that AUX was absent/invalid and the caller should use the OLS fallback.  The [0, 1728]
+  None means that AUX was absent/invalid and the caller should use the existing fallback policy. The [0, 1728]
   active domain is deliberately enforced here because values above the observed +13.5 m/s rail have
   not appeared on active objects; 0x7FE is the observed inactive sentinel.
   """
@@ -416,6 +421,8 @@ class RadarInterface(RadarInterfaceBase):
         # The CAN identity remains the externally-visible key, but a lifecycle discontinuity starts a
         # new incarnation and must not inherit the previous object's range-rate history.
         track.samples.clear()
+        track.last_trusted_vrel = None
+        track.last_trusted_vrel_nanos = None
         self.pts.pop(track_id, None)
 
       v0 = self.rcp.vl[BOSCH_A_MAIN_IDS[slot][0]]
@@ -440,7 +447,19 @@ class RadarInterface(RadarInterfaceBase):
       direct_vrel_raw = observation['direct_vrel_raw']
       direct_vrel_uncertainty_raw = observation['direct_vrel_uncertainty_raw']
       direct_vrel = _bosch_a_direct_vrel(direct_vrel_raw, direct_vrel_uncertainty_raw)
+      live_direct_vrel = _bosch_a_direct_vrel(direct_vrel_raw)
       range_ratio_raw = observation['range_ratio_raw']
+
+      # A live U11 rejected solely by the conservative U10 qualification threshold is neither an
+      # unavailable velocity nor permission to synthesize a one-sweep range derivative. It is also
+      # NOT permission to skip range-innovation checking below: u10 correlates with range_sigma in
+      # replay data, so a high-u10 sweep is exactly the condition where a bad/discontinuous range
+      # (slot migration, reset) is most likely, not less likely. Range acceptance is therefore
+      # decided on the same terms as every other sweep first; only once the range clears that gate
+      # does a high-u10 U11 fall back to coasting instead of publishing a synthesized derivative.
+      high_u10_live_vrel = (direct_vrel is None and live_direct_vrel is not None and
+                            direct_vrel_uncertainty_raw is not None and
+                            direct_vrel_uncertainty_raw > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW)
 
       # Validate against the previous accepted range. Qualified U11 and the range-ratio field are
       # independent corroboration paths; high-U10 U11 is deliberately excluded from this decision.
@@ -495,6 +514,35 @@ class RadarInterface(RadarInterfaceBase):
         self._slot_track_ids[slot] = track_id
         continue
 
+      if high_u10_live_vrel:
+        # The range cleared innovation checking above, so geometry here is trustworthy; only vRel is
+        # in question. Preserve current geometry but coast only a recent authoritative motion
+        # estimate without a KF update, rather than publishing a one-sweep-derivative synthesis.
+        trusted_fresh = (track.last_trusted_vrel is not None and track.last_trusted_vrel_nanos is not None and
+                         (now - track.last_trusted_vrel_nanos) * 1e-9 <= BOSCH_A_STALE_S)
+        if trusted_fresh:
+          point = self.pts.get(track_id)
+          if point is not None:
+            point.dRel = dRel
+            point.yRel = yRel
+            point.vRel = track.last_trusted_vrel
+            point.measured = False
+        else:
+          track.last_trusted_vrel = None
+          track.last_trusted_vrel_nanos = None
+          self.pts.pop(track_id, None)
+
+        # Do not let a coast-only range observation become a future derivative baseline.
+        track.prev_frame_idx = idx0
+        track.prev_life = life
+        track.last_seen_nanos = now
+        track.wire_slot = slot
+        for old_slot, old_id in enumerate(self._slot_track_ids):
+          if old_slot != slot and old_id == track_id:
+            self._slot_track_ids[old_slot] = None
+        self._slot_track_ids[slot] = track_id
+        continue
+
       track.samples.append((now_s, dRel))
       sample_count = len(track.samples)
 
@@ -503,14 +551,20 @@ class RadarInterface(RadarInterfaceBase):
       # ratio yet: capture validation improves the negative rail but regresses the positive rail.
       if direct_vrel is not None:
         vRel = direct_vrel
+        trustworthy_vrel = True
       elif ratio_vrel is not None and not degraded:
         vRel = ratio_vrel
+        trustworthy_vrel = True
       else:
         vRel = fallback_vrel
+        trustworthy_vrel = False
 
       # A birth observation has no range-rate yet. Keep it as history, but do not publish a RadarPoint
       # until a second coherent observation of the same CAN identity supplies a finite derivative.
       matured = sample_count >= 2 and math.isfinite(vRel)
+      if trustworthy_vrel:
+        track.last_trusted_vrel = vRel
+        track.last_trusted_vrel_nanos = now
       if matured and track_id not in self.pts:
         self.pts[track_id] = structs.RadarData.RadarPoint()
         self.pts[track_id].trackId = track_id

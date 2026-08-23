@@ -547,25 +547,75 @@ class TestVrel:
     assert _bosch_a_direct_vrel(864, 0x3FE) is None
     assert _bosch_a_direct_vrel(864, 0x3FF) is None
 
-  def test_high_aux_uncertainty_falls_back_to_adjacent_accepted_range_rate(self):
+  def test_high_u10_live_vrel_without_trust_is_withheld(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=False))
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
                          direct_vrel_raw=0, direct_vrel_uncertainty_raw=1023))
-    # High U10 prevents U11 authority, but the adjacent derivative is computed only between
-    # accepted ranges and cannot be contaminated by a rejected range reset.
-    assert rr.points[0].vRel == pytest.approx((10 * BOSCH_A_RANGE_SCALE_M) / 0.05)
-    assert rr.points[0].vRel != pytest.approx(-13.5)
+    assert len(rr.points) == 0
+    assert len(ri._tracks[1].samples) == 1
 
   def test_fast_clean_range_rate_is_not_rejected_by_old_ols_cap(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 2000, 1024, 1, 0, with_aux=False))
     ri.update(sweep(0, 1, 0x7, 1945, 1024, 3, 70_000_000, with_aux=False))
-    rr = ri.update(sweep(0, 2, 0x7, 1889, 1024, 5, 140_000_000, with_aux=True,
-                         direct_vrel_raw=554, direct_vrel_uncertainty_raw=437))
+    rr = ri.update(sweep(0, 2, 0x7, 1889, 1024, 5, 140_000_000, with_aux=False))
     assert len(rr.points) == 1
     assert rr.points[0].vRel == pytest.approx((1889 - 1945) * BOSCH_A_RANGE_SCALE_M / 0.07)
     assert len(ri._tracks[1].samples) == 3
+
+  def test_high_u10_live_vrel_coasts_recent_trusted_motion(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1724, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=696, direct_vrel_uncertainty_raw=84))
+    rr = ri.update(sweep(0, 1, 0x7, 1724, 1024, 3, 50_000_000, with_aux=True,
+                   direct_vrel_raw=696, direct_vrel_uncertainty_raw=84))
+    assert rr.points[0].vRel == pytest.approx(-2.625)
+    # R146/S21 ID50's 19-count / 68.962 ms high-U10 step would have synthesized about -15.74 m/s.
+    rr = ri.update(sweep(0, 2, 0x7, 1705, 1024, 5, 118_962_000, with_aux=True,
+                   direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
+    assert len(rr.points) == 1
+    assert rr.points[0].dRel == pytest.approx(1705 * BOSCH_A_RANGE_SCALE_M - 3.0)
+    assert rr.points[0].vRel == pytest.approx(-2.625)
+    assert not rr.points[0].measured
+    assert len(ri._tracks[1].samples) == 2
+
+  def test_qualified_u11_recovers_immediately_after_high_u10_coast(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=800, direct_vrel_uncertainty_raw=84))
+    ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
+              direct_vrel_raw=800, direct_vrel_uncertainty_raw=84))
+    ri.update(sweep(0, 2, 0x7, 981, 1024, 5, 100_000_000, with_aux=True,
+              direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
+    rr = ri.update(sweep(0, 3, 0x7, 980, 1024, 7, 150_000_000, with_aux=True,
+                   direct_vrel_raw=760, direct_vrel_uncertainty_raw=84))
+    assert rr.points[0].vRel == pytest.approx((760 - 864) / 64.0)
+    assert rr.points[0].measured
+    assert ri._tracks[1].last_trusted_vrel == pytest.approx((760 - 864) / 64.0)
+
+  def test_high_u10_coast_cannot_cross_lifecycle_incarnation(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=800, direct_vrel_uncertainty_raw=84))
+    ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
+              direct_vrel_raw=800, direct_vrel_uncertainty_raw=84))
+    rr = ri.update(sweep(0, 2, 0x7, 981, 1024, 99, 100_000_000, with_aux=True,
+                   direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
+    assert len(rr.points) == 0
+    assert ri._tracks[1].last_trusted_vrel is None
+
+  def test_high_u10_coast_expires_with_trusted_motion_age(self):
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=800, direct_vrel_uncertainty_raw=84))
+    ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
+              direct_vrel_raw=800, direct_vrel_uncertainty_raw=84))
+    ri.update(sweep(0, 2, 0x7, 981, 1024, 5, 100_000_000, with_aux=True,
+              direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
+    rr = ri.update(sweep(0, 3, 0x7, 980, 1024, 7, 300_000_000, with_aux=True,
+                   direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
+    assert len(rr.points) == 0
 
   def test_range_ratio_conversion_and_sentinel(self):
     assert _bosch_a_range_ratio(500) == pytest.approx(1.0)
@@ -633,7 +683,7 @@ class TestVrel:
     accepted_drel = rr.points[0].dRel
 
     rr = ri.update(sweep(0, 2, 0x7, 100, 1024, 5, 100_000_000, with_aux=True,
-                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=612, rawca=509,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=80, rawca=509,
                          range_sigma_raw=4, existence_raw=0))
     assert len(rr.points) == 1
     assert rr.points[0].dRel == pytest.approx(accepted_drel)
