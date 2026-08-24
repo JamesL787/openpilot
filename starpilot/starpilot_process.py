@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import copy
 import datetime
+import gc
 import hashlib
 import importlib
 import json
@@ -41,6 +42,16 @@ TOGGLE_BROADCAST_INTERVAL_FRAMES = int(1 / DT_MDL)
 UPDATE_CHECK_INTERVAL_SECONDS = 60 * 60
 
 _DASHBOARD_UTILITIES = None
+
+
+def configure_starpilot_realtime():
+  # Run below the safety-critical processes and allow migration to whichever
+  # of the planner/camera cores has spare time. config_realtime_process disables
+  # cyclic GC for hard realtime loops; this 20 Hz coordinator owns cyclic planner
+  # graphs and is long-lived, so turn GC back on to prevent drive-over-drive and
+  # per-frame cyclic garbage from accumulating.
+  config_realtime_process([5, 6], Priority.STARPILOT)
+  gc.enable()
 
 
 def get_update_check_phase_seconds(params_raw):
@@ -249,7 +260,7 @@ def update_toggles_in_background(result, starpilot_variables, started, theme_man
 def starpilot_thread():
   rate_keeper = Ratekeeper(1 / DT_MDL, None)
 
-  config_realtime_process(5, Priority.CTRL_LOW)
+  configure_starpilot_realtime()
 
   pm = messaging.PubMaster(["starpilotPlan"])
   sm = messaging.SubMaster(["carControl", "carParams", "carState", "controlsState", "deviceState", "driverMonitoringState",
@@ -285,6 +296,8 @@ def starpilot_thread():
   run_update_checks = False
   safe_mode_active = safe_mode_enabled(params_raw)
   started_previously = False
+  starpilot_planner = None
+  starpilot_tracking = None
   model_randomizer_previously = params.get_bool("ModelRandomizer")
   time_validated = False
 
@@ -304,12 +317,19 @@ def starpilot_thread():
     started = sm["deviceState"].started
 
     if not started and started_previously:
+      assert starpilot_planner is not None
       starpilot_planner.shutdown()
 
       starpilot_toggles = update_toggles(starpilot_variables, started, theme_manager, thread_manager, time_validated, params, starpilot_toggles)
       serialized_starpilot_toggles = serialize_starpilot_toggles(starpilot_toggles)
       toggle_broadcast_pending = True
       transition_offroad(starpilot_planner, model_manager, theme_manager, thread_manager, time_validated, sm, params, starpilot_toggles)
+
+      # Planner helpers retain back-references to the planner. Release the whole
+      # onroad graph promptly instead of retaining it until a later automatic GC.
+      starpilot_tracking = None
+      starpilot_planner = None
+      gc.collect()
 
       run_update_checks = True
     elif started and not started_previously:
@@ -319,6 +339,7 @@ def starpilot_thread():
       transition_onroad(error_log)
 
     if started and sm.updated["modelV2"]:
+      assert starpilot_planner is not None and starpilot_tracking is not None
       broadcast_toggles = toggle_broadcast_pending or (rate_keeper.frame % TOGGLE_BROADCAST_INTERVAL_FRAMES == 0)
       starpilot_planner.update(now, time_validated, sm, starpilot_toggles)
       starpilot_planner.publish(theme_manager.theme_updated, sm, pm, starpilot_toggles,
