@@ -18,14 +18,15 @@ DT_DMON = 0.05  # driver monitoring
 
 
 class Priority:
-  # CORE 2
-  # - modeld = 55
-  # - camerad = 54
-  CTRL_LOW = 51 # plannerd & radard
+  # Big-core realtime layout on comma 3X:
+  # - core 4: card
+  # - core 5: controlsd & selfdrived
+  # - core 6: camerad
+  # - core 7: modeld & dmonitoringmodeld
+  # Lower-priority planners may use spare time on cores 5-6.
+  STARPILOT = 50
+  CTRL_LOW = 51  # plannerd & radard
   UI = 50
-
-  # CORE 3
-  # - pandad = 55
   CTRL_HIGH = 53
 
 
