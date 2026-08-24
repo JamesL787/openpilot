@@ -390,7 +390,17 @@ class NRDRTuningLayout(_SettingsPage):
       toggle("NrdrHondaEcuMatchedLong", "Nidec ECU-Matched Long",
              "Shape Honda gas and brake commands closer to the stock Nidec ECU.",
              visible=self._is_honda_nidec),
+      toggle("NrdrHondaFullBrakeAuthority", "Full Nidec Brake Authority",
+             "Allow the supported Honda Nidec path to use the full normalized brake-command range. "
+             "Disable to retain upstream brake-command headroom.",
+             visible=self._is_honda_nidec),
+      toggle("NrdrRoenAccelerationLimits", "Roen Nidec Acceleration Limits",
+             "Use the Roen ISO-based planner and Nidec pedal-controller acceleration envelopes. "
+             "This is independent of Live Learning Gas.",
+             visible=self._is_honda_nidec),
       toggle("HondaLiveLearningGas", "Live Learning Gas", "Adapt Honda gas and wind compensation factors while driving."),
+      toggle("NrdrHondaDashVariantB", "Honda Dashboard Variant B",
+             "Use the alternate Honda cluster set-speed rounding profile (the cluster with four dashed lane lines)."),
       value(
         "HondaStoppingDecelRate", "Honda Stopping Decel Rate", "Brake command rate used by Honda carcontroller while stopping.",
         lambda: f"{p.get_int('HondaStoppingDecelRate')}%",
@@ -399,11 +409,44 @@ class NRDRTuningLayout(_SettingsPage):
     ]
     long_pid_rows = [
       value(
-        "LongPidTuneScale", "Longitudinal PID Tune Scale", "Scale Honda longitudinal PID output. 100% preserves the base tune.",
+        "LongPidTuneScaleAggressive", "Distance 1 / Aggressive PID Scale",
+        "PID scale used with the Aggressive personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
+        lambda: f"{p.get_int('LongPidTuneScaleAggressive')}%",
+        lambda: self._show_slider("LongPidTuneScaleAggressive", 0, 500, step=5, unit="%", title="Aggressive PID Scale"),
+      ),
+      value(
+        "LongPidTuneScaleStandard", "Distance 2 / Standard PID Scale",
+        "PID scale used with the Standard personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
+        lambda: f"{p.get_int('LongPidTuneScaleStandard')}%",
+        lambda: self._show_slider("LongPidTuneScaleStandard", 0, 500, step=5, unit="%", title="Standard PID Scale"),
+      ),
+      value(
+        "LongPidTuneScaleRelaxed", "Distance 3 / Relaxed PID Scale",
+        "PID scale used with the Relaxed personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
+        lambda: f"{p.get_int('LongPidTuneScaleRelaxed')}%",
+        lambda: self._show_slider("LongPidTuneScaleRelaxed", 0, 500, step=5, unit="%", title="Relaxed PID Scale"),
+      ),
+      value(
+        "LongPidTuneScaleEcon", "Distance 4 / Econ PID Scale",
+        "PID scale used with the Econ personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
+        lambda: f"{p.get_int('LongPidTuneScaleEcon')}%",
+        lambda: self._show_slider("LongPidTuneScaleEcon", 0, 500, step=5, unit="%", title="Econ PID Scale"),
+      ),
+      value(
+        "LongPidTuneScale", "Legacy Longitudinal PID Scale", "Scale Honda longitudinal PID output. 100% preserves the base tune.",
         lambda: f"{p.get_int('LongPidTuneScale')}%",
-        lambda: self._show_slider("LongPidTuneScale", 0, 500, step=5, unit="%", title="Longitudinal PID Tune Scale"),
+        lambda: self._show_slider("LongPidTuneScale", 0, 500, step=5, unit="%", title="Legacy Longitudinal PID Scale"),
       ),
       toggle("StaticFeedforwardLong", "Keep Feedforward Static", "Apply the PID scale only to feedback while preserving feedforward."),
+    ]
+    cruise_rows = [
+      value(
+        "NrdrCruiseMismatchCorrection", "Cruise Mismatch Correction",
+        "Correct a persistent difference between indicated set speed and the actual steady cruising speed.",
+        lambda: f"{p.get_float('NrdrCruiseMismatchCorrection'):.1f}%",
+        lambda: self._show_slider("NrdrCruiseMismatchCorrection", 95.0, 105.0, step=0.1, unit="%", value_type="float",
+                                  title="Cruise Mismatch Correction"),
+      ),
     ]
     stopping_rows = [
       value(
@@ -441,6 +484,7 @@ class NRDRTuningLayout(_SettingsPage):
       [
         SettingSection(title=tr_noop("Honda Nidec Control"), rows=long_control_rows),
         SettingSection(title=tr_noop("Longitudinal PID"), rows=long_pid_rows),
+        SettingSection(title=tr_noop("Cruise Target"), rows=cruise_rows),
         SettingSection(title=tr_noop("Stopping"), rows=stopping_rows),
       ],
       header_title=tr_noop("NRDR Long"),

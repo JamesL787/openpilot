@@ -321,8 +321,16 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HondaVEgoStopping", {PERSISTENT, FLOAT, "0.5", "0.5", 2}},
     {"IgnoreIgnitionLine", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"LongPidTuneScale", {PERSISTENT, INT, "100", "100", 2}},
+    {"LongPidTuneScaleAggressive", {PERSISTENT, INT, "200", "200", 2}},
+    {"LongPidTuneScaleEcon", {PERSISTENT, INT, "50", "50", 2}},
+    {"LongPidTuneScaleRelaxed", {PERSISTENT, INT, "80", "80", 2}},
+    {"LongPidTuneScaleStandard", {PERSISTENT, INT, "100", "100", 2}},
     {"LongPitch", {PERSISTENT, BOOL, "1", "0", 2, SETTINGS_SIMPLE}},
     {"NrdrHondaEcuMatchedLong", {PERSISTENT, BOOL, "0", "0", 2}},
+    {"NrdrHondaFullBrakeAuthority", {PERSISTENT, BOOL, "1", "1", 2}},
+    {"NrdrHondaDashVariantB", {PERSISTENT, BOOL, "0", "0", 2}},
+    {"NrdrCruiseMismatchCorrection", {PERSISTENT, FLOAT, "100.0", "100.0", 2}},
+    {"NrdrRoenAccelerationLimits", {PERSISTENT, BOOL, "1", "1", 2}},
     // Experimental: feed the MPC the model's predicted lead horizon instead of extrapolating
     // one instant forward. Civic Bosch only. See commaai/openpilot#37824.
     {"BoschLong", {PERSISTENT, BOOL, "0", "0", 3}},
