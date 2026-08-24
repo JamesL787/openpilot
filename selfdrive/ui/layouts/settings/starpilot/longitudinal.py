@@ -593,9 +593,10 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     ]
 
     # ── 3. Speed Limit Controller (SLC) Rows ──
-    # Radarless Honda Bosch longitudinal. Its own section so the header reads as a group;
-    # SettingSection.visible hides the header too on cars this does not apply to.
-    self._bosch_long_rows = [
+    # Civic Bosch longitudinal supervisor. Independent of BoschLong -- works off the
+    # radar-tracked lead, not the driving model. Its own section so the header reads as a
+    # group; SettingSection.visible hides the header too on cars this does not apply to.
+    self._blotv2_rows = [
       SettingRow("NrdrBlotV2", "toggle", tr_noop("BLoTv2 Supervisor"),
                  subtitle=tr_noop("Experimental. Tracks how much deceleration the lead actually needs, "
                                   "softens the solver's jerk cost when it has to respond, and pads "
@@ -873,7 +874,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     self._sub_panels["advanced"] = AetherSettingsView(
       self,
       [SettingSection(title="", rows=self._advanced_rows),
-       SettingSection(tr_noop("Bosch Long"), self._bosch_long_rows,
+       SettingSection(tr_noop("BLoTv2"), self._blotv2_rows,
                       visible=lambda: self._advanced_enabled() and self._is_civic_bosch())],
       header_title=tr_noop("Advanced Actuators"),
       header_subtitle=tr_noop("Adjust actuator delay, EV/Truck tuning, and launch/stop speeds/rates."),

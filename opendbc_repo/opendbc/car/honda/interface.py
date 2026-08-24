@@ -49,8 +49,10 @@ class CarInterface(CarInterfaceBase):
       # a firmware-correct RadarInterface (16-slot Bosch-A object bank, RX-only) and use it by
       # default via NrdrBoschARadar: every other Bosch platform still has no parsed radar DBC and
       # keeps radarUnavailable=True regardless.
-      # BoschLong's model-based longitudinal features (BLoTv2, Model Lead Trajectory) are built
-      # for radarless operation, so a real Bosch-A radar track overrides the toggle off.
+      # BoschLong plans against the driving model rather than a radar track, so a real
+      # Bosch-A radar overrides the toggle off. This is specific to BoschLong itself --
+      # BLoTv2 and Model Lead Trajectory are both independent of it (BLoTv2 works off the
+      # radar-tracked lead; MLT runs unconditionally for every car).
       try:
         params = Params()
         bosch_a_radar_tryout = params.get_bool("NrdrBoschARadar") and not params.get_bool("BoschLong")

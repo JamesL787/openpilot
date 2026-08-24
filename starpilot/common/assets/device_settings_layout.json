@@ -2394,10 +2394,10 @@
       {
         "key": "NrdrBlotV2",
         "label": "BLoTv2 Supervisor",
-        "description": "Experimental, Civic Bosch only. Tracks how much deceleration the lead actually needs, softens the solver's jerk cost when it has to respond, and pads following time when the lead is slowing. Never commands acceleration itself. (Model Lead Trajectory itself now runs unconditionally for every car, matching upstream.)",
+        "description": "Experimental, Civic Bosch only. Tracks how much deceleration the lead actually needs, softens the solver's jerk cost when it has to respond, and pads following time when the lead is slowing. Never commands acceleration itself. Independent of Bosch Long -- works off the radar-tracked lead, not the driving model.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "BoschLong",
+        "parent_key": "AdvancedLongitudinalTune",
         "settings_tier": "advanced"
       },
       {
