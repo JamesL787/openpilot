@@ -905,6 +905,44 @@ def test_conditional_chill_wheel_override_cycles_manual_state(monkeypatch, tmp_p
   assert card.params_memory.get_int("CCStatus") == spc.CCStatus["OFF"]
 
 
+def test_very_long_distance_press_does_not_repeat_long_action(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
+  button_events = []
+  monkeypatch.setattr(card, "handle_button_event", lambda key, *_: button_events.append(key))
+
+  card.gap_counter = card.very_long_press_threshold - 1
+  card.distancePressed_previously = True
+  card.update(make_car_state(), SimpleNamespace(distancePressed=True), make_sm(), make_toggles())
+
+  assert button_events == ["distance_very_long"]
+  assert card.params_memory.get(spc.WHEEL_BUTTON_SOUND_PARAM) == "prompt"
+
+
+def test_long_distance_press_runs_on_release(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
+  button_events = []
+  monkeypatch.setattr(card, "handle_button_event", lambda key, *_: button_events.append(key))
+
+  card.gap_counter = card.long_press_threshold - 1
+  card.distancePressed_previously = True
+  starpilot_car_state = SimpleNamespace(distancePressed=True)
+  card.update(make_car_state(), starpilot_car_state, make_sm(), make_toggles())
+  assert button_events == []
+  assert card.params_memory.get(spc.WHEEL_BUTTON_SOUND_PARAM) == "preAlert"
+
+  starpilot_car_state.distancePressed = False
+  card.update(make_car_state(), starpilot_car_state, make_sm(), make_toggles())
+  assert button_events == ["distance_long"]
+
+
 def test_cancel_button_short_press_can_run_independent_mapping(monkeypatch, tmp_path):
   monkeypatch.setattr(spc, "Params", FakeParams)
   monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)

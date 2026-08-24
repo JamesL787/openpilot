@@ -234,6 +234,17 @@ class Soundd:
         new_alert = starpilot_alert_key(new_starpilot_alert)
         new_alert_type = sm['starpilotSelfdriveState'].alertType
 
+      wheel_button_sound = self.params_memory.get("WheelButtonSound")
+      if wheel_button_sound is not None:
+        self.params_memory.remove("WheelButtonSound")
+        if isinstance(wheel_button_sound, bytes):
+          wheel_button_sound = wheel_button_sound.decode("utf-8", "ignore")
+        if new_alert == AudibleAlert.none:
+          new_alert = {
+            "preAlert": AudibleAlert.preAlert,
+            "prompt": AudibleAlert.prompt,
+          }.get(wheel_button_sound, AudibleAlert.none)
+
       self.current_alert_type = new_alert_type
       self.update_alert(new_alert)
     elif check_selfdrive_timeout_alert(sm):
