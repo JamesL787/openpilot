@@ -41,3 +41,11 @@
   CAN-FD controls without deleting stored preferences.
 - Changed the native advanced lateral view to omit controls that do not apply
   to the detected angle/torque controller rather than showing disabled rows.
+
+## 2026-08-24 — EPS tooling recovery from arc-dev
+
+- Recovered the deleted `arc-dev` tip from its reflog and compared its
+  `eps_tools/` tree with `ns-bosch-radar`.
+- Ported the guided flasher, diagnostic and UDS hardening, firmware guidance,
+  and the CR-V 5G rate-authority tuning image to `ns-bosch-radar`.
+- Corrected the tuning README to name the recovered image file exactly.
