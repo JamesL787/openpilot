@@ -111,10 +111,13 @@ class SettingsLayout(Widget):
 
   def _handle_back_navigation(self):
     if self._panel_depth > 0:
-      self._panel_depth -= 1
       current_panel = self._panels[self._current_panel].instance
       if hasattr(current_panel, 'navigate_back'):
-        current_panel.navigate_back()
+        if current_panel.navigate_back() is not False:
+          return
+      # A stale depth must never consume a Back press and skip the current
+      # panel's root screen.
+      self._panel_depth = 0
     else:
       if self._close_callback:
         self._close_callback()
@@ -298,7 +301,13 @@ class SettingsLayout(Widget):
     if panel_type != self._current_panel:
       self._panels[self._current_panel].instance.hide_event()
       self._current_panel = panel_type
-      self._panels[self._current_panel].instance.show_event()
+      # Sidebar entries are top-level destinations.  Do not carry a nested
+      # back state from the prior section into the newly selected one.
+      self._panel_depth = 0
+      panel = self._panels[self._current_panel].instance
+      if hasattr(panel, 'reset_to_root'):
+        panel.reset_to_root()
+      panel.show_event()
 
   def show_event(self):
     super().show_event()

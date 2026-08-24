@@ -1103,12 +1103,17 @@ class AdjustorTogglesPanelView(PanelManagerView):
 class BreadcrumbController:
   EXPAND_DURATION: float = 2.5
 
-  def __init__(self):
+  def __init__(self, path_provider: Callable[[], list[tuple[str, str]]] | None = None,
+               click_handler: Callable[[str], None] | None = None):
     self._rects: dict[str, rl.Rectangle] = {}
     self._pressed: str | None = None
     self._expanded: bool = False
     self._expand_alpha: float = 0.0
     self._last_interact: float = 0.0
+    # Most users are StarPilot's hierarchical hub.  Other settings pages can
+    # supply their own compact path without inheriting that hub's global state.
+    self._path_provider = path_provider
+    self._click_handler = click_handler
 
   @property
   def rects(self) -> dict[str, rl.Rectangle]:
@@ -1154,6 +1159,10 @@ class BreadcrumbController:
       return
 
     self._expanded = False
+
+    if self._click_handler is not None:
+      self._click_handler(target)
+      return
 
     import openpilot.selfdrive.ui.layouts.settings.starpilot.main_panel as main_panel
     from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import StarPilotPanelType
@@ -1239,7 +1248,7 @@ class BreadcrumbController:
 
   def draw(self, rect: rl.Rectangle) -> None:
     self._rects.clear()
-    path = self.build_path()
+    path = self._path_provider() if self._path_provider is not None else self.build_path()
     if not path:
       return
 
@@ -5475,4 +5484,3 @@ class TileGrid(Widget):
           tile.set_parent_rect(parent_rect)
         tile.render(snap_rect(rl.Rectangle(row_x + c * (row_tile_w + self._gap), rect.y + y_offset + r * (tile_h + self._gap), row_tile_w, tile_h)))
         tile_idx += 1
-

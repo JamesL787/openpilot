@@ -18,10 +18,15 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPag
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   AetherSettingsView,
   DEFAULT_PANEL_STYLE,
+  AETHER_LIST_METRICS,
+  AetherListColors,
+  BreadcrumbController,
   HubTile,
   SettingRow,
   SettingSection,
   TileGrid,
+  draw_rounded_fill,
+  draw_rounded_stroke,
 )
 
 
@@ -180,6 +185,7 @@ class NRDRTuningLayout(_SettingsPage):
     super().__init__()
     self._scan_proc: subprocess.Popen | None = None
     self._scan_fh = None
+    self._breadcrumbs = BreadcrumbController(self._navigation_path, self._handle_breadcrumb)
     p = self._params
 
     def toggle(key: str, title: str, subtitle: str, *, visible=None) -> SettingRow:
@@ -443,6 +449,67 @@ class NRDRTuningLayout(_SettingsPage):
     )
     self._wire_sub_panels()
 
+  def _navigation_path(self) -> list[tuple[str, str]]:
+    """Return the NRDR-local breadcrumb path shown in the shared top bar."""
+    path = [(tr("NRDR"), "action:nrdr:root")]
+    labels = {
+      "lateral": tr("NRDR Lateral"),
+      "longitudinal": tr("NRDR Long"),
+    }
+    if self._current_sub_panel in labels:
+      path.append((labels[self._current_sub_panel], "action:nrdr:current"))
+    return path
+
+  def _handle_breadcrumb(self, target: str) -> None:
+    if target == "action:nrdr:root":
+      self.reset_to_root()
+
+  def reset_to_root(self) -> None:
+    """Return to the NRDR chooser and synchronize the shared Back button."""
+    if self._current_sub_panel:
+      self._go_back()
+
+  def _render(self, rect: rl.Rectangle):
+    # Match StarPilot's persistent top navigation shell.  The page content is
+    # deliberately below it, so the breadcrumb is always available on long
+    # NRDR tuning lists.
+    top_bar_height = 72
+    bottom_bar_height = 10
+    content_rect = rl.Rectangle(rect.x, rect.y + top_bar_height, rect.width,
+                              rect.height - top_bar_height - bottom_bar_height)
+
+    shell_w = min(rect.width - AETHER_LIST_METRICS.outer_margin_x * 2,
+                  AETHER_LIST_METRICS.max_content_width)
+    shell_x = rect.x + (rect.width - shell_w) / 2
+    glass_rect = rl.Rectangle(shell_x, rect.y + 2, shell_w, top_bar_height - 4)
+
+    glow = AetherListColors.PRIMARY
+    for i in range(4, 0, -1):
+      offset = i * 2.5
+      glow_rect = rl.Rectangle(glass_rect.x - offset, glass_rect.y - offset,
+                               glass_rect.width + offset * 2, glass_rect.height + offset * 2)
+      alpha = int(25 * (1.0 - i / 5))
+      draw_rounded_fill(glow_rect, rl.Color(glow.r, glow.g, glow.b, alpha), radius_px=34)
+    draw_rounded_fill(glass_rect, rl.Color(12, 10, 18, 255), radius_px=34)
+    draw_rounded_stroke(glass_rect, glow, radius_px=34)
+    self._breadcrumbs.draw(glass_rect)
+
+    if self._current_sub_panel and self._current_sub_panel in self._sub_panels:
+      self._sub_panels[self._current_sub_panel].render(content_rect)
+    elif self._manager_view is not None:
+      self._manager_view.render(content_rect)
+
+  def _handle_mouse_press(self, mouse_pos):
+    self._breadcrumbs.init_interaction(mouse_pos)
+
+  def _handle_mouse_release(self, mouse_pos):
+    action = self._breadcrumbs.finish_interaction(mouse_pos)
+    if action:
+      self._breadcrumbs.handle_click(action)
+
+  def _handle_mouse_event(self, mouse_event):
+    self._breadcrumbs.update_interaction(mouse_event.pos)
+
   def _is_honda_nidec(self) -> bool:
     """True only on a Honda running the Nidec longitudinal path.
 
@@ -466,4 +533,9 @@ class NRDRTuningLayout(_SettingsPage):
       return False
 
   def navigate_back(self):
+    # Returning True means the shared Settings back button consumed this press
+    # inside NRDR.  At the chooser it should close Settings normally.
+    if not self._current_sub_panel:
+      return False
     self._go_back()
+    return True
