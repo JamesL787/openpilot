@@ -19,6 +19,8 @@
   panel, retaining the existing StarPilot controls and parameter compatibility.
 - Omitted NRDR's set-speed overshoot allowance because StarPilot's existing
   Set Speed Offset already provides the overlapping cruise-target behavior.
+- Exposed the added NRDR longitudinal controls through Galaxy's shared device
+  settings layout.
 - Kept the existing lateral panel because it already covers the upstream
   vehicle learning, controller tuning, override, filter, and tune-report
   areas. The upstream handcrafted-lateral switch was not added because its

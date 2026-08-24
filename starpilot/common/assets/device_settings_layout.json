@@ -2408,6 +2408,93 @@
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",
         "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrHondaFullBrakeAuthority",
+        "label": "Full Nidec Brake Authority",
+        "description": "Honda Nidec only. Allow the supported Nidec path to use the full normalized brake-command range. Disable to retain upstream brake-command headroom.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrRoenAccelerationLimits",
+        "label": "Roen Nidec Acceleration Limits",
+        "description": "Honda Nidec only. Use the Roen ISO-based planner and pedal-controller acceleration envelopes. This is independent of Live Learning Gas.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LongPidTuneScaleAggressive",
+        "label": "Aggressive PID Scale",
+        "description": "Longitudinal PID scale for the Aggressive personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0,
+        "max": 500,
+        "step": 5,
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LongPidTuneScaleStandard",
+        "label": "Standard PID Scale",
+        "description": "Longitudinal PID scale for the Standard personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0,
+        "max": 500,
+        "step": 5,
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LongPidTuneScaleRelaxed",
+        "label": "Relaxed PID Scale",
+        "description": "Longitudinal PID scale for the Relaxed personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0,
+        "max": 500,
+        "step": 5,
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LongPidTuneScaleEcon",
+        "label": "Econ PID Scale",
+        "description": "Longitudinal PID scale for the Econ personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0,
+        "max": 500,
+        "step": 5,
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrCruiseMismatchCorrection",
+        "label": "Cruise Mismatch Correction",
+        "description": "Correct a persistent difference between indicated set speed and actual steady cruising speed.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 95.0,
+        "max": 105.0,
+        "step": 0.1,
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrHondaDashVariantB",
+        "label": "Honda Dashboard Variant B",
+        "description": "Use the alternate Honda cluster set-speed rounding profile for clusters with four dashed lane lines.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
       }
     ]
   },
