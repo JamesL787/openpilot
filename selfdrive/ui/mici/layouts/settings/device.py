@@ -5,8 +5,9 @@ from collections.abc import Callable
 
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
+from openpilot.common.swaglog import cloudlog
 from openpilot.common.time_helpers import system_time_valid
-from openpilot.system.hardware import PC
+from openpilot.system.hardware import HARDWARE, PC
 from openpilot.system.hardware.hw import Paths
 from openpilot.system.ui.widgets.scroller import NavRawScrollPanel, NavScroller
 from openpilot.selfdrive.ui.mici.widgets.button import BigButton, BigCircleButton, BigParamControl
@@ -18,6 +19,19 @@ from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.widgets import Widget
 from openpilot.selfdrive.ui.ui_state import device, ui_state
+
+
+def _perform_user_reboot():
+  # DoReboot is deferred by manager.py while started/ignition is true, which is the normal
+  # state for someone sitting in the car adjusting settings -- it would silently no-op with
+  # no on-screen feedback. DoUserReboot is never deferred; call HARDWARE.reboot() directly
+  # too so this doesn't depend on manager's loop noticing the param at all, matching the
+  # standard UI's _perform_reboot.
+  ui_state.params.put_bool("DoUserReboot", True)
+  try:
+    HARDWARE.reboot()
+  except Exception:
+    cloudlog.exception("Direct user-requested reboot failed; manager fallback requested")
 from openpilot.system.ui.widgets.label import UnifiedLabel
 from openpilot.system.ui.widgets.html_render import HtmlModal, HtmlRenderer
 from openpilot.system.athena.registration import UNREGISTERED_DONGLE_ID
@@ -158,7 +172,7 @@ class ConnectServerBigButton(BigButton):
         if toggle_path.exists():
           toggle_path.unlink()
 
-    ui_state.params.put_bool("DoReboot", True)
+    _perform_user_reboot()
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
     super()._handle_mouse_release(mouse_pos)
@@ -227,7 +241,7 @@ class DeviceLayoutMici(NavScroller):
       ui_state.params.put_bool("DoShutdown", True)
 
     def reboot_callback():
-      ui_state.params.put_bool("DoReboot", True)
+      _perform_user_reboot()
 
     def reset_calibration_callback():
       params = ui_state.params
