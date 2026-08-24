@@ -382,8 +382,11 @@ def update_json_file(path, data):
 
 @cache
 def use_konik_server():
-  # Prefer the persistent toggle over volatile cache files.
-  return Params().get_bool("UseKonikServer")
+  # Prefer the persistent toggle over volatile cache files. Params.get_bool ignores
+  # params_keys.h's declared default on a bare read -- pass it explicitly so a fresh
+  # install (param not yet written to disk) reads the intended on-by-default value
+  # instead of silently registering against the wrong backend.
+  return Params().get_bool("UseKonikServer", default=True)
 
 
 def wait_for_no_driver(params, sm, door_checks=False, time_threshold=60):

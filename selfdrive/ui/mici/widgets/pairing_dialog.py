@@ -14,7 +14,7 @@ from openpilot.system.ui.widgets.label import UnifiedLabel
 
 def use_konik_server(params: Params | None = None) -> bool:
   params = params or Params()
-  return params.get_bool("UseKonikServer")
+  return params.get_bool("UseKonikServer", default=True)
 
 
 def get_pairing_host(params: Params | None = None) -> str:

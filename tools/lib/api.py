@@ -7,7 +7,7 @@ from openpilot.tools.lib.auth_config import DEFAULT_API_HOST, KONIK_API_HOST, no
 
 def _use_konik_server():
   try:
-    return Params().get_bool("UseKonikServer")
+    return Params().get_bool("UseKonikServer", default=True)
   except Exception:
     return False
 

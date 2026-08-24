@@ -141,7 +141,7 @@ class ConnectServerBigButton(BigButton):
     return 52
 
   def _selected_option(self) -> str:
-    return self._KONIK_OPTION if self._params.get_bool("UseKonikServer") else self._COMMA_OPTION
+    return self._KONIK_OPTION if self._params.get_bool("UseKonikServer", default=True) else self._COMMA_OPTION
 
   def _apply_selection(self, selection: str):
     use_konik = selection == self._KONIK_OPTION

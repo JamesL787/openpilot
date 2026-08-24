@@ -977,7 +977,7 @@ class StarPilotSystemLayout(_SettingsPage):
   def _get_konik_state(self):
     if Path("/data/not_vetted").exists():
       return True
-    return self._params.get_bool("UseKonikServer")
+    return self._params.get_bool("UseKonikServer", default=True)
 
   def _on_konik_toggle(self, state):
     target = tr("Konik") if state else tr("Comma")
