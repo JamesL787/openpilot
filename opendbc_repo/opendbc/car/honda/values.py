@@ -124,11 +124,17 @@ class HondaCarDocs(CarDocs):
 
     self.car_parts = CarParts.common([harness])
 
+    if CP.alphaLongitudinalAvailable:
+      self.footnotes.append(Footnote.EXP_LONG)
+
 
 class Footnote(Enum):
   CIVIC_DIESEL = CarFootnote(
     "2019 Honda Civic 1.6L Diesel Sedan does not have ALC below 12mph.",
     Column.FSR_STEERING)
+  EXP_LONG = CarFootnote(
+    "Enabling longitudinal control (alpha) will disable all CMBS functionality, including AEB and FCW.",
+    Column.LONGITUDINAL)
 
 
 @dataclass
@@ -198,7 +204,10 @@ class CAR(Platforms):
     ],
     CarSpecs(mass=1326, wheelbase=2.7, steerRatio=15.38, centerToFrontRatio=0.4),  # steerRatio: 10.93 is end-to-end spec
     # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
-    # RX-parse only; no CAN authority is taken, so factory AEB/CMBS stays fully live.
+    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
+    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
+    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
+    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.radar: 'honda_bosch_a_radar'},
   )
   HONDA_CIVIC_BOSCH_DIESEL = HondaBoschPlatformConfig(
