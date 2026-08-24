@@ -46,12 +46,10 @@ _DASHBOARD_UTILITIES = None
 
 def configure_starpilot_realtime():
   # Run below the safety-critical processes and allow migration to whichever
-  # of the planner/camera cores has spare time. config_realtime_process disables
-  # cyclic GC for hard realtime loops; this 20 Hz coordinator owns cyclic planner
-  # graphs and is long-lived, so turn GC back on to prevent drive-over-drive and
-  # per-frame cyclic garbage from accumulating.
+  # of the planner/camera cores has spare time. Keep cyclic GC disabled onroad:
+  # per-frame detector allocations use a singleton, while planner lifecycle
+  # cycles are collected explicitly during the offroad transition below.
   config_realtime_process([5, 6], Priority.STARPILOT)
-  gc.enable()
 
 
 def get_update_check_phase_seconds(params_raw):

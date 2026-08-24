@@ -1,4 +1,3 @@
-import gc
 import json
 from types import SimpleNamespace
 
@@ -28,17 +27,12 @@ class FakeModelManager:
     return None
 
 
-def test_realtime_setup_preserves_cyclic_garbage_collection(monkeypatch):
+def test_realtime_setup_uses_spare_big_cores_at_lower_priority(monkeypatch):
   calls = []
   monkeypatch.setattr(starpilot_process, "config_realtime_process", lambda cores, priority: calls.append((cores, priority)))
 
-  gc.disable()
-  try:
-    starpilot_process.configure_starpilot_realtime()
-    assert gc.isenabled()
-    assert calls == [([5, 6], starpilot_process.Priority.STARPILOT)]
-  finally:
-    gc.enable()
+  starpilot_process.configure_starpilot_realtime()
+  assert calls == [([5, 6], starpilot_process.Priority.STARPILOT)]
 
 
 def test_background_toggle_update_does_not_mutate_active_toggles():
