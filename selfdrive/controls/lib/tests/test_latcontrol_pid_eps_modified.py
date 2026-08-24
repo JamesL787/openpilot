@@ -12,6 +12,7 @@ from opendbc.car import structs
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   NRDR_MODIFIED_EPS_KF_SPEED_BP,
   NRDR_MODIFIED_EPS_KF_V,
+  NRDR_SR_CURVE_BY_FP,
   LatControlPID,
   get_nrdr_modified_eps_kf,
 )
@@ -66,19 +67,25 @@ def test_stock_eps_hondas_do_not_get_the_nrdr_live_tune(candidate):
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', "civic_tba_c020"),
   (CAR.HONDA_INSIGHT, b'39990-TXM,A040\x00\x00', "insight_txm_a040"),
 ])
-def test_exact_eps_firmware_selects_only_its_vgr_profile(candidate, fw_version, profile):
+def test_road_measured_curve_takes_priority_over_exact_firmware_profile(candidate, fw_version, profile):
   car_params = _params(candidate, fw_version)
   lat = LatControlPID(car_params, STUB_CI, 0.01)
-  assert lat.vgr_inverse is HONDA_VGR_INVERSE_BY_PROFILE[profile]
-  assert not hasattr(lat, "sr_curve")
-
-
-@pytest.mark.parametrize("candidate", [CAR.HONDA_CLARITY, CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_INSIGHT,
-                                       CAR.HONDA_CRV_5G, CAR.HONDA_CIVIC_BOSCH_DIESEL])
-def test_unknown_eps_firmware_keeps_fixed_vehicle_model_ratio(candidate):
-  lat = _controller(candidate, STOCK_FW)
+  assert profile in HONDA_VGR_INVERSE_BY_PROFILE
+  assert lat.sr_curve is NRDR_SR_CURVE_BY_FP[str(candidate)]
   assert lat.vgr_inverse is None
-  assert not hasattr(lat, "sr_curve")
+
+
+@pytest.mark.parametrize("candidate", [CAR.HONDA_CLARITY, CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_INSIGHT, CAR.HONDA_CRV_5G])
+def test_road_measured_curve_does_not_depend_on_eps_firmware(candidate):
+  lat = _controller(candidate, STOCK_FW)
+  assert lat.sr_curve is NRDR_SR_CURVE_BY_FP[str(candidate)]
+  assert lat.vgr_inverse is None
+
+
+def test_unmapped_unknown_eps_firmware_keeps_fixed_vehicle_model_ratio():
+  lat = _controller(CAR.HONDA_CIVIC_BOSCH_DIESEL, STOCK_FW)
+  assert lat.sr_curve is None
+  assert lat.vgr_inverse is None
 
 
 def test_modified_eps_runtime_scales_remain_neutral():
