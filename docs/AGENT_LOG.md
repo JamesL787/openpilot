@@ -25,3 +25,19 @@
   vehicle learning, controller tuning, override, filter, and tune-report
   areas. The upstream handcrafted-lateral switch was not added because its
   controller runtime is not present on this branch.
+
+## 2026-08-24 — Dynamic longitudinal settings visibility
+
+- Hid the generic StarPilot stop controls whenever an active Honda openpilot
+  long controller uses the Honda-specific override parameters instead.
+- Scoped NRDR Long controls and sections to the detected Honda controller path,
+  while retaining the Nidec-only controls for Nidec cars.
+- Added conditional hub-tile support and hid NRDR's Honda-only lateral and
+  longitudinal entry points for non-Honda fingerprints.
+- Added one shared CarParams/controller capability catalogue for Galaxy,
+  Favorites, and the native vehicle settings panel. It gates Honda Bosch/Nidec
+  paths, modified EPS tuning, Tesla Model 3 vs. Pre-AP controls, GM pedal and
+  Volt settings, Subaru/Toyota/Jeep settings, Rivian hardware, and Hyundai
+  CAN-FD controls without deleting stored preferences.
+- Changed the native advanced lateral view to omit controls that do not apply
+  to the detected angle/torque controller rather than showing disabled rows.

@@ -12,37 +12,6 @@ const FAVORITE_ACTION_PREFIX = "__starpilot_favorite_action__:"
 const GALAXY_DEVELOPER_MODE_KEY = "GalaxyDeveloperMode"
 const HIDDEN_SECTION_NAMES = new Set(["Model & Customization"])
 const HIDDEN_SETTING_KEYS = new Set(["HumanAcceleration", "ReverseCruise"])
-const GM_MAKES = ["Buick", "Cadillac", "Chevrolet", "GMC", "Holden"]
-const HKG_MAKES = ["Genesis", "Hyundai", "Kia"]
-const VEHICLE_SETTING_MAKES = {
-  RivianAngleControl: ["Rivian"],
-  TeslaCoopSteering: ["Tesla"],
-  NAPRadarEnabled: ["Tesla"],
-  NAPRadarBehindNosecone: ["Tesla"],
-  NAPRadarOffset: ["Tesla"],
-  NAPPedalEnabled: ["Tesla"],
-  NAPPedalCanBus: ["Tesla"],
-  NAPAdaptiveAccel: ["Tesla"],
-  NAPPedalCalibDone: ["Tesla"],
-  NAPPedalCalibFactor: ["Tesla"],
-  NAPPedalCalibZero: ["Tesla"],
-  GMPedalLongitudinal: GM_MAKES,
-  GMDashSpoofOffsets: GM_MAKES,
-  IgnoreIgnitionLine: GM_MAKES,
-  LongPitch: GM_MAKES,
-  RemoteStartBootsComma: GM_MAKES,
-  HKGRemoteStartBootsComma: HKG_MAKES,
-  VoltSNG: ["Chevrolet", "Holden"],
-  GMAutoHold: ["Chevrolet", "Holden"],
-  VoltOnePedalMode: ["Chevrolet", "Holden"],
-  RemapCancelToDistance: ["Chevrolet", "Holden"],
-  JeepBrakeHold: ["Jeep"],
-  SubaruSNG: ["Subaru"],
-  SubaruSNGManualParkingBrake: ["Subaru"],
-  ClusterOffset: ["Lexus", "Toyota"],
-  SNGHack: ["Lexus", "Toyota"],
-  ToyotaAutoHold: ["Lexus", "Toyota"],
-}
 const RADAR_REQUIRED_KEYS = new Set(["HumanLaneChanges", "RadarTakeoffs"])
 
 // Plain variables — scheduling/routing flags that must NOT be reactive
@@ -91,21 +60,11 @@ function slugifySectionName(name) {
     .replace(/^-+|-+$/g, "")
 }
 
-function normalizeVehicleMake(value) {
-  return String(value || "").trim().toLowerCase()
-}
-
-function isVehicleSettingVisible(section, param) {
-  if (section.name !== "Vehicle") return true
-  const allowedMakes = VEHICLE_SETTING_MAKES[param.key]
-  if (!allowedMakes) return true
-  const selectedMake = normalizeVehicleMake(state.values.CarMake)
-  return allowedMakes.some(make => normalizeVehicleMake(make) === selectedMake)
-}
-
 function isSettingVisible(section, param) {
   // This policy controls Galaxy rendering only; hidden params retain their stored values.
-  if (HIDDEN_SETTING_KEYS.has(param.key) || !isVehicleSettingVisible(section, param)) return false
+  if (HIDDEN_SETTING_KEYS.has(param.key)) return false
+  const settingCapabilities = state.values.SettingCapabilities || {}
+  if (Object.prototype.hasOwnProperty.call(settingCapabilities, param.key) && !settingCapabilities[param.key]) return false
   if (param.requires_capability && !state.values[param.requires_capability]) return false
   if (RADAR_REQUIRED_KEYS.has(param.key) && !state.values.HasRadar) return false
   if (param.key === "AlphaLongitudinalEnabled" && !state.values.AlphaLongitudinalAvailable) return false

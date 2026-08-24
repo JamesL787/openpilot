@@ -53,6 +53,7 @@ from openpilot.starpilot.common.accel_profile import (
   normalize_deceleration_profile,
 )
 from openpilot.starpilot.common.experimental_state import sync_persist_experimental_state, sync_persist_chill_state
+from openpilot.starpilot.common.vehicle_settings_capabilities import get_vehicle_setting_capabilities
 from openpilot.common.constants import CV
 
 
@@ -486,7 +487,27 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     return self._params.get_bool("AdvancedLongitudinalTune")
 
   def _show_stop_tuning_values(self) -> bool:
-    return self._advanced_enabled()
+    return self._advanced_enabled() and not self._uses_honda_long_overrides()
+
+  def _uses_honda_long_overrides(self) -> bool:
+    """Whether Honda-specific stop settings replace the generic controls.
+
+    Honda LongControl reads the HondaStopAccel, HondaStoppingDecelRateLong,
+    HondaVEgoStarting, and HondaVEgoStopping params whenever openpilot is
+    controlling longitudinal. Showing the generic copies alongside those
+    settings leaves the user with controls that do not affect the active
+    controller.
+    """
+    try:
+      from openpilot.selfdrive.ui.ui_state import ui_state
+      cp = getattr(ui_state, "CP", None)
+      capabilities = get_vehicle_setting_capabilities(
+        cp,
+        disable_openpilot_longitudinal=self._params.get_bool("DisableOpenpilotLongitudinal"),
+      )
+      return capabilities["HasHondaLongitudinal"]
+    except Exception:
+      return False
 
   def _make_parent(self, key: str, label: str, subtitle: str = "") -> ParentToggle:
     return ParentToggle(
@@ -574,7 +595,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  subtitle=tr_noop("Brake force to hold the vehicle at a complete stop."),
                  get_value=lambda: f"{self._params.get_float('StopAccel'):.2f}m/s",
                  on_click=lambda: self._show_slider("StopAccel", -4.0, 0.0, step=0.01, unit="m/s", value_type="float"),
-                 visible=adv),
+                 visible=self._show_stop_tuning_values),
       SettingRow("StoppingRate", "value", tr_noop("Stopping Rate"),
                  subtitle=tr_noop("How quickly braking ramps up to bring the car to a stop."),
                  get_value=lambda: f"{self._params.get_float('StoppingDecelRate'):.3f}m/s",

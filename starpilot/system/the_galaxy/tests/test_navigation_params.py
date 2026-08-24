@@ -273,10 +273,10 @@ def test_rivian_angle_favorite_requires_detected_extreme_harness(monkeypatch):
   ]
   monkeypatch.setattr(the_galaxy, "_get_favorite_slot_options", lambda: options)
 
-  monkeypatch.setattr(the_galaxy, "_get_has_rivian_angle_harness", lambda: False)
+  monkeypatch.setattr(the_galaxy, "_get_vehicle_setting_capabilities", lambda: {"HasRivianAngleHarness": False})
   assert [option["key"] for option in the_galaxy._get_available_favorite_slot_options()] == ["NonGatedFavorite"]
 
-  monkeypatch.setattr(the_galaxy, "_get_has_rivian_angle_harness", lambda: True)
+  monkeypatch.setattr(the_galaxy, "_get_vehicle_setting_capabilities", lambda: {"HasRivianAngleHarness": True})
   assert [option["key"] for option in the_galaxy._get_available_favorite_slot_options()] == [
     "RivianAngleControl",
     "NonGatedFavorite",

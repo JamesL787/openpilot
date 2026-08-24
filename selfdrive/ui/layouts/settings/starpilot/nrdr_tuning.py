@@ -28,6 +28,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   draw_rounded_fill,
   draw_rounded_stroke,
 )
+from openpilot.starpilot.common.vehicle_settings_capabilities import get_vehicle_setting_capabilities
 
 
 PANEL_STYLE = DEFAULT_PANEL_STYLE
@@ -56,13 +57,15 @@ class NRDRManagerView(AetherSettingsView):
       icon_key="steering",
       on_click=lambda: controller._navigate_to("lateral"),
       bg_color="#8B5CF6",
+      visible=controller._is_honda,
     ))
     self._grid.add_tile(HubTile(
       title=tr("NRDR Long"),
-      desc=tr("Configure Honda Nidec gas, brake, stopping, and longitudinal PID behavior."),
+      desc=tr("Configure Honda gas, brake, stopping, and longitudinal PID behavior."),
       icon_key="road",
       on_click=lambda: controller._navigate_to("longitudinal"),
       bg_color="#8B5CF6",
+      visible=controller._uses_honda_long_controller,
     ))
 
   def _render(self, rect: rl.Rectangle):
@@ -188,6 +191,9 @@ class NRDRTuningLayout(_SettingsPage):
     self._breadcrumbs = BreadcrumbController(self._navigation_path, self._handle_breadcrumb)
     p = self._params
 
+    modified_eps = self._has_honda_modified_eps_lateral
+    honda_pid = self._has_honda_pid_lateral
+
     def toggle(key: str, title: str, subtitle: str, *, visible=None) -> SettingRow:
       return SettingRow(
         key, "toggle", tr_noop(title), subtitle=tr_noop(subtitle),
@@ -211,16 +217,19 @@ class NRDRTuningLayout(_SettingsPage):
           f"LatPScale{suffix}", "Proportional Scale", "Scales proportional steering response. 100% preserves the base tune.",
           lambda s=suffix: f"{p.get_int(f'LatPScale{s}')}%",
           lambda s=suffix: self._show_slider(f"LatPScale{s}", 0, 500, step=5, unit="%", title="Proportional Scale"),
+          visible=modified_eps,
         ),
         value(
           f"LatIScale{suffix}", "Integral Scale", "Scales integral correction. 100% preserves the base tune.",
           lambda s=suffix: f"{p.get_int(f'LatIScale{s}')}%",
           lambda s=suffix: self._show_slider(f"LatIScale{s}", 0, 500, step=5, unit="%", title="Integral Scale"),
+          visible=modified_eps,
         ),
         value(
           f"LatFScale{suffix}", "Feedforward Scale", "Scales steering feedforward. 100% preserves the base tune.",
           lambda s=suffix: f"{p.get_int(f'LatFScale{s}')}%",
           lambda s=suffix: self._show_slider(f"LatFScale{s}", 0, 500, step=5, unit="%", title="Feedforward Scale"),
+          visible=modified_eps,
         ),
       ]))
 
@@ -228,20 +237,22 @@ class NRDRTuningLayout(_SettingsPage):
       toggle("NrdrLearnSteerRatio", "Learn Steering Ratio", "Use paramsd's learned steering ratio instead of the static car value."),
       toggle("NrdrLearnStiffness", "Learn Tire Stiffness", "Use paramsd's learned tire stiffness instead of 1.0."),
       toggle("NrdrLearnAngleOffset", "Learn Angle Offset", "Use paramsd's learned steering angle offset instead of zero."),
-      toggle("NrdrTuneLearner", "2D Online Tune Learner", "Learn a speed-and-angle feedforward trim map while driving."),
+      toggle("NrdrTuneLearner", "2D Online Tune Learner", "Learn a speed-and-angle feedforward trim map while driving.",
+             visible=honda_pid),
       value(
         "NrdrTuneLearnerStrength", "Tune Learner Strength", "Maximum learned trim authority as a percent of full steering output.",
         lambda: f"{p.get_int('NrdrTuneLearnerStrength')}%",
         lambda: self._show_slider("NrdrTuneLearnerStrength", 0, 30, unit="%", title="Tune Learner Strength"),
-        visible=lambda: p.get_bool("NrdrTuneLearner"),
+        visible=lambda: honda_pid() and p.get_bool("NrdrTuneLearner"),
       ),
       value(
         "NrdrTuneLearnerRate", "Tune Learner Rate", "Learning speed. Zero freezes learning while retaining the saved map.",
         lambda: f"{p.get_int('NrdrTuneLearnerRate')}%",
         lambda: self._show_slider("NrdrTuneLearnerRate", 0, 100, unit="%", title="Tune Learner Rate"),
-        visible=lambda: p.get_bool("NrdrTuneLearner"),
+        visible=lambda: honda_pid() and p.get_bool("NrdrTuneLearner"),
       ),
-      toggle("NrdrTuneLearnerReset", "Reset Tune Learner Map", "Clear the saved 2D trim map. This switch clears after controls process it."),
+      toggle("NrdrTuneLearnerReset", "Reset Tune Learner Map", "Clear the saved 2D trim map. This switch clears after controls process it.",
+             visible=honda_pid),
     ]
 
     center_rows = [
@@ -249,33 +260,40 @@ class NRDRTuningLayout(_SettingsPage):
         "HondaCenterBoostThreshold", "Center Boost Angle", "Angle band where center boost and straight-line override tuning apply.",
         lambda: f"{p.get_float('HondaCenterBoostThreshold'):.1f} deg",
         lambda: self._show_slider("HondaCenterBoostThreshold", 0.0, 10.0, step=0.1, unit=" deg", value_type="float", title="Center Boost Angle"),
+        visible=modified_eps,
       ),
       value(
         "HondaCenterBoostMinSpeed", "Center Boost Min Speed", "Disable center boost below this speed to avoid low-speed oscillation.",
         lambda: f"{p.get_int('HondaCenterBoostMinSpeed')} mph",
         lambda: self._show_slider("HondaCenterBoostMinSpeed", 0, 90, unit=" mph", title="Center Boost Min Speed"),
+        visible=modified_eps,
       ),
       value(
         "HondaCenterScale", "Center Scale", "Feedforward scale near center. Lower values reduce torque through straight unwind.",
         lambda: f"{p.get_float('HondaCenterScale'):.2f}",
         lambda: self._show_slider("HondaCenterScale", 0.0, 5.0, step=0.05, value_type="float", title="Center Scale"),
+        visible=modified_eps,
       ),
-      toggle("HondaUnwindFreeze", "Unwind Integrator Freeze", "Freeze the PID integrator while steering naturally returns toward center."),
+      toggle("HondaUnwindFreeze", "Unwind Integrator Freeze", "Freeze the PID integrator while steering naturally returns toward center.",
+             visible=modified_eps),
       value(
         "HondaUnwindBoostSeconds", "Unwind Boost Duration", "Maximum duration of the low-speed unwind feedforward boost.",
         lambda: f"{p.get_float('HondaUnwindBoostSeconds'):.1f}s",
         lambda: self._show_slider("HondaUnwindBoostSeconds", 0.0, 3.0, step=0.1, unit="s", value_type="float", title="Unwind Boost Duration"),
+        visible=modified_eps,
       ),
       value(
         "HondaUnwindFfMultiplier", "Unwind FF Multiplier", "Peak low-speed feedforward multiplier during unwind.",
         lambda: f"{p.get_float('HondaUnwindFfMultiplier'):.1f}x",
         lambda: self._show_slider("HondaUnwindFfMultiplier", 1.0, 4.0, step=0.1, unit="x", value_type="float", title="Unwind FF Multiplier"),
+        visible=modified_eps,
       ),
     ]
 
     stiction_rows = [
       toggle("NrdrLatStiction", "Lateral Stiction", "Emulate high-torque EPS breakaway friction: hold steering output flat between "
-                                                     "corrections instead of tracking small dither. For NRDR's modified-EPS Hondas."),
+                                                     "corrections instead of tracking small dither. For NRDR's modified-EPS Hondas.",
+             visible=modified_eps),
     ]
 
 
@@ -376,16 +394,18 @@ class NRDRTuningLayout(_SettingsPage):
       ),
     ]
 
+    honda_active = self._is_honda
     lateral_sections = [
-      SettingSection(title=tr_noop("Tune Report"), rows=tune_report_rows),
-      *pid_sections,
-      SettingSection(title=tr_noop("Live Parameters / Auto Tuning"), rows=learning_rows),
-      SettingSection(title=tr_noop("Center / Unwind"), rows=center_rows),
-      SettingSection(title=tr_noop("Lateral Stiction"), rows=stiction_rows),
-      SettingSection(title=tr_noop("Driver Override"), rows=override_rows),
-      SettingSection(title=tr_noop("Filters / Limits"), rows=filter_rows),
+      SettingSection(title=tr_noop("Tune Report"), rows=tune_report_rows, visible=honda_active),
+      *[SettingSection(title=section.title, rows=section.rows, visible=honda_active) for section in pid_sections],
+      SettingSection(title=tr_noop("Live Parameters / Auto Tuning"), rows=learning_rows, visible=honda_active),
+      SettingSection(title=tr_noop("Center / Unwind"), rows=center_rows, visible=honda_active),
+      SettingSection(title=tr_noop("Lateral Stiction"), rows=stiction_rows, visible=honda_active),
+      SettingSection(title=tr_noop("Driver Override"), rows=override_rows, visible=honda_active),
+      SettingSection(title=tr_noop("Filters / Limits"), rows=filter_rows, visible=honda_active),
     ]
 
+    honda_long_active = self._uses_honda_long_controller
     long_control_rows = [
       toggle("NrdrHondaEcuMatchedLong", "Nidec ECU-Matched Long",
              "Shape Honda gas and brake commands closer to the stock Nidec ECU.",
@@ -398,13 +418,16 @@ class NRDRTuningLayout(_SettingsPage):
              "Use the Roen ISO-based planner and Nidec pedal-controller acceleration envelopes. "
              "This is independent of Live Learning Gas.",
              visible=self._is_honda_nidec),
-      toggle("HondaLiveLearningGas", "Live Learning Gas", "Adapt Honda gas and wind compensation factors while driving."),
+      toggle("HondaLiveLearningGas", "Live Learning Gas", "Adapt Honda gas and wind compensation factors while driving.",
+             visible=honda_long_active),
       toggle("NrdrHondaDashVariantB", "Honda Dashboard Variant B",
-             "Use the alternate Honda cluster set-speed rounding profile (the cluster with four dashed lane lines)."),
+             "Use the alternate Honda cluster set-speed rounding profile (the cluster with four dashed lane lines).",
+             visible=self._is_honda),
       value(
         "HondaStoppingDecelRate", "Honda Stopping Decel Rate", "Brake command rate used by Honda carcontroller while stopping.",
         lambda: f"{p.get_int('HondaStoppingDecelRate')}%",
         lambda: self._show_slider("HondaStoppingDecelRate", 0, 100, unit="%", title="Honda Stopping Decel Rate"),
+        visible=self._is_honda_nidec,
       ),
     ]
     long_pid_rows = [
@@ -413,31 +436,37 @@ class NRDRTuningLayout(_SettingsPage):
         "PID scale used with the Aggressive personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
         lambda: f"{p.get_int('LongPidTuneScaleAggressive')}%",
         lambda: self._show_slider("LongPidTuneScaleAggressive", 0, 500, step=5, unit="%", title="Aggressive PID Scale"),
+        visible=honda_long_active,
       ),
       value(
         "LongPidTuneScaleStandard", "Distance 2 / Standard PID Scale",
         "PID scale used with the Standard personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
         lambda: f"{p.get_int('LongPidTuneScaleStandard')}%",
         lambda: self._show_slider("LongPidTuneScaleStandard", 0, 500, step=5, unit="%", title="Standard PID Scale"),
+        visible=honda_long_active,
       ),
       value(
         "LongPidTuneScaleRelaxed", "Distance 3 / Relaxed PID Scale",
         "PID scale used with the Relaxed personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
         lambda: f"{p.get_int('LongPidTuneScaleRelaxed')}%",
         lambda: self._show_slider("LongPidTuneScaleRelaxed", 0, 500, step=5, unit="%", title="Relaxed PID Scale"),
+        visible=honda_long_active,
       ),
       value(
         "LongPidTuneScaleEcon", "Distance 4 / Econ PID Scale",
         "PID scale used with the Econ personality. Effective with a gas pedal interceptor and Live Learning Gas off.",
         lambda: f"{p.get_int('LongPidTuneScaleEcon')}%",
         lambda: self._show_slider("LongPidTuneScaleEcon", 0, 500, step=5, unit="%", title="Econ PID Scale"),
+        visible=honda_long_active,
       ),
       value(
         "LongPidTuneScale", "Legacy Longitudinal PID Scale", "Scale Honda longitudinal PID output. 100% preserves the base tune.",
         lambda: f"{p.get_int('LongPidTuneScale')}%",
         lambda: self._show_slider("LongPidTuneScale", 0, 500, step=5, unit="%", title="Legacy Longitudinal PID Scale"),
+        visible=honda_long_active,
       ),
-      toggle("StaticFeedforwardLong", "Keep Feedforward Static", "Apply the PID scale only to feedback while preserving feedforward."),
+      toggle("StaticFeedforwardLong", "Keep Feedforward Static", "Apply the PID scale only to feedback while preserving feedforward.",
+             visible=honda_long_active),
     ]
     cruise_rows = [
       value(
@@ -453,21 +482,25 @@ class NRDRTuningLayout(_SettingsPage):
         "HondaStopAccel", "Stop Accel", "Target acceleration once stopped. More negative values hold the brake more firmly.",
         lambda: f"{p.get_float('HondaStopAccel'):.2f} m/s2",
         lambda: self._show_slider("HondaStopAccel", -4.0, 0.0, step=0.01, unit=" m/s2", value_type="float", title="Stop Accel"),
+        visible=honda_long_active,
       ),
       value(
         "HondaStoppingDecelRateLong", "Planner Stopping Rate", "Rate at which commanded deceleration ramps while stopping.",
         lambda: f"{p.get_float('HondaStoppingDecelRateLong'):.2f} m/s2",
         lambda: self._show_slider("HondaStoppingDecelRateLong", 0.0, 5.0, step=0.01, unit=" m/s2", value_type="float", title="Planner Stopping Rate"),
+        visible=honda_long_active,
       ),
       value(
         "HondaVEgoStopping", "Stop Speed", "Speed below which Honda longcontrol treats the car as stopping.",
         lambda: f"{p.get_float('HondaVEgoStopping'):.2f} m/s",
         lambda: self._show_slider("HondaVEgoStopping", 0.0, 3.0, step=0.01, unit=" m/s", value_type="float", title="Stop Speed"),
+        visible=honda_long_active,
       ),
       value(
         "HondaVEgoStarting", "Start Speed", "Speed above which Honda longcontrol treats the car as moving again.",
         lambda: f"{p.get_float('HondaVEgoStarting'):.2f} m/s",
         lambda: self._show_slider("HondaVEgoStarting", 0.0, 3.0, step=0.01, unit=" m/s", value_type="float", title="Start Speed"),
+        visible=honda_long_active,
       ),
     ]
 
@@ -482,13 +515,17 @@ class NRDRTuningLayout(_SettingsPage):
     self._sub_panels["longitudinal"] = AetherSettingsView(
       self,
       [
-        SettingSection(title=tr_noop("Honda Nidec Control"), rows=long_control_rows),
-        SettingSection(title=tr_noop("Longitudinal PID"), rows=long_pid_rows),
-        SettingSection(title=tr_noop("Cruise Target"), rows=cruise_rows),
-        SettingSection(title=tr_noop("Stopping"), rows=stopping_rows),
+        SettingSection(title=tr_noop("Honda Nidec Control"), rows=long_control_rows,
+                       visible=honda_long_active),
+        SettingSection(title=tr_noop("Longitudinal PID"), rows=long_pid_rows,
+                       visible=honda_long_active),
+        SettingSection(title=tr_noop("Cruise Target"), rows=cruise_rows,
+                       visible=honda_long_active),
+        SettingSection(title=tr_noop("Stopping"), rows=stopping_rows,
+                       visible=honda_long_active),
       ],
       header_title=tr_noop("NRDR Long"),
-      header_subtitle=tr_noop("Honda Nidec gas, brake, stopping, and PID tuning."),
+      header_subtitle=tr_noop("Honda gas, brake, stopping, and PID tuning for the active controller."),
       panel_style=PANEL_STYLE,
     )
     self._wire_sub_panels()
@@ -554,27 +591,40 @@ class NRDRTuningLayout(_SettingsPage):
   def _handle_mouse_event(self, mouse_event):
     self._breadcrumbs.update_interaction(mouse_event.pos)
 
+  def _uses_honda_long_controller(self) -> bool:
+    """True when the active car uses the Honda openpilot long controller."""
+    return self._vehicle_capabilities().get("HasHondaLongitudinal", False)
+
+  def _is_honda(self) -> bool:
+    """True once the detected vehicle is a Honda, regardless of long mode."""
+    return self._vehicle_capabilities().get("HasHonda", False)
+
+  def _has_honda_pid_lateral(self) -> bool:
+    return self._vehicle_capabilities().get("HasHondaPidLateral", False)
+
+  def _has_honda_modified_eps_lateral(self) -> bool:
+    return self._vehicle_capabilities().get("HasHondaModifiedEpsLateral", False)
+
+  def _vehicle_capabilities(self) -> dict[str, bool]:
+    try:
+      from openpilot.selfdrive.ui.ui_state import ui_state
+      cp = getattr(ui_state, "CP", None)
+      return get_vehicle_setting_capabilities(
+        cp,
+        disable_openpilot_longitudinal=self._params.get_bool("DisableOpenpilotLongitudinal"),
+      )
+    except Exception:
+      return {}
+
   def _is_honda_nidec(self) -> bool:
     """True only on a Honda running the Nidec longitudinal path.
 
     Mirrors the carcontroller gate exactly -- Nidec only, and not with a pedal interceptor --
     so the row is hidden on the cars where the toggle would do nothing. CP comes from
     CarParamsPersistent, so this is False until the car has been seen once and the row
-    simply stays hidden until then. The Galaxy layout has no car-conditional field, so its
-    copy of this row says "Honda Nidec only" in the description instead.
+    simply stays hidden until then. Galaxy uses the same capability catalogue.
     """
-    try:
-      from openpilot.selfdrive.ui.ui_state import ui_state
-      from opendbc.car.honda.values import CAR as HONDA_CAR, HONDA_BOSCH
-      cp = getattr(ui_state, "CP", None)
-      if cp is None:
-        return False
-      if getattr(cp, "enableGasInterceptorDEPRECATED", False):
-        return False
-      fingerprint = str(cp.carFingerprint)
-      return fingerprint in {str(c) for c in HONDA_CAR} and fingerprint not in {str(c) for c in HONDA_BOSCH}
-    except Exception:
-      return False
+    return self._vehicle_capabilities().get("HasHondaNidecLongitudinal", False)
 
   def navigate_back(self):
     # Returning True means the shared Settings back button consumed this press

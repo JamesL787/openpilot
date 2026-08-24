@@ -87,6 +87,11 @@ from openpilot.starpilot.common.favorite_slots import (
   trigger_favorite_action,
 )
 from openpilot.starpilot.common.lateral_delay import full_lateral_delay
+from openpilot.starpilot.common.vehicle_settings_capabilities import (
+  SETTING_CAPABILITY_REQUIREMENTS,
+  get_setting_capabilities,
+  get_vehicle_setting_capabilities,
+)
 from openpilot.starpilot.common.starpilot_utilities import delete_file, get_lock_status, run_cmd
 from openpilot.starpilot.common.starpilot_variables import ACTIVE_THEME_PATH, BUTTON_FUNCTIONS, ERROR_LOGS_PATH, EXCLUDED_KEYS, LEGACY_STARPILOT_PARAM_RENAMES, MAPS_PATH, MODELS_PATH, RESOURCES_REPO, SCREEN_RECORDINGS_PATH, STOCK_THEME_PATH, THEME_SAVE_PATH,\
                                                            default_ev_tuning_enabled, migrate_cancel_button_controls, update_starpilot_toggles
@@ -2932,12 +2937,16 @@ def _get_favorite_slot_options():
     lambda key: key in allowed_keys,
     alpha_longitudinal_available=_get_alpha_longitudinal_available(),
   )
+  for option in _favorite_slot_options:
+    required_capability = SETTING_CAPABILITY_REQUIREMENTS.get(str(option.get("key") or ""))
+    if required_capability:
+      option["requiresCapability"] = required_capability
   return _favorite_slot_options
 
 def _get_available_favorite_slot_options():
   return filter_favorite_slot_options(
     _get_favorite_slot_options(),
-    {"HasRivianAngleHarness": _get_has_rivian_angle_harness()},
+    _get_vehicle_setting_capabilities(),
   )
 
 def _favorite_slot_values(options):
@@ -3730,6 +3739,38 @@ def _get_has_rivian_angle_harness():
       return cp.brand == "rivian" and bool(int(getattr(cp, "flags", 0)) & RIVIAN_ANGLE_HARNESS_FLAG)
   except Exception:
     return False
+
+def _get_vehicle_setting_capabilities():
+  """Build the shared vehicle/controller capability map for the settings clients."""
+  cp = None
+  cp_bytes = _safe_params_get_live_raw("CarParamsPersistent")
+  if cp_bytes:
+    try:
+      cp = car.CarParams.from_bytes(cp_bytes)
+    except Exception:
+      cp = None
+
+  return get_vehicle_setting_capabilities(
+    cp,
+    disable_openpilot_longitudinal=params.get_bool("DisableOpenpilotLongitudinal"),
+    has_rivian_angle_harness=_get_has_rivian_angle_harness(),
+  )
+
+def _get_setting_capabilities():
+  """Build the per-setting visibility map consumed by Galaxy."""
+  cp = None
+  cp_bytes = _safe_params_get_live_raw("CarParamsPersistent")
+  if cp_bytes:
+    try:
+      cp = car.CarParams.from_bytes(cp_bytes)
+    except Exception:
+      cp = None
+
+  return get_setting_capabilities(
+    cp,
+    disable_openpilot_longitudinal=params.get_bool("DisableOpenpilotLongitudinal"),
+    has_rivian_angle_harness=_get_has_rivian_angle_harness(),
+  )
 
 def _get_hardware_snapshot_items():
   starpilot_toggles = _get_starpilot_toggles_snapshot()
@@ -5424,6 +5465,9 @@ def setup(app):
       except Exception:
         result[key] = None
 
+    vehicle_capabilities = _get_vehicle_setting_capabilities()
+    result.update(vehicle_capabilities)
+    result["SettingCapabilities"] = _get_setting_capabilities()
     result["HasRadar"] = _get_has_radar()
     result["VehicleParked"] = _get_vehicle_parked()
     result["AlphaLongitudinalAvailable"] = _get_alpha_longitudinal_available()

@@ -3852,12 +3852,14 @@ class HubTile(AetherTile):
     on_click: Callable | None = None,
     bg_color: rl.Color | str | None = None,
     get_status: Callable[[], str] | None = None,
+    visible: Callable[[], bool] | None = None,
   ):
     if bg_color:
       super().__init__(surface_color=bg_color, on_click=on_click)
     else:
       super().__init__(on_click=on_click)
     self.get_status = get_status
+    self.visible = visible
     self.title = title
     self.desc = desc
     self.custom_icon_key = icon_key if icon_key in ("sound", "steering", "navigate", "system", "display", "vehicle", "road", "aicar") else None
@@ -5338,6 +5340,10 @@ class TileGrid(Widget):
   def clear(self):
     self.tiles.clear()
 
+  def _visible_tiles(self):
+    return [tile for tile in self.tiles
+            if getattr(tile, "visible", None) is None or tile.visible()]
+
   def get_column_count(self, tile_count: int | None = None) -> int:
     count = len(self.tiles) if tile_count is None else tile_count
     if count <= 0:
@@ -5378,9 +5384,10 @@ class TileGrid(Widget):
     return self._gap * max(0, rows - 1)
 
   def measure_height(self, width: float) -> float:
-    if not self.tiles:
+    visible_tiles = self._visible_tiles()
+    if not visible_tiles:
       return 0.0
-    count = len(self.tiles)
+    count = len(visible_tiles)
     if self.carousel_rows and self.carousel_tile_width:
       rows = self.carousel_rows
       h = self._tile_height if self._tile_height is not None else 130.0
@@ -5407,11 +5414,12 @@ class TileGrid(Widget):
     return rows * h + self.get_internal_gap_height(count, available_width=width)
 
   def measure_width(self) -> float:
-    if not self.tiles:
+    visible_tiles = self._visible_tiles()
+    if not visible_tiles:
       return 0.0
     if not self.carousel_rows or not self.carousel_tile_width:
       return 0.0
-    count = len(self.tiles)
+    count = len(visible_tiles)
     cols = (count + self.carousel_rows - 1) // self.carousel_rows
     return cols * self.carousel_tile_width + max(0, cols - 1) * self._gap
 
@@ -5420,7 +5428,9 @@ class TileGrid(Widget):
     self.set_rect(rect)
     if not self.tiles:
       return
-    tiles_to_render = list(self.tiles)
+    tiles_to_render = self._visible_tiles()
+    if not tiles_to_render:
+      return
     count = len(tiles_to_render)
     
     if self.carousel_rows and self.carousel_tile_width:

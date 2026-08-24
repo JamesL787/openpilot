@@ -46,6 +46,19 @@ from openpilot.selfdrive.ui.lib.fingerprint_catalog import (
   shorten_model_label,
 )
 from openpilot.starpilot.common.starpilot_variables import migrate_cancel_button_controls
+from openpilot.starpilot.common.vehicle_settings_capabilities import get_vehicle_setting_capabilities
+
+
+def _vehicle_capabilities(params) -> dict[str, bool]:
+  """Read the same vehicle/controller capabilities used by Galaxy."""
+  try:
+    from openpilot.selfdrive.ui.ui_state import ui_state
+    return get_vehicle_setting_capabilities(
+      getattr(ui_state, "CP", None),
+      disable_openpilot_longitudinal=params.get_bool("DisableOpenpilotLongitudinal"),
+    )
+  except Exception:
+    return {}
 
 
 ACTION_OPTIONS = [
@@ -106,7 +119,7 @@ class VehicleSettingsManagerView(PanelManagerView):
     self._rebuild_toggle_grid()
 
   def _build_identity_rows(self) -> list[SettingRow]:
-    cs = starpilot_state.car_state
+    caps = _vehicle_capabilities(self._controller._params)
     fp = lambda: self._controller._params.get_bool("ForceFingerprint")
     rows = [
       SettingRow("ForceFingerprint", "toggle", tr_noop("Disable Fingerprinting"),
@@ -122,7 +135,7 @@ class VehicleSettingsManagerView(PanelManagerView):
                  on_click=lambda: self._controller._on_select("CarModel"),
                  enabled=fp),
     ]
-    if cs.isToyota:
+    if caps.get("HasToyota", False):
       rows.append(SettingRow("LockDoorsTimer", "value", tr_noop("Lock Doors Timer"),
                  get_value=lambda: _lock_doors_timer_labels().get(
                    float(self._controller._params.get_int("LockDoorsTimer")),
@@ -141,7 +154,7 @@ class VehicleSettingsManagerView(PanelManagerView):
     return first_action
 
   def _build_steering_rows(self) -> list[SettingRow]:
-    cs = starpilot_state.car_state
+    caps = _vehicle_capabilities(self._controller._params)
     rows = []
 
     dist_keys = ("DistanceButtonControl", "LongDistanceButtonControl", "VeryLongDistanceButtonControl")
@@ -151,7 +164,7 @@ class VehicleSettingsManagerView(PanelManagerView):
       on_click=lambda: self._controller._on_select("combo:distance"),
     ))
 
-    if cs.isBolt and cs.hasPedal and self._controller._params.get_bool("RemapCancelToDistance"):
+    if caps.get("HasBoltPedal", False) and self._controller._params.get_bool("RemapCancelToDistance"):
       cancel_keys = ("CancelButtonControl", "LongCancelButtonControl", "VeryLongCancelButtonControl")
       rows.append(SettingRow(
         "combo:cancel", "value", tr_noop("Cancel Button"),
@@ -159,7 +172,7 @@ class VehicleSettingsManagerView(PanelManagerView):
         on_click=lambda: self._controller._on_select("combo:cancel"),
       ))
 
-    if not cs.isSubaru:
+    if caps.get("HasLKASButton", False):
       rows.append(SettingRow("LKASButtonControl", "value", tr_noop("LKAS Button"),
                    get_value=lambda: self._controller._get_action_name("LKASButtonControl"),
                    on_click=lambda: self._controller._on_select("LKASButtonControl")))
@@ -168,7 +181,7 @@ class VehicleSettingsManagerView(PanelManagerView):
                  get_value=lambda: self._controller._get_action_name("MainCruiseButtonControl"),
                  on_click=lambda: self._controller._on_select("MainCruiseButtonControl")))
 
-    if cs.hasModeStarButtons:
+    if caps.get("HasHKGCanFdMediaButtons", False):
       mode_keys = ("ModeButtonControl", "LongModeButtonControl", "VeryLongModeButtonControl")
       star_keys = ("StarButtonControl", "LongStarButtonControl", "VeryLongStarButtonControl")
       rows.append(SettingRow(
@@ -324,7 +337,7 @@ class VehicleSettingsManagerView(PanelManagerView):
     return left_natural_h + tiles_h + tiles_overhead
 
   def _build_driving_toggles(self) -> list[dict]:
-    cs = starpilot_state.car_state
+    caps = _vehicle_capabilities(self._controller._params)
     toggles = []
 
     toggles.append({
@@ -340,7 +353,7 @@ class VehicleSettingsManagerView(PanelManagerView):
       "set_state": lambda s: self._controller._on_toggle("DisableSeatbeltCheck"),
     })
 
-    if cs.isGM and (cs.hasPedal or cs.canUsePedal):
+    if caps.get("HasGMPedal", False):
       toggles.append({
         "title": tr("Pedal for Long"),
         "get_state": lambda: self._controller._params.get_bool("GMPedalLongitudinal"),
@@ -351,7 +364,7 @@ class VehicleSettingsManagerView(PanelManagerView):
         "get_state": lambda: self._controller._params.get_bool("GMDashSpoofOffsets"),
         "set_state": lambda s: self._controller._on_toggle("GMDashSpoofOffsets"),
       })
-    if cs.isGM and cs.hasOpenpilotLongitudinal:
+    if caps.get("HasGM", False):
       toggles.append({
         "title": tr("CAN Ignition Only"),
         "subtitle": tr("Use Panda firmware that ignores the physical ignition line and starts only from CAN ignition."),
@@ -363,13 +376,13 @@ class VehicleSettingsManagerView(PanelManagerView):
         "get_state": lambda: self._controller._params.get_bool("RemoteStartBootsComma"),
         "set_state": lambda s: self._controller._on_panda_firmware_toggle("RemoteStartBootsComma", tr("Remote Start requires a Panda firmware update.")),
       })
-    if cs.isGM and cs.isVolt and not cs.hasSNG:
+    if caps.get("HasLegacyVoltStockAcc", False):
       toggles.append({
         "title": tr("Volt SNG Hack"),
         "get_state": lambda: self._controller._params.get_bool("VoltSNG"),
         "set_state": lambda s: self._controller._on_toggle("VoltSNG"),
       })
-    if cs.isJeep:
+    if caps.get("HasJeepBrakeHold", False):
       toggles.append({
         "title": tr("Jeep Brake Hold"),
         "subtitle": tr("Hold after ACC times out at a stop and resume when traffic moves."),
@@ -377,7 +390,7 @@ class VehicleSettingsManagerView(PanelManagerView):
         "set_state": lambda s: self._controller._on_toggle("JeepBrakeHold"),
       })
 
-    if cs.isSubaru:
+    if caps.get("HasSubaruSNG", False):
       toggles.append({
         "title": tr("Stop and Go"),
         "get_state": lambda: self._controller._params.get_bool("SubaruSNG"),
@@ -390,7 +403,7 @@ class VehicleSettingsManagerView(PanelManagerView):
           "set_state": lambda s: self._controller._on_toggle("SubaruSNGManualParkingBrake"),
         })
 
-    if cs.isToyota:
+    if caps.get("HasToyota", False):
       toggles.append({
         "title": tr("Auto Lock Doors"),
         "get_state": lambda: self._controller._params.get_bool("LockDoors"),
@@ -401,13 +414,13 @@ class VehicleSettingsManagerView(PanelManagerView):
         "get_state": lambda: self._controller._params.get_bool("UnlockDoors"),
         "set_state": lambda s: self._controller._on_toggle("UnlockDoors"),
       })
-    if cs.isToyota and not cs.hasSNG:
+    if caps.get("HasToyotaSNGHack", False):
       toggles.append({
         "title": tr("Stop-and-Go Hack"),
         "get_state": lambda: self._controller._params.get_bool("SNGHack"),
         "set_state": lambda s: self._controller._on_toggle("SNGHack"),
       })
-    if cs.isBolt and cs.hasPedal:
+    if caps.get("HasBoltPedal", False):
       toggles.append({
         "title": tr("Remap Cancel Button"),
         "subtitle": tr("Treat the Cancel button as an extra mappable steering-wheel button."),
@@ -415,12 +428,13 @@ class VehicleSettingsManagerView(PanelManagerView):
         "set_state": lambda s: self._controller._on_toggle("RemapCancelToDistance"),
       })
 
-    if cs.isHKGCanFd and cs.hasOpenpilotLongitudinal:
+    if caps.get("HasHKGRemoteClimate", False):
       toggles.append({
         "title": tr("EV Remote Climate"),
         "get_state": lambda: self._controller._params.get_bool("HKGRemoteStartBootsComma"),
         "set_state": lambda s: self._controller._on_panda_firmware_toggle("HKGRemoteStartBootsComma", tr("EV Remote Climate requires a Panda firmware update.")),
       })
+    if caps.get("HasNostalgiaMode", False):
       toggles.append({
         "title": tr("Nostalgia Mode"),
         "subtitle": tr("Use the left paddle to pause openpilot acceleration and braking."),
@@ -672,12 +686,14 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
           if res == DialogResult.CONFIRM:
             self._params.put_bool("DisableOpenpilotLongitudinal", True)
             starpilot_state.update(force=True)
+            self._manager_view._rebuild_toggle_grid()
             if starpilot_state.started:
               HARDWARE.reboot()
         gui_app.push_widget(ConfirmDialog(tr("Disable openpilot longitudinal control?"), tr("Disable"), callback=on_confirm))
       else:
         self._params.put_bool("DisableOpenpilotLongitudinal", False)
         starpilot_state.update(force=True)
+        self._manager_view._rebuild_toggle_grid()
       return
     if param_key == "RemapCancelToDistance":
       new_state = not self._params.get_bool("RemapCancelToDistance")
