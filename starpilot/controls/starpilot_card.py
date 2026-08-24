@@ -20,6 +20,7 @@ from openpilot.starpilot.common.starpilot_utilities import is_FrogsGoMoo
 from openpilot.starpilot.common.starpilot_variables import ERROR_LOGS_PATH, GearShifter, NON_DRIVING_GEARS
 
 HYUNDAI_MAIN_CRUISE_AOL_CONFIRM_TIMEOUT_FRAMES = 100
+WHEEL_BUTTON_SOUND_PARAM = "WheelButtonSound"
 
 
 class StarPilotCard:
@@ -291,12 +292,15 @@ class StarPilotCard:
 
     self.distancePressed_previously = starpilotCarState.distancePressed
 
-    if not starpilotCarState.distancePressed and 1 <= self.gap_counter < self.long_press_threshold:
-      self.handle_button_event("distance", sm, starpilot_toggles)
+    if not starpilotCarState.distancePressed:
+      if 1 <= self.gap_counter < self.long_press_threshold:
+        self.handle_button_event("distance", sm, starpilot_toggles)
+      elif self.long_press_threshold <= self.gap_counter < self.very_long_press_threshold:
+        self.handle_button_event("distance_long", sm, starpilot_toggles)
     elif self.gap_counter == self.long_press_threshold:
-      self.handle_button_event("distance_long", sm, starpilot_toggles)
+      self.params_memory.put(WHEEL_BUTTON_SOUND_PARAM, "preAlert")
     elif self.gap_counter == self.very_long_press_threshold:
-      self.handle_button_event("distance_long", sm, starpilot_toggles)
+      self.params_memory.put(WHEEL_BUTTON_SOUND_PARAM, "prompt")
       self.handle_button_event("distance_very_long", sm, starpilot_toggles)
 
     if cancel_pressed:

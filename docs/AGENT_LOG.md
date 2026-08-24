@@ -49,3 +49,10 @@
 - Ported the guided flasher, diagnostic and UDS hardening, firmware guidance,
   and the CR-V 5G rate-authority tuning image to `ns-bosch-radar`.
 - Corrected the tuning README to name the recovered image file exactly.
+
+## 2026-08-24 — StarPilot distance-button hold feedback
+
+- Deferred long-press actions until release, allowing very-long button actions
+  without temporarily toggling and undoing the long-press action.
+- Added existing openpilot audio cues at the long and very-long thresholds;
+  driving and safety alerts retain priority over these feedback sounds.
