@@ -1087,7 +1087,7 @@ def test_bosch_a_timing_contract():
 
 # --- misc integration: DBC wiring -------------------------------------------------------------------
 
-def test_civic_bosch_radar_dbc_wired_and_available():
+def test_honda_bosch_a_radar_dbc_wired_and_available():
   assert CP.radarUnavailable is False
   ri = make_radar_interface()
   assert ri.bosch_a_radar is True

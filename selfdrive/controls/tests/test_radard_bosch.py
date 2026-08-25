@@ -50,7 +50,7 @@ class FakeSubMaster:
 
 
 def make_track(track_id, d_rel, count, *, y_rel=0.0, v_rel=0.0):
-  track = radard.Track(track_id, 0.0, radard.KalmanParams(radard.CIVIC_BOSCH_RADAR_TS))
+  track = radard.Track(track_id, 0.0, radard.KalmanParams(radard.HONDA_BOSCH_A_RADAR_TS))
   for _ in range(count):
     track.update(d_rel, y_rel, v_rel, v_rel, True, True)
   return track
@@ -77,8 +77,8 @@ def make_plan():
   return SimpleNamespace(increasedStoppedDistance=0.0)
 
 
-def make_staleness_radar_d(*, civic_bosch_radar=True):
-  radar_d = radard.RadarD(civic_bosch_radar=civic_bosch_radar)
+def make_staleness_radar_d(*, honda_bosch_a_radar=True):
+  radar_d = radard.RadarD(honda_bosch_a_radar=honda_bosch_a_radar)
   radar_d.ready = True
   radar_d.v_ego = 0.0
   radar_d.starpilot_toggles = make_toggles()
@@ -108,7 +108,7 @@ def test_civic_bosch_duplicate_live_tracks_frame_does_not_update_kf(monkeypatch)
   toggles = make_toggles()
   monkeypatch.setattr(radard, "get_starpilot_toggles", lambda *_args: toggles)
 
-  radar_d = radard.RadarD(civic_bosch_radar=True)
+  radar_d = radard.RadarD(honda_bosch_a_radar=True)
   assert radar_d.kalman_params.A[0][1] == pytest.approx(1.0 / 15.0)
 
   sm = FakeSubMaster(live_tracks_frame=1)
@@ -132,7 +132,7 @@ def test_civic_bosch_duplicate_live_tracks_frame_does_not_update_kf(monkeypatch)
 
 
 def test_civic_bosch_separates_kf_and_model_lead_probability_timing():
-  radar_d = radard.RadarD(civic_bosch_radar=True)
+  radar_d = radard.RadarD(honda_bosch_a_radar=True)
 
   assert radar_d.kalman_params.A[0][1] == pytest.approx(1.0 / 15.0)
   assert radar_d.lead_prob_filters[0].dt == pytest.approx(radard.DT_MDL)
@@ -147,7 +147,7 @@ def test_model_lead_probability_filters_use_model_timing_for_all_radars():
   assert radar_d.lead_prob_filters[0].dt == pytest.approx(radard.DT_MDL)
 
 
-def test_non_civic_bosch_radars_keep_per_model_cycle_update_semantics(monkeypatch):
+def test_non_honda_bosch_a_radars_keep_per_model_cycle_update_semantics(monkeypatch):
   toggles = make_toggles()
   monkeypatch.setattr(radard, "get_starpilot_toggles", lambda *_args: toggles)
 
@@ -165,7 +165,7 @@ def test_bosch_close_new_candidate_does_not_replace_established_lead():
   }
   lead = radard.get_lead(
     1.0, True, tracks, make_lead(7.0), 0.0, make_model_data(), False, make_plan(), make_toggles(),
-    lead_prob=0.99, civic_bosch_radar=True,
+    lead_prob=0.99, honda_bosch_a_radar=True,
   )
   assert lead['radarTrackId'] == 7
 
@@ -177,7 +177,7 @@ def test_bosch_persistent_candidate_that_matches_vision_can_take_over():
   }
   lead = radard.get_lead(
     1.0, True, tracks, make_lead(2.0), 0.0, make_model_data(), False, make_plan(), make_toggles(),
-    lead_prob=0.99, civic_bosch_radar=True,
+    lead_prob=0.99, honda_bosch_a_radar=True,
   )
   assert lead['radarTrackId'] == 2
 
@@ -186,7 +186,7 @@ def test_bosch_mature_radar_only_candidate_can_takeover_without_model_lead():
   tracks = {4: make_track(4, 5.0, 3)}
   lead = radard.get_lead(
     1.0, False, tracks, make_lead(5.0, probability=0.0), 0.0, make_model_data(), False, make_plan(), make_toggles(),
-    lead_prob=0.0, civic_bosch_radar=True,
+    lead_prob=0.0, honda_bosch_a_radar=True,
   )
   assert lead['status']
   assert lead['radarTrackId'] == 4
@@ -199,7 +199,7 @@ def test_bosch_preferred_lead_survives_model_probability_fluctuation():
   }
   lead = radard.get_lead(
     1.0, False, tracks, make_lead(7.0, probability=0.0), 0.0, make_model_data(), False, make_plan(), make_toggles(),
-    lead_prob=0.0, preferred_track_id=7, civic_bosch_radar=True,
+    lead_prob=0.0, preferred_track_id=7, honda_bosch_a_radar=True,
   )
   assert lead['radarTrackId'] == 7
 
@@ -213,11 +213,11 @@ def test_bosch_arm_a_clears_after_two_better_challenger_cycles():
   radar_d.prev_lead_track_ids[0] = 27
   lead = make_lead(10.0)
 
-  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
   assert radar_d.prev_lead_track_ids[0] == 27
   assert radar_d.preferred_challenger_stale_counts[0] == 1
 
-  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
   assert radar_d.prev_lead_track_ids[0] == -1
   assert radar_d.preferred_challenger_stale_counts[0] == 0
 
@@ -232,12 +232,12 @@ def test_bosch_arm_a_clear_does_not_select_non_strict_challenger():
   lead_msg = make_lead(10.0)
 
   for _ in range(2):
-    radar_d._update_civic_bosch_preferred_staleness(0, lead_msg, 0.99)
+    radar_d._update_honda_bosch_a_preferred_staleness(0, lead_msg, 0.99)
 
   lead = radard.get_lead(
     0.0, True, radar_d.tracks, lead_msg, 0.0, make_model_data(), False, make_plan(), make_toggles(),
     low_speed_override=False, lead_prob=0.99, preferred_track_id=radar_d.prev_lead_track_ids[0],
-    civic_bosch_radar=True,
+    honda_bosch_a_radar=True,
   )
   assert lead['status']
   assert not lead['radar']
@@ -254,15 +254,15 @@ def test_bosch_arm_a_resets_when_preferred_relaxed_match_recovers():
   radar_d.prev_lead_track_ids[0] = 27
   lead = make_lead(10.0)
 
-  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
   assert radar_d.preferred_challenger_stale_counts[0] == 1
 
   preferred.yRel = 1.4  # strict lateral fail, existing relaxed lateral pass
-  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
   assert radar_d.preferred_challenger_stale_counts[0] == 0
 
   preferred.yRel = 3.0
-  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
   assert radar_d.prev_lead_track_ids[0] == 27
   assert radar_d.preferred_challenger_stale_counts[0] == 1
 
@@ -274,11 +274,11 @@ def test_bosch_arm_b_clears_after_three_non_strict_gross_distance_cycles():
   lead = make_lead(110.0)
 
   for expected_count in (1, 2):
-    radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+    radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
     assert radar_d.prev_lead_track_ids[0] == 53
     assert radar_d.preferred_gross_distance_stale_counts[0] == expected_count
 
-  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
   assert radar_d.prev_lead_track_ids[0] == -1
   assert radar_d.preferred_gross_distance_stale_counts[0] == 0
 
@@ -290,7 +290,7 @@ def test_bosch_arm_b_strict_match_resets_gross_distance_streak():
   lead = make_lead(104.0)  # 25.5 m mismatch, inside the 26 m strict allowance
 
   for _ in range(4):
-    radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+    radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
     assert radar_d.prev_lead_track_ids[0] == 46
     assert radar_d.preferred_gross_distance_stale_counts[0] == 0
 
@@ -305,18 +305,18 @@ def test_bosch_stale_evidence_does_not_leak_to_new_preferred_id():
   lead = make_lead(10.0)
 
   radar_d.prev_lead_track_ids[0] = 1
-  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
   assert radar_d.preferred_challenger_stale_counts[0] == 1
 
   radar_d.prev_lead_track_ids[0] = 3
-  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
   assert radar_d.prev_lead_track_ids[0] == 3
   assert radar_d.preferred_stale_track_ids[0] == 3
   assert radar_d.preferred_challenger_stale_counts[0] == 1
 
 
 def test_non_bosch_radar_does_not_apply_preferred_stale_logic():
-  radar_d = make_staleness_radar_d(civic_bosch_radar=False)
+  radar_d = make_staleness_radar_d(honda_bosch_a_radar=False)
   radar_d.tracks = {
     27: make_track(27, 10.0, 5, y_rel=3.0),
     38: make_track(38, 10.0, 5, y_rel=2.0),
@@ -324,7 +324,7 @@ def test_non_bosch_radar_does_not_apply_preferred_stale_logic():
   radar_d.prev_lead_track_ids[0] = 27
 
   for _ in range(4):
-    radar_d._update_civic_bosch_preferred_staleness(0, make_lead(10.0), 0.99)
+    radar_d._update_honda_bosch_a_preferred_staleness(0, make_lead(10.0), 0.99)
 
   assert radar_d.prev_lead_track_ids[0] == 27
   assert radar_d.preferred_challenger_stale_counts == [0, 0]
@@ -340,14 +340,14 @@ def test_bosch_duplicate_lead_preferences_keep_independent_stale_state():
   radar_d.prev_lead_track_ids = [24, 24]
   lead = make_lead(10.0)
 
-  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
-  radar_d._update_civic_bosch_preferred_staleness(1, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(1, lead, 0.99)
   assert radar_d.prev_lead_track_ids == [24, 24]
   assert radar_d.preferred_challenger_stale_counts == [1, 1]
 
-  radar_d._update_civic_bosch_preferred_staleness(0, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(0, lead, 0.99)
   assert radar_d.prev_lead_track_ids == [-1, 24]
-  radar_d._update_civic_bosch_preferred_staleness(1, lead, 0.99)
+  radar_d._update_honda_bosch_a_preferred_staleness(1, lead, 0.99)
   assert radar_d.prev_lead_track_ids == [-1, -1]
 
 
@@ -355,7 +355,7 @@ def test_bosch_full_update_clears_stale_preference_then_strictly_reacquires(monk
   toggles = make_toggles()
   monkeypatch.setattr(radard, "get_starpilot_toggles", lambda *_args: toggles)
 
-  radar_d = radard.RadarD(civic_bosch_radar=True)
+  radar_d = radard.RadarD(honda_bosch_a_radar=True)
   sm = FakeSubMaster(live_tracks_frame=0)
   lead = make_lead(10.0)
   lead.xStd[0] = 10.0
@@ -396,8 +396,8 @@ def test_bosch_full_update_clears_stale_preference_then_strictly_reacquires(monk
   # but fails the unchanged strict distance gate, so it must not replace the valid vision lead.
   output = update(3.0)
   assert radar_d.preferred_challenger_stale_counts[0] == 1
-  assert radar_d.civic_bosch_radar
-  assert radard.civic_bosch_low_speed_radar_lead_sane(radar_d.tracks[38], radar_d.v_ego)
+  assert radar_d.honda_bosch_a_radar
+  assert radard.honda_bosch_a_low_speed_radar_lead_sane(radar_d.tracks[38], radar_d.v_ego)
   assert not radard.track_matches_vision(radar_d.tracks[38], lead, radar_d.v_ego,
                                          dist_scale=0.25, dist_floor=5.0,
                                          vel_limit=10.0, y_std_scale=1.0, y_floor=1.0)
