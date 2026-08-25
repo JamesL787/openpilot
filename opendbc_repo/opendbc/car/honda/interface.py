@@ -47,15 +47,13 @@ class CarInterface(CarInterfaceBase):
 
       # HONDA_BOSCH_A platforms (plain bosch_a harness: not CANFD, not radarless, not alt-radar) have
       # a firmware-correct RadarInterface (16-slot Bosch-A object bank, RX-only) and use it by
-      # default via NrdrBoschARadar: every other Bosch platform still has no parsed radar DBC and
+      # default via BoschARadar: every other Bosch platform still has no parsed radar DBC and
       # keeps radarUnavailable=True regardless.
-      # BoschLong plans against the driving model rather than a radar track, so a real
-      # Bosch-A radar overrides the toggle off. This is specific to BoschLong itself --
-      # BLoTv2 and Model Lead Trajectory are both independent of it (BLoTv2 works off the
-      # radar-tracked lead; MLT runs unconditionally for every car).
+      # Independent of alpha long: that decides who commands the gas/brake (openpilot vs. stock
+      # ACC), not where the lead comes from. A real radar-confirmed lead only helps radarState
+      # regardless of which controller is acting on it, so the two are not exclusive.
       try:
-        params = Params()
-        bosch_a_radar_tryout = params.get_bool("NrdrBoschARadar") and not params.get_bool("BoschLong")
+        bosch_a_radar_tryout = Params().get_bool("BoschARadar")
       except UnknownKeyName:
         bosch_a_radar_tryout = False
       ret.radarUnavailable = not (candidate in HONDA_BOSCH_A and bosch_a_radar_tryout)

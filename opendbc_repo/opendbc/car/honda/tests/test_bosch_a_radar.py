@@ -37,11 +37,11 @@ from openpilot.common.params import Params
 # it), which runs before any pytest fixture could -- so this has to be plain top-level code, not a
 # fixture. teardown_module() restores it once every test in this file has run (mirrors
 # gm/tests/test_gm.py's put_bool/finally pattern for params-gated _get_params behavior).
-Params().put_bool("NrdrBoschARadar", True)
+Params().put_bool("BoschARadar", True)
 
 
 def teardown_module(module):
-  Params().remove("NrdrBoschARadar")
+  Params().remove("BoschARadar")
 
 
 CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
@@ -1105,7 +1105,7 @@ def test_civic_bosch_object_feed_uses_camera_side_acc_can():
 # Computed once at collection time, like CP above -- the openpilot_function_fixture in the root
 # conftest.py gives every test function its own fresh, isolated OpenpilotPrefix(), so a
 # get_non_essential_params() call made from *inside* a test body runs in an environment where the
-# NrdrBoschARadar=True set at module import time (before any fixture exists) was never written.
+# BoschARadar=True set at module import time (before any fixture exists) was never written.
 # Computing these at module scope, in the same environment CP uses, sidesteps that entirely.
 _OPEN_BOSCH_A_CARS = [CAR.HONDA_CRV_5G, CAR.HONDA_CRV_HYBRID, CAR.HONDA_ACCORD, CAR.HONDA_INSIGHT, CAR.ACURA_RDX_3G]
 _OPEN_BOSCH_A_CPS = {car: CarInterface.get_non_essential_params(car) for car in _OPEN_BOSCH_A_CARS}

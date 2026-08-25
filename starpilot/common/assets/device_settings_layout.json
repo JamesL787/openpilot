@@ -2373,28 +2373,19 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "NrdrBoschARadar",
-        "label": "Civic Bosch Radar",
-        "description": "Civic Bosch only. Parses the car's own 16-slot Bosch-A radar CAN traffic into real leadOne/leadTwo tracks instead of treating the car as radarless. RX-only — never transmits on the radar bus, so factory AEB/CMBS is untouched. Overridden off while Bosch Long is on, since those features are built for radarless operation. Restart required to take effect.",
+        "key": "BoschARadar",
+        "label": "Bosch A Radar",
+        "description": "Bosch A harness only. Parses the car's own 16-slot Bosch-A radar CAN traffic into real leadOne/leadTwo tracks instead of treating the car as radarless. RX-only — this toggle by itself never transmits on the radar bus and does not disable factory AEB/CMBS. That's separately controlled by whether openpilot has longitudinal control (Alpha Long): if that's on, factory AEB/CMBS is already disabled regardless of this toggle. A real radar lead just helps openpilot's own tracking either way. Restart required to take effect.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",
+        "requires_offroad": true,
         "settings_tier": "advanced"
       },
       {
-        "key": "BoschLong",
-        "label": "Bosch Long",
-        "description": "Experimental longitudinal features for radarless Honda Bosch that plan against the driving model rather than a radar track.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "is_parent_toggle": true,
-        "parent_key": "AdvancedLongitudinalTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "NrdrBlotV2",
+        "key": "BlotV2",
         "label": "BLoTv2 Supervisor",
-        "description": "Experimental, Civic Bosch only. Tracks how much deceleration the lead actually needs, softens the solver's jerk cost when it has to respond, and pads following time when the lead is slowing. Never commands acceleration itself. Independent of Bosch Long -- works off the radar-tracked lead, not the driving model.",
+        "description": "Experimental. Tracks how much deceleration the lead actually needs, softens the solver's jerk cost when it has to respond, and pads following time when the lead is slowing. Never commands acceleration itself. Works off the radar-tracked lead, independent of the car it's running on -- Model Lead Trajectory itself runs unconditionally for every car, matching upstream.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",

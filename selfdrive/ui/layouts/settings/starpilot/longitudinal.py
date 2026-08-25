@@ -590,21 +590,33 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_value=lambda: f"{self._params.get_float('VEgoStopping'):.2f}m/s",
                  on_click=lambda: self._show_slider("VEgoStopping", 0.01, 1.0, step=0.01, unit="m/s", value_type="float"),
                  visible=self._show_stop_tuning_values),
-    ]
-
-    # ── 3. Speed Limit Controller (SLC) Rows ──
-    # Civic Bosch longitudinal supervisor. Independent of BoschLong -- works off the
-    # radar-tracked lead, not the driving model. Its own section so the header reads as a
-    # group; SettingSection.visible hides the header too on cars this does not apply to.
-    self._blotv2_rows = [
-      SettingRow("NrdrBlotV2", "toggle", tr_noop("BLoTv2 Supervisor"),
+      SettingRow("BlotV2", "toggle", tr_noop("BLoTv2 Supervisor"),
                  subtitle=tr_noop("Experimental. Tracks how much deceleration the lead actually needs, "
                                   "softens the solver's jerk cost when it has to respond, and pads "
                                   "following time when the lead is slowing. Never commands acceleration "
-                                  "itself. Model Lead Trajectory itself now runs unconditionally for "
+                                  "itself. Works off the radar-tracked lead, independent of the car it's "
+                                  "running on -- Model Lead Trajectory itself runs unconditionally for "
                                   "every car, matching upstream."),
-                 get_state=lambda: self._params.get_bool("NrdrBlotV2"),
-                 set_state=lambda v: self._params.put_bool("NrdrBlotV2", v)),
+                 get_state=lambda: self._params.get_bool("BlotV2"),
+                 set_state=lambda v: self._params.put_bool("BlotV2", v),
+                 visible=adv),
+    ]
+
+    # ── 3. Speed Limit Controller (SLC) Rows ──
+    # Bosch-A radar tryout. Its own section so the header reads as a group; SettingSection.visible
+    # hides the header too on cars this does not apply to.
+    self._bosch_a_radar_rows = [
+      SettingRow("BoschARadar", "toggle", tr_noop("Bosch A Radar"),
+                 subtitle=tr_noop("Parses the car's own 16-slot Bosch-A radar CAN traffic into real "
+                                  "leadOne/leadTwo tracks instead of treating the car as radarless. "
+                                  "RX-only -- this toggle by itself never transmits on the radar bus "
+                                  "and does not disable factory AEB/CMBS. That's separately controlled "
+                                  "by whether openpilot has longitudinal control (Alpha Long): if "
+                                  "that's on, factory AEB/CMBS is already disabled regardless of this "
+                                  "toggle. A real radar lead just helps openpilot's own tracking either "
+                                  "way. Restart required to take effect."),
+                 get_state=lambda: self._params.get_bool("BoschARadar"),
+                 set_state=lambda v: self._params.put_bool("BoschARadar", v)),
     ]
 
     self._slc_rows = [
@@ -874,8 +886,8 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     self._sub_panels["advanced"] = AetherSettingsView(
       self,
       [SettingSection(title="", rows=self._advanced_rows),
-       SettingSection(tr_noop("BLoTv2"), self._blotv2_rows,
-                      visible=lambda: self._advanced_enabled() and self._is_civic_bosch())],
+       SettingSection(tr_noop("Bosch A Radar"), self._bosch_a_radar_rows,
+                      visible=lambda: self._advanced_enabled() and self._is_bosch_a())],
       header_title=tr_noop("Advanced Actuators"),
       header_subtitle=tr_noop("Adjust actuator delay, EV/Truck tuning, and launch/stop speeds/rates."),
       parent_toggle=pt_advanced,
@@ -1032,13 +1044,16 @@ class StarPilotLongitudinalLayout(_SettingsPage):
 
     gui_app.push_widget(ConfirmDialog(tr_noop("Reset to Defaults?"), tr_noop("Confirm"), callback=on_close))
 
-  def _is_civic_bosch(self) -> bool:
-    """True only on a Civic Bosch. CP comes from CarParamsPersistent, so this is False until
-    the car has been seen once -- the experimental row simply stays hidden until then."""
+  def _is_bosch_a(self) -> bool:
+    """True on any plain bosch_a-harness Honda (not CANFD, not radarless, not alt-radar) -- the
+    hardware generation the hand-written Bosch-A 16-slot radar DBC was reverse-engineered against.
+    CP comes from CarParamsPersistent, so this is False until the car has been seen once -- the
+    experimental row simply stays hidden until then."""
     try:
+      from opendbc.car.honda.values import HONDA_BOSCH_A
       from openpilot.selfdrive.ui.ui_state import ui_state
       cp = getattr(ui_state, "CP", None)
-      return cp is not None and str(cp.carFingerprint) == "HONDA_CIVIC_BOSCH"
+      return cp is not None and str(cp.carFingerprint) in HONDA_BOSCH_A
     except Exception:
       return False
 
