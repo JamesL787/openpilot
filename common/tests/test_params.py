@@ -59,6 +59,13 @@ class TestParams:
     with pytest.raises(UnknownKeyName):
       self.params.put_bool("swag", True)
 
+  def test_wheel_button_sound_is_registered_as_transient_string(self):
+    self.params.check_key("WheelButtonSound")
+    assert self.params.get_type("WheelButtonSound") == ParamKeyType.STRING
+
+    self.params.put("WheelButtonSound", "preAlert")
+    assert self.params.get("WheelButtonSound") == "preAlert"
+
   def test_remove_not_there(self):
     assert self.params.get("CarParams") is None
     self.params.remove("CarParams")

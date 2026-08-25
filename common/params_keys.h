@@ -323,13 +323,10 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LongPidTuneScale", {PERSISTENT, INT, "100", "100", 2}},
     {"LongPitch", {PERSISTENT, BOOL, "1", "0", 2, SETTINGS_SIMPLE}},
     {"NrdrHondaEcuMatchedLong", {PERSISTENT, BOOL, "0", "0", 2}},
-    // Experimental: feed the MPC the model's predicted lead horizon instead of extrapolating
-    // one instant forward. Civic Bosch only. See commaai/openpilot#37824.
-    {"BoschLong", {PERSISTENT, BOOL, "0", "0", 3}},
-    {"NrdrBlotV2", {PERSISTENT, BOOL, "0", "0", 3}},
-    // Tester rollout: parse the Civic Bosch's own 16-slot radar object bank into real leadOne/leadTwo
-    // tracks instead of treating the car as radarless. RX-only, no CAN authority taken. Civic Bosch only.
-    {"NrdrBoschARadar", {PERSISTENT, BOOL, "1", "1", 3}},
+    {"BlotV2", {PERSISTENT, BOOL, "0", "0", 3}},
+    // Tester rollout: parse the Bosch-A harness's own 16-slot radar object bank into real
+    // leadOne/leadTwo tracks instead of treating the car as radarless. RX-only, no CAN authority taken.
+    {"BoschARadar", {PERSISTENT, BOOL, "1", "1", 3}},
     {"RemoteStartBootsComma", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"RemapCancelToDistance", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"NAPAdaptiveAccel", {PERSISTENT, BOOL, "1", "1", 0, SETTINGS_SIMPLE}},
@@ -559,6 +556,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"FavoriteVirtualDecelCruiseCounter", {CLEAR_ON_MANAGER_START, INT, "0", "0"}},
     {"FavoriteTrafficModeCounter", {CLEAR_ON_MANAGER_START, INT, "0", "0"}},
     {"WheelButtonBookmarkCounter", {CLEAR_ON_MANAGER_START, INT, "0", "0"}},
+    {"WheelButtonSound", {CLEAR_ON_MANAGER_START, STRING, "", ""}},
     {"openpilotMinutes", {PERSISTENT, INT, "0", "0", 0}},
     {"OverpassRequests", {PERSISTENT, JSON, "{}", "{}"}},
     {"PathColor", {PERSISTENT, STRING, "", "", 2, SETTINGS_SIMPLE}},

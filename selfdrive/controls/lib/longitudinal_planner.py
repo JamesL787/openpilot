@@ -523,18 +523,16 @@ def get_accel_from_plan(speeds, accels, action_t=DT_MDL, vEgoStopping=0.05):
 
 class LongitudinalPlanner:
   def _blotv2_active(self) -> bool:
-    """Civic Bosch plus NrdrBlotV2. Re-read about once a second so the toggle applies
-    without a restart; never touches params on cars the feature does not apply to."""
-    if not self._blotv2_car:
-      return False
-
+    """Gated only on BlotV2, matching MLT's own unconditional scope -- BLoTv2 works off
+    any car's radar-tracked lead, nothing here is Civic-Bosch-specific. Re-read about once a
+    second so the toggle applies without a restart."""
     self._blotv2_frame += 1
     if self._blotv2_params is None or self._blotv2_frame % 100 == 0:
       try:
         from openpilot.common.params import Params
         if self._blotv2_params is None:
           self._blotv2_params = Params()
-        self._blotv2_enabled = self._blotv2_params.get_bool("NrdrBlotV2")
+        self._blotv2_enabled = self._blotv2_params.get_bool("BlotV2")
       except Exception:
         self._blotv2_enabled = False
     return self._blotv2_enabled
@@ -558,9 +556,8 @@ class LongitudinalPlanner:
 
     # Model Lead Trajectory (commaai/openpilot#37824) now runs unconditionally for every
     # car -- StarPilot ships it that way upstream, so we match rather than keep our own
-    # narrower gate. BLoTv2 (SpysyWeeb/Spysypilot) is still Civic Bosch only, behind its
-    # own param: it was ported separately and isn't validated on anything else.
-    self._blotv2_car = CP.brand == "honda" and str(CP.carFingerprint) == "HONDA_CIVIC_BOSCH"
+    # narrower gate. BLoTv2 (SpysyWeeb/Spysypilot) follows the same scope: it was built
+    # assuming MLT as a precondition, so it runs for every car too, behind its own param.
     self._blotv2 = BLoTv2Supervisor(dt)
     self._blotv2_policy = None
     self._blotv2_enabled = False

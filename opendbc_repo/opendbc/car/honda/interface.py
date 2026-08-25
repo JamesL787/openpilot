@@ -47,20 +47,13 @@ class CarInterface(CarInterfaceBase):
 
       # HONDA_BOSCH_A platforms (plain bosch_a harness: not CANFD, not radarless, not alt-radar) have
       # a firmware-correct RadarInterface (16-slot Bosch-A object bank, RX-only) and use it by
-      # default via NrdrBoschARadar: every other Bosch platform still has no parsed radar DBC and
+      # default via BoschARadar: every other Bosch platform still has no parsed radar DBC and
       # keeps radarUnavailable=True regardless.
-      # BoschLong's model-based longitudinal features (BLoTv2, Model Lead Trajectory) are built
-      # for radarless operation, so a real Bosch-A radar track overrides the toggle off. Check
-      # NrdrModelLeadTrajectory directly too, not just its BoschLong parent: the parent/child
-      # relationship is UI-only grouping, not enforcement -- the two params persist independently,
-      # and _model_lead_trajectory_active() in longitudinal_planner.py activates MLT off
-      # NrdrModelLeadTrajectory alone. A device with BoschLong off but NrdrModelLeadTrajectory on
-      # would otherwise run MLT and the radar tryout at the same time, which is exactly the
-      # radar/radarless conflict this gate exists to prevent.
+      # Independent of alpha long: that decides who commands the gas/brake (openpilot vs. stock
+      # ACC), not where the lead comes from. A real radar-confirmed lead only helps radarState
+      # regardless of which controller is acting on it, so the two are not exclusive.
       try:
-        params = Params()
-        bosch_long_features_active = params.get_bool("BoschLong") or params.get_bool("NrdrModelLeadTrajectory")
-        bosch_a_radar_tryout = params.get_bool("NrdrBoschARadar") and not bosch_long_features_active
+        bosch_a_radar_tryout = Params().get_bool("BoschARadar")
       except UnknownKeyName:
         bosch_a_radar_tryout = False
       ret.radarUnavailable = not (candidate in HONDA_BOSCH_A and bosch_a_radar_tryout)
