@@ -848,10 +848,7 @@ class Controls:
 
 
 def main():
-  # card's Bosch radar/CAN parsing can consume most of core 4. Keep the two
-  # 100 Hz control-loop processes on separate big cores so a card burst cannot
-  # delay controlsState/carControl/carOutput publication.
-  config_realtime_process(5, Priority.CTRL_HIGH)
+  config_realtime_process(4, Priority.CTRL_HIGH)
   controls = Controls()
   controls.run()
 

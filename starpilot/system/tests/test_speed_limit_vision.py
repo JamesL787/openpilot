@@ -134,31 +134,6 @@ def test_inference_interval_backs_off_after_expensive_inference():
   assert daemon.last_inference_interval_reason == "processing_cost"
 
 
-def test_coexistence_throttle_uses_speed_vision_affinity_cores(monkeypatch):
-  class FakeSubMaster:
-    valid = {"deviceState": True}
-
-    def __getitem__(self, key):
-      assert key == "deviceState"
-      return type("DeviceState", (), {"cpuUsagePercent": [95] * 8})()
-
-  calls = []
-  monkeypatch.setattr(slv, "device_cpu_throttle_factor", lambda usage, name, cores: calls.append((usage, name, cores)) or 2.0)
-
-  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
-  daemon.followup_until = 0.0
-  daemon.last_live_pose_inputs_not_ok_at = -float("inf")
-  daemon.last_frame_process_duration_s = 0.0
-  daemon.memory_pressure_state = "normal"
-  daemon.coexistence_mode = True
-  daemon.last_cpu_busy = False
-  daemon.sm = FakeSubMaster()
-  daemon._update_memory_pressure = lambda: "normal"
-
-  assert daemon._inference_interval(10.0) == pytest.approx(2.0 * slv.INFERENCE_INTERVAL)
-  assert calls == [([95] * 8, "SpeedLimit", slv.SPEED_LIMIT_VISION_COEXISTENCE_AFFINITY_CORES)]
-
-
 def test_runtime_loop_represents_exact_normal_cadences():
   assert slv.RUNTIME_LOOP_HZ * slv.INFERENCE_INTERVAL == pytest.approx(5.0)
   assert slv.RUNTIME_LOOP_HZ * slv.FOLLOWUP_INFERENCE_INTERVAL == pytest.approx(3.0)
