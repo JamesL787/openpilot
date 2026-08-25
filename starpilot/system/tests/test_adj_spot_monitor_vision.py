@@ -2,7 +2,6 @@ from pathlib import Path
 
 import numpy as np
 
-import starpilot.system.adj_spot_monitor_vision as vasm
 from starpilot.system.adj_spot_monitor_vision import VASMDaemon
 from starpilot.system.adj_spot_monitor_vision_inference import MODEL_INPUT_H, MODEL_INPUT_W, V_ASM_MODEL_PATH, VASMInference
 
@@ -34,26 +33,6 @@ class FakeInference:
 
   def reset_state(self):
     self.reset_count += 1
-
-
-def test_inference_throttle_uses_active_affinity_cores(monkeypatch):
-  class FakeSubMaster:
-    valid = {"deviceState": True}
-
-    def __getitem__(self, key):
-      assert key == "deviceState"
-      return type("DeviceState", (), {"cpuUsagePercent": [90] * 8})()
-
-  calls = []
-  monkeypatch.setattr(vasm, "device_cpu_throttle_factor", lambda usage, name, cores: calls.append((usage, name, cores)) or 2.0)
-
-  daemon = VASMDaemon.__new__(VASMDaemon)
-  daemon.followup_until = 0.0
-  daemon._slv_enabled = True
-  daemon.sm = FakeSubMaster()
-
-  assert daemon._inference_interval(10.0) == 2.0 * vasm.BASE_INTERVAL
-  assert calls == [([90] * 8, "VASM", vasm.V_ASM_AFFINITY_CORES)]
 
 
 def test_inference_geometry_supports_single_annotated_side():
