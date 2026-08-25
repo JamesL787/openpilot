@@ -607,13 +607,15 @@ class StarPilotLongitudinalLayout(_SettingsPage):
     # hides the header too on cars this does not apply to.
     self._bosch_a_radar_rows = [
       SettingRow("BoschARadar", "toggle", tr_noop("Bosch A Radar"),
-                 subtitle=tr_noop("Parses the car's own 16-slot Bosch-A radar CAN traffic into real "
-                                  "leadOne/leadTwo tracks instead of treating the car as radarless. "
-                                  "RX-only -- this toggle by itself never transmits on the radar bus "
-                                  "and does not disable factory AEB/CMBS. That's separately controlled "
-                                  "by whether openpilot has longitudinal control (Alpha Long): if "
-                                  "that's on, factory AEB/CMBS is already disabled regardless of this "
-                                  "toggle. A real radar lead just helps openpilot's own tracking either "
+                 subtitle=tr_noop("RX-only -- decodes the Bosch radar's lead tracks to sharpen "
+                                  "openpilot's own lead detection (fused with vision). It never "
+                                  "transmits on the radar bus, so switching this on or off has no "
+                                  "effect on factory AEB/CMBS by itself. AEB/CMBS is governed "
+                                  "separately, by whether openpilot has longitudinal control (Alpha "
+                                  "Long). With Alpha Long, factory AEB/CMBS is already disabled "
+                                  "regardless of this toggle -- openpilot can still brake just as hard "
+                                  "as AEB would in an emergency, but the warning won't reach the Honda "
+                                  "dash. With Stock Long, factory AEB/CMBS stays fully intact either "
                                   "way. Restart required to take effect."),
                  get_state=lambda: self._params.get_bool("BoschARadar"),
                  set_state=lambda v: self._params.put_bool("BoschARadar", v)),

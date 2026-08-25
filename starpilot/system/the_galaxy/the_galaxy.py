@@ -35,6 +35,7 @@ from urllib.parse import quote
 from cereal import car, custom, log, messaging
 from opendbc.can.parser import CANParser
 from opendbc.car.gm.values import GMFlags
+from opendbc.car.honda.values import HONDA_BOSCH_A
 from opendbc.car.toyota.carcontroller import LOCK_CMD, UNLOCK_CMD
 from opendbc.car.toyota.values import ToyotaStarPilotFlags
 from openpilot.common.constants import CV
@@ -3731,6 +3732,20 @@ def _get_has_rivian_angle_harness():
   except Exception:
     return False
 
+def _get_bosch_a_available():
+  # Car-family membership only, independent of the BoschARadar toggle's own state -- unlike
+  # HasRadar (radarUnavailable), which reflects the toggle too and would self-lock the row
+  # that turns it on.
+  cp_bytes = _safe_params_get_live_raw("CarParamsPersistent")
+  if not cp_bytes:
+    return False
+
+  try:
+    with car.CarParams.from_bytes(cp_bytes) as cp:
+      return str(getattr(cp, "carFingerprint", "") or "") in HONDA_BOSCH_A
+  except Exception:
+    return False
+
 def _get_hardware_snapshot_items():
   starpilot_toggles = _get_starpilot_toggles_snapshot()
 
@@ -5428,6 +5443,7 @@ def setup(app):
     result["VehicleParked"] = _get_vehicle_parked()
     result["AlphaLongitudinalAvailable"] = _get_alpha_longitudinal_available()
     result["HasRivianAngleHarness"] = _get_has_rivian_angle_harness()
+    result["BoschARadarAvailable"] = _get_bosch_a_available()
 
     return jsonify(_sanitize_json_value(result)), 200
 
