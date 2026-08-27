@@ -14,7 +14,7 @@ from openpilot.selfdrive.ui.onroad.starpilot.widgets import (
 )
 from openpilot.selfdrive.ui.onroad.starpilot.stopping_point import render_stopping_point
 from openpilot.selfdrive.ui.onroad.starpilot.pause_indicators import render_lateral_paused, render_longitudinal_paused
-from openpilot.selfdrive.ui.onroad.starpilot.pulse_glide import render_pulse_glide
+from openpilot.selfdrive.ui.onroad.starpilot.pulse_glide import get_pulse_glide_border_color, render_pulse_glide
 from openpilot.selfdrive.ui.onroad.starpilot.pip_sidecam import PipSideCamera
 from openpilot.selfdrive.ui.onroad.starpilot.favorite_radial_menu import FavoriteRadialMenu
 from openpilot.selfdrive.ui.onroad.starpilot.weather_icon import render_weather_icon
@@ -97,7 +97,7 @@ class StarPilotOnroadView(AugmentedRoadView):
 
   def _render(self, rect: rl.Rectangle):
     border_width = self._get_border_width()
-    border_color = get_screen_edge_color(ui_state)
+    border_color = get_pulse_glide_border_color(ui_state.sm, get_screen_edge_color(ui_state))
     rl.draw_rectangle_rounded(rect, 0.12, 10, border_color)
     render_background_effects(rect, border_width)
 

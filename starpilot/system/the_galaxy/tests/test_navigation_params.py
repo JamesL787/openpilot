@@ -95,10 +95,11 @@ def _params_client(monkeypatch, values, device_type):
     the_galaxy,
     "_get_param_type_info",
     lambda: (
-      {"AlphaLongitudinalEnabled", "ForceOffroad"},
+      {"AlphaLongitudinalEnabled", "ForceOffroad", "FordLateralMode"},
       {
         "AlphaLongitudinalEnabled": bool,
         "ForceOffroad": bool,
+        "FordLateralMode": int,
       },
     ),
   )
@@ -255,6 +256,40 @@ def test_device_settings_layout_asset_is_served_from_common_catalog(monkeypatch)
     assert response.get_json() == the_galaxy.load_settings_catalog()
 
 
+def test_params_all_exposes_curve_calibration_readouts(monkeypatch):
+  client, _ = _params_client(monkeypatch, {
+    "CalibratedLateralAcceleration": 2.73,
+    "CalibrationProgress": 48.0,
+  }, "tici")
+  monkeypatch.setattr(
+    the_galaxy,
+    "_params_live_raw",
+    WritableFakeParams({
+      "CalibratedLateralAcceleration": 2.73,
+      "CalibrationProgress": 48.0,
+    }),
+  )
+
+  response = client.get("/api/params/all")
+
+  assert response.status_code == 200
+  assert response.get_json()["CalibratedLateralAcceleration"] == 2.73
+  assert response.get_json()["CalibrationProgress"] == 48.0
+
+
+def test_ford_lateral_mode_is_editable_through_galaxy(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "CarMake": "Ford",
+    "FordLateralMode": 1,
+  }, "mici")
+
+  response = client.put("/api/params", json={"key": "FordLateralMode", "value": 2, "label": "Angle"})
+
+  assert response.status_code == 200
+  assert fake_params.values["FordLateralMode"] == "2"
+  assert ("FordLateralMode", "2") in fake_params.writes
+
+
 def test_favorite_slot_options_include_virtual_cruise_actions(monkeypatch):
   monkeypatch.setattr(the_galaxy, "_favorite_slot_options", None)
   monkeypatch.setattr(the_galaxy, "_get_param_type_info", lambda: (set(), {}))
@@ -377,6 +412,12 @@ def test_curve_speed_controller_reset_clears_learned_data_offroad(monkeypatch):
     "CalibrationProgress": 48.0,
     "CurvatureData": {"0.01": {"average": 2.73, "count": 12}},
   }, "tici")
+  fake_memory = WritableFakeParams({
+    "CalibratedLateralAcceleration": 2.73,
+    "CalibrationProgress": 48.0,
+    "CurvatureData": {"0.01": {"average": 2.73, "count": 12}},
+  })
+  monkeypatch.setattr(the_galaxy, "params_memory", fake_memory)
 
   response = client.post("/api/curve_speed_controller/reset")
 
@@ -389,6 +430,11 @@ def test_curve_speed_controller_reset_clears_learned_data_offroad(monkeypatch):
   assert "CalibrationProgress" not in fake_params.values
   assert "CurvatureData" not in fake_params.values
   assert fake_params.removals == ["CalibrationProgress", "CurvatureData"]
+  assert fake_memory.values == {
+    "CalibratedLateralAcceleration": 2.0,
+    "CalibrationProgress": 0.0,
+  }
+  assert fake_memory.removals == ["CurvatureData"]
 
 
 def test_curve_speed_controller_reset_rejected_onroad(monkeypatch):

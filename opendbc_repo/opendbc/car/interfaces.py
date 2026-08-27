@@ -261,6 +261,10 @@ class CarInterfaceBase(ABC):
         if getattr(starpilot_toggles, "always_on_lateral_lkas", False):
           fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
 
+        if candidate == HYUNDAI.HYUNDAI_ELANTRA_HEV_2024 and \
+            getattr(starpilot_toggles, "always_on_lateral_main", False):
+          fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
+
         # LKASButtonControl == 9 means BUTTON_FUNCTIONS["AOL_TOGGLE"] in starpilot_variables.
         if params.get_bool("AlwaysOnLateral") and params.get_int("LKASButtonControl") == 9:
           fp_ret.safetyConfigs[-1].safetyParam |= HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value

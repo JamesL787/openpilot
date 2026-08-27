@@ -30,6 +30,10 @@ _ANGLE_RECLAIM_FRAMES = 36
 _ANGLE_RECLAIM_EXPONENT = 2.5
 _ANGLE_MADS_MIN_SPEED = 0.44704
 _ANGLE_MADS_MAX_STEER_ANGLE = 120.0
+_STOP_START_STARTUP_DELAY_FRAMES = 100
+_STOP_START_STARTUP_DEADLINE_FRAMES = 300
+_STOP_START_PULSE_FRAMES = 30
+_STOP_START_PULSE_PERIOD_FRAMES = 5
 
 
 def get_safety_CP():
@@ -73,6 +77,66 @@ class CarController(CarControllerBase):
     self.prev_close_distance = 0
     self.epb_resume_frames_remaining = -1
     self.last_standstill_frame = 0
+    self.stop_start_attempted = False
+    self.stop_start_request_started = False
+    self.stop_start_request_frame = 0
+    self.stop_start_initial_state = None
+    self.stop_start_counter = 0
+    self.stop_start_acknowledged = False
+
+  def _stop_start_off_request(self, CC, CS, starpilot_toggles):
+    """Send one bounded Outback Stop/Start OFF request after ignition.
+
+    This is intentionally opt-in and limited to a stationary vehicle in
+    Park/Neutral. A single ignition session gets at most one attempt.
+    """
+    if self.CP.carFingerprint != CAR.SUBARU_OUTBACK_2023 or \
+       not getattr(starpilot_toggles, "subaru_stop_start_off", False) or self.stop_start_attempted:
+      return None
+
+    if self.frame > _STOP_START_STARTUP_DEADLINE_FRAMES or getattr(CC, "enabled", False):
+      self.stop_start_attempted = True
+      return None
+
+    if self.frame < _STOP_START_STARTUP_DELAY_FRAMES or not getattr(getattr(CS, "out", None), "canValid", True):
+      return None
+
+    out = CS.out
+    if not getattr(out, "standstill", False) or out.gearShifter not in (
+      structs.CarState.GearShifter.park,
+      structs.CarState.GearShifter.neutral,
+    ):
+      return None
+
+    dashlights_msg = getattr(CS, "dashlights_msg", None)
+    if not dashlights_msg:
+      return None
+
+    if not self.stop_start_request_started:
+      self.stop_start_request_started = True
+      self.stop_start_request_frame = self.frame
+      self.stop_start_initial_state = getattr(CS, "stop_start_state", None)
+      self.stop_start_counter = (int(dashlights_msg.get("COUNTER", 0)) + 1) % 0x10
+
+    current_state = getattr(CS, "stop_start_state", None)
+    if self.stop_start_initial_state is not None and self.stop_start_initial_state != 3 and current_state == 3:
+      self.stop_start_attempted = True
+      self.stop_start_acknowledged = True
+      return None
+
+    elapsed = self.frame - self.stop_start_request_frame
+    if elapsed >= _STOP_START_PULSE_FRAMES:
+      self.stop_start_attempted = True
+      return None
+
+    if elapsed % _STOP_START_PULSE_PERIOD_FRAMES != 0:
+      return None
+
+    msg = subarucan.create_stop_start_control(
+      self.packer, dashlights_msg, counter=self.stop_start_counter, bus=self.main_bus,
+    )
+    self.stop_start_counter = (self.stop_start_counter + 1) % 0x10
+    return msg
 
   def _reset_legacy_2025_handoff(self):
     self.legacy_2025_handoff_active = False
@@ -87,7 +151,7 @@ class CarController(CarControllerBase):
       self._reset_legacy_2025_handoff()
       return False
 
-    if CS.out.steeringPressed:
+    if getattr(CS.out, "steeringPressed", False):
       self.legacy_2025_handoff_active = True
       self.legacy_2025_override_hold_frames = _LEGACY_2025_OVERRIDE_HOLD_FRAMES
       self.legacy_2025_reengage_settle_frames = 0
@@ -96,7 +160,7 @@ class CarController(CarControllerBase):
       return True
 
     if not self.legacy_2025_handoff_active and not self.legacy_2025_lkas_active and \
-       abs(CS.out.steeringRateDeg) > _LEGACY_2025_REENGAGE_MAX_STEER_RATE:
+       abs(getattr(CS.out, "steeringRateDeg", 0.0)) > _LEGACY_2025_REENGAGE_MAX_STEER_RATE:
       self.legacy_2025_handoff_active = True
       self.legacy_2025_reengage_reference_angle = CS.out.steeringAngleDeg
 
@@ -109,7 +173,7 @@ class CarController(CarControllerBase):
         self.legacy_2025_reengage_reference_angle = CS.out.steeringAngleDeg
       return True
 
-    wheel_stable = abs(CS.out.steeringRateDeg) <= _LEGACY_2025_REENGAGE_MAX_STEER_RATE and \
+    wheel_stable = abs(getattr(CS.out, "steeringRateDeg", 0.0)) <= _LEGACY_2025_REENGAGE_MAX_STEER_RATE and \
       abs(CS.out.steeringAngleDeg - self.legacy_2025_reengage_reference_angle) <= _LEGACY_2025_REENGAGE_MAX_ANGLE_DELTA
     if wheel_stable:
       self.legacy_2025_reengage_settle_frames += 1
@@ -150,7 +214,7 @@ class CarController(CarControllerBase):
       self._reset_angle_handoff()
       return False
 
-    if CS.out.steeringPressed:
+    if getattr(CS.out, "steeringPressed", False):
       self.angle_handoff_active = True
       self.angle_override_hold_frames = _ANGLE_OVERRIDE_HOLD_FRAMES
       self.angle_reengage_settle_frames = 0
@@ -159,7 +223,7 @@ class CarController(CarControllerBase):
       return True
 
     if not self.angle_handoff_active and not self.angle_lkas_active and \
-       abs(CS.out.steeringRateDeg) > _ANGLE_REENGAGE_MAX_STEER_RATE:
+       abs(getattr(CS.out, "steeringRateDeg", 0.0)) > _ANGLE_REENGAGE_MAX_STEER_RATE:
       self.angle_handoff_active = True
       self.angle_reengage_reference_angle = CS.out.steeringAngleDeg
 
@@ -172,7 +236,7 @@ class CarController(CarControllerBase):
         self.angle_reengage_reference_angle = CS.out.steeringAngleDeg
       return True
 
-    wheel_stable = abs(CS.out.steeringRateDeg) <= _ANGLE_REENGAGE_MAX_STEER_RATE and \
+    wheel_stable = abs(getattr(CS.out, "steeringRateDeg", 0.0)) <= _ANGLE_REENGAGE_MAX_STEER_RATE and \
       abs(CS.out.steeringAngleDeg - self.angle_reengage_reference_angle) <= _ANGLE_REENGAGE_MAX_ANGLE_DELTA
     if wheel_stable:
       self.angle_reengage_settle_frames += 1
@@ -267,9 +331,19 @@ class CarController(CarControllerBase):
     elif abs_torque < self.p.STEER_OVERRIDE_TORQUE_LOW:
       self.driver_override = False
 
-    lat_active = CC.latActive and not self.driver_override
+    mads_only = CC.latActive and not getattr(CC, "enabled", False)
+    mads_only_ok = CS.out.vEgoRaw > _ANGLE_MADS_MIN_SPEED and \
+      abs(CS.out.steeringAngleDeg) < _ANGLE_MADS_MAX_STEER_ANGLE
+    lkas_available = CC.latActive and (not mads_only or mads_only_ok) and \
+      getattr(CS.out, "gearShifter", structs.CarState.GearShifter.drive) == structs.CarState.GearShifter.drive and \
+      not getattr(CS.out, "standstill", False)
+    manual_handoff = self._angle_manual_handoff(CS, lkas_available)
+    lat_active = lkas_available and not self.driver_override and not manual_handoff
+    if lat_active and not self.angle_lkas_active:
+      self.apply_steer_last = CS.out.steeringAngleDeg
+    steer_target = self._angle_reclaim_target(CC.actuators.steeringAngleDeg) if lat_active else CC.actuators.steeringAngleDeg
     apply_steer = apply_steer_angle_limits_vm(
-      CC.actuators.steeringAngleDeg,
+      steer_target,
       self.apply_steer_last,
       CS.out.vEgoRaw,
       CS.out.steeringAngleDeg,
@@ -282,6 +356,7 @@ class CarController(CarControllerBase):
       apply_steer = CS.out.steeringAngleDeg
 
     self.apply_steer_last = apply_steer
+    self.angle_lkas_active = lat_active
     return subarucan.create_steering_control_angle(self.packer, apply_steer, lat_active, self.angle_bus)
 
   def lateral_torque(self, CC, CS):
@@ -315,6 +390,10 @@ class CarController(CarControllerBase):
     pcm_cancel_cmd = CC.cruiseControl.cancel
 
     can_sends = []
+
+    stop_start_msg = self._stop_start_off_request(CC, CS, starpilot_toggles)
+    if stop_start_msg is not None:
+      can_sends.append(stop_start_msg)
 
     # *** steering ***
     if (self.frame % self.p.STEER_STEP) == 0:

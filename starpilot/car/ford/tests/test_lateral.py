@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ..lateral import HANDOFF_PAUSE_FRAMES, FordLateralController, HumanTurnDetector
+from ..lateral import HANDOFF_PAUSE_FRAMES, HANDOFF_PAUSE_MIN_FRAMES, FordLateralController, HumanTurnDetector
 
 
 class FakeSubMaster(dict):
@@ -25,13 +25,16 @@ def controller(monkeypatch):
   return controller
 
 
-def car_state(speed=15.0, curvature=0.0, steering_pressed=False, steering_angle=0.0):
-  return SimpleNamespace(out=SimpleNamespace(
+def car_state(speed=15.0, curvature=0.0, steering_pressed=False, steering_angle=0.0, lateral_control_status=None):
+  state = SimpleNamespace(out=SimpleNamespace(
     vEgoRaw=speed,
     yawRate=-curvature * speed,
     steeringPressed=steering_pressed,
     steeringAngleDeg=steering_angle,
   ))
+  if lateral_control_status is not None:
+    state.lateral_control_status = lateral_control_status
+  return state
 
 
 def test_human_turn_requires_sustained_input():
@@ -102,34 +105,75 @@ def test_manual_turn_releases_lateral(controller):
   assert result.path_angle == 0.0
 
 
-@pytest.mark.parametrize("strategy", ["update_curvature", "update_angle"])
-def test_enhanced_control_yields_during_sustained_driver_correction(controller, strategy):
+def test_curvature_control_stays_active_during_driver_correction(controller):
   controller.human_turn_enabled = True
   CC = SimpleNamespace(latActive=True)
   actuators = SimpleNamespace(curvature=0.001)
-  update = getattr(controller, strategy)
 
-  for _ in range(9):
-    assert update(CC, car_state(steering_pressed=True, steering_angle=10.0), actuators).active
+  for _ in range(20):
+    result = controller.update_curvature(
+      CC, car_state(steering_pressed=True, steering_angle=10.0), actuators)
+    assert result.active
 
-  result = update(CC, car_state(steering_pressed=True, steering_angle=10.0), actuators)
-  assert not result.active
+
+def test_curvature_manual_turn_keeps_session_active_with_neutral_command(controller):
+  controller.human_turn_enabled = True
+  CC = SimpleNamespace(latActive=True)
+  actuators = SimpleNamespace(curvature=0.001)
+
+  controller.update_curvature(
+    CC, car_state(steering_pressed=True, steering_angle=0.0), actuators)
+  for _ in range(30):
+    result = controller.update_curvature(
+      CC, car_state(steering_pressed=True, steering_angle=50.0), actuators)
+
+  assert result.active
+  assert result.curvature == 0.0
   assert result.path_angle == 0.0
 
-  assert update(CC, car_state(), actuators).active
 
-
-@pytest.mark.parametrize("strategy", ["update_curvature", "update_angle"])
-def test_short_driver_correction_does_not_pause_enhanced_control(controller, strategy):
+def test_angle_control_pulses_inactive_after_sustained_driver_correction(controller):
   controller.human_turn_enabled = True
   CC = SimpleNamespace(latActive=True)
   actuators = SimpleNamespace(curvature=0.001)
-  update = getattr(controller, strategy)
+
+  for _ in range(10):
+    assert controller.update_angle(
+      CC, car_state(steering_pressed=True, steering_angle=10.0), actuators).active
+
+  for _ in range(HANDOFF_PAUSE_FRAMES):
+    assert not controller.update_angle(CC, car_state(), actuators).active
+
+  assert controller.update_angle(CC, car_state(), actuators).active
+
+
+def test_short_driver_correction_does_not_pause_angle_control(controller):
+  controller.human_turn_enabled = True
+  CC = SimpleNamespace(latActive=True)
+  actuators = SimpleNamespace(curvature=0.001)
 
   for _ in range(9):
-    assert update(CC, car_state(steering_pressed=True, steering_angle=10.0), actuators).active
+    assert controller.update_angle(
+      CC, car_state(steering_pressed=True, steering_angle=10.0), actuators).active
 
-  assert update(CC, car_state(), actuators).active
+  assert controller.update_angle(CC, car_state(), actuators).active
+
+
+def test_angle_control_resumes_after_pscm_acknowledges_pause(controller):
+  controller.human_turn_enabled = True
+  CC = SimpleNamespace(latActive=True)
+  actuators = SimpleNamespace(curvature=0.001)
+
+  for _ in range(10):
+    assert controller.update_angle(
+      CC, car_state(steering_pressed=True, steering_angle=10.0), actuators).active
+
+  for _ in range(HANDOFF_PAUSE_MIN_FRAMES):
+    assert not controller.update_angle(
+      CC, car_state(lateral_control_status=1), actuators).active
+
+  assert controller.update_angle(
+    CC, car_state(lateral_control_status=1), actuators).active
 
 
 def test_angle_control_recovers_from_bounded_tracking_stall(controller):

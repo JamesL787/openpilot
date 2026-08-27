@@ -4,6 +4,7 @@ from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.ford.fordcan import CanBus
 from opendbc.car.ford.values import DBC, CarControllerParams, FordFlags
+from opendbc.car.gps import get_car_gps_config
 from opendbc.car.interfaces import CarStateBase
 
 ButtonType = structs.CarState.ButtonEvent.Type
@@ -27,11 +28,39 @@ class CarState(CarStateBase):
     self.lc_button = 0
     self.lkas_available = False
     self.lateral_motion_control = None
+    self.lateral_control_status = None
     self.steering_angle_offset_deg = 0.0
+    self.car_gps_config = get_car_gps_config(CP)
+    self.car_gps_supported = self.car_gps_config is not None
+    self.car_gps = None
+    self._car_gps_timestamp_nanos = 0
+
+  def _update_car_gps(self, cp) -> None:
+    if self.car_gps_config is None:
+      return
+
+    timestamps = [max(cp.ts_nanos[name].values(), default=0) for name in self.car_gps_config.messages]
+    if not all(timestamps) or max(timestamps) - min(timestamps) > 2_000_000_000:
+      return
+
+    timestamp_nanos = max(timestamps)
+    if timestamp_nanos <= self._car_gps_timestamp_nanos:
+      return
+
+    gps = self.car_gps_config.decoder(*(cp.vl[name] for name in self.car_gps_config.messages))
+    if gps is not None:
+      gps["timestamp_nanos"] = timestamp_nanos
+      self.car_gps = gps
+      self._car_gps_timestamp_nanos = timestamp_nanos
+
+  def get_car_gps(self):
+    return self.car_gps
 
   def update(self, can_parsers, starpilot_toggles) -> structs.CarState:
     cp = can_parsers[Bus.pt]
     cp_cam = can_parsers[Bus.cam]
+
+    self._update_car_gps(cp)
 
     ret = structs.CarState()
 
@@ -81,7 +110,8 @@ class CarState(CarStateBase):
 
     if self.CP.flags & FordFlags.CANFD:
       # this signal is always 0 on non-CAN FD cars
-      ret.steerFaultTemporary |= cp.vl["Lane_Assist_Data3_FD1"]["LatCtlSte_D_Stat"] not in (1, 2, 3)
+      self.lateral_control_status = int(cp.vl["Lane_Assist_Data3_FD1"]["LatCtlSte_D_Stat"])
+      ret.steerFaultTemporary |= self.lateral_control_status not in (1, 2, 3)
 
     # cruise state
     is_metric = cp.vl["INSTRUMENT_PANEL"]["METRIC_UNITS"] == 1 if not self.CP.flags & FordFlags.CANFD else \
@@ -177,7 +207,9 @@ class CarState(CarStateBase):
 
   @staticmethod
   def get_can_parsers(CP):
+    gps_config = get_car_gps_config(CP)
+    gps_messages = [(name, 0) for name in gps_config.messages] if gps_config is not None else []
     return {
-      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], [], CanBus(CP).main),
+      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], gps_messages, CanBus(CP).main),
       Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], CanBus(CP).camera),
     }

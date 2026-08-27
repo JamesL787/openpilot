@@ -201,6 +201,45 @@ class TestGMInterface:
     assert car_params.flags & GMFlags.NO_CAMERA.value
     assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_CAMERA.value
 
+  def test_volt_cc_obd_gateway_uses_cc_long_no_camera_path(self):
+    CarInterface = interfaces[CAR.CHEVROLET_VOLT_CC]
+    car_params = CarInterface.get_params(
+      CAR.CHEVROLET_VOLT_CC,
+      _empty_fingerprint(),
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=_test_starpilot_toggles(),
+    )
+
+    assert car_params.networkLocation == structs.CarParams.NetworkLocation.gateway
+    assert car_params.flags & GMFlags.CC_LONG.value
+    assert car_params.flags & GMFlags.NO_CAMERA.value
+    assert not (car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.HW_CAM.value)
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_CC_LONG.value
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_ACC.value
+    assert car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_NO_CAMERA.value
+
+    parsers = CarInterface.CarState.get_can_parsers(car_params)
+    assert "ECMCruiseControl" in parsers[Bus.pt].vl
+    assert not parsers[Bus.cam].vl
+
+  def test_other_cc_only_gateway_does_not_use_volt_cc_safety_path(self):
+    CarInterface = interfaces[CAR.CHEVROLET_SILVERADO_CC]
+    car_params = CarInterface.get_params(
+      CAR.CHEVROLET_SILVERADO_CC,
+      _empty_fingerprint(),
+      [],
+      alpha_long=False,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=_test_starpilot_toggles(),
+    )
+
+    assert car_params.networkLocation == structs.CarParams.NetworkLocation.gateway
+    assert not (car_params.safetyConfigs[0].safetyParam & GMSafetyFlags.FLAG_GM_VOLT_CC_GATEWAY.value)
+
   def test_volt_ascm_sparse_fingerprint_without_camera_does_not_set_no_camera(self):
     CarInterface = interfaces[CAR.CHEVROLET_VOLT_ASCM]
     fingerprint = {
@@ -533,6 +572,7 @@ class TestGMCarController:
       CP=SimpleNamespace(
         carFingerprint=CAR.CHEVROLET_VOLT_CC,
         flags=0,
+        networkLocation=structs.CarParams.NetworkLocation.fwdCamera,
         minEnableSpeed=24 * CV.MPH_TO_MS,
       ),
       buttons_counter=2,
@@ -554,6 +594,7 @@ class TestGMCarController:
       CP=SimpleNamespace(
         carFingerprint=CAR.CHEVROLET_VOLT_CC,
         flags=GMFlags.NO_CAMERA.value,
+        networkLocation=structs.CarParams.NetworkLocation.gateway,
         minEnableSpeed=24 * CV.MPH_TO_MS,
       ),
       buttons_counter=2,

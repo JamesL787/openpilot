@@ -45,6 +45,7 @@ CANCEL_DOWNLOAD_PARAM = "CancelModelDownload"
 DOWNLOAD_PROGRESS_PARAM = "ModelDownloadProgress"
 MODEL_DOWNLOAD_PARAM = "ModelToDownload"
 MODEL_DOWNLOAD_ALL_PARAM = "DownloadAllModels"
+ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM = "AllowGpuModelDownloadWithoutGpu"
 UPDATE_TINYGRAD_PARAM = "UpdateTinygrad"
 
 
@@ -570,6 +571,7 @@ class ModelManager:
         "released": str(info.get("released") or "2100-01-01").strip(),
         "community_favorite": False,
         "artifact_format": UNIFIED_ARTIFACT_FORMAT,
+        "uses_external_gpu": bool(info.get("uses_external_gpu", False)),
       }
 
     return list(discovered.values())
@@ -683,6 +685,13 @@ class ModelManager:
     self.check_models(boot_run)
 
   def download_model(self, model_to_download: str):
+    allow_gpu_without_gpu = self.params_memory.get_bool(ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM)
+    try:
+      self._download_model(model_to_download, allow_gpu_without_gpu)
+    finally:
+      self.params_memory.remove(ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM)
+
+  def _download_model(self, model_to_download: str, allow_gpu_without_gpu: bool):
     self.downloading_model = True
 
     if is_builtin_model_key(model_to_download):
@@ -691,7 +700,7 @@ class ModelManager:
       self.downloading_model = False
       return
 
-    if model_uses_external_gpu(model_to_download) and not external_gpu_available():
+    if model_uses_external_gpu(model_to_download) and not external_gpu_available() and not allow_gpu_without_gpu:
       handle_error(None, "External GPU required...", "This model requires a detected external GPU.", MODEL_DOWNLOAD_PARAM, DOWNLOAD_PROGRESS_PARAM, self.params_memory)
       self.downloading_model = False
       return
@@ -789,6 +798,13 @@ class ModelManager:
     self.downloading_model = False
 
   def download_all_models(self):
+    allow_gpu_without_gpu = self.params_memory.get_bool(ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM)
+    try:
+      self._download_all_models(allow_gpu_without_gpu)
+    finally:
+      self.params_memory.remove(ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM)
+
+  def _download_all_models(self, allow_gpu_without_gpu: bool):
     repo_url = get_repository_url()
     if not repo_url:
       handle_error(None, "GitHub and GitLab are offline...", "Repository unavailable", MODEL_DOWNLOAD_ALL_PARAM, DOWNLOAD_PROGRESS_PARAM, self.params_memory)
@@ -810,7 +826,7 @@ class ModelManager:
       if is_local_model_key(model_key):
         continue
 
-      if model_uses_external_gpu(model_key) and not external_gpu_available():
+      if model_uses_external_gpu(model_key) and not external_gpu_available() and not allow_gpu_without_gpu:
         continue
 
       artifact_format = artifact_format_map.get(model_key, "")
@@ -818,7 +834,7 @@ class ModelManager:
         continue
 
       self.params_memory.put(DOWNLOAD_PROGRESS_PARAM, f"Downloading \"{model_name}\"...")
-      self.download_model(model_key)
+      self._download_model(model_key, allow_gpu_without_gpu)
       if self.params_memory.get_bool(CANCEL_DOWNLOAD_PARAM):
         return
 

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from cereal import car
 from openpilot.common.params import Params
+from opendbc.car.gps import car_gps_available
 from openpilot.system.hardware import HARDWARE, PC, TICI
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 
@@ -30,11 +31,24 @@ def logging(started: bool, params: Params, CP: car.CarParams, starpilot_toggles:
 def ublox_available() -> bool:
   return os.path.exists('/dev/ttyHS0') and not os.path.exists('/persist/comma/use-quectel-gps')
 
+
+def update_car_gps_param(params: Params) -> bool | None:
+  car_params = params.get("CarParams")
+  if car_params is None:
+    return None
+
+  with car.CarParams.from_bytes(car_params) as CP:
+    available = car_gps_available(CP)
+  if available != params.get_bool("CarGpsAvailable"):
+    params.put_bool("CarGpsAvailable", available)
+  return available
+
 def ublox(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
+  car_gps = update_car_gps_param(params)
   use_ublox = ublox_available()
   if use_ublox != params.get_bool("UbloxAvailable"):
     params.put_bool("UbloxAvailable", use_ublox)
-  return started and use_ublox
+  return started and use_ublox and car_gps is False
 
 def joystick(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return started and params.get_bool("JoystickDebugMode")
@@ -52,6 +66,7 @@ def not_long_maneuver(started: bool, params: Params, CP: car.CarParams, starpilo
   return started and not params.get_bool("LongitudinalManeuverMode")
 
 def qcomgps(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
+  update_car_gps_param(params)
   return started and not ublox_available()
 
 def always_run(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:

@@ -128,6 +128,9 @@ def build_favorite_slot_options(is_eligible_param: Callable[[str], bool], *,
 
   options = [dict(option) for option in FAVORITE_ACTION_OPTIONS]
   for key, param_data in catalog_map.items():
+    if param_data.get("galaxy_only"):
+      continue
+
     ui_type = str(param_data.get("ui_type") or "")
     data_type = str(param_data.get("data_type") or "")
     raw_options = param_data.get("options")

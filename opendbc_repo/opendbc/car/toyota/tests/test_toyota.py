@@ -10,6 +10,7 @@ from opendbc.car.fw_versions import build_fw_dict, match_fw_to_car
 from opendbc.car.toyota import toyotacan
 from opendbc.car.toyota.carcontroller import CarController, get_camry_hybrid_feedforward, get_long_tune, get_prius_feedforward, \
                                              get_prius_positive_feedforward_scale, \
+                                             get_steer_rate_limit_frames, \
                                              limit_interceptor_pcm_accel, \
                                              limit_interceptor_stopping_accel, limit_no_lead_cruise_sign_flip, \
                                              limit_prius_stopping_accel, should_bypass_toyota_long_pid, update_permit_braking
@@ -19,7 +20,7 @@ from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.radar_interface import RadarInterface, TSSP_RADAR_EGO_SPEED_SCALE
 from opendbc.car.toyota.values import CAR, DBC, TSS2_CAR, ANGLE_CONTROL_CAR, RADAR_ACC_CAR, SECOC_CAR, \
                                                   FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, FUZZY_EXCLUDED_PLATFORMS, \
-                                                  ToyotaFlags, ToyotaSafetyFlags, get_platform_codes
+                                                  ToyotaFlags, ToyotaSafetyFlags, ToyotaStarPilotFlags, get_platform_codes
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.common.params import Params
 
@@ -39,6 +40,32 @@ class TestToyotaInterfaces:
   def test_lta_platforms(self):
     # At this time, only RAV4 2023 is expected to use LTA/angle control
     assert ANGLE_CONTROL_CAR == {CAR.TOYOTA_RAV4_TSS2_2023}
+
+  @pytest.mark.parametrize("candidate", [CAR.TOYOTA_RAV4_TSS2, CAR.TOYOTA_RAV4_TSS2_2023])
+  def test_rav4_can_filter_is_optional(self, candidate):
+    def get_params(has_can_filter):
+      fingerprint = {bus: {} for bus in range(8)}
+      if has_can_filter:
+        fingerprint[0][0x2AA] = 8
+
+      car_params = CarInterface.get_params(
+        candidate,
+        fingerprint,
+        [],
+        alpha_long=False,
+        is_release=False,
+        docs=False,
+        starpilot_toggles=SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False),
+      )
+      return CarInterface.get_starpilot_params(candidate, fingerprint, [], car_params, SimpleNamespace())
+
+    without_filter = get_params(False)
+    with_filter = get_params(True)
+
+    assert not without_filter.flags & ToyotaStarPilotFlags.RADAR_CAN_FILTER.value
+    assert not without_filter.flags & ToyotaStarPilotFlags.SMART_DSU.value
+    assert with_filter.flags & ToyotaStarPilotFlags.RADAR_CAN_FILTER.value
+    assert with_filter.flags & ToyotaStarPilotFlags.SMART_DSU.value
 
   def test_rav4_prime_force_torque_controller(self):
     fingerprint = {bus: {} for bus in range(8)}
@@ -680,6 +707,10 @@ class TestToyotaFingerprint:
 
 
 class TestToyotaCarController:
+  def test_highlander_tss2_uses_early_steer_rate_fault_guard(self):
+    assert get_steer_rate_limit_frames(CAR.TOYOTA_HIGHLANDER_TSS2) == 8
+    assert get_steer_rate_limit_frames(CAR.TOYOTA_RAV4_TSS2) == 18
+
   @staticmethod
   def _make_controller(*, standstill_req=False, last_standstill=False):
     controller = CarController.__new__(CarController)
@@ -844,6 +875,22 @@ class TestToyotaCarController:
     )
     parser.update([(1, [reverse_msg])])
     assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 2
+
+  def test_acc_control_accepts_toggle_namespace_without_reverse_cruise_option(self):
+    # Older or partially refreshed toggle broadcasts do not include this optional field.
+    toggles = SimpleNamespace()
+    assert getattr(toggles, "reverse_cruise_increase", False) is False
+
+    packer = CANPacker(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt])
+    msg = toyotacan.create_accel_command(
+      packer, 0.0, False, True, False, False, 1, False, 0,
+      getattr(toggles, "reverse_cruise_increase", False),
+    )
+    parser = CANParser(DBC[CAR.TOYOTA_HIGHLANDER_TSS2][Bus.pt], [("ACC_CONTROL", 0)], 0)
+    parser.update([(1, [msg])])
+
+    assert parser.can_valid
+    assert parser.vl["ACC_CONTROL"]["ALLOW_LONG_PRESS"] == 1
 
   def test_auto_brake_hold_sends_modified_pre_collision_after_timer(self):
     controller = self._make_controller()

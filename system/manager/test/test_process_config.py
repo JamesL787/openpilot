@@ -3,7 +3,8 @@ from types import SimpleNamespace
 import pytest
 
 from cereal import car
-from openpilot.system.manager.process_config import allow_uploads, camera_run, managed_processes, sentry_mode
+from opendbc.car.ford.values import CAR as FORD_CAR
+from openpilot.system.manager.process_config import allow_uploads, camera_run, managed_processes, sentry_mode, ublox
 
 
 class FakeParams:
@@ -71,3 +72,43 @@ class SentryParams:
 @pytest.mark.parametrize("started,enabled,expected", [(True, True, False), (False, True, True), (False, False, False)])
 def test_sentry_process_is_offroad_only(started, enabled, expected):
   assert sentry_mode(started, SentryParams(enabled), car.CarParams.new_message(), SimpleNamespace()) is expected
+
+
+class GpsParams:
+  def __init__(self, CP=None):
+    self.values = {}
+    if CP is not None:
+      self.values["CarParams"] = CP.to_bytes()
+
+  def get(self, key: str):
+    return self.values.get(key)
+
+  def get_bool(self, key: str) -> bool:
+    return bool(self.values.get(key, False))
+
+  def put_bool(self, key: str, value: bool):
+    self.values[key] = value
+
+
+def test_ublox_waits_for_current_carparams(monkeypatch):
+  monkeypatch.setattr("openpilot.system.manager.process_config.ublox_available", lambda: True)
+  params = GpsParams()
+
+  assert not ublox(True, params, car.CarParams.new_message(), SimpleNamespace())
+  assert params.get_bool("UbloxAvailable")
+
+
+@pytest.mark.parametrize("car_gps,expected", [(False, True), (True, False)])
+def test_ublox_has_single_external_gps_publisher(monkeypatch, car_gps, expected):
+  monkeypatch.setattr("openpilot.system.manager.process_config.ublox_available", lambda: True)
+  CP = car.CarParams.new_message()
+  if car_gps:
+    CP.brand = "ford"
+    CP.carFingerprint = FORD_CAR.FORD_MUSTANG_MACH_E_MK1
+  else:
+    CP.brand = "mock"
+    CP.carFingerprint = "mock"
+  params = GpsParams(CP)
+
+  assert ublox(True, params, car.CarParams.new_message(), SimpleNamespace()) is expected
+  assert params.get_bool("CarGpsAvailable") is car_gps

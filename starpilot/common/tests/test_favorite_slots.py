@@ -88,6 +88,18 @@ def test_shared_settings_catalog_is_common_and_well_formed():
   assert len(keys) == len(set(keys))
 
 
+def test_galaxy_only_ford_controls_are_not_available_to_device_favorites():
+  ford_keys = {
+    "FordLateralMode",
+    "FordHumanTurnDetection",
+    "FordHandsFreeCluster",
+  }
+
+  options = build_favorite_slot_options(lambda _key: True, alpha_longitudinal_available=True)
+
+  assert ford_keys.isdisjoint({option["key"] for option in options})
+
+
 def test_load_favorite_slots_filters_non_bool_keys():
   params = FakeParams()
   params.put(FAVORITE_SLOTS_PARAM, [

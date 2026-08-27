@@ -120,6 +120,20 @@ def test_standstill_without_turn_signal_keeps_lateral_allowed(monkeypatch):
     planner.shutdown()
 
 
+def test_manual_lateral_pause_blocks_lateral_while_cruise_is_enabled(monkeypatch):
+  planner = make_planner(monkeypatch)
+
+  try:
+    sm = make_sm(planner, frame=1, v_ego=20.0, left_blinker=False)
+    sm["starpilotCarState"].pauseLateral = True
+
+    planner.update(0.0, False, sm, make_toggles())
+
+    assert planner.lateral_check is False
+  finally:
+    planner.shutdown()
+
+
 def test_pulse_glide_target_is_published_after_vcruise_update(monkeypatch):
   planner = make_planner(monkeypatch)
 

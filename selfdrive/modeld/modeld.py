@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from collections.abc import Callable
+import ctypes
 from functools import cached_property
 import os
 import struct
@@ -75,9 +77,6 @@ def _should_publish_model_output(model_output, vipc_dropped_frames: int, externa
 MIN_LAT_CONTROL_SPEED = 0.3
 BIG_MODEL_LOAD_WAIT_TIMEOUT_MS = 30000
 BIG_MODEL_RUN_WAIT_TIMEOUT_MS = 3000
-EXTERNAL_GPU_POWER_READY_MV = 13000
-EXTERNAL_GPU_POWER_STABLE_SECONDS = 3.0
-EXTERNAL_GPU_POWER_LOG_INTERVAL_SECONDS = 10.0
 LAT_SMOOTH_BP = [2.0, 8.0]
 
 
@@ -88,40 +87,6 @@ def _set_hcq_wait_timeout(timeout_ms: int) -> None:
   # in effect for the lifetime of modeld.
   from tinygrad.helpers import getenv
   getenv.cache_clear()
-
-
-def _external_gpu_power_ready(panda_states, now: float, stable_since: float | None) -> tuple[bool, float | None, int | None]:
-  voltages = [
-    int(state.voltage) for state in panda_states
-    if state.pandaType != log.PandaState.PandaType.unknown and int(state.voltage) > 0
-  ]
-  voltage = max(voltages, default=None)
-  if voltage is None or voltage < EXTERNAL_GPU_POWER_READY_MV:
-    return False, None, voltage
-
-  stable_since = now if stable_since is None else stable_since
-  return now - stable_since >= EXTERNAL_GPU_POWER_STABLE_SECONDS, stable_since, voltage
-
-
-def wait_for_external_gpu_power_ready() -> None:
-  """Wait until the vehicle's 12 V rail is in its post-start charging state."""
-  sm = SubMaster(["pandaStates"])
-  stable_since = None
-  last_log = 0.0
-
-  while True:
-    sm.update(1000)
-    now = time.monotonic()
-    ready, stable_since, voltage = _external_gpu_power_ready(sm["pandaStates"], now, stable_since)
-    if ready:
-      cloudlog.warning(f"vehicle power stable at {voltage / 1000:.2f} V; starting external GPU load")
-      return
-
-    if now - last_log >= EXTERNAL_GPU_POWER_LOG_INTERVAL_SECONDS:
-      detail = "unavailable" if voltage is None else f"{voltage / 1000:.2f} V"
-      cloudlog.warning(f"external GPU load deferred: vehicle power is {detail}; waiting for " +
-                       f"{EXTERNAL_GPU_POWER_READY_MV / 1000:.1f} V to remain stable")
-      last_log = now
 
 
 def get_lateral_smooth_seconds(v_ego: float, maximum: float = 0.0) -> float:
@@ -159,8 +124,10 @@ class ChestnutState:
     if self.big and "AMD" in Device._opened_devices and self.sends % 100 == 1:
       try:
         smu = Device["AMD"].iface.dev_impl.smu
+        metrics_t = smu.smu_mod.SmuMetricsExternal_t
         smu._send_msg(smu.smu_mod.PPSMC_MSG_TransferTableSmu2Dram, smu.smu_mod.TABLE_SMU_METRICS, timeout=100)
-        metrics = smu.read_table(smu.smu_mod.SmuMetricsExternal_t, smu.smu_mod.TABLE_SMU_METRICS).SmuMetrics
+        metrics_buf = bytearray(smu.adev.vram.view(smu.driver_table_paddr, ctypes.sizeof(metrics_t))[:])
+        metrics = metrics_t.from_buffer(metrics_buf).SmuMetrics
         self.metrics = {
           "tempC": metrics.AvgTemperature[smu.smu_mod.TEMP_HOTSPOT],
           "memoryTempC": metrics.AvgTemperature[smu.smu_mod.TEMP_MEM],
@@ -277,10 +244,11 @@ def _close_tinygrad_disk_cache_connection() -> None:
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
                           lat_action_t: float, long_action_t: float, v_ego: float, mlsim: bool,
                           is_v9: bool, is_v14: bool, is_v15: bool, starpilot_toggles,
-                          lat_smooth_seconds=LAT_SMOOTH_SECONDS, long_smooth_seconds=LONG_SMOOTH_SECONDS) -> log.ModelDataV2.Action:
-    if is_v14 or is_v15:
+                          lat_smooth_seconds=LAT_SMOOTH_SECONDS, long_smooth_seconds=LONG_SMOOTH_SECONDS,
+                          is_v16: bool = False) -> log.ModelDataV2.Action:
+    if is_v14 or is_v15 or is_v16:
       desired_curv_unscaled, desired_accel = model_output['action'][0]
-      if is_v15:
+      if is_v15 or is_v16:
         desired_curvature = float(desired_curv_unscaled) / max(1.0, v_ego) ** 2
       else:
         desired_curvature = float(desired_curv_unscaled) / 100.0
@@ -465,6 +433,7 @@ class ModelState:
     self.is_v9 = self.policy_generation == "v9"
     self.is_v14 = self.policy_generation == "v14"
     self.is_v15 = self.policy_generation == "v15"
+    self.is_v16 = self.policy_generation == "v16"
     self.mlsim = is_tinygrad_model_version(self.policy_generation)
     if write_model_version:
       params.put("ModelVersion", self.policy_generation)
@@ -568,7 +537,8 @@ class ModelState:
     self._reset_state()
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
-          inputs: dict[str, np.ndarray], prepare_only: bool, blinker_on: bool = False) -> dict[str, np.ndarray] | None:
+          inputs: dict[str, np.ndarray], prepare_only: bool, blinker_on: bool = False,
+          after_enqueue: Callable[[], None] | None = None) -> dict[str, np.ndarray] | None:
     frames: dict[str, Tensor] = {}
     for key, buf in bufs.items():
       ptr = np.frombuffer(buf.data, dtype=np.uint8).ctypes.data
@@ -625,11 +595,12 @@ class ModelState:
         img=img,
         big_img=big_img,
       )
+    if after_enqueue is not None:
+      after_enqueue()
     outputs = [output.numpy().flatten() for output in output_tensors]
 
     if self.uses_external_gpu and any(not np.isfinite(output).all() for output in outputs):
-      cloudlog.error("external GPU model output not finite, dropping frame")
-      return None
+      raise RuntimeError("external GPU model output not finite")
 
     if self.model_type == "supercombo":
       model_output = outputs[0]
@@ -670,14 +641,10 @@ def _load_model_state(cam_w: int, cam_h: int, selected_model: str, external_gpu_
     return ModelState(cam_w, cam_h, False)
 
 
-def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str,
-                             demo: bool = False) -> ModelState | None:
+def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str) -> ModelState | None:
   """Load and warm the USB-GPU model without running another tinygrad model concurrently."""
   candidate = None
   try:
-    if not demo:
-      wait_for_external_gpu_power_ready()
-
     _set_hcq_wait_timeout(BIG_MODEL_LOAD_WAIT_TIMEOUT_MS)
     wait_usbgpu_link()
     candidate = ModelState(
@@ -752,7 +719,6 @@ def main(demo=False):
       vipc_client_main.width,
       vipc_client_main.height,
       selected_model,
-      demo,
     )
 
     small_model = ModelState(
@@ -940,7 +906,15 @@ def main(demo=False):
     mt1 = time.perf_counter()
     blinker_on = bool(sm["carState"].leftBlinker or sm["carState"].rightBlinker) or lane_change_in_progress
     try:
-      model_output = model.run(bufs, transforms, inputs, prepare_only, blinker_on=blinker_on)
+      send_chestnut = (
+        chestnut_state is not None and
+        run_count % round(ModelConstants.MODEL_FREQ / SERVICE_LIST["chestnutState"].frequency) == 0
+      )
+      model_output = model.run(
+        bufs, transforms, inputs, prepare_only,
+        blinker_on=blinker_on,
+        after_enqueue=chestnut_state.send if send_chestnut else None,
+      )
     except Exception:
       if not external_gpu_active or small_model is None:
         raise
@@ -974,7 +948,7 @@ def main(demo=False):
         lat_action_t,
         long_action_t,
         v_ego, model.mlsim, model.is_v9, model.is_v14, model.is_v15, starpilot_toggles,
-        lat_smooth_seconds, long_smooth_seconds,
+        lat_smooth_seconds, long_smooth_seconds, is_v16=model.is_v16,
       )
       prev_action = action
       fill_model_msg(drivingdata_send, modelv2_send, model_output, action,
@@ -1002,9 +976,6 @@ def main(demo=False):
     # Update planner-driven parameters
     if sm.updated['starpilotPlan']:
       starpilot_toggles = get_starpilot_toggles(sm)
-
-    if chestnut_state is not None and run_count % round(ModelConstants.MODEL_FREQ / SERVICE_LIST["chestnutState"].frequency) == 0:
-      chestnut_state.send()
 
 if __name__ == "__main__":
   try:

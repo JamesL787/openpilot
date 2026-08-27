@@ -193,6 +193,7 @@ def test_outback_2023_uses_d_platform_bus_layout():
 
   assert CP.flags & SubaruFlags.D_PLATFORM
   assert CP.safetyConfigs[0].safetyParam & SubaruSafetyFlags.D_PLATFORM
+  assert CP.safetyConfigs[0].safetyParam & SubaruSafetyFlags.STOP_START_BUTTON
   assert not (CP.safetyConfigs[0].safetyParam & SubaruSafetyFlags.LEGACY_2025_ANGLE_LIMITS)
   assert CanBus.main_for_cp(CP) == CanBus.alt
   assert CanBus.angle_for_cp(CP) == CanBus.main
@@ -203,6 +204,52 @@ def test_outback_2023_uses_d_platform_bus_layout():
   assert controller.angle_bus == CanBus.main
   assert controller.status_bus == CanBus.main
   assert CP.lateralSmoothSeconds == pytest.approx(0.4)
+
+
+def test_stop_start_request_is_bounded_and_uses_live_dashlights():
+  CP = CarInterface.get_non_essential_params(CAR.SUBARU_OUTBACK_2023)
+  controller = CarController({}, CP)
+  controller.frame = 101
+
+  class TestActuators:
+    steeringAngleDeg = 0.0
+
+    def as_builder(self):
+      return SimpleNamespace(steeringAngleDeg=self.steeringAngleDeg)
+
+  CC = SimpleNamespace(
+    enabled=False,
+    latActive=False,
+    longActive=False,
+    actuators=TestActuators(),
+    hudControl=SimpleNamespace(leadVisible=False),
+    cruiseControl=SimpleNamespace(cancel=False),
+  )
+  CS = SimpleNamespace(
+    canValid=True,
+    dashlights_msg={"COUNTER": 6, "STOP_START": 0},
+    stop_start_state=0,
+    out=SimpleNamespace(
+      standstill=True,
+      gearShifter=structs.CarState.GearShifter.park,
+    ),
+  )
+  toggles = SimpleNamespace(subaru_stop_start_off=True, subaru_sng=False)
+
+  _, can_sends = controller.update(CC, CS, 0, toggles)
+  stop_start_msgs = [msg for msg in can_sends if msg[0] == 0x390]
+  assert len(stop_start_msgs) == 1
+  assert stop_start_msgs[0][2] == CanBus.alt
+  parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("Dashlights", 0)], CanBus.alt)
+  parser.update([(1, [stop_start_msgs[0]])])
+  assert parser.vl["Dashlights"]["STOP_START"] == 1
+  assert parser.vl["Dashlights"]["COUNTER"] == 7
+
+  controller.frame = 103
+  CS.stop_start_state = 3
+  _, can_sends = controller.update(CC, CS, 0, toggles)
+  assert not any(msg[0] == 0x390 for msg in can_sends)
+  assert controller.stop_start_acknowledged
 
 
 def test_legacy_2025_uses_gen2_angle_bus_layout():
@@ -429,13 +476,61 @@ def test_angle_controller_tracks_driver_override():
   CP = CarInterface.get_non_essential_params(CAR.SUBARU_CROSSTREK_2025)
   controller = CarController({}, CP)
   CC = SimpleNamespace(latActive=True, actuators=SimpleNamespace(steeringAngleDeg=15.0))
-  CS = SimpleNamespace(out=SimpleNamespace(vEgoRaw=15.0, steeringAngleDeg=2.0, steeringTorque=250.0))
+  CS = SimpleNamespace(out=SimpleNamespace(vEgoRaw=15.0, steeringAngleDeg=2.0, steeringTorque=175.0))
 
   msg = controller.lateral_angle(CC, CS)
 
   assert controller.driver_override
+  assert controller.p.STEER_OVERRIDE_TORQUE_HIGH == 150
+  assert controller.p.STEER_OVERRIDE_TORQUE_LOW == 100
   assert controller.apply_steer_last == CS.out.steeringAngleDeg
   assert msg[0] == 0x124
+
+  CS.out.steeringTorque = 125.0
+  controller.lateral_angle(CC, CS)
+  assert controller.driver_override
+
+  CS.out.steeringTorque = 75.0
+  controller.lateral_angle(CC, CS)
+  assert not controller.driver_override
+
+
+def test_angle_controller_blocks_low_speed_mads_engagement():
+  CP = CarInterface.get_non_essential_params(CAR.SUBARU_CROSSTREK_2025)
+  controller = CarController({}, CP)
+  CC = SimpleNamespace(
+    enabled=False,
+    latActive=True,
+    actuators=SimpleNamespace(steeringAngleDeg=15.0),
+  )
+  CS = SimpleNamespace(out=SimpleNamespace(
+    vEgoRaw=0.3,
+    steeringAngleDeg=80.0,
+    steeringTorque=0.0,
+    gearShifter=structs.CarState.GearShifter.drive,
+    standstill=False,
+  ))
+  parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("ES_LKAS_ANGLE", 0)], CanBus.main)
+
+  msg = controller.lateral_angle(CC, CS)
+  parser.update([(1, [msg])])
+
+  assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 0
+  assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Output"] == pytest.approx(CS.out.steeringAngleDeg)
+
+  CS.out.vEgoRaw = 1.0
+  CS.out.steeringAngleDeg = 130.0
+  msg = controller.lateral_angle(CC, CS)
+  parser.update([(2, [msg])])
+
+  assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 0
+  assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Output"] == pytest.approx(CS.out.steeringAngleDeg)
+
+  CS.out.steeringAngleDeg = 0.0
+  msg = controller.lateral_angle(CC, CS)
+  parser.update([(3, [msg])])
+
+  assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 1
 
 
 def test_ascent_angle_controller_uses_fixed_angle_rate_limits():

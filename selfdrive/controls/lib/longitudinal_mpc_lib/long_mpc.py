@@ -967,7 +967,8 @@ class LongitudinalMpc:
   def update(self, radarstate, v_cruise, x, v, a, j, danger_factor, t_follow,
              personality=log.LongitudinalPersonality.standard, tracking_lead=True,
              optional_far_lead_comfort=True, smooth_duplicate_vision=False,
-             stop_x=None, silverado_early_follow=False, modelV2=None):
+             stop_x=None, silverado_early_follow=False, modelV2=None,
+             lead_obstacle_bias=(0.0, 0.0), tracked_lead_catchup_headway_margins=None):
     v_ego = self.x0[1]
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
@@ -988,6 +989,8 @@ class LongitudinalMpc:
     # and then treat that as a stopped car/obstacle at this new distance.
     lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1])
     lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1])
+    lead_0_obstacle -= float(lead_obstacle_bias[0])
+    lead_1_obstacle -= float(lead_obstacle_bias[1])
 
     self.params[:,0] = ACCEL_MIN
     self.params[:,1] = max(0.0, self.max_a)
@@ -1014,6 +1017,12 @@ class LongitudinalMpc:
       if optional_far_lead_comfort and tracking_lead and lead_one.status:
         desired_gap = desired_follow_distance(v_ego, lead_one.vLead, t_follow)
         closing_speed = max(0.0, v_ego - lead_one.vLead)
+        catchup_kwargs = {}
+        if tracked_lead_catchup_headway_margins is not None:
+          catchup_kwargs = {
+            "min_headway_margin": tracked_lead_catchup_headway_margins[0],
+            "full_headway_margin": tracked_lead_catchup_headway_margins[1],
+          }
         cruise_obstacle += get_tracked_lead_catchup_bias(
           v_ego,
           lead_one.dRel,
@@ -1021,6 +1030,7 @@ class LongitudinalMpc:
           closing_speed,
           v_cruise=v_cruise,
           y_rel=float(getattr(lead_one, "yRel", 0.0)),
+          **catchup_kwargs,
         )
       if optional_far_lead_comfort:
         cruise_obstacle += self.get_identical_radar_duplicate_cruise_bias(lead_one, lead_two, v_ego, t_follow)

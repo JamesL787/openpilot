@@ -4,7 +4,7 @@ from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarStateBase
-from opendbc.car.subaru.values import DBC, CanBus, SubaruFlags
+from opendbc.car.subaru.values import CAR, DBC, CanBus, SubaruFlags
 from opendbc.car import CanSignalRateCalculator
 
 
@@ -15,6 +15,8 @@ class CarState(CarStateBase):
     self.shifter_values = can_define.dv["Transmission"]["Gear"]
 
     self.angle_rate_calulator = CanSignalRateCalculator(50)
+    self.dashlights_msg = {}
+    self.stop_start_state = 0
 
   def update(self, can_parsers, starpilot_toggles) -> structs.CarState:
     cp = can_parsers[Bus.pt]
@@ -23,6 +25,10 @@ class CarState(CarStateBase):
     cp_main = can_parsers[Bus.main] if self.CP.flags & SubaruFlags.D_PLATFORM else cp
     cp_angle = cp_main if self.CP.flags & SubaruFlags.D_PLATFORM else cp
     ret = structs.CarState()
+
+    if self.CP.carFingerprint == CAR.SUBARU_OUTBACK_2023:
+      self.dashlights_msg = copy.copy(cp.vl["Dashlights"])
+      self.stop_start_state = cp.vl["Engine_Stop_Start"]["STOP_START_STATE"]
 
     throttle_msg = cp.vl["Throttle"] if not (self.CP.flags & SubaruFlags.HYBRID) else cp_alt.vl["Throttle_Hybrid"]
     ret.gasPressed = throttle_msg["Throttle_Pedal"] > 1e-5
