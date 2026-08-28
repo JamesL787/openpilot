@@ -136,7 +136,7 @@ class ModelRenderer(Widget):
     model = sm['modelV2']
     radar_state = sm['radarState'] if sm.valid['radarState'] else None
     lead_one = radar_state.leadOne if radar_state else None
-    render_lead_indicator = self._longitudinal_control and radar_state is not None and lead_indicator_enabled(self._params, hide_by_default=True)
+    render_lead_indicator = self._should_render_lead_indicator(radar_state)
 
     # Update model data when needed
     model_updated = sm.updated['modelV2']
@@ -160,6 +160,9 @@ class ModelRenderer(Widget):
 
     if render_lead_indicator and radar_state:
       self._draw_lead_indicator()
+
+  def _should_render_lead_indicator(self, radar_state) -> bool:
+    return radar_state is not None and lead_indicator_enabled(self._params, hide_by_default=True)
 
   def _update_raw_points(self, model):
     """Update raw 3D points from model data"""

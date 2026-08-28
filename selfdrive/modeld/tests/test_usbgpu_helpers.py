@@ -38,6 +38,51 @@ def test_external_gpu_uses_a_longer_load_watchdog():
   assert modeld.BIG_MODEL_RUN_WAIT_TIMEOUT_MS == 3000
 
 
+def test_external_gpu_voltage_uses_hardware_specific_source():
+  panda_type = modeld.log.PandaState.PandaType
+  panda_states = [SimpleNamespace(pandaType=panda_type.dos, voltage=230)]
+  peripheral_state = SimpleNamespace(pandaType=panda_type.dos, voltage=13550)
+
+  assert modeld._external_gpu_power_voltage("tici", panda_states, peripheral_state) == 13550
+
+  panda_states = [SimpleNamespace(pandaType=panda_type.tres, voltage=14100)]
+  peripheral_state = SimpleNamespace(pandaType=panda_type.tres, voltage=12800)
+  assert modeld._external_gpu_power_voltage("tizi", panda_states, peripheral_state) == 14100
+
+  panda_states = [SimpleNamespace(pandaType=panda_type.cuatro, voltage=13200)]
+  peripheral_state = SimpleNamespace(pandaType=panda_type.cuatro, voltage=12800)
+  assert modeld._external_gpu_power_voltage("mici", panda_states, peripheral_state) == 13200
+
+
+def test_external_gpu_power_must_remain_stable():
+  ready, stable_since = modeld._external_gpu_power_ready(12800, 10.0, None)
+  assert not ready
+  assert stable_since is None
+
+  ready, stable_since = modeld._external_gpu_power_ready(14100, 11.0, stable_since)
+  assert not ready
+  assert stable_since == 11.0
+
+  ready, stable_since = modeld._external_gpu_power_ready(14100, 13.9, stable_since)
+  assert not ready
+  ready, stable_since = modeld._external_gpu_power_ready(14100, 14.0, stable_since)
+  assert ready
+
+  ready, stable_since = modeld._external_gpu_power_ready(11900, 15.0, stable_since)
+  assert not ready
+  assert stable_since is None
+
+
+def test_egmp_ready_uses_accelerator_ready_bit():
+  bus = 1
+  not_ready = SimpleNamespace(address=0x35, src=bus, dat=bytes([0, 0, 0, 0x00]))
+  wrong_bus = SimpleNamespace(address=0x35, src=0, dat=bytes([0, 0, 0, 0x40]))
+  ready = SimpleNamespace(address=0x35, src=bus, dat=bytes([0, 0, 0, 0x40]))
+
+  assert not modeld._egmp_vehicle_ready([not_ready, wrong_bus], bus)
+  assert modeld._egmp_vehicle_ready([not_ready, ready], bus)
+
+
 def test_external_gpu_signal_wait_yields_between_usb_polls(monkeypatch):
   from tinygrad.runtime import ops_amd
 
@@ -139,6 +184,7 @@ def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):
       calls.append("warmup")
 
   monkeypatch.setattr(modeld, "wait_usbgpu_link", lambda: calls.append("link"))
+  monkeypatch.setattr(modeld, "wait_for_external_gpu_power_ready", lambda CP: calls.append(("power", CP)))
   monkeypatch.setattr(modeld, "_set_hcq_wait_timeout", lambda timeout: calls.append(("timeout", timeout)))
   monkeypatch.setattr(modeld, "_close_tinygrad_disk_cache_connection", lambda: calls.append("close_cache"))
   monkeypatch.setattr(modeld, "ModelState", FakeModelState)
@@ -148,10 +194,11 @@ def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):
     lambda *_args: (_ for _ in ()).throw(AssertionError("runtime must not change tinygrad's process-global DEV")),
   )
 
-  loaded = modeld._load_external_gpu_model(1928, 1208, "big-model")
+  loaded = modeld._load_external_gpu_model(1928, 1208, "big-model", "car-params")
 
   assert isinstance(loaded, FakeModelState)
   assert calls == [
+    ("power", "car-params"),
     ("timeout", modeld.BIG_MODEL_LOAD_WAIT_TIMEOUT_MS),
     "link",
     ("model", 1928, 1208, True, "big-model", False),

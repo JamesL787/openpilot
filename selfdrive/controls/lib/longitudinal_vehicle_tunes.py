@@ -3,10 +3,25 @@ import numpy as np
 
 HONDA_HRV_3G_FAR_FOLLOW_BRAKE_SLEW_RATE = 3.0
 HONDA_HRV_3G_FAR_FOLLOW_RELEASE_SLEW_RATE = 2.0
+HONDA_CRV_5G_FAR_FOLLOW_BRAKE_SLEW_RATE = 1.5
+HONDA_CRV_5G_FAR_FOLLOW_RELEASE_SLEW_RATE = 1.0
+HONDA_ACCORD_FAR_FOLLOW_BRAKE_SLEW_RATE = 2.0
+HONDA_ACCORD_FAR_FOLLOW_RELEASE_SLEW_RATE = 1.5
 HONDA_HRV_3G_UNTRACKED_SLOW_LEAD_DECEL_SCALE = 1.35
 HONDA_ACCORD_LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL = 0.85
 HONDA_ACCORD_LEAD_DEPART_ACCEL_ASSIST = 0.25
+HONDA_ACCORD_STOP_GO_MAX_EGO_SPEED = 4.5
+HONDA_ACCORD_STOP_GO_MIN_DISTANCE = 5.5
+HONDA_ACCORD_STOP_GO_MAX_DISTANCE = 14.0
+HONDA_ACCORD_STOP_GO_MAX_LEAD_SPEED = 4.5
+HONDA_ACCORD_STOP_GO_MIN_LEAD_SPEED = 0.4
+HONDA_ACCORD_STOP_GO_MAX_LEAD_BRAKE = 0.25
+HONDA_ACCORD_STOP_GO_MAX_LATERAL_OFFSET = 1.25
+HONDA_ACCORD_STOP_GO_MIN_MODEL_PROB = 0.95
+HONDA_ACCORD_STOP_GO_ACCEL_RISE_RATE = 4.0
 HYUNDAI_ELANTRA_LEAD_FOLLOW_JERK_SCALE = 1.25
+GENESIS_GV70_ELECTRIFIED_LEAD_FOLLOW_JERK_SCALE = 1.35
+FORD_LIGHTNING_LEAD_FOLLOW_JERK_SCALE = 1.20
 GM_SILVERADO_EARLY_FOLLOW_MIN_EGO_SPEED = 18.0
 GM_SILVERADO_EARLY_FOLLOW_MAX_DISTANCE = 130.0
 GM_SILVERADO_EARLY_FOLLOW_MIN_MODEL_PROB = 0.85
@@ -14,10 +29,14 @@ GM_SILVERADO_EARLY_FOLLOW_MAX_LATERAL_OFFSET = 1.2
 DEFAULT_FOLLOW_PREBRAKE_MIN_HEADWAY = 1.25
 GM_SILVERADO_FOLLOW_PREBRAKE_MIN_HEADWAY = 1.25
 FORD_LIGHTNING_FOLLOW_PREBRAKE_MIN_HEADWAY = 1.0
-FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_MIN_HEADWAY_MARGIN = 0.20
-FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_FULL_HEADWAY_MARGIN = 0.45
+FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_MIN_HEADWAY_MARGIN = 0.10
+FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_FULL_HEADWAY_MARGIN = 0.25
+FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_BIAS_GAIN = 0.65
+FORD_LIGHTNING_FAR_FOLLOW_BRAKE_SLEW_RATE = 2.5
+FORD_LIGHTNING_FAR_FOLLOW_RELEASE_SLEW_RATE = 1.75
 FORD_LIGHTNING_STANDSTILL_GUARD_DISTANCE_MARGIN = 5.0
 FORD_LIGHTNING_STANDSTILL_GUARD_MAX_LEAD_SPEED = 0.60
+FORD_LIGHTNING_GAP_SETTLE_MAX_EXTRA_GAP = 3.0
 TOYOTA_SIENNA_POST_DEPARTURE_RESTOP_MAX_EGO_SPEED = 2.0
 TOYOTA_SIENNA_POST_DEPARTURE_RESTOP_MAX_LEAD_SPEED = 0.45
 TOYOTA_SIENNA_POST_DEPARTURE_RESTOP_MAX_LEAD_DELTA = 0.35
@@ -239,6 +258,8 @@ def allow_honda_crv_5g_vision_gap_settle(CP):
 def get_standstill_gap_settle_max_extra_gap(CP):
   if is_honda_crv_5g(CP):
     return HONDA_CRV_5G_GAP_SETTLE_MAX_EXTRA_GAP
+  if is_ford_f150_lightning(CP):
+    return FORD_LIGHTNING_GAP_SETTLE_MAX_EXTRA_GAP
   return 1.5
 
 
@@ -262,6 +283,12 @@ def get_tracked_lead_catchup_headway_margins(CP):
       FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_MIN_HEADWAY_MARGIN,
       FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_FULL_HEADWAY_MARGIN,
     )
+  return None
+
+
+def get_tracked_lead_catchup_bias_gain(CP):
+  if is_ford_f150_lightning(CP):
+    return FORD_LIGHTNING_TRACKED_LEAD_CATCHUP_BIAS_GAIN
   return None
 
 
@@ -366,15 +393,30 @@ def allow_radar_standstill_gap_settle(CP):
 
 
 def get_far_follow_output_slew_rates(CP):
+  if CP.brand == "honda" and str(CP.carFingerprint) == "HONDA_ACCORD":
+    return (
+      HONDA_ACCORD_FAR_FOLLOW_BRAKE_SLEW_RATE,
+      HONDA_ACCORD_FAR_FOLLOW_RELEASE_SLEW_RATE,
+    )
   if CP.brand == "honda" and str(CP.carFingerprint) == "HONDA_HRV_3G":
     return (
       HONDA_HRV_3G_FAR_FOLLOW_BRAKE_SLEW_RATE,
       HONDA_HRV_3G_FAR_FOLLOW_RELEASE_SLEW_RATE,
     )
+  if is_honda_crv_5g(CP):
+    return (
+      HONDA_CRV_5G_FAR_FOLLOW_BRAKE_SLEW_RATE,
+      HONDA_CRV_5G_FAR_FOLLOW_RELEASE_SLEW_RATE,
+    )
   if is_toyota_rav4_tss2_post_departure_tune(CP):
     return (
       TOYOTA_RAV4_TSS2_FAR_FOLLOW_BRAKE_SLEW_RATE,
       TOYOTA_RAV4_TSS2_FAR_FOLLOW_RELEASE_SLEW_RATE,
+    )
+  if is_ford_f150_lightning(CP):
+    return (
+      FORD_LIGHTNING_FAR_FOLLOW_BRAKE_SLEW_RATE,
+      FORD_LIGHTNING_FAR_FOLLOW_RELEASE_SLEW_RATE,
     )
   return 0.0, 0.0
 
@@ -389,6 +431,13 @@ def get_lead_follow_jerk_scale(CP):
   """Spread the lead-source transition for cars with a sharp vision-lead handoff."""
   if getattr(CP, "brand", "") == "hyundai" and str(getattr(CP, "carFingerprint", "")) == "HYUNDAI_ELANTRA_2021":
     return HYUNDAI_ELANTRA_LEAD_FOLLOW_JERK_SCALE
+  if (
+    getattr(CP, "brand", "") == "hyundai" and
+    str(getattr(CP, "carFingerprint", "")) == "GENESIS_GV70_ELECTRIFIED_1ST_GEN"
+  ):
+    return GENESIS_GV70_ELECTRIFIED_LEAD_FOLLOW_JERK_SCALE
+  if is_ford_f150_lightning(CP):
+    return FORD_LIGHTNING_LEAD_FOLLOW_JERK_SCALE
   return 1.0
 
 
@@ -399,6 +448,45 @@ def get_honda_accord_lead_departure_tune(CP):
       HONDA_ACCORD_LEAD_DEPART_ACCEL_ASSIST,
     )
   return None
+
+
+def get_honda_accord_stop_go_accel_cap(CP, lead, v_ego):
+  """Keep the Accord from launching at the full cruise acceleration into a close lead."""
+  if (
+    CP.brand != "honda" or str(CP.carFingerprint) != "HONDA_ACCORD" or
+    lead is None or not bool(getattr(lead, "status", False)) or
+    bool(getattr(lead, "radar", False)) or
+    float(getattr(lead, "modelProb", 0.0)) < HONDA_ACCORD_STOP_GO_MIN_MODEL_PROB or
+    float(v_ego) < 0.0 or float(v_ego) > HONDA_ACCORD_STOP_GO_MAX_EGO_SPEED or
+    abs(float(getattr(lead, "yRel", 0.0))) > HONDA_ACCORD_STOP_GO_MAX_LATERAL_OFFSET
+  ):
+    return None
+
+  distance = float(getattr(lead, "dRel", float("inf")))
+  lead_speed = max(float(getattr(lead, "vLead", 0.0)), 0.0)
+  lead_delta = lead_speed - float(v_ego)
+  lead_brake = max(0.0, -float(getattr(lead, "aLeadK", 0.0)))
+  if (
+    not HONDA_ACCORD_STOP_GO_MIN_DISTANCE <= distance <= HONDA_ACCORD_STOP_GO_MAX_DISTANCE or
+    not HONDA_ACCORD_STOP_GO_MIN_LEAD_SPEED <= lead_speed <= HONDA_ACCORD_STOP_GO_MAX_LEAD_SPEED or
+    lead_delta < -0.25 or
+    lead_brake > HONDA_ACCORD_STOP_GO_MAX_LEAD_BRAKE
+  ):
+    return None
+
+  speed_factor = float(np.clip(float(v_ego) / 2.5, 0.0, 1.0))
+  gap_factor = float(np.clip(
+    (distance - HONDA_ACCORD_STOP_GO_MIN_DISTANCE) /
+    max(HONDA_ACCORD_STOP_GO_MAX_DISTANCE - HONDA_ACCORD_STOP_GO_MIN_DISTANCE, 0.1),
+    0.0, 1.0,
+  ))
+  return float(0.90 + 0.12 * speed_factor + 0.10 * gap_factor)
+
+
+def get_honda_accord_stop_go_accel_rise_rate(CP):
+  if CP.brand == "honda" and str(CP.carFingerprint) == "HONDA_ACCORD":
+    return HONDA_ACCORD_STOP_GO_ACCEL_RISE_RATE
+  return 0.0
 
 
 def is_gm_silverado_early_follow_lead(CP, lead, v_ego):

@@ -351,6 +351,7 @@ def test_legacy_2025_waits_for_manual_steering_to_settle_before_reengaging():
     vEgoRaw=6.2,
     steeringAngleDeg=-121.55,
     steeringRateDeg=350.0,
+    steeringTorque=250.0,
     steeringPressed=True,
     gearShifter=structs.CarState.GearShifter.drive,
     standstill=False,
@@ -359,10 +360,14 @@ def test_legacy_2025_waits_for_manual_steering_to_settle_before_reengaging():
 
   msg = controller.lateral_angle(CC, CS)
   parser.update([(1, [msg])])
+
+  msg = controller.lateral_angle(CC, CS)
+  parser.update([(2, [msg])])
   assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 0
   assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Output"] == pytest.approx(CS.out.steeringAngleDeg)
 
   CS.out.steeringPressed = False
+  CS.out.steeringTorque = 0.0
   CS.out.steeringAngleDeg = -113.78
   msg = controller.lateral_angle(CC, CS)
   parser.update([(2, [msg])])
@@ -411,6 +416,7 @@ def test_legacy_2025_manual_handoff_reclaim_is_gradual():
     vEgoRaw=3.7,
     steeringAngleDeg=2.5,
     steeringRateDeg=-45.0,
+    steeringTorque=250.0,
     steeringPressed=True,
     gearShifter=structs.CarState.GearShifter.drive,
     standstill=False,
@@ -419,9 +425,13 @@ def test_legacy_2025_manual_handoff_reclaim_is_gradual():
 
   msg = controller.lateral_angle(CC, CS)
   parser.update([(1, [msg])])
+
+  msg = controller.lateral_angle(CC, CS)
+  parser.update([(2, [msg])])
   assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 0
 
   CS.out.steeringPressed = False
+  CS.out.steeringTorque = 0.0
   CS.out.steeringRateDeg = 0.0
   for i in range(19):
     msg = controller.lateral_angle(CC, CS)
@@ -477,6 +487,10 @@ def test_angle_controller_tracks_driver_override():
   controller = CarController({}, CP)
   CC = SimpleNamespace(latActive=True, actuators=SimpleNamespace(steeringAngleDeg=15.0))
   CS = SimpleNamespace(out=SimpleNamespace(vEgoRaw=15.0, steeringAngleDeg=2.0, steeringTorque=175.0))
+
+  msg = controller.lateral_angle(CC, CS)
+
+  assert not controller.driver_override
 
   msg = controller.lateral_angle(CC, CS)
 
@@ -541,7 +555,7 @@ def test_ascent_angle_controller_uses_fixed_angle_rate_limits():
     vEgoRaw=21.66,
     steeringAngleDeg=-25.77,
     steeringRateDeg=0.0,
-    steeringTorque=-149.0,
+    steeringTorque=-250.0,
     steeringPressed=False,
     gearShifter=structs.CarState.GearShifter.drive,
     standstill=False,
@@ -563,7 +577,7 @@ def test_angle_controller_yields_until_manual_steering_settles(platform):
     vEgoRaw=21.66,
     steeringAngleDeg=-25.06,
     steeringRateDeg=35.0,
-    steeringTorque=-149.0,
+    steeringTorque=-250.0,
     steeringPressed=True,
     gearShifter=structs.CarState.GearShifter.drive,
     standstill=False,
@@ -572,10 +586,14 @@ def test_angle_controller_yields_until_manual_steering_settles(platform):
 
   msg = controller.lateral_angle(CC, CS)
   parser.update([(1, [msg])])
+
+  msg = controller.lateral_angle(CC, CS)
+  parser.update([(2, [msg])])
   assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Request"] == 0
   assert parser.vl["ES_LKAS_ANGLE"]["LKAS_Output"] == pytest.approx(CS.out.steeringAngleDeg)
 
   CS.out.steeringPressed = False
+  CS.out.steeringTorque = 0.0
   CS.out.steeringAngleDeg = -17.91
   CS.out.steeringRateDeg = 0.0
   for i in range(18):

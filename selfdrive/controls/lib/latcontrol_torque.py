@@ -516,6 +516,8 @@ class LatControlTorque(LatControl):
         vehicle_friction_jerk_deadzone = get_prius_friction_jerk_deadzone(CS.vEgo, setpoint)
       elif genesis_g70_active:
         vehicle_friction_jerk_deadzone = get_genesis_g70_friction_jerk_deadzone(CS.vEgo, setpoint)
+      elif self.is_genesis_gv70:
+        vehicle_friction_jerk_deadzone = get_genesis_gv70_friction_jerk_deadzone(CS.vEgo, setpoint)
       elif kia_carnival_active:
         vehicle_friction_jerk_deadzone = get_kia_carnival_friction_jerk_deadzone(
           CS.vEgo, setpoint, desired_lateral_jerk,
@@ -638,6 +640,7 @@ class LatControlTorque(LatControl):
         low_speed_output_limit = get_genesis_g70_low_speed_output_limit(setpoint, CS.vEgo)
         output_torque = float(np.clip(output_torque, -low_speed_output_limit, low_speed_output_limit))
       elif self.is_genesis_gv70:
+        output_torque *= get_genesis_gv70_center_output_scale(setpoint, CS.vEgo)
         output_torque *= get_genesis_gv70_high_speed_error_scale(
           setpoint, measurement, desired_lateral_jerk, CS.vEgo,
         )

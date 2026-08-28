@@ -968,7 +968,8 @@ class LongitudinalMpc:
              personality=log.LongitudinalPersonality.standard, tracking_lead=True,
              optional_far_lead_comfort=True, smooth_duplicate_vision=False,
              stop_x=None, silverado_early_follow=False, modelV2=None,
-             lead_obstacle_bias=(0.0, 0.0), tracked_lead_catchup_headway_margins=None):
+             lead_obstacle_bias=(0.0, 0.0), tracked_lead_catchup_headway_margins=None,
+             tracked_lead_catchup_bias_gain=None):
     v_ego = self.x0[1]
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
@@ -1023,6 +1024,8 @@ class LongitudinalMpc:
             "min_headway_margin": tracked_lead_catchup_headway_margins[0],
             "full_headway_margin": tracked_lead_catchup_headway_margins[1],
           }
+        if tracked_lead_catchup_bias_gain is not None:
+          catchup_kwargs["bias_gain"] = tracked_lead_catchup_bias_gain
         cruise_obstacle += get_tracked_lead_catchup_bias(
           v_ego,
           lead_one.dRel,

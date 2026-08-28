@@ -4,7 +4,7 @@ import ctypes
 from functools import cached_property
 import os
 import struct
-from openpilot.system.hardware import TICI
+from openpilot.system.hardware import HARDWARE, TICI
 os.environ['GMMU'] = '0'
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
 from tinygrad.device import Device
@@ -77,6 +77,10 @@ def _should_publish_model_output(model_output, vipc_dropped_frames: int, externa
 MIN_LAT_CONTROL_SPEED = 0.3
 BIG_MODEL_LOAD_WAIT_TIMEOUT_MS = 30000
 BIG_MODEL_RUN_WAIT_TIMEOUT_MS = 3000
+EXTERNAL_GPU_POWER_READY_MV = 13000
+EXTERNAL_GPU_EGMP_READY_MV = 12500
+EXTERNAL_GPU_POWER_STABLE_SECONDS = 3.0
+EXTERNAL_GPU_POWER_LOG_INTERVAL_SECONDS = 10.0
 LAT_SMOOTH_BP = [2.0, 8.0]
 
 
@@ -87,6 +91,86 @@ def _set_hcq_wait_timeout(timeout_ms: int) -> None:
   # in effect for the lifetime of modeld.
   from tinygrad.helpers import getenv
   getenv.cache_clear()
+
+
+def _external_gpu_power_voltage(device_type: str, panda_states, peripheral_state) -> int | None:
+  if device_type == "tici":
+    voltage = int(peripheral_state.voltage)
+    return voltage if peripheral_state.pandaType != log.PandaState.PandaType.unknown and voltage > 0 else None
+
+  voltages = [
+    int(state.voltage) for state in panda_states
+    if state.pandaType != log.PandaState.PandaType.unknown and int(state.voltage) > 0
+  ]
+  return max(voltages, default=None)
+
+
+def _external_gpu_power_ready(voltage: int | None, now: float, stable_since: float | None,
+                              minimum_voltage: int = EXTERNAL_GPU_POWER_READY_MV) -> tuple[bool, float | None]:
+  if voltage is None or voltage < minimum_voltage:
+    return False, None
+
+  stable_since = now if stable_since is None else stable_since
+  return now - stable_since >= EXTERNAL_GPU_POWER_STABLE_SECONDS, stable_since
+
+
+def _egmp_ready_bus(CP) -> int | None:
+  if CP is None or CP.brand != "hyundai":
+    return None
+
+  # These platforms use the accessory-mode ECU-disable startup sequence.
+  from opendbc.car.hyundai.hyundaicanfd import CanBus
+  from opendbc.car.hyundai.values import CAR
+  if CP.carFingerprint not in (CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_6, CAR.KIA_EV9):
+    return None
+  return CanBus(CP).ECAN
+
+
+def _egmp_vehicle_ready(can_messages, bus: int) -> bool:
+  return any(
+    msg.address == 0x35 and msg.src == bus and len(msg.dat) > 3 and bytes(msg.dat)[3] & 0x40
+    for msg in can_messages
+  )
+
+
+def wait_for_external_gpu_power_ready(CP=None) -> None:
+  """Wait out vehicle startup power transitions before initializing Chestnut."""
+  device_type = HARDWARE.get_device_type()
+  egmp_bus = _egmp_ready_bus(CP)
+  services = ["pandaStates", "peripheralState"] + (["can"] if egmp_bus is not None else [])
+  sm = SubMaster(services)
+  vehicle_ready = egmp_bus is None
+  stable_since = None
+  last_log = 0.0
+
+  while True:
+    sm.update(1000)
+    now = time.monotonic()
+    if egmp_bus is not None and sm.updated["can"] and _egmp_vehicle_ready(sm["can"], egmp_bus):
+      if not vehicle_ready:
+        cloudlog.warning("e-GMP vehicle entered READY; waiting for external GPU power to stabilize")
+      vehicle_ready = True
+
+    voltage = _external_gpu_power_voltage(device_type, sm["pandaStates"], sm["peripheralState"])
+    minimum_voltage = EXTERNAL_GPU_EGMP_READY_MV if egmp_bus is not None else EXTERNAL_GPU_POWER_READY_MV
+    ready, stable_since = _external_gpu_power_ready(
+      voltage,
+      now,
+      stable_since if vehicle_ready else None,
+      minimum_voltage,
+    )
+    if vehicle_ready and ready:
+      cloudlog.warning(f"vehicle power stable at {voltage / 1000:.2f} V; starting external GPU load")
+      return
+
+    if now - last_log >= EXTERNAL_GPU_POWER_LOG_INTERVAL_SECONDS:
+      detail = "unavailable" if voltage is None else f"{voltage / 1000:.2f} V"
+      if not vehicle_ready:
+        cloudlog.warning(f"external GPU load deferred: vehicle power is {detail}; waiting for e-GMP READY")
+      else:
+        cloudlog.warning(f"external GPU load deferred: vehicle power is {detail}; waiting for " +
+                         f"{minimum_voltage / 1000:.1f} V to remain stable")
+      last_log = now
 
 
 def get_lateral_smooth_seconds(v_ego: float, maximum: float = 0.0) -> float:
@@ -641,10 +725,13 @@ def _load_model_state(cam_w: int, cam_h: int, selected_model: str, external_gpu_
     return ModelState(cam_w, cam_h, False)
 
 
-def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str) -> ModelState | None:
+def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str,
+                             CP=None, demo: bool = False) -> ModelState | None:
   """Load and warm the USB-GPU model without running another tinygrad model concurrently."""
   candidate = None
   try:
+    if not demo:
+      wait_for_external_gpu_power_ready(CP)
     _set_hcq_wait_timeout(BIG_MODEL_LOAD_WAIT_TIMEOUT_MS)
     wait_usbgpu_link()
     candidate = ModelState(
@@ -714,11 +801,19 @@ def main(demo=False):
   model = None
   small_model = None
   big_model = None
+  CP = None
   if external_gpu_requested:
+    if demo:
+      CP = get_demo_car_params()
+    else:
+      CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
+
     big_model = _load_external_gpu_model(
       vipc_client_main.width,
       vipc_client_main.height,
       selected_model,
+      CP,
+      demo,
     )
 
     small_model = ModelState(
@@ -766,10 +861,11 @@ def main(demo=False):
   camera_offset.set_target(params.get_float("CameraOffset", return_default=True))
 
 
-  if demo:
-    CP = get_demo_car_params()
-  else:
-    CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
+  if CP is None:
+    if demo:
+      CP = get_demo_car_params()
+    else:
+      CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
   cloudlog.info("modeld got CarParams: %s", CP.brand)
 
   lat_smooth_seconds = _model_smooth_seconds(params, "LatSmoothSeconds", LAT_SMOOTH_SECONDS)

@@ -23,6 +23,22 @@ def test_v24_manifest_is_loaded_from_models_checkout():
   assert ModelManager._manifest_paths("v24") == ("Models/model_names_v24.json",)
 
 
+def test_resource_sources_prefer_huggingface_then_github(monkeypatch):
+  monkeypatch.setattr(download_functions, "is_url_pingable", lambda url: True)
+  assert download_functions.get_resource_urls() == [
+    download_functions.HF_BUCKET_URL,
+    download_functions.GITHUB_URL,
+  ]
+  assert all("gitlab" not in url for url in download_functions.get_resource_urls())
+
+
+def test_huggingface_manifest_has_root_and_manifests_fallbacks():
+  assert ModelManager._hf_manifest_paths("v24") == (
+    "model_names_v24.json",
+    "manifests/model_names_v24.json",
+  )
+
+
 def test_old_manifest_ids_resolve_to_v23_namespace():
   manager = object.__new__(ModelManager)
   manager.available_models = ["pop223", "tr14223"]
@@ -36,7 +52,7 @@ def test_model_cleanup_matches_legacy_split_artifacts():
   assert model_manager.is_driving_artifact_file("driving_vision_tinygrad.pkl")
   assert model_manager.is_driving_artifact_file("driving_off_policy_tinygrad.pkl.p00")
   assert not model_manager.is_driving_artifact_file("dmonitoring_model_tinygrad.pkl")
-  assert not model_manager.is_driving_artifact_file("local-test_driving_tinygrad.pkl")
+  assert model_manager.is_driving_artifact_file("local-test_driving_tinygrad.pkl")
 
 
 def test_behavior_version_does_not_control_artifact_layout():

@@ -38,6 +38,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   LatControlPID,
   get_civic_bosch_modified_pid_output_alpha,
   get_civic_bosch_modified_pid_output_scale,
+  get_honda_crv_5g_pid_output,
 )
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   clear_flm_runtime_overrides,
@@ -102,6 +103,8 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_genesis_g70_low_speed_angle_damping,
   get_genesis_g70_low_speed_output_limit,
   get_genesis_g70_unwind_ff_scale,
+  get_genesis_gv70_center_output_scale,
+  get_genesis_gv70_friction_jerk_deadzone,
   get_genesis_gv70_friction_threshold,
   get_genesis_gv70_high_speed_error_scale,
   get_genesis_gv70_unwind_ff_scale,
@@ -1011,6 +1014,18 @@ class TestLatControl:
     assert highway_center > base
     assert highway_turn == pytest.approx(base, rel=0.01)
     assert highway_center < center
+
+  def test_genesis_gv70_center_bounce_damping_preserves_turn_authority(self):
+    center_scale = get_genesis_gv70_center_output_scale(0.0, 30.0)
+    turn_scale = get_genesis_gv70_center_output_scale(0.8, 30.0)
+    low_speed_center_scale = get_genesis_gv70_center_output_scale(0.0, 5.0)
+    highway_center_deadzone = get_genesis_gv70_friction_jerk_deadzone(30.0, 0.0)
+    highway_turn_deadzone = get_genesis_gv70_friction_jerk_deadzone(30.0, 0.8)
+
+    assert center_scale < low_speed_center_scale < 1.0
+    assert turn_scale > center_scale
+    assert highway_center_deadzone > highway_turn_deadzone
+    assert highway_turn_deadzone < 0.05
 
   def test_genesis_gv70_high_speed_error_damping(self):
     assert get_genesis_gv70_high_speed_error_scale(0.2, 0.2, 0.8, 20.0) == 1.0
@@ -1972,6 +1987,35 @@ class TestLatControl:
     assert abs(low_speed) < 0.50
     assert abs(large_turn) > abs(low_speed)
     assert highway > low_speed
+
+  def test_honda_crv_5g_pid_output_damps_low_speed_center_reversals(self):
+    low_speed = get_honda_crv_5g_pid_output(1.0, -1.0, 4.0, 8.0 * 0.44704)
+    large_turn = get_honda_crv_5g_pid_output(1.0, -1.0, 24.0, 8.0 * 0.44704)
+    highway = get_honda_crv_5g_pid_output(1.0, -1.0, 4.0, 25.0 * 0.44704)
+
+    assert abs(low_speed) < 0.50
+    assert abs(large_turn) > abs(low_speed)
+    assert highway > low_speed
+
+  def test_honda_crv_5g_pid_output_update_path(self, monkeypatch):
+    controller, VM, CS, params, starpilot_toggles = self._build_pid_controller(HONDA.HONDA_CRV_5G)
+    CS.vEgo = 8.0 * 0.44704
+    CS.steeringAngleDeg = 4.0
+    tuned_output, _, lac_log = controller.update(
+      True, CS, VM, params, False, 0.0, False, 0.2, None, None, starpilot_toggles,
+    )
+
+    monkeypatch.setattr(latcontrol_pid, "get_honda_crv_5g_pid_output", lambda output, *_args: output)
+    base_controller, base_VM, base_CS, base_params, base_toggles = self._build_pid_controller(HONDA.HONDA_CRV_5G)
+    base_CS.vEgo = 8.0 * 0.44704
+    base_CS.steeringAngleDeg = 4.0
+    base_output, _, _ = base_controller.update(
+      True, base_CS, base_VM, base_params, False, 0.0, False, 0.2, None, None, base_toggles,
+    )
+
+    assert controller.is_honda_crv_5g
+    assert lac_log.active
+    assert abs(tuned_output) < abs(base_output)
 
   def test_rav4_tss2_torque_center_tune_fades_before_real_turns(self):
     low_speed_center = get_rav4_tss2_center_output_scale(0.05, 8.0)

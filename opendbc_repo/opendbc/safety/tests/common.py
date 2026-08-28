@@ -1102,6 +1102,7 @@ class SafetyTest(SafetyTestBase):
               continue
             if {attr, current_test}.issubset({'TestHyundaiLongitudinalSafety', 'TestHyundaiLongitudinalSafetyCameraSCC',
                                               'TestHyundaiSafetyFCEVLong', 'TestHyundaiLongitudinalAolLkasOnEngageSafety',
+                                              'TestHyundaiLongitudinalAolMainLkasOnEngageSafety',
                                               'TestHyundaiSafetyCanRefreshLong', 'TestHyundaiSafetyCanRefreshLongCameraSCC',
                                               'TestHyundaiCanCanfdBlendedLongitudinalSafety',
                                               'TestHyundaiLegacyLongitudinalSafety',
@@ -1157,6 +1158,7 @@ class SafetyTest(SafetyTestBase):
 
             if attr.startswith('TestHyundaiLongitudinal') or attr in ('TestHyundaiSafetyFCEVLong',
                                                                       'TestHyundaiLongitudinalAolLkasOnEngageSafety',
+                                                                      'TestHyundaiLongitudinalAolMainLkasOnEngageSafety',
                                                                       'TestHyundaiCanCanfdBlendedLongitudinalSafety',
                                                                       'TestHyundaiLegacyLongitudinalSafety',
                                                                       'TestHyundaiLegacyLongitudinalSafetyHEV'):

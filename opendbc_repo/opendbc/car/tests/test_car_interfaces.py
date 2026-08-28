@@ -323,6 +323,40 @@ class TestCarInterfaces:
     )
 
     assert fp_car_params.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_LKAS_ON_ENGAGE.value
+    assert fp_car_params.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_ON_ENGAGE.value
+
+  @pytest.mark.parametrize(
+    ("candidate", "sets_main_aol_flag"),
+    (
+      (HYUNDAI_CAR.HYUNDAI_SONATA_HYBRID, True),
+      (HYUNDAI_CAR.HYUNDAI_SONATA, False),
+    ),
+  )
+  def test_hyundai_main_aol_engage_flag_is_scoped_to_hybrid(self, candidate, sets_main_aol_flag):
+    toggles = get_test_starpilot_toggles()
+    toggles.always_on_lateral_main = True
+    fingerprint = {bus: {} for bus in range(8)}
+
+    car_params = HyundaiCarInterface.get_params(
+      candidate,
+      fingerprint,
+      [],
+      alpha_long=True,
+      is_release=False,
+      docs=False,
+      starpilot_toggles=toggles,
+    )
+    fp_car_params = HyundaiCarInterface.get_starpilot_params(
+      candidate,
+      fingerprint,
+      [],
+      car_params,
+      toggles,
+    )
+
+    has_main_aol_flag = bool(fp_car_params.safetyConfigs[-1].safetyParam &
+                             HyundaiStarPilotSafetyFlags.AOL_MAIN_LKAS_ON_ENGAGE.value)
+    assert has_main_aol_flag is sets_main_aol_flag
 
   def test_toyota_disable_openpilot_long_sets_stock_long_safety_flag(self):
     CarInterface = interfaces[TOYOTA_CAR.TOYOTA_PRIUS_TSS2]

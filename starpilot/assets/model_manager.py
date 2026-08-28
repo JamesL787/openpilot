@@ -5,12 +5,12 @@ import re
 import urllib.request
 
 from pathlib import Path
+from urllib.parse import quote
 
 from openpilot.starpilot.assets.download_functions import (
-  GITLAB_URL,
   download_file,
   download_multipart_file,
-  get_repository_url,
+  get_resource_urls,
   handle_error,
   handle_request_error,
   verify_download,
@@ -461,21 +461,41 @@ class ModelManager:
       handle_request_error(error, None, None, None, None)
       return []
 
-  def _get_manifest(self, repo_url: str) -> tuple[str | None, list[dict]]:
+  @staticmethod
+  def _is_huggingface_url(url: str) -> bool:
+    return "huggingface.co/buckets/" in url
+
+  @staticmethod
+  def _hf_manifest_paths(manifest_version: str) -> tuple[str, ...]:
+    return (
+      f"model_names_{manifest_version}.json",
+      f"manifests/model_names_{manifest_version}.json",
+    )
+
+  def _get_manifest(self, resource_urls: str | list[str]) -> tuple[str | None, list[dict]]:
+    if isinstance(resource_urls, str):
+      resource_urls = [resource_urls]
+
     for manifest_version in MANIFEST_CANDIDATES:
-      for manifest_path in self._manifest_paths(manifest_version):
-        model_info = self._fetch_manifest(f"{repo_url}/{manifest_path}")
-        if not model_info:
-          continue
+      for resource_url in resource_urls:
+        manifest_paths = (
+          self._hf_manifest_paths(manifest_version)
+          if self._is_huggingface_url(resource_url)
+          else self._manifest_paths(manifest_version)
+        )
+        for manifest_path in manifest_paths:
+          model_info = self._fetch_manifest(f"{resource_url}/{manifest_path}")
+          if not model_info:
+            continue
 
-        filtered = [
-          model for model in model_info
-          if is_supported_artifact_format(model.get("artifact_format"))
-        ]
-        if not filtered:
-          continue
+          filtered = [
+            model for model in model_info
+            if is_supported_artifact_format(model.get("artifact_format"))
+          ]
+          if not filtered:
+            continue
 
-        return manifest_version, filtered
+          return manifest_version, filtered
 
     return None, []
 
@@ -659,12 +679,12 @@ class ModelManager:
     if self.downloading_model:
       return
 
-    repo_url = get_repository_url()
-    if repo_url is None:
-      print("GitHub and GitLab are offline...")
+    resource_urls = get_resource_urls()
+    if not resource_urls:
+      print("Hugging Face and GitHub are offline...")
       return
 
-    manifest_version, model_info = self._get_manifest(repo_url)
+    manifest_version, model_info = self._get_manifest(resource_urls)
     if not model_info:
       print("No compatible tinygrad manifest found.")
       return
@@ -713,9 +733,9 @@ class ModelManager:
       self.downloading_model = False
       return
 
-    repo_url = get_repository_url()
-    if not repo_url:
-      handle_error(None, "GitHub and GitLab are offline...", "Repository unavailable", MODEL_DOWNLOAD_PARAM, DOWNLOAD_PROGRESS_PARAM, self.params_memory)
+    resource_urls = get_resource_urls()
+    if not resource_urls:
+      handle_error(None, "Hugging Face and GitHub are offline...", "Repository unavailable", MODEL_DOWNLOAD_PARAM, DOWNLOAD_PROGRESS_PARAM, self.params_memory)
       self.downloading_model = False
       return
 
@@ -742,12 +762,18 @@ class ModelManager:
       if custom_url:
         candidate_urls.append((custom_url, True, False))
 
-      file_url = f"{repo_url}/Models/{filename}"
-      candidate_urls.append((file_url, False, True))
+      for resource_url in resource_urls:
+        if self._is_huggingface_url(resource_url):
+          artifact_urls_for_source = [
+            f"{resource_url}/models/{quote(self._canonical_model_key(model_to_download), safe='')}/{filename}",
+            f"{resource_url}/{filename}",
+          ]
+        else:
+          artifact_urls_for_source = [f"{resource_url}/Models/{filename}"]
 
-      fallback_url = f"{GITLAB_URL}/Models/{filename}"
-      if fallback_url != file_url:
-        candidate_urls.append((fallback_url, False, True))
+        for artifact_url in artifact_urls_for_source:
+          if not any(existing[0] == artifact_url for existing in candidate_urls):
+            candidate_urls.append((artifact_url, False, True))
 
       download_succeeded = False
       for candidate_url, allow_unknown_size, allow_multipart in candidate_urls:
@@ -805,12 +831,12 @@ class ModelManager:
       self.params_memory.remove(ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM)
 
   def _download_all_models(self, allow_gpu_without_gpu: bool):
-    repo_url = get_repository_url()
-    if not repo_url:
-      handle_error(None, "GitHub and GitLab are offline...", "Repository unavailable", MODEL_DOWNLOAD_ALL_PARAM, DOWNLOAD_PROGRESS_PARAM, self.params_memory)
+    resource_urls = get_resource_urls()
+    if not resource_urls:
+      handle_error(None, "Hugging Face and GitHub are offline...", "Repository unavailable", MODEL_DOWNLOAD_ALL_PARAM, DOWNLOAD_PROGRESS_PARAM, self.params_memory)
       return
 
-    manifest_version, model_info = self._get_manifest(repo_url)
+    manifest_version, model_info = self._get_manifest(resource_urls)
     if not model_info:
       handle_error(None, "Unable to fetch models...", "Model list unavailable", MODEL_DOWNLOAD_ALL_PARAM, DOWNLOAD_PROGRESS_PARAM, self.params_memory)
       return

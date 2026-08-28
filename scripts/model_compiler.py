@@ -558,10 +558,13 @@ def compile_driving(
     command += ["--behavior-version", version]
   compile_env = build_compile_env(supercombo=input_format == "supercombo")
   if external_gpu:
+    gpu_debug = os.environ.get("STARPILOT_GPU_DEBUG", "1")
+    if gpu_debug not in {"1", "2"}:
+      gpu_debug = "1"
     for qcom_only_flag in ("IMAGE", "NOLOCALS", "OPENPILOT_HACKS"):
       compile_env.pop(qcom_only_flag, None)
     compile_env.update({
-      "DEBUG": "1",
+      "DEBUG": gpu_debug,
       "DEV": "USB+AMD:LLVM",
       "WARP_DEV": "QCOM",
       "FLOAT16": "1",

@@ -25,6 +25,8 @@ from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_far_follow_output_slew_rates,
   get_follow_prebrake_min_headway,
   get_honda_accord_lead_departure_tune,
+  get_honda_accord_stop_go_accel_cap,
+  get_honda_accord_stop_go_accel_rise_rate,
   get_toyota_rav4_tss2_lead_departure_tune,
   get_force_stop_distance_bias,
   get_force_stop_handoff_distance,
@@ -43,6 +45,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_standstill_gap_settle_max_extra_gap,
   get_standstill_stopped_lead_guard_distance_margin,
   get_standstill_stopped_lead_guard_max_lead_speed,
+  get_tracked_lead_catchup_bias_gain,
   get_tracked_lead_catchup_headway_margins,
 )
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
@@ -601,6 +604,7 @@ class LongitudinalPlanner:
     self.lead_depart_release_hold_remaining = 0.0
     self.radar_standstill_gap_settle_elapsed = 0.0
     self.radar_standstill_gap_settle_active = False
+    self.tracked_lead_catchup_bias_gain = get_tracked_lead_catchup_bias_gain(CP)
 
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
@@ -1652,6 +1656,25 @@ class LongitudinalPlanner:
       LOW_SPEED_WEAK_LEAD_ACCEL_CAP_MAX_ACCEL - LOW_SPEED_WEAK_LEAD_ACCEL_CAP_MIN_ACCEL
     ) * cap_strength
 
+  def get_honda_accord_stop_go_accel_target(self, lead, v_ego, previous_target, target, blocked):
+    """Smooth the Accord's low-speed lead launch without touching braking targets."""
+    if blocked or target <= 0.0:
+      return float(target)
+
+    cap = get_honda_accord_stop_go_accel_cap(self.CP, lead, v_ego)
+    if cap is None:
+      return float(target)
+
+    limited_target = min(float(target), cap)
+    if limited_target > float(previous_target):
+      rise_rate = get_honda_accord_stop_go_accel_rise_rate(self.CP)
+      if rise_rate > 0.0:
+        limited_target = min(
+          limited_target,
+          max(0.0, float(previous_target) + rise_rate * self.dt),
+        )
+    return float(limited_target)
+
   def get_standstill_stopped_lead_guard_cap(self, lead, v_ego, accel_min, stop_distance,
                                             release_ready, confident_depart_ready):
     if lead is None or not lead.status or release_ready or confident_depart_ready:
@@ -2319,7 +2342,8 @@ class LongitudinalPlanner:
                     silverado_early_follow=early_truck_follow,
                     modelV2=sm['modelV2'],
                     lead_obstacle_bias=stopped_lead_obstacle_bias,
-                    tracked_lead_catchup_headway_margins=self.tracked_lead_catchup_headway_margins)
+                    tracked_lead_catchup_headway_margins=self.tracked_lead_catchup_headway_margins,
+                    tracked_lead_catchup_bias_gain=self.tracked_lead_catchup_bias_gain)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
@@ -3024,6 +3048,31 @@ class LongitudinalPlanner:
     # can otherwise leave it creeping indefinitely at the maneuver-test cutoff.
     if force_slow_decel and scene_v_ego > 0.1:
       output_a_target = min(output_a_target, FORCE_DECEL_MIN_ACCEL)
+
+    try:
+      starpilot_car_state = sm['starpilotCarState']
+    except KeyError:
+      starpilot_car_state = None
+    driver_accel_pressed = bool(
+      getattr(sm['carState'], 'gasPressed', False) or
+      getattr(starpilot_car_state, 'accelPressed', False)
+    )
+    accord_stop_go_blocked = bool(
+      not lead_control_active or
+      output_should_stop or
+      vision_low_speed_stop_active or
+      depart_safety_veto or
+      radar_gap_settle_active or
+      getattr(sm['starpilotPlan'], 'forcingStop', False) or
+      getattr(sm['starpilotPlan'], 'redLight', False) or
+      driver_accel_pressed
+    )
+    accord_stop_go_target = self.get_honda_accord_stop_go_accel_target(
+      policy_lead, scene_v_ego, prev_output_a_target, output_a_target, accord_stop_go_blocked,
+    )
+    if accord_stop_go_target < output_a_target:
+      self.a_desired = min(self.a_desired, accord_stop_go_target)
+      output_a_target = accord_stop_go_target
 
     self.output_a_target = output_a_target
     self.output_should_stop = bool(output_should_stop or vision_low_speed_stop_active)

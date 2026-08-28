@@ -22,6 +22,7 @@ _LEGACY_2025_REENGAGE_MAX_STEER_RATE = 2.0
 _LEGACY_2025_REENGAGE_MAX_ANGLE_DELTA = 1.0
 _LEGACY_2025_RECLAIM_FRAMES = 36
 _LEGACY_2025_RECLAIM_EXPONENT = 2.5
+_ANGLE_OVERRIDE_CONFIRM_FRAMES = 2
 _ANGLE_OVERRIDE_HOLD_FRAMES = 10
 _ANGLE_REENGAGE_SETTLE_FRAMES = 8
 _ANGLE_REENGAGE_MAX_STEER_RATE = 2.0
@@ -47,6 +48,7 @@ class CarController(CarControllerBase):
     self.apply_torque_last = 0
     self.apply_steer_last = 0
     self.driver_override = False
+    self.angle_override_confirm_frames = 0
     self.legacy_2025_lkas_active = False
     self.legacy_2025_handoff_active = False
     self.legacy_2025_override_hold_frames = 0
@@ -139,6 +141,8 @@ class CarController(CarControllerBase):
     return msg
 
   def _reset_legacy_2025_handoff(self):
+    self.driver_override = False
+    self.angle_override_confirm_frames = 0
     self.legacy_2025_handoff_active = False
     self.legacy_2025_override_hold_frames = 0
     self.legacy_2025_reengage_settle_frames = 0
@@ -151,7 +155,8 @@ class CarController(CarControllerBase):
       self._reset_legacy_2025_handoff()
       return False
 
-    if getattr(CS.out, "steeringPressed", False):
+    driver_override = self._update_angle_driver_override(CS)
+    if driver_override:
       self.legacy_2025_handoff_active = True
       self.legacy_2025_override_hold_frames = _LEGACY_2025_OVERRIDE_HOLD_FRAMES
       self.legacy_2025_reengage_settle_frames = 0
@@ -202,6 +207,8 @@ class CarController(CarControllerBase):
     return target_angle
 
   def _reset_angle_handoff(self):
+    self.driver_override = False
+    self.angle_override_confirm_frames = 0
     self.angle_handoff_active = False
     self.angle_override_hold_frames = 0
     self.angle_reengage_settle_frames = 0
@@ -214,7 +221,8 @@ class CarController(CarControllerBase):
       self._reset_angle_handoff()
       return False
 
-    if getattr(CS.out, "steeringPressed", False):
+    driver_override = self._update_angle_driver_override(CS)
+    if driver_override:
       self.angle_handoff_active = True
       self.angle_override_hold_frames = _ANGLE_OVERRIDE_HOLD_FRAMES
       self.angle_reengage_settle_frames = 0
@@ -252,6 +260,22 @@ class CarController(CarControllerBase):
     self.angle_reclaim_frames = _ANGLE_RECLAIM_FRAMES
     self.angle_reclaim_start_angle = CS.out.steeringAngleDeg
     return True
+
+  def _update_angle_driver_override(self, CS):
+    """Debounce the higher-confidence raw torque override signal for angle cars."""
+    abs_torque = abs(getattr(CS.out, "steeringTorque", 0.0))
+    if self.driver_override:
+      if abs_torque < self.p.STEER_OVERRIDE_TORQUE_LOW:
+        self.driver_override = False
+    elif abs_torque > self.p.STEER_OVERRIDE_TORQUE_HIGH:
+      self.angle_override_confirm_frames += 1
+      if self.angle_override_confirm_frames >= _ANGLE_OVERRIDE_CONFIRM_FRAMES:
+        self.driver_override = True
+        self.angle_override_confirm_frames = 0
+    else:
+      self.angle_override_confirm_frames = 0
+
+    return self.driver_override
 
   def _angle_reclaim_target(self, target_angle):
     if self.angle_reclaim_frames <= 0:
@@ -324,12 +348,6 @@ class CarController(CarControllerBase):
       self.apply_steer_last = apply_steer
       self.angle_lkas_active = lkas_active
       return subarucan.create_steering_control_angle(self.packer, apply_steer, lkas_active, self.angle_bus)
-
-    abs_torque = abs(CS.out.steeringTorque)
-    if abs_torque > self.p.STEER_OVERRIDE_TORQUE_HIGH:
-      self.driver_override = True
-    elif abs_torque < self.p.STEER_OVERRIDE_TORQUE_LOW:
-      self.driver_override = False
 
     mads_only = CC.latActive and not getattr(CC, "enabled", False)
     mads_only_ok = CS.out.vEgoRaw > _ANGLE_MADS_MIN_SPEED and \

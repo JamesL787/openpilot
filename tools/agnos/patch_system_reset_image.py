@@ -263,6 +263,12 @@ def install_bundled_installer(owner: str, branch: str, installer_url: str) -> No
 
   source = replace_exactly(
     source,
+    'USER_AGENT = f"AGNOSSetup-{HARDWARE.get_os_version()}"',
+    'USER_AGENT = f"AGNOSSetup-{\'.\'.join(HARDWARE.get_os_version().split(\'.\')[:2])}"',
+  )
+
+  source = replace_exactly(
+    source,
     '''    # autocomplete incomplete URLs
     if re.match("^([^/.]+)/([^/]+)$", url):
       url = f"https://installer.comma.ai/{url}"
@@ -273,7 +279,7 @@ def install_bundled_installer(owner: str, branch: str, installer_url: str) -> No
     # installer.comma.ai binary targets Wayland and cannot run in this AGNOS.
     self.installer_url = ("https://installer.comma.ai/firestar5683/StarPilot" if url == OPENPILOT_URL else url)
     self.bundled_installer_target = (("firestar5683", "StarPilot") if url == OPENPILOT_URL else None)
-    match = re.fullmatch(r"(?:https://installer\\.comma\\.ai/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", url)
+    match = re.fullmatch(r"(?:https://installer\\.comma\\.ai/)?([A-Za-z0-9_-]+)/([A-Za-z0-9_.-]+)", url)
     if match:
       self.bundled_installer_target = match.groups()
       self.installer_url = f"https://installer.comma.ai/{'/'.join(self.bundled_installer_target)}"
@@ -444,6 +450,7 @@ def validate_factory_install_payloads(setup: Path, installer: Path) -> None:
       if "CONNECTIVITY_URL = \"https://openpilot.comma.ai\"" not in source:
         raise RuntimeError(f"Connectivity check changed unexpectedly in {member}")
       for expected in (
+        'USER_AGENT = f"AGNOSSetup-{\'.\'.join(HARDWARE.get_os_version().split(\'.\')[:2])}"',
         "patch_bundled_installer(tmpfile, *self.bundled_installer_target)",
         "install_bundled_installer(*bundled_target, self.installer_url)",
         'self.bundled_installer_target = (("firestar5683", "StarPilot") if url == OPENPILOT_URL else None)',

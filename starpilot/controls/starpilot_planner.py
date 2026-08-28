@@ -316,10 +316,6 @@ class StarPilotPlanner:
     if self.starpilot_vcruise.forcing_stop or self.starpilot_vcruise.approach_stop_length > 0.0:
       jerk_scale = get_force_stop_jerk_scale(car_params)
     elif self.tracking_lead:
-      # Elantra vision leads can hand off from cruise to lead0 while closing
-      # quickly. A slightly higher accel-change cost makes that handoff begin
-      # earlier instead of arriving as a sharp brake request, without changing
-      # the safety stop distance or the force-stop path.
       jerk_scale = get_lead_follow_jerk_scale(car_params)
     else:
       jerk_scale = 1.0

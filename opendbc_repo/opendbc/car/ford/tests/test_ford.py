@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from hypothesis import settings, given, strategies as st
 from parameterized import parameterized
+import pytest
 
 from opendbc.car import Bus, gen_empty_fingerprint
 from opendbc.can import CANPacker
@@ -272,6 +273,23 @@ def test_mach_e_can_gps_messages_are_optional_main_bus_inputs():
     parser.dbc.addr_to_msg[0x464].name,
   }
   assert all(parser.message_states[address].ignore_alive for address in (0x462, 0x463, 0x464))
+
+
+def test_lightning_low_rate_camera_messages_use_declared_frequencies():
+  cp = CarInterface.get_params(CAR.FORD_F_150_LIGHTNING_MK1, gen_empty_fingerprint(), [], True, False, False, None)
+  cp.enableBsm = True
+  parser = CarInterface.CarState.get_can_parsers(cp)[Bus.cam]
+
+  expected_frequencies = {
+    "IPMA_Data": 1,
+    "Traffic_RecognitnData": 1,
+    "Side_Detect_L_Stat": 5,
+    "Side_Detect_R_Stat": 5,
+  }
+  for message, frequency in expected_frequencies.items():
+    state = parser.message_states[parser.dbc.name_to_msg[message].address]
+    assert state.frequency == frequency
+    assert state.timeout_threshold == pytest.approx(10e9 / frequency)
 
 
 def test_hands_free_cluster_status_is_opt_in():
