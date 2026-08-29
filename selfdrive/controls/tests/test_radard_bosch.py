@@ -131,6 +131,28 @@ def test_civic_bosch_duplicate_live_tracks_frame_does_not_update_kf(monkeypatch)
   assert float(track.kf.x[radard.SPEED][0]) != pytest.approx(first_kf_speed)
 
 
+def test_civic_bosch_unmeasured_coast_updates_geometry_without_kf(monkeypatch):
+  toggles = make_toggles()
+  monkeypatch.setattr(radard, "get_starpilot_toggles", lambda *_args: toggles)
+
+  radar_d = radard.RadarD(honda_bosch_a_radar=True)
+  sm = FakeSubMaster(live_tracks_frame=1)
+  radar_d.update(sm, make_radar_data(v_rel=-1.0, d_rel=20.0, y_rel=0.1, measured=True))
+  track = radar_d.tracks[1]
+  trusted_kf_speed = float(track.kf.x[radard.SPEED][0])
+  trusted_kf_accel = float(track.kf.x[radard.ACCEL][0])
+
+  sm.recv_frame['liveTracks'] = 2
+  radar_d.update(sm, make_radar_data(v_rel=-1.0, d_rel=18.9, y_rel=0.2, measured=False))
+  assert track.dRel == pytest.approx(18.9)
+  assert track.yRel == pytest.approx(0.2)
+  assert track.vRel == pytest.approx(-1.0)
+  assert not track.measured
+  assert track.cnt == 1
+  assert float(track.kf.x[radard.SPEED][0]) == pytest.approx(trusted_kf_speed)
+  assert float(track.kf.x[radard.ACCEL][0]) == pytest.approx(trusted_kf_accel)
+
+
 def test_civic_bosch_separates_kf_and_model_lead_probability_timing():
   radar_d = radard.RadarD(honda_bosch_a_radar=True)
 
