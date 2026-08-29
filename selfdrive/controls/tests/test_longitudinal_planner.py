@@ -1017,6 +1017,37 @@ def test_vision_lead_approach_cap_brakes_harder_for_braking_tracked_lead_inside_
   assert approach_cap < hard_cap
 
 
+def test_honda_bosch_a_nonurgent_radar_lead_accel_does_not_bypass_mpc():
+  v_ego = 26.98
+  lead = make_lead(status=True, d_rel=52.31, v_lead=20.09, a_lead=-3.32, radar=True, model_prob=0.98)
+
+  bosch_planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH), init_v=v_ego)
+  other_planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=v_ego)
+
+  assert bosch_planner.honda_bosch_a_radar
+  assert bosch_planner.get_close_lead_brake_cap(lead, v_ego, -3.5) is None
+  assert other_planner.get_close_lead_brake_cap(lead, v_ego, -3.5) == pytest.approx(-2.93, abs=0.02)
+
+
+@pytest.mark.parametrize(
+  ("d_rel", "v_lead"),
+  [
+    (35.0, 20.0),  # Close even though TTC remains above the emergency threshold.
+    (52.0, 13.0),  # Farther away, but inside the FCW TTC horizon.
+    (80.0, 0.0),   # A real stopped lead remains fully protected at highway speed.
+  ],
+)
+def test_honda_bosch_a_urgent_radar_lead_keeps_full_brake_cap(d_rel, v_lead):
+  v_ego = 27.0
+  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH), init_v=v_ego)
+  lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=-3.0, radar=True, model_prob=0.98)
+
+  cap = planner.get_close_lead_brake_cap(lead, v_ego, -3.5)
+
+  assert cap is not None
+  assert cap < -2.0
+
+
 def test_vision_lead_approach_cap_ignores_opening_lead_with_large_gap():
   v_ego = 19.37
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
