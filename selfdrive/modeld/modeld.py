@@ -48,7 +48,12 @@ from openpilot.selfdrive.modeld.helpers import get_tg_input_devices, load_oob, t
 from openpilot.selfdrive.modeld.usbgpu_link import wait_usbgpu_link
 from openpilot.starpilot.assets.model_manager import ModelManager, model_uses_external_gpu
 from openpilot.starpilot.common.model_versions import is_tinygrad_model_version
-from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles, MODELS_PATH, params_memory
+from openpilot.starpilot.common.starpilot_variables import (
+  get_longitudinal_actuator_delay,
+  get_starpilot_toggles,
+  MODELS_PATH,
+  params_memory,
+)
 
 
 PROCESS_NAME = "selfdrive.modeld.modeld"
@@ -870,12 +875,12 @@ def main(demo=False):
 
   lat_smooth_seconds = _model_smooth_seconds(params, "LatSmoothSeconds", LAT_SMOOTH_SECONDS)
   long_smooth_seconds = _model_smooth_seconds(params, "LongSmoothSeconds", LONG_SMOOTH_SECONDS)
-  long_delay = CP.longitudinalActuatorDelay + long_smooth_seconds
   prev_action = log.ModelDataV2.Action()
 
   DH = DesireHelper()
 
   starpilot_toggles = get_starpilot_toggles(sm)
+  long_delay = get_longitudinal_actuator_delay(CP, starpilot_toggles) + long_smooth_seconds
 
   while True:
     # Keep receiving frames until we are at least 1 frame ahead of previous extra frame
@@ -913,7 +918,7 @@ def main(demo=False):
     sm.update(0)
 
     long_smooth_seconds = _model_smooth_seconds(params, "LongSmoothSeconds", LONG_SMOOTH_SECONDS)
-    long_delay = CP.longitudinalActuatorDelay + long_smooth_seconds
+    long_delay = get_longitudinal_actuator_delay(CP, starpilot_toggles) + long_smooth_seconds
     desire = DH.desire
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["roadCameraState"].frameId

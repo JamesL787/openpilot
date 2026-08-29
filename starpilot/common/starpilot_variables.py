@@ -59,6 +59,19 @@ MINIMUM_LATERAL_ACCELERATION = 1.3        # m/s^2, typical minimum lateral accel
 PLANNER_TIME = ModelConstants.T_IDXS[-1]  # Length of time the model projects out for
 THRESHOLD = 1 - 1 / math.e                # Requires the condition to be true for ~1 second
 
+
+def get_longitudinal_actuator_delay(CP, starpilot_toggles) -> float:
+  """Return the live longitudinal delay, falling back to the vehicle default."""
+  default = float(getattr(CP, "longitudinalActuatorDelay", 0.0) or 0.0)
+  value = getattr(starpilot_toggles, "longitudinalActuatorDelay", default)
+  try:
+    value = float(value)
+  except (TypeError, ValueError):
+    return default
+  if not math.isfinite(value):
+    return default
+  return float(np.clip(value, 0.0, 1.0))
+
 NON_DRIVING_GEARS = [GearShifter.neutral, GearShifter.park, GearShifter.reverse, GearShifter.unknown]
 
 # Temporary fallback until the weather-compatible API is hosted locally.

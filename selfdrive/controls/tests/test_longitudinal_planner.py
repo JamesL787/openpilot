@@ -51,6 +51,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
 )
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.modeld import modeld
+from openpilot.starpilot.common.starpilot_variables import get_longitudinal_actuator_delay
 
 
 class _SmoothParams:
@@ -647,6 +648,26 @@ def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False):
     vEgoStopping=0.5,
     radar_takeoffs=radar_takeoffs,
   )
+
+
+def test_live_longitudinal_actuator_delay_overrides_vehicle_default():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  CP.longitudinalActuatorDelay = 0.5
+  toggles = make_toggles()
+  toggles.longitudinalActuatorDelay = 0.15
+
+  assert get_longitudinal_actuator_delay(CP, toggles) == pytest.approx(0.15)
+
+
+def test_live_longitudinal_actuator_delay_falls_back_and_clamps():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  CP.longitudinalActuatorDelay = 0.5
+  toggles = make_toggles()
+
+  toggles.longitudinalActuatorDelay = float("nan")
+  assert get_longitudinal_actuator_delay(CP, toggles) == pytest.approx(0.5)
+  toggles.longitudinalActuatorDelay = 2.0
+  assert get_longitudinal_actuator_delay(CP, toggles) == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
