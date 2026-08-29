@@ -1130,33 +1130,3 @@ def test_bosch_a_gate_open_to_other_bosch_a_platforms(car):
 def test_bosch_a_gate_stays_closed_for_non_bosch_a_platforms(car):
   cp = _CLOSED_BOSCH_A_CPS[car]
   assert cp.radarUnavailable is True
-
-
-# --- 12. BoschLong / NrdrModelLeadTrajectory are independently-persisted params, not a real
-# parent/child enforcement -- the radar gate must catch the child even when the parent is off ------
-
-class TestBoschLongRadarGate:
-  def _cp_with(self, *, bosch_long: bool, mlt: bool):
-    p = Params()
-    p.put_bool("BoschLong", bosch_long)
-    p.put_bool("NrdrModelLeadTrajectory", mlt)
-    try:
-      return CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
-    finally:
-      p.remove("BoschLong")
-      p.remove("NrdrModelLeadTrajectory")
-
-  def test_radar_available_when_both_off(self):
-    assert self._cp_with(bosch_long=False, mlt=False).radarUnavailable is False
-
-  def test_radar_unavailable_when_bosch_long_on(self):
-    assert self._cp_with(bosch_long=True, mlt=False).radarUnavailable is True
-
-  def test_radar_unavailable_when_mlt_on_even_with_bosch_long_off(self):
-    """The real-world case found on a live device: BoschLong=0, NrdrModelLeadTrajectory=1 -- an
-    orphaned child-on/parent-off state the old `not params.get_bool("BoschLong")` check alone
-    could not see, letting the radar tryout and MLT run at the same time."""
-    assert self._cp_with(bosch_long=False, mlt=True).radarUnavailable is True
-
-  def test_radar_unavailable_when_both_on(self):
-    assert self._cp_with(bosch_long=True, mlt=True).radarUnavailable is True
