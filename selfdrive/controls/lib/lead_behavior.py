@@ -113,7 +113,10 @@ def is_radarless_matched_follow_window(v_ego: float, lead_distance: float, v_lea
 
 
 def get_tracked_lead_catchup_bias(v_ego: float, lead_distance: float, desired_gap: float, closing_speed: float,
-                                  v_cruise: float | None = None, y_rel: float | None = None) -> float:
+                                  v_cruise: float | None = None, y_rel: float | None = None,
+                                  min_headway_margin: float = TRACKED_LEAD_CATCHUP_BIAS_MIN_HEADWAY_MARGIN,
+                                  full_headway_margin: float = TRACKED_LEAD_CATCHUP_BIAS_FULL_HEADWAY_MARGIN,
+                                  bias_gain: float = TRACKED_LEAD_CATCHUP_BIAS_GAIN) -> float:
   gap_error = lead_distance - desired_gap
   actual_hw = lead_distance / max(v_ego, 1e-3)
   desired_hw = desired_gap / max(v_ego, 1e-3)
@@ -137,8 +140,8 @@ def get_tracked_lead_catchup_bias(v_ego: float, lead_distance: float, desired_ga
   fade_end_margin = max(TRACKED_LEAD_CATCHUP_BIAS_MIN_FADE_END_MARGIN,
                         TRACKED_LEAD_CATCHUP_BIAS_ABSOLUTE_FADE_END - desired_hw)
   entry_factor = _smoothstep(headway_margin,
-                             TRACKED_LEAD_CATCHUP_BIAS_MIN_HEADWAY_MARGIN,
-                             TRACKED_LEAD_CATCHUP_BIAS_FULL_HEADWAY_MARGIN)
+                             min_headway_margin,
+                             full_headway_margin)
   exit_factor = 1.0 - _smoothstep(headway_margin, fade_start_margin, fade_end_margin)
 
   closing_fade_end = max(2.5, 0.12 * v_ego)
@@ -153,7 +156,7 @@ def get_tracked_lead_catchup_bias(v_ego: float, lead_distance: float, desired_ga
                                        TRACKED_LEAD_CATCHUP_BIAS_MAX_LATERAL_OFFSET)
 
   bias_cap = max(10.0, TRACKED_LEAD_CATCHUP_BIAS_SPEED_FACTOR * v_ego)
-  return (min(gap_error * TRACKED_LEAD_CATCHUP_BIAS_GAIN, bias_cap) * speed_factor * cruise_factor *
+  return (min(gap_error * max(0.0, float(bias_gain)), bias_cap) * speed_factor * cruise_factor *
           entry_factor * exit_factor * closing_factor * lateral_factor)
 
 

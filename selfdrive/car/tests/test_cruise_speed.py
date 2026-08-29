@@ -73,7 +73,6 @@ class TestVCruiseHelper:
       cruise_increase=1,
       cruise_increase_long=5,
       is_metric=False,
-      reverse_cruise_increase=False,
       set_speed_limit=False,
     )
     self.reset_cruise_speed_state()
@@ -118,6 +117,47 @@ class TestVCruiseHelper:
           starpilot_toggles=self.starpilot_toggles,
         )
         assert pressed == (self.v_cruise_helper.v_cruise_kph == self.v_cruise_helper.v_cruise_kph_last)
+
+  def test_accel_stops_at_slc_target_before_crossing_it(self):
+    self.starpilot_toggles.cruise_increase = 5
+    self.v_cruise_helper.v_cruise_kph = 30
+    self.v_cruise_helper.v_cruise_cluster_kph = 30
+    slc_target_with_offset = 33 * CV.KPH_TO_MS
+
+    # A 30 km/h limit with a +3 km/h SLC offset should be an intermediate stop.
+    for expected_kph in (33, 35, 40):
+      for pressed in (True, False):
+        CS = car.CarState(cruiseState={"available": True})
+        CS.buttonEvents = [ButtonEvent(type=ButtonType.accelCruise, pressed=pressed)]
+        self.v_cruise_helper.update_v_cruise(
+          CS,
+          enabled=True,
+          is_metric=True,
+          speed_limit_changed=False,
+          starpilot_toggles=self.starpilot_toggles,
+          slc_target_with_offset=slc_target_with_offset,
+        )
+
+      assert self.v_cruise_helper.v_cruise_kph == pytest.approx(expected_kph)
+
+  def test_accel_uses_normal_interval_without_an_active_slc_target(self):
+    self.starpilot_toggles.cruise_increase = 5
+    self.v_cruise_helper.v_cruise_kph = 30
+    self.v_cruise_helper.v_cruise_cluster_kph = 30
+
+    # Card passes zero when SLC is disabled or has no active speed-limit source.
+    for pressed in (True, False):
+      CS = car.CarState(cruiseState={"available": True})
+      CS.buttonEvents = [ButtonEvent(type=ButtonType.accelCruise, pressed=pressed)]
+      self.v_cruise_helper.update_v_cruise(
+        CS,
+        enabled=True,
+        is_metric=True,
+        speed_limit_changed=False,
+        starpilot_toggles=self.starpilot_toggles,
+      )
+
+    assert self.v_cruise_helper.v_cruise_kph == pytest.approx(35)
 
   def test_hard_press_uses_long_press_interval(self):
     self.enable(52 * CV.MPH_TO_MS, False)
@@ -452,7 +492,6 @@ class TestVCruiseHelperRedneck:
       cruise_increase=1,
       cruise_increase_long=5,
       is_metric=False,
-      reverse_cruise_increase=False,
       set_speed_limit=False,
     )
 
@@ -514,34 +553,3 @@ class TestVCruiseHelperRedneck:
 
     assert self.v_cruise_helper.v_cruise_kph == pytest.approx(75 * CV.MPH_TO_KPH)
     assert self.v_cruise_helper.v_cruise_cluster_kph == pytest.approx(75 * CV.MPH_TO_KPH)
-
-  def test_reverse_cruise_increase_swaps_short_and_long_press_intervals(self):
-    self.enable(55 * CV.MPH_TO_MS, experimental_mode=False)
-    initial_v_cruise_kph = self.v_cruise_helper.v_cruise_kph
-    self.starpilot_toggles.cruise_increase = 1
-    self.starpilot_toggles.cruise_increase_long = 5
-    self.starpilot_toggles.reverse_cruise_increase = True
-
-    pressed_cs = car.CarState(cruiseState={"available": True})
-    pressed_cs.buttonEvents = [ButtonEvent(type=ButtonType.accelCruise, pressed=True)]
-    self.v_cruise_helper.update_v_cruise(
-      pressed_cs,
-      enabled=True,
-      is_metric=False,
-      speed_limit_changed=False,
-      starpilot_toggles=self.starpilot_toggles,
-    )
-
-    released_cs = car.CarState(cruiseState={"available": True})
-    released_cs.buttonEvents = [ButtonEvent(type=ButtonType.accelCruise, pressed=False)]
-    self.v_cruise_helper.update_v_cruise(
-      released_cs,
-      enabled=True,
-      is_metric=False,
-      speed_limit_changed=False,
-      starpilot_toggles=self.starpilot_toggles,
-    )
-
-    reversed_interval = 5 * IMPERIAL_INCREMENT
-    expected_kph = math.ceil(initial_v_cruise_kph / reversed_interval) * reversed_interval
-    assert self.v_cruise_helper.v_cruise_kph == pytest.approx(expected_kph)

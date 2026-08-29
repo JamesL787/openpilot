@@ -50,9 +50,11 @@ JERK_SCALE_MIN = 0.3
 JERK_SCALE_RATE = 1.5
 ONSET_LEAD_DECEL = 0.4
 ONSET_PAD_MAX = 0.45
+STOPPED_LEAD_PAD_MAX = 0.75
 ONSET_FULL_DECEL = 1.5
 ONSET_MAX_A_REQ = 1.5
-ONSET_RATE_UP = 0.4
+EMERGENCY_SHORTFALL_MIN = 0.15
+ONSET_RATE_UP = 0.8
 ONSET_RATE_DOWN = 0.5
 MIN_TTC = 3.5
 MIN_SPEED = 1.0
@@ -137,9 +139,11 @@ class BLoTv2Supervisor:
         v_ego, lead, D_MIN, MIN_GAP_BUDGET,
       )
       closing = closing_speed(v_ego, lead)
+      braking_shortfall = required_decel + a_mpc if math.isfinite(a_mpc) else math.inf
       emergency = (
         time_to_collision(v_ego, lead) < MIN_TTC
         and required_decel >= ONSET_MAX_A_REQ
+        and braking_shortfall > EMERGENCY_SHORTFALL_MIN
       )
 
       if not emergency:
@@ -187,14 +191,18 @@ class BLoTv2Supervisor:
         ):
           scale_target = self.jerk_scale
 
+        onset_lead_accel = lead.acceleration
+        if model_active and predicted_lead_accel is not None:
+          onset_lead_accel = min(onset_lead_accel, predicted_lead_accel)
+
         recovering = v_ego <= lead.speed + 0.2 or lead.acceleration > 0.2
         if (
-          lead.acceleration < -ONSET_LEAD_DECEL
+          onset_lead_accel < -ONSET_LEAD_DECEL
           and required_decel < ONSET_MAX_A_REQ
           and not recovering
         ):
           pad_target = ONSET_PAD_MAX * min(
-            -lead.acceleration / ONSET_FULL_DECEL,
+            -onset_lead_accel / ONSET_FULL_DECEL,
             1.0,
           )
         if (
@@ -204,7 +212,7 @@ class BLoTv2Supervisor:
         ):
           pad_target = max(
             pad_target,
-            ONSET_PAD_MAX * min(required_decel / 1.2, 1.0),
+            STOPPED_LEAD_PAD_MAX * min(required_decel / 1.2, 1.0),
           )
       else:
         for trigger in self._triggers:
@@ -212,6 +220,10 @@ class BLoTv2Supervisor:
     else:
       for trigger in self._triggers:
         trigger.reset()
+
+    if (lead.present and v_ego <= MIN_SPEED and scale_target > self.jerk_scale
+        and self.jerk_scale == JERK_SCALE_MIN):
+      scale_target = self.jerk_scale
 
     self.jerk_scale = self._slew(
       self.jerk_scale,

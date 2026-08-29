@@ -17,6 +17,30 @@ def test_tracked_lead_catchup_bias_ignores_near_desired_gap():
   assert bias == 0.0
 
 
+def test_tracked_lead_catchup_bias_corrects_lightning_aggressive_follow_bookmark():
+  default_bias = get_tracked_lead_catchup_bias(
+    31.75,
+    46.2,
+    34.0,
+    0.0,
+    v_cruise=37.55,
+    y_rel=0.1,
+  )
+  bias = get_tracked_lead_catchup_bias(
+    31.75,
+    46.2,
+    34.0,
+    0.0,
+    v_cruise=37.55,
+    y_rel=0.1,
+    min_headway_margin=0.20,
+    full_headway_margin=0.45,
+  )
+
+  assert default_bias == 0.0
+  assert bias > 2.0
+
+
 def test_tracked_lead_catchup_bias_ignores_very_far_gap():
   bias = get_tracked_lead_catchup_bias(31.4, 110.0, 38.0, 0.1)
   assert bias == 0.0

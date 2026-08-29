@@ -42,6 +42,7 @@ TOYOTA_NO_LEAD_CRUISE_SIGN_FLIP_MIN_SET_SPEED_ERROR = 0.35  # m/s
 # EPS faults if you apply torque while the steering rate is above 100 deg/s for too long
 MAX_STEER_RATE = 100  # deg/s
 MAX_STEER_RATE_FRAMES = 18  # tx control frames needed before torque can be cut
+TOYOTA_HIGHLANDER_TSS2_MAX_STEER_RATE_FRAMES = 8
 
 # EPS allows user torque above threshold for 50 frames before permanently faulting
 MAX_USER_TORQUE = 500
@@ -70,6 +71,11 @@ def should_bypass_toyota_long_pid(CP, starpilot_toggles=None) -> bool:
   return bool(CP.enableGasInterceptorDEPRECATED or (
     CP.carFingerprint == CAR.TOYOTA_CAMRY and not is_camry_hybrid(CP)
   ) or highlander_sdsu)
+
+
+def get_steer_rate_limit_frames(car_fingerprint) -> int:
+  return (TOYOTA_HIGHLANDER_TSS2_MAX_STEER_RATE_FRAMES
+          if car_fingerprint == CAR.TOYOTA_HIGHLANDER_TSS2 else MAX_STEER_RATE_FRAMES)
 
 
 def get_long_tune(CP, params):
@@ -223,6 +229,7 @@ class CarController(CarControllerBase):
     self.standstill_req = False
     self.permit_braking = True
     self.steer_rate_counter = 0
+    self.steer_rate_limit_frames = get_steer_rate_limit_frames(self.CP.carFingerprint)
     self.distance_button = 0
 
     # *** start long control state ***
@@ -345,8 +352,10 @@ class CarController(CarControllerBase):
     apply_torque = apply_meas_steer_torque_limits(new_torque, self.last_torque, CS.out.steeringTorqueEps, self.params)
 
     # >100 degree/sec steering fault prevention
-    self.steer_rate_counter, apply_steer_req = common_fault_avoidance(abs(CS.out.steeringRateDeg) >= MAX_STEER_RATE, lat_active,
-                                                                      self.steer_rate_counter, MAX_STEER_RATE_FRAMES)
+    self.steer_rate_counter, apply_steer_req = common_fault_avoidance(
+      abs(CS.out.steeringRateDeg) >= MAX_STEER_RATE, lat_active,
+      self.steer_rate_counter, self.steer_rate_limit_frames,
+    )
 
     if not lat_active:
       apply_torque = 0
@@ -518,7 +527,8 @@ class CarController(CarControllerBase):
 
         main_accel_cmd = 0. if self.CP.flags & ToyotaFlags.SECOC.value else pcm_accel_cmd
         can_sends.append(toyotacan.create_accel_command(self.packer, main_accel_cmd, pcm_cancel_cmd, self.permit_braking, self.standstill_req, lead,
-                                                        CS.acc_type, fcw_alert, self.distance_button, starpilot_toggles.reverse_cruise_increase))
+                                                        CS.acc_type, fcw_alert, self.distance_button,
+                                                        getattr(starpilot_toggles, "reverse_cruise_increase", False)))
         if self.CP.flags & ToyotaFlags.SECOC.value:
           acc_cmd_2 = toyotacan.create_accel_command_2(self.packer, pcm_accel_cmd)
           acc_cmd_2 = add_mac(self.secoc_key,
@@ -538,7 +548,8 @@ class CarController(CarControllerBase):
           can_sends.append(toyotacan.create_acc_cancel_command(self.packer))
         else:
           can_sends.append(toyotacan.create_accel_command(self.packer, 0, pcm_cancel_cmd, True, False, lead, CS.acc_type, False,
-                                                          self.distance_button, starpilot_toggles.reverse_cruise_increase))
+                                                          self.distance_button,
+                                                          getattr(starpilot_toggles, "reverse_cruise_increase", False)))
 
     # *** hud ui ***
     if self.CP.carFingerprint != CAR.TOYOTA_PRIUS_V:

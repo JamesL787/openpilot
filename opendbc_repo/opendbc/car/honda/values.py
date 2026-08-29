@@ -58,6 +58,9 @@ class HondaSafetyFlags(IntFlag):
   BOSCH_CANFD = 16
   GAS_INTERCEPTOR = 32
   NIDEC_HYBRID = 64
+  # Accord 11G MVL radar/camera handover messages. Keep the generic CAN-FD
+  # safety profile unchanged for other Honda CAN-FD platforms (for example CR-V 6G).
+  BOSCH_CANFD_MVL = 64
 
 
 class HondaFlags(IntFlag):
@@ -175,6 +178,11 @@ class CAR(Platforms):
       HondaCarDocs("Honda N-Box 2018", "All", min_steer_speed=5.),
     ],
     CarSpecs(mass=890., wheelbase=2.520, steerRatio=18.64),
+    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
+    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
+    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
+    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
+    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'acura_rdx_2020_can_generated', Bus.radar: 'honda_bosch_a_radar'},
   )
   HONDA_ACCORD = HondaBoschPlatformConfig(
@@ -185,6 +193,11 @@ class CAR(Platforms):
     ],
     # steerRatio: 11.82 is spec end-to-end
     CarSpecs(mass=3279 * CV.LB_TO_KG, wheelbase=2.83, steerRatio=16.33, centerToFrontRatio=0.39, tireStiffnessFactor=0.8467),
+    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
+    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
+    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
+    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
+    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.radar: 'honda_bosch_a_radar'},
     flags=HondaFlags.ALLOW_MANUAL_TRANS,
   )
@@ -192,8 +205,9 @@ class CAR(Platforms):
     [
       HondaCarDocs("Honda Accord 2023-25", "All"),
       HondaCarDocs("Honda Accord Hybrid 2023-25", "All"),
-  ],
-    CarSpecs(mass=3477 * CV.LB_TO_KG, wheelbase=2.83, steerRatio=16.0, centerToFrontRatio=0.39),
+    ],
+    CarSpecs(mass=3477 * CV.LB_TO_KG, wheelbase=2.83, steerRatio=16.7, centerToFrontRatio=0.39),
+    {Bus.pt: 'honda_common_canfd_generated', Bus.radar: 'honda_common_canfd_generated'},
   )
   HONDA_CIVIC_BOSCH = HondaBoschPlatformConfig(
     [
@@ -213,6 +227,11 @@ class CAR(Platforms):
   HONDA_CIVIC_BOSCH_DIESEL = HondaBoschPlatformConfig(
     [],  # don't show in docs
     HONDA_CIVIC_BOSCH.specs,
+    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
+    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
+    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
+    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
+    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.radar: 'honda_bosch_a_radar'},
   )
   HONDA_CIVIC_2022 = HondaBoschPlatformConfig(
@@ -232,6 +251,11 @@ class CAR(Platforms):
     [HondaCarDocs("Honda CR-V 2017-22", min_steer_speed=15. * CV.MPH_TO_MS)],
     # steerRatio: 12.3 is spec end-to-end
     CarSpecs(mass=3410 * CV.LB_TO_KG, wheelbase=2.66, steerRatio=16.0, centerToFrontRatio=0.41, tireStiffnessFactor=0.677),
+    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
+    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
+    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
+    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
+    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.body: 'honda_crv_ex_2017_body_generated', Bus.radar: 'honda_bosch_a_radar'},
     flags=HondaFlags.BOSCH_ALT_BRAKE,
   )
@@ -246,6 +270,11 @@ class CAR(Platforms):
     [HondaCarDocs("Honda CR-V Hybrid 2017-22", min_steer_speed=12. * CV.MPH_TO_MS)],
     # mass: mean of 4 models in kg, steerRatio: 12.3 is spec end-to-end
     CarSpecs(mass=1667, wheelbase=2.66, steerRatio=16, centerToFrontRatio=0.41, tireStiffnessFactor=0.677),
+    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
+    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
+    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
+    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
+    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'honda_civic_hatchback_ex_2017_can_generated', Bus.radar: 'honda_bosch_a_radar'},
   )
   HONDA_HRV_3G = HondaBoschPlatformConfig(
@@ -263,6 +292,11 @@ class CAR(Platforms):
   ACURA_RDX_3G = HondaBoschPlatformConfig(
     [HondaCarDocs("Acura RDX 2019-21", "All", min_steer_speed=3. * CV.MPH_TO_MS)],
     CarSpecs(mass=4068 * CV.LB_TO_KG, wheelbase=2.75, steerRatio=11.95, centerToFrontRatio=0.41, tireStiffnessFactor=0.677),  # as spec
+    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
+    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
+    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
+    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
+    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'acura_rdx_2020_can_generated', Bus.radar: 'honda_bosch_a_radar'},
     flags=HondaFlags.BOSCH_ALT_BRAKE,
   )
@@ -275,16 +309,31 @@ class CAR(Platforms):
   HONDA_INSIGHT = HondaBoschPlatformConfig(
     [HondaCarDocs("Honda Insight 2019-22", "All", min_steer_speed=3. * CV.MPH_TO_MS)],
     CarSpecs(mass=2987 * CV.LB_TO_KG, wheelbase=2.7, steerRatio=15.0, centerToFrontRatio=0.39, tireStiffnessFactor=0.82),  # as spec
+    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
+    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
+    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
+    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
+    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'honda_insight_ex_2019_can_generated', Bus.radar: 'honda_bosch_a_radar'},
   )
   HONDA_E = HondaBoschPlatformConfig(
     [HondaCarDocs("Honda e 2020", "All", min_steer_speed=3. * CV.MPH_TO_MS)],
     CarSpecs(mass=3338.8 * CV.LB_TO_KG, wheelbase=2.5, centerToFrontRatio=0.5, steerRatio=16.71, tireStiffnessFactor=0.82),
+    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
+    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
+    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
+    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
+    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'acura_rdx_2020_can_generated', Bus.radar: 'honda_bosch_a_radar'},
   )
   HONDA_E_ADVANCE = HondaBoschPlatformConfig(
     [],  # don't show in docs, base trim already in docs
     CarSpecs(mass=1527, wheelbase=2.5, centerToFrontRatio=0.5, steerRatio=16.71, tireStiffnessFactor=0.82),
+    # Bus.radar = the hand-written 16-slot Bosch-A object bank DBC (see radar_interface.py for the decode).
+    # RX-parse only; the decode itself takes no CAN authority, so factory AEB/CMBS/FCW stay live as long as
+    # stock longitudinal remains in control. Enabling openpilot longitudinal (alpha) disables all CMBS
+    # functionality, including AEB and FCW -- see Footnote.EXP_LONG and CarInterface.init()'s UDS
+    # CommunicationControl call, which suppresses the stock radar's longitudinal TX for the same reason.
     {Bus.pt: 'honda_e_advance_2020_can_generated', Bus.radar: 'honda_bosch_a_radar'},
   )
   HONDA_PILOT_4G = HondaBoschCANFDPlatformConfig(

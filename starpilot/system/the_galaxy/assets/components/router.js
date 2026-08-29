@@ -16,7 +16,7 @@ import { ScreenRecordings } from "/assets/components/recordings/screen_recording
 import { Sidebar } from "/assets/components/sidebar.js?v=lateral-tuning-1"
 import { SentryMode } from "/assets/components/tools/sentry.js"
 import { SpeedLimits } from "/assets/components/tools/speed_limits.js"
-import { ModelManager } from "/assets/components/tools/model_manager.js?v=20260303t"
+import { ModelManager } from "/assets/components/tools/model_manager.js?v=20260825a"
 import { LivePlots } from "/assets/components/tools/plots.js"
 import { ThemeMaker } from "/assets/components/tools/theme_maker.js"
 import { TestingGround } from "/assets/components/tools/testing_ground.js"

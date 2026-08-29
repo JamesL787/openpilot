@@ -113,8 +113,9 @@ GITLAB_SUBMISSIONS_PROJECT_ID = "71992109"
 GITLAB_TOKEN = os.environ.get("GITLAB_TOKEN", "")
 LEGACY_LATERAL_METHOD_API_PREFIX = "/api/" + "".join(("f", "t", "m"))
 VASM_CONFIGURATION_KEYS = {"VASMEnabled", "VASMConfidenceThreshold", "VASMSmoothSeconds", "VASMAnnotationConfig"}
-PIP_PREVIEW_CONFIGURATION_KEYS = {"PIPPreviewEnabled", "PIPPreviewMask", "PIPPreviewShowOnBlinker", "PIPPreviewShowOnBSM"}
+PIP_PREVIEW_CONFIGURATION_KEYS = {"PIPPreviewEnabled", "PIPPreviewMask", "PIPPreviewShowOnBlinker", "PIPPreviewShowOnBSM", "PIPPreviewInvert"}
 MODEL_SMOOTHING_KEYS = {"LatSmoothSeconds", "LongSmoothSeconds"}
+GALAXY_DEVELOPER_ONLY_KEYS = {"TurnSteeringLimitMuteSpeed"}
 PULSE_GLIDE_BUTTON_KEYS = {
   "CancelButtonControl", "DistanceButtonControl",
   "LongCancelButtonControl", "LongDistanceButtonControl",
@@ -126,6 +127,7 @@ SENTRY_NUMERIC_PARAM_BOUNDS = {
   "SentryModeSensitivity": (0.005, 1.0),
   "SentryModeWarningTime": (0.1, 10.0),
 }
+SENTRY_NOTIFICATION_RATE_LIMIT_SECONDS = 180.0
 
 GALAXY_DEPS_PATH = "/data/galaxy_deps"
 LEGACY_GALAXY_DEPS_PATH = "/data/" + "".join(chr(code) for code in (112, 111, 110, 100)) + "_deps"
@@ -788,6 +790,8 @@ def _capture_sentry_live_images() -> list[str]:
 
 
 _SENTRY_PUSH_LOCK = threading.Lock()
+_SENTRY_NOTIFICATION_RATE_LIMIT_LOCK = threading.Lock()
+_SENTRY_NOTIFICATION_LAST_AT: float | None = None
 _SENTRY_PUSH_PRIVATE_KEY_NAME = "sentry_vapid_private.pem"
 _SENTRY_PUSH_SUBSCRIPTIONS_NAME = "sentry_push_subscriptions.json"
 _SENTRY_PUSH_SUBJECT = os.getenv("STARPILOT_VAPID_SUBJECT", "mailto:galaxy@firestar.link")
@@ -910,6 +914,61 @@ def _sentry_notification_channels() -> dict[str, bool]:
   }
 
 
+def _sentry_notification_rate_limit_path() -> Path:
+  return _get_galaxy_dir() / "sentry_notification_rate_limit.json"
+
+
+def _load_sentry_notification_last_at() -> float | None:
+  try:
+    payload = json.loads(_sentry_notification_rate_limit_path().read_text())
+    value = float(payload.get("lastNotificationAt")) if isinstance(payload, dict) else None
+  except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    return None
+  return value if value is not None and math.isfinite(value) else None
+
+
+def _claim_sentry_notification_slot(event: dict) -> bool:
+  """Reserve the shared notification slot for a real Sentry event."""
+  global _SENTRY_NOTIFICATION_LAST_AT
+
+  now = time.time()
+  with _SENTRY_NOTIFICATION_RATE_LIMIT_LOCK:
+    persisted_last_at = _load_sentry_notification_last_at()
+    last_at = max(
+      (value for value in (_SENTRY_NOTIFICATION_LAST_AT, persisted_last_at) if value is not None),
+      default=None,
+    )
+    if last_at is not None:
+      elapsed = max(0.0, now - last_at)
+      if elapsed < SENTRY_NOTIFICATION_RATE_LIMIT_SECONDS:
+        remaining = SENTRY_NOTIFICATION_RATE_LIMIT_SECONDS - elapsed
+        cloudlog.info(
+          "Galaxy: Sentry notification suppressed by rate limit (%.0f seconds remaining; event=%s)",
+          remaining,
+          event.get("eventId", ""),
+        )
+        return False
+
+    _SENTRY_NOTIFICATION_LAST_AT = now
+    rate_limit_path = _sentry_notification_rate_limit_path()
+    temporary_path = rate_limit_path.with_suffix(".tmp")
+    try:
+      rate_limit_path.parent.mkdir(parents=True, exist_ok=True)
+      temporary_path.write_text(json.dumps({
+        "lastNotificationAt": now,
+        "eventId": str(event.get("eventId") or ""),
+      }, separators=(",", ":")))
+      temporary_path.chmod(0o600)
+      temporary_path.replace(rate_limit_path)
+    except OSError:
+      cloudlog.warning("Galaxy: unable to persist Sentry notification rate-limit state")
+      try:
+        temporary_path.unlink(missing_ok=True)
+      except OSError:
+        pass
+    return True
+
+
 def _sentry_test_notification_event() -> dict:
   return {
     "eventId": f"notification-test-{int(time.time())}-{secrets.token_hex(4)}",
@@ -970,7 +1029,12 @@ def _dispatch_sentry_push(event: dict) -> None:
       ])
 
 
-def _dispatch_sentry_event(event: dict) -> None:
+def _dispatch_sentry_event(event: dict, *, bypass_rate_limit: bool = False) -> None:
+  if not any(_sentry_notification_channels().values()):
+    return
+  if not bypass_rate_limit and not _claim_sentry_notification_slot(event):
+    return
+
   _dispatch_sentry_push(event)
   message = f"🚨 StarPilot Sentry Mode: {event['message']}"
   webhook = (params.get("SentryModeWebhook", encoding="utf-8") or "").strip()
@@ -1148,6 +1212,7 @@ TMUX_LOGS_PATH = Path("/data/tmux_logs")
 
 MODEL_DOWNLOAD_PARAM = "ModelToDownload"
 MODEL_DOWNLOAD_ALL_PARAM = "DownloadAllModels"
+ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM = "AllowGpuModelDownloadWithoutGpu"
 MODEL_DOWNLOAD_PROGRESS_PARAM = "ModelDownloadProgress"
 MODEL_CANCEL_DOWNLOAD_PARAM = "CancelModelDownload"
 MODEL_SORT_MODE_PARAM = "ModelSortMode"
@@ -5031,6 +5096,9 @@ def setup(app):
         if not params.get_bool("GalaxyDeveloperMode"):
           return jsonify({"error": "Pulse and Glide is available only with Galaxy Developer Mode enabled."}), 403
 
+      if key in GALAXY_DEVELOPER_ONLY_KEYS and not params.get_bool("GalaxyDeveloperMode"):
+        return jsonify({"error": f"{key} is available only with Galaxy Developer Mode enabled."}), 403
+
       if key in SENTRY_NUMERIC_PARAM_BOUNDS:
         minimum, maximum = SENTRY_NUMERIC_PARAM_BOUNDS[key]
         try:
@@ -5416,6 +5484,9 @@ def setup(app):
     params.put("CalibratedLateralAcceleration", 2.0)
     params.remove("CalibrationProgress")
     params.remove("CurvatureData")
+    params_memory.put("CalibratedLateralAcceleration", 2.0)
+    params_memory.put("CalibrationProgress", 0.0)
+    params_memory.remove("CurvatureData")
 
     return jsonify({
       "message": "Curve Speed Controller data reset. Training will restart on the next drive.",
@@ -5444,6 +5515,12 @@ def setup(app):
     result["AlphaLongitudinalAvailable"] = _get_alpha_longitudinal_available()
     result["HasRivianAngleHarness"] = _get_has_rivian_angle_harness()
     result["BoschARadarAvailable"] = _get_bosch_a_available()
+
+    for key in ("CalibratedLateralAcceleration", "CalibrationProgress"):
+      try:
+        result[key] = _get_current_param_value(key, float, defaults_lookup)
+      except Exception:
+        result[key] = None
 
     return jsonify(_sanitize_json_value(result)), 200
 
@@ -5671,11 +5748,13 @@ def setup(app):
 
     if model["installed"]:
       return jsonify({"message": f"\"{model['label']}\" is already installed."}), 200
-    if model["requiresGpu"] and not model["gpuAvailable"]:
+    allow_gpu_without_gpu = data.get("allowGpuWithoutGpu") is True
+    if model["requiresGpu"] and not model["gpuAvailable"] and not allow_gpu_without_gpu:
       return jsonify({"error": "This model requires a detected external GPU."}), 409
 
     params_memory.remove(MODEL_CANCEL_DOWNLOAD_PARAM)
     params_memory.remove(MODEL_DOWNLOAD_ALL_PARAM)
+    params_memory.put_bool(ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM, allow_gpu_without_gpu)
     params_memory.put(MODEL_DOWNLOAD_PARAM, model_key)
     params_memory.put(MODEL_DOWNLOAD_PROGRESS_PARAM, "Downloading...")
 
@@ -5689,12 +5768,18 @@ def setup(app):
     if params_memory.get_bool(MODEL_DOWNLOAD_ALL_PARAM) or (params_memory.get(MODEL_DOWNLOAD_PARAM, encoding="utf-8") or ""):
       return jsonify({"error": "A model download is already in progress."}), 409
 
-    missing_models = [model for model in get_model_catalog() if not model["installed"] and (not model["requiresGpu"] or model["gpuAvailable"])]
+    data = request.get_json(silent=True) or {}
+    allow_gpu_without_gpu = data.get("allowGpuWithoutGpu") is True
+    missing_models = [
+      model for model in get_model_catalog()
+      if not model["installed"] and (not model["requiresGpu"] or model["gpuAvailable"] or allow_gpu_without_gpu)
+    ]
     if not missing_models:
       return jsonify({"message": "All models are already installed."}), 200
 
     params_memory.remove(MODEL_CANCEL_DOWNLOAD_PARAM)
     params_memory.remove(MODEL_DOWNLOAD_PARAM)
+    params_memory.put_bool(ALLOW_GPU_DOWNLOAD_WITHOUT_GPU_PARAM, allow_gpu_without_gpu)
     params_memory.put_bool(MODEL_DOWNLOAD_ALL_PARAM, True)
     params_memory.put(MODEL_DOWNLOAD_PROGRESS_PARAM, "Downloading...")
 
@@ -6519,7 +6604,7 @@ def setup(app):
       "dashboard": dashboard_stats,
     }
     _STATS_RESPONSE_CACHE.update({
-      "updated_at": cache_now,
+      "updated_at": time.monotonic(),
       "payload": payload,
     })
     return payload
@@ -6681,11 +6766,13 @@ def setup(app):
   @app.route("/api/flm/status", methods=["GET"])
   def get_flm_status():
     is_onroad = params.get_bool("IsOnroad")
+    lane_centering = params.get_bool("LaneCentering")
     if is_onroad:
       flm_workspace.cancel_flm_if_onroad()
     workspace = flm_workspace.list_workspace()
     return jsonify({
       "isOnroad": is_onroad,
+      "laneCentering": lane_centering,
       "status": flm_workspace.read_flm_status(),
       "activeTrial": workspace.get("activeTrial"),
       "reports": workspace.get("reports", [])[:10],
@@ -6697,6 +6784,10 @@ def setup(app):
   def start_flm_analysis():
     if params.get_bool("IsOnroad"):
       return jsonify({"error": "FLM analysis can only run offroad."}), 409
+    if params.get_bool("LaneCentering"):
+      return jsonify({
+        "error": "Turn Lane Centering off before running FLM. Its correction must not be mixed into lateral-tuning analysis."
+      }), 409
 
     data = request.get_json(silent=True) or {}
     route_names = [str(route).strip() for route in data.get("routes", []) if str(route).strip()]
@@ -7238,6 +7329,7 @@ def setup(app):
     threading.Thread(
       target=_dispatch_sentry_event,
       args=(event,),
+      kwargs={"bypass_rate_limit": True},
       name="galaxy-sentry-notification-test",
       daemon=True,
     ).start()
@@ -7351,7 +7443,13 @@ def setup(app):
       event["imagePaths"] = _capture_sentry_test_images(event_id)
       _record_sentry_event(event)
       params.put("SentryModeLastEvent", json.dumps(event, separators=(",", ":")))
-      threading.Thread(target=_dispatch_sentry_event, args=(event,), name="galaxy-sentry-test-notify", daemon=True).start()
+      threading.Thread(
+        target=_dispatch_sentry_event,
+        args=(event,),
+        kwargs={"bypass_rate_limit": True},
+        name="galaxy-sentry-test-notify",
+        daemon=True,
+      ).start()
 
     threading.Thread(target=capture_and_publish, name="galaxy-sentry-test-capture", daemon=True).start()
     return jsonify({"accepted": True, "eventId": event_id}), 202

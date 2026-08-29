@@ -49,7 +49,6 @@ class DeveloperLayoutMici(NavScroller):
     # ******** Main Scroller ********
     self._adb_toggle = BigCircleParamControl(gui_app.texture("icons_mici/adb_short.png", 82, 82), "AdbEnabled", icon_offset=(0, 12))
     self._ssh_toggle = BigCircleParamControl(gui_app.texture("icons_mici/ssh_short.png", 82, 82), "SshEnabled", icon_offset=(0, 12))
-    self._use_prebuilt_toggle = BigParamControl("use prebuilt binaries", "UsePrebuilt")
     self._disable_wide_road_toggle = BigParamControl("disable wide road camera", "DisableWideRoad", toggle_callback=restart_needed_callback)
     self._joystick_toggle = BigToggle("joystick debug mode",
                                       initial_state=ui_state.params.get_bool("JoystickDebugMode"),
@@ -57,9 +56,6 @@ class DeveloperLayoutMici(NavScroller):
     self._long_maneuver_toggle = BigToggle("longitudinal maneuver mode",
                                            initial_state=ui_state.params.get_bool("LongitudinalManeuverMode"),
                                            toggle_callback=self._on_long_maneuver_mode)
-    self._lat_maneuver_toggle = BigToggle("lateral maneuver mode",
-                                          initial_state=ui_state.params.get_bool("LateralManeuverMode"),
-                                          toggle_callback=self._on_lat_maneuver_mode)
     self._alpha_long_toggle = BigToggle("alpha longitudinal",
                                         initial_state=ui_state.params.get_bool("AlphaLongitudinalEnabled"),
                                         toggle_callback=self._on_alpha_long_enabled)
@@ -71,11 +67,9 @@ class DeveloperLayoutMici(NavScroller):
       self._adb_toggle,
       self._ssh_toggle,
       self._ssh_keys_btn,
-      self._use_prebuilt_toggle,
       self._disable_wide_road_toggle,
       self._joystick_toggle,
       self._long_maneuver_toggle,
-      self._lat_maneuver_toggle,
       self._alpha_long_toggle,
       self._debug_mode_toggle,
     ])
@@ -84,21 +78,18 @@ class DeveloperLayoutMici(NavScroller):
     self._refresh_toggles = (
       ("AdbEnabled", self._adb_toggle),
       ("SshEnabled", self._ssh_toggle),
-      ("UsePrebuilt", self._use_prebuilt_toggle),
       ("DisableWideRoad", self._disable_wide_road_toggle),
       ("JoystickDebugMode", self._joystick_toggle),
       ("LongitudinalManeuverMode", self._long_maneuver_toggle),
-      ("LateralManeuverMode", self._lat_maneuver_toggle),
       ("AlphaLongitudinalEnabled", self._alpha_long_toggle),
       ("ShowDebugInfo", self._debug_mode_toggle),
     )
     onroad_blocked_toggles = (
       self._adb_toggle,
-      self._use_prebuilt_toggle,
       self._disable_wide_road_toggle,
       self._joystick_toggle,
     )
-    engaged_blocked_toggles = (self._long_maneuver_toggle, self._lat_maneuver_toggle, self._alpha_long_toggle)
+    engaged_blocked_toggles = (self._long_maneuver_toggle, self._alpha_long_toggle)
 
     # Disable toggles that require offroad
     for item in onroad_blocked_toggles:
@@ -143,12 +134,8 @@ class DeveloperLayoutMici(NavScroller):
       if not long_man_enabled:
         self._long_maneuver_toggle.set_checked(False)
         ui_state.params.put_bool("LongitudinalManeuverMode", False)
-
-      lat_man_enabled = ui_state.is_offroad()
-      self._lat_maneuver_toggle.set_enabled(lat_man_enabled)
     else:
       self._long_maneuver_toggle.set_enabled(False)
-      self._lat_maneuver_toggle.set_enabled(False)
       self._alpha_long_toggle.set_visible(False)
 
     # Refresh toggles from params to mirror external changes
@@ -160,23 +147,12 @@ class DeveloperLayoutMici(NavScroller):
     ui_state.params.put_bool("LongitudinalManeuverMode", False)
     self._long_maneuver_toggle.set_checked(False)
     ui_state.params.put_bool("LateralManeuverMode", False)
-    self._lat_maneuver_toggle.set_checked(False)
 
   def _on_long_maneuver_mode(self, state: bool):
     ui_state.params.put_bool("LongitudinalManeuverMode", state)
     ui_state.params.put_bool("JoystickDebugMode", False)
     self._joystick_toggle.set_checked(False)
     ui_state.params.put_bool("LateralManeuverMode", False)
-    self._lat_maneuver_toggle.set_checked(False)
-    restart_needed_callback(state)
-
-  def _on_lat_maneuver_mode(self, state: bool):
-    ui_state.params.put_bool("LateralManeuverMode", state)
-    ui_state.params.put_bool("ExperimentalMode", False)
-    ui_state.params.put_bool("JoystickDebugMode", False)
-    self._joystick_toggle.set_checked(False)
-    ui_state.params.put_bool("LongitudinalManeuverMode", False)
-    self._long_maneuver_toggle.set_checked(False)
     restart_needed_callback(state)
 
   def _on_alpha_long_enabled(self, state: bool):

@@ -9,8 +9,9 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.starpilot.common.model_versions import is_tinygrad_model_version
+from openpilot.starpilot.controls.lib.starpilot_vcruise import FT_TO_M, OFFSET_FT_MAX, OFFSET_FT_MIN
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
-from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, get_safe_obstacle_distance
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import desired_follow_distance
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import should_trigger_planner_fcw
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import STOP_DISTANCE
@@ -23,6 +24,10 @@ from openpilot.selfdrive.controls.lib.longitudinal_lead import LeadObservation
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_far_follow_output_slew_rates,
   get_follow_prebrake_min_headway,
+  get_honda_accord_lead_departure_tune,
+  get_honda_accord_stop_go_accel_cap,
+  get_honda_accord_stop_go_accel_rise_rate,
+  get_toyota_rav4_tss2_lead_departure_tune,
   get_force_stop_distance_bias,
   get_force_stop_handoff_distance,
   allow_radar_standstill_gap_settle,
@@ -32,6 +37,16 @@ from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   is_toyota_rav4_tss2_radar_follow_lead,
   get_toyota_sienna_post_departure_restop_cap,
   get_untracked_slow_lead_decel_scale,
+  get_toyota_prius_stopped_lead_obstacle_bias,
+  get_honda_crv_5g_stopped_lead_obstacle_bias,
+  get_honda_crv_5g_low_speed_stopped_lead_cap,
+  allow_honda_crv_5g_vision_gap_settle,
+  get_honda_crv_5g_early_radar_follow_cap,
+  get_standstill_gap_settle_max_extra_gap,
+  get_standstill_stopped_lead_guard_distance_margin,
+  get_standstill_stopped_lead_guard_max_lead_speed,
+  get_tracked_lead_catchup_bias_gain,
+  get_tracked_lead_catchup_headway_margins,
 )
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.selfdrive.car.cruise import V_CRUISE_UNSET
@@ -375,6 +390,11 @@ def get_vehicle_min_accel(CP, v_ego):
 
 # Restored planner constants retained by CEM, stop, and departure paths.
 A_CRUISE_MIN = -1.0
+# The stop distance runs ~9 m long through the mid-approach, which leaves the obstacle slack
+# so it stays silent and deceleration sags. Multiplicative so the trim scales with what is
+# left. Note the car parks where the obstacle sits, so this is also a placement bias — 0.85
+# stopped ~4.6 m short, 0.93 ~1.6 m.
+FORCE_STOP_OBSTACLE_TRIM = 0.93
 STANDSTILL_LEAD_CREEP_RELEASE_MIN_LEAD_SPEED = 0.25
 STANDSTILL_LEAD_CREEP_RELEASE_MIN_LEAD_ACCEL = 0.08
 STANDSTILL_LEAD_CREEP_RELEASE_MIN_GAP_MARGIN = 0.1
@@ -573,6 +593,7 @@ class LongitudinalPlanner:
     self.output_should_stop = False
     self.far_follow_brake_slew_rate, self.far_follow_release_slew_rate = get_far_follow_output_slew_rates(CP)
     self.untracked_slow_lead_decel_scale = get_untracked_slow_lead_decel_scale(CP)
+    self.tracked_lead_catchup_headway_margins = get_tracked_lead_catchup_headway_margins(CP)
     self.far_follow_output_slew_active = False
     self.model_launch_armed = False
     self.model_launch_stop_seen = False
@@ -583,6 +604,7 @@ class LongitudinalPlanner:
     self.lead_depart_release_hold_remaining = 0.0
     self.radar_standstill_gap_settle_elapsed = 0.0
     self.radar_standstill_gap_settle_active = False
+    self.tracked_lead_catchup_bias_gain = get_tracked_lead_catchup_bias_gain(CP)
 
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
@@ -1389,8 +1411,9 @@ class LongitudinalPlanner:
     ))
 
   @staticmethod
-  def is_radar_standstill_gap_settle_candidate(lead, v_ego, target_gap, active=False):
-    if lead is None or not lead.status or not bool(getattr(lead, "radar", False)):
+  def is_radar_standstill_gap_settle_candidate(lead, v_ego, target_gap, active=False,
+                                               allow_vision=False, max_extra_gap=RADAR_STANDSTILL_GAP_SETTLE_MAX_EXTRA_GAP):
+    if lead is None or not lead.status or (not bool(getattr(lead, "radar", False)) and not allow_vision):
       return False
     if float(v_ego) > RADAR_STANDSTILL_GAP_SETTLE_MAX_EGO_SPEED:
       return False
@@ -1398,15 +1421,20 @@ class LongitudinalPlanner:
       return False
     if abs(float(getattr(lead, "vLead", 0.0))) > RADAR_STANDSTILL_GAP_SETTLE_MAX_LEAD_SPEED:
       return False
+    if allow_vision and (
+      bool(getattr(lead, "radar", False)) or
+      float(getattr(lead, "modelProb", 0.0)) < 0.99
+    ):
+      return False
 
     lead_gap = float(getattr(lead, "dRel", 0.0))
     min_margin = RADAR_STANDSTILL_GAP_SETTLE_EXIT_MARGIN if active else RADAR_STANDSTILL_GAP_SETTLE_ENTRY_MARGIN
     return bool(
       lead_gap > target_gap + min_margin and
-      lead_gap <= target_gap + RADAR_STANDSTILL_GAP_SETTLE_MAX_EXTRA_GAP
+      lead_gap <= target_gap + float(max_extra_gap)
     )
 
-  def update_radar_standstill_gap_settle(self, sm, target_gap):
+  def update_radar_standstill_gap_settle(self, sm, target_gap, allow_vision=False, max_extra_gap=None):
     vetoed = bool(
       getattr(sm["carState"], "brakePressed", False) or
       getattr(sm["carState"], "gasPressed", False) or
@@ -1420,6 +1448,8 @@ class LongitudinalPlanner:
         float(sm["carState"].vEgo),
         target_gap,
         active=self.radar_standstill_gap_settle_active,
+        allow_vision=allow_vision,
+        max_extra_gap=(RADAR_STANDSTILL_GAP_SETTLE_MAX_EXTRA_GAP if max_extra_gap is None else max_extra_gap),
       )
     ]
 
@@ -1532,9 +1562,14 @@ class LongitudinalPlanner:
                                max(LEAD_DEPART_ACCEL_HOLD_FULL_GAP - LEAD_DEPART_ACCEL_HOLD_MIN_GAP, 0.1), 0.0, 1.0))
     lead_factor = float(np.clip((lead_speed - LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_SPEED) /
                                 max(LEAD_DEPART_ACCEL_HOLD_FULL_LEAD_SPEED - LEAD_DEPART_ACCEL_HOLD_MIN_LEAD_SPEED, 0.1), 0.0, 1.0))
-    accel_cap = LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL + (LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL - LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL) * np.clip(
+    departure_tune = get_honda_accord_lead_departure_tune(self.CP)
+    if departure_tune is None:
+      departure_tune = get_toyota_rav4_tss2_lead_departure_tune(self.CP)
+    max_accel = LEAD_DEPART_ACCEL_HOLD_MAX_ACCEL if departure_tune is None else departure_tune[0]
+    assist = LEAD_DEPART_ACCEL_ASSIST if departure_tune is None else departure_tune[1]
+    accel_cap = LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL + (max_accel - LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL) * np.clip(
       0.55 * lead_factor + 0.45 * gap_factor, 0.0, 1.0)
-    assisted_model_accel = float(model_desired_accel) + LEAD_DEPART_ACCEL_ASSIST
+    assisted_model_accel = float(model_desired_accel) + assist
     return min(accel_cap, max(assisted_model_accel, LEAD_DEPART_ACCEL_HOLD_MIN_ACCEL))
 
   def get_reusable_lead_depart_accel_floor(self, lead, v_ego, t_follow):
@@ -1621,6 +1656,25 @@ class LongitudinalPlanner:
       LOW_SPEED_WEAK_LEAD_ACCEL_CAP_MAX_ACCEL - LOW_SPEED_WEAK_LEAD_ACCEL_CAP_MIN_ACCEL
     ) * cap_strength
 
+  def get_honda_accord_stop_go_accel_target(self, lead, v_ego, previous_target, target, blocked):
+    """Smooth the Accord's low-speed lead launch without touching braking targets."""
+    if blocked or target <= 0.0:
+      return float(target)
+
+    cap = get_honda_accord_stop_go_accel_cap(self.CP, lead, v_ego)
+    if cap is None:
+      return float(target)
+
+    limited_target = min(float(target), cap)
+    if limited_target > float(previous_target):
+      rise_rate = get_honda_accord_stop_go_accel_rise_rate(self.CP)
+      if rise_rate > 0.0:
+        limited_target = min(
+          limited_target,
+          max(0.0, float(previous_target) + rise_rate * self.dt),
+        )
+    return float(limited_target)
+
   def get_standstill_stopped_lead_guard_cap(self, lead, v_ego, accel_min, stop_distance,
                                             release_ready, confident_depart_ready):
     if lead is None or not lead.status or release_ready or confident_depart_ready:
@@ -1638,13 +1692,16 @@ class LongitudinalPlanner:
 
     lead_speed = max(float(getattr(lead, "vLead", 0.0)), 0.0)
     lead_delta = lead_speed - float(v_ego)
+    max_lead_speed = get_standstill_stopped_lead_guard_max_lead_speed(
+      self.CP, STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_SPEED,
+    )
     max_distance = max(
       STANDSTILL_STOPPED_LEAD_GUARD_MIN_DISTANCE,
-      float(stop_distance) + STANDSTILL_STOPPED_LEAD_GUARD_DISTANCE_MARGIN,
+      float(stop_distance) + get_standstill_stopped_lead_guard_distance_margin(self.CP),
     )
     if (
       float(getattr(lead, "dRel", float("inf"))) > max_distance or
-      lead_speed > STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_SPEED or
+      lead_speed > max_lead_speed or
       lead_delta > STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_DELTA
     ):
       return None
@@ -1652,7 +1709,7 @@ class LongitudinalPlanner:
     distance_factor = float(np.clip((max_distance - float(lead.dRel)) /
                                     max(max_distance - STANDSTILL_STOPPED_LEAD_GUARD_MIN_DISTANCE, 0.1),
                                     0.0, 1.0))
-    speed_factor = float(np.clip(lead_speed / max(STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_SPEED, 0.1), 0.0, 1.0))
+    speed_factor = float(np.clip(lead_speed / max(max_lead_speed, 0.1), 0.0, 1.0))
     delta_factor = float(np.clip((STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_DELTA - lead_delta) /
                                  max(STANDSTILL_STOPPED_LEAD_GUARD_MAX_LEAD_DELTA, 0.1),
                                  0.0, 1.0))
@@ -2246,9 +2303,34 @@ class LongitudinalPlanner:
     force_stop_x = None
     force_stop_handoff_m = get_force_stop_handoff_distance(self.CP.carFingerprint)
     if sm['starpilotPlan'].forcingStop and sm['starpilotPlan'].forcingStopLength > force_stop_handoff_m:
+      stop_length = float(sm['starpilotPlan'].forcingStopLength)
+    else:
+      # pre-commit the envelope is only a speed ceiling, which the solver tracks with a lag;
+      # getattr so a stale cereal build degrades to the old behaviour instead of raising
+      stop_length = float(getattr(sm['starpilotPlan'], 'approachStopLength', 0.0))
+    if stop_length > force_stop_handoff_m:
+      # ForceStopDistanceOffset shifts the perceived line for the v_cruise ceiling, so it has
+      # to shift the obstacle too or the slider barely moves anything now that stop_x leads.
+      offset_ft = max(OFFSET_FT_MIN, min(OFFSET_FT_MAX, int(getattr(starpilot_toggles, 'force_stop_distance_offset', 0) or 0)))
       force_stop_x = (
-        float(sm['starpilotPlan'].forcingStopLength) + STOP_DISTANCE +
+        stop_length * FORCE_STOP_OBSTACLE_TRIM + offset_ft * FT_TO_M + STOP_DISTANCE +
         get_force_stop_distance_bias(self.CP.carFingerprint)
+      )
+
+    stopped_lead_obstacle_bias = (0.0, 0.0)
+    if (
+      self.mode == 'acc' and
+      not bool(getattr(sm['modelV2'].action, 'shouldStop', False)) and
+      not bool(getattr(sm['starpilotPlan'], 'redLight', False)) and
+      not bool(getattr(sm['starpilotPlan'], 'forcingStop', False)) and
+      not bool(getattr(sm['carState'], 'standstill', False))
+    ):
+      stopped_lead_obstacle_bias = tuple(
+        max(
+          get_toyota_prius_stopped_lead_obstacle_bias(self.CP, lead, scene_v_ego),
+          get_honda_crv_5g_stopped_lead_obstacle_bias(self.CP, lead, scene_v_ego),
+        )
+        for lead in (self.lead_one, self.lead_two)
       )
 
     self.mpc.update(sm['radarState'], v_cruise, x, v, a, j,
@@ -2258,7 +2340,10 @@ class LongitudinalPlanner:
                     smooth_duplicate_vision=nonurgent_duplicate_vision_follow and not panic_bypass,
                     stop_x=force_stop_x,
                     silverado_early_follow=early_truck_follow,
-                    modelV2=sm['modelV2'])
+                    modelV2=sm['modelV2'],
+                    lead_obstacle_bias=stopped_lead_obstacle_bias,
+                    tracked_lead_catchup_headway_margins=self.tracked_lead_catchup_headway_margins,
+                    tracked_lead_catchup_bias_gain=self.tracked_lead_catchup_bias_gain)
 
     self.a_desired_trajectory_full = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
@@ -2348,6 +2433,22 @@ class LongitudinalPlanner:
       if approach_lift_caps:
         raw_approach_lift_cap = min(approach_lift_caps)
 
+      if not experimental_mode:
+        early_radar_caps = [
+          cap for cap in (
+            get_honda_crv_5g_early_radar_follow_cap(
+              self.CP, self.lead_one, v_ego, vision_cap_accel_min,
+            ),
+            get_honda_crv_5g_early_radar_follow_cap(
+              self.CP, self.lead_two, v_ego, vision_cap_accel_min,
+            ),
+          ) if cap is not None
+        ]
+        if early_radar_caps:
+          early_radar_cap = min(early_radar_caps)
+          self.a_desired = min(self.a_desired, early_radar_cap)
+          output_a_target = min(output_a_target, early_radar_cap)
+
       pretracking_vision_caps = []
       for lead in (self.lead_one, self.lead_two):
         if lead.status and not bool(getattr(lead, "radar", False)):
@@ -2405,6 +2506,11 @@ class LongitudinalPlanner:
         if rav4_early_lead_cap is not None:
           rav4_early_lead_caps.append(rav4_early_lead_cap)
         cap = self.get_close_lead_brake_cap(lead, v_ego, output_accel_min)
+        if cap is not None:
+          close_lead_caps.append(cap)
+        cap = get_honda_crv_5g_low_speed_stopped_lead_cap(
+          self.CP, lead, v_ego, vision_cap_accel_min,
+        )
         if cap is not None:
           close_lead_caps.append(cap)
         slow_stop_cap = self.get_vision_slow_stopped_lead_cap(lead, v_ego, vision_cap_accel_min, effective_t_follow)
@@ -2526,8 +2632,13 @@ class LongitudinalPlanner:
       self.slow_creep_lead_depart_elapsed >= STANDSTILL_LEAD_CREEP_RELEASE_CONFIRM_TIME
     )
     radar_gap_settle_active = False
-    if allow_radar_standstill_gap_settle(self.CP):
-      radar_gap_settle_active = self.update_radar_standstill_gap_settle(sm, standstill_nudge_gap)
+    if allow_radar_standstill_gap_settle(self.CP) or allow_honda_crv_5g_vision_gap_settle(self.CP):
+      radar_gap_settle_active = self.update_radar_standstill_gap_settle(
+        sm,
+        standstill_nudge_gap,
+        allow_vision=allow_honda_crv_5g_vision_gap_settle(self.CP),
+        max_extra_gap=get_standstill_gap_settle_max_extra_gap(self.CP),
+      )
     else:
       self.radar_standstill_gap_settle_elapsed = 0.0
       self.radar_standstill_gap_settle_active = False
@@ -2937,6 +3048,31 @@ class LongitudinalPlanner:
     # can otherwise leave it creeping indefinitely at the maneuver-test cutoff.
     if force_slow_decel and scene_v_ego > 0.1:
       output_a_target = min(output_a_target, FORCE_DECEL_MIN_ACCEL)
+
+    try:
+      starpilot_car_state = sm['starpilotCarState']
+    except KeyError:
+      starpilot_car_state = None
+    driver_accel_pressed = bool(
+      getattr(sm['carState'], 'gasPressed', False) or
+      getattr(starpilot_car_state, 'accelPressed', False)
+    )
+    accord_stop_go_blocked = bool(
+      not lead_control_active or
+      output_should_stop or
+      vision_low_speed_stop_active or
+      depart_safety_veto or
+      radar_gap_settle_active or
+      getattr(sm['starpilotPlan'], 'forcingStop', False) or
+      getattr(sm['starpilotPlan'], 'redLight', False) or
+      driver_accel_pressed
+    )
+    accord_stop_go_target = self.get_honda_accord_stop_go_accel_target(
+      policy_lead, scene_v_ego, prev_output_a_target, output_a_target, accord_stop_go_blocked,
+    )
+    if accord_stop_go_target < output_a_target:
+      self.a_desired = min(self.a_desired, accord_stop_go_target)
+      output_a_target = accord_stop_go_target
 
     self.output_a_target = output_a_target
     self.output_should_stop = bool(output_should_stop or vision_low_speed_stop_active)
