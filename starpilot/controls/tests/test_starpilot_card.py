@@ -1103,7 +1103,6 @@ def test_conditional_chill_wheel_override_cycles_manual_state(monkeypatch, tmp_p
 
 def test_very_long_distance_press_does_not_repeat_long_action(monkeypatch, tmp_path):
   monkeypatch.setattr(spc, "Params", FakeParams)
-  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
   monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
 
   card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
@@ -1120,7 +1119,6 @@ def test_very_long_distance_press_does_not_repeat_long_action(monkeypatch, tmp_p
 
 def test_long_distance_press_runs_on_release(monkeypatch, tmp_path):
   monkeypatch.setattr(spc, "Params", FakeParams)
-  monkeypatch.setattr(spc, "is_FrogsGoMoo", lambda: False)
   monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
 
   card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
