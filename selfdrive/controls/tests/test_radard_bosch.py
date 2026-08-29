@@ -161,12 +161,14 @@ def test_civic_bosch_separates_kf_and_model_lead_probability_timing():
   assert radar_d.lead_prob_filters[1].dt == pytest.approx(radard.DT_MDL)
 
 
-def test_model_lead_probability_filters_use_model_timing_for_all_radars():
+def test_model_lead_probability_filters_use_radar_timing_for_non_bosch_a_radars():
   radar_d = radard.RadarD(radar_ts=0.1)
 
   assert radar_d.kalman_params.A[0][1] == pytest.approx(0.1)
-  # Lead probabilities are model-cycle inputs even when a caller supplies a different radar KF dt.
-  assert radar_d.lead_prob_filters[0].dt == pytest.approx(radard.DT_MDL)
+  # Nidec cadence can differ from Bosch-A cadence, so non-Bosch-A radars keep lead probabilities
+  # on the same dt as the KF -- only Bosch-A decouples them onto model-loop timing (see
+  # test_civic_bosch_separates_kf_and_model_lead_probability_timing above).
+  assert radar_d.lead_prob_filters[0].dt == pytest.approx(0.1)
 
 
 def test_non_honda_bosch_a_radars_keep_per_model_cycle_update_semantics(monkeypatch):

@@ -5,7 +5,7 @@ import pytest
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
 from openpilot.starpilot.common.starpilot_variables import PLANNER_TIME
-from openpilot.starpilot.controls.lib.curve_speed_controller import CSC_MAX_DECEL_RATE, CurveSpeedController
+from openpilot.starpilot.controls.lib.curve_speed_controller import CSC_MAX_DECEL_RATE, PARAM_REFRESH_FRAMES, CurveSpeedController
 from openpilot.starpilot.controls.lib.starpilot_vcruise import (
   FORCE_STOP_CAP_SLACK_M,
   FORCE_STOP_TURN_VETO_STOP_SEEN_HOLD_TIME,
@@ -297,19 +297,29 @@ def test_curve_speed_controller_persists_data_after_leaving_curve():
   assert any(key == "CurvatureData" for key, _ in planner.params.writes)
 
 
-def test_curve_speed_controller_publishes_live_values_to_memory_params():
+def test_curve_speed_controller_refreshes_lateral_accel_from_params_periodically():
+  """No learner to publish memory params anymore -- log_data() instead re-reads the static
+  slider param on a fixed cadence (PARAM_REFRESH_FRAMES) so a live edit takes effect without
+  a restart. See curve_speed_controller.py's update_lateral_acceleration()."""
   planner, vcruise = make_vcruise(road_curvature=0.02)
   sm = make_sm(standstill=False)
-  sm["carControl"].longActive = False
-  planner.driving_in_curve = True
-  planner.lateral_acceleration = 2.4
-  vcruise.csc.training_timer = PLANNER_TIME
+
+  refresh_calls = []
+  vcruise.csc.update_lateral_acceleration = lambda: refresh_calls.append(vcruise.csc._frame)
+
+  for _ in range(PARAM_REFRESH_FRAMES - 1):
+    vcruise.csc.log_data(20.0, sm)
+  assert refresh_calls == []
 
   vcruise.csc.log_data(20.0, sm)
+  assert len(refresh_calls) == 1
 
-  assert any(key == "CalibratedLateralAcceleration" for key, _ in planner.params_memory.writes)
-  assert any(key == "CalibrationProgress" for key, _ in planner.params_memory.writes)
-  assert planner.params_memory.values["CalibrationProgress"] > 0.0
+  for _ in range(PARAM_REFRESH_FRAMES - 1):
+    vcruise.csc.log_data(20.0, sm)
+  assert len(refresh_calls) == 1
+
+  vcruise.csc.log_data(20.0, sm)
+  assert len(refresh_calls) == 2
 
 
 def test_curve_speed_controller_ramps_toward_curve_speed_at_bounded_rate():
