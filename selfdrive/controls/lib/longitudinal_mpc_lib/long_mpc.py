@@ -152,7 +152,6 @@ T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 LEAD_T_IDXS_MODEL = np.asarray(ModelConstants.LEAD_T_IDXS, dtype=np.float64)
-LEAD_TRAJ_LEN = ModelConstants.LEAD_TRAJ_LEN
 COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
 
@@ -627,52 +626,10 @@ class LongitudinalMpc:
     lead_xv = np.column_stack((x_lead_traj, v_lead_traj))
     return lead_xv
 
-  @staticmethod
-  def model_lead_trajectory(lead, model_lead, v_ego):
-    """Lead trajectory taken from the model's predicted horizon instead of extrapolated.
-
-    Anchored at the radar's h=0 so measured distance and speed still set the near field;
-    only the shape beyond h=0 comes from the model. This lets the MPC see a lead that the
-    model expects to keep decelerating (red light) or keep accelerating (cut-in), instead
-    of assuming its acceleration decays to zero. See commaai/openpilot#37824.
-
-    Returns None if the model output is unusable, so the caller falls back to extrapolation.
-    """
-    mx = np.asarray(model_lead.x, dtype=np.float64)
-    mv = np.asarray(model_lead.v, dtype=np.float64)
-    if mx.size != LEAD_TRAJ_LEN or mv.size != LEAD_TRAJ_LEN:
-      return None
-    if not (np.all(np.isfinite(mx)) and np.all(np.isfinite(mv))):
-      return None
-
-    x_traj = float(lead.dRel) + (mx - mx[0])
-    v_traj = float(lead.vLead) + (mv - mv[0])
-
-    # Same crash guard as the extrapolated path: MPC will not converge if an immediate
-    # crash is expected, so lift h=0 to the minimum distance still brakeable.
-    v_lead_0 = float(v_traj[0])
-    min_x_lead = ((v_ego + v_lead_0) / 2) * (v_ego - v_lead_0) / (-ACCEL_MIN * 2)
-    x_traj[0] = max(x_traj[0], min_x_lead)
-    v_traj = np.clip(v_traj, 0.0, 1e8)
-
-    # maximum.accumulate keeps x monotonic after interpolation; a lead that closes on us
-    # is expressed through v, never through x going backwards.
-    x_mpc = np.maximum.accumulate(np.interp(T_IDXS, LEAD_T_IDXS_MODEL, x_traj))
-    v_mpc = np.interp(T_IDXS, LEAD_T_IDXS_MODEL, v_traj)
-    return np.column_stack((x_mpc, v_mpc))
-
   def process_lead(self, lead, tracking_lead=True, t_follow=None, *, lead_index=0,
                    smooth_duplicate_vision=False, model_lead=None):
     v_ego = self.x0[1]
     lead_active = lead is not None and lead.status and tracking_lead
-
-    # Model-trajectory path. Runs unconditionally now, matching upstream; model_lead is
-    # only ever None when the model didn't produce a usable prediction this cycle, in
-    # which case this falls through to the extrapolation below.
-    if model_lead is not None and lead_active and float(getattr(model_lead, "prob", 0.0)) > 0.5:
-      lead_xv = self.model_lead_trajectory(lead, model_lead, v_ego)
-      if lead_xv is not None:
-        return lead_xv
 
     if lead_active:
       model_lead_xv = build_model_lead_trajectory(model_lead, lead, v_ego)

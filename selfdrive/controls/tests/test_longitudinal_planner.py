@@ -586,6 +586,16 @@ def test_model_lead_trajectory_falls_back_for_urgent_raw_lead(d_rel, v_lead, a_l
 
   assert build_model_lead_trajectory(model_lead, raw_lead, 20.0) is None
 
+  mpc = LongitudinalMpc()
+  mpc.set_cur_state(20.0, 0.0)
+  actual = mpc.process_lead(raw_lead, model_lead=model_lead)
+
+  legacy_mpc = LongitudinalMpc()
+  legacy_mpc.set_cur_state(20.0, 0.0)
+  expected = legacy_mpc.process_lead(raw_lead, model_lead=None)
+
+  np.testing.assert_allclose(actual, expected)
+
 
 def set_model_launch_trajectory(model, *, wait_time: float = 0.6, accel: float = 1.0):
   times = np.asarray(ModelConstants.T_IDXS, dtype=float)
