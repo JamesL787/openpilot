@@ -138,6 +138,7 @@ LEAD_ACCEL_TAU = 1.5
 FCW_MIN_MODEL_PROB = 0.9
 FCW_MIN_CLOSING_SPEED = 0.5
 FCW_MAX_TTC = 4.0
+RAW_LEAD_SAFETY_DISTANCE = 40.0
 MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE = 0.5
 MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC = 7.0
 
@@ -156,7 +157,7 @@ COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
 
 
-def build_model_lead_trajectory(model_lead, radar_lead, v_ego):
+def build_model_lead_trajectory(model_lead, radar_lead, v_ego, *, raw_geometry_guard=False):
   """Build a model-predicted lead path while preserving the raw h=0 anchor."""
   if model_lead is None or radar_lead is None or not bool(getattr(radar_lead, "status", False)):
     return None
@@ -187,8 +188,17 @@ def build_model_lead_trajectory(model_lead, radar_lead, v_ego):
   raw_lead_brake = max(0.0, -float(getattr(radar_lead, "aLeadK", 0.0)))
   closing_speed = max(0.0, float(v_ego) - raw_v_lead)
   ttc = raw_d_rel / max(closing_speed, 1e-3) if closing_speed > 0.1 else float("inf")
-  if (raw_lead_brake > MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE or
-      (closing_speed > 0.75 and ttc < MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC)):
+
+  if raw_geometry_guard:
+    # Some native radar sources can produce short-lived pessimistic aLeadK estimates.
+    # In that case do not abandon a model-backed future trajectory solely because of
+    # derived lead acceleration. Keep the raw dRel/vLead h=0 anchor, and fall back to
+    # the conservative radar trajectory when directly measured geometry enters the
+    # same close/FCW safety envelope used by the planner's post-MPC brake guard.
+    if raw_d_rel <= RAW_LEAD_SAFETY_DISTANCE or ttc <= FCW_MAX_TTC:
+      return None
+  elif (raw_lead_brake > MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE or
+        (closing_speed > 0.75 and ttc < MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC)):
     return None
 
   # The model contributes future deltas only. This preserves raw lead source
@@ -428,9 +438,10 @@ def gen_long_ocp():
 
 
 class LongitudinalMpc:
-  def __init__(self, mode='acc', dt=DT_MDL):
+  def __init__(self, mode='acc', dt=DT_MDL, raw_geometry_model_guard=False):
     self.mode = mode
     self.dt = dt
+    self.raw_geometry_model_guard = bool(raw_geometry_model_guard)
     self.solver = AcadosOcpSolverCython(MODEL_NAME, ACADOS_SOLVER_TYPE, N)
     self.source = SOURCES[2]
     # Initialize smoothing filters with default time constants
@@ -632,7 +643,15 @@ class LongitudinalMpc:
     lead_active = lead is not None and lead.status and tracking_lead
 
     if lead_active:
-      model_lead_xv = build_model_lead_trajectory(model_lead, lead, v_ego)
+      model_lead_xv = build_model_lead_trajectory(
+        model_lead,
+        lead,
+        v_ego,
+        raw_geometry_guard=(
+          self.raw_geometry_model_guard and
+          bool(getattr(lead, "radar", False))
+        ),
+      )
       if model_lead_xv is not None:
         return model_lead_xv
 

@@ -16,6 +16,7 @@ from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, get_safe_obstacle_distance
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import desired_follow_distance
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import FCW_MAX_TTC
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import RAW_LEAD_SAFETY_DISTANCE
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import should_trigger_planner_fcw
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import STOP_DISTANCE
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
@@ -90,7 +91,6 @@ MODEL_LAUNCH_MOVING_SPEED = 1.2
 MODEL_LAUNCH_MAX_ACCEL = 1.5
 RAW_LEAD_SAFETY_MIN_CLOSING_SPEED = 0.5
 RAW_LEAD_SAFETY_TTC = 7.0
-RAW_LEAD_SAFETY_DISTANCE = 40.0
 RAW_RADAR_STOPPED_LEAD_MAX_SPEED = 1.0
 RAW_RADAR_STOPPED_LEAD_MAX_DISTANCE = 120.0
 RAW_LEAD_LOW_SPEED_HOLD_MAX_EGO_SPEED = 4.5
@@ -565,7 +565,10 @@ class LongitudinalPlanner:
     self.CP = CP
     self.honda_bosch_a_radar = CP.brand == "honda" and CP.carFingerprint in HONDA_BOSCH_A and not CP.radarUnavailable
     self.longitudinal_actuator_delay = max(DT_MDL, float(CP.longitudinalActuatorDelay))
-    self.mpc = LongitudinalMpc(dt=dt)
+    self.mpc = LongitudinalMpc(
+      dt=dt,
+      raw_geometry_model_guard=self.honda_bosch_a_radar,
+    )
     self.fcw = False
     self.dt = dt
     self.model_allow_throttle = True
