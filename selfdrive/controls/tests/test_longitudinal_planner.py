@@ -631,20 +631,49 @@ def test_bosch_raw_geometry_guard_keeps_model_trajectory_for_nonurgent_pessimist
 
 
 @pytest.mark.parametrize(
-  ("d_rel", "v_lead"),
+  ("v_ego", "d_rel", "v_lead", "a_lead"),
   [
-    (35.0, 20.0),  # Close even if instantaneous raw TTC is long/infinite.
-    (52.0, 13.0),  # Farther away but inside the FCW TTC horizon.
-    (80.0, 0.0),   # Genuine stopped lead at highway speed.
+    (29.55, 25.86, 26.78, -3.51),  # ID44 peak closing-speed transient.
+    (25.43, 23.92, 25.87, -2.24),  # ID44 hard-brake floor after closing subsides.
   ],
 )
-def test_bosch_raw_geometry_guard_keeps_urgent_radar_fallback(d_rel, v_lead):
+def test_bosch_raw_geometry_guard_keeps_model_trajectory_for_peter_id44(v_ego, d_rel, v_lead, a_lead):
+  raw_lead = make_lead(
+    status=True,
+    d_rel=d_rel,
+    v_lead=v_lead,
+    a_lead=a_lead,
+    radar=True,
+    model_prob=0.99,
+  )
+  _, model_lead = make_model_lead()
+
+  # Preserve generic behavior: aLeadK alone still rejects the model trajectory.
+  assert build_model_lead_trajectory(model_lead, raw_lead, v_ego) is None
+  assert build_model_lead_trajectory(
+    model_lead,
+    raw_lead,
+    v_ego,
+    raw_geometry_guard=True,
+  ) is not None
+
+
+@pytest.mark.parametrize(
+  ("d_rel", "v_lead", "a_lead"),
+  [
+    (10.0, 27.0, -3.0),  # Genuinely close lead, even without instantaneous closing.
+    (35.0, 20.0, -3.0),  # Closing requires meaningful deceleration before the stop gap.
+    (52.0, 13.0, -3.0),  # Farther away but inside the FCW TTC horizon.
+    (80.0, 0.0, -3.0),   # Genuine stopped lead at highway speed.
+  ],
+)
+def test_bosch_raw_geometry_guard_keeps_urgent_radar_fallback(d_rel, v_lead, a_lead):
   v_ego = 27.0
   raw_lead = make_lead(
     status=True,
     d_rel=d_rel,
     v_lead=v_lead,
-    a_lead=-3.0,
+    a_lead=a_lead,
     radar=True,
     model_prob=0.99,
   )

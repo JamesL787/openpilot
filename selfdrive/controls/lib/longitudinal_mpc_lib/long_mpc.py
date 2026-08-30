@@ -155,6 +155,10 @@ T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 LEAD_T_IDXS_MODEL = np.asarray(ModelConstants.LEAD_T_IDXS, dtype=np.float64)
 COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
+# Civic-Bosch raw-geometry policy values. These are derived from existing planner
+# constants, not recovered Bosch calibration limits.
+MODEL_LEAD_TRAJECTORY_RAW_MIN_DISTANCE = 2.0 * STOP_DISTANCE
+MODEL_LEAD_TRAJECTORY_RAW_MAX_REQUIRED_DECEL = MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE
 
 
 def build_model_lead_trajectory(model_lead, radar_lead, v_ego, *, raw_geometry_guard=False):
@@ -192,10 +196,15 @@ def build_model_lead_trajectory(model_lead, radar_lead, v_ego, *, raw_geometry_g
   if raw_geometry_guard:
     # Some native radar sources can produce short-lived pessimistic aLeadK estimates.
     # In that case do not abandon a model-backed future trajectory solely because of
-    # derived lead acceleration. Keep the raw dRel/vLead h=0 anchor, and fall back to
-    # the conservative radar trajectory when directly measured geometry enters the
-    # same close/FCW safety envelope used by the planner's post-MPC brake guard.
-    if raw_d_rel <= RAW_LEAD_SAFETY_DISTANCE or ttc <= FCW_MAX_TTC:
+    # derived lead acceleration. Keep the raw dRel/vLead h=0 anchor, and use measured
+    # closing geometry to decide whether the conservative radar trajectory is needed.
+    # The required deceleration is the constant relative deceleration needed to shed
+    # closing speed while preserving STOP_DISTANCE; it is not an aLeadK estimate.
+    usable_gap = max(raw_d_rel - STOP_DISTANCE, 1e-3)
+    required_decel = closing_speed ** 2 / (2.0 * usable_gap)
+    if (raw_d_rel <= MODEL_LEAD_TRAJECTORY_RAW_MIN_DISTANCE or
+        ttc <= FCW_MAX_TTC or
+        required_decel >= MODEL_LEAD_TRAJECTORY_RAW_MAX_REQUIRED_DECEL):
       return None
   elif (raw_lead_brake > MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE or
         (closing_speed > 0.75 and ttc < MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC)):
