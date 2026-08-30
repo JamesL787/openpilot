@@ -209,6 +209,8 @@ def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):
 
 
 def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
+  call_order = []
+
   class FakeTensor:
     @staticmethod
     def from_blob(*_args, **_kwargs):
@@ -216,6 +218,7 @@ def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
 
   class FakeOutput:
     def numpy(self):
+      call_order.append("output_sync")
       return np.array([np.nan], dtype=np.float32)
 
   state = modeld.ModelState.__new__(modeld.ModelState)
@@ -236,6 +239,7 @@ def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
     "big_tfm": np.zeros((3, 3), dtype=np.float32),
   }
   state.prev_desire = np.zeros(8, dtype=np.float32)
+  state.prev_blinker_on = False
   state.warp_input_keys = ()
   state.policy_input_keys = ()
   state.input_queues = {}
@@ -254,8 +258,14 @@ def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
   inputs = {"desire_pulse": np.zeros(8, dtype=np.float32)}
 
   callbacks = []
+
+  def send_telemetry():
+    call_order.append("telemetry")
+    callbacks.append("sent")
+
   with pytest.raises(RuntimeError, match="external GPU model output not finite"):
-    state.run(buffers, transforms, inputs, False, lambda: callbacks.append("sent"))
+    state.run(buffers, transforms, inputs, False, after_output_sync=send_telemetry)
+  assert call_order == ["output_sync", "telemetry"]
   assert callbacks == ["sent"]
 
 

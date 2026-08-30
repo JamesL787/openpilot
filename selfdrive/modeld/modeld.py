@@ -627,7 +627,7 @@ class ModelState:
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
           inputs: dict[str, np.ndarray], prepare_only: bool, blinker_on: bool = False,
-          after_enqueue: Callable[[], None] | None = None) -> dict[str, np.ndarray] | None:
+          after_output_sync: Callable[[], None] | None = None) -> dict[str, np.ndarray] | None:
     frames: dict[str, Tensor] = {}
     for key, buf in bufs.items():
       ptr = np.frombuffer(buf.data, dtype=np.uint8).ctypes.data
@@ -684,9 +684,11 @@ class ModelState:
         img=img,
         big_img=big_img,
       )
-    if after_enqueue is not None:
-      after_enqueue()
     outputs = [output.numpy().flatten() for output in output_tensors]
+    # output.numpy() synchronizes the GPU queue. Keep USB telemetry reads after
+    # that synchronization so they cannot contend with in-flight model work.
+    if after_output_sync is not None:
+      after_output_sync()
 
     if self.uses_external_gpu and any(not np.isfinite(output).all() for output in outputs):
       raise RuntimeError("external GPU model output not finite")
@@ -1014,7 +1016,7 @@ def main(demo=False):
       model_output = model.run(
         bufs, transforms, inputs, prepare_only,
         blinker_on=blinker_on,
-        after_enqueue=chestnut_state.send if send_chestnut else None,
+        after_output_sync=chestnut_state.send if send_chestnut else None,
       )
     except Exception:
       if not external_gpu_active or small_model is None:
