@@ -597,6 +597,87 @@ def test_model_lead_trajectory_falls_back_for_urgent_raw_lead(d_rel, v_lead, a_l
   np.testing.assert_allclose(actual, expected)
 
 
+def test_bosch_raw_geometry_guard_keeps_model_trajectory_for_nonurgent_pessimistic_alead():
+  # Peter B2-style case: stable native track and raw geometry are nonurgent, but
+  # the second-stage radar aLeadK is temporarily much more pessimistic than the
+  # model trajectory. Derived acceleration alone must not force the legacy path.
+  v_ego = 19.041454
+  raw_lead = make_lead(
+    status=True,
+    d_rel=42.524639,
+    v_lead=14.900833,
+    a_lead=-4.004934,
+    radar=True,
+    model_prob=0.955,
+  )
+  _, model_lead = make_model_lead()
+
+  # Generic/non-Bosch behavior remains unchanged.
+  assert build_model_lead_trajectory(model_lead, raw_lead, v_ego) is None
+
+  expected = build_model_lead_trajectory(
+    model_lead,
+    raw_lead,
+    v_ego,
+    raw_geometry_guard=True,
+  )
+  assert expected is not None
+
+  mpc = LongitudinalMpc(raw_geometry_model_guard=True)
+  mpc.set_cur_state(v_ego, 0.0)
+  actual = mpc.process_lead(raw_lead, model_lead=model_lead)
+
+  np.testing.assert_allclose(actual, expected)
+
+
+@pytest.mark.parametrize(
+  ("d_rel", "v_lead"),
+  [
+    (35.0, 20.0),  # Close even if instantaneous raw TTC is long/infinite.
+    (52.0, 13.0),  # Farther away but inside the FCW TTC horizon.
+    (80.0, 0.0),   # Genuine stopped lead at highway speed.
+  ],
+)
+def test_bosch_raw_geometry_guard_keeps_urgent_radar_fallback(d_rel, v_lead):
+  v_ego = 27.0
+  raw_lead = make_lead(
+    status=True,
+    d_rel=d_rel,
+    v_lead=v_lead,
+    a_lead=-3.0,
+    radar=True,
+    model_prob=0.99,
+  )
+  _, model_lead = make_model_lead()
+
+  assert build_model_lead_trajectory(
+    model_lead,
+    raw_lead,
+    v_ego,
+    raw_geometry_guard=True,
+  ) is None
+
+  guarded_mpc = LongitudinalMpc(raw_geometry_model_guard=True)
+  guarded_mpc.set_cur_state(v_ego, 0.0)
+  actual = guarded_mpc.process_lead(raw_lead, model_lead=model_lead)
+
+  legacy_mpc = LongitudinalMpc()
+  legacy_mpc.set_cur_state(v_ego, 0.0)
+  expected = legacy_mpc.process_lead(raw_lead, model_lead=None)
+
+  np.testing.assert_allclose(actual, expected)
+
+
+def test_civic_bosch_planner_enables_raw_geometry_model_guard():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
+  CP.radarUnavailable = False
+
+  planner = LongitudinalPlanner(CP)
+
+  assert planner.honda_bosch_a_radar
+  assert planner.mpc.raw_geometry_model_guard
+
+
 def set_model_launch_trajectory(model, *, wait_time: float = 0.6, accel: float = 1.0):
   times = np.asarray(ModelConstants.T_IDXS, dtype=float)
   moving_time = np.maximum(times - wait_time, 0.0)
