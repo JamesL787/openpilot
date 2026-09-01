@@ -109,6 +109,35 @@ NRDR_MODIFIED_EPS_KF_CARS = frozenset({
 })
 
 
+
+_TURN_IN_ASYMMETRY_PATH = "/data/HondaTurnInAsymmetry"
+_UNWIND_ASYMMETRY_PATH = "/data/HondaUnwindAsymmetry"
+
+
+def _read_turn_in_asymmetry(default: float = 1.0) -> float:
+  """Percent of the Clarity-fitted left/right turn-in split, 100 = unchanged, 0 = symmetric."""
+  try:
+    with open(_TURN_IN_ASYMMETRY_PATH, "rb") as f:
+      value = float(f.read().strip()) / 100.0
+  except (OSError, ValueError, TypeError):
+    return default
+  if not math.isfinite(value):
+    return default
+  return min(max(value, 0.0), 1.0)
+
+
+def _read_unwind_asymmetry(default: float = 1.0) -> float:
+  """Percent of the Clarity-fitted left/right UNWIND split, 100 = unchanged, 0 = symmetric."""
+  try:
+    with open(_UNWIND_ASYMMETRY_PATH, "rb") as f:
+      value = float(f.read().strip()) / 100.0
+  except (OSError, ValueError, TypeError):
+    return default
+  if not math.isfinite(value):
+    return default
+  return min(max(value, 0.0), 1.0)
+
+
 def get_nrdr_modified_eps_kf(v_ego: float) -> float:
   return float(np.interp(v_ego, NRDR_MODIFIED_EPS_KF_SPEED_BP, NRDR_MODIFIED_EPS_KF_V))
 
@@ -256,6 +285,8 @@ def _clarity_eps_pid_output_scale(
   center_taper_high: float,
   center_boost_threshold_deg: float,
   center_boost_min_speed_ms: float,
+  turn_in_asymmetry: float = 1.0,
+  unwind_asymmetry: float = 1.0,
 ) -> float:
   abs_angle = abs(desired_angle_deg)
   speed_weight = min(max((v_ego - 4.0) / 10.0, 0.0), 1.0)
@@ -275,12 +306,43 @@ def _clarity_eps_pid_output_scale(
     center_speed_weight = 1.0
   center_taper = center_taper_high * center_taper_scale * center_speed_weight
 
-  mid_turn_scale = 0.1200 if is_left else 0.0150
-  mid_turn_turn_in_scale = -0.5500 if is_left else -0.0524
-  mid_turn_unwind_scale = -0.0743 if is_left else -0.0842
-  base_scale = 0.0722 if is_left else 0.0972
-  turn_in_scale = -0.0799 if is_left else 0.0888
-  unwind_scale = 0.1600 if is_left else 0.2000
+  # These constants were fitted on a Clarity and are strongly direction-asymmetric on TURN-IN:
+  # at a large angle above ~26 mph they floor a left turn-in at 0.6863 while giving a right
+  # turn-in 1.113-1.149, a 1.62x gap. `turn_in_asymmetry` blends the left turn-in constants
+  # toward the right ones so the split can be measured on a car that is not a Clarity:
+  # 1.0 keeps the Clarity behaviour exactly, 0.0 makes turn-in direction-symmetric.
+  #
+  # Hold/unwind is bit-identical at every knob setting: nothing on that path is blended.
+  a = min(max(float(turn_in_asymmetry), 0.0), 1.0)
+  if is_left:
+    # Blend ONLY the two turn-in-phase constants. mid_turn_scale and base_scale are shared with
+    # the hold/unwind phase: blending them too (as this did originally) bought turn-in strength by
+    # weakening left corner EXIT, which showed up on the road as the car holding ~8-15 deg too much
+    # left on the way out of a curve. Leaving them alone gives MORE turn-in for zero exit penalty
+    # -- at knob 65, 0.796 instead of 0.768, with exit unchanged rather than -2.9%.
+    mid_turn_scale = 0.1200
+    base_scale = 0.0722
+    mid_turn_turn_in_scale = -0.5500 * a + -0.0524 * (1.0 - a)
+    turn_in_scale = -0.0799 * a + 0.0888 * (1.0 - a)
+  else:
+    mid_turn_scale = 0.0150
+    mid_turn_turn_in_scale = -0.0524
+    base_scale = 0.0972
+    turn_in_scale = 0.0888
+  # The UNWIND constants are Clarity-asymmetric too, in the direction that makes a left corner
+  # exit badly: left keeps more holding torque on the way out (0.1600 vs 0.2000 reduction), so a
+  # left exit unwinds slower and over-rotates while a right exit under-rotates. Measured left
+  # exits +5.08/+7.34 deg, right exits -2.65/-5.36 -- both signs match. Same disease as turn-in.
+  # 1.0 keeps the Clarity behaviour exactly, 0.0 gives a left exit the right-hand constants.
+  # Note the low-speed-unwind branch below bypasses these entirely, so very slow exits are
+  # unaffected at any setting.
+  b = min(max(float(unwind_asymmetry), 0.0), 1.0)
+  if is_left:
+    mid_turn_unwind_scale = -0.0743 * b + -0.0842 * (1.0 - b)
+    unwind_scale = 0.1600 * b + 0.2000 * (1.0 - b)
+  else:
+    mid_turn_unwind_scale = -0.0842
+    unwind_scale = 0.2000
 
   scale = 1.0 + (center_weight * center_taper)
   scale += speed_weight * mid_turn_weight * mid_turn_scale
@@ -357,6 +419,8 @@ class LatControlPID(LatControl):
     self.unwind_boost_elapsed = 0.0
     self.lat_stiction = LatStiction(dt, self.steer_max)
     self.lat_stiction_enabled = False
+    self.turn_in_asymmetry = 1.0
+    self.unwind_asymmetry = 1.0
     self.prev_saturated = False
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
@@ -504,6 +568,13 @@ class LatControlPID(LatControl):
           self.unwind_ff_multiplier = _get_param_float(self.params, "HondaUnwindFfMultiplier", 2.0, 1.0, 4.0)
           self.unwind_boost_cap_s = _get_param_float(self.params, "HondaUnwindBoostSeconds", 1.0, 0.0, 3.0)
           self.lat_stiction_enabled = _get_param_bool(self.params, "NrdrLatStiction")
+          # 100 = Clarity-fitted left/right turn-in split (previous behaviour), 0 = symmetric.
+          # Read as a plain file rather than through Params: the key is deliberately NOT in
+          # params_keys.h, so this needs no params_pyx.so rebuild to carry on a device. Same
+          # NOT under /data/params/d: the params system deletes unregistered keys on boot. So `echo 65 > /data/HondaTurnInAsymmetry`
+          # takes effect within ~3 s, and a missing/garbage file keeps the previous behaviour.
+          self.turn_in_asymmetry = _read_turn_in_asymmetry()
+          self.unwind_asymmetry = _read_unwind_asymmetry()
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
         i_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_i_scale_low, self.lat_i_scale_standard, self.lat_i_scale_highway)
@@ -526,6 +597,8 @@ class LatControlPID(LatControl):
             self.center_taper_high,
             self.center_boost_threshold,
             self.center_boost_min_speed * _MPH_TO_MS,
+            self.turn_in_asymmetry,
+            self.unwind_asymmetry,
           )
 
       if self.is_subaru_impreza:
