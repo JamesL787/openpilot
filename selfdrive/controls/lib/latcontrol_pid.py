@@ -439,6 +439,35 @@ class LatControlPID(LatControl):
     MORE windup, not less."""
     return self._compose_scaled(p, i, d, f) + self._compose_state[4] + self._stiction_delta
 
+  def reset(self):
+    """Drop every piece of carried-over state when lateral control is not running.
+
+    controlsd calls this on each frame lateral is inactive (selfdrive/controls/controlsd.py:590)
+    and update()'s own inactive branch calls it too, so the two paths cannot drift apart.
+
+    The inherited LatControl.reset() only cleared the saturation timer, so self.pid.i survived a
+    disengagement and was re-injected whole on the first frame after re-engagement -- measured at
+    +0.19115 across a 0.2 s gap and -0.13616 across a 0.35 s gap, the latter against a positive
+    proportional term. LatControlCurvature.reset() already did the right thing; this matches it.
+
+    The full PIDController.reset() is used rather than clearing i alone: p, d and f are recomputed
+    unconditionally at the top of PIDController.update() before anything reads them, so zeroing
+    them cannot change the first active frame, and using the controller's own API keeps this from
+    depending on which fields happen to be stale.
+    """
+    super().reset()
+    self.pid.reset()
+    self.eps_modified_steering_pressed_filter_s = 0.0
+    self.eps_modified_steering_pressed_prev = False
+    self.center_taper_scale.x = 1.0
+    self.unwind_boost_elapsed = 0.0
+    self.prev_output_torque = 0.0
+    self.prev_saturated = False
+    self.lat_stiction.reset()
+    # Stiction is stateful and _compose_candidate consumes last frame's delta; with the stiction
+    # filter itself reset, the delta it goes with is zero.
+    self._stiction_delta = 0.0
+
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
       return
@@ -492,14 +521,10 @@ class LatControlPID(LatControl):
     if not active:
       output_torque = 0.0
       pid_log.active = False
+      # The only piece of inactive-frame state that is frame dependent: everything else is
+      # cleared by reset(), which is also what controlsd calls on every inactive frame.
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
-      self.eps_modified_steering_pressed_filter_s = 0.0
-      self.eps_modified_steering_pressed_prev = False
-      self.center_taper_scale.x = 1.0
-      self.unwind_boost_elapsed = 0.0
-      self.prev_output_torque = 0.0
-      self.prev_saturated = False
-      self.lat_stiction.reset()
+      self.reset()
 
     else:
       self.frame += 1
