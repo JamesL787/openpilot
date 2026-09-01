@@ -43,7 +43,8 @@ class PIDController:
     self.pos_limit = pos_limit
     self.neg_limit = neg_limit
 
-  def update(self, error, error_rate=0.0, speed=0.0, feedforward=0., freeze_integrator=False):
+  def update(self, error, error_rate=0.0, speed=0.0, feedforward=0., freeze_integrator=False,
+             compose=None):
     self.speed = speed
     self.p = self.k_p * float(error)
     self.d = self.k_d * error_rate
@@ -52,8 +53,17 @@ class PIDController:
     if not freeze_integrator:
       i = self.i + self.k_i * self.i_dt * error
 
-      # Don't allow windup if already clipping
-      test_control = self.p + i + self.d + self.f
+      # Don't allow windup if already clipping.
+      #
+      # `compose` lets a caller that reshapes p/i/d/f before sending them (per-term scales, a
+      # scheduled output multiplier, an additive trim) tell us what the candidate integral would
+      # actually become on the wire. Without it we clip against p+i+d+f, which is not the command
+      # for such a caller, so the integrator is protected against the wrong number in both
+      # directions. Callers that send p+i+d+f unchanged pass nothing and keep the original path.
+      if compose is None:
+        test_control = self.p + i + self.d + self.f
+      else:
+        test_control = compose(self.p, i, self.d, self.f)
       i_upperbound = self.i if test_control > self.pos_limit else self.pos_limit
       i_lowerbound = self.i if test_control < self.neg_limit else self.neg_limit
       self.i = np.clip(i, i_lowerbound, i_upperbound)

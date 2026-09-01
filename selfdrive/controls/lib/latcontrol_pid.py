@@ -109,6 +109,41 @@ NRDR_MODIFIED_EPS_KF_CARS = frozenset({
 })
 
 
+
+_TURN_IN_ASYMMETRY_PATH = "/data/HondaTurnInAsymmetry"
+_UNWIND_ASYMMETRY_PATH = "/data/HondaUnwindAsymmetry"
+
+# The carcontroller zeroes the LKAS request below NrdrMinSteerSpeed. Fixed here rather than reading
+# that param so the controller stays independent of a carcontroller knob; it sits inside the
+# modified-EPS freeze band, so the worst case is leaking an already-frozen integrator early.
+_MIN_STEER_SPEED_CLEAR_MS = 2.0 * 0.44704
+_INTEGRATOR_LEAK_TAU_S = 0.5
+
+
+def _read_turn_in_asymmetry(default: float = 1.0) -> float:
+  """Percent of the Clarity-fitted left/right turn-in split, 100 = unchanged, 0 = symmetric."""
+  try:
+    with open(_TURN_IN_ASYMMETRY_PATH, "rb") as f:
+      value = float(f.read().strip()) / 100.0
+  except (OSError, ValueError, TypeError):
+    return default
+  if not math.isfinite(value):
+    return default
+  return min(max(value, 0.0), 1.0)
+
+
+def _read_unwind_asymmetry(default: float = 1.0) -> float:
+  """Percent of the Clarity-fitted left/right UNWIND split, 100 = unchanged, 0 = symmetric."""
+  try:
+    with open(_UNWIND_ASYMMETRY_PATH, "rb") as f:
+      value = float(f.read().strip()) / 100.0
+  except (OSError, ValueError, TypeError):
+    return default
+  if not math.isfinite(value):
+    return default
+  return min(max(value, 0.0), 1.0)
+
+
 def get_nrdr_modified_eps_kf(v_ego: float) -> float:
   return float(np.interp(v_ego, NRDR_MODIFIED_EPS_KF_SPEED_BP, NRDR_MODIFIED_EPS_KF_V))
 
@@ -256,6 +291,8 @@ def _clarity_eps_pid_output_scale(
   center_taper_high: float,
   center_boost_threshold_deg: float,
   center_boost_min_speed_ms: float,
+  turn_in_asymmetry: float = 1.0,
+  unwind_asymmetry: float = 1.0,
 ) -> float:
   abs_angle = abs(desired_angle_deg)
   speed_weight = min(max((v_ego - 4.0) / 10.0, 0.0), 1.0)
@@ -275,12 +312,35 @@ def _clarity_eps_pid_output_scale(
     center_speed_weight = 1.0
   center_taper = center_taper_high * center_taper_scale * center_speed_weight
 
-  mid_turn_scale = 0.1200 if is_left else 0.0150
-  mid_turn_turn_in_scale = -0.5500 if is_left else -0.0524
-  mid_turn_unwind_scale = -0.0743 if is_left else -0.0842
-  base_scale = 0.0722 if is_left else 0.0972
-  turn_in_scale = -0.0799 if is_left else 0.0888
-  unwind_scale = 0.1600 if is_left else 0.2000
+  # Fitted on a Clarity and strongly asymmetric on TURN-IN: above ~26 mph at a large angle they
+  # floor a left turn-in at 0.6863 against 1.113-1.149 right, a 1.62x gap. `turn_in_asymmetry`
+  # blends left toward right; 1.0 is the Clarity behaviour, 0.0 is symmetric. Hold/unwind is
+  # bit-identical at every setting.
+  a = min(max(float(turn_in_asymmetry), 0.0), 1.0)
+  if is_left:
+    # Blend ONLY the turn-in constants. mid_turn_scale and base_scale are shared with hold/unwind;
+    # blending those too bought turn-in strength by weakening the left corner exit (~8-15 deg of
+    # extra held angle on the way out).
+    mid_turn_scale = 0.1200
+    base_scale = 0.0722
+    mid_turn_turn_in_scale = -0.5500 * a + -0.0524 * (1.0 - a)
+    turn_in_scale = -0.0799 * a + 0.0888 * (1.0 - a)
+  else:
+    mid_turn_scale = 0.0150
+    mid_turn_turn_in_scale = -0.0524
+    base_scale = 0.0972
+    turn_in_scale = 0.0888
+  # The UNWIND constants are asymmetric the same way: left keeps more holding torque on the way out
+  # (0.1600 vs 0.2000), so left exits over-rotate and right exits under-rotate (measured +5.08/+7.34
+  # vs -2.65/-5.36). 1.0 is the Clarity behaviour, 0.0 gives left the right-hand constants. The
+  # low-speed-unwind branch below bypasses these entirely.
+  b = min(max(float(unwind_asymmetry), 0.0), 1.0)
+  if is_left:
+    mid_turn_unwind_scale = -0.0743 * b + -0.0842 * (1.0 - b)
+    unwind_scale = 0.1600 * b + 0.2000 * (1.0 - b)
+  else:
+    mid_turn_unwind_scale = -0.0842
+    unwind_scale = 0.2000
 
   scale = 1.0 + (center_weight * center_taper)
   scale += speed_weight * mid_turn_weight * mid_turn_scale
@@ -357,7 +417,56 @@ class LatControlPID(LatControl):
     self.unwind_boost_elapsed = 0.0
     self.lat_stiction = LatStiction(dt, self.steer_max)
     self.lat_stiction_enabled = False
+    self.turn_in_asymmetry = 1.0
+    self._compose_state = (1.0, 1.0, 1.0, 1.0, 0.0)
+    self._stiction_delta = 0.0
+    self.unwind_asymmetry = 1.0
     self.prev_saturated = False
+
+  def _compose_scaled(self, p, i, d, f):
+    """The scaled PID command: per-term scales then the scheduled output scale. Single source of
+    truth for that arithmetic -- the real output and the anti-windup candidate both start here."""
+    p_scale, i_scale, f_scale, out_scale, _ = self._compose_state
+    return (p * p_scale + i * i_scale + d + f * f_scale) * out_scale
+
+  def _compose_candidate(self, p, i, d, f):
+    """What the candidate integral would actually put on the wire: the scaled command plus the
+    additive stages that follow it. The learner trim is a pure map lookup so it is exact; the
+    stiction delta is last frame's, because stiction transforms the output and is stateful -- exact
+    to within one 10 ms frame against its 0.30 s capture tau, and zero when saturated, which is the
+    regime anti-windup exists for. Including these is deliberate: omitting an additive
+    same-direction term makes the candidate an UNDERestimate, firing the clamp late and permitting
+    MORE windup, not less."""
+    return self._compose_scaled(p, i, d, f) + self._compose_state[4] + self._stiction_delta
+
+  def reset(self):
+    """Drop every piece of carried-over state when lateral control is not running.
+
+    controlsd calls this on each frame lateral is inactive (selfdrive/controls/controlsd.py:590)
+    and update()'s own inactive branch calls it too, so the two paths cannot drift apart.
+
+    The inherited LatControl.reset() only cleared the saturation timer, so self.pid.i survived a
+    disengagement and was re-injected whole on the first frame after re-engagement -- measured at
+    +0.19115 across a 0.2 s gap and -0.13616 across a 0.35 s gap, the latter against a positive
+    proportional term. LatControlCurvature.reset() already did the right thing; this matches it.
+
+    The full PIDController.reset() is used rather than clearing i alone: p, d and f are recomputed
+    unconditionally at the top of PIDController.update() before anything reads them, so zeroing
+    them cannot change the first active frame, and using the controller's own API keeps this from
+    depending on which fields happen to be stale.
+    """
+    super().reset()
+    self.pid.reset()
+    self.eps_modified_steering_pressed_filter_s = 0.0
+    self.eps_modified_steering_pressed_prev = False
+    self.center_taper_scale.x = 1.0
+    self.unwind_boost_elapsed = 0.0
+    self.prev_output_torque = 0.0
+    self.prev_saturated = False
+    self.lat_stiction.reset()
+    # Stiction is stateful and _compose_candidate consumes last frame's delta; with the stiction
+    # filter itself reset, the delta it goes with is zero.
+    self._stiction_delta = 0.0
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
@@ -374,7 +483,7 @@ class LatControlPID(LatControl):
     self.pid._k_i = [self.base_ki_bp, scale_lateral_pid_gain_values(self.base_ki_v, ki_scale)]
 
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited,
-             lat_delay, calibrated_pose, model_data, starpilot_toggles):
+             lat_delay, calibrated_pose, model_data, starpilot_toggles, integrator_wind_blocked=None):
     self.update_honda_lateral_pid_gain_scale(starpilot_toggles)
 
     pid_log = log.ControlsState.LateralPIDState.new_message()
@@ -412,14 +521,10 @@ class LatControlPID(LatControl):
     if not active:
       output_torque = 0.0
       pid_log.active = False
+      # The only piece of inactive-frame state that is frame dependent: everything else is
+      # cleared by reset(), which is also what controlsd calls on every inactive frame.
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
-      self.eps_modified_steering_pressed_filter_s = 0.0
-      self.eps_modified_steering_pressed_prev = False
-      self.center_taper_scale.x = 1.0
-      self.unwind_boost_elapsed = 0.0
-      self.prev_output_torque = 0.0
-      self.prev_saturated = False
-      self.lat_stiction.reset()
+      self.reset()
 
     else:
       self.frame += 1
@@ -454,6 +559,8 @@ class LatControlPID(LatControl):
         ff_unwind_weight *= time_gate
         ff *= 1.0 + ff_unwind_weight * max(unwind_ff_boost - 1.0, 0.0)
 
+      learner_trim = 0.0
+      raw_steering_pressed = bool(CS.steeringPressed)
       steering_pressed = CS.steeringPressed
       # Civic Bosch used to take a graded detector of its own here. It now shares the generic
       # modified-EPS one with the Clarity, so override feel is identical across the cars.
@@ -467,16 +574,32 @@ class LatControlPID(LatControl):
         )
         self.eps_modified_steering_pressed_prev = steering_pressed
 
+      # This carcontroller reshapes torque every frame on purpose (low-speed zeroing, override ramp,
+      # LPF), so controlsd's absolute mismatch flag is true on ~99% of frames and starves the
+      # integrator. That is intentional shaping, not an actuator limit: no active-state torque clamp
+      # is applied, the output is clipped to +-steer_max below, and `compose` stops the integrator
+      # pushing the composed command past that rail. Use the relative judgement when it is available;
+      # None (legacy path) or 0 in the gate file keeps the old absolute rule exactly.
+      if integrator_wind_blocked is None:
+        mismatch_freezes_i = steer_limited_by_safety
+      else:
+        mismatch_freezes_i = bool(integrator_wind_blocked)
       freeze_threshold = 2.0 if self.is_eps_modified else 5.0
-      freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < freeze_threshold
+      # Below the carcontroller's cutoff the wire carries zero whatever we ask for, so an integral
+      # stored there gets applied in full when the car rolls back above it. Leak rather than freeze
+      # (preserves it) or hard-clear (bumpy).
+      if self.is_eps_modified and integrator_wind_blocked is not None and CS.vEgo < _MIN_STEER_SPEED_CLEAR_MS:
+        self.pid.i *= math.exp(-self.dt / _INTEGRATOR_LEAK_TAU_S)
+
+      # The filtered detector delays a same-direction press up to 0.28 s while the carcontroller is
+      # already fading torque out; freeze on the raw press to close that window. Rides the same gate
+      # so the disabled path stays bit-identical.
+      raw_press_freezes_i = raw_steering_pressed and integrator_wind_blocked is not None
+      freeze_integrator = (mismatch_freezes_i or raw_press_freezes_i or steering_pressed
+                           or CS.vEgo < freeze_threshold)
       unwind_detected = phase < UNWIND_FREEZE_PHASE_THRESHOLD and abs_angle_des < UNWIND_FREEZE_ANGLE_NEAR_CENTER
       if self.is_eps_modified and self.unwind_freeze_enabled and unwind_detected:
         freeze_integrator = True
-
-      output_torque = self.pid.update(error,
-                                feedforward=ff,
-                                speed=CS.vEgo,
-                                freeze_integrator=freeze_integrator)
 
       # The Civic Bosch testing ground applies its own hardcoded center taper below; let it own the
       # output scale so the two tapers can never compound.
@@ -504,11 +627,16 @@ class LatControlPID(LatControl):
           self.unwind_ff_multiplier = _get_param_float(self.params, "HondaUnwindFfMultiplier", 2.0, 1.0, 4.0)
           self.unwind_boost_cap_s = _get_param_float(self.params, "HondaUnwindBoostSeconds", 1.0, 0.0, 3.0)
           self.lat_stiction_enabled = _get_param_bool(self.params, "NrdrLatStiction")
+          # 100 = Clarity split (previous behaviour), 0 = symmetric. A plain file, not a param: the
+          # key is not in params_keys.h so no params_pyx.so rebuild is needed, and it must live
+          # outside /data/params/d, which is pruned of unregistered keys on boot. Missing or garbage
+          # keeps the previous behaviour.
+          self.turn_in_asymmetry = _read_turn_in_asymmetry()
+          self.unwind_asymmetry = _read_unwind_asymmetry()
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
         i_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_i_scale_low, self.lat_i_scale_standard, self.lat_i_scale_highway)
         f_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_f_scale_low, self.lat_f_scale_standard, self.lat_f_scale_highway)
-        output_torque = self.pid.p * p_scale + self.pid.i * i_scale + self.pid.d + self.pid.f * f_scale
 
         lane_change = bool(getattr(CS, "leftBlinker", False) or getattr(CS, "rightBlinker", False))
         if lane_change:
@@ -516,8 +644,10 @@ class LatControlPID(LatControl):
           center_taper_scale = 0.0
         else:
           center_taper_scale = float(self.center_taper_scale.update(1.0))
-        if not civic_bosch_testing_ground:
-          output_torque *= _clarity_eps_pid_output_scale(
+        if civic_bosch_testing_ground:
+          eps_output_scale = 1.0
+        else:
+          eps_output_scale = _clarity_eps_pid_output_scale(
             angle_steers_des_no_offset,
             phase,
             float(CS.steeringRateDeg),
@@ -526,7 +656,30 @@ class LatControlPID(LatControl):
             self.center_taper_high,
             self.center_boost_threshold,
             self.center_boost_min_speed * _MPH_TO_MS,
+            self.turn_in_asymmetry,
+            self.unwind_asymmetry,
           )
+
+        # Judge the candidate integral against the torque actually sent: the command is rebuilt with
+        # per-term scales, a scheduled output scale, a learner trim and a stiction stage, so it
+        # differs from p+i+d+f by up to ~30%. _compose_output is the single source of truth for both
+        # the real output and the candidate. The stiction delta is last frame's (it is stateful and
+        # transforms the output); it is zero when saturated, which is the regime anti-windup exists
+        # for. Omitting it would make the candidate an underestimate and permit more windup, not less.
+        learner_trim = float(self.tune_learner.apply(CS.vEgo, angle_steers_des))
+        self._compose_state = (p_scale, i_scale, f_scale, eps_output_scale, learner_trim)
+
+        output_torque = self.pid.update(error,
+                                  feedforward=ff,
+                                  speed=CS.vEgo,
+                                  freeze_integrator=freeze_integrator,
+                                  compose=self._compose_candidate if integrator_wind_blocked is not None else None)
+        output_torque = self._compose_scaled(self.pid.p, self.pid.i, self.pid.d, self.pid.f)
+      else:
+        output_torque = self.pid.update(error,
+                                  feedforward=ff,
+                                  speed=CS.vEgo,
+                                  freeze_integrator=freeze_integrator)
 
       if self.is_subaru_impreza:
         raw_output_torque = self.pid.p + self.pid.i + self.pid.d + self.pid.f
@@ -552,7 +705,7 @@ class LatControlPID(LatControl):
         output_torque = self.prev_output_torque + (output_alpha * (output_torque - self.prev_output_torque))
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
-      output_torque += self.tune_learner.apply(CS.vEgo, angle_steers_des)
+      output_torque += learner_trim if self.is_eps_modified else self.tune_learner.apply(CS.vEgo, angle_steers_des)
       output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       paramsd_ok = bool(
@@ -567,18 +720,24 @@ class LatControlPID(LatControl):
       if self.lat_stiction_enabled:
         des_rate_degs = desired_angle_delta / self.dt
         lane_change_stiction = bool(getattr(CS, "leftBlinker", False) or getattr(CS, "rightBlinker", False))
+        _pre_stiction = output_torque
         output_torque = float(self.lat_stiction.update(
           active, CS.vEgo, error, des_rate_degs, float(CS.steeringRateDeg), output_torque,
           steering_pressed, lane_change_stiction, self.prev_saturated))
+        self._stiction_delta = output_torque - _pre_stiction
       else:
         self.lat_stiction.reset()
+        self._stiction_delta = 0.0
 
       pid_log.active = True
       pid_log.p = float(self.pid.p)
       pid_log.i = float(self.pid.i)
       pid_log.f = float(self.pid.f)
       pid_log.output = float(output_torque)
-      pid_log.saturated = bool(self._check_saturation(self.steer_max - abs(output_torque) < 1e-3, CS, steer_limited_by_safety, curvature_limited))
+      # Same classification as the integrator: _check_saturation() refuses to accumulate while the
+      # limiter flag is set, so leaving the ~99%-true mismatch here would keep saturation and
+      # "take control" detection suppressed on modified-EPS cars even after it stops freezing I.
+      pid_log.saturated = bool(self._check_saturation(self.steer_max - abs(output_torque) < 1e-3, CS, mismatch_freezes_i, curvature_limited))
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
       self.prev_output_torque = float(output_torque)
       self.prev_saturated = bool(pid_log.saturated)

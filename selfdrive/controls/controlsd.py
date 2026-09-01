@@ -1,3 +1,4 @@
+import inspect
 #!/usr/bin/env python3
 import math
 from numbers import Number
@@ -23,7 +24,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
   get_lateral_active,
 )
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
-from openpilot.selfdrive.controls.lib.latcontrol import LatControl
+from openpilot.selfdrive.controls.lib.latcontrol import LatControl, integrator_wind_blocked
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
@@ -373,6 +374,37 @@ def get_torque_control_params(CP, torque_params, starpilot_toggles, use_live_par
   return lat_accel_factor, lat_accel_offset, friction
 
 
+_INTEGRATOR_FIX_PATH = "/data/HondaIntegratorFix"
+
+
+_INTEGRATOR_FIX_CACHE = [0.0, -1]
+
+
+def _read_integrator_fix_threshold_cached(frame: int, default: float = 0.0) -> float:
+  """Cached wrapper: this sits in the 100 Hz control loop, and the value is a hand-edited knob.
+  Re-read once a second; 1 s of latency on a tuning file is irrelevant, a syscall per frame is not."""
+  if frame - _INTEGRATOR_FIX_CACHE[1] >= 100 or _INTEGRATOR_FIX_CACHE[1] < 0:
+    _INTEGRATOR_FIX_CACHE[0] = _read_integrator_fix_threshold(default)
+    _INTEGRATOR_FIX_CACHE[1] = frame
+  return _INTEGRATOR_FIX_CACHE[0]
+
+
+def _read_integrator_fix_threshold(default: float = 0.0) -> float:
+  """Relative freeze threshold as a percent. Absent/0/garbage -> 0.0 = legacy absolute behaviour.
+
+  File-gated rather than a Params key so it needs no params_pyx.so rebuild and can be flipped
+  live (the value is re-read every frame; the controller picks it up within a frame).
+  """
+  try:
+    with open(_INTEGRATOR_FIX_PATH, "rb") as f:
+      value = float(f.read().strip()) / 100.0
+  except (OSError, ValueError, TypeError):
+    return default
+  if value != value or value in (float("inf"), float("-inf")):
+    return default
+  return min(max(value, 0.0), 1.0)
+
+
 class Controls:
   def __init__(self) -> None:
     self.params = Params()
@@ -389,6 +421,7 @@ class Controls:
     self.pm = messaging.PubMaster(['carControl', 'controlsState', 'starpilotLateralState'])
 
     self.steer_limited_by_safety = False
+    self.integrator_wind_blocked = None
     self.curvature = 0.0
     self.desired_curvature = 0.0
     self.lc_smooth_release = 0.0
@@ -431,6 +464,11 @@ class Controls:
 
     if self.CP.lateralTuning.which() == "torque" and (self.starpilot_toggles.nnff or self.starpilot_toggles.nnff_lite):
       self.LaC = LatControlNNFF(self.CP, self.CI, DT_CTRL)
+
+    # Resolved once, and only after EVERY possible self.LaC assignment above -- including the NNFF
+    # replacement. Only LatControlPID accepts the integrator-freeze classification; angle,
+    # curvature, torque and NNFF keep their existing signatures.
+    self._lac_takes_wind_blocked = "integrator_wind_blocked" in inspect.signature(self.LaC.update).parameters
 
   def update_nrdr_autotune_params(self):
     self.learn_steer_ratio = self.params.get_bool("NrdrLearnSteerRatio", default=True)
@@ -783,12 +821,17 @@ class Controls:
     lat_delay = self.sm["liveDelay"].lateralDelay + lat_smooth_seconds
 
     actuators.curvature = self.desired_curvature
+    # Only LatControlPID takes the integrator-freeze classification. The angle, curvature, torque
+    # and NNFF controllers keep their existing signatures, so passing it unconditionally would be a
+    # TypeError on every one of those cars -- gate state or not.
+    lac_extra = (self.integrator_wind_blocked,) if self._lac_takes_wind_blocked else ()
     steer, lateral_output, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
                                                      self.steer_limited_by_safety, self.desired_curvature,
                                                      curvature_limited, lat_delay,
                                                      self.calibrated_pose,
                                                      self.sm['modelV2'],
-                                                     self.starpilot_toggles)
+                                                     self.starpilot_toggles,
+                                                     *lac_extra)
     actuators.torque = float(steer)
     if self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
       actuators.curvature = float(lateral_output)
@@ -880,9 +923,21 @@ class Controls:
         self.steer_limited_by_safety = abs(CC.actuators.steeringAngleDeg - CO.actuatorsOutput.steeringAngleDeg) > \
                                               STEER_ANGLE_SATURATION_THRESHOLD
       else:
+        # steer_limited_by_safety keeps its original absolute meaning -- it also feeds saturation
+        # and "take control" detection, which we are not changing. The integrator gets a separate,
+        # relative judgement so intentional carcontroller shaping (LPF, override ramp) stops being
+        # mistaken for the actuator refusing to follow. Threshold comes from
+        # /data/HondaIntegratorFix: absent or 0 restores the legacy behaviour exactly.
         self.steer_limited_by_safety = abs(CC.actuators.torque - CO.actuatorsOutput.torque) > 1e-2
+        # None means "fix disabled" -- the lateral controller then takes its entirely legacy path,
+        # anti-windup composition included. One gate for the whole change, so it is on or off, never
+        # half-applied.
+        _thr = _read_integrator_fix_threshold_cached(self.sm.frame)
+        self.integrator_wind_blocked = integrator_wind_blocked(
+          float(CC.actuators.torque), float(CO.actuatorsOutput.torque), _thr) if _thr > 0.0 else None
     else:
       self.steer_limited_by_safety = False
+      self.integrator_wind_blocked = None
 
     # TODO: both controlsState and carControl valids should be set by
     #       sm.all_checks(), but this creates a circular dependency
