@@ -113,14 +113,9 @@ NRDR_MODIFIED_EPS_KF_CARS = frozenset({
 _TURN_IN_ASYMMETRY_PATH = "/data/HondaTurnInAsymmetry"
 _UNWIND_ASYMMETRY_PATH = "/data/HondaUnwindAsymmetry"
 
-# The Honda carcontroller zeroes the LKAS request below NrdrMinSteerSpeed (1 mph default; 2 on the
-# car this was developed against). A fixed threshold here rather than reading that param keeps the
-# controller independent of a carcontroller tuning knob.
-#
-# This sits well inside the modified-EPS freeze band (freeze_threshold 2.0 m/s = 4.5 mph), so the
-# integrator cannot grow below it in the first place -- the change is purely hold-vs-clear. Even if
-# NrdrMinSteerSpeed were raised above this, the worst case is that we clear a frozen integrator
-# slightly earlier than the wire goes quiet, never that we clear a live one.
+# The carcontroller zeroes the LKAS request below NrdrMinSteerSpeed. Fixed here rather than reading
+# that param so the controller stays independent of a carcontroller knob; it sits inside the
+# modified-EPS freeze band, so the worst case is leaking an already-frozen integrator early.
 _MIN_STEER_SPEED_CLEAR_MS = 2.0 * 0.44704
 _INTEGRATOR_LEAK_TAU_S = 0.5
 
@@ -317,20 +312,15 @@ def _clarity_eps_pid_output_scale(
     center_speed_weight = 1.0
   center_taper = center_taper_high * center_taper_scale * center_speed_weight
 
-  # These constants were fitted on a Clarity and are strongly direction-asymmetric on TURN-IN:
-  # at a large angle above ~26 mph they floor a left turn-in at 0.6863 while giving a right
-  # turn-in 1.113-1.149, a 1.62x gap. `turn_in_asymmetry` blends the left turn-in constants
-  # toward the right ones so the split can be measured on a car that is not a Clarity:
-  # 1.0 keeps the Clarity behaviour exactly, 0.0 makes turn-in direction-symmetric.
-  #
-  # Hold/unwind is bit-identical at every knob setting: nothing on that path is blended.
+  # Fitted on a Clarity and strongly asymmetric on TURN-IN: above ~26 mph at a large angle they
+  # floor a left turn-in at 0.6863 against 1.113-1.149 right, a 1.62x gap. `turn_in_asymmetry`
+  # blends left toward right; 1.0 is the Clarity behaviour, 0.0 is symmetric. Hold/unwind is
+  # bit-identical at every setting.
   a = min(max(float(turn_in_asymmetry), 0.0), 1.0)
   if is_left:
-    # Blend ONLY the two turn-in-phase constants. mid_turn_scale and base_scale are shared with
-    # the hold/unwind phase: blending them too (as this did originally) bought turn-in strength by
-    # weakening left corner EXIT, which showed up on the road as the car holding ~8-15 deg too much
-    # left on the way out of a curve. Leaving them alone gives MORE turn-in for zero exit penalty
-    # -- at knob 65, 0.796 instead of 0.768, with exit unchanged rather than -2.9%.
+    # Blend ONLY the turn-in constants. mid_turn_scale and base_scale are shared with hold/unwind;
+    # blending those too bought turn-in strength by weakening the left corner exit (~8-15 deg of
+    # extra held angle on the way out).
     mid_turn_scale = 0.1200
     base_scale = 0.0722
     mid_turn_turn_in_scale = -0.5500 * a + -0.0524 * (1.0 - a)
@@ -340,13 +330,10 @@ def _clarity_eps_pid_output_scale(
     mid_turn_turn_in_scale = -0.0524
     base_scale = 0.0972
     turn_in_scale = 0.0888
-  # The UNWIND constants are Clarity-asymmetric too, in the direction that makes a left corner
-  # exit badly: left keeps more holding torque on the way out (0.1600 vs 0.2000 reduction), so a
-  # left exit unwinds slower and over-rotates while a right exit under-rotates. Measured left
-  # exits +5.08/+7.34 deg, right exits -2.65/-5.36 -- both signs match. Same disease as turn-in.
-  # 1.0 keeps the Clarity behaviour exactly, 0.0 gives a left exit the right-hand constants.
-  # Note the low-speed-unwind branch below bypasses these entirely, so very slow exits are
-  # unaffected at any setting.
+  # The UNWIND constants are asymmetric the same way: left keeps more holding torque on the way out
+  # (0.1600 vs 0.2000), so left exits over-rotate and right exits under-rotate (measured +5.08/+7.34
+  # vs -2.65/-5.36). 1.0 is the Clarity behaviour, 0.0 gives left the right-hand constants. The
+  # low-speed-unwind branch below bypasses these entirely.
   b = min(max(float(unwind_asymmetry), 0.0), 1.0)
   if is_left:
     mid_turn_unwind_scale = -0.0743 * b + -0.0842 * (1.0 - b)
@@ -562,44 +549,26 @@ class LatControlPID(LatControl):
         )
         self.eps_modified_steering_pressed_prev = steering_pressed
 
-      # On a modified-EPS Honda the carcontroller reshapes torque every frame on purpose (low-speed
-      # zeroing, override ramp, LPF, optional delta limiter), so controlsd's
-      # `abs(actuators.torque - actuatorsOutput.torque) > 1e-2` is true on ~99% of frames and starves
-      # the integrator (measured 53-89% frozen). That mismatch is intentional shaping, not an
-      # actuator constraint the integrator has to respect: Honda's safety hook applies no
-      # active-state torque clamp, the output is already clipped to +-steer_max below, and `compose`
-      # now stops the integrator pushing the *composed* command past that rail. So the mismatch is
-      # only a real limit signal for cars that don't reshape.
-      # On a reshaping car use the relative judgement from controlsd when it is available; the
-      # absolute flag is true on ~99% of frames there and is what starved the integrator.
-      # integrator_wind_blocked is None on the legacy path, and 0 in the gate file makes controlsd
-      # compute it with the old absolute rule, so both fall back to previous behaviour exactly.
+      # This carcontroller reshapes torque every frame on purpose (low-speed zeroing, override ramp,
+      # LPF), so controlsd's absolute mismatch flag is true on ~99% of frames and starves the
+      # integrator. That is intentional shaping, not an actuator limit: no active-state torque clamp
+      # is applied, the output is clipped to +-steer_max below, and `compose` stops the integrator
+      # pushing the composed command past that rail. Use the relative judgement when it is available;
+      # None (legacy path) or 0 in the gate file keeps the old absolute rule exactly.
       if integrator_wind_blocked is None:
         mismatch_freezes_i = steer_limited_by_safety
       else:
         mismatch_freezes_i = bool(integrator_wind_blocked)
       freeze_threshold = 2.0 if self.is_eps_modified else 5.0
-      # `steering_pressed` above may be the modified-EPS detector, which deliberately delays a
-      # same-direction press by up to 0.28 s. The carcontroller meanwhile acts on the RAW press
-      # immediately, so for that window it is fading torque out while we would still be integrating.
-      # The mismatch boolean used to mask this by accident; freeze on the raw press explicitly.
-      # Below the carcontroller's own cutoff (NrdrMinSteerSpeed, 1 mph by default) the wire carries
-      # zero regardless of what we ask for, so any integral built there is fiction. Freezing it
-      # merely stores that fiction until the car rolls back above the cutoff, where it is applied
-      # in full. Clear it instead: nothing downstream can act on it while we are below, and the
-      # override fade brings torque back in gently on the way out.
-      # Below the carcontroller's cutoff the wire carries zero whatever we ask for, so any integral
-      # stored there is fiction that gets applied in full when the car rolls back above it. Leak it
-      # rather than freezing (which preserves the fiction) or hard-clearing (bumpy, and contrary to
-      # the no-hard-clears conclusion from the earlier driver-hand work). tau 0.5 s empties it in
-      # about a second and a half of standstill while staying continuous.
+      # Below the carcontroller's cutoff the wire carries zero whatever we ask for, so an integral
+      # stored there gets applied in full when the car rolls back above it. Leak rather than freeze
+      # (preserves it) or hard-clear (bumpy).
       if self.is_eps_modified and integrator_wind_blocked is not None and CS.vEgo < _MIN_STEER_SPEED_CLEAR_MS:
         self.pid.i *= math.exp(-self.dt / _INTEGRATOR_LEAK_TAU_S)
 
-      # The raw-press term closes a window the filtered detector leaves open (it delays a
-      # same-direction press up to 0.28 s while the carcontroller is already fading torque out).
-      # It only matters once the integrator is actually free, so it rides the same gate -- keeping
-      # the disabled path bit-identical to stock.
+      # The filtered detector delays a same-direction press up to 0.28 s while the carcontroller is
+      # already fading torque out; freeze on the raw press to close that window. Rides the same gate
+      # so the disabled path stays bit-identical.
       raw_press_freezes_i = raw_steering_pressed and integrator_wind_blocked is not None
       freeze_integrator = (mismatch_freezes_i or raw_press_freezes_i or steering_pressed
                            or CS.vEgo < freeze_threshold)
@@ -633,11 +602,10 @@ class LatControlPID(LatControl):
           self.unwind_ff_multiplier = _get_param_float(self.params, "HondaUnwindFfMultiplier", 2.0, 1.0, 4.0)
           self.unwind_boost_cap_s = _get_param_float(self.params, "HondaUnwindBoostSeconds", 1.0, 0.0, 3.0)
           self.lat_stiction_enabled = _get_param_bool(self.params, "NrdrLatStiction")
-          # 100 = Clarity-fitted left/right turn-in split (previous behaviour), 0 = symmetric.
-          # Read as a plain file rather than through Params: the key is deliberately NOT in
-          # params_keys.h, so this needs no params_pyx.so rebuild to carry on a device. Same
-          # NOT under /data/params/d: the params system deletes unregistered keys on boot. So `echo 65 > /data/HondaTurnInAsymmetry`
-          # takes effect within ~3 s, and a missing/garbage file keeps the previous behaviour.
+          # 100 = Clarity split (previous behaviour), 0 = symmetric. A plain file, not a param: the
+          # key is not in params_keys.h so no params_pyx.so rebuild is needed, and it must live
+          # outside /data/params/d, which is pruned of unregistered keys on boot. Missing or garbage
+          # keeps the previous behaviour.
           self.turn_in_asymmetry = _read_turn_in_asymmetry()
           self.unwind_asymmetry = _read_unwind_asymmetry()
 
@@ -667,20 +635,12 @@ class LatControlPID(LatControl):
             self.unwind_asymmetry,
           )
 
-        # Anti-windup has to judge the candidate integral against the torque we are about to SEND.
-        # The command is rebuilt with independent per-term scales, multiplied by a scheduled output
-        # scale, then given an additive learner trim and a stiction stage -- so it differs from
-        # p+i+d+f by up to ~30% and the integrator was protected against the wrong number in both
-        # directions. _compose_output is the single source of truth: the real output below and the
-        # anti-windup candidate both go through it, so the two cannot drift apart.
-        #
-        # The learner trim is a pure map lookup, so it is exact. The stiction delta is last frame's,
-        # because stiction TRANSFORMS the output and is stateful -- the candidate is therefore exact
-        # to within one 10 ms frame against stiction's 0.30 s capture tau, and stiction bypasses
-        # itself when saturated, so in the regime anti-windup exists for the delta is zero and the
-        # candidate is exact. Including it rather than omitting it as "conservative" is deliberate:
-        # omitting an additive same-direction term makes the candidate an UNDERestimate, firing the
-        # clamp late and permitting MORE windup, not less.
+        # Judge the candidate integral against the torque actually sent: the command is rebuilt with
+        # per-term scales, a scheduled output scale, a learner trim and a stiction stage, so it
+        # differs from p+i+d+f by up to ~30%. _compose_output is the single source of truth for both
+        # the real output and the candidate. The stiction delta is last frame's (it is stateful and
+        # transforms the output); it is zero when saturated, which is the regime anti-windup exists
+        # for. Omitting it would make the candidate an underestimate and permit more windup, not less.
         learner_trim = float(self.tune_learner.apply(CS.vEgo, angle_steers_des))
         self._compose_state = (p_scale, i_scale, f_scale, eps_output_scale, learner_trim)
 
