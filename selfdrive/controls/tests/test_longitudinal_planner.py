@@ -545,6 +545,46 @@ def test_model_lead_trajectory_is_default_for_stable_lead():
   np.testing.assert_allclose(actual, expected)
 
 
+@pytest.mark.parametrize(
+  ("v_ego", "d_rel", "v_lead", "a_lead"),
+  [
+    (9.606, 36.832, 3.497, -5.466),
+    (17.421, 39.577, 11.035, -6.017),
+  ],
+)
+def test_bosch_raw_geometry_guard_ignores_nonurgent_derived_braking(v_ego, d_rel, v_lead, a_lead):
+  raw_lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=a_lead, radar=True, model_prob=0.99)
+  _, model_lead = make_model_lead()
+
+  assert d_rel / (v_ego - v_lead) > 5.0
+  assert build_model_lead_trajectory(model_lead, raw_lead, v_ego) is None
+  assert build_model_lead_trajectory(model_lead, raw_lead, v_ego, raw_geometry_guard=True) is not None
+
+
+@pytest.mark.parametrize(
+  ("d_rel", "v_lead"),
+  [(10.0, 27.0), (35.0, 20.0), (52.0, 13.0), (80.0, 0.0)],
+)
+def test_bosch_raw_geometry_guard_keeps_urgent_radar_fallback(d_rel, v_lead):
+  raw_lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=-3.0, radar=True, model_prob=0.99)
+  _, model_lead = make_model_lead()
+
+  assert build_model_lead_trajectory(model_lead, raw_lead, 27.0, raw_geometry_guard=True) is None
+
+
+def test_bosch_planner_enables_raw_geometry_guard_only_for_available_bosch_radar():
+  bosch_cp = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
+  bosch_cp.radarUnavailable = False
+  bosch_planner = LongitudinalPlanner(bosch_cp)
+  assert bosch_planner.honda_bosch_a_radar
+  assert bosch_planner.mpc.raw_geometry_model_guard
+
+  vision_cp = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  vision_planner = LongitudinalPlanner(vision_cp)
+  assert not vision_planner.honda_bosch_a_radar
+  assert not vision_planner.mpc.raw_geometry_model_guard
+
+
 def test_model_lead_trajectory_uses_raw_current_anchor_and_future_deltas():
   lead = make_lead(status=True, d_rel=42.0, v_lead=18.0, model_prob=0.99)
   _, model_lead = make_model_lead()
@@ -1098,6 +1138,16 @@ def test_planner_fcw_keeps_real_low_speed_closing_alerts():
     make_lead(status=True, d_rel=1.8, v_lead=0.0, a_lead=0.0, radar=False, model_prob=0.99),
     1.6,
   )
+
+
+def test_bosch_planner_fcw_requires_radard_authority():
+  relaxed_lead = make_lead(status=True, d_rel=8.0, v_lead=2.0, a_lead=-2.0, radar=True, model_prob=0.99)
+  relaxed_lead.fcw = False
+  assert should_trigger_planner_fcw(relaxed_lead, 8.0)
+  assert not should_trigger_planner_fcw(relaxed_lead, 8.0, require_lead_fcw=True)
+
+  relaxed_lead.fcw = True
+  assert should_trigger_planner_fcw(relaxed_lead, 8.0, require_lead_fcw=True)
 
 
 def test_publish_planner_fcw_suppresses_crawl_speed_false_positive():

@@ -359,11 +359,11 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
   return [a_target[0], min(a_target[1], a_x_allowed)]
 
 
-def should_publish_planner_fcw(crash_cnt: int, car_state, radar_state) -> bool:
+def should_publish_planner_fcw(crash_cnt: int, car_state, radar_state, *, require_lead_fcw=False) -> bool:
   return (
     crash_cnt > 2 and
     not car_state.standstill and
-    should_trigger_planner_fcw(radar_state.leadOne, float(car_state.vEgo))
+    should_trigger_planner_fcw(radar_state.leadOne, float(car_state.vEgo), require_lead_fcw=require_lead_fcw)
   )
 
 
@@ -2377,7 +2377,10 @@ class LongitudinalPlanner:
     self.j_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC[:-1], self.mpc.j_solution)
 
     # TODO counter is only needed because radar is glitchy, remove once radar is gone
-    self.fcw = should_publish_planner_fcw(self.mpc.crash_cnt, sm['carState'], sm['radarState'])
+    self.fcw = should_publish_planner_fcw(
+      self.mpc.crash_cnt, sm['carState'], sm['radarState'],
+      require_lead_fcw=self.honda_bosch_a_radar,
+    )
     if self.fcw:
       cloudlog.info("FCW triggered")
 

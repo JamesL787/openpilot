@@ -228,6 +228,26 @@ def test_bosch_preferred_lead_survives_model_probability_fluctuation():
   assert lead['radarTrackId'] == 7
 
 
+def test_bosch_relaxed_preferred_lead_keeps_control_but_loses_fcw_authority():
+  tracks = {7: make_track(7, 10.0, 5, y_rel=1.4)}
+  lead = radard.get_lead(
+    10.0, True, tracks, make_lead(10.0), 10.0, make_model_data(), False, make_plan(), make_toggles(),
+    low_speed_override=False, lead_prob=0.99, preferred_track_id=7, honda_bosch_a_radar=True,
+  )
+  assert lead['radarTrackId'] == 7
+  assert not lead['fcw']
+
+
+def test_bosch_strictly_matched_lead_retains_fcw_authority():
+  tracks = {7: make_track(7, 10.0, 5, y_rel=0.2)}
+  lead = radard.get_lead(
+    10.0, True, tracks, make_lead(10.0), 10.0, make_model_data(), False, make_plan(), make_toggles(),
+    low_speed_override=False, lead_prob=0.99, preferred_track_id=7, honda_bosch_a_radar=True,
+  )
+  assert lead['radarTrackId'] == 7
+  assert lead['fcw']
+
+
 def test_bosch_arm_a_clears_after_two_better_challenger_cycles():
   radar_d = make_staleness_radar_d()
   radar_d.tracks = {
