@@ -390,9 +390,28 @@ class LatControlPID(LatControl):
     # lateral-accel forecast at t=lat_delay instead of the current-frame value gives the same
     # setpoint-lead correction Torque/NNFF get from their jerk feedforward, without leaving
     # angle-error space or touching P/I/F.
-    if model_data is not None and len(model_data.acceleration.y) == len(ModelConstants.T_IDXS):
+    #
+    # curvature = lat_accel / v^2, and both sides of that division must be sampled at the SAME
+    # time. future_lat_accel is a forecast for t=lat_delay, so it must be divided by the model's
+    # OWN predicted v at that same t -- dividing by the current vEgo instead blows up whenever
+    # current and future speed differ, which is most of the time near a stop (v_now ~= 0, while
+    # the model is forecasting the accel of a car that has since pulled away).
+    #
+    # That still isn't enough on its own: flooring a near-zero v (current OR future) to MIN_SPEED
+    # and dividing anyway stays numerically unstable, because MIN_SPEED (1 m/s) is far too low a
+    # reference speed for this ratio -- any ordinary lat_accel forecast (a few tenths of a m/s^2)
+    # divided by 1.0 reads as an enormous curvature. Caught on-road: desired angle hit -620deg at
+    # a stop where desired_curvature itself was a sane 0.2. So a stopped-and-staying-stopped car
+    # (future_vego also near zero) must fall back to desired_curvature, not floor-and-proceed.
+    model_trajectory_ok = (
+      model_data is not None and
+      len(model_data.acceleration.y) == len(ModelConstants.T_IDXS) and
+      len(model_data.velocity.x) == len(ModelConstants.T_IDXS)
+    )
+    future_vego = np.interp(lat_delay, ModelConstants.T_IDXS, model_data.velocity.x) if model_trajectory_ok else 0.0
+    if model_trajectory_ok and future_vego > MIN_SPEED:
       future_lat_accel = np.interp(lat_delay, ModelConstants.T_IDXS, model_data.acceleration.y)
-      lead_curvature = future_lat_accel / max(CS.vEgo, MIN_SPEED) ** 2
+      lead_curvature = future_lat_accel / future_vego ** 2
     else:
       lead_curvature = desired_curvature
 
