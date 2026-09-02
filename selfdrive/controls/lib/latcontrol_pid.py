@@ -390,7 +390,7 @@ class LatControlPID(LatControl):
     # lateral-accel forecast at t=lat_delay instead of the current-frame value gives the same
     # setpoint-lead correction Torque/NNFF get from their jerk feedforward, without leaving
     # angle-error space or touching P/I/F.
-    if model_data is not None:
+    if model_data is not None and len(model_data.acceleration.y) == len(ModelConstants.T_IDXS):
       future_lat_accel = np.interp(lat_delay, ModelConstants.T_IDXS, model_data.acceleration.y)
       lead_curvature = future_lat_accel / max(CS.vEgo, MIN_SPEED) ** 2
     else:
