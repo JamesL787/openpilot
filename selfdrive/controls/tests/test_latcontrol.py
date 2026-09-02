@@ -307,6 +307,32 @@ class TestLatControl:
     starpilot_toggles = SimpleNamespace()
     return controller, VM, CS, params, starpilot_toggles
 
+  @parameterized.expand([
+    ("cruise", 20.0, 20.0, 1.0, 0.0),
+    ("stopped", 0.0, 2.0, 0.5, 0.02),
+  ])
+  def test_pid_target_uses_processed_curvature_with_model_data(
+    self, _name, v_ego, model_speed, model_lateral_accel, desired_curvature,
+  ):
+    model_data = SimpleNamespace(
+      velocity=SimpleNamespace(x=[model_speed] * 33),
+      acceleration=SimpleNamespace(y=[model_lateral_accel] * 33),
+    )
+
+    def run(model):
+      controller, VM, CS, params, starpilot_toggles = self._build_pid_controller(HONDA.HONDA_CLARITY)
+      CS.vEgo = v_ego
+      CS.steeringAngleDeg = 0.0
+      _, target, _ = controller.update(
+        True, CS, VM, params, False, desired_curvature, False, 0.4, None, model, starpilot_toggles,
+      )
+      return target
+
+    target_without_model = run(None)
+    target_with_model = run(model_data)
+
+    assert target_with_model == pytest.approx(target_without_model)
+
   def test_clarity_vgr_inverse_map(self):
     import numpy as np
     from itertools import pairwise

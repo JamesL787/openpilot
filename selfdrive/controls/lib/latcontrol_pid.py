@@ -9,9 +9,7 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.common.pid import PIDController
 from openpilot.starpilot.common.testing_grounds import testing_ground
-from openpilot.selfdrive.controls.lib.drive_helpers import MIN_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
-from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   RAV4_TSS2_CARS,
   SUBARU_IMPREZA_CARS,
@@ -383,37 +381,11 @@ class LatControlPID(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    # Lead-compensate the target: desired_curvature is this frame's command, but the actuator
-    # (carcontroller's own shaping plus real mechanical lag) won't land it for ~lat_delay seconds.
-    # An angle-error PID with no delay awareness chases where the road was, not where the model
-    # expects it to be by the time the command lands -- comparing against the model's own
-    # lateral-accel forecast at t=lat_delay instead of the current-frame value gives the same
-    # setpoint-lead correction Torque/NNFF get from their jerk feedforward, without leaving
-    # angle-error space or touching P/I/F.
-    #
-    # curvature = lat_accel / v^2, and both sides of that division must be sampled at the SAME
-    # time. future_lat_accel is a forecast for t=lat_delay, so it must be divided by the model's
-    # OWN predicted v at that same t -- dividing by the current vEgo instead blows up whenever
-    # current and future speed differ, which is most of the time near a stop (v_now ~= 0, while
-    # the model is forecasting the accel of a car that has since pulled away).
-    #
-    # That still isn't enough on its own: flooring a near-zero v (current OR future) to MIN_SPEED
-    # and dividing anyway stays numerically unstable, because MIN_SPEED (1 m/s) is far too low a
-    # reference speed for this ratio -- any ordinary lat_accel forecast (a few tenths of a m/s^2)
-    # divided by 1.0 reads as an enormous curvature. Caught on-road: desired angle hit -620deg at
-    # a stop where desired_curvature itself was a sane 0.2. So a stopped-and-staying-stopped car
-    # (future_vego also near zero) must fall back to desired_curvature, not floor-and-proceed.
-    model_trajectory_ok = (
-      model_data is not None and
-      len(model_data.acceleration.y) == len(ModelConstants.T_IDXS) and
-      len(model_data.velocity.x) == len(ModelConstants.T_IDXS)
-    )
-    future_vego = np.interp(lat_delay, ModelConstants.T_IDXS, model_data.velocity.x) if model_trajectory_ok else 0.0
-    if model_trajectory_ok and future_vego > MIN_SPEED:
-      future_lat_accel = np.interp(lat_delay, ModelConstants.T_IDXS, model_data.acceleration.y)
-      lead_curvature = future_lat_accel / future_vego ** 2
-    else:
-      lead_curvature = desired_curvature
+    # controlsd passes the modeld action here after it has already been selected at the
+    # delay-compensated action horizon, smoothed, and run through curvature jerk/acceleration
+    # limits. Keep PID on that exact setpoint. Reconstructing a second target from raw model
+    # acceleration would use a different camera-frame timestamp, arrive at 20 Hz, and bypass
+    # those protections; the CarController LPF is downstream of this point and cannot correct it.
 
     if self.sr_curve is not None:
       # Road-measured effective ratio, selected at the MEASURED angle. Fitted from steering
@@ -424,7 +396,7 @@ class LatControlPID(LatControl):
       # every frame, so this override cannot compound.
       sr_bp, sr_v = self.sr_curve
       VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
-      angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-lead_curvature, CS.vEgo, params.roll))
+      angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
       angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     elif self.vgr_inverse is not None:
       # Firmware VGR path. VehicleModel keeps the scalar sR paramsd learned (controlsd sets it
@@ -433,11 +405,11 @@ class LatControlPID(LatControl):
       # angle is what the old path could not do: selecting sR at the MEASURED angle only agrees
       # when theta_meas == theta_des, and it lets a measurement wobble move the target
       # (a spurious d(theta_des)/d(theta_meas) term inside the loop).
-      linear_des_no_offset = math.degrees(VM.get_steer_from_curvature(-lead_curvature, CS.vEgo, params.roll))
+      linear_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
       angle_steers_des_no_offset = vgr_linear_to_physical(linear_des_no_offset, self.vgr_inverse)
       angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     else:
-      angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-lead_curvature, CS.vEgo, params.roll))
+      angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
       angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     error = angle_steers_des - CS.steeringAngleDeg
 
