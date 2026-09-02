@@ -788,7 +788,8 @@ class Controls:
                                                      curvature_limited, lat_delay,
                                                      self.calibrated_pose,
                                                      self.sm['modelV2'],
-                                                     self.starpilot_toggles)
+                                                     self.starpilot_toggles,
+                                                     lat_smooth_seconds=lat_smooth_seconds)
     actuators.torque = float(steer)
     if self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
       actuators.curvature = float(lateral_output)

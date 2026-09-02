@@ -307,60 +307,63 @@ class TestLatControl:
     starpilot_toggles = SimpleNamespace()
     return controller, VM, CS, params, starpilot_toggles
 
-  @parameterized.expand([
-    ("cruise", 20.0, 20.0, 1.0, 0.0),
-    ("stopped", 0.0, 2.0, 0.5, 0.02),
-  ])
-  def test_pid_target_uses_processed_curvature_with_model_data(
-    self, _name, v_ego, model_speed, model_lateral_accel, desired_curvature,
-  ):
+  def test_pid_tracking_target_uses_latency_compensated_model_forecast(self):
     model_data = SimpleNamespace(
-      velocity=SimpleNamespace(x=[model_speed] * 33),
-      acceleration=SimpleNamespace(y=[model_lateral_accel] * 33),
+      acceleration=SimpleNamespace(y=[1.0] * 33),
+      velocity=SimpleNamespace(x=[20.0] * 33),
+    )
+    controller, VM, CS, params, starpilot_toggles = self._build_pid_controller(HONDA.HONDA_CLARITY)
+    CS.vEgo = 20.0
+    CS.steeringAngleDeg = 0.0
+    desired_curvature = 0.0
+
+    _, command_target, pid_log = controller.update(
+      True, CS, VM, params, False, desired_curvature, False, 0.4, None, model_data, starpilot_toggles,
+      lat_smooth_seconds=0.0,
     )
 
-    def run(model):
-      controller, VM, CS, params, starpilot_toggles = self._build_pid_controller(HONDA.HONDA_CLARITY)
-      CS.vEgo = v_ego
-      CS.steeringAngleDeg = 0.0
-      _, target, _ = controller.update(
-        True, CS, VM, params, False, desired_curvature, False, 0.4, None, model, starpilot_toggles,
-      )
-      return target
-
-    target_without_model = run(None)
-    target_with_model = run(model_data)
-
-    assert target_with_model == pytest.approx(target_without_model)
-
-  def test_pid_feedback_target_uses_latency_aligned_processed_request(self):
-    controller, VM, CS, params, starpilot_toggles = self._build_pid_controller(HONDA.HONDA_CLARITY)
-    CS.steeringAngleDeg = 0.0
-    desired_curvature = 0.01
-    lat_delay = 4 * DT_CTRL
-
-    def update(active, curvature):
-      return controller.update(
-        active, CS, VM, params, False, curvature, False, lat_delay, None, None, starpilot_toggles,
-      )
-
-    # Inactive updates prime the history so engagement never starts against a zeroed request.
-    _, command_target, _ = update(False, desired_curvature)
-    _, command_target, pid_log = update(True, desired_curvature)
-    assert pid_log.steeringAngleDesiredDeg == pytest.approx(command_target)
-
-    # The current target is kept for feedforward/output reporting, while P/I uses the request
-    # from lat_delay ago. A step therefore reaches the feedback error only after the matching
-    # number of control ticks, instead of immediately.
-    _, command_target, pid_log = update(True, 0.0)
     assert command_target == pytest.approx(0.0)
-    assert pid_log.steeringAngleDesiredDeg != pytest.approx(command_target, abs=1e-6)
+    assert abs(pid_log.steeringAngleDesiredDeg) > 0.0
 
-    for _ in range(3):
-      _, command_target, pid_log = update(True, 0.0)
-      assert pid_log.steeringAngleDesiredDeg != pytest.approx(command_target, abs=1e-6)
+  def test_pid_tracking_target_smooths_latency_compensated_forecast(self):
+    model_data = SimpleNamespace(
+      acceleration=SimpleNamespace(y=[1.0] * 33),
+      velocity=SimpleNamespace(x=[20.0] * 33),
+    )
+    controller, VM, CS, params, starpilot_toggles = self._build_pid_controller(HONDA.HONDA_CLARITY)
+    CS.vEgo = 20.0
+    CS.steeringAngleDeg = 0.0
 
-    _, command_target, pid_log = update(True, 0.0)
+    controller.update(False, CS, VM, params, False, 0.0, False, 0.4, None, None, starpilot_toggles)
+    _, _, pid_log = controller.update(
+      True, CS, VM, params, False, 0.0, False, 0.4, None, model_data, starpilot_toggles,
+      lat_smooth_seconds=0.1,
+    )
+    _, _, unsmoothed_log = self._build_pid_controller(HONDA.HONDA_CLARITY)[0].update(
+      True, CS, VM, params, False, 0.0, False, 0.4, None, model_data, starpilot_toggles,
+      lat_smooth_seconds=0.0,
+    )
+
+    assert 0.0 < abs(pid_log.steeringAngleDesiredDeg) < abs(unsmoothed_log.steeringAngleDesiredDeg)
+
+  @parameterized.expand([
+    ("mismatched_trajectory", [1.0] * 32, [20.0] * 33),
+    ("stopped_at_horizon", [1.0] * 33, [0.0] * 33),
+  ])
+  def test_pid_tracking_target_falls_back_when_forecast_is_invalid(self, _name, acceleration, velocity):
+    model_data = SimpleNamespace(
+      acceleration=SimpleNamespace(y=acceleration),
+      velocity=SimpleNamespace(x=velocity),
+    )
+    controller, VM, CS, params, starpilot_toggles = self._build_pid_controller(HONDA.HONDA_CLARITY)
+    CS.vEgo = 20.0
+    CS.steeringAngleDeg = 0.0
+
+    _, command_target, pid_log = controller.update(
+      True, CS, VM, params, False, 0.002, False, 0.4, None, model_data, starpilot_toggles,
+      lat_smooth_seconds=0.0,
+    )
+
     assert pid_log.steeringAngleDesiredDeg == pytest.approx(command_target)
 
   def test_clarity_vgr_inverse_map(self):

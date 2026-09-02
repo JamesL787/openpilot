@@ -1,4 +1,3 @@
-from collections import deque
 import math
 
 import numpy as np
@@ -12,6 +11,7 @@ from openpilot.common.params import Params
 from openpilot.common.pid import PIDController
 from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
+from openpilot.selfdrive.controls.lib.drive_helpers import MIN_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   RAV4_TSS2_CARS,
   SUBARU_IMPREZA_CARS,
@@ -21,6 +21,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
 )
 from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
+from openpilot.selfdrive.modeld.constants import ModelConstants
 
 
 # nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio.
@@ -117,7 +118,6 @@ def get_nrdr_modified_eps_kf(v_ego: float) -> float:
 
 CENTER_TAPER_FADE_TAU = 0.25
 UNWIND_BOOST_FADE_S = 0.3
-PID_CURVATURE_REQUEST_BUFFER_SECONDS = 1.0
 
 # Below this speed the phase SIGN is held rather than recomputed. phase is
 # angle * d(angle), and d(angle) is a frame-to-frame difference of the desired angle, so
@@ -338,9 +338,7 @@ class LatControlPID(LatControl):
     self.prev_output_torque = 0.0
     self.center_taper_scale = FirstOrderFilter(1.0, CENTER_TAPER_FADE_TAU, dt)
     self.dt = dt
-    self.request_buffer_len = int(PID_CURVATURE_REQUEST_BUFFER_SECONDS / dt)
-    self.curvature_request_buffer = deque([0.0] * self.request_buffer_len, maxlen=self.request_buffer_len)
-    self.was_active = False
+    self.lead_curvature_filter = FirstOrderFilter(0.0, 0.0, dt, initialized=False)
     self.params = Params()
     self.frame = -1
     self.tune_learner = TuneLearner(dt, self.steer_max)
@@ -379,10 +377,6 @@ class LatControlPID(LatControl):
     self.pid._k_p = [self.base_kp_bp, scale_lateral_pid_gain_values(self.base_kp_v, kp_scale)]
     self.pid._k_i = [self.base_ki_bp, scale_lateral_pid_gain_values(self.base_ki_v, ki_scale)]
 
-  def _prime_curvature_request_buffer(self, desired_curvature):
-    self.curvature_request_buffer.clear()
-    self.curvature_request_buffer.extend([desired_curvature] * self.request_buffer_len)
-
   def _get_desired_steer_angles(self, desired_curvature, CS, VM, params):
     if self.sr_curve is not None:
       # Road-measured effective ratio, selected at the MEASURED angle. Fitted from steering
@@ -409,29 +403,39 @@ class LatControlPID(LatControl):
     return angle_steers_des_no_offset, angle_steers_des_no_offset + params.angleOffsetDeg
 
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited,
-             lat_delay, calibrated_pose, model_data, starpilot_toggles):
+             lat_delay, calibrated_pose, model_data, starpilot_toggles, lat_smooth_seconds=0.0):
     self.update_honda_lateral_pid_gain_scale(starpilot_toggles)
 
     pid_log = log.ControlsState.LateralPIDState.new_message()
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    # modeld/controlsd already make a smooth, jerk-limited 100 Hz request. It is deliberately
-    # aimed ahead by the total command delay, but the wheel measurement is from *now*. Give P/I
-    # the request that should be arriving at the rack now (lat_delay includes LAT_SMOOTH_SECONDS),
-    # while retaining the current request for feedforward and command-phase logic. This keeps both
-    # sides of the feedback error in the same time frame without replacing the processed request
-    # with a second, raw 20 Hz model trajectory.
-    if not active:
-      self._prime_curvature_request_buffer(desired_curvature)
-      feedback_curvature = desired_curvature
+    # The model action is a command for the latency-compensated horizon, but P/I need an equally
+    # latency-compensated *tracking* target. Use modeld's lateral-accel forecast at that horizon,
+    # then apply the same LatSmoothSeconds time constant at the 100 Hz controller rate. Replaying
+    # a historical command here would add the learned actuator lag a second time and makes the
+    # loop chase the wrong side of a direction change.
+    model_trajectory_ok = (
+      model_data is not None and
+      len(model_data.acceleration.y) == len(ModelConstants.T_IDXS) and
+      len(model_data.velocity.x) == len(ModelConstants.T_IDXS)
+    )
+    horizon = max(lat_delay, 0.0) if math.isfinite(lat_delay) else 0.0
+    future_vego = np.interp(horizon, ModelConstants.T_IDXS, model_data.velocity.x) if model_trajectory_ok else 0.0
+    if model_trajectory_ok and future_vego > MIN_SPEED:
+      future_lat_accel = np.interp(horizon, ModelConstants.T_IDXS, model_data.acceleration.y)
+      lead_curvature = future_lat_accel / future_vego ** 2
     else:
-      if not self.was_active:
-        self._prime_curvature_request_buffer(desired_curvature)
-      delay_s = lat_delay if math.isfinite(lat_delay) else self.dt
-      delay_frames = int(np.clip(delay_s / self.dt, 1, self.request_buffer_len))
-      feedback_curvature = self.curvature_request_buffer[-delay_frames]
-      self.curvature_request_buffer.append(desired_curvature)
+      lead_curvature = desired_curvature
+
+    if not active:
+      feedback_curvature = desired_curvature
+      self.lead_curvature_filter.x = desired_curvature
+      self.lead_curvature_filter.initialized = True
+    else:
+      smooth_seconds = max(float(lat_smooth_seconds), 0.0) if math.isfinite(lat_smooth_seconds) else 0.0
+      self.lead_curvature_filter.update_alpha(smooth_seconds)
+      feedback_curvature = self.lead_curvature_filter.update(lead_curvature)
 
     _, feedback_angle_steers_des = self._get_desired_steer_angles(
       feedback_curvature, CS, VM, params,
@@ -454,7 +458,6 @@ class LatControlPID(LatControl):
       self.prev_output_torque = 0.0
       self.prev_saturated = False
       self.lat_stiction.reset()
-      self.was_active = False
 
     else:
       self.frame += 1
@@ -617,6 +620,5 @@ class LatControlPID(LatControl):
       self.prev_angle_steers_des_no_offset = command_angle_steers_des_no_offset
       self.prev_output_torque = float(output_torque)
       self.prev_saturated = bool(pid_log.saturated)
-      self.was_active = True
 
     return output_torque, command_angle_steers_des, pid_log
