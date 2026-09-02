@@ -333,6 +333,36 @@ class TestLatControl:
 
     assert target_with_model == pytest.approx(target_without_model)
 
+  def test_pid_feedback_target_uses_latency_aligned_processed_request(self):
+    controller, VM, CS, params, starpilot_toggles = self._build_pid_controller(HONDA.HONDA_CLARITY)
+    CS.steeringAngleDeg = 0.0
+    desired_curvature = 0.01
+    lat_delay = 4 * DT_CTRL
+
+    def update(active, curvature):
+      return controller.update(
+        active, CS, VM, params, False, curvature, False, lat_delay, None, None, starpilot_toggles,
+      )
+
+    # Inactive updates prime the history so engagement never starts against a zeroed request.
+    _, command_target, _ = update(False, desired_curvature)
+    _, command_target, pid_log = update(True, desired_curvature)
+    assert pid_log.steeringAngleDesiredDeg == pytest.approx(command_target)
+
+    # The current target is kept for feedforward/output reporting, while P/I uses the request
+    # from lat_delay ago. A step therefore reaches the feedback error only after the matching
+    # number of control ticks, instead of immediately.
+    _, command_target, pid_log = update(True, 0.0)
+    assert command_target == pytest.approx(0.0)
+    assert pid_log.steeringAngleDesiredDeg != pytest.approx(command_target, abs=1e-6)
+
+    for _ in range(3):
+      _, command_target, pid_log = update(True, 0.0)
+      assert pid_log.steeringAngleDesiredDeg != pytest.approx(command_target, abs=1e-6)
+
+    _, command_target, pid_log = update(True, 0.0)
+    assert pid_log.steeringAngleDesiredDeg == pytest.approx(command_target)
+
   def test_clarity_vgr_inverse_map(self):
     import numpy as np
     from itertools import pairwise

@@ -1,4 +1,6 @@
+from collections import deque
 import math
+
 import numpy as np
 
 from cereal import log
@@ -115,6 +117,7 @@ def get_nrdr_modified_eps_kf(v_ego: float) -> float:
 
 CENTER_TAPER_FADE_TAU = 0.25
 UNWIND_BOOST_FADE_S = 0.3
+PID_CURVATURE_REQUEST_BUFFER_SECONDS = 1.0
 
 # Below this speed the phase SIGN is held rather than recomputed. phase is
 # angle * d(angle), and d(angle) is a frame-to-frame difference of the desired angle, so
@@ -335,6 +338,9 @@ class LatControlPID(LatControl):
     self.prev_output_torque = 0.0
     self.center_taper_scale = FirstOrderFilter(1.0, CENTER_TAPER_FADE_TAU, dt)
     self.dt = dt
+    self.request_buffer_len = int(PID_CURVATURE_REQUEST_BUFFER_SECONDS / dt)
+    self.curvature_request_buffer = deque([0.0] * self.request_buffer_len, maxlen=self.request_buffer_len)
+    self.was_active = False
     self.params = Params()
     self.frame = -1
     self.tune_learner = TuneLearner(dt, self.steer_max)
@@ -373,20 +379,11 @@ class LatControlPID(LatControl):
     self.pid._k_p = [self.base_kp_bp, scale_lateral_pid_gain_values(self.base_kp_v, kp_scale)]
     self.pid._k_i = [self.base_ki_bp, scale_lateral_pid_gain_values(self.base_ki_v, ki_scale)]
 
-  def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited,
-             lat_delay, calibrated_pose, model_data, starpilot_toggles):
-    self.update_honda_lateral_pid_gain_scale(starpilot_toggles)
+  def _prime_curvature_request_buffer(self, desired_curvature):
+    self.curvature_request_buffer.clear()
+    self.curvature_request_buffer.extend([desired_curvature] * self.request_buffer_len)
 
-    pid_log = log.ControlsState.LateralPIDState.new_message()
-    pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
-    pid_log.steeringRateDeg = float(CS.steeringRateDeg)
-
-    # controlsd passes the modeld action here after it has already been selected at the
-    # delay-compensated action horizon, smoothed, and run through curvature jerk/acceleration
-    # limits. Keep PID on that exact setpoint. Reconstructing a second target from raw model
-    # acceleration would use a different camera-frame timestamp, arrive at 20 Hz, and bypass
-    # those protections; the CarController LPF is downstream of this point and cannot correct it.
-
+  def _get_desired_steer_angles(self, desired_curvature, CS, VM, params):
     if self.sr_curve is not None:
       # Road-measured effective ratio, selected at the MEASURED angle. Fitted from steering
       # wheel angle to achieved yaw rate, so it spans the whole chain: VGR pinion, rack,
@@ -397,7 +394,6 @@ class LatControlPID(LatControl):
       sr_bp, sr_v = self.sr_curve
       VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
       angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
-      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     elif self.vgr_inverse is not None:
       # Firmware VGR path. VehicleModel keeps the scalar sR paramsd learned (controlsd sets it
       # every frame), so it returns the angle a constant-ratio rack would need; the measured rack
@@ -407,18 +403,50 @@ class LatControlPID(LatControl):
       # (a spurious d(theta_des)/d(theta_meas) term inside the loop).
       linear_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
       angle_steers_des_no_offset = vgr_linear_to_physical(linear_des_no_offset, self.vgr_inverse)
-      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     else:
       angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
-      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
-    error = angle_steers_des - CS.steeringAngleDeg
 
-    pid_log.steeringAngleDesiredDeg = angle_steers_des
+    return angle_steers_des_no_offset, angle_steers_des_no_offset + params.angleOffsetDeg
+
+  def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited,
+             lat_delay, calibrated_pose, model_data, starpilot_toggles):
+    self.update_honda_lateral_pid_gain_scale(starpilot_toggles)
+
+    pid_log = log.ControlsState.LateralPIDState.new_message()
+    pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
+    pid_log.steeringRateDeg = float(CS.steeringRateDeg)
+
+    # modeld/controlsd already make a smooth, jerk-limited 100 Hz request. It is deliberately
+    # aimed ahead by the total command delay, but the wheel measurement is from *now*. Give P/I
+    # the request that should be arriving at the rack now (lat_delay includes LAT_SMOOTH_SECONDS),
+    # while retaining the current request for feedforward and command-phase logic. This keeps both
+    # sides of the feedback error in the same time frame without replacing the processed request
+    # with a second, raw 20 Hz model trajectory.
+    if not active:
+      self._prime_curvature_request_buffer(desired_curvature)
+      feedback_curvature = desired_curvature
+    else:
+      if not self.was_active:
+        self._prime_curvature_request_buffer(desired_curvature)
+      delay_s = lat_delay if math.isfinite(lat_delay) else self.dt
+      delay_frames = int(np.clip(delay_s / self.dt, 1, self.request_buffer_len))
+      feedback_curvature = self.curvature_request_buffer[-delay_frames]
+      self.curvature_request_buffer.append(desired_curvature)
+
+    _, feedback_angle_steers_des = self._get_desired_steer_angles(
+      feedback_curvature, CS, VM, params,
+    )
+    command_angle_steers_des_no_offset, command_angle_steers_des = self._get_desired_steer_angles(
+      desired_curvature, CS, VM, params,
+    )
+    error = feedback_angle_steers_des - CS.steeringAngleDeg
+
+    pid_log.steeringAngleDesiredDeg = feedback_angle_steers_des
     pid_log.angleError = error
     if not active:
       output_torque = 0.0
       pid_log.active = False
-      self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
+      self.prev_angle_steers_des_no_offset = command_angle_steers_des_no_offset
       self.eps_modified_steering_pressed_filter_s = 0.0
       self.eps_modified_steering_pressed_prev = False
       self.center_taper_scale.x = 1.0
@@ -426,11 +454,12 @@ class LatControlPID(LatControl):
       self.prev_output_torque = 0.0
       self.prev_saturated = False
       self.lat_stiction.reset()
+      self.was_active = False
 
     else:
       self.frame += 1
-      desired_angle_delta = angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
-      phase, self.phase_direction = phase_with_latch(angle_steers_des_no_offset, desired_angle_delta,
+      desired_angle_delta = command_angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
+      phase, self.phase_direction = phase_with_latch(command_angle_steers_des_no_offset, desired_angle_delta,
                                                       CS.vEgo, self.phase_direction)
 
       # offset does not contribute to resistive torque
@@ -438,11 +467,11 @@ class LatControlPID(LatControl):
         ff_factor = get_nrdr_modified_eps_kf(CS.vEgo)
       else:
         ff_factor = self.ff_factor
-      ff = ff_factor * self.get_steer_feedforward(angle_steers_des_no_offset, CS.vEgo)
-      abs_angle_des = abs(angle_steers_des_no_offset)
+      ff = ff_factor * self.get_steer_feedforward(command_angle_steers_des_no_offset, CS.vEgo)
+      abs_angle_des = abs(command_angle_steers_des_no_offset)
       if self.is_eps_modified:
         unwind_ff_boost = float(np.interp(CS.vEgo, [0.0, 10.0], [self.unwind_ff_multiplier, 1.0]))
-        steering_rate_unwind_ff = angle_steers_des_no_offset * float(CS.steeringRateDeg) < -1.0
+        steering_rate_unwind_ff = command_angle_steers_des_no_offset * float(CS.steeringRateDeg) < -1.0
         ff_unwind_weight = min(max(-phase / 0.5, 0.0), 1.0)
         if steering_rate_unwind_ff and abs_angle_des > 5.0:
           ff_unwind_weight = max(ff_unwind_weight, 0.5)
@@ -524,7 +553,7 @@ class LatControlPID(LatControl):
           center_taper_scale = float(self.center_taper_scale.update(1.0))
         if not civic_bosch_testing_ground:
           output_torque *= _clarity_eps_pid_output_scale(
-            angle_steers_des_no_offset,
+            command_angle_steers_des_no_offset,
             phase,
             float(CS.steeringRateDeg),
             CS.vEgo,
@@ -542,23 +571,23 @@ class LatControlPID(LatControl):
 
       if self.is_honda_crv_5g:
         output_torque = get_honda_crv_5g_pid_output(
-          output_torque, self.prev_output_torque, angle_steers_des_no_offset, CS.vEgo,
+          output_torque, self.prev_output_torque, command_angle_steers_des_no_offset, CS.vEgo,
         )
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       if self.is_rav4_tss2:
         output_torque = get_rav4_tss2_pid_output(output_torque, self.prev_output_torque,
-                                                angle_steers_des_no_offset, CS.vEgo)
+                                                command_angle_steers_des_no_offset, CS.vEgo)
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       if civic_bosch_testing_ground:
-        output_torque *= get_civic_bosch_modified_pid_output_scale(angle_steers_des_no_offset, phase, CS.vEgo)
-        output_alpha = get_civic_bosch_modified_pid_output_alpha(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo,
+        output_torque *= get_civic_bosch_modified_pid_output_scale(command_angle_steers_des_no_offset, phase, CS.vEgo)
+        output_alpha = get_civic_bosch_modified_pid_output_alpha(command_angle_steers_des_no_offset, desired_angle_delta, CS.vEgo,
                                                                  output_torque, self.prev_output_torque)
         output_torque = self.prev_output_torque + (output_alpha * (output_torque - self.prev_output_torque))
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
-      output_torque += self.tune_learner.apply(CS.vEgo, angle_steers_des)
+      output_torque += self.tune_learner.apply(CS.vEgo, command_angle_steers_des)
       output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       paramsd_ok = bool(
@@ -567,7 +596,7 @@ class LatControlPID(LatControl):
         getattr(params, "steerRatioValid", True) and
         getattr(params, "stiffnessFactorValid", True)
       )
-      self.tune_learner.learn(CS.vEgo, angle_steers_des, error, float(CS.steeringRateDeg), steering_pressed, paramsd_ok, self.frame)
+      self.tune_learner.learn(CS.vEgo, command_angle_steers_des, error, float(CS.steeringRateDeg), steering_pressed, paramsd_ok, self.frame)
 
       # nrdr stiction output stage:
       if self.lat_stiction_enabled:
@@ -585,8 +614,9 @@ class LatControlPID(LatControl):
       pid_log.f = float(self.pid.f)
       pid_log.output = float(output_torque)
       pid_log.saturated = bool(self._check_saturation(self.steer_max - abs(output_torque) < 1e-3, CS, steer_limited_by_safety, curvature_limited))
-      self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
+      self.prev_angle_steers_des_no_offset = command_angle_steers_des_no_offset
       self.prev_output_torque = float(output_torque)
       self.prev_saturated = bool(pid_log.saturated)
+      self.was_active = True
 
-    return output_torque, angle_steers_des, pid_log
+    return output_torque, command_angle_steers_des, pid_log
