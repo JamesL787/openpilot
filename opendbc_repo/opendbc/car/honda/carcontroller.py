@@ -46,14 +46,6 @@ def get_eps_modified_steering_pressed(
   return filter_s, filter_s >= 0.28
 
 
-def torque_lpf_tau(v_ego: float, low_tau: float, standard_tau: float, highway_tau: float) -> float:
-  if v_ego < 25.0 * CV.MPH_TO_MS:
-    return low_tau
-  if v_ego < 50.0 * CV.MPH_TO_MS:
-    return standard_tau
-  return highway_tau
-
-
 def get_honda_bosch_wind_brake_mps2(v_ego: float) -> float:
   return float(np.interp(v_ego, [0.0, 13.4, 22.4, 31.3, 40.2], [0.000, 0.049, 0.136, 0.267, 0.441]))
 
@@ -529,7 +521,6 @@ class CarController(CarControllerBase):
     self.gas = 0.0
     self.brake = 0.0
     self.last_torque = 0.0
-    self.torque_lpf = 0.0
     self.override_ramp = 1.0
     self.lat_active_prev = False
     self.steering_pressed_filter_s = 0.0
@@ -584,10 +575,6 @@ class CarController(CarControllerBase):
       "override_fade_up_s": float(np.clip(self.param_store.get_float("HondaOverrideFadeUpSecs", default=1.5), 0.0, 10.0)),
       "override_torque_scale": float(np.clip(self.param_store.get_int("HondaOverrideTorqueScale", default=0), 0, 100)) / 100.0,
       "driver_assist_during_override": self.param_store.get_bool("HondaDriverAssistDuringOverride", default=False),
-      "torque_lpf_enabled": self.param_store.get_bool("HondaTorqueLowPassFilter", default=True),
-      "lpf_tau_low": float(np.clip(self.param_store.get_float("HondaLpfTauLowSpeed", default=0.1), 0.0, 5.0)),
-      "lpf_tau_standard": float(np.clip(self.param_store.get_float("HondaLpfTauStandard", default=0.1), 0.0, 5.0)),
-      "lpf_tau_highway": float(np.clip(self.param_store.get_float("HondaLpfTauHighway", default=0.1), 0.0, 5.0)),
       "steer_delta_limiter_enabled": self.param_store.get_bool("HondaSteerDeltaLimiter", default=False),
       "steer_delta_up": float(np.clip(self.param_store.get_float("HondaSteerDeltaUp", default=3.0), 0.0, 100.0)),
       "steer_delta_down": float(np.clip(self.param_store.get_float("HondaSteerDeltaDown", default=3.0), 0.0, 100.0)),
@@ -631,21 +618,26 @@ class CarController(CarControllerBase):
 
       torque_cmd *= self.override_ramp
 
-      # One LPF for every modified-EPS Honda: the NRDR speed-banded tau, live-tuned through
-      # HondaLpfTau{LowSpeed,Standard,Highway}. Civic Bosch used to fall back to a hardcoded
-      # curve of its own when this toggle was off, which meant "disable the low-pass filter"
-      # silently selected a different low-pass filter on that car. Off now means off.
-      if live["torque_lpf_enabled"]:
-        tau = torque_lpf_tau(CS.out.vEgo, live["lpf_tau_low"], live["lpf_tau_standard"], live["lpf_tau_highway"])
-        alpha = DT_CTRL / (tau + DT_CTRL)
-        self.torque_lpf = alpha * torque_cmd + (1.0 - alpha) * self.torque_lpf
-        torque_cmd = self.torque_lpf
-      else:
-        self.torque_lpf = torque_cmd
+      # The speed-banded torque LPF that used to sit here has moved into LatControlPID, where it
+      # smooths the desired ANGLE instead of this output. Same filter, same HondaTorqueLowPassFilter
+      # toggle, same HondaLpfTau{LowSpeed,Standard,Highway} taus -- the rack still sees a smoothed
+      # command, it is just produced upstream of actuators.torque now.
+      #
+      # Filtering here made this controller's own shaping indistinguishable from safety limiting.
+      # controlsd derives steer_limited_by_safety from
+      #   abs(CC.actuators.torque - carOutput.actuatorsOutput.torque) > 1e-2
+      # and a first-order lag holds a steady-state gap of tau * slew, so at tau = 0.1 s that
+      # tripped for any command moving faster than 0.1 authority/s -- under 6 deg/s of angle-error
+      # change at the Clarity's low-speed kp -- and froze the lateral integrator through every
+      # curve. Smoothing upstream of actuators.torque leaves that comparison meaning only what it
+      # says: genuine safety clipping.
+      #
+      # Deliberately removed rather than left behind a disabled-by-default toggle:
+      # HondaTorqueLowPassFilter is seeded True on existing installs, so any surviving path here
+      # would double-filter.
 
     else:
       self.override_ramp = 0.0
-      self.torque_lpf = 0.0
       self.steering_pressed_filter_s = 0.0
       self.steering_pressed_robust_prev = False
 

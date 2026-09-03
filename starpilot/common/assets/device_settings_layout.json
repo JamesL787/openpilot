@@ -891,8 +891,8 @@
       },
       {
         "key": "HondaTorqueLowPassFilter",
-        "label": "Honda Torque Low Pass Filter",
-        "description": "Smooths steering torque with speed-banded tau values.",
+        "label": "Honda Steering Target Smoothing",
+        "description": "Smooths the desired steering angle with speed-banded tau values.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LateralTune",

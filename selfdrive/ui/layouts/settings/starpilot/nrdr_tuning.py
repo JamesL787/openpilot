@@ -310,7 +310,7 @@ class NRDRTuningLayout(_SettingsPage):
     ]
 
     filter_rows = [
-      toggle("HondaTorqueLowPassFilter", "Torque Low Pass Filter", "Smooth steering torque using speed-banded time constants."),
+      toggle("HondaTorqueLowPassFilter", "Steering Target Smoothing", "Smooth the desired steering angle using speed-banded time constants."),
       value(
         "HondaLpfTauLowSpeed", "LPF Tau: Low Speed", "Low-pass time constant below 25 mph.",
         lambda: f"{p.get_float('HondaLpfTauLowSpeed'):.2f}",

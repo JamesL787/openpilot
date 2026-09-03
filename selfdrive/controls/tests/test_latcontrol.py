@@ -319,51 +319,47 @@ class TestLatControl:
       angles.append(angle_des)
     return angles
 
+  def _run_clarity_pid(self, curvatures, *, rate_limit, smoothing, tau=0.1, v_ego=2.0):
+    """Set the live params, THEN build and run -- the controller reads them on its first frame."""
+    Params().put("NrdrLatAngleRateLimit", int(rate_limit))
+    Params().put_bool("HondaTorqueLowPassFilter", smoothing)
+    for key in ("HondaLpfTauLowSpeed", "HondaLpfTauStandard", "HondaLpfTauHighway"):
+      Params().put_float(key, tau)
+
+    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
+    CS.vEgo = v_ego
+    CS.steeringAngleDeg = 0.0
+    return controller, self._run_pid_frames(controller, VM, CS, params, toggles, curvatures)
+
   def test_desired_angle_rate_limit_clips_low_speed_model_jitter(self):
     # clip_curvature's ISO jerk allowance is ~1/v^2 in angle space, so at a crawl it lets the
     # target step tens of degrees per frame. The angle-space limiter is what actually bounds it.
-    Params().put("NrdrLatAngleRateLimit", int(NRDR_ANGLE_RATE_LIMIT_DEG_S))
-    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
+    # Smoothing off so this measures the slew clip alone.
+    spike = [0.0, 0.05]
+    controller, (settled, limited) = self._run_clarity_pid(spike, rate_limit=NRDR_ANGLE_RATE_LIMIT_DEG_S, smoothing=False)
     assert controller.is_eps_modified
-    CS.vEgo = 2.0
-    CS.steeringAngleDeg = 0.0
-
-    # Settle on centre, then hit it with a curvature spike clip_curvature would happily pass.
-    settled, limited = self._run_pid_frames(controller, VM, CS, params, toggles, [0.0, 0.05])
     assert controller.angle_rate_limit_deg_s == pytest.approx(NRDR_ANGLE_RATE_LIMIT_DEG_S)
     assert abs(limited - settled) == pytest.approx(NRDR_ANGLE_RATE_LIMIT_DEG_S * DT_CTRL, abs=1e-6)
 
     # 0 disables the limiter, and that same command is then an enormous single-frame step.
-    Params().put("NrdrLatAngleRateLimit", 0)
-    reference, ref_VM, ref_CS, ref_params, ref_toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
-    ref_CS.vEgo, ref_CS.steeringAngleDeg = CS.vEgo, CS.steeringAngleDeg
-    ref_settled, unlimited = self._run_pid_frames(reference, ref_VM, ref_CS, ref_params, ref_toggles, [0.0, 0.05])
-
+    reference, (ref_settled, unlimited) = self._run_clarity_pid(spike, rate_limit=0, smoothing=False)
     assert reference.angle_rate_limit_deg_s == 0.0
     assert abs(unlimited - ref_settled) > 10.0 * abs(limited - settled)
 
   def test_desired_angle_rate_limit_passes_sustained_motion(self):
     # A slew clip must not behave like a filter: a ramp slower than the ceiling is untouched.
     ramp = [2e-5 * n for n in range(50)]  # well inside the 300 deg/s ceiling at this ratio
-
-    Params().put("NrdrLatAngleRateLimit", int(NRDR_ANGLE_RATE_LIMIT_DEG_S))
-    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
-    CS.vEgo = 2.0
-    CS.steeringAngleDeg = 0.0
-    limited = self._run_pid_frames(controller, VM, CS, params, toggles, ramp)
-
-    Params().put("NrdrLatAngleRateLimit", 0)
-    reference, ref_VM, ref_CS, ref_params, ref_toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
-    ref_CS.vEgo, ref_CS.steeringAngleDeg = CS.vEgo, CS.steeringAngleDeg
-    unlimited = self._run_pid_frames(reference, ref_VM, ref_CS, ref_params, ref_toggles, ramp)
+    _, limited = self._run_clarity_pid(ramp, rate_limit=NRDR_ANGLE_RATE_LIMIT_DEG_S, smoothing=False)
+    _, unlimited = self._run_clarity_pid(ramp, rate_limit=0, smoothing=False)
 
     assert max(abs(angle) for angle in unlimited) > 1.0  # the ramp really does move the target
     assert limited == pytest.approx(unlimited)
 
   def test_desired_angle_rate_limit_does_not_slew_in_on_engage(self):
-    # While disengaged the limiter is bypassed and prev tracks the raw target, so engaging on
-    # an already-turned wheel snaps to the current command instead of ramping in from centre.
+    # While disengaged both shaping states track the raw target, so engaging on an already-turned
+    # wheel snaps to the current command instead of ramping in from centre.
     Params().put("NrdrLatAngleRateLimit", int(NRDR_ANGLE_RATE_LIMIT_DEG_S))
+    Params().put_bool("HondaTorqueLowPassFilter", True)
     controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
     CS.vEgo = 2.0
     CS.steeringAngleDeg = 0.0
@@ -373,6 +369,43 @@ class TestLatControl:
 
     assert abs(inactive_angle) > 10.0
     assert engaged_angle == pytest.approx(inactive_angle)
+
+  def test_target_smoothing_lags_a_step_and_is_toggleable(self):
+    # The carcontroller LPF moved onto the target. Same tau params, so it must behave as a
+    # first-order lag on the desired angle, and the existing toggle must still turn it off.
+    # Slew clip disabled so this measures the filter alone.
+    step = [0.0] + [0.01] * 3
+    _, smoothed = self._run_clarity_pid(step, rate_limit=0, smoothing=True, tau=0.1)
+    reference, raw = self._run_clarity_pid(step, rate_limit=0, smoothing=False, tau=0.1)
+
+    assert not reference.target_smoothing_enabled
+    # Unsmoothed lands the step immediately; smoothed approaches it monotonically from behind.
+    assert raw[1] == pytest.approx(raw[3])
+    assert abs(smoothed[1]) < abs(smoothed[2]) < abs(smoothed[3]) < abs(raw[3])
+
+    alpha = DT_CTRL / (0.1 + DT_CTRL)
+    assert abs(smoothed[1] - smoothed[0]) == pytest.approx(alpha * abs(raw[1] - raw[0]), rel=1e-6)
+
+  def test_target_smoothing_does_not_throttle_the_slew_clip(self):
+    # The slew clip must run off its OWN previous value, not the smoothed one. Chaining them
+    # would cap each frame's allowance at alpha * max_delta (~27 deg/s), throttling real steering.
+    frames = 20
+    controller, _ = self._run_clarity_pid([0.0] + [0.05] * frames,
+                                          rate_limit=NRDR_ANGLE_RATE_LIMIT_DEG_S, smoothing=True, tau=0.1)
+
+    max_step = NRDR_ANGLE_RATE_LIMIT_DEG_S * DT_CTRL
+    assert abs(controller.prev_rate_limited_angle) == pytest.approx(frames * max_step, abs=1e-6)
+
+  def test_lateral_command_reaches_carcontroller_unfiltered(self):
+    # The whole point of moving the filter: what LatControlPID returns is what the carcontroller
+    # sends, so controlsd's actuators-vs-actuatorsOutput comparison means only safety clipping.
+    CarInterface = interfaces[HONDA.HONDA_CLARITY]
+    CP = CarInterface.get_non_essential_params(HONDA.HONDA_CLARITY)
+    CP.flags |= int(HondaFlags.EPS_MODIFIED)
+    CC = CarInterface(CP, custom.StarPilotCarParams.new_message()).CC
+
+    assert not hasattr(CC, "torque_lpf")
+    assert not any("lpf" in key.lower() for key in CC._get_live_tuning_params())
 
   def test_clarity_vgr_inverse_map(self):
     import numpy as np
