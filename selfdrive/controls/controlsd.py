@@ -6,7 +6,7 @@ from cereal import car, custom, log
 import cereal.messaging as messaging
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
-from openpilot.common.realtime import config_realtime_process, DT_CTRL, Priority, Ratekeeper
+from openpilot.common.realtime import config_realtime_process, DT_CTRL, DT_MDL, Priority, Ratekeeper
 from openpilot.common.swaglog import cloudlog
 
 from opendbc.car.car_helpers import interfaces
@@ -391,6 +391,12 @@ class Controls:
     self.steer_limited_by_safety = False
     self.curvature = 0.0
     self.desired_curvature = 0.0
+    # First-order hold on the model action; see the ramp in state_control().
+    self.model_curvature_held = 0.0
+    self.model_curvature_from = 0.0
+    self.model_curvature_target = 0.0
+    self.model_curvature_elapsed = 0.0
+    self.model_action_interp = self.params.get_bool("NrdrLatModelActionInterp")
     self.lc_smooth_release = 0.0
     self.lane_centering = LaneCenteringController()
     self.lc_entry_sign = 0.0
@@ -576,6 +582,40 @@ class Controls:
       new_desired_curvature = self.sm['lateralManeuverPlan'].desiredCurvature if CC.latActive else self.curvature
     else:
       new_desired_curvature = model_v2.action.desiredCurvature if CC.latActive else self.curvature
+
+    # modeld publishes its action at 20 Hz while this loop runs at 100 Hz, so holding the newest
+    # value is a zero-order hold: the target moves in one step per model frame and sits still for
+    # the other four. clip_curvature smears that at road speed, but its allowance is
+    # MAX_LATERAL_JERK / v_ego**2 and below roughly 20 mph it does not bind, so the staircase
+    # reaches the rack intact.
+    #
+    # Measured on route 00000276 under 15 mph: each model frame steps the desired wheel angle by
+    # 2.0 deg at p50 and 6.9 deg at p90, half of those steps are smaller than the angle-rate clip
+    # and so pass it untouched, and 19% of the command's chatter power sits in the 15-22 Hz band
+    # -- about four times what it is with the lateral target low-pass enabled. That low-pass is
+    # what has been hiding this, at the cost of 0.11 s of lag on every genuine maneuver too.
+    #
+    # Ramp toward each new action across the model frame instead. Starting the ramp from the value
+    # currently being commanded keeps the target continuous by construction -- there is no step
+    # left to filter -- and costs at most one model frame of transport delay, which lagd learns
+    # anyway, rather than the broadband attenuation a low-pass applies.
+    if self.model_action_interp and CC.latActive:
+      if self.sm.updated['modelV2']:
+        self.model_curvature_target = new_desired_curvature
+        self.model_curvature_elapsed = 0.0
+      else:
+        self.model_curvature_elapsed += DT_CTRL
+      if self.sm.updated['modelV2']:
+        self.model_curvature_from = self.model_curvature_held
+      blend = min(self.model_curvature_elapsed / DT_MDL, 1.0)
+      self.model_curvature_held = self.model_curvature_from + \
+        blend * (self.model_curvature_target - self.model_curvature_from)
+      new_desired_curvature = self.model_curvature_held
+    else:
+      self.model_curvature_held = new_desired_curvature
+      self.model_curvature_from = new_desired_curvature
+      self.model_curvature_target = new_desired_curvature
+      self.model_curvature_elapsed = 0.0
 
     # Low-speed turn-intent hold (see CURVATURE_HOLD_* above). Curvature sign convention
     # here is positive for RIGHT turns (pauseturn log: left turn at +148 deg steering
