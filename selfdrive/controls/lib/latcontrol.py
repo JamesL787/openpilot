@@ -17,9 +17,7 @@ class LatControl(ABC):
     self.steer_max = 1.0
 
   @abstractmethod
-  def update(self, active: bool, CS, VM, params, steer_limited_by_safety: bool, desired_curvature: float,
-             curvature_limited: bool, lat_delay: float, calibrated_pose: Pose, model_data: capnp._DynamicStructReader,
-             starpilot_toggles: SimpleNamespace, lat_smooth_seconds: float = 0.0):
+  def update(self, active: bool, CS, VM, params, steer_limited_by_safety: bool, desired_curvature: float, curvature_limited: bool, lat_delay: float, calibrated_pose: Pose, model_data: capnp._DynamicStructReader, starpilot_toggles: SimpleNamespace):
     pass
 
   def reset(self):

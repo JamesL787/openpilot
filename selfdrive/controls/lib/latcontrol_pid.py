@@ -1,5 +1,4 @@
 import math
-
 import numpy as np
 
 from cereal import log
@@ -11,7 +10,6 @@ from openpilot.common.params import Params
 from openpilot.common.pid import PIDController
 from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
-from openpilot.selfdrive.controls.lib.drive_helpers import MIN_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   RAV4_TSS2_CARS,
   SUBARU_IMPREZA_CARS,
@@ -21,7 +19,6 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
 )
 from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
-from openpilot.selfdrive.modeld.constants import ModelConstants
 
 
 # nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio.
@@ -338,7 +335,6 @@ class LatControlPID(LatControl):
     self.prev_output_torque = 0.0
     self.center_taper_scale = FirstOrderFilter(1.0, CENTER_TAPER_FADE_TAU, dt)
     self.dt = dt
-    self.lead_curvature_filter = FirstOrderFilter(0.0, 0.0, dt, initialized=False)
     self.params = Params()
     self.frame = -1
     self.tune_learner = TuneLearner(dt, self.steer_max)
@@ -377,7 +373,14 @@ class LatControlPID(LatControl):
     self.pid._k_p = [self.base_kp_bp, scale_lateral_pid_gain_values(self.base_kp_v, kp_scale)]
     self.pid._k_i = [self.base_ki_bp, scale_lateral_pid_gain_values(self.base_ki_v, ki_scale)]
 
-  def _get_desired_steer_angles(self, desired_curvature, CS, VM, params):
+  def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited,
+             lat_delay, calibrated_pose, model_data, starpilot_toggles):
+    self.update_honda_lateral_pid_gain_scale(starpilot_toggles)
+
+    pid_log = log.ControlsState.LateralPIDState.new_message()
+    pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
+    pid_log.steeringRateDeg = float(CS.steeringRateDeg)
+
     if self.sr_curve is not None:
       # Road-measured effective ratio, selected at the MEASURED angle. Fitted from steering
       # wheel angle to achieved yaw rate, so it spans the whole chain: VGR pinion, rack,
@@ -388,6 +391,7 @@ class LatControlPID(LatControl):
       sr_bp, sr_v = self.sr_curve
       VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
       angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
+      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     elif self.vgr_inverse is not None:
       # Firmware VGR path. VehicleModel keeps the scalar sR paramsd learned (controlsd sets it
       # every frame), so it returns the angle a constant-ratio rack would need; the measured rack
@@ -397,49 +401,10 @@ class LatControlPID(LatControl):
       # (a spurious d(theta_des)/d(theta_meas) term inside the loop).
       linear_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
       angle_steers_des_no_offset = vgr_linear_to_physical(linear_des_no_offset, self.vgr_inverse)
+      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     else:
       angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
-
-    return angle_steers_des_no_offset, angle_steers_des_no_offset + params.angleOffsetDeg
-
-  def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited,
-             lat_delay, calibrated_pose, model_data, starpilot_toggles, lat_smooth_seconds=0.0):
-    self.update_honda_lateral_pid_gain_scale(starpilot_toggles)
-
-    pid_log = log.ControlsState.LateralPIDState.new_message()
-    pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
-    pid_log.steeringRateDeg = float(CS.steeringRateDeg)
-
-    # Sample the model's lateral-acceleration forecast at the actuator horizon, then smooth it
-    # at the PID rate with LatSmoothSeconds. This is the one lead-compensated target for the
-    # entire controller: P/I, feedforward, phase, and tune learner must agree on it. Splitting
-    # the target lets feedforward fight the PID whenever the raw trajectory differs from the
-    # action head, producing the torque chatter this path is meant to eliminate.
-    model_trajectory_ok = (
-      model_data is not None and
-      len(model_data.acceleration.y) == len(ModelConstants.T_IDXS) and
-      len(model_data.velocity.x) == len(ModelConstants.T_IDXS)
-    )
-    horizon = max(lat_delay, 0.0) if math.isfinite(lat_delay) else 0.0
-    future_vego = np.interp(horizon, ModelConstants.T_IDXS, model_data.velocity.x) if model_trajectory_ok else 0.0
-    if model_trajectory_ok and future_vego > MIN_SPEED:
-      future_lat_accel = np.interp(horizon, ModelConstants.T_IDXS, model_data.acceleration.y)
-      lead_curvature = future_lat_accel / future_vego ** 2
-    else:
-      lead_curvature = desired_curvature
-
-    if not active:
-      self.lead_curvature_filter.x = desired_curvature
-      self.lead_curvature_filter.initialized = True
-      target_curvature = desired_curvature
-    else:
-      smooth_seconds = max(float(lat_smooth_seconds), 0.0) if math.isfinite(lat_smooth_seconds) else 0.0
-      self.lead_curvature_filter.update_alpha(smooth_seconds)
-      target_curvature = self.lead_curvature_filter.update(lead_curvature)
-
-    angle_steers_des_no_offset, angle_steers_des = self._get_desired_steer_angles(
-      target_curvature, CS, VM, params,
-    )
+      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     error = angle_steers_des - CS.steeringAngleDeg
 
     pid_log.steeringAngleDesiredDeg = angle_steers_des

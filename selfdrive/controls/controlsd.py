@@ -35,7 +35,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
 )
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
 from openpilot.selfdrive.car.cruise_state import should_cancel_stock_cruise
-from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS, get_car_lateral_smooth_seconds, get_model_lateral_smooth_seconds
+from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS, get_car_lateral_smooth_seconds
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
@@ -779,10 +779,7 @@ class Controls:
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
                                                                jerk_factor)
-    # Keep controls and modeld on the exact same DeveloperUI-aware smoothing time. PID uses this
-    # time to filter its acceleration forecast, so the former fixed 0.1 s Honda fallback was a
-    # real timing mismatch whenever modeld was running a user-selected LatSmoothSeconds value.
-    lat_smooth_seconds = get_model_lateral_smooth_seconds(self.CP, self.params, CS.vEgo)
+    lat_smooth_seconds = get_control_lateral_smooth_seconds(self.CP.brand, CS.vEgo, self.CP.lateralSmoothSeconds)
     lat_delay = self.sm["liveDelay"].lateralDelay + lat_smooth_seconds
 
     actuators.curvature = self.desired_curvature
@@ -791,8 +788,7 @@ class Controls:
                                                      curvature_limited, lat_delay,
                                                      self.calibrated_pose,
                                                      self.sm['modelV2'],
-                                                     self.starpilot_toggles,
-                                                     lat_smooth_seconds=lat_smooth_seconds)
+                                                     self.starpilot_toggles)
     actuators.torque = float(steer)
     if self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
       actuators.curvature = float(lateral_output)
