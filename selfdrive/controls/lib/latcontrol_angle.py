@@ -53,7 +53,7 @@ class LatControlAngle(LatControl):
     return self.measured_angle_rate
 
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited,
-             lat_delay, calibrated_pose, model_data, starpilot_toggles, lat_smooth_seconds=0.0):
+             lat_delay, calibrated_pose, model_data, starpilot_toggles):
     angle_log = log.ControlsState.LateralAngleState.new_message()
 
     if not active:
