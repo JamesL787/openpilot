@@ -113,6 +113,36 @@ def get_nrdr_modified_eps_kf(v_ego: float) -> float:
   return float(np.interp(v_ego, NRDR_MODIFIED_EPS_KF_SPEED_BP, NRDR_MODIFIED_EPS_KF_V))
 
 
+# nrdr: ceiling on how fast the DESIRED wheel angle is allowed to move, deg/s.
+#
+# clip_curvature() enforces the ISO jerk limit in CURVATURE space -- the allowance is
+# MAX_LATERAL_JERK / v_ego**2 -- but this controller works in ANGLE space, and the
+# curvature-to-angle gain (sR * wheelbase) is very nearly speed-independent. The allowance
+# falls off as 1/v**2 while the gain does not, so the angle-rate ceiling that actually
+# reaches the PID is roughly:
+#
+#     1 mph  15500 deg/s      15 mph   345 deg/s      45 mph    38 deg/s
+#     5 mph   3100 deg/s      25 mph   124 deg/s      65 mph    18 deg/s
+#
+# Sane at road speed, absent below ~20 mph -- exactly where the model's curvature jitter
+# reaches the rack as multi-degree per-frame steps in the target, saturating the P term and
+# flipping the turn-in/unwind branches of the output scale on alternate frames. A flat deg/s
+# ceiling is the constraint that is physical for an angle-space controller, and since
+# clip_curvature is already tighter than this above ~16 mph, it can only bind at low speed:
+# highway behaviour is unchanged by construction.
+#
+# This is a slew clip, NOT a filter. Sustained target motion passes through untouched, so it
+# costs no phase lag on a real maneuver -- only the per-frame excursions are removed.
+NRDR_ANGLE_RATE_LIMIT_DEG_S = 300.0  # 0 disables
+
+
+def rate_limit_desired_angle(angle_deg: float, prev_angle_deg: float, max_rate_deg_s: float, dt: float) -> float:
+  if max_rate_deg_s <= 0.0 or not math.isfinite(angle_deg):
+    return angle_deg
+  max_delta = max_rate_deg_s * dt
+  return float(min(max(angle_deg, prev_angle_deg - max_delta), prev_angle_deg + max_delta))
+
+
 CENTER_TAPER_FADE_TAU = 0.25
 UNWIND_BOOST_FADE_S = 0.3
 
@@ -358,6 +388,7 @@ class LatControlPID(LatControl):
     self.lat_stiction = LatStiction(dt, self.steer_max)
     self.lat_stiction_enabled = False
     self.prev_saturated = False
+    self.angle_rate_limit_deg_s = NRDR_ANGLE_RATE_LIMIT_DEG_S
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
@@ -391,7 +422,6 @@ class LatControlPID(LatControl):
       sr_bp, sr_v = self.sr_curve
       VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
       angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
-      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     elif self.vgr_inverse is not None:
       # Firmware VGR path. VehicleModel keeps the scalar sR paramsd learned (controlsd sets it
       # every frame), so it returns the angle a constant-ratio rack would need; the measured rack
@@ -401,10 +431,18 @@ class LatControlPID(LatControl):
       # (a spurious d(theta_des)/d(theta_meas) term inside the loop).
       linear_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
       angle_steers_des_no_offset = vgr_linear_to_physical(linear_des_no_offset, self.vgr_inverse)
-      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     else:
       angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
-      angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
+
+    # Clip the target's slew rate before it becomes error, feedforward or phase, so a model
+    # curvature spike cannot slam the P term or flip the turn-in/unwind branches downstream.
+    # Only while active: when disengaged prev_angle_steers_des_no_offset tracks the raw target
+    # below, so re-engagement snaps to the current target instead of slewing in from a stale one.
+    if active and self.is_eps_modified:
+      angle_steers_des_no_offset = rate_limit_desired_angle(
+        angle_steers_des_no_offset, self.prev_angle_steers_des_no_offset, self.angle_rate_limit_deg_s, self.dt,
+      )
+    angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     error = angle_steers_des - CS.steeringAngleDeg
 
     pid_log.steeringAngleDesiredDeg = angle_steers_des
@@ -504,6 +542,8 @@ class LatControlPID(LatControl):
           self.unwind_ff_multiplier = _get_param_float(self.params, "HondaUnwindFfMultiplier", 2.0, 1.0, 4.0)
           self.unwind_boost_cap_s = _get_param_float(self.params, "HondaUnwindBoostSeconds", 1.0, 0.0, 3.0)
           self.lat_stiction_enabled = _get_param_bool(self.params, "NrdrLatStiction")
+          self.angle_rate_limit_deg_s = _get_param_float(self.params, "NrdrLatAngleRateLimit",
+                                                         NRDR_ANGLE_RATE_LIMIT_DEG_S, 0.0, 2000.0)
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
         i_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_i_scale_low, self.lat_i_scale_standard, self.lat_i_scale_highway)
