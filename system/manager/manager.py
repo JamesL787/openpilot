@@ -70,7 +70,7 @@ STARPILOT_PARAMS_CACHE_MIGRATION_FLAG = Path("/data") / "starpilot_params_cache_
 STARPILOT_DEFAULT_MODEL_MIGRATION_FLAG = Path("/data") / "starpilot_default_model_rdf_v4"
 STARPILOT_CE_MODEL_STOP_TIME_MIGRATION_FLAG = Path("/data") / "starpilot_ce_model_stop_time_v2"
 STARPILOT_LEGACY_CACHE_MARKER_KEYS = ("RemapCancelToDistance",)
-NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_tuning_defaults_v2"
+NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_tuning_defaults_v3"
 NRDR_HONDA_OVERRIDE_SEMANTICS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_override_semantics_v1"
 NRDR_KONIK_DEFAULT_MIGRATION_FLAG = Path("/data") / "nrdr_konik_default_v1"
 NRDR_DM_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_dm_defaults_v1"
@@ -830,6 +830,7 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "HondaSteerDeltaUp": 3.0,
     "HondaUnwindBoostSeconds": 1.0,
     "HondaUnwindFfMultiplier": 2.0,
+    "NrdrLatUnwindRateTau": 0.1,
   }
   desired_int_values = {
     "HondaCenterBoostMinSpeed": 50,
@@ -844,6 +845,7 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "LatPScaleLowSpeed": 100,
     "LatPScaleStandard": 135,
     "NrdrDriverOverrideThreshold": 2400,
+    "NrdrLatAngleRateLimit": 300,
     "NrdrMinSteerSpeed": 1,
     "NrdrOverrideThresholdCenterBoost": 1200,
   }

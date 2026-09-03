@@ -890,6 +890,30 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "NrdrLatAngleRateLimit",
+        "label": "Desired Angle Rate Limit",
+        "description": "Ceiling on how fast the desired steering angle may move, deg/s. 0 disables.",
+        "data_type": "int",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 2000.0,
+        "step": 10.0,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrLatUnwindRateTau",
+        "label": "Unwind Rate Smoothing",
+        "description": "Seconds of smoothing on the measured steering rate that gates the unwind branches. 0 uses the raw rate.",
+        "data_type": "float",
+        "ui_type": "numeric",
+        "min": 0.0,
+        "max": 2.0,
+        "step": 0.01,
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "HondaTorqueLowPassFilter",
         "label": "Honda Steering Target Smoothing",
         "description": "Smooths the desired steering angle with speed-banded tau values.",

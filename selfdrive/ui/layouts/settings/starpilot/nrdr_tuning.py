@@ -310,6 +310,13 @@ class NRDRTuningLayout(_SettingsPage):
     ]
 
     filter_rows = [
+      value(
+        "NrdrLatAngleRateLimit", "Desired Angle Rate Limit",
+        "Ceiling on how fast the desired steering angle may move. Backstops the curvature jerk limit, "
+        "which does not bind below about 20 mph. 0 disables.",
+        lambda: f"{p.get_int('NrdrLatAngleRateLimit')} deg/s",
+        lambda: self._show_slider("NrdrLatAngleRateLimit", 0, 2000, unit=" deg/s", title="Desired Angle Rate Limit"),
+      ),
       toggle("HondaTorqueLowPassFilter", "Steering Target Smoothing", "Smooth the desired steering angle using speed-banded time constants."),
       value(
         "HondaLpfTauLowSpeed", "LPF Tau: Low Speed", "Low-pass time constant below 25 mph.",
@@ -328,6 +335,13 @@ class NRDRTuningLayout(_SettingsPage):
         lambda: f"{p.get_float('HondaLpfTauHighway'):.2f}",
         lambda: self._show_slider("HondaLpfTauHighway", 0.0, 5.0, step=0.01, value_type="float", title="LPF Tau: Highway"),
         visible=lambda: p.get_bool("HondaTorqueLowPassFilter"),
+      ),
+      value(
+        "NrdrLatUnwindRateTau", "Unwind Rate Smoothing",
+        "Smooths the measured steering rate that gates the unwind branches, so a rate flipping sign "
+        "cannot flip the output scale frame to frame. 0 uses the raw rate.",
+        lambda: f"{p.get_float('NrdrLatUnwindRateTau'):.2f}s",
+        lambda: self._show_slider("NrdrLatUnwindRateTau", 0.0, 2.0, step=0.01, unit="s", value_type="float", title="Unwind Rate Smoothing"),
       ),
       toggle("HondaSteerDeltaLimiter", "Steer Delta Limiter", "Legacy torque rate limiter. Leave off unless testing."),
       value(
