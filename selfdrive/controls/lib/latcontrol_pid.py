@@ -354,14 +354,10 @@ def _get_param_float(params, key, default, min_value=None, max_value=None, scale
 
 
 def _get_param_bool(params, key, default=False):
-  # NOT params.get_bool(): that is a raw read that reports an unset key as False and ignores
-  # the default declared in params_keys.h, so it cannot express a default-ON param. get()
-  # returns None when the key has never been written, which is the case we need to see.
   try:
-    value = params.get(key)
+    return bool(params.get_bool(key))
   except Exception:
     return default
-  return default if value is None else bool(value)
 
 
 def _clarity_eps_pid_output_scale(
