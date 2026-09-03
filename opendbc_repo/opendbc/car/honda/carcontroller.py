@@ -590,9 +590,14 @@ class CarController(CarControllerBase):
     steering_pressed = False
     below_min_steer_speed = CS.out.vEgo < live["min_steer_speed"]
 
+    # INVARIANT: every stage below may only reduce the command because the car genuinely cannot
+    # deliver it -- below the rack's minimum steer speed, cut for a driver override, or held back
+    # by the steer-delta limiter. controlsd turns any difference between CC.actuators.torque and
+    # the value returned here into steer_limited_by_safety, which freezes the lateral integrator,
+    # so comfort shaping must NOT live here. Smoothing belongs upstream in the lateral controller,
+    # where it is part of the command rather than a silent deviation from it.
     if below_min_steer_speed:
       torque_cmd = 0.0
-    raw_torque_cmd = torque_cmd
 
     if CC.latActive:
       # Clarity's behaviour, now shared by every modified-EPS Honda: the command path uses raw
@@ -641,6 +646,9 @@ class CarController(CarControllerBase):
       self.steering_pressed_filter_s = 0.0
       self.steering_pressed_robust_prev = False
 
+    # Opt-in slew limit on the delivered command. Unlike a low-pass filter this genuinely
+    # withholds authority for as long as it is saturated, so reporting it as limiting -- and
+    # freezing the integrator against it -- is correct.
     if live["steer_delta_limiter_enabled"]:
       limited_torque = rate_limit(torque_cmd, self.last_torque, -live["steer_delta_down"] * DT_CTRL, live["steer_delta_up"] * DT_CTRL)
     else:

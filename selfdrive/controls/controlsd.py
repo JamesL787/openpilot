@@ -880,6 +880,14 @@ class Controls:
         self.steer_limited_by_safety = abs(CC.actuators.steeringAngleDeg - CO.actuatorsOutput.steeringAngleDeg) > \
                                               STEER_ANGLE_SATURATION_THRESHOLD
       else:
+        # This is a proxy, not a report: it infers "the car could not deliver what we asked" from
+        # the car controller having returned something else. That only holds while every stage
+        # between actuators.torque and actuatorsOutput.torque is a genuine limit. A car controller
+        # that also does comfort shaping here -- the Honda torque LPF used to -- makes the two
+        # indistinguishable, and because a first-order lag holds a steady-state gap of tau * slew
+        # it trips this 1e-2 threshold continuously rather than occasionally: tau = 0.1 s means any
+        # command slewing faster than 0.1 authority/s reads as limited, which froze the lateral
+        # integrator for effectively the whole drive. Shaping belongs upstream of actuators.torque.
         self.steer_limited_by_safety = abs(CC.actuators.torque - CO.actuatorsOutput.torque) > 1e-2
     else:
       self.steer_limited_by_safety = False

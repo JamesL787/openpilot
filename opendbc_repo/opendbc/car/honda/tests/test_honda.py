@@ -350,3 +350,85 @@ class TestHondaFingerprint:
 
     assert hrv3g_cp.longitudinalActuatorDelay == pytest.approx(0.4)
     assert accord_cp.longitudinalActuatorDelay == pytest.approx(0.5)
+
+
+class TestHondaSteeringCommandFidelity:
+  """actuatorsOutput.torque may differ from actuators.torque ONLY when the car cannot deliver it.
+
+  controlsd infers steer_limited_by_safety from that difference and uses it to freeze the lateral
+  integrator, so any comfort shaping applied on this path is indistinguishable from safety
+  limiting. The torque LPF that used to live here held a steady-state gap of tau * slew, which
+  tripped the 1e-2 threshold continuously and kept the integrator frozen for whole drives.
+  """
+
+  LIVE_DEFAULTS = {
+    "override_fade_down_s": 0.0,
+    "override_fade_up_s": 1.5,
+    "override_torque_scale": 0.0,
+    "increase_override_tolerance": False,
+    "steer_delta_limiter_enabled": False,
+    "steer_delta_up": 3.0,
+    "steer_delta_down": 3.0,
+    "driver_assist_during_override": False,
+    "min_steer_speed": 1.0 * CV.MPH_TO_MS,
+  }
+
+  @staticmethod
+  def _controller():
+    CP = CarInterface.get_non_essential_params(CAR.HONDA_CLARITY)
+    CP.flags |= int(HondaFlags.EPS_MODIFIED)
+    return CarController(DBC[CP.carFingerprint], CP)
+
+  @staticmethod
+  def _cc(torque, lat_active=True):
+    CC = structs.CarControl.new_message()
+    CC.latActive = lat_active
+    CC.actuators.torque = torque
+    return CC
+
+  @staticmethod
+  def _cs(v_ego=20.0, steering_pressed=False):
+    return SimpleNamespace(out=SimpleNamespace(vEgo=v_ego, steeringPressed=steering_pressed, steeringTorque=0.0))
+
+  def _drive(self, controller, torques, live=None, **cs_kwargs):
+    live = {**self.LIVE_DEFAULTS, **(live or {})}
+    delivered = []
+    for torque in torques:
+      out, _, _ = controller._update_steering_torque(self._cc(torque), self._cs(**cs_kwargs), live)
+      delivered.append(out)
+    return delivered
+
+  def test_command_is_delivered_unchanged_once_the_override_ramp_is_up(self):
+    # The default path must be bit-for-bit transparent, or steer_limited_by_safety latches True.
+    controller = self._controller()
+    self._drive(controller, [0.0] * 200)  # let the engage ramp finish
+
+    commands = [0.10, 0.35, -0.20, 0.80, -0.75, 0.0]
+    assert self._drive(controller, commands) == pytest.approx(commands)
+
+  def test_a_moving_command_is_not_reported_as_limited(self):
+    # The regression itself: a fast ramp used to leave a tau * slew gap on every frame.
+    controller = self._controller()
+    self._drive(controller, [0.0] * 200)
+
+    ramp = [0.01 * n for n in range(60)]  # 1.0 authority/s, 10x the old trip threshold
+    delivered = self._drive(controller, ramp)
+
+    assert all(abs(cmd - out) <= 1e-2 for cmd, out in zip(ramp, delivered, strict=True))
+
+  def test_min_steer_speed_zeroing_is_reported_as_limited(self):
+    controller = self._controller()
+    delivered = self._drive(controller, [0.5], v_ego=0.0)
+    assert delivered == [0.0]
+
+  def test_override_cut_is_reported_as_limited(self):
+    controller = self._controller()
+    self._drive(controller, [0.0] * 200)
+    delivered = self._drive(controller, [0.5], steering_pressed=True)
+    assert abs(0.5 - delivered[0]) > 1e-2
+
+  def test_steer_delta_limiter_is_reported_as_limited(self):
+    controller = self._controller()
+    self._drive(controller, [0.0] * 200)
+    delivered = self._drive(controller, [1.0], live={"steer_delta_limiter_enabled": True})
+    assert abs(1.0 - delivered[0]) > 1e-2
