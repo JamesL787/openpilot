@@ -283,11 +283,28 @@ ensure_host_python_extensions() {
 }
 
 sync_host_generated_headers() {
-  if ! command -v capnpc >/dev/null 2>&1; then
-    return
+  # capnpc embeds an exact compiler-version guard in every generated C++ header, and the
+  # build compiles those headers against the Cap'n Proto shipped in the managed venv. They
+  # must therefore come from the SAME toolchain. Running a bare `capnpc` here picks up a
+  # Homebrew capnproto when one is installed, which silently regenerates the headers with a
+  # different version guard on every sync and breaks the next C++ build with
+  # "Version mismatch between generated code and library headers".
+  #
+  # Note capnpc invokes `capnpc-c++` as a separate PATH-resolved plugin, and it is that
+  # plugin -- not capnpc itself -- that stamps the guard, so the package's bin directory has
+  # to be on PATH, not just the capnpc binary.
+  local capnp_bin_dir=""
+  if [[ -x "${HOST_VENV}/bin/python3" ]]; then
+    capnp_bin_dir="$("${HOST_VENV}/bin/python3" -c \
+      'import capnproto; print(capnproto.BIN_DIR)' 2>/dev/null || true)"
   fi
 
   (
+    if [[ -n "${capnp_bin_dir}" && -d "${capnp_bin_dir}" ]]; then
+      export PATH="${capnp_bin_dir}:${PATH}"
+    fi
+    command -v capnpc >/dev/null 2>&1 || exit 0
+
     cd "${WORK_DIR}"
     mkdir -p cereal/gen/cpp
     capnpc --src-prefix=cereal \
