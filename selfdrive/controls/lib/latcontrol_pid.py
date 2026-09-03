@@ -92,6 +92,42 @@ NRDR_SR_CURVE_BY_FP = {
   "HONDA_INSIGHT": (NRDR_INSIGHT_SR_CURVE_BP, NRDR_INSIGHT_SR_CURVE_V),
 }
 
+
+def build_steer_ratio_inverse(curve_bp, curve_v) -> list[float]:
+  """Unit-ratio angle breakpoints for a measured effective-ratio curve.
+
+  VehicleModel.get_steer_from_curvature is exactly linear in sR -- curvature_factor and
+  roll_compensation depend only on the vehicle's mass, geometry and speed -- so the desired
+  wheel angle satisfies
+
+      theta_des = A * sR(|theta_des|)
+
+  where A is the angle the same command would need at sR = 1. Evaluating x / sR(x) at each
+  knot gives the A that lands exactly on that knot, and since sR is non-increasing while x
+  increases those values are strictly increasing. The relation therefore inverts by plain
+  interpolation: exactly, in one step, and without ever referring to the measured angle.
+  """
+  inverse_bp = [angle / ratio for angle, ratio in zip(curve_bp, curve_v, strict=True)]
+  assert all(low < high for low, high in zip(inverse_bp, inverse_bp[1:], strict=False)), \
+    "ratio curve is not invertible: x / sR(x) must be strictly increasing"
+  return inverse_bp
+
+
+def solve_angle_from_ratio_curve(unit_ratio_angle_deg: float, curve_bp, curve_v, inverse_bp) -> float:
+  magnitude = abs(unit_ratio_angle_deg)
+  if magnitude >= inverse_bp[-1]:
+    # Past the table, np.interp would clamp the ANGLE. The curve clamps the RATIO, so keep
+    # extrapolating at the final ratio -- exactly what selecting sR by interpolation did.
+    solved = magnitude * curve_v[-1]
+  else:
+    solved = float(np.interp(magnitude, inverse_bp, curve_bp))
+  return math.copysign(solved, unit_ratio_angle_deg)
+
+
+NRDR_SR_CURVE_INVERSE_BY_FP = {
+  fingerprint: build_steer_ratio_inverse(*curve) for fingerprint, curve in NRDR_SR_CURVE_BY_FP.items()
+}
+
 # NRDR modified-EPS speed-banded feedforward shared by Clarity and Civic Bosch. The
 # duplicate-near-25 breakpoint preserves the road-tested hard handoff.
 NRDR_MODIFIED_EPS_KF_SPEED_BP = [0.0, 25.0 * 0.44704 - 1e-3, 25.0 * 0.44704, 50.0 * 0.44704]  # m/s
@@ -363,6 +399,7 @@ class LatControlPID(LatControl):
     # correction (rack-to-steering-wheel only) and is the fallback for a mapped rack that
     # has no measured curve yet -- currently just the Civic Bosch.
     self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
+    self.sr_curve_inverse = NRDR_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
     # VGR is selected by exact EPS firmware, and only for a car with no measured curve.
     # There is intentionally no vehicle-family fallback: another rack's table is not
     # interchangeable.
@@ -430,15 +467,28 @@ class LatControlPID(LatControl):
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
     if self.sr_curve is not None:
-      # Road-measured effective ratio, selected at the MEASURED angle. Fitted from steering
-      # wheel angle to achieved yaw rate, so it spans the whole chain: VGR pinion, rack,
-      # linkage, Ackermann, compliance and tyres. The firmware position map covers only the
-      # first of those -- 1.157x of the Clarity's measured 1.440x taper -- which is why using
-      # it alone leaves the ratio too high at angle and over-commands. controlsd refreshes VM
-      # every frame, so this override cannot compound.
+      # Road-measured effective ratio, solved at the DESIRED angle. Fitted from steering wheel
+      # angle to achieved yaw rate, so it spans the whole chain: VGR pinion, rack, linkage,
+      # Ackermann, compliance and tyres. The firmware position map covers only the first of
+      # those -- 1.157x of the Clarity's measured 1.440x taper -- which is why using it alone
+      # leaves the ratio too high at angle and over-commands.
+      #
+      # This used to select sR at the MEASURED angle, which is the hazard the vgr_inverse branch
+      # below spells out and avoids: it only agrees when theta_meas == theta_des, and it closes a
+      # d(theta_des)/d(theta_meas) path through the setpoint, so a measurement wobble moves the
+      # target it is being compared against. Near centre the curve is flat and it cost nothing,
+      # but 70-90 deg is where it is steepest -- a 1 deg wobble at 80 deg moved the target ~0.4
+      # deg -- so that is where it fed the limit cycle.
+      #
+      # get_steer_from_curvature is linear in sR, so asking for the angle at sR = 1 and solving
+      # the curve for its own fixed point costs one interpolation and removes the loop entirely.
+      # controlsd refreshes VM from paramsd every frame before this runs, so no override compounds.
       sr_bp, sr_v = self.sr_curve
-      VM.sR = float(np.interp(abs(CS.steeringAngleDeg), sr_bp, sr_v))
-      angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
+      VM.sR = 1.0
+      unit_ratio_angle = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
+      angle_steers_des_no_offset = solve_angle_from_ratio_curve(unit_ratio_angle, sr_bp, sr_v, self.sr_curve_inverse)
+      # Leave the model holding the ratio at the angle actually being asked for.
+      VM.sR = float(np.interp(abs(angle_steers_des_no_offset), sr_bp, sr_v))
     elif self.vgr_inverse is not None:
       # Firmware VGR path. VehicleModel keeps the scalar sR paramsd learned (controlsd sets it
       # every frame), so it returns the angle a constant-ratio rack would need; the measured rack

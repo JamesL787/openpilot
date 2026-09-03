@@ -1,5 +1,7 @@
 import math
+import numpy as np
 import pytest
+from itertools import pairwise
 from parameterized import parameterized
 from types import SimpleNamespace
 
@@ -37,7 +39,10 @@ from openpilot.selfdrive.controls.lib.latcontrol_angle import (
 )
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   NRDR_ANGLE_RATE_LIMIT_DEG_S,
+  NRDR_SR_CURVE_BY_FP,
+  NRDR_SR_CURVE_INVERSE_BY_FP,
   LatControlPID,
+  solve_angle_from_ratio_curve,
   get_civic_bosch_modified_pid_output_alpha,
   get_civic_bosch_modified_pid_output_scale,
   get_honda_crv_5g_pid_output,
@@ -406,6 +411,47 @@ class TestLatControl:
 
     assert not hasattr(CC, "torque_lpf")
     assert not any("lpf" in key.lower() for key in CC._get_live_tuning_params())
+
+  def test_steer_ratio_curves_are_invertible(self):
+    for fingerprint, (curve_bp, curve_v) in NRDR_SR_CURVE_BY_FP.items():
+      inverse_bp = NRDR_SR_CURVE_INVERSE_BY_FP[fingerprint]
+      assert len(inverse_bp) == len(curve_bp)
+      assert all(low < high for low, high in pairwise(inverse_bp)), fingerprint
+      # Round trip: an angle on the curve maps to its own unit-ratio angle and back.
+      for angle in curve_bp[1:]:
+        ratio = float(np.interp(angle, curve_bp, curve_v))
+        solved = solve_angle_from_ratio_curve(angle / ratio, curve_bp, curve_v, inverse_bp)
+        assert solved == pytest.approx(angle, rel=1e-9), (fingerprint, angle)
+
+  def test_steer_ratio_solution_is_sign_preserving_and_extrapolates_at_the_final_ratio(self):
+    curve_bp, curve_v = NRDR_SR_CURVE_BY_FP[HONDA.HONDA_CLARITY]
+    inverse_bp = NRDR_SR_CURVE_INVERSE_BY_FP[HONDA.HONDA_CLARITY]
+
+    left = solve_angle_from_ratio_curve(4.0, curve_bp, curve_v, inverse_bp)
+    right = solve_angle_from_ratio_curve(-4.0, curve_bp, curve_v, inverse_bp)
+    assert left == pytest.approx(-right)
+    assert left > 0.0
+
+    # Beyond the table the ratio is clamped, not the angle.
+    beyond = inverse_bp[-1] * 2.0
+    assert solve_angle_from_ratio_curve(beyond, curve_bp, curve_v, inverse_bp) == pytest.approx(beyond * curve_v[-1])
+
+  def test_desired_angle_does_not_move_with_the_measured_angle(self):
+    # The defect: selecting sR at the measured angle put d(theta_des)/d(theta_meas) inside the
+    # loop. For one fixed command the target must be identical whatever the wheel is doing.
+    Params().put("NrdrLatAngleRateLimit", 0)
+    Params().put_bool("HondaTorqueLowPassFilter", False)
+
+    targets = []
+    for measured in (-90.0, -20.0, 0.0, 20.0, 90.0):
+      controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
+      CS.vEgo = 20.0
+      CS.steeringAngleDeg = measured
+      _, angle_des, _ = controller.update(True, CS, VM, params, False, 0.02, False, 0.2, None, None, toggles)
+      targets.append(angle_des)
+
+    assert abs(targets[0]) > 1.0  # the command really does ask for a meaningful angle
+    assert targets == pytest.approx([targets[0]] * len(targets))
 
   def test_clarity_vgr_inverse_map(self):
     import numpy as np
