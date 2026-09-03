@@ -42,6 +42,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   NRDR_SR_CURVE_BY_FP,
   NRDR_SR_CURVE_INVERSE_BY_FP,
   LatControlPID,
+  is_steering_rate_unwinding,
   solve_angle_from_ratio_curve,
   get_civic_bosch_modified_pid_output_alpha,
   get_civic_bosch_modified_pid_output_scale,
@@ -452,6 +453,81 @@ class TestLatControl:
 
     assert abs(targets[0]) > 1.0  # the command really does ask for a meaningful angle
     assert targets == pytest.approx([targets[0]] * len(targets))
+
+  def test_unwind_gates_ignore_a_sign_flipping_measured_rate(self):
+    # Both unwind gates test  desired_angle * steering_rate < -1.0.  With the raw CAN rate a
+    # single sign flip clears that outright at any real angle, switching which expression builds
+    # the output scale and stepping the feedforward boost -- multiplicative chatter on the command.
+    Params().put("NrdrLatAngleRateLimit", 0)
+    Params().put_bool("HondaTorqueLowPassFilter", False)
+
+    curvature = 0.0082  # ~25 deg of desired angle: past the 10 deg mid-turn knee
+
+    def run(tau, rates):
+      Params().put_float("NrdrLatUnwindRateTau", tau)
+      controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
+      CS.vEgo = 3.0
+      CS.steeringRateDeg = 0.0
+      # Engage the way the car does, and hold the wheel near the target so the output stays
+      # well short of saturation -- a railed output would hide the scale entirely.
+      controller.update(False, CS, VM, params, False, curvature, False, 0.2, None, None, toggles)
+      CS.steeringAngleDeg = controller.prev_angle_steers_des_no_offset
+      outputs = []
+      for rate in rates:
+        CS.steeringRateDeg = rate
+        output, _, _ = controller.update(True, CS, VM, params, False, curvature, False, 0.2, None, None, toggles)
+        outputs.append(output)
+      return outputs
+
+    def relative_chatter(values):
+      # The gates multiply the command, so the defect is a fraction of it, not an absolute
+      # torque. Measuring it as a ratio keeps this independent of the test CP's gains.
+      settled = values[10:]
+      mean = sum(abs(value) for value in settled) / len(settled)
+      assert max(abs(value) for value in settled) < 0.9, "railed: the output scale is not visible"
+      return max(abs(b - a) for a, b in pairwise(settled)) / mean
+
+    dither = [10.0, -10.0] * 25  # no net motion, sign flips every frame
+    raw = relative_chatter(run(0.0, dither))
+    filtered = relative_chatter(run(0.1, dither))
+
+    assert raw > 0.2  # the raw gate swings the command by tens of percent, frame to frame
+    assert filtered < 0.05 * raw
+
+  def test_unwind_gate_needs_a_real_rate_not_just_the_right_sign(self):
+    # The product test alone is an angle-scaled deadband running the wrong way: it demands
+    # 1 deg/s at 1 deg of angle but only 0.01 deg/s at 100 deg.
+    assert is_steering_rate_unwinding(100.0, -0.05) is False
+    assert is_steering_rate_unwinding(100.0, -40.0) is True
+    assert is_steering_rate_unwinding(-100.0, 40.0) is True
+    assert is_steering_rate_unwinding(100.0, 40.0) is False  # turning in, not unwinding
+    # Still bounded by the original product test at small angles.
+    assert is_steering_rate_unwinding(0.01, -40.0) is False
+
+  def test_unwind_rate_filter_still_tracks_a_sustained_unwind(self):
+    # Smoothing must not blind the gate: a real unwind lasts hundreds of ms and must register.
+    Params().put("NrdrLatAngleRateLimit", 0)
+    Params().put_bool("HondaTorqueLowPassFilter", False)
+    Params().put_float("NrdrLatUnwindRateTau", 0.1)
+    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
+    CS.vEgo = 3.0
+    CS.steeringAngleDeg = 20.0
+
+    for _ in range(100):  # 1 s of steady unwind
+      CS.steeringRateDeg = -40.0
+      controller.update(True, CS, VM, params, False, 0.03, False, 0.2, None, None, toggles)
+
+    assert controller.unwind_rate_filter.x == pytest.approx(-40.0, rel=0.02)
+
+  def test_telemetry_and_learners_keep_the_raw_steering_rate(self):
+    Params().put_float("NrdrLatUnwindRateTau", 0.1)
+    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
+    CS.vEgo = 3.0
+    CS.steeringAngleDeg = 20.0
+    CS.steeringRateDeg = 55.0
+
+    _, _, pid_log = controller.update(True, CS, VM, params, False, 0.03, False, 0.2, None, None, toggles)
+    assert pid_log.steeringRateDeg == pytest.approx(55.0)
 
   def test_clarity_vgr_inverse_map(self):
     import numpy as np
