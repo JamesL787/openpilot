@@ -73,6 +73,11 @@ def test_model_smoothing_is_developer_gated_and_quantized():
   assert modeld._model_smooth_seconds(_SmoothParams(0.126, safe=True), "LatSmoothSeconds", 0.1) == pytest.approx(0.1)
 
 
+def test_model_and_controls_share_effective_lateral_smoothing_time():
+  CP = types.SimpleNamespace(brand="honda", lateralSmoothSeconds=0.0)
+  assert modeld.get_model_lateral_smooth_seconds(CP, _SmoothParams(0.126), 15.0) == pytest.approx(0.125)
+
+
 def make_lead(*, status: bool, d_rel: float = 200.0, v_lead: float = 0.0, a_lead: float = 0.0,
               radar: bool = False, model_prob: float = 0.0, y_rel: float = 0.0):
   lead = log.RadarState.LeadData.new_message()

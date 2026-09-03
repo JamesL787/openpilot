@@ -11,6 +11,7 @@ from openpilot.common.params import Params
 from openpilot.common.pid import PIDController
 from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
+from openpilot.selfdrive.controls.lib.drive_helpers import MIN_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   RAV4_TSS2_CARS,
   SUBARU_IMPREZA_CARS,
@@ -20,6 +21,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
 )
 from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
 from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
+from openpilot.selfdrive.modeld.constants import ModelConstants
 
 
 # nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio.
@@ -336,6 +338,7 @@ class LatControlPID(LatControl):
     self.prev_output_torque = 0.0
     self.center_taper_scale = FirstOrderFilter(1.0, CENTER_TAPER_FADE_TAU, dt)
     self.dt = dt
+    self.lead_curvature_filter = FirstOrderFilter(0.0, 0.0, dt, initialized=False)
     self.params = Params()
     self.frame = -1
     self.tune_learner = TuneLearner(dt, self.steer_max)
@@ -400,19 +403,42 @@ class LatControlPID(LatControl):
     return angle_steers_des_no_offset, angle_steers_des_no_offset + params.angleOffsetDeg
 
   def update(self, active, CS, VM, params, steer_limited_by_safety, desired_curvature, curvature_limited,
-             lat_delay, calibrated_pose, model_data, starpilot_toggles):
+             lat_delay, calibrated_pose, model_data, starpilot_toggles, lat_smooth_seconds=0.0):
     self.update_honda_lateral_pid_gain_scale(starpilot_toggles)
 
     pid_log = log.ControlsState.LateralPIDState.new_message()
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    # modeld produces desiredCurvature for liveDelay + LatSmoothSeconds and smooths that action
-    # with the same time constant. P/I must track that exact processed command. The raw trajectory
-    # is a separate, unsmoothed prediction and can have a different magnitude from the action;
-    # using it here makes feedback unwind while feedforward is still turning in.
+    # Sample the model's lateral-acceleration forecast at the actuator horizon, then smooth it
+    # at the PID rate with LatSmoothSeconds. This is the one lead-compensated target for the
+    # entire controller: P/I, feedforward, phase, and tune learner must agree on it. Splitting
+    # the target lets feedforward fight the PID whenever the raw trajectory differs from the
+    # action head, producing the torque chatter this path is meant to eliminate.
+    model_trajectory_ok = (
+      model_data is not None and
+      len(model_data.acceleration.y) == len(ModelConstants.T_IDXS) and
+      len(model_data.velocity.x) == len(ModelConstants.T_IDXS)
+    )
+    horizon = max(lat_delay, 0.0) if math.isfinite(lat_delay) else 0.0
+    future_vego = np.interp(horizon, ModelConstants.T_IDXS, model_data.velocity.x) if model_trajectory_ok else 0.0
+    if model_trajectory_ok and future_vego > MIN_SPEED:
+      future_lat_accel = np.interp(horizon, ModelConstants.T_IDXS, model_data.acceleration.y)
+      lead_curvature = future_lat_accel / future_vego ** 2
+    else:
+      lead_curvature = desired_curvature
+
+    if not active:
+      self.lead_curvature_filter.x = desired_curvature
+      self.lead_curvature_filter.initialized = True
+      target_curvature = desired_curvature
+    else:
+      smooth_seconds = max(float(lat_smooth_seconds), 0.0) if math.isfinite(lat_smooth_seconds) else 0.0
+      self.lead_curvature_filter.update_alpha(smooth_seconds)
+      target_curvature = self.lead_curvature_filter.update(lead_curvature)
+
     angle_steers_des_no_offset, angle_steers_des = self._get_desired_steer_angles(
-      desired_curvature, CS, VM, params,
+      target_curvature, CS, VM, params,
     )
     error = angle_steers_des - CS.steeringAngleDeg
 
