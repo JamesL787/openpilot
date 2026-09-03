@@ -104,9 +104,12 @@ def build_steer_ratio_inverse(curve_bp, curve_v) -> list[float]:
 
   where A is the angle the same command would need at sR = 1. Evaluating x / sR(x) at each
   knot gives the A that lands exactly on that knot, and since sR is non-increasing while x
-  increases those values are strictly increasing. The relation therefore inverts by plain
-  interpolation: exactly, in one step, and without ever referring to the measured angle.
+  increases those values are strictly increasing -- so these bracket the solution for any A,
+  in one step and without ever referring to the measured angle. solve_angle_from_ratio_curve
+  then closes the segment exactly; see there for why interpolating this table is not enough.
   """
+  assert all(low < high for low, high in zip(curve_bp, curve_bp[1:], strict=False)), \
+    "ratio curve angle breakpoints must be strictly increasing"
   inverse_bp = [angle / ratio for angle, ratio in zip(curve_bp, curve_v, strict=True)]
   assert all(low < high for low, high in zip(inverse_bp, inverse_bp[1:], strict=False)), \
     "ratio curve is not invertible: x / sR(x) must be strictly increasing"
@@ -120,7 +123,19 @@ def solve_angle_from_ratio_curve(unit_ratio_angle_deg: float, curve_bp, curve_v,
     # extrapolating at the final ratio -- exactly what selecting sR by interpolation did.
     solved = magnitude * curve_v[-1]
   else:
-    solved = float(np.interp(magnitude, inverse_bp, curve_bp))
+    # inverse_bp is exact AT the knots but interpolating it is not: that would make the
+    # solution linear in A, and the inverse of a piecewise-linear sR is not. The drift shows
+    # up mid-segment where the knots are widest -- 0.3 deg at 120 deg, 1.7 deg at 350 deg on
+    # the Clarity curve, which is the same order as the measured-angle error being removed.
+    #
+    # Inside the bracketing segment sR is linear, sR(x) = m*x + c, so x = A * sR(x) closes in
+    # one step: x = A*c / (1 - A*m). m <= 0 because the ratio is non-increasing and A >= 0, so
+    # the denominator is never below 1 and this cannot blow up.
+    index = int(np.searchsorted(inverse_bp, magnitude, side="right")) - 1
+    index = min(max(index, 0), len(curve_bp) - 2)
+    slope = (curve_v[index + 1] - curve_v[index]) / (curve_bp[index + 1] - curve_bp[index])
+    intercept = curve_v[index] - slope * curve_bp[index]
+    solved = magnitude * intercept / (1.0 - magnitude * slope)
   return math.copysign(solved, unit_ratio_angle_deg)
 
 

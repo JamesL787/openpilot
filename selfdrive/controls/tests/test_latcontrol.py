@@ -418,8 +418,12 @@ class TestLatControl:
       inverse_bp = NRDR_SR_CURVE_INVERSE_BY_FP[fingerprint]
       assert len(inverse_bp) == len(curve_bp)
       assert all(low < high for low, high in pairwise(inverse_bp)), fingerprint
-      # Round trip: an angle on the curve maps to its own unit-ratio angle and back.
-      for angle in curve_bp[1:]:
+      # Round trip: an angle on the curve maps to its own unit-ratio angle and back. Sampled
+      # BETWEEN the knots as well as on them -- interpolating inverse_bp is exact on the knots
+      # and wrong in between, which on the Clarity curve is 0.3 deg at 120 deg and 1.7 deg at
+      # 350 deg, the same order as the measured-angle error this whole change removes.
+      dense = np.linspace(curve_bp[1], curve_bp[-1], 401)
+      for angle in dense:
         ratio = float(np.interp(angle, curve_bp, curve_v))
         solved = solve_angle_from_ratio_curve(angle / ratio, curve_bp, curve_v, inverse_bp)
         assert solved == pytest.approx(angle, rel=1e-9), (fingerprint, angle)
