@@ -118,24 +118,36 @@ BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / 64.0
 # filter as a measurement. A track crossing a rail also steps vRel by whole m/s in one sweep, which is
 # a strong candidate for the aLeadK transients the planner-side Bosch-A guards were added to suppress.
 BOSCH_A_DIRECT_VREL_RAILS_RAW = (BOSCH_A_DIRECT_VREL_MIN_RAW, BOSCH_A_DIRECT_VREL_MAX_RAW)
-# u10 is a genuine uncertainty on U11. Measured against a centred multi-sweep range-rate reference
-# over 15,199 comparison frames on Peter route 000001e8, |U11 - reference| rises monotonically:
+# u10 is a genuine uncertainty on U11, but it is confounded with dynamics -- read the table before
+# re-tuning this. Measured against an EVENT-LOCAL reference (quadratic fit to a centred window,
+# derivative taken at the centre sample) over 16,834 frames on Peter route 000001e8:
 #
-#     u10 bin      n     median |err|   frac > 2 m/s
-#     0 -   64   7325       0.24 m/s        3.9%
-#    64 -  128   5906       0.84            15.1%
-#   128 -  192   1262       1.22            30.7%
-#   192 -  256    435       1.51            40.0%
-#   384 -  512     36       3.19            72.2%
+#     u10 bin      n     median |err|   median |a_rel|
+#     0 -   64   7681       0.26 m/s        0.73 m/s^2
+#    64 -  128   6379       0.88            2.13
+#   128 -  192   1509       1.44            3.51
+#   192 -  256    569       1.95            4.59
+#   384 - 1024    299       3.16           14.98
 #
-# corr(u10, |err|) = +0.43. The previous 511 was set from a misread of the distribution -- the
-# observed median u10 is 65, so a 511 gate rejected 0.1% of frames and caught 0.8% of the frames
-# that were actually wrong by more than 2 m/s. It was effectively dead code.
+# corr(u10,|err|) = +0.396, but corr(u10,|a_rel|) = +0.427: u10 rises with real manoeuvring nearly
+# as strongly as with error. Holding dynamics out settles it -- among calm frames (|a_rel| < 1):
 #
-# 128 is the natural break: it removes the tier where roughly a third of frames are badly wrong, at
-# the cost of routing 12.7% of frames to the coast path (geometry is still published; only the
-# velocity coasts). Re-tune with evidence, not by feel: >192 catches 16% of bad frames for 4.6%
-# rejected, >128 catches 37% for 12.7%.
+#     0-64: 0.12 m/s | 64-128: 0.72 | 128-192: 1.15 | 192-256: 1.60   corr = +0.521
+#
+# So u10 is a real quality signal, not merely a dynamics flag, and 128 marks a ~10x step in calm
+# error (0.12 -> 1.15 m/s). Cost: it rejects 16.2% of frames overall but 23.1% of dynamic frames
+# (|a_rel| >= 1), so it does preferentially coast during genuine braking. That is a known,
+# unresolved trade -- on 000001e8 at 9:00 the lead really was decelerating at ~8 m/s^2 and u10 ran
+# 96 -> 348 through it, so this gate coasts across part of a real emergency decel.
+#
+# An earlier revision of this comment cited a different table derived from a LINEAR centred fit that
+# rejected curved windows; that method silently excluded hard-braking frames and its numbers should
+# not be used. The table above supersedes it.
+#
+# The principled fix is not a better threshold: it is to let u10 modulate the measurement covariance
+# in radard's lead filter, or to trust U11 at elevated u10 when the local range rate corroborates it
+# (high u10 + agreeing geometry = dynamics, not error). Both are out of scope here -- the first
+# touches the lead filter shared by every car.
 BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW = 128
 
 # Multi-sweep velocity/range consistency. The existing per-sweep innovation gate cannot see a
