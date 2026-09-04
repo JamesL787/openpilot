@@ -109,14 +109,22 @@ BOSCH_A_DIRECT_VREL_MIN_RAW = 0
 BOSCH_A_DIRECT_VREL_MAX_RAW = 1728
 BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / 64.0
-# The domain endpoints are SATURATION RAILS, not readings: at the rail the true relative velocity is
-# only bounded (|vRel| >= 13.5 m/s), never measured. They are common -- 20.3% of active AUX frames on
-# route 000001df sit on the low rail, rising to 49.4% while doing 15-20 m/s, because a stationary
-# object seen at highway speed closes far faster than +-13.5 m/s. Publishing the rail as fact reports
-# a stopped vehicle as moving: at vEgo 17.9 m/s the rail implies vLead +4.4 m/s. Treat both endpoints
-# like the 0x7FE sentinel so they fall through to the coast path instead of entering the lead Kalman
-# filter as a measurement. A track crossing a rail also steps vRel by whole m/s in one sweep, which is
-# a strong candidate for the aLeadK transients the planner-side Bosch-A guards were added to suppress.
+# The domain endpoints are SATURATION RAILS: at raw 0 or 1728 the true |vRel| is >= 13.5 m/s and
+# the exact value is not recoverable from this field. A rail is therefore a BOUND, not an unknown,
+# and it must still be published.
+#
+# This was briefly treated as "no measurement" and routed to the coast path. That was a safety
+# regression, because a stationary car approached at any speed above 13.5 m/s (30 mph) rails on
+# EVERY sweep -- so the coast never ended, it outlived BOSCH_A_STALE_S, and the radar point was
+# deleted. Measured on route 000001f9 at 29:52: two stopped cars, 88 of 88 active frames on the low
+# rail with healthy u10 (78-94), range closing smoothly at -19.4 m/s. The radar lead was dropped,
+# radard fell back to the vision lead which reported only -11.4 m/s, and the planner commanded 0.00
+# while closing on stopped traffic at 76 m with a 6.6 s TTC. The driver had to intervene.
+#
+# Publishing the rail understates the closing rate (a stopped car reads as vLead = vEgo - 13.5), and
+# that understatement is why it looked worth "fixing". But understating closing still brakes;
+# deleting the object does not. Recovering the true value past the rail needs the range channel and
+# is deliberately left for a separate, validated change.
 BOSCH_A_DIRECT_VREL_RAILS_RAW = (BOSCH_A_DIRECT_VREL_MIN_RAW, BOSCH_A_DIRECT_VREL_MAX_RAW)
 # u10 is a genuine uncertainty on U11, but it is CONFOUNDED WITH DYNAMICS. Measured against an
 # event-local reference (quadratic fit to a centred window, derivative at the centre) over 16,834
@@ -226,9 +234,6 @@ def _bosch_a_direct_vrel(raw_value: int | float | None,
   if raw == BOSCH_A_DIRECT_VREL_INVALID:
     return None
   if not BOSCH_A_DIRECT_VREL_MIN_RAW <= raw <= BOSCH_A_DIRECT_VREL_MAX_RAW:
-    return None
-  # Saturated: the rail bounds the value but does not measure it. See BOSCH_A_DIRECT_VREL_RAILS_RAW.
-  if raw in BOSCH_A_DIRECT_VREL_RAILS_RAW:
     return None
   # u10 is retained as a raw quality indicator because its physical units remain unresolved.  The
   # conservative threshold is evidence-backed tuning, not a recovered firmware validity rule.
@@ -525,14 +530,6 @@ class RadarInterface(RadarInterfaceBase):
                             direct_vrel_uncertainty_raw is not None and
                             direct_vrel_uncertainty_raw > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW)
 
-      # A saturated U11 is the same shape of problem as a high-u10 one: the geometry is fine, only
-      # the velocity is unusable. It must NOT fall through to ratio_vrel. The range-ratio field is
-      # the only channel that keeps moving past the rail, but it under-reports by ~25% against clean
-      # U11 (slope 0.72-0.84 over 5011 comparisons), so using it to extend a rail would swap a known
-      # wrong number for an uncalibrated one. Coast the last trusted velocity instead, and keep
-      # publishing the good range/azimuth.
-      railed_u11 = (direct_vrel_raw is not None and
-                    int(direct_vrel_raw) in BOSCH_A_DIRECT_VREL_RAILS_RAW)
 
       # Validate against the previous accepted range. Qualified U11 and the range-ratio field are
       # independent corroboration paths; high-U10 U11 is deliberately excluded from this decision.
@@ -605,7 +602,7 @@ class RadarInterface(RadarInterfaceBase):
             # One-sided: only U11 claiming MORE closing than the range supports is a fault.
             vrel_inconsistent = vrel_candidate < rate - BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
 
-      if high_u10_live_vrel or railed_u11 or vrel_inconsistent:
+      if high_u10_live_vrel or vrel_inconsistent:
         # The range cleared innovation checking above, so geometry here is trustworthy; only vRel is
         # in question. Preserve current geometry but coast only a recent authoritative motion
         # estimate without a KF update, rather than publishing a one-sweep-derivative synthesis.

@@ -365,20 +365,29 @@ class TestDbcBitGeometry:
 # --- 3. range / azimuth extraction + invalid sentinels ------------------------------------------------
 
 class TestRangeAzimuth:
-  def test_direct_vrel_rails_are_not_measurements(self):
-    """raw 0 / 1728 are saturation rails: the true |vRel| is only bounded there, never measured.
+  def test_direct_vrel_rails_publish_the_bound(self):
+    """raw 0 / 1728 are saturation rails, and a rail must still be published as a bound.
 
-    They are common -- 20.3% of active AUX frames on Peter route 000001df sit on the low rail,
-    rising to 49.4% at 15-20 m/s, because a stationary object seen at highway speed closes much
-    faster than the +-13.5 m/s the field can express. Publishing the rail reports a stopped
-    vehicle as moving (at vEgo 17.9 m/s the low rail implies vLead +4.4 m/s), and a track
-    crossing a rail steps vRel by whole m/s in a single sweep.
+    A stationary car approached above 13.5 m/s rails on EVERY sweep, so treating a rail as "no
+    measurement" made the coast permanent, outlive BOSCH_A_STALE_S and delete the radar point.
+    Measured on route 000001f9 at 29:52: 88 of 88 active frames railed on two stopped cars, the
+    radar lead was dropped, and the planner commanded 0.00 while closing at 76 m with a 6.6 s TTC.
+    Publishing -13.5 understates the closing rate but still brakes; deleting the object does not.
     """
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW) is None
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) is None
-    # one count inside either rail is still a real measurement
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW) == pytest.approx(-13.5)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) == pytest.approx(13.5)
     assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW + 1) == pytest.approx(-13.484375)
     assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW - 1) == pytest.approx(13.484375)
+
+  def test_railed_stopped_car_keeps_its_radar_point(self):
+    """The regression that motivated the above: a permanently railed object must not be deleted."""
+    ri = make_radar_interface()
+    rr = None
+    for i, raw in enumerate((1700, 1680, 1660, 1640, 1620, 1600, 1580)):
+      rr = ri.update(sweep(0, i & 0xF, 0x7, raw, 1024, 1 + 2 * i, i * 70_000_000, with_aux=True,
+                           direct_vrel_raw=BOSCH_A_DIRECT_VREL_MIN_RAW, direct_vrel_uncertainty_raw=90))
+    assert len(rr.points) == 1
+    assert rr.points[0].vRel == pytest.approx(-13.5)
 
   def test_range_scale_matches_firmware_q16_conversion(self):
     """The range scale is firmware-derived, not capture-fitted.
@@ -628,18 +637,18 @@ class TestVrel:
     assert rr.points[0].vRel == pytest.approx((800 - 864) / 64.0)
 
   def test_direct_aux_vrel_domain_and_sentinel(self):
-    # The domain endpoints are saturation rails, not readings -- see
-    # test_direct_vrel_rails_are_not_measurements. One count inside either rail is a measurement.
-    assert _bosch_a_direct_vrel(0) is None
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) is None
+    # The domain endpoints are saturation rails, published as bounds -- see
+    # test_direct_vrel_rails_publish_the_bound.
+    assert _bosch_a_direct_vrel(0) == pytest.approx(-13.5)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) == pytest.approx(13.5)
     assert _bosch_a_direct_vrel(1) == pytest.approx(-13.484375)
     assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW - 1) == pytest.approx(13.484375)
     assert _bosch_a_direct_vrel(1729) is None
     assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID) is None
     assert _bosch_a_direct_vrel(0x7FF) is None
     assert _bosch_a_direct_vrel(None) is None
-    assert _bosch_a_direct_vrel(1, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW) == pytest.approx(-13.484375)
-    assert _bosch_a_direct_vrel(1, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 1) is None
+    assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW) == pytest.approx(-13.5)
+    assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 1) is None
     assert _bosch_a_direct_vrel(864, 0x3FE) is None
     assert _bosch_a_direct_vrel(864, 0x3FF) is None
 
@@ -725,41 +734,24 @@ class TestVrel:
     assert _bosch_a_range_ratio_vrel(600, 10.0, 0.1) == pytest.approx(-10.0)
 
   @pytest.mark.parametrize(
-    ('direct_raw', 'range_raw', 'rawca'),
-    [(0, 974, 528), (BOSCH_A_DIRECT_VREL_MAX_RAW, 1027, 472)],
+    ('direct_raw', 'range_raw', 'rawca', 'expected'),
+    [(0, 974, 528, -13.5), (BOSCH_A_DIRECT_VREL_MAX_RAW, 1027, 472, 13.5)],
   )
-  def test_range_ratio_does_not_extend_direct_vrel_rails(self, direct_raw, range_raw, rawca):
-    """A railed U11 with no trusted history publishes nothing -- not the rail, not a ratio value.
+  def test_range_ratio_does_not_extend_direct_vrel_rails(self, direct_raw, range_raw, rawca, expected):
+    """At a rail the bound is published, and the ratio field must not be used to exceed it.
 
-    Two things must not happen at a rail. The ratio field must not be used to manufacture a larger
-    velocity (it under-reports ~25% against clean U11, so it cannot be trusted to extend a rail),
-    and the rail itself must not be published as though it were a measurement.
+    The range-ratio channel is the only one that keeps moving past a rail, but it under-reports by
+    ~25% against clean U11 (slope 0.72-0.84 over 5011 comparisons), so it cannot be trusted to
+    manufacture a larger closing rate. Recovering the true value past a rail needs the range
+    channel and a separate validated change.
     """
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
                     direct_vrel_raw=direct_raw, direct_vrel_uncertainty_raw=80, rawca=500))
     rr = ri.update(sweep(0, 1, 0x7, range_raw, 1024, 3, 50_000_000, with_aux=True,
                          direct_vrel_raw=direct_raw, direct_vrel_uncertainty_raw=80, rawca=rawca))
-    assert len(rr.points) == 0
-
-  def test_railed_direct_vrel_coasts_last_trusted_velocity(self):
-    """With a trusted velocity in hand, a rail coasts it and keeps the good geometry."""
-    ri = make_radar_interface()
-    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
-                    direct_vrel_raw=800, direct_vrel_uncertainty_raw=0))
-    rr = ri.update(sweep(0, 1, 0x7, 990, 1024, 3, 50_000_000, with_aux=True,
-                         direct_vrel_raw=800, direct_vrel_uncertainty_raw=0))
-    assert rr.points[0].vRel == pytest.approx((800 - 864) / 64.0)
-    assert rr.points[0].measured
-
-    # Now the same object rails. Geometry stays live, velocity coasts, nothing is fabricated.
-    rr = ri.update(sweep(0, 2, 0x7, 980, 1024, 5, 100_000_000, with_aux=True,
-                         direct_vrel_raw=0, direct_vrel_uncertainty_raw=0, rawca=528))
     assert len(rr.points) == 1
-    assert rr.points[0].vRel == pytest.approx((800 - 864) / 64.0)
-    assert rr.points[0].vRel != pytest.approx(-13.5)
-    assert not rr.points[0].measured
-    assert rr.points[0].dRel == pytest.approx(980 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
+    assert rr.points[0].vRel == pytest.approx(expected)
 
   def test_first_sighting_vrel_is_zero(self):
     ri = make_radar_interface()
