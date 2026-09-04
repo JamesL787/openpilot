@@ -438,10 +438,16 @@ class LatControlPID(LatControl):
     # has no measured curve yet -- currently just the Civic Bosch.
     self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
     self.sr_curve_inverse = NRDR_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
-    # VGR is selected by exact EPS firmware, and only for a car with no measured curve.
-    # There is intentionally no vehicle-family fallback: another rack's table is not
-    # interchangeable.
-    self.vgr_inverse = None if self.sr_curve is not None else get_honda_vgr_inverse(CP.flags)
+    # Selected at runtime by NrdrLatUseFirmwareVgr so the two maps can be A/B'd on the road.
+    # They are NOT the same measurement: the road curve is the absolute effective ratio across
+    # the whole chain and ignores what paramsd learned, while the firmware map is only a
+    # relative warp applied on top of paramsd's scalar. Switching therefore moves the centre
+    # gain as well as the taper -- see the comment at the selection in update().
+    self.use_firmware_vgr = False
+    # VGR is selected by exact EPS firmware. There is intentionally no vehicle-family
+    # fallback: another rack's table is not interchangeable, so this stays None for a car
+    # whose image was never traced and the toggle below is then inert.
+    self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
     self.is_rav4_tss2 = CP.carFingerprint in RAV4_TSS2_CARS
     self.prev_angle_steers_des_no_offset = 0.0
     self.eps_modified_steering_pressed_filter_s = 0.0
@@ -506,7 +512,21 @@ class LatControlPID(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    if self.sr_curve is not None:
+    # Which rack map converts curvature into a wheel angle. Only the A (position) table is
+    # ever a candidate: the firmware's B table divides the RATE input on a separate path and
+    # is not a position curve, which is why it is traced but not tabulated in steer_ratio.py.
+    #
+    # These two are not interchangeable calibrations of the same thing:
+    #   road curve  absolute effective ratio, 19.680 at centre tapering 1.55x to 12.720. Fitted
+    #               end to end, so it spans the VGR pinion, rack, linkage, Ackermann, compliance
+    #               and tyres. It sets VM.sR itself and ignores what paramsd learned.
+    #   firmware A  a relative warp only, about 1.13x across the same span, applied on top of
+    #               paramsd's learned scalar (17.67 on route 00000278). It describes the VGR
+    #               pinion alone, which is why it under-tapers.
+    # So flipping the toggle moves the centre gain by roughly -10% AND flattens the taper; it
+    # is not a pure taper swap, and the two effects partly cancel near centre.
+    use_firmware_vgr = self.use_firmware_vgr and self.vgr_inverse is not None
+    if self.sr_curve is not None and not use_firmware_vgr:
       # Road-measured effective ratio, solved at the DESIRED angle. Fitted from steering wheel
       # angle to achieved yaw rate, so it spans the whole chain: VGR pinion, rack, linkage,
       # Ackermann, compliance and tyres. The firmware position map covers only the first of
@@ -694,6 +714,7 @@ class LatControlPID(LatControl):
           self.lpf_tau_standard = _get_param_float(self.params, "HondaLpfTauStandard", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
           self.lpf_tau_highway = _get_param_float(self.params, "HondaLpfTauHighway", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
           self.unwind_rate_tau = _get_param_float(self.params, "NrdrLatUnwindRateTau", NRDR_UNWIND_RATE_TAU, 0.0, 2.0)
+          self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
         i_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_i_scale_low, self.lat_i_scale_standard, self.lat_i_scale_highway)

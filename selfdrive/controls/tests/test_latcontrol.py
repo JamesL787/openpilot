@@ -292,12 +292,15 @@ class TestLatControl:
     return controller, VM, CS, params, starpilot_toggles
 
   @staticmethod
-  def _build_pid_controller(car_name, eps_modified=False):
+  def _build_pid_controller(car_name, eps_modified=False, extra_flags=0):
     CarInterface = interfaces[car_name]
     CP = CarInterface.get_non_essential_params(car_name)
     CP.dashcamOnly = True
     if eps_modified:
       CP.flags |= int(HondaFlags.EPS_MODIFIED)
+    # VGR profile flags come from EPS firmware fingerprinting, not from EPS_MODIFIED. The real
+    # Clarity carries VGR_CLARITY_TRW_A020 (carParams.flags 0xE910), so pass it explicitly here.
+    CP.flags |= int(extra_flags)
     CI = CarInterface(CP, custom.StarPilotCarParams.new_message())
     controller = LatControlPID(CP.as_reader(), CI, DT_CTRL)
     VM = VehicleModel(CP)
@@ -532,6 +535,51 @@ class TestLatControl:
 
     _, _, pid_log = controller.update(True, CS, VM, params, False, 0.03, False, 0.2, None, None, toggles)
     assert pid_log.steeringRateDeg == pytest.approx(55.0)
+
+  def test_firmware_vgr_toggle_selects_the_other_rack_map(self):
+    # Both maps must be built for a car that has both, so the toggle can pick either at runtime.
+    Params().put("NrdrLatAngleRateLimit", 0)
+    Params().put_bool("HondaTorqueLowPassFilter", False)
+
+    def run(use_fw):
+      Params().put_bool("NrdrLatUseFirmwareVgr", use_fw)
+      controller, VM, CS, params, toggles = self._build_pid_controller(
+        HONDA.HONDA_CLARITY, eps_modified=True, extra_flags=HondaFlags.VGR_CLARITY_TRW_A020)
+      CS.vEgo = 20.0
+      CS.steeringAngleDeg = 0.0
+      # first frame reads the params, second frame acts on them
+      out = [controller.update(True, CS, VM, params, False, 0.02, False, 0.2, None, None, toggles)[1]
+             for _ in range(3)]
+      return controller, out[-1]
+
+    road_c, road = run(False)
+    fw_c, fw = run(True)
+
+    assert road_c.sr_curve is not None and road_c.vgr_inverse is not None, "both maps must exist"
+    assert not road_c.use_firmware_vgr and fw_c.use_firmware_vgr
+    assert abs(road) > 1.0 and abs(fw) > 1.0
+    assert road != pytest.approx(fw), "the toggle must actually change the commanded angle"
+
+  def test_firmware_vgr_toggle_is_inert_without_a_traced_table(self):
+    # A car with a measured curve but no traced EPS image must keep the road curve either way.
+    Params().put_bool("NrdrLatUseFirmwareVgr", True)
+    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CRV_5G, eps_modified=True)
+    assert controller.sr_curve is not None
+    assert controller.vgr_inverse is None      # no traced image for this rack
+    CS.vEgo = 20.0
+    for _ in range(3):
+      _, angle, _ = controller.update(True, CS, VM, params, False, 0.02, False, 0.2, None, None, toggles)
+    assert abs(angle) > 0.0                    # still produces a target, via the road curve
+
+  def test_only_the_position_table_is_used_as_a_rack_map(self):
+    # The firmware's B table divides the RATE input, not the position; it must not be tabulated
+    # as a position curve. Guard the A table's defining property instead: unity at centre.
+    from opendbc.car.honda import steer_ratio as sr
+    assert sr._CLARITY_POSITION_Y[0] == 1 << 14, "A table must be unity (2**14) at centre"
+    linear_bp, angle_bp = sr.HONDA_VGR_INVERSE_BY_PROFILE[sr.HONDA_VGR_CLARITY_TRW_A020]
+    assert linear_bp[0] == pytest.approx(0.0) and angle_bp[0] == pytest.approx(0.0)
+    assert all(a < b for a, b in pairwise(linear_bp)), "linear axis must be strictly increasing"
+    assert all(a < b for a, b in pairwise(angle_bp)), "angle axis must be strictly increasing"
 
   def test_clarity_vgr_inverse_map(self):
     import numpy as np

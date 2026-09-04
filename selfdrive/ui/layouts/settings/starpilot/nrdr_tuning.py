@@ -310,6 +310,9 @@ class NRDRTuningLayout(_SettingsPage):
     ]
 
     filter_rows = [
+      toggle("NrdrLatUseFirmwareVgr", "Use Firmware VGR Table",
+             "Convert curvature with the EPS firmware's A (position) table on top of the learned steer "
+             "ratio, instead of the road-measured effective-ratio curve. Changes centre gain and taper."),
       toggle("NrdrLatModelActionInterp", "Model Action Interpolation",
              "Ramp the model's 20 Hz steering action across the model frame instead of holding it. "
              "Removes the 20 Hz staircase in the target that the smoothing filter otherwise has to hide."),
