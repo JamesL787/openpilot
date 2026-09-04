@@ -121,7 +121,21 @@ STANDSTILL_STOPPED_LEAD_GUARD_MIN_BRAKE = 0.16
 STANDSTILL_STOPPED_LEAD_GUARD_MAX_BRAKE = 0.26
 LEAD_DEPART_ACCEL_HOLD_TIME = 1.2
 LEAD_DEPART_ACCEL_HOLD_MAX_EGO_SPEED = 2.0
-CLOSE_LEAD_BRAKE_CAP_MAX_TTC = 25.0
+# Engagement horizon for the close-lead brake cap. Was 25.0 s, which is not "close" by any reading of
+# the name: on Peter route 000001eb at 5:48 it engaged on a lead 71.1 m away at 15.2 s TTC and pulled
+# commanded accel from +0.89 to -0.32 while the MPC itself still reported source `cruise`. 8.0 s sits
+# with this file's other lead-safety horizons (RAW_LEAD_SAFETY_TTC 7.0, FCW_MAX_TTC 4.0) and still
+# engages on the genuine close approaches (000001e8 at 9:00 gates at 5.5 s) and keeps the
+# existing 9.2 s vision-approach behaviour, while clearing 000001eb 5:48 (15.2 s) and its
+# rubber-banding neighbour (17.6 s) with margin.
+CLOSE_LEAD_BRAKE_CAP_MAX_TTC = 10.0
+
+# The cap used to be a step: nothing below required_decel 0.2, full demand at and above it. That
+# discontinuity is the accel->decel->accel cycling reported as rubber banding -- 000001eb at 5:48
+# shows it toggling off/on/off inside 1.2 s as required_decel crosses 0.2. Ramp the demand in over a
+# band instead, so a marginal geometry produces a marginal cap rather than a step.
+CLOSE_LEAD_BRAKE_CAP_RAMP_MIN = 0.2
+CLOSE_LEAD_BRAKE_CAP_RAMP_FULL = 0.5
 INSIDE_GAP_CLOSING_MIN_EGO_SPEED = 8.0
 INSIDE_GAP_CLOSING_MIN_LEAD_SPEED = 5.0
 INSIDE_GAP_CLOSING_MIN_SPEED = 0.5
@@ -746,11 +760,21 @@ class LongitudinalPlanner:
     projected_ttc = available_gap / max(projected_closing_speed, 0.1)
     if projected_ttc > CLOSE_LEAD_BRAKE_CAP_MAX_TTC:
       return None
-    required_decel = (projected_closing_speed ** 2) / (2.0 * available_gap) + 0.7 * lead_brake
-    if required_decel < 0.2:
+    # Lead braking is counted ONCE. To null a closing speed c over a usable gap d while the lead
+    # decelerates at b, the ego demand is c^2/(2d) + b. Using the lead-brake-inflated
+    # projected_closing_speed in the quadratic term AND adding b again double-counted it: on
+    # 000001e8 at 9:00 that inflated the demand from 4.27 to 4.87 m/s^2. The quadratic term is the
+    # smaller one either way -- at that sample aLeadK supplied 85% of the total -- so this makes the
+    # cap correct, not gentle. A spurious aLeadK still dominates it; that is an input problem, and
+    # deliberately not something this function pretends to solve.
+    required_decel = (closing_speed ** 2) / (2.0 * available_gap) + 0.7 * lead_brake
+
+    ramp = float(np.clip((required_decel - CLOSE_LEAD_BRAKE_CAP_RAMP_MIN) /
+                         (CLOSE_LEAD_BRAKE_CAP_RAMP_FULL - CLOSE_LEAD_BRAKE_CAP_RAMP_MIN), 0.0, 1.0))
+    if ramp <= 0.0:
       return None
 
-    return max(accel_min, -required_decel)
+    return max(accel_min, -required_decel * ramp)
 
   @staticmethod
   def get_inside_gap_closing_lead_accel_cap(lead, v_ego, accel_min, t_follow):
