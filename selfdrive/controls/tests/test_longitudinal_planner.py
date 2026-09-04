@@ -545,46 +545,6 @@ def test_model_lead_trajectory_is_default_for_stable_lead():
   np.testing.assert_allclose(actual, expected)
 
 
-@pytest.mark.parametrize(
-  ("v_ego", "d_rel", "v_lead", "a_lead"),
-  [
-    (9.606, 36.832, 3.497, -5.466),
-    (17.421, 39.577, 11.035, -6.017),
-  ],
-)
-def test_bosch_raw_geometry_guard_ignores_nonurgent_derived_braking(v_ego, d_rel, v_lead, a_lead):
-  raw_lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=a_lead, radar=True, model_prob=0.99)
-  _, model_lead = make_model_lead()
-
-  assert d_rel / (v_ego - v_lead) > 5.0
-  assert build_model_lead_trajectory(model_lead, raw_lead, v_ego) is None
-  assert build_model_lead_trajectory(model_lead, raw_lead, v_ego, raw_geometry_guard=True) is not None
-
-
-@pytest.mark.parametrize(
-  ("d_rel", "v_lead"),
-  [(10.0, 27.0), (35.0, 20.0), (52.0, 13.0), (80.0, 0.0)],
-)
-def test_bosch_raw_geometry_guard_keeps_urgent_radar_fallback(d_rel, v_lead):
-  raw_lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=-3.0, radar=True, model_prob=0.99)
-  _, model_lead = make_model_lead()
-
-  assert build_model_lead_trajectory(model_lead, raw_lead, 27.0, raw_geometry_guard=True) is None
-
-
-def test_bosch_planner_enables_raw_geometry_guard_only_for_available_bosch_radar():
-  bosch_cp = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
-  bosch_cp.radarUnavailable = False
-  bosch_planner = LongitudinalPlanner(bosch_cp)
-  assert bosch_planner.honda_bosch_a_radar
-  assert bosch_planner.mpc.raw_geometry_model_guard
-
-  vision_cp = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-  vision_planner = LongitudinalPlanner(vision_cp)
-  assert not vision_planner.honda_bosch_a_radar
-  assert not vision_planner.mpc.raw_geometry_model_guard
-
-
 def test_model_lead_trajectory_uses_raw_current_anchor_and_future_deltas():
   lead = make_lead(status=True, d_rel=42.0, v_lead=18.0, model_prob=0.99)
   _, model_lead = make_model_lead()
@@ -635,116 +595,6 @@ def test_model_lead_trajectory_falls_back_for_urgent_raw_lead(d_rel, v_lead, a_l
   expected = legacy_mpc.process_lead(raw_lead, model_lead=None)
 
   np.testing.assert_allclose(actual, expected)
-
-
-def test_bosch_raw_geometry_guard_keeps_model_trajectory_for_nonurgent_pessimistic_alead():
-  # Peter B2-style case: stable native track and raw geometry are nonurgent, but
-  # the second-stage radar aLeadK is temporarily much more pessimistic than the
-  # model trajectory. Derived acceleration alone must not force the legacy path.
-  v_ego = 19.041454
-  raw_lead = make_lead(
-    status=True,
-    d_rel=42.524639,
-    v_lead=14.900833,
-    a_lead=-4.004934,
-    radar=True,
-    model_prob=0.955,
-  )
-  _, model_lead = make_model_lead()
-
-  # Generic/non-Bosch behavior remains unchanged.
-  assert build_model_lead_trajectory(model_lead, raw_lead, v_ego) is None
-
-  expected = build_model_lead_trajectory(
-    model_lead,
-    raw_lead,
-    v_ego,
-    raw_geometry_guard=True,
-  )
-  assert expected is not None
-
-  mpc = LongitudinalMpc(raw_geometry_model_guard=True)
-  mpc.set_cur_state(v_ego, 0.0)
-  actual = mpc.process_lead(raw_lead, model_lead=model_lead)
-
-  np.testing.assert_allclose(actual, expected)
-
-
-@pytest.mark.parametrize(
-  ("v_ego", "d_rel", "v_lead", "a_lead"),
-  [
-    (29.55, 25.86, 26.78, -3.51),  # ID44 peak closing-speed transient.
-    (25.43, 23.92, 25.87, -2.24),  # ID44 hard-brake floor after closing subsides.
-  ],
-)
-def test_bosch_raw_geometry_guard_keeps_model_trajectory_for_peter_id44(v_ego, d_rel, v_lead, a_lead):
-  raw_lead = make_lead(
-    status=True,
-    d_rel=d_rel,
-    v_lead=v_lead,
-    a_lead=a_lead,
-    radar=True,
-    model_prob=0.99,
-  )
-  _, model_lead = make_model_lead()
-
-  # Preserve generic behavior: aLeadK alone still rejects the model trajectory.
-  assert build_model_lead_trajectory(model_lead, raw_lead, v_ego) is None
-  assert build_model_lead_trajectory(
-    model_lead,
-    raw_lead,
-    v_ego,
-    raw_geometry_guard=True,
-  ) is not None
-
-
-@pytest.mark.parametrize(
-  ("d_rel", "v_lead", "a_lead"),
-  [
-    (10.0, 27.0, -3.0),  # Genuinely close lead, even without instantaneous closing.
-    (35.0, 20.0, -3.0),  # Closing requires meaningful deceleration before the stop gap.
-    (52.0, 13.0, -3.0),  # Farther away but inside the FCW TTC horizon.
-    (80.0, 0.0, -3.0),   # Genuine stopped lead at highway speed.
-  ],
-)
-def test_bosch_raw_geometry_guard_keeps_urgent_radar_fallback(d_rel, v_lead, a_lead):
-  v_ego = 27.0
-  raw_lead = make_lead(
-    status=True,
-    d_rel=d_rel,
-    v_lead=v_lead,
-    a_lead=a_lead,
-    radar=True,
-    model_prob=0.99,
-  )
-  _, model_lead = make_model_lead()
-
-  assert build_model_lead_trajectory(
-    model_lead,
-    raw_lead,
-    v_ego,
-    raw_geometry_guard=True,
-  ) is None
-
-  guarded_mpc = LongitudinalMpc(raw_geometry_model_guard=True)
-  guarded_mpc.set_cur_state(v_ego, 0.0)
-  actual = guarded_mpc.process_lead(raw_lead, model_lead=model_lead)
-
-  legacy_mpc = LongitudinalMpc()
-  legacy_mpc.set_cur_state(v_ego, 0.0)
-  expected = legacy_mpc.process_lead(raw_lead, model_lead=None)
-
-  np.testing.assert_allclose(actual, expected)
-
-
-def test_civic_bosch_planner_enables_raw_geometry_model_guard():
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
-  CP.radarUnavailable = False
-
-  planner = LongitudinalPlanner(CP)
-
-  assert planner.honda_bosch_a_radar
-  assert planner.mpc.raw_geometry_model_guard
 
 
 def set_model_launch_trajectory(model, *, wait_time: float = 0.6, accel: float = 1.0):
@@ -1140,16 +990,6 @@ def test_planner_fcw_keeps_real_low_speed_closing_alerts():
   )
 
 
-def test_bosch_planner_fcw_requires_radard_authority():
-  relaxed_lead = make_lead(status=True, d_rel=8.0, v_lead=2.0, a_lead=-2.0, radar=True, model_prob=0.99)
-  relaxed_lead.fcw = False
-  assert should_trigger_planner_fcw(relaxed_lead, 8.0)
-  assert not should_trigger_planner_fcw(relaxed_lead, 8.0, require_lead_fcw=True)
-
-  relaxed_lead.fcw = True
-  assert should_trigger_planner_fcw(relaxed_lead, 8.0, require_lead_fcw=True)
-
-
 def test_publish_planner_fcw_suppresses_crawl_speed_false_positive():
   car_state = SimpleNamespace(vEgo=0.29, standstill=False)
   radar_state = SimpleNamespace(
@@ -1206,37 +1046,6 @@ def test_vision_lead_approach_cap_brakes_harder_for_braking_tracked_lead_inside_
   assert approach_cap is not None
   assert approach_cap < -1.35
   assert approach_cap < hard_cap
-
-
-def test_honda_bosch_a_nonurgent_radar_lead_accel_does_not_bypass_mpc():
-  v_ego = 26.98
-  lead = make_lead(status=True, d_rel=52.31, v_lead=20.09, a_lead=-3.32, radar=True, model_prob=0.98)
-
-  bosch_planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH), init_v=v_ego)
-  other_planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=v_ego)
-
-  assert bosch_planner.honda_bosch_a_radar
-  assert bosch_planner.get_close_lead_brake_cap(lead, v_ego, -3.5) is None
-  assert other_planner.get_close_lead_brake_cap(lead, v_ego, -3.5) == pytest.approx(-2.93, abs=0.02)
-
-
-@pytest.mark.parametrize(
-  ("d_rel", "v_lead"),
-  [
-    (35.0, 20.0),  # Close even though TTC remains above the emergency threshold.
-    (52.0, 13.0),  # Farther away, but inside the FCW TTC horizon.
-    (80.0, 0.0),   # A real stopped lead remains fully protected at highway speed.
-  ],
-)
-def test_honda_bosch_a_urgent_radar_lead_keeps_full_brake_cap(d_rel, v_lead):
-  v_ego = 27.0
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH), init_v=v_ego)
-  lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=-3.0, radar=True, model_prob=0.98)
-
-  cap = planner.get_close_lead_brake_cap(lead, v_ego, -3.5)
-
-  assert cap is not None
-  assert cap < -2.0
 
 
 def test_vision_lead_approach_cap_ignores_opening_lead_with_large_gap():

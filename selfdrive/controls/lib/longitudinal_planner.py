@@ -4,7 +4,6 @@ import numpy as np
 import time
 import cereal.messaging as messaging
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
-from opendbc.car.honda.values import HONDA_BOSCH_A
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
@@ -15,8 +14,6 @@ from openpilot.starpilot.controls.lib.starpilot_vcruise import FT_TO_M, OFFSET_F
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, get_safe_obstacle_distance
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import desired_follow_distance
-from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import FCW_MAX_TTC
-from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import RAW_LEAD_SAFETY_DISTANCE
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import should_trigger_planner_fcw
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import STOP_DISTANCE
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
@@ -91,6 +88,7 @@ MODEL_LAUNCH_MOVING_SPEED = 1.2
 MODEL_LAUNCH_MAX_ACCEL = 1.5
 RAW_LEAD_SAFETY_MIN_CLOSING_SPEED = 0.5
 RAW_LEAD_SAFETY_TTC = 7.0
+RAW_LEAD_SAFETY_DISTANCE = 40.0
 RAW_RADAR_STOPPED_LEAD_MAX_SPEED = 1.0
 RAW_RADAR_STOPPED_LEAD_MAX_DISTANCE = 120.0
 RAW_LEAD_LOW_SPEED_HOLD_MAX_EGO_SPEED = 4.5
@@ -359,11 +357,11 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
   return [a_target[0], min(a_target[1], a_x_allowed)]
 
 
-def should_publish_planner_fcw(crash_cnt: int, car_state, radar_state, *, require_lead_fcw=False) -> bool:
+def should_publish_planner_fcw(crash_cnt: int, car_state, radar_state) -> bool:
   return (
     crash_cnt > 2 and
     not car_state.standstill and
-    should_trigger_planner_fcw(radar_state.leadOne, float(car_state.vEgo), require_lead_fcw=require_lead_fcw)
+    should_trigger_planner_fcw(radar_state.leadOne, float(car_state.vEgo))
   )
 
 
@@ -563,12 +561,8 @@ class LongitudinalPlanner:
 
   def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
-    self.honda_bosch_a_radar = CP.brand == "honda" and CP.carFingerprint in HONDA_BOSCH_A and not CP.radarUnavailable
     self.longitudinal_actuator_delay = max(DT_MDL, float(CP.longitudinalActuatorDelay))
-    self.mpc = LongitudinalMpc(
-      dt=dt,
-      raw_geometry_model_guard=self.honda_bosch_a_radar,
-    )
+    self.mpc = LongitudinalMpc(dt=dt)
     self.fcw = False
     self.dt = dt
     self.model_allow_throttle = True
@@ -739,32 +733,16 @@ class LongitudinalPlanner:
     if lead is None or not lead.status:
       return None
 
-    closing_speed = max(0.0, v_ego - lead.vLead)
-    d_rel = max(float(lead.dRel), 0.0)
-    raw_ttc = d_rel / max(closing_speed, 0.1) if closing_speed > 0.1 else float("inf")
-
-    # Bosch-A's lead acceleration is a short-history derivative of the native velocity. Around a
-    # fresh cut-in it can briefly report several m/s^2 of lead braking even while distance/vRel and
-    # the model-backed MPC trajectory remain non-urgent. Do not let this post-MPC safety cap bypass
-    # that trajectory outside the close/FCW safety envelope. Raw distance/vRel still anchor the MPC,
-    # while close, FCW-horizon, and stopped-lead cases retain the original full brake authority.
-    if (
-      self.honda_bosch_a_radar and
-      bool(getattr(lead, "radar", False)) and
-      d_rel > RAW_LEAD_SAFETY_DISTANCE and
-      raw_ttc > FCW_MAX_TTC
-    ):
-      return None
-
     lead_brake = max(0.0, -float(lead.aLeadK))
     reaction_t = max(self.longitudinal_actuator_delay, self.dt)
+    closing_speed = max(0.0, v_ego - lead.vLead)
     projected_closing_speed = closing_speed + lead_brake * reaction_t
     if projected_closing_speed < 0.1 and lead_brake < 0.5:
       return None
 
     target_gap = float(np.clip(2.0 + 0.2 * v_ego, 2.0, 6.0))
     delay_buffer = projected_closing_speed * reaction_t
-    available_gap = max(d_rel - target_gap - delay_buffer, 0.5)
+    available_gap = max(float(lead.dRel) - target_gap - delay_buffer, 0.5)
     projected_ttc = available_gap / max(projected_closing_speed, 0.1)
     if projected_ttc > CLOSE_LEAD_BRAKE_CAP_MAX_TTC:
       return None
@@ -2377,10 +2355,7 @@ class LongitudinalPlanner:
     self.j_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC[:-1], self.mpc.j_solution)
 
     # TODO counter is only needed because radar is glitchy, remove once radar is gone
-    self.fcw = should_publish_planner_fcw(
-      self.mpc.crash_cnt, sm['carState'], sm['radarState'],
-      require_lead_fcw=self.honda_bosch_a_radar,
-    )
+    self.fcw = should_publish_planner_fcw(self.mpc.crash_cnt, sm['carState'], sm['radarState'])
     if self.fcw:
       cloudlog.info("FCW triggered")
 
