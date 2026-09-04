@@ -581,6 +581,70 @@ class TestLatControl:
     assert all(a < b for a, b in pairwise(linear_bp)), "linear axis must be strictly increasing"
     assert all(a < b for a, b in pairwise(angle_bp)), "angle axis must be strictly increasing"
 
+  def test_rate_feedforward_cancels_ramp_lag(self):
+    # A ramping target is exactly the case P cannot close. The FF must add command in the
+    # direction of travel, and must not act on a stationary target.
+    from openpilot.selfdrive.controls.lib.latcontrol_pid import (
+      NRDR_RATE_FF_GAIN, NRDR_RATE_FF_MAX, get_target_rate_feedforward)
+    assert get_target_rate_feedforward(0.0, NRDR_RATE_FF_GAIN) == 0.0
+    assert get_target_rate_feedforward(40.0, NRDR_RATE_FF_GAIN) == pytest.approx(0.288, abs=1e-3)
+    assert get_target_rate_feedforward(-40.0, NRDR_RATE_FF_GAIN) == pytest.approx(-0.288, abs=1e-3)
+    # the measured turn-in (27-43 deg/s) must sit inside the clamp, not against it
+    assert abs(get_target_rate_feedforward(43.0, NRDR_RATE_FF_GAIN)) < NRDR_RATE_FF_MAX
+    # the slew clip's 191 deg/s would be 1.38 open loop; the clamp has to catch that
+    assert get_target_rate_feedforward(191.0, NRDR_RATE_FF_GAIN) == pytest.approx(NRDR_RATE_FF_MAX)
+    assert get_target_rate_feedforward(50.0, 0.0) == 0.0
+
+  def test_rate_feedforward_adds_command_on_a_ramping_target(self):
+    # Hold the wheel exactly on the target so the error term is ~0 and P contributes nothing.
+    # Whatever the two runs differ by is then the rate feedforward alone.
+    Params().put("NrdrLatAngleRateLimit", 0)
+    Params().put_bool("HondaTorqueLowPassFilter", False)
+
+    def run(gain):
+      Params().put_float("NrdrLatRateFf", gain)
+      controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
+      CS.vEgo = 8.0
+      CS.steeringAngleDeg = 0.0
+      outs, rates = [], []
+      prev = 0.0
+      for n in range(120):
+        out, angle, _ = controller.update(True, CS, VM, params, False, 1.2e-4 * n, False, 0.2, None, None, toggles)
+        rates.append((angle - prev) / DT_CTRL)
+        prev = angle
+        CS.steeringAngleDeg = angle          # wheel sits on target -> error ~ 0
+        outs.append(out)
+      return controller, np.array(outs), np.array(rates)
+
+    off_c, off, rate = run(0.0)
+    on_c, on, _ = run(0.0072)
+
+    assert off_c.rate_ff_gain == 0.0 and on_c.rate_ff_gain == pytest.approx(0.0072)
+    settled = slice(80, 120)
+    assert max(abs(on)) < 0.99, "must not be railed, or the comparison is meaningless"
+    target_rate = float(np.median(rate[settled]))
+    # positive curvature commands a negative wheel angle on this car, so the rate is signed
+    assert 10.0 < abs(target_rate) < 120.0, f"test ramp should be a realistic turn-in rate, got {target_rate:.0f} deg/s"
+
+    delta = float(np.mean(on[settled] - off[settled]))
+    assert delta == pytest.approx(0.0072 * target_rate, rel=0.15), \
+      f"FF should contribute gain*rate ({0.0072 * target_rate:.4f}), got {delta:.4f}"
+
+  def test_rate_feedforward_filter_rejects_the_chatter_band(self):
+    # The whole risk of this term: differentiating the target amplifies its 3-6 Hz content.
+    # Two cascaded poles must pass a ~0.2 Hz turn-in ramp and reject ~4.5 Hz.
+    from openpilot.selfdrive.controls.lib.latcontrol_pid import NRDR_RATE_FF_TAU
+    from openpilot.common.filter_simple import FirstOrderFilter
+    def gain_at(freq):
+      a = FirstOrderFilter(0.0, NRDR_RATE_FF_TAU, DT_CTRL)
+      b = FirstOrderFilter(0.0, NRDR_RATE_FF_TAU, DT_CTRL)
+      n = int(20.0 / DT_CTRL)
+      t = np.arange(n) * DT_CTRL
+      y = np.array([b.update(a.update(v)) for v in np.sin(2 * np.pi * freq * t)])
+      return 2.0 * np.abs(np.mean(y[n // 2:] * np.exp(-2j * np.pi * freq * t[n // 2:])))
+    assert gain_at(0.2) > 0.95, "must pass the turn-in ramp"
+    assert gain_at(4.5) < 0.15, "must reject the chatter band"
+
   def test_clarity_vgr_inverse_map(self):
     import numpy as np
     from itertools import pairwise

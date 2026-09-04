@@ -310,6 +310,13 @@ class NRDRTuningLayout(_SettingsPage):
     ]
 
     filter_rows = [
+      value(
+        "NrdrLatRateFf", "Turn-in Rate Feedforward",
+        "Feeds the desired steering angle's rate forward, cancelling the standing lag a "
+        "proportional loop carries while the target ramps. 0 disables.",
+        lambda: f"{p.get_float('NrdrLatRateFf'):.4f}",
+        lambda: self._show_slider("NrdrLatRateFf", 0.0, 0.05, step=0.0005, value_type="float", title="Turn-in Rate Feedforward"),
+      ),
       toggle("NrdrLatUseFirmwareVgr", "Use Firmware VGR Table",
              "Convert curvature with the EPS firmware's A (position) table on top of the learned steer "
              "ratio, instead of the road-measured effective-ratio curve. Changes centre gain and taper."),

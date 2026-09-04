@@ -214,6 +214,57 @@ NRDR_UNWIND_RATE_TAU = 0.1  # 0 uses the raw measured rate
 NRDR_UNWIND_RATE_MIN_DEG_S = 5.0
 
 
+# nrdr: feedforward on the TARGET'S RATE, the term that cancels ramp-following lag.
+#
+# A proportional controller tracking a ramp carries a standing error of ramp / (kp * K): it
+# only produces output once error exists, so while the target keeps moving the error cannot
+# close. Measured on route 00000278's left turn, mid-ramp:
+#
+#     err 14.3 deg  P 0.319  target slew 42 deg/s
+#     err 13.0 deg  P 0.289  target slew 43 deg/s
+#     err 13.6 deg  P 0.302  target slew 40 deg/s
+#
+# Flat error against a moving target, output nowhere near the rail -- ramp lag, not saturation
+# and not a gain shortfall. It cost 342 ms of tracking lag, 5.1 deg of heading and 1.08 m of
+# lateral offset by the time the car reached the corner.
+#
+# The integrator does eventually close it (I climbed 0.075 -> 0.357 over that turn) but it is
+# reactive: at this ki it needs ~3 s to build the authority the ramp demands, and the entry is
+# already spent. Raising kp instead would work on the lag but multiplies every bit of error,
+# and the command in the chatter band IS the P term (output/P = 1.04 measured), so it buys the
+# lag back as chatter.
+#
+# There is a physical hole to fill too. The existing feedforward is kf * angle * v**2, a
+# POSITION term sized to hold a steady angle against self-aligning torque. Moving the rack
+# additionally costs torque against friction, damping and inertia, and that scales with RATE.
+# So this is the missing half of the actuator's inverse model, not a patch over an error.
+#
+# Gain comes straight from the measurement above: had the feedforward supplied what P was
+# supplying, the error would have been ~zero, so kd_ff = P / slew = 0.0067..0.0076.
+NRDR_RATE_FF_GAIN = 0.0072  # authority per deg/s of target rate; 0 disables
+
+# Differentiating the target multiplies its in-band noise by ~2*pi*f. The target carries
+# 0.2018 deg RMS of 3-6 Hz content below 15 mph, so its derivative is ~5.7 deg/s RMS and this
+# term would inject 0.041 of authority there -- 8x the 0.00505 the command currently has. Fed
+# raw it would undo what the model-action interpolation bought.
+#
+# Turn-in is a ~5 s ramp, about 0.2 Hz, and the noise sits at ~4.5 Hz: twenty times apart. Two
+# cascaded poles at 1.5 Hz pass 0.2 Hz at 0.98 and cut 4.5 Hz to 0.10, putting the injected
+# chatter just under what is already there. One pole was not enough (0.32 at 4.5 Hz, 2.6x
+# worse than today); this is the opposite call from the target low-pass, where signal and
+# noise sit close together and one pole wins.
+NRDR_RATE_FF_TAU = 0.106  # seconds, per pole -> 1.5 Hz corner
+
+# Safety clamp, not a tuning value. The slew clip alone allows 191 deg/s, which at the gain
+# above is 1.38 -- more than full authority, open loop. Real turn-in ran 27-43 deg/s, so this
+# covers it with margin. If it saturates in the logs, revisit the gain, not the clamp.
+NRDR_RATE_FF_MAX = 0.4
+
+
+def get_target_rate_feedforward(target_rate_deg_s: float, gain: float) -> float:
+  return float(min(max(gain * target_rate_deg_s, -NRDR_RATE_FF_MAX), NRDR_RATE_FF_MAX))
+
+
 def is_steering_rate_unwinding(desired_angle_deg: float, steering_rate_deg: float) -> bool:
   return (desired_angle_deg * steering_rate_deg < -1.0 and
           abs(steering_rate_deg) > NRDR_UNWIND_RATE_MIN_DEG_S)
@@ -488,6 +539,10 @@ class LatControlPID(LatControl):
     self.lpf_tau_standard = NRDR_TARGET_SMOOTH_TAU
     self.lpf_tau_highway = NRDR_TARGET_SMOOTH_TAU
     self.unwind_rate_filter = FirstOrderFilter(0.0, NRDR_UNWIND_RATE_TAU, dt)
+    # Two cascaded poles; see NRDR_RATE_FF_TAU for why one is not enough.
+    self.rate_ff_filter_a = FirstOrderFilter(0.0, NRDR_RATE_FF_TAU, dt)
+    self.rate_ff_filter_b = FirstOrderFilter(0.0, NRDR_RATE_FF_TAU, dt)
+    self.rate_ff_gain = NRDR_RATE_FF_GAIN
     self.unwind_rate_tau = NRDR_UNWIND_RATE_TAU
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
@@ -607,6 +662,8 @@ class LatControlPID(LatControl):
       self.target_smooth_filter.x = angle_steers_des_no_offset
       self.target_smooth_filter.initialized = True
       self.unwind_rate_filter.x = float(CS.steeringRateDeg)
+      self.rate_ff_filter_a.x = 0.0
+      self.rate_ff_filter_b.x = 0.0
       self.eps_modified_steering_pressed_filter_s = 0.0
       self.eps_modified_steering_pressed_prev = False
       self.center_taper_scale.x = 1.0
@@ -618,6 +675,11 @@ class LatControlPID(LatControl):
     else:
       self.frame += 1
       desired_angle_delta = angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
+      # Rate feedforward on the SHAPED target: the clip and the smoothing are already applied,
+      # so this anticipates the motion the wheel is actually being asked to make.
+      smoothed_target_rate = self.rate_ff_filter_b.update(
+        self.rate_ff_filter_a.update(desired_angle_delta / self.dt))
+      rate_feedforward = get_target_rate_feedforward(smoothed_target_rate, self.rate_ff_gain)
       phase, self.phase_direction = phase_with_latch(angle_steers_des_no_offset, desired_angle_delta,
                                                       CS.vEgo, self.phase_direction)
 
@@ -715,6 +777,7 @@ class LatControlPID(LatControl):
           self.lpf_tau_highway = _get_param_float(self.params, "HondaLpfTauHighway", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
           self.unwind_rate_tau = _get_param_float(self.params, "NrdrLatUnwindRateTau", NRDR_UNWIND_RATE_TAU, 0.0, 2.0)
           self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
+          self.rate_ff_gain = _get_param_float(self.params, "NrdrLatRateFf", NRDR_RATE_FF_GAIN, 0.0, 0.05)
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
         i_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_i_scale_low, self.lat_i_scale_standard, self.lat_i_scale_highway)
@@ -742,6 +805,18 @@ class LatControlPID(LatControl):
       if self.is_subaru_impreza:
         raw_output_torque = self.pid.p + self.pid.i + self.pid.d + self.pid.f
         output_torque = raw_output_torque * get_subaru_impreza_pid_output_scale(error)
+
+      # Added after the feel shaping deliberately: _clarity_eps_pid_output_scale tunes how the
+      # command feels at angle, while this is an actuator inverse-model term that must deliver
+      # the torque the motion costs regardless. Below 10 mph that scale is ~1.0 anyway
+      # (speed_weight clamps to 0 there), so in the band this matters most the placement
+      # changes nothing measurable.
+      #
+      # Not folded into pid.update()'s feedforward, because the modified-EPS path rebuilds the
+      # output as p*p_scale + i*i_scale + d + f*f_scale and LatFScaleLowSpeed is 50 on this car
+      # -- routing it through pid.f would silently halve a gain measured against the full command.
+      if self.is_eps_modified:
+        output_torque += rate_feedforward
 
       output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 

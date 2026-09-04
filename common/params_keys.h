@@ -361,6 +361,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrLatUnwindRateTau", {PERSISTENT, FLOAT, "0.1", "0.1", 2}},    // seconds; smooths the measured steer rate that gates the unwind branches. 0 = raw rate
     {"NrdrLatModelActionInterp", {PERSISTENT, BOOL, "1", "1", 2}},   // ramp modeld's 20 Hz action across the model frame instead of holding it; removes the 20 Hz staircase in the lateral target
     {"NrdrLatUseFirmwareVgr", {PERSISTENT, BOOL, "0", "0", 2}},      // use the EPS firmware A (position) VGR table instead of the road-measured effective-ratio curve
+    {"NrdrLatRateFf", {PERSISTENT, FLOAT, "0.0072", "0.0072", 2}},   // feedforward on the desired-angle rate, authority per deg/s; cancels ramp-following lag on turn-in. 0 disables
     {"NrdrTuneLearnerMap", {PERSISTENT | DONT_LOG, BYTES}},
     {"ForceFingerprint", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ForceOffroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
