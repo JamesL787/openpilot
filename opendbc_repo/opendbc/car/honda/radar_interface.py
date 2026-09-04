@@ -53,10 +53,26 @@ BOSCH_A_SWEEP_END_MSG = BOSCH_A_AUX_IDS[BOSCH_A_NUM_SLOTS - 1]  # 0x297
 # Observed coherent Bosch-A sweep cadence is ~14.5-16 Hz in the available captures.
 BOSCH_A_FREQ_HZ = 15
 
-# Range: f0 raw_range (12-bit, B2:B3 high nibble) -> meters. Firmware q16 = 8*raw_range; physical
-# calibration keeps slope/offset as named, replay-refinable constants (do not add a second radar/camera
-# longitudinal offset on top of this).
-BOSCH_A_RANGE_SCALE_M = 0.05712
+# Range: f0 raw_range (12-bit, B2:B3 high nibble) -> meters. Firmware q16 = 8*raw_range.
+#
+# The scale is firmware-exact, not fitted. AC004 converts the internal value with
+# (q16 - n) / 128, and q16 = sat16(round(8 * raw_range)), so
+#
+#     range_m = (8 * raw_range - n) / 128 = raw_range / 16 - n / 128
+#
+# Corroboration that 1/16 is the designed mapping rather than a coincidence: 8 * 4095 = 32760
+# fits int16 with 7 counts to spare, so the *8 exists to make the 12-bit field fill the internal
+# word; full scale is 4095/16 = 255.9 m; and /128 (Q7) is this firmware's unit for physical
+# quantities throughout. The previous 0.05712 was 16 * 0.00357, and that 0.00357 was solved from
+# a single tape point with the offset assumed, so it read progressively short with distance
+# (~9% low, -9 m at 60 m against vision).
+BOSCH_A_RANGE_SCALE_M = 1.0 / 16.0
+
+# Offset. The firmware term is -n/128, where n is assembled from a configuration word plus a
+# runtime addend and is therefore a PER-UNIT CALIBRATION VALUE, not a constant; 335 (-2.617 m) is
+# only the fallback the firmware uses when the config word reads zero. -3.0 is retained because it
+# sits inside the plausible calibration range and the choice barely moves the residual. Do not
+# re-fit this against vision: read it from the radar's own configuration instead.
 BOSCH_A_RANGE_OFFSET_M = -3.0
 
 # Azimuth: f0 raw_angle (11-bit, B4:B5 high 3 bits), offset-binary about 1024.

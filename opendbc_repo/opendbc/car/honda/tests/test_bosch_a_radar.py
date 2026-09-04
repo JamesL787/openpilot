@@ -20,6 +20,7 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_MAIN_IDS,
   BOSCH_A_NUM_SLOTS,
   BOSCH_A_RANGE_RATIO_INVALID,
+  BOSCH_A_RANGE_OFFSET_M,
   BOSCH_A_RANGE_SCALE_M,
   BOSCH_A_STALE_S,
   BOSCH_A_SWEEP_END_MSG,
@@ -332,13 +333,37 @@ class TestDbcBitGeometry:
 # --- 3. range / azimuth extraction + invalid sentinels ------------------------------------------------
 
 class TestRangeAzimuth:
+  def test_range_scale_matches_firmware_q16_conversion(self):
+    """The range scale is firmware-derived, not capture-fitted.
+
+    Stock 36802TBA AC004 converts the internal object range with (q16 - n) / 128, and the
+    wire-to-internal scaling is q16 = sat16(round(8 * raw_range)). Composing the two gives
+
+        range_m = (8 * raw_range - n) / 128 = raw_range / 16 - n / 128
+
+    so the scale is exactly 1/16 m per raw count and the offset term is a per-unit
+    calibration value, not a constant.
+
+    This test exists because the previous 0.05712 was 16 * 0.00357, and that 0.00357 was
+    solved from a single tape measurement with the offset assumed -- one equation, two
+    unknowns -- which read progressively short with distance. Pin the scale so a future
+    fit against a vision or capture reference cannot silently reintroduce that error.
+    """
+    Q16_PER_RAW_COUNT = 8           # q16 = 8 * raw_range
+    FIRMWARE_Q7_DIVISOR = 128       # AC004's (q16 - n) / 128; Q7 is this firmware's unit
+    assert BOSCH_A_RANGE_SCALE_M == Q16_PER_RAW_COUNT / FIRMWARE_Q7_DIVISOR
+
+    # The *8 exists so a full-scale 12-bit wire value exactly fills the internal int16.
+    # If this ever fails the q16 relation above is wrong and the scale must be re-derived.
+    assert Q16_PER_RAW_COUNT * 0xFFF <= 0x7FFF
+
   def test_range_scale_and_offset(self):
     ri = make_radar_interface()
     raw_range = 1000
     ri.update(sweep(0, 0, 0x7, raw_range, 1024, 1, 0))
     rr = ri.update(sweep(0, 1, 0x7, raw_range, 1024, 3, 50_000_000, with_aux=True,
                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
-    assert rr.points[0].dRel == pytest.approx(0.05712 * raw_range - 3.0)
+    assert rr.points[0].dRel == pytest.approx(BOSCH_A_RANGE_SCALE_M * raw_range + BOSCH_A_RANGE_OFFSET_M)
 
   def test_range_invalid_sentinel_0xfff(self):
     ri = make_radar_interface()
@@ -355,7 +380,7 @@ class TestRangeAzimuth:
     ri.update(sweep(0, 0, 0x7, 1000, 1024 - 100, 1, 0))
     rr = ri.update(sweep(0, 1, 0x7, 1000, 1024 - 100, 3, 50_000_000, with_aux=True,
                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))  # raw_angle < center -> right of center
-    d = 0.05712 * 1000 - 3.0
+    d = BOSCH_A_RANGE_SCALE_M * 1000 + BOSCH_A_RANGE_OFFSET_M
     expected_y = d * math.tan(-100.0 / 2048.0)
     assert rr.points[0].yRel == pytest.approx(expected_y)
     assert rr.points[0].yRel < 0
@@ -599,7 +624,7 @@ class TestVrel:
     rr = ri.update(sweep(0, 2, 0x7, 1705, 1024, 5, 118_962_000, with_aux=True,
                    direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
     assert len(rr.points) == 1
-    assert rr.points[0].dRel == pytest.approx(1705 * BOSCH_A_RANGE_SCALE_M - 3.0)
+    assert rr.points[0].dRel == pytest.approx(1705 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
     assert rr.points[0].vRel == pytest.approx(-2.625)
     assert not rr.points[0].measured
     assert len(ri._tracks[1].samples) == 2
@@ -689,8 +714,8 @@ class TestVrel:
                     direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
                          direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
-    d1 = 0.05712 * 1000 - 3.0
-    d2 = 0.05712 * 1010 - 3.0
+    d1 = BOSCH_A_RANGE_SCALE_M * 1000 + BOSCH_A_RANGE_OFFSET_M
+    d2 = BOSCH_A_RANGE_SCALE_M * 1010 + BOSCH_A_RANGE_OFFSET_M
     range_implied_vrel = (d2 - d1) / 0.05
     assert range_implied_vrel != pytest.approx(0.0)
     assert rr.points[0].vRel == pytest.approx(0.0)  # native U11 (864 -> 0 m/s), not the range rate
@@ -749,7 +774,7 @@ class TestVrel:
     assert rr is not None
     assert len(rr.points) == 0
     assert len(ri._tracks[23].samples) == 2
-    assert ri._tracks[23].samples[-1][1] == pytest.approx(8.30976)
+    assert ri._tracks[23].samples[-1][1] == pytest.approx(198 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
 
 
 # --- 7b. residual vRel-authority fix: raw one-sweep fallback never becomes a published measurement ----
@@ -778,7 +803,11 @@ class TestFallbackNeverPublishes:
                          direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID, direct_vrel_uncertainty_raw=0,
                          rawca=BOSCH_A_RANGE_RATIO_INVALID))
     implied_fallback_vrel = (985 - 1000) * BOSCH_A_RANGE_SCALE_M / 0.05
-    assert implied_fallback_vrel == pytest.approx(-17.136)  # confirms the setup would poison, if reached
+    # Confirms the setup would poison if reached, while staying under the generic ceiling so this
+    # exercises the coast path and not range_rejected. Stated as bounds, not a magic number, so a
+    # range-scale change cannot silently invalidate the scenario.
+    assert implied_fallback_vrel < -15.0
+    assert abs(implied_fallback_vrel) < BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS
     assert abs(implied_fallback_vrel) < BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS  # and clears range_rejected
     assert len(rr.points) == 1
     assert rr.points[0].measured is False
@@ -808,7 +837,7 @@ class TestFallbackNeverPublishes:
     rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
                          direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID, direct_vrel_uncertainty_raw=0,
                          rawca=520))
-    d = 0.05712 * 1000 - 3.0
+    d = BOSCH_A_RANGE_SCALE_M * 1000 + BOSCH_A_RANGE_OFFSET_M
     ratio = 0.5 + 0.001 * 520
     residual = abs(d - d * ratio)
     assert residual < 2.0  # clears innovation checking regardless of degraded status
