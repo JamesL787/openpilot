@@ -77,18 +77,14 @@ def create_brake_command(packer, CAN, apply_brake, pump_on, pcm_override, pcm_ca
   return packer.make_can_msg("BRAKE_COMMAND", CAN.pt, values)
 
 
-def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_counter, car_fingerprint, gas_force):
+def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_counter, car_fingerprint, gas_force, braking):
   commands = []
   min_gas_accel = CarControllerParams.BOSCH_GAS_LOOKUP_BP[0]
 
   control_on = 5 if enabled else 0
-  # Keep the stock -0.2 brake threshold. Raw accel is the requested net vehicle
-  # acceleration, while gas_force includes drag/grade compensation and can
-  # correctly remain positive at zero or slightly negative raw accel.
-  braking = 1 if active and accel < -0.2 else 0
-  # Preserve that road-load compensation, but make an asserted brake request a
-  # hard gas inhibitor. This avoids both the P061B gas+brake contradiction and
-  # the raw-zero on/off cycling seen when gas_force was removed from this gate.
+  # Gas and brake mode are both selected from road-load-adjusted gas_force in
+  # CarController. Keep braking as a hard gas inhibitor at the CAN boundary.
+  braking = int(active and braking)
   gas_command = gas if active and gas_force > min_gas_accel and not braking else -30000
   accel_command = accel if active else 0
   standstill = 1 if active and stopping_counter > 0 else 0
