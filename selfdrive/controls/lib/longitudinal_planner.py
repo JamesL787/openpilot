@@ -576,6 +576,7 @@ class LongitudinalPlanner:
   def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
     self.longitudinal_actuator_delay = max(DT_MDL, float(CP.longitudinalActuatorDelay))
+    self.close_lead_brake_cap_value = 0.0
     self.mpc = LongitudinalMpc(dt=dt)
     self.fcw = False
     self.dt = dt
@@ -2527,6 +2528,7 @@ class LongitudinalPlanner:
     tracked_vision_approach_caps = []
     vision_low_speed_stop_active = False
     vision_brake_cap_active = False
+    self.close_lead_brake_cap_value = 0.0
     if lead_control_active:
       for lead in (self.lead_one, self.lead_two):
         rav4_early_lead_cap = get_toyota_rav4_tss2_early_lead_cap(
@@ -2537,6 +2539,7 @@ class LongitudinalPlanner:
         cap = self.get_close_lead_brake_cap(lead, v_ego, output_accel_min)
         if cap is not None:
           close_lead_caps.append(cap)
+          self.close_lead_brake_cap_value = min(self.close_lead_brake_cap_value, cap)
         cap = get_honda_crv_5g_low_speed_stopped_lead_cap(
           self.CP, lead, v_ego, vision_cap_accel_min,
         )
@@ -3144,5 +3147,7 @@ class LongitudinalPlanner:
     longitudinalPlan.shouldStop = bool(self.output_should_stop) or force_stop_handoff
     longitudinalPlan.allowBrake = True
     longitudinalPlan.allowThrottle = bool(self.allow_throttle)
+    longitudinalPlan.closeLeadBrakeCap = float(self.close_lead_brake_cap_value
+                                               if self.close_lead_brake_cap_value < 0.0 else 0.0)
 
     pm.send('longitudinalPlan', plan_send)

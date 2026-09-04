@@ -118,37 +118,24 @@ BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / 64.0
 # filter as a measurement. A track crossing a rail also steps vRel by whole m/s in one sweep, which is
 # a strong candidate for the aLeadK transients the planner-side Bosch-A guards were added to suppress.
 BOSCH_A_DIRECT_VREL_RAILS_RAW = (BOSCH_A_DIRECT_VREL_MIN_RAW, BOSCH_A_DIRECT_VREL_MAX_RAW)
-# u10 is a genuine uncertainty on U11, but it is confounded with dynamics -- read the table before
-# re-tuning this. Measured against an EVENT-LOCAL reference (quadratic fit to a centred window,
-# derivative taken at the centre sample) over 16,834 frames on Peter route 000001e8:
+# u10 is a genuine uncertainty on U11, but it is CONFOUNDED WITH DYNAMICS. Measured against an
+# event-local reference (quadratic fit to a centred window, derivative at the centre) over 16,834
+# frames: median |err| rises 0.26 -> 0.88 -> 1.44 -> 1.95 m/s across u10 bins 0-64 / 64-128 /
+# 128-192 / 192-256, but median |a_rel| rises 0.73 -> 2.13 -> 3.51 -> 4.59 m/s^2 alongside it.
+# corr(u10,|err|) = +0.40 and corr(u10,|a_rel|) = +0.43. Holding dynamics out, the quality signal is
+# real (calm-frame corr +0.52) -- but u10 climbs during genuine hard braking just as reliably.
 #
-#     u10 bin      n     median |err|   median |a_rel|
-#     0 -   64   7681       0.26 m/s        0.73 m/s^2
-#    64 -  128   6379       0.88            2.13
-#   128 -  192   1509       1.44            3.51
-#   192 -  256    569       1.95            4.59
-#   384 - 1024    299       3.16           14.98
+# 511 is the value validated in d5000fe344 by replaying 20 bookmarks through the real
+# RadarInterface and radard's Kalman filter, where it collapsed recorded spikes up to -26.5 m/s^2
+# aLeadK. It was briefly lowered to 128 on error statistics alone; that undid the validated result
+# and caused a measured regression -- on route 000001f3 at 19:27 u10 sat above 128 for 0.81 s during
+# a real ~8 m/s^2 lead decel, the coast outlived BOSCH_A_STALE_S, the lead was deleted, and the
+# vision fallback injected a 5 m / 6 m/s step that drove a -3.51 m/s^2 brake. Restored here.
 #
-# corr(u10,|err|) = +0.396, but corr(u10,|a_rel|) = +0.427: u10 rises with real manoeuvring nearly
-# as strongly as with error. Holding dynamics out settles it -- among calm frames (|a_rel| < 1):
-#
-#     0-64: 0.12 m/s | 64-128: 0.72 | 128-192: 1.15 | 192-256: 1.60   corr = +0.521
-#
-# So u10 is a real quality signal, not merely a dynamics flag, and 128 marks a ~10x step in calm
-# error (0.12 -> 1.15 m/s). Cost: it rejects 16.2% of frames overall but 23.1% of dynamic frames
-# (|a_rel| >= 1), so it does preferentially coast during genuine braking. That is a known,
-# unresolved trade -- on 000001e8 at 9:00 the lead really was decelerating at ~8 m/s^2 and u10 ran
-# 96 -> 348 through it, so this gate coasts across part of a real emergency decel.
-#
-# An earlier revision of this comment cited a different table derived from a LINEAR centred fit that
-# rejected curved windows; that method silently excluded hard-braking frames and its numbers should
-# not be used. The table above supersedes it.
-#
-# The principled fix is not a better threshold: it is to let u10 modulate the measurement covariance
-# in radard's lead filter, or to trust U11 at elevated u10 when the local range rate corroborates it
-# (high u10 + agreeing geometry = dynamics, not error). Both are out of scope here -- the first
-# touches the lead filter shared by every car.
-BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW = 128
+# Do not re-tune this from offline error statistics. u10's confounding with dynamics means a lower
+# threshold preferentially rejects real manoeuvring; the coast paths below are what must stay safe,
+# not this number.
+BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW = 511
 
 # Multi-sweep velocity/range consistency. The existing per-sweep innovation gate cannot see a
 # velocity error at all: over one ~70 ms sweep even a 3 m/s error moves the range by 0.2 m, far
@@ -161,6 +148,15 @@ BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW = 128
 # 0.6-2.5 m/s overshoots seen at deceleration onset: a trailing window legitimately lags
 # instantaneous velocity during real braking, so a threshold tight enough to catch those would also
 # reject genuine hard decels. Those are the u10 gate's job.
+#
+# The test is ONE-SIDED, and that matters. U11 lags the true closure at a deceleration onset -- at
+# 000001f3 19:27 the fitted range rate was -6.7 m/s while U11 still read -2.08 -- so a symmetric
+# |U11 - rate| test fires during genuine hard braking and coasts exactly when the velocity is most
+# needed. Lag can only make U11 UNDER-report closing while the lead is braking, so only the other
+# direction is evidence of a fault: U11 claiming more closing than the geometry can support.
+# Checked both ways: 000001eb 6:59 (U11 -10.58 while the range OPENED at +0.46) is rejected;
+# the 000001f3 onset is not. In the mirror case, a lead accelerating away, the one-sided test
+# coasts a more-conservative velocity, so it fails safe.
 BOSCH_A_VREL_RATE_CHECK_MIN_SAMPLES = 4
 BOSCH_A_VREL_RATE_CHECK_MIN_SPAN_S = 0.25
 BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS = 3.0
@@ -606,7 +602,8 @@ class RadarInterface(RadarInterfaceBase):
           denom = sum((t - t_mean) ** 2 for t in ts)
           if denom > 1e-9:
             rate = sum((t - t_mean) * (d - d_mean) for t, d in zip(ts, ds)) / denom
-            vrel_inconsistent = abs(vrel_candidate - rate) > BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
+            # One-sided: only U11 claiming MORE closing than the range supports is a fault.
+            vrel_inconsistent = vrel_candidate < rate - BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
 
       if high_u10_live_vrel or railed_u11 or vrel_inconsistent:
         # The range cleared innovation checking above, so geometry here is trustworthy; only vRel is
