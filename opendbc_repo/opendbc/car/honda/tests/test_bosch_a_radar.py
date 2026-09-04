@@ -14,6 +14,7 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_DBC_NAME,
   BOSCH_A_DIRECT_VREL_INVALID,
   BOSCH_A_DIRECT_VREL_MAX_RAW,
+  BOSCH_A_DIRECT_VREL_MIN_RAW,
   BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW,
   BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS,
   BOSCH_A_FREQ_HZ,
@@ -108,7 +109,38 @@ def make_main_frames(slot, frame_idx, status, range_raw, angle_raw, life, track_
 
 
 def make_radar_interface():
+  _reset_test_counters()
   return CarInterface.RadarInterface(CP)
+
+
+# The DBC now declares the Honda CHECKSUM (last byte bits 3:0) and the 2-bit rolling COUNTER
+# (bits 5:4), so opendbc enforces both. Synthesized frames must therefore carry real framing or
+# every message is rejected before any signal reaches the parser. Verified on real captures:
+# 361,360/361,360 checksum pass and 214,400/214,400 sequential counter transitions.
+_TEST_COUNTERS: dict[int, int] = {}
+
+
+def _reset_test_counters():
+  _TEST_COUNTERS.clear()
+
+
+def _stamp(frame: CanData) -> CanData:
+  """Give one synthesized frame a valid rolling counter and Honda checksum."""
+  data = bytearray(frame.dat)
+  counter = (_TEST_COUNTERS.get(frame.address, -1) + 1) & 0x3
+  _TEST_COUNTERS[frame.address] = counter
+  data[7] = (data[7] & 0xC0) | (counter << 4)
+  checksum = 0
+  address = frame.address
+  while address > 0:
+    checksum += address & 0xF
+    address >>= 4
+  for i, b in enumerate(data):
+    if i == len(data) - 1:
+      b >>= 4
+    checksum += (b >> 4) + (b & 0xF)
+  data[7] |= (8 - checksum) & 0xF
+  return CanData(frame.address, bytes(data), frame.src)
 
 
 def sweep(slot, frame_idx, status, range_raw, angle_raw, life, t_nanos, with_aux=False, aux_frame_idx=None,
@@ -131,7 +163,7 @@ def sweep(slot, frame_idx, status, range_raw, angle_raw, life, t_nanos, with_aux
     frames.append(CanData(trig_f3, make_f3(frame_idx), BUS))
   for extra in extra_slots:
     frames.append(extra)
-  return [(t_nanos, frames)]
+  return [(t_nanos, [_stamp(f) for f in frames])]
 
 
 # --- 1. all 16 slot/frame ID mappings ---------------------------------------------------------------
@@ -333,6 +365,21 @@ class TestDbcBitGeometry:
 # --- 3. range / azimuth extraction + invalid sentinels ------------------------------------------------
 
 class TestRangeAzimuth:
+  def test_direct_vrel_rails_are_not_measurements(self):
+    """raw 0 / 1728 are saturation rails: the true |vRel| is only bounded there, never measured.
+
+    They are common -- 20.3% of active AUX frames on Peter route 000001df sit on the low rail,
+    rising to 49.4% at 15-20 m/s, because a stationary object seen at highway speed closes much
+    faster than the +-13.5 m/s the field can express. Publishing the rail reports a stopped
+    vehicle as moving (at vEgo 17.9 m/s the low rail implies vLead +4.4 m/s), and a track
+    crossing a rail steps vRel by whole m/s in a single sweep.
+    """
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW) is None
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) is None
+    # one count inside either rail is still a real measurement
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW + 1) == pytest.approx(-13.484375)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW - 1) == pytest.approx(13.484375)
+
   def test_range_scale_matches_firmware_q16_conversion(self):
     """The range scale is firmware-derived, not capture-fitted.
 
@@ -440,7 +487,7 @@ class TestObjectValid:
       CanData(f2, make_f2(1, 3), BUS),
       CanData(trig_f3, make_f3(1), BUS),
     ]
-    rr = ri.update([(50_000_000, frames)])
+    rr = ri.update([(50_000_000, [_stamp(f) for f in frames])])
     assert len(rr.points) == 0
 
     rr = ri.update(sweep(0, 2, 0x7, 1020, 1024, 5, 100_000_000, with_aux=True,
@@ -581,14 +628,18 @@ class TestVrel:
     assert rr.points[0].vRel == pytest.approx((800 - 864) / 64.0)
 
   def test_direct_aux_vrel_domain_and_sentinel(self):
-    assert _bosch_a_direct_vrel(0) == pytest.approx(-13.5)
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) == pytest.approx(13.5)
+    # The domain endpoints are saturation rails, not readings -- see
+    # test_direct_vrel_rails_are_not_measurements. One count inside either rail is a measurement.
+    assert _bosch_a_direct_vrel(0) is None
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) is None
+    assert _bosch_a_direct_vrel(1) == pytest.approx(-13.484375)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW - 1) == pytest.approx(13.484375)
     assert _bosch_a_direct_vrel(1729) is None
     assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID) is None
     assert _bosch_a_direct_vrel(0x7FF) is None
     assert _bosch_a_direct_vrel(None) is None
-    assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW) == pytest.approx(-13.5)
-    assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 1) is None
+    assert _bosch_a_direct_vrel(1, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW) == pytest.approx(-13.484375)
+    assert _bosch_a_direct_vrel(1, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 1) is None
     assert _bosch_a_direct_vrel(864, 0x3FE) is None
     assert _bosch_a_direct_vrel(864, 0x3FF) is None
 
@@ -674,17 +725,41 @@ class TestVrel:
     assert _bosch_a_range_ratio_vrel(600, 10.0, 0.1) == pytest.approx(-10.0)
 
   @pytest.mark.parametrize(
-    ('direct_raw', 'range_raw', 'rawca', 'expected'),
-    [(0, 974, 528, -13.5), (BOSCH_A_DIRECT_VREL_MAX_RAW, 1027, 472, 13.5)],
+    ('direct_raw', 'range_raw', 'rawca'),
+    [(0, 974, 528), (BOSCH_A_DIRECT_VREL_MAX_RAW, 1027, 472)],
   )
-  def test_range_ratio_does_not_extend_direct_vrel_rails(self, direct_raw, range_raw, rawca, expected):
+  def test_range_ratio_does_not_extend_direct_vrel_rails(self, direct_raw, range_raw, rawca):
+    """A railed U11 with no trusted history publishes nothing -- not the rail, not a ratio value.
+
+    Two things must not happen at a rail. The ratio field must not be used to manufacture a larger
+    velocity (it under-reports ~25% against clean U11, so it cannot be trusted to extend a rail),
+    and the rail itself must not be published as though it were a measurement.
+    """
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
                     direct_vrel_raw=direct_raw, direct_vrel_uncertainty_raw=80, rawca=500))
     rr = ri.update(sweep(0, 1, 0x7, range_raw, 1024, 3, 50_000_000, with_aux=True,
                          direct_vrel_raw=direct_raw, direct_vrel_uncertainty_raw=80, rawca=rawca))
+    assert len(rr.points) == 0
+
+  def test_railed_direct_vrel_coasts_last_trusted_velocity(self):
+    """With a trusted velocity in hand, a rail coasts it and keeps the good geometry."""
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=800, direct_vrel_uncertainty_raw=0))
+    rr = ri.update(sweep(0, 1, 0x7, 990, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=800, direct_vrel_uncertainty_raw=0))
+    assert rr.points[0].vRel == pytest.approx((800 - 864) / 64.0)
+    assert rr.points[0].measured
+
+    # Now the same object rails. Geometry stays live, velocity coasts, nothing is fabricated.
+    rr = ri.update(sweep(0, 2, 0x7, 980, 1024, 5, 100_000_000, with_aux=True,
+                         direct_vrel_raw=0, direct_vrel_uncertainty_raw=0, rawca=528))
     assert len(rr.points) == 1
-    assert rr.points[0].vRel == pytest.approx(expected)
+    assert rr.points[0].vRel == pytest.approx((800 - 864) / 64.0)
+    assert rr.points[0].vRel != pytest.approx(-13.5)
+    assert not rr.points[0].measured
+    assert rr.points[0].dRel == pytest.approx(980 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
 
   def test_first_sighting_vrel_is_zero(self):
     ri = make_radar_interface()
@@ -924,7 +999,7 @@ def test_incomplete_main_frame_set_leaves_existing_point_untouched():
     CanData(f2, make_f2(1, 3), BUS),
     CanData(trig_f3, make_f3(1), BUS),
   ]
-  rr = ri.update([(50_000_000, frames)])
+  rr = ri.update([(50_000_000, [_stamp(f) for f in frames])])
   assert len(rr.points) == 1  # untouched, not dropped
   assert rr.points[0].trackId == t0
 
@@ -945,7 +1020,7 @@ def test_incoherent_frame_index_across_main_frames_is_skipped():
     CanData(f3, make_f3(1), BUS),
     CanData(trig_f3, make_f3(1), BUS),
   ]
-  rr = ri.update([(50_000_000, frames)])
+  rr = ri.update([(50_000_000, [_stamp(f) for f in frames])])
   assert len(rr.points) == 1  # unchanged from before, not re-derived, not dropped
   assert rr.points[0].trackId == t0
 
@@ -962,7 +1037,7 @@ def test_stale_bus_clears_points_and_flags_temporary_unavailable():
   # Advance the parser clock well past BOSCH_A_STALE_S with no trigger frame at all.
   f0, f1, f2, f3 = BOSCH_A_MAIN_IDS[0]
   frames = [CanData(f0, make_f0(1, 0x7, 1000, 1024), BUS)]  # not a full/coherent set, and no trigger
-  rr = ri.update([(300_000_000, frames)])  # +300ms, no trigger msg present
+  rr = ri.update([(300_000_000, [_stamp(f) for f in frames])])  # +300ms, no trigger msg present
   assert rr is not None
   assert len(rr.points) == 0
   assert rr.errors.radarUnavailableTemporary is True
@@ -1110,7 +1185,7 @@ def test_bosch_a_observed_sweep_end_and_publish_trigger_are_distinct():
 
 
 def test_bosch_a_timing_contract():
-  assert BOSCH_A_FREQ_HZ == 15
+  assert BOSCH_A_FREQ_HZ == pytest.approx(14.35)
   assert BOSCH_A_STALE_S == pytest.approx(0.20)
 
 

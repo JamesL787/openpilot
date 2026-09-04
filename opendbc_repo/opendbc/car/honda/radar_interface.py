@@ -50,8 +50,10 @@ BOSCH_A_ALL_IDS = [addr for ids in BOSCH_A_MAIN_IDS for addr in ids] + BOSCH_A_A
 BOSCH_A_TRIGGER_MSG = BOSCH_A_MAIN_IDS[BOSCH_A_NUM_SLOTS - 1][3]
 BOSCH_A_SWEEP_END_MSG = BOSCH_A_AUX_IDS[BOSCH_A_NUM_SLOTS - 1]  # 0x297
 
-# Observed coherent Bosch-A sweep cadence is ~14.5-16 Hz in the available captures.
-BOSCH_A_FREQ_HZ = 15
+# Coherent Bosch-A sweep cadence, measured from 0x280 inter-arrival across Peter's routes:
+# median 14.35 Hz (p5 12.5, p95 16.9). This also sets the lead-Kalman dt in radard, so the
+# previous round 15 ran the filter ~4.5% fast.
+BOSCH_A_FREQ_HZ = 14.35
 
 # Range: f0 raw_range (12-bit, B2:B3 high nibble) -> meters. Firmware q16 = 8*raw_range.
 #
@@ -107,6 +109,15 @@ BOSCH_A_DIRECT_VREL_MIN_RAW = 0
 BOSCH_A_DIRECT_VREL_MAX_RAW = 1728
 BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / 64.0
+# The domain endpoints are SATURATION RAILS, not readings: at the rail the true relative velocity is
+# only bounded (|vRel| >= 13.5 m/s), never measured. They are common -- 20.3% of active AUX frames on
+# route 000001df sit on the low rail, rising to 49.4% while doing 15-20 m/s, because a stationary
+# object seen at highway speed closes far faster than +-13.5 m/s. Publishing the rail as fact reports
+# a stopped vehicle as moving: at vEgo 17.9 m/s the rail implies vLead +4.4 m/s. Treat both endpoints
+# like the 0x7FE sentinel so they fall through to the coast path instead of entering the lead Kalman
+# filter as a measurement. A track crossing a rail also steps vRel by whole m/s in one sweep, which is
+# a strong candidate for the aLeadK transients the planner-side Bosch-A guards were added to suppress.
+BOSCH_A_DIRECT_VREL_RAILS_RAW = (BOSCH_A_DIRECT_VREL_MIN_RAW, BOSCH_A_DIRECT_VREL_MAX_RAW)
 # Empirical raw-quality policy. U11 error against an independent range-derivative reference rises
 # with u10 in a graded way, not a cliff: replay evidence bins it roughly as 0-255 clean, 256-511 only
 # mildly degraded, 512-767 clearly degraded, 768+ worst. 511 is set at that mild/clear boundary so
@@ -181,6 +192,9 @@ def _bosch_a_direct_vrel(raw_value: int | float | None,
   if raw == BOSCH_A_DIRECT_VREL_INVALID:
     return None
   if not BOSCH_A_DIRECT_VREL_MIN_RAW <= raw <= BOSCH_A_DIRECT_VREL_MAX_RAW:
+    return None
+  # Saturated: the rail bounds the value but does not measure it. See BOSCH_A_DIRECT_VREL_RAILS_RAW.
+  if raw in BOSCH_A_DIRECT_VREL_RAILS_RAW:
     return None
   # u10 is retained as a raw quality indicator because its physical units remain unresolved.  The
   # conservative threshold is evidence-backed tuning, not a recovered firmware validity rule.
@@ -477,6 +491,15 @@ class RadarInterface(RadarInterfaceBase):
                             direct_vrel_uncertainty_raw is not None and
                             direct_vrel_uncertainty_raw > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW)
 
+      # A saturated U11 is the same shape of problem as a high-u10 one: the geometry is fine, only
+      # the velocity is unusable. It must NOT fall through to ratio_vrel. The range-ratio field is
+      # the only channel that keeps moving past the rail, but it under-reports by ~25% against clean
+      # U11 (slope 0.72-0.84 over 5011 comparisons), so using it to extend a rail would swap a known
+      # wrong number for an uncalibrated one. Coast the last trusted velocity instead, and keep
+      # publishing the good range/azimuth.
+      railed_u11 = (direct_vrel_raw is not None and
+                    int(direct_vrel_raw) in BOSCH_A_DIRECT_VREL_RAILS_RAW)
+
       # Validate against the previous accepted range. Qualified U11 and the range-ratio field are
       # independent corroboration paths; high-U10 U11 is deliberately excluded from this decision.
       previous_sample = track.samples[-1] if track.samples else None
@@ -530,7 +553,7 @@ class RadarInterface(RadarInterfaceBase):
         self._slot_track_ids[slot] = track_id
         continue
 
-      if high_u10_live_vrel:
+      if high_u10_live_vrel or railed_u11:
         # The range cleared innovation checking above, so geometry here is trustworthy; only vRel is
         # in question. Preserve current geometry but coast only a recent authoritative motion
         # estimate without a KF update, rather than publishing a one-sweep-derivative synthesis.
