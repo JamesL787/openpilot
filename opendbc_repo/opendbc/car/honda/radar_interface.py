@@ -118,14 +118,40 @@ BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / 64.0
 # filter as a measurement. A track crossing a rail also steps vRel by whole m/s in one sweep, which is
 # a strong candidate for the aLeadK transients the planner-side Bosch-A guards were added to suppress.
 BOSCH_A_DIRECT_VREL_RAILS_RAW = (BOSCH_A_DIRECT_VREL_MIN_RAW, BOSCH_A_DIRECT_VREL_MAX_RAW)
-# Empirical raw-quality policy. U11 error against an independent range-derivative reference rises
-# with u10 in a graded way, not a cliff: replay evidence bins it roughly as 0-255 clean, 256-511 only
-# mildly degraded, 512-767 clearly degraded, 768+ worst. 511 is set at that mild/clear boundary so
-# U11 is still trusted directly through the mildly-degraded band; only u10 above this triggers the
-# high-u10 coast path below. This is deliberately not presented as a Bosch physical unit or
-# descriptor constant; it keeps saturated/high-uncertainty AUX values from becoming authoritative
-# velocity measurements.
-BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW = 511
+# u10 is a genuine uncertainty on U11. Measured against a centred multi-sweep range-rate reference
+# over 15,199 comparison frames on Peter route 000001e8, |U11 - reference| rises monotonically:
+#
+#     u10 bin      n     median |err|   frac > 2 m/s
+#     0 -   64   7325       0.24 m/s        3.9%
+#    64 -  128   5906       0.84            15.1%
+#   128 -  192   1262       1.22            30.7%
+#   192 -  256    435       1.51            40.0%
+#   384 -  512     36       3.19            72.2%
+#
+# corr(u10, |err|) = +0.43. The previous 511 was set from a misread of the distribution -- the
+# observed median u10 is 65, so a 511 gate rejected 0.1% of frames and caught 0.8% of the frames
+# that were actually wrong by more than 2 m/s. It was effectively dead code.
+#
+# 128 is the natural break: it removes the tier where roughly a third of frames are badly wrong, at
+# the cost of routing 12.7% of frames to the coast path (geometry is still published; only the
+# velocity coasts). Re-tune with evidence, not by feel: >192 catches 16% of bad frames for 4.6%
+# rejected, >128 catches 37% for 12.7%.
+BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW = 128
+
+# Multi-sweep velocity/range consistency. The existing per-sweep innovation gate cannot see a
+# velocity error at all: over one ~70 ms sweep even a 3 m/s error moves the range by 0.2 m, far
+# under its 2-5 m thresholds. Comparing U11 against a range rate fitted over several sweeps does
+# have that power.
+#
+# Scope, measured on Peter's nine flagged events: this catches GROSS disagreement -- the 000001eb
+# 6:59 event reported vRel -10.58 m/s while the range was actually opening at +0.46 m/s, an 11 m/s
+# contradiction, across a track-identity change. It deliberately does NOT try to catch the milder
+# 0.6-2.5 m/s overshoots seen at deceleration onset: a trailing window legitimately lags
+# instantaneous velocity during real braking, so a threshold tight enough to catch those would also
+# reject genuine hard decels. Those are the u10 gate's job.
+BOSCH_A_VREL_RATE_CHECK_MIN_SAMPLES = 4
+BOSCH_A_VREL_RATE_CHECK_MIN_SPAN_S = 0.25
+BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS = 3.0
 
 # Measurement-authority policy. These are replay-derived safety/tuning gates, not recovered Bosch
 # constants. Range innovation is measured from the previous accepted observation so a reset cannot
@@ -553,7 +579,24 @@ class RadarInterface(RadarInterfaceBase):
         self._slot_track_ids[slot] = track_id
         continue
 
-      if high_u10_live_vrel or railed_u11:
+      # Multi-sweep consistency: does the range actually move the way this velocity claims?
+      # Fitted over the accepted range history, so it is immune to the single-sweep blindness above.
+      vrel_candidate = direct_vrel if direct_vrel is not None else ratio_vrel
+      vrel_inconsistent = False
+      if vrel_candidate is not None and len(track.samples) >= BOSCH_A_VREL_RATE_CHECK_MIN_SAMPLES - 1:
+        ts = [sample[0] for sample in track.samples] + [now_s]
+        ds = [sample[1] for sample in track.samples] + [dRel]
+        span = ts[-1] - ts[0]
+        if span >= BOSCH_A_VREL_RATE_CHECK_MIN_SPAN_S:
+          n = len(ts)
+          t_mean = sum(ts) / n
+          d_mean = sum(ds) / n
+          denom = sum((t - t_mean) ** 2 for t in ts)
+          if denom > 1e-9:
+            rate = sum((t - t_mean) * (d - d_mean) for t, d in zip(ts, ds)) / denom
+            vrel_inconsistent = abs(vrel_candidate - rate) > BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
+
+      if high_u10_live_vrel or railed_u11 or vrel_inconsistent:
         # The range cleared innovation checking above, so geometry here is trustworthy; only vRel is
         # in question. Preserve current geometry but coast only a recent authoritative motion
         # estimate without a KF update, rather than publishing a one-sweep-derivative synthesis.

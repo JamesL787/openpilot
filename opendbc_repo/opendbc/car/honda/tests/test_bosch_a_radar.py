@@ -825,6 +825,28 @@ class TestVrel:
     assert rr.points[0].measured is False
     assert len(ri._tracks[1].samples) == 2
 
+  def test_gross_velocity_range_disagreement_coasts(self):
+    """A velocity that flatly contradicts the measured range over several sweeps is not published.
+
+    Modelled on Peter route 000001eb at 6:59, where U11 reported -10.58 m/s closing while the range
+    was actually opening at +0.46 m/s across a track-identity change. The per-sweep innovation gate
+    cannot see this: over one ~70 ms sweep even a 3 m/s error moves the range only 0.2 m.
+    """
+    ri = make_radar_interface()
+    # Four sweeps of a steadily OPENING range, with a believable velocity, to build history.
+    for i, raw in enumerate((800, 810, 820, 830)):
+      ri.update(sweep(0, i, 0x7, raw, 1024, 1 + 2 * i, i * 70_000_000, with_aux=True,
+                      direct_vrel_raw=864 + 40, direct_vrel_uncertainty_raw=0))
+    # Fifth sweep: range keeps opening, but U11 now claims hard closing. Contradiction ~11 m/s.
+    rr = ri.update(sweep(0, 4, 0x7, 840, 1024, 9, 280_000_000, with_aux=True,
+                         direct_vrel_raw=864 - 11 * 64, direct_vrel_uncertainty_raw=0))
+    assert len(rr.points) == 1
+    # Coasted, not the contradictory value, and flagged unmeasured.
+    assert rr.points[0].vRel == pytest.approx(40 / 64.0)
+    assert not rr.points[0].measured
+    # Geometry is still live -- only the velocity was in question.
+    assert rr.points[0].dRel == pytest.approx(840 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
+
   def test_exact_peter_reset_sequence_never_rebases_on_rejected_ranges(self):
     ri = make_radar_interface()
     rows = [
@@ -848,8 +870,15 @@ class TestVrel:
 
     assert rr is not None
     assert len(rr.points) == 0
-    assert len(ri._tracks[23].samples) == 2
-    assert ri._tracks[23].samples[-1][1] == pytest.approx(198 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
+
+    # The point of this sequence: the 64/82/96/102 reset ranges are rejected and must never enter
+    # the accepted history, so they can never become the baseline for a later derivative. Asserted
+    # by content rather than by sample count, which also depends on the u10 gate -- row 0 (u10=136)
+    # now coasts on uncertainty, which is the intended stricter behaviour, not a regression.
+    accepted = [sample[1] for sample in ri._tracks[23].samples]
+    rejected = [raw * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M for raw in (64, 82, 96, 102)]
+    assert not any(any(abs(a - r) < 1e-6 for r in rejected) for a in accepted)
+    assert accepted[-1] == pytest.approx(198 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
 
 
 # --- 7b. residual vRel-authority fix: raw one-sweep fallback never becomes a published measurement ----
