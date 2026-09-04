@@ -13,7 +13,7 @@ from opendbc.car.honda.carcontroller import (
   get_honda_bosch_wind_brake_mps2,
   update_honda_bosch_live_learning,
 )
-from opendbc.car.honda.hondacan import create_brake_command, create_lkas_hud
+from opendbc.car.honda.hondacan import create_acc_commands, create_brake_command, create_lkas_hud
 from opendbc.car.honda.fingerprints import FW_VERSIONS
 from opendbc.car.honda.values import CAR, DBC, HONDA_BOSCH, HONDA_BOSCH_TJA_CONTROL, CarControllerParams, HondaFlags, HondaSafetyFlags, \
                                      HondaStarPilotFlags
@@ -26,6 +26,40 @@ def get_test_toggles() -> SimpleNamespace:
 
 
 class TestHondaFingerprint:
+  @staticmethod
+  def _acc_control_values(active, accel, gas=500):
+    class FakePacker:
+      @staticmethod
+      def make_can_msg(name, bus, values):
+        return name, bus, values
+
+    can = SimpleNamespace(pt=1)
+    commands = create_acc_commands(FakePacker(), can, True, active, accel, gas, 0, CAR.HONDA_CRV_5G)
+    assert commands[-1][0] == "ACC_CONTROL"
+    return commands[-1][2]
+
+  def test_bosch_acc_commands_reject_fault_route_gas_brake_conflict(self):
+    # Route 00000002--aa8501ddcb broadcast P061B while Alpha Long sent
+    # approximately accel=-0.27, positive gas, and both brake bits. Drag/grade
+    # compensation may still calculate positive gas, but it must not override
+    # the sign of the raw acceleration request at the CAN arbitration boundary.
+    values = self._acc_control_values(True, -0.27, gas=160)
+
+    assert values["GAS_COMMAND"] == -30000
+    assert values["ACCEL_COMMAND"] == pytest.approx(-0.27)
+    assert values["BRAKE_REQUEST"] == 1
+    assert values["BRAKE_LIGHTS"] == 1
+
+  @pytest.mark.parametrize("active", [False, True])
+  @pytest.mark.parametrize("accel", [-3.5, -0.27, -0.2, -0.1, 0.0, 0.01, 2.0])
+  def test_bosch_acc_commands_never_request_gas_and_braking_together(self, active, accel):
+    values = self._acc_control_values(active, accel)
+
+    assert not (values["GAS_COMMAND"] > 0 and values["BRAKE_REQUEST"] == 1)
+    assert not (values["GAS_COMMAND"] > 0 and values["BRAKE_LIGHTS"] == 1)
+    if values["GAS_COMMAND"] > 0:
+      assert active
+
   def test_honda_lkas_hud_shows_lane_lines_when_lateral_only_is_active(self):
     class FakePacker:
       @staticmethod

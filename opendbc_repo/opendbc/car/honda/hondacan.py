@@ -77,17 +77,20 @@ def create_brake_command(packer, CAN, apply_brake, pump_on, pcm_override, pcm_ca
   return packer.make_can_msg("BRAKE_COMMAND", CAN.pt, values)
 
 
-def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_counter, car_fingerprint, gas_force):
+def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_counter, car_fingerprint):
   commands = []
   min_gas_accel = CarControllerParams.BOSCH_GAS_LOOKUP_BP[0]
 
   control_on = 5 if enabled else 0
-  gas_command = gas if active and gas_force > min_gas_accel else -30000
-  accel_command = accel if active else 0
-  # nrdr: stock brake-bit computation. Using gas_force (accel + wind + hill feedforward) here
-  # jittered BRAKE_REQUEST/BRAKE_LIGHTS around light decel on the radar Bosch. Keep comma's
-  # accel-based logic at the stock -0.2 threshold, independent of the gas lookup BP.
+  # Keep the stock -0.2 brake threshold, leaving a neutral deadband up to the
+  # configured gas threshold.
   braking = 1 if active and accel < -0.2 else 0
+  # Select propulsion and braking from the same raw acceleration request. Using
+  # drag/grade-adjusted gas force here can command positive gas while the raw
+  # request independently asserts BRAKE_REQUEST, which can trip Honda's P061B
+  # torque plausibility monitor.
+  gas_command = gas if active and accel > min_gas_accel and not braking else -30000
+  accel_command = accel if active else 0
   standstill = 1 if active and stopping_counter > 0 else 0
   standstill_release = 1 if active and stopping_counter == 0 else 0
 
