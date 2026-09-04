@@ -15,12 +15,12 @@ from openpilot.starpilot.assets.model_manager import MANIFEST_CANDIDATES, ModelM
 from openpilot.starpilot.common.model_versions import UNIFIED_ARTIFACT_FORMAT
 
 
-def test_v24_is_the_only_manifest_candidate():
-  assert MANIFEST_CANDIDATES == ("v24",)
+def test_v25_is_the_only_manifest_candidate():
+  assert MANIFEST_CANDIDATES == ("v25",)
 
 
-def test_v24_manifest_is_loaded_from_models_checkout():
-  assert ModelManager._manifest_paths("v24") == ("Models/model_names_v24.json",)
+def test_v25_manifest_is_loaded_from_models_checkout():
+  assert ModelManager._manifest_paths("v25") == ("Models/model_names_v25.json",)
 
 
 def test_resource_sources_prefer_huggingface_then_github(monkeypatch):
@@ -32,10 +32,20 @@ def test_resource_sources_prefer_huggingface_then_github(monkeypatch):
   assert all("gitlab" not in url for url in download_functions.get_resource_urls())
 
 
-def test_huggingface_manifest_has_root_and_manifests_fallbacks():
-  assert ModelManager._hf_manifest_paths("v24") == (
-    "model_names_v24.json",
-    "manifests/model_names_v24.json",
+def test_huggingface_manifest_lives_under_manifests():
+  assert ModelManager._hf_manifest_paths("v25") == ("manifests/model_names_v25.json",)
+
+
+def test_v25_artifacts_only_use_versioned_paths():
+  hf_url = "https://huggingface.co/buckets/StarPilot-Driving/StarPilot-Resources"
+  github_url = "https://raw.githubusercontent.com/firestar5683/StarPilot-Resources"
+  filename = "pop223_driving_tinygrad.pkl"
+
+  assert ModelManager._artifact_source_urls(hf_url, "v25", "pop223", filename) == (
+    f"{hf_url}/models/v25/pop223/{filename}",
+  )
+  assert ModelManager._artifact_source_urls(github_url, "v25", "pop223", filename) == (
+    f"{github_url}/Models/v25/pop223/{filename}",
   )
 
 
@@ -47,12 +57,57 @@ def test_old_manifest_ids_resolve_to_v23_namespace():
   assert manager._resolve_manifest_model_key("missing") == "missing"
 
 
+def test_old_remove_avgpool_ids_resolve_to_artifact_ids():
+  manager = object.__new__(ModelManager)
+  manager.available_models = ["remove-avgpoolv4"]
+  assert manager._resolve_manifest_model_key("napv4") == "remove-avgpoolv4"
+  assert model_manager.canonical_model_key("napv4") == "remove-avgpoolv4"
+
+
 def test_model_cleanup_matches_legacy_split_artifacts():
   assert model_manager.is_driving_artifact_file("pop223_driving_tinygrad.pkl")
   assert model_manager.is_driving_artifact_file("driving_vision_tinygrad.pkl")
   assert model_manager.is_driving_artifact_file("driving_off_policy_tinygrad.pkl.p00")
   assert not model_manager.is_driving_artifact_file("dmonitoring_model_tinygrad.pkl")
   assert model_manager.is_driving_artifact_file("local-test_driving_tinygrad.pkl")
+
+
+def test_manifest_migration_purges_old_artifacts_and_redownloads_selected(tmp_path, monkeypatch):
+  monkeypatch.setattr(model_manager, "MODELS_PATH", tmp_path)
+  for filename in (
+    "pop223_driving_tinygrad.pkl",
+    "pop223_driving_tinygrad.pkl.p00",
+    "other_driving_tinygrad.pkl.chunk01of02",
+    "other_driving_tinygrad.pkl.chunk02of02",
+    "other_driving_tinygrad.pkl.chunkmanifest",
+    "local-test_driving_tinygrad.pkl",
+    "dmonitoring_model_tinygrad.pkl",
+  ):
+    (tmp_path / filename).write_bytes(b"old")
+
+  class FakeParamsMemory:
+    def put(self, key, value):
+      del key, value
+
+  manager = object.__new__(ModelManager)
+  manager.params_memory = FakeParamsMemory()
+  manager.available_models = ["rdf43", "pop223"]
+  manager.available_model_names = ["Regret Driven Framework V4", "Pop V2"]
+  manager.model_versions = ["v15", "v15"]
+  manager.artifact_formats = [UNIFIED_ARTIFACT_FORMAT, UNIFIED_ARTIFACT_FORMAT]
+
+  def fake_download(model_key):
+    assert model_key == "pop223"
+    (tmp_path / "pop223_driving_tinygrad.pkl").write_bytes(b"v25")
+
+  monkeypatch.setattr(manager, "download_model", fake_download)
+  manager._migrate_model_artifacts("pop223")
+
+  assert (tmp_path / "pop223_driving_tinygrad.pkl").read_bytes() == b"v25"
+  assert (tmp_path / "local-test_driving_tinygrad.pkl").read_bytes() == b"old"
+  assert (tmp_path / "dmonitoring_model_tinygrad.pkl").read_bytes() == b"old"
+  assert not (tmp_path / "pop223_driving_tinygrad.pkl.p00").exists()
+  assert not (tmp_path / "other_driving_tinygrad.pkl.chunkmanifest").exists()
 
 
 def test_behavior_version_does_not_control_artifact_layout():
@@ -112,7 +167,7 @@ def test_local_gpu_compile_persists_runtime_metadata(tmp_path, monkeypatch):
   assert metadata["local-large"]["uses_external_gpu"] is False
 
 
-def test_external_gpu_compilation_is_opt_in(tmp_path, monkeypatch):
+def test_all_compilation_uses_oob_and_external_gpu_is_opt_in(tmp_path, monkeypatch):
   invocations = []
   monkeypatch.setattr(model_compiler, "build_compile_env", lambda **_: {
     "DEV": "QCOM", "IMAGE": "2", "NOLOCALS": "1", "OPENPILOT_HACKS": "1",
@@ -126,7 +181,7 @@ def test_external_gpu_compilation_is_opt_in(tmp_path, monkeypatch):
 
   normal_command, normal_kwargs = invocations[0]
   external_command, external_kwargs = invocations[1]
-  assert "--out-of-band" not in normal_command
+  assert "--out-of-band" in normal_command
   assert normal_kwargs["env"]["DEV"] == "QCOM"
   assert normal_kwargs["env"]["IMAGE"] == "2"
   assert "--out-of-band" in external_command
@@ -374,11 +429,66 @@ def test_multipart_checksum_failure_leaves_no_model(tmp_path, monkeypatch):
   assert not destination.exists()
 
 
+def test_native_chunk_download_is_atomic_and_checksum_verified(tmp_path, monkeypatch):
+  chunks = [b"first native chunk", b"second native chunk"]
+  payload = b"".join(chunks)
+  expected_sha = hashlib.sha256(payload).hexdigest()
+
+  class FakeResponse:
+    def __init__(self, data):
+      self.data = data
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      pass
+
+    def raise_for_status(self):
+      pass
+
+    def iter_content(self, chunk_size):
+      del chunk_size
+      yield self.data
+
+  def fake_get(url, **kwargs):
+    del kwargs
+    index = 0 if ".chunk01of02" in url else 1
+    return FakeResponse(chunks[index])
+
+  def fake_size(url, **kwargs):
+    del kwargs
+    return len(chunks[0 if ".chunk01of02" in url else 1])
+
+  class FakeParams:
+    def get_bool(self, key):
+      del key
+      return False
+
+    def put(self, key, value):
+      del key, value
+
+  monkeypatch.setattr(download_functions, "get_remote_text", lambda *args, **kwargs: "2")
+  monkeypatch.setattr(download_functions.requests, "get", fake_get)
+  monkeypatch.setattr(download_functions, "get_remote_file_size", fake_size)
+  destination = tmp_path / "model.pkl"
+  destination.write_bytes(b"old model remains until validation succeeds")
+
+  assert download_functions.download_chunked_file(
+    "cancel", destination, "progress", "https://example.com/model.pkl", FakeParams(),
+    expected_size=len(payload), expected_sha256=expected_sha, expected_chunk_count=2,
+  )
+  assert not destination.exists()
+  assert (tmp_path / "model.pkl.chunkmanifest").read_text() == "2"
+  assert b"".join((tmp_path / f"model.pkl.chunk{i:02d}of02").read_bytes() for i in (1, 2)) == payload
+
+
 def test_oversized_artifact_split_round_trip(tmp_path):
   artifact = tmp_path / "model.pkl"
   artifact.write_bytes(b"multipart artifact")
 
   outputs = split_oversized_artifact(artifact, chunk_size=10, force=True)
-  part_paths = [path for path in outputs if path.suffix != ".sha256"]
-  assert len(part_paths) == 2
-  assert b"".join(path.read_bytes() for path in part_paths) == artifact.read_bytes()
+  chunk_paths = [path for path in outputs if ".chunk" in path.name and not path.name.endswith(".chunkmanifest")]
+  assert len(chunk_paths) == 2
+  assert b"".join(path.read_bytes() for path in chunk_paths) == artifact.read_bytes()
+  assert (tmp_path / "model.pkl.chunkmanifest").read_text() == "2"

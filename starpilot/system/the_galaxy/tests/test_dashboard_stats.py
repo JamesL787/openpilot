@@ -59,6 +59,8 @@ sys.modules.setdefault("openpilot.starpilot.assets.theme_manager", theme_manager
 
 import utilities
 
+_REAL_COMMON_PARAMS_MODULE = sys.modules.get("openpilot.common.params")
+
 for _module_name, _module in _INITIAL_MODULES.items():
   if _module is None:
     sys.modules.pop(_module_name, None)
@@ -86,6 +88,8 @@ def _simple_module(name, **attrs):
 
 
 def _install_server_import_stubs():
+  if _REAL_COMMON_PARAMS_MODULE is not None:
+    sys.modules["openpilot.common.params"] = _REAL_COMMON_PARAMS_MODULE
   sys.modules["openpilot.system.loggerd.config"] = loggerd_config
   sys.modules["openpilot.system.loggerd.deleter"] = loggerd_deleter
   sys.modules["openpilot.system.loggerd.uploader"] = loggerd_uploader
@@ -130,6 +134,14 @@ def _install_server_import_stubs():
   )
 
   sys.modules["openpilot.common.realtime"] = _simple_module("openpilot.common.realtime", DT_HW=0.01)
+  sys.modules["openpilot.common.swaglog"] = _simple_module(
+    "openpilot.common.swaglog",
+    cloudlog=SimpleNamespace(
+      error=lambda *args, **kwargs: None,
+      exception=lambda *args, **kwargs: None,
+      info=lambda *args, **kwargs: None,
+    ),
+  )
   sys.modules["openpilot.common.time_helpers"] = _simple_module("openpilot.common.time_helpers", system_time_valid=lambda: True)
   sys.modules["openpilot.system.hardware"] = _simple_module(
     "openpilot.system.hardware",
@@ -149,18 +161,47 @@ def _install_server_import_stubs():
     get_longitudinal_maneuver_support=lambda *args, **kwargs: {},
   )
   sys.modules["panda"] = _simple_module("panda", Panda=lambda *args, **kwargs: SimpleNamespace(can_send=lambda *send_args, **send_kwargs: None))
+  msgq_module = _simple_module("msgq")
+  msgq_visionipc = _simple_module(
+    "msgq.visionipc",
+    VisionIpcClient=lambda *args, **kwargs: SimpleNamespace(connect=lambda *connect_args: False),
+    VisionStreamType=SimpleNamespace(VISION_STREAM_DRIVER=0),
+  )
+  msgq_module.visionipc = msgq_visionipc
+  sys.modules["msgq"] = msgq_module
+  sys.modules["msgq.visionipc"] = msgq_visionipc
 
   model_manager.is_builtin_model_key = lambda value: False
   model_manager.model_key_aliases = lambda value: [value]
   theme_manager.THEME_COMPONENT_PARAMS = {}
 
+  def parse_custom_accel_profile_curve(count, breakpoints, values):
+    point_count = int(count)
+    active_breakpoints = [float(value) for value in breakpoints[:point_count]]
+    if any(current <= previous for previous, current in zip(active_breakpoints, active_breakpoints[1:], strict=False)):
+      raise ValueError("Breakpoint speeds must be strictly increasing")
+    return active_breakpoints, [float(value) for value in values[:point_count]]
+
   sys.modules["openpilot.starpilot.common.accel_profile"] = _simple_module(
     "openpilot.starpilot.common.accel_profile",
+    CUSTOM_ACCEL_PROFILE_BREAKPOINT_PARAM_KEYS=[f"CustomAccelProfileBreakpoint{index}MPH" for index in range(1, 13)],
+    CUSTOM_ACCEL_PROFILE_BREAKPOINTS_INITIALIZED_KEY="CustomAccelProfileBreakpointsInitialized",
+    CUSTOM_ACCEL_PROFILE_CURVE_PARAM_KEYS=[
+      "CustomAccelProfilePointCount",
+      *[f"CustomAccelProfileBreakpoint{index}MPH" for index in range(1, 13)],
+      *[f"CustomAccelProfilePoint{index}Accel" for index in range(1, 13)],
+    ],
+    CUSTOM_ACCEL_PROFILE_DEFAULT_BREAKPOINTS_MPH=[0.0, 11.2, 22.4, 33.6, 44.7, 55.9, 89.5, 100.7, 111.8, 123.0, 134.2, 145.4],
+    CUSTOM_ACCEL_PROFILE_DEFAULT_POINT_COUNT=7,
     CUSTOM_ACCEL_PROFILE_INITIALIZED_KEY="CustomAccelProfileInitialized",
     CUSTOM_ACCEL_PROFILE_PARAM_KEYS=[],
+    CUSTOM_ACCEL_PROFILE_POINT_COUNT_KEY="CustomAccelProfilePointCount",
+    CUSTOM_ACCEL_PROFILE_POINT_VALUE_PARAM_KEYS=[f"CustomAccelProfilePoint{index}Accel" for index in range(1, 13)],
     build_custom_accel_profile_defaults=lambda *args, **kwargs: {},
     custom_accel_profile_is_initialized=lambda *args, **kwargs: False,
+    get_custom_accel_profile_curve_defaults=lambda *args, **kwargs: {},
     normalize_acceleration_profile=lambda value: value,
+    parse_custom_accel_profile_curve=parse_custom_accel_profile_curve,
   )
   sys.modules["openpilot.starpilot.common.maps_catalog"] = _simple_module(
     "openpilot.starpilot.common.maps_catalog",
@@ -297,6 +338,33 @@ def _install_server_import_stubs():
     "openpilot.starpilot.system.the_galaxy.flm_workspace",
   )
   sys.modules["openpilot.starpilot.system.the_galaxy.utilities"] = utilities
+  sys.modules["openpilot.starpilot.system.wheel_controls"] = _simple_module(
+    "openpilot.starpilot.system.wheel_controls",
+    CONTROLLER_ACTION_OPTIONS=(
+      {"key": "__starpilot_controller_action__:set_speed", "label": "Set Speed To", "section": "Controller Actions", "value_type": "speed"},
+      {"key": "__starpilot_controller_action__:selfie", "label": "Take Comma Selfie", "section": "Controller Actions"},
+      {"key": "__starpilot_controller_action__:bookmark", "label": "Bookmark", "section": "Controller Actions"},
+      {"key": "__starpilot_controller_action__:pulse_and_glide", "label": "Pulse and Glide", "section": "Controller Actions"},
+      {"key": "__starpilot_controller_action__:force_coast", "label": "Force Coasting", "section": "Controller Actions"},
+      {"key": "__starpilot_controller_action__:toggle_aol", "label": "Toggle AOL", "section": "Controller Actions"},
+    ),
+    CONTROLLER_ACTION_SET_SPEED="__starpilot_controller_action__:set_speed",
+    CONTROLLER_ACTION_SLOT_COUNT=10,
+    FAVORITE_SLOT_COUNT=3,
+    cancel_learning=lambda *args, **kwargs: None,
+    clear_mappings=lambda *args, **kwargs: None,
+    controller_speed_bounds=lambda is_metric: (8, 145) if is_metric else (5, 90),
+    delete_mapping=lambda *args, **kwargs: True,
+    load_controller_action_slots=lambda *args, **kwargs: [
+      {"enabled": False, "key": None, "label": "", "value": None} for _ in range(10)
+    ],
+    public_status=lambda *args, **kwargs: {"mappings": [], "devices": [], "available": True},
+    set_controller_action_slot=lambda *args, **kwargs: None,
+    set_joystick_device=lambda *args, **kwargs: None,
+    start_learning=lambda *args, **kwargs: None,
+    start_testing=lambda *args, **kwargs: None,
+    stop_testing=lambda *args, **kwargs: None,
+  )
 
 
 class FakeParams:
@@ -337,17 +405,16 @@ class FakeDashboardAnalyzerProcess:
 
 
 def test_route_inventory_counts_segments_without_video_probing(monkeypatch):
-  segments = [
-    SimpleNamespace(route_name=SimpleNamespace(time_str="route-new")),
-    SimpleNamespace(route_name=SimpleNamespace(time_str="route-new")),
-    SimpleNamespace(route_name=SimpleNamespace(time_str="route-new")),
-    SimpleNamespace(route_name=SimpleNamespace(time_str="route-old")),
-  ]
+  def segment(time_str, segment_num):
+    return SimpleNamespace(route_name=SimpleNamespace(time_str=time_str), segment_num=segment_num)
+
+  # route-new has aged out of its first two segments, so it no longer starts at --0.
+  segments = [segment("route-new", 4), segment("route-new", 2), segment("route-new", 3), segment("route-old", 0)]
   monkeypatch.setattr(utilities, "get_all_segment_names", lambda _path: segments)
 
-  assert utilities.get_routes_with_segment_counts("/tmp/routes") == [
-    ("route-old", 1),
-    ("route-new", 3),
+  assert utilities.get_routes_with_segment_details("/tmp/routes") == [
+    ("route-old", {"segmentCount": 1, "firstSegmentNum": 0}),
+    ("route-new", {"segmentCount": 3, "firstSegmentNum": 2}),
   ]
 
 
@@ -937,6 +1004,20 @@ def test_cpu_temp_reader_uses_hardware_cpu_values(monkeypatch):
   assert utilities._read_cpu_temp_c() == 57
 
 
+def test_gpu_temp_reader_uses_hardware_gpu_values(monkeypatch):
+  hardware_module = _simple_module(
+    "openpilot.system.hardware",
+    HARDWARE=SimpleNamespace(
+      get_thermal_config=lambda: SimpleNamespace(
+        get_msg=lambda: {"gpuTempC": [41.2, 42.6], "cpuTempC": [56.0]}
+      )
+    ),
+  )
+  monkeypatch.setitem(sys.modules, "openpilot.system.hardware", hardware_module)
+
+  assert utilities._read_gpu_temp_c() == 43
+
+
 def test_cpu_temp_reader_ignores_non_cpu_thermal_zones(tmp_path):
   cpu_zone = tmp_path / "thermal_zone0"
   cpu_zone.mkdir()
@@ -949,6 +1030,20 @@ def test_cpu_temp_reader_ignores_non_cpu_thermal_zones(tmp_path):
   (pmic_zone / "temp").write_text("75000", encoding="utf-8")
 
   assert utilities._read_cpu_temp_c(tmp_path) == 61
+
+
+def test_gpu_temp_reader_ignores_non_gpu_thermal_zones(tmp_path):
+  gpu_zone = tmp_path / "thermal_zone0"
+  gpu_zone.mkdir()
+  (gpu_zone / "type").write_text("gpu0-usr", encoding="utf-8")
+  (gpu_zone / "temp").write_text("42000", encoding="utf-8")
+
+  cpu_zone = tmp_path / "thermal_zone1"
+  cpu_zone.mkdir()
+  (cpu_zone / "type").write_text("cpu0-silver-usr", encoding="utf-8")
+  (cpu_zone / "temp").write_text("61000", encoding="utf-8")
+
+  assert utilities._read_gpu_temp_c(tmp_path) == 42
 
 
 def test_network_name_uses_wifi_ssid(monkeypatch):
@@ -993,6 +1088,7 @@ def test_network_name_reports_no_wireless_connectivity(monkeypatch):
 def test_device_summary_includes_network_name(monkeypatch):
   monkeypatch.setattr(utilities, "_read_uptime_seconds", lambda: 120)
   monkeypatch.setattr(utilities, "_read_cpu_temp_c", lambda: 55)
+  monkeypatch.setattr(utilities, "_read_gpu_temp_c", lambda: 42)
   monkeypatch.setattr(utilities, "get_current_lan_ip", lambda: "192.168.1.10")
   monkeypatch.setattr(utilities, "get_current_network_name", lambda: "Home Network")
 
@@ -1000,6 +1096,7 @@ def test_device_summary_includes_network_name(monkeypatch):
 
   assert summary["networkName"] == "Home Network"
   assert summary["lanIp"] == "192.168.1.10"
+  assert summary["gpuTempC"] == 42
 
 
 def test_persistent_loader_accepts_decoded_param_dict():
@@ -1069,6 +1166,28 @@ def test_clear_dashboard_route_history_keeps_durable_records(tmp_path, monkeypat
   assert stats["personalRecords"]["cleanDriveStreak"]["drives"] == 4
   assert stats["attentionRecords"]["cleanDriveStreak"]["drives"] == 4
   assert stats["modelUsage"]["orion"]["drives"] == 3
+
+
+def test_clear_dashboard_route_history_can_retain_preserved_routes(tmp_path, monkeypatch):
+  monkeypatch.setattr(utilities, "DASHBOARD_PARAMS_DIR", tmp_path)
+  params = FakeParams({
+    utilities.DASHBOARD_PERSISTENT_STATS_PARAM: {
+      "routes": {
+        "0000006a--9f0a7bdf9c": {"date": "2026-06-15T08:00:00"},
+        "0000006b--9f0a7bdf9d": {"date": "2026-06-16T08:00:00"},
+      },
+      "ignoredRoutes": ["0000006a--9f0a7bdf9c", "0000006b--9f0a7bdf9d"],
+      "personalRecords": {"cleanDriveStreak": {"drives": 4}},
+    },
+  })
+
+  removed = utilities.clear_dashboard_route_history(params, retained_route_names={"0000006a--9f0a7bdf9c"})
+
+  assert removed == 1
+  stats = utilities._load_dashboard_persistent_stats(params)
+  assert list(stats["routes"]) == ["0000006a--9f0a7bdf9c"]
+  assert stats["ignoredRoutes"] == ["0000006a--9f0a7bdf9c"]
+  assert stats["personalRecords"]["cleanDriveStreak"]["drives"] == 4
 
 
 def test_lightweight_routes_surface_recent_drives_without_log_analysis(monkeypatch):
@@ -1669,6 +1788,55 @@ def test_clear_generated_build_state_preserves_prebuilts_and_user_data(tmp_path)
   assert not (tmp_path / "cereal" / "gen").exists()
   assert prebuilt.read_text() == "test"
   assert user_model.read_text() == "test"
+
+
+def test_maps_status_uses_cache_without_scanning_legacy_storage(monkeypatch):
+  server = _load_server_module()
+  assert server._import_galaxy_web_symbols()
+
+  app = server.Flask(
+    "maps_status_test",
+    template_folder=str(MODULE_DIR / "templates"),
+    static_folder=str(MODULE_DIR / "assets"),
+  )
+  server.setup(app)
+  monkeypatch.setattr(server, "params", FakeParams({
+    "MapsDownloadSizeCache": '{"country:CA":{"downloadBytes":123}}',
+    "MapsSelected": "",
+  }))
+  monkeypatch.setattr(server, "params_memory", FakeParams())
+  monkeypatch.setattr(server, "MAPS_PATH", SimpleNamespace(rglob=lambda *_args: (_ for _ in ()).throw(AssertionError("status must not scan maps"))))
+
+  response = app.test_client().get("/api/maps/status")
+  payload = response.get_json()
+
+  assert response.status_code == 200
+  assert payload["storageKnown"] is False
+  assert payload["storageBytes"] == 0
+  assert payload["mapsPresent"] is False
+
+
+def test_maps_status_returns_known_storage_from_v2_cache(monkeypatch):
+  server = _load_server_module()
+  assert server._import_galaxy_web_symbols()
+
+  app = server.Flask(
+    "maps_status_known_test",
+    template_folder=str(MODULE_DIR / "templates"),
+    static_folder=str(MODULE_DIR / "assets"),
+  )
+  server.setup(app)
+  monkeypatch.setattr(server, "params", FakeParams({
+    "MapsDownloadSizeCache": '{"version":2,"storageBytes":4096,"selections":{}}',
+    "MapsSelected": "",
+  }))
+  monkeypatch.setattr(server, "params_memory", FakeParams())
+
+  payload = app.test_client().get("/api/maps/status").get_json()
+
+  assert payload["storageKnown"] is True
+  assert payload["storageBytes"] == 4096
+  assert payload["mapsPresent"] is True
 
 
 def test_sentry_notification_rate_limit_persists_and_expires(monkeypatch, tmp_path):

@@ -12,6 +12,7 @@ from openpilot.starpilot.common.favorite_slots import (
   SETTINGS_CATALOG_PATH,
   build_favorite_slot_options,
   default_favorite_slots,
+  execute_favorite_key,
   filter_favorite_slot_options,
   load_settings_catalog,
   load_favorite_slots,
@@ -154,6 +155,17 @@ def test_toggle_favorite_slot_flips_bool_and_requests_refresh():
   assert toggle_favorite_slot(0, params, memory) is True
   assert params.get_bool("RedneckCruise") is True
   assert memory.get_bool("StarPilotTogglesUpdated") is True
+
+
+def test_execute_favorite_key_uses_same_dispatch_without_a_visible_slot():
+  params = FakeParams()
+  memory = FakeParams()
+  params.put("RedneckCruise", False)
+
+  assert execute_favorite_key("RedneckCruise", params, memory, eligible_keys={"RedneckCruise"}) is True
+  assert params.get_bool("RedneckCruise") is True
+  assert memory.get_bool("StarPilotTogglesUpdated") is True
+  assert execute_favorite_key("NotBool", params, memory, eligible_keys={"RedneckCruise"}) is False
 
 
 def test_toggle_favorite_slot_blocks_alpha_longitudinal_onroad():

@@ -20,8 +20,8 @@ from opendbc.car.hyundai.carcontroller import CarController, Ioniq6LongitudinalT
                                              should_track_stop_accel_directly_for_car, \
                                              preserve_stock_canfd_lfa_status, \
                                              preserve_stock_canfd_lkas_status, \
-                                             apply_carnival_steering_override, \
-                                             suppress_redundant_gv70_brake_cancel
+                                             suppress_redundant_gv70_brake_cancel, \
+                                             clear_ioniq_6_torque_when_request_inactive
 from opendbc.car.hyundai.carstate import CarState, decode_canfd_camera_lead, decode_ioniq_6_blindspot_radar_state, \
                                              get_canfd_cruise_available
 from opendbc.car.hyundai.interface import CarInterface, KIA_EV9_ACCEL_MAX
@@ -79,6 +79,7 @@ HYUNDAI_NON_SCC_CARS = (
   CAR.HYUNDAI_ELANTRA_HEV_2022_NON_SCC,
   CAR.HYUNDAI_KONA_NON_SCC,
   CAR.HYUNDAI_KONA_EV_NON_SCC,
+  CAR.KIA_RAY_EV,
   CAR.KIA_CEED_PHEV_2022_NON_SCC,
   CAR.KIA_FORTE_2019_NON_SCC,
   CAR.KIA_FORTE_2021_NON_SCC,
@@ -128,6 +129,20 @@ def get_test_toggles() -> SimpleNamespace:
 
 
 class TestHyundaiFingerprint:
+  def test_carnival_hev_low_speed_torque_rate_limits(self):
+    CP = CarInterface.get_params(CAR.KIA_CARNIVAL_HEV_4TH_GEN, gen_empty_fingerprint(), [],
+                                 False, False, False, None)
+    carnival_2025_cp = CarInterface.get_params(CAR.KIA_CARNIVAL_2025, gen_empty_fingerprint(), [],
+                                                False, False, False, None)
+
+    low_speed = CarControllerParams(CP, 10.0)
+    high_speed = CarControllerParams(CP, 20.0)
+    carnival_2025_low_speed = CarControllerParams(carnival_2025_cp, 10.0)
+
+    assert (low_speed.STEER_DELTA_UP, low_speed.STEER_DELTA_DOWN) == (2, 3)
+    assert (high_speed.STEER_DELTA_UP, high_speed.STEER_DELTA_DOWN) == (2, 3)
+    assert (carnival_2025_low_speed.STEER_DELTA_UP, carnival_2025_low_speed.STEER_DELTA_DOWN) == (10, 8)
+
   @pytest.mark.parametrize("candidate", (CAR.KIA_CARNIVAL_4TH_GEN, CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN))
   def test_carnival_uses_clean_canfd_lfa_status(self, candidate):
     assert not preserve_stock_canfd_lfa_status(candidate)
@@ -208,12 +223,6 @@ class TestHyundaiFingerprint:
     assert parser.vl["LKAS_ALT"]["DAMP_FACTOR"] == 100
     assert parser.vl["LKAS_ALT"]["TORQUE_REQUEST"] == 123
     assert parser.vl["LKAS_ALT"]["STEER_REQ"] == 1
-
-  def test_carnival_steering_override_is_scoped_to_2025_platform(self):
-    assert apply_carnival_steering_override(CAR.KIA_CARNIVAL_2025, True, True, 123) == (False, 0)
-    assert apply_carnival_steering_override(CAR.KIA_CARNIVAL_2025, False, True, 123) == (True, 123)
-    assert apply_carnival_steering_override(CAR.KIA_CARNIVAL_HEV_4TH_GEN, True, True, 123) == (True, 123)
-    assert apply_carnival_steering_override(CAR.HYUNDAI_IONIQ_6, True, True, 123) == (True, 123)
 
   def test_canfd_torque_bsm_parser_registers_rear_blindspots(self):
     CP = CarParams.new_message()
@@ -561,6 +570,14 @@ class TestHyundaiFingerprint:
     assert not (CP.flags & HyundaiFlags.CANFD_LKA_STEERING)
     assert bool(CP.flags & HyundaiFlags.CANFD_CAMERA_SCC)
 
+  def test_ioniq_6_clears_torque_with_inactive_safety_request(self):
+    ioniq_6_cp = SimpleNamespace(carFingerprint=CAR.HYUNDAI_IONIQ_6)
+    other_cp = SimpleNamespace(carFingerprint=CAR.KIA_EV6)
+
+    assert clear_ioniq_6_torque_when_request_inactive(ioniq_6_cp, -409, False) == 0
+    assert clear_ioniq_6_torque_when_request_inactive(ioniq_6_cp, -409, True) == -409
+    assert clear_ioniq_6_torque_when_request_inactive(other_cp, -409, False) == -409
+
     palisade_2023 = CarInterface.get_params(CAR.HYUNDAI_PALISADE_2023, gen_empty_fingerprint(), [], True, False, False, None)
     assert palisade_2023.flags & HyundaiFlags.CAN_CANFD_BLENDED
     assert DBC[palisade_2023.carFingerprint][Bus.pt] == "hyundai_palisade_2023_generated"
@@ -676,6 +693,96 @@ class TestHyundaiFingerprint:
 
     assert parser.vl["LKAS11"]["CF_Lkas_FcwOpt_USM"] == 2
 
+  def test_kona_non_scc_uses_no_individual_lane_lkas_status(self):
+    CP = CarInterface.get_params(CAR.HYUNDAI_KONA_NON_SCC, gen_empty_fingerprint(), [], False, False, False, None)
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LKAS11", 0)], 0)
+
+    lkas11 = parser.vl["LKAS11"]
+    msg = hyundaican.create_lkas11(
+      packer, 0, CP, 0, True, False, lkas11, False, 4, False,
+      True, True, 0, 0, 2,
+    )
+    parser.update([(1, [msg])])
+
+    assert parser.vl["LKAS11"]["CF_Lkas_LdwsSysState"] == 2
+    assert parser.vl["LKAS11"]["CF_Lkas_LdwsOpt_USM"] == 2
+    assert parser.vl["LKAS11"]["CF_Lkas_LdwsActivemode"] == 0
+    assert parser.vl["LKAS11"]["CF_Lkas_FcwOpt_USM"] == 0
+
+  def test_kia_ray_ev_preserves_stock_inactive_lkas_status(self):
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[2][0x485] = 4
+    CP = CarInterface.get_params(CAR.KIA_RAY_EV, fingerprint, [], False, False, False, None)
+    assert CP.flags & HyundaiFlags.SEND_LFA
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LKAS11", 0)], 0)
+
+    lkas11 = parser.vl["LKAS11"]
+    lkas11.update({
+      "CF_Lkas_LdwsActivemode": 0,
+      "CF_Lkas_LdwsSysState": 1,
+      "CF_Lkas_FcwOpt_USM": 1,
+    })
+    msg = hyundaican.create_lkas11(
+      packer, 0, CP, 0, True, False, lkas11, False, 4, False,
+      True, True, 0, 0, 2,
+    )
+    parser.update([(1, [msg])])
+
+    assert parser.vl["LKAS11"]["CF_Lkas_LdwsActivemode"] == 0
+    assert parser.vl["LKAS11"]["CF_Lkas_LdwsSysState"] == 1
+    assert parser.vl["LKAS11"]["CF_Lkas_LdwsOpt_USM"] == 0
+    assert parser.vl["LKAS11"]["CF_Lkas_FcwOpt_USM"] == 1
+
+  def test_kia_ray_ev_uses_active_lkas_status_when_enabled(self):
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[2][0x485] = 4
+    CP = CarInterface.get_params(CAR.KIA_RAY_EV, fingerprint, [], False, False, False, None)
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LKAS11", 0)], 0)
+
+    lkas11 = parser.vl["LKAS11"]
+    lkas11.update({
+      "CF_Lkas_LdwsActivemode": 0,
+      "CF_Lkas_LdwsSysState": 1,
+      "CF_Lkas_FcwOpt_USM": 1,
+    })
+    msg = hyundaican.create_lkas11(
+      packer, 0, CP, 0, True, False, lkas11, False, 4, True,
+      True, True, 0, 0, 2,
+    )
+    parser.update([(1, [msg])])
+
+    assert parser.vl["LKAS11"]["CF_Lkas_LdwsActivemode"] == 3
+    assert parser.vl["LKAS11"]["CF_Lkas_LdwsSysState"] == 4
+    assert parser.vl["LKAS11"]["CF_Lkas_LdwsOpt_USM"] == 0
+    assert parser.vl["LKAS11"]["CF_Lkas_FcwOpt_USM"] == 2
+
+  def test_kia_ray_ev_delays_first_lkas11(self):
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[2][0x485] = 4
+    CP = CarInterface.get_params(CAR.KIA_RAY_EV, fingerprint, [], False, False, False, None)
+    controller = CarController(DBC[CP.carFingerprint], CP)
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LKAS11", 0)], 0)
+
+    hud_control = SimpleNamespace(
+      visualAlert=CarControl.HUDControl.VisualAlert.none,
+      leftLaneVisible=True,
+      rightLaneVisible=True,
+      leftLaneDepart=False,
+      rightLaneDepart=False,
+    )
+    CS = SimpleNamespace(lkas11=parser.vl["LKAS11"], redneck_send_button=Buttons.NONE)
+    CC = SimpleNamespace(enabled=False, cruiseControl=SimpleNamespace(cancel=False, resume=False, override=False))
+    actuators = SimpleNamespace(longControlState=LongCtrlState.off)
+
+    first = controller.create_can_msgs(True, 0, False, 0.0, 0.0, False, hud_control, actuators, CS, CC, 2, 0)
+    second = controller.create_can_msgs(True, 0, False, 0.0, 0.0, False, hud_control, actuators, CS, CC, 2, 0)
+
+    assert not any(addr == 0x340 for addr, _, _ in first)
+    assert any(addr == 0x340 for addr, _, _ in second)
+
   @pytest.mark.parametrize("candidate", (CAR.HYUNDAI_ELANTRA_2024, CAR.HYUNDAI_ELANTRA_HEV_2024))
   def test_hyundai_can_refresh_platforms_use_refresh_dbc_and_safety_param(self, candidate):
     CP = CarInterface.get_params(candidate, gen_empty_fingerprint(), [], False, False, False, None)
@@ -720,6 +827,60 @@ class TestHyundaiFingerprint:
     palisade_2023 = CarInterface.get_params(CAR.HYUNDAI_PALISADE_2023, gen_empty_fingerprint(), [], True, False, False, None)
     assert palisade_2023.safetyConfigs[-1].safetyParam & HyundaiStarPilotSafetyFlags.HAS_LDA_BUTTON
 
+  def test_lkas12_da_warning_is_filtered_for_camera_fingerprint(self):
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[2][0x53E] = 6
+    CP = CarInterface.get_params(CAR.HYUNDAI_SONATA_HYBRID, fingerprint, [], False, False, False, None)
+    FPCP = CarInterface.get_starpilot_params(CAR.HYUNDAI_SONATA_HYBRID, fingerprint, [], CP, get_test_toggles())
+    assert FPCP.flags & HyundaiStarPilotFlags.HAS_LKAS12
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    stock = {
+      "CF_Lkas_TsrSlifOpt": 3,
+      "CF_LkasTsrStatus": 2,
+      "CF_Lkas_TsrSpeed_Display_Clu": 80,
+      "CF_LkasTsrSpeed_Display_Navi": 70,
+      "CF_Lkas_TsrAddinfo_Display": 1,
+      "CF_Lkas_Daw_USM": 0,
+      "CF_LkasDawStatus": 1,
+    }
+    msg = hyundaican.create_lkas12(packer, stock)
+    parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LKAS12", 0)], 0)
+    parser.update([(1, [msg])])
+
+    assert parser.can_valid
+    assert parser.vl["LKAS12"]["CF_LkasDawStatus"] == 0
+    assert parser.vl["LKAS12"]["CF_Lkas_TsrSpeed_Display_Clu"] == 80
+
+    no_lkas12 = CarInterface.get_params(CAR.HYUNDAI_SONATA_HYBRID, gen_empty_fingerprint(), [], False, False, False, None)
+    no_lkas12_fpcp = CarInterface.get_starpilot_params(
+      CAR.HYUNDAI_SONATA_HYBRID, gen_empty_fingerprint(), [], no_lkas12, get_test_toggles(),
+    )
+    assert not (no_lkas12_fpcp.flags & HyundaiStarPilotFlags.HAS_LKAS12)
+
+  def test_ray_ev_does_not_treat_eight_byte_53e_as_lkas12(self):
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[2][0x53E] = 8
+    CP = CarInterface.get_params(CAR.KIA_RAY_EV, fingerprint, [], False, False, False, None)
+    FPCP = CarInterface.get_starpilot_params(CAR.KIA_RAY_EV, fingerprint, [], CP, get_test_toggles())
+
+    assert not (FPCP.flags & HyundaiStarPilotFlags.HAS_LKAS12)
+
+  def test_ray_ev_does_not_treat_eight_byte_485_as_lfa(self):
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[2][0x485] = 8
+    CP = CarInterface.get_params(CAR.KIA_RAY_EV, fingerprint, [], False, False, False, None)
+
+    assert not (CP.flags & HyundaiFlags.SEND_LFA)
+
+  def test_non_ray_legacy_platform_keeps_53e_lkas12_detection(self):
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[2][0x53E] = 8
+    CP = CarInterface.get_params(CAR.HYUNDAI_SONATA_HYBRID, fingerprint, [], False, False, False, None)
+    FPCP = CarInterface.get_starpilot_params(CAR.HYUNDAI_SONATA_HYBRID, fingerprint, [], CP, get_test_toggles())
+
+    assert FPCP.flags & HyundaiStarPilotFlags.HAS_LKAS12
+
   def test_carnival_lka_button_does_not_enable_angle_steering_safety(self):
     fingerprint = gen_empty_fingerprint()
     fingerprint[0][0x391] = 8
@@ -737,7 +898,7 @@ class TestHyundaiFingerprint:
 
   @pytest.mark.parametrize("candidate, tracks_main_cruise", (
     (CAR.HYUNDAI_ELANTRA_2021, False),
-    (CAR.HYUNDAI_ELANTRA_HEV_2024, False),
+    (CAR.HYUNDAI_ELANTRA_HEV_2024, True),
     (CAR.HYUNDAI_SONATA_HYBRID, False),
   ))
   def test_legacy_hyundai_long_main_cruise_tracking_is_vehicle_specific(self, candidate, tracks_main_cruise):
@@ -788,6 +949,7 @@ class TestHyundaiFingerprint:
     (CAR.HYUNDAI_ELANTRA_2022_NON_SCC, ("EMS16", "LVR12"), ()),
     (CAR.HYUNDAI_ELANTRA_HEV_2022_NON_SCC, ("E_CRUISE_CONTROL", "ELECT_GEAR"), ("EMS16",)),
     (CAR.HYUNDAI_KONA_EV_NON_SCC, ("LABEL11", "EMS12", "E_EMS11"), ()),
+    (CAR.KIA_RAY_EV, ("LABEL11", "E_EMS11", "ELECT_GEAR"), ("EMS12", "SCC11", "SCC12")),
   ])
   def test_non_scc_cruise_message_selection(self, candidate, expected_msgs, unexpected_msgs):
     toggles = get_test_toggles()
@@ -805,6 +967,26 @@ class TestHyundaiFingerprint:
     assert not ret.cruiseState.available
     assert not ret.cruiseState.enabled
     assert ret.cruiseState.speed == 0
+
+  def test_kia_ray_ev_decodes_cruise_state(self):
+    toggles = get_test_toggles()
+    CP = CarInterface.get_params(CAR.KIA_RAY_EV, gen_empty_fingerprint(), [], True, False, False, toggles)
+    FPCP = CarInterface.get_starpilot_params(CAR.KIA_RAY_EV, gen_empty_fingerprint(), [], CP, toggles)
+    car_state = CarState(CP, FPCP)
+    can_parsers = car_state.get_can_parsers(CP)
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+
+    can_parsers[Bus.pt].update([(1_000_000_000, [
+      packer.make_can_msg("LABEL11", 0, {"CC_React": 1, "CC_Engaged": 1}),
+      packer.make_can_msg("E_EMS11", 0, {"Cruise_Limit_Target": 10, "Accel_Pedal_Pos": 0}),
+      packer.make_can_msg("ELECT_GEAR", 0, {"Elect_Gear_Shifter": 5}),
+    ])])
+
+    ret, _ = car_state.update(can_parsers, toggles)
+
+    assert ret.cruiseState.available
+    assert ret.cruiseState.enabled
+    assert ret.cruiseState.speed == pytest.approx(10 * 0.2777778)
 
   def test_hyundai_redneck_cruise_availability(self, monkeypatch):
     class FakeParams:
@@ -1475,6 +1657,20 @@ class TestHyundaiFingerprint:
 
     ret = update(0, 3)
     assert any(be.type == ButtonType.lkas and not be.pressed for be in ret.buttonEvents)
+
+  def test_elantra_hev_lkas_button_keeps_a_short_parser_cycle_edge(self):
+    car_state = CarState.__new__(CarState)
+    car_state.CP = SimpleNamespace(carFingerprint=CAR.HYUNDAI_ELANTRA_HEV_2024)
+    car_state.lda_button = 0
+    parser_cycle = SimpleNamespace(vl_all={
+      "CLU13": {"CF_Clu_LdwsLkasSW": [0]},
+      "BCM_PO_11": {"LDA_BTN": [1, 0]},
+    })
+
+    events = car_state.create_lkas_button_events(parser_cycle, 0)
+
+    assert any(be.type == ButtonType.lkas and be.pressed for be in events)
+    assert car_state.lda_button == 1
 
   def test_sonata_hybrid_uses_main_bus_lkas_parser(self):
     toggles = get_test_toggles()
@@ -2197,7 +2393,7 @@ class TestHyundaiFingerprint:
     assert parser.vl["LKAS_ALT"]["ADAS_ACIAnglTqRedcGainVal"] == pytest.approx(0.0)
     assert parser.vl["LKAS_ALT"]["ADAS_StrAnglReqVal"] == pytest.approx(8.5)
 
-  def test_gv70_electrified_synthesizes_lkas_status_payload(self):
+  def test_gv70_electrified_uses_generic_lkas_status_payload(self):
     CP = CarParams.new_message()
     CP.carFingerprint = CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN
     CP.flags = int(HyundaiFlags.CANFD | HyundaiFlags.EV | HyundaiFlags.CANFD_LKA_STEERING)
@@ -2240,9 +2436,11 @@ class TestHyundaiFingerprint:
     parser.update([(1, lkas_msgs)])
     assert parser.can_valid
     assert parser.vl["LKAS"]["HAS_LANE_SAFETY"] == 0
-    assert parser.vl["LKAS"]["DAMP_FACTOR"] == 100
+    assert parser.vl["LKAS"]["DAMP_FACTOR"] == 0
     assert parser.vl["LKAS"]["TORQUE_REQUEST"] == 0
     assert parser.vl["LKAS"]["STEER_REQ"] == 1
+    assert parser.vl["LKAS"]["STEER_MODE"] == 0
+    assert parser.vl["LKAS"]["NEW_SIGNAL_2"] == 0
 
     CP.openpilotLongitudinalControl = True
     lfa_parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("LFA", 0)], can_bus.ECAN)
@@ -3478,13 +3676,17 @@ class TestHyundaiFingerprint:
   def test_platform_code_ecus_available(self, subtests):
     # TODO: add queries for these non-CAN FD cars to get EPS
     no_eps_platforms = CANFD_CAR | {CAR.KIA_SORENTO, CAR.KIA_OPTIMA_G4, CAR.KIA_OPTIMA_G4_FL, CAR.KIA_OPTIMA_H,
-                                    CAR.KIA_OPTIMA_H_G4_FL, CAR.HYUNDAI_SONATA_LF, CAR.HYUNDAI_TUCSON, CAR.GENESIS_G90, CAR.GENESIS_G80, CAR.HYUNDAI_ELANTRA}
+                                    CAR.KIA_OPTIMA_H_G4_FL, CAR.HYUNDAI_SONATA_LF, CAR.HYUNDAI_TUCSON, CAR.GENESIS_G90, CAR.GENESIS_G80,
+                                    CAR.HYUNDAI_ELANTRA, CAR.KIA_RAY_EV}
+    no_fwd_radar_platforms = {CAR.KIA_RAY_EV}
 
     # Asserts ECU keys essential for fuzzy fingerprinting are available on all platforms
     for car_model, ecus in FW_VERSIONS.items():
       with subtests.test(car_model=car_model.value):
         for platform_code_ecu in PLATFORM_CODE_ECUS:
           if platform_code_ecu in (Ecu.fwdRadar, Ecu.eps) and car_model == CAR.HYUNDAI_GENESIS:
+            continue
+          if platform_code_ecu == Ecu.fwdRadar and car_model in no_fwd_radar_platforms:
             continue
           if platform_code_ecu == Ecu.eps and car_model in no_eps_platforms:
             continue

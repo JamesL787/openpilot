@@ -182,18 +182,55 @@ def create_es_dashstatus(packer, frame, dashstatus_msg, enabled, long_enabled, l
   return packer.make_can_msg("ES_DashStatus", bus, values)
 
 
-def create_stop_start_control(packer, dashlights_msg, counter=None, bus=CanBus.alt):
-  """Create the Outback 2023-24 momentary Stop/Start button request.
+def create_stop_start_control(packer, dashlights_msg, raw_dat=None, counter=None, bus=CanBus.alt):
+  """Create the supported Subaru momentary Stop/Start button request.
 
   Dashlights is a stock periodic message, so preserve the live frame and only
-  change the event bit. CANPacker calculates the Subaru checksum for us.
+  change the counter, event bit, and checksum. The raw frame is needed because
+  the DBC does not describe every byte in this message.
   """
+  if raw_dat:
+    dat = bytearray(raw_dat)
+    if len(dat) != 8:
+      raise ValueError(f"Dashlights frame must be 8 bytes, got {len(dat)}")
+    if counter is None:
+      counter = (int(dashlights_msg.get("COUNTER", 0)) + 1) % 0x10
+    dat[1] = (dat[1] & 0xF0) | (counter % 0x10)
+    dat[6] |= 0x40  # STOP_START, big-endian bit 54
+    dat[0] = ((0x390 & 0xFF) + ((0x390 >> 8) & 0xFF) + sum(dat[1:])) & 0xFF
+    return 0x390, bytes(dat), bus
+
   values = dict(dashlights_msg)
   if counter is None:
     counter = (int(values.get("COUNTER", 0)) + 1) % 0x10
   values["COUNTER"] = counter % 0x10
   values["STOP_START"] = 1
   return packer.make_can_msg("Dashlights", bus, values)
+
+
+def create_avh_control(packer, avh_msg, raw_dat=None, counter=None, bus=CanBus.alt):
+  """Create the supported Subaru Legacy AVH ON request.
+
+  AVH is carried in the live 0x32b frame. Preserve the other bytes and update
+  only the rolling counter, AVH bit, and Subaru additive checksum.
+  """
+  if raw_dat:
+    dat = bytearray(raw_dat)
+    if len(dat) != 8:
+      raise ValueError(f"AVH frame must be 8 bytes, got {len(dat)}")
+    if counter is None:
+      counter = (int(avh_msg.get("COUNTER", 0)) + 1) % 0x10
+    dat[1] = (dat[1] & 0xF0) | (counter % 0x10)
+    dat[5] |= 0x20  # AVH, big-endian bit 45
+    dat[0] = ((0x32B & 0xFF) + ((0x32B >> 8) & 0xFF) + sum(dat[1:])) & 0xFF
+    return 0x32B, bytes(dat), bus
+
+  values = dict(avh_msg)
+  if counter is None:
+    counter = (int(values.get("COUNTER", 0)) + 1) % 0x10
+  values["COUNTER"] = counter % 0x10
+  values["AVH"] = 1
+  return packer.make_can_msg("AVH", bus, values)
 
 
 def create_es_brake(packer, frame, es_brake_msg, long_enabled, long_active, brake_value, bus=CanBus.main):

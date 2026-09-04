@@ -10,6 +10,7 @@ from difflib import SequenceMatcher
 
 from cereal import log
 from opendbc.car.lateral import FRICTION_THRESHOLD, get_friction
+from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR
 from openpilot.common.constants import ACCELERATION_DUE_TO_GRAVITY
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
@@ -33,6 +34,17 @@ from openpilot.starpilot.common.starpilot_variables import NNFF_MODELS_PATH, get
 
 # dict used to rename activation functions whose names aren't valid python identifiers
 ACTIVATION_FUNCTION_NAMES = {"σ": "sigmoid"}
+
+PALISADE_NNFF_LAT_JERK_FRICTION_FACTOR = 0.25
+DEFAULT_NNFF_LAT_JERK_FRICTION_FACTOR = 0.4
+
+
+def get_nnff_lat_jerk_friction_factor(car_fingerprint) -> float:
+  return (
+    PALISADE_NNFF_LAT_JERK_FRICTION_FACTOR
+    if car_fingerprint == HYUNDAI_CAR.HYUNDAI_PALISADE_2023
+    else DEFAULT_NNFF_LAT_JERK_FRICTION_FACTOR
+  )
 
 LOW_SPEED_X = [0, 10, 20, 30]
 LOW_SPEED_Y = [12, 3, 1, 0]
@@ -198,7 +210,7 @@ class LatControlNNFF(LatControl):
     # Scaling the lateral acceleration "friction response" could be helpful for some.
     # Increase for a stronger response, decrease for a weaker response.
     self.lat_accel_friction_factor = 0.7  # in [0, 3], in 0.05 increments. 3 is arbitrary safety limit
-    self.lat_jerk_friction_factor = 0.4
+    self.lat_jerk_friction_factor = get_nnff_lat_jerk_friction_factor(CP.carFingerprint)
 
     # precompute time differences between ModelConstants.T_IDXS
     self.t_diffs = np.diff(ModelConstants.T_IDXS)

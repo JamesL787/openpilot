@@ -161,6 +161,8 @@ class MiciHomeLayout(Widget):
     self._home_screen_name = DEFAULT_HOME_SCREEN_NAME
 
     self._mode_status_atom = ModeStatusAtom()
+    self._bluetooth_icon = IconWidget("icons_mici/settings/bluetooth.png", (38, 38), opacity=0.9)
+    self._bluetooth_icon.set_visible(False)
     self._egpu_icon = IconWidget("icons_mici/egpu.png", (50, 37))
     self._egpu_icon_gray = IconWidget("icons_mici/egpu_gray.png", (50, 37))
     self._mic_icon = IconWidget("icons_mici/microphone.png", (32, 46))
@@ -168,6 +170,7 @@ class MiciHomeLayout(Widget):
     self._status_bar_layout = HBoxLayout([
       IconWidget("icons_mici/settings.png", (48, 48), opacity=0.9),
       NetworkIcon(),
+      self._bluetooth_icon,
       self._mode_status_atom,
       self._egpu_icon,
       self._egpu_icon_gray,
@@ -188,6 +191,7 @@ class MiciHomeLayout(Widget):
 
   def _update_params(self):
     self._experimental_mode = ui_state.params.get_bool("ExperimentalMode")
+    self._bluetooth_icon.set_visible(ui_state.params.get_bool("BluetoothEnabled"))
     self._mode_status_atom.refresh()
     self._home_screen_name = home_screen_name(ui_state.params)
     self._openpilot_label.set_text(self._home_screen_name)
@@ -217,8 +221,8 @@ class MiciHomeLayout(Widget):
 
     if self._mouse_down_t is not None:
       if time.monotonic() - self._mouse_down_t > 0.5:
-        # long gating for experimental mode - only allow toggle if longitudinal control is available
-        if ui_state.has_longitudinal_control:
+        # Only allow the toggle when this vehicle exposes Experimental Mode.
+        if ui_state.experimental_mode_available:
           self._experimental_mode = not self._experimental_mode
           ui_state.params.put("ExperimentalMode", self._experimental_mode)
           self._mode_status_atom.refresh()

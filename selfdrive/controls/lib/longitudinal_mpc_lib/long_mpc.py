@@ -945,7 +945,9 @@ class LongitudinalMpc:
              optional_far_lead_comfort=True, smooth_duplicate_vision=False,
              stop_x=None, silverado_early_follow=False, modelV2=None,
              lead_obstacle_bias=(0.0, 0.0), tracked_lead_catchup_headway_margins=None,
-             tracked_lead_catchup_bias_gain=None):
+             tracked_lead_catchup_bias_gain=None, tracked_lead_catchup_bias_cap=None,
+             tracked_lead_catchup_speed_range=None, tracked_lead_catchup_fade_margins=None,
+             tracked_lead_catchup_cruise_error_full=None):
     v_ego = self.x0[1]
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
@@ -991,7 +993,9 @@ class LongitudinalMpc:
           cruise_obstacle += self.get_stable_follow_cruise_hysteresis(lead_one, v_ego, t_follow)
         elif prev_source == 'lead1':
           cruise_obstacle += self.get_stable_follow_cruise_hysteresis(lead_two, v_ego, t_follow)
-      if optional_far_lead_comfort and tracking_lead and lead_one.status:
+      crv_tracked_lead_tune = tracked_lead_catchup_bias_cap is not None
+      if (optional_far_lead_comfort and tracking_lead and lead_one.status and
+          (not crv_tracked_lead_tune or bool(getattr(lead_one, "radar", False)))):
         desired_gap = desired_follow_distance(v_ego, lead_one.vLead, t_follow)
         closing_speed = max(0.0, v_ego - lead_one.vLead)
         catchup_kwargs = {}
@@ -1002,6 +1006,14 @@ class LongitudinalMpc:
           }
         if tracked_lead_catchup_bias_gain is not None:
           catchup_kwargs["bias_gain"] = tracked_lead_catchup_bias_gain
+        if tracked_lead_catchup_bias_cap is not None:
+          catchup_kwargs["bias_cap"] = tracked_lead_catchup_bias_cap
+        if tracked_lead_catchup_speed_range is not None:
+          catchup_kwargs["speed_range"] = tracked_lead_catchup_speed_range
+        if tracked_lead_catchup_fade_margins is not None:
+          catchup_kwargs["fade_margins"] = tracked_lead_catchup_fade_margins
+        if tracked_lead_catchup_cruise_error_full is not None:
+          catchup_kwargs["cruise_error_full"] = tracked_lead_catchup_cruise_error_full
         cruise_obstacle += get_tracked_lead_catchup_bias(
           v_ego,
           lead_one.dRel,

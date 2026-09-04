@@ -231,6 +231,38 @@ def test_pulse_and_glide_long_cancel_consumes_release_after_threshold(monkeypatc
   assert release.buttonEvents == []
 
 
+@pytest.mark.parametrize(
+  ("pressed_field", "long_key", "very_long_key"),
+  (
+    ("distancePressed", "distance_long", "distance_very_long"),
+    ("cancelPressed", "cancel_long", "cancel_very_long"),
+    ("modePressed", "mode_long", "mode_very_long"),
+    ("customPressed", "star_long", "star_very_long"),
+  ),
+)
+def test_very_long_press_does_not_repeat_long_press_action(monkeypatch, tmp_path, pressed_field, long_key, very_long_key):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
+  sm = make_sm()
+  toggles = make_toggles(has_canfd_media_buttons=pressed_field in ("modePressed", "customPressed"))
+  starpilot_car_state = SimpleNamespace(
+    distancePressed=False,
+    cancelPressed=False,
+    modePressed=False,
+    customPressed=False,
+  )
+  setattr(starpilot_car_state, pressed_field, True)
+  handled = []
+  monkeypatch.setattr(card, "handle_button_event", lambda key, _sm, _toggles: handled.append(key) or False)
+
+  for _ in range(card.very_long_press_threshold):
+    card.update(make_car_state(), starpilot_car_state, sm, toggles)
+
+  assert handled == [long_key, very_long_key]
+
+
 def make_car_state(available=False, enabled=False, button_events=None, brake_pressed=False, gas_pressed=False):
   return SimpleNamespace(
     buttonEvents=button_events or [],
@@ -305,6 +337,35 @@ def test_honda_lkas_button_can_toggle_always_on_lateral(monkeypatch, tmp_path):
   assert ret.pauseLateral is False
 
 
+def test_controller_actions_match_vehicle_button_behaviors(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="honda"), SimpleNamespace(alternativeExperience=0))
+  sm = make_sm()
+  sm["carControl"].longActive = True
+  toggles = make_toggles(
+    always_on_lateral=True,
+    lkas_allowed_for_aol=True,
+    openpilot_longitudinal=True,
+    pulse_and_glide_available=True,
+  )
+  for _key, counter in spc.CONTROLLER_ACTION_COUNTERS.items():
+    if counter != "WheelButtonBookmarkCounter":
+      card.params_memory.put_int(counter, 1)
+
+  ret = card.update(make_car_state(), SimpleNamespace(distancePressed=False), sm, toggles)
+
+  assert card.force_coast is True
+  assert card.pulse_and_glide is True
+  assert ret.alwaysOnLateralAllowed is True
+
+  ret = card.update(make_car_state(), SimpleNamespace(distancePressed=False), sm, toggles)
+  assert card.force_coast is True
+  assert card.pulse_and_glide is True
+  assert ret.alwaysOnLateralAllowed is True
+
+
 def test_hyundai_lkas_button_can_start_aol_before_normal_engagement(monkeypatch, tmp_path):
   monkeypatch.setattr(spc, "Params", FakeParams)
   monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
@@ -332,6 +393,31 @@ def test_hyundai_lkas_button_can_start_aol_before_normal_engagement(monkeypatch,
 
   assert ret.alwaysOnLateralAllowed is False
   assert ret.pauseLateral is False
+
+
+def test_volvo_aol_stays_disabled_even_with_stale_enabled_toggle(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(
+    SimpleNamespace(brand="volvo"),
+    SimpleNamespace(alternativeExperience=spc.ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL),
+  )
+  car_state = make_car_state(available=True, enabled=True)
+  starpilot_car_state = SimpleNamespace(distancePressed=False)
+  sm = make_sm()
+  toggles = make_toggles(
+    always_on_lateral=True,
+    always_on_lateral_main=True,
+    always_on_lateral_lkas=True,
+    lkas_allowed_for_aol=True,
+    main_cruise_aol_toggle=True,
+  )
+
+  ret = card.update(car_state, starpilot_car_state, sm, toggles)
+
+  assert ret.alwaysOnLateralAllowed is False
+  assert ret.alwaysOnLateralEnabled is False
 
 
 def test_sonata_hybrid_lkas_button_can_start_aol_before_normal_engagement(monkeypatch, tmp_path):

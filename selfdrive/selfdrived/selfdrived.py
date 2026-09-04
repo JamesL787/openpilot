@@ -35,6 +35,7 @@ from openpilot.system.hardware import HARDWARE
 
 from openpilot.starpilot.common.starpilot_utilities import contains_event_type
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
+from openpilot.starpilot.common.lateral_only_experimental import experimental_mode_available
 from openpilot.starpilot.common.vision_bsm import get_fresh_vasm_state
 
 REPLAY = "REPLAY" in os.environ
@@ -222,7 +223,7 @@ class SelfdriveD:
     # cleanup old params
     if not self.CP.alphaLongitudinalAvailable:
       self.params.remove("AlphaLongitudinalEnabled")
-    if not self.CP.openpilotLongitudinalControl:
+    if not experimental_mode_available(self.CP):
       self.params.remove("ExperimentalMode")
 
     self.CS_prev = car.CarState.new_message()
@@ -970,7 +971,7 @@ class SelfdriveD:
       if self.safe_mode:
         self.experimental_mode = False
       elif not self.starpilot_toggles.conditional_experimental_mode:
-        self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
+        self.experimental_mode = self.params.get_bool("ExperimentalMode") and experimental_mode_available(self.CP)
       self.personality = log.LongitudinalPersonality.relaxed if self.safe_mode else self.params.get("LongitudinalPersonality", return_default=True)
       time.sleep(0.1)
 

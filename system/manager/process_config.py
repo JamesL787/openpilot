@@ -117,6 +117,18 @@ def run_navigationd(started: bool, params: Params, CP: car.CarParams, starpilot_
   return started and params.get("NavDestination") is not None
 
 
+def bluetooth_enabled(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
+  return params.get_bool("BluetoothEnabled")
+
+
+def soundd_run(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
+  return driverview(started, params, CP, starpilot_toggles) or params.get_bool("BluetoothAudioTestActive")
+
+
+def wheel_controls_enabled(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
+  return params.get_bool("WheelControlsEnabled")
+
+
 def run_v_asm(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return started and getattr(starpilot_toggles, "v_asm_enabled", False)
 
@@ -152,7 +164,7 @@ procs = [
 
   PythonProcess("sensord", "system.sensord.sensord", sensord_run, enabled=not PC),
   PythonProcess("sentryd", "system.sentryd.sentryd", sentry_mode, enabled=not PC),
-  PythonProcess("soundd", "selfdrive.ui.soundd", driverview),
+  PythonProcess("soundd", "selfdrive.ui.soundd", soundd_run),
   PythonProcess("locationd", "selfdrive.locationd.locationd", only_onroad),
   NativeProcess("_pandad", "selfdrive/pandad", ["./pandad"], always_run, enabled=False),
   PythonProcess("calibrationd", "selfdrive.locationd.calibrationd", only_onroad),
@@ -189,6 +201,8 @@ procs = [
 
 # StarPilot variables
 procs += [
+  PythonProcess("bluetooth_managerd", "starpilot.system.bluetooth.daemon", bluetooth_enabled, enabled=TICI),
+  PythonProcess("wheel_controlsd", "starpilot.system.wheel_controls.wheel_controlsd", wheel_controls_enabled, enabled=TICI, nice=19),
   PythonProcess("the_galaxy", "starpilot.system.the_galaxy.the_galaxy", always_run, nice=10),
   PythonProcess("galaxy", "starpilot.system.galaxy.galaxy", always_run, nice=10),
 ]

@@ -209,7 +209,9 @@ class CarInterface(CarInterfaceBase):
       ret.enableBsm = 0x58b in fingerprint[CAN.ECAN]
 
       # Send LFA message on cars with HDA
-      if 0x485 in fingerprint[CAN.CAM]:
+      if 0x485 in fingerprint[CAN.CAM] and (
+          candidate != CAR.KIA_RAY_EV or fingerprint[CAN.CAM][0x485] == 4
+      ):
         ret.flags |= HyundaiFlags.SEND_LFA.value
 
       # These cars use the FCA11 message for the AEB and FCW signals, all others use SCC12

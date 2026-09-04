@@ -8,7 +8,7 @@ from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_steer_an
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CANFD_ANGLE_LONGITUDINAL_CAR, \
+from opendbc.car.hyundai.values import HyundaiFlags, HyundaiStarPilotFlags, Buttons, CarControllerParams, CAR, CANFD_ANGLE_LONGITUDINAL_CAR, \
                                         CANFD_RADAR_LIVE_LONGITUDINAL_CAR, CANFD_ALT_BUTTONS_RESUME_CAR, kia_ev6_gt_line_longitudinal_tuning, \
                                         KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID
 from opendbc.car.interfaces import CarControllerBase
@@ -178,13 +178,6 @@ def should_track_stop_accel_directly_for_car(car_fingerprint, stopping: bool, v_
 def should_use_ev6_gt_line_stop_direct_tracking(ev6_gt_line: bool, stopping: bool, v_ego: float,
                                                  accel_cmd: float, actual_accel: float) -> bool:
   return bool(ev6_gt_line and stopping and v_ego > EV6_GT_LINE_STOP_BRAKE_CAP_MAX_SPEED and accel_cmd < actual_accel)
-
-
-def apply_carnival_steering_override(car_fingerprint, steering_pressed: bool,
-                                     apply_steer_req: bool, apply_torque: int) -> tuple[bool, int]:
-  if car_fingerprint == CAR.KIA_CARNIVAL_2025 and steering_pressed:
-    return False, 0
-  return apply_steer_req, apply_torque
 
 
 def update_ev9_longitudinal_tuning(state: EV9LongitudinalTuningState, enabled: bool,
@@ -438,6 +431,12 @@ def suppress_redundant_gv70_brake_cancel(CP, brake_pressed: bool, lat_active: bo
   )
 
 
+def clear_ioniq_6_torque_when_request_inactive(CP, apply_torque: int, apply_steer_req: bool) -> int:
+  if CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and not apply_steer_req:
+    return 0
+  return apply_torque
+
+
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -471,6 +470,7 @@ class CarController(CarControllerBase):
     self._dash_lat_disengage_blink_frame = 0
     self._dash_lat_disengage_init = False
     self._dash_prev_lat_active = False
+    self._ray_lkas11_active = False
 
   def _update_dash_icon_state(self, CC):
     if CC.latActive:
@@ -620,9 +620,7 @@ class CarController(CarControllerBase):
       if not CC.latActive:
         apply_torque = 0
 
-      apply_steer_req, apply_torque = apply_carnival_steering_override(
-        self.CP.carFingerprint, CS.out.steeringPressed, apply_steer_req, apply_torque,
-      )
+      apply_torque = clear_ioniq_6_torque_when_request_inactive(self.CP, apply_torque, apply_steer_req)
 
       # Hold torque with induced temporary fault when cutting the actuation bit
       # FIXME: we don't use this with CAN FD?
@@ -772,10 +770,15 @@ class CarController(CarControllerBase):
                                                                   hud_control.leftLaneVisible, hud_control.rightLaneVisible,
                                                                   left_lane_warning, right_lane_warning, CS.msg_364))
     else:
-      can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
-                                                torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
-                                                hud_control.leftLaneVisible, hud_control.rightLaneVisible,
-                                                left_lane_warning, right_lane_warning, lka_icon))
+      if self.CP.carFingerprint != CAR.KIA_RAY_EV or self._ray_lkas11_active:
+        can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
+                                                  torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
+                                                  hud_control.leftLaneVisible, hud_control.rightLaneVisible,
+                                                  left_lane_warning, right_lane_warning, lka_icon))
+      if self.CP.carFingerprint == CAR.KIA_RAY_EV:
+        self._ray_lkas11_active = True
+      if getattr(self.FPCP, "flags", 0) & HyundaiStarPilotFlags.HAS_LKAS12:
+        can_sends.append(hyundaican.create_lkas12(self.packer, CS.lkas12))
 
     # Button messages
     if not self.long_active_ecu:
@@ -849,9 +852,6 @@ class CarController(CarControllerBase):
     )
 
     # steering control
-    # The first-generation Electrified GV70 expects the synthesized LKAS status
-    # payload. Forwarding its stock status bits leaves lane-safety state asserted
-    # while StarPilot is suppressing the stock LFA path.
     preserve_stock_lkas = bool(self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING) and \
       not self.long_active_ecu and self.CP.carFingerprint != CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN and \
       preserve_stock_canfd_lkas_status(self.CP.carFingerprint)

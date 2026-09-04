@@ -8,6 +8,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 from openpilot.starpilot.assets.download_functions import (
+  delete_chunked_artifact,
+  download_chunked_file,
   download_file,
   download_multipart_file,
   get_resource_urls,
@@ -22,9 +24,10 @@ from openpilot.starpilot.common.model_versions import (
 )
 from openpilot.starpilot.common.starpilot_utilities import delete_file
 from openpilot.starpilot.common.starpilot_variables import MODELS_PATH
+from openpilot.common.file_chunker import file_chunked_exists, get_existing_chunks, get_manifest_path
 from openpilot.system.hardware.usb import chestnut_firmware_ready
 
-MANIFEST_CANDIDATES = ("v24",)
+MANIFEST_CANDIDATES = ("v25",)
 MODEL_NAMESPACE_SUFFIX = "3"
 DEFAULT_MODEL_KEY = "rdf43"
 LOCAL_MODEL_PREFIX = "local-"
@@ -33,6 +36,10 @@ ARTIFACT_URLS_CACHE = ".model_artifact_urls.json"
 ARTIFACT_METADATA_CACHE = ".model_artifacts.json"
 MODEL_KEY_CANONICAL_MAP = {
   "sc": "sc2",
+  "napv1": "remove-avgpoolv1",
+  "napv2": "remove-avgpoolv2",
+  "napv3": "remove-avgpoolv3",
+  "napv4": "remove-avgpoolv4",
   # The original bundled RDF key remains valid after the bundled default moves
   # to the v23 RDF V4 artifact.
   "rdf": DEFAULT_MODEL_KEY,
@@ -339,8 +346,10 @@ class ModelManager:
         continue
       metadata[model_key] = {
         "artifact_format": artifact_format,
+        "artifact_filename": str(model.get("artifact_filename") or "").strip(),
         "artifact_size": int(model.get("artifact_size") or 0),
         "artifact_sha256": str(model.get("artifact_sha256") or "").strip().lower(),
+        "artifact_chunk_count": int(model.get("artifact_chunk_count") or 0),
         "artifact_url": str(model.get("artifact_url") or model.get("download_url") or "").strip(),
         "uses_external_gpu": bool(model.get("uses_external_gpu", False)),
       }
@@ -365,10 +374,18 @@ class ModelManager:
     metadata = self._load_artifact_metadata_map().get(self._canonical_model_key(model_key), {})
     for filename in required_files:
       path = MODELS_PATH / filename
-      if not path.is_file():
+      if not file_chunked_exists(path):
         return False
       expected_size = int(metadata.get("artifact_size") or 0)
-      if expected_size and path.stat().st_size != expected_size:
+      try:
+        paths = get_existing_chunks(path)
+      except (OSError, ValueError):
+        return False
+      if paths and paths[0] == get_manifest_path(path):
+        paths = paths[1:]
+      if not paths or any(not Path(part).is_file() for part in paths):
+        return False
+      if expected_size and sum(Path(part).stat().st_size for part in paths) != expected_size:
         return False
     return True
 
@@ -467,10 +484,16 @@ class ModelManager:
 
   @staticmethod
   def _hf_manifest_paths(manifest_version: str) -> tuple[str, ...]:
-    return (
-      f"model_names_{manifest_version}.json",
-      f"manifests/model_names_{manifest_version}.json",
-    )
+    return (f"manifests/model_names_{manifest_version}.json",)
+
+  @classmethod
+  def _artifact_source_urls(cls, resource_url: str, manifest_version: str, model_key: str, filename: str) -> tuple[str, ...]:
+    model_key = quote(cls._canonical_model_key(model_key), safe="")
+    manifest_version = quote(manifest_version, safe="")
+    filename = quote(filename, safe="")
+    if cls._is_huggingface_url(resource_url):
+      return (f"{resource_url}/models/{manifest_version}/{model_key}/{filename}",)
+    return (f"{resource_url}/Models/{manifest_version}/{model_key}/{filename}",)
 
   def _get_manifest(self, resource_urls: str | list[str]) -> tuple[str | None, list[dict]]:
     if isinstance(resource_urls, str):
@@ -638,7 +661,13 @@ class ModelManager:
     self._remove_stale_model_files()
     self._enforce_selected_model()
 
-  def _migrate_to_unified_artifacts(self, selected_model: str):
+  def _migrate_model_artifacts(self, selected_model: str):
+    """Remove artifacts compiled for the previous tinygrad manifest.
+
+    Model IDs are stable across manifest generations, but tinygrad pickles are
+    not. Local models are intentionally retained because StarPilot does not own
+    or have a source from which to redownload them.
+    """
     removed = 0
     for model_file in MODELS_PATH.iterdir():
       if not model_file.is_file() or not is_driving_artifact_file(model_file.name):
@@ -650,14 +679,14 @@ class ModelManager:
         delete_file(model_file, print_error=False)
         removed += 1
     if removed:
-      print(f"Removed {removed} incompatible model artifacts during manifest migration.")
+      print(f"Removed {removed} incompatible model artifacts during tinygrad manifest migration.")
 
     if selected_model and not is_builtin_model_key(selected_model):
       self.params_memory.put(DOWNLOAD_PROGRESS_PARAM, f"Downloading selected model \"{selected_model}\"...")
       self.download_model(selected_model)
       selected_format = self._model_artifact_format_map().get(selected_model, "")
       selected_files = self._required_files(selected_model, selected_format)
-      if not selected_files or not all((MODELS_PATH / filename).is_file() for filename in selected_files):
+      if not selected_files or not all(file_chunked_exists(MODELS_PATH / filename) for filename in selected_files):
         default_index = next(
           (index for index, key in enumerate(self.available_models) if is_builtin_model_key(key)),
           None,
@@ -701,7 +730,7 @@ class ModelManager:
       self._set_model_param_keys(migrated_model, migrated_name, migrated_version)
       selected_model = migrated_model
     if previous_manifest != resolved_manifest:
-      self._migrate_to_unified_artifacts(selected_model)
+      self._migrate_model_artifacts(selected_model)
     self.check_models(boot_run)
 
   def download_model(self, model_to_download: str):
@@ -713,6 +742,7 @@ class ModelManager:
 
   def _download_model(self, model_to_download: str, allow_gpu_without_gpu: bool):
     self.downloading_model = True
+    model_to_download = self._canonical_model_key(model_to_download)
 
     if is_builtin_model_key(model_to_download):
       self.params_memory.put(DOWNLOAD_PROGRESS_PARAM, "Built-in model already downloaded.")
@@ -756,27 +786,35 @@ class ModelManager:
 
     for filename in required_files:
       file_path = MODELS_PATH / filename
+      remote_filename = str(artifact_metadata.get("artifact_filename") or filename).strip()
+      manifest_version = self._param_text("ModelManifestVersion") or MANIFEST_CANDIDATES[0]
       candidate_urls: list[tuple[str, bool, bool]] = []
 
-      custom_url = artifact_urls.get(filename, "").strip()
+      custom_url = (artifact_urls.get(filename) or artifact_urls.get(remote_filename) or artifact_metadata.get("artifact_url") or "").strip()
       if custom_url:
         candidate_urls.append((custom_url, True, False))
 
       for resource_url in resource_urls:
-        if self._is_huggingface_url(resource_url):
-          artifact_urls_for_source = [
-            f"{resource_url}/models/{quote(self._canonical_model_key(model_to_download), safe='')}/{filename}",
-            f"{resource_url}/{filename}",
-          ]
-        else:
-          artifact_urls_for_source = [f"{resource_url}/Models/{filename}"]
-
-        for artifact_url in artifact_urls_for_source:
+        for artifact_url in self._artifact_source_urls(resource_url, manifest_version, model_to_download, remote_filename):
           if not any(existing[0] == artifact_url for existing in candidate_urls):
             candidate_urls.append((artifact_url, False, True))
 
       download_succeeded = False
       for candidate_url, allow_unknown_size, allow_multipart in candidate_urls:
+        chunk_count = int(artifact_metadata.get("artifact_chunk_count") or 0)
+        if chunk_count and download_chunked_file(
+          CANCEL_DOWNLOAD_PARAM,
+          file_path,
+          DOWNLOAD_PROGRESS_PARAM,
+          candidate_url,
+          self.params_memory,
+          expected_size=artifact_metadata.get("artifact_size"),
+          expected_sha256=artifact_metadata.get("artifact_sha256"),
+          expected_chunk_count=chunk_count,
+        ):
+          download_succeeded = True
+          break
+
         download_file(
           CANCEL_DOWNLOAD_PARAM,
           file_path,
@@ -803,6 +841,16 @@ class ModelManager:
           break
         delete_file(file_path, print_error=False)
 
+        if not chunk_count and download_chunked_file(
+          CANCEL_DOWNLOAD_PARAM,
+          file_path,
+          DOWNLOAD_PROGRESS_PARAM,
+          candidate_url,
+          self.params_memory,
+        ):
+          download_succeeded = True
+          break
+
         if allow_multipart and download_multipart_file(
           CANCEL_DOWNLOAD_PARAM,
           file_path,
@@ -815,6 +863,7 @@ class ModelManager:
           break
 
       if not download_succeeded:
+        delete_chunked_artifact(file_path)
         handle_error(file_path, "Verification failed...", f"Verification failed for {filename}", MODEL_DOWNLOAD_PARAM, DOWNLOAD_PROGRESS_PARAM, self.params_memory)
         self.downloading_model = False
         return

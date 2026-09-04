@@ -7,6 +7,7 @@ from typing import Any
 
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.ford.values import CAR as FORD_CAR
+from opendbc.car.gm.values import CAR as GM_CAR
 
 
 CarGpsSample = dict[str, Any]
@@ -90,10 +91,52 @@ def parse_ford_can_gps(nav1: Mapping[str, float], nav2: Mapping[str, float], nav
   }
 
 
+def parse_chevrolet_bolt_can_gps(position: Mapping[str, float]) -> CarGpsSample | None:
+  """Decode the Bolt's OnStar GPS position message."""
+  try:
+    latitude = float(position["GPSLatitude"]) / 3_600_000.0
+    longitude = float(position["GPSLongitude"]) / 3_600_000.0
+  except (KeyError, TypeError, ValueError):
+    return None
+
+  coordinates_valid = (
+    math.isfinite(latitude) and math.isfinite(longitude) and
+    -90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0 and
+    (latitude != 0.0 or longitude != 0.0)
+  )
+  if not coordinates_valid:
+    latitude = longitude = 0.0
+
+  return {
+    "latitude": latitude,
+    "longitude": longitude,
+    "altitude": 0.0,
+    "speed": 0.0,
+    "bearingDeg": 0.0,
+    "horizontalAccuracy": 100.0,
+    "unixTimestampMillis": int(datetime.now(UTC).timestamp() * 1000),
+    "verticalAccuracy": 100.0,
+    "bearingAccuracyDeg": 180.0,
+    "speedAccuracy": 100.0,
+    "hasFix": coordinates_valid,
+    "satelliteCount": 0,
+    "vNED": [0.0, 0.0, 0.0],
+  }
+
+
 FORD_MACH_E_GPS_MESSAGES = (
   "APIMGPS_Data_Nav_1_FD1",
   "APIMGPS_Data_Nav_2_FD1",
   "APIMGPS_Data_Nav_3_FD1",
+)
+CHEVROLET_BOLT_GPS_MESSAGES = ("TCICOnStarGPSPosition",)
+
+CHEVROLET_BOLT_GPS_CARS = (
+  GM_CAR.CHEVROLET_BOLT_ACC_2022_2023,
+  GM_CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL,
+  GM_CAR.CHEVROLET_BOLT_CC_2022_2023,
+  GM_CAR.CHEVROLET_BOLT_CC_2018_2021,
+  GM_CAR.CHEVROLET_BOLT_CC_2017,
 )
 
 
@@ -103,6 +146,14 @@ CAR_GPS_CONFIGS: dict[str, CarGpsConfig] = {
     messages=FORD_MACH_E_GPS_MESSAGES,
     decoder=parse_ford_can_gps,
   ),
+  **{
+    car: CarGpsConfig(
+      brand="gm",
+      messages=CHEVROLET_BOLT_GPS_MESSAGES,
+      decoder=parse_chevrolet_bolt_can_gps,
+    )
+    for car in CHEVROLET_BOLT_GPS_CARS
+  },
 }
 
 

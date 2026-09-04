@@ -61,6 +61,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_sonata_hybrid_center_output_scale,
   get_sonata_hybrid_friction_threshold,
   get_prius_center_taper_scale,
+  PRIUS_STANDARD_FRICTION_JERK_DEADZONE_MAX,
   KIA_FORTE_BASE_LAT_ACCEL_FACTOR_MULT,
   HONDA_ACCORD_TORQUE_KI,
   HONDA_ACCORD_TORQUE_KP,
@@ -73,6 +74,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_ram_1500_ff_scale,
   get_rav4_tss2_pid_output,
   get_subaru_impreza_pid_output_scale,
+  get_genesis_gv70_low_speed_center_overshoot_scale,
   normalize_flm_overrides,
   set_flm_runtime_overrides,
 )
@@ -105,6 +107,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_genesis_g90_friction_threshold,
   get_genesis_g70_center_output_scale,
   get_genesis_g70_curve_unwind_output_scale,
+  get_genesis_g70_angle_output_scale,
   get_genesis_g70_friction_jerk_deadzone,
   get_genesis_g70_friction_threshold,
   get_genesis_g70_high_speed_error_scale,
@@ -1195,6 +1198,9 @@ class TestLatControl:
     assert overshooting_unwind < 0.70
     assert highway_overshoot > overshooting_unwind
 
+    low_speed_exit = get_kia_carnival_unwind_ff_scale(0.31, 0.43, -0.88, 11.0)
+    assert low_speed_exit < 0.90
+
   def test_genesis_g90_ff_scale_curve(self):
     assert get_genesis_g90_ff_scale(0.0, 0.0, 20.0) == 1.0
     assert get_genesis_g90_ff_scale(0.5, 0.0, 20.0) > get_genesis_g90_ff_scale(-0.5, 0.0, 20.0)
@@ -1320,6 +1326,8 @@ class TestLatControl:
     assert base_scale > left_unwind_scale == right_unwind_scale
 
     assert get_prius_friction_jerk_deadzone(30.0, 0.0) > get_prius_friction_jerk_deadzone(30.0, 0.8)
+    assert get_prius_friction_jerk_deadzone(30.0, 0.0, PRIUS_STANDARD_FRICTION_JERK_DEADZONE_MAX) > \
+           get_prius_friction_jerk_deadzone(30.0, 0.0)
     assert get_prius_friction_jerk_deadzone(8.0, 0.0) < 0.05
     assert get_prius_center_taper_scale(0.0, 30.0) < get_prius_center_taper_scale(0.8, 30.0)
     assert get_prius_center_taper_scale(0.0, 8.0) > 0.99
@@ -1364,12 +1372,26 @@ class TestLatControl:
     assert turn_scale > center_scale
     assert highway_center_deadzone > highway_turn_deadzone
     assert highway_turn_deadzone < 0.05
+    assert latcontrol_vehicle_tunes.get_genesis_gv70_friction_jerk_deadzone(60.0 * 0.44704, 0.2) > 0.40
 
   def test_genesis_gv70_high_speed_error_damping(self):
     assert get_genesis_gv70_high_speed_error_scale(0.2, 0.2, 0.8, 20.0) == 1.0
     assert get_genesis_gv70_high_speed_error_scale(-0.7, 0.58, -0.8, 33.5) < 1.0
     assert get_genesis_gv70_high_speed_error_scale(-0.7, 0.58, -0.8, 20.0) > \
       get_genesis_gv70_high_speed_error_scale(-0.7, 0.58, -0.8, 33.5)
+
+  def test_genesis_gv70_low_speed_center_overshoot_damping(self):
+    center_overshoot = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.45, 22.0 * 0.44704)
+    clean_center = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.02, 22.0 * 0.44704)
+    strong_turn = get_genesis_gv70_low_speed_center_overshoot_scale(0.8, 0.9, 22.0 * 0.44704)
+    opposite_turn = get_genesis_gv70_low_speed_center_overshoot_scale(0.4, -0.8, 22.0 * 0.44704)
+    high_speed = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.45, 45.0 * 0.44704)
+
+    assert center_overshoot < 0.85
+    assert clean_center == pytest.approx(1.0)
+    assert strong_turn > center_overshoot
+    assert opposite_turn == pytest.approx(1.0)
+    assert high_speed > center_overshoot
 
   def test_genesis_g70_center_chatter_tune(self):
     base = get_standard_friction_threshold(25.0)
@@ -1391,6 +1413,8 @@ class TestLatControl:
     assert get_genesis_g70_low_speed_angle_damping(0.0, 20.0, 0.0, 2.0) > 0.0
     assert get_genesis_g70_curve_unwind_output_scale(0.7, -0.5, 25.0) == pytest.approx(1.0)
     assert get_genesis_g70_curve_unwind_output_scale(0.7, 0.5, 25.0) == 1.0
+    assert get_genesis_g70_angle_output_scale(55.0, 1.0) > get_genesis_g70_angle_output_scale(85.0, 1.0)
+    assert get_genesis_g70_angle_output_scale(85.0, -1.0) == pytest.approx(1.0)
     assert get_genesis_g70_friction_jerk_deadzone(25.0, 0.0) > 0.25
     assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, 0.5, 25.0) < 0.90
     assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, -0.5, 25.0) == 1.0
@@ -1399,6 +1423,8 @@ class TestLatControl:
     assert get_genesis_g70_high_speed_error_scale(0.2, 0.2, 0.8, 20.0) == 1.0
     assert get_genesis_g70_high_speed_error_scale(0.2, 0.9, 0.8, 20.0) < 1.0
     assert get_genesis_g70_high_speed_error_scale(0.2, 0.9, 0.8, 10.0) > get_genesis_g70_high_speed_error_scale(0.2, 0.9, 0.8, 20.0)
+    assert get_genesis_g70_high_speed_error_scale(0.7, 0.95, 0.8, 30.0) < \
+      get_genesis_g70_high_speed_error_scale(0.7, 0.45, 0.8, 30.0)
 
   def test_sonata_hybrid_center_output_taper_is_mid_speed_and_center_gated(self):
     low_speed = get_sonata_hybrid_center_output_scale(0.0, 8.0)
@@ -1569,6 +1595,30 @@ class TestLatControl:
 
     assert controller.is_rav4_prime
     assert lac_log.active
+    assert tapered_output == pytest.approx(base_output * 0.5)
+
+  def test_genesis_g70_angle_output_taper_update_path(self, monkeypatch):
+    monkeypatch.setattr(latcontrol_torque, "get_genesis_g70_angle_output_scale", lambda *_args: 1.0)
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.GENESIS_G70_2020)
+    CS.vEgo = 15.0
+    CS.steeringAngleDeg = 85.0
+    base_output, _, lac_log = controller.update(
+      True, CS, VM, params, False, 0.004, False, 0.2, None, None, starpilot_toggles,
+    )
+
+    monkeypatch.setattr(latcontrol_torque, "get_genesis_g70_angle_output_scale", lambda *_args: 0.5)
+    tapered_controller, tapered_VM, tapered_CS, tapered_params, tapered_toggles = self._build_torque_controller(
+      HYUNDAI.GENESIS_G70_2020,
+    )
+    tapered_CS.vEgo = 15.0
+    tapered_CS.steeringAngleDeg = 85.0
+    tapered_output, _, _ = tapered_controller.update(
+      True, tapered_CS, tapered_VM, tapered_params, False, 0.004, False, 0.2, None, None, tapered_toggles,
+    )
+
+    assert controller.is_genesis_g70
+    assert lac_log.active
+    assert base_output != 0.0
     assert tapered_output == pytest.approx(base_output * 0.5)
 
   def test_ram_1500_transition_taper_curve(self):
@@ -2172,8 +2222,9 @@ class TestLatControl:
     assert lac_log.active
     assert controller.torque_params.latAccelFactor == pytest.approx(CP.lateralTuning.torque.latAccelFactor * KIA_FORTE_BASE_LAT_ACCEL_FACTOR_MULT)
 
-  def test_kia_carnival_default_update_path(self):
-    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_CARNIVAL_2025)
+  @pytest.mark.parametrize("candidate", (HYUNDAI.KIA_CARNIVAL_2025, HYUNDAI.KIA_CARNIVAL_HEV_4TH_GEN))
+  def test_kia_carnival_default_update_path(self, candidate):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(candidate)
     CS.vEgo = 8.5
 
     _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)

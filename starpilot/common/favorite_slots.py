@@ -480,20 +480,12 @@ def trigger_favorite_action(key: str | None, params_memory: Params | None = None
   return True
 
 
-def toggle_favorite_slot(slot_index: int, params: Params | None = None, params_memory: Params | None = None, *,
+def execute_favorite_key(key: str | None, params: Params | None = None, params_memory: Params | None = None, *,
                          eligible_keys: Iterable[str] | None = None) -> bool:
-  """Universal polymorphic favorite execution dispatcher."""
-  if slot_index < 0 or slot_index >= FAVORITE_SLOT_COUNT:
-    return False
-
   params = params or Params(return_defaults=True)
   eligible_keys = set(eligible_keys) if eligible_keys is not None else None
-  slots = load_favorite_slots(params, eligible_keys=eligible_keys)
-  slot = slots[slot_index]
-  key = slot.get("key")
-  if not slot.get("enabled") or not key:
+  if not favorite_key_is_valid(params, key, eligible_keys=eligible_keys):
     return False
-
   if not is_param_action_safe_onroad(key, params):
     return False
 
@@ -514,6 +506,22 @@ def toggle_favorite_slot(slot_index: int, params: Params | None = None, params_m
     return True
 
   return False
+
+
+def toggle_favorite_slot(slot_index: int, params: Params | None = None, params_memory: Params | None = None, *,
+                         eligible_keys: Iterable[str] | None = None) -> bool:
+  """Universal polymorphic favorite execution dispatcher."""
+  if slot_index < 0 or slot_index >= FAVORITE_SLOT_COUNT:
+    return False
+
+  params = params or Params(return_defaults=True)
+  eligible_keys = set(eligible_keys) if eligible_keys is not None else None
+  slots = load_favorite_slots(params, eligible_keys=eligible_keys)
+  slot = slots[slot_index]
+  key = slot.get("key")
+  if not slot.get("enabled") or not key:
+    return False
+  return execute_favorite_key(key, params, params_memory, eligible_keys=eligible_keys)
 
 
 def unassign_favorite_slot(slot_index: int, params: Params | None = None, params_memory: Params | None = None, *,

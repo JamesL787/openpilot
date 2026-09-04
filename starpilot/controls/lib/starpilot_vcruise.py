@@ -563,6 +563,8 @@ class StarPilotVCruise:
     following_lead = bool(getattr(self.starpilot_planner.starpilot_following, "following_lead", False))
     manual_speed_control = is_manual_speed_control(sm)
     csc_available = (
+      not force_stop_active and
+      not self.forcing_stop and
       long_control_active and
       not manual_speed_control and
       v_ego > CRUISING_SPEED and

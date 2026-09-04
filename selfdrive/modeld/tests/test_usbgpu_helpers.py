@@ -55,7 +55,7 @@ def test_external_gpu_voltage_uses_hardware_specific_source():
 
 
 def test_external_gpu_power_must_remain_stable():
-  ready, stable_since = modeld._external_gpu_power_ready(12800, 10.0, None)
+  ready, stable_since = modeld._external_gpu_power_ready(9900, 10.0, None)
   assert not ready
   assert stable_since is None
 
@@ -169,6 +169,41 @@ def test_tinygrad_disk_cache_connection_is_closed_between_models(monkeypatch):
 
   assert connection.closed
   assert tinygrad_helpers._db_connection is None
+
+
+def test_tinygrad_thread_local_cache_holder_survives_cleanup(monkeypatch):
+  import threading
+  import tinygrad.helpers as tinygrad_helpers
+
+  class FakeConnection:
+    def __init__(self):
+      self.closed = False
+
+    def close(self):
+      self.closed = True
+
+  holder = threading.local()
+  connection = FakeConnection()
+  holder.conn = connection
+  monkeypatch.setattr(tinygrad_helpers, "_db_connection", holder)
+
+  modeld._close_tinygrad_disk_cache_connection()
+
+  assert connection.closed
+  assert tinygrad_helpers._db_connection is holder
+  assert not hasattr(holder, "conn")
+
+
+def test_tinygrad_empty_thread_local_cache_holder_is_safe(monkeypatch):
+  import threading
+  import tinygrad.helpers as tinygrad_helpers
+
+  holder = threading.local()
+  monkeypatch.setattr(tinygrad_helpers, "_db_connection", holder)
+
+  modeld._close_tinygrad_disk_cache_connection()
+
+  assert tinygrad_helpers._db_connection is holder
 
 
 def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):
