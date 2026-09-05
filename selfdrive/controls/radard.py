@@ -315,7 +315,6 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
              preferred_track_id: int = -1, honda_bosch_a_radar: bool = False) -> dict[str, Any]:
   lead_detection_probability = float(getattr(starpilot_toggles, "lead_detection_probability", 0.35))
   filtered_lead_prob = float(lead_msg.prob if lead_prob is None else lead_prob)
-  model_lead_available = ready and filtered_lead_prob > lead_detection_probability
 
   # Determine leads, this is where the essential logic happens
   if len(tracks) > 0 and ready and filtered_lead_prob > lead_detection_probability:
@@ -337,6 +336,8 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
       low_speed_tracks = [c for c in tracks.values() if honda_bosch_a_low_speed_radar_lead_sane(c, v_ego)]
     else:
       low_speed_tracks = [c for c in tracks.values() if c.potential_low_speed_lead(v_ego)]
+
+    model_lead_available = ready and filtered_lead_prob > lead_detection_probability
 
     # Keep a previously selected Bosch radar track through ordinary model-probability fluctuations
     # when it is still coherent. If the model has a valid lead, the old track must still agree with
@@ -379,18 +380,6 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
       # Only choose new track if it is actually closer than the previous one
       if (not lead_dict['status']) or (closest_track.dRel < lead_dict['dRel']):
         lead_dict = closest_track.get_RadarState()
-
-  # Relaxed preferred-track continuity may remain useful for ordinary control, but it
-  # must not independently authorize a Civic Bosch-A planner FCW.
-  if (honda_bosch_a_radar and lead_dict.get('status', False) and lead_dict.get('radar', False) and
-      model_lead_available):
-    selected_track = tracks.get(lead_dict.get('radarTrackId', -1))
-    strict_match = selected_track is not None and track_matches_vision(
-      selected_track, lead_msg, v_ego,
-      dist_scale=0.25, dist_floor=5.0,
-      vel_limit=10.0, y_std_scale=1.0, y_floor=1.0,
-    )
-    lead_dict['fcw'] = bool(lead_dict.get('fcw', False) and strict_match)
 
   for track in tracks.values():
     track.leadTrackID = lead_dict.get('radarTrackId', -1)

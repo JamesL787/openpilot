@@ -4,7 +4,6 @@ import numpy as np
 import time
 import cereal.messaging as messaging
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
-from opendbc.car.honda.values import HONDA_BOSCH_A
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
@@ -15,8 +14,6 @@ from openpilot.starpilot.controls.lib.starpilot_vcruise import FT_TO_M, OFFSET_F
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, get_safe_obstacle_distance
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import desired_follow_distance
-from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import FCW_MAX_TTC
-from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import RAW_LEAD_SAFETY_DISTANCE
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import should_trigger_planner_fcw
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import STOP_DISTANCE
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
@@ -91,6 +88,7 @@ MODEL_LAUNCH_MOVING_SPEED = 1.2
 MODEL_LAUNCH_MAX_ACCEL = 1.5
 RAW_LEAD_SAFETY_MIN_CLOSING_SPEED = 0.5
 RAW_LEAD_SAFETY_TTC = 7.0
+RAW_LEAD_SAFETY_DISTANCE = 40.0
 RAW_RADAR_STOPPED_LEAD_MAX_SPEED = 1.0
 RAW_RADAR_STOPPED_LEAD_MAX_DISTANCE = 120.0
 RAW_LEAD_LOW_SPEED_HOLD_MAX_EGO_SPEED = 4.5
@@ -123,7 +121,21 @@ STANDSTILL_STOPPED_LEAD_GUARD_MIN_BRAKE = 0.16
 STANDSTILL_STOPPED_LEAD_GUARD_MAX_BRAKE = 0.26
 LEAD_DEPART_ACCEL_HOLD_TIME = 1.2
 LEAD_DEPART_ACCEL_HOLD_MAX_EGO_SPEED = 2.0
-CLOSE_LEAD_BRAKE_CAP_MAX_TTC = 25.0
+# Engagement horizon for the close-lead brake cap. Was 25.0 s, which is not "close" by any reading of
+# the name: on Peter route 000001eb at 5:48 it engaged on a lead 71.1 m away at 15.2 s TTC and pulled
+# commanded accel from +0.89 to -0.32 while the MPC itself still reported source `cruise`. 8.0 s sits
+# with this file's other lead-safety horizons (RAW_LEAD_SAFETY_TTC 7.0, FCW_MAX_TTC 4.0) and still
+# engages on the genuine close approaches (000001e8 at 9:00 gates at 5.5 s) and keeps the
+# existing 9.2 s vision-approach behaviour, while clearing 000001eb 5:48 (15.2 s) and its
+# rubber-banding neighbour (17.6 s) with margin.
+CLOSE_LEAD_BRAKE_CAP_MAX_TTC = 10.0
+
+# The cap used to be a step: nothing below required_decel 0.2, full demand at and above it. That
+# discontinuity is the accel->decel->accel cycling reported as rubber banding -- 000001eb at 5:48
+# shows it toggling off/on/off inside 1.2 s as required_decel crosses 0.2. Ramp the demand in over a
+# band instead, so a marginal geometry produces a marginal cap rather than a step.
+CLOSE_LEAD_BRAKE_CAP_RAMP_MIN = 0.2
+CLOSE_LEAD_BRAKE_CAP_RAMP_FULL = 0.5
 INSIDE_GAP_CLOSING_MIN_EGO_SPEED = 8.0
 INSIDE_GAP_CLOSING_MIN_LEAD_SPEED = 5.0
 INSIDE_GAP_CLOSING_MIN_SPEED = 0.5
@@ -359,11 +371,11 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
   return [a_target[0], min(a_target[1], a_x_allowed)]
 
 
-def should_publish_planner_fcw(crash_cnt: int, car_state, radar_state, *, require_lead_fcw=False) -> bool:
+def should_publish_planner_fcw(crash_cnt: int, car_state, radar_state) -> bool:
   return (
     crash_cnt > 2 and
     not car_state.standstill and
-    should_trigger_planner_fcw(radar_state.leadOne, float(car_state.vEgo), require_lead_fcw=require_lead_fcw)
+    should_trigger_planner_fcw(radar_state.leadOne, float(car_state.vEgo))
   )
 
 
@@ -563,12 +575,9 @@ class LongitudinalPlanner:
 
   def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
-    self.honda_bosch_a_radar = CP.brand == "honda" and CP.carFingerprint in HONDA_BOSCH_A and not CP.radarUnavailable
     self.longitudinal_actuator_delay = max(DT_MDL, float(CP.longitudinalActuatorDelay))
-    self.mpc = LongitudinalMpc(
-      dt=dt,
-      raw_geometry_model_guard=self.honda_bosch_a_radar,
-    )
+    self.close_lead_brake_cap_value = 0.0
+    self.mpc = LongitudinalMpc(dt=dt)
     self.fcw = False
     self.dt = dt
     self.model_allow_throttle = True
@@ -739,40 +748,34 @@ class LongitudinalPlanner:
     if lead is None or not lead.status:
       return None
 
-    closing_speed = max(0.0, v_ego - lead.vLead)
-    d_rel = max(float(lead.dRel), 0.0)
-    raw_ttc = d_rel / max(closing_speed, 0.1) if closing_speed > 0.1 else float("inf")
-
-    # Bosch-A's lead acceleration is a short-history derivative of the native velocity. Around a
-    # fresh cut-in it can briefly report several m/s^2 of lead braking even while distance/vRel and
-    # the model-backed MPC trajectory remain non-urgent. Do not let this post-MPC safety cap bypass
-    # that trajectory outside the close/FCW safety envelope. Raw distance/vRel still anchor the MPC,
-    # while close, FCW-horizon, and stopped-lead cases retain the original full brake authority.
-    if (
-      self.honda_bosch_a_radar and
-      bool(getattr(lead, "radar", False)) and
-      d_rel > RAW_LEAD_SAFETY_DISTANCE and
-      raw_ttc > FCW_MAX_TTC
-    ):
-      return None
-
     lead_brake = max(0.0, -float(lead.aLeadK))
     reaction_t = max(self.longitudinal_actuator_delay, self.dt)
+    closing_speed = max(0.0, v_ego - lead.vLead)
     projected_closing_speed = closing_speed + lead_brake * reaction_t
     if projected_closing_speed < 0.1 and lead_brake < 0.5:
       return None
 
     target_gap = float(np.clip(2.0 + 0.2 * v_ego, 2.0, 6.0))
     delay_buffer = projected_closing_speed * reaction_t
-    available_gap = max(d_rel - target_gap - delay_buffer, 0.5)
+    available_gap = max(float(lead.dRel) - target_gap - delay_buffer, 0.5)
     projected_ttc = available_gap / max(projected_closing_speed, 0.1)
     if projected_ttc > CLOSE_LEAD_BRAKE_CAP_MAX_TTC:
       return None
-    required_decel = (projected_closing_speed ** 2) / (2.0 * available_gap) + 0.7 * lead_brake
-    if required_decel < 0.2:
+    # Lead braking is counted ONCE. To null a closing speed c over a usable gap d while the lead
+    # decelerates at b, the ego demand is c^2/(2d) + b. Using the lead-brake-inflated
+    # projected_closing_speed in the quadratic term AND adding b again double-counted it: on
+    # 000001e8 at 9:00 that inflated the demand from 4.27 to 4.87 m/s^2. The quadratic term is the
+    # smaller one either way -- at that sample aLeadK supplied 85% of the total -- so this makes the
+    # cap correct, not gentle. A spurious aLeadK still dominates it; that is an input problem, and
+    # deliberately not something this function pretends to solve.
+    required_decel = (closing_speed ** 2) / (2.0 * available_gap) + 0.7 * lead_brake
+
+    ramp = float(np.clip((required_decel - CLOSE_LEAD_BRAKE_CAP_RAMP_MIN) /
+                         (CLOSE_LEAD_BRAKE_CAP_RAMP_FULL - CLOSE_LEAD_BRAKE_CAP_RAMP_MIN), 0.0, 1.0))
+    if ramp <= 0.0:
       return None
 
-    return max(accel_min, -required_decel)
+    return max(accel_min, -required_decel * ramp)
 
   @staticmethod
   def get_inside_gap_closing_lead_accel_cap(lead, v_ego, accel_min, t_follow):
@@ -2377,10 +2380,7 @@ class LongitudinalPlanner:
     self.j_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC[:-1], self.mpc.j_solution)
 
     # TODO counter is only needed because radar is glitchy, remove once radar is gone
-    self.fcw = should_publish_planner_fcw(
-      self.mpc.crash_cnt, sm['carState'], sm['radarState'],
-      require_lead_fcw=self.honda_bosch_a_radar,
-    )
+    self.fcw = should_publish_planner_fcw(self.mpc.crash_cnt, sm['carState'], sm['radarState'])
     if self.fcw:
       cloudlog.info("FCW triggered")
 
@@ -2528,6 +2528,7 @@ class LongitudinalPlanner:
     tracked_vision_approach_caps = []
     vision_low_speed_stop_active = False
     vision_brake_cap_active = False
+    self.close_lead_brake_cap_value = 0.0
     if lead_control_active:
       for lead in (self.lead_one, self.lead_two):
         rav4_early_lead_cap = get_toyota_rav4_tss2_early_lead_cap(
@@ -2538,6 +2539,7 @@ class LongitudinalPlanner:
         cap = self.get_close_lead_brake_cap(lead, v_ego, output_accel_min)
         if cap is not None:
           close_lead_caps.append(cap)
+          self.close_lead_brake_cap_value = min(self.close_lead_brake_cap_value, cap)
         cap = get_honda_crv_5g_low_speed_stopped_lead_cap(
           self.CP, lead, v_ego, vision_cap_accel_min,
         )
@@ -3145,5 +3147,7 @@ class LongitudinalPlanner:
     longitudinalPlan.shouldStop = bool(self.output_should_stop) or force_stop_handoff
     longitudinalPlan.allowBrake = True
     longitudinalPlan.allowThrottle = bool(self.allow_throttle)
+    longitudinalPlan.closeLeadBrakeCap = float(self.close_lead_brake_cap_value
+                                               if self.close_lead_brake_cap_value < 0.0 else 0.0)
 
     pm.send('longitudinalPlan', plan_send)

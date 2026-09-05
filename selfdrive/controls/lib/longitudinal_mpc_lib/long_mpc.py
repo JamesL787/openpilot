@@ -138,7 +138,6 @@ LEAD_ACCEL_TAU = 1.5
 FCW_MIN_MODEL_PROB = 0.9
 FCW_MIN_CLOSING_SPEED = 0.5
 FCW_MAX_TTC = 4.0
-RAW_LEAD_SAFETY_DISTANCE = 40.0
 MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE = 0.5
 MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC = 7.0
 
@@ -155,13 +154,9 @@ T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 LEAD_T_IDXS_MODEL = np.asarray(ModelConstants.LEAD_T_IDXS, dtype=np.float64)
 COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
-# Civic-Bosch raw-geometry policy values. These are derived from existing planner
-# constants, not recovered Bosch calibration limits.
-MODEL_LEAD_TRAJECTORY_RAW_MIN_DISTANCE = 2.0 * STOP_DISTANCE
-MODEL_LEAD_TRAJECTORY_RAW_MAX_TTC = 5.0
 
 
-def build_model_lead_trajectory(model_lead, radar_lead, v_ego, *, raw_geometry_guard=False):
+def build_model_lead_trajectory(model_lead, radar_lead, v_ego):
   """Build a model-predicted lead path while preserving the raw h=0 anchor."""
   if model_lead is None or radar_lead is None or not bool(getattr(radar_lead, "status", False)):
     return None
@@ -192,14 +187,8 @@ def build_model_lead_trajectory(model_lead, radar_lead, v_ego, *, raw_geometry_g
   raw_lead_brake = max(0.0, -float(getattr(radar_lead, "aLeadK", 0.0)))
   closing_speed = max(0.0, float(v_ego) - raw_v_lead)
   ttc = raw_d_rel / max(closing_speed, 1e-3) if closing_speed > 0.1 else float("inf")
-  if raw_geometry_guard:
-    # For Bosch-A, transient derived aLeadK is not sufficient to discard a valid
-    # model future. Raw distance and closing geometry remain the safety authority.
-    if (raw_d_rel <= MODEL_LEAD_TRAJECTORY_RAW_MIN_DISTANCE or
-        ttc <= MODEL_LEAD_TRAJECTORY_RAW_MAX_TTC):
-      return None
-  elif (raw_lead_brake > MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE or
-        (closing_speed > 0.75 and ttc < MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC)):
+  if (raw_lead_brake > MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE or
+      (closing_speed > 0.75 and ttc < MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC)):
     return None
 
   # The model contributes future deltas only. This preserves raw lead source
@@ -218,10 +207,8 @@ def build_model_lead_trajectory(model_lead, radar_lead, v_ego, *, raw_geometry_g
   return np.column_stack((x_lead_mpc, v_lead_mpc))
 
 
-def should_trigger_planner_fcw(lead, v_ego: float, *, require_lead_fcw=False) -> bool:
+def should_trigger_planner_fcw(lead, v_ego: float) -> bool:
   if lead is None or not lead.status or float(getattr(lead, "modelProb", 0.0)) <= FCW_MIN_MODEL_PROB:
-    return False
-  if require_lead_fcw and not bool(getattr(lead, "fcw", False)):
     return False
 
   closing_speed = max(0.0, float(v_ego) - float(getattr(lead, "vLead", 0.0)))
@@ -441,10 +428,9 @@ def gen_long_ocp():
 
 
 class LongitudinalMpc:
-  def __init__(self, mode='acc', dt=DT_MDL, raw_geometry_model_guard=False):
+  def __init__(self, mode='acc', dt=DT_MDL):
     self.mode = mode
     self.dt = dt
-    self.raw_geometry_model_guard = bool(raw_geometry_model_guard)
     self.solver = AcadosOcpSolverCython(MODEL_NAME, ACADOS_SOLVER_TYPE, N)
     self.source = SOURCES[2]
     # Initialize smoothing filters with default time constants
@@ -646,15 +632,7 @@ class LongitudinalMpc:
     lead_active = lead is not None and lead.status and tracking_lead
 
     if lead_active:
-      model_lead_xv = build_model_lead_trajectory(
-        model_lead,
-        lead,
-        v_ego,
-        raw_geometry_guard=(
-          self.raw_geometry_model_guard and
-          bool(getattr(lead, "radar", False))
-        ),
-      )
+      model_lead_xv = build_model_lead_trajectory(model_lead, lead, v_ego)
       if model_lead_xv is not None:
         return model_lead_xv
 
@@ -1099,7 +1077,7 @@ class LongitudinalMpc:
 
     self.run()
     if (np.any(lead_xv_0[FCW_IDXS,0] - self.x_sol[FCW_IDXS,0] < CRASH_DISTANCE) and
-            should_trigger_planner_fcw(lead_one, v_ego, require_lead_fcw=self.raw_geometry_model_guard)):
+            should_trigger_planner_fcw(lead_one, v_ego)):
       self.crash_cnt += 1
     else:
       self.crash_cnt = 0

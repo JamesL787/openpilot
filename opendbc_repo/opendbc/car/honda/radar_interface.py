@@ -50,13 +50,31 @@ BOSCH_A_ALL_IDS = [addr for ids in BOSCH_A_MAIN_IDS for addr in ids] + BOSCH_A_A
 BOSCH_A_TRIGGER_MSG = BOSCH_A_MAIN_IDS[BOSCH_A_NUM_SLOTS - 1][3]
 BOSCH_A_SWEEP_END_MSG = BOSCH_A_AUX_IDS[BOSCH_A_NUM_SLOTS - 1]  # 0x297
 
-# Observed coherent Bosch-A sweep cadence is ~14.5-16 Hz in the available captures.
-BOSCH_A_FREQ_HZ = 15
+# Coherent Bosch-A sweep cadence, measured from 0x280 inter-arrival across Peter's routes:
+# median 14.35 Hz (p5 12.5, p95 16.9). This also sets the lead-Kalman dt in radard, so the
+# previous round 15 ran the filter ~4.5% fast.
+BOSCH_A_FREQ_HZ = 14.35
 
-# Range: f0 raw_range (12-bit, B2:B3 high nibble) -> meters. Firmware q16 = 8*raw_range; physical
-# calibration keeps slope/offset as named, replay-refinable constants (do not add a second radar/camera
-# longitudinal offset on top of this).
-BOSCH_A_RANGE_SCALE_M = 0.05712
+# Range: f0 raw_range (12-bit, B2:B3 high nibble) -> meters. Firmware q16 = 8*raw_range.
+#
+# The scale is firmware-exact, not fitted. AC004 converts the internal value with
+# (q16 - n) / 128, and q16 = sat16(round(8 * raw_range)), so
+#
+#     range_m = (8 * raw_range - n) / 128 = raw_range / 16 - n / 128
+#
+# Corroboration that 1/16 is the designed mapping rather than a coincidence: 8 * 4095 = 32760
+# fits int16 with 7 counts to spare, so the *8 exists to make the 12-bit field fill the internal
+# word; full scale is 4095/16 = 255.9 m; and /128 (Q7) is this firmware's unit for physical
+# quantities throughout. The previous 0.05712 was 16 * 0.00357, and that 0.00357 was solved from
+# a single tape point with the offset assumed, so it read progressively short with distance
+# (~9% low, -9 m at 60 m against vision).
+BOSCH_A_RANGE_SCALE_M = 1.0 / 16.0
+
+# Offset. The firmware term is -n/128, where n is assembled from a configuration word plus a
+# runtime addend and is therefore a PER-UNIT CALIBRATION VALUE, not a constant; 335 (-2.617 m) is
+# only the fallback the firmware uses when the config word reads zero. -3.0 is retained because it
+# sits inside the plausible calibration range and the choice barely moves the residual. Do not
+# re-fit this against vision: read it from the radar's own configuration instead.
 BOSCH_A_RANGE_OFFSET_M = -3.0
 
 # Azimuth: f0 raw_angle (11-bit, B4:B5 high 3 bits), offset-binary about 1024.
@@ -91,14 +109,65 @@ BOSCH_A_DIRECT_VREL_MIN_RAW = 0
 BOSCH_A_DIRECT_VREL_MAX_RAW = 1728
 BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / 64.0
-# Empirical raw-quality policy. U11 error against an independent range-derivative reference rises
-# with u10 in a graded way, not a cliff: replay evidence bins it roughly as 0-255 clean, 256-511 only
-# mildly degraded, 512-767 clearly degraded, 768+ worst. 511 is set at that mild/clear boundary so
-# U11 is still trusted directly through the mildly-degraded band; only u10 above this triggers the
-# high-u10 coast path below. This is deliberately not presented as a Bosch physical unit or
-# descriptor constant; it keeps saturated/high-uncertainty AUX values from becoming authoritative
-# velocity measurements.
+# The domain endpoints are SATURATION RAILS: at raw 0 or 1728 the true |vRel| is >= 13.5 m/s and
+# the exact value is not recoverable from this field. A rail is therefore a BOUND, not an unknown,
+# and it must still be published.
+#
+# This was briefly treated as "no measurement" and routed to the coast path. That was a safety
+# regression, because a stationary car approached at any speed above 13.5 m/s (30 mph) rails on
+# EVERY sweep -- so the coast never ended, it outlived BOSCH_A_STALE_S, and the radar point was
+# deleted. Measured on route 000001f9 at 29:52: two stopped cars, 88 of 88 active frames on the low
+# rail with healthy u10 (78-94), range closing smoothly at -19.4 m/s. The radar lead was dropped,
+# radard fell back to the vision lead which reported only -11.4 m/s, and the planner commanded 0.00
+# while closing on stopped traffic at 76 m with a 6.6 s TTC. The driver had to intervene.
+#
+# Publishing the rail understates the closing rate (a stopped car reads as vLead = vEgo - 13.5), and
+# that understatement is why it looked worth "fixing". But understating closing still brakes;
+# deleting the object does not. Recovering the true value past the rail needs the range channel and
+# is deliberately left for a separate, validated change.
+BOSCH_A_DIRECT_VREL_RAILS_RAW = (BOSCH_A_DIRECT_VREL_MIN_RAW, BOSCH_A_DIRECT_VREL_MAX_RAW)
+# u10 is a genuine uncertainty on U11, but it is CONFOUNDED WITH DYNAMICS. Measured against an
+# event-local reference (quadratic fit to a centred window, derivative at the centre) over 16,834
+# frames: median |err| rises 0.26 -> 0.88 -> 1.44 -> 1.95 m/s across u10 bins 0-64 / 64-128 /
+# 128-192 / 192-256, but median |a_rel| rises 0.73 -> 2.13 -> 3.51 -> 4.59 m/s^2 alongside it.
+# corr(u10,|err|) = +0.40 and corr(u10,|a_rel|) = +0.43. Holding dynamics out, the quality signal is
+# real (calm-frame corr +0.52) -- but u10 climbs during genuine hard braking just as reliably.
+#
+# 511 is the value validated in d5000fe344 by replaying 20 bookmarks through the real
+# RadarInterface and radard's Kalman filter, where it collapsed recorded spikes up to -26.5 m/s^2
+# aLeadK. It was briefly lowered to 128 on error statistics alone; that undid the validated result
+# and caused a measured regression -- on route 000001f3 at 19:27 u10 sat above 128 for 0.81 s during
+# a real ~8 m/s^2 lead decel, the coast outlived BOSCH_A_STALE_S, the lead was deleted, and the
+# vision fallback injected a 5 m / 6 m/s step that drove a -3.51 m/s^2 brake. Restored here.
+#
+# Do not re-tune this from offline error statistics. u10's confounding with dynamics means a lower
+# threshold preferentially rejects real manoeuvring; the coast paths below are what must stay safe,
+# not this number.
 BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW = 511
+
+# Multi-sweep velocity/range consistency. The existing per-sweep innovation gate cannot see a
+# velocity error at all: over one ~70 ms sweep even a 3 m/s error moves the range by 0.2 m, far
+# under its 2-5 m thresholds. Comparing U11 against a range rate fitted over several sweeps does
+# have that power.
+#
+# Scope, measured on Peter's nine flagged events: this catches GROSS disagreement -- the 000001eb
+# 6:59 event reported vRel -10.58 m/s while the range was actually opening at +0.46 m/s, an 11 m/s
+# contradiction, across a track-identity change. It deliberately does NOT try to catch the milder
+# 0.6-2.5 m/s overshoots seen at deceleration onset: a trailing window legitimately lags
+# instantaneous velocity during real braking, so a threshold tight enough to catch those would also
+# reject genuine hard decels. Those are the u10 gate's job.
+#
+# The test is ONE-SIDED, and that matters. U11 lags the true closure at a deceleration onset -- at
+# 000001f3 19:27 the fitted range rate was -6.7 m/s while U11 still read -2.08 -- so a symmetric
+# |U11 - rate| test fires during genuine hard braking and coasts exactly when the velocity is most
+# needed. Lag can only make U11 UNDER-report closing while the lead is braking, so only the other
+# direction is evidence of a fault: U11 claiming more closing than the geometry can support.
+# Checked both ways: 000001eb 6:59 (U11 -10.58 while the range OPENED at +0.46) is rejected;
+# the 000001f3 onset is not. In the mirror case, a lead accelerating away, the one-sided test
+# coasts a more-conservative velocity, so it fails safe.
+BOSCH_A_VREL_RATE_CHECK_MIN_SAMPLES = 4
+BOSCH_A_VREL_RATE_CHECK_MIN_SPAN_S = 0.25
+BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS = 3.0
 
 # Measurement-authority policy. These are replay-derived safety/tuning gates, not recovered Bosch
 # constants. Range innovation is measured from the previous accepted observation so a reset cannot
@@ -461,6 +530,7 @@ class RadarInterface(RadarInterfaceBase):
                             direct_vrel_uncertainty_raw is not None and
                             direct_vrel_uncertainty_raw > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW)
 
+
       # Validate against the previous accepted range. Qualified U11 and the range-ratio field are
       # independent corroboration paths; high-U10 U11 is deliberately excluded from this decision.
       previous_sample = track.samples[-1] if track.samples else None
@@ -514,7 +584,25 @@ class RadarInterface(RadarInterfaceBase):
         self._slot_track_ids[slot] = track_id
         continue
 
-      if high_u10_live_vrel:
+      # Multi-sweep consistency: does the range actually move the way this velocity claims?
+      # Fitted over the accepted range history, so it is immune to the single-sweep blindness above.
+      vrel_candidate = direct_vrel if direct_vrel is not None else ratio_vrel
+      vrel_inconsistent = False
+      if vrel_candidate is not None and len(track.samples) >= BOSCH_A_VREL_RATE_CHECK_MIN_SAMPLES - 1:
+        ts = [sample[0] for sample in track.samples] + [now_s]
+        ds = [sample[1] for sample in track.samples] + [dRel]
+        span = ts[-1] - ts[0]
+        if span >= BOSCH_A_VREL_RATE_CHECK_MIN_SPAN_S:
+          n = len(ts)
+          t_mean = sum(ts) / n
+          d_mean = sum(ds) / n
+          denom = sum((t - t_mean) ** 2 for t in ts)
+          if denom > 1e-9:
+            rate = sum((t - t_mean) * (d - d_mean) for t, d in zip(ts, ds)) / denom
+            # One-sided: only U11 claiming MORE closing than the range supports is a fault.
+            vrel_inconsistent = vrel_candidate < rate - BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
+
+      if high_u10_live_vrel or vrel_inconsistent:
         # The range cleared innovation checking above, so geometry here is trustworthy; only vRel is
         # in question. Preserve current geometry but coast only a recent authoritative motion
         # estimate without a KF update, rather than publishing a one-sweep-derivative synthesis.
