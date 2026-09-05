@@ -22,6 +22,8 @@ SWIPE_THRESHOLD = 80
 CLOSE_BTN_SIZE = 200
 CLOSE_ICON_SIZE = 70
 NAV_BTN_HEIGHT = 110
+MIN_NAV_BTN_HEIGHT = 72
+NAV_BOTTOM_MARGIN = 12
 PANEL_MARGIN = 10
 
 # Colors
@@ -228,8 +230,12 @@ class SettingsLayout(Widget):
 
       # Navigation buttons
       y = rect.y + 300
+      nav_button_height = min(
+        NAV_BTN_HEIGHT,
+        max(MIN_NAV_BTN_HEIGHT, (rect.height - (y - rect.y) - NAV_BOTTOM_MARGIN) / len(self._panels)),
+      )
       for panel_type, panel_info in self._panels.items():
-        button_rect = rl.Rectangle(rect.x + 50, y, rect.width - 150, NAV_BTN_HEIGHT)
+        button_rect = rl.Rectangle(rect.x + 50, y, rect.width - 150, nav_button_height)
 
         # Button styling
         is_selected = panel_type == self._current_panel
@@ -243,7 +249,7 @@ class SettingsLayout(Widget):
         # Store button rect for click detection
         panel_info.button_rect = button_rect
 
-        y += NAV_BTN_HEIGHT
+        y += nav_button_height
 
   def _draw_current_panel(self, rect: rl.Rectangle):
     rl.draw_rectangle_rounded(rl.Rectangle(rect.x + 10, rect.y + 10, rect.width - 20, rect.height - 20), 0.04, 30, PANEL_COLOR)
