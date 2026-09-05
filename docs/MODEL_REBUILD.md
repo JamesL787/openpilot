@@ -5,9 +5,21 @@ releasing a new model manifest generation. A manifest generation represents one
 tinygrad ABI. Model behavior versions (`v8` through `v16`) are independent and
 must remain unchanged when only tinygrad changes.
 
-The current generation is **v25**, pinned to tinygrad
-`e837e367aac9e1a66e689f4f32ce20ca9367df13`. The supported compiler is
-`comma@192.168.3.110`; never substitute another comma without explicit approval.
+The published generation is **v25**, whose legacy artifacts were built with
+tinygrad `e837e367aac9e1a66e689f4f32ce20ca9367df13`. VFN's next-generation
+runtime is pinned to `f6fc4e3f2c3db5fae1e19cbfbc3ad9fc579a12ae` so it can build
+comma's fused Chestnut model graph. New external-GPU artifacts use format v2
+and record that exact compiler revision; modeld refuses a v2 artifact when its
+pin differs from the runtime.
+
+Legacy format-v1 artifacts remain loadable during the transition so the whole
+catalog does not have to be rebuilt at once. This is a compatibility allowance,
+not proof that every old artifact is safe: validate each selected v1 artifact
+on the comma after a tinygrad bump. The built-in RDF43 artifact must always pass
+a real QCOM warmup before deployment. The next published catalog generation
+must use a new manifest version and must not mix old and new compiler pins.
+
+The current development comma is `comma@192.168.1.118`.
 
 ## Release Contract
 
@@ -20,8 +32,8 @@ The current generation is **v25**, pinned to tinygrad
   models as well as external-GPU models.
 - Include `artifact_sha256` and `artifact_chunk_count` in the manifest.
 - Set `uses_external_gpu: true` only for models compiled for Chestnut.
-- Do not rename an artifact from another tinygrad revision. PKLs must either use
-  the exact v25 pin or be rebuilt with it.
+- Do not rename an artifact from another tinygrad revision. Published PKLs must
+  use the exact pin declared for their manifest generation.
 - Do not add models absent from the existing StarPilot catalog unless the
   release explicitly requests them.
 
@@ -40,26 +52,43 @@ pickle.
 4. Review upstream `modeld`, compiler, parser, and camera-warp changes. Merge
    required ABI changes into StarPilot's existing multi-model runtime; never
    replace StarPilot `modeld.py` wholesale.
-5. Increment `MANIFEST_CANDIDATES` to a new single version. Do not fall back to
-   the prior manifest because its PKLs target a different tinygrad ABI.
+5. Before publishing rebuilt artifacts, increment `MANIFEST_CANDIDATES` to a
+   new single version. Do not put f6fc artifacts into the published v25 catalog.
 6. Sync the exact tree to the compiler before building anything:
 
 ```bash
 ./dev sync
 rsync -az --delete --exclude=.git --exclude=__pycache__ -e ssh \
-  tinygrad_repo/ comma@192.168.3.110:/data/openpilot/tinygrad_repo/
+  tinygrad_repo/ comma@192.168.1.118:/data/openpilot/tinygrad_repo/
 rsync -az -e ssh selfdrive/modeld/ \
-  comma@192.168.3.110:/data/openpilot/selfdrive/modeld/
+  comma@192.168.1.118:/data/openpilot/selfdrive/modeld/
 rsync -az -e ssh scripts/model_compiler.py \
-  comma@192.168.3.110:/data/openpilot/scripts/model_compiler.py
-rsync -az -e ssh models comma@192.168.3.110:/data/openpilot/models
+  comma@192.168.1.118:/data/openpilot/scripts/model_compiler.py
+rsync -az -e ssh models comma@192.168.1.118:/data/openpilot/models
 ```
 
 Confirm the device marker before compiling:
 
 ```bash
-ssh comma@192.168.3.110 \
+ssh comma@192.168.1.118 \
   'cat /data/openpilot/tinygrad_repo/TINYGRAD_COMMIT'
+```
+
+Before changing `/data/openpilot`, a legacy QCOM artifact can be smoke-tested
+against the new tinygrad from `/data/tmp`. Run from outside `/data/openpilot` so
+Python does not import the checkout's old `tinygrad` through `sys.path[0]`:
+
+```bash
+rsync -az --delete --exclude=__pycache__ tinygrad_repo/ \
+  comma@192.168.1.118:/data/tmp/vfn-tinygrad-f6fc-test/
+
+ssh comma@192.168.1.118 '
+  cd /data/openpilot && source ./launch_env.sh
+  cd /data/tmp
+  DEV=QCOM WARP_DEV=QCOM \
+  PYTHONPATH=/data/tmp/vfn-tinygrad-f6fc-test:/data/openpilot \
+  timeout 120 python3 -c '\''from openpilot.selfdrive.modeld.modeld import ModelState; m=ModelState(1928, 1208, model_id_override="rdf43", write_model_version=False); m.warmup(); print("RDF43 warmup passed")'\''
+'
 ```
 
 ## Reuse Compatible Artifacts
@@ -94,9 +123,41 @@ Stage one model at a time in `/data/openpilot/uncompiledmodels`; this avoids
 filling the comma and prevents `./models` from selecting stale input files.
 
 ```bash
-./models --<model-id> --version <behavior-version>
-./models --<gpu-model-id> --version v16 --gpu
+./models --model <model-id> --version <behavior-version>
+./models --model <gpu-model-id> --version v16 --gpu
 ```
+
+`--gpu` now always builds the fused comma graph with the required Chestnut
+environment: `DEV=USB+AMD:LLVM`, `FRAME_DEV=CPU`, `FLOAT16=1`, `TC_OPT=2`, and
+`TC_MIN_GLOBALS=32`. The compiler captures warp plus policy in one TinyJit and
+runs 20 deterministic replay checks per seed after the pickle round trip. Set
+`STARPILOT_GPU_VALIDATION_RUNS` only when intentionally changing that count.
+
+For a local TGC candidate, build without replacing the installed model first:
+
+```bash
+cd /data/openpilot
+source ./launch_env.sh
+./models \
+  --model local-tgc \
+  --input-dir /data/openpilot/uncompiledmodels/tgc \
+  --output-dir /data/openpilot/compiledmodels/f6fc-candidate \
+  --input-format supercombo \
+  --version v16 \
+  --image-history-pipeline policy \
+  --gpu \
+  --no-install
+
+python3 scripts/validate_model_artifact.py \
+  --artifact /data/openpilot/compiledmodels/f6fc-candidate/local-tgc_driving_tinygrad.pkl \
+  --model local-tgc --version v16 --external-gpu
+```
+
+Only after validation should the candidate be copied atomically into
+`/data/models/local-tgc_driving_tinygrad.pkl`. Keep RDF43 selected for the first
+offroad modeld soak; select TGC only after repeated outputs remain finite and
+bounded. A v2 artifact with the wrong tinygrad pin fails at load instead of
+silently running.
 
 The default input is a single supercombo ONNX. For legacy sources use:
 
@@ -111,7 +172,7 @@ for local use.
 The resumable bulk helper is:
 
 ```bash
-STAR_PILOT_MODEL_REMOTE=comma@192.168.3.110 \
+STAR_PILOT_MODEL_REMOTE=comma@192.168.1.118 \
 python3 scripts/model_rebuild_pipeline.py compile \
   --workspace /Volumes/T5/StarPilot-Model-Rebuild \
   --source-map scripts/model_source_map_v25.json \

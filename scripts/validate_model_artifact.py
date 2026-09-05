@@ -15,28 +15,34 @@ if str(REPO_ROOT) not in sys.path:
 from tinygrad.tensor import Tensor
 
 from openpilot.common.params import Params
-from openpilot.selfdrive.modeld.modeld import ModelState
+from openpilot.selfdrive.modeld.modeld import ModelState, _validate_external_gpu_outputs
 
 
 def main() -> int:
   parser = argparse.ArgumentParser()
   parser.add_argument("--model", required=True)
   parser.add_argument("--version", required=True)
+  parser.add_argument("--artifact", type=Path, help="Validate this candidate PKL without installing or selecting it.")
+  parser.add_argument("--external-gpu", action="store_true", help="Load the candidate on the external AMD GPU.")
   parser.add_argument("--camera-resolution", default="1928x1208")
   args = parser.parse_args()
   cam_w, cam_h = (int(value) for value in args.camera_resolution.split("x", 1))
 
-  params = Params()
-  params.put("Model", args.model)
-  params.put("DrivingModel", args.model)
-  params.put("ModelVersion", args.version)
-  params.put("DrivingModelVersion", args.version)
+  if args.artifact is None:
+    params = Params()
+    params.put("Model", args.model)
+    params.put("DrivingModel", args.model)
+    params.put("ModelVersion", args.version)
+    params.put("DrivingModelVersion", args.version)
 
-  model = ModelState(cam_w, cam_h)
-  frames = [
-    Tensor.randint(model.frame_buf_size, low=0, high=256, dtype="uint8", device=model.WARP_DEV).realize()
-    for _ in range(2)
-  ]
+  model = ModelState(
+    cam_w,
+    cam_h,
+    external_gpu_active=args.external_gpu,
+    model_id_override=args.model,
+    write_model_version=args.artifact is None,
+    artifact_path_override=args.artifact,
+  )
   model.npy["tfm"][:] = np.eye(3, dtype=np.float32)
   model.npy["big_tfm"][:] = np.eye(3, dtype=np.float32)
   for key, value in model.npy.items():
@@ -47,17 +53,29 @@ def main() -> int:
   if "action_t" in model.npy:
     model.npy["action_t"][:] = [0.15, 0.25]
 
-  warped = model.warp_enqueue(
-    **{key: model.input_queues[key] for key in model.warp_input_keys},
-    frame=frames[0],
-    big_frame=frames[1],
-  )
-  policy_inputs = {key: model.input_queues[key] for key in model.policy_input_keys}
-  if model.image_history_pipeline == "policy":
-    outputs = model.run_policy(**policy_inputs, warped=warped)
+  if model.fused:
+    rng = np.random.default_rng(42)
+    for frame in model.frame_views.values():
+      frame[:] = rng.integers(0, 256, size=frame.shape, dtype=np.uint8)
+    outputs = model.run_model(**{key: model.input_queues[key] for key in model.model_input_keys})
   else:
-    outputs = model.run_policy(**policy_inputs, img=warped[0], big_img=warped[1])
+    frames = [
+      Tensor.randint(model.frame_buf_size, low=0, high=256, dtype="uint8", device=model.WARP_DEV).realize()
+      for _ in range(2)
+    ]
+    warped = model.warp_enqueue(
+      **{key: model.input_queues[key] for key in model.warp_input_keys},
+      frame=frames[0],
+      big_frame=frames[1],
+    )
+    policy_inputs = {key: model.input_queues[key] for key in model.policy_input_keys}
+    if model.image_history_pipeline == "policy":
+      outputs = model.run_policy(**policy_inputs, warped=warped)
+    else:
+      outputs = model.run_policy(**policy_inputs, img=warped[0], big_img=warped[1])
   arrays = [output.numpy().flatten() for output in outputs]
+  if model.uses_external_gpu:
+    _validate_external_gpu_outputs(arrays)
   if model.model_type == "supercombo":
     parsed = model.parser.parse_outputs(model.slice_outputs(arrays[0], model.output_slices))
   else:

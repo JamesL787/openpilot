@@ -39,13 +39,18 @@ from openpilot.selfdrive.modeld.compile_modeld import (
   ARTIFACT_FORMAT_VERSION,
   FAST_POLICY_INPUTS,
   FAST_WARP_INPUTS,
+  FUSED_MODELD_INPUTS,
   IMAGE_HISTORY_IN_POLICY,
   IMAGE_HISTORY_IN_WARP,
+  LEGACY_ARTIFACT_FORMAT_VERSION,
   LEGACY_WARP_INPUTS,
   _detect_vision_keys,
   derive_frame_skip,
+  make_fused_supercombo_input_queues,
   make_split_input_queues,
   make_supercombo_input_queues,
+  nv12_copy_size,
+  tinygrad_commit,
 )
 from openpilot.selfdrive.modeld.helpers import get_tg_input_devices, load_oob, tinygrad_dev_config, usbgpu_present
 from openpilot.selfdrive.modeld.usbgpu_link import wait_usbgpu_link
@@ -90,6 +95,7 @@ EXTERNAL_GPU_EGMP_READY_MV = 12500
 EXTERNAL_GPU_POWER_STABLE_SECONDS = 3.0
 EXTERNAL_GPU_POWER_LOG_INTERVAL_SECONDS = 10.0
 LAT_SMOOTH_BP = [2.0, 8.0]
+MAX_ABS_EXTERNAL_MODEL_OUTPUT = 1e6
 
 
 def _set_hcq_wait_timeout(timeout_ms: int) -> None:
@@ -429,11 +435,17 @@ def _load_model_artifact(path: Path):
 def _normalize_model_artifact(artifact: dict) -> dict:
   """Adapt the current metadata-only artifact envelope to StarPilot's explicit schema."""
   if artifact.get("format_version") is not None:
-    if artifact["format_version"] != ARTIFACT_FORMAT_VERSION:
-      raise ValueError(
-        f"Unsupported model artifact format {artifact.get('format_version')!r}; "
-        f"expected {ARTIFACT_FORMAT_VERSION}"
-      )
+    if artifact["format_version"] not in (LEGACY_ARTIFACT_FORMAT_VERSION, ARTIFACT_FORMAT_VERSION):
+      actual = artifact.get("format_version")
+      expected = f"{LEGACY_ARTIFACT_FORMAT_VERSION} or {ARTIFACT_FORMAT_VERSION}"
+      raise ValueError(f"Unsupported model artifact format {actual!r}; expected {expected}")
+    if artifact["format_version"] == ARTIFACT_FORMAT_VERSION:
+      if artifact.get("execution_mode") != "fused" or "run_model" not in artifact:
+        raise ValueError("Fused model artifact is missing run_model")
+      compiler_commit = artifact.get("compiler", {}).get("tinygrad_commit")
+      runtime_commit = tinygrad_commit()
+      if compiler_commit != runtime_commit:
+        raise ValueError(f"Fused model artifact tinygrad mismatch: built with {compiler_commit or 'unknown'}, runtime has {runtime_commit}")
     return artifact
 
   metadata = artifact.get("metadata")
@@ -453,7 +465,8 @@ def _normalize_model_artifact(artifact: dict) -> dict:
 
   return {
     **artifact,
-    "format_version": ARTIFACT_FORMAT_VERSION,
+    "format_version": LEGACY_ARTIFACT_FORMAT_VERSION,
+    "execution_mode": "split",
     "model_type": model_type,
     "policy_order": policy_order,
     "frame_skip": derive_frame_skip(policy_shapes),
@@ -461,6 +474,14 @@ def _normalize_model_artifact(artifact: dict) -> dict:
     "warp_input_keys": FAST_WARP_INPUTS,
     "policy_input_keys": FAST_POLICY_INPUTS,
   }
+
+
+def _validate_external_gpu_outputs(outputs: list[np.ndarray]) -> None:
+  for output in outputs:
+    if not np.isfinite(output).all():
+      raise RuntimeError("external GPU model output not finite")
+    if output.size and float(np.max(np.abs(output))) > MAX_ABS_EXTERNAL_MODEL_OUTPUT:
+      raise RuntimeError("external GPU model output magnitude implausible")
 
 
 class ModelState:
@@ -483,28 +504,35 @@ class ModelState:
     return numpy_inputs, prev_desired_curv_key
 
   def __init__(self, cam_w: int, cam_h: int, external_gpu_active: bool = False,
-               model_id_override: str | None = None, write_model_version: bool = True):
+               model_id_override: str | None = None, write_model_version: bool = True,
+               artifact_path_override: Path | None = None):
     params = Params()
     selected_model = model_id_override or _resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY
     model_id = _canonical_model_id(selected_model)
-    requires_external_gpu = model_uses_external_gpu(model_id)
-    if requires_external_gpu and not external_gpu_active:
-      cloudlog.error(f"Model {model_id} requires an external GPU; falling back to {BUILTIN_MODEL_KEY}")
-      model_id = BUILTIN_MODEL_KEY
-    use_builtin = model_id == BUILTIN_MODEL_KEY
-    loaded_builtin = use_builtin
-    if use_builtin:
-      model_path = Path(__file__).parent / "models" / "driving_tinygrad.pkl"
+    if artifact_path_override is not None:
+      model_path = Path(artifact_path_override)
+      requires_external_gpu = external_gpu_active
+      use_builtin = False
+      loaded_builtin = False
     else:
-      model_path = MODELS_PATH / f"{model_id}_driving_tinygrad.pkl"
+      requires_external_gpu = model_uses_external_gpu(model_id)
+      if requires_external_gpu and not external_gpu_active:
+        cloudlog.error(f"Model {model_id} requires an external GPU; falling back to {BUILTIN_MODEL_KEY}")
+        model_id = BUILTIN_MODEL_KEY
+      use_builtin = model_id == BUILTIN_MODEL_KEY
+      loaded_builtin = use_builtin
+      if use_builtin:
+        model_path = Path(__file__).parent / "models" / "driving_tinygrad.pkl"
+      else:
+        model_path = MODELS_PATH / f"{model_id}_driving_tinygrad.pkl"
 
-    if not file_chunked_exists(model_path) and not use_builtin:
+    if artifact_path_override is None and not file_chunked_exists(model_path) and not use_builtin:
       cloudlog.error(f"Missing model artifact {model_path}, downloading {model_id}...")
       try:
         ModelManager(params, params_memory).download_model(model_id)
       except Exception:
         cloudlog.exception(f"Failed to download model {model_id}")
-    if not file_chunked_exists(model_path) and not use_builtin:
+    if artifact_path_override is None and not file_chunked_exists(model_path) and not use_builtin:
       fallback_path = Path(__file__).parent / "models" / "driving_tinygrad.pkl"
       if file_chunked_exists(fallback_path):
         cloudlog.error(f"Falling back to builtin model artifact after {model_id} download failed")
@@ -521,19 +549,38 @@ class ModelState:
     self.metadata = artifact["metadata"]
     self.policy_order = artifact.get("policy_order", [])
     self.frame_skip = int(artifact["frame_skip"])
+    self.execution_mode = artifact.get("execution_mode", "split")
+    self.fused = self.execution_mode == "fused"
     self.image_history_pipeline = artifact.get("image_history_pipeline", IMAGE_HISTORY_IN_WARP)
-    self.warp_input_keys = tuple(artifact.get("warp_input_keys", LEGACY_WARP_INPUTS))
-    self.policy_input_keys = tuple(artifact["policy_input_keys"])
-    self.run_policy = artifact["run_policy"]
-    self.warp_enqueue = artifact[(cam_w, cam_h)]
-    self.can_prepare_only = self.image_history_pipeline == IMAGE_HISTORY_IN_WARP
+    if self.fused:
+      self.model_input_keys = tuple(artifact.get("input_keys", FUSED_MODELD_INPUTS))
+      self.run_model = artifact["run_model"][(cam_w, cam_h)]
+      self.can_prepare_only = False
+    else:
+      self.warp_input_keys = tuple(artifact.get("warp_input_keys", LEGACY_WARP_INPUTS))
+      self.policy_input_keys = tuple(artifact["policy_input_keys"])
+      self.run_policy = artifact["run_policy"]
+      self.warp_enqueue = artifact[(cam_w, cam_h)]
+      self.can_prepare_only = self.image_history_pipeline == IMAGE_HISTORY_IN_WARP
 
     if self.model_type == "supercombo":
       input_shapes = self.metadata["model"]["input_shapes"]
       self.output_slices = self.metadata["model"]["output_slices"]
-      self.input_queues, self.npy = make_supercombo_input_queues(input_shapes, self.frame_skip, self.QUEUE_DEV)
       self.policy_input_shapes = input_shapes
+      if self.fused:
+        frame_info = get_nv12_info(cam_w, cam_h)
+        self.frame_copy_size = nv12_copy_size(*frame_info[:3])
+        self.input_queues, self.npy, self.frame_views = make_fused_supercombo_input_queues(
+          input_shapes,
+          self.frame_skip,
+          self.QUEUE_DEV,
+          self.frame_copy_size,
+        )
+      else:
+        self.input_queues, self.npy = make_supercombo_input_queues(input_shapes, self.frame_skip, self.QUEUE_DEV)
     else:
+      if self.fused:
+        raise ValueError("Fused artifacts currently require a supercombo model")
       vision_shapes = self.metadata["vision"]["input_shapes"]
       primary_policy = "on_policy" if "on_policy" in self.policy_order else "policy"
       self.policy_input_shapes = self.metadata[primary_policy]["input_shapes"]
@@ -637,9 +684,17 @@ class ModelState:
 
   def _reset_state(self) -> None:
     if self.model_type == "supercombo":
-      self.input_queues, self.npy = make_supercombo_input_queues(
-        self.policy_input_shapes, self.frame_skip, self.QUEUE_DEV,
-      )
+      if self.fused:
+        self.input_queues, self.npy, self.frame_views = make_fused_supercombo_input_queues(
+          self.policy_input_shapes,
+          self.frame_skip,
+          self.QUEUE_DEV,
+          self.frame_copy_size,
+        )
+      else:
+        self.input_queues, self.npy = make_supercombo_input_queues(
+          self.policy_input_shapes, self.frame_skip, self.QUEUE_DEV,
+        )
     else:
       vision_shapes = self.metadata["vision"]["input_shapes"]
       self.input_queues, self.npy = make_split_input_queues(
@@ -658,12 +713,13 @@ class ModelState:
       key: np.zeros(self.frame_buf_size, dtype=np.uint8)
       for key in self.vision_input_names
     }
-    # A host pointer is not a valid camera buffer for every warp backend. Match
-    # upstream and substitute realized device buffers for warmup only.
-    self._blob_cache.update({
-      (key, value.ctypes.data): Tensor.zeros(value.shape, dtype="uint8", device=self.WARP_DEV).realize()
-      for key, value in dummy_frames.items()
-    })
+    if not self.fused:
+      # A host pointer is not a valid camera buffer for every warp backend. Match
+      # upstream and substitute realized device buffers for warmup only.
+      self._blob_cache.update({
+        (key, value.ctypes.data): Tensor.zeros(value.shape, dtype="uint8", device=self.WARP_DEV).realize()
+        for key, value in dummy_frames.items()
+      })
     eye = np.eye(3, dtype=np.float32)
     inputs = {self.desire_key: np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)}
     for name, value in self.numpy_inputs.items():
@@ -679,14 +735,21 @@ class ModelState:
           inputs: dict[str, np.ndarray], prepare_only: bool, blinker_on: bool = False,
           after_output_sync: Callable[[], None] | None = None) -> dict[str, np.ndarray] | None:
     frames: dict[str, Tensor] = {}
-    for key, buf in bufs.items():
-      ptr = np.frombuffer(buf.data, dtype=np.uint8).ctypes.data
-      cache_key = (key, ptr)
-      if cache_key not in self._blob_cache:
-        self._blob_cache[cache_key] = Tensor.from_blob(
-          ptr, (self.frame_buf_size,), dtype="uint8", device=self.WARP_DEV,
+    if self.fused:
+      for key, buf in bufs.items():
+        np.copyto(
+          self.frame_views[key],
+          np.frombuffer(buf.data, dtype=np.uint8, count=self.frame_copy_size),
         )
-      frames[key] = self._blob_cache[cache_key]
+    else:
+      for key, buf in bufs.items():
+        ptr = np.frombuffer(buf.data, dtype=np.uint8).ctypes.data
+        cache_key = (key, ptr)
+        if cache_key not in self._blob_cache:
+          self._blob_cache[cache_key] = Tensor.from_blob(
+            ptr, (self.frame_buf_size,), dtype="uint8", device=self.WARP_DEV,
+          )
+        frames[key] = self._blob_cache[cache_key]
 
     # A desire is edge-triggered into the model input, but the compiled policy keeps
     # roughly five seconds of desire history in ``desire_q`` and max-pools it.  When
@@ -714,34 +777,39 @@ class ModelState:
     self.npy["tfm"][:] = transforms[self.road_key]
     self.npy["big_tfm"][:] = transforms[self.wide_key]
 
-    warp_output = self.warp_enqueue(
-      **{key: self.input_queues[key] for key in self.warp_input_keys},
-      frame=frames[self.road_key],
-      big_frame=frames[self.wide_key],
-    )
-
-    if self.image_history_pipeline == IMAGE_HISTORY_IN_POLICY:
-      output_tensors = self.run_policy(
-        **{key: self.input_queues[key] for key in self.policy_input_keys},
-        warped=warp_output,
+    if self.fused:
+      output_tensors = self.run_model(
+        **{key: self.input_queues[key] for key in self.model_input_keys},
       )
     else:
-      img, big_img = warp_output
-      if prepare_only:
-        return None
-      output_tensors = self.run_policy(
-        **{key: self.input_queues[key] for key in self.policy_input_keys},
-        img=img,
-        big_img=big_img,
+      warp_output = self.warp_enqueue(
+        **{key: self.input_queues[key] for key in self.warp_input_keys},
+        frame=frames[self.road_key],
+        big_frame=frames[self.wide_key],
       )
+
+      if self.image_history_pipeline == IMAGE_HISTORY_IN_POLICY:
+        output_tensors = self.run_policy(
+          **{key: self.input_queues[key] for key in self.policy_input_keys},
+          warped=warp_output,
+        )
+      else:
+        img, big_img = warp_output
+        if prepare_only:
+          return None
+        output_tensors = self.run_policy(
+          **{key: self.input_queues[key] for key in self.policy_input_keys},
+          img=img,
+          big_img=big_img,
+        )
     outputs = [output.numpy().flatten() for output in output_tensors]
     # output.numpy() synchronizes the GPU queue. Keep USB telemetry reads after
     # that synchronization so they cannot contend with in-flight model work.
     if after_output_sync is not None:
       after_output_sync()
 
-    if self.uses_external_gpu and any(not np.isfinite(output).all() for output in outputs):
-      raise RuntimeError("external GPU model output not finite")
+    if self.uses_external_gpu:
+      _validate_external_gpu_outputs(outputs)
 
     if self.model_type == "supercombo":
       model_output = outputs[0]
