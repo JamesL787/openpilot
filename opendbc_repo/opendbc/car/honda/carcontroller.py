@@ -30,6 +30,9 @@ from openpilot.common.params import Params
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
 
+BOSCH_BRAKE_FORCE_ON = -0.12
+BOSCH_BRAKE_FORCE_RELEASE = -0.02
+
 
 def get_eps_modified_steering_pressed(
   raw_pressed: bool, steering_torque: float, torque_cmd: float, filter_s: float, previous_pressed: bool
@@ -56,6 +59,17 @@ def torque_lpf_tau(v_ego: float, low_tau: float, standard_tau: float, highway_ta
 
 def get_honda_bosch_wind_brake_mps2(v_ego: float) -> float:
   return float(np.interp(v_ego, [0.0, 13.4, 22.4, 31.3, 40.2], [0.000, 0.049, 0.136, 0.267, 0.441]))
+
+
+def update_honda_bosch_braking(braking: bool, gas_pedal_force: float, stopping: bool, long_active: bool) -> bool:
+  """Select Bosch brake mode from the same road-load-adjusted force used for gas."""
+  if not long_active:
+    return False
+  if stopping:
+    return True
+  if braking:
+    return gas_pedal_force <= BOSCH_BRAKE_FORCE_RELEASE
+  return gas_pedal_force < BOSCH_BRAKE_FORCE_ON
 
 
 def update_honda_bosch_live_learning(
@@ -535,6 +549,7 @@ class CarController(CarControllerBase):
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_robust_prev = False
     self.bosch_last_gas = 0.0
+    self.bosch_braking = False
     if self.CP.carFingerprint in HONDA_BOSCH:
       self.bosch_gas_factor = self.param_store.get_float("HondaGasFactorParams", default=1.0)
       self.bosch_wind_factor = self.param_store.get_float("HondaWindFactorParams", default=1.0)
@@ -861,9 +876,11 @@ class CarController(CarControllerBase):
           self.bosch_last_gas = self.gas
 
           stopping = actuators.longControlState == LongCtrlState.stopping
+          self.bosch_braking = update_honda_bosch_braking(self.bosch_braking, gas_pedal_force, stopping, CC.longActive)
           self.stopping_counter = self.stopping_counter + 1 if stopping else 0
           can_sends.extend(
-            hondacan.create_acc_commands(self.packer, self.CAN, CC.enabled, CC.longActive, self.accel, self.gas, self.stopping_counter, self.CP.carFingerprint, gas_pedal_force)
+            hondacan.create_acc_commands(self.packer, self.CAN, CC.enabled, CC.longActive, self.accel, self.gas,
+                                         self.stopping_counter, self.CP.carFingerprint, gas_pedal_force, self.bosch_braking)
           )
         else:
           apply_brake = np.clip(self.brake_last - wind_brake, 0.0, 1.0)

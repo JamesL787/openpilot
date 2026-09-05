@@ -77,17 +77,16 @@ def create_brake_command(packer, CAN, apply_brake, pump_on, pcm_override, pcm_ca
   return packer.make_can_msg("BRAKE_COMMAND", CAN.pt, values)
 
 
-def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_counter, car_fingerprint, gas_force):
+def create_acc_commands(packer, CAN, enabled, active, accel, gas, stopping_counter, car_fingerprint, gas_force, braking):
   commands = []
   min_gas_accel = CarControllerParams.BOSCH_GAS_LOOKUP_BP[0]
 
   control_on = 5 if enabled else 0
-  gas_command = gas if active and gas_force > min_gas_accel else -30000
+  # Gas and brake mode are both selected from road-load-adjusted gas_force in
+  # CarController. Keep braking as a hard gas inhibitor at the CAN boundary.
+  braking = int(active and braking)
+  gas_command = gas if active and gas_force > min_gas_accel and not braking else -30000
   accel_command = accel if active else 0
-  # nrdr: stock brake-bit computation. Using gas_force (accel + wind + hill feedforward) here
-  # jittered BRAKE_REQUEST/BRAKE_LIGHTS around light decel on the radar Bosch. Keep comma's
-  # accel-based logic at the stock -0.2 threshold, independent of the gas lookup BP.
-  braking = 1 if active and accel < -0.2 else 0
   standstill = 1 if active and stopping_counter > 0 else 0
   standstill_release = 1 if active and stopping_counter == 0 else 0
 
