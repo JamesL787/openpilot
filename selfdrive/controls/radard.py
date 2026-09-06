@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import math
-import time
 import numpy as np
 from collections import deque
 from types import SimpleNamespace
@@ -22,9 +21,12 @@ from opendbc.car.honda.values import HONDA_BOSCH_A
 # Default lead acceleration decay set to 50% at 1s
 _LEAD_ACCEL_TAU = 0.6
 
-# Shadow range-derived vRel (telemetry only). 4 samples is the shortest window whose velocity noise
-# (0.19 m/s at the measured 0.030 m robust range sigma) is usable, and it carries the least lag.
-RANGE_VREL_SAMPLES = 5
+# Shadow range-derived vRel, TELEMETRY ONLY, and computed for whichever radar lead is selected --
+# not only Bosch-A. Timestamps come from the message clock so replay is faithful; wall-clock time
+# made every accelerated replay of this field meaningless. The fit is plain LSQ with no outlier
+# rejection, so it inherits the range channel's ~1% gross outliers: read it as a diagnostic, not as
+# a validated velocity.
+RANGE_VREL_SAMPLES = 5   # deque length AND the minimum fit length; do not diverge these
 RANGE_VREL_MIN_SPAN_S = 0.12
 RANGE_VREL_MAX_SPAN_S = 0.60
 
@@ -130,7 +132,7 @@ class Track:
     # Shadow estimator: real measurements only -- a duplicate payload would forge a zero-dt sample.
     if measurement_update:
       self.range_hist.append((float(t_now), float(d_rel)))
-      if len(self.range_hist) >= 3:
+      if len(self.range_hist) >= RANGE_VREL_SAMPLES:
         ts = np.array([p[0] for p in self.range_hist])
         ds = np.array([p[1] for p in self.range_hist])
         span = ts[-1] - ts[0]
@@ -608,7 +610,7 @@ class RadarD:
       # Non-Bosch sources retain the historical per-model-cycle update semantics. Only Civic Bosch
       # suppresses duplicate measurement updates when liveTracks has not advanced.
       measurement_update = True if not self.honda_bosch_a_radar else measured
-      self.tracks[ids].update(rpt[0], rpt[1], rpt[2], v_lead, measured, measurement_update, t_now=time.monotonic())
+      self.tracks[ids].update(rpt[0], rpt[1], rpt[2], v_lead, measured, measurement_update, t_now=sm.logMonoTime['liveTracks'] * 1e-9)
 
     # *** publish radarState ***
     self.radar_state_valid = sm.all_checks()

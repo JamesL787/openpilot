@@ -67,6 +67,53 @@ class _SmoothParams:
     return self.value
 
 
+def _req(d_rel, v_ego, v_lead, a_lead):
+  from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+  lead = SimpleNamespace(status=True, dRel=d_rel, vLead=v_lead, aLeadK=a_lead)
+  return LongitudinalPlanner.get_lead_geometry_required_accel(lead, v_ego)
+
+
+def test_lead_geometry_required_accel_matches_the_hand_derivation():
+  # 00000206 at 10:36, the sample that exposed the follow-distance denominator bug.
+  # d = 45.5-4 = 41.5; lead stops in 19.56^2/(2*4.08) = 46.9 m; ego must stop in 88.4 m.
+  # 25.3^2/(2*88.4) = 3.62, against 3.50 commanded. The old form returned 40.62 here.
+  assert _req(45.5, 25.3, 19.56, -4.08) == pytest.approx(3.62, abs=0.05)
+
+
+def test_lead_geometry_required_accel_does_not_explode_inside_the_follow_distance():
+  """The original defect: the denominator was the follow distance, so being inside it -- the normal
+  case while following -- clamped the gap to its floor and the quadratic term exploded to 40+ m/s^2.
+  Against the physical standoff, ordinary close following stays small."""
+  # 25 m gap at 25 m/s is well inside any follow distance, closing gently, lead not braking
+  assert _req(25.0, 25.0, 24.0, 0.0) < 0.5
+  # and even a firm approach stays physically plausible
+  assert _req(25.0, 25.0, 20.0, 0.0) < 1.0
+
+
+def test_lead_geometry_required_accel_is_bounded_at_short_range():
+  """The 0.5 m gap floor stops a divide-by-zero but not an explosion -- unclamped this returned
+  400 m/s^2 at dRel <= standoff. Telemetry saturates at the tyre limit instead."""
+  from openpilot.selfdrive.controls.lib.longitudinal_planner import LEAD_GEOMETRY_MAX_REQUIRED_ACCEL
+  for d, v_ego, v_lead, a_lead in ((0.0, 20.0, 0.0, -3.0), (4.0, 20.0, 0.0, 0.0), (4.5, 25.0, 0.0, -5.0)):
+    v = _req(d, v_ego, v_lead, a_lead)
+    assert 0.0 <= v <= LEAD_GEOMETRY_MAX_REQUIRED_ACCEL
+    assert v == v      # not NaN
+
+
+def test_lead_geometry_required_accel_is_zero_when_not_closing():
+  assert _req(50.0, 20.0, 22.0, 0.0) == 0.0          # opening, lead not braking
+  assert _req(50.0, 20.0, 20.0, 0.0) == 0.0          # matched speed, lead not braking
+  # but a braking lead arms the stop term even with no current closing speed
+  assert _req(50.0, 20.0, 20.0, -3.0) > 0.0
+
+
+def test_lead_geometry_required_accel_ignores_absent_lead():
+  from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+  assert LongitudinalPlanner.get_lead_geometry_required_accel(None, 20.0) == 0.0
+  assert LongitudinalPlanner.get_lead_geometry_required_accel(
+    SimpleNamespace(status=False, dRel=10.0, vLead=0.0, aLeadK=0.0), 20.0) == 0.0
+
+
 def test_model_smoothing_is_developer_gated_and_quantized():
   assert modeld._model_smooth_seconds(_SmoothParams(0.126), "LatSmoothSeconds", 0.1) == pytest.approx(0.125)
   assert modeld._model_smooth_seconds(_SmoothParams(0.126, developer=False), "LatSmoothSeconds", 0.1) == pytest.approx(0.1)

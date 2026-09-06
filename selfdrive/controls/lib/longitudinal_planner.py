@@ -138,6 +138,11 @@ CLOSE_LEAD_BRAKE_CAP_MAX_TTC = 10.0
 LEAD_GEOMETRY_STANDOFF_M = 4.0
 LEAD_GEOMETRY_MIN_GAP_M = 0.5
 LEAD_GEOMETRY_MIN_LEAD_BRAKE = 0.1
+# Telemetry clamp. The 0.5 m floor stops a divide-by-zero but not an explosion: at dRel <= the
+# standoff the match term reaches v_ego^2/1.0, e.g. 400 m/s^2 at 20 m/s. Nothing beyond the tyre
+# limit carries information, so saturate rather than log a number that is technically finite and
+# practically meaningless.
+LEAD_GEOMETRY_MAX_REQUIRED_ACCEL = 12.0
 
 CLOSE_LEAD_BRAKE_CAP_RAMP_MIN = 0.2
 CLOSE_LEAD_BRAKE_CAP_RAMP_FULL = 0.5
@@ -752,12 +757,19 @@ class LongitudinalPlanner:
 
   @staticmethod
   def get_lead_geometry_required_accel(lead, v_ego: float) -> float:
-    """Telemetry only: the deceleration the MEASURED geometry demands. Nothing consumes this.
+    """Telemetry only: a DIAGNOSTIC SCENARIO ENVELOPE, not a physical requirement. Nothing consumes it.
+
+    It is the larger of two scenarios, and neither is a guarantee: `match` assumes the lead holds
+    its current speed, `stop` assumes the lead decelerates at exactly the current aLeadK until it
+    stops. It therefore understates a lead that brakes harder later and overstates one that stops
+    braking, and it inherits aLeadK's staleness (~0.5-0.7 s on this platform) and noise -- the
+    0.1 m/s^2 branch threshold is below aLeadK's own noise, so `stop` can arm on noise alone.
+    Read it as "roughly what this geometry implies", never as a control reference.
 
     The denominator is the PHYSICAL standoff, not the follow distance. An earlier version used
     `dRel - (t_follow*v_ego + standoff)` floored at 0.5 m, which treats a comfort target as a
     barrier: inside the follow distance -- the normal case -- the gap clamped to the floor and
-    closing^2/(2*gap) exploded. It logged 40.62 m/s^2 on 000001206 at the very event it was added to
+    closing^2/(2*gap) exploded. It logged 40.62 m/s^2 on 00000206 at the very event it was added to
     explain, and reached 21.01 with 0.79% of frames over 10 m/s^2 on 000001fb. Re-derived against
     the standoff it never exceeds 4.64 m/s^2 over 7500 frames on those two routes, and during real
     braking on 00000206 commanded/required has a median of 1.02.
@@ -778,7 +790,7 @@ class LongitudinalPlanner:
     stop_term = 0.0
     if lead_brake > LEAD_GEOMETRY_MIN_LEAD_BRAKE:
       stop_term = v_ego ** 2 / (2.0 * (d + v_lead ** 2 / (2.0 * lead_brake)))
-    return float(max(match_term, stop_term))
+    return float(min(max(match_term, stop_term), LEAD_GEOMETRY_MAX_REQUIRED_ACCEL))
 
   def get_close_lead_brake_cap(self, lead, v_ego, accel_min):
     if lead is None or not lead.status:
@@ -2565,7 +2577,12 @@ class LongitudinalPlanner:
     vision_low_speed_stop_active = False
     vision_brake_cap_active = False
     self.close_lead_brake_cap_value = 0.0
-    self.lead_geometry_required_accel = self.get_lead_geometry_required_accel(self.lead_one, v_ego)
+    # Worst case over BOTH leads: the MPC may be constrained by lead two, and publishing only
+    # lead one's value silently described the wrong object.
+    self.lead_geometry_required_accel = max(
+      self.get_lead_geometry_required_accel(self.lead_one, v_ego),
+      self.get_lead_geometry_required_accel(self.lead_two, v_ego),
+    )
     if lead_control_active:
       for lead in (self.lead_one, self.lead_two):
         rav4_early_lead_cap = get_toyota_rav4_tss2_early_lead_cap(
