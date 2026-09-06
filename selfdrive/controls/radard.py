@@ -173,8 +173,14 @@ class Track:
 
       self.cnt += 1
 
-  def get_RadarState(self, model_prob: float = 0.0):
-    return {
+  def get_RadarState(self, model_prob: float = 0.0, shadow_telemetry: bool = False):
+    """`shadow_telemetry` is opt-in because this dict is assigned to TWO different capnp structs:
+    log.capnp LeadData (radarState.leadOne/leadTwo) and custom.capnp LeadData
+    (starpilotRadarState.leadLeft/leadRight). Only the former carries the shadow fields, and only
+    the followed lead should: adjacent tracks sit at up to 17-23 deg azimuth, where a range
+    derivative is radial rate and NOT longitudinal velocity, so publishing it there would be
+    misleading as well as a schema error."""
+    state = {
       "dRel": float(self.dRel),
       "yRel": float(self.yRel),
       "vRel": float(self.vRel),
@@ -187,9 +193,11 @@ class Track:
       "modelProb": model_prob,
       "radar": True,
       "radarTrackId": self.identifier,
-      "vRelRangeDerived": float(self.vRelRange),
-      "measuredRadar": bool(self.measured),
     }
+    if shadow_telemetry:
+      state["vRelRangeDerived"] = float(self.vRelRange)
+      state["measuredRadar"] = bool(self.measured)
+    return state
 
   def potential_adjacent_lead(self, left: bool, standstill: bool, model_data: capnp._DynamicStructReader):
     if standstill or self.vLead < 1 or self.leadTrackID == self.identifier:
@@ -355,6 +363,7 @@ def get_RadarState_from_vision(lead_msg: capnp._DynamicStructReader, v_ego: floa
   }
 
 
+
 def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capnp._DynamicStructReader,
              model_v_ego: float, model_data: capnp._DynamicStructReader, standstill: bool,
              starpilot_plan: capnp._DynamicStructReader, starpilot_toggles: SimpleNamespace,
@@ -372,7 +381,7 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
 
   lead_dict = {'status': False}
   if track is not None:
-    lead_dict = track.get_RadarState(filtered_lead_prob)
+    lead_dict = track.get_RadarState(filtered_lead_prob, shadow_telemetry=True)
   elif (track is None) and ready and (filtered_lead_prob > lead_detection_probability):
     lead_dict = get_RadarState_from_vision(lead_msg, v_ego, model_v_ego, filtered_lead_prob)
 
@@ -400,7 +409,7 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
                                 lead_dict.get('radarTrackId', -1) == preferred_track_id or
                                 (lead_dict.get('status', False) and not lead_dict.get('radar', False)))
         if preferred_is_current and preferred_matches_model:
-          lead_dict = preferred_track.get_RadarState(filtered_lead_prob)
+          lead_dict = preferred_track.get_RadarState(filtered_lead_prob, shadow_telemetry=True)
 
     def candidate_is_established(candidate: Track) -> bool:
       if not honda_bosch_a_radar:
@@ -426,7 +435,7 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
 
       # Only choose new track if it is actually closer than the previous one
       if (not lead_dict['status']) or (closest_track.dRel < lead_dict['dRel']):
-        lead_dict = closest_track.get_RadarState()
+        lead_dict = closest_track.get_RadarState(shadow_telemetry=True)
 
   for track in tracks.values():
     track.leadTrackID = lead_dict.get('radarTrackId', -1)
