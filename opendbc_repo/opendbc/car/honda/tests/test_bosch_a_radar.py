@@ -714,7 +714,11 @@ class TestVrel:
     assert len(rr.points) == 0
     assert ri._tracks[1].last_trusted_vrel is None
 
-  def test_high_u10_coast_expires_with_trusted_motion_age(self):
+  def test_high_u10_coast_keeps_the_point_with_a_stale_velocity(self):
+    # A coast means the velocity is doubtful, not that the object left. Object existence is decided
+    # earlier by STATUS/existence/range validity. Dropping the point here is the 000001f9 failure:
+    # a stopped car was deleted, radard fell back to vision, and the planner commanded 0.00 at 76 m.
+    # The geometry must keep publishing; the stale velocity is flagged by measured=False.
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
                     direct_vrel_raw=800, direct_vrel_uncertainty_raw=84))
@@ -724,7 +728,28 @@ class TestVrel:
               direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
     rr = ri.update(sweep(0, 3, 0x7, 980, 1024, 7, 300_000_000, with_aux=True,
                    direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
-    assert len(rr.points) == 0
+    assert len(rr.points) == 1
+    point = rr.points[0]
+    # fresh geometry, held velocity, explicitly unmeasured
+    assert point.dRel == pytest.approx(980 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
+    assert point.vRel == pytest.approx((800 - 864) / 64.0)
+    assert not point.measured
+
+  def test_coast_still_retires_when_the_radar_stops_reporting(self):
+    # The complement of the above: holding a coasting point must not leak a track that the radar
+    # has actually dropped. _bosch_a_retire_stale_tracks still owns that, via last_seen_nanos.
+    ri = make_radar_interface()
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=800, direct_vrel_uncertainty_raw=84))
+    ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
+              direct_vrel_raw=800, direct_vrel_uncertainty_raw=84))
+    rr = ri.update(sweep(0, 2, 0x7, 981, 1024, 5, 100_000_000, with_aux=True,
+                   direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
+    assert len(rr.points) == 1
+    # radar stops reporting this identity: a later cycle past BOSCH_A_STALE_S must retire it
+    rr = ri.update(sweep(1, 0, 0x7, 900, 1024, 1, 1_000_000_000, with_aux=True, track_id=2,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
+    assert all(p.trackId != 1 for p in rr.points)
 
   def test_range_ratio_conversion_and_sentinel(self):
     assert _bosch_a_range_ratio(500) == pytest.approx(1.0)

@@ -606,18 +606,27 @@ class RadarInterface(RadarInterfaceBase):
         # The range cleared innovation checking above, so geometry here is trustworthy; only vRel is
         # in question. Preserve current geometry but coast only a recent authoritative motion
         # estimate without a KF update, rather than publishing a one-sweep-derivative synthesis.
-        trusted_fresh = (track.last_trusted_vrel is not None and track.last_trusted_vrel_nanos is not None and
-                         (now - track.last_trusted_vrel_nanos) * 1e-9 <= BOSCH_A_STALE_S)
-        if trusted_fresh:
-          point = self.pts.get(track_id)
-          if point is not None:
-            point.dRel = dRel
-            point.yRel = yRel
-            point.vRel = track.last_trusted_vrel
-            point.measured = False
-        else:
-          track.last_trusted_vrel = None
-          track.last_trusted_vrel_nanos = None
+        # A coast means the VELOCITY is doubtful, not that the object is gone: object existence is
+        # decided earlier by STATUS/existence/range validity, which route elsewhere. Dropping the
+        # point here therefore discards a geometry the radar is still reporting and the range
+        # innovation check just accepted. Measured on 000001fb segments 34-35 through the real
+        # RadarInterface: 28 suppression gaps, 70% of them longer than BOSCH_A_STALE_S, i.e. long
+        # enough for radard to delete the track and fall back to vision. That is the 000001f9
+        # failure mode -- there a stopped car was dropped and the planner commanded 0.00 at 76 m.
+        #
+        # Keep publishing the geometry and hold the last trusted velocity, flagged measured=False.
+        # An understated closing rate still brakes; a deleted object does not. Genuine disappearance
+        # is still handled by _bosch_a_retire_stale_tracks, which every coast path leaves armed by
+        # refreshing last_seen_nanos only while the radar keeps reporting this identity.
+        point = self.pts.get(track_id)
+        if point is not None and track.last_trusted_vrel is not None:
+          point.dRel = dRel
+          point.yRel = yRel
+          point.vRel = track.last_trusted_vrel
+          point.measured = False
+        elif point is not None:
+          # No trusted velocity was ever established for this identity, so there is nothing to
+          # coast and no way to publish a defensible vRel.
           self.pts.pop(track_id, None)
 
         # Do not let a coast-only range observation become a future derivative baseline.
@@ -643,18 +652,27 @@ class RadarInterface(RadarInterfaceBase):
       u11_and_ratio_unavailable = (direct_vrel is None and (ratio_vrel is None or degraded) and
                                    previous_sample is not None)
       if u11_and_ratio_unavailable:
-        trusted_fresh = (track.last_trusted_vrel is not None and track.last_trusted_vrel_nanos is not None and
-                         (now - track.last_trusted_vrel_nanos) * 1e-9 <= BOSCH_A_STALE_S)
-        if trusted_fresh:
-          point = self.pts.get(track_id)
-          if point is not None:
-            point.dRel = dRel
-            point.yRel = yRel
-            point.vRel = track.last_trusted_vrel
-            point.measured = False
-        else:
-          track.last_trusted_vrel = None
-          track.last_trusted_vrel_nanos = None
+        # A coast means the VELOCITY is doubtful, not that the object is gone: object existence is
+        # decided earlier by STATUS/existence/range validity, which route elsewhere. Dropping the
+        # point here therefore discards a geometry the radar is still reporting and the range
+        # innovation check just accepted. Measured on 000001fb segments 34-35 through the real
+        # RadarInterface: 28 suppression gaps, 70% of them longer than BOSCH_A_STALE_S, i.e. long
+        # enough for radard to delete the track and fall back to vision. That is the 000001f9
+        # failure mode -- there a stopped car was dropped and the planner commanded 0.00 at 76 m.
+        #
+        # Keep publishing the geometry and hold the last trusted velocity, flagged measured=False.
+        # An understated closing rate still brakes; a deleted object does not. Genuine disappearance
+        # is still handled by _bosch_a_retire_stale_tracks, which every coast path leaves armed by
+        # refreshing last_seen_nanos only while the radar keeps reporting this identity.
+        point = self.pts.get(track_id)
+        if point is not None and track.last_trusted_vrel is not None:
+          point.dRel = dRel
+          point.yRel = yRel
+          point.vRel = track.last_trusted_vrel
+          point.measured = False
+        elif point is not None:
+          # No trusted velocity was ever established for this identity, so there is nothing to
+          # coast and no way to publish a defensible vRel.
           self.pts.pop(track_id, None)
 
         # Do not let a coast-only range observation become a future derivative baseline.
