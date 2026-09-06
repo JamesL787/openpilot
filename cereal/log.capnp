@@ -800,6 +800,11 @@ struct RadarState @0x9a185389d6fdd05f {
     modelProb @13 :Float32;
     radar @14 :Bool;
     radarTrackId @15 :Int32 = -1;
+    # Telemetry only, nothing consumes these. vRelRangeDerived is a range-LSQ velocity published
+    # beside the radar's own vRel so the two can be compared on real drives; measuredRadar exposes
+    # whether the last radar update was a real measurement or a coast.
+    vRelRangeDerived @16 :Float32;
+    measuredRadar @17 :Bool;
 
     aLeadDEPRECATED @5 :Float32;
   }
@@ -1337,6 +1342,10 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   # aTarget is min(MPC, caps), so without this a saturation cannot be attributed to the cap
   # or to the MPC -- both clip at ACCEL_MIN. Diagnostic only; nothing consumes it.
   closeLeadBrakeCap @44 :Float32;
+  # Telemetry only: the deceleration the measured geometry demands to stop closing at the follow
+  # distance, given the lead's own braking. Published so commanded-vs-required can be read straight
+  # out of a route instead of reconstructed offline.
+  leadGeometryRequiredAccel @45 :Float32;
 
   enum LongitudinalPlanSource {
     cruise @0;

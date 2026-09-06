@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+import time
 import numpy as np
 from collections import deque
 from types import SimpleNamespace
@@ -20,6 +21,12 @@ from opendbc.car.honda.values import HONDA_BOSCH_A
 
 # Default lead acceleration decay set to 50% at 1s
 _LEAD_ACCEL_TAU = 0.6
+
+# Shadow range-derived vRel (telemetry only). 4 samples is the shortest window whose velocity noise
+# (0.19 m/s at the measured 0.030 m robust range sigma) is usable, and it carries the least lag.
+RANGE_VREL_SAMPLES = 5
+RANGE_VREL_MIN_SPAN_S = 0.12
+RANGE_VREL_MAX_SPAN_S = 0.60
 
 # radar tracks
 SPEED, ACCEL = 0, 1     # Kalman filter states enum
@@ -88,13 +95,22 @@ class Track:
 
     self.leadTrackID = 0
 
+    # Shadow telemetry only: a range-derived vRel, published alongside the radar's own vRel so the
+    # two can be compared on real drives. Nothing consumes it. Measured on 000001fe/fb/fd, U11
+    # (the Bosch-A native velocity) detects a closing onset 0.88-1.28 s late while a 4-sample range
+    # LSQ lands within 0.07-0.14 s; and on 00000141 R141-8 U11 diverged from the range by 13.7 m/s
+    # while the range moved 1.9 m. This exists to confirm or refute that on Peter's next drive
+    # before any of it is wired into control.
+    self.range_hist: deque = deque(maxlen=RANGE_VREL_SAMPLES)
+    self.vRelRange = float('nan')
+
     # deceleration history for the adjacent-lane stopped-vehicle detector
     self.moving_frames = 0
     self.rest_frames = 0
     self.seen_moving = False
 
   def update(self, d_rel: float, y_rel: float, v_rel: float, v_lead: float, measured: bool,
-             measurement_update: bool | None = None):
+             measurement_update: bool | None = None, t_now: float = 0.0):
     # relative values, copy
     self.dRel = d_rel   # LONG_DIST
     self.yRel = y_rel   # -LAT_DIST
@@ -111,6 +127,22 @@ class Track:
       measurement_update = True
 
     # computed velocity and accelerations
+    # Shadow estimator: real measurements only -- a duplicate payload would forge a zero-dt sample.
+    if measurement_update:
+      self.range_hist.append((float(t_now), float(d_rel)))
+      if len(self.range_hist) >= 3:
+        ts = np.array([p[0] for p in self.range_hist])
+        ds = np.array([p[1] for p in self.range_hist])
+        span = ts[-1] - ts[0]
+        # Reject a stale or gappy history: an LSQ across a dropout is meaningless.
+        if RANGE_VREL_MIN_SPAN_S <= span <= RANGE_VREL_MAX_SPAN_S:
+          self.vRelRange = float(np.polyfit(ts - ts[-1], ds, 1)[0])
+        else:
+          self.vRelRange = float('nan')
+          if span > RANGE_VREL_MAX_SPAN_S:
+            self.range_hist.clear()
+            self.range_hist.append((float(t_now), float(d_rel)))
+
     if measurement_update and self.cnt > 0:
       self.kf.update(self.vLead)
 
@@ -155,6 +187,8 @@ class Track:
       "modelProb": model_prob,
       "radar": True,
       "radarTrackId": self.identifier,
+      "vRelRangeDerived": float(self.vRelRange),
+      "measuredRadar": bool(self.measured),
     }
 
   def potential_adjacent_lead(self, left: bool, standstill: bool, model_data: capnp._DynamicStructReader):
@@ -314,6 +348,10 @@ def get_RadarState_from_vision(lead_msg: capnp._DynamicStructReader, v_ego: floa
     "status": True,
     "radar": False,
     "radarTrackId": -1,
+    # A vision lead has no radar range channel to derive a velocity from, and is never a radar
+    # measurement. Explicit so the telemetry is not read as "range LSQ said zero".
+    "vRelRangeDerived": float('nan'),
+    "measuredRadar": False,
   }
 
 
@@ -561,7 +599,7 @@ class RadarD:
       # Non-Bosch sources retain the historical per-model-cycle update semantics. Only Civic Bosch
       # suppresses duplicate measurement updates when liveTracks has not advanced.
       measurement_update = True if not self.honda_bosch_a_radar else measured
-      self.tracks[ids].update(rpt[0], rpt[1], rpt[2], v_lead, measured, measurement_update)
+      self.tracks[ids].update(rpt[0], rpt[1], rpt[2], v_lead, measured, measurement_update, t_now=time.monotonic())
 
     # *** publish radarState ***
     self.radar_state_valid = sm.all_checks()
