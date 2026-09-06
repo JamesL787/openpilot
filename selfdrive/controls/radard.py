@@ -245,6 +245,15 @@ def track_matches_vision(track: Track, lead: capnp._DynamicStructReader, v_ego: 
                          y_std_scale: float, y_floor: float) -> bool:
   offset_vision_dist = lead.x[0] - RADAR_TO_CAMERA
   dist_sane = abs(track.dRel - offset_vision_dist) < max(abs(offset_vision_dist) * dist_scale, dist_floor)
+  # NOTE: the `or` makes this check inert for any lead above 3 m/s, i.e. essentially always at road
+  # speed -- a radar track whose velocity disagrees with vision by any amount still passes. Removing
+  # it was measured on 000001fb (6 segments, 5390 radar-lead frames with a confident vision lead):
+  # only 37 frames (0.69%) would begin failing, and 0 on 000001fd. But failing here drops the radar
+  # match and leaves a vision-only lead, and on exactly those frames radar and vision disagree by
+  # >10 m/s with no evidence vision is the correct one -- on 000001fe 35:36 vision missed a real 9 m
+  # closure that radar tracked correctly. Deleting radar leads is the 000001f9 failure mode, so this
+  # is left as-is deliberately: inert, but inert in the safe direction. Do not "fix" it without
+  # first establishing which sensor is right on the frames it would start rejecting.
   vel_sane = (abs(track.vRel + v_ego - lead.v[0]) < vel_limit) or (v_ego + track.vRel > 3)
   lat_sane = abs(track.yRel + lead.y[0]) < max(y_floor, y_std_scale * max(float(lead.yStd[0]), 0.2))
   return dist_sane and vel_sane and lat_sane
