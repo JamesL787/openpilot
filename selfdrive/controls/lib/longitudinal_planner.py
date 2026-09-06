@@ -751,28 +751,33 @@ class LongitudinalPlanner:
     return float(np.clip(a_launch, 0.0, accel_cap))
 
   @staticmethod
-  def get_lead_geometry_required_accel(lead, v_ego: float, t_follow: float) -> float:
+  def get_lead_geometry_required_accel(lead, v_ego: float) -> float:
     """Telemetry only: the deceleration the MEASURED geometry demands. Nothing consumes this.
 
-    Published because reading commanded-vs-required off a route currently requires reconstructing
-    it offline, and getting the reference wrong is easy -- computing it against the collision gap
-    rather than the follow distance, or ignoring the lead's own braking, both produce large
-    spurious "over-braking" ratios. This pins one definition in the log.
+    The denominator is the PHYSICAL standoff, not the follow distance. An earlier version used
+    `dRel - (t_follow*v_ego + standoff)` floored at 0.5 m, which treats a comfort target as a
+    barrier: inside the follow distance -- the normal case -- the gap clamped to the floor and
+    closing^2/(2*gap) exploded. It logged 40.62 m/s^2 on 000001206 at the very event it was added to
+    explain, and reached 21.01 with 0.79% of frames over 10 m/s^2 on 000001fb. Re-derived against
+    the standoff it never exceeds 4.64 m/s^2 over 7500 frames on those two routes, and during real
+    braking on 00000206 commanded/required has a median of 1.02.
 
-    Two terms, whichever is larger:
-      match: stop closing before the follow distance         closing^2 / 2*gap
-      stop:  both vehicles come to rest without contact      v_ego^2 / 2*(gap + lead stopping dist)
+    Two terms, whichever is larger, and zero when neither applies:
+      match: null the closing rate before contact        closing^2 / 2d
+      stop:  both come to rest, if the lead is braking    v_ego^2 / 2*(d + lead stopping distance)
     """
     if lead is None or not lead.status:
       return 0.0
+    d = max(float(lead.dRel) - LEAD_GEOMETRY_STANDOFF_M, LEAD_GEOMETRY_MIN_GAP_M)
     v_lead = max(float(lead.vLead), 0.0)
     closing = max(v_ego - v_lead, 0.0)
-    gap = max(float(lead.dRel) - (t_follow * v_ego + LEAD_GEOMETRY_STANDOFF_M), LEAD_GEOMETRY_MIN_GAP_M)
-    match_term = closing ** 2 / (2.0 * gap)
     lead_brake = max(-float(lead.aLeadK), 0.0)
+    if closing <= 0.0 and lead_brake <= LEAD_GEOMETRY_MIN_LEAD_BRAKE:
+      return 0.0
+    match_term = closing ** 2 / (2.0 * d)
     stop_term = 0.0
     if lead_brake > LEAD_GEOMETRY_MIN_LEAD_BRAKE:
-      stop_term = v_ego ** 2 / (2.0 * (gap + v_lead ** 2 / (2.0 * lead_brake)))
+      stop_term = v_ego ** 2 / (2.0 * (d + v_lead ** 2 / (2.0 * lead_brake)))
     return float(max(match_term, stop_term))
 
   def get_close_lead_brake_cap(self, lead, v_ego, accel_min):
@@ -2560,8 +2565,7 @@ class LongitudinalPlanner:
     vision_low_speed_stop_active = False
     vision_brake_cap_active = False
     self.close_lead_brake_cap_value = 0.0
-    self.lead_geometry_required_accel = self.get_lead_geometry_required_accel(
-      self.lead_one, v_ego, effective_t_follow)
+    self.lead_geometry_required_accel = self.get_lead_geometry_required_accel(self.lead_one, v_ego)
     if lead_control_active:
       for lead in (self.lead_one, self.lead_two):
         rav4_early_lead_cap = get_toyota_rav4_tss2_early_lead_cap(
