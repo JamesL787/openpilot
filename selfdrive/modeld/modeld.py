@@ -1252,12 +1252,12 @@ def main(demo=False):
 
   lat_smooth_seconds = _model_smooth_seconds(params, "LatSmoothSeconds", LAT_SMOOTH_SECONDS)
   long_smooth_seconds = _model_smooth_seconds(params, "LongSmoothSeconds", LONG_SMOOTH_SECONDS)
-  long_delay = get_longitudinal_actuator_delay(CP, starpilot_toggles) + long_smooth_seconds
   prev_action = log.ModelDataV2.Action()
 
   DH = DesireHelper()
 
   starpilot_toggles = get_starpilot_toggles(sm)
+  long_delay = get_longitudinal_actuator_delay(CP, starpilot_toggles) + long_smooth_seconds
 
   while True:
     # Keep receiving frames until we are at least 1 frame ahead of previous extra frame
