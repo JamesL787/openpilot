@@ -1549,8 +1549,8 @@
       {
         "key": "CurveSpeedController",
         "label": "Curve Speed Controller",
-        "description": "Automatically slow down for upcoming curves using data learned from your driving style, adapting to curves as you would.",
-        "picker_description": "Slows for upcoming curves using your driving history.",
+        "description": "Automatically slow down for upcoming curves using the configured lateral-acceleration target.",
+        "picker_description": "Slows for upcoming curves using the configured target.",
         "data_type": "bool",
         "ui_type": "toggle",
         "is_parent_toggle": true,
@@ -1590,12 +1590,12 @@
       },
       {
         "key": "ResetCurveData",
-        "label": "Reset Curve Data",
-        "description": "Clear learned Curve Speed Controller data and begin training again from the default lateral acceleration.",
+        "label": "Reset Curve Setting",
+        "description": "Reset the curve lateral-acceleration target to the default 2.0 m/s².",
         "ui_type": "action",
         "action_label": "Reset",
         "action_endpoint": "/api/curve_speed_controller/reset",
-        "confirm_message": "Reset all learned Curve Speed Controller data? Training will restart from the default value.",
+        "confirm_message": "Reset the curve lateral-acceleration target to 2.0 m/s²?",
         "parent_key": "CurveSpeedController",
         "settings_tier": "simple"
       },

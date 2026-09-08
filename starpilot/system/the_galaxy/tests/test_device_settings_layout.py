@@ -115,15 +115,20 @@ def test_curve_speed_controller_no_lead_toggle_is_nested_under_csc():
   assert _declared_default("CurveSpeedControllerNoLead") == "0"
 
 
-def test_curve_speed_controller_readouts_are_display_only_and_nested():
+def test_curve_speed_controller_exposes_static_target_and_reset_action():
   csc = _params_by_section(_layout())["Longitudinal (Speed & Following)"]
 
-  for key, unit in (("CalibratedLateralAcceleration", " m/s²"), ("CalibrationProgress", "%")):
-    readout = csc[key]
-    assert readout["ui_type"] == "readout"
-    assert readout["parent_key"] == "CurveSpeedController"
-    assert readout["unit"] == unit
-    assert readout["settings_tier"] == "simple"
+  target = csc["CurveSpeedLateralAccel"]
+  assert target["ui_type"] == "numeric"
+  assert target["parent_key"] == "CurveSpeedController"
+  assert target["min"] == 1.5
+  assert target["max"] == 3.0
+  assert target["step"] == 0.1
+
+  reset = csc["ResetCurveData"]
+  assert reset["ui_type"] == "action"
+  assert reset["parent_key"] == "CurveSpeedController"
+  assert "learned" not in reset["description"].lower()
 
 
 def test_custom_accel_profile_exposes_variable_breakpoints():

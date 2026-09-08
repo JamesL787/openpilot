@@ -54,8 +54,6 @@ let flmWorkspaceInflight = null
 let lastFlmWorkspaceFetch = 0
 let favoritePollInflight = null
 let favoritePollTimer = null
-let cscCalibrationPollInflight = null
-let cscCalibrationPollTimer = null
 const DYNAMIC_DEFAULT_DEP_KEYS = new Set(["AccelerationProfile", "EVTuning", "TruckTuning"])
 const PANDA_FIRMWARE_TOGGLE_KEYS = new Set(["IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma"])
 const FLM_ADVANCED_LATERAL_KEYS = new Set([
@@ -698,51 +696,6 @@ function ensureFavoriteValuePolling() {
     }
     if (document.visibilityState === "visible") {
       refreshFavoriteValues()
-    }
-  }, 1000)
-}
-
-async function refreshCscCalibrationValues() {
-  if (cscCalibrationPollInflight || state.loadingValues) return cscCalibrationPollInflight
-
-  cscCalibrationPollInflight = Promise.all(
-    ["CalibratedLateralAcceleration", "CalibrationProgress"].map(async key => {
-      const response = await fetch(`/api/params_memory?key=${encodeURIComponent(key)}`, { cache: "no-store" })
-      if (!response.ok) return [key, null]
-      const raw = (await response.text()).trim()
-      const value = Number(raw)
-      return [key, Number.isFinite(value) && raw !== "" ? value : null]
-    }),
-  ).then(entries => {
-    const nextValues = { ...state.values }
-    let changed = false
-    for (const [key, value] of entries) {
-      if (value === null || nextValues[key] === value) continue
-      nextValues[key] = value
-      changed = true
-    }
-    if (changed) {
-      state.values = nextValues
-      scheduleSyncInputs()
-    }
-  }).catch(() => {}).finally(() => {
-    cscCalibrationPollInflight = null
-  })
-
-  return cscCalibrationPollInflight
-}
-
-function ensureCscCalibrationPolling() {
-  if (cscCalibrationPollTimer !== null) return
-
-  cscCalibrationPollTimer = setInterval(() => {
-    if (!window.location.pathname.startsWith("/device_settings")) {
-      clearInterval(cscCalibrationPollTimer)
-      cscCalibrationPollTimer = null
-      return
-    }
-    if (document.visibilityState === "visible") {
-      refreshCscCalibrationValues()
     }
   }, 1000)
 }
@@ -1855,7 +1808,6 @@ export function DeviceSettings({ params }) {
 
   fetchFlmWorkspace()
   ensureFavoriteValuePolling()
-  ensureCscCalibrationPolling()
 
   if (!state.fetched) {
     state.fetched = true

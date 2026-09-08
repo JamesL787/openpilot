@@ -6173,20 +6173,23 @@ def setup(app):
   @app.route("/api/curve_speed_controller/reset", methods=["POST"])
   def reset_curve_speed_controller_data():
     if params.get_bool("IsOnroad"):
-      return jsonify({"error": "Curve Speed Controller data can only be reset while parked."}), 403
+      return jsonify({"error": "Curve Speed Controller setting can only be reset while parked."}), 403
 
+    # VFN's CSC uses a static lateral-acceleration target. Clear the legacy learner
+    # state as well so older clients do not retain stale calibration data.
+    params.put("CurveSpeedLateralAccel", 2.0)
     params.put("CalibratedLateralAcceleration", 2.0)
     params.remove("CalibrationProgress")
     params.remove("CurvatureData")
+    params_memory.put("CurveSpeedLateralAccel", 2.0)
     params_memory.put("CalibratedLateralAcceleration", 2.0)
     params_memory.put("CalibrationProgress", 0.0)
     params_memory.remove("CurvatureData")
 
     return jsonify({
-      "message": "Curve Speed Controller data reset. Training will restart on the next drive.",
+      "message": "Curve Speed Controller lateral-acceleration setting reset to the default.",
       "updated": {
-        "CalibratedLateralAcceleration": 2.0,
-        "CalibrationProgress": 0.0,
+        "CurveSpeedLateralAccel": 2.0,
       },
     }), 200
 

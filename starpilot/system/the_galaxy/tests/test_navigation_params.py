@@ -734,14 +734,16 @@ def test_force_offroad_toggle_rejects_when_not_parked(monkeypatch):
   assert fake_params.writes == []
 
 
-def test_curve_speed_controller_reset_clears_learned_data_offroad(monkeypatch):
+def test_curve_speed_controller_reset_restores_static_target_offroad(monkeypatch):
   client, fake_params = _params_client(monkeypatch, {
     "IsOnroad": False,
+    "CurveSpeedLateralAccel": 2.73,
     "CalibratedLateralAcceleration": 2.73,
     "CalibrationProgress": 48.0,
     "CurvatureData": {"0.01": {"average": 2.73, "count": 12}},
   }, "tici")
   fake_memory = WritableFakeParams({
+    "CurveSpeedLateralAccel": 2.73,
     "CalibratedLateralAcceleration": 2.73,
     "CalibrationProgress": 48.0,
     "CurvatureData": {"0.01": {"average": 2.73, "count": 12}},
@@ -752,14 +754,15 @@ def test_curve_speed_controller_reset_clears_learned_data_offroad(monkeypatch):
 
   assert response.status_code == 200
   assert response.get_json()["updated"] == {
-    "CalibratedLateralAcceleration": 2.0,
-    "CalibrationProgress": 0.0,
+    "CurveSpeedLateralAccel": 2.0,
   }
+  assert fake_params.values["CurveSpeedLateralAccel"] == 2.0
   assert fake_params.values["CalibratedLateralAcceleration"] == 2.0
   assert "CalibrationProgress" not in fake_params.values
   assert "CurvatureData" not in fake_params.values
   assert fake_params.removals == ["CalibrationProgress", "CurvatureData"]
   assert fake_memory.values == {
+    "CurveSpeedLateralAccel": 2.0,
     "CalibratedLateralAcceleration": 2.0,
     "CalibrationProgress": 0.0,
   }
@@ -777,6 +780,6 @@ def test_curve_speed_controller_reset_rejected_onroad(monkeypatch):
   response = client.post("/api/curve_speed_controller/reset")
 
   assert response.status_code == 403
-  assert response.get_json()["error"] == "Curve Speed Controller data can only be reset while parked."
+  assert response.get_json()["error"] == "Curve Speed Controller setting can only be reset while parked."
   assert fake_params.writes == []
   assert fake_params.removals == []
