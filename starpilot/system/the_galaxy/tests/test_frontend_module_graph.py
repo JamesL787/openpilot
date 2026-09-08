@@ -8,6 +8,7 @@ INDEX_PATH = REPO_ROOT / "starpilot/system/the_galaxy/templates/index.html"
 BLUETOOTH_PATH = REPO_ROOT / "starpilot/system/the_galaxy/assets/components/tools/bluetooth.js"
 CONTROLLERS_PATH = REPO_ROOT / "starpilot/system/the_galaxy/assets/components/tools/wheel_controls.js"
 SIDEBAR_PATH = REPO_ROOT / "starpilot/system/the_galaxy/assets/components/sidebar.js"
+MODEL_LAB_PATH = REPO_ROOT / "starpilot/system/the_galaxy/assets/components/tools/model_laboratory.js"
 
 
 def test_settings_does_not_create_a_second_router_module():
@@ -22,7 +23,7 @@ def test_router_and_settings_cache_bust_is_consistent():
   index = INDEX_PATH.read_text(encoding="utf-8")
 
   assert "/assets/components/settings.js?v=router-cycle-fix-5" in router
-  assert "/assets/components/router.js?v=router-cycle-fix-6" in index
+  assert "/assets/components/router.js?v=router-cycle-fix-7" in index
 
 
 def test_bluetooth_actions_use_reactive_disabled_bindings():
@@ -95,3 +96,44 @@ def test_bluetooth_and_controllers_sidebar_order():
   sentry = source.index('{ name: "Sentry Mode"')
   controllers = source.index('{ name: "Controllers"')
   assert toggles < bluetooth < sentry < controllers
+
+def test_model_laboratory_is_wired_into_classic_and_mobile_navigation():
+  router = ROUTER_PATH.read_text(encoding="utf-8")
+  sidebar = SIDEBAR_PATH.read_text(encoding="utf-8")
+  template = INDEX_PATH.read_text(encoding="utf-8")
+  mobile_tools = (REPO_ROOT / "starpilot/system/the_galaxy/assets/mobile/js/views/Tools.js").read_text(encoding="utf-8")
+  mobile_embed = (REPO_ROOT / "starpilot/system/the_galaxy/assets/mobile/js/views/ToolEmbed.js").read_text(encoding="utf-8")
+
+  assert MODEL_LAB_PATH.is_file()
+  assert 'createRoute("model_laboratory", "/model_laboratory", ModelLaboratory)' in router
+  assert '{ name: "Model Laboratory", link: "/model_laboratory"' in sidebar
+  assert "/assets/components/tools/model_laboratory.css" in template
+  assert '{ name: "Model Laboratory", link: "/model_laboratory"' in mobile_tools
+  assert '"/model_laboratory": "Model Laboratory"' in mobile_embed
+
+
+def test_model_laboratory_frontend_exposes_guards_and_role_copy():
+  source = MODEL_LAB_PATH.read_text(encoding="utf-8")
+  assert 'if (!state.chestnutReady)' in source
+  assert 'if (state.isOnroad)' in source
+  assert "model.modelLabArtifactInstalled" in source
+  assert "Nothing is compiled on the comma" in source
+  assert "run every camera frame on Chestnut's AMD GPU" in source
+  assert 'lateral.value === longitudinal.value' in source
+  assert 'lateral.version !== longitudinal.version' not in source
+  assert 'class="ml-chip ${' not in source
+  assert 'class="ml-state ${() =>' not in source
+  assert 'class="${() => `ml-chip ${' in source
+  assert 'class="${() => `ml-state ${' in source
+  assert "Path shape, curvature, lane geometry" in source
+  assert "Speed, acceleration, stopping, leads" in source
+  assert "Chestnut experiment" not in source
+  assert "Manifest shortcomings" not in source
+  assert "Opportunities" not in source
+  assert "let selectionDirty = false" in source
+  assert "lateralModel: selectionDirty" in source
+  assert "longitudinalModel: selectionDirty" in source
+  assert source.count("selectionDirty = true") == 2
+  assert "selectionDirty = false\n    applyPayload(payload)" in source
+  assert 'model_laboratory.js?v=model-lab-5' in ROUTER_PATH.read_text(encoding="utf-8")
+  assert 'model_laboratory.css?v=model-lab-4' in INDEX_PATH.read_text(encoding="utf-8")

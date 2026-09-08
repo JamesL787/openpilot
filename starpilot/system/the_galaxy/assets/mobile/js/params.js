@@ -28,7 +28,7 @@ const VEHICLE_SETTING_MAKES = {
   SubaruSNG: ["Subaru"],
   SubaruSNGManualParkingBrake: ["Subaru"],
   SubaruStopStartOff: ["Subaru"],
-  SubaruAvhOnAtStartup: ["Subaru"],
+  SubaruRedneckCruise: ["Subaru"],
   ClusterOffset: ["Lexus", "Toyota"],
   SNGHack: ["Lexus", "Toyota"],
   ToyotaAutoHold: ["Lexus", "Toyota"],
@@ -56,23 +56,24 @@ export function matchesSettingValueCondition(param, values) {
   return allowedValues.some((value) => toSelectValue(value) === currentValue)
 }
 
+// Any structural reason a param must not be shown (regardless of dev mode).
+function isHiddenByConditions(section, param, values) {
+  if (HIDDEN_SETTING_KEYS.has(param.key) || !isVehicleSettingVisible(section, param, values) || !matchesSettingValueCondition(param, values)) return true
+  if (param.requires_capability && !values[param.requires_capability]) return true
+  if (RADAR_REQUIRED_KEYS.has(param.key) && !values.HasRadar) return true
+  if (param.key === "AlphaLongitudinalEnabled" && !values.AlphaLongitudinalAvailable) return true
+  return false
+}
+
 export function isSettingVisible(section, param, values) {
-  if (HIDDEN_SETTING_KEYS.has(param.key) || !isVehicleSettingVisible(section, param, values) || !matchesSettingValueCondition(param, values)) return false
-  if (param.requires_capability && !values[param.requires_capability]) return false
-  if (RADAR_REQUIRED_KEYS.has(param.key) && !values.HasRadar) return false
-  if (param.key === "AlphaLongitudinalEnabled" && !values.AlphaLongitudinalAvailable) return false
+  if (isHiddenByConditions(section, param, values)) return false
   if (values[GALAXY_DEVELOPER_MODE_KEY]) return true
   return section.name === "Favorites" || param.settings_tier === "simple"
 }
 
 export function isAdvancedHiddenByDeveloperMode(section, param, values) {
   if (param.settings_tier !== "advanced") return false
-  if (HIDDEN_SETTING_KEYS.has(param.key)) return false
-  if (!isVehicleSettingVisible(section, param, values) || !matchesSettingValueCondition(param, values)) return false
-  if (param.requires_capability && !values[param.requires_capability]) return false
-  if (RADAR_REQUIRED_KEYS.has(param.key) && !values.HasRadar) return false
-  if (param.key === "AlphaLongitudinalEnabled" && !values.AlphaLongitudinalAvailable) return false
-  return true
+  return !isHiddenByConditions(section, param, values)
 }
 
 export function countAdvancedHiddenByDeveloperMode(layout, values) {
@@ -99,6 +100,9 @@ export function numericBounds(param, values) {
   }
   if (param.key === "ScreenBrightness" || param.key === "ScreenBrightnessOnroad") {
     return { min: 1, max: 101, step: 1 }
+  }
+  if (param.key === "LaneCenterOffset") {
+    return { min: -0.3, max: 0.3, step: 0.01 }
   }
   if (/^(Traffic|Aggressive|Standard|Relaxed)Jerk(Acceleration|Deceleration|Danger|SpeedDecrease|Speed)$/.test(String(param.key || ""))) {
     return { min: 25, max: 200, step: 1 }

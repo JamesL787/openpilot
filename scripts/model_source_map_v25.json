@@ -359,6 +359,11 @@
     "input_format": "supercombo",
     "source_id": "deeprl3v2"
   },
+  "deeprl3v2": {
+    "ref": "702fa71ad4dd8de08425eb11a1a42aaeb64892c9",
+    "input_format": "supercombo",
+    "source_id": "deeprl3v2"
+  },
   "rh3": {
     "ref": "93f5aa469a72b7621aef7da7901c100e0113e4d9",
     "input_format": "supercombo",
@@ -378,6 +383,26 @@
     "ref": "0f8b4248a2e8bdd63b6ea4c6e1bbb32119cb2620",
     "input_format": "supercombo",
     "source_id": "rdf2"
+  },
+  "rdf33": {
+    "ref": "ea2151ba4b82854277f37f03b949f15fe2733dc8",
+    "input_format": "supercombo",
+    "source_id": "rdf3"
+  },
+  "rdf43": {
+    "ref": "a5a6412d08474cffb49a69afb910756afdee123e",
+    "input_format": "supercombo",
+    "source_id": "rdf4"
+  },
+  "rdf53": {
+    "ref": "7fb03ca474f03e95e59ec0c8a6c5fba831bd5fd1",
+    "input_format": "supercombo",
+    "source_id": "rdf5"
+  },
+  "rdf63": {
+    "ref": "35703097905a122c9f3ddf0d12889b4873d7e2a2",
+    "input_format": "supercombo",
+    "source_id": "rdf6"
   },
   "tsf": {
     "ref": "4d911346cde4e0d2978a625f31679808284cc19d",
@@ -426,4 +451,3 @@
     "source_id": "bmrlnapv6"
   }
 }
-

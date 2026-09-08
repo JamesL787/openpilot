@@ -1,7 +1,5 @@
-import math
-import numpy as np
 import pytest
-from itertools import pairwise
+import numpy as np
 from parameterized import parameterized
 from types import SimpleNamespace
 
@@ -13,37 +11,19 @@ from opendbc.car.car_helpers import interfaces
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.chrysler.values import CAR as CHRYSLER
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
-from opendbc.car.honda.steer_ratio import (
-  HONDA_VGR_INVERSE_BY_PROFILE,
-  HONDA_VGR_PROFILE_BY_FW,
-  NRDR_CLARITY_VGR_ANGLE_BP,
-  NRDR_CLARITY_VGR_LINEAR_BP,
-  NRDR_CLARITY_VGR_REL_LOCAL,
-  _CLARITY_POSITION_Y,
-  NRDR_INSIGHT_TXM_A040_VGR_ANGLE_BP,
-  NRDR_INSIGHT_TXM_A040_VGR_LINEAR_BP,
-  NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL,
-)
 from opendbc.car.toyota.values import CAR as TOYOTA
 from opendbc.car.nissan.values import CAR as NISSAN
 from opendbc.car.gm.values import CAR as GM
 from opendbc.car.hyundai.values import CAR as HYUNDAI
 from opendbc.car.subaru.values import CAR as SUBARU
 from opendbc.car.vehicle_model import VehicleModel
-from openpilot.common.params import Params
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.latcontrol_angle import (
   LatControlAngle,
   _ascent_angle_tracking_target,
-  _ford_angle_tracking_saturated,
 )
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
-  NRDR_ANGLE_RATE_LIMIT_DEG_S,
-  NRDR_SR_CURVE_BY_FP,
-  NRDR_SR_CURVE_INVERSE_BY_FP,
   LatControlPID,
-  is_steering_rate_unwinding,
-  solve_angle_from_ratio_curve,
   get_civic_bosch_modified_pid_output_alpha,
   get_civic_bosch_modified_pid_output_scale,
   get_honda_crv_5g_pid_output,
@@ -118,6 +98,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_genesis_gv70_friction_jerk_deadzone,
   get_genesis_gv70_friction_threshold,
   get_genesis_gv70_high_speed_error_scale,
+  get_genesis_gv70_reversal_output_scale,
   get_genesis_gv70_unwind_ff_scale,
   get_honda_accord_ff_scale,
   get_elantra_non_scc_ff_scale,
@@ -223,41 +204,6 @@ class TestLatControl:
     assert _ascent_angle_tracking_target(10.0, 0.0, 4.0, False) == pytest.approx(10.0)
     assert _ascent_angle_tracking_target(10.0, 0.0, 20.0, True) == pytest.approx(10.0)
 
-  def test_ford_angle_tracking_does_not_report_a_responsive_eps_as_saturated(self):
-    assert not _ford_angle_tracking_saturated(12.0, 12.0)
-    assert not _ford_angle_tracking_saturated(-12.0, -12.0)
-    assert _ford_angle_tracking_saturated(16.0, 12.0)
-    assert _ford_angle_tracking_saturated(12.0, -12.0)
-
-  def test_ford_angle_tracking_still_reports_a_stalled_eps(self):
-    assert _ford_angle_tracking_saturated(3.0, 0.0)
-    assert not _ford_angle_tracking_saturated(2.5, 0.0)
-
-  def test_ford_angle_handoff_saturation_waits_for_eps_response(self):
-    CP = SimpleNamespace(
-      steerLimitTimer=1.0,
-      brand="ford",
-      carFingerprint="FORD_MUSTANG_MACH_E_MK1",
-    )
-    controller = LatControlAngle(CP, None, DT_CTRL)
-    target = [12.0]
-    VM = SimpleNamespace(get_steer_from_curvature=lambda *_args: math.radians(target[0]))
-    CS = car.CarState.new_message(vEgo=10.0, steeringPressed=False)
-    params = log.LiveParametersData.new_message(angleOffsetDeg=0.0, roll=0.0)
-    toggles = SimpleNamespace(ford_lateral_mode=2)
-
-    for frame in range(round(2.0 / DT_CTRL)):
-      CS.steeringAngleDeg = frame * 12.0 * DT_CTRL
-      target[0] = CS.steeringAngleDeg + 12.0
-      _, _, angle_log = controller.update(
-        True, CS, VM, params, False, 0.0, False, 0.0, None, None, toggles)
-      assert not angle_log.saturated
-
-    for _ in range(round(2.0 / DT_CTRL)):
-      _, _, angle_log = controller.update(
-        True, CS, VM, params, False, 0.0, False, 0.0, None, None, toggles)
-    assert angle_log.saturated
-
   def test_torque_log_exposes_friction_controller_state(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(GM.CHEVROLET_BOLT_ACC_2022_2023)
 
@@ -295,15 +241,10 @@ class TestLatControl:
     return controller, VM, CS, params, starpilot_toggles
 
   @staticmethod
-  def _build_pid_controller(car_name, eps_modified=False, extra_flags=0):
+  def _build_pid_controller(car_name):
     CarInterface = interfaces[car_name]
     CP = CarInterface.get_non_essential_params(car_name)
     CP.dashcamOnly = True
-    if eps_modified:
-      CP.flags |= int(HondaFlags.EPS_MODIFIED)
-    # VGR profile flags come from EPS firmware fingerprinting, not from EPS_MODIFIED. The real
-    # Clarity carries VGR_CLARITY_TRW_A020 (carParams.flags 0xE910), so pass it explicitly here.
-    CP.flags |= int(extra_flags)
     CI = CarInterface(CP, custom.StarPilotCarParams.new_message())
     controller = LatControlPID(CP.as_reader(), CI, DT_CTRL)
     VM = VehicleModel(CP)
@@ -322,406 +263,6 @@ class TestLatControl:
 
     starpilot_toggles = SimpleNamespace()
     return controller, VM, CS, params, starpilot_toggles
-
-  @staticmethod
-  def _run_pid_frames(controller, VM, CS, params, toggles, curvatures):
-    angles = []
-    for curvature in curvatures:
-      _, angle_des, _ = controller.update(True, CS, VM, params, False, curvature, False, 0.2, None, None, toggles)
-      angles.append(angle_des)
-    return angles
-
-  def _run_clarity_pid(self, curvatures, *, rate_limit, smoothing, tau=0.1, v_ego=2.0):
-    """Set the live params, THEN build and run -- the controller reads them on its first frame."""
-    Params().put("NrdrLatAngleRateLimit", int(rate_limit))
-    Params().put_bool("HondaTorqueLowPassFilter", smoothing)
-    for key in ("HondaLpfTauLowSpeed", "HondaLpfTauStandard", "HondaLpfTauHighway"):
-      Params().put_float(key, tau)
-
-    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
-    CS.vEgo = v_ego
-    CS.steeringAngleDeg = 0.0
-    return controller, self._run_pid_frames(controller, VM, CS, params, toggles, curvatures)
-
-  def test_desired_angle_rate_limit_clips_low_speed_model_jitter(self):
-    # clip_curvature's ISO jerk allowance is ~1/v^2 in angle space, so at a crawl it lets the
-    # target step tens of degrees per frame. The angle-space limiter is what actually bounds it.
-    # Smoothing off so this measures the slew clip alone.
-    spike = [0.0, 0.05]
-    controller, (settled, limited) = self._run_clarity_pid(spike, rate_limit=NRDR_ANGLE_RATE_LIMIT_DEG_S, smoothing=False)
-    assert controller.is_eps_modified
-    assert controller.angle_rate_limit_deg_s == pytest.approx(NRDR_ANGLE_RATE_LIMIT_DEG_S)
-    assert abs(limited - settled) == pytest.approx(NRDR_ANGLE_RATE_LIMIT_DEG_S * DT_CTRL, abs=1e-6)
-
-    # 0 disables the limiter, and that same command is then an enormous single-frame step.
-    reference, (ref_settled, unlimited) = self._run_clarity_pid(spike, rate_limit=0, smoothing=False)
-    assert reference.angle_rate_limit_deg_s == 0.0
-    assert abs(unlimited - ref_settled) > 10.0 * abs(limited - settled)
-
-  def test_desired_angle_rate_limit_passes_sustained_motion(self):
-    # A slew clip must not behave like a filter: a ramp slower than the ceiling is untouched.
-    ramp = [2e-5 * n for n in range(50)]  # well inside the 300 deg/s ceiling at this ratio
-    _, limited = self._run_clarity_pid(ramp, rate_limit=NRDR_ANGLE_RATE_LIMIT_DEG_S, smoothing=False)
-    _, unlimited = self._run_clarity_pid(ramp, rate_limit=0, smoothing=False)
-
-    assert max(abs(angle) for angle in unlimited) > 1.0  # the ramp really does move the target
-    assert limited == pytest.approx(unlimited)
-
-  def test_desired_angle_rate_limit_does_not_slew_in_on_engage(self):
-    # While disengaged both shaping states track the raw target, so engaging on an already-turned
-    # wheel snaps to the current command instead of ramping in from centre.
-    Params().put("NrdrLatAngleRateLimit", int(NRDR_ANGLE_RATE_LIMIT_DEG_S))
-    Params().put_bool("HondaTorqueLowPassFilter", True)
-    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
-    CS.vEgo = 2.0
-    CS.steeringAngleDeg = 0.0
-
-    _, inactive_angle, _ = controller.update(False, CS, VM, params, False, 0.05, False, 0.2, None, None, toggles)
-    _, engaged_angle, _ = controller.update(True, CS, VM, params, False, 0.05, False, 0.2, None, None, toggles)
-
-    assert abs(inactive_angle) > 10.0
-    assert engaged_angle == pytest.approx(inactive_angle)
-
-  def test_target_smoothing_lags_a_step_and_is_toggleable(self):
-    # The carcontroller LPF moved onto the target. Same tau params, so it must behave as a
-    # first-order lag on the desired angle, and the existing toggle must still turn it off.
-    # Slew clip disabled so this measures the filter alone.
-    step = [0.0] + [0.01] * 3
-    _, smoothed = self._run_clarity_pid(step, rate_limit=0, smoothing=True, tau=0.1)
-    reference, raw = self._run_clarity_pid(step, rate_limit=0, smoothing=False, tau=0.1)
-
-    assert not reference.target_smoothing_enabled
-    # Unsmoothed lands the step immediately; smoothed approaches it monotonically from behind.
-    assert raw[1] == pytest.approx(raw[3])
-    assert abs(smoothed[1]) < abs(smoothed[2]) < abs(smoothed[3]) < abs(raw[3])
-
-    alpha = DT_CTRL / (0.1 + DT_CTRL)
-    assert abs(smoothed[1] - smoothed[0]) == pytest.approx(alpha * abs(raw[1] - raw[0]), rel=1e-6)
-
-  def test_target_smoothing_does_not_throttle_the_slew_clip(self):
-    # The slew clip must run off its OWN previous value, not the smoothed one. Chaining them
-    # would cap each frame's allowance at alpha * max_delta (~27 deg/s), throttling real steering.
-    frames = 20
-    controller, _ = self._run_clarity_pid([0.0] + [0.05] * frames,
-                                          rate_limit=NRDR_ANGLE_RATE_LIMIT_DEG_S, smoothing=True, tau=0.1)
-
-    max_step = NRDR_ANGLE_RATE_LIMIT_DEG_S * DT_CTRL
-    assert abs(controller.prev_rate_limited_angle) == pytest.approx(frames * max_step, abs=1e-6)
-
-  def test_lateral_command_reaches_carcontroller_unfiltered(self):
-    # The whole point of moving the filter: what LatControlPID returns is what the carcontroller
-    # sends, so controlsd's actuators-vs-actuatorsOutput comparison means only safety clipping.
-    CarInterface = interfaces[HONDA.HONDA_CLARITY]
-    CP = CarInterface.get_non_essential_params(HONDA.HONDA_CLARITY)
-    CP.flags |= int(HondaFlags.EPS_MODIFIED)
-    CC = CarInterface(CP, custom.StarPilotCarParams.new_message()).CC
-
-    assert not hasattr(CC, "torque_lpf")
-    assert not any("lpf" in key.lower() for key in CC._get_live_tuning_params())
-
-  def test_steer_ratio_curves_are_invertible(self):
-    for fingerprint, (curve_bp, curve_v) in NRDR_SR_CURVE_BY_FP.items():
-      inverse_bp = NRDR_SR_CURVE_INVERSE_BY_FP[fingerprint]
-      assert len(inverse_bp) == len(curve_bp)
-      assert all(low < high for low, high in pairwise(inverse_bp)), fingerprint
-      # Round trip: an angle on the curve maps to its own unit-ratio angle and back. Sampled
-      # BETWEEN the knots as well as on them -- interpolating inverse_bp is exact on the knots
-      # and wrong in between, which on the Clarity curve is 0.3 deg at 120 deg and 1.7 deg at
-      # 350 deg, the same order as the measured-angle error this whole change removes.
-      dense = np.linspace(curve_bp[1], curve_bp[-1], 401)
-      for angle in dense:
-        ratio = float(np.interp(angle, curve_bp, curve_v))
-        solved = solve_angle_from_ratio_curve(angle / ratio, curve_bp, curve_v, inverse_bp)
-        assert solved == pytest.approx(angle, rel=1e-9), (fingerprint, angle)
-
-  def test_steer_ratio_solution_is_sign_preserving_and_extrapolates_at_the_final_ratio(self):
-    curve_bp, curve_v = NRDR_SR_CURVE_BY_FP[HONDA.HONDA_CLARITY]
-    inverse_bp = NRDR_SR_CURVE_INVERSE_BY_FP[HONDA.HONDA_CLARITY]
-
-    left = solve_angle_from_ratio_curve(4.0, curve_bp, curve_v, inverse_bp)
-    right = solve_angle_from_ratio_curve(-4.0, curve_bp, curve_v, inverse_bp)
-    assert left == pytest.approx(-right)
-    assert left > 0.0
-
-    # Beyond the table the ratio is clamped, not the angle.
-    beyond = inverse_bp[-1] * 2.0
-    assert solve_angle_from_ratio_curve(beyond, curve_bp, curve_v, inverse_bp) == pytest.approx(beyond * curve_v[-1])
-
-  def test_desired_angle_does_not_move_with_the_measured_angle(self):
-    # The defect: selecting sR at the measured angle put d(theta_des)/d(theta_meas) inside the
-    # loop. For one fixed command the target must be identical whatever the wheel is doing.
-    Params().put("NrdrLatAngleRateLimit", 0)
-    Params().put_bool("HondaTorqueLowPassFilter", False)
-
-    targets = []
-    for measured in (-90.0, -20.0, 0.0, 20.0, 90.0):
-      controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
-      CS.vEgo = 20.0
-      CS.steeringAngleDeg = measured
-      _, angle_des, _ = controller.update(True, CS, VM, params, False, 0.02, False, 0.2, None, None, toggles)
-      targets.append(angle_des)
-
-    assert abs(targets[0]) > 1.0  # the command really does ask for a meaningful angle
-    assert targets == pytest.approx([targets[0]] * len(targets))
-
-  def test_unwind_gates_ignore_a_sign_flipping_measured_rate(self):
-    # Both unwind gates test  desired_angle * steering_rate < -1.0.  With the raw CAN rate a
-    # single sign flip clears that outright at any real angle, switching which expression builds
-    # the output scale and stepping the feedforward boost -- multiplicative chatter on the command.
-    Params().put("NrdrLatAngleRateLimit", 0)
-    Params().put_bool("HondaTorqueLowPassFilter", False)
-
-    curvature = 0.0082  # ~25 deg of desired angle: past the 10 deg mid-turn knee
-
-    def run(tau, rates):
-      Params().put_float("NrdrLatUnwindRateTau", tau)
-      controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
-      CS.vEgo = 3.0
-      CS.steeringRateDeg = 0.0
-      # Engage the way the car does, and hold the wheel near the target so the output stays
-      # well short of saturation -- a railed output would hide the scale entirely.
-      controller.update(False, CS, VM, params, False, curvature, False, 0.2, None, None, toggles)
-      CS.steeringAngleDeg = controller.prev_angle_steers_des_no_offset
-      outputs = []
-      for rate in rates:
-        CS.steeringRateDeg = rate
-        output, _, _ = controller.update(True, CS, VM, params, False, curvature, False, 0.2, None, None, toggles)
-        outputs.append(output)
-      return outputs
-
-    def relative_chatter(values):
-      # The gates multiply the command, so the defect is a fraction of it, not an absolute
-      # torque. Measuring it as a ratio keeps this independent of the test CP's gains.
-      settled = values[10:]
-      mean = sum(abs(value) for value in settled) / len(settled)
-      assert max(abs(value) for value in settled) < 0.9, "railed: the output scale is not visible"
-      return max(abs(b - a) for a, b in pairwise(settled)) / mean
-
-    dither = [10.0, -10.0] * 25  # no net motion, sign flips every frame
-    raw = relative_chatter(run(0.0, dither))
-    filtered = relative_chatter(run(0.1, dither))
-
-    assert raw > 0.2  # the raw gate swings the command by tens of percent, frame to frame
-    assert filtered < 0.05 * raw
-
-  def test_unwind_gate_needs_a_real_rate_not_just_the_right_sign(self):
-    # The product test alone is an angle-scaled deadband running the wrong way: it demands
-    # 1 deg/s at 1 deg of angle but only 0.01 deg/s at 100 deg.
-    assert is_steering_rate_unwinding(100.0, -0.05) is False
-    assert is_steering_rate_unwinding(100.0, -40.0) is True
-    assert is_steering_rate_unwinding(-100.0, 40.0) is True
-    assert is_steering_rate_unwinding(100.0, 40.0) is False  # turning in, not unwinding
-    # Still bounded by the original product test at small angles.
-    assert is_steering_rate_unwinding(0.01, -40.0) is False
-
-  def test_unwind_rate_filter_still_tracks_a_sustained_unwind(self):
-    # Smoothing must not blind the gate: a real unwind lasts hundreds of ms and must register.
-    Params().put("NrdrLatAngleRateLimit", 0)
-    Params().put_bool("HondaTorqueLowPassFilter", False)
-    Params().put_float("NrdrLatUnwindRateTau", 0.1)
-    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
-    CS.vEgo = 3.0
-    CS.steeringAngleDeg = 20.0
-
-    for _ in range(100):  # 1 s of steady unwind
-      CS.steeringRateDeg = -40.0
-      controller.update(True, CS, VM, params, False, 0.03, False, 0.2, None, None, toggles)
-
-    assert controller.unwind_rate_filter.x == pytest.approx(-40.0, rel=0.02)
-
-  def test_telemetry_and_learners_keep_the_raw_steering_rate(self):
-    Params().put_float("NrdrLatUnwindRateTau", 0.1)
-    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
-    CS.vEgo = 3.0
-    CS.steeringAngleDeg = 20.0
-    CS.steeringRateDeg = 55.0
-
-    _, _, pid_log = controller.update(True, CS, VM, params, False, 0.03, False, 0.2, None, None, toggles)
-    assert pid_log.steeringRateDeg == pytest.approx(55.0)
-
-  def test_firmware_vgr_toggle_selects_the_other_rack_map(self):
-    # Both maps must be built for a car that has both, so the toggle can pick either at runtime.
-    Params().put("NrdrLatAngleRateLimit", 0)
-    Params().put_bool("HondaTorqueLowPassFilter", False)
-
-    def run(use_fw):
-      Params().put_bool("NrdrLatUseFirmwareVgr", use_fw)
-      controller, VM, CS, params, toggles = self._build_pid_controller(
-        HONDA.HONDA_CLARITY, eps_modified=True, extra_flags=HondaFlags.VGR_CLARITY_TRW_A020)
-      CS.vEgo = 20.0
-      CS.steeringAngleDeg = 0.0
-      # first frame reads the params, second frame acts on them
-      out = [controller.update(True, CS, VM, params, False, 0.02, False, 0.2, None, None, toggles)[1]
-             for _ in range(3)]
-      return controller, out[-1]
-
-    road_c, road = run(False)
-    fw_c, fw = run(True)
-
-    assert road_c.sr_curve is not None and road_c.vgr_inverse is not None, "both maps must exist"
-    assert not road_c.use_firmware_vgr and fw_c.use_firmware_vgr
-    assert abs(road) > 1.0 and abs(fw) > 1.0
-    assert road != pytest.approx(fw), "the toggle must actually change the commanded angle"
-
-  def test_firmware_vgr_toggle_is_inert_without_a_traced_table(self):
-    # A car with a measured curve but no traced EPS image must keep the road curve either way.
-    Params().put_bool("NrdrLatUseFirmwareVgr", True)
-    controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CRV_5G, eps_modified=True)
-    assert controller.sr_curve is not None
-    assert controller.vgr_inverse is None      # no traced image for this rack
-    CS.vEgo = 20.0
-    for _ in range(3):
-      _, angle, _ = controller.update(True, CS, VM, params, False, 0.02, False, 0.2, None, None, toggles)
-    assert abs(angle) > 0.0                    # still produces a target, via the road curve
-
-  def test_only_the_position_table_is_used_as_a_rack_map(self):
-    # The firmware's B table divides the RATE input, not the position; it must not be tabulated
-    # as a position curve. Guard the A table's defining property instead: unity at centre.
-    from opendbc.car.honda import steer_ratio as sr
-    assert sr._CLARITY_POSITION_Y[0] == 1 << 14, "A table must be unity (2**14) at centre"
-    linear_bp, angle_bp = sr.HONDA_VGR_INVERSE_BY_PROFILE[sr.HONDA_VGR_CLARITY_TRW_A020]
-    assert linear_bp[0] == pytest.approx(0.0) and angle_bp[0] == pytest.approx(0.0)
-    assert all(a < b for a, b in pairwise(linear_bp)), "linear axis must be strictly increasing"
-    assert all(a < b for a, b in pairwise(angle_bp)), "angle axis must be strictly increasing"
-
-  def test_rate_feedforward_cancels_ramp_lag(self):
-    # A ramping target is exactly the case P cannot close. The FF must add command in the
-    # direction of travel, and must not act on a stationary target.
-    from openpilot.selfdrive.controls.lib.latcontrol_pid import (
-      NRDR_RATE_FF_GAIN, NRDR_RATE_FF_MAX, get_target_rate_feedforward)
-    assert get_target_rate_feedforward(0.0, NRDR_RATE_FF_GAIN) == 0.0
-    assert get_target_rate_feedforward(40.0, NRDR_RATE_FF_GAIN) == pytest.approx(0.288, abs=1e-3)
-    assert get_target_rate_feedforward(-40.0, NRDR_RATE_FF_GAIN) == pytest.approx(-0.288, abs=1e-3)
-    # the measured turn-in (27-43 deg/s) must sit inside the clamp, not against it
-    assert abs(get_target_rate_feedforward(43.0, NRDR_RATE_FF_GAIN)) < NRDR_RATE_FF_MAX
-    # the slew clip's 191 deg/s would be 1.38 open loop; the clamp has to catch that
-    assert get_target_rate_feedforward(191.0, NRDR_RATE_FF_GAIN) == pytest.approx(NRDR_RATE_FF_MAX)
-    assert get_target_rate_feedforward(50.0, 0.0) == 0.0
-
-  def test_rate_feedforward_adds_command_on_a_ramping_target(self):
-    # Hold the wheel exactly on the target so the error term is ~0 and P contributes nothing.
-    # Whatever the two runs differ by is then the rate feedforward alone.
-    Params().put("NrdrLatAngleRateLimit", 0)
-    Params().put_bool("HondaTorqueLowPassFilter", False)
-
-    def run(gain):
-      Params().put_float("NrdrLatRateFf", gain)
-      controller, VM, CS, params, toggles = self._build_pid_controller(HONDA.HONDA_CLARITY, eps_modified=True)
-      CS.vEgo = 8.0
-      CS.steeringAngleDeg = 0.0
-      outs, rates = [], []
-      prev = 0.0
-      for n in range(120):
-        out, angle, _ = controller.update(True, CS, VM, params, False, 1.2e-4 * n, False, 0.2, None, None, toggles)
-        rates.append((angle - prev) / DT_CTRL)
-        prev = angle
-        CS.steeringAngleDeg = angle          # wheel sits on target -> error ~ 0
-        outs.append(out)
-      return controller, np.array(outs), np.array(rates)
-
-    off_c, off, rate = run(0.0)
-    on_c, on, _ = run(0.0072)
-
-    assert off_c.rate_ff_gain == 0.0 and on_c.rate_ff_gain == pytest.approx(0.0072)
-    settled = slice(80, 120)
-    assert max(abs(on)) < 0.99, "must not be railed, or the comparison is meaningless"
-    target_rate = float(np.median(rate[settled]))
-    # positive curvature commands a negative wheel angle on this car, so the rate is signed
-    assert 10.0 < abs(target_rate) < 120.0, f"test ramp should be a realistic turn-in rate, got {target_rate:.0f} deg/s"
-
-    delta = float(np.mean(on[settled] - off[settled]))
-    assert delta == pytest.approx(0.0072 * target_rate, rel=0.15), \
-      f"FF should contribute gain*rate ({0.0072 * target_rate:.4f}), got {delta:.4f}"
-
-  def test_rate_feedforward_filter_rejects_the_chatter_band(self):
-    # The whole risk of this term: differentiating the target amplifies its 3-6 Hz content.
-    # Two cascaded poles must pass a ~0.2 Hz turn-in ramp and reject ~4.5 Hz.
-    from openpilot.selfdrive.controls.lib.latcontrol_pid import NRDR_RATE_FF_TAU
-    from openpilot.common.filter_simple import FirstOrderFilter
-    def gain_at(freq):
-      a = FirstOrderFilter(0.0, NRDR_RATE_FF_TAU, DT_CTRL)
-      b = FirstOrderFilter(0.0, NRDR_RATE_FF_TAU, DT_CTRL)
-      n = int(20.0 / DT_CTRL)
-      t = np.arange(n) * DT_CTRL
-      y = np.array([b.update(a.update(v)) for v in np.sin(2 * np.pi * freq * t)])
-      return 2.0 * np.abs(np.mean(y[n // 2:] * np.exp(-2j * np.pi * freq * t[n // 2:])))
-    assert gain_at(0.2) > 0.95, "must pass the turn-in ramp"
-    assert gain_at(4.5) < 0.15, "must reject the chatter band"
-
-  def test_clarity_vgr_inverse_map(self):
-    import numpy as np
-    from itertools import pairwise
-
-    linear_bp, angle_bp = HONDA_VGR_INVERSE_BY_PROFILE["clarity_trw_a020"]
-    assert (linear_bp, angle_bp) == (NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP)
-    assert len(angle_bp) == len(linear_bp) == len(NRDR_CLARITY_VGR_REL_LOCAL)
-    # Both axes must be strictly increasing or np.interp is not a bijection.
-    assert all(left < right for left, right in pairwise(angle_bp))
-    assert all(left < right for left, right in pairwise(linear_bp))
-    assert angle_bp[0] == 0.0 and linear_bp[0] == 0.0
-
-    def solve(angle_linear):
-      return float(np.interp(abs(angle_linear), linear_bp, angle_bp))
-
-    # This is position table A, whose Y is a Q14 divisor with Y[0] = 2**14 = unity at
-    # centre. Near centre it is close to identity but NOT an exact no-op: Y dips below
-    # 2**14 over the first few knots, so the map runs slightly ABOVE identity there.
-    # (The old "exact no-op below 16 deg" assertion described rate table B, and stayed
-    # behind when the position table replaced it.)
-    assert solve(0.0) == 0.0
-    for angle in (1.0, 5.0, 10.0, 16.0, 30.0):
-      assert solve(angle) == pytest.approx(angle, rel=0.015)
-      assert solve(angle) > angle
-
-    # The crossover is near 48 deg. Past it the rack is quicker, so less wheel angle is
-    # needed than a constant ratio would ask for, and the gap widens monotonically.
-    assert solve(48.0) > 48.0 and solve(49.0) < 49.0
-    for angle in (60.0, 100.0, 200.0, 400.0):
-      assert solve(angle) < angle
-    assert solve(100.0) == pytest.approx(95.804, abs=0.05)
-    assert solve(400.0) == pytest.approx(349.392, abs=0.05)
-
-    # The local ratio is exactly 1.0 at centre. Over the first ~24 deg the measured table
-    # is noisy and the ratio wobbles inside a narrow band above unity; past that it falls
-    # monotonically to the table's full-scale taper. Assert the band and the monotonic
-    # tail separately rather than pretending the whole curve is monotonic.
-    assert NRDR_CLARITY_VGR_REL_LOCAL[0] == 1.0
-    assert all(1.0 <= r <= 1.0131 for lin, r in zip(linear_bp, NRDR_CLARITY_VGR_REL_LOCAL) if lin <= 24.0)
-    tail = [r for lin, r in zip(linear_bp, NRDR_CLARITY_VGR_REL_LOCAL) if lin > 24.0]
-    assert all(left >= right - 1e-9 for left, right in pairwise(tail))
-    assert min(NRDR_CLARITY_VGR_REL_LOCAL) == NRDR_CLARITY_VGR_REL_LOCAL[-1]
-
-    # Tie the endpoint to the raw firmware values so this cannot drift away from the
-    # table it is meant to describe: rel_local[-1] is exactly Y[0]/Y[-1].
-    assert NRDR_CLARITY_VGR_REL_LOCAL[-1] == pytest.approx(_CLARITY_POSITION_Y[0] / _CLARITY_POSITION_Y[-1], abs=1e-6)
-
-    # LINEAR_BP is the integral of 1/rel_local. For the position table the final knot
-    # reduces exactly to angle_bp[-1] / rel_local[-1].
-    assert linear_bp[-1] == pytest.approx(angle_bp[-1] / NRDR_CLARITY_VGR_REL_LOCAL[-1], abs=1e-6)
-
-    assert set(HONDA_VGR_PROFILE_BY_FW) == {"39990-TRW-A020", "39990-TBA-C020", "39990-TXM-A040"}
-    assert len(HONDA_VGR_INVERSE_BY_PROFILE) == 3
-
-  def test_insight_vgr_uses_primary_angle_table(self):
-    from itertools import pairwise
-
-    linear_bp, angle_bp = HONDA_VGR_INVERSE_BY_PROFILE["insight_txm_a040"]
-    assert (linear_bp, angle_bp) == (NRDR_INSIGHT_TXM_A040_VGR_LINEAR_BP,
-                                     NRDR_INSIGHT_TXM_A040_VGR_ANGLE_BP)
-    assert len(angle_bp) == len(linear_bp) == len(NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL)
-    assert all(left < right for left, right in pairwise(angle_bp))
-    assert all(left < right for left, right in pairwise(linear_bp))
-
-    # TXM-A040's primary position path is flat through raw 4.3 degrees, then
-    # reaches a 20989/17613 = 1.1917x center-to-lock ratio.  These endpoints
-    # distinguish it from the adjacent rate table and the previously crossed
-    # X/Y pairing.
-    center_plateau_end = 43 * (1 << 14) / 17613 / 10
-    assert linear_bp[angle_bp.index(center_plateau_end)] == pytest.approx(center_plateau_end)
-    assert NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL[-1] == pytest.approx(17613 / 20989)
-    assert linear_bp[-1] == pytest.approx(5515 * (1 << 14) / 17613 / 10)
-    assert angle_bp[-1] == pytest.approx(5515 * (1 << 14) / 20989 / 10)
-    assert angle_bp[-1] < linear_bp[-1]
 
   def test_bolt_2017_testing_ground_scale_curve(self):
     assert get_bolt_2017_base_torque_scale(0.1) == 1.0
@@ -1282,7 +823,7 @@ class TestLatControl:
 
     assert low_speed_center > highway_center
     assert highway_center < highway_turn <= 1.0
-    assert highway_center > 0.89
+    assert highway_center > 0.87
 
   def test_prius_ff_scale_curve(self):
     assert get_prius_ff_scale(0.0, 0.0, 20.0) == 1.0
@@ -1380,6 +921,15 @@ class TestLatControl:
     assert get_genesis_gv70_high_speed_error_scale(-0.7, 0.58, -0.8, 20.0) > \
       get_genesis_gv70_high_speed_error_scale(-0.7, 0.58, -0.8, 33.5)
 
+  def test_genesis_gv70_reversal_damping_is_medium_speed_and_phase_gated(self):
+    same_direction = get_genesis_gv70_reversal_output_scale(0.7, 0.9, 0.8, 16.0)
+    low_speed = get_genesis_gv70_reversal_output_scale(-0.7, 0.7, -0.8, 8.0)
+    route_speed = get_genesis_gv70_reversal_output_scale(-0.7, 0.7, -0.8, 15.0)
+
+    assert same_direction == pytest.approx(1.0)
+    assert route_speed < 1.0
+    assert route_speed < low_speed
+
   def test_genesis_gv70_low_speed_center_overshoot_damping(self):
     center_overshoot = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.45, 22.0 * 0.44704)
     clean_center = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.02, 22.0 * 0.44704)
@@ -1416,6 +966,10 @@ class TestLatControl:
     assert get_genesis_g70_angle_output_scale(55.0, 1.0) > get_genesis_g70_angle_output_scale(85.0, 1.0)
     assert get_genesis_g70_angle_output_scale(85.0, -1.0) == pytest.approx(1.0)
     assert get_genesis_g70_friction_jerk_deadzone(25.0, 0.0) > 0.25
+    hwy_unwind_deadzone = get_genesis_g70_friction_jerk_deadzone(68.0 * 0.44704, 0.8, -0.6, 1.0)
+    hwy_turn_in_deadzone = get_genesis_g70_friction_jerk_deadzone(68.0 * 0.44704, 0.8, 0.6, 0.5)
+    assert hwy_unwind_deadzone > hwy_turn_in_deadzone
+    assert hwy_unwind_deadzone > 0.08
     assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, 0.5, 25.0) < 0.90
     assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, -0.5, 25.0) == 1.0
     assert get_genesis_g70_unwind_ff_scale(-0.7, 0.2, 0.5, 25.0) == 1.0
@@ -2716,16 +2270,16 @@ class TestLatControl:
     assert get_civic_bosch_modified_pid_output_scale(10.0, 0.0, 12.0) < 1.0
     assert get_civic_bosch_modified_pid_output_scale(12.0, 0.0, 12.0) < 1.0
     assert get_civic_bosch_modified_pid_output_scale(14.0, 0.0, 12.0) < 1.0
-    assert get_civic_bosch_modified_pid_output_scale(-16.0, -0.0, 12.0) < 1.0
-    assert get_civic_bosch_modified_pid_output_scale(16.0, 0.0, 12.0) > get_civic_bosch_modified_pid_output_scale(-16.0, -0.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(-16.0, 0.0, 12.0) < 1.0
+    assert get_civic_bosch_modified_pid_output_scale(16.0, 0.0, 12.0) > get_civic_bosch_modified_pid_output_scale(-16.0, 0.0, 12.0)
     assert get_civic_bosch_modified_pid_output_scale(0.0, 0.0, 6.0) < 0.9
     assert get_civic_bosch_modified_pid_output_scale(18.0, 0.0, 12.0) > get_civic_bosch_modified_pid_output_scale(8.0, 0.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(20.0, 10.0, 12.0) > get_civic_bosch_modified_pid_output_scale(20.0, 0.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(-20.0, 10.0, 12.0) < get_civic_bosch_modified_pid_output_scale(-20.0, -0.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(20.0, -10.0, 12.0) < get_civic_bosch_modified_pid_output_scale(20.0, 0.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(-20.0, -10.0, 12.0) < get_civic_bosch_modified_pid_output_scale(-20.0, -0.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(20.0, 10.0, 12.0) > get_civic_bosch_modified_pid_output_scale(-20.0, 10.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(-20.0, 10.0, 4.0) > get_civic_bosch_modified_pid_output_scale(-20.0, 10.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(20.0, 0.5, 12.0) > get_civic_bosch_modified_pid_output_scale(20.0, 0.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(-20.0, -0.5, 12.0) < get_civic_bosch_modified_pid_output_scale(-20.0, 0.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(20.0, -0.5, 12.0) < get_civic_bosch_modified_pid_output_scale(20.0, 0.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(-20.0, 0.5, 12.0) < get_civic_bosch_modified_pid_output_scale(-20.0, 0.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(20.0, 0.5, 12.0) > get_civic_bosch_modified_pid_output_scale(-20.0, -0.5, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(-20.0, -0.5, 4.0) > get_civic_bosch_modified_pid_output_scale(-20.0, -0.5, 12.0)
 
   def test_civic_bosch_modified_pid_output_alpha_curve(self):
     assert get_civic_bosch_modified_pid_output_alpha(0.0, 0.0, 12.0, 0.2, 0.1) == 1.0

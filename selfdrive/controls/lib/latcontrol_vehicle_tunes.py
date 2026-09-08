@@ -243,6 +243,13 @@ GENESIS_GV70_HIGH_SPEED_ERROR_DAMPING_ERROR = 0.18
 GENESIS_GV70_HIGH_SPEED_ERROR_DAMPING_ERROR_WIDTH = 0.15
 GENESIS_GV70_HIGH_SPEED_ERROR_DAMPING_JERK = 0.15
 GENESIS_GV70_HIGH_SPEED_ERROR_DAMPING_JERK_WIDTH = 0.10
+GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_MAX = 0.28
+GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_SPEED = 25.0 * CV.MPH_TO_MS
+GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_SPEED_WIDTH = 5.0 * CV.MPH_TO_MS
+GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_ERROR = 0.30
+GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_ERROR_WIDTH = 0.16
+GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_JERK = 0.20
+GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_JERK_WIDTH = 0.10
 GENESIS_GV70_LOW_SPEED_CENTER_OVERSHOOT_MAX = 0.28
 GENESIS_GV70_LOW_SPEED_CENTER_OVERSHOOT_SPEED = 18.0 * CV.MPH_TO_MS
 GENESIS_GV70_LOW_SPEED_CENTER_OVERSHOOT_SPEED_WIDTH = 3.5 * CV.MPH_TO_MS
@@ -268,6 +275,15 @@ GENESIS_G70_FRICTION_JERK_DEADZONE_LAT = 0.30
 GENESIS_G70_FRICTION_JERK_DEADZONE_LAT_WIDTH = 0.08
 GENESIS_G70_FRICTION_JERK_DEADZONE_SPEED = 12.0
 GENESIS_G70_FRICTION_JERK_DEADZONE_SPEED_WIDTH = 3.5
+GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_MAX = 0.16
+GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_SPEED = 35.0 * CV.MPH_TO_MS
+GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_SPEED_WIDTH = 8.0 * CV.MPH_TO_MS
+GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_LAT = 0.35
+GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_LAT_WIDTH = 0.15
+GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_LAT_CUTOFF = 1.25
+GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_LAT_CUTOFF_WIDTH = 0.25
+GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_JERK = 0.20
+GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_JERK_WIDTH = 0.12
 GENESIS_G70_CENTER_OUTPUT_TAPER_MAX = 0.22
 GENESIS_G70_CENTER_OUTPUT_TAPER_LAT = 0.30
 GENESIS_G70_CENTER_OUTPUT_TAPER_LAT_WIDTH = 0.10
@@ -655,8 +671,8 @@ PALISADE_FF_CUTOFF = 1.25
 PALISADE_FF_CUTOFF_WIDTH = 0.36
 PALISADE_TRANSITION_SPEED = 9.0
 PALISADE_PHASE_SCALE = 0.11
-PALISADE_TURN_IN_BOOST_LEFT = 0.34
-PALISADE_TURN_IN_BOOST_RIGHT = 0.24
+PALISADE_TURN_IN_BOOST_LEFT = 0.44
+PALISADE_TURN_IN_BOOST_RIGHT = 0.34
 PALISADE_UNWIND_TAPER_LEFT = 0.18
 PALISADE_UNWIND_TAPER_RIGHT = 0.30
 PALISADE_FRICTION_MULT = 1.02
@@ -675,11 +691,11 @@ PALISADE_CENTER_TAPER_LAT = 0.28
 PALISADE_CENTER_TAPER_LAT_WIDTH = 0.055
 PALISADE_CENTER_TAPER_SPEED = 12.0
 PALISADE_CENTER_TAPER_SPEED_WIDTH = 2.5
-PALISADE_CENTER_OUTPUT_TAPER_MAX = 0.10
+PALISADE_CENTER_OUTPUT_TAPER_MAX = 0.18
 PALISADE_CENTER_OUTPUT_TAPER_LAT = 0.28
 PALISADE_CENTER_OUTPUT_TAPER_LAT_WIDTH = 0.055
-PALISADE_CENTER_OUTPUT_TAPER_SPEED = 18.0
-PALISADE_CENTER_OUTPUT_TAPER_SPEED_WIDTH = 2.5
+PALISADE_CENTER_OUTPUT_TAPER_SPEED = 15.0
+PALISADE_CENTER_OUTPUT_TAPER_SPEED_WIDTH = 3.0
 
 GENESIS_G90_LATERAL_TESTING_GROUND_ID = testing_ground.id_4
 GENESIS_G90_FF_GAIN_LEFT = 0.32
@@ -3131,6 +3147,24 @@ def get_genesis_gv70_high_speed_error_scale(setpoint: float, measured_lateral_ac
   return 1.0 - reduction
 
 
+def get_genesis_gv70_reversal_output_scale(setpoint: float, measured_lateral_accel: float,
+                                           desired_lateral_jerk: float, v_ego: float) -> float:
+  commanded_unwind = setpoint * desired_lateral_jerk < 0.0
+  measured_reversal = setpoint * measured_lateral_accel < 0.0
+  if not commanded_unwind and not measured_reversal:
+    return 1.0
+
+  tracking_error = abs(measured_lateral_accel - setpoint)
+  speed_weight = _sigmoid((v_ego - GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_SPEED) /
+                          GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_SPEED_WIDTH)
+  error_weight = _sigmoid((tracking_error - GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_ERROR) /
+                          GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_ERROR_WIDTH)
+  jerk_weight = _sigmoid((abs(desired_lateral_jerk) - GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_JERK) /
+                         GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_JERK_WIDTH)
+  reduction = (GENESIS_GV70_REVERSAL_OUTPUT_DAMPING_MAX * speed_weight * error_weight * jerk_weight)
+  return 1.0 - reduction
+
+
 def get_genesis_gv70_low_speed_center_overshoot_scale(setpoint: float, measured_lateral_accel: float,
                                                       v_ego: float) -> float:
   if abs(setpoint) > 0.08 and setpoint * measured_lateral_accel < 0.0:
@@ -3164,12 +3198,38 @@ def get_genesis_g70_friction_threshold(v_ego: float, desired_lateral_accel: floa
   return base_threshold * (1.0 + gain)
 
 
-def get_genesis_g70_friction_jerk_deadzone(v_ego: float, desired_lateral_accel: float) -> float:
+def get_genesis_g70_friction_jerk_deadzone(v_ego: float, desired_lateral_accel: float,
+                                           desired_lateral_jerk: float = 0.0,
+                                           measured_lateral_accel: float = 0.0) -> float:
   speed_weight = _sigmoid((v_ego - GENESIS_G70_FRICTION_JERK_DEADZONE_SPEED) /
                           GENESIS_G70_FRICTION_JERK_DEADZONE_SPEED_WIDTH)
   center_weight = _sigmoid((GENESIS_G70_FRICTION_JERK_DEADZONE_LAT - abs(desired_lateral_accel)) /
                            GENESIS_G70_FRICTION_JERK_DEADZONE_LAT_WIDTH)
-  return GENESIS_G70_FRICTION_JERK_DEADZONE_MAX * speed_weight * center_weight
+  deadzone = GENESIS_G70_FRICTION_JERK_DEADZONE_MAX * speed_weight * center_weight
+
+  overshoot = max(abs(measured_lateral_accel) - abs(desired_lateral_accel), 0.0)
+  if (desired_lateral_accel * desired_lateral_jerk < 0.0 and
+      desired_lateral_accel * measured_lateral_accel > 0.0 and overshoot > 0.0):
+    curve_speed_weight = _sigmoid(
+      (max(v_ego, 0.0) - GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_SPEED) /
+      GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_SPEED_WIDTH
+    )
+    curve_onset_weight = _sigmoid(
+      (abs(desired_lateral_accel) - GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_LAT) /
+      GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_LAT_WIDTH
+    )
+    curve_cutoff_weight = _sigmoid(
+      (GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_LAT_CUTOFF - abs(desired_lateral_accel)) /
+      GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_LAT_CUTOFF_WIDTH
+    )
+    jerk_weight = _sigmoid(
+      (abs(desired_lateral_jerk) - GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_JERK) /
+      GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_JERK_WIDTH
+    )
+    overshoot_weight = _sigmoid((overshoot - 0.08) / 0.10)
+    deadzone += (GENESIS_G70_CURVE_UNWIND_FRICTION_JERK_DEADZONE_MAX * curve_speed_weight *
+                 curve_onset_weight * curve_cutoff_weight * jerk_weight * overshoot_weight)
+  return deadzone
 
 
 def get_genesis_g70_center_output_scale(desired_lateral_accel: float, v_ego: float) -> float:

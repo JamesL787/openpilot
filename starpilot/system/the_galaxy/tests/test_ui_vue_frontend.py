@@ -105,11 +105,14 @@ def test_ui_ports_all_tool_views():
   # Endpoint usage may live in a view or in a reusable component it composes.
   checks = {
         "js/views/Recordings.js": ["/api/routes", "getRoutesStream", "getRouteLogs"],
-    "js/views/Logs.js": ["getErrorLogs", "tmuxSnapshot", "runTroubleshoot"],
-    "js/views/Tuning.js": ["GalaxyEmbed", 'src="/tuning"'],
-    "js/views/Navigation.js": ["getNavigation", "setNavigation"],
+    "js/views/Logs.js": ["getErrorLogs", "tmuxSnapshot"],
+    "js/components/TroubleshootPanel.js": ["getTroubleshoot", "resetTroubleshootSection", "GalaxyConfirm"],
+    "js/views/Tuning.js": ["LateralTuningPanel", "LongitudinalManeuvers"],
+    "js/views/Navigation.js": ["getNavigation", "setNavigation", "MapsPanel", "NavigationKeysPanel"],
     "js/views/ToolEmbed.js": ["/manage_maps", "/manage_navigation_keys"],
-    "js/views/SystemTools.js": ["backupToggles", "restoreToggles", "getUpdateBranches", "factoryReset"],
+    "js/views/SystemTools.js": [
+      "backupToggles", "restoreToggles", "getToggleProfiles", "saveToggleProfile", "loadToggleProfile", "getUpdateBranches", "factoryReset",
+    ],
     "js/components/WheelControls.js": ["getWheelControlsStatus"],
     "js/components/BluetoothPanel.js": ["getBluetoothStatus"],
   }
@@ -126,7 +129,6 @@ def test_ui_routes_ported_views_natively_no_classic_fallback():
   app = _read("js/app.js")
   shell = _read("js/components/AppShell.js")
   tools = _read("js/views/Tools.js")
-  home = _read("js/views/Home.js")
 
   for view in ["Recordings", "Logs", "Tuning", "Navigation", "Vehicle", "SystemTools"]:
     assert view in app, f"app.js should register {view}"
@@ -139,14 +141,19 @@ def test_ui_routes_ported_views_natively_no_classic_fallback():
   # and is intentionally absent from the Tools page).
   for tool in ["/tuning", "/logs", "/navigation", "/vehicle", "/system"]:
     assert tool in tools, f"Tools grid should route {tool} natively"
-  # V-ASM Spot Monitor and PiP Side Camera use the classic page-in-page embeds
-  # instead of the removed native Annotation Tool.
-  assert "/manage_v_asm" in tools and "/manage_pip_sidecam" in tools
+  assert "/cameras" in tools, "Tools grid should route the camera hub natively"
+  assert "/manage_v_asm" not in tools and "/manage_pip_sidecam" not in tools
   # Unmigrated tools are embedded (ToolEmbed), never a full-page redirect.
   assert "return ToolEmbed" in app
   assert "ToolEmbed" in app
-  # Home renders the classic dashboard as a shared page-in-page embed.
-  assert 'src="/classic"' in home and "GalaxyEmbed" in home
+  home = _read("js/views/Home.js")
+  assert "GalaxyEmbed" not in home and 'src="/classic"' not in home
+  assert "api.getStats()" in home and "keepRefreshing" in home and "usePolling" in home
+  for section in ["Last drive", "This week", "Recent drives", "Personal records",
+                  "Most used models", "Storage", "Vitals", "Software", "Your driving", "Your device"]:
+    assert section in home, f"Home dashboard should include {section!r}"
+  assert "setDriveStats" in _read("js/api.js")
+  assert "fetch(" not in home.replace("api.", ""), "Home should not use raw fetch()"
   # Neither the shell, tools grid, nor home tiles ever redirect out of the UI.
   for src in [shell, tools, home, _read("js/views/ToolEmbed.js"), _read("js/store.js")]:
     assert "window.location.href" not in src
@@ -200,13 +207,9 @@ def test_ui_centralizes_api_and_uses_composables():
 
 
 def test_ui_schema_driven_param_engine_reused():
-  # Tuning is a page-in-page embed of the classic /tuning SPA (which owns its
-  # own tuning UI). Vehicle is a hub of Controllers/Bluetooth/Features — all
-  # toggles live in the dedicated Settings view, so it must NOT render toggles.
   tuning = _read("js/views/Tuning.js")
-  embed_comp = _read("js/components/GalaxyEmbed.js")
-  assert 'src="/tuning"' in tuning and "GalaxyEmbed" in tuning, "Tuning should embed the classic tuning SPA"
-  assert "embedded=1" in embed_comp
+  assert "GalaxyEmbed" not in tuning and 'src="/tuning"' not in tuning, "Tuning must be native, not a classic embed"
+  assert "LateralTuningPanel" in tuning and "LongitudinalManeuvers" in tuning
   vehicle = _read("js/views/Vehicle.js")
   assert "ParamSections" not in vehicle, "Vehicle must not render redundant toggles"
   assert "WheelControls" in vehicle and "BluetoothPanel" in vehicle
@@ -264,7 +267,7 @@ def test_ui_has_bottom_navigation_and_drawer():
   assert "goBack" in shell or "back()" in shell
   assert "gx-drawer" in shell
   assert "gx-appbar" in shell
-  assert "Search settings" in shell
+  assert "Search toggles" in shell
 
 
 def test_ui_search_visible_on_mobile_and_content_full_width():
@@ -322,15 +325,17 @@ def test_ui_galaxy_background_is_css_only_and_lightweight():
 
 def test_galaxy_py_serves_classic_at_root_and_new_ui_at_mobile():
   source = GALAXY_PY.read_text(encoding="utf-8")
-  # The classic Galaxy SPA is the default landing at / (original behaviour).
+  # The classic Galaxy SPA is the default landing at / (original behaviour) unless
+  # the "New Galaxy by Default" (GalaxyMobileDefault) toggle is enabled.
   assert '@app.route("/", methods=["GET"])' in source
   assert 'render_template("index.html")' in source
+  assert 'params.get_bool("GalaxyMobileDefault")' in source
   # Classic also stays reachable at /classic (page-in-page embed target).
   assert '@app.route("/classic", methods=["GET"])' in source
-  # The modern Vue UI is served at /mobile (and /ui), not the root.
+  # The modern Vue UI is served at /mobile, not the root.
   assert '@app.route("/mobile", methods=["GET"])' in source
-  assert '@app.route("/ui", methods=["GET"])' in source
   assert 'Path(app.static_folder) / "mobile" / "index.html"' in source
+  assert '@app.route("/ui", methods=["GET"])' not in source
 
 
 def test_ui_manifest_is_valid_pwa_manifest():
@@ -339,6 +344,130 @@ def test_ui_manifest_is_valid_pwa_manifest():
   assert manifest["name"]
   assert manifest["icons"]
   assert manifest["start_url"] == "/mobile/"
+
+
+def test_ui_ported_classic_tools_native_no_embed():
+  app = _read("js/app.js")
+  store = _read("js/store.js")
+  api = _read("js/api.js")
+
+  assert "Doors" in app and "Galaxy" in app and "Tsk" in app
+  for route in ["/manage_doors", "/galaxy", "/manage_tsk"]:
+    assert route in app, f"app.js should register {route}"
+    assert route in store, f"store NATIVE_ROOTS should include {route}"
+
+  doors = _read("js/views/Doors.js")
+  galaxy = _read("js/views/Galaxy.js")
+  tsk = _read("js/views/Tsk.js")
+  assert "GalaxyEmbed" not in doors and "fetch(" not in doors
+  assert "api.postAction" in doors and "showSnackbar" in doors
+  assert "GalaxyEmbed" not in galaxy and "fetch(" not in galaxy
+  assert "api.getGalaxyStatus" in galaxy and "api.galaxyPair" in galaxy and "api.galaxyUnpair" in galaxy
+  assert "GalaxyConfirm" in galaxy  # destructive unpair is confirmed
+  assert "GalaxyEmbed" not in tsk and "fetch(" not in tsk
+  assert "api.getTskKeys" in tsk and "api.saveTskKeys" in tsk and "api.deleteTskKey" in tsk and "api.tskKeySet" in tsk
+
+  # New shared API surface added for the ported pages.
+  for method in ["getGalaxyStatus", "galaxyPair", "galaxyUnpair",
+                 "getSpeedLimitsStatus", "processSpeedLimits",
+                 "getTskKeys", "saveTskKeys", "deleteTskKey", "tskKeySet",
+                 "resetTroubleshootSection"]:
+    assert method in api, f"api.js should expose {method}"
+
+  # Troubleshoot is now a native panel inside the Logs view (no embed).
+  logs = _read("js/views/Logs.js")
+  assert "GalaxyEmbed" not in logs
+  assert "TroubleshootPanel" in logs
+  panel = _read("js/components/TroubleshootPanel.js")
+  assert "getTroubleshoot" in panel and "resetTroubleshootSection" in panel
+  assert "fetch(" not in panel
+
+  # Speed limits panel is native and reused by the Navigation speeds tab.
+  nav = _read("js/views/Navigation.js")
+  assert "SpeedLimitsPanel" in nav
+  nav_speed = nav
+  assert 'src="/download_speed_limits"' not in nav_speed
+  panel = _read("js/components/SpeedLimitsPanel.js")
+  assert "getSpeedLimitsStatus" in panel and "processSpeedLimits" in panel
+  assert "usePolling" in panel
+  assert "fetch(" not in panel
+
+
+def test_ui_all_remaining_classic_tools_native_no_embed():
+  app = _read("js/app.js")
+  store = _read("js/store.js")
+  api = _read("js/api.js")
+
+  # Standalone native views + their routes.
+  native = {
+    "/sentry": "Sentry",
+    "/manage_models": "ModelManager",
+    "/plots": "Plots",
+    "/testing_ground": "TestingGround",
+    "/theme_maker": "ThemeMaker",
+  }
+  for route, view in native.items():
+    assert view in app, f"app.js should register {view}"
+    assert route in app, f"app.js should resolve {route}"
+    assert route in store, f"store NATIVE_ROOTS should include {route}"
+    src = _read(f"js/views/{view}.js")
+    assert src, f"missing view: {view}"
+    assert "GalaxyEmbed" not in src and "fetch(" not in src, f"{view} should be native with no raw fetch"
+
+  # Navigation maps + App Keys and Tuning lateral are native tabs now.
+  nav = _read("js/views/Navigation.js")
+  assert "GalaxyEmbed" not in nav and "MapsPanel" in nav and "NavigationKeysPanel" in nav
+  tuning = _read("js/views/Tuning.js")
+  assert "GalaxyEmbed" not in tuning and "LateralTuningPanel" in tuning
+  assert _read("js/components/MapsPanel.js") and _read("js/components/NavigationKeysPanel.js")
+  assert _read("js/components/LateralTuningPanel.js")
+
+  # Shared API surface added for the second batch of ported pages.
+  for method in ["selectTestingGround",
+                 "getSentryStatus", "getSentryEvents", "deleteSentryEvent", "sentryPushSubscribe",
+                 "getModelStatus", "setActiveModel", "startModelDownload", "downloadAllModels", "deleteModel", "saveModelPreferences",
+                 "getPlotsLive",
+                 "getGalaxySession", "deleteNavigationKey",
+                 "getThemeList", "saveTheme", "applyTheme", "deleteTheme", "downloadTheme",
+                 "getFlmStatus", "flmAnalyze", "flmApplyTrial", "flmRevertTrial", "flmSaveFeedback",
+                 "flmSaveTune", "flmApplySavedTune", "flmRenameSavedTune", "flmDeleteSavedTune", "flmSubmitTune"]:
+    assert method in api, f"api.js should expose {method}"
+
+  # Panels used by the native tabs expose no raw fetch.
+  for rel in ["js/components/MapsPanel.js", "js/components/NavigationKeysPanel.js",
+              "js/components/LateralTuningPanel.js"]:
+    assert "fetch(" not in _read(rel), f"{rel} should not use raw fetch()"
+
+
+def test_ui_cameras_hub_vasm_and_pip_native_no_embed():
+  app = _read("js/app.js")
+  store = _read("js/store.js")
+  api = _read("js/api.js")
+
+  cameras = _read("js/views/Cameras.js")
+  assert cameras
+  assert "/cameras" in app and "Cameras" in app, "app.js should register the camera hub"
+  assert "/cameras" in store, "store NATIVE_ROOTS should include /cameras"
+  assert "GalaxyEmbed" not in cameras and "fetch(" not in cameras
+  assert "Vasm" in cameras and "Pip" in cameras, "camera hub should embed V-ASM and PiP"
+  assert "GalaxyTabs" in cameras
+
+  # Removed standalone pages are no longer routed or listed as native roots.
+  for route in ["/manage_v_asm", "/manage_pip_sidecam"]:
+    assert route not in app, f"{route} standalone page should be removed from app.js"
+    assert route not in store, f"{route} should be removed from NATIVE_ROOTS"
+
+  vasm = _read("js/views/Vasm.js")
+  assert "api.getVasmSnapshotBlob" in vasm and "api.deleteVasmConfig" in vasm and "api.getMemoryParam" in vasm
+  assert "GalaxyConfirm" in vasm  # destructive delete is confirmed
+  assert "GalaxyEmbed" not in vasm and "fetch(" not in vasm
+  pip = _read("js/views/Pip.js")
+  assert "api.pipSnapshotSource" in pip and "api.deletePipConfig" in pip and "api.setPipConfig" in pip
+  assert "GalaxyEmbed" not in pip and "fetch(" not in pip
+
+  for method in ["getVasmSnapshotBlob", "deleteVasmConfig", "getMemoryParam",
+                 "pipSnapshotSource", "deletePipConfig"]:
+    assert method in api, f"api.js should expose {method}"
 
 
 def _node_exe():
@@ -376,6 +505,10 @@ assert(P.countAdvancedHiddenByDeveloperMode([sec], { GalaxyDeveloperMode: true }
 const slider = { key: "DeviceShutdown", data_type: "int", min: 1, max: 30, step: 1 }
 assert(P.snapNumericToBoundsAndStep(17.9, P.numericBounds(slider, {}), 0) === 18, "snap")
 assert(P.formatSliderValue(6, "1", 0, "DeviceShutdown") === "6 hours", "format")
+const laneOffset = { key: "LaneCenterOffset", data_type: "float", min: 0, max: 0.3, step: 0.01 }
+const laneBounds = P.numericBounds(laneOffset, {})
+assert(laneBounds.min === -0.3, "lane offset keeps signed lower bound")
+assert(P.snapNumericToBoundsAndStep(-0.01, laneBounds, 2) === -0.01, "lane offset snaps below zero")
 console.log("params.js logic OK")
 """,
     encoding="utf-8",

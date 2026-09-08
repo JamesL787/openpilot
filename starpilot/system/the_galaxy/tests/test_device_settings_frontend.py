@@ -46,6 +46,14 @@ def test_device_settings_uses_the_params_api_and_layout_json():
   assert 'fetch("/assets/components/tools/device_settings_layout.json?v=settings-tier-1"' in source
 
 
+def test_lane_center_offset_can_step_below_zero():
+  source = _device_settings()
+
+  assert 'if (param.key === "LaneCenterOffset")' in source
+  assert "return { min: -0.3, max: 0.3, step: 0.01 }" in source
+  assert "canStepNumericParam(p, -1)" in source
+
+
 def test_developer_mode_notice_has_styles():
   css = DEVICE_SETTINGS_CSS_PATH.read_text(encoding="utf-8")
 

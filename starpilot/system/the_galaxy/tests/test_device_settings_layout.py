@@ -69,12 +69,14 @@ def test_galaxy_layout_contains_basic_mode_controls():
 def test_ford_lateral_controls_are_ford_only_and_galaxy_only():
   lateral = _params_by_section(_layout())["Lateral (Steering)"]
   ford_keys = {
-    "FordLateralMode",
     "FordHumanTurnDetection",
     "FordHandsFreeCluster",
     "FordCurvatureBlendLow",
     "FordCurvatureBlendHigh",
     "FordCurvatureLaneChangeFactor",
+  }
+  retired_ford_keys = {
+    "FordLateralMode",
     "FordAngleBlend",
     "FordAngleLowSpeedFactor",
     "FordAngleHighSpeedFactor",
@@ -83,34 +85,12 @@ def test_ford_lateral_controls_are_ford_only_and_galaxy_only():
   }
 
   assert ford_keys <= lateral.keys()
+  assert retired_ford_keys.isdisjoint(lateral)
   assert all(lateral[key]["galaxy_only"] is True for key in ford_keys)
   assert all(lateral[key]["vehicle_makes"] == ["Ford"] for key in ford_keys)
   assert all(lateral[key]["settings_tier"] == "simple" for key in ford_keys)
-
-  mode = lateral["FordLateralMode"]
-  assert mode["ui_type"] == "dropdown"
-  assert mode["data_type"] == "int"
-  assert mode["is_parent_toggle"] is True
-  assert {option["label"]: option["value"] for option in mode["options"]} == {
-    "Native": 0,
-    "Curvature": 1,
-    "Angle": 2,
-  }
-  assert _declared_default("FordLateralMode") == "1"
-
-  common_keys = {"FordHumanTurnDetection", "FordHandsFreeCluster"}
-  curvature_keys = {"FordCurvatureBlendLow", "FordCurvatureBlendHigh", "FordCurvatureLaneChangeFactor"}
-  angle_keys = {
-    "FordAngleBlend",
-    "FordAngleLowSpeedFactor",
-    "FordAngleHighSpeedFactor",
-    "FordAngleHighSpeedDamping",
-    "FordAngleLaneChangeFactor",
-  }
-  assert all(lateral[key]["visible_when_values"] == [1, 2] for key in common_keys)
-  assert all(lateral[key]["visible_when_values"] == [1] for key in curvature_keys)
-  assert all(lateral[key]["visible_when_values"] == [2] for key in angle_keys)
-  assert all(lateral[key]["parent_key"] == "FordLateralMode" for key in ford_keys - {"FordLateralMode"})
+  assert all("visible_when_key" not in lateral[key] for key in ford_keys)
+  assert all("parent_key" not in lateral[key] for key in ford_keys)
 
   device_ui_root = REPO_ROOT / "selfdrive/ui"
   for path in device_ui_root.rglob("*.py"):
@@ -292,22 +272,6 @@ def test_honda_pid_scale_controls_use_galaxy_fine_granularity():
     assert setting["settings_tier"] == "advanced"
 
 
-def test_ford_angle_controls_use_galaxy_fine_granularity():
-  lateral = _params_by_section(_layout())["Lateral (Steering)"]
-
-  for key in (
-    "FordAngleBlend",
-    "FordAngleLowSpeedFactor",
-    "FordAngleHighSpeedFactor",
-    "FordAngleHighSpeedDamping",
-    "FordAngleLaneChangeFactor",
-  ):
-    setting = lateral[key]
-    assert setting["step"] == 0.01
-    assert setting["precision"] == 2
-    assert setting["galaxy_only"]
-
-
 def test_hidden_feature_defaults_remain_enabled():
   assert _declared_default("GalaxyDeveloperMode") == "0"
   assert _declared_default("NavDesiresAllowed") == "1"
@@ -322,6 +286,13 @@ def test_hidden_feature_defaults_remain_enabled():
     "RelaxedPersonalityProfile",
   ):
     assert _declared_default(key) == "1"
+
+
+def test_toyota_auto_hold_is_galaxy_only():
+  setting = _params_by_section(_layout())["Vehicle"]["ToyotaAutoHold"]
+  assert setting["galaxy_only"] is True
+  assert setting["ui_type"] == "toggle"
+  assert setting["data_type"] == "bool"
 
 
 def test_human_acceleration_param_is_removed():

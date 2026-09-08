@@ -519,7 +519,9 @@ class LatControlTorque(LatControl):
           CS.vEgo, setpoint, prius_deadzone_max,
         )
       elif genesis_g70_active:
-        vehicle_friction_jerk_deadzone = get_genesis_g70_friction_jerk_deadzone(CS.vEgo, setpoint)
+        vehicle_friction_jerk_deadzone = get_genesis_g70_friction_jerk_deadzone(
+          CS.vEgo, setpoint, desired_lateral_jerk, measurement,
+        )
       elif self.is_genesis_gv70:
         vehicle_friction_jerk_deadzone = get_genesis_gv70_friction_jerk_deadzone(CS.vEgo, setpoint)
       elif kia_carnival_active:
@@ -650,6 +652,9 @@ class LatControlTorque(LatControl):
           setpoint, measurement, CS.vEgo,
         )
         output_torque *= get_genesis_gv70_high_speed_error_scale(
+          setpoint, measurement, desired_lateral_jerk, CS.vEgo,
+        )
+        output_torque *= get_genesis_gv70_reversal_output_scale(
           setpoint, measurement, desired_lateral_jerk, CS.vEgo,
         )
       elif sonata_hybrid_active:

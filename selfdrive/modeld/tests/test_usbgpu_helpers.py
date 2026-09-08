@@ -1,4 +1,5 @@
 import io
+import struct
 from types import MethodType
 from types import SimpleNamespace
 
@@ -69,8 +70,8 @@ def test_external_gpu_power_must_remain_stable():
   assert ready
 
   ready, stable_since = modeld._external_gpu_power_ready(11900, 15.0, stable_since)
-  assert not ready
-  assert stable_since is None
+  assert ready
+  assert stable_since == 11.0
 
 
 def test_egmp_ready_uses_accelerator_ready_bit():
@@ -152,6 +153,42 @@ def test_chestnut_telemetry_is_bounded_when_amd_is_unavailable(monkeypatch):
   assert not message.valid
 
 
+def test_chestnut_power_telemetry_works_before_amd_initializes(monkeypatch):
+  class FakePubMaster:
+    def __init__(self):
+      self.sent = []
+
+    def send(self, service, message):
+      self.sent.append((service, message))
+
+  class FakeHandle:
+    def controlRead(self, *_args, **_kwargs):
+      return struct.pack("<Hh?", 12100, 850, True)
+
+    def close(self):
+      pass
+
+  class FakeContext:
+    def openByVendorIDAndProductID(self, *_args, **_kwargs):
+      return FakeHandle()
+
+    def close(self):
+      pass
+
+  publisher = FakePubMaster()
+  monkeypatch.setattr(modeld, "Device", SimpleNamespace(_opened_devices=set()))
+  monkeypatch.setattr(modeld.usb1, "USBContext", FakeContext)
+
+  telemetry = modeld.ChestnutState(publisher, big=False)
+  telemetry.send()
+
+  _, message = publisher.sent[0]
+  assert message.valid
+  assert message.chestnutState.supplyVoltage == 12100
+  assert message.chestnutState.supplyCurrent == 850
+  assert message.chestnutState.supplyFault
+
+
 def test_tinygrad_disk_cache_connection_is_closed_between_models(monkeypatch):
   import tinygrad.helpers as tinygrad_helpers
 
@@ -212,7 +249,8 @@ def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):
   class FakeModelState:
     uses_external_gpu = True
 
-    def __init__(self, cam_w, cam_h, external_gpu_active, model_id_override, write_model_version):
+    def __init__(self, cam_w, cam_h, external_gpu_active, model_id_override, write_model_version,
+                 model_version_override=None, **_kwargs):
       calls.append(("model", cam_w, cam_h, external_gpu_active, model_id_override, write_model_version))
 
     def warmup(self):
@@ -229,7 +267,7 @@ def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):
     lambda *_args: (_ for _ in ()).throw(AssertionError("runtime must not change tinygrad's process-global DEV")),
   )
 
-  loaded = modeld._load_external_gpu_model(1928, 1208, "big-model", "car-params")
+  loaded = modeld._load_external_gpu_model(1928, 1208, "big-model", CP="car-params")
 
   assert isinstance(loaded, FakeModelState)
   assert calls == [
@@ -258,7 +296,6 @@ def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
 
   state = modeld.ModelState.__new__(modeld.ModelState)
   state.uses_external_gpu = True
-  state.fused = False
   state.frame_buf_size = 4
   state.vision_input_names = ["img", "big_img"]
   state.road_key = "img"
@@ -329,27 +366,6 @@ def test_out_of_band_artifact_round_trip():
   np.testing.assert_array_equal(restored["weights"], artifact["weights"])
 
 
-def test_fused_artifact_requires_matching_tinygrad():
-  artifact = {
-    "format_version": modeld.ARTIFACT_FORMAT_VERSION,
-    "execution_mode": "fused",
-    "run_model": {},
-    "compiler": {"tinygrad_commit": "wrong"},
-  }
-  with pytest.raises(ValueError, match="tinygrad mismatch"):
-    modeld._normalize_model_artifact(artifact)
-
-
-def test_fused_artifact_accepts_matching_tinygrad():
-  artifact = {
-    "format_version": modeld.ARTIFACT_FORMAT_VERSION,
-    "execution_mode": "fused",
-    "run_model": {},
-    "compiler": {"tinygrad_commit": modeld.tinygrad_commit()},
-  }
-  assert modeld._normalize_model_artifact(artifact) is artifact
-
-
 def test_external_gpu_probe_matches_upstream_retry_loop(monkeypatch):
   from openpilot.system.hardware.chestnut import flash
 
@@ -361,37 +377,6 @@ def test_external_gpu_probe_matches_upstream_retry_loop(monkeypatch):
   model_compiler.wait_for_external_gpu()
 
   assert calls == ["probe", ("sleep", 1), "probe", ("sleep", 1), "probe"]
-
-
-def test_external_gpu_compiler_uses_fused_comma_stack(monkeypatch, tmp_path):
-  calls = []
-  monkeypatch.setattr(model_compiler, "wait_for_external_gpu", lambda: calls.append("probe"))
-  monkeypatch.setattr(model_compiler, "external_gpu_compile_command", lambda command: command)
-
-  def fake_run(command, cwd, env, check):
-    calls.append((command, cwd, env, check))
-
-  monkeypatch.setattr(model_compiler.subprocess, "run", fake_run)
-  source = tmp_path / "big_driving_supercombo.onnx"
-  model_compiler.compile_driving(
-    "local-test",
-    {"driving_supercombo": source},
-    "supercombo",
-    "v16",
-    tmp_path,
-    "policy",
-    external_gpu=True,
-  )
-
-  assert calls[0] == "probe"
-  command, _, env, check = calls[1]
-  assert check
-  assert "--fused" in command
-  assert command[command.index("--benchmark-runs") + 1] == "20"
-  assert env["DEV"] == "USB+AMD:LLVM"
-  assert env["FRAME_DEV"] == "CPU"
-  assert env["TC_MIN_GLOBALS"] == "32"
-  assert "WARP_DEV" not in env
 
 
 def test_external_gpu_warmup_runs_a_complete_frame_and_resets(monkeypatch):
@@ -406,7 +391,6 @@ def test_external_gpu_warmup_runs_a_complete_frame_and_resets(monkeypatch):
 
   calls = []
   state = modeld.ModelState.__new__(modeld.ModelState)
-  state.fused = False
   state.frame_buf_size = 32
   state.vision_input_names = ["img", "big_img"]
   state._blob_cache = {}

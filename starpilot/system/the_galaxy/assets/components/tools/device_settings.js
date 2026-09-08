@@ -40,7 +40,7 @@ const VEHICLE_SETTING_MAKES = {
   SubaruSNG: ["Subaru"],
   SubaruSNGManualParkingBrake: ["Subaru"],
   SubaruStopStartOff: ["Subaru"],
-  SubaruAvhOnAtStartup: ["Subaru"],
+  SubaruRedneckCruise: ["Subaru"],
   ClusterOffset: ["Lexus", "Toyota"],
   SNGHack: ["Lexus", "Toyota"],
   ToyotaAutoHold: ["Lexus", "Toyota"],
@@ -495,11 +495,11 @@ function formatSliderValue(val, stepStr, precisionInt, key) {
 
 function formatReadoutValue(p) {
   const raw = state.values[p.key]
-  const value = parseFloat(raw)
-  if (raw === undefined || raw === null || Number.isNaN(value)) return "--"
+  const v = parseFloat(raw)
+  if (raw === undefined || raw === null || Number.isNaN(v)) return "--"
 
   const precision = p.precision !== undefined && p.precision !== null ? Number(p.precision) : 2
-  const formatted = Number(value.toFixed(Math.max(0, precision))).toString()
+  const formatted = Number(v.toFixed(Math.max(0, precision))).toString()
   return p.unit ? `${formatted}${p.unit}` : formatted
 }
 
@@ -532,6 +532,10 @@ function numericBounds(param) {
   }
   if (param.key === "ScreenBrightnessOnroad") {
     return { min: 1, max: 101, step: 1 }
+  }
+
+  if (param.key === "LaneCenterOffset") {
+    return { min: -0.3, max: 0.3, step: 0.01 }
   }
 
   // Personality jerk params are stored as percentage-style integers (25..200).
@@ -1062,6 +1066,18 @@ function stepNumericParam(param, direction) {
   if (Math.abs(next - current) <= epsilon) return
 
   updateNumericParam(param, next)
+}
+
+function canStepNumericParam(param, direction) {
+  const bounds = numericBounds(param)
+  const min = Number(bounds.min)
+  const max = Number(bounds.max)
+  const current = resolveCurrentNumericValue(param, bounds)
+  const precision = stepPrecision(bounds.step, param.precision)
+  const epsilon = Math.pow(10, -(precision + 2))
+
+  if (!Number.isFinite(min) || !Number.isFinite(max) || !Number.isFinite(current)) return false
+  return direction < 0 ? current > min + epsilon : current < max - epsilon
 }
 
 function applyManualNumericParam(param) {
@@ -1624,8 +1640,6 @@ function renderSettingRow(p) {
       const precision = stepPrecision(bounds.step, p.precision)
       const epsilon = Math.pow(10, -(precision + 2))
       const updating = isNumericUpdating(p.key)
-      const canDecrease = !updating && currentNumeric > (Number(bounds.min) + epsilon)
-      const canIncrease = !updating && currentNumeric < (Number(bounds.max) - epsilon)
       const defaultNumeric = resolveDefaultNumericValue(p, bounds)
       const defaultLabel = defaultNumeric !== null
         ? formatSliderValue(defaultNumeric, String(bounds.step), p.precision, p.key)
@@ -1636,7 +1650,7 @@ function renderSettingRow(p) {
             <div class="ds-stepper">
               <button
                 class="ds-stepper-btn"
-                disabled="${() => isLocked() || !canDecrease || false}"
+                disabled="${() => isLocked() || isNumericUpdating(p.key) || !canStepNumericParam(p, -1)}"
                 @click="${() => stepNumericParam(p, -1)}">-</button>
               <div class="ds-stepper-meta">
                 <span>${formatSliderValue(bounds.min, String(bounds.step), p.precision, p.key)} to ${formatSliderValue(bounds.max, String(bounds.step), p.precision, p.key)}</span>
@@ -1669,7 +1683,7 @@ function renderSettingRow(p) {
               </div>
               <button
                 class="ds-stepper-btn"
-                disabled="${() => isLocked() || !canIncrease || false}"
+                disabled="${() => isLocked() || isNumericUpdating(p.key) || !canStepNumericParam(p, 1)}"
                 @click="${() => stepNumericParam(p, 1)}">+</button>            </div>
           `
     })()}

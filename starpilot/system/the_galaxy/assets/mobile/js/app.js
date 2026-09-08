@@ -10,6 +10,16 @@ import { Navigation } from "./views/Navigation.js"
 import { Vehicle } from "./views/Vehicle.js"
 import { SystemTools } from "./views/SystemTools.js"
 import { ToolEmbed } from "./views/ToolEmbed.js"
+import { Doors } from "./views/Doors.js"
+import { Galaxy } from "./views/Galaxy.js"
+import { Tsk } from "./views/Tsk.js"
+import { Sentry } from "./views/Sentry.js"
+import { ModelManager } from "./views/ModelManager.js"
+import { Plots } from "./views/Plots.js"
+import { TestingGround } from "./views/TestingGround.js"
+import { ThemeMaker } from "./views/ThemeMaker.js"
+import { ModelLaboratory } from "./views/ModelLaboratory.js"
+import { Cameras } from "./views/Cameras.js"
 import { store, initRouter, navigate } from "./store.js"
 import { showSnackbar } from "./api.js"
 
@@ -35,6 +45,16 @@ const VIEWS = {
   "/vehicle": Vehicle,
   "/system": SystemTools,
   "/embed": ToolEmbed,
+  "/manage_doors": Doors,
+  "/galaxy": Galaxy,
+  "/manage_tsk": Tsk,
+  "/sentry": Sentry,
+  "/manage_models": ModelManager,
+  "/plots": Plots,
+  "/testing_ground": TestingGround,
+  "/theme_maker": ThemeMaker,
+  "/model_laboratory": ModelLaboratory,
+  "/cameras": Cameras,
 }
 
 function resolveView(path) {

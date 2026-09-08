@@ -23,6 +23,7 @@ const MENU_ITEMS = {
     { name: "Navigation", link: "/set_navigation_destination", icon: "bi-geo-alt-fill" },
     { name: "App Keys", link: "/manage_navigation_keys", icon: "bi-key-fill" },
     { name: "Model Manager", link: "/manage_models", icon: "bi-cpu" },
+    { name: "Model Laboratory", link: "/model_laboratory", icon: "bi-bezier2" },
     { name: "Plots", link: "/plots", icon: "bi-graph-up-arrow" },
     { name: "Testing Ground", link: "/testing_ground", icon: "bi-bezier2" },
     { name: "Troubleshoot", link: "/troubleshoot", icon: "bi-tools" },

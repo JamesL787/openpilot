@@ -96,11 +96,10 @@ def _params_client(monkeypatch, values, device_type):
     the_galaxy,
     "_get_param_type_info",
     lambda: (
-      {"AlphaLongitudinalEnabled", "ForceOffroad", "FordLateralMode"},
+      {"AlphaLongitudinalEnabled", "ForceOffroad"},
       {
         "AlphaLongitudinalEnabled": bool,
         "ForceOffroad": bool,
-        "FordLateralMode": int,
       },
     ),
   )
@@ -228,6 +227,8 @@ def test_wheel_controls_status_includes_favorite_slots(monkeypatch):
     "__starpilot_controller_action__:pulse_and_glide",
     "__starpilot_controller_action__:force_coast",
     "__starpilot_controller_action__:toggle_aol",
+    "__starpilot_controller_action__:engage_openpilot",
+    "__starpilot_controller_action__:disengage_openpilot",
   }
   assert response.get_json()["speed_unit"] == "mph"
 
@@ -249,6 +250,8 @@ def test_wheel_controls_configures_a_controller_only_action(monkeypatch):
     "__starpilot_controller_action__:pulse_and_glide",
     "__starpilot_controller_action__:force_coast",
     "__starpilot_controller_action__:toggle_aol",
+    "__starpilot_controller_action__:engage_openpilot",
+    "__starpilot_controller_action__:disengage_openpilot",
   }
   assert calls == [((9, "ForceOffroad", "Force Offroad", the_galaxy.params), {"value": None, "eligible_keys": expected_keys})]
 
@@ -552,19 +555,6 @@ def test_params_all_exposes_curve_calibration_readouts(monkeypatch):
   assert response.status_code == 200
   assert response.get_json()["CalibratedLateralAcceleration"] == 2.73
   assert response.get_json()["CalibrationProgress"] == 48.0
-
-
-def test_ford_lateral_mode_is_editable_through_galaxy(monkeypatch):
-  client, fake_params = _params_client(monkeypatch, {
-    "CarMake": "Ford",
-    "FordLateralMode": 1,
-  }, "mici")
-
-  response = client.put("/api/params", json={"key": "FordLateralMode", "value": 2, "label": "Angle"})
-
-  assert response.status_code == 200
-  assert fake_params.values["FordLateralMode"] == "2"
-  assert ("FordLateralMode", "2") in fake_params.writes
 
 
 def test_custom_accel_breakpoint_update_validates_the_complete_curve(monkeypatch):

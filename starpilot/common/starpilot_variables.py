@@ -20,7 +20,7 @@ from opendbc.car.gm.values import CAR as GM_CAR, EV_CAR as GM_EV_CAR, GMFlags
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, EV_CAR as HYUNDAI_EV_CAR, HyundaiFlags, HyundaiStarPilotSafetyFlags
 from opendbc.car.interfaces import TORQUE_SUBSTITUTE_PATH, CarInterfaceBase, GearShifter
 from opendbc.car.mock.values import CAR as MOCK
-from opendbc.car.subaru.values import SUBARU_AVH_CARS, SUBARU_STOP_START_CARS, SubaruFlags
+from opendbc.car.subaru.values import SUBARU_REDNECK_CRUISE_CARS, SUBARU_STOP_START_CARS, SubaruFlags
 from opendbc.car.tesla.values import CAR as TESLA_CAR
 from opendbc.car.toyota.values import CAR as TOYOTA_CAR, ToyotaStarPilotFlags
 from openpilot.common.basedir import BASEDIR
@@ -648,14 +648,6 @@ class StarPilotVariables:
 
     alpha_longitudinal = CP.alphaLongitudinalAvailable
     toggle.car_make = CP.brand
-    toggle.ford_lateral_mode = self.get_value(
-      "FordLateralMode",
-      cast=int,
-      condition=toggle.car_make == "ford",
-      default=1,
-      min=0,
-      max=2,
-    )
     migrate_ford_lkas_button_default(toggle.car_make, self.params)
     toggle.car_model = CP.carFingerprint
     toggle.disable_openpilot_long = self.get_value("DisableOpenpilotLongitudinal", condition=not alpha_longitudinal)
@@ -685,14 +677,24 @@ class StarPilotVariables:
     toggle.experimental_mode_available = (
       toggle.openpilot_longitudinal or lateral_only_experimental_available(CP)
     )
-    if not toggle.redneck_cruise_available or (toggle.openpilot_longitudinal and FPCP.pcmCruiseSpeed):
+    hyundai_redneck_available = toggle.car_make == "hyundai" and toggle.redneck_cruise_available
+    if toggle.car_make == "hyundai" and (not toggle.redneck_cruise_available or
+                                          (toggle.openpilot_longitudinal and FPCP.pcmCruiseSpeed)):
       self.params.put_bool("RedneckCruise", False)
     toggle.redneck_cruise = self.get_value(
       "RedneckCruise",
-      condition=toggle.redneck_cruise_available and not toggle.openpilot_longitudinal,
+      condition=hyundai_redneck_available and not toggle.openpilot_longitudinal,
     )
-    if toggle.redneck_cruise_available and not FPCP.pcmCruiseSpeed:
+    if hyundai_redneck_available and not FPCP.pcmCruiseSpeed:
       toggle.redneck_cruise = True
+
+    toggle.subaru_redneck_cruise = self.get_value(
+      "SubaruRedneckCruise", condition=toggle.car_model in SUBARU_REDNECK_CRUISE_CARS,
+    )
+    if toggle.car_model in SUBARU_REDNECK_CRUISE_CARS and not FPCP.pcmCruiseSpeed:
+      toggle.subaru_redneck_cruise = True
+    if toggle.car_make == "subaru":
+      toggle.redneck_cruise = bool(toggle.subaru_redneck_cruise and not FPCP.pcmCruiseSpeed)
     pcm_cruise = CP.pcmCruise
     prohibited_main_aol = not toggle.openpilot_longitudinal and hyundai_can_use_lkas_for_aol
     startAccel = CP.startAccel
@@ -1558,10 +1560,6 @@ class StarPilotVariables:
     toggle.subaru_stop_start_off = self.get_value(
       "SubaruStopStartOff", condition=toggle.car_model in SUBARU_STOP_START_CARS,
     )
-    toggle.subaru_avh_on = self.get_value(
-      "SubaruAvhOnAtStartup", condition=toggle.car_model in SUBARU_AVH_CARS,
-    )
-
     toggle.jeep_brake_hold = self.get_value(
       "JeepBrakeHold",
       condition=toggle.car_make == "chrysler" and toggle.car_model in CHRYSLER_JEEPS,
