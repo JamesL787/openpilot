@@ -42,6 +42,7 @@ def main() -> int:
     model_id_override=args.model,
     write_model_version=args.artifact is None,
     model_path_override=args.artifact,
+    force_external_gpu=args.external_gpu and args.artifact is not None,
   )
   model.npy["tfm"][:] = np.eye(3, dtype=np.float32)
   model.npy["big_tfm"][:] = np.eye(3, dtype=np.float32)
@@ -53,20 +54,26 @@ def main() -> int:
   if "action_t" in model.npy:
     model.npy["action_t"][:] = [0.15, 0.25]
 
-  frames = [
-    Tensor.randint(model.frame_buf_size, low=0, high=256, dtype="uint8", device=model.WARP_DEV).realize()
-    for _ in range(2)
-  ]
-  warped = model.warp_enqueue(
-    **{key: model.input_queues[key] for key in model.warp_input_keys},
-    frame=frames[0],
-    big_frame=frames[1],
-  )
-  policy_inputs = {key: model.input_queues[key] for key in model.policy_input_keys}
-  if model.image_history_pipeline == "policy":
-    outputs = model.run_policy(**policy_inputs, warped=warped)
+  if model.fused:
+    rng = np.random.default_rng(42)
+    for frame in model.frame_views.values():
+      frame[:] = rng.integers(0, 256, size=frame.shape, dtype=np.uint8)
+    outputs = model.run_model(**{key: model.input_queues[key] for key in model.model_input_keys})
   else:
-    outputs = model.run_policy(**policy_inputs, img=warped[0], big_img=warped[1])
+    frames = [
+      Tensor.randint(model.frame_buf_size, low=0, high=256, dtype="uint8", device=model.WARP_DEV).realize()
+      for _ in range(2)
+    ]
+    warped = model.warp_enqueue(
+      **{key: model.input_queues[key] for key in model.warp_input_keys},
+      frame=frames[0],
+      big_frame=frames[1],
+    )
+    policy_inputs = {key: model.input_queues[key] for key in model.policy_input_keys}
+    if model.image_history_pipeline == "policy":
+      outputs = model.run_policy(**policy_inputs, warped=warped)
+    else:
+      outputs = model.run_policy(**policy_inputs, img=warped[0], big_img=warped[1])
   arrays = [output.numpy().flatten() for output in outputs]
   if model.uses_external_gpu:
     _validate_external_gpu_outputs(arrays)

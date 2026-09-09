@@ -177,10 +177,17 @@ def test_model_lab_requires_shareable_camera_preprocessing():
     warped_input_shape=(2, 6, 256, 512),
     WARP_DEV="QCOM",
   )
+  fused = SimpleNamespace(
+    fused=True,
+    image_history_pipeline=modeld.IMAGE_HISTORY_IN_POLICY,
+    warped_input_shape=(2, 6, 128, 256),
+    WARP_DEV="QCOM",
+  )
 
   assert modeld._model_lab_shared_warp_compatible(compatible, compatible)
   assert not modeld._model_lab_shared_warp_compatible(compatible, legacy)
   assert not modeld._model_lab_shared_warp_compatible(compatible, different_shape)
+  assert not modeld._model_lab_shared_warp_compatible(fused, compatible)
 
 
 def test_model_state_reuses_shared_warp_without_preprocessing_again():

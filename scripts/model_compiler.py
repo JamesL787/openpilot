@@ -575,20 +575,29 @@ def compile_driving(
     command += ["--behavior-version", version]
   compile_env = build_compile_env(supercombo=input_format == "supercombo")
   if external_gpu:
+    if model_type != "supercombo":
+      raise ValueError("Fused external-GPU artifacts currently require a supercombo ONNX")
     gpu_debug = os.environ.get("STARPILOT_GPU_DEBUG", "1")
     if gpu_debug not in {"1", "2"}:
       gpu_debug = "1"
+    try:
+      validation_runs = max(1, int(os.environ.get("STARPILOT_GPU_VALIDATION_RUNS", "20")))
+    except ValueError:
+      validation_runs = 20
     for qcom_only_flag in ("IMAGE", "NOLOCALS", "OPENPILOT_HACKS"):
       compile_env.pop(qcom_only_flag, None)
     compile_env.update({
       "DEBUG": gpu_debug,
       "DEV": "USB+AMD:LLVM",
-      "WARP_DEV": "QCOM",
+      "FRAME_DEV": "CPU",
       "FLOAT16": "1",
       "JIT_BATCH_SIZE": "0",
       "GMMU": "0",
       "TC_OPT": "2",
+      "TC_MIN_GLOBALS": "32",
     })
+    compile_env.pop("WARP_DEV", None)
+    command += ["--fused", "--benchmark-runs", str(validation_runs)]
     wait_for_external_gpu()
     command = external_gpu_compile_command(command)
   subprocess.run(command, cwd=REPO_ROOT, env=compile_env, check=True)

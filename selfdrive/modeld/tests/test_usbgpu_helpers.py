@@ -296,6 +296,7 @@ def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
 
   state = modeld.ModelState.__new__(modeld.ModelState)
   state.uses_external_gpu = True
+  state.fused = False
   state.frame_buf_size = 4
   state.vision_input_names = ["img", "big_img"]
   state.road_key = "img"
@@ -355,6 +356,59 @@ def test_external_gpu_reasonable_finite_outputs_are_accepted():
   ])
 
 
+def test_fused_model_copies_live_frames_and_runs_single_graph():
+  calls = []
+
+  class FakeOutput:
+    @staticmethod
+    def numpy():
+      return np.zeros(2, dtype=np.float32)
+
+  state = modeld.ModelState.__new__(modeld.ModelState)
+  state.fused = True
+  state.frame_copy_size = 4
+  state.frame_views = {
+    "img": np.zeros(4, dtype=np.uint8),
+    "big_img": np.zeros(4, dtype=np.uint8),
+  }
+  state.desire_key = "desire"
+  state.prev_desired_curv_key = None
+  state.numpy_inputs = {"desire": np.zeros((1, modeld.ModelConstants.DESIRE_LEN), dtype=np.float32)}
+  state.npy = {
+    "desire": np.zeros(modeld.ModelConstants.DESIRE_LEN, dtype=np.float32),
+    "tfm": np.zeros((3, 3), dtype=np.float32),
+    "big_tfm": np.zeros((3, 3), dtype=np.float32),
+  }
+  state.prev_desire = np.zeros(modeld.ModelConstants.DESIRE_LEN, dtype=np.float32)
+  state.prev_blinker_on = False
+  state.road_key = "img"
+  state.wide_key = "big_img"
+  state.input_queues = {"packed": "host-buffer"}
+  state.model_input_keys = ("packed",)
+  state.run_model = lambda **kwargs: calls.append(kwargs) or [FakeOutput()]
+  state.uses_external_gpu = False
+  state.model_type = "supercombo"
+  state.parser = SimpleNamespace(parse_outputs=lambda _outputs: {"plan": np.zeros(1, dtype=np.float32)})
+  state.output_slices = {"plan": slice(0, 1)}
+  state.last_warp_output = object()
+
+  output = state.run(
+    {
+      "img": SimpleNamespace(data=bytearray([1, 2, 3, 4, 99])),
+      "big_img": SimpleNamespace(data=bytearray([5, 6, 7, 8, 99])),
+    },
+    {"img": np.eye(3, dtype=np.float32), "big_img": np.eye(3, dtype=np.float32)},
+    {"desire": np.zeros(modeld.ModelConstants.DESIRE_LEN, dtype=np.float32)},
+    False,
+  )
+
+  np.testing.assert_array_equal(state.frame_views["img"], [1, 2, 3, 4])
+  np.testing.assert_array_equal(state.frame_views["big_img"], [5, 6, 7, 8])
+  assert calls == [{"packed": "host-buffer"}]
+  assert state.last_warp_output is None
+  assert output is not None
+
+
 def test_out_of_band_artifact_round_trip():
   artifact = {"weights": np.arange(32, dtype=np.float32), "metadata": {"version": 1}}
   stream = io.BytesIO()
@@ -364,6 +418,27 @@ def test_out_of_band_artifact_round_trip():
   restored = load_oob(stream)
   assert restored["metadata"] == artifact["metadata"]
   np.testing.assert_array_equal(restored["weights"], artifact["weights"])
+
+
+def test_fused_artifact_requires_matching_tinygrad():
+  artifact = {
+    "format_version": modeld.ARTIFACT_FORMAT_VERSION,
+    "execution_mode": "fused",
+    "run_model": {},
+    "compiler": {"tinygrad_commit": "wrong"},
+  }
+  with pytest.raises(ValueError, match="tinygrad mismatch"):
+    modeld._normalize_model_artifact(artifact)
+
+
+def test_fused_artifact_accepts_matching_tinygrad():
+  artifact = {
+    "format_version": modeld.ARTIFACT_FORMAT_VERSION,
+    "execution_mode": "fused",
+    "run_model": {},
+    "compiler": {"tinygrad_commit": modeld.tinygrad_commit()},
+  }
+  assert modeld._normalize_model_artifact(artifact) is artifact
 
 
 def test_external_gpu_probe_matches_upstream_retry_loop(monkeypatch):
@@ -379,6 +454,37 @@ def test_external_gpu_probe_matches_upstream_retry_loop(monkeypatch):
   assert calls == ["probe", ("sleep", 1), "probe", ("sleep", 1), "probe"]
 
 
+def test_external_gpu_compiler_uses_fused_comma_stack(monkeypatch, tmp_path):
+  calls = []
+  monkeypatch.setattr(model_compiler, "wait_for_external_gpu", lambda: calls.append("probe"))
+  monkeypatch.setattr(model_compiler, "external_gpu_compile_command", lambda command: command)
+
+  def fake_run(command, cwd, env, check):
+    calls.append((command, cwd, env, check))
+
+  monkeypatch.setattr(model_compiler.subprocess, "run", fake_run)
+  source = tmp_path / "big_driving_supercombo.onnx"
+  model_compiler.compile_driving(
+    "local-test",
+    {"driving_supercombo": source},
+    "supercombo",
+    "v16",
+    tmp_path,
+    "policy",
+    external_gpu=True,
+  )
+
+  assert calls[0] == "probe"
+  command, _, env, check = calls[1]
+  assert check
+  assert "--fused" in command
+  assert command[command.index("--benchmark-runs") + 1] == "20"
+  assert env["DEV"] == "USB+AMD:LLVM"
+  assert env["FRAME_DEV"] == "CPU"
+  assert env["TC_MIN_GLOBALS"] == "32"
+  assert "WARP_DEV" not in env
+
+
 def test_external_gpu_warmup_runs_a_complete_frame_and_resets(monkeypatch):
   class FakeTensor:
     @staticmethod
@@ -391,6 +497,7 @@ def test_external_gpu_warmup_runs_a_complete_frame_and_resets(monkeypatch):
 
   calls = []
   state = modeld.ModelState.__new__(modeld.ModelState)
+  state.fused = False
   state.frame_buf_size = 32
   state.vision_input_names = ["img", "big_img"]
   state._blob_cache = {}

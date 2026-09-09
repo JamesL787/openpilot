@@ -532,7 +532,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
   @recursive_property
   def trace_num(self):
     num = next(ucount)
-    uop_fields[num] = (self.op, tuple(s.trace_num for s in self.src), self.arg, self.tag)+((self.metadata,) if TRACEMETA>=2 else ())
+    # tags can contain UOps (callify tags nodes with their originals): store them as trace_nums, same as srcs
+    tag = tuple(t.trace_num if isinstance(t, UOp) else t for t in self.tag) if isinstance(self.tag, tuple) else self.tag
+    uop_fields[num] = (self.op, tuple(s.trace_num for s in self.src), self.arg, tag)+((self.metadata,) if TRACEMETA>=2 else ())
     return num
 
   # *** uop syntactic sugar ***
@@ -776,6 +778,13 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
     # TODO: why can't this be in normal base?
     if self.op is Ops.UNSHARD: return self.src[0].base
     return self
+
+  # the storage this uop ultimately targets: base with UNSHARD, BITCAST and AFTER stripped
+  @property
+  def storage_base(self) -> UOp:
+    b = self.unsharded_base
+    while b.op in {Ops.BITCAST, Ops.AFTER, Ops.UNSHARD}: b = b.src[0].unsharded_base
+    return b
 
   # cached property here makes external_uop_gc fail, why?
   @property

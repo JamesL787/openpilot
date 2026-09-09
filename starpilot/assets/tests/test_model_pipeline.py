@@ -394,9 +394,13 @@ def test_all_compilation_uses_oob_and_external_gpu_is_opt_in(tmp_path, monkeypat
   assert normal_kwargs["env"]["DEV"] == "QCOM"
   assert normal_kwargs["env"]["IMAGE"] == "2"
   assert "--out-of-band" in external_command
+  assert "--fused" in external_command
+  assert external_command[external_command.index("--benchmark-runs") + 1] == "20"
   assert external_kwargs["env"]["DEBUG"] == "1"
   assert external_kwargs["env"]["DEV"] == "USB+AMD:LLVM"
-  assert external_kwargs["env"]["WARP_DEV"] == "QCOM"
+  assert external_kwargs["env"]["FRAME_DEV"] == "CPU"
+  assert external_kwargs["env"]["TC_MIN_GLOBALS"] == "32"
+  assert "WARP_DEV" not in external_kwargs["env"]
   assert all(flag not in external_kwargs["env"] for flag in ("IMAGE", "NOLOCALS", "OPENPILOT_HACKS"))
 
 
