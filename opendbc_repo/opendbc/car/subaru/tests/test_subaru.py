@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from opendbc.can import CANPacker, CANParser
-from opendbc.car import Bus, fw_versions, structs
+from opendbc.car import Bus, fw_versions, gen_empty_fingerprint, structs
 from opendbc.car.fw_query_definitions import StdQueries
 from opendbc.car.subaru import subarucan
 from opendbc.car.subaru.carcontroller import CarController
@@ -65,6 +65,56 @@ def test_preglobal_sng_does_not_send_standstill_keepalive_without_manual_toggle(
 
   assert throttle_cmd is False
   assert speed_cmd is False
+
+
+def test_redneck_cruise_buttons_use_resume_for_increase_and_set_for_decrease():
+  dbc = DBC[CAR.SUBARU_IMPREZA_2020][Bus.pt]
+  packer = CANPacker(dbc)
+  parser = CANParser(dbc, [("Cruise_Buttons", 0)], CanBus.main)
+  stock_buttons = defaultdict(int)
+
+  resume_msg = subarucan.create_cruise_buttons(
+    packer, 1, stock_buttons, subarucan.CRUISE_BUTTON_RESUME, CanBus.main,
+  )
+  parser.update([(1, [resume_msg])])
+  assert parser.vl["Cruise_Buttons"]["Resume"] == 1
+  assert parser.vl["Cruise_Buttons"]["Set"] == 0
+
+  set_msg = subarucan.create_cruise_buttons(
+    packer, 2, stock_buttons, subarucan.CRUISE_BUTTON_SET, CanBus.main,
+  )
+  parser.update([(2, [set_msg])])
+  assert parser.vl["Cruise_Buttons"]["Resume"] == 0
+  assert parser.vl["Cruise_Buttons"]["Set"] == 1
+
+
+def test_redneck_cruise_is_only_available_on_the_experimental_impreza(monkeypatch):
+  class FakeParams:
+    def __init__(self, **_kwargs):
+      pass
+
+    def get_bool(self, key):
+      return key == "SubaruRedneckCruise"
+
+  monkeypatch.setattr("opendbc.car.interfaces.Params", FakeParams)
+  toggles = SimpleNamespace(subaru_sng=False)
+
+  impreza_cp = CarInterface.get_non_essential_params(CAR.SUBARU_IMPREZA_2020)
+  impreza_fpcp = CarInterface.get_starpilot_params(
+    CAR.SUBARU_IMPREZA_2020, gen_empty_fingerprint(), [], impreza_cp, toggles,
+  )
+  assert impreza_fpcp.redneckCruiseAvailable
+  assert not impreza_fpcp.pcmCruiseSpeed
+  assert impreza_cp.openpilotLongitudinalControl
+  assert impreza_cp.safetyConfigs[0].safetyParam & SubaruSafetyFlags.REDNECK_CRUISE
+
+  old_impreza_cp = CarInterface.get_non_essential_params(CAR.SUBARU_IMPREZA)
+  old_impreza_fpcp = CarInterface.get_starpilot_params(
+    CAR.SUBARU_IMPREZA, gen_empty_fingerprint(), [], old_impreza_cp, toggles,
+  )
+  assert not old_impreza_fpcp.redneckCruiseAvailable
+  assert old_impreza_fpcp.pcmCruiseSpeed
+  assert not old_impreza_cp.openpilotLongitudinalControl
 
 
 class TestSubaruFingerprint:
@@ -206,10 +256,32 @@ def test_outback_2023_uses_d_platform_bus_layout():
   assert CP.lateralSmoothSeconds == pytest.approx(0.4)
 
 
-def test_stop_start_request_is_bounded_and_uses_live_dashlights():
-  CP = CarInterface.get_non_essential_params(CAR.SUBARU_OUTBACK_2023)
+@pytest.mark.parametrize("platform", [CAR.SUBARU_OUTBACK_2023, CAR.SUBARU_LEGACY_2025])
+def test_stop_start_inputs_are_captured_for_supported_models(platform):
+  CP = CarInterface.get_non_essential_params(platform)
+  car_state = CarState(CP, None)
+  parsers = car_state.get_can_parsers(CP)
+  raw_dashlights = bytes.fromhex("13031407875a8100")
+  parsers[Bus.alt].vl["Dashlights"]["COUNTER"] = 6
+  parsers[Bus.alt].vl["Dashlights"]["STOP_START"] = 0
+  parsers[Bus.alt].vl["Engine_Stop_Start"]["STOP_START_STATE"] = 3
+  parsers[Bus.alt].vl_raw["Dashlights"] = raw_dashlights
+
+  car_state.update(parsers, SimpleNamespace(subaru_sng=False))
+
+  assert car_state.dashlights_msg["COUNTER"] == 6
+  assert car_state.dashlights_dat == raw_dashlights
+  assert car_state.stop_start_state == 3
+
+
+@pytest.mark.parametrize("platform, expected_bus, start_frame", [
+  (CAR.SUBARU_OUTBACK_2023, CanBus.alt, 101),
+  (CAR.SUBARU_LEGACY_2025, CanBus.alt, 401),
+])
+def test_stop_start_request_is_bounded_and_uses_live_dashlights(platform, expected_bus, start_frame):
+  CP = CarInterface.get_non_essential_params(platform)
   controller = CarController({}, CP)
-  controller.frame = 101
+  controller.frame = start_frame
 
   class TestActuators:
     steeringAngleDeg = 0.0
@@ -228,6 +300,7 @@ def test_stop_start_request_is_bounded_and_uses_live_dashlights():
   CS = SimpleNamespace(
     canValid=True,
     dashlights_msg={"COUNTER": 6, "STOP_START": 0},
+    dashlights_dat=bytes.fromhex("13061407875a8100"),
     stop_start_state=0,
     out=SimpleNamespace(
       standstill=True,
@@ -239,9 +312,10 @@ def test_stop_start_request_is_bounded_and_uses_live_dashlights():
   _, can_sends = controller.update(CC, CS, 0, toggles)
   stop_start_msgs = [msg for msg in can_sends if msg[0] == 0x390]
   assert len(stop_start_msgs) == 1
-  assert stop_start_msgs[0][2] == CanBus.alt
-  parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("Dashlights", 0)], CanBus.alt)
-  parser.update([(1, [stop_start_msgs[0]])])
+  assert stop_start_msgs[0][2] == expected_bus
+  assert stop_start_msgs[0][1] == bytes.fromhex("57071407875ac100")
+  parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("Dashlights", 0)], expected_bus)
+  parser.update([(expected_bus, [stop_start_msgs[0]])])
   assert parser.vl["Dashlights"]["STOP_START"] == 1
   assert parser.vl["Dashlights"]["COUNTER"] == 7
 
@@ -262,6 +336,7 @@ def test_legacy_2025_uses_gen2_angle_bus_layout():
   assert not (CP.flags & SubaruFlags.D_PLATFORM_CAMERA)
   assert not (CP.safetyConfigs[0].safetyParam & SubaruSafetyFlags.D_PLATFORM_CAMERA)
   assert CP.safetyConfigs[0].safetyParam & SubaruSafetyFlags.FIXED_ANGLE_LIMITS
+  assert CP.safetyConfigs[0].safetyParam & SubaruSafetyFlags.STOP_START_BUTTON
   assert CanBus.main_for_cp(CP) == CanBus.main
   assert CanBus.angle_for_cp(CP) == CanBus.main
   assert parsers[Bus.pt].bus == CanBus.main

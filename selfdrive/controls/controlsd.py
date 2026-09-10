@@ -6,7 +6,7 @@ from cereal import car, custom, log
 import cereal.messaging as messaging
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
-from openpilot.common.realtime import config_realtime_process, DT_CTRL, Priority, Ratekeeper
+from openpilot.common.realtime import config_realtime_process, DT_CTRL, DT_MDL, Priority, Ratekeeper
 from openpilot.common.swaglog import cloudlog
 
 from opendbc.car.car_helpers import interfaces
@@ -21,6 +21,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
   clip_curvature,
   get_kona_non_scc_lateral_active,
   get_lateral_active,
+  update_lateral_fault_latch,
 )
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
@@ -391,6 +392,12 @@ class Controls:
     self.steer_limited_by_safety = False
     self.curvature = 0.0
     self.desired_curvature = 0.0
+    # First-order hold on the model action; see the ramp in state_control().
+    self.model_curvature_held = 0.0
+    self.model_curvature_from = 0.0
+    self.model_curvature_target = 0.0
+    self.model_curvature_elapsed = 0.0
+    self.model_action_interp = self.params.get_bool("NrdrLatModelActionInterp")
     self.lc_smooth_release = 0.0
     self.lane_centering = LaneCenteringController()
     self.lc_entry_sign = 0.0
@@ -403,6 +410,9 @@ class Controls:
     self.turn_blinker_swept = 0.0
     self.twitch_guard_remaining = 0.0
     self.kona_non_scc_lateral_active = False
+    self.kona_non_scc_lateral_faulted = False
+    self.elantra_hev_2024_lateral_faulted = False
+    self.elantra_hev_2024_previous_cruise_enabled = False
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -516,15 +526,41 @@ class Controls:
     # Check which actuators can be enabled
     standstill = abs(CS.vEgo) <= max(self.CP.minSteerSpeed, 0.3) or CS.standstill
     if self.CP.carFingerprint == HYUNDAI_CAR.HYUNDAI_KONA_NON_SCC:
+      always_on_lateral_enabled = self.sm['starpilotCarState'].alwaysOnLateralEnabled
+      lateral_requested = (CC.enabled and self.sm['selfdriveState'].active) or always_on_lateral_enabled
+      if not lateral_requested:
+        self.kona_non_scc_lateral_faulted = False
+      elif CS.steerFaultTemporary:
+        self.kona_non_scc_lateral_faulted = True
       CC.latActive = get_kona_non_scc_lateral_active(
         CC.enabled, self.sm['selfdriveState'].active,
-        self.sm['starpilotCarState'].alwaysOnLateralEnabled,
+        always_on_lateral_enabled,
         CS.steerFaultTemporary, CS.steerFaultPermanent,
         standstill, self.CP.steerAtStandstill,
         self.sm['starpilotPlan'].lateralCheck,
         CS.steeringPressed, self.kona_non_scc_lateral_active,
+        self.kona_non_scc_lateral_faulted,
       )
       self.kona_non_scc_lateral_active = CC.latActive
+    elif self.CP.carFingerprint == HYUNDAI_CAR.HYUNDAI_ELANTRA_HEV_2024:
+      always_on_lateral_enabled = self.sm['starpilotCarState'].alwaysOnLateralEnabled
+      lateral_requested = (CC.enabled and self.sm['selfdriveState'].active) or always_on_lateral_enabled
+      cruise_reenabled = CS.cruiseState.enabled and not self.elantra_hev_2024_previous_cruise_enabled
+      self.elantra_hev_2024_lateral_faulted = update_lateral_fault_latch(
+        self.elantra_hev_2024_lateral_faulted,
+        lateral_requested,
+        CS.steerFaultTemporary,
+        reset=cruise_reenabled,
+      )
+      CC.latActive = get_lateral_active(
+        CC.enabled, self.sm['selfdriveState'].active,
+        always_on_lateral_enabled,
+        CS.steerFaultTemporary, CS.steerFaultPermanent,
+        standstill, self.CP.steerAtStandstill,
+        self.sm['starpilotPlan'].lateralCheck,
+        self.elantra_hev_2024_lateral_faulted,
+      )
+      self.elantra_hev_2024_previous_cruise_enabled = CS.cruiseState.enabled
     else:
       CC.latActive = get_lateral_active(CC.enabled, self.sm['selfdriveState'].active,
                                         self.sm['starpilotCarState'].alwaysOnLateralEnabled,
@@ -576,6 +612,40 @@ class Controls:
       new_desired_curvature = self.sm['lateralManeuverPlan'].desiredCurvature if CC.latActive else self.curvature
     else:
       new_desired_curvature = model_v2.action.desiredCurvature if CC.latActive else self.curvature
+
+    # modeld publishes its action at 20 Hz while this loop runs at 100 Hz, so holding the newest
+    # value is a zero-order hold: the target moves in one step per model frame and sits still for
+    # the other four. clip_curvature smears that at road speed, but its allowance is
+    # MAX_LATERAL_JERK / v_ego**2 and below roughly 20 mph it does not bind, so the staircase
+    # reaches the rack intact.
+    #
+    # Measured on route 00000276 under 15 mph: each model frame steps the desired wheel angle by
+    # 2.0 deg at p50 and 6.9 deg at p90, half of those steps are smaller than the angle-rate clip
+    # and so pass it untouched, and 19% of the command's chatter power sits in the 15-22 Hz band
+    # -- about four times what it is with the lateral target low-pass enabled. That low-pass is
+    # what has been hiding this, at the cost of 0.11 s of lag on every genuine maneuver too.
+    #
+    # Ramp toward each new action across the model frame instead. Starting the ramp from the value
+    # currently being commanded keeps the target continuous by construction -- there is no step
+    # left to filter -- and costs at most one model frame of transport delay, which lagd learns
+    # anyway, rather than the broadband attenuation a low-pass applies.
+    if self.model_action_interp and CC.latActive:
+      if self.sm.updated['modelV2']:
+        self.model_curvature_target = new_desired_curvature
+        self.model_curvature_elapsed = 0.0
+      else:
+        self.model_curvature_elapsed += DT_CTRL
+      if self.sm.updated['modelV2']:
+        self.model_curvature_from = self.model_curvature_held
+      blend = min(self.model_curvature_elapsed / DT_MDL, 1.0)
+      self.model_curvature_held = self.model_curvature_from + \
+        blend * (self.model_curvature_target - self.model_curvature_from)
+      new_desired_curvature = self.model_curvature_held
+    else:
+      self.model_curvature_held = new_desired_curvature
+      self.model_curvature_from = new_desired_curvature
+      self.model_curvature_target = new_desired_curvature
+      self.model_curvature_elapsed = 0.0
 
     # Low-speed turn-intent hold (see CURVATURE_HOLD_* above). Curvature sign convention
     # here is positive for RIGHT turns (pauseturn log: left turn at +148 deg steering
@@ -740,7 +810,8 @@ class Controls:
       CC.latActive,
       bool(self.sm.all_checks(['modelV2'])),
       self.starpilot_toggles.lane_centering_pause_on_signal,
-      bool(CS.leftBlinker or CS.rightBlinker))
+      bool(CS.leftBlinker or CS.rightBlinker),
+      bool(CS.steeringPressed))
 
     jerk_factor = 1.0
     if self.starpilot_toggles.lane_change_pace < 10:
@@ -880,6 +951,14 @@ class Controls:
         self.steer_limited_by_safety = abs(CC.actuators.steeringAngleDeg - CO.actuatorsOutput.steeringAngleDeg) > \
                                               STEER_ANGLE_SATURATION_THRESHOLD
       else:
+        # This is a proxy, not a report: it infers "the car could not deliver what we asked" from
+        # the car controller having returned something else. That only holds while every stage
+        # between actuators.torque and actuatorsOutput.torque is a genuine limit. A car controller
+        # that also does comfort shaping here -- the Honda torque LPF used to -- makes the two
+        # indistinguishable, and because a first-order lag holds a steady-state gap of tau * slew
+        # it trips this 1e-2 threshold continuously rather than occasionally: tau = 0.1 s means any
+        # command slewing faster than 0.1 authority/s reads as limited, which froze the lateral
+        # integrator for effectively the whole drive. Shaping belongs upstream of actuators.torque.
         self.steer_limited_by_safety = abs(CC.actuators.torque - CO.actuatorsOutput.torque) > 1e-2
     else:
       self.steer_limited_by_safety = False

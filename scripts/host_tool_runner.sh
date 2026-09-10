@@ -26,6 +26,7 @@ Usage:
 Commands:
   c3           Launch the large raylib UI from the isolated host cache.
   c4           Launch the small raylib UI from the isolated host cache.
+  galaxy       Launch the local Galaxy web UI from the isolated host cache.
   onroad       Launch replay plus desktop UI(s) from the isolated host cache.
   replay       Build and run replay from the isolated host cache.
   cabana       Build and run cabana from the isolated host cache.
@@ -283,11 +284,28 @@ ensure_host_python_extensions() {
 }
 
 sync_host_generated_headers() {
-  if ! command -v capnpc >/dev/null 2>&1; then
-    return
+  # capnpc embeds an exact compiler-version guard in every generated C++ header, and the
+  # build compiles those headers against the Cap'n Proto shipped in the managed venv. They
+  # must therefore come from the SAME toolchain. Running a bare `capnpc` here picks up a
+  # Homebrew capnproto when one is installed, which silently regenerates the headers with a
+  # different version guard on every sync and breaks the next C++ build with
+  # "Version mismatch between generated code and library headers".
+  #
+  # Note capnpc invokes `capnpc-c++` as a separate PATH-resolved plugin, and it is that
+  # plugin -- not capnpc itself -- that stamps the guard, so the package's bin directory has
+  # to be on PATH, not just the capnpc binary.
+  local capnp_bin_dir=""
+  if [[ -x "${HOST_VENV}/bin/python3" ]]; then
+    capnp_bin_dir="$("${HOST_VENV}/bin/python3" -c \
+      'import capnproto; print(capnproto.BIN_DIR)' 2>/dev/null || true)"
   fi
 
   (
+    if [[ -n "${capnp_bin_dir}" && -d "${capnp_bin_dir}" ]]; then
+      export PATH="${capnp_bin_dir}:${PATH}"
+    fi
+    command -v capnpc >/dev/null 2>&1 || exit 0
+
     cd "${WORK_DIR}"
     mkdir -p cereal/gen/cpp
     capnpc --src-prefix=cereal \
@@ -484,6 +502,47 @@ launch_c4() {
   run_in_worktree "${WORK_DIR}/scripts/launch_ui_c4_desktop.sh" "${jobs}" "$@"
 }
 
+pick_free_galaxy_port() {
+  "${ROOT_DIR}/.venv/bin/python3" - <<'PY'
+import socket
+
+# Desktop ZMQ hashes replay service names into ports 8023-65535. Keep Galaxy
+# below that range so its HTTP server never steals a replay service port.
+for port in range(4600, 8023):
+  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    try:
+      sock.bind(("0.0.0.0", port))
+    except OSError:
+      continue
+    print(port)
+    raise SystemExit(0)
+
+raise SystemExit("Unable to find a free local Galaxy port.")
+PY
+}
+
+launch_galaxy() {
+  sync_worktree
+  ensure_host_python_extensions
+
+  local port
+  port="$(pick_free_galaxy_port)"
+  local galaxy_dir="${HOME}/.comma/starpilot/data/galaxy"
+
+  echo "Starting local Galaxy session on port ${port}..."
+  (
+    cd "${WORK_DIR}"
+    setup_build_env
+    export_workdir_pythonpath
+    export SP_GALAXY_DIR="${galaxy_dir}"
+    export SP_GALAXY_HOST="0.0.0.0"
+    export SP_GALAXY_PORT="${port}"
+    export SP_GALAXY_DEBUG="${SP_GALAXY_DEBUG:-1}"
+    export SP_GALAXY_RELOAD="${SP_GALAXY_RELOAD:-0}"
+    exec "${WORK_DIR}/.venv/bin/python3" -m openpilot.starpilot.system.the_galaxy.the_galaxy
+  )
+}
+
 launch_onroad() {
   local jobs
   jobs="$(default_jobs)"
@@ -588,7 +647,7 @@ main() {
     help|-h|--help)
       usage
       ;;
-    c3|c4|onroad|replay|shell|python|pytest)
+    c3|c4|galaxy|onroad|replay|shell|python|pytest)
       set_host_bucket "shared"
       acquire_host_lock "${command} $*"
       ;;
@@ -628,6 +687,9 @@ main() {
       ;;
     c4)
       launch_c4 "$@"
+      ;;
+    galaxy)
+      launch_galaxy "$@"
       ;;
     onroad)
       launch_onroad "$@"

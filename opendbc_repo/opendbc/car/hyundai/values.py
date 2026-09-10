@@ -2,6 +2,8 @@ import re
 from dataclasses import dataclass, field
 from enum import IntFlag
 
+# Provenance: portions of HKG angle limits, flags, and platform data are adapted from
+# sunnypilot/opendbc's hkg-angle-steering-2025 branch at cc4b08625. See CREDITS.md.
 from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds
 from opendbc.car.lateral import AngleSteeringLimits, ISO_LATERAL_ACCEL
 from opendbc.car.common.conversions import Conversions as CV
@@ -45,8 +47,12 @@ class CarControllerParams:
       self.STEER_DRIVER_MULTIPLIER = 2
       self.STEER_THRESHOLD = 100
       if vEgoRaw < 15.0:  # below ~34 mph - more aggressive for tight turns
-        self.STEER_DELTA_UP = 10
-        self.STEER_DELTA_DOWN = 8
+        if CP.carFingerprint == CAR.KIA_CARNIVAL_HEV_4TH_GEN:
+          self.STEER_DELTA_UP = 2
+          self.STEER_DELTA_DOWN = 3
+        else:
+          self.STEER_DELTA_UP = 10
+          self.STEER_DELTA_DOWN = 8
       else:
         self.STEER_DELTA_UP = 2
         self.STEER_DELTA_DOWN = 3
@@ -120,6 +126,7 @@ class HyundaiStarPilotSafetyFlags(IntFlag):
 class HyundaiStarPilotFlags(IntFlag):
   SPEED_LIMIT_AVAILABLE = 1
   MAIN_CRUISE_STATE_TRACKING = 2 ** 2
+  HAS_LKAS12 = 2 ** 9
 
 
 class HyundaiFlags(IntFlag):
@@ -941,6 +948,11 @@ class CAR(Platforms):
     HYUNDAI_KONA_EV.specs,
     flags=HyundaiFlags.EV | HyundaiFlags.ALT_LIMITS,
   )
+  KIA_RAY_EV = HyundaiNonSccPlatformConfig(
+    [HyundaiNonSccCarDocs("Kia Ray EV 2025", car_parts=CarParts.common([CarHarness.hyundai_h]))],
+    CarSpecs(mass=1295, wheelbase=2.52, steerRatio=14.5),
+    flags=HyundaiFlags.EV | HyundaiFlags.CHECKSUM_CRC8,
+  )
   KIA_CEED_PHEV_2022_NON_SCC = HyundaiNonSccPlatformConfig(
     [HyundaiNonSccCarDocs("Kia Ceed Plug-in Hybrid Non-SCC 2022", car_parts=CarParts.common([CarHarness.hyundai_i]))],
     CarSpecs(mass=1650, wheelbase=2.65, steerRatio=13.75, tireStiffnessFactor=0.5),
@@ -988,6 +1000,10 @@ KIA_EV6_GT_LINE_LONG_TUNING_VDS_PREFIXES = frozenset({
 })
 KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID = "5"
 
+KIA_RAY_EV_VIN_VDS_PREFIXES = frozenset({
+  "CG81A",
+})
+
 
 ALT_BUS_LDA_BUTTON_CARS = frozenset()
 ALT_BUS_LDA_BUTTON_SWL_STAT_CARS = frozenset()
@@ -1000,6 +1016,10 @@ def hyundai_cancel_button_enables_cruise(car_fingerprint) -> bool:
 def kia_ev6_gt_line_longitudinal_tuning(car_fingerprint, vin: str, testing_ground_active: bool = False) -> bool:
   vin_match = isinstance(vin, str) and len(vin) == 17 and vin[3:8] in KIA_EV6_GT_LINE_LONG_TUNING_VDS_PREFIXES
   return car_fingerprint == CAR.KIA_EV6 and (vin_match or testing_ground_active)
+
+
+def kia_ray_ev_vin(vin: str) -> bool:
+  return isinstance(vin, str) and len(vin) == 17 and vin[3:8] in KIA_RAY_EV_VIN_VDS_PREFIXES
 
 
 def get_platform_codes(fw_versions: list[bytes]) -> set[tuple[bytes, bytes | None]]:

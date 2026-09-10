@@ -4,7 +4,7 @@ from opendbc.car import Bus, DT_CTRL, make_tester_present_msg, structs
 from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_std_steer_angle_limits, apply_steer_angle_limits_vm, common_fault_avoidance
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.subaru import subarucan
-from opendbc.car.subaru.values import CAR, DBC, GLOBAL_ES_ADDR, CanBus, CarControllerParams, SubaruFlags
+from opendbc.car.subaru.values import CAR, DBC, GLOBAL_ES_ADDR, SUBARU_STOP_START_CARS, CanBus, CarControllerParams, SubaruFlags
 from opendbc.car.vehicle_model import VehicleModel
 
 # FIXME: These limits aren't exact. The real limit is more than likely over a larger time period and
@@ -32,9 +32,13 @@ _ANGLE_RECLAIM_EXPONENT = 2.5
 _ANGLE_MADS_MIN_SPEED = 0.44704
 _ANGLE_MADS_MAX_STEER_ANGLE = 120.0
 _STOP_START_STARTUP_DELAY_FRAMES = 100
-_STOP_START_STARTUP_DEADLINE_FRAMES = 300
+# StarPilot's first populated toggle message can arrive several seconds after
+# the car controller starts while fingerprinting and settings settle.
+_STOP_START_STARTUP_DEADLINE_FRAMES = 1000
 _STOP_START_PULSE_FRAMES = 30
 _STOP_START_PULSE_PERIOD_FRAMES = 5
+_REDNECK_BUTTON_INTERVAL_FRAMES = 10
+_REDNECK_BUTTON_COPIES = 2
 
 
 def get_safety_CP():
@@ -85,14 +89,15 @@ class CarController(CarControllerBase):
     self.stop_start_initial_state = None
     self.stop_start_counter = 0
     self.stop_start_acknowledged = False
+    self.last_redneck_button_frame = 0
 
   def _stop_start_off_request(self, CC, CS, starpilot_toggles):
-    """Send one bounded Outback Stop/Start OFF request after ignition.
+    """Send one bounded Subaru Stop/Start OFF request after ignition.
 
     This is intentionally opt-in and limited to a stationary vehicle in
     Park/Neutral. A single ignition session gets at most one attempt.
     """
-    if self.CP.carFingerprint != CAR.SUBARU_OUTBACK_2023 or \
+    if self.CP.carFingerprint not in SUBARU_STOP_START_CARS or \
        not getattr(starpilot_toggles, "subaru_stop_start_off", False) or self.stop_start_attempted:
       return None
 
@@ -135,7 +140,8 @@ class CarController(CarControllerBase):
       return None
 
     msg = subarucan.create_stop_start_control(
-      self.packer, dashlights_msg, counter=self.stop_start_counter, bus=self.main_bus,
+      self.packer, dashlights_msg, raw_dat=getattr(CS, "dashlights_dat", None),
+      counter=self.stop_start_counter, bus=CanBus.alt_for_cp(self.CP),
     )
     self.stop_start_counter = (self.stop_start_counter + 1) % 0x10
     return msg
@@ -406,6 +412,10 @@ class CarController(CarControllerBase):
     actuators = CC.actuators
     hud_control = CC.hudControl
     pcm_cancel_cmd = CC.cruiseControl.cancel
+    subaru_redneck_cruise = bool(
+      self.CP.carFingerprint == CAR.SUBARU_IMPREZA_2020 and
+      getattr(starpilot_toggles, "subaru_redneck_cruise", False)
+    )
 
     can_sends = []
 
@@ -470,7 +480,8 @@ class CarController(CarControllerBase):
     else:
       if self.frame % 10 == 0:
         can_sends.append(subarucan.create_es_dashstatus(self.packer, self.frame // 10, CS.es_dashstatus_msg, CC.enabled,
-                                                        self.CP.openpilotLongitudinalControl, CC.longActive, hud_control.leadVisible,
+                                                        self.CP.openpilotLongitudinalControl and not subaru_redneck_cruise,
+                                                        CC.longActive, hud_control.leadVisible,
                                                         self.status_bus))
 
         can_sends.append(subarucan.create_es_lkas_state(self.packer, self.frame // 10, CS.es_lkas_state_msg, CC.latActive, hud_control.visualAlert,
@@ -488,7 +499,7 @@ class CarController(CarControllerBase):
           can_sends.append(subarucan.create_brake_pedal(self.packer, self.frame // 2, CS.brake_pedal_msg,
                                                         speed_cmd, pcm_cancel_cmd))
 
-      if self.CP.openpilotLongitudinalControl:
+      if self.CP.openpilotLongitudinalControl and not subaru_redneck_cruise:
         if self.frame % 5 == 0:
           can_sends.append(subarucan.create_es_status(self.packer, self.frame // 5, CS.es_status_msg,
                                                       self.CP.openpilotLongitudinalControl, CC.longActive, cruise_rpm))
@@ -503,6 +514,20 @@ class CarController(CarControllerBase):
           if not (self.CP.flags & SubaruFlags.HYBRID):
             bus = CanBus.alt_for_cp(self.CP) if self.CP.flags & SubaruFlags.GLOBAL_GEN2 else self.main_bus
             can_sends.append(subarucan.create_es_distance(self.packer, CS.es_distance_msg["COUNTER"] + 1, CS.es_distance_msg, bus, pcm_cancel_cmd))
+
+      if subaru_redneck_cruise:
+        redneck_button = {
+          1: subarucan.CRUISE_BUTTON_RESUME,
+          2: subarucan.CRUISE_BUTTON_SET,
+        }.get(getattr(CS, "redneck_send_button", 0))
+        cruise_buttons_msg = getattr(CS, "cruise_buttons_msg", None)
+        if redneck_button and cruise_buttons_msg and self.frame - self.last_redneck_button_frame >= _REDNECK_BUTTON_INTERVAL_FRAMES:
+          counter = (int(cruise_buttons_msg["COUNTER"]) + 1) % 0x10
+          for copy_idx in range(_REDNECK_BUTTON_COPIES):
+            can_sends.append(subarucan.create_cruise_buttons(
+              self.packer, counter + copy_idx, cruise_buttons_msg, redneck_button, self.main_bus,
+            ))
+          self.last_redneck_button_frame = self.frame
 
       if self.CP.flags & SubaruFlags.DISABLE_EYESIGHT:
         # Tester present (keeps eyesight disabled)

@@ -107,6 +107,10 @@ class EngagedConfirmationButton(BigButton):
     self.set_click_callback(lambda: _engaged_confirmation_click(callback, action_text, icon, exit_on_confirm=exit_on_confirm, red=red))
 
 
+def _request_user_reboot(params: Params) -> None:
+  params.put_bool("DoUserReboot", True)
+
+
 class DeviceInfoLayoutMici(Widget):
   def __init__(self):
     super().__init__()

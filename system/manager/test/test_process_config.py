@@ -4,7 +4,17 @@ import pytest
 
 from cereal import car
 from opendbc.car.ford.values import CAR as FORD_CAR
-from openpilot.system.manager.process_config import allow_uploads, camera_run, managed_processes, sentry_mode, ublox
+import openpilot.system.manager.process_config as process_config
+from openpilot.system.manager.process_config import (
+  allow_uploads,
+  bluetooth_enabled,
+  camera_run,
+  managed_processes,
+  sentry_mode,
+  soundd_run,
+  ublox,
+  wheel_controls_enabled,
+)
 
 
 class FakeParams:
@@ -37,6 +47,58 @@ def test_allow_uploads(started, no_uploads, no_onroad_uploads, always_allow_uplo
 
 def test_uploader_runs_at_background_priority():
   assert managed_processes["uploader"].nice == 19
+
+
+def test_mapd_runs_onroad_or_during_offroad_map_transfer(monkeypatch):
+  class MemoryParams:
+    values = {}
+
+    def __init__(self, *, memory=False):
+      assert memory
+
+    def get_bool(self, key):
+      return self.values.get(key, False)
+
+  monkeypatch.setattr(process_config, "Params", MemoryParams)
+  params = object()
+  CP = car.CarParams.new_message()
+  toggles = SimpleNamespace()
+
+  assert process_config.run_mapd(True, params, CP, toggles)
+  assert not process_config.run_mapd(False, params, CP, toggles)
+
+  MemoryParams.values["DownloadMaps"] = True
+  assert process_config.run_mapd(False, params, CP, toggles)
+
+  MemoryParams.values = {"DownloadMaps": False, "CancelDownloadMaps": True}
+  assert process_config.run_mapd(False, params, CP, toggles)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_bluetooth_process_is_param_gated(enabled):
+  params = SimpleNamespace(get_bool=lambda key: enabled if key == "BluetoothEnabled" else False)
+  assert bluetooth_enabled(False, params, car.CarParams.new_message(), SimpleNamespace()) is enabled
+
+
+@pytest.mark.parametrize(
+  "started,driver_view,audio_test,expected",
+  [(True, False, False, True), (False, True, False, True), (False, False, True, True), (False, False, False, False)],
+)
+def test_soundd_runs_for_driving_and_bluetooth_audio_test(started, driver_view, audio_test, expected):
+  values = {"IsDriverViewEnabled": driver_view, "BluetoothAudioTestActive": audio_test}
+  params = SimpleNamespace(get_bool=lambda key: values.get(key, False))
+  assert soundd_run(started, params, car.CarParams.new_message(), SimpleNamespace()) is expected
+
+
+def test_wheel_controls_process_runs_on_supported_devices_at_background_priority():
+  process = managed_processes["wheel_controlsd"]
+  assert process.nice == 19
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_wheel_controls_process_is_mapping_gated(enabled):
+  params = SimpleNamespace(get_bool=lambda key: enabled if key == "WheelControlsEnabled" else False)
+  assert wheel_controls_enabled(False, params, car.CarParams.new_message(), SimpleNamespace()) is enabled
 
 
 class CameraParams:

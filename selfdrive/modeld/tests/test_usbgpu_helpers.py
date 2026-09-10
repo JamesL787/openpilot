@@ -1,4 +1,5 @@
 import io
+import struct
 from types import MethodType
 from types import SimpleNamespace
 
@@ -55,7 +56,7 @@ def test_external_gpu_voltage_uses_hardware_specific_source():
 
 
 def test_external_gpu_power_must_remain_stable():
-  ready, stable_since = modeld._external_gpu_power_ready(12800, 10.0, None)
+  ready, stable_since = modeld._external_gpu_power_ready(9900, 10.0, None)
   assert not ready
   assert stable_since is None
 
@@ -69,8 +70,8 @@ def test_external_gpu_power_must_remain_stable():
   assert ready
 
   ready, stable_since = modeld._external_gpu_power_ready(11900, 15.0, stable_since)
-  assert not ready
-  assert stable_since is None
+  assert ready
+  assert stable_since == 11.0
 
 
 def test_egmp_ready_uses_accelerator_ready_bit():
@@ -152,6 +153,42 @@ def test_chestnut_telemetry_is_bounded_when_amd_is_unavailable(monkeypatch):
   assert not message.valid
 
 
+def test_chestnut_power_telemetry_works_before_amd_initializes(monkeypatch):
+  class FakePubMaster:
+    def __init__(self):
+      self.sent = []
+
+    def send(self, service, message):
+      self.sent.append((service, message))
+
+  class FakeHandle:
+    def controlRead(self, *_args, **_kwargs):
+      return struct.pack("<Hh?", 12100, 850, True)
+
+    def close(self):
+      pass
+
+  class FakeContext:
+    def openByVendorIDAndProductID(self, *_args, **_kwargs):
+      return FakeHandle()
+
+    def close(self):
+      pass
+
+  publisher = FakePubMaster()
+  monkeypatch.setattr(modeld, "Device", SimpleNamespace(_opened_devices=set()))
+  monkeypatch.setattr(modeld.usb1, "USBContext", FakeContext)
+
+  telemetry = modeld.ChestnutState(publisher, big=False)
+  telemetry.send()
+
+  _, message = publisher.sent[0]
+  assert message.valid
+  assert message.chestnutState.supplyVoltage == 12100
+  assert message.chestnutState.supplyCurrent == 850
+  assert message.chestnutState.supplyFault
+
+
 def test_tinygrad_disk_cache_connection_is_closed_between_models(monkeypatch):
   import tinygrad.helpers as tinygrad_helpers
 
@@ -171,13 +208,49 @@ def test_tinygrad_disk_cache_connection_is_closed_between_models(monkeypatch):
   assert tinygrad_helpers._db_connection is None
 
 
+def test_tinygrad_thread_local_cache_holder_survives_cleanup(monkeypatch):
+  import threading
+  import tinygrad.helpers as tinygrad_helpers
+
+  class FakeConnection:
+    def __init__(self):
+      self.closed = False
+
+    def close(self):
+      self.closed = True
+
+  holder = threading.local()
+  connection = FakeConnection()
+  holder.conn = connection
+  monkeypatch.setattr(tinygrad_helpers, "_db_connection", holder)
+
+  modeld._close_tinygrad_disk_cache_connection()
+
+  assert connection.closed
+  assert tinygrad_helpers._db_connection is holder
+  assert not hasattr(holder, "conn")
+
+
+def test_tinygrad_empty_thread_local_cache_holder_is_safe(monkeypatch):
+  import threading
+  import tinygrad.helpers as tinygrad_helpers
+
+  holder = threading.local()
+  monkeypatch.setattr(tinygrad_helpers, "_db_connection", holder)
+
+  modeld._close_tinygrad_disk_cache_connection()
+
+  assert tinygrad_helpers._db_connection is holder
+
+
 def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):
   calls = []
 
   class FakeModelState:
     uses_external_gpu = True
 
-    def __init__(self, cam_w, cam_h, external_gpu_active, model_id_override, write_model_version):
+    def __init__(self, cam_w, cam_h, external_gpu_active, model_id_override, write_model_version,
+                 model_version_override=None, **_kwargs):
       calls.append(("model", cam_w, cam_h, external_gpu_active, model_id_override, write_model_version))
 
     def warmup(self):
@@ -194,7 +267,7 @@ def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):
     lambda *_args: (_ for _ in ()).throw(AssertionError("runtime must not change tinygrad's process-global DEV")),
   )
 
-  loaded = modeld._load_external_gpu_model(1928, 1208, "big-model", "car-params")
+  loaded = modeld._load_external_gpu_model(1928, 1208, "big-model", CP="car-params")
 
   assert isinstance(loaded, FakeModelState)
   assert calls == [
@@ -209,6 +282,8 @@ def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):
 
 
 def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
+  call_order = []
+
   class FakeTensor:
     @staticmethod
     def from_blob(*_args, **_kwargs):
@@ -216,10 +291,12 @@ def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
 
   class FakeOutput:
     def numpy(self):
+      call_order.append("output_sync")
       return np.array([np.nan], dtype=np.float32)
 
   state = modeld.ModelState.__new__(modeld.ModelState)
   state.uses_external_gpu = True
+  state.fused = False
   state.frame_buf_size = 4
   state.vision_input_names = ["img", "big_img"]
   state.road_key = "img"
@@ -236,6 +313,7 @@ def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
     "big_tfm": np.zeros((3, 3), dtype=np.float32),
   }
   state.prev_desire = np.zeros(8, dtype=np.float32)
+  state.prev_blinker_on = False
   state.warp_input_keys = ()
   state.policy_input_keys = ()
   state.input_queues = {}
@@ -254,9 +332,81 @@ def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
   inputs = {"desire_pulse": np.zeros(8, dtype=np.float32)}
 
   callbacks = []
+
+  def send_telemetry():
+    call_order.append("telemetry")
+    callbacks.append("sent")
+
   with pytest.raises(RuntimeError, match="external GPU model output not finite"):
-    state.run(buffers, transforms, inputs, False, lambda: callbacks.append("sent"))
+    state.run(buffers, transforms, inputs, False, after_output_sync=send_telemetry)
+  assert call_order == ["output_sync", "telemetry"]
   assert callbacks == ["sent"]
+
+
+def test_external_gpu_implausible_finite_outputs_trigger_fallback():
+  with pytest.raises(RuntimeError, match="output magnitude implausible"):
+    modeld._validate_external_gpu_outputs([
+      np.array([0.0, modeld.MAX_ABS_EXTERNAL_MODEL_OUTPUT * 2], dtype=np.float32),
+    ])
+
+
+def test_external_gpu_reasonable_finite_outputs_are_accepted():
+  modeld._validate_external_gpu_outputs([
+    np.array([-100.0, 0.0, 100.0], dtype=np.float32),
+  ])
+
+
+def test_fused_model_copies_live_frames_and_runs_single_graph():
+  calls = []
+
+  class FakeOutput:
+    @staticmethod
+    def numpy():
+      return np.zeros(2, dtype=np.float32)
+
+  state = modeld.ModelState.__new__(modeld.ModelState)
+  state.fused = True
+  state.frame_copy_size = 4
+  state.frame_views = {
+    "img": np.zeros(4, dtype=np.uint8),
+    "big_img": np.zeros(4, dtype=np.uint8),
+  }
+  state.desire_key = "desire"
+  state.prev_desired_curv_key = None
+  state.numpy_inputs = {"desire": np.zeros((1, modeld.ModelConstants.DESIRE_LEN), dtype=np.float32)}
+  state.npy = {
+    "desire": np.zeros(modeld.ModelConstants.DESIRE_LEN, dtype=np.float32),
+    "tfm": np.zeros((3, 3), dtype=np.float32),
+    "big_tfm": np.zeros((3, 3), dtype=np.float32),
+  }
+  state.prev_desire = np.zeros(modeld.ModelConstants.DESIRE_LEN, dtype=np.float32)
+  state.prev_blinker_on = False
+  state.road_key = "img"
+  state.wide_key = "big_img"
+  state.input_queues = {"packed": "host-buffer"}
+  state.model_input_keys = ("packed",)
+  state.run_model = lambda **kwargs: calls.append(kwargs) or [FakeOutput()]
+  state.uses_external_gpu = False
+  state.model_type = "supercombo"
+  state.parser = SimpleNamespace(parse_outputs=lambda _outputs: {"plan": np.zeros(1, dtype=np.float32)})
+  state.output_slices = {"plan": slice(0, 1)}
+  state.last_warp_output = object()
+
+  output = state.run(
+    {
+      "img": SimpleNamespace(data=bytearray([1, 2, 3, 4, 99])),
+      "big_img": SimpleNamespace(data=bytearray([5, 6, 7, 8, 99])),
+    },
+    {"img": np.eye(3, dtype=np.float32), "big_img": np.eye(3, dtype=np.float32)},
+    {"desire": np.zeros(modeld.ModelConstants.DESIRE_LEN, dtype=np.float32)},
+    False,
+  )
+
+  np.testing.assert_array_equal(state.frame_views["img"], [1, 2, 3, 4])
+  np.testing.assert_array_equal(state.frame_views["big_img"], [5, 6, 7, 8])
+  assert calls == [{"packed": "host-buffer"}]
+  assert state.last_warp_output is None
+  assert output is not None
 
 
 def test_out_of_band_artifact_round_trip():
@@ -268,6 +418,27 @@ def test_out_of_band_artifact_round_trip():
   restored = load_oob(stream)
   assert restored["metadata"] == artifact["metadata"]
   np.testing.assert_array_equal(restored["weights"], artifact["weights"])
+
+
+def test_fused_artifact_requires_matching_tinygrad():
+  artifact = {
+    "format_version": modeld.ARTIFACT_FORMAT_VERSION,
+    "execution_mode": "fused",
+    "run_model": {},
+    "compiler": {"tinygrad_commit": "wrong"},
+  }
+  with pytest.raises(ValueError, match="tinygrad mismatch"):
+    modeld._normalize_model_artifact(artifact)
+
+
+def test_fused_artifact_accepts_matching_tinygrad():
+  artifact = {
+    "format_version": modeld.ARTIFACT_FORMAT_VERSION,
+    "execution_mode": "fused",
+    "run_model": {},
+    "compiler": {"tinygrad_commit": modeld.tinygrad_commit()},
+  }
+  assert modeld._normalize_model_artifact(artifact) is artifact
 
 
 def test_external_gpu_probe_matches_upstream_retry_loop(monkeypatch):
@@ -283,6 +454,37 @@ def test_external_gpu_probe_matches_upstream_retry_loop(monkeypatch):
   assert calls == ["probe", ("sleep", 1), "probe", ("sleep", 1), "probe"]
 
 
+def test_external_gpu_compiler_uses_fused_comma_stack(monkeypatch, tmp_path):
+  calls = []
+  monkeypatch.setattr(model_compiler, "wait_for_external_gpu", lambda: calls.append("probe"))
+  monkeypatch.setattr(model_compiler, "external_gpu_compile_command", lambda command: command)
+
+  def fake_run(command, cwd, env, check):
+    calls.append((command, cwd, env, check))
+
+  monkeypatch.setattr(model_compiler.subprocess, "run", fake_run)
+  source = tmp_path / "big_driving_supercombo.onnx"
+  model_compiler.compile_driving(
+    "local-test",
+    {"driving_supercombo": source},
+    "supercombo",
+    "v16",
+    tmp_path,
+    "policy",
+    external_gpu=True,
+  )
+
+  assert calls[0] == "probe"
+  command, _, env, check = calls[1]
+  assert check
+  assert "--fused" in command
+  assert command[command.index("--benchmark-runs") + 1] == "20"
+  assert env["DEV"] == "USB+AMD:LLVM"
+  assert env["FRAME_DEV"] == "CPU"
+  assert env["TC_MIN_GLOBALS"] == "32"
+  assert "WARP_DEV" not in env
+
+
 def test_external_gpu_warmup_runs_a_complete_frame_and_resets(monkeypatch):
   class FakeTensor:
     @staticmethod
@@ -295,6 +497,7 @@ def test_external_gpu_warmup_runs_a_complete_frame_and_resets(monkeypatch):
 
   calls = []
   state = modeld.ModelState.__new__(modeld.ModelState)
+  state.fused = False
   state.frame_buf_size = 32
   state.vision_input_names = ["img", "big_img"]
   state._blob_cache = {}

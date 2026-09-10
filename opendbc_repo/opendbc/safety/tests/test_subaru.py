@@ -370,6 +370,21 @@ class TestSubaruGen2FixedAngleSafety(TestSubaruGen2AngleStockLongitudinalSafety)
     raise unittest.SkipTest("Breakpoint angle limits do not enforce a real-time message frequency")
 
 
+class TestSubaruGen2FixedAngleStopStartSafety(TestSubaruGen2FixedAngleSafety):
+  FLAGS = SubaruSafetyFlags.GEN2 | SubaruSafetyFlags.LKAS_ANGLE | SubaruSafetyFlags.FIXED_ANGLE_LIMITS | \
+    SubaruSafetyFlags.STOP_START_BUTTON
+  TX_MSGS = TestSubaruGen2FixedAngleSafety.TX_MSGS + [[SubaruMsg.Dashlights, SUBARU_ALT_BUS]]
+
+  def _stop_start_msg(self, pressed):
+    return self.packer.make_can_msg_safety(
+      "Dashlights", SUBARU_ALT_BUS, {"COUNTER": 0, "STOP_START": pressed},
+    )
+
+  def test_stop_start_tx_requires_pressed_bit(self):
+    self.assertTrue(self._tx(self._stop_start_msg(True)))
+    self.assertFalse(self._tx(self._stop_start_msg(False)))
+
+
 class TestSubaruDPlatformAngleSafety(TestSubaruStockLongitudinalSafetyBase, TestSubaruAngleSafetyBase):
   FLAGS = SubaruSafetyFlags.GEN2 | SubaruSafetyFlags.LKAS_ANGLE | SubaruSafetyFlags.D_PLATFORM
   ALT_MAIN_BUS = SUBARU_ALT_BUS

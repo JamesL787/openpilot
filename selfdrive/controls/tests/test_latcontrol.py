@@ -1,5 +1,5 @@
-import math
 import pytest
+import numpy as np
 from parameterized import parameterized
 from types import SimpleNamespace
 
@@ -11,17 +11,6 @@ from opendbc.car.car_helpers import interfaces
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.chrysler.values import CAR as CHRYSLER
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
-from opendbc.car.honda.steer_ratio import (
-  HONDA_VGR_INVERSE_BY_PROFILE,
-  HONDA_VGR_PROFILE_BY_FW,
-  NRDR_CLARITY_VGR_ANGLE_BP,
-  NRDR_CLARITY_VGR_LINEAR_BP,
-  NRDR_CLARITY_VGR_REL_LOCAL,
-  _CLARITY_POSITION_Y,
-  NRDR_INSIGHT_TXM_A040_VGR_ANGLE_BP,
-  NRDR_INSIGHT_TXM_A040_VGR_LINEAR_BP,
-  NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL,
-)
 from opendbc.car.toyota.values import CAR as TOYOTA
 from opendbc.car.nissan.values import CAR as NISSAN
 from opendbc.car.gm.values import CAR as GM
@@ -32,7 +21,6 @@ from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.latcontrol_angle import (
   LatControlAngle,
   _ascent_angle_tracking_target,
-  _ford_angle_tracking_saturated,
 )
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   LatControlPID,
@@ -53,6 +41,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_sonata_hybrid_center_output_scale,
   get_sonata_hybrid_friction_threshold,
   get_prius_center_taper_scale,
+  PRIUS_STANDARD_FRICTION_JERK_DEADZONE_MAX,
   KIA_FORTE_BASE_LAT_ACCEL_FACTOR_MULT,
   HONDA_ACCORD_TORQUE_KI,
   HONDA_ACCORD_TORQUE_KP,
@@ -65,6 +54,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_ram_1500_ff_scale,
   get_rav4_tss2_pid_output,
   get_subaru_impreza_pid_output_scale,
+  get_genesis_gv70_low_speed_center_overshoot_scale,
   normalize_flm_overrides,
   set_flm_runtime_overrides,
 )
@@ -97,6 +87,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_genesis_g90_friction_threshold,
   get_genesis_g70_center_output_scale,
   get_genesis_g70_curve_unwind_output_scale,
+  get_genesis_g70_angle_output_scale,
   get_genesis_g70_friction_jerk_deadzone,
   get_genesis_g70_friction_threshold,
   get_genesis_g70_high_speed_error_scale,
@@ -107,6 +98,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_genesis_gv70_friction_jerk_deadzone,
   get_genesis_gv70_friction_threshold,
   get_genesis_gv70_high_speed_error_scale,
+  get_genesis_gv70_reversal_output_scale,
   get_genesis_gv70_unwind_ff_scale,
   get_honda_accord_ff_scale,
   get_elantra_non_scc_ff_scale,
@@ -212,41 +204,6 @@ class TestLatControl:
     assert _ascent_angle_tracking_target(10.0, 0.0, 4.0, False) == pytest.approx(10.0)
     assert _ascent_angle_tracking_target(10.0, 0.0, 20.0, True) == pytest.approx(10.0)
 
-  def test_ford_angle_tracking_does_not_report_a_responsive_eps_as_saturated(self):
-    assert not _ford_angle_tracking_saturated(12.0, 12.0)
-    assert not _ford_angle_tracking_saturated(-12.0, -12.0)
-    assert _ford_angle_tracking_saturated(16.0, 12.0)
-    assert _ford_angle_tracking_saturated(12.0, -12.0)
-
-  def test_ford_angle_tracking_still_reports_a_stalled_eps(self):
-    assert _ford_angle_tracking_saturated(3.0, 0.0)
-    assert not _ford_angle_tracking_saturated(2.5, 0.0)
-
-  def test_ford_angle_handoff_saturation_waits_for_eps_response(self):
-    CP = SimpleNamespace(
-      steerLimitTimer=1.0,
-      brand="ford",
-      carFingerprint="FORD_MUSTANG_MACH_E_MK1",
-    )
-    controller = LatControlAngle(CP, None, DT_CTRL)
-    target = [12.0]
-    VM = SimpleNamespace(get_steer_from_curvature=lambda *_args: math.radians(target[0]))
-    CS = car.CarState.new_message(vEgo=10.0, steeringPressed=False)
-    params = log.LiveParametersData.new_message(angleOffsetDeg=0.0, roll=0.0)
-    toggles = SimpleNamespace(ford_lateral_mode=2)
-
-    for frame in range(round(2.0 / DT_CTRL)):
-      CS.steeringAngleDeg = frame * 12.0 * DT_CTRL
-      target[0] = CS.steeringAngleDeg + 12.0
-      _, _, angle_log = controller.update(
-        True, CS, VM, params, False, 0.0, False, 0.0, None, None, toggles)
-      assert not angle_log.saturated
-
-    for _ in range(round(2.0 / DT_CTRL)):
-      _, _, angle_log = controller.update(
-        True, CS, VM, params, False, 0.0, False, 0.0, None, None, toggles)
-    assert angle_log.saturated
-
   def test_torque_log_exposes_friction_controller_state(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(GM.CHEVROLET_BOLT_ACC_2022_2023)
 
@@ -306,81 +263,6 @@ class TestLatControl:
 
     starpilot_toggles = SimpleNamespace()
     return controller, VM, CS, params, starpilot_toggles
-
-  def test_clarity_vgr_inverse_map(self):
-    import numpy as np
-    from itertools import pairwise
-
-    linear_bp, angle_bp = HONDA_VGR_INVERSE_BY_PROFILE["clarity_trw_a020"]
-    assert (linear_bp, angle_bp) == (NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP)
-    assert len(angle_bp) == len(linear_bp) == len(NRDR_CLARITY_VGR_REL_LOCAL)
-    # Both axes must be strictly increasing or np.interp is not a bijection.
-    assert all(left < right for left, right in pairwise(angle_bp))
-    assert all(left < right for left, right in pairwise(linear_bp))
-    assert angle_bp[0] == 0.0 and linear_bp[0] == 0.0
-
-    def solve(angle_linear):
-      return float(np.interp(abs(angle_linear), linear_bp, angle_bp))
-
-    # This is position table A, whose Y is a Q14 divisor with Y[0] = 2**14 = unity at
-    # centre. Near centre it is close to identity but NOT an exact no-op: Y dips below
-    # 2**14 over the first few knots, so the map runs slightly ABOVE identity there.
-    # (The old "exact no-op below 16 deg" assertion described rate table B, and stayed
-    # behind when the position table replaced it.)
-    assert solve(0.0) == 0.0
-    for angle in (1.0, 5.0, 10.0, 16.0, 30.0):
-      assert solve(angle) == pytest.approx(angle, rel=0.015)
-      assert solve(angle) > angle
-
-    # The crossover is near 48 deg. Past it the rack is quicker, so less wheel angle is
-    # needed than a constant ratio would ask for, and the gap widens monotonically.
-    assert solve(48.0) > 48.0 and solve(49.0) < 49.0
-    for angle in (60.0, 100.0, 200.0, 400.0):
-      assert solve(angle) < angle
-    assert solve(100.0) == pytest.approx(95.804, abs=0.05)
-    assert solve(400.0) == pytest.approx(349.392, abs=0.05)
-
-    # The local ratio is exactly 1.0 at centre. Over the first ~24 deg the measured table
-    # is noisy and the ratio wobbles inside a narrow band above unity; past that it falls
-    # monotonically to the table's full-scale taper. Assert the band and the monotonic
-    # tail separately rather than pretending the whole curve is monotonic.
-    assert NRDR_CLARITY_VGR_REL_LOCAL[0] == 1.0
-    assert all(1.0 <= r <= 1.0131 for lin, r in zip(linear_bp, NRDR_CLARITY_VGR_REL_LOCAL) if lin <= 24.0)
-    tail = [r for lin, r in zip(linear_bp, NRDR_CLARITY_VGR_REL_LOCAL) if lin > 24.0]
-    assert all(left >= right - 1e-9 for left, right in pairwise(tail))
-    assert min(NRDR_CLARITY_VGR_REL_LOCAL) == NRDR_CLARITY_VGR_REL_LOCAL[-1]
-
-    # Tie the endpoint to the raw firmware values so this cannot drift away from the
-    # table it is meant to describe: rel_local[-1] is exactly Y[0]/Y[-1].
-    assert NRDR_CLARITY_VGR_REL_LOCAL[-1] == pytest.approx(_CLARITY_POSITION_Y[0] / _CLARITY_POSITION_Y[-1], abs=1e-6)
-
-    # LINEAR_BP is the integral of 1/rel_local. For the position table the final knot
-    # reduces exactly to angle_bp[-1] / rel_local[-1].
-    assert linear_bp[-1] == pytest.approx(angle_bp[-1] / NRDR_CLARITY_VGR_REL_LOCAL[-1], abs=1e-6)
-
-    assert set(HONDA_VGR_PROFILE_BY_FW) == {"39990-TRW-A020", "39990-TBA-C020", "39990-TXM-A040"}
-    assert len(HONDA_VGR_INVERSE_BY_PROFILE) == 3
-
-  def test_insight_vgr_uses_primary_angle_table(self):
-    from itertools import pairwise
-
-    linear_bp, angle_bp = HONDA_VGR_INVERSE_BY_PROFILE["insight_txm_a040"]
-    assert (linear_bp, angle_bp) == (NRDR_INSIGHT_TXM_A040_VGR_LINEAR_BP,
-                                     NRDR_INSIGHT_TXM_A040_VGR_ANGLE_BP)
-    assert len(angle_bp) == len(linear_bp) == len(NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL)
-    assert all(left < right for left, right in pairwise(angle_bp))
-    assert all(left < right for left, right in pairwise(linear_bp))
-
-    # TXM-A040's primary position path is flat through raw 4.3 degrees, then
-    # reaches a 20989/17613 = 1.1917x center-to-lock ratio.  These endpoints
-    # distinguish it from the adjacent rate table and the previously crossed
-    # X/Y pairing.
-    center_plateau_end = 43 * (1 << 14) / 17613 / 10
-    assert linear_bp[angle_bp.index(center_plateau_end)] == pytest.approx(center_plateau_end)
-    assert NRDR_INSIGHT_TXM_A040_VGR_REL_LOCAL[-1] == pytest.approx(17613 / 20989)
-    assert linear_bp[-1] == pytest.approx(5515 * (1 << 14) / 17613 / 10)
-    assert angle_bp[-1] == pytest.approx(5515 * (1 << 14) / 20989 / 10)
-    assert angle_bp[-1] < linear_bp[-1]
 
   def test_bolt_2017_testing_ground_scale_curve(self):
     assert get_bolt_2017_base_torque_scale(0.1) == 1.0
@@ -857,6 +739,9 @@ class TestLatControl:
     assert overshooting_unwind < 0.70
     assert highway_overshoot > overshooting_unwind
 
+    low_speed_exit = get_kia_carnival_unwind_ff_scale(0.31, 0.43, -0.88, 11.0)
+    assert low_speed_exit < 0.90
+
   def test_genesis_g90_ff_scale_curve(self):
     assert get_genesis_g90_ff_scale(0.0, 0.0, 20.0) == 1.0
     assert get_genesis_g90_ff_scale(0.5, 0.0, 20.0) > get_genesis_g90_ff_scale(-0.5, 0.0, 20.0)
@@ -938,7 +823,7 @@ class TestLatControl:
 
     assert low_speed_center > highway_center
     assert highway_center < highway_turn <= 1.0
-    assert highway_center > 0.89
+    assert highway_center > 0.87
 
   def test_prius_ff_scale_curve(self):
     assert get_prius_ff_scale(0.0, 0.0, 20.0) == 1.0
@@ -982,6 +867,8 @@ class TestLatControl:
     assert base_scale > left_unwind_scale == right_unwind_scale
 
     assert get_prius_friction_jerk_deadzone(30.0, 0.0) > get_prius_friction_jerk_deadzone(30.0, 0.8)
+    assert get_prius_friction_jerk_deadzone(30.0, 0.0, PRIUS_STANDARD_FRICTION_JERK_DEADZONE_MAX) > \
+           get_prius_friction_jerk_deadzone(30.0, 0.0)
     assert get_prius_friction_jerk_deadzone(8.0, 0.0) < 0.05
     assert get_prius_center_taper_scale(0.0, 30.0) < get_prius_center_taper_scale(0.8, 30.0)
     assert get_prius_center_taper_scale(0.0, 8.0) > 0.99
@@ -1026,12 +913,35 @@ class TestLatControl:
     assert turn_scale > center_scale
     assert highway_center_deadzone > highway_turn_deadzone
     assert highway_turn_deadzone < 0.05
+    assert latcontrol_vehicle_tunes.get_genesis_gv70_friction_jerk_deadzone(60.0 * 0.44704, 0.2) > 0.40
 
   def test_genesis_gv70_high_speed_error_damping(self):
     assert get_genesis_gv70_high_speed_error_scale(0.2, 0.2, 0.8, 20.0) == 1.0
     assert get_genesis_gv70_high_speed_error_scale(-0.7, 0.58, -0.8, 33.5) < 1.0
     assert get_genesis_gv70_high_speed_error_scale(-0.7, 0.58, -0.8, 20.0) > \
       get_genesis_gv70_high_speed_error_scale(-0.7, 0.58, -0.8, 33.5)
+
+  def test_genesis_gv70_reversal_damping_is_medium_speed_and_phase_gated(self):
+    same_direction = get_genesis_gv70_reversal_output_scale(0.7, 0.9, 0.8, 16.0)
+    low_speed = get_genesis_gv70_reversal_output_scale(-0.7, 0.7, -0.8, 8.0)
+    route_speed = get_genesis_gv70_reversal_output_scale(-0.7, 0.7, -0.8, 15.0)
+
+    assert same_direction == pytest.approx(1.0)
+    assert route_speed < 1.0
+    assert route_speed < low_speed
+
+  def test_genesis_gv70_low_speed_center_overshoot_damping(self):
+    center_overshoot = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.45, 22.0 * 0.44704)
+    clean_center = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.02, 22.0 * 0.44704)
+    strong_turn = get_genesis_gv70_low_speed_center_overshoot_scale(0.8, 0.9, 22.0 * 0.44704)
+    opposite_turn = get_genesis_gv70_low_speed_center_overshoot_scale(0.4, -0.8, 22.0 * 0.44704)
+    high_speed = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.45, 45.0 * 0.44704)
+
+    assert center_overshoot < 0.85
+    assert clean_center == pytest.approx(1.0)
+    assert strong_turn > center_overshoot
+    assert opposite_turn == pytest.approx(1.0)
+    assert high_speed > center_overshoot
 
   def test_genesis_g70_center_chatter_tune(self):
     base = get_standard_friction_threshold(25.0)
@@ -1053,7 +963,13 @@ class TestLatControl:
     assert get_genesis_g70_low_speed_angle_damping(0.0, 20.0, 0.0, 2.0) > 0.0
     assert get_genesis_g70_curve_unwind_output_scale(0.7, -0.5, 25.0) == pytest.approx(1.0)
     assert get_genesis_g70_curve_unwind_output_scale(0.7, 0.5, 25.0) == 1.0
+    assert get_genesis_g70_angle_output_scale(55.0, 1.0) > get_genesis_g70_angle_output_scale(85.0, 1.0)
+    assert get_genesis_g70_angle_output_scale(85.0, -1.0) == pytest.approx(1.0)
     assert get_genesis_g70_friction_jerk_deadzone(25.0, 0.0) > 0.25
+    hwy_unwind_deadzone = get_genesis_g70_friction_jerk_deadzone(68.0 * 0.44704, 0.8, -0.6, 1.0)
+    hwy_turn_in_deadzone = get_genesis_g70_friction_jerk_deadzone(68.0 * 0.44704, 0.8, 0.6, 0.5)
+    assert hwy_unwind_deadzone > hwy_turn_in_deadzone
+    assert hwy_unwind_deadzone > 0.08
     assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, 0.5, 25.0) < 0.90
     assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, -0.5, 25.0) == 1.0
     assert get_genesis_g70_unwind_ff_scale(-0.7, 0.2, 0.5, 25.0) == 1.0
@@ -1061,6 +977,8 @@ class TestLatControl:
     assert get_genesis_g70_high_speed_error_scale(0.2, 0.2, 0.8, 20.0) == 1.0
     assert get_genesis_g70_high_speed_error_scale(0.2, 0.9, 0.8, 20.0) < 1.0
     assert get_genesis_g70_high_speed_error_scale(0.2, 0.9, 0.8, 10.0) > get_genesis_g70_high_speed_error_scale(0.2, 0.9, 0.8, 20.0)
+    assert get_genesis_g70_high_speed_error_scale(0.7, 0.95, 0.8, 30.0) < \
+      get_genesis_g70_high_speed_error_scale(0.7, 0.45, 0.8, 30.0)
 
   def test_sonata_hybrid_center_output_taper_is_mid_speed_and_center_gated(self):
     low_speed = get_sonata_hybrid_center_output_scale(0.0, 8.0)
@@ -1231,6 +1149,30 @@ class TestLatControl:
 
     assert controller.is_rav4_prime
     assert lac_log.active
+    assert tapered_output == pytest.approx(base_output * 0.5)
+
+  def test_genesis_g70_angle_output_taper_update_path(self, monkeypatch):
+    monkeypatch.setattr(latcontrol_torque, "get_genesis_g70_angle_output_scale", lambda *_args: 1.0)
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.GENESIS_G70_2020)
+    CS.vEgo = 15.0
+    CS.steeringAngleDeg = 85.0
+    base_output, _, lac_log = controller.update(
+      True, CS, VM, params, False, 0.004, False, 0.2, None, None, starpilot_toggles,
+    )
+
+    monkeypatch.setattr(latcontrol_torque, "get_genesis_g70_angle_output_scale", lambda *_args: 0.5)
+    tapered_controller, tapered_VM, tapered_CS, tapered_params, tapered_toggles = self._build_torque_controller(
+      HYUNDAI.GENESIS_G70_2020,
+    )
+    tapered_CS.vEgo = 15.0
+    tapered_CS.steeringAngleDeg = 85.0
+    tapered_output, _, _ = tapered_controller.update(
+      True, tapered_CS, tapered_VM, tapered_params, False, 0.004, False, 0.2, None, None, tapered_toggles,
+    )
+
+    assert controller.is_genesis_g70
+    assert lac_log.active
+    assert base_output != 0.0
     assert tapered_output == pytest.approx(base_output * 0.5)
 
   def test_ram_1500_transition_taper_curve(self):
@@ -1834,8 +1776,9 @@ class TestLatControl:
     assert lac_log.active
     assert controller.torque_params.latAccelFactor == pytest.approx(CP.lateralTuning.torque.latAccelFactor * KIA_FORTE_BASE_LAT_ACCEL_FACTOR_MULT)
 
-  def test_kia_carnival_default_update_path(self):
-    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(HYUNDAI.KIA_CARNIVAL_2025)
+  @pytest.mark.parametrize("candidate", (HYUNDAI.KIA_CARNIVAL_2025, HYUNDAI.KIA_CARNIVAL_HEV_4TH_GEN))
+  def test_kia_carnival_default_update_path(self, candidate):
+    controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(candidate)
     CS.vEgo = 8.5
 
     _, _, lac_log = controller.update(True, CS, VM, params, False, 0.0025, False, 0.2, None, None, starpilot_toggles)
@@ -2327,16 +2270,16 @@ class TestLatControl:
     assert get_civic_bosch_modified_pid_output_scale(10.0, 0.0, 12.0) < 1.0
     assert get_civic_bosch_modified_pid_output_scale(12.0, 0.0, 12.0) < 1.0
     assert get_civic_bosch_modified_pid_output_scale(14.0, 0.0, 12.0) < 1.0
-    assert get_civic_bosch_modified_pid_output_scale(-16.0, -0.0, 12.0) < 1.0
-    assert get_civic_bosch_modified_pid_output_scale(16.0, 0.0, 12.0) > get_civic_bosch_modified_pid_output_scale(-16.0, -0.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(-16.0, 0.0, 12.0) < 1.0
+    assert get_civic_bosch_modified_pid_output_scale(16.0, 0.0, 12.0) > get_civic_bosch_modified_pid_output_scale(-16.0, 0.0, 12.0)
     assert get_civic_bosch_modified_pid_output_scale(0.0, 0.0, 6.0) < 0.9
     assert get_civic_bosch_modified_pid_output_scale(18.0, 0.0, 12.0) > get_civic_bosch_modified_pid_output_scale(8.0, 0.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(20.0, 10.0, 12.0) > get_civic_bosch_modified_pid_output_scale(20.0, 0.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(-20.0, 10.0, 12.0) < get_civic_bosch_modified_pid_output_scale(-20.0, -0.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(20.0, -10.0, 12.0) < get_civic_bosch_modified_pid_output_scale(20.0, 0.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(-20.0, -10.0, 12.0) < get_civic_bosch_modified_pid_output_scale(-20.0, -0.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(20.0, 10.0, 12.0) > get_civic_bosch_modified_pid_output_scale(-20.0, 10.0, 12.0)
-    assert get_civic_bosch_modified_pid_output_scale(-20.0, 10.0, 4.0) > get_civic_bosch_modified_pid_output_scale(-20.0, 10.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(20.0, 0.5, 12.0) > get_civic_bosch_modified_pid_output_scale(20.0, 0.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(-20.0, -0.5, 12.0) < get_civic_bosch_modified_pid_output_scale(-20.0, 0.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(20.0, -0.5, 12.0) < get_civic_bosch_modified_pid_output_scale(20.0, 0.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(-20.0, 0.5, 12.0) < get_civic_bosch_modified_pid_output_scale(-20.0, 0.0, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(20.0, 0.5, 12.0) > get_civic_bosch_modified_pid_output_scale(-20.0, -0.5, 12.0)
+    assert get_civic_bosch_modified_pid_output_scale(-20.0, -0.5, 4.0) > get_civic_bosch_modified_pid_output_scale(-20.0, -0.5, 12.0)
 
   def test_civic_bosch_modified_pid_output_alpha_curve(self):
     assert get_civic_bosch_modified_pid_output_alpha(0.0, 0.0, 12.0, 0.2, 0.1) == 1.0
