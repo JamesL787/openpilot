@@ -228,20 +228,6 @@ class NRDRTuningLayout(_SettingsPage):
       toggle("NrdrLearnSteerRatio", "Learn Steering Ratio", "Use paramsd's learned steering ratio instead of the static car value."),
       toggle("NrdrLearnStiffness", "Learn Tire Stiffness", "Use paramsd's learned tire stiffness instead of 1.0."),
       toggle("NrdrLearnAngleOffset", "Learn Angle Offset", "Use paramsd's learned steering angle offset instead of zero."),
-      toggle("NrdrTuneLearner", "2D Online Tune Learner", "Learn a speed-and-angle feedforward trim map while driving."),
-      value(
-        "NrdrTuneLearnerStrength", "Tune Learner Strength", "Maximum learned trim authority as a percent of full steering output.",
-        lambda: f"{p.get_int('NrdrTuneLearnerStrength')}%",
-        lambda: self._show_slider("NrdrTuneLearnerStrength", 0, 30, unit="%", title="Tune Learner Strength"),
-        visible=lambda: p.get_bool("NrdrTuneLearner"),
-      ),
-      value(
-        "NrdrTuneLearnerRate", "Tune Learner Rate", "Learning speed. Zero freezes learning while retaining the saved map.",
-        lambda: f"{p.get_int('NrdrTuneLearnerRate')}%",
-        lambda: self._show_slider("NrdrTuneLearnerRate", 0, 100, unit="%", title="Tune Learner Rate"),
-        visible=lambda: p.get_bool("NrdrTuneLearner"),
-      ),
-      toggle("NrdrTuneLearnerReset", "Reset Tune Learner Map", "Clear the saved 2D trim map. This switch clears after controls process it."),
     ]
 
     center_rows = [
@@ -260,22 +246,6 @@ class NRDRTuningLayout(_SettingsPage):
         lambda: f"{p.get_float('HondaCenterScale'):.2f}",
         lambda: self._show_slider("HondaCenterScale", 0.0, 5.0, step=0.05, value_type="float", title="Center Scale"),
       ),
-      toggle("HondaUnwindFreeze", "Unwind Integrator Freeze", "Freeze the PID integrator while steering naturally returns toward center."),
-      value(
-        "HondaUnwindBoostSeconds", "Unwind Boost Duration", "Maximum duration of the low-speed unwind feedforward boost.",
-        lambda: f"{p.get_float('HondaUnwindBoostSeconds'):.1f}s",
-        lambda: self._show_slider("HondaUnwindBoostSeconds", 0.0, 3.0, step=0.1, unit="s", value_type="float", title="Unwind Boost Duration"),
-      ),
-      value(
-        "HondaUnwindFfMultiplier", "Unwind FF Multiplier", "Peak low-speed feedforward multiplier during unwind.",
-        lambda: f"{p.get_float('HondaUnwindFfMultiplier'):.1f}x",
-        lambda: self._show_slider("HondaUnwindFfMultiplier", 1.0, 4.0, step=0.1, unit="x", value_type="float", title="Unwind FF Multiplier"),
-      ),
-    ]
-
-    stiction_rows = [
-      toggle("NrdrLatStiction", "Lateral Stiction", "Emulate high-torque EPS breakaway friction: hold steering output flat between "
-                                                     "corrections instead of tracking small dither. For NRDR's modified-EPS Hondas."),
     ]
 
 
@@ -310,13 +280,6 @@ class NRDRTuningLayout(_SettingsPage):
     ]
 
     filter_rows = [
-      value(
-        "NrdrLatRateFf", "Turn-in Rate Feedforward",
-        "Feeds the desired steering angle's rate forward, cancelling the standing lag a "
-        "proportional loop carries while the target ramps. 0 disables.",
-        lambda: f"{p.get_float('NrdrLatRateFf'):.4f}",
-        lambda: self._show_slider("NrdrLatRateFf", 0.0, 0.05, step=0.0005, value_type="float", title="Turn-in Rate Feedforward"),
-      ),
       toggle("NrdrLatUseFirmwareVgr", "Use Firmware VGR Table",
              "Convert curvature with the EPS firmware's A (position) table on top of the learned steer "
              "ratio, instead of the road-measured effective-ratio curve. Changes centre gain and taper."),
@@ -348,13 +311,6 @@ class NRDRTuningLayout(_SettingsPage):
         lambda: f"{p.get_float('HondaLpfTauHighway'):.2f}",
         lambda: self._show_slider("HondaLpfTauHighway", 0.0, 5.0, step=0.01, value_type="float", title="LPF Tau: Highway"),
         visible=lambda: p.get_bool("HondaTorqueLowPassFilter"),
-      ),
-      value(
-        "NrdrLatUnwindRateTau", "Unwind Rate Smoothing",
-        "Smooths the measured steering rate that gates the unwind branches, so a rate flipping sign "
-        "cannot flip the output scale frame to frame. 0 uses the raw rate.",
-        lambda: f"{p.get_float('NrdrLatUnwindRateTau'):.2f}s",
-        lambda: self._show_slider("NrdrLatUnwindRateTau", 0.0, 2.0, step=0.01, unit="s", value_type="float", title="Unwind Rate Smoothing"),
       ),
       toggle("HondaSteerDeltaLimiter", "Steer Delta Limiter", "Legacy torque rate limiter. Leave off unless testing."),
       value(
@@ -407,8 +363,7 @@ class NRDRTuningLayout(_SettingsPage):
       SettingSection(title=tr_noop("Tune Report"), rows=tune_report_rows),
       *pid_sections,
       SettingSection(title=tr_noop("Live Parameters / Auto Tuning"), rows=learning_rows),
-      SettingSection(title=tr_noop("Center / Unwind"), rows=center_rows),
-      SettingSection(title=tr_noop("Lateral Stiction"), rows=stiction_rows),
+      SettingSection(title=tr_noop("Center Response"), rows=center_rows),
       SettingSection(title=tr_noop("Driver Override"), rows=override_rows),
       SettingSection(title=tr_noop("Filters / Limits"), rows=filter_rows),
     ]

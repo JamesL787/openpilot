@@ -6,6 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[4]
 LAYOUT_PATH = REPO_ROOT / "starpilot/common/assets/device_settings_layout.json"
 PARAM_KEYS_PATH = REPO_ROOT / "common/params_keys.h"
+RAYLIB_NRDR_TUNING_PATH = REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/nrdr_tuning.py"
 
 
 def _layout():
@@ -27,6 +28,17 @@ def _declared_default(key):
   )
   assert match is not None, f"Missing param declaration for {key}"
   return match.group(1)
+
+
+def _raylib_nrdr_setting_keys():
+  source = RAYLIB_NRDR_TUNING_PATH.read_text(encoding="utf-8")
+  keys = set(re.findall(r'(?:toggle|value)\(\s*"([^"]+)"', source))
+  keys.update(
+    f"Lat{term}Scale{speed_band}"
+    for term in ("P", "I", "F")
+    for speed_band in ("LowSpeed", "Standard", "Highway")
+  )
+  return keys
 
 
 def test_galaxy_layout_removes_obsolete_and_duplicate_controls():
@@ -64,6 +76,29 @@ def test_galaxy_layout_contains_basic_mode_controls():
   assert sections["Longitudinal (Speed & Following)"]["PulseGlideSpeedDelta"]["settings_tier"] == "advanced"
   assert "PulseGlideSpeedDelta" not in sections["Developer"]
   assert {"AlphaLongitudinalEnabled", "ForceOffroad", "GalaxyDeveloperMode"} <= sections["Developer"].keys()
+
+
+def test_galaxy_exposes_every_raylib_nrdr_control_and_omits_pruned_helpers():
+  layout = _layout()
+  galaxy_keys = {
+    param["key"]
+    for section in layout
+    for param in section.get("params", [])
+  }
+  assert _raylib_nrdr_setting_keys() <= galaxy_keys
+  assert {
+    "HondaUnwindFreeze",
+    "HondaUnwindBoostSeconds",
+    "HondaUnwindFfMultiplier",
+    "NrdrLatRateFf",
+    "NrdrLatStiction",
+    "NrdrLatUnwindRateTau",
+    "NrdrTuneLearner",
+    "NrdrTuneLearnerMap",
+    "NrdrTuneLearnerRate",
+    "NrdrTuneLearnerReset",
+    "NrdrTuneLearnerStrength",
+  }.isdisjoint(galaxy_keys)
 
 
 def test_ford_lateral_controls_are_ford_only_and_galaxy_only():

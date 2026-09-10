@@ -158,10 +158,6 @@ HondaStopAccel
 HondaStoppingDecelRate
 HondaStoppingDecelRateLong
 HondaTorqueLowPassFilter
-HondaUnwindBoostSeconds
-HondaUnwindFfMultiplier
-HondaUnwindFreeze
-HondaUnwindLookahead
 HondaVEgoStarting
 HondaVEgoStopping
 HumanLaneChanges
@@ -256,7 +252,6 @@ NrdrClarityHybrid
 NrdrDriverOverrideThreshold
 NrdrHondaEcuMatchedLong
 NrdrIncreaseOverrideTolerance
-NrdrLatStiction
 NrdrLearnAngleOffset
 NrdrLearnSteerRatio
 NrdrLearnStiffness
@@ -268,10 +263,6 @@ NrdrNnlcKfGain
 NrdrNnlcKiGain
 NrdrNnlcKpGain
 NrdrOverrideThresholdCenterBoost
-NrdrTuneLearner
-NrdrTuneLearnerRate
-NrdrTuneLearnerReset
-NrdrTuneLearnerStrength
 NudgelessLaneChange
 NumericalTemp
 Offroad_ExcessiveActuation

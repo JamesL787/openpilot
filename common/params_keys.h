@@ -395,17 +395,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrLearnSteerRatio", {PERSISTENT, BOOL, "1", "1", 2}},
     {"NrdrLearnStiffness", {PERSISTENT, BOOL, "1", "1", 2}},
     {"NrdrLearnAngleOffset", {PERSISTENT, BOOL, "1", "1", 2}},
-    {"NrdrTuneLearner", {PERSISTENT, BOOL, "0", "0", 2}},
-    {"NrdrTuneLearnerReset", {PERSISTENT, BOOL, "0", "0", 2}},
-    {"NrdrTuneLearnerStrength", {PERSISTENT, INT, "10", "10", 2}},
-    {"NrdrTuneLearnerRate", {PERSISTENT, INT, "30", "30", 2}},
-    {"NrdrLatStiction", {PERSISTENT, BOOL, "0", "0", 2}},              // emulated EPS breakaway hold/move output stage (NRDR_LATERAL_STICTION.md); for NRDR's modified-EPS Hondas
     {"NrdrLatAngleRateLimit", {PERSISTENT, INT, "300", "300", 2}},     // deg/s ceiling on desired wheel-angle slew; 0 disables. Backstops clip_curvature, whose ISO jerk limit is ~1/v^2 in angle space and so does not bind below ~20 mph
-    {"NrdrLatUnwindRateTau", {PERSISTENT, FLOAT, "0.1", "0.1", 2}},    // seconds; smooths the measured steer rate that gates the unwind branches. 0 = raw rate
     {"NrdrLatModelActionInterp", {PERSISTENT, BOOL, "1", "1", 2}},   // ramp modeld's 20 Hz action across the model frame instead of holding it; removes the 20 Hz staircase in the lateral target
     {"NrdrLatUseFirmwareVgr", {PERSISTENT, BOOL, "0", "0", 2}},      // use the EPS firmware A (position) VGR table instead of the road-measured effective-ratio curve
-    {"NrdrLatRateFf", {PERSISTENT, FLOAT, "0.0072", "0.0072", 2}},   // feedforward on the desired-angle rate, authority per deg/s; cancels ramp-following lag on turn-in. 0 disables
-    {"NrdrTuneLearnerMap", {PERSISTENT | DONT_LOG, BYTES}},
     {"ForceFingerprint", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ForceOffroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
     {"ForceOnroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
@@ -471,9 +463,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HondaSteerDeltaUp", {PERSISTENT, FLOAT, "3.0", "3.0", 2}},
     {"HondaStoppingDecelRate", {PERSISTENT, INT, "30", "30", 2}},
     {"HondaTorqueLowPassFilter", {PERSISTENT, BOOL, "0", "0", 2}},
-    {"HondaUnwindBoostSeconds", {PERSISTENT, FLOAT, "1.0", "1.0", 2}},
-    {"HondaUnwindFfMultiplier", {PERSISTENT, FLOAT, "2.0", "2.0", 2}},
-    {"HondaUnwindFreeze", {PERSISTENT, BOOL, "0", "0", 2}},
     {"HumanLaneChanges", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"IconPack", {PERSISTENT, STRING, "stock", "stock", 0}},
     {"IconToDownload", {CLEAR_ON_MANAGER_START, STRING, "", ""}},
@@ -507,8 +496,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LatFScaleHighway", {PERSISTENT, INT, "100", "100", 2}},
     {"LatFScaleLowSpeed", {PERSISTENT, INT, "100", "100", 2}},
     {"LatFScaleStandard", {PERSISTENT, INT, "100", "100", 2}},
-    {"LatIScaleHighway", {PERSISTENT, INT, "100", "100", 2}},
-    {"LatIScaleLowSpeed", {PERSISTENT, INT, "100", "100", 2}},
+    {"LatIScaleHighway", {PERSISTENT, INT, "0", "0", 2}},
+    {"LatIScaleLowSpeed", {PERSISTENT, INT, "20", "20", 2}},
     {"LatIScaleStandard", {PERSISTENT, INT, "100", "100", 2}},
     {"LatPScaleHighway", {PERSISTENT, INT, "100", "100", 2}},
     {"LatPScaleLowSpeed", {PERSISTENT, INT, "100", "100", 2}},

@@ -17,8 +17,6 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_rav4_tss2_pid_output,
   get_subaru_impreza_pid_output_scale,
 )
-from openpilot.selfdrive.controls.lib.nrdr_lat_stiction import LatStiction
-from openpilot.selfdrive.controls.lib.nrdr_tune_learner import TuneLearner
 
 
 # nrdr: the Clarity's Nidec rack is variable-ratio, but paramsd learns ONE steerRatio.
@@ -191,85 +189,6 @@ NRDR_ANGLE_RATE_LIMIT_DEG_S = 300.0  # 0 disables
 # road tune carries over verbatim.
 NRDR_TARGET_SMOOTH_TAU = 0.1
 
-# nrdr: time constant for the measured steering rate that gates the two unwind branches.
-#
-# Both gates are hard booleans on  desired_angle * steering_rate < -1.0,  i.e. "is the wheel
-# moving back toward centre". With the raw CAN rate that test flips every time the measured
-# rate changes SIGN -- not a near-threshold effect, since at 50 deg of angle the product jumps
-# in steps of ~50 and crosses the threshold outright -- and each flip switches which expression
-# builds the output scale, or steps ff_unwind_weight to 0.5 and the feedforward with it. Both
-# are multiplicative on the command, so that lands as chatter no downstream filter can undo.
-#
-# Whether the wheel is unwinding is a low-frequency fact, so the gate should read a
-# low-frequency signal. Telemetry, the tune learner and the stiction stage keep the raw rate.
-NRDR_UNWIND_RATE_TAU = 0.1  # 0 uses the raw measured rate
-
-# Smoothing alone cannot fix the gate, because the threshold is on the PRODUCT. Whatever ripple
-# survives the filter is multiplied by the desired angle, so at 25 deg a residual half a deg/s
-# still clears -1.0 and the branch flips anyway. The product form is the deeper problem: it is
-# an angle-scaled deadband running the wrong way -- 1 deg/s of rate is required at 1 deg of
-# angle, but only 0.01 deg/s at 100 deg, so the test gets more twitchy exactly where the scale
-# terms it gates are largest. Pair it with an absolute floor on the rate, which is the physical
-# question the gate is actually asking: is the wheel really travelling back toward centre.
-NRDR_UNWIND_RATE_MIN_DEG_S = 5.0
-
-
-# nrdr: feedforward on the TARGET'S RATE, the term that cancels ramp-following lag.
-#
-# A proportional controller tracking a ramp carries a standing error of ramp / (kp * K): it
-# only produces output once error exists, so while the target keeps moving the error cannot
-# close. Measured on route 00000278's left turn, mid-ramp:
-#
-#     err 14.3 deg  P 0.319  target slew 42 deg/s
-#     err 13.0 deg  P 0.289  target slew 43 deg/s
-#     err 13.6 deg  P 0.302  target slew 40 deg/s
-#
-# Flat error against a moving target, output nowhere near the rail -- ramp lag, not saturation
-# and not a gain shortfall. It cost 342 ms of tracking lag, 5.1 deg of heading and 1.08 m of
-# lateral offset by the time the car reached the corner.
-#
-# The integrator does eventually close it (I climbed 0.075 -> 0.357 over that turn) but it is
-# reactive: at this ki it needs ~3 s to build the authority the ramp demands, and the entry is
-# already spent. Raising kp instead would work on the lag but multiplies every bit of error,
-# and the command in the chatter band IS the P term (output/P = 1.04 measured), so it buys the
-# lag back as chatter.
-#
-# There is a physical hole to fill too. The existing feedforward is kf * angle * v**2, a
-# POSITION term sized to hold a steady angle against self-aligning torque. Moving the rack
-# additionally costs torque against friction, damping and inertia, and that scales with RATE.
-# So this is the missing half of the actuator's inverse model, not a patch over an error.
-#
-# Gain comes straight from the measurement above: had the feedforward supplied what P was
-# supplying, the error would have been ~zero, so kd_ff = P / slew = 0.0067..0.0076.
-NRDR_RATE_FF_GAIN = 0.0072  # authority per deg/s of target rate; 0 disables
-
-# Differentiating the target multiplies its in-band noise by ~2*pi*f. The target carries
-# 0.2018 deg RMS of 3-6 Hz content below 15 mph, so its derivative is ~5.7 deg/s RMS and this
-# term would inject 0.041 of authority there -- 8x the 0.00505 the command currently has. Fed
-# raw it would undo what the model-action interpolation bought.
-#
-# Turn-in is a ~5 s ramp, about 0.2 Hz, and the noise sits at ~4.5 Hz: twenty times apart. Two
-# cascaded poles at 1.5 Hz pass 0.2 Hz at 0.98 and cut 4.5 Hz to 0.10, putting the injected
-# chatter just under what is already there. One pole was not enough (0.32 at 4.5 Hz, 2.6x
-# worse than today); this is the opposite call from the target low-pass, where signal and
-# noise sit close together and one pole wins.
-NRDR_RATE_FF_TAU = 0.106  # seconds, per pole -> 1.5 Hz corner
-
-# Safety clamp, not a tuning value. The slew clip alone allows 191 deg/s, which at the gain
-# above is 1.38 -- more than full authority, open loop. Real turn-in ran 27-43 deg/s, so this
-# covers it with margin. If it saturates in the logs, revisit the gain, not the clamp.
-NRDR_RATE_FF_MAX = 0.4
-
-
-def get_target_rate_feedforward(target_rate_deg_s: float, gain: float) -> float:
-  return float(min(max(gain * target_rate_deg_s, -NRDR_RATE_FF_MAX), NRDR_RATE_FF_MAX))
-
-
-def is_steering_rate_unwinding(desired_angle_deg: float, steering_rate_deg: float) -> bool:
-  return (desired_angle_deg * steering_rate_deg < -1.0 and
-          abs(steering_rate_deg) > NRDR_UNWIND_RATE_MIN_DEG_S)
-
-
 def rate_limit_desired_angle(angle_deg: float, prev_angle_deg: float, max_rate_deg_s: float, dt: float) -> float:
   if max_rate_deg_s <= 0.0 or not math.isfinite(angle_deg):
     return angle_deg
@@ -278,7 +197,6 @@ def rate_limit_desired_angle(angle_deg: float, prev_angle_deg: float, max_rate_d
 
 
 CENTER_TAPER_FADE_TAU = 0.25
-UNWIND_BOOST_FADE_S = 0.3
 
 # Below this speed the phase SIGN is held rather than recomputed. phase is
 # angle * d(angle), and d(angle) is a frame-to-frame difference of the desired angle, so
@@ -294,8 +212,6 @@ def phase_with_latch(angle_deg: float, angle_delta_deg: float, v_ego: float,
   if phase != 0.0 and (v_ego > PHASE_SWITCH_MIN_SPEED or direction == 0.0):
     direction = 1.0 if phase > 0.0 else -1.0
   return abs(phase) * direction, direction
-UNWIND_FREEZE_PHASE_THRESHOLD = -0.2
-UNWIND_FREEZE_ANGLE_NEAR_CENTER = 8.0
 _MPH_TO_MS = 0.44704
 _LAT_SCALE_LOW_MAX = 25.0 * _MPH_TO_MS
 _LAT_SCALE_STD_MAX = 50.0 * _MPH_TO_MS
@@ -414,7 +330,6 @@ def _get_param_bool(params, key, default=False):
 def _clarity_eps_pid_output_scale(
   desired_angle_deg: float,
   phase: float,
-  steering_rate_deg: float,
   v_ego: float,
   center_taper_scale: float,
   center_taper_high: float,
@@ -426,10 +341,6 @@ def _clarity_eps_pid_output_scale(
   mid_turn_weight = min(max((abs_angle - 10.0) / 10.0, 0.0), 1.0)
   angle_weight = min(max((abs_angle - 16.0) / 12.0, 0.0), 1.0)
   is_left = desired_angle_deg > 0.0
-
-  low_speed_unwind_weight = min(max(1.0 - (v_ego / (15.0 * _MPH_TO_MS)), 0.0), 1.0)
-  steering_rate_unwind = is_steering_rate_unwinding(desired_angle_deg, steering_rate_deg)
-  low_speed_unwind = low_speed_unwind_weight > 0.0 and steering_rate_unwind
 
   center_fade_deg = 1.0
   center_weight = min(max((center_boost_threshold_deg + center_fade_deg - abs_angle) / center_fade_deg, 0.0), 1.0)
@@ -452,11 +363,8 @@ def _clarity_eps_pid_output_scale(
 
   turn_in_weight = min(max(phase / 0.5, 0.0), 1.0)
   unwind_weight = min(max(-phase / 0.5, 0.0), 1.0)
-  if low_speed_unwind and speed_weight < 0.1:
-    scale += low_speed_unwind_weight * mid_turn_weight * 0.18
-  else:
-    scale += speed_weight * mid_turn_weight * (turn_in_weight * mid_turn_turn_in_scale + unwind_weight * mid_turn_unwind_scale)
-    scale += speed_weight * angle_weight * (turn_in_weight * turn_in_scale - unwind_weight * unwind_scale)
+  scale += speed_weight * mid_turn_weight * (turn_in_weight * mid_turn_turn_in_scale + unwind_weight * mid_turn_unwind_scale)
+  scale += speed_weight * angle_weight * (turn_in_weight * turn_in_scale - unwind_weight * unwind_scale)
 
   return max(scale, 0.6863)
 
@@ -508,13 +416,12 @@ class LatControlPID(LatControl):
     self.dt = dt
     self.params = Params()
     self.frame = -1
-    self.tune_learner = TuneLearner(dt, self.steer_max)
     self.lat_p_scale_low = 1.0
     self.lat_p_scale_standard = 1.0
     self.lat_p_scale_highway = 1.0
-    self.lat_i_scale_low = 1.0
+    self.lat_i_scale_low = 0.2
     self.lat_i_scale_standard = 1.0
-    self.lat_i_scale_highway = 1.0
+    self.lat_i_scale_highway = 0.0
     self.lat_f_scale_low = 1.0
     self.lat_f_scale_standard = 1.0
     self.lat_f_scale_highway = 1.0
@@ -522,13 +429,6 @@ class LatControlPID(LatControl):
     self.center_boost_threshold = 3.0
     self.center_boost_min_speed = 50.0
     self.phase_direction = 0.0
-    self.unwind_freeze_enabled = False
-    self.unwind_ff_multiplier = 2.0
-    self.unwind_boost_cap_s = 1.0
-    self.unwind_boost_elapsed = 0.0
-    self.lat_stiction = LatStiction(dt, self.steer_max)
-    self.lat_stiction_enabled = False
-    self.prev_saturated = False
     self.angle_rate_limit_deg_s = NRDR_ANGLE_RATE_LIMIT_DEG_S
     # The rate limiter needs its own reference: chaining it off the SMOOTHED target would make
     # each frame's allowance alpha * max_delta instead of max_delta, throttling real steering.
@@ -538,12 +438,6 @@ class LatControlPID(LatControl):
     self.lpf_tau_low = NRDR_TARGET_SMOOTH_TAU
     self.lpf_tau_standard = NRDR_TARGET_SMOOTH_TAU
     self.lpf_tau_highway = NRDR_TARGET_SMOOTH_TAU
-    self.unwind_rate_filter = FirstOrderFilter(0.0, NRDR_UNWIND_RATE_TAU, dt)
-    # Two cascaded poles; see NRDR_RATE_FF_TAU for why one is not enough.
-    self.rate_ff_filter_a = FirstOrderFilter(0.0, NRDR_RATE_FF_TAU, dt)
-    self.rate_ff_filter_b = FirstOrderFilter(0.0, NRDR_RATE_FF_TAU, dt)
-    self.rate_ff_gain = NRDR_RATE_FF_GAIN
-    self.unwind_rate_tau = NRDR_UNWIND_RATE_TAU
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
@@ -661,36 +555,16 @@ class LatControlPID(LatControl):
       self.prev_rate_limited_angle = angle_steers_des_no_offset
       self.target_smooth_filter.x = angle_steers_des_no_offset
       self.target_smooth_filter.initialized = True
-      self.unwind_rate_filter.x = float(CS.steeringRateDeg)
-      self.rate_ff_filter_a.x = 0.0
-      self.rate_ff_filter_b.x = 0.0
       self.eps_modified_steering_pressed_filter_s = 0.0
       self.eps_modified_steering_pressed_prev = False
       self.center_taper_scale.x = 1.0
-      self.unwind_boost_elapsed = 0.0
       self.prev_output_torque = 0.0
-      self.prev_saturated = False
-      self.lat_stiction.reset()
 
     else:
       self.frame += 1
       desired_angle_delta = angle_steers_des_no_offset - self.prev_angle_steers_des_no_offset
-      # Rate feedforward on the SHAPED target: the clip and the smoothing are already applied,
-      # so this anticipates the motion the wheel is actually being asked to make.
-      smoothed_target_rate = self.rate_ff_filter_b.update(
-        self.rate_ff_filter_a.update(desired_angle_delta / self.dt))
-      rate_feedforward = get_target_rate_feedforward(smoothed_target_rate, self.rate_ff_gain)
       phase, self.phase_direction = phase_with_latch(angle_steers_des_no_offset, desired_angle_delta,
                                                       CS.vEgo, self.phase_direction)
-
-      # One low-frequency view of the measured rate for both unwind gates below. Telemetry, the
-      # tune learner and the stiction stage deliberately keep reading the raw signal.
-      if self.unwind_rate_tau > 0.0:
-        self.unwind_rate_filter.update_alpha(self.unwind_rate_tau)
-        unwind_rate_deg = float(self.unwind_rate_filter.update(float(CS.steeringRateDeg)))
-      else:
-        self.unwind_rate_filter.x = float(CS.steeringRateDeg)
-        unwind_rate_deg = float(CS.steeringRateDeg)
 
       # offset does not contribute to resistive torque
       if self.is_modified_eps_kf_car:
@@ -698,26 +572,6 @@ class LatControlPID(LatControl):
       else:
         ff_factor = self.ff_factor
       ff = ff_factor * self.get_steer_feedforward(angle_steers_des_no_offset, CS.vEgo)
-      abs_angle_des = abs(angle_steers_des_no_offset)
-      if self.is_eps_modified:
-        unwind_ff_boost = float(np.interp(CS.vEgo, [0.0, 10.0], [self.unwind_ff_multiplier, 1.0]))
-        steering_rate_unwind_ff = is_steering_rate_unwinding(angle_steers_des_no_offset, unwind_rate_deg)
-        ff_unwind_weight = min(max(-phase / 0.5, 0.0), 1.0)
-        if steering_rate_unwind_ff and abs_angle_des > 5.0:
-          ff_unwind_weight = max(ff_unwind_weight, 0.5)
-
-
-        if ff_unwind_weight > 0.0:
-          self.unwind_boost_elapsed += self.dt
-        else:
-          self.unwind_boost_elapsed = 0.0
-        if self.unwind_boost_cap_s > 0.0:
-          fade = min(UNWIND_BOOST_FADE_S, self.unwind_boost_cap_s)
-          time_gate = min(max((self.unwind_boost_cap_s - self.unwind_boost_elapsed) / fade, 0.0), 1.0)
-        else:
-          time_gate = 0.0
-        ff_unwind_weight *= time_gate
-        ff *= 1.0 + ff_unwind_weight * max(unwind_ff_boost - 1.0, 0.0)
 
       steering_pressed = CS.steeringPressed
       # Civic Bosch used to take a graded detector of its own here. It now shares the generic
@@ -734,9 +588,6 @@ class LatControlPID(LatControl):
 
       freeze_threshold = 2.0 if self.is_eps_modified else 5.0
       freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < freeze_threshold
-      unwind_detected = phase < UNWIND_FREEZE_PHASE_THRESHOLD and abs_angle_des < UNWIND_FREEZE_ANGLE_NEAR_CENTER
-      if self.is_eps_modified and self.unwind_freeze_enabled and unwind_detected:
-        freeze_integrator = True
 
       output_torque = self.pid.update(error,
                                 feedforward=ff,
@@ -749,35 +600,28 @@ class LatControlPID(LatControl):
 
       if self.is_eps_modified:
         if self.frame % 300 == 0:
-          # Lat*Scale are pure user fine-trim now: every modified-EPS car gets its banding from
-          # kpBP/kpV in interface.py, and these params default to a neutral 100. The old
-          # Clarity-only gate here existed because they defaulted 135/200 and would otherwise
-          # leak the Clarity curve onto Civic/CR-V/Insight; that premise is gone.
+          # Lat*Scale are user fine-trim shared by every modified-EPS Honda; the base speed
+          # banding remains in kpBP/kpV in interface.py. There is no Clarity-only gate, so a
+          # persisted value always has the same scope across the modified-EPS group.
           self.lat_p_scale_low = _get_param_float(self.params, "LatPScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_p_scale_standard = _get_param_float(self.params, "LatPScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_p_scale_highway = _get_param_float(self.params, "LatPScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
-          self.lat_i_scale_low = _get_param_float(self.params, "LatIScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
+          self.lat_i_scale_low = _get_param_float(self.params, "LatIScaleLowSpeed", 0.2, 0.0, 5.0, scale=100.0)
           self.lat_i_scale_standard = _get_param_float(self.params, "LatIScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
-          self.lat_i_scale_highway = _get_param_float(self.params, "LatIScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
+          self.lat_i_scale_highway = _get_param_float(self.params, "LatIScaleHighway", 0.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_low = _get_param_float(self.params, "LatFScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_standard = _get_param_float(self.params, "LatFScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_highway = _get_param_float(self.params, "LatFScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
           self.center_taper_high = _get_param_float(self.params, "HondaCenterScale", 0.5, 0.0, 5.0)
           self.center_boost_threshold = _get_param_float(self.params, "HondaCenterBoostThreshold", 3.0, 0.0, 10.0)
           self.center_boost_min_speed = _get_param_float(self.params, "HondaCenterBoostMinSpeed", 50.0, 0.0, 90.0)
-          self.unwind_freeze_enabled = _get_param_bool(self.params, "HondaUnwindFreeze")
-          self.unwind_ff_multiplier = _get_param_float(self.params, "HondaUnwindFfMultiplier", 2.0, 1.0, 4.0)
-          self.unwind_boost_cap_s = _get_param_float(self.params, "HondaUnwindBoostSeconds", 1.0, 0.0, 3.0)
-          self.lat_stiction_enabled = _get_param_bool(self.params, "NrdrLatStiction")
           self.angle_rate_limit_deg_s = _get_param_float(self.params, "NrdrLatAngleRateLimit",
                                                          NRDR_ANGLE_RATE_LIMIT_DEG_S, 0.0, 2000.0)
           self.target_smoothing_enabled = _get_param_bool(self.params, "HondaTorqueLowPassFilter", True)
           self.lpf_tau_low = _get_param_float(self.params, "HondaLpfTauLowSpeed", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
           self.lpf_tau_standard = _get_param_float(self.params, "HondaLpfTauStandard", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
           self.lpf_tau_highway = _get_param_float(self.params, "HondaLpfTauHighway", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
-          self.unwind_rate_tau = _get_param_float(self.params, "NrdrLatUnwindRateTau", NRDR_UNWIND_RATE_TAU, 0.0, 2.0)
           self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
-          self.rate_ff_gain = _get_param_float(self.params, "NrdrLatRateFf", NRDR_RATE_FF_GAIN, 0.0, 0.05)
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
         i_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_i_scale_low, self.lat_i_scale_standard, self.lat_i_scale_highway)
@@ -794,7 +638,6 @@ class LatControlPID(LatControl):
           output_torque *= _clarity_eps_pid_output_scale(
             angle_steers_des_no_offset,
             phase,
-            unwind_rate_deg,
             CS.vEgo,
             center_taper_scale,
             self.center_taper_high,
@@ -805,18 +648,6 @@ class LatControlPID(LatControl):
       if self.is_subaru_impreza:
         raw_output_torque = self.pid.p + self.pid.i + self.pid.d + self.pid.f
         output_torque = raw_output_torque * get_subaru_impreza_pid_output_scale(error)
-
-      # Added after the feel shaping deliberately: _clarity_eps_pid_output_scale tunes how the
-      # command feels at angle, while this is an actuator inverse-model term that must deliver
-      # the torque the motion costs regardless. Below 10 mph that scale is ~1.0 anyway
-      # (speed_weight clamps to 0 there), so in the band this matters most the placement
-      # changes nothing measurable.
-      #
-      # Not folded into pid.update()'s feedforward, because the modified-EPS path rebuilds the
-      # output as p*p_scale + i*i_scale + d + f*f_scale and LatFScaleLowSpeed is 50 on this car
-      # -- routing it through pid.f would silently halve a gain measured against the full command.
-      if self.is_eps_modified:
-        output_torque += rate_feedforward
 
       output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
@@ -838,27 +669,6 @@ class LatControlPID(LatControl):
         output_torque = self.prev_output_torque + (output_alpha * (output_torque - self.prev_output_torque))
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
-      output_torque += self.tune_learner.apply(CS.vEgo, angle_steers_des)
-      output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
-
-      paramsd_ok = bool(
-        getattr(params, "valid", True) and
-        getattr(params, "angleOffsetValid", True) and
-        getattr(params, "steerRatioValid", True) and
-        getattr(params, "stiffnessFactorValid", True)
-      )
-      self.tune_learner.learn(CS.vEgo, angle_steers_des, error, float(CS.steeringRateDeg), steering_pressed, paramsd_ok, self.frame)
-
-      # nrdr stiction output stage:
-      if self.lat_stiction_enabled:
-        des_rate_degs = desired_angle_delta / self.dt
-        lane_change_stiction = bool(getattr(CS, "leftBlinker", False) or getattr(CS, "rightBlinker", False))
-        output_torque = float(self.lat_stiction.update(
-          active, CS.vEgo, error, des_rate_degs, float(CS.steeringRateDeg), output_torque,
-          steering_pressed, lane_change_stiction, self.prev_saturated))
-      else:
-        self.lat_stiction.reset()
-
       pid_log.active = True
       pid_log.p = float(self.pid.p)
       pid_log.i = float(self.pid.i)
@@ -867,6 +677,5 @@ class LatControlPID(LatControl):
       pid_log.saturated = bool(self._check_saturation(self.steer_max - abs(output_torque) < 1e-3, CS, steer_limited_by_safety, curvature_limited))
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
       self.prev_output_torque = float(output_torque)
-      self.prev_saturated = bool(pid_log.saturated)
 
     return output_torque, angle_steers_des, pid_log
