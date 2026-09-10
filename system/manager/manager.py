@@ -76,6 +76,7 @@ NRDR_KONIK_DEFAULT_MIGRATION_FLAG = Path("/data") / "nrdr_konik_default_v1"
 NRDR_DM_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_dm_defaults_v1"
 STARPILOT_REMOVED_PARAM_KEYS = (
   "CoastUpToLeads", "HumanAcceleration", "HumanFollowing", "PrioritizeSmoothFollowing", "ReverseCruise",
+  "NrdrTuneLearner", "NrdrTuneLearnerMap", "NrdrTuneLearnerRate", "NrdrTuneLearnerReset", "NrdrTuneLearnerStrength",
 )
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
@@ -815,7 +816,6 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "HondaDriverAssistDuringOverride": False,
     "HondaSteerDeltaLimiter": False,
     "HondaTorqueLowPassFilter": True,
-    "HondaUnwindFreeze": False,
     "NrdrIncreaseOverrideTolerance": False,
     "NrdrLatModelActionInterp": True,
     "NrdrLatUseFirmwareVgr": False,
@@ -830,10 +830,6 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "HondaOverrideFadeUpSecs": 1.5,
     "HondaSteerDeltaDown": 3.0,
     "HondaSteerDeltaUp": 3.0,
-    "HondaUnwindBoostSeconds": 1.0,
-    "HondaUnwindFfMultiplier": 2.0,
-    "NrdrLatUnwindRateTau": 0.1,
-    "NrdrLatRateFf": 0.0072,
   }
   desired_int_values = {
     "HondaCenterBoostMinSpeed": 50,
@@ -841,8 +837,8 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "LatFScaleHighway": 100,
     "LatFScaleLowSpeed": 100,
     "LatFScaleStandard": 100,
-    "LatIScaleHighway": 200,
-    "LatIScaleLowSpeed": 100,
+    "LatIScaleHighway": 0,
+    "LatIScaleLowSpeed": 20,
     "LatIScaleStandard": 135,
     "LatPScaleHighway": 200,
     "LatPScaleLowSpeed": 100,

@@ -88,20 +88,22 @@ def test_unmapped_unknown_eps_firmware_keeps_fixed_vehicle_model_ratio():
   assert lat.vgr_inverse is None
 
 
-def test_modified_eps_runtime_scales_remain_neutral():
-  # P/I/F speed banding is baked into the base tune; runtime scales must not apply it again.
+def test_modified_eps_runtime_scales_match_defaults():
+  # P/F defaults are neutral, while the requested I defaults reduce low-speed correction
+  # to 20% and disable highway integration.
+  expected_scales = (1.0, 1.0, 1.0, 0.2, 1.0, 0.0, 1.0, 1.0, 1.0)
   clarity = _controller(CAR.HONDA_CLARITY, MODIFIED_FW)
   clarity_scales = (clarity.lat_p_scale_low, clarity.lat_p_scale_standard, clarity.lat_p_scale_highway,
                     clarity.lat_i_scale_low, clarity.lat_i_scale_standard, clarity.lat_i_scale_highway,
                     clarity.lat_f_scale_low, clarity.lat_f_scale_standard, clarity.lat_f_scale_highway)
-  assert clarity_scales == (1.0,) * 9
+  assert clarity_scales == expected_scales
 
   for candidate in (CAR.HONDA_CRV_5G, CAR.HONDA_INSIGHT, CAR.HONDA_CIVIC, CAR.HONDA_CIVIC_BOSCH):
     lat = _controller(candidate, MODIFIED_FW)
     scales = (lat.lat_p_scale_low, lat.lat_p_scale_standard, lat.lat_p_scale_highway,
               lat.lat_i_scale_low, lat.lat_i_scale_standard, lat.lat_i_scale_highway,
               lat.lat_f_scale_low, lat.lat_f_scale_standard, lat.lat_f_scale_highway)
-    assert scales == (1.0,) * 9, f"{candidate} should run neutral band scales, got {scales}"
+    assert scales == expected_scales, f"{candidate} should use the configured band scales, got {scales}"
 
 
 def test_non_honda_never_takes_the_eps_modified_path():
