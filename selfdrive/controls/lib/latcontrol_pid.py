@@ -329,7 +329,6 @@ def _get_param_bool(params, key, default=False):
 
 def _clarity_eps_pid_output_scale(
   desired_angle_deg: float,
-  phase: float,
   v_ego: float,
   center_taper_scale: float,
   center_taper_high: float,
@@ -351,20 +350,11 @@ def _clarity_eps_pid_output_scale(
   center_taper = center_taper_high * center_taper_scale * center_speed_weight
 
   mid_turn_scale = 0.1200 if is_left else 0.0150
-  mid_turn_turn_in_scale = -0.5500 if is_left else -0.0524
-  mid_turn_unwind_scale = -0.0743 if is_left else -0.0842
   base_scale = 0.0722 if is_left else 0.0972
-  turn_in_scale = -0.0799 if is_left else 0.0888
-  unwind_scale = 0.1600 if is_left else 0.2000
 
   scale = 1.0 + (center_weight * center_taper)
   scale += speed_weight * mid_turn_weight * mid_turn_scale
   scale += speed_weight * angle_weight * base_scale
-
-  turn_in_weight = min(max(phase / 0.5, 0.0), 1.0)
-  unwind_weight = min(max(-phase / 0.5, 0.0), 1.0)
-  scale += speed_weight * mid_turn_weight * (turn_in_weight * mid_turn_turn_in_scale + unwind_weight * mid_turn_unwind_scale)
-  scale += speed_weight * angle_weight * (turn_in_weight * turn_in_scale - unwind_weight * unwind_scale)
 
   return max(scale, 0.6863)
 
@@ -637,7 +627,6 @@ class LatControlPID(LatControl):
         if not civic_bosch_testing_ground:
           output_torque *= _clarity_eps_pid_output_scale(
             angle_steers_des_no_offset,
-            phase,
             CS.vEgo,
             center_taper_scale,
             self.center_taper_high,
