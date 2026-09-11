@@ -9,6 +9,7 @@ from opendbc.car.honda.steer_ratio import (
 )
 from opendbc.car.honda.values import CAR
 from opendbc.car import structs
+from openpilot.common.pid import PIDController
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   NRDR_MODIFIED_EPS_KF_SPEED_BP,
   NRDR_MODIFIED_EPS_KF_V,
@@ -147,6 +148,20 @@ def test_clarity_output_scale_is_static_for_each_rack_direction(desired_angle, e
   # The scale is a static rack calibration. Directional authority belongs in the PID,
   # not in a multiplier on its complete P/I/F output.
   assert _clarity_eps_pid_output_scale(**kwargs) == pytest.approx(expected)
+
+
+def test_modified_eps_i_scale_controls_accumulation_and_clears_zero_band_state():
+  pid = PIDController(k_p=0.0, k_i=1.0, rate=100)
+
+  pid.update(1.0, integrator_gain_scale=0.2)
+  assert pid.i == pytest.approx(0.002)
+
+  pid.update(1.0, integrator_gain_scale=0.0, reset_integrator=True)
+  assert pid.i == pytest.approx(0.0)
+
+  # Returning to a non-zero band starts clean; no hidden highway I can reappear.
+  pid.update(0.0, integrator_gain_scale=1.0)
+  assert pid.i == pytest.approx(0.0)
 
 
 def test_crv_5g_shares_the_clarity_modified_eps_tune():

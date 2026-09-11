@@ -578,11 +578,19 @@ class LatControlPID(LatControl):
 
       freeze_threshold = 2.0 if self.is_eps_modified else 5.0
       freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < freeze_threshold
+      # LatIScale is the effective integrator gain, not merely an output multiplier.
+      # In particular, a zero-I highway band must not retain hidden integral state that
+      # comes back when the car crosses into another speed band.
+      i_scale = 1.0
+      if self.is_eps_modified:
+        i_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_i_scale_low, self.lat_i_scale_standard, self.lat_i_scale_highway)
 
       output_torque = self.pid.update(error,
                                 feedforward=ff,
                                 speed=CS.vEgo,
-                                freeze_integrator=freeze_integrator)
+                                freeze_integrator=freeze_integrator,
+                                integrator_gain_scale=i_scale,
+                                reset_integrator=self.is_eps_modified and i_scale <= 0.0)
 
       # The Civic Bosch testing ground applies its own hardcoded center taper below; let it own the
       # output scale so the two tapers can never compound.
@@ -614,9 +622,8 @@ class LatControlPID(LatControl):
           self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
-        i_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_i_scale_low, self.lat_i_scale_standard, self.lat_i_scale_highway)
         f_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_f_scale_low, self.lat_f_scale_standard, self.lat_f_scale_highway)
-        output_torque = self.pid.p * p_scale + self.pid.i * i_scale + self.pid.d + self.pid.f * f_scale
+        output_torque = self.pid.p * p_scale + self.pid.i + self.pid.d + self.pid.f * f_scale
 
         lane_change = bool(getattr(CS, "leftBlinker", False) or getattr(CS, "rightBlinker", False))
         if lane_change:
