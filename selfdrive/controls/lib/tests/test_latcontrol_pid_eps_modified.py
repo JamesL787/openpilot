@@ -69,12 +69,15 @@ def test_stock_eps_hondas_do_not_get_the_nrdr_live_tune(candidate):
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', "civic_tba_c020"),
   (CAR.HONDA_INSIGHT, b'39990-TXM,A040\x00\x00', "insight_txm_a040"),
 ])
-def test_road_measured_curve_takes_priority_over_exact_firmware_profile(candidate, fw_version, profile):
+def test_road_measured_curve_defaults_over_exact_firmware_profile(candidate, fw_version, profile):
   car_params = _params(candidate, fw_version)
   lat = LatControlPID(car_params, STUB_CI, 0.01)
   assert profile in HONDA_VGR_INVERSE_BY_PROFILE
   assert lat.sr_curve is NRDR_SR_CURVE_BY_FP[str(candidate)]
-  assert lat.vgr_inverse is None
+  # The road curve is the default, but retain the exact firmware inverse for the
+  # runtime VGR A/B setting instead of discarding a valid traced profile at init.
+  assert not lat.use_firmware_vgr
+  assert lat.vgr_inverse is HONDA_VGR_INVERSE_BY_PROFILE[profile]
 
 
 @pytest.mark.parametrize("candidate", [CAR.HONDA_CLARITY, CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_INSIGHT, CAR.HONDA_CRV_5G])
