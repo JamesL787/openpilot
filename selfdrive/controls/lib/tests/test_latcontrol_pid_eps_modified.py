@@ -163,6 +163,14 @@ def test_modified_eps_i_scale_controls_accumulation_and_clears_zero_band_state()
   pid.update(0.0, integrator_gain_scale=1.0)
   assert pid.i == pytest.approx(0.0)
 
+  pid.update(1.0, integrator_gain_scale=1.0)
+  assert pid.i == pytest.approx(0.01)
+
+  # The modified-EPS low-speed freeze clears I as well, so pull-away cannot revive
+  # an old parking-speed correction.
+  pid.update(0.0, freeze_integrator=True, reset_integrator=True)
+  assert pid.i == pytest.approx(0.0)
+
 
 def test_crv_5g_shares_the_clarity_modified_eps_tune():
   # CR-V 5G runs the same NRDR modified-EPS hardware as Clarity/Civic Bosch, so it should
