@@ -549,6 +549,8 @@ class LatControlPID(LatControl):
       self.eps_modified_steering_pressed_prev = False
       self.center_taper_scale.x = 1.0
       self.prev_output_torque = 0.0
+      if self.is_eps_modified:
+        self.pid.reset()
 
     else:
       self.frame += 1
@@ -590,7 +592,7 @@ class LatControlPID(LatControl):
                                 speed=CS.vEgo,
                                 freeze_integrator=freeze_integrator,
                                 integrator_gain_scale=i_scale,
-                                reset_integrator=self.is_eps_modified and i_scale <= 0.0)
+                                reset_integrator=self.is_eps_modified and (i_scale <= 0.0 or CS.vEgo < freeze_threshold))
 
       # The Civic Bosch testing ground applies its own hardcoded center taper below; let it own the
       # output scale so the two tapers can never compound.
