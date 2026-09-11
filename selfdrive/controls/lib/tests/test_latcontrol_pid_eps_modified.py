@@ -14,6 +14,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   NRDR_MODIFIED_EPS_KF_V,
   NRDR_SR_CURVE_BY_FP,
   LatControlPID,
+  _clarity_eps_pid_output_scale,
   get_nrdr_modified_eps_kf,
 )
 
@@ -128,6 +129,24 @@ def test_clarity_and_c020_share_the_current_feedforward_curve():
   assert c020.is_civic_bosch_modified
   assert clarity.ff_factor == pytest.approx(3.6e-6)
   assert c020.ff_factor == pytest.approx(3.6e-6)
+
+
+@pytest.mark.parametrize(("desired_angle", "expected"), [
+  (-24.0, 1.04788),
+  (24.0, 1.10088),
+])
+def test_clarity_output_scale_is_static_for_each_rack_direction(desired_angle, expected):
+  kwargs = dict(
+    desired_angle_deg=desired_angle,
+    v_ego=10.0,
+    center_taper_scale=1.0,
+    center_taper_high=0.5,
+    center_boost_threshold_deg=3.0,
+    center_boost_min_speed_ms=50.0 * 0.44704,
+  )
+  # The scale is a static rack calibration. Directional authority belongs in the PID,
+  # not in a multiplier on its complete P/I/F output.
+  assert _clarity_eps_pid_output_scale(**kwargs) == pytest.approx(expected)
 
 
 def test_crv_5g_shares_the_clarity_modified_eps_tune():
