@@ -250,7 +250,6 @@ class NRDRTuningLayout(_SettingsPage):
 
 
     override_rows = [
-      toggle("NrdrIncreaseOverrideTolerance", "Override Hysteresis", "Double the override tolerance after steering input leaves center."),
       value(
         "NrdrDriverOverrideThreshold", "Driver Override Threshold", "Raw torque-sensor threshold outside the center boost angle band.",
         lambda: str(p.get_int("NrdrDriverOverrideThreshold")),
