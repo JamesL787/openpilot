@@ -581,7 +581,6 @@ class CarController(CarControllerBase):
       "live_learning_gas": self.param_store.get_bool("HondaLiveLearningGas", default=self.CP.carFingerprint in HONDA_BOSCH),
       "stopping_decel_rate": float(np.clip(self.param_store.get_int("HondaStoppingDecelRate", default=30), 0, 100)) / 100.0,
       "ecu_matched_long": self.param_store.get_bool("NrdrHondaEcuMatchedLong", default=False),
-      "increase_override_tolerance": self.param_store.get_bool("NrdrIncreaseOverrideTolerance", default=False),
       "min_steer_speed": float(np.clip(self.param_store.get_int("NrdrMinSteerSpeed", default=1), 0, 45)) * CV.MPH_TO_MS,
     }
 
@@ -600,13 +599,10 @@ class CarController(CarControllerBase):
       torque_cmd = 0.0
 
     if CC.latActive:
-      # Clarity's behaviour, now shared by every modified-EPS Honda: the command path uses raw
-      # steeringPressed and only debounces when NrdrIncreaseOverrideTolerance is explicitly on.
-      # Civic Bosch used to force the filter on here regardless; that exception is gone.
-      if live["increase_override_tolerance"]:
-        steering_pressed = self._filtered_steering_pressed(CS, torque_cmd)
-      else:
-        steering_pressed = bool(CS.out.steeringPressed)
+      # Match the modified-EPS PID's override policy. A raw threshold crossing can chatter
+      # around the driver-torque boundary; letting the actuator fade while the PID still sees
+      # a different override state creates false safety limiting and integrator freeze churn.
+      steering_pressed = self._filtered_steering_pressed(CS, torque_cmd)
 
       if not self.lat_active_prev:
         self.override_ramp = 0.0

@@ -365,7 +365,6 @@ class TestHondaSteeringCommandFidelity:
     "override_fade_down_s": 0.0,
     "override_fade_up_s": 1.5,
     "override_torque_scale": 0.0,
-    "increase_override_tolerance": False,
     "steer_delta_limiter_enabled": False,
     "steer_delta_up": 3.0,
     "steer_delta_down": 3.0,
@@ -424,8 +423,11 @@ class TestHondaSteeringCommandFidelity:
   def test_override_cut_is_reported_as_limited(self):
     controller = self._controller()
     self._drive(controller, [0.0] * 200)
-    delivered = self._drive(controller, [0.5], steering_pressed=True)
-    assert abs(0.5 - delivered[0]) > 1e-2
+    # Brief raw threshold flickers do not abruptly cut torque. Sustained same-direction
+    # driver torque trips the shared 0.28 s override policy.
+    delivered = self._drive(controller, [0.5] * 28, steering_pressed=True)
+    assert delivered[:-1] == pytest.approx([0.5] * 27)
+    assert abs(0.5 - delivered[-1]) > 1e-2
 
   def test_steer_delta_limiter_is_reported_as_limited(self):
     controller = self._controller()

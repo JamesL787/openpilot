@@ -619,15 +619,6 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "NrdrIncreaseOverrideTolerance",
-        "label": "Increase Driver Override Hysteresis",
-        "description": "Filters short same-direction driver torque spikes.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "NrdrDriverOverrideThreshold",
         "label": "Driver Override Threshold",
         "description": "Raw torque threshold for driver steering. 1200 is stock Honda scale.",

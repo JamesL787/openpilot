@@ -77,6 +77,7 @@ NRDR_DM_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_dm_defaults_v1"
 STARPILOT_REMOVED_PARAM_KEYS = (
   "CoastUpToLeads", "HumanAcceleration", "HumanFollowing", "PrioritizeSmoothFollowing", "ReverseCruise",
   "NrdrTuneLearner", "NrdrTuneLearnerMap", "NrdrTuneLearnerRate", "NrdrTuneLearnerReset", "NrdrTuneLearnerStrength",
+  "NrdrIncreaseOverrideTolerance",
 )
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
@@ -816,7 +817,6 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "HondaDriverAssistDuringOverride": False,
     "HondaSteerDeltaLimiter": False,
     "HondaTorqueLowPassFilter": True,
-    "NrdrIncreaseOverrideTolerance": False,
     "NrdrLatModelActionInterp": True,
     "NrdrLatUseFirmwareVgr": False,
   }
@@ -884,9 +884,8 @@ def migrate_nrdr_honda_override_semantics(params: Params, params_cache: Params) 
   if NRDR_HONDA_OVERRIDE_SEMANTICS_MIGRATION_FLAG.exists():
     return
 
-  for key in ("HondaDriverAssistDuringOverride", "NrdrIncreaseOverrideTolerance"):
-    params.put_bool(key, False)
-    params_cache.put_bool(key, False)
+  params.put_bool("HondaDriverAssistDuringOverride", False)
+  params_cache.put_bool("HondaDriverAssistDuringOverride", False)
 
   try:
     NRDR_HONDA_OVERRIDE_SEMANTICS_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
