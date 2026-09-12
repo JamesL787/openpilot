@@ -224,11 +224,6 @@ class CarState(CarStateBase):
     if custom_threshold > 0:
       steer_threshold = custom_threshold if stock_threshold == 1200 else stock_threshold * custom_threshold / 1200.0
 
-    center_boost_threshold = self.params.get_float("HondaCenterBoostThreshold", default=3.0)
-    center_custom_threshold = self.params.get_int("NrdrOverrideThresholdCenterBoost", default=1200)
-    if center_boost_threshold > 0.0 and center_custom_threshold > 0 and abs(ret.steeringAngleDeg) <= center_boost_threshold:
-      steer_threshold = center_custom_threshold if stock_threshold == 1200 else stock_threshold * center_custom_threshold / 1200.0
-
     ret.steeringPressed = abs(ret.steeringTorque) > steer_threshold
 
     if self.CP.carFingerprint in HONDA_BOSCH:
