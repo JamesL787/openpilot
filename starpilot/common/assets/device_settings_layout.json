@@ -700,6 +700,15 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "NrdrLatDelayCompensation",
+        "label": "PID Delay Compensation",
+        "description": "Enable the bounded, speed-banded PID reference lead for modified-EPS Honda testing. Off by default until validated against replay and road logs.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NrdrLatUseFirmwareVgr",
         "label": "Use Firmware VGR Table",
         "description": "Convert curvature with the EPS firmware's position table on top of the learned steer ratio instead of the road-measured effective-ratio curve.",

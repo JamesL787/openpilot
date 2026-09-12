@@ -285,6 +285,9 @@ class NRDRTuningLayout(_SettingsPage):
       toggle("NrdrLatModelActionInterp", "Model Action Interpolation",
              "Ramp the model's 20 Hz steering action across the model frame instead of holding it. "
              "Removes the 20 Hz staircase in the target that the smoothing filter otherwise has to hide."),
+      toggle("NrdrLatDelayCompensation", "PID Delay Compensation",
+             "Enable the bounded, speed-banded PID reference lead for modified-EPS Honda testing. "
+             "Off by default until validated against replay and road logs."),
       value(
         "NrdrLatAngleRateLimit", "Desired Angle Rate Limit",
         "Ceiling on how fast the desired steering angle may move. Backstops the curvature jerk limit, "

@@ -189,11 +189,11 @@ NRDR_ANGLE_RATE_LIMIT_DEG_S = 300.0  # 0 disables
 # road tune carries over verbatim.
 NRDR_TARGET_SMOOTH_TAU = 0.1
 
-# Local sketch: a PID reference lead is deliberately kept off until replay/A-B testing
-# proves that the measured wheel-angle lag needs compensation.  This is intentionally
-# separate from liveDelay.lateralDelay: that value is the model-to-yaw delay and is too
-# large for the wheel-angle PID reference.
-NRDR_PID_DELAY_COMPENSATION_ENABLED = False
+# Candidate PID reference lead. The runtime enable is the persistent
+# NrdrLatDelayCompensation parameter, deliberately defaulting off until replay/A-B testing
+# proves that the measured wheel-angle lag needs compensation. This is intentionally separate
+# from liveDelay.lateralDelay: that value is the model-to-yaw delay and is too large for the
+# wheel-angle PID reference.
 NRDR_PID_DELAY_COMPENSATION_MIN_SPEED = 15.0 * 0.44704
 NRDR_PID_DELAY_COMPENSATION_MID_SPEED = 0.10
 NRDR_PID_DELAY_COMPENSATION_ROAD_SPEED = 0.15
@@ -222,9 +222,9 @@ def delay_compensated_angle(angle_deg: float, previous_angle_deg: float, dt: flo
   return angle_deg + lead
 
 
-def get_pid_delay_compensation_seconds(v_ego: float) -> float:
+def get_pid_delay_compensation_seconds(v_ego: float, enabled: bool = False) -> float:
   """Candidate wheel-angle lead for the local prototype; not the learned yaw delay."""
-  if not NRDR_PID_DELAY_COMPENSATION_ENABLED or v_ego < NRDR_PID_DELAY_COMPENSATION_MIN_SPEED:
+  if not enabled or v_ego < NRDR_PID_DELAY_COMPENSATION_MIN_SPEED:
     return 0.0
   if v_ego < 25.0 * 0.44704:
     return NRDR_PID_DELAY_COMPENSATION_MID_SPEED
@@ -464,6 +464,7 @@ class LatControlPID(LatControl):
     self.lpf_tau_low = NRDR_TARGET_SMOOTH_TAU
     self.lpf_tau_standard = NRDR_TARGET_SMOOTH_TAU
     self.lpf_tau_highway = NRDR_TARGET_SMOOTH_TAU
+    self.pid_delay_compensation_enabled = False
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
@@ -580,7 +581,7 @@ class LatControlPID(LatControl):
         angle_steers_des_no_offset,
         self.prev_delay_compensation_angle,
         self.dt,
-        get_pid_delay_compensation_seconds(CS.vEgo),
+        get_pid_delay_compensation_seconds(CS.vEgo, self.pid_delay_compensation_enabled),
         NRDR_PID_DELAY_COMPENSATION_MAX_ANGLE_DEG,
       )
       self.prev_delay_compensation_angle = base_delay_compensation_angle
@@ -674,6 +675,7 @@ class LatControlPID(LatControl):
           self.lpf_tau_standard = _get_param_float(self.params, "HondaLpfTauStandard", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
           self.lpf_tau_highway = _get_param_float(self.params, "HondaLpfTauHighway", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
           self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
+          self.pid_delay_compensation_enabled = _get_param_bool(self.params, "NrdrLatDelayCompensation")
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
         f_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_f_scale_low, self.lat_f_scale_standard, self.lat_f_scale_highway)
