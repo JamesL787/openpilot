@@ -685,6 +685,18 @@ def read_file_chunked_to_disk(path):
   return temporary_path
 
 
+def validate_serialized_artifact(path, out_of_band: bool) -> None:
+  """Read the complete artifact back and reject trailing or incomplete data."""
+  with open(path, "rb") as artifact_file:
+    if out_of_band:
+      from openpilot.selfdrive.modeld.helpers import load_oob
+      load_oob(artifact_file)
+    else:
+      pickle.load(artifact_file)
+    if artifact_file.read(1):
+      raise ValueError(f"serialized model artifact has trailing data: {path}")
+
+
 def validate_metadata(metadata):
   output_shapes = metadata.get("output_shapes", {})
   output_shape = output_shapes.get("outputs")
@@ -882,6 +894,7 @@ def main():
       dump_oob(output, artifact_file)
     else:
       pickle.dump(output, artifact_file)
+  validate_serialized_artifact(args.output, args.out_of_band)
   print(f"Saved JITs to {args.output} ({os.path.getsize(args.output) / 1e6:.2f} MB)")
   return 0
 

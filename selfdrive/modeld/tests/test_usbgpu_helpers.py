@@ -1,4 +1,5 @@
 import io
+import pickle
 import struct
 from types import MethodType
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ import numpy as np
 import pytest
 
 from openpilot.selfdrive.modeld import modeld
+from openpilot.selfdrive.modeld.compile_modeld import validate_serialized_artifact
 from openpilot.selfdrive.modeld.helpers import dump_oob, load_oob, tinygrad_dev_config
 from scripts import model_compiler
 
@@ -37,6 +39,24 @@ def test_external_gpu_selects_amd_without_probing_other_backends(monkeypatch, tm
 def test_external_gpu_uses_a_longer_load_watchdog():
   assert modeld.BIG_MODEL_LOAD_WAIT_TIMEOUT_MS == 60000
   assert modeld.BIG_MODEL_RUN_WAIT_TIMEOUT_MS == 3000
+
+
+def test_serialized_artifact_validation_rejects_trailing_data(tmp_path):
+  artifact = tmp_path / "artifact.pkl"
+  artifact.write_bytes(pickle.dumps({"ok": True}) + b"trailing")
+
+  with pytest.raises(ValueError, match="trailing data"):
+    validate_serialized_artifact(artifact, out_of_band=False)
+
+
+def test_serialized_artifact_validation_rejects_incomplete_oob_data(tmp_path):
+  artifact = tmp_path / "artifact.pkl"
+  with artifact.open("wb") as output:
+    dump_oob({"ok": True}, output)
+  artifact.write_bytes(artifact.read_bytes()[:-1])
+
+  with pytest.raises((EOFError, pickle.UnpicklingError)):
+    validate_serialized_artifact(artifact, out_of_band=True)
 
 
 def test_external_gpu_voltage_uses_hardware_specific_source():
