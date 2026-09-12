@@ -475,42 +475,6 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "HondaCenterScale",
-        "label": "Honda Center Boost",
-        "description": "Adds extra correction near center. Useful when straight roads feel too soft.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 0.0,
-        "max": 5.0,
-        "step": 0.01,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "HondaCenterBoostThreshold",
-        "label": "Honda Center Boost Threshold",
-        "description": "Angle band where center boost is active.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 0.0,
-        "max": 10.0,
-        "step": 0.1,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "HondaCenterBoostMinSpeed",
-        "label": "Honda Center Boost Minimum Speed",
-        "description": "Disables center boost below this speed.",
-        "data_type": "int",
-        "ui_type": "numeric",
-        "min": 0.0,
-        "max": 90.0,
-        "step": 1.0,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "LatPScaleLowSpeed",
         "label": "Low Speed Proportional Scale",
         "description": "Scales P below 25 mph. Higher is tighter; lower is softer.",
@@ -622,18 +586,6 @@
         "key": "NrdrDriverOverrideThreshold",
         "label": "Driver Override Threshold",
         "description": "Raw torque threshold for driver steering. 1200 is stock Honda scale.",
-        "data_type": "int",
-        "ui_type": "numeric",
-        "min": 100.0,
-        "max": 5000.0,
-        "step": 100.0,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "NrdrOverrideThresholdCenterBoost",
-        "label": "Center Override Threshold",
-        "description": "Override threshold used inside the center boost angle band.",
         "data_type": "int",
         "ui_type": "numeric",
         "min": 100.0,

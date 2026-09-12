@@ -196,8 +196,6 @@ def rate_limit_desired_angle(angle_deg: float, prev_angle_deg: float, max_rate_d
   return float(min(max(angle_deg, prev_angle_deg - max_delta), prev_angle_deg + max_delta))
 
 
-CENTER_TAPER_FADE_TAU = 0.25
-
 # Below this speed the phase SIGN is held rather than recomputed. phase is
 # angle * d(angle), and d(angle) is a frame-to-frame difference of the desired angle, so
 # at a crawl it is dominated by model jitter and the sign chatters -- which would flip
@@ -215,8 +213,6 @@ def phase_with_latch(angle_deg: float, angle_delta_deg: float, v_ego: float,
 _MPH_TO_MS = 0.44704
 _LAT_SCALE_LOW_MAX = 25.0 * _MPH_TO_MS
 _LAT_SCALE_STD_MAX = 50.0 * _MPH_TO_MS
-CENTER_BOOST_SPEED_FADE_MS = 5.0 * _MPH_TO_MS
-
 HONDA_PID_GAIN_SCALE_MIN = 0.1
 HONDA_PID_GAIN_SCALE_MAX = 4.0
 
@@ -330,10 +326,6 @@ def _get_param_bool(params, key, default=False):
 def _clarity_eps_pid_output_scale(
   desired_angle_deg: float,
   v_ego: float,
-  center_taper_scale: float,
-  center_taper_high: float,
-  center_boost_threshold_deg: float,
-  center_boost_min_speed_ms: float,
 ) -> float:
   abs_angle = abs(desired_angle_deg)
   speed_weight = min(max((v_ego - 4.0) / 10.0, 0.0), 1.0)
@@ -341,19 +333,10 @@ def _clarity_eps_pid_output_scale(
   angle_weight = min(max((abs_angle - 16.0) / 12.0, 0.0), 1.0)
   is_left = desired_angle_deg > 0.0
 
-  center_fade_deg = 1.0
-  center_weight = min(max((center_boost_threshold_deg + center_fade_deg - abs_angle) / center_fade_deg, 0.0), 1.0)
-  if center_boost_min_speed_ms > 0.0:
-    center_speed_weight = min(max((v_ego - center_boost_min_speed_ms) / CENTER_BOOST_SPEED_FADE_MS, 0.0), 1.0)
-  else:
-    center_speed_weight = 1.0
-  center_taper = center_taper_high * center_taper_scale * center_speed_weight
-
   mid_turn_scale = 0.1200 if is_left else 0.0150
   base_scale = 0.0722 if is_left else 0.0972
 
-  scale = 1.0 + (center_weight * center_taper)
-  scale += speed_weight * mid_turn_weight * mid_turn_scale
+  scale = 1.0 + (speed_weight * mid_turn_weight * mid_turn_scale)
   scale += speed_weight * angle_weight * base_scale
 
   return max(scale, 0.6863)
@@ -402,7 +385,6 @@ class LatControlPID(LatControl):
     self.eps_modified_steering_pressed_filter_s = 0.0
     self.eps_modified_steering_pressed_prev = False
     self.prev_output_torque = 0.0
-    self.center_taper_scale = FirstOrderFilter(1.0, CENTER_TAPER_FADE_TAU, dt)
     self.dt = dt
     self.params = Params()
     self.frame = -1
@@ -415,9 +397,6 @@ class LatControlPID(LatControl):
     self.lat_f_scale_low = 1.0
     self.lat_f_scale_standard = 1.0
     self.lat_f_scale_highway = 1.0
-    self.center_taper_high = 0.5
-    self.center_boost_threshold = 3.0
-    self.center_boost_min_speed = 50.0
     self.phase_direction = 0.0
     self.angle_rate_limit_deg_s = NRDR_ANGLE_RATE_LIMIT_DEG_S
     # The rate limiter needs its own reference: chaining it off the SMOOTHED target would make
@@ -548,7 +527,6 @@ class LatControlPID(LatControl):
       self.target_smooth_filter.initialized = True
       self.eps_modified_steering_pressed_filter_s = 0.0
       self.eps_modified_steering_pressed_prev = False
-      self.center_taper_scale.x = 1.0
       self.prev_output_torque = 0.0
       if self.is_eps_modified:
         self.pid.reset()
@@ -613,9 +591,6 @@ class LatControlPID(LatControl):
           self.lat_f_scale_low = _get_param_float(self.params, "LatFScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_standard = _get_param_float(self.params, "LatFScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_highway = _get_param_float(self.params, "LatFScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
-          self.center_taper_high = _get_param_float(self.params, "HondaCenterScale", 0.5, 0.0, 5.0)
-          self.center_boost_threshold = _get_param_float(self.params, "HondaCenterBoostThreshold", 3.0, 0.0, 10.0)
-          self.center_boost_min_speed = _get_param_float(self.params, "HondaCenterBoostMinSpeed", 50.0, 0.0, 90.0)
           self.angle_rate_limit_deg_s = _get_param_float(self.params, "NrdrLatAngleRateLimit",
                                                          NRDR_ANGLE_RATE_LIMIT_DEG_S, 0.0, 2000.0)
           self.target_smoothing_enabled = _get_param_bool(self.params, "HondaTorqueLowPassFilter", True)
@@ -628,20 +603,10 @@ class LatControlPID(LatControl):
         f_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_f_scale_low, self.lat_f_scale_standard, self.lat_f_scale_highway)
         output_torque = self.pid.p * p_scale + self.pid.i + self.pid.d + self.pid.f * f_scale
 
-        lane_change = bool(getattr(CS, "leftBlinker", False) or getattr(CS, "rightBlinker", False))
-        if lane_change:
-          self.center_taper_scale.x = 0.0
-          center_taper_scale = 0.0
-        else:
-          center_taper_scale = float(self.center_taper_scale.update(1.0))
         if not civic_bosch_testing_ground:
           output_torque *= _clarity_eps_pid_output_scale(
             angle_steers_des_no_offset,
             CS.vEgo,
-            center_taper_scale,
-            self.center_taper_high,
-            self.center_boost_threshold,
-            self.center_boost_min_speed * _MPH_TO_MS,
           )
 
       if self.is_subaru_impreza:

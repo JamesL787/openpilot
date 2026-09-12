@@ -140,17 +140,9 @@ def test_clarity_and_c020_share_the_current_feedforward_curve():
   (24.0, 1.10088),
 ])
 def test_clarity_output_scale_is_static_for_each_rack_direction(desired_angle, expected):
-  kwargs = dict(
-    desired_angle_deg=desired_angle,
-    v_ego=10.0,
-    center_taper_scale=1.0,
-    center_taper_high=0.5,
-    center_boost_threshold_deg=3.0,
-    center_boost_min_speed_ms=50.0 * 0.44704,
-  )
   # The scale is a static rack calibration. Directional authority belongs in the PID,
   # not in a multiplier on its complete P/I/F output.
-  assert _clarity_eps_pid_output_scale(**kwargs) == pytest.approx(expected)
+  assert _clarity_eps_pid_output_scale(desired_angle, 10.0) == pytest.approx(expected)
 
 
 def test_modified_eps_i_scale_controls_accumulation_and_clears_zero_band_state():

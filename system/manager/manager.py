@@ -77,7 +77,8 @@ NRDR_DM_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_dm_defaults_v1"
 STARPILOT_REMOVED_PARAM_KEYS = (
   "CoastUpToLeads", "HumanAcceleration", "HumanFollowing", "PrioritizeSmoothFollowing", "ReverseCruise",
   "NrdrTuneLearner", "NrdrTuneLearnerMap", "NrdrTuneLearnerRate", "NrdrTuneLearnerReset", "NrdrTuneLearnerStrength",
-  "NrdrIncreaseOverrideTolerance",
+  "NrdrIncreaseOverrideTolerance", "HondaCenterBoostMinSpeed", "HondaCenterBoostThreshold", "HondaCenterScale",
+  "NrdrOverrideThresholdCenterBoost",
 )
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
@@ -821,8 +822,6 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "NrdrLatUseFirmwareVgr": False,
   }
   desired_float_values = {
-    "HondaCenterBoostThreshold": 3.0,
-    "HondaCenterScale": 0.5,
     "HondaLpfTauHighway": 0.1,
     "HondaLpfTauLowSpeed": 0.1,
     "HondaLpfTauStandard": 0.1,
@@ -832,7 +831,6 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "HondaSteerDeltaUp": 3.0,
   }
   desired_int_values = {
-    "HondaCenterBoostMinSpeed": 50,
     "HondaOverrideTorqueScale": 0,
     "LatFScaleHighway": 100,
     "LatFScaleLowSpeed": 100,
@@ -846,7 +844,6 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "NrdrDriverOverrideThreshold": 2400,
     "NrdrLatAngleRateLimit": 300,
     "NrdrMinSteerSpeed": 1,
-    "NrdrOverrideThresholdCenterBoost": 1200,
   }
 
   for key, value in desired_bool_values.items():

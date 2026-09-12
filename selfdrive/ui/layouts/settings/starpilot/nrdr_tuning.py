@@ -230,35 +230,11 @@ class NRDRTuningLayout(_SettingsPage):
       toggle("NrdrLearnAngleOffset", "Learn Angle Offset", "Use paramsd's learned steering angle offset instead of zero."),
     ]
 
-    center_rows = [
-      value(
-        "HondaCenterBoostThreshold", "Center Boost Angle", "Angle band where center boost and straight-line override tuning apply.",
-        lambda: f"{p.get_float('HondaCenterBoostThreshold'):.1f} deg",
-        lambda: self._show_slider("HondaCenterBoostThreshold", 0.0, 10.0, step=0.1, unit=" deg", value_type="float", title="Center Boost Angle"),
-      ),
-      value(
-        "HondaCenterBoostMinSpeed", "Center Boost Min Speed", "Disable center boost below this speed to avoid low-speed oscillation.",
-        lambda: f"{p.get_int('HondaCenterBoostMinSpeed')} mph",
-        lambda: self._show_slider("HondaCenterBoostMinSpeed", 0, 90, unit=" mph", title="Center Boost Min Speed"),
-      ),
-      value(
-        "HondaCenterScale", "Center Scale", "Feedforward scale near center. Lower values reduce torque through straight unwind.",
-        lambda: f"{p.get_float('HondaCenterScale'):.2f}",
-        lambda: self._show_slider("HondaCenterScale", 0.0, 5.0, step=0.05, value_type="float", title="Center Scale"),
-      ),
-    ]
-
-
     override_rows = [
       value(
-        "NrdrDriverOverrideThreshold", "Driver Override Threshold", "Raw torque-sensor threshold outside the center boost angle band.",
+        "NrdrDriverOverrideThreshold", "Driver Override Threshold", "Raw torque-sensor threshold for driver steering.",
         lambda: str(p.get_int("NrdrDriverOverrideThreshold")),
         lambda: self._show_slider("NrdrDriverOverrideThreshold", 0, 5000, title="Driver Override Threshold"),
-      ),
-      value(
-        "NrdrOverrideThresholdCenterBoost", "Center Override Threshold", "Raw torque threshold inside the center boost angle band.",
-        lambda: str(p.get_int("NrdrOverrideThresholdCenterBoost")),
-        lambda: self._show_slider("NrdrOverrideThresholdCenterBoost", 0, 5000, title="Center Override Threshold"),
       ),
       toggle("HondaDriverAssistDuringOverride", "Assist During Override", "Keep controller torque while the driver is applying steering torque."),
       value(
@@ -362,7 +338,6 @@ class NRDRTuningLayout(_SettingsPage):
       SettingSection(title=tr_noop("Tune Report"), rows=tune_report_rows),
       *pid_sections,
       SettingSection(title=tr_noop("Live Parameters / Auto Tuning"), rows=learning_rows),
-      SettingSection(title=tr_noop("Center Response"), rows=center_rows),
       SettingSection(title=tr_noop("Driver Override"), rows=override_rows),
       SettingSection(title=tr_noop("Filters / Limits"), rows=filter_rows),
     ]

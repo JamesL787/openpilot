@@ -140,9 +140,6 @@ HideSteeringWheel
 HideTurningBanner
 HigherBitrate
 HolidayThemes
-HondaCenterBoostMinSpeed
-HondaCenterBoostThreshold
-HondaCenterScale
 HondaDriverAssistDuringOverride
 HondaLiveLearningGas
 HondaLpfTauHighway
@@ -261,7 +258,6 @@ NrdrNnlcEnabled
 NrdrNnlcKfGain
 NrdrNnlcKiGain
 NrdrNnlcKpGain
-NrdrOverrideThresholdCenterBoost
 NudgelessLaneChange
 NumericalTemp
 Offroad_ExcessiveActuation
