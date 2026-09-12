@@ -107,7 +107,9 @@ def _should_publish_model_output(model_output, vipc_dropped_frames: int, externa
 
 
 MIN_LAT_CONTROL_SPEED = 0.3
-BIG_MODEL_LOAD_WAIT_TIMEOUT_MS = 30000
+# Newer fused v16 artifacts can spend a long time loading and warming the
+# Chestnut graph on a cold boot. Match upstream's one-minute load watchdog.
+BIG_MODEL_LOAD_WAIT_TIMEOUT_MS = 60000
 BIG_MODEL_RUN_WAIT_TIMEOUT_MS = 3000
 EXTERNAL_GPU_POWER_READY_MV = 10000
 EXTERNAL_GPU_EGMP_READY_MV = 12500

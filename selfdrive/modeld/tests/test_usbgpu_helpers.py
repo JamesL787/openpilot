@@ -35,7 +35,7 @@ def test_external_gpu_selects_amd_without_probing_other_backends(monkeypatch, tm
 
 
 def test_external_gpu_uses_a_longer_load_watchdog():
-  assert modeld.BIG_MODEL_LOAD_WAIT_TIMEOUT_MS == 30000
+  assert modeld.BIG_MODEL_LOAD_WAIT_TIMEOUT_MS == 60000
   assert modeld.BIG_MODEL_RUN_WAIT_TIMEOUT_MS == 3000
 
 
