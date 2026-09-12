@@ -758,6 +758,12 @@ def main():
       "device": str(Device.DEFAULT),
     },
   }
+  if args.fused:
+    # Fused artifacts execute the model graph on the queue device. Keep this
+    # explicit so modeld can reject an artifact built for the wrong accelerator
+    # before it starts warming a large graph. This is additive: older artifacts
+    # without input_devices remain compatible with the runtime.
+    output["input_devices"] = {"model": Device.canonicalize(Device.DEFAULT)}
   if args.behavior_version:
     output["behavior_version"] = args.behavior_version
 

@@ -461,6 +461,39 @@ def test_fused_artifact_accepts_matching_tinygrad():
   assert modeld._normalize_model_artifact(artifact) is artifact
 
 
+def test_fused_artifact_without_device_metadata_remains_compatible(monkeypatch):
+  artifact = {
+    "format_version": modeld.ARTIFACT_FORMAT_VERSION,
+    "execution_mode": "fused",
+    "run_model": {},
+    "compiler": {"tinygrad_commit": modeld.tinygrad_commit()},
+  }
+  monkeypatch.setattr(modeld, "get_tg_input_devices", lambda *_args, **_kwargs: {"QUEUE_DEV": "AMD"})
+
+  modeld._validate_fused_artifact_device(artifact, external_gpu_active=True)
+
+
+def test_fused_artifact_accepts_matching_device_metadata(monkeypatch):
+  artifact = {
+    "execution_mode": "fused",
+    "input_devices": {"model": "amd:0"},
+  }
+  monkeypatch.setattr(modeld, "get_tg_input_devices", lambda *_args, **_kwargs: {"QUEUE_DEV": "AMD"})
+
+  modeld._validate_fused_artifact_device(artifact, external_gpu_active=True)
+
+
+def test_fused_artifact_rejects_wrong_device_metadata(monkeypatch):
+  artifact = {
+    "execution_mode": "fused",
+    "input_devices": {"model": "CPU"},
+  }
+  monkeypatch.setattr(modeld, "get_tg_input_devices", lambda *_args, **_kwargs: {"QUEUE_DEV": "AMD"})
+
+  with pytest.raises(ValueError, match="device mismatch"):
+    modeld._validate_fused_artifact_device(artifact, external_gpu_active=True)
+
+
 def test_external_gpu_probe_matches_upstream_retry_loop(monkeypatch):
   from openpilot.system.hardware.chestnut import flash
 

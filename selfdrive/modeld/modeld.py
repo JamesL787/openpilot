@@ -538,6 +538,25 @@ def _normalize_model_artifact(artifact: dict) -> dict:
     "policy_input_keys": FAST_POLICY_INPUTS,
   }
 
+
+def _validate_fused_artifact_device(artifact: dict, external_gpu_active: bool) -> None:
+  """Reject newly tagged fused artifacts compiled for another model device."""
+  if not external_gpu_active or artifact.get("execution_mode") != "fused":
+    return
+
+  input_devices = artifact.get("input_devices")
+  if not isinstance(input_devices, dict) or input_devices.get("model") is None:
+    # The field was added after the first fused artifacts shipped. Preserve
+    # compatibility with those artifacts while enforcing it for new builds.
+    return
+
+  declared = Device.canonicalize(str(input_devices["model"]))
+  expected = Device.canonicalize(str(get_tg_input_devices(PROCESS_NAME, usbgpu=True)["QUEUE_DEV"]))
+  if declared != expected:
+    raise ValueError(
+      f"Fused model artifact device mismatch: built for {declared}, runtime queue is {expected}"
+    )
+
 class ModelState:
   prev_desire: np.ndarray
 
@@ -598,6 +617,7 @@ class ModelState:
     self.model_id = BUILTIN_MODEL_KEY if loaded_builtin else model_id
     self.uses_external_gpu = external_gpu_active and (requires_external_gpu or force_external_gpu) and not loaded_builtin
     artifact = _normalize_model_artifact(_load_model_artifact(model_path))
+    _validate_fused_artifact_device(artifact, self.uses_external_gpu)
 
     self.model_type = artifact["model_type"]
     self.metadata = artifact["metadata"]
