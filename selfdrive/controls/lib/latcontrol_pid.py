@@ -184,10 +184,9 @@ def get_nrdr_modified_eps_kf(v_ego: float) -> float:
 # costs no phase lag on a real maneuver -- only the per-frame excursions are removed.
 NRDR_ANGLE_RATE_LIMIT_DEG_S = 300.0  # 0 disables
 
-# nrdr: time constant for smoothing the desired angle, seconds. Speed-banded through the same
-# HondaLpfTau{LowSpeed,Standard,Highway} params the carcontroller LPF used, so an existing
-# road tune carries over verbatim.
-NRDR_TARGET_SMOOTH_TAU = 0.1
+# nrdr: time constant for smoothing the final modified-EPS torque command, seconds.
+# Speed-banded so the former carcontroller tune carries over without filtering the target.
+NRDR_TORQUE_OUTPUT_LPF_TAU = 0.1
 
 def rate_limit_desired_angle(angle_deg: float, prev_angle_deg: float, max_rate_deg_s: float, dt: float) -> float:
   if max_rate_deg_s <= 0.0 or not math.isfinite(angle_deg):
@@ -399,14 +398,13 @@ class LatControlPID(LatControl):
     self.lat_f_scale_highway = 1.0
     self.phase_direction = 0.0
     self.angle_rate_limit_deg_s = NRDR_ANGLE_RATE_LIMIT_DEG_S
-    # The rate limiter needs its own reference: chaining it off the SMOOTHED target would make
-    # each frame's allowance alpha * max_delta instead of max_delta, throttling real steering.
+    # The rate limiter needs its own reference so its allowance is independent of the output LPF.
     self.prev_rate_limited_angle = 0.0
-    self.target_smooth_filter = FirstOrderFilter(0.0, NRDR_TARGET_SMOOTH_TAU, dt, initialized=False)
-    self.target_smoothing_enabled = True
-    self.lpf_tau_low = NRDR_TARGET_SMOOTH_TAU
-    self.lpf_tau_standard = NRDR_TARGET_SMOOTH_TAU
-    self.lpf_tau_highway = NRDR_TARGET_SMOOTH_TAU
+    self.torque_output_lpf = FirstOrderFilter(0.0, NRDR_TORQUE_OUTPUT_LPF_TAU, dt)
+    self.torque_output_lpf_enabled = True
+    self.torque_output_lpf_tau_low = NRDR_TORQUE_OUTPUT_LPF_TAU
+    self.torque_output_lpf_tau_standard = NRDR_TORQUE_OUTPUT_LPF_TAU
+    self.torque_output_lpf_tau_highway = NRDR_TORQUE_OUTPUT_LPF_TAU
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
@@ -479,39 +477,15 @@ class LatControlPID(LatControl):
     else:
       angle_steers_des_no_offset = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
 
-    # Shape the target before it becomes error, feedforward or phase, so a model curvature
-    # spike cannot slam the P term or flip the turn-in/unwind branches downstream. Slew clip
-    # first, then smooth: clipping removes the excursion outright, where smoothing alone would
-    # still pass alpha of it (~9% of a 155 deg spike) straight into the command.
-    #
-    # The smoothing is the Honda torque LPF, moved off the carcontroller's OUTPUT and onto the
-    # controller's INPUT. Same filter, same tau, same resulting command to the rack -- but on
-    # this side of actuators.torque it is no longer invisible to controlsd, which compares
-    # CC.actuators.torque against carOutput.actuatorsOutput.torque to decide steer_limited_by_
-    # safety. A first-order lag holds a steady-state gap of tau * slew, so with tau = 0.1 s that
-    # comparison tripped its 1e-2 threshold at any command slew above 0.1 authority/s -- under
-    # 6 deg/s of angle-error change at low-speed kp, i.e. essentially the entire time the car
-    # was steering -- and froze the integrator through every curve. Freezing on a lag is wrong
-    # regardless: a lag converges to the command with nothing to wind up against, and the real
-    # clipping cases are already handled by the anti-windup clamp inside PIDController.
-    #
-    # Filtering the target rather than the output is also strictly the better placement: P, the
-    # feedforward, desired_angle_delta and therefore phase all see the smoothed value, so the
-    # nonlinear output scales stop flapping between turn-in and unwind on alternate frames.
-    # An output-side filter is applied after those scales and can only smear that chatter.
-    #
-    # Only while active: while disengaged both states track the raw target below, so
-    # re-engagement snaps to the current command instead of slewing in from a stale value.
+    # Shape the target before it becomes error, feedforward or phase. Keep the target free of
+    # first-order smoothing for this A/B: model-action interpolation and the angle-rate ceiling
+    # handle target continuity, while the single speed-banded LPF below acts on the final torque
+    # command after all modified-EPS output shaping.
     if active and self.is_eps_modified:
       angle_steers_des_no_offset = rate_limit_desired_angle(
         angle_steers_des_no_offset, self.prev_rate_limited_angle, self.angle_rate_limit_deg_s, self.dt,
       )
       self.prev_rate_limited_angle = angle_steers_des_no_offset
-      if self.target_smoothing_enabled:
-        self.target_smooth_filter.update_alpha(
-          _lat_pid_scale_banded(CS.vEgo, self.lpf_tau_low, self.lpf_tau_standard, self.lpf_tau_highway)
-        )
-        angle_steers_des_no_offset = float(self.target_smooth_filter.update(angle_steers_des_no_offset))
 
     angle_steers_des = angle_steers_des_no_offset + params.angleOffsetDeg
     error = angle_steers_des - CS.steeringAngleDeg
@@ -523,8 +497,8 @@ class LatControlPID(LatControl):
       pid_log.active = False
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
       self.prev_rate_limited_angle = angle_steers_des_no_offset
-      self.target_smooth_filter.x = angle_steers_des_no_offset
-      self.target_smooth_filter.initialized = True
+      self.torque_output_lpf.x = 0.0
+      self.torque_output_lpf.initialized = True
       self.eps_modified_steering_pressed_filter_s = 0.0
       self.eps_modified_steering_pressed_prev = False
       self.prev_output_torque = 0.0
@@ -593,10 +567,16 @@ class LatControlPID(LatControl):
           self.lat_f_scale_highway = _get_param_float(self.params, "LatFScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
           self.angle_rate_limit_deg_s = _get_param_float(self.params, "NrdrLatAngleRateLimit",
                                                          NRDR_ANGLE_RATE_LIMIT_DEG_S, 0.0, 2000.0)
-          self.target_smoothing_enabled = _get_param_bool(self.params, "HondaTorqueLowPassFilter", True)
-          self.lpf_tau_low = _get_param_float(self.params, "HondaLpfTauLowSpeed", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
-          self.lpf_tau_standard = _get_param_float(self.params, "HondaLpfTauStandard", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
-          self.lpf_tau_highway = _get_param_float(self.params, "HondaLpfTauHighway", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
+          self.torque_output_lpf_enabled = _get_param_bool(self.params, "HondaTorqueOutputLowPassFilter", True)
+          self.torque_output_lpf_tau_low = _get_param_float(
+            self.params, "HondaTorqueOutputLpfTauLowSpeed", NRDR_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0,
+          )
+          self.torque_output_lpf_tau_standard = _get_param_float(
+            self.params, "HondaTorqueOutputLpfTauStandard", NRDR_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0,
+          )
+          self.torque_output_lpf_tau_highway = _get_param_float(
+            self.params, "HondaTorqueOutputLpfTauHighway", NRDR_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0,
+          )
           self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
@@ -631,6 +611,22 @@ class LatControlPID(LatControl):
         output_alpha = get_civic_bosch_modified_pid_output_alpha(angle_steers_des_no_offset, desired_angle_delta, CS.vEgo,
                                                                  output_torque, self.prev_output_torque)
         output_torque = self.prev_output_torque + (output_alpha * (output_torque - self.prev_output_torque))
+        output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
+
+      if self.is_eps_modified:
+        if self.torque_output_lpf_enabled:
+          self.torque_output_lpf.update_alpha(
+            _lat_pid_scale_banded(
+              CS.vEgo,
+              self.torque_output_lpf_tau_low,
+              self.torque_output_lpf_tau_standard,
+              self.torque_output_lpf_tau_highway,
+            )
+          )
+          output_torque = float(self.torque_output_lpf.update(output_torque))
+        else:
+          self.torque_output_lpf.x = output_torque
+          self.torque_output_lpf.initialized = True
         output_torque = float(max(min(output_torque, self.steer_max), -self.steer_max))
 
       pid_log.active = True

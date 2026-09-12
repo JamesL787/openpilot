@@ -670,18 +670,18 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "HondaTorqueLowPassFilter",
-        "label": "Honda Steering Target Smoothing",
-        "description": "Smooths the desired steering angle with speed-banded tau values.",
+        "key": "HondaTorqueOutputLowPassFilter",
+        "label": "Honda Torque Output LPF",
+        "description": "Smooths the final modified-EPS torque command with speed-banded tau values.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LateralTune",
         "settings_tier": "advanced"
       },
       {
-        "key": "HondaLpfTauLowSpeed",
-        "label": "Low Speed LPF Tau",
-        "description": "Low-pass tau below 25 mph.",
+        "key": "HondaTorqueOutputLpfTauLowSpeed",
+        "label": "Output LPF Tau: Low Speed",
+        "description": "Torque-output low-pass tau below 25 mph.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -691,9 +691,9 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "HondaLpfTauStandard",
-        "label": "Standard Speed LPF Tau",
-        "description": "Low-pass tau from 25 to 50 mph.",
+        "key": "HondaTorqueOutputLpfTauStandard",
+        "label": "Output LPF Tau: Standard",
+        "description": "Torque-output low-pass tau from 25 to 50 mph.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -703,9 +703,9 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "HondaLpfTauHighway",
-        "label": "Highway LPF Tau",
-        "description": "Low-pass tau above 50 mph.",
+        "key": "HondaTorqueOutputLpfTauHighway",
+        "label": "Output LPF Tau: Highway",
+        "description": "Torque-output low-pass tau above 50 mph.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,

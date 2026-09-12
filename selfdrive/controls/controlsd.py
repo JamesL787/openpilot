@@ -621,9 +621,8 @@ class Controls:
     #
     # Measured on route 00000276 under 15 mph: each model frame steps the desired wheel angle by
     # 2.0 deg at p50 and 6.9 deg at p90, half of those steps are smaller than the angle-rate clip
-    # and so pass it untouched, and 19% of the command's chatter power sits in the 15-22 Hz band
-    # -- about four times what it is with the lateral target low-pass enabled. That low-pass is
-    # what has been hiding this, at the cost of 0.11 s of lag on every genuine maneuver too.
+    # and so pass it untouched. Target smoothing is deliberately not used here; modified-EPS
+    # torque is filtered once, after output shaping, in LatControlPID.
     #
     # Ramp toward each new action across the model frame instead. Starting the ramp from the value
     # currently being commanded keeps the target continuous by construction -- there is no step
@@ -953,12 +952,10 @@ class Controls:
       else:
         # This is a proxy, not a report: it infers "the car could not deliver what we asked" from
         # the car controller having returned something else. That only holds while every stage
-        # between actuators.torque and actuatorsOutput.torque is a genuine limit. A car controller
-        # that also does comfort shaping here -- the Honda torque LPF used to -- makes the two
-        # indistinguishable, and because a first-order lag holds a steady-state gap of tau * slew
-        # it trips this 1e-2 threshold continuously rather than occasionally: tau = 0.1 s means any
-        # command slewing faster than 0.1 authority/s reads as limited, which froze the lateral
-        # integrator for effectively the whole drive. Shaping belongs upstream of actuators.torque.
+        # between actuators.torque and actuatorsOutput.torque is a genuine limit. The modified-EPS
+        # torque-output LPF runs in LatControlPID before actuators.torque, so comfort shaping is
+        # already reflected in CC and this comparison remains a safety-limit proxy rather than a
+        # filter-lag detector.
         self.steer_limited_by_safety = abs(CC.actuators.torque - CO.actuatorsOutput.torque) > 1e-2
     else:
       self.steer_limited_by_safety = False

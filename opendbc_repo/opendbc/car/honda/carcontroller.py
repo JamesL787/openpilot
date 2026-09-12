@@ -619,10 +619,10 @@ class CarController(CarControllerBase):
 
       torque_cmd *= self.override_ramp
 
-      # The speed-banded torque LPF that used to sit here has moved into LatControlPID, where it
-      # smooths the desired ANGLE instead of this output. Same filter, same HondaTorqueLowPassFilter
-      # toggle, same HondaLpfTau{LowSpeed,Standard,Highway} taus -- the rack still sees a smoothed
-      # command, it is just produced upstream of actuators.torque now.
+      # The speed-banded torque-output LPF now runs in LatControlPID after all modified-EPS
+      # shaping. It uses the HondaTorqueOutputLowPassFilter toggle and
+      # HondaTorqueOutputLpfTau{LowSpeed,Standard,Highway} taus, so actuators.torque already
+      # contains the command that this controller will deliver to the rack.
       #
       # Filtering here made this controller's own shaping indistinguishable from safety limiting.
       # controlsd derives steer_limited_by_safety from
@@ -633,9 +633,8 @@ class CarController(CarControllerBase):
       # curve. Smoothing upstream of actuators.torque leaves that comparison meaning only what it
       # says: genuine safety clipping.
       #
-      # Deliberately removed rather than left behind a disabled-by-default toggle:
-      # HondaTorqueLowPassFilter is seeded True on existing installs, so any surviving path here
-      # would double-filter.
+      # There is intentionally no second filter here: keeping this stage unfiltered ensures the
+      # controlsd CC-versus-carOutput comparison only reports actual safety limiting.
 
     else:
       self.override_ramp = 0.0

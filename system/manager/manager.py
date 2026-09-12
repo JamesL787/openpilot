@@ -70,6 +70,7 @@ STARPILOT_PARAMS_CACHE_MIGRATION_FLAG = Path("/data") / "starpilot_params_cache_
 STARPILOT_DEFAULT_MODEL_MIGRATION_FLAG = Path("/data") / "starpilot_default_model_rdf_v4"
 STARPILOT_CE_MODEL_STOP_TIME_MIGRATION_FLAG = Path("/data") / "starpilot_ce_model_stop_time_v2"
 STARPILOT_LEGACY_CACHE_MARKER_KEYS = ("RemapCancelToDistance",)
+NRDR_HONDA_TORQUE_OUTPUT_LPF_RENAME_MIGRATION_FLAG = Path("/data") / "nrdr_honda_torque_output_lpf_rename_v1"
 NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_tuning_defaults_v6"
 NRDR_HONDA_OVERRIDE_SEMANTICS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_override_semantics_v1"
 NRDR_KONIK_DEFAULT_MIGRATION_FLAG = Path("/data") / "nrdr_konik_default_v1"
@@ -809,6 +810,48 @@ def migrate_traffic_follow_default(params: Params, params_cache: Params) -> None
     cloudlog.exception(f"Failed to write migration flag: {STARPILOT_TRAFFIC_FOLLOW_MIGRATION_FLAG}")
 
 
+def migrate_nrdr_honda_torque_output_lpf_param_names(params: Params, params_cache: Params) -> None:
+  """Rename the persisted target-LPF keys before the manager removes unknown keys."""
+  if NRDR_HONDA_TORQUE_OUTPUT_LPF_RENAME_MIGRATION_FLAG.exists():
+    return
+
+  renamed_keys: list[str] = []
+  key_renames = {
+    "HondaTorqueLowPassFilter": "HondaTorqueOutputLowPassFilter",
+    "HondaLpfTauLowSpeed": "HondaTorqueOutputLpfTauLowSpeed",
+    "HondaLpfTauStandard": "HondaTorqueOutputLpfTauStandard",
+    "HondaLpfTauHighway": "HondaTorqueOutputLpfTauHighway",
+  }
+
+  for old_key, new_key in key_renames.items():
+    if _has_persisted_param_file(params, new_key) or _has_persisted_param_file(params_cache, new_key):
+      continue
+
+    value = _load_first_available_param_value(params, params_cache, old_key, new_key)
+    if value is None:
+      continue
+
+    try:
+      params.put(new_key, value)
+      params_cache.put(new_key, value)
+      renamed_keys.append(f"{old_key}->{new_key}")
+    except Exception:
+      cloudlog.exception(f"Failed to migrate renamed Honda torque-output LPF param {old_key}")
+
+  for old_key in key_renames:
+    _remove_persisted_param_file(params, old_key)
+    _remove_persisted_param_file(params_cache, old_key)
+
+  if renamed_keys:
+    cloudlog.warning(f"Renamed Honda torque-output LPF params: {renamed_keys}")
+
+  try:
+    NRDR_HONDA_TORQUE_OUTPUT_LPF_RENAME_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    NRDR_HONDA_TORQUE_OUTPUT_LPF_RENAME_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+  except Exception:
+    cloudlog.exception(f"Failed to write migration flag: {NRDR_HONDA_TORQUE_OUTPUT_LPF_RENAME_MIGRATION_FLAG}")
+
+
 def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> None:
   if NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG.exists():
     return
@@ -817,14 +860,14 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
   desired_bool_values = {
     "HondaDriverAssistDuringOverride": False,
     "HondaSteerDeltaLimiter": False,
-    "HondaTorqueLowPassFilter": True,
+    "HondaTorqueOutputLowPassFilter": True,
     "NrdrLatModelActionInterp": True,
     "NrdrLatUseFirmwareVgr": False,
   }
   desired_float_values = {
-    "HondaLpfTauHighway": 0.1,
-    "HondaLpfTauLowSpeed": 0.1,
-    "HondaLpfTauStandard": 0.1,
+    "HondaTorqueOutputLpfTauHighway": 0.1,
+    "HondaTorqueOutputLpfTauLowSpeed": 0.1,
+    "HondaTorqueOutputLpfTauStandard": 0.1,
     "HondaOverrideFadeDownSecs": 0.1,
     "HondaOverrideFadeUpSecs": 1.5,
     "HondaSteerDeltaDown": 3.0,
@@ -1129,6 +1172,11 @@ def manager_init() -> None:
   # deleted by clear_all() if we do not migrate them first.
   migrate_starpilot_param_renames(params, params_cache)
   last_timing = _log_boot_timing("manager_init", "param_renames", manager_init_start, last_timing)
+
+  # These LPF keys were renamed when the filter moved from target-angle smoothing to final
+  # torque-output smoothing. This must run before clear_all() removes unknown legacy keys.
+  migrate_nrdr_honda_torque_output_lpf_param_names(params, params_cache)
+  last_timing = _log_boot_timing("manager_init", "nrdr_lpf_param_renames", manager_init_start, last_timing)
 
   params.clear_all(ParamKeyFlag.CLEAR_ON_MANAGER_START)
   params.clear_all(ParamKeyFlag.CLEAR_ON_ONROAD_TRANSITION)

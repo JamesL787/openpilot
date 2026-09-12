@@ -142,9 +142,9 @@ HigherBitrate
 HolidayThemes
 HondaDriverAssistDuringOverride
 HondaLiveLearningGas
-HondaLpfTauHighway
-HondaLpfTauLowSpeed
-HondaLpfTauStandard
+HondaTorqueOutputLpfTauHighway
+HondaTorqueOutputLpfTauLowSpeed
+HondaTorqueOutputLpfTauStandard
 HondaOverrideFadeDownSecs
 HondaOverrideFadeUpSecs
 HondaOverrideTorqueScale
@@ -154,7 +154,7 @@ HondaSteerDeltaUp
 HondaStopAccel
 HondaStoppingDecelRate
 HondaStoppingDecelRateLong
-HondaTorqueLowPassFilter
+HondaTorqueOutputLowPassFilter
 HondaVEgoStarting
 HondaVEgoStopping
 HumanLaneChanges
