@@ -535,7 +535,7 @@ def test_external_gpu_compiler_uses_fused_comma_stack(monkeypatch, tmp_path):
   assert env["DEV"] == "USB+AMD:LLVM"
   assert env["FRAME_DEV"] == "CPU"
   assert env["TC_MIN_GLOBALS"] == "32"
-  assert "WARP_DEV" not in env
+  assert env["WARP_DEV"] == "QCOM"
 
 
 def test_external_gpu_warmup_runs_a_complete_frame_and_resets(monkeypatch):

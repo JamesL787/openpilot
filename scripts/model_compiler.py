@@ -595,8 +595,10 @@ def compile_driving(
       "GMMU": "0",
       "TC_OPT": "2",
       "TC_MIN_GLOBALS": "32",
+      # Keep camera buffers and the warp on the device native to the comma;
+      # only the prepared model crop crosses the USB link to AMD.
+      "WARP_DEV": "QCOM",
     })
-    compile_env.pop("WARP_DEV", None)
     command += ["--fused", "--benchmark-runs", str(validation_runs)]
     wait_for_external_gpu()
     command = external_gpu_compile_command(command)

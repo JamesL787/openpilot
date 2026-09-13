@@ -42,6 +42,7 @@ from openpilot.selfdrive.modeld.compile_modeld import (
   FAST_POLICY_INPUTS,
   FAST_WARP_INPUTS,
   FUSED_MODELD_INPUTS,
+  FUSED_LEGACY_MODELD_INPUTS,
   IMAGE_HISTORY_IN_POLICY,
   IMAGE_HISTORY_IN_WARP,
   LEGACY_ARTIFACT_FORMAT_VERSION,
@@ -550,12 +551,21 @@ def _validate_fused_artifact_device(artifact: dict, external_gpu_active: bool) -
     # compatibility with those artifacts while enforcing it for new builds.
     return
 
+  devices = get_tg_input_devices(PROCESS_NAME, usbgpu=True)
   declared = Device.canonicalize(str(input_devices["model"]))
-  expected = Device.canonicalize(str(get_tg_input_devices(PROCESS_NAME, usbgpu=True)["QUEUE_DEV"]))
+  expected = Device.canonicalize(str(devices["QUEUE_DEV"]))
   if declared != expected:
     raise ValueError(
       f"Fused model artifact device mismatch: built for {declared}, runtime queue is {expected}"
     )
+
+  if input_devices.get("warp") is not None:
+    declared_warp = Device.canonicalize(str(input_devices["warp"]))
+    expected_warp = Device.canonicalize(str(devices["WARP_DEV"]))
+    if declared_warp != expected_warp:
+      raise ValueError(
+        f"Fused model artifact warp device mismatch: built for {declared_warp}, runtime warp is {expected_warp}"
+      )
 
 class ModelState:
   prev_desire: np.ndarray
@@ -628,6 +638,7 @@ class ModelState:
     self.image_history_pipeline = artifact.get("image_history_pipeline", IMAGE_HISTORY_IN_WARP)
     if self.fused:
       self.model_input_keys = tuple(artifact.get("input_keys", FUSED_MODELD_INPUTS))
+      self.fused_legacy = self.model_input_keys == FUSED_LEGACY_MODELD_INPUTS
       self.run_model = artifact["run_model"][(cam_w, cam_h)]
       self.can_prepare_only = False
     else:
@@ -644,12 +655,19 @@ class ModelState:
       if self.fused:
         frame_info = get_nv12_info(cam_w, cam_h)
         self.frame_copy_size = nv12_copy_size(*frame_info[:3])
-        self.input_queues, self.npy, self.frame_views = make_fused_supercombo_input_queues(
-          input_shapes,
-          self.frame_skip,
-          self.QUEUE_DEV,
-          self.frame_copy_size,
-        )
+        if self.fused_legacy:
+          self.input_queues, self.npy, self.frame_views = make_fused_supercombo_input_queues(
+            input_shapes,
+            self.frame_skip,
+            self.QUEUE_DEV,
+            self.frame_copy_size,
+          )
+        else:
+          self.input_queues, self.npy = make_fused_supercombo_input_queues(
+            input_shapes,
+            self.frame_skip,
+            self.QUEUE_DEV,
+          )
       else:
         self.input_queues, self.npy = make_supercombo_input_queues(input_shapes, self.frame_skip, self.QUEUE_DEV)
     else:
@@ -762,12 +780,19 @@ class ModelState:
   def _reset_state(self) -> None:
     if self.model_type == "supercombo":
       if self.fused:
-        self.input_queues, self.npy, self.frame_views = make_fused_supercombo_input_queues(
-          self.policy_input_shapes,
-          self.frame_skip,
-          self.QUEUE_DEV,
-          self.frame_copy_size,
-        )
+        if self.fused_legacy:
+          self.input_queues, self.npy, self.frame_views = make_fused_supercombo_input_queues(
+            self.policy_input_shapes,
+            self.frame_skip,
+            self.QUEUE_DEV,
+            self.frame_copy_size,
+          )
+        else:
+          self.input_queues, self.npy = make_fused_supercombo_input_queues(
+            self.policy_input_shapes,
+            self.frame_skip,
+            self.QUEUE_DEV,
+          )
       else:
         self.input_queues, self.npy = make_supercombo_input_queues(
           self.policy_input_shapes, self.frame_skip, self.QUEUE_DEV,
@@ -791,7 +816,7 @@ class ModelState:
       key: np.zeros(self.frame_buf_size, dtype=np.uint8)
       for key in self.vision_input_names
     }
-    if not self.fused:
+    if not self.fused or not self.fused_legacy:
       # A host pointer is not a valid camera buffer for every warp backend. Match
       # upstream and substitute realized device buffers for warmup only.
       self._blob_cache.update({
@@ -818,7 +843,7 @@ class ModelState:
       raise RuntimeError("shared camera warp requires a policy-history model artifact")
 
     frames: dict[str, Tensor] = {}
-    if fused:
+    if fused and self.fused_legacy:
       for key, buf in bufs.items():
         np.copyto(
           self.frame_views[key],
@@ -861,9 +886,15 @@ class ModelState:
 
     if fused:
       self.last_warp_output = None
-      output_tensors = self.run_model(
-        **{key: self.input_queues[key] for key in self.model_input_keys},
-      )
+      queue_inputs = {key: self.input_queues[key] for key in FUSED_LEGACY_MODELD_INPUTS}
+      if self.fused_legacy:
+        output_tensors = self.run_model(**queue_inputs)
+      else:
+        output_tensors = self.run_model(
+          frame=frames[self.road_key],
+          big_frame=frames[self.wide_key],
+          **queue_inputs,
+        )
     else:
       if shared_warp is None:
         warp_output = self.warp_enqueue(
