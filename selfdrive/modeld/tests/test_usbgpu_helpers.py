@@ -483,6 +483,20 @@ def test_fused_artifact_accepts_matching_device_metadata(monkeypatch):
   modeld._validate_fused_artifact_device(artifact, external_gpu_active=True)
 
 
+def test_fused_artifact_accepts_matching_warp_device_metadata(monkeypatch):
+  artifact = {
+    "execution_mode": "fused",
+    "input_devices": {"model": "amd:0", "warp": "QCOM"},
+  }
+  monkeypatch.setattr(
+    modeld,
+    "get_tg_input_devices",
+    lambda *_args, **_kwargs: {"QUEUE_DEV": "AMD", "WARP_DEV": "QCOM"},
+  )
+
+  modeld._validate_fused_artifact_device(artifact, external_gpu_active=True)
+
+
 def test_fused_artifact_rejects_wrong_device_metadata(monkeypatch):
   artifact = {
     "execution_mode": "fused",
@@ -491,6 +505,21 @@ def test_fused_artifact_rejects_wrong_device_metadata(monkeypatch):
   monkeypatch.setattr(modeld, "get_tg_input_devices", lambda *_args, **_kwargs: {"QUEUE_DEV": "AMD"})
 
   with pytest.raises(ValueError, match="device mismatch"):
+    modeld._validate_fused_artifact_device(artifact, external_gpu_active=True)
+
+
+def test_fused_artifact_rejects_wrong_warp_device_metadata(monkeypatch):
+  artifact = {
+    "execution_mode": "fused",
+    "input_devices": {"model": "AMD", "warp": "CPU"},
+  }
+  monkeypatch.setattr(
+    modeld,
+    "get_tg_input_devices",
+    lambda *_args, **_kwargs: {"QUEUE_DEV": "AMD", "WARP_DEV": "QCOM"},
+  )
+
+  with pytest.raises(ValueError, match="warp device mismatch"):
     modeld._validate_fused_artifact_device(artifact, external_gpu_active=True)
 
 
