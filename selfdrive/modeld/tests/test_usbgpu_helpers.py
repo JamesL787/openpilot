@@ -38,10 +38,28 @@ class _FakeParser:
     return outputs
 
 
+class _LegacyBufferReduce:
+  """Mirror the pre-BufferStorage pickle tuple emitted by VFN's old tinygrad."""
+  def __reduce__(self):
+    from tinygrad.device import Buffer
+    from tinygrad.dtype import dtypes
+
+    # The seventh positional item used to be uop_refcount; it now maps to base.
+    return Buffer, ("CPU", 4, dtypes.uint8, None, None, None, 0)
+
+
 def test_external_gpu_keeps_the_native_device_available():
   assert tinygrad_dev_config(True, tici=True) == "QCOM;USB+AMD:LLVM"
   assert tinygrad_dev_config(False, tici=True) == "QCOM"
   assert tinygrad_dev_config(True, tici=False) == "CPU:LLVM;USB+AMD:LLVM"
+
+
+def test_current_tinygrad_loads_legacy_vfn_buffer_pickle():
+  buffer = pickle.loads(pickle.dumps(_LegacyBufferReduce(), protocol=5))
+
+  assert buffer.device == "CPU"
+  assert buffer.size == 4
+  assert buffer._base is None
 
 
 def test_tinygrad_call_info_accepts_old_and_new_pickle_schemas():

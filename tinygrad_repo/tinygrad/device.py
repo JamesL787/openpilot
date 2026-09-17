@@ -109,6 +109,12 @@ class Buffer:
   profile_events:list[ProfileEvent] = []
   def __init__(self, device:str, size:int, dtype:DType, opaque:Any=None, options:BufferSpec|None=None,
                initial_value:bytes|pickle.PickleBuffer|None=None, base:Buffer|None=None, offset:int=0, preallocate=False):
+    # VFN artifacts built before tinygrad's BufferStorage migration serialized
+    # ``uop_refcount`` in this positional slot. It was an integer (normally
+    # zero), whereas current tinygrad uses the slot for a base Buffer. Keep
+    # those immutable model PKLs loadable; the obsolete refcount has no runtime
+    # equivalent after the migration.
+    if isinstance(base, int): base = None
     assert isinstance(dtype, DType)
     self.device, self.size, self.dtype, self.offset, self.allocated_views, self._base = Device.canonicalize(device), size, dtype, offset, 0, base
     self.options = options if options is not None else BufferSpec()
