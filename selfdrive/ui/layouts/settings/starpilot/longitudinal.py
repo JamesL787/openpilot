@@ -590,15 +590,17 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_value=lambda: f"{self._params.get_float('VEgoStopping'):.2f}m/s",
                  on_click=lambda: self._show_slider("VEgoStopping", 0.01, 1.0, step=0.01, unit="m/s", value_type="float"),
                  visible=self._show_stop_tuning_values),
-      SettingRow("BlotV2", "toggle", tr_noop("BLoTv2 Supervisor"),
+      SettingRow("BlotV3", "toggle", tr_noop("BLoTv3 Supervisor"),
                  subtitle=tr_noop("Experimental. Tracks how much deceleration the lead actually needs, "
                                   "softens the solver's jerk cost when it has to respond, and pads "
-                                  "following time when the lead is slowing. Never commands acceleration "
+                                  "following time when the lead is slowing or stopped. The padding "
+                                  "stays at its maximum as braking need grows, and the softening is "
+                                  "held through the final crawl to a stop. Never commands acceleration "
                                   "itself. Works off the radar-tracked lead, independent of the car it's "
                                   "running on -- Model Lead Trajectory itself runs unconditionally for "
                                   "every car, matching upstream."),
-                 get_state=lambda: self._params.get_bool("BlotV2"),
-                 set_state=lambda v: self._params.put_bool("BlotV2", v),
+                 get_state=lambda: self._params.get_bool("BlotV3"),
+                 set_state=lambda v: self._params.put_bool("BlotV3", v),
                  visible=adv),
     ]
 

@@ -20,7 +20,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDX
 from openpilot.selfdrive.controls.lib.lead_behavior import is_radarless_matched_follow_window
 from openpilot.selfdrive.controls.lib.lead_follow_policy import apply as apply_follow_policy
 from openpilot.selfdrive.controls.lib.lead_follow_policy import is_nonurgent_duplicate_vision_follow
-from openpilot.selfdrive.controls.lib.blotv2 import BLoTv2Supervisor, model_predicted_acceleration
+from openpilot.selfdrive.controls.lib.blotv3 import BLoTv3Supervisor, model_predicted_acceleration
 from openpilot.selfdrive.controls.lib.longitudinal_lead import LeadObservation
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_far_follow_output_slew_rates,
@@ -579,20 +579,20 @@ def get_accel_from_plan(speeds, accels, action_t=DT_MDL, vEgoStopping=0.05):
 
 
 class LongitudinalPlanner:
-  def _blotv2_active(self) -> bool:
-    """Gated only on BlotV2, matching MLT's own unconditional scope -- BLoTv2 works off
+  def _blotv3_active(self) -> bool:
+    """Gated only on BlotV3, matching MLT's own unconditional scope -- BLoTv3 works off
     any car's radar-tracked lead, nothing here is Civic-Bosch-specific. Re-read about once a
     second so the toggle applies without a restart."""
-    self._blotv2_frame += 1
-    if self._blotv2_params is None or self._blotv2_frame % 100 == 0:
+    self._blotv3_frame += 1
+    if self._blotv3_params is None or self._blotv3_frame % 100 == 0:
       try:
         from openpilot.common.params import Params
-        if self._blotv2_params is None:
-          self._blotv2_params = Params()
-        self._blotv2_enabled = self._blotv2_params.get_bool("BlotV2")
+        if self._blotv3_params is None:
+          self._blotv3_params = Params()
+        self._blotv3_enabled = self._blotv3_params.get_bool("BlotV3")
       except Exception:
-        self._blotv2_enabled = False
-    return self._blotv2_enabled
+        self._blotv3_enabled = False
+    return self._blotv3_enabled
 
   def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
@@ -616,13 +616,13 @@ class LongitudinalPlanner:
 
     # Model Lead Trajectory (commaai/openpilot#37824) now runs unconditionally for every
     # car -- StarPilot ships it that way upstream, so we match rather than keep our own
-    # narrower gate. BLoTv2 (SpysyWeeb/Spysypilot) follows the same scope: it was built
+    # narrower gate. BLoTv3 (SpysyWeeb/Spysypilot) follows the same scope: it was built
     # assuming MLT as a precondition, so it runs for every car too, behind its own param.
-    self._blotv2 = BLoTv2Supervisor(dt)
-    self._blotv2_policy = None
-    self._blotv2_enabled = False
-    self._blotv2_frame = 0
-    self._blotv2_params = None
+    self._blotv3 = BLoTv3Supervisor(dt)
+    self._blotv3_policy = None
+    self._blotv3_enabled = False
+    self._blotv3_frame = 0
+    self._blotv3_params = None
 
     self.generation = None
 
@@ -2228,14 +2228,14 @@ class LongitudinalPlanner:
     lead_one_active = bool(self.lead_one.status and lead_control_active)
     effective_t_follow = self.get_dynamic_t_follow(sm['starpilotPlan'].tFollow, self.lead_one if lead_one_active else None, v_ego)
 
-    # BLoTv2 supervisor (SpysyWeeb/Spysypilot BLoTv2). It never commands acceleration --
+    # BLoTv3 supervisor (SpysyWeeb/Spysypilot BLoTv3). It never commands acceleration --
     # it returns a jerk-cost scale and a following-time pad, both bounded and slew limited.
     # Run it after effective_t_follow is final and after the follow policy has had its say,
     # so its pad is additive rather than competing with our own t_follow modifiers.
-    self._blotv2_policy = None
-    if self._blotv2_active():
+    self._blotv3_policy = None
+    if self._blotv3_active():
       model_leads_now = sm['modelV2'].leadsV3
-      self._blotv2_policy = self._blotv2.update(
+      self._blotv3_policy = self._blotv3.update(
         LeadObservation.from_radar(self.lead_one if lead_one_active else None,
                                    sm.all_checks(['radarState'])),
         v_ego,
@@ -2243,9 +2243,9 @@ class LongitudinalPlanner:
         effective_t_follow,
         model_predicted_acceleration(model_leads_now[0] if len(model_leads_now) > 0 else None),
       )
-      effective_t_follow = float(self._blotv2_policy.t_follow)
+      effective_t_follow = float(self._blotv3_policy.t_follow)
     else:
-      self._blotv2.reset()
+      self._blotv3.reset()
 
     if self.is_preap and self.nap_adaptive_accel and lead_one_active:
       follow_limit = get_preap_follow_limit(v_ego)
@@ -2421,11 +2421,11 @@ class LongitudinalPlanner:
 
     personality = get_longitudinal_personality(sm)
 
-    # BLoTv2 softens the acceleration-jerk cost when it detects a need to respond. Applied
+    # BLoTv3 softens the acceleration-jerk cost when it detects a need to respond. Applied
     # as a multiplier so our speed-scheduled costs still set the baseline.
-    blotv2_jerk_scale = float(self._blotv2_policy.jerk_scale) if self._blotv2_policy is not None else 1.0
+    blotv3_jerk_scale = float(self._blotv3_policy.jerk_scale) if self._blotv3_policy is not None else 1.0
 
-    self.mpc.set_weights(sm['starpilotPlan'].accelerationJerk * blotv2_jerk_scale,
+    self.mpc.set_weights(sm['starpilotPlan'].accelerationJerk * blotv3_jerk_scale,
                          sm['starpilotPlan'].dangerJerk,
                          sm['starpilotPlan'].speedJerk,
                          prev_accel_constraint,

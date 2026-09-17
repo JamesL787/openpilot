@@ -370,7 +370,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LongPidTuneScale", {PERSISTENT, INT, "100", "100", 2}},
     {"LongPitch", {PERSISTENT, BOOL, "1", "0", 2, SETTINGS_SIMPLE}},
     {"NrdrHondaEcuMatchedLong", {PERSISTENT, BOOL, "0", "0", 2}},
-    {"BlotV2", {PERSISTENT, BOOL, "0", "0", 3}},
+    {"BlotV3", {PERSISTENT, BOOL, "0", "0", 3}},
     // Tester rollout: parse the Bosch-A harness's own 16-slot radar object bank into real
     // leadOne/leadTwo tracks instead of treating the car as radarless. RX-only, no CAN authority taken.
     {"BoschARadar", {PERSISTENT, BOOL, "1", "1", 3}},
