@@ -400,7 +400,7 @@ def test_all_compilation_uses_oob_and_external_gpu_is_opt_in(tmp_path, monkeypat
   assert external_kwargs["env"]["DEV"] == "USB+AMD:LLVM"
   assert external_kwargs["env"]["FRAME_DEV"] == "CPU"
   assert external_kwargs["env"]["TC_MIN_GLOBALS"] == "32"
-  assert "WARP_DEV" not in external_kwargs["env"]
+  assert external_kwargs["env"]["WARP_DEV"] == "QCOM"
   assert all(flag not in external_kwargs["env"] for flag in ("IMAGE", "NOLOCALS", "OPENPILOT_HACKS"))
 
 
@@ -418,6 +418,26 @@ def test_external_gpu_compile_does_not_pin_other_platforms(monkeypatch):
   monkeypatch.setattr(model_compiler.platform, "machine", lambda: "arm64")
 
   assert model_compiler.external_gpu_compile_command(command) is command
+
+
+def test_upstream_precompiled_warps_build_the_tizi_pair(tmp_path, monkeypatch):
+  invocations = []
+  monkeypatch.setattr(model_compiler, "UPSTREAM_WARP_MODELS_DIR", tmp_path)
+  monkeypatch.setattr(model_compiler, "wait_for_external_gpu", lambda: None)
+  monkeypatch.setattr(model_compiler, "external_gpu_compile_command", lambda command: command)
+  monkeypatch.setattr(model_compiler.subprocess, "run", lambda command, **kwargs: invocations.append((command, kwargs)))
+
+  outputs = model_compiler.compile_upstream_precompiled_warps()
+
+  assert [path.name for path in outputs] == [
+    "big_driving_warp_1928x1208_tinygrad.pkl",
+    "big_driving_warp_1344x760_tinygrad.pkl",
+  ]
+  assert all("compile_warp.py" in invocation[0][1] for invocation in invocations)
+  assert all("--layout" in invocation[0] and "yuv420" in invocation[0] for invocation in invocations)
+  assert all("--frames" in invocation[0] and "2" in invocation[0] for invocation in invocations)
+  assert all(invocation[1]["env"]["DEV"] == "USB+AMD:LLVM" for invocation in invocations)
+  assert all("WARP_DEV" not in invocation[1]["env"] for invocation in invocations)
 
 
 def test_compile_clears_only_selected_model_outputs(tmp_path, monkeypatch):

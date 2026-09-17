@@ -1,9 +1,14 @@
 import os
 import glob
 
+from openpilot.common.transformations.camera import _ar_ox_fisheye, _os_fisheye
+from openpilot.common.transformations.model import MEDMODEL_INPUT_SIZE
+from openpilot.selfdrive.modeld.helpers import usbgpu_present
+
 Import('env', 'envCython', 'arch', 'cereal', 'messaging', 'common', 'gpucommon', 'visionipc', 'transformations')
 lenv = env.Clone()
 lenvCython = envCython.Clone()
+lenv.PrependENVPath('PYTHONPATH', Dir('#tinygrad_repo').abspath)
 
 libs = [cereal, messaging, visionipc, gpucommon, common, 'capnp', 'kj', 'pthread']
 frameworks = []
@@ -58,3 +63,43 @@ if build_dm_artifacts and not skip_dm_tinygrad_pkl:
   )
 else:
   print("Using prebuilt unified driving and driver-monitoring artifacts")
+
+# Comma's current big-model artifacts are a pair: the downloaded AMD policy
+# pickle and a camera-specific Chestnut warp pickle. Build both Tizi camera
+# sizes when the accelerator is connected during the device SCons build.
+if usbgpu_present():
+  from SCons.Script import Action
+  from openpilot.system.hardware.chestnut.flash import link_up
+  from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
+
+  camera_configs = [(camera.width, camera.height) for camera in (_ar_ox_fisheye, _os_fisheye)]
+  compiler = Dir('#tinygrad_repo/examples/openpilot').abspath
+  taskset = 'taskset -c 7 ' if arch == 'larch64' else ''
+  chestnut_flags = 'DEBUG=1 DEV=USB+AMD:LLVM FRAME_DEV=CPU FLOAT16=1 JIT_BATCH_SIZE=0 GMMU=0 TC_OPT=2 TC_MIN_GLOBALS=32'
+  chestnut_lock = File('models/.chestnut.lock').abspath
+
+  def chestnut_action(command):
+    def do_compile(target, source, env):
+      for _ in range(10):
+        if link_up():
+          break
+        time.sleep(1)
+      else:
+        print('Chestnut PCIe link is not ready; skipping big-model warp build')
+        return
+      return env.Execute(command)
+    return Action(do_compile, '  [CHESTNUT] $TARGET')
+
+  import time
+  model_w, model_h = MEDMODEL_INPUT_SIZE
+  warp_deps = [File('#openpilot/system/camerad/cameras/nv12_info.py')]
+  for cam_w, cam_h in camera_configs:
+    target = File(f'models/big_driving_warp_{cam_w}x{cam_h}_tinygrad.pkl').abspath
+    stride, y_height, uv_height, frame_size = get_nv12_info(cam_w, cam_h)
+    command = (
+      f'{chestnut_flags} {taskset}python3 "{compiler}/compile_warp.py" '
+      f'--frame {cam_w},{cam_h},{stride},{y_height},{uv_height},{frame_size} '
+      f'--warp-to {model_w}x{model_h} --layout yuv420 --frames 2 --output {target}'
+    )
+    node = lenv.Command(target, tinygrad_files + warp_deps + [Value(command)], chestnut_action(command))
+    lenv.SideEffect(chestnut_lock, node)

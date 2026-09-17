@@ -11,7 +11,6 @@ import usb1
 from openpilot.system.hardware import HARDWARE, TICI
 os.environ['GMMU'] = '0'
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
-from tinygrad import TinyJit
 from tinygrad.device import Buffer, Device
 from tinygrad.dtype import DType, dtypes
 from tinygrad.helpers import round_up
@@ -53,10 +52,8 @@ from openpilot.selfdrive.modeld.compile_modeld import (
   IMAGE_HISTORY_IN_WARP,
   LEGACY_ARTIFACT_FORMAT_VERSION,
   LEGACY_WARP_INPUTS,
-  NV12Frame,
   _detect_vision_keys,
   derive_frame_skip,
-  make_warp,
   make_fused_supercombo_input_queues,
   make_split_input_queues,
   make_supercombo_input_queues,
@@ -127,6 +124,7 @@ EXTERNAL_GPU_POWER_LOG_INTERVAL_SECONDS = 10.0
 LAT_SMOOTH_BP = [2.0, 8.0]
 MAX_ABS_EXTERNAL_MODEL_OUTPUT = 1e6
 UPSTREAM_PRECOMPILED_EXECUTION_MODE = "upstream_precompiled"
+UPSTREAM_PRECOMPILED_WARP_PREFIX = "big_driving_warp_"
 
 
 def _input_view(buffer: Buffer, shape: tuple[int, ...], dtype: DType, offset: int) -> Tensor:
@@ -134,13 +132,8 @@ def _input_view(buffer: Buffer, shape: tuple[int, ...], dtype: DType, offset: in
   return Tensor(UOp.from_buffer(view)).reshape(shape)
 
 
-def _make_warp_transforms(device: str) -> tuple[Tensor, Tensor]:
-  # TinyJit treats views into one realized buffer as duplicate inputs. Keep the
-  # road and wide-camera transforms in separate buffers for the two-input warp.
-  return tuple(
-    Tensor.zeros((3, 3), dtype="float32", device=device).realize()
-    for _ in range(2)
-  )
+def _upstream_precompiled_warp_path(cam_w: int, cam_h: int) -> Path:
+  return Path(__file__).parent / "models" / f"{UPSTREAM_PRECOMPILED_WARP_PREFIX}{cam_w}x{cam_h}_tinygrad.pkl"
 
 
 def _set_hcq_wait_timeout(timeout_ms: int) -> None:
@@ -640,7 +633,7 @@ class ModelState:
   prev_desire: np.ndarray
 
   def _init_upstream_precompiled(self, artifact: dict, cam_w: int, cam_h: int) -> None:
-    """Adapt Comma's policy-only precompiled artifact to StarPilot's QCOM warp path."""
+    """Load Comma's paired policy and Chestnut-warp precompiled artifacts."""
     self.model_type = "supercombo"
     self.policy_order = []
     self.frame_skip = 1
@@ -670,39 +663,42 @@ class ModelState:
       for name in self.input_specs
       if f"next_{name}" in self.output_specs
     }
-    input_shapes = {
+    self.input_shapes = {
       name: (tuple(shape), np.dtype(dtype))
       for name, (shape, dtype, _) in self.input_specs.items()
     }
-    device = self.model_device
     # Comma's precompiled model JIT is captured against one packed host/device
-    # buffer. Recreating each input as an independent Tensor changes the UOp
-    # signatures and causes TinyJit's args-mismatch check on the first run.
+    # buffer, including the full NV12 frame pair. The companion warp JIT and
+    # policy JIT both receive views into this same AMD allocation.
     self.input_queues = {
-      name: Tensor(np.zeros(shape, dtype=dtype), device=device).realize()
-      for name, (shape, dtype) in input_shapes.items()
+      name: Tensor(np.zeros(shape, dtype=dtype), device=self.model_device).realize()
+      for name, (shape, dtype) in self.input_shapes.items()
       if name in self.state_pairs
     }
     packed_shapes = {
       "tfm": (2, 3, 3),
       **{
         name: shape
-        for name, (shape, _) in input_shapes.items()
+        for name, (shape, _) in self.input_shapes.items()
         if name not in self.state_pairs and name != "new_img"
       },
     }
     packed_size = sum(round_up(math.prod(shape) * 4, 128) for shape in packed_shapes.values())
-    self.packed_input = np.zeros(packed_size + 2 * get_nv12_info(cam_w, cam_h)[3], dtype=np.uint8)
+    _, _, _, self.frame_copy_size = get_nv12_info(cam_w, cam_h)
+    self.packed_input = np.zeros(packed_size + 2 * self.frame_copy_size, dtype=np.uint8)
     self.input_host = Tensor(self.packed_input, device="NPY")._buffer()
-    self.input_device = Tensor(self.packed_input, device=device)._buffer()
+    self.input_device = Tensor(self.packed_input, device=self.model_device)._buffer()
     self.npy = {}
     offset = 0
     for name, shape in packed_shapes.items():
       self.npy[name] = np.ndarray(shape, dtype=np.float32, buffer=self.packed_input, offset=offset)
-      queue = _input_view(self.input_device, shape, dtypes.float32, offset)
-      if name != "tfm":
-        self.input_queues[name] = queue
+      self.input_queues[name] = _input_view(self.input_device, shape, dtypes.float32, offset)
       offset += round_up(self.npy[name].nbytes, 128)
+    self.frames = self.packed_input[packed_size:].reshape(2, self.frame_copy_size)
+    self.warp_inputs = {
+      "input_frame": _input_view(self.input_device, self.frames.shape, dtypes.uint8, packed_size),
+      "M_inv": self.input_queues.pop("tfm"),
+    }
     self.numpy_inputs = {name: value for name, value in self.npy.items() if name != "tfm"}
     self.model_outputs = {
       name: Tensor(np.zeros(shape, dtype=dtype), device=device).realize()
@@ -712,18 +708,24 @@ class ModelState:
       state = self.input_queues[name]
       self.model_outputs[next_name] = _input_view(state._buffer(), state.shape, state.dtype, 0)
 
+    warp_path = _upstream_precompiled_warp_path(cam_w, cam_h)
+    if not warp_path.is_file():
+      raise FileNotFoundError(
+        f"Missing required precompiled Chestnut warp {warp_path.name}; build it offroad before selecting this model"
+      )
+    with warp_path.open("rb") as warp_file:
+      warp_artifact = pickle.load(warp_file)
+    if not isinstance(warp_artifact, dict) or not callable(warp_artifact.get("run")):
+      raise ValueError(f"Invalid precompiled Chestnut warp artifact: {warp_path}")
+    warp_specs = warp_artifact.get("input_specs", {})
+    expected_frame_shape = (2, self.frame_copy_size)
+    if tuple(warp_specs.get("input_frame", ((),))[0]) != expected_frame_shape:
+      raise ValueError(f"Precompiled Chestnut warp frame shape does not match {cam_w}x{cam_h}: {warp_path}")
+    if tuple(warp_specs.get("M_inv", ((),))[0]) != (2, 3, 3):
+      raise ValueError(f"Precompiled Chestnut warp transforms are invalid: {warp_path}")
+    self.run_warp = warp_artifact["run"]
     self.run_model = artifact["run"]
-    new_img_shape = tuple(self.input_specs["new_img"][0])
-    if len(new_img_shape) != 4 or new_img_shape[:2] != (2, 6):
-      raise ValueError(f"Unexpected precompiled new_img shape: {new_img_shape}")
-    self.warped_input_shape = new_img_shape
-    model_h, model_w = new_img_shape[-2] * 2, new_img_shape[-1] * 2
-    nv12 = NV12Frame(cam_w, cam_h, *get_nv12_info(cam_w, cam_h))
-    self.run_warp = TinyJit(
-      make_warp(nv12, model_w, model_h, self.frame_skip, IMAGE_HISTORY_IN_POLICY, device=self.WARP_DEV),
-      prune=True,
-    )
-    self.warp_transforms = _make_warp_transforms(self.WARP_DEV)
+    self.warped_input_shape = tuple(self.input_specs["new_img"][0])
 
     self.road_key, self.wide_key = "img", "big_img"
     self.vision_input_names = [self.road_key, self.wide_key]
@@ -737,7 +739,7 @@ class ModelState:
     self.prev_blinker_on = False
     self.parser = Parser()
     self.aux_parser = Parser(ignore_missing=True)
-    self.frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
+    self.frame_buf_size = self.frame_copy_size
     self._blob_cache = {}
     self.last_warp_output = None
 
@@ -1001,7 +1003,7 @@ class ModelState:
       key: np.zeros(self.frame_buf_size, dtype=np.uint8)
       for key in self.vision_input_names
     }
-    if not self.fused or not self.fused_legacy:
+    if not getattr(self, "precompiled", False) and (not self.fused or not self.fused_legacy):
       # A host pointer is not a valid camera buffer for every warp backend. Match
       # upstream and substitute realized device buffers for warmup only.
       self._blob_cache.update({
@@ -1016,23 +1018,18 @@ class ModelState:
       shape = value.shape[1:] if value.ndim > 1 and value.shape[0] == 1 else value.shape
       inputs[name] = np.zeros(shape, dtype=value.dtype)
 
-    warmup_runs = 3 if getattr(self, "precompiled", False) else 1
-    for _ in range(warmup_runs):
-      self.run(dummy_frames, dict.fromkeys(self.vision_input_names, eye), inputs, False)
+    self.run(dummy_frames, dict.fromkeys(self.vision_input_names, eye), inputs, False)
     self._reset_state()
 
   def _run_upstream_precompiled(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
                                 inputs: dict[str, np.ndarray], after_output_sync: Callable[[], None] | None,
                                 shared_warp: Tensor | None, blinker_on: bool) -> dict[str, np.ndarray]:
-    frames: dict[str, Tensor] = {}
-    for key, buf in bufs.items():
-      ptr = np.frombuffer(buf.data, dtype=np.uint8).ctypes.data
-      cache_key = (key, ptr)
-      if cache_key not in self._blob_cache:
-        self._blob_cache[cache_key] = Tensor.from_blob(
-          ptr, (self.frame_buf_size,), dtype="uint8", device=self.WARP_DEV,
-        )
-      frames[key] = self._blob_cache[cache_key]
+    if shared_warp is not None:
+      raise RuntimeError("Comma precompiled artifacts cannot share a StarPilot warp graph")
+
+    for i, key in enumerate(self.vision_input_names):
+      np.copyto(self.frames[i], np.frombuffer(bufs[key].data, dtype=np.uint8, count=self.frame_copy_size))
+      self.npy["tfm"][i] = transforms[key]
 
     blinker_released = self.prev_blinker_on and not blinker_on
     self.prev_blinker_on = blinker_on
@@ -1051,25 +1048,10 @@ class ModelState:
       if name != self.desire_key and name in inputs:
         value[:] = inputs[name]
 
-    transform_values = np.stack((transforms[self.road_key], transforms[self.wide_key])).astype(np.float32, copy=False)
-    self.npy["tfm"][:] = transform_values if shared_warp is None else 0
     self.input_device.copy_from(self.input_host)
-
-    if shared_warp is None:
-      for transform, value in zip(self.warp_transforms, transform_values, strict=True):
-        transform.assign(value).realize()
-      warped = self.run_warp(
-        tfm=self.warp_transforms[0],
-        big_tfm=self.warp_transforms[1],
-        frame=frames[self.road_key],
-        big_frame=frames[self.wide_key],
-      )
-    else:
-      warped = shared_warp
-    self.last_warp_output = warped
-    model_image = warped.to(self.model_device)
-
-    self.run_model(output_buffers=self.model_outputs, new_img=model_image, **self.input_queues)
+    self.input_queues["new_img"] = self.run_warp(**self.warp_inputs)
+    self.last_warp_output = None
+    self.run_model(output_buffers=self.model_outputs, **self.input_queues)
     model_output = self.model_outputs["outputs"].numpy().reshape(-1)
     if after_output_sync is not None:
       after_output_sync()
@@ -1293,7 +1275,9 @@ def _load_model_lab_model(cam_w: int, cam_h: int, model_id: str, version: str) -
 
 def _model_lab_shared_warp_compatible(lateral: ModelState, longitudinal: ModelState) -> bool:
   return (
-    not getattr(lateral, "fused", False)
+    not getattr(lateral, "precompiled", False)
+    and not getattr(longitudinal, "precompiled", False)
+    and not getattr(lateral, "fused", False)
     and not getattr(longitudinal, "fused", False)
     and lateral.image_history_pipeline == IMAGE_HISTORY_IN_POLICY
     and longitudinal.image_history_pipeline == IMAGE_HISTORY_IN_POLICY

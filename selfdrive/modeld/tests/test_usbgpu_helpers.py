@@ -14,6 +14,30 @@ from openpilot.selfdrive.modeld.helpers import dump_oob, load_oob, tinygrad_dev_
 from scripts import model_compiler
 
 
+class _FakePrecompiledWarp:
+  def __init__(self, output_shape):
+    self.output_shape = output_shape
+    self.inputs = None
+
+  def __call__(self, **inputs):
+    self.inputs = inputs
+    return modeld.Tensor.zeros(self.output_shape, dtype="uint8", device="CPU").realize()
+
+
+class _FakePrecompiledPolicy:
+  def __init__(self):
+    self.inputs = None
+
+  def __call__(self, output_buffers, **inputs):
+    self.inputs = inputs
+    output_buffers["outputs"].assign(0).realize()
+
+
+class _FakeParser:
+  def parse_outputs(self, outputs):
+    return outputs
+
+
 def test_external_gpu_keeps_the_native_device_available():
   assert tinygrad_dev_config(True, tici=True) == "QCOM;USB+AMD:LLVM"
   assert tinygrad_dev_config(False, tici=True) == "QCOM"
@@ -113,35 +137,13 @@ def test_egmp_ready_uses_accelerator_ready_bit():
   assert modeld._egmp_vehicle_ready([not_ready, ready], bus)
 
 
-def test_external_gpu_signal_wait_yields_between_usb_polls(monkeypatch):
-  from tinygrad.runtime import ops_amd
+def test_current_amd_runtime_uses_hcq2_by_default():
+  from tinygrad.helpers import HCQ2
 
-  sleeps = []
-  monkeypatch.setattr(ops_amd.time, "sleep", sleeps.append)
-  signal = ops_amd.AMDSignal.__new__(ops_amd.AMDSignal)
-  signal.should_return = False
-  signal.owner = SimpleNamespace(is_usb=lambda: True, iface=SimpleNamespace(sleep=lambda _: None))
-
-  signal._sleep(0)
-
-  assert sleeps == [ops_amd.AMD_USB_POLL_US / 1e6]
-
-
-def test_native_amd_signal_keeps_existing_short_wait_behavior():
-  from tinygrad.runtime import ops_amd
-
-  sleeps = []
-  signal = ops_amd.AMDSignal.__new__(ops_amd.AMDSignal)
-  signal.should_return = False
-  signal.owner = SimpleNamespace(is_usb=lambda: False, iface=SimpleNamespace(sleep=sleeps.append))
-
-  signal._sleep(199)
-
-  assert sleeps == []
-
-  signal._sleep(201)
-
-  assert sleeps == [200]
+  # The upstream precompiled artifacts are built for the HCQ2 AMD runtime.
+  # HCQ1's AMDSignal polling implementation is intentionally not part of the
+  # current compatibility contract.
+  assert HCQ2.value == 1
 
 
 def test_external_gpu_wait_timeout_updates_tinygrad_cache(monkeypatch):
@@ -502,10 +504,70 @@ def test_upstream_precompiled_artifact_requires_output_slices():
     modeld._normalize_model_artifact(artifact)
 
 
-def test_upstream_precompiled_warp_transforms_use_distinct_buffers():
-  transforms = modeld._make_warp_transforms("CPU")
+def test_upstream_precompiled_warp_path_is_camera_specific():
+  assert modeld._upstream_precompiled_warp_path(1928, 1208).name == "big_driving_warp_1928x1208_tinygrad.pkl"
+  assert modeld._upstream_precompiled_warp_path(1344, 760).name == "big_driving_warp_1344x760_tinygrad.pkl"
 
-  assert transforms[0].uop.base is not transforms[1].uop.base
+
+def test_upstream_precompiled_runtime_packs_frames_with_warp_inputs(tmp_path, monkeypatch):
+  cam_w, cam_h = 8, 8
+  frame_size = modeld.get_nv12_info(cam_w, cam_h)[3]
+  warp_path = tmp_path / "big_driving_warp_8x8_tinygrad.pkl"
+  warp_path.touch()
+  fake_warp = _FakePrecompiledWarp((2, 6, 2, 2))
+  monkeypatch.setattr(modeld, "_upstream_precompiled_warp_path", lambda *_: warp_path)
+  monkeypatch.setattr(modeld.pickle, "load", lambda _: {
+    "run": fake_warp,
+    "input_specs": {
+      "input_frame": ((2, frame_size), "uint8", "CPU"),
+      "M_inv": ((2, 3, 3), "float32", "CPU"),
+    },
+  })
+  policy = _FakePrecompiledPolicy()
+  input_shapes = {
+    "new_img": (2, 6, 2, 2),
+    "desire": (1, modeld.ModelConstants.DESIRE_LEN),
+    "traffic_convention": (1, 2),
+    "action_t": (1, 2),
+  }
+  artifact = {
+    "run": policy,
+    "input_specs": {
+      name: (shape, "uint8" if name == "new_img" else "float32", "CPU")
+      for name, shape in input_shapes.items()
+    },
+    "output_specs": {"outputs": ((1, 1), "float32", "CPU")},
+    "metadata": {"input_shapes": input_shapes},
+    "output_slices": {"stub": slice(0, 1)},
+  }
+  state = modeld.ModelState.__new__(modeld.ModelState)
+  state.uses_external_gpu = False
+  state._queue_dev = "CPU"
+  state._warp_dev = "CPU"
+  state._init_upstream_precompiled(artifact, cam_w, cam_h)
+  state.parser = _FakeParser()
+
+  road = np.arange(frame_size, dtype=np.uint8)
+  wide = np.arange(frame_size, dtype=np.uint8) + 1
+  eye = np.eye(3, dtype=np.float32)
+  result = state._run_upstream_precompiled(
+    {"img": SimpleNamespace(data=road), "big_img": SimpleNamespace(data=wide)},
+    {"img": eye, "big_img": eye * 2},
+    {
+      "desire": np.zeros(modeld.ModelConstants.DESIRE_LEN, dtype=np.float32),
+      "traffic_convention": np.array([1, 0], dtype=np.float32),
+      "action_t": np.array([.1, .2], dtype=np.float32),
+    },
+    None,
+    None,
+    False,
+  )
+
+  np.testing.assert_array_equal(fake_warp.inputs["input_frame"].numpy(), np.stack((road, wide)))
+  np.testing.assert_array_equal(fake_warp.inputs["M_inv"].numpy(), np.stack((eye, eye * 2)))
+  assert "new_img" in policy.inputs
+  assert "tfm" not in policy.inputs
+  assert result["stub"].shape == (1, 1)
 
 
 def test_fused_artifact_without_device_metadata_remains_compatible(monkeypatch):
