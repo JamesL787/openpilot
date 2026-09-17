@@ -112,7 +112,11 @@ def _model_smooth_seconds(params, key, default):
 
 
 def _should_publish_model_output(model_output, vipc_dropped_frames: int, external_gpu_active: bool = False) -> bool:
-  return model_output is not None and vipc_dropped_frames == 0
+  # A completed inference remains useful when modeld skipped an input frame.
+  # Match Comma's modeld: publish it and carry the gap in frameDropPerc rather
+  # than turning a transient capture gap into an unrelated commIssueAvgFreq.
+  del vipc_dropped_frames, external_gpu_active
+  return model_output is not None
 
 
 MIN_LAT_CONTROL_SPEED = 0.3
