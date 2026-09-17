@@ -674,6 +674,7 @@ class ModelState:
       name: (tuple(shape), np.dtype(dtype))
       for name, (shape, dtype, _) in self.input_specs.items()
     }
+    device = self.model_device
     # Comma's precompiled model JIT is captured against one packed host/device
     # buffer. Recreating each input as an independent Tensor changes the UOp
     # signatures and causes TinyJit's args-mismatch check on the first run.
