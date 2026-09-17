@@ -1,3 +1,4 @@
+import base64
 import io
 import pickle
 import struct
@@ -17,6 +18,14 @@ def test_external_gpu_keeps_the_native_device_available():
   assert tinygrad_dev_config(True, tici=True) == "QCOM;USB+AMD:LLVM"
   assert tinygrad_dev_config(False, tici=True) == "QCOM"
   assert tinygrad_dev_config(True, tici=False) == "CPU:LLVM;USB+AMD:LLVM"
+
+
+def test_tinygrad_call_info_accepts_old_and_new_pickle_schemas():
+  from tinygrad.dtype import dtypes
+  from tinygrad.uop.ops import CallInfo
+
+  assert CallInfo(None, "legacy", False, False, None).dtype is dtypes.void
+  assert CallInfo(None, "current", False, False, None, dtypes.float).dtype is dtypes.float
 
 
 def test_external_gpu_selects_amd_without_probing_other_backends(monkeypatch, tmp_path):
@@ -386,6 +395,7 @@ def test_fused_model_copies_live_frames_and_runs_single_graph():
 
   state = modeld.ModelState.__new__(modeld.ModelState)
   state.fused = True
+  state.fused_legacy = True
   state.frame_copy_size = 4
   state.frame_views = {
     "img": np.zeros(4, dtype=np.uint8),
@@ -461,6 +471,37 @@ def test_fused_artifact_accepts_matching_tinygrad():
   assert modeld._normalize_model_artifact(artifact) is artifact
 
 
+def test_upstream_precompiled_artifact_is_normalized():
+  output_slices = {"plan": slice(0, 10)}
+  artifact = {
+    "run": lambda **_kwargs: None,
+    "input_specs": {"new_img": ((2, 6, 128, 256), "uint8", "AMD")},
+    "output_specs": {"outputs": ((1, 10), "float32", "AMD")},
+    "metadata": {
+      "input_shapes": {"new_img": (2, 6, 128, 256)},
+      "metadata": {"output_slices": base64.b64encode(pickle.dumps(output_slices)).decode()},
+    },
+  }
+
+  normalized = modeld._normalize_model_artifact(artifact)
+
+  assert normalized["execution_mode"] == modeld.UPSTREAM_PRECOMPILED_EXECUTION_MODE
+  assert normalized["image_history_pipeline"] == modeld.IMAGE_HISTORY_IN_POLICY
+  assert normalized["output_slices"] == output_slices
+
+
+def test_upstream_precompiled_artifact_requires_output_slices():
+  artifact = {
+    "run": lambda **_kwargs: None,
+    "input_specs": {"new_img": ((2, 6, 128, 256), "uint8", "AMD")},
+    "output_specs": {"outputs": ((1, 10), "float32", "AMD")},
+    "metadata": {"input_shapes": {"new_img": (2, 6, 128, 256)}, "metadata": {}},
+  }
+
+  with pytest.raises(ValueError, match="output_slices"):
+    modeld._normalize_model_artifact(artifact)
+
+
 def test_fused_artifact_without_device_metadata_remains_compatible(monkeypatch):
   artifact = {
     "format_version": modeld.ARTIFACT_FORMAT_VERSION,
@@ -520,6 +561,27 @@ def test_fused_artifact_rejects_wrong_warp_device_metadata(monkeypatch):
   )
 
   with pytest.raises(ValueError, match="warp device mismatch"):
+    modeld._validate_fused_artifact_device(artifact, external_gpu_active=True)
+
+
+def test_upstream_precompiled_artifact_accepts_runtime_model_device(monkeypatch):
+  artifact = {
+    "execution_mode": modeld.UPSTREAM_PRECOMPILED_EXECUTION_MODE,
+    "input_specs": {"new_img": ((2, 6, 128, 256), "uint8", "AMD")},
+  }
+  monkeypatch.setattr(modeld, "get_tg_input_devices", lambda *_args, **_kwargs: {"QUEUE_DEV": "AMD"})
+
+  modeld._validate_fused_artifact_device(artifact, external_gpu_active=True)
+
+
+def test_upstream_precompiled_artifact_rejects_wrong_runtime_model_device(monkeypatch):
+  artifact = {
+    "execution_mode": modeld.UPSTREAM_PRECOMPILED_EXECUTION_MODE,
+    "input_specs": {"new_img": ((2, 6, 128, 256), "uint8", "CPU")},
+  }
+  monkeypatch.setattr(modeld, "get_tg_input_devices", lambda *_args, **_kwargs: {"QUEUE_DEV": "AMD"})
+
+  with pytest.raises(ValueError, match="device mismatch"):
     modeld._validate_fused_artifact_device(artifact, external_gpu_active=True)
 
 

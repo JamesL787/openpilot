@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 from collections.abc import Callable
 import ctypes
 from functools import cached_property
@@ -9,6 +10,7 @@ import usb1
 from openpilot.system.hardware import HARDWARE, TICI
 os.environ['GMMU'] = '0'
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
+from tinygrad import TinyJit
 from tinygrad.device import Device
 from tinygrad.tensor import Tensor
 import time
@@ -47,8 +49,10 @@ from openpilot.selfdrive.modeld.compile_modeld import (
   IMAGE_HISTORY_IN_WARP,
   LEGACY_ARTIFACT_FORMAT_VERSION,
   LEGACY_WARP_INPUTS,
+  NV12Frame,
   _detect_vision_keys,
   derive_frame_skip,
+  make_warp,
   make_fused_supercombo_input_queues,
   make_split_input_queues,
   make_supercombo_input_queues,
@@ -118,6 +122,7 @@ EXTERNAL_GPU_POWER_STABLE_SECONDS = 3.0
 EXTERNAL_GPU_POWER_LOG_INTERVAL_SECONDS = 10.0
 LAT_SMOOTH_BP = [2.0, 8.0]
 MAX_ABS_EXTERNAL_MODEL_OUTPUT = 1e6
+UPSTREAM_PRECOMPILED_EXECUTION_MODE = "upstream_precompiled"
 
 
 def _set_hcq_wait_timeout(timeout_ms: int) -> None:
@@ -496,8 +501,41 @@ def _load_model_artifact(path: Path):
     return load_oob(artifact_file) if oob_artifact else pickle.load(artifact_file)
 
 
+def _is_upstream_precompiled_artifact(artifact: dict) -> bool:
+  return (
+    isinstance(artifact, dict)
+    and callable(artifact.get("run"))
+    and isinstance(artifact.get("input_specs"), dict)
+    and isinstance(artifact.get("output_specs"), dict)
+    and isinstance(artifact.get("metadata"), dict)
+  )
+
+
+def _upstream_output_slices(artifact: dict) -> dict[str, slice]:
+  encoded = artifact.get("metadata", {}).get("metadata", {}).get("output_slices")
+  if not isinstance(encoded, str):
+    raise ValueError("Precompiled model artifact is missing output_slices metadata")
+  output_slices = pickle.loads(base64.b64decode(encoded))
+  if not isinstance(output_slices, dict) or not all(isinstance(value, slice) for value in output_slices.values()):
+    raise ValueError("Precompiled model artifact has invalid output_slices metadata")
+  return output_slices
+
+
 def _normalize_model_artifact(artifact: dict) -> dict:
   """Adapt the current metadata-only artifact envelope to StarPilot's explicit schema."""
+  if _is_upstream_precompiled_artifact(artifact):
+    input_shapes = artifact["metadata"].get("input_shapes")
+    if not isinstance(input_shapes, dict) or "new_img" not in input_shapes:
+      raise ValueError("Precompiled model artifact is missing new_img input metadata")
+    return {
+      **artifact,
+      "execution_mode": UPSTREAM_PRECOMPILED_EXECUTION_MODE,
+      "model_type": "supercombo",
+      "frame_skip": 1,
+      "image_history_pipeline": IMAGE_HISTORY_IN_POLICY,
+      "output_slices": _upstream_output_slices(artifact),
+    }
+
   if artifact.get("format_version") is not None:
     if artifact["format_version"] not in (LEGACY_ARTIFACT_FORMAT_VERSION, ARTIFACT_FORMAT_VERSION):
       actual = artifact.get("format_version")
@@ -541,8 +579,21 @@ def _normalize_model_artifact(artifact: dict) -> dict:
 
 
 def _validate_fused_artifact_device(artifact: dict, external_gpu_active: bool) -> None:
-  """Reject newly tagged fused artifacts compiled for another model device."""
-  if not external_gpu_active or artifact.get("execution_mode") != "fused":
+  """Reject accelerator artifacts compiled for another model device."""
+  if not external_gpu_active:
+    return
+
+  if artifact.get("execution_mode") == UPSTREAM_PRECOMPILED_EXECUTION_MODE:
+    new_img_spec = artifact.get("input_specs", {}).get("new_img")
+    if not isinstance(new_img_spec, (tuple, list)) or len(new_img_spec) != 3:
+      raise ValueError("Precompiled model artifact is missing the new_img device specification")
+    declared = Device.canonicalize(str(new_img_spec[2]))
+    expected = Device.canonicalize(str(get_tg_input_devices(PROCESS_NAME, usbgpu=True)["QUEUE_DEV"]))
+    if declared != expected:
+      raise ValueError(f"Precompiled model device mismatch: built for {declared}, runtime queue is {expected}")
+    return
+
+  if artifact.get("execution_mode") != "fused":
     return
 
   input_devices = artifact.get("input_devices")
@@ -569,6 +620,84 @@ def _validate_fused_artifact_device(artifact: dict, external_gpu_active: bool) -
 
 class ModelState:
   prev_desire: np.ndarray
+
+  def _init_upstream_precompiled(self, artifact: dict, cam_w: int, cam_h: int) -> None:
+    """Adapt Comma's policy-only precompiled artifact to StarPilot's QCOM warp path."""
+    self.model_type = "supercombo"
+    self.policy_order = []
+    self.frame_skip = 1
+    self.execution_mode = UPSTREAM_PRECOMPILED_EXECUTION_MODE
+    self.precompiled = True
+    self.fused = False
+    self.fused_legacy = False
+    self.image_history_pipeline = IMAGE_HISTORY_IN_POLICY
+    self.can_prepare_only = False
+
+    self.input_specs = artifact["input_specs"]
+    self.output_specs = artifact["output_specs"]
+    self.policy_input_shapes = artifact["metadata"]["input_shapes"]
+    self.output_slices = artifact["output_slices"]
+    self.metadata = {
+      "model": {
+        "input_shapes": self.policy_input_shapes,
+        "output_slices": self.output_slices,
+      },
+    }
+    self.model_device = str(self.input_specs["new_img"][2])
+    if Device.canonicalize(self.model_device) != Device.canonicalize(self.QUEUE_DEV):
+      raise ValueError(f"Precompiled model expects {self.model_device}, runtime queue is {self.QUEUE_DEV}")
+
+    self.state_pairs = {
+      name: f"next_{name}"
+      for name in self.input_specs
+      if f"next_{name}" in self.output_specs
+    }
+    self.numpy_inputs = {
+      name: np.zeros(shape, dtype=dtype)
+      for name, (shape, dtype, _) in self.input_specs.items()
+      if name != "new_img" and name not in self.state_pairs
+    }
+    self.input_queues = {
+      name: Tensor(np.zeros(shape, dtype=dtype), device=device).realize()
+      for name, (shape, dtype, device) in self.input_specs.items()
+      if name != "new_img"
+    }
+    self.model_outputs = {
+      name: Tensor(np.zeros(shape, dtype=dtype), device=device).realize()
+      for name, (shape, dtype, device) in self.output_specs.items()
+    }
+    for name, next_name in self.state_pairs.items():
+      self.model_outputs[next_name] = self.input_queues[name]
+
+    self.run_model = artifact["run"]
+    new_img_shape = tuple(self.input_specs["new_img"][0])
+    if len(new_img_shape) != 4 or new_img_shape[:2] != (2, 6):
+      raise ValueError(f"Unexpected precompiled new_img shape: {new_img_shape}")
+    self.warped_input_shape = new_img_shape
+    model_h, model_w = new_img_shape[-2] * 2, new_img_shape[-1] * 2
+    nv12 = NV12Frame(cam_w, cam_h, *get_nv12_info(cam_w, cam_h))
+    self.run_warp = TinyJit(
+      make_warp(nv12, model_w, model_h, self.frame_skip, IMAGE_HISTORY_IN_POLICY, device=self.WARP_DEV),
+      prune=True,
+    )
+    self.warp_transforms = Tensor.zeros((2, 3, 3), dtype="float32", device=self.WARP_DEV).contiguous().realize()
+
+    self.road_key, self.wide_key = "img", "big_img"
+    self.vision_input_names = [self.road_key, self.wide_key]
+    self.npy = self.numpy_inputs
+    self.desire_key = next((name for name in self.numpy_inputs if name.startswith("desire")), "desire")
+    if self.desire_key not in self.numpy_inputs:
+      raise ValueError("Precompiled model artifact is missing a desire input")
+    self.prev_desired_curv_key = None
+    self.off_policy_enabled = False
+    self.off_policy_numpy_inputs = {}
+    self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
+    self.prev_blinker_on = False
+    self.parser = Parser()
+    self.aux_parser = Parser(ignore_missing=True)
+    self.frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
+    self._blob_cache = {}
+    self.last_warp_output = None
 
   def _build_policy_inputs(self, input_shapes: dict[str, tuple[int, ...]]) -> tuple[dict[str, np.ndarray], str | None]:
     numpy_inputs: dict[str, np.ndarray] = {}
@@ -629,72 +758,76 @@ class ModelState:
     artifact = _normalize_model_artifact(_load_model_artifact(model_path))
     _validate_fused_artifact_device(artifact, self.uses_external_gpu)
 
-    self.model_type = artifact["model_type"]
-    self.metadata = artifact["metadata"]
-    self.policy_order = artifact.get("policy_order", [])
-    self.frame_skip = int(artifact["frame_skip"])
-    self.execution_mode = artifact.get("execution_mode", "split")
-    self.fused = self.execution_mode == "fused"
-    self.image_history_pipeline = artifact.get("image_history_pipeline", IMAGE_HISTORY_IN_WARP)
-    if self.fused:
-      self.model_input_keys = tuple(artifact.get("input_keys", FUSED_MODELD_INPUTS))
-      self.fused_legacy = self.model_input_keys == FUSED_LEGACY_MODELD_INPUTS
-      self.run_model = artifact["run_model"][(cam_w, cam_h)]
-      self.can_prepare_only = False
+    self.precompiled = artifact.get("execution_mode") == UPSTREAM_PRECOMPILED_EXECUTION_MODE
+    if getattr(self, "precompiled", False):
+      self._init_upstream_precompiled(artifact, cam_w, cam_h)
     else:
-      self.warp_input_keys = tuple(artifact.get("warp_input_keys", LEGACY_WARP_INPUTS))
-      self.policy_input_keys = tuple(artifact["policy_input_keys"])
-      self.run_policy = artifact["run_policy"]
-      self.warp_enqueue = artifact[(cam_w, cam_h)]
-      self.can_prepare_only = self.image_history_pipeline == IMAGE_HISTORY_IN_WARP
-
-    if self.model_type == "supercombo":
-      input_shapes = self.metadata["model"]["input_shapes"]
-      self.output_slices = self.metadata["model"]["output_slices"]
-      self.policy_input_shapes = input_shapes
+      self.model_type = artifact["model_type"]
+      self.metadata = artifact["metadata"]
+      self.policy_order = artifact.get("policy_order", [])
+      self.frame_skip = int(artifact["frame_skip"])
+      self.execution_mode = artifact.get("execution_mode", "split")
+      self.fused = self.execution_mode == "fused"
+      self.image_history_pipeline = artifact.get("image_history_pipeline", IMAGE_HISTORY_IN_WARP)
       if self.fused:
-        frame_info = get_nv12_info(cam_w, cam_h)
-        self.frame_copy_size = nv12_copy_size(*frame_info[:3])
-        if self.fused_legacy:
-          self.input_queues, self.npy, self.frame_views = make_fused_supercombo_input_queues(
-            input_shapes,
-            self.frame_skip,
-            self.QUEUE_DEV,
-            self.frame_copy_size,
-          )
-        else:
-          self.input_queues, self.npy = make_fused_supercombo_input_queues(
-            input_shapes,
-            self.frame_skip,
-            self.QUEUE_DEV,
-          )
+        self.model_input_keys = tuple(artifact.get("input_keys", FUSED_MODELD_INPUTS))
+        self.fused_legacy = self.model_input_keys == FUSED_LEGACY_MODELD_INPUTS
+        self.run_model = artifact["run_model"][(cam_w, cam_h)]
+        self.can_prepare_only = False
       else:
-        self.input_queues, self.npy = make_supercombo_input_queues(input_shapes, self.frame_skip, self.QUEUE_DEV)
-    else:
-      if self.fused:
-        raise ValueError("Fused artifacts currently require a supercombo model")
-      vision_shapes = self.metadata["vision"]["input_shapes"]
-      primary_policy = "on_policy" if "on_policy" in self.policy_order else "policy"
-      self.policy_input_shapes = self.metadata[primary_policy]["input_shapes"]
-      self.input_queues, self.npy = make_split_input_queues(
-        vision_shapes, self.policy_input_shapes, self.frame_skip, self.QUEUE_DEV,
-      )
-      input_shapes = vision_shapes
+        self.warp_input_keys = tuple(artifact.get("warp_input_keys", LEGACY_WARP_INPUTS))
+        self.policy_input_keys = tuple(artifact["policy_input_keys"])
+        self.run_policy = artifact["run_policy"]
+        self.warp_enqueue = artifact[(cam_w, cam_h)]
+        self.can_prepare_only = self.image_history_pipeline == IMAGE_HISTORY_IN_WARP
 
-    self.road_key, self.wide_key = _detect_vision_keys(input_shapes)
-    self.vision_input_names = [self.road_key, self.wide_key]
-    self.warped_input_shape = (2, 6, *input_shapes[self.road_key][2:])
-    self.last_warp_output: Tensor | None = None
-    self.numpy_inputs, self.prev_desired_curv_key = self._build_policy_inputs(self.policy_input_shapes)
-    self.desire_key = next(key for key in self.numpy_inputs if key.startswith("desire"))
-    self.off_policy_enabled = "off_policy" in self.policy_order
-    self.off_policy_numpy_inputs = dict(self.numpy_inputs) if self.off_policy_enabled else {}
-    self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
-    self.prev_blinker_on = False
-    self.parser = Parser()
-    self.aux_parser = Parser(ignore_missing=True)
-    self.frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
-    self._blob_cache: dict[tuple[str, int], Tensor] = {}
+      if self.model_type == "supercombo":
+        input_shapes = self.metadata["model"]["input_shapes"]
+        self.output_slices = self.metadata["model"]["output_slices"]
+        self.policy_input_shapes = input_shapes
+        if self.fused:
+          frame_info = get_nv12_info(cam_w, cam_h)
+          self.frame_copy_size = nv12_copy_size(*frame_info[:3])
+          if self.fused_legacy:
+            self.input_queues, self.npy, self.frame_views = make_fused_supercombo_input_queues(
+              input_shapes,
+              self.frame_skip,
+              self.QUEUE_DEV,
+              self.frame_copy_size,
+            )
+          else:
+            self.input_queues, self.npy = make_fused_supercombo_input_queues(
+              input_shapes,
+              self.frame_skip,
+              self.QUEUE_DEV,
+            )
+        else:
+          self.input_queues, self.npy = make_supercombo_input_queues(input_shapes, self.frame_skip, self.QUEUE_DEV)
+      else:
+        if self.fused:
+          raise ValueError("Fused artifacts currently require a supercombo model")
+        vision_shapes = self.metadata["vision"]["input_shapes"]
+        primary_policy = "on_policy" if "on_policy" in self.policy_order else "policy"
+        self.policy_input_shapes = self.metadata[primary_policy]["input_shapes"]
+        self.input_queues, self.npy = make_split_input_queues(
+          vision_shapes, self.policy_input_shapes, self.frame_skip, self.QUEUE_DEV,
+        )
+        input_shapes = vision_shapes
+
+      self.road_key, self.wide_key = _detect_vision_keys(input_shapes)
+      self.vision_input_names = [self.road_key, self.wide_key]
+      self.warped_input_shape = (2, 6, *input_shapes[self.road_key][2:])
+      self.last_warp_output: Tensor | None = None
+      self.numpy_inputs, self.prev_desired_curv_key = self._build_policy_inputs(self.policy_input_shapes)
+      self.desire_key = next(key for key in self.numpy_inputs if key.startswith("desire"))
+      self.off_policy_enabled = "off_policy" in self.policy_order
+      self.off_policy_numpy_inputs = dict(self.numpy_inputs) if self.off_policy_enabled else {}
+      self.prev_desire = np.zeros(ModelConstants.DESIRE_LEN, dtype=np.float32)
+      self.prev_blinker_on = False
+      self.parser = Parser()
+      self.aux_parser = Parser(ignore_missing=True)
+      self.frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
+      self._blob_cache: dict[tuple[str, int], Tensor] = {}
 
     model_version = str(model_version_override or "").strip()
     if not model_version:
@@ -778,6 +911,19 @@ class ModelState:
     return parsed
 
   def _reset_state(self) -> None:
+    if getattr(self, "precompiled", False):
+      for name in self.state_pairs:
+        self.input_queues[name].assign(0).realize()
+      for name, value in self.numpy_inputs.items():
+        value.fill(0)
+        self.input_queues[name].assign(value).realize()
+      self.warp_transforms.assign(0).realize()
+      self.prev_desire.fill(0)
+      self.prev_blinker_on = False
+      self._blob_cache.clear()
+      self.last_warp_output = None
+      return
+
     if self.model_type == "supercombo":
       if self.fused:
         if self.fused_legacy:
@@ -831,13 +977,77 @@ class ModelState:
       shape = value.shape[1:] if value.ndim > 1 and value.shape[0] == 1 else value.shape
       inputs[name] = np.zeros(shape, dtype=value.dtype)
 
-    self.run(dummy_frames, dict.fromkeys(self.vision_input_names, eye), inputs, False)
+    warmup_runs = 3 if getattr(self, "precompiled", False) else 1
+    for _ in range(warmup_runs):
+      self.run(dummy_frames, dict.fromkeys(self.vision_input_names, eye), inputs, False)
     self._reset_state()
+
+  def _run_upstream_precompiled(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
+                                inputs: dict[str, np.ndarray], after_output_sync: Callable[[], None] | None,
+                                shared_warp: Tensor | None, blinker_on: bool) -> dict[str, np.ndarray]:
+    frames: dict[str, Tensor] = {}
+    for key, buf in bufs.items():
+      ptr = np.frombuffer(buf.data, dtype=np.uint8).ctypes.data
+      cache_key = (key, ptr)
+      if cache_key not in self._blob_cache:
+        self._blob_cache[cache_key] = Tensor.from_blob(
+          ptr, (self.frame_buf_size,), dtype="uint8", device=self.WARP_DEV,
+        )
+      frames[key] = self._blob_cache[cache_key]
+
+    blinker_released = self.prev_blinker_on and not blinker_on
+    self.prev_blinker_on = blinker_on
+    if blinker_released and "state_desire_q" in self.input_queues:
+      self.input_queues["state_desire_q"].assign(0).realize()
+
+    desire = np.asarray(inputs[self.desire_key], dtype=np.float32)
+    self.numpy_inputs[self.desire_key].fill(0)
+    self.numpy_inputs[self.desire_key].reshape(-1, ModelConstants.DESIRE_LEN)[-1] = np.where(
+      desire - self.prev_desire > 0.99,
+      desire,
+      0,
+    )
+    self.prev_desire[:] = desire
+    for name, value in self.numpy_inputs.items():
+      if name != self.desire_key and name in inputs:
+        value[:] = inputs[name]
+      self.input_queues[name].assign(value).realize()
+
+    if shared_warp is None:
+      transform_values = np.stack((transforms[self.road_key], transforms[self.wide_key])).astype(np.float32, copy=False)
+      self.warp_transforms.assign(transform_values).realize()
+      warped = self.run_warp(
+        tfm=self.warp_transforms[0],
+        big_tfm=self.warp_transforms[1],
+        frame=frames[self.road_key],
+        big_frame=frames[self.wide_key],
+      )
+    else:
+      warped = shared_warp
+    self.last_warp_output = warped
+    model_image = warped.to(self.model_device).realize()
+
+    self.run_model(output_buffers=self.model_outputs, new_img=model_image, **self.input_queues)
+    model_output = self.model_outputs["outputs"].numpy().reshape(-1)
+    if after_output_sync is not None:
+      after_output_sync()
+    if self.uses_external_gpu:
+      _validate_external_gpu_outputs([model_output])
+
+    parsed = self.parser.parse_outputs(self.slice_outputs(model_output, self.output_slices))
+    if SEND_RAW_PRED:
+      parsed["raw_pred"] = model_output.copy()
+    return parsed
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
           inputs: dict[str, np.ndarray], prepare_only: bool,
           after_output_sync: Callable[[], None] | None = None,
           shared_warp: Tensor | None = None, *, blinker_on: bool = False) -> dict[str, np.ndarray] | None:
+    if getattr(self, "precompiled", False):
+      return self._run_upstream_precompiled(
+        bufs, transforms, inputs, after_output_sync, shared_warp, blinker_on,
+      )
+
     fused = getattr(self, "fused", False)
     if shared_warp is not None and (fused or self.image_history_pipeline != IMAGE_HISTORY_IN_POLICY):
       raise RuntimeError("shared camera warp requires a policy-history model artifact")
@@ -886,7 +1096,7 @@ class ModelState:
 
     if fused:
       self.last_warp_output = None
-      queue_inputs = {key: self.input_queues[key] for key in FUSED_LEGACY_MODELD_INPUTS}
+      queue_inputs = {key: self.input_queues[key] for key in self.model_input_keys if key in self.input_queues}
       if self.fused_legacy:
         output_tensors = self.run_model(**queue_inputs)
       else:
