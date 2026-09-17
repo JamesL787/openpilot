@@ -125,6 +125,15 @@ MAX_ABS_EXTERNAL_MODEL_OUTPUT = 1e6
 UPSTREAM_PRECOMPILED_EXECUTION_MODE = "upstream_precompiled"
 
 
+def _make_warp_transforms(device: str) -> tuple[Tensor, Tensor]:
+  # TinyJit treats views into one realized buffer as duplicate inputs. Keep the
+  # road and wide-camera transforms in separate buffers for the two-input warp.
+  return tuple(
+    Tensor.zeros((3, 3), dtype="float32", device=device).realize()
+    for _ in range(2)
+  )
+
+
 def _set_hcq_wait_timeout(timeout_ms: int) -> None:
   """Update tinygrad's cached HCQ timeout for the external-GPU load/run phase."""
   os.environ["HCQDEV_WAIT_TIMEOUT_MS"] = str(timeout_ms)
@@ -680,7 +689,7 @@ class ModelState:
       make_warp(nv12, model_w, model_h, self.frame_skip, IMAGE_HISTORY_IN_POLICY, device=self.WARP_DEV),
       prune=True,
     )
-    self.warp_transforms = Tensor.zeros((2, 3, 3), dtype="float32", device=self.WARP_DEV).contiguous().realize()
+    self.warp_transforms = _make_warp_transforms(self.WARP_DEV)
 
     self.road_key, self.wide_key = "img", "big_img"
     self.vision_input_names = [self.road_key, self.wide_key]
@@ -917,7 +926,8 @@ class ModelState:
       for name, value in self.numpy_inputs.items():
         value.fill(0)
         self.input_queues[name].assign(value).realize()
-      self.warp_transforms.assign(0).realize()
+      for transform in self.warp_transforms:
+        transform.assign(0).realize()
       self.prev_desire.fill(0)
       self.prev_blinker_on = False
       self._blob_cache.clear()
@@ -1015,7 +1025,8 @@ class ModelState:
 
     if shared_warp is None:
       transform_values = np.stack((transforms[self.road_key], transforms[self.wide_key])).astype(np.float32, copy=False)
-      self.warp_transforms.assign(transform_values).realize()
+      for transform, value in zip(self.warp_transforms, transform_values, strict=True):
+        transform.assign(value).realize()
       warped = self.run_warp(
         tfm=self.warp_transforms[0],
         big_tfm=self.warp_transforms[1],

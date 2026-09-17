@@ -502,6 +502,12 @@ def test_upstream_precompiled_artifact_requires_output_slices():
     modeld._normalize_model_artifact(artifact)
 
 
+def test_upstream_precompiled_warp_transforms_use_distinct_buffers():
+  transforms = modeld._make_warp_transforms("CPU")
+
+  assert transforms[0].uop.base is not transforms[1].uop.base
+
+
 def test_fused_artifact_without_device_metadata_remains_compatible(monkeypatch):
   artifact = {
     "format_version": modeld.ARTIFACT_FORMAT_VERSION,
