@@ -4,6 +4,7 @@ from collections.abc import Callable
 import ctypes
 from functools import cached_property
 import json
+import math
 import os
 import struct
 import usb1
@@ -11,8 +12,11 @@ from openpilot.system.hardware import HARDWARE, TICI
 os.environ['GMMU'] = '0'
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
 from tinygrad import TinyJit
-from tinygrad.device import Device
+from tinygrad.device import Buffer, Device
+from tinygrad.dtype import DType, dtypes
+from tinygrad.helpers import round_up
 from tinygrad.tensor import Tensor
+from tinygrad.uop.ops import UOp
 import time
 import pickle
 import numpy as np
@@ -123,6 +127,11 @@ EXTERNAL_GPU_POWER_LOG_INTERVAL_SECONDS = 10.0
 LAT_SMOOTH_BP = [2.0, 8.0]
 MAX_ABS_EXTERNAL_MODEL_OUTPUT = 1e6
 UPSTREAM_PRECOMPILED_EXECUTION_MODE = "upstream_precompiled"
+
+
+def _input_view(buffer: Buffer, shape: tuple[int, ...], dtype: DType, offset: int) -> Tensor:
+  view = buffer.view(math.prod(shape), dtype, offset).ensure_allocated()
+  return Tensor(UOp.from_buffer(view)).reshape(shape)
 
 
 def _make_warp_transforms(device: str) -> tuple[Tensor, Tensor]:
@@ -661,22 +670,46 @@ class ModelState:
       for name in self.input_specs
       if f"next_{name}" in self.output_specs
     }
-    self.numpy_inputs = {
-      name: np.zeros(shape, dtype=dtype)
+    input_shapes = {
+      name: (tuple(shape), np.dtype(dtype))
       for name, (shape, dtype, _) in self.input_specs.items()
-      if name != "new_img" and name not in self.state_pairs
     }
+    # Comma's precompiled model JIT is captured against one packed host/device
+    # buffer. Recreating each input as an independent Tensor changes the UOp
+    # signatures and causes TinyJit's args-mismatch check on the first run.
     self.input_queues = {
       name: Tensor(np.zeros(shape, dtype=dtype), device=device).realize()
-      for name, (shape, dtype, device) in self.input_specs.items()
-      if name != "new_img"
+      for name, (shape, dtype) in input_shapes.items()
+      if name in self.state_pairs
     }
+    packed_shapes = {
+      "tfm": (2, 3, 3),
+      **{
+        name: shape
+        for name, (shape, _) in input_shapes.items()
+        if name not in self.state_pairs and name != "new_img"
+      },
+    }
+    packed_size = sum(round_up(math.prod(shape) * 4, 128) for shape in packed_shapes.values())
+    self.packed_input = np.zeros(packed_size + 2 * get_nv12_info(cam_w, cam_h)[3], dtype=np.uint8)
+    self.input_host = Tensor(self.packed_input, device="NPY")._buffer()
+    self.input_device = Tensor(self.packed_input, device=device)._buffer()
+    self.npy = {}
+    offset = 0
+    for name, shape in packed_shapes.items():
+      self.npy[name] = np.ndarray(shape, dtype=np.float32, buffer=self.packed_input, offset=offset)
+      queue = _input_view(self.input_device, shape, dtypes.float32, offset)
+      if name != "tfm":
+        self.input_queues[name] = queue
+      offset += round_up(self.npy[name].nbytes, 128)
+    self.numpy_inputs = {name: value for name, value in self.npy.items() if name != "tfm"}
     self.model_outputs = {
       name: Tensor(np.zeros(shape, dtype=dtype), device=device).realize()
       for name, (shape, dtype, device) in self.output_specs.items()
     }
     for name, next_name in self.state_pairs.items():
-      self.model_outputs[next_name] = self.input_queues[name]
+      state = self.input_queues[name]
+      self.model_outputs[next_name] = _input_view(state._buffer(), state.shape, state.dtype, 0)
 
     self.run_model = artifact["run"]
     new_img_shape = tuple(self.input_specs["new_img"][0])
@@ -693,7 +726,6 @@ class ModelState:
 
     self.road_key, self.wide_key = "img", "big_img"
     self.vision_input_names = [self.road_key, self.wide_key]
-    self.npy = self.numpy_inputs
     self.desire_key = next((name for name in self.numpy_inputs if name.startswith("desire")), "desire")
     if self.desire_key not in self.numpy_inputs:
       raise ValueError("Precompiled model artifact is missing a desire input")
@@ -923,11 +955,7 @@ class ModelState:
     if getattr(self, "precompiled", False):
       for name in self.state_pairs:
         self.input_queues[name].assign(0).realize()
-      for name, value in self.numpy_inputs.items():
-        value.fill(0)
-        self.input_queues[name].assign(value).realize()
-      for transform in self.warp_transforms:
-        transform.assign(0).realize()
+      self.packed_input.fill(0)
       self.prev_desire.fill(0)
       self.prev_blinker_on = False
       self._blob_cache.clear()
@@ -1021,10 +1049,12 @@ class ModelState:
     for name, value in self.numpy_inputs.items():
       if name != self.desire_key and name in inputs:
         value[:] = inputs[name]
-      self.input_queues[name].assign(value).realize()
+
+    transform_values = np.stack((transforms[self.road_key], transforms[self.wide_key])).astype(np.float32, copy=False)
+    self.npy["tfm"][:] = transform_values if shared_warp is None else 0
+    self.input_device.copy_from(self.input_host)
 
     if shared_warp is None:
-      transform_values = np.stack((transforms[self.road_key], transforms[self.wide_key])).astype(np.float32, copy=False)
       for transform, value in zip(self.warp_transforms, transform_values, strict=True):
         transform.assign(value).realize()
       warped = self.run_warp(
@@ -1036,7 +1066,7 @@ class ModelState:
     else:
       warped = shared_warp
     self.last_warp_output = warped
-    model_image = warped.to(self.model_device).realize()
+    model_image = warped.to(self.model_device)
 
     self.run_model(output_buffers=self.model_outputs, new_img=model_image, **self.input_queues)
     model_output = self.model_outputs["outputs"].numpy().reshape(-1)
