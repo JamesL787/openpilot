@@ -42,6 +42,7 @@ from openpilot.selfdrive.modeld.camera_offset import CameraOffset, DEFAULT_CAMER
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_pose_msg, PublishState, get_curvature_from_output
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
+from openpilot.selfdrive.modeld import reproject_c4 as RC
 from openpilot.selfdrive.modeld.compile_modeld import (
   ARTIFACT_FORMAT_VERSION,
   FAST_POLICY_INPUTS,
@@ -91,6 +92,8 @@ from openpilot.starpilot.common.starpilot_variables import (
 
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
+REPROJECT_C4 = os.getenv("REPROJECT_C4", "1") != "0"
+C4_CAM = (1344, 760)
 
 BUILTIN_MODEL_KEY = "rdf43"
 BUILTIN_MODEL_ALIASES = {BUILTIN_MODEL_KEY, "rdf"}
@@ -766,7 +769,7 @@ class ModelState:
   def __init__(self, cam_w: int, cam_h: int, external_gpu_active: bool = False,
                model_id_override: str | None = None, write_model_version: bool = True,
                model_version_override: str | None = None, model_path_override: Path | None = None,
-               force_external_gpu: bool = False):
+               force_external_gpu: bool = False, reproject_c4: bool = False):
     params = Params()
     selected_model = model_id_override or _resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY
     model_id = _canonical_model_id(selected_model)
@@ -807,8 +810,37 @@ class ModelState:
     _validate_fused_artifact_device(artifact, self.uses_external_gpu)
 
     self.precompiled = artifact.get("execution_mode") == UPSTREAM_PRECOMPILED_EXECUTION_MODE
+    self.reprojector = None
+    self.reproject_active = False
+    self.reproject_time = 0.0
+    self.source_cam_wh = (cam_w, cam_h)
+    self.source_frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
+    self._reproject_blob_cache: dict[tuple[str, int], Tensor] = {}
+
+    # The C3X->C4 compatibility stage is intentionally limited to Comma's
+    # upstream-precompiled Chestnut path. VFN's other model formats are compiled
+    # against their own camera geometry and must remain untouched.
+    if reproject_c4 and self.precompiled and self.uses_external_gpu and (cam_w, cam_h) == (1928, 1208):
+      self.reprojector = RC.Reprojector(
+        (cam_w, cam_h),
+        C4_CAM,
+        device="QCOM",
+        cache_dir=os.environ.get("XDG_CACHE_HOME", "/data/tgcache"),
+      )
+      self.reproject_active = True
+      cam_w, cam_h = C4_CAM
+      cloudlog.warning("C3X->C4 QCOM reprojection enabled for upstream precompiled Chestnut model")
+    elif reproject_c4 and self.uses_external_gpu and (cam_w, cam_h) == (1928, 1208) and not self.precompiled:
+      cloudlog.warning("C3X->C4 reprojection requested, but selected AMD artifact is not upstream-precompiled; leaving native geometry")
+
     if getattr(self, "precompiled", False):
       self._init_upstream_precompiled(artifact, cam_w, cam_h)
+      if self.reprojector is not None:
+        # _init_upstream_precompiled lays frames out as [road/narrow, wide].
+        # Reprojector.bind expects (wide destination, narrow destination).
+        self.reprojector.bind(self.frames[1], self.frames[0])
+        # Runtime source buffers are still full-resolution C3X VisionIPC frames.
+        self.frame_buf_size = self.source_frame_buf_size
     else:
       self.model_type = artifact["model_type"]
       self.metadata = artifact["metadata"]
@@ -937,6 +969,19 @@ class ModelState:
     if name in self.npy:
       self.npy[name][:] = self.numpy_inputs[name]
 
+  def _reproject_src_tensor(self, key: str, buf) -> Tensor:
+    data = buf.data if hasattr(buf, "data") else buf
+    ptr = np.frombuffer(data, dtype=np.uint8).ctypes.data
+    cache_key = (key, ptr)
+    if cache_key not in self._reproject_blob_cache:
+      self._reproject_blob_cache[cache_key] = Tensor.from_blob(
+        ptr,
+        (self.source_frame_buf_size,),
+        dtype="uint8",
+        device="QCOM",
+      )
+    return self._reproject_blob_cache[cache_key]
+
   def _parse_split_outputs(self, outputs: list[np.ndarray]) -> dict[str, np.ndarray]:
     vision_output, *policy_outputs = outputs
     parsed = self.parser.parse_vision_outputs(
@@ -966,6 +1011,7 @@ class ModelState:
       self.prev_desire.fill(0)
       self.prev_blinker_on = False
       self._blob_cache.clear()
+      self._reproject_blob_cache.clear()
       self.last_warp_output = None
       return
 
@@ -1031,8 +1077,24 @@ class ModelState:
     if shared_warp is not None:
       raise RuntimeError("Comma precompiled artifacts cannot share a StarPilot warp graph")
 
+    if self.reprojector is not None:
+      t0 = time.perf_counter()
+      gain_y, gain_c = inputs.get("reproj_gains", (1.0, 1.0))
+      self.reprojector(
+        self._reproject_src_tensor(self.wide_key, bufs[self.wide_key]),
+        self._reproject_src_tensor(self.road_key, bufs[self.road_key]),
+        gain_y,
+        gain_c,
+      )
+      # Keep Amy's first-drive synchronization semantics for correctness and
+      # deterministic timing. Do not pipeline this until the basic port is proven.
+      Device["QCOM"].synchronize()
+      self.reproject_time = time.perf_counter() - t0
+    else:
+      for i, key in enumerate(self.vision_input_names):
+        np.copyto(self.frames[i], np.frombuffer(bufs[key].data, dtype=np.uint8, count=self.frame_copy_size))
+
     for i, key in enumerate(self.vision_input_names):
-      np.copyto(self.frames[i], np.frombuffer(bufs[key].data, dtype=np.uint8, count=self.frame_copy_size))
       self.npy["tfm"][i] = transforms[key]
 
     blinker_released = self.prev_blinker_on and not blinker_on
@@ -1222,7 +1284,7 @@ def _load_model_state(cam_w: int, cam_h: int, selected_model: str, external_gpu_
 
 
 def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str, model_version: str = "",
-                             CP=None, demo: bool = False) -> ModelState | None:
+                             CP=None, demo: bool = False, reproject_c4: bool = False) -> ModelState | None:
   """Load and warm the USB-GPU model without running another tinygrad model concurrently."""
   candidate = None
   try:
@@ -1237,6 +1299,7 @@ def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str, model_
       model_id_override=selected_model,
       write_model_version=False,
       model_version_override=model_version,
+      reproject_c4=reproject_c4,
     )
     if not candidate.uses_external_gpu:
       raise RuntimeError("external GPU model resolved to the builtin model")
@@ -1464,6 +1527,13 @@ def main(demo=False):
   if use_extra_client:
     cloudlog.warning(f"connected extra cam with buffer size: {vipc_client_extra.buffer_len} ({vipc_client_extra.width} x {vipc_client_extra.height})")
 
+  reproject_c4_requested = bool(
+    REPROJECT_C4
+    and use_extra_client
+    and not main_wide_camera
+    and (vipc_client_main.width, vipc_client_main.height) == (1928, 1208)
+  )
+
   start_time = time.monotonic()
   cloudlog.warning("loading model")
   model = None
@@ -1472,6 +1542,8 @@ def main(demo=False):
   model_lab_longitudinal = None
   model_lab_active = False
   model_lab_timings: list[float] = []
+  reprojection_exec_times: list[float] = []
+  reprojection_stage_times: list[float] = []
   CP = None
   if model_lab_ready:
     if demo:
@@ -1525,6 +1597,7 @@ def main(demo=False):
       selected_model_version,
       CP,
       demo,
+      reproject_c4_requested,
     )
 
     small_model = _load_model_state(
@@ -1571,7 +1644,7 @@ def main(demo=False):
   if external_gpu_requested:
     publish_services.append("chestnutState")
   pm = PubMaster(publish_services)
-  sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay", "starpilotPlan"])
+  sm = SubMaster(["deviceState", "carState", "roadCameraState", "wideRoadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay", "starpilotPlan"])
 
   publish_state = PublishState()
   chestnut_state = ChestnutState(pm, external_gpu_active) if external_gpu_requested else None
@@ -1658,15 +1731,17 @@ def main(demo=False):
 
     if sm.updated["liveCalibration"] and sm.seen['roadCameraState'] and sm.seen['deviceState']:
       device_from_calib_euler = np.array(sm["liveCalibration"].rpyCalib, dtype=np.float32)
-      dc = DEVICE_CAMERAS[(str(sm['deviceState'].deviceType), str(sm['roadCameraState'].sensor))]
+      warp_device_type = "mici" if getattr(model, "reproject_active", False) else str(sm['deviceState'].deviceType)
+      warp_sensor = "os04c10" if getattr(model, "reproject_active", False) else str(sm['roadCameraState'].sensor)
+      dc = DEVICE_CAMERAS[(warp_device_type, warp_sensor)]
       model_transform_main = get_warp_matrix(device_from_calib_euler, dc.ecam.intrinsics if main_wide_camera else dc.fcam.intrinsics, False).astype(np.float32)
       model_transform_extra = get_warp_matrix(device_from_calib_euler, dc.ecam.intrinsics, True).astype(np.float32)
       camera_height = sm["liveCalibration"].height[0] if sm["liveCalibration"].height else DEFAULT_CAMERA_HEIGHT
       model_transform_main, model_transform_extra = camera_offset.update(
         model_transform_main,
         model_transform_extra,
-        str(sm["deviceState"].deviceType),
-        str(sm["roadCameraState"].sensor),
+        warp_device_type,
+        warp_sensor,
         camera_height,
         main_wide_camera,
       )
@@ -1782,6 +1857,14 @@ def main(demo=False):
           vec_desire, traffic_convention, lat_action_t, long_action_t,
           prev_action, v_ego, lateral_control_params,
         )
+        if getattr(model, "reprojector", None) is not None:
+          ncs = sm["roadCameraState"]
+          wcs = sm["wideRoadCameraState"]
+          gain = RC.exposure_gain(
+            ncs.gain * ncs.integLines,
+            wcs.gain * wcs.integLines,
+          ) if sm.seen["wideRoadCameraState"] else 1.0
+          inputs["reproj_gains"] = (gain, gain)
         model_output = model.run(
           bufs,
           transforms,
@@ -1826,6 +1909,18 @@ def main(demo=False):
 
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
+    if getattr(model, "reprojector", None) is not None:
+      reprojection_exec_times.append(model_execution_time * 1000.0)
+      reprojection_stage_times.append(model.reproject_time * 1000.0)
+      if len(reprojection_exec_times) % 200 == 0:
+        recent_exec = reprojection_exec_times[-200:]
+        recent_stage = reprojection_stage_times[-200:]
+        cloudlog.warning(
+          "C3X->C4 timing: model p50/p95 %.2f/%.2f ms; reprojection p50/p95 %.2f/%.2f ms; current drops %.1f%%",
+          np.percentile(recent_exec, 50), np.percentile(recent_exec, 95),
+          np.percentile(recent_stage, 50), np.percentile(recent_stage, 95),
+          frame_drop_ratio * 100.0,
+        )
     if model_lab_active and model_lab_longitudinal is not None:
       model_lab_timings.append(model_execution_time * 1000)
       if run_count % (ModelConstants.MODEL_FREQ * 10) == 0:
