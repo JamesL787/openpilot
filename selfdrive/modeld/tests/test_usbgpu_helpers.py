@@ -529,7 +529,9 @@ def test_upstream_precompiled_warp_path_is_camera_specific():
 
 def test_upstream_precompiled_runtime_packs_frames_with_warp_inputs(tmp_path, monkeypatch):
   cam_w, cam_h = 8, 8
-  frame_size = modeld.get_nv12_info(cam_w, cam_h)[3]
+  stride, y_height, uv_height, full_frame_size = modeld.get_nv12_info(cam_w, cam_h)
+  frame_size = modeld.nv12_copy_size(stride, y_height, uv_height)
+  assert frame_size < full_frame_size
   warp_path = tmp_path / "big_driving_warp_8x8_tinygrad.pkl"
   warp_path.touch()
   fake_warp = _FakePrecompiledWarp((2, 6, 2, 2))
@@ -562,6 +564,8 @@ def test_upstream_precompiled_runtime_packs_frames_with_warp_inputs(tmp_path, mo
   state.uses_external_gpu = False
   state._queue_dev = "CPU"
   state._warp_dev = "CPU"
+  state.reprojector = None
+  state._reproject_blob_cache = {}
   state._init_upstream_precompiled(artifact, cam_w, cam_h)
   state.parser = _FakeParser()
 

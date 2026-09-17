@@ -684,7 +684,11 @@ class ModelState:
       },
     }
     packed_size = sum(round_up(math.prod(shape) * 4, 128) for shape in packed_shapes.values())
-    _, _, _, self.frame_copy_size = get_nv12_info(cam_w, cam_h)
+    # Only the padded Y+UV body is consumed by the driving warp. Do not pack
+    # camerad's trailing Venus/kernel guard allocation into the USB upload.
+    # This matches current comma upstream and Amy's tizi-to-mici measurements.
+    stride, y_height, uv_height, _ = get_nv12_info(cam_w, cam_h)
+    self.frame_copy_size = nv12_copy_size(stride, y_height, uv_height)
     self.packed_input = np.zeros(packed_size + 2 * self.frame_copy_size, dtype=np.uint8)
     self.input_host = Tensor(self.packed_input, device="NPY")._buffer()
     self.input_device = Tensor(self.packed_input, device=self.model_device)._buffer()
