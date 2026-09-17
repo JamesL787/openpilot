@@ -7,7 +7,7 @@ from tinygrad.uop.weak import pm_lower_weak, pm_commit_weak, pm_cast_const
 from tinygrad.uop.render import pyrender
 from tinygrad.uop.spec import type_verify, spec_tensor, spec_program
 from tinygrad.renderer import Renderer, Estimates
-from tinygrad.renderer.isa import ISARenderer, IselContext, PreRegAllocContext
+from tinygrad.renderer.isa import ISARenderer, IselContext
 from tinygrad.dtype import dtypes, AddrSpace
 
 # import all pattern matchers here
@@ -62,26 +62,20 @@ def expand_reduce(r:UOp):
   out_shape = tuple([1 if i in new_axes else s for i,s in enumerate(r.src[0].shape)])
   return r.src[0].permute(perm).reduce(*range_srcs, arg=(r.arg[0], len(new_axes))).reshape(out_shape)
 
-def contract_axis(ctx:dict[int, int], u:UOp, arg):
-  permute_tail = [ctx[rn] for rn,_ in arg]
-  permute_head = [i for i in range(len(u.shape)) if i not in permute_tail]
-  out = u.permute(permute_head+permute_tail)
-  return out.reshape(*out.shape[:len(permute_head)], -1)
+def contract_axis(u:UOp, dims:list[int]) -> UOp:
+  return u.permute([i for i in range(u.ndim) if i not in dims]+dims).flatten(-len(dims))
 
-def unroll_axis(ctx:dict[int, int], u:UOp, arg):
-  permute_tail = [ctx[rn] for rn,_ in arg]
-  out = u.reshape(*u.shape[:-1], *[nm for _,nm in arg])
-  permute_head = [i for i in range(len(out.shape)) if i not in permute_tail]
-  return out.permute(argsort(permute_head+permute_tail))
+def unroll_axis(u:UOp, dims:list[int], sizes:list[int]) -> UOp:
+  out = u.unflatten(-1, tuple(sizes))
+  return out.permute(argsort([i for i in range(out.ndim) if i not in dims]+dims))
 
 def expand_wmma(ctx:dict[int, int], u:UOp):
   if u.arg[4] is None: return None
-  in0, in1, out0 = u.arg[4]
-  wmma = u.replace(src=(contract_axis(ctx, u.src[0], in0), contract_axis(ctx, u.src[1], in1), u.src[2]),
-                   arg=(*u.arg[:4], None))
-  return unroll_axis(ctx, wmma, out0)
+  in0, in1, out0 = [[ctx[rn] for rn,_ in upcast_axes] for upcast_axes in u.arg[4]]
+  wmma = u.replace(src=(contract_axis(u.src[0], in0), contract_axis(u.src[1], in1), u.src[2]), arg=(*u.arg[:4], None))
+  return unroll_axis(wmma, out0, [sz for _,sz in u.arg[4][2]])
 
-expander2 = PatternMatcher([
+expander = PatternMatcher([
   (UPat(Ops.REDUCE, name="r"), expand_reduce),
   (UPat(Ops.RANGE, name="r"),
    lambda ctx, r: UOp.const(tuple(range(r.vmax+1)), r.dtype) \
@@ -97,7 +91,7 @@ def expand_broadcast(x:UOp):
 
 def broadcast_and_devec_wmma(b:UOp):
   shapes = [u.shape[:-1] for u in b.src]
-  if all_same(shapes): return None
+  if not any(shapes): return None
   shape = _broadcast_shape(*shapes)
   src_expanded = tuple([u.expand(shape+(u.shape[-1],)) for u in b.src])
   src = []
@@ -326,7 +320,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
   sink = graph_rewrite(sink, sym+pm_move_where_on_load+pm_flatten_range+pm_reduce_unparented+pm_reduce_identity, name="postopt symbolic")
 
   # expand
-  sink = graph_rewrite(sink, expander2, ctx=build_range_map(sink), name="expander")
+  sink = graph_rewrite(sink, expander, ctx=build_range_map(sink), name="expander")
 
   # remove reduce
   sink = graph_rewrite(sink, mop_cleanup+pm_reduce_local, ctx=ReduceContext(), name="remove reduces")
@@ -360,7 +354,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
   # the boundary: required compute dtypes settle here; derivable const edges may stay bare
   # NOTE: we need indexing_simplify to remove the cast to long using the Invalid
   # NOTE: symbolic must NOT be composed here -- pm_data_invalid pushes the weak result CAST into a gated WHERE, remaking the weak node, and it cycles
-  sink = graph_rewrite(sink, pm_lower_weak+indexing_simplify, name="lower all index dtypes")
+  sink = graph_rewrite(sink, pm_lower_weak+indexing_simplify, name="lower all index dtypes", enter_calls=True)
 
   # final symbolic before decomp
   sink = graph_rewrite(sink, symbolic, name="final symbolic")
@@ -439,12 +433,13 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
   lst = line_rewrite(linearize(sink), pm_linearize_cleanups)
   # isa renderers need to allocate registers
   if isinstance(ctx, ISARenderer):
-    if ctx.pre_regalloc_matcher is not None: lst = line_rewrite(lst, ctx.pre_regalloc_matcher, PreRegAllocContext())
+    lin_ctx = ctx.linear_ctx_type(ctx)
+    lst = line_rewrite(lst, ctx.pre_regalloc_matcher, lin_ctx)
     # register definitions (INS without srcs) move to the top so regalloc sees their live ranges span the whole program (callee saved regs)
     lst = sorted(lst, key=lambda u: u.op is not Ops.INS or bool(u.src))
-    regalloc_ctx = LinearScanRegallocContext(lst, ctx)
+    regalloc_ctx = LinearScanRegallocContext(lin_ctx, lst, ctx)
     lst = line_rewrite(lst, pm_regalloc_rewrite, regalloc_ctx)
-    lst = line_rewrite(lst, ctx.post_regalloc_matcher, regalloc_ctx)
+    lst = line_rewrite(lst, ctx.post_regalloc_matcher, lin_ctx)
     if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
   return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
 
