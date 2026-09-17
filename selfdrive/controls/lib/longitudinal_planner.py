@@ -20,7 +20,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDX
 from openpilot.selfdrive.controls.lib.lead_behavior import is_radarless_matched_follow_window
 from openpilot.selfdrive.controls.lib.lead_follow_policy import apply as apply_follow_policy
 from openpilot.selfdrive.controls.lib.lead_follow_policy import is_nonurgent_duplicate_vision_follow
-from openpilot.selfdrive.controls.lib.blotv2 import BLoTv2Supervisor, model_predicted_acceleration
+from openpilot.selfdrive.controls.lib.blotv2 import JERK_SCALE_MIN, BLoTv2Supervisor, model_predicted_acceleration
 from openpilot.selfdrive.controls.lib.longitudinal_lead import LeadObservation
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_far_follow_output_slew_rates,
@@ -630,6 +630,8 @@ class LongitudinalPlanner:
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
     self.v_model_error = 0.0
     self.output_a_target = 0.0
+    # The MPC's own solution, kept separately from the arbitrated output_a_target.
+    self.last_mpc_a_target = 0.0
     self.output_should_stop = False
     self.far_follow_brake_slew_rate, self.far_follow_release_slew_rate = get_far_follow_output_slew_rates(CP)
     self.untracked_slow_lead_decel_scale = get_untracked_slow_lead_decel_scale(CP)
@@ -2144,6 +2146,7 @@ class LongitudinalPlanner:
       self.v_desired_filter.x = v_ego
       # Clip aEgo to cruise limits to prevent large accelerations when becoming active
       self.a_desired = np.clip(sm['carState'].aEgo, accel_limits[0], accel_limits[1])
+      self.last_mpc_a_target = float(self.a_desired)
       self.model_allow_throttle = True
       self.model_allow_throttle_transition_t = 0.0
 
@@ -2239,7 +2242,7 @@ class LongitudinalPlanner:
         LeadObservation.from_radar(self.lead_one if lead_one_active else None,
                                    sm.all_checks(['radarState'])),
         v_ego,
-        float(self.output_a_target),
+        float(self.last_mpc_a_target),
         effective_t_follow,
         model_predicted_acceleration(model_leads_now[0] if len(model_leads_now) > 0 else None),
       )
@@ -2424,6 +2427,9 @@ class LongitudinalPlanner:
     # BLoTv2 softens the acceleration-jerk cost when it detects a need to respond. Applied
     # as a multiplier so our speed-scheduled costs still set the baseline.
     blotv2_jerk_scale = float(self._blotv2_policy.jerk_scale) if self._blotv2_policy is not None else 1.0
+    # The supervisor already bounds this by construction; clip anyway so set_weights is the
+    # single clip source if the scale ever comes from somewhere else (matches upstream).
+    blotv2_jerk_scale = float(np.clip(blotv2_jerk_scale, JERK_SCALE_MIN, 1.0))
 
     self.mpc.set_weights(sm['starpilotPlan'].accelerationJerk * blotv2_jerk_scale,
                          sm['starpilotPlan'].dangerJerk,
@@ -2545,6 +2551,7 @@ class LongitudinalPlanner:
     if self.model_launch_armed and not bool(sm['modelV2'].action.shouldStop):
       model_launch_accel = self.get_model_launch_accel(model_launch_v, model_launch_a, action_t, scene_v_ego)
 
+    output_a_target_mpc = None
     if classic_model:
       output_a_target, output_should_stop = get_accel_from_plan_classic(
         self.CP, self.v_desired_trajectory, self.a_desired_trajectory, starpilot_toggles.vEgoStopping,
@@ -2586,6 +2593,13 @@ class LongitudinalPlanner:
       output_a_target, output_should_stop = get_accel_from_plan(
         self.v_desired_trajectory, self.a_desired_trajectory,
         action_t=action_t, vEgoStopping=starpilot_toggles.vEgoStopping)
+
+    # BLoT reads the MPC's own solution, not the arbitrated output. Upstream
+    # (SpysyWeeb/Spysypilot) keeps these as two fields for this reason: everything below
+    # -- the vision caps, the curve limiter, e2e, the force-decel floor, the stop-go
+    # target -- can brake for reasons the lead policy never asked for, and feeding that
+    # back in arms the recovery trigger on it and masks the emergency shortfall.
+    self.last_mpc_a_target = float(output_a_target_mpc if output_a_target_mpc is not None else output_a_target)
 
     comfort_output_accel_min = get_vehicle_min_accel(self.CP, v_ego) if experimental_mlsim else accel_limits_turns[0]
     vision_cap_accel_min = min(comfort_output_accel_min, get_vehicle_min_accel(self.CP, v_ego))
