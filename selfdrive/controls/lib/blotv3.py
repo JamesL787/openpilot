@@ -1,4 +1,4 @@
-"""BLoTv2 longitudinal necessity policy.
+"""BLoTv3 longitudinal necessity policy.
 
 The supervisor never commands acceleration. It changes only two runtime inputs
 the stock MPC already owns: acceleration-change/jerk cost and following time.
@@ -24,7 +24,7 @@ MIN_GAP_BUDGET = 1.0
 
 # NRDR: upstream also redefines the acceleration envelope here. That is deliberately
 # NOT ported -- StarPilot takes its limits from starpilotPlan.maxAcceleration, and
-# BLOTV2_ACCEL_MAX resolves to opendbc's ACCEL_MAX (2.0) anyway, so it would only
+# BLOTV3_ACCEL_MAX resolves to opendbc's ACCEL_MAX (2.0) anyway, so it would only
 # fight the planner for no gain. The supervisor below never commands acceleration.
 
 # Recovery and model-forecast response.
@@ -52,6 +52,12 @@ ONSET_LEAD_DECEL = 0.4
 ONSET_PAD_MAX = 0.45
 STOPPED_LEAD_PAD_MAX = 0.75
 ONSET_FULL_DECEL = 1.5
+# ONSET_MAX_A_REQ gates the emergency bypass ONLY. It used to also cap both t_follow pads,
+# which made the pads *vanish* exactly where need was highest: above 1.5 m/s2 of required
+# decel the pad snapped to zero in one frame unless the emergency bypass happened to be
+# armed too (it needs TTC < MIN_TTC and a real braking shortfall as well). Upstream BLoTv3
+# (SpysyWeeb/Spysypilot, necessity_supervisor.py) removed the upper bound so the pads
+# saturate at their ceilings instead. Do not reinstate the upper bound.
 ONSET_MAX_A_REQ = 1.5
 EMERGENCY_SHORTFALL_MIN = 0.15
 ONSET_RATE_UP = 0.8
@@ -104,7 +110,7 @@ def model_predicted_acceleration(model_lead: Any) -> float | None:
   return (v1 - v0) / horizon
 
 
-class BLoTv2Supervisor:
+class BLoTv3Supervisor:
   def __init__(self, dt: float = DT_MDL):
     self.dt = dt
     self.jerk_scale = 1.0
@@ -113,10 +119,14 @@ class BLoTv2Supervisor:
     self._model = DebouncedTrigger(MODEL_ARM_DEBOUNCE, dt)
     self._launch = DebouncedTrigger(LAUNCH_DEBOUNCE, dt)
     self._triggers = (self._recovery, self._model, self._launch)
+    # True while the supervisor is actually softening for a lead. Latches the low-speed
+    # hold below; see update().
+    self._responsive = False
 
   def reset(self) -> None:
     self.jerk_scale = 1.0
     self.t_follow_pad = 0.0
+    self._responsive = False
     for trigger in self._triggers:
       trigger.reset()
 
@@ -196,9 +206,9 @@ class BLoTv2Supervisor:
           onset_lead_accel = min(onset_lead_accel, predicted_lead_accel)
 
         recovering = v_ego <= lead.speed + 0.2 or lead.acceleration > 0.2
+        # The pads saturate at their ceilings; they never vanish above ONSET_MAX_A_REQ.
         if (
           onset_lead_accel < -ONSET_LEAD_DECEL
-          and required_decel < ONSET_MAX_A_REQ
           and not recovering
         ):
           pad_target = ONSET_PAD_MAX * min(
@@ -207,23 +217,38 @@ class BLoTv2Supervisor:
           )
         if (
           lead.speed < 2.0
-          and 0.3 < required_decel < ONSET_MAX_A_REQ
+          and required_decel > 0.3
           and not recovering
         ):
           pad_target = max(
             pad_target,
             STOPPED_LEAD_PAD_MAX * min(required_decel / 1.2, 1.0),
           )
+
+        self._responsive = scale_target < 1.0 or pad_target > 0.0
       else:
+        # The emergency bypass hands the frame back to the MPC unsoftened, and it must
+        # also drop the low-speed hold -- otherwise the hold would carry a softened
+        # jerk cost into the one situation that wants the stock cost.
+        self._responsive = False
         for trigger in self._triggers:
           trigger.reset()
     else:
+      # A crawl (v_ego <= MIN_SPEED) with the lead still present keeps the latch; only
+      # losing the lead clears it.
+      if not lead.present:
+        self._responsive = False
       for trigger in self._triggers:
         trigger.reset()
 
-    if (lead.present and v_ego <= MIN_SPEED and scale_target > self.jerk_scale
-        and self.jerk_scale == JERK_SCALE_MIN):
-      scale_target = self.jerk_scale
+    # Hold whatever softening was built while necessity-braking through the crawl and the
+    # standstill transition. The previous form only held at the exact JERK_SCALE_MIN floor,
+    # so a partially-softened approach (the common case: a pad without a full trigger, or a
+    # slew still in flight when v_ego crossed MIN_SPEED) started stiffening back toward 1.0
+    # in the last metres of the stop. The latch is set only by an in-motion frame that was
+    # actually softening, and is cleared by the emergency bypass and by lead loss.
+    if lead.present and v_ego <= MIN_SPEED and self._responsive:
+      scale_target = min(scale_target, self.jerk_scale)
 
     self.jerk_scale = self._slew(
       self.jerk_scale,

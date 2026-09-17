@@ -1,4 +1,4 @@
-"""Shared, side-effect-free lead physics for BLoTv2.
+"""Shared, side-effect-free lead physics for BLoTv3.
 
 The planner and the 100 Hz final-stop controller run in different processes,
 so they cannot share state. They can, however, share one definition of a

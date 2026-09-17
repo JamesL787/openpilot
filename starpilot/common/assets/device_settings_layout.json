@@ -2860,9 +2860,9 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "BlotV2",
-        "label": "BLoTv2 Supervisor",
-        "description": "Experimental. Tracks how much deceleration the lead actually needs, softens the solver's jerk cost when it has to respond, and pads following time when the lead is slowing. Never commands acceleration itself. Works off the radar-tracked lead, independent of the car it's running on -- Model Lead Trajectory itself runs unconditionally for every car, matching upstream.",
+        "key": "BlotV3",
+        "label": "BLoTv3 Supervisor",
+        "description": "Experimental. Tracks how much deceleration the lead actually needs, softens the solver's jerk cost when it has to respond, and pads following time when the lead is slowing or stopped. The padding stays at its maximum as braking need grows, and the softening is held through the final crawl to a stop. Never commands acceleration itself. Works off the radar-tracked lead, independent of the car it's running on -- Model Lead Trajectory itself runs unconditionally for every car, matching upstream.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",
