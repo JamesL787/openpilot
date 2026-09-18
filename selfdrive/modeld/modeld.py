@@ -93,6 +93,7 @@ from openpilot.starpilot.common.starpilot_variables import (
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 REPROJECT_C4 = os.getenv("REPROJECT_C4", "1") != "0"
+REPROJECT_C4_REFINE = os.getenv("REPROJECT_C4_REFINE", "0").strip().lower()
 C4_CAM = (1344, 760)
 
 BUILTIN_MODEL_KEY = "rdf43"
@@ -815,6 +816,10 @@ class ModelState:
 
     self.precompiled = artifact.get("execution_mode") == UPSTREAM_PRECOMPILED_EXECUTION_MODE
     self.reprojector = None
+    self.reproject_meter = None
+    self.reproject_match = None
+    self.reproject_meter_time = 0.0
+    self.reproject_refiner = None
     self.reproject_active = False
     self.reproject_time = 0.0
     self.source_cam_wh = (cam_w, cam_h)
@@ -825,15 +830,33 @@ class ModelState:
     # upstream-precompiled Chestnut path. VFN's other model formats are compiled
     # against their own camera geometry and must remain untouched.
     if reproject_c4 and self.precompiled and self.uses_external_gpu and (cam_w, cam_h) == (1928, 1208):
+      # Preserve VFN's currently-working board/reference optical geometry and
+      # 24 px feather. Do not silently switch to Amy's population lens,
+      # 50 px feather, or an active refined rotation in this patch.
+      self.reproject_calib = RC.DEFAULT_CALIB
       self.reprojector = RC.Reprojector(
         (cam_w, cam_h),
         C4_CAM,
         device="QCOM",
         cache_dir=os.environ.get("XDG_CACHE_HOME", "/data/tgcache"),
+        calib=self.reproject_calib,
+        feather=RC.FEATHER_PX,
       )
+      self.reproject_meter = RC.SeamMeter(
+        (cam_w, cam_h),
+        C4_CAM,
+        calib=self.reproject_calib,
+      )
+      if REPROJECT_C4_REFINE == "shadow":
+        # Seed from VFN's known-good fixed geometry, not CalibrationParams.
+        self.reproject_refiner = RC.RotationRefiner(RC.R_NARROW_FROM_WIDE)
       self.reproject_active = True
       cam_w, cam_h = C4_CAM
-      cloudlog.warning("C3X->C4 QCOM reprojection enabled for upstream precompiled Chestnut model")
+      cloudlog.warning(
+        "C3X->C4 QCOM reprojection enabled: photometric seam meter on, "
+        "geometry fixed to VFN board/reference calibration, refine=%s",
+        REPROJECT_C4_REFINE,
+      )
     elif reproject_c4 and self.uses_external_gpu and (cam_w, cam_h) == (1928, 1208) and not self.precompiled:
       cloudlog.warning("C3X->C4 reprojection requested, but selected AMD artifact is not upstream-precompiled; leaving native geometry")
 
@@ -1083,12 +1106,10 @@ class ModelState:
 
     if self.reprojector is not None:
       t0 = time.perf_counter()
-      gain_y, gain_c = inputs.get("reproj_gains", (1.0, 1.0))
       self.reprojector(
         self._reproject_src_tensor(self.wide_key, bufs[self.wide_key]),
         self._reproject_src_tensor(self.road_key, bufs[self.road_key]),
-        gain_y,
-        gain_c,
+        **inputs.get("reproj_match", {}),
       )
       # Keep Amy's first-drive synchronization semantics for correctness and
       # deterministic timing. Do not pipeline this until the basic port is proven.
@@ -1548,6 +1569,7 @@ def main(demo=False):
   model_lab_timings: list[float] = []
   reprojection_exec_times: list[float] = []
   reprojection_stage_times: list[float] = []
+  reprojection_meter_times: list[float] = []
   CP = None
   if model_lab_ready:
     if demo:
@@ -1868,7 +1890,14 @@ def main(demo=False):
             ncs.gain * ncs.integLines,
             wcs.gain * wcs.integLines,
           ) if sm.seen["wideRoadCameraState"] else 1.0
-          inputs["reproj_gains"] = (gain, gain)
+          # Measure the source C3X buffers directly. This creates no full-frame
+          # copy, resize, or RGB conversion.
+          meter_t0 = time.perf_counter()
+          wide_np = np.frombuffer(buf_extra.data, dtype=np.uint8)
+          narrow_np = np.frombuffer(buf_main.data, dtype=np.uint8)
+          model.reproject_match = model.reproject_meter.update(wide_np, narrow_np, gain)
+          model.reproject_meter_time = time.perf_counter() - meter_t0
+          inputs["reproj_match"] = model.reproject_match
         model_output = model.run(
           bufs,
           transforms,
@@ -1877,6 +1906,32 @@ def main(demo=False):
           blinker_on=blinker_on,
           after_output_sync=chestnut_state.send if send_chestnut else None,
         )
+
+        # SHADOW ONLY. Never train geometry from an output VFN itself refuses
+        # to publish after a VisionIPC drop. The proposal is logged; it does
+        # not modify calibration, rebuild tables, write disk state, or swap
+        # anything into the running model.
+        if (
+          getattr(model, "reproject_refiner", None) is not None
+          and model_output is not None
+          and vipc_dropped_frames == 0
+          and "wide_from_device_euler" in model_output
+          and "wide_from_device_euler_stds" in model_output
+        ):
+          proposal = model.reproject_refiner.push_shadow(
+            model_output["wide_from_device_euler"][0],
+            model_output["wide_from_device_euler_stds"][0],
+            v_ego,
+          )
+          if proposal is not None:
+            cloudlog.warning(
+              "C3X->C4 SHADOW rotation window %d: residual deg=%s step deg=%s candidate deg=%s converged=%s",
+              model.reproject_refiner.windows,
+              np.degrees(proposal["residual"]).round(3),
+              np.degrees(proposal["step"]).round(3),
+              np.degrees(proposal["candidate"]).round(3),
+              proposal["converged"],
+            )
         lateral_model_output = model_output
     except Exception:
       if model_lab_active:
@@ -1916,13 +1971,21 @@ def main(demo=False):
     if getattr(model, "reprojector", None) is not None:
       reprojection_exec_times.append(model_execution_time * 1000.0)
       reprojection_stage_times.append(model.reproject_time * 1000.0)
+      reprojection_meter_times.append(model.reproject_meter_time * 1000.0)
       if len(reprojection_exec_times) % 200 == 0:
         recent_exec = reprojection_exec_times[-200:]
         recent_stage = reprojection_stage_times[-200:]
+        recent_meter = reprojection_meter_times[-200:]
+        match = model.reproject_match or {}
         cloudlog.warning(
-          "C3X->C4 timing: model p50/p95 %.2f/%.2f ms; reprojection p50/p95 %.2f/%.2f ms; current drops %.1f%%",
+          "C3X->C4 timing: model p50/p95 %.2f/%.2f ms; reprojection p50/p95 %.2f/%.2f ms; "
+          "seam meter p50/p95 %.2f/%.2f ms; gain %.3f U %+.1f V %+.1f grad %+.3f/%+.3f; drops %.1f%%",
           np.percentile(recent_exec, 50), np.percentile(recent_exec, 95),
           np.percentile(recent_stage, 50), np.percentile(recent_stage, 95),
+          np.percentile(recent_meter, 50), np.percentile(recent_meter, 95),
+          float(match.get("gain_y", 1.0)),
+          float(match.get("u_off", 0.0)), float(match.get("v_off", 0.0)),
+          float(match.get("gx", 0.0)), float(match.get("gy", 0.0)),
           frame_drop_ratio * 100.0,
         )
     if model_lab_active and model_lab_longitudinal is not None:
