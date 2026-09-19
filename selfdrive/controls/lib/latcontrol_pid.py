@@ -330,10 +330,13 @@ def _clarity_eps_pid_output_scale(
   speed_weight = min(max((v_ego - 4.0) / 10.0, 0.0), 1.0)
   mid_turn_weight = min(max((abs_angle - 10.0) / 10.0, 0.0), 1.0)
   angle_weight = min(max((abs_angle - 16.0) / 12.0, 0.0), 1.0)
-  is_left = desired_angle_deg > 0.0
 
-  mid_turn_scale = 0.1200 if is_left else 0.0150
-  base_scale = 0.0722 if is_left else 0.0972
+  # Keep the road-tuned magnitude shaping while removing the artificial
+  # left/right bias. Since the output scale is linear in these coefficients,
+  # the arithmetic means preserve the exact midpoint of the former left/right
+  # behavior for every angle and speed.
+  mid_turn_scale = 0.0675  # mean(0.1200 left, 0.0150 right)
+  base_scale = 0.0847      # mean(0.0722 left, 0.0972 right)
 
   scale = 1.0 + (speed_weight * mid_turn_weight * mid_turn_scale)
   scale += speed_weight * angle_weight * base_scale
