@@ -168,6 +168,7 @@ procs = [
   PythonProcess("timed", "system.timed", always_run, enabled=not PC),
 
   PythonProcess("modeld", "selfdrive.modeld.modeld", only_onroad),
+  PythonProcess("reprojectd", "selfdrive.modeld.reprojectd", only_onroad, enabled=TICI),
   PythonProcess("dmonitoringmodeld", "selfdrive.modeld.dmonitoringmodeld", driverview, enabled=(WEBCAM or not PC)),
 
   PythonProcess("sensord", "system.sensord.sensord", sensord_run, enabled=not PC),

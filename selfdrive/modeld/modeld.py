@@ -7,10 +7,14 @@ import json
 import math
 import os
 import struct
+import threading
 import usb1
 from openpilot.system.hardware import HARDWARE, TICI
 os.environ['GMMU'] = '0'
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
+# launch_env.sh defaults the shared process environment to 12 for ordinary model/UI
+# scheduling. The direct reprojection path needs the driving QCOM context at priority 1.
+os.environ['QCOM_PRIORITY'] = '1'
 from tinygrad.device import Buffer, Device
 from tinygrad.dtype import DType, dtypes
 from tinygrad.helpers import round_up
@@ -822,6 +826,12 @@ class ModelState:
     self.reproject_refiner = None
     self.reproject_active = False
     self.reproject_time = 0.0
+    self.reproject_enqueue_time = 0.0
+    self.reproject_rotation = None
+    self.reproject_rot_file = {}
+    self.reproject_pending = None
+    self.reproject_loader: threading.Thread | None = None
+    self.reproject_rot_mtime = 0.0
     self.source_cam_wh = (cam_w, cam_h)
     self.source_frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
     self._reproject_blob_cache: dict[tuple[str, int], Tensor] = {}
@@ -830,15 +840,18 @@ class ModelState:
     # upstream-precompiled Chestnut path. VFN's other model formats are compiled
     # against their own camera geometry and must remain untouched.
     if reproject_c4 and self.precompiled and self.uses_external_gpu and (cam_w, cam_h) == (1928, 1208):
-      # Preserve VFN's currently-working board/reference optical geometry and
-      # 24 px feather. Do not silently switch to Amy's population lens,
-      # 50 px feather, or an active refined rotation in this patch.
-      self.reproject_calib = RC.DEFAULT_CALIB
+      # Keep VFN's current optical model/24 px feather, but let reprojectd own the
+      # per-device narrow<->wide rotation. A persisted direct fit wins; otherwise
+      # start from the same known-good board/reference rotation we already drove.
+      self.reproject_rotation = RC.load_rotation()
+      self.reproject_rot_file = RC.read_rotation_file()
+      self.reproject_calib = RC.calib_from_rotvec(self.reproject_rotation)
+      cache_dir = os.environ.get("XDG_CACHE_HOME", "/data/tgcache")
       self.reprojector = RC.Reprojector(
         (cam_w, cam_h),
         C4_CAM,
         device="QCOM",
-        cache_dir=os.environ.get("XDG_CACHE_HOME", "/data/tgcache"),
+        cache_dir=cache_dir,
         calib=self.reproject_calib,
         feather=RC.FEATHER_PX,
       )
@@ -846,15 +859,24 @@ class ModelState:
         (cam_w, cam_h),
         C4_CAM,
         calib=self.reproject_calib,
+        geometry=self.reprojector.meter_geometry,
       )
       if REPROJECT_C4_REFINE == "shadow":
-        # Seed from VFN's known-good fixed geometry, not CalibrationParams.
-        self.reproject_refiner = RC.RotationRefiner(RC.R_NARROW_FROM_WIDE)
+        # Direct image geometry owns calibration; model residual stays a monitor.
+        self.reproject_refiner = RC.RotationRefiner(self.reproject_rotation)
+      self.reproject_cache_dir = cache_dir
+      RC.save_applied(
+        self.reproject_rotation,
+        bool(self.reproject_rot_file.get("fitted")),
+        stage=True,
+      )
       self.reproject_active = True
       cam_w, cam_h = C4_CAM
       cloudlog.warning(
-        "C3X->C4 QCOM reprojection enabled: photometric seam meter on, "
-        "geometry fixed to VFN board/reference calibration, refine=%s",
+        "C3X->C4 QCOM reprojection enabled: rotation=%s deg fitted=%s feather=%s refine=%s",
+        np.degrees(self.reproject_rotation).round(3),
+        bool(self.reproject_rot_file.get("fitted")),
+        RC.FEATHER_PX,
         REPROJECT_C4_REFINE,
       )
     elif reproject_c4 and self.uses_external_gpu and (cam_w, cam_h) == (1928, 1208) and not self.precompiled:
@@ -1009,6 +1031,90 @@ class ModelState:
       )
     return self._reproject_blob_cache[cache_key]
 
+  def poll_reproject_fit(self) -> None:
+    """Load a newly completed direct fit without doing numpy geometry work in modeld.
+
+    reprojectd has already built the table + SeamMeter geometry cache. The loader
+    thread explicitly drops inherited SCHED_FIFO before the file read. The final
+    table upload happens between model runs while calibrationd is still holding.
+    """
+    if self.reprojector is None or self.reproject_rotation is None:
+      return
+
+    if self.reproject_pending is not None:
+      tables, calib, meter, rot = self.reproject_pending
+      self.reproject_pending = None
+      self.reproject_loader = None
+      t0 = time.perf_counter()
+      self.reprojector.reload(tables)
+      self.reproject_calib = calib
+      self.reproject_meter = meter
+      self.reproject_rotation = rot
+      self.reproject_rot_file = RC.read_rotation_file()
+      if self.reproject_refiner is not None:
+        self.reproject_refiner = RC.RotationRefiner(rot)
+      RC.save_applied(rot, True, stage=True)
+      cloudlog.warning(
+        "C3X->C4 fitted rotation %s deg swapped in (%.0f ms)",
+        np.degrees(rot).round(3),
+        (time.perf_counter() - t0) * 1000.0,
+      )
+      return
+
+    if self.reproject_loader is not None:
+      return
+
+    try:
+      mtime = os.stat(RC.ROTATION_FILE).st_mtime
+    except OSError:
+      return
+    if mtime == self.reproject_rot_mtime:
+      return
+
+    self.reproject_rot_mtime = mtime
+    d = RC.read_rotation_file()
+    if not d.get("fitted") or np.allclose(d["rotvec"], self.reproject_rotation, atol=1e-6):
+      return
+
+    calib = RC.calib_from_rotvec(d["rotvec"])
+    if not os.path.exists(RC.table_path(
+      self.source_cam_wh,
+      C4_CAM,
+      self.reproject_cache_dir,
+      calib,
+      RC.FEATHER_PX,
+    )):
+      cloudlog.warning("C3X->C4 fitted rotation published before its table cache exists")
+      self.reproject_rot_mtime = 0.0
+      return
+
+    def load():
+      # Python threads inherit modeld's scheduler; never let a 19 MB table read
+      # execute as SCHED_FIFO 54.
+      os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
+      tables = RC.load_tables(
+        self.source_cam_wh,
+        C4_CAM,
+        self.reproject_cache_dir,
+        calib,
+        RC.FEATHER_PX,
+      )
+      meter = RC.SeamMeter(
+        self.source_cam_wh,
+        C4_CAM,
+        calib=calib,
+        geometry=tables.get("meter"),
+      )
+      self.reproject_pending = (
+        tables,
+        calib,
+        meter,
+        tuple(float(v) for v in d["rotvec"]),
+      )
+
+    self.reproject_loader = threading.Thread(target=load, daemon=True)
+    self.reproject_loader.start()
+
   def _parse_split_outputs(self, outputs: list[np.ndarray]) -> dict[str, np.ndarray]:
     vision_output, *policy_outputs = outputs
     parsed = self.parser.parse_vision_outputs(
@@ -1111,8 +1217,7 @@ class ModelState:
         self._reproject_src_tensor(self.road_key, bufs[self.road_key]),
         **inputs.get("reproj_match", {}),
       )
-      # Keep Amy's first-drive synchronization semantics for correctness and
-      # deterministic timing. Do not pipeline this until the basic port is proven.
+      self.reproject_enqueue_time = time.perf_counter() - t0
       Device["QCOM"].synchronize()
       self.reproject_time = time.perf_counter() - t0
     else:
@@ -1569,6 +1674,7 @@ def main(demo=False):
   model_lab_timings: list[float] = []
   reprojection_exec_times: list[float] = []
   reprojection_stage_times: list[float] = []
+  reprojection_enqueue_times: list[float] = []
   reprojection_meter_times: list[float] = []
   CP = None
   if model_lab_ready:
@@ -1653,6 +1759,11 @@ def main(demo=False):
     set_runtime_model_params(params, model.model_id, model.policy_generation)
 
   external_gpu_active = model_lab_active or model.uses_external_gpu
+  # Clear any persisted stage handshake when this runtime did not end up on the
+  # upstream-precompiled C3X->C4 path. Otherwise a previous drive's applied.json
+  # could make calibrationd wait forever after fallback to a small/model-lab path.
+  if not getattr(model, "reproject_active", False):
+    RC.save_applied((0.0, 0.0, 0.0), False, stage=False)
   params.put_bool("UsbGpuCompiled", external_artifact_ready or model_lab_ready)
   params.put_bool("UsbGpuActive", external_gpu_active)
   params.put_bool("UsbGpuLoading", False)
@@ -1933,6 +2044,8 @@ def main(demo=False):
               proposal["converged"],
             )
         lateral_model_output = model_output
+        if getattr(model, "reprojector", None) is not None and run_count % 20 == 0:
+          model.poll_reproject_fit()
     except Exception:
       if model_lab_active:
         cloudlog.exception("Model Laboratory inference failed, falling back to the active small model")
@@ -1957,6 +2070,7 @@ def main(demo=False):
         big_model = None
       params.put_bool("UsbGpuActive", False)
       external_gpu_active = False
+      RC.save_applied((0.0, 0.0, 0.0), False, stage=False)
       params.put("ModelVersion", model.policy_generation)
       params.put("DrivingModelVersion", model.policy_generation)
       set_runtime_model_params(params, model.model_id, model.policy_generation)
@@ -1971,17 +2085,21 @@ def main(demo=False):
     if getattr(model, "reprojector", None) is not None:
       reprojection_exec_times.append(model_execution_time * 1000.0)
       reprojection_stage_times.append(model.reproject_time * 1000.0)
+      reprojection_enqueue_times.append(model.reproject_enqueue_time * 1000.0)
       reprojection_meter_times.append(model.reproject_meter_time * 1000.0)
       if len(reprojection_exec_times) % 200 == 0:
         recent_exec = reprojection_exec_times[-200:]
         recent_stage = reprojection_stage_times[-200:]
+        recent_enqueue = reprojection_enqueue_times[-200:]
         recent_meter = reprojection_meter_times[-200:]
         match = model.reproject_match or {}
         cloudlog.warning(
-          "C3X->C4 timing: model p50/p95 %.2f/%.2f ms; reprojection p50/p95 %.2f/%.2f ms; "
-          "seam meter p50/p95 %.2f/%.2f ms; gain %.3f U %+.1f V %+.1f grad %+.3f/%+.3f; drops %.1f%%",
+          "C3X->C4 timing: model p50/p95 %.2f/%.2f ms; reprojection p50/p95 %.2f/%.2f ms "
+          "(enqueue %.2f/%.2f); seam meter p50/p95 %.2f/%.2f ms; "
+          "gain %.3f U %+.1f V %+.1f grad %+.3f/%+.3f; drops %.1f%%",
           np.percentile(recent_exec, 50), np.percentile(recent_exec, 95),
           np.percentile(recent_stage, 50), np.percentile(recent_stage, 95),
+          np.percentile(recent_enqueue, 50), np.percentile(recent_enqueue, 95),
           np.percentile(recent_meter, 50), np.percentile(recent_meter, 95),
           float(match.get("gain_y", 1.0)),
           float(match.get("u_off", 0.0)), float(match.get("v_off", 0.0)),

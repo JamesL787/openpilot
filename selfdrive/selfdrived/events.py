@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import bisect
+import json
 import math
 import os
+import time
 from enum import IntEnum
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -273,10 +275,44 @@ def speed_limit_changed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging
     Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.0)
 
 
+_reproject_fit: dict = {}
+
+
+def reproject_fit_progress() -> str | None:
+  """Text for direct camera alignment while liveCalibration is held."""
+  now = time.monotonic()
+  if now - _reproject_fit.get("t", 0.0) > 0.5:
+    _reproject_fit["t"] = now
+    try:
+      applied = json.load(open("/data/reproject_c4/applied.json"))
+      fit = json.load(open("/data/reproject_c4/fit.json"))
+    except (OSError, ValueError):
+      applied, fit = {}, {}
+    _reproject_fit["applied"], _reproject_fit["fit"] = applied, fit
+
+  applied = _reproject_fit.get("applied", {})
+  fit = _reproject_fit.get("fit", {})
+  if not applied.get("stage") or (applied.get("fitted") and fit.get("fitted", True)):
+    return None
+  if fit.get("building"):
+    return "Aligning Cameras: Building"
+  if not fit.get("n"):
+    return {
+      "cameras": "Aligning Cameras: Waiting for Cameras",
+      "model": "Aligning Cameras: Loading Model",
+      "straight": "Aligning Cameras: Drive Straight",
+      "features": "Aligning Cameras: Low Detail",
+      "stage": "Aligning Cameras: Loading Model",
+    }.get(fit.get("why"), "Aligning Cameras: 0%")
+  return f"Aligning Cameras: {fit.get('pct', 0):.0f}%" + (
+    " (Low Detail)" if fit.get("why") == "features" else ""
+  )
+
+
 def calibration_incomplete_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, starpilot_toggles: SimpleNamespace) -> Alert:
   first_word = 'Recalibrating' if sm['liveCalibration'].calStatus == log.LiveCalibrationData.Status.recalibrating else 'Calibrating'
   return Alert(
-    f"{first_word}: {sm['liveCalibration'].calPerc:.0f}%",
+    reproject_fit_progress() or f"{first_word}: {sm['liveCalibration'].calPerc:.0f}%",
     f"Drive Above {get_display_speed(MIN_SPEED_FILTER, metric)}",
     AlertStatus.normal, AlertSize.mid,
     Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .2)

@@ -6,7 +6,9 @@ While the roll calibration is a real value that can be estimated, here we assume
 and the image input into the neural network is not corrected for roll.
 '''
 
+import json
 import os
+import time
 import capnp
 import numpy as np
 from typing import NoReturn
@@ -56,6 +58,15 @@ def sanity_clip(rpy: np.ndarray) -> np.ndarray:
   return np.array([rpy[0],
                    np.clip(rpy[1], PITCH_LIMITS[0] - .005, PITCH_LIMITS[1] + .005),
                    np.clip(rpy[2], YAW_LIMITS[0] - .005, YAW_LIMITS[1] + .005)])
+
+
+# Physical C3X narrow<->wide alignment must be applied before normal device->road
+# calibration accumulates model odometry.
+REPROJECT_APPLIED = "/data/reproject_c4/applied.json"
+REPROJECT_CALIBRATED_WITH = "/data/reproject_c4/calibrated_with.json"
+REPROJECT_FIT = "/data/reproject_c4/fit.json"
+REPROJECT_ROTATION = "/data/reproject_c4/rotation.json"
+
 
 def moving_avg_with_linear_decay(prev_mean: np.ndarray, new_val: np.ndarray, idx: int, block_size: float) -> np.ndarray:
   return (idx*prev_mean + (block_size - idx) * new_val) / block_size
@@ -172,6 +183,83 @@ class Calibrator:
   def handle_v_ego(self, v_ego: float) -> None:
     self.v_ego = v_ego
 
+  def reproject_ready(self) -> bool:
+    """Hold liveCalibration until the direct camera fit is actually running in modeld.
+
+    rotation.json alone is not sufficient: reprojectd can publish a fit before modeld
+    has loaded/uploaded the new tables. Also hold during an intentional settings refit.
+    """
+    now = time.monotonic()
+    if now - getattr(self, "_rp_t", 0.0) < 1.0:
+      return getattr(self, "_rp_ready", True)
+    self._rp_t = now
+
+    try:
+      applied = json.load(open(REPROJECT_APPLIED))
+    except (OSError, ValueError):
+      applied = {}
+
+    try:
+      refitting = not json.load(open(REPROJECT_FIT)).get("fitted", True)
+    except (OSError, ValueError):
+      refitting = False
+
+    try:
+      rotation = json.load(open(REPROJECT_ROTATION))
+      swapping = (
+        bool(rotation.get("fitted"))
+        and not np.allclose(
+          rotation["rotvec"],
+          applied.get("rotvec", rotation["rotvec"]),
+          atol=1e-6,
+        )
+      )
+    except (OSError, ValueError, KeyError):
+      swapping = False
+
+    ready = (
+      not applied.get("stage", False)
+      or (bool(applied.get("fitted")) and not refitting and not swapping)
+    )
+
+    if not ready:
+      if self.valid_blocks or self.idx or self.cal_status != log.LiveCalibrationData.Status.uncalibrated:
+        cloudlog.warning("calibrationd: holding until fitted C3X camera geometry is applied")
+        self.reset()
+        self.cal_status = log.LiveCalibrationData.Status.uncalibrated
+    else:
+      rot = applied.get("rotvec") if applied.get("stage") else None
+      try:
+        prev = json.load(open(REPROJECT_CALIBRATED_WITH)).get("rotvec")
+      except (OSError, ValueError):
+        prev = None
+
+      if (
+        rot is not None
+        and prev is not None
+        and not np.allclose(rot, prev, atol=1e-6)
+        and (self.valid_blocks or self.idx)
+      ):
+        # This is our own camera-pair geometry handoff, not evidence that the device
+        # mount moved. Restart as uncalibrated so VFN does not raise a false remount alert.
+        cloudlog.warning(
+          "calibrationd: reprojection rotation changed %s -> %s deg: calibrating again",
+          np.degrees(prev).round(3),
+          np.degrees(rot).round(3),
+        )
+        self.reset()
+        self.cal_status = log.LiveCalibrationData.Status.uncalibrated
+
+      if rot != prev:
+        try:
+          os.makedirs(os.path.dirname(REPROJECT_CALIBRATED_WITH), exist_ok=True)
+          json.dump({"rotvec": rot}, open(REPROJECT_CALIBRATED_WITH, "w"))
+        except OSError:
+          pass
+
+    self._rp_ready = ready
+    return ready
+
   def get_smooth_rpy(self) -> np.ndarray:
     if self.old_rpy_weight > 0:
       return self.old_rpy_weight * self.old_rpy + (1.0 - self.old_rpy_weight) * self.rpy
@@ -274,7 +362,7 @@ def main() -> NoReturn:
     timeout = 0 if sm.frame == -1 else 100
     sm.update(timeout)
 
-    if sm.updated['cameraOdometry']:
+    if sm.updated['cameraOdometry'] and calibrator.reproject_ready():
       calibrator.handle_v_ego(sm['carState'].vEgo)
       new_rpy = calibrator.handle_cam_odom(sm['cameraOdometry'].trans,
                                            sm['cameraOdometry'].rot,

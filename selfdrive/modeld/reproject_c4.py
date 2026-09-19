@@ -15,6 +15,7 @@ infrastructure while PRESERVING VFN's currently-working geometry:
 Do not silently switch this file to Amy's population wide lens, 50 px feather, or active
 rotation refinement. Those are separate experiments.
 """
+import glob
 import hashlib
 import json
 import os
@@ -121,6 +122,194 @@ def rotvec_from_wide_from_device_euler(euler):
   return (float(p), float(y), float(r))
 
 
+ROTATION_FILE = os.environ.get("REPROJECT_C4_ROTATION", "/data/reproject_c4/rotation.json")
+APPLIED_FILE = os.path.join(os.path.dirname(ROTATION_FILE), "applied.json")
+
+
+def read_rotation_file() -> dict:
+  try:
+    d = json.load(open(ROTATION_FILE))
+    if len(d["rotvec"]) == 3 and np.isfinite(d["rotvec"]).all():
+      return d
+  except (OSError, ValueError, KeyError, TypeError):
+    pass
+  return {}
+
+
+def load_rotation() -> tuple[float, float, float]:
+  """Use a persisted direct fit when available; otherwise keep VFN's known-good board/reference seed.
+
+  Deliberately do NOT seed this VFN port from CalibrationParams. The direct fitter can start coarse from the
+  known-good geometry, and CalibrationParams may already contain residuals measured through synthetic C4 geometry.
+  """
+  d = read_rotation_file()
+  if d.get("fitted"):
+    return tuple(float(v) for v in d["rotvec"])
+  return R_NARROW_FROM_WIDE
+
+
+def save_rotation(rotvec, **extra) -> None:
+  import time
+  os.makedirs(os.path.dirname(ROTATION_FILE), exist_ok=True)
+  tmp = ROTATION_FILE + ".tmp"
+  json.dump({"rotvec": [float(v) for v in rotvec], "at": time.time(), **extra}, open(tmp, "w"))
+  os.replace(tmp, ROTATION_FILE)
+
+
+def save_applied(rotvec, fitted: bool, stage: bool = True) -> None:
+  """What modeld is actually running. calibrationd keys off this, not merely rotation.json."""
+  import time
+  os.makedirs(os.path.dirname(APPLIED_FILE), exist_ok=True)
+  tmp = APPLIED_FILE + ".tmp"
+  json.dump({
+    "stage": bool(stage),
+    "fitted": bool(fitted),
+    "rotvec": [float(v) for v in rotvec],
+    "at": time.time(),
+  }, open(tmp, "w"))
+  os.replace(tmp, APPLIED_FILE)
+
+
+def read_applied() -> dict:
+  try:
+    return json.load(open(APPLIED_FILE))
+  except (OSError, ValueError):
+    return {}
+
+
+# --- direct narrow<->wide camera-pair rotation fit ---
+# Ported from Amy's current tizi-to-mici flow, but intentionally uses VFN's current
+# board/reference wide lens + 24 px feather. Population-lens and feather experiments stay separate.
+
+def render_layers(narrow_y, wide_y, calib, dst_wh=(1344, 760)):
+  """Render the C4 narrow view twice: once from the 3X narrow and once from the 3X wide."""
+  sh, sw = narrow_y.shape
+  mw, mn = sample_coords("narrow", dst_wh[0], dst_wh[1], 1.0, calib)
+  xn = np.round(mn[..., 0] - 0.5).astype(int)
+  yn = np.round(mn[..., 1] - 0.5).astype(int)
+  xw = np.round(mw[..., 0] - 0.5).astype(int)
+  yw = np.round(mw[..., 1] - 0.5).astype(int)
+  vn = (xn >= 0) & (xn < sw) & (yn >= 0) & (yn < sh)
+  vw = (xw >= 0) & (xw < sw) & (yw >= 0) & (yw < sh)
+  inset = np.where(vn, narrow_y[yn.clip(0, sh - 1), xn.clip(0, sw - 1)], 0).astype(np.float32)
+  surround = np.where(vw, wide_y[yw.clip(0, sh - 1), xw.clip(0, sw - 1)], 0).astype(np.float32)
+  return inset, surround, mw, vn & vw
+
+
+def phase_shift(a, b):
+  """Phase-correlation shift of b relative to a: (dx, dy, peak-to-sidelobe ratio)."""
+  h, w = a.shape
+  win = np.outer(np.hanning(h), np.hanning(w)).astype(np.float32)
+  A = np.fft.rfft2((a - a.mean()) * win)
+  B = np.fft.rfft2((b - b.mean()) * win)
+  R = A * np.conj(B)
+  R /= np.abs(R) + 1e-6
+  r = np.fft.irfft2(R, s=(h, w))
+  py, px = divmod(int(np.argmax(r)), w)
+  peak = r[py, px]
+  m = np.ones_like(r, bool)
+  m[max(0, py - 5):py + 6, max(0, px - 5):px + 6] = False
+  side = r[m]
+  psr = (peak - side.mean()) / (side.std() + 1e-9)
+
+  def sub(c, l, rr):
+    d = l - 2 * c + rr
+    return 0.0 if d >= 0 else float(0.5 * (l - rr) / d)
+
+  dx = px + sub(peak, r[py, (px - 1) % w], r[py, (px + 1) % w])
+  dy = py + sub(peak, r[(py - 1) % h, px], r[(py + 1) % h, px])
+  if dx > w / 2:
+    dx -= w
+  if dy > h / 2:
+    dy -= h
+  return -dx, -dy, float(psr)
+
+
+def match_rays(narrow_y, wide_y, calib, dst_wh=(1344, 760), patch=96, stride=64,
+               min_psr=5.0, max_shift=None, min_matches=12):
+  """Return matched narrow/wide rays or None when the frame has too little usable detail.
+
+  Amy lowered min_psr from 6 -> 5 after dusk testing: it roughly doubled usable patches
+  while keeping pitch accuracy and yaw within ~0.05 deg of the stricter fit.
+  """
+  inset, surround, mw, valid = render_layers(narrow_y, wide_y, calib, dst_wh)
+  dw, dh = dst_wh
+  max_shift = max_shift or patch / 3
+  pa, pb = [], []
+  for y in range(0, dh - patch + 1, stride):
+    for x in range(0, dw - patch + 1, stride):
+      if valid[y:y + patch, x:x + patch].mean() < 0.98:
+        continue
+      a = inset[y:y + patch, x:x + patch]
+      b = surround[y:y + patch, x:x + patch]
+      if a.std() < 4 or b.std() < 4:
+        continue
+      dx, dy, psr = phase_shift(a, b)
+      if psr < min_psr or abs(dx) > max_shift or abs(dy) > max_shift:
+        continue
+      pa.append((x + patch / 2, y + patch / 2))
+      pb.append((x + patch / 2 + dx, y + patch / 2 + dy))
+  if len(pa) < min_matches:
+    return None
+
+  pa, pb = np.float32(pa), np.float32(pb)
+  Kn = DEVICE_CAMERAS[("mici", "os04c10")].fcam.intrinsics
+  rays_n = unproject_pinhole(pa, Kn[0, 0], Kn[0, 2], Kn[1, 2])
+  xb = np.round(pb[:, 0] - 0.5).astype(int).clip(0, dw - 1)
+  yb = np.round(pb[:, 1] - 0.5).astype(int).clip(0, dh - 1)
+  rays_w = unproject_fisheye(mw[yb, xb], calib["wide"])
+  return rays_n, rays_w
+
+
+def kabsch(rays_n, rays_w):
+  """Rotation taking narrow rays onto wide rays, robustly trimmed twice."""
+  for _ in range(2):
+    U, _, Vt = np.linalg.svd(rays_w.T @ rays_n)
+    d = np.sign(np.linalg.det(U @ Vt))
+    Rm = U @ np.diag([1, 1, d]) @ Vt
+    res = np.degrees(np.arccos(np.clip((rays_n @ Rm.T * rays_w).sum(1), -1, 1)))
+    keep = res <= np.percentile(res, 80)
+    rays_n, rays_w = rays_n[keep], rays_w[keep]
+  return matrix_to_rotvec(Rm), int(len(rays_n)), float(np.sqrt(np.mean(res[keep] ** 2)))
+
+
+def fit_rotation(narrow_y, wide_y, calib0, dst_wh=(1344, 760), iters=3, coarse=True):
+  """One synchronized frame pair -> (rotvec, n_matches, rms_deg) or None."""
+  calib = dict(calib0)
+  R = np.asarray(calib0["R"], float)
+  for it in range(iters):
+    calib["R"] = tuple(R)
+    if it == 0 and coarse:
+      m = match_rays(narrow_y, wide_y, calib, dst_wh, patch=192, stride=96, max_shift=64)
+    else:
+      m = match_rays(narrow_y, wide_y, calib, dst_wh)
+    if m is None:
+      return None
+    R, n, rms = kabsch(*m)
+  return tuple(float(v) for v in R), n, rms
+
+
+def mean_rotvec(rotvecs):
+  M = sum(rotvec_to_matrix(v) for v in rotvecs) / len(rotvecs)
+  U, _, Vt = np.linalg.svd(M)
+  d = np.sign(np.linalg.det(U @ Vt))
+  return tuple(float(v) for v in matrix_to_rotvec(U @ np.diag([1, 1, d]) @ Vt))
+
+
+def combine_fits(rotvecs, trim=0.2):
+  """Trimmed mean + convergence statistics. SE uses pitch/yaw only."""
+  m = mean_rotvec(rotvecs)
+  dev = np.array([
+    np.linalg.norm(matrix_to_rotvec(rotvec_to_matrix(m).T @ rotvec_to_matrix(v)))
+    for v in rotvecs
+  ])
+  keep = np.argsort(dev)[:max(1, int(round(len(rotvecs) * (1 - trim))))]
+  kept = np.array([rotvecs[i] for i in keep])
+  mean = mean_rotvec(kept)
+  se = float(np.degrees(np.linalg.norm(kept[:, :2].std(0)) / np.sqrt(len(kept)))) if len(kept) > 1 else float("inf")
+  return mean, keep, float(np.degrees(dev[keep].max())), se
+
+
 def sample_coords(out_cam, dst_w, dst_h, scale=1.0, calib=None):
   """Float 3X wide/narrow coordinates for every comma 4 output pixel."""
   calib = calib or DEFAULT_CALIB
@@ -206,10 +395,15 @@ def build_tables(src_wh, dst_wh, calib=None, feather=FEATHER_PX):
       # Keep the narrow sample unsoftened. Amy's optional blend-zone softening
       # intentionally destroys some narrow detail and remains a separate A/B.
       out[cam]["pn"] = idx_n.astype(np.int32)
+
+  # Amy found constructing SeamMeter geometry during a live table swap could stall modeld
+  # for ~1 s. Build/cache those indices alongside the LUT instead.
+  out["meter"] = SeamMeter.geometry(src_wh, dst_wh, calib)
   return out
 
 
-TABLE_VERSION = 3
+# VFN cache layout: current gather tables + cached SeamMeter geometry, still NO inset-softening packing.
+TABLE_VERSION = 4
 
 
 def calib_tag(calib, feather=FEATHER_PX):
@@ -217,25 +411,44 @@ def calib_tag(calib, feather=FEATHER_PX):
   return tag + ("" if feather == FEATHER_PX else f"_f{feather:g}")
 
 
-def load_tables(src_wh, dst_wh, cache_dir=None, calib=None, feather=FEATHER_PX):
-  """Cache expensive lookup-table construction on disk."""
-  if cache_dir is None:
-    return build_tables(src_wh, dst_wh, calib, feather)
-  os.makedirs(cache_dir, exist_ok=True)
-  p = os.path.join(
+def table_path(src_wh, dst_wh, cache_dir, calib=None, feather=FEATHER_PX):
+  return os.path.join(
     cache_dir,
     f"reproject_c4_v{TABLE_VERSION}_{src_wh[0]}x{src_wh[1]}_{dst_wh[0]}x{dst_wh[1]}{calib_tag(calib, feather)}.npz",
   )
+
+
+def load_tables(src_wh, dst_wh, cache_dir=None, calib=None, feather=FEATHER_PX):
+  """Cache the expensive table + SeamMeter geometry build on disk."""
+  if cache_dir is None:
+    return build_tables(src_wh, dst_wh, calib, feather)
+  os.makedirs(cache_dir, exist_ok=True)
+  p = table_path(src_wh, dst_wh, cache_dir, calib, feather)
   if os.path.exists(p):
     z = np.load(p)
-    tables = {"wide": {}, "narrow": {}}
+    tables = {"wide": {}, "narrow": {}, "meter": {}}
     for key in z.files:
       cam, k = key.split("_", 1)
       tables[cam][k] = z[key] if z[key].ndim else int(z[key])
     return tables
+
   tables = build_tables(src_wh, dst_wh, calib, feather)
-  np.savez_compressed(p + ".tmp.npz", **{f"{cam}_{k}": v for cam, tab in tables.items() for k, v in tab.items()})
+  # These tables are effectively incompressible. Amy measured ~15 s compressed vs
+  # ~6 s uncompressed build time on 3X, with ~0.07 s load.
+  np.savez(p + ".tmp.npz", **{
+    f"{cam}_{k}": v
+    for cam, tab in tables.items()
+    for k, v in tab.items()
+  })
   os.replace(p + ".tmp.npz", p)
+
+  # Refits leave ~19 MB caches. Retain only the newest few.
+  old = sorted(glob.glob(os.path.join(cache_dir, "reproject_c4_*.npz")), key=os.path.getmtime)[:-4]
+  for f in old:
+    try:
+      os.remove(f)
+    except OSError:
+      pass
   return tables
 
 
@@ -255,7 +468,25 @@ class SeamMeter:
   BANDS = ((16, 50), (50, 100), (100, 160), (160, 235))
 
   def __init__(self, src_wh=(1928, 1208), dst_wh=(1344, 760), calib=None,
-               n_pairs=2048, ring=(30.0, 130.0), alpha=0.3, every=2, feedforward=True):
+               n_pairs=2048, ring=(30.0, 130.0), alpha=0.3, every=2, feedforward=True,
+               geometry=None):
+    g = geometry if geometry is not None else self.geometry(src_wh, dst_wh, calib, n_pairs, ring)
+    self.y_w, self.y_n, self.pos, self.cell, self.uv_w, self.uv_n = (
+      g[k] for k in ("y_w", "y_n", "pos", "cell", "uv_w", "uv_n")
+    )
+    self.cell_bad = np.zeros(32 * 18, np.float32)
+    self.CELL_ALPHA = 0.02
+    self.CELL_LIMIT = 0.2
+    self.alpha = alpha
+    self.every = every
+    self.n_calls = 0
+    self.moving = False
+    self.feedforward = feedforward
+    self.state = None
+
+  @staticmethod
+  def geometry(src_wh=(1928, 1208), dst_wh=(1344, 760), calib=None,
+               n_pairs=2048, ring=(30.0, 130.0)) -> dict:
     sw, sh = src_wh
     dw, dh = dst_wh
     calib = calib or DEFAULT_CALIB
@@ -270,33 +501,27 @@ class SeamMeter:
     in_ring = vw & vn & (dist > ring[0]) & (dist < ring[1])
     sel = np.flatnonzero(in_ring)[::max(1, int(in_ring.sum()) // n_pairs)][:n_pairs]
 
-    self.y_w = iw.ravel()[sel]
-    self.y_n = inn.ravel()[sel]
-    self.pos = np.stack([
+    pos = np.stack([
       (sel % dw + 0.5) / dw * 2 - 1,
       (sel // dw + 0.5) / dh * 2 - 1,
     ], 1).astype(np.float32)
 
-    self.cell = (np.floor((self.pos + 1) / 2 * [32, 18])).astype(int)
-    self.cell = self.cell[:, 0] * 18 + self.cell[:, 1]
-    self.cell_bad = np.zeros(32 * 18, np.float32)
-    self.CELL_ALPHA = 0.02
-    self.CELL_LIMIT = 0.2
+    cell = (np.floor((pos + 1) / 2 * [32, 18])).astype(int)
+    cell = cell[:, 0] * 18 + cell[:, 1]
 
     mw2, mn2 = sample_coords("narrow", dw // 2, dh // 2, 0.5, calib)
     iw2, vw2 = _nv12_index(mw2, sw, sh, s_stride, s_uv, True)
     inn2, vn2 = _nv12_index(mn2, sw, sh, s_stride, s_uv, True)
     in_ring2 = in_ring[::2, ::2] & vw2 & vn2
     sel2 = np.flatnonzero(in_ring2)[::max(1, int(in_ring2.sum()) // (n_pairs // 2))][:n_pairs // 2]
-    self.uv_w = iw2.ravel()[sel2]
-    self.uv_n = inn2.ravel()[sel2]
-
-    self.alpha = alpha
-    self.every = every
-    self.n_calls = 0
-    self.moving = False
-    self.feedforward = feedforward
-    self.state = None
+    return {
+      "y_w": iw.ravel()[sel],
+      "y_n": inn.ravel()[sel],
+      "pos": pos,
+      "cell": cell,
+      "uv_w": iw2.ravel()[sel2],
+      "uv_n": inn2.ravel()[sel2],
+    }
 
   def measure(self, wide, narrow):
     yw = wide[self.y_w].astype(np.float32)
@@ -399,10 +624,11 @@ class Reprojector:
     self.size = tables["wide"]["size"]
     self.body = tables["wide"]["body"]
     self.uv_offset = tables["wide"]["uv_offset"]
+    self.meter_geometry = tables.get("meter")
     self.device = device
     self.t = {
-      cam: {k: Tensor(v, device=device).realize() for k, v in tab.items() if isinstance(v, np.ndarray)}
-      for cam, tab in tables.items()
+      cam: {k: Tensor(v, device=device).realize() for k, v in tables[cam].items() if isinstance(v, np.ndarray)}
+      for cam in ("wide", "narrow")
     }
 
     self.params_np = np.zeros(12, np.float32)
@@ -443,9 +669,10 @@ class Reprojector:
     """
     assert tables["wide"]["body"] == self.body
     assert tables["wide"]["uv_offset"] == self.uv_offset
+    self.meter_geometry = tables.get("meter")
     self.t = {
-      cam: {k: Tensor(v, device=self.device).realize() for k, v in tab.items() if isinstance(v, np.ndarray)}
-      for cam, tab in tables.items()
+      cam: {k: Tensor(v, device=self.device).realize() for k, v in tables[cam].items() if isinstance(v, np.ndarray)}
+      for cam in ("wide", "narrow")
     }
 
   def _chroma(self):
