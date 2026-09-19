@@ -136,12 +136,12 @@ def test_clarity_and_c020_share_the_current_feedforward_curve():
 
 
 @pytest.mark.parametrize(("desired_angle", "expected"), [
-  (-24.0, 1.04788),
-  (24.0, 1.10088),
+  (-24.0, 1.07438),
+  (24.0, 1.07438),
 ])
-def test_clarity_output_scale_is_static_for_each_rack_direction(desired_angle, expected):
-  # The scale is a static rack calibration. Directional authority belongs in the PID,
-  # not in a multiplier on its complete P/I/F output.
+def test_modified_eps_output_scale_is_direction_neutral(desired_angle, expected):
+  # The shared modified-EPS scale is direction-neutral. Directional authority belongs
+  # in the PID, not in a multiplier on its complete P/I/F output.
   assert _clarity_eps_pid_output_scale(desired_angle, 10.0) == pytest.approx(expected)
 
 
