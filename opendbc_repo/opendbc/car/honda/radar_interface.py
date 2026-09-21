@@ -91,6 +91,27 @@ BOSCH_A_STATUS_INVALID = 0xF
 BOSCH_A_RANGE_RAW_INVALID = 0xFFF
 BOSCH_A_ANGLE_RAW_INVALID = 0x7FF
 BOSCH_A_LIFE_INVALID = 0xFFF
+
+# LIFECYCLE_RAW is a 12-bit counter that advances by 2 per frame index, so it reaches its highest
+# even value, 0xFFE, after 2047 frames -- about 137 s of continuous tracking at the ~14.9 Hz sweep
+# rate -- and then stops advancing. It is NOT the invalid sentinel (0xFFF): STATUS, range, azimuth
+# and track id all stay valid, and the object is still really there.
+#
+# Measured on 00000232--fc8dad0d18 (device commit 0083ffa, replayed through this parser):
+# track 37 was born at route t=442.7 s, saturated at t=580.2 s at an age of 137.4 s, and was then
+# observed on every sweep for 121.8 s (1,815 sweeps) while `life_delta == 2 * frame_delta` failed
+# every time -- so the range history was cleared every sweep, no point ever matured, and the object
+# was published exactly 0 times. Its last published geometry was dRel 38.9 m, yRel -0.1 m: the lead
+# we were following. The device's own recording agrees -- liveTracks carries id 37 in 894/894 frames
+# of segment 8 and 569/893 of segment 9, then 0 in segments 10-12, and the radar lead goes from
+# 1200/1200 frames to 0/1200 across that boundary. Track 34 did the same at an age of 137.5 s.
+#
+# A saturated counter cannot testify either way about identity, and per D-041/D-042 the safe
+# direction is to keep publishing geometry rather than delete a real object: the range-innovation
+# gate below still decides whether each sweep is trustworthy, and staleness still retires a genuine
+# disappearance. The cost, recorded against D-049: an ID reuse that happens WHILE the counter is
+# saturated cannot be detected here at all.
+BOSCH_A_LIFE_SATURATED = 0xFFE
 BOSCH_A_TRACK_ID_MIN = 1
 BOSCH_A_TRACK_ID_MAX = 0x3F
 # AUX logical 0x00CA has an explicit 0x3FF invalid sentinel. Firmware proves the normalization below;
@@ -485,6 +506,11 @@ class RadarInterface(RadarInterfaceBase):
         frame_delta = (idx0 - track.prev_frame_idx) & 0xF
         life_delta = (life - track.prev_life) & 0xFFF
         same_incarnation = life_delta == 2 * frame_delta
+        if not same_incarnation and life == BOSCH_A_LIFE_SATURATED and track.prev_life == BOSCH_A_LIFE_SATURATED:
+          # The counter is pinned at its maximum and can no longer advance (see the constant's
+          # evidence block). Without this, an object tracked for ~137 s is deleted for as long as it
+          # remains visible -- measured at 121.8 s of continuous suppression of the followed lead.
+          same_incarnation = True
 
       if not same_incarnation:
         # The CAN identity remains the externally-visible key, but a lifecycle discontinuity starts a
@@ -529,7 +555,6 @@ class RadarInterface(RadarInterfaceBase):
       high_u10_live_vrel = (direct_vrel is None and live_direct_vrel is not None and
                             direct_vrel_uncertainty_raw is not None and
                             direct_vrel_uncertainty_raw > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW)
-
 
       # Validate against the previous accepted range. Qualified U11 and the range-ratio field are
       # independent corroboration paths; high-U10 U11 is deliberately excluded from this decision.
@@ -598,7 +623,9 @@ class RadarInterface(RadarInterfaceBase):
           d_mean = sum(ds) / n
           denom = sum((t - t_mean) ** 2 for t in ts)
           if denom > 1e-9:
-            rate = sum((t - t_mean) * (d - d_mean) for t, d in zip(ts, ds)) / denom
+            # strict=True: ts and ds are same-length by construction. A silent truncation here
+            # would bias the fitted rate and weaken the one-sided gate rather than erroring.
+            rate = sum((t - t_mean) * (d - d_mean) for t, d in zip(ts, ds, strict=True)) / denom
             # One-sided: only U11 claiming MORE closing than the range supports is a fault.
             vrel_inconsistent = vrel_candidate < rate - BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
 

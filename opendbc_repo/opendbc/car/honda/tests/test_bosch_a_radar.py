@@ -18,6 +18,7 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW,
   BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS,
   BOSCH_A_FREQ_HZ,
+  BOSCH_A_LIFE_SATURATED,
   BOSCH_A_MAIN_IDS,
   BOSCH_A_NUM_SLOTS,
   BOSCH_A_RANGE_RATIO_INVALID,
@@ -589,6 +590,42 @@ class TestLifecycle:
     assert rr.points[0].trackId == t0
     assert rr.points[0].vRel == 0.0
     assert len(rr.points) == 1
+
+  def _drive_held_life(self, held_life, sweeps=12):
+    """Two clean sweeps into `held_life`, then `sweeps` more with the counter not advancing.
+
+    Returns the per-sweep published point count after the counter stops moving.
+    """
+    ri = make_radar_interface()
+    kw = dict(with_aux=True, direct_vrel_raw=800, direct_vrel_uncertainty_raw=40)
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, held_life - 2, 0, **kw))
+    ri.update(sweep(0, 1, 0x7, 997, 1024, held_life, 70_000_000, **kw))
+    published = []
+    for i in range(2, 2 + sweeps):
+      rr = ri.update(sweep(0, i % 16, 0x7, 1000 - 3 * i, 1024, held_life, i * 70_000_000, **kw))
+      published.append(len(rr.points))
+    return ri, published
+
+  def test_saturated_lifecycle_counter_keeps_publishing(self):
+    """LIFECYCLE_RAW pins at 0xFFE after ~137 s of tracking and cannot advance again.
+
+    Treating each of those sweeps as a new incarnation deletes a still-visible object for as long
+    as it stays visible: measured at 121.8 s of continuous suppression of the followed lead on
+    00000232--fc8dad0d18 (track 37, last published at dRel 38.9 m, yRel -0.1 m).
+    """
+    ri, published = self._drive_held_life(BOSCH_A_LIFE_SATURATED)
+    assert all(n == 1 for n in published), published
+    assert len(ri._tracks[1].samples) > 2          # range history survives, so vRel stays derivable
+    assert ri.pts[1].measured
+
+  def test_a_stuck_but_unsaturated_counter_is_still_a_lifecycle_break(self):
+    """D-009 negative control: the carve-out is for the saturation value only.
+
+    A counter frozen anywhere else is a real discontinuity and must still clear the history --
+    otherwise this fix would silently disable incarnation detection everywhere.
+    """
+    _ri, published = self._drive_held_life(4000)
+    assert all(n == 0 for n in published), published
 
   def test_death_then_rebirth_reuses_can_id_with_clean_history(self):
     ri = make_radar_interface()
