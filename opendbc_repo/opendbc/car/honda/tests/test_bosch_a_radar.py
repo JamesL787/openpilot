@@ -1181,6 +1181,63 @@ class TestLastingCleanStepReAnchors:
       assert not any(p.measured for p in rr.points)
 
 
+class TestAJoinWaitsForAFreshRateFit:
+  """D-059 (STATUS item 22.5). A range-rejection run ends when a later range passes the gate against the stale anchor's
+  U11 extrapolation (a "join"). D-043 then fitted the pre-gap samples plus the joined range, so the gap,
+  not the object, set the fitted rate. Replayed on 7 routes (232/236/237/239/23a/23b/23e): measured vRel
+  in the second after a join over-closed the next-1 s range slope by >3 m/s on 21.0 % of sweeps
+  (33.1 % where the run's own slope contradicted U11) against 4.6 % for reference points. Measured vRel resumes only once a fit over the post-join ranges
+  alone also agrees."""
+  DT_NANOS = 70_000_000
+  CLOSING_RAW = 2.24  # 2 m/s over a 70 ms sweep
+
+  def _drive(self, ri, i, raw, u11_mps):
+    return ri.update(sweep(0, i & 0xF, 0x7, round(raw), 1024, (1 + 2 * i) & 0xFFF, i * self.DT_NANOS, with_aux=True,
+                           direct_vrel_raw=864 + round(u11_mps * 64), direct_vrel_uncertainty_raw=0,
+                           range_sigma_raw=1, existence_raw=126))
+
+  def _birth(self, ri):
+    raw = 1650
+    for i in range(6):
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw, -2.0)
+    assert rr.points[0].measured is True
+    return raw
+
+  def test_negative_control_a_join_that_contradicts_u11_is_published_unmeasured(self):
+    ri = make_radar_interface()
+    # The range settles 8.5 m closer and holds still while U11 claims 4 m/s closing. The anchor's U11
+    # extrapolation meets it after ~0.84 s. Before 22.5 that join published vRel -4.0 as measured.
+    raw = self._birth(ri) - 136
+    joined_d_rel = round(raw) * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M
+    joined = False
+    for i in range(6, 60):
+      rr = self._drive(ri, i, raw, -4.0)
+      assert not any(p.measured for p in rr.points), f"measured at sweep {i}"
+      if rr.points and rr.points[0].dRel == pytest.approx(joined_d_rel):
+        joined = True
+      elif joined:
+        pytest.fail(f"joined point deleted at sweep {i}")
+    assert joined
+
+  def test_a_walk_that_returns_resumes_measured_after_a_fresh_fit(self):
+    ri = make_radar_interface()
+    raw = self._birth(ri)
+    for i in range(6, 20):  # ~1 s walk 8 m out; the object keeps closing underneath it
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw + 128, -2.0)
+      assert not any(p.measured for p in rr.points)  # held, then deleted past BOSCH_A_STALE_S (unchanged)
+    measured_at = None
+    for i in range(20, 40):
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw, -2.0)
+      assert len(rr.points) == 1, f"point deleted at sweep {i}"
+      if rr.points[0].measured and measured_at is None:
+        measured_at = i
+    assert measured_at is not None
+    assert (measured_at - 20) * self.DT_NANOS * 1e-9 <= 0.5
+
+
 # --- 7b. residual vRel-authority fix: raw one-sweep fallback never becomes a published measurement ----
 # (U11 genuinely unavailable -- sentinel/out-of-range -- is a different path than the high-u10-but-live
 # case above; see radar_interface.py's u11_and_ratio_unavailable branch.)

@@ -260,6 +260,7 @@ class _BoschATrackState:
   # D-057: the current run of range-REJECTED sweeps, (time, range, U11 or None, degraded).
   # Cleared by any accepted sweep and by a lifecycle discontinuity.
   rejected_run: list = field(default_factory=list)
+  rejoin_samples: list | None = None  # D-059: gated ranges since a join, until a fresh rate fit agrees with vRel
   last_trusted_vrel: float | None = None
   last_trusted_vrel_nanos: int | None = None
 
@@ -590,6 +591,7 @@ class RadarInterface(RadarInterfaceBase):
         track.samples.clear()
         track.range_anchor = None
         track.rejected_run.clear()
+        track.rejoin_samples = None
         track.last_trusted_vrel = None
         track.last_trusted_vrel_nanos = None
         self.pts.pop(track_id, None)
@@ -679,6 +681,9 @@ class RadarInterface(RadarInterfaceBase):
           range_rejected = False
           track.rejected_run.clear()
       else:
+        if track.rejected_run:
+          # D-059: a join. The range passed only after a rejection run, so `samples` straddle the gap.
+          track.rejoin_samples = []
         track.rejected_run.clear()
 
       if range_rejected:
@@ -728,7 +733,42 @@ class RadarInterface(RadarInterfaceBase):
             # One-sided: only U11 claiming MORE closing than the range supports is a fault.
             vrel_inconsistent = vrel_candidate < rate - BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
 
-      if high_u10_live_vrel or vrel_inconsistent:
+      # D-059: after a join, `samples` hold pre-gap ranges plus the joined one, so the fit above is set by
+      # the gap rather than by the object and cannot see a contradicting U11. Replayed on 00000232 / 236 /
+      # 237 / 239 / 23a / 23b / 23e: measured vRel in the second after a join over-closed the next-1 s
+      # range slope by >3 m/s on 21.0 % of sweeps (33.1 % where the rejected run's own slope contradicted
+      # U11) against 4.6 % for all measured points. Hold such a vRel as a coast until the same one-sided
+      # check also passes over the post-join ranges alone.
+      # - `samples` are left exactly as before: clearing them instead (fitting only the fresh ranges)
+      #   admitted 106 new measured sweeps that over-closed on 16 % and lost 65 point-sweeps (the D-056
+      #   failure mode). With them untouched, this can only withdraw measured vRel, never add it.
+      # - The hold needs a trusted vRel to coast and re-publishes a point the rejection had dropped: a
+      #   join must never delete an object the radar is reporting and the gate just accepted (D-041/D-042).
+      # Replay vs D-057: 0 lost, 0 new measured, 612 sweeps withdrawn (30 lead); the withdrawn vRel
+      # over-closed on 29.2 % (105 / 359 scored).
+      rejoin_hold = False
+      if track.rejoin_samples is not None:
+        track.rejoin_samples.append((now_s, dRel))
+        del track.rejoin_samples[:-BOSCH_A_REANCHOR_WINDOW]
+        fresh_ok = False
+        if vrel_candidate is not None and len(track.rejoin_samples) >= BOSCH_A_VREL_RATE_CHECK_MIN_SAMPLES:
+          ts = [x[0] for x in track.rejoin_samples]
+          ds = [x[1] for x in track.rejoin_samples]
+          if ts[-1] - ts[0] >= BOSCH_A_VREL_RATE_CHECK_MIN_SPAN_S:
+            n = len(ts)
+            t_mean = sum(ts) / n
+            d_mean = sum(ds) / n
+            denom = sum((t - t_mean) ** 2 for t in ts)
+            if denom > 1e-9:
+              rate = sum((t - t_mean) * (d - d_mean) for t, d in zip(ts, ds, strict=True)) / denom
+              fresh_ok = vrel_candidate >= rate - BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
+        if fresh_ok:
+          track.rejoin_samples = None
+        else:
+          rejoin_hold = track.last_trusted_vrel is not None and not (high_u10_live_vrel or vrel_inconsistent)
+      if rejoin_hold:
+        track.samples.append((now_s, dRel))
+      if high_u10_live_vrel or vrel_inconsistent or rejoin_hold:
         # The range cleared innovation checking above, so geometry here is trustworthy; only vRel is
         # in question. Preserve current geometry but coast only a recent authoritative motion
         # estimate without a KF update, rather than publishing a one-sweep-derivative synthesis.
@@ -745,6 +785,11 @@ class RadarInterface(RadarInterfaceBase):
         # is still handled by _bosch_a_retire_stale_tracks, which every coast path leaves armed by
         # refreshing last_seen_nanos only while the radar keeps reporting this identity.
         point = self.pts.get(track_id)
+        if point is None and rejoin_hold:
+          point = self.pts[track_id] = structs.RadarData.RadarPoint()
+          point.trackId = track_id
+          point.aRel = float('nan')
+          point.yvRel = float('nan')
         if point is not None and track.last_trusted_vrel is not None:
           point.dRel = dRel
           point.yRel = yRel
