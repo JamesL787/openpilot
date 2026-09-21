@@ -479,6 +479,15 @@ class RadarInterface(RadarInterfaceBase):
     # First collapse duplicate wire observations of one CAN identity. The dictionary is also the
     # output uniqueness boundary: one valid Bosch identity can never create two RadarPoints.
     valid_by_id = {}
+    # D-055 (replay and static only; road evidence pending): an identity valid in ANY slot this sweep
+    # is decided by its own valid observation below, never hidden by an invalid one, mirroring the
+    # slot-replacement guard. Only an accept re-creates a hidden point; a coast updates an existing
+    # one. So when the radar migrated an object to another slot and the old slot went invalid in the
+    # same sweep, the hide below deleted a point the coast would have kept. Measured on 00000232 /
+    # 236 / 237 / 239 / 23a: 2,252 withheld point-sweeps, 504 of them the lead (00000237 track 9:
+    # 21.2 s dark). On the fresh routes 0000023b / 23e (driven on D-054, 0756f810): 0 point-sweeps
+    # lost, 9 + 331 restored (33 lead), all coasts — no new measured vRel enters control.
+    valid_this_sweep = {o['track_id'] for o in observations if o['object_valid'] and o['track_id_valid']}
     for observation in observations:
       if not (observation['object_valid'] and observation['track_id_valid']):
         # An invalid observation ends publication for the object currently occupying this wire slot,
@@ -488,7 +497,7 @@ class RadarInterface(RadarInterfaceBase):
         ids_to_hide = {self._slot_track_ids[observation['slot']]}
         if observation['track_id_valid']:
           ids_to_hide.add(observation['track_id'])
-        for invalid_id in ids_to_hide - {None}:
+        for invalid_id in ids_to_hide - {None} - valid_this_sweep:
           self.pts.pop(invalid_id, None)
         continue
       track_id = observation['track_id']

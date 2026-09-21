@@ -1074,6 +1074,55 @@ class TestCoastAdvancesTheRangeGate:
     assert len(ri._tracks[1].samples) == 1
 
 
+# --- 7a'. D-055: an invalid slot must not hide an identity that is valid elsewhere ------------
+
+class TestInvalidSlotDoesNotHideAMigratedIdentity:
+  """Modelled on 00000237--77313c5a66 track 9 (the followed lead, 21.2 s dark) and 00000232 track 43.
+  The radar moved the object to another wire slot in the same sweep its old slot went invalid. The
+  invalid-observation hide deleted the point, the D-043 rate check then coasted the valid observation,
+  and a coast only updates an existing point, so the lead stayed dark until an accept."""
+  DT_NANOS = 70_000_000
+  U11 = 864  # 0 m/s
+
+  def _history(self, ri, slot=0):
+    for i in range(4):
+      rr = ri.update(sweep(slot, i, 0x7, 1000, 1024, 1 + 2 * i, i * self.DT_NANOS, with_aux=True,
+                           direct_vrel_raw=self.U11, direct_vrel_uncertainty_raw=0))
+    assert len(rr.points) == 1 and rr.points[0].measured is True
+
+  def _migrate(self, ri, i, *, u10, invalid_track_id=0xFF, valid_elsewhere=True):
+    invalid_old_slot = make_main_frames(0, i, 0xF, 1000, 1024, 1 + 2 * i, track_id=invalid_track_id)
+    if valid_elsewhere:
+      return ri.update(sweep(1, i, 0x7, 1000, 1024, 1 + 2 * i, i * self.DT_NANOS, with_aux=True,
+                             direct_vrel_raw=self.U11, direct_vrel_uncertainty_raw=u10,
+                             extra_slots=invalid_old_slot))
+    return ri.update(sweep(2, i, 0x7, 1200, 1024, 1, i * self.DT_NANOS, track_id=2,
+                           extra_slots=invalid_old_slot))
+
+  @pytest.mark.parametrize("invalid_track_id", [0xFF, 1])
+  def test_a_coasted_identity_that_migrated_slots_keeps_its_point(self, invalid_track_id):
+    ri = make_radar_interface()
+    self._history(ri)
+    # u10 above the qualified limit: the valid observation in slot 1 coasts.
+    rr = self._migrate(ri, 4, u10=1023, invalid_track_id=invalid_track_id)
+    assert [p.trackId for p in rr.points] == [1]
+    assert rr.points[0].measured is False
+    assert rr.points[0].vRel == pytest.approx(0.0)
+
+  def test_an_accepted_identity_that_migrated_slots_still_publishes_measured(self):
+    ri = make_radar_interface()
+    self._history(ri)
+    rr = self._migrate(ri, 4, u10=0)
+    assert [p.trackId for p in rr.points] == [1] and rr.points[0].measured is True
+
+  def test_negative_control_an_invalid_slot_still_hides_an_identity_seen_nowhere_else(self):
+    ri = make_radar_interface()
+    self._history(ri)
+    rr = self._migrate(ri, 4, u10=0, valid_elsewhere=False)
+    assert 1 not in [p.trackId for p in rr.points]
+    assert 1 in ri._tracks  # hidden, not retired: the history survives to its stale deadline
+
+
 # --- 7b. residual vRel-authority fix: raw one-sweep fallback never becomes a published measurement ----
 # (U11 genuinely unavailable -- sentinel/out-of-range -- is a different path than the high-u10-but-live
 # case above; see radar_interface.py's u11_and_ratio_unavailable branch.)
