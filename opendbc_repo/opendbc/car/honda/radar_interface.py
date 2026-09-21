@@ -91,6 +91,27 @@ BOSCH_A_STATUS_INVALID = 0xF
 BOSCH_A_RANGE_RAW_INVALID = 0xFFF
 BOSCH_A_ANGLE_RAW_INVALID = 0x7FF
 BOSCH_A_LIFE_INVALID = 0xFFF
+
+# LIFECYCLE_RAW is a 12-bit counter that advances by 2 per frame index, so it reaches its highest
+# even value, 0xFFE, after 2047 frames -- about 137 s of continuous tracking at the ~14.9 Hz sweep
+# rate -- and then stops advancing. It is NOT the invalid sentinel (0xFFF): STATUS, range, azimuth
+# and track id all stay valid, and the object is still really there.
+#
+# Measured on 00000232--fc8dad0d18 (device commit 0083ffa, replayed through this parser):
+# track 37 was born at route t=442.7 s, saturated at t=580.2 s at an age of 137.4 s, and was then
+# observed on every sweep for 121.8 s (1,815 sweeps) while `life_delta == 2 * frame_delta` failed
+# every time -- so the range history was cleared every sweep, no point ever matured, and the object
+# was published exactly 0 times. Its last published geometry was dRel 38.9 m, yRel -0.1 m: the lead
+# we were following. The device's own recording agrees -- liveTracks carries id 37 in 894/894 frames
+# of segment 8 and 569/893 of segment 9, then 0 in segments 10-12, and the radar lead goes from
+# 1200/1200 frames to 0/1200 across that boundary. Track 34 did the same at an age of 137.5 s.
+#
+# A saturated counter cannot testify either way about identity, and per D-041/D-042 the safe
+# direction is to keep publishing geometry rather than delete a real object: the range-innovation
+# gate below still decides whether each sweep is trustworthy, and staleness still retires a genuine
+# disappearance. The cost, recorded against D-049: an ID reuse that happens WHILE the counter is
+# saturated cannot be detected here at all.
+BOSCH_A_LIFE_SATURATED = 0xFFE
 BOSCH_A_TRACK_ID_MIN = 1
 BOSCH_A_TRACK_ID_MAX = 0x3F
 # AUX logical 0x00CA has an explicit 0x3FF invalid sentinel. Firmware proves the normalization below;
@@ -182,6 +203,22 @@ BOSCH_A_USE_TAN_LATERAL_PROJECTION = True
 # range resets never enter it, and it is not used for a multi-sample OLS velocity fit.
 BOSCH_A_VREL_MAX_SAMPLES = 8
 
+# D-057 (replay and static only; road evidence pending): re-anchor a range-rejected identity on a LASTING,
+# clean step. Replay of every range-rejection run on 00000232 / 236 / 237 / 239 / 23a (D-054 + D-055): the 13 runs of
+# >= 3 sweeps that RETURNED to the baseline all lasted <= 1.2 s and every one was degraded (existence 0
+# on 62-83% of sweeps, U11 railed at -13.5). The lead lockouts were not: 236 track 38 (27.4 s) and 237
+# track 31 (20.4 s) had non-degraded tails whose range moved at the U11 rate. A run re-anchors only when
+# it has outlasted every returning excursion, its last WINDOW sweeps are all non-degraded with U11
+# present, and their range fits a line at the U11 rate (RMS <= MAX_RMS, slope within the D-043 rate
+# disagreement). Until then the identity stays coasted, never deleted (D-041). Re-based onto D-055 and
+# replayed on 232/236/237/239/23a/23b/23e: 0 point-sweeps lost on every route; restores 236 track 38
+# (17.1 s) and 237 track 31 (16.2 s) as the lead and 237 track 63 (51.4 s, non-lead); re-admitted
+# measured vRel over-closes the next-1 s range slope by >3 m/s on 2.2 / 2.2 / 0 % of sweeps (236 /
+# 237 / 23a) against 5.4 / 5.9 / 2.6 % for the already-published reference.
+BOSCH_A_REANCHOR_MIN_SPAN_S = 1.5
+BOSCH_A_REANCHOR_WINDOW = 8
+BOSCH_A_REANCHOR_MAX_RMS_M = 1.0
+
 # Staleness gate -- TUNING constant, reused plumbing pattern (not a firmware fact). At the observed
 # ~15 Hz cadence, 0.20 s is approximately three missed sweeps.
 BOSCH_A_STALE_S = 0.20
@@ -216,6 +253,14 @@ class _BoschATrackState:
   last_seen_nanos: int | None = None
   wire_slot: int | None = None
   samples: deque = field(default_factory=lambda: deque(maxlen=BOSCH_A_VREL_MAX_SAMPLES))
+  # (time, range) of the last observation that PASSED the range-innovation gate, accepted or coasted
+  # (D-054). The gate measures the next sweep against it. It is never a velocity-derivative baseline:
+  # `samples` above stays accepted-only, and a range-rejected sweep never moves either of them.
+  range_anchor: tuple[float, float] | None = None
+  # D-057: the current run of range-REJECTED sweeps, (time, range, U11 or None, degraded).
+  # Cleared by any accepted sweep and by a lifecycle discontinuity.
+  rejected_run: list = field(default_factory=list)
+  rejoin_samples: list | None = None  # D-059: gated ranges since a join, until a fresh rate fit agrees with vRel
   last_trusted_vrel: float | None = None
   last_trusted_vrel_nanos: int | None = None
 
@@ -259,12 +304,52 @@ def _bosch_a_range_ratio_vrel(raw_value: int | float | None, d_rel: float, dt: f
   return d_rel * (1.0 - ratio) / dt
 
 
+def _bosch_a_range_innovation_rejected(baseline: tuple[float, float], now_s: float, dRel: float,
+                                       direct_vrel: float | None, ratio: float | None, degraded: bool) -> bool:
+  """Does this range contradict one (time, range) baseline? See the D-054 comment at the call site."""
+  previous_time, previous_range = baseline
+  dt = now_s - previous_time
+  if dt <= 0.0:
+    return True
+  residuals_m = []
+  if direct_vrel is not None:
+    residuals_m.append(abs(dRel - (previous_range + direct_vrel * dt)))
+  if ratio is not None:
+    residuals_m.append(abs(previous_range - dRel * ratio))
+  if not residuals_m:
+    return abs((dRel - previous_range) / dt) > BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS
+  innovation_m = min(residuals_m)
+  return (innovation_m > BOSCH_A_RANGE_INNOVATION_HARD_MAX_M or
+          (degraded and innovation_m > BOSCH_A_RANGE_INNOVATION_MAX_M))
+
+
 def _bosch_a_measurement_degraded(range_sigma_raw: int, existence_raw: int,
                                   direct_vrel_uncertainty_raw: int | None) -> bool:
   range_quality_bad = range_sigma_raw >= BOSCH_A_RANGE_SIGMA_DEGRADED_RAW or existence_raw in (0, 0x7F)
   velocity_quality_bad = (direct_vrel_uncertainty_raw is not None and
                           direct_vrel_uncertainty_raw > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW)
   return range_quality_bad or velocity_quality_bad
+
+
+def _bosch_a_lasting_clean_step(run: list) -> bool:
+  """D-057: True when the trailing window of a range-rejected run is long, clean and moving at the U11 rate."""
+  if len(run) < BOSCH_A_REANCHOR_WINDOW or run[-1][0] - run[0][0] < BOSCH_A_REANCHOR_MIN_SPAN_S:
+    return False
+  window = run[-BOSCH_A_REANCHOR_WINDOW:]
+  if any(degraded or u11 is None for _, _, u11, degraded in window):
+    return False
+  ts = [w[0] for w in window]
+  ds = [w[1] for w in window]
+  n = len(window)
+  t_mean = sum(ts) / n
+  d_mean = sum(ds) / n
+  denom = sum((t - t_mean) ** 2 for t in ts)
+  if denom <= 1e-9:
+    return False
+  rate = sum((t - t_mean) * (d - d_mean) for t, d in zip(ts, ds, strict=True)) / denom
+  rms = (sum((d - (d_mean + rate * (t - t_mean))) ** 2 for t, d in zip(ts, ds, strict=True)) / n) ** 0.5
+  u11 = sorted(w[2] for w in window)[n // 2]
+  return rms <= BOSCH_A_REANCHOR_MAX_RMS_M and abs(rate - u11) <= BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
 
 
 def _create_bosch_a_can_parser(CP):
@@ -435,6 +520,15 @@ class RadarInterface(RadarInterfaceBase):
     # First collapse duplicate wire observations of one CAN identity. The dictionary is also the
     # output uniqueness boundary: one valid Bosch identity can never create two RadarPoints.
     valid_by_id = {}
+    # D-055 (replay and static only; road evidence pending): an identity valid in ANY slot this sweep
+    # is decided by its own valid observation below, never hidden by an invalid one, mirroring the
+    # slot-replacement guard. Only an accept re-creates a hidden point; a coast updates an existing
+    # one. So when the radar migrated an object to another slot and the old slot went invalid in the
+    # same sweep, the hide below deleted a point the coast would have kept. Measured on 00000232 /
+    # 236 / 237 / 239 / 23a: 2,252 withheld point-sweeps, 504 of them the lead (00000237 track 9:
+    # 21.2 s dark). On the fresh routes 0000023b / 23e (driven on D-054, 0756f810): 0 point-sweeps
+    # lost, 9 + 331 restored (33 lead), all coasts — no new measured vRel enters control.
+    valid_this_sweep = {o['track_id'] for o in observations if o['object_valid'] and o['track_id_valid']}
     for observation in observations:
       if not (observation['object_valid'] and observation['track_id_valid']):
         # An invalid observation ends publication for the object currently occupying this wire slot,
@@ -444,7 +538,7 @@ class RadarInterface(RadarInterfaceBase):
         ids_to_hide = {self._slot_track_ids[observation['slot']]}
         if observation['track_id_valid']:
           ids_to_hide.add(observation['track_id'])
-        for invalid_id in ids_to_hide - {None}:
+        for invalid_id in ids_to_hide - {None} - valid_this_sweep:
           self.pts.pop(invalid_id, None)
         continue
       track_id = observation['track_id']
@@ -485,11 +579,19 @@ class RadarInterface(RadarInterfaceBase):
         frame_delta = (idx0 - track.prev_frame_idx) & 0xF
         life_delta = (life - track.prev_life) & 0xFFF
         same_incarnation = life_delta == 2 * frame_delta
+        if not same_incarnation and life == BOSCH_A_LIFE_SATURATED and track.prev_life == BOSCH_A_LIFE_SATURATED:
+          # The counter is pinned at its maximum and can no longer advance (see the constant's
+          # evidence block). Without this, an object tracked for ~137 s is deleted for as long as it
+          # remains visible -- measured at 121.8 s of continuous suppression of the followed lead.
+          same_incarnation = True
 
       if not same_incarnation:
         # The CAN identity remains the externally-visible key, but a lifecycle discontinuity starts a
         # new incarnation and must not inherit the previous object's range-rate history.
         track.samples.clear()
+        track.range_anchor = None
+        track.rejected_run.clear()
+        track.rejoin_samples = None
         track.last_trusted_vrel = None
         track.last_trusted_vrel_nanos = None
         self.pts.pop(track_id, None)
@@ -530,45 +632,64 @@ class RadarInterface(RadarInterfaceBase):
                             direct_vrel_uncertainty_raw is not None and
                             direct_vrel_uncertainty_raw > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW)
 
-
-      # Validate against the previous accepted range. Qualified U11 and the range-ratio field are
-      # independent corroboration paths; high-U10 U11 is deliberately excluded from this decision.
+      # Qualified U11 and the range-ratio field are independent corroboration paths for the range;
+      # high-U10 U11 is deliberately excluded from this decision.
+      #
+      # D-054: a sweep is range-rejected only if it contradicts BOTH the last ACCEPTED sample and
+      # `range_anchor`, the last range that passed this gate (a velocity coast also advances it). Each
+      # baseline on its own locked a real object out, measured through this parser on 00000232 / 236 /
+      # 237 / 239 / 23a:
+      # - Accepted sample only (the parser before D-054). A coast held it still while the range kept
+      #   moving, and every later sweep was predicted across the growing gap with the very U11 the coast
+      #   had just distrusted. 00000232 track 43, the followed lead pulling away 78.5 -> 84.5 m: the
+      #   D-043 rate check coasted four sweeps, the error grew 0.86 / 1.12 / 1.53 / 1.87 / 2.11 m, the
+      #   degraded 2.0 m limit rejected it, the point was deleted after BOSCH_A_STALE_S, and radar lost
+      #   the lead for 15 s while it closed from 84 m to 27 m.
+      # - Anchor only (the first D-054 draft). 00000237 track 12, a new object at 25 m whose range walked
+      #   out to 28.06 m while U11 said -2 m/s. The rate check rightly coasted the walk, the walk became
+      #   the baseline, and the real ranges (25.3 m closing to 17 m) were rejected against it for 53 s
+      #   while the accepted sample still tracked them.
+      # The recorded range resets this gate exists for contradict both baselines.
       previous_sample = track.samples[-1] if track.samples else None
-      fallback_vrel = 0.0
+      range_anchor = track.range_anchor
       ratio_vrel = None
       range_rejected = False
       degraded = _bosch_a_measurement_degraded(
         observation['range_sigma_raw'], observation['existence_raw'], direct_vrel_uncertainty_raw,
       )
-      if previous_sample is not None:
-        previous_time, previous_range = previous_sample
-        dt = now_s - previous_time
-        if dt <= 0.0:
-          range_rejected = True
-        else:
-          fallback_vrel = (dRel - previous_range) / dt
-          ratio = _bosch_a_range_ratio(range_ratio_raw)
-          ratio_vrel = _bosch_a_range_ratio_vrel(range_ratio_raw, dRel, dt)
-
-          residuals_m = []
-          if direct_vrel is not None:
-            residuals_m.append(abs(dRel - (previous_range + direct_vrel * dt)))
-          if ratio is not None:
-            residuals_m.append(abs(previous_range - dRel * ratio))
-
-          if residuals_m:
-            innovation_m = min(residuals_m)
-            range_rejected = (
-              innovation_m > BOSCH_A_RANGE_INNOVATION_HARD_MAX_M or
-              (degraded and innovation_m > BOSCH_A_RANGE_INNOVATION_MAX_M)
-            )
-          else:
-            range_rejected = abs(fallback_vrel) > BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS
+      if range_anchor is not None:
+        ratio = _bosch_a_range_ratio(range_ratio_raw)
+        # Deliberately still timed from the last ACCEPTED sample, as before D-054: changing a
+        # published vRel is a separate decision, recorded as open in STATUS.md.
+        if previous_sample is not None and now_s > previous_sample[0]:
+          ratio_vrel = _bosch_a_range_ratio_vrel(range_ratio_raw, dRel, now_s - previous_sample[0])
+        baselines = [range_anchor] if previous_sample in (None, range_anchor) else [range_anchor, previous_sample]
+        range_rejected = all(_bosch_a_range_innovation_rejected(baseline, now_s, dRel, direct_vrel, ratio, degraded)
+                             for baseline in baselines)
 
       if range_rejected:
-        # Keep the last accepted point briefly as an unmeasured coast. The rejected geometry is not
-        # published and never becomes the baseline for a later derivative.
-        accepted_fresh = previous_sample is not None and now_s - previous_sample[0] <= BOSCH_A_STALE_S
+        track.rejected_run.append((now_s, dRel, direct_vrel, degraded))
+        if _bosch_a_lasting_clean_step(track.rejected_run):
+          # D-057: the step has outlasted every returning excursion measured, cleanly and at the U11
+          # rate. Re-root the accepted history and the anchor on it and gate this sweep as passed.
+          recent = track.rejected_run[-BOSCH_A_VREL_RATE_CHECK_MIN_SAMPLES:]
+          track.samples.clear()
+          track.samples.extend((t, d) for t, d, _, _ in recent[:-1])
+          track.range_anchor = recent[-2][:2]
+          previous_sample = track.samples[-1]
+          range_anchor = track.range_anchor
+          range_rejected = False
+          track.rejected_run.clear()
+      else:
+        if track.rejected_run:
+          # D-059: a join. The range passed only after a rejection run, so `samples` straddle the gap.
+          track.rejoin_samples = []
+        track.rejected_run.clear()
+
+      if range_rejected:
+        # Keep the last trusted point briefly as an unmeasured coast. The rejected geometry is not
+        # published and never becomes the baseline for a later derivative or for this gate.
+        accepted_fresh = range_anchor is not None and now_s - range_anchor[0] <= BOSCH_A_STALE_S
         point = self.pts.get(track_id)
         if accepted_fresh and point is not None:
           point.measured = False
@@ -584,6 +705,14 @@ class RadarInterface(RadarInterfaceBase):
         self._slot_track_ids[slot] = track_id
         continue
 
+      # The range passed the gate: it is the gate's baseline from here on, whatever happens to vRel.
+      # Only a range that was actually GATED can advance it. With no anchor there was no gate, so a
+      # coast now (a high-u10 birth) would root the gate on an unchecked, unpublished range: measured
+      # on 00000239 that withheld 2,236 sweeps the pre-D-054 parser published, rejecting later sweeps
+      # 2-17 m off such a birth range. The first ACCEPTED sample below roots the anchor instead.
+      if range_anchor is not None:
+        track.range_anchor = (now_s, dRel)
+
       # Multi-sweep consistency: does the range actually move the way this velocity claims?
       # Fitted over the accepted range history, so it is immune to the single-sweep blindness above.
       vrel_candidate = direct_vrel if direct_vrel is not None else ratio_vrel
@@ -598,11 +727,48 @@ class RadarInterface(RadarInterfaceBase):
           d_mean = sum(ds) / n
           denom = sum((t - t_mean) ** 2 for t in ts)
           if denom > 1e-9:
-            rate = sum((t - t_mean) * (d - d_mean) for t, d in zip(ts, ds)) / denom
+            # strict=True: ts and ds are same-length by construction. A silent truncation here
+            # would bias the fitted rate and weaken the one-sided gate rather than erroring.
+            rate = sum((t - t_mean) * (d - d_mean) for t, d in zip(ts, ds, strict=True)) / denom
             # One-sided: only U11 claiming MORE closing than the range supports is a fault.
             vrel_inconsistent = vrel_candidate < rate - BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
 
-      if high_u10_live_vrel or vrel_inconsistent:
+      # D-059: after a join, `samples` hold pre-gap ranges plus the joined one, so the fit above is set by
+      # the gap rather than by the object and cannot see a contradicting U11. Replayed on 00000232 / 236 /
+      # 237 / 239 / 23a / 23b / 23e: measured vRel in the second after a join over-closed the next-1 s
+      # range slope by >3 m/s on 21.0 % of sweeps (33.1 % where the rejected run's own slope contradicted
+      # U11) against 4.6 % for all measured points. Hold such a vRel as a coast until the same one-sided
+      # check also passes over the post-join ranges alone.
+      # - `samples` are left exactly as before: clearing them instead (fitting only the fresh ranges)
+      #   admitted 106 new measured sweeps that over-closed on 16 % and lost 65 point-sweeps (the D-056
+      #   failure mode). With them untouched, this can only withdraw measured vRel, never add it.
+      # - The hold needs a trusted vRel to coast and re-publishes a point the rejection had dropped: a
+      #   join must never delete an object the radar is reporting and the gate just accepted (D-041/D-042).
+      # Replay vs D-057: 0 lost, 0 new measured, 612 sweeps withdrawn (30 lead); the withdrawn vRel
+      # over-closed on 29.2 % (105 / 359 scored).
+      rejoin_hold = False
+      if track.rejoin_samples is not None:
+        track.rejoin_samples.append((now_s, dRel))
+        del track.rejoin_samples[:-BOSCH_A_REANCHOR_WINDOW]
+        fresh_ok = False
+        if vrel_candidate is not None and len(track.rejoin_samples) >= BOSCH_A_VREL_RATE_CHECK_MIN_SAMPLES:
+          ts = [x[0] for x in track.rejoin_samples]
+          ds = [x[1] for x in track.rejoin_samples]
+          if ts[-1] - ts[0] >= BOSCH_A_VREL_RATE_CHECK_MIN_SPAN_S:
+            n = len(ts)
+            t_mean = sum(ts) / n
+            d_mean = sum(ds) / n
+            denom = sum((t - t_mean) ** 2 for t in ts)
+            if denom > 1e-9:
+              rate = sum((t - t_mean) * (d - d_mean) for t, d in zip(ts, ds, strict=True)) / denom
+              fresh_ok = vrel_candidate >= rate - BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
+        if fresh_ok:
+          track.rejoin_samples = None
+        else:
+          rejoin_hold = track.last_trusted_vrel is not None and not (high_u10_live_vrel or vrel_inconsistent)
+      if rejoin_hold:
+        track.samples.append((now_s, dRel))
+      if high_u10_live_vrel or vrel_inconsistent or rejoin_hold:
         # The range cleared innovation checking above, so geometry here is trustworthy; only vRel is
         # in question. Preserve current geometry but coast only a recent authoritative motion
         # estimate without a KF update, rather than publishing a one-sweep-derivative synthesis.
@@ -619,6 +785,11 @@ class RadarInterface(RadarInterfaceBase):
         # is still handled by _bosch_a_retire_stale_tracks, which every coast path leaves armed by
         # refreshing last_seen_nanos only while the radar keeps reporting this identity.
         point = self.pts.get(track_id)
+        if point is None and rejoin_hold:
+          point = self.pts[track_id] = structs.RadarData.RadarPoint()
+          point.trackId = track_id
+          point.aRel = float('nan')
+          point.yvRel = float('nan')
         if point is not None and track.last_trusted_vrel is not None:
           point.dRel = dRel
           point.yRel = yRel
@@ -687,6 +858,7 @@ class RadarInterface(RadarInterfaceBase):
         continue
 
       track.samples.append((now_s, dRel))
+      track.range_anchor = (now_s, dRel)
       sample_count = len(track.samples)
 
       # Prefer qualified native U11; otherwise the range-ratio field. The raw one-sweep derivative is

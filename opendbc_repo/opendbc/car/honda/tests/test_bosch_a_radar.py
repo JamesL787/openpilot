@@ -9,6 +9,7 @@ from opendbc.car.can_definitions import CanData
 from opendbc.car.honda.hondacan import CanBus
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.radar_interface import (
+  BOSCH_A_REANCHOR_MIN_SPAN_S,
   BOSCH_A_AZIMUTH_SCALE_RAD,
   BOSCH_A_AUX_IDS,
   BOSCH_A_DBC_NAME,
@@ -18,6 +19,7 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW,
   BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS,
   BOSCH_A_FREQ_HZ,
+  BOSCH_A_LIFE_SATURATED,
   BOSCH_A_MAIN_IDS,
   BOSCH_A_NUM_SLOTS,
   BOSCH_A_RANGE_RATIO_INVALID,
@@ -590,6 +592,42 @@ class TestLifecycle:
     assert rr.points[0].vRel == 0.0
     assert len(rr.points) == 1
 
+  def _drive_held_life(self, held_life, sweeps=12):
+    """Two clean sweeps into `held_life`, then `sweeps` more with the counter not advancing.
+
+    Returns the per-sweep published point count after the counter stops moving.
+    """
+    ri = make_radar_interface()
+    kw = dict(with_aux=True, direct_vrel_raw=800, direct_vrel_uncertainty_raw=40)
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, held_life - 2, 0, **kw))
+    ri.update(sweep(0, 1, 0x7, 997, 1024, held_life, 70_000_000, **kw))
+    published = []
+    for i in range(2, 2 + sweeps):
+      rr = ri.update(sweep(0, i % 16, 0x7, 1000 - 3 * i, 1024, held_life, i * 70_000_000, **kw))
+      published.append(len(rr.points))
+    return ri, published
+
+  def test_saturated_lifecycle_counter_keeps_publishing(self):
+    """LIFECYCLE_RAW pins at 0xFFE after ~137 s of tracking and cannot advance again.
+
+    Treating each of those sweeps as a new incarnation deletes a still-visible object for as long
+    as it stays visible: measured at 121.8 s of continuous suppression of the followed lead on
+    00000232--fc8dad0d18 (track 37, last published at dRel 38.9 m, yRel -0.1 m).
+    """
+    ri, published = self._drive_held_life(BOSCH_A_LIFE_SATURATED)
+    assert all(n == 1 for n in published), published
+    assert len(ri._tracks[1].samples) > 2          # range history survives, so vRel stays derivable
+    assert ri.pts[1].measured
+
+  def test_a_stuck_but_unsaturated_counter_is_still_a_lifecycle_break(self):
+    """D-009 negative control: the carve-out is for the saturation value only.
+
+    A counter frozen anywhere else is a real discontinuity and must still clear the history --
+    otherwise this fix would silently disable incarnation detection everywhere.
+    """
+    _ri, published = self._drive_held_life(4000)
+    assert all(n == 0 for n in published), published
+
   def test_death_then_rebirth_reuses_can_id_with_clean_history(self):
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0))
@@ -896,6 +934,308 @@ class TestVrel:
     rejected = [raw * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M for raw in (64, 82, 96, 102)]
     assert not any(any(abs(a - r) < 1e-6 for r in rejected) for a in accepted)
     assert accepted[-1] == pytest.approx(198 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
+
+
+# --- 7a. D-054: a velocity coast must not freeze the range-innovation baseline ----------------------
+
+class TestCoastAdvancesTheRangeGate:
+  """Modelled on 00000232--3a01619ce5 track 43 at t=1258.7 s, the followed lead pulling away 78.5 ->
+  84.5 m with a degraded range sigma of 7. U11 lagged the opening, the D-043 rate check coasted, and
+  the gate kept predicting from the last ACCEPTED sample with that lagging U11 across a growing gap:
+  the error grew 0.86 / 1.12 / 1.53 / 1.87 / 2.11 m, the degraded 2.0 m limit rejected the lead, and
+  radar did not publish it again for 15 s while it closed to 27 m."""
+  OPEN_RAW_PER_SWEEP = 7  # 0.4375 m per 70 ms sweep: receding at 6.25 m/s
+  U11_TRUE = 864 + 400  # +6.25 m/s, what the range shows
+  U11_LAGGING = 864 + 64  # +1.0 m/s: more than 3 m/s short of the range rate, so D-043 coasts
+  DT_NANOS = 70_000_000
+
+  def _drive(self, ri, i, u11, range_raw=None, existence_raw=126):
+    raw = 800 + self.OPEN_RAW_PER_SWEEP * i if range_raw is None else range_raw
+    rr = ri.update(sweep(0, i & 0xF, 0x7, raw, 1024, 1 + 2 * i, i * self.DT_NANOS, with_aux=True,
+                         direct_vrel_raw=u11, direct_vrel_uncertainty_raw=0, range_sigma_raw=7,
+                         existence_raw=existence_raw))
+    return rr, raw * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M
+
+  def _history_then_coast(self, ri, coasts):
+    for i in range(4):
+      rr, _ = self._drive(ri, i, self.U11_TRUE)
+    assert rr.points[0].measured is True
+    history = list(ri._tracks[1].samples)
+    d_rel = None
+    for i in range(4, 4 + coasts):
+      rr, d_rel = self._drive(ri, i, self.U11_LAGGING)
+      assert len(rr.points) == 1 and rr.points[0].measured is False
+    return history, rr, d_rel
+
+  def test_lagging_u11_coast_keeps_publishing_a_receding_lead(self):
+    ri = make_radar_interface()
+    history, _, _ = self._history_then_coast(ri, coasts=0)
+    # 25 coasted sweeps (1.75 s): the old baseline would have rejected the lead from the sixth.
+    for i in range(4, 29):
+      rr, d_rel = self._drive(ri, i, self.U11_LAGGING)
+      assert len(rr.points) == 1, f"lead deleted at sweep {i}"
+      assert rr.points[0].dRel == pytest.approx(d_rel)
+      assert rr.points[0].vRel == pytest.approx(400 / 64.0)
+      assert rr.points[0].measured is False
+    # Coasted ranges moved only the gate's baseline. The velocity history is still accepted-only.
+    assert list(ri._tracks[1].samples) == history
+    rr, d_rel = self._drive(ri, 29, self.U11_TRUE)
+    assert rr.points[0].measured is True
+    assert rr.points[0].dRel == pytest.approx(d_rel)
+
+  def test_rejection_right_after_a_coast_holds_the_point_instead_of_deleting_it(self):
+    # The last ACCEPTED sample is 0.35 s old here, but the last range that passed the gate is one sweep
+    # old. A single bad sweep must hold the point unmeasured (D-041/D-042), not delete the lead.
+    ri = make_radar_interface()
+    _, _, last_d_rel = self._history_then_coast(ri, coasts=4)
+    rr, _ = self._drive(ri, 8, self.U11_LAGGING, range_raw=800 + 7 * 8 - 128)  # 8 m short
+    assert len(rr.points) == 1
+    assert rr.points[0].dRel == pytest.approx(last_d_rel)
+    assert rr.points[0].measured is False
+    rr, d_rel = self._drive(ri, 9, self.U11_LAGGING)
+    assert len(rr.points) == 1 and rr.points[0].dRel == pytest.approx(d_rel)
+
+  def test_reset_ranges_after_a_coast_never_publish_or_enter_history(self):
+    # Negative control for the change above. The recorded reset shape (see
+    # test_exact_peter_reset_sequence_never_rebases_on_rejected_ranges): a large drop that walks back
+    # 1.5 / 1.0 / 0.45 m per sweep, existence 0. A coast must not let any of it become a baseline.
+    ri = make_radar_interface()
+    history, _, _ = self._history_then_coast(ri, coasts=4)
+    lead_raw = 800 + 7 * 8
+    reset_raws = [lead_raw - 128, lead_raw - 104, lead_raw - 88, lead_raw - 81, lead_raw - 81, lead_raw - 81]
+    reset_ranges = [raw * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M for raw in reset_raws]
+    for k, raw in enumerate(reset_raws):
+      rr, _ = self._drive(ri, 8 + k, self.U11_LAGGING, range_raw=raw, existence_raw=0)
+      assert not any(any(abs(p.dRel - r) < 1e-6 for r in reset_ranges) for p in rr.points)
+    assert len(rr.points) == 0  # held no longer than BOSCH_A_STALE_S past the last trusted range
+    assert list(ri._tracks[1].samples) == history
+    assert not any(abs(ri._tracks[1].range_anchor[1] - r) < 1e-6 for r in reset_ranges)
+
+  def test_a_persistent_range_step_is_still_rejected_and_not_re_anchored(self):
+    # D-054 does NOT re-anchor on a real, lasting step: replay found returning excursions just as
+    # self-consistent as lasting ones, and no lasting >= 5 m step on the lead. Recorded as open.
+    ri = make_radar_interface()
+    history, _, _ = self._history_then_coast(ri, coasts=0)
+    for i in range(4, 14):
+      rr, _ = self._drive(ri, i, self.U11_TRUE, range_raw=800 + 7 * i + 128, existence_raw=126)
+    assert len(rr.points) == 0
+    assert list(ri._tracks[1].samples) == history
+
+  # 00000237--77313c5a66 track 12 from t=7649.64 s: (ms, range m, U11 m/s, range sigma, existence, u10).
+  # A new object whose range walked out 25.4 -> 28.1 m while U11 said -2 m/s, then closed to 19 m.
+  RECORDED_237_TRACK_12 = [
+    (0, 25.44, -1.94, 10, 1, 233), (70, 26.38, -1.98, 8, 57, 184), (140, 26.75, -2.08, 8, 81, 166),
+    (210, 27.31, -1.45, 7, 99, 106), (270, 27.81, -1.50, 6, 84, 93), (350, 28.06, -1.80, 6, 98, 112),
+    (400, 25.31, -2.69, 5, 86, 123), (470, 23.38, -3.06, 4, 122, 94), (540, 22.12, -1.81, 4, 125, 52),
+    (610, 21.31, -1.83, 3, 125, 43), (680, 20.69, -1.88, 3, 125, 30), (750, 20.12, -1.94, 3, 125, 33),
+    (820, 19.62, -1.95, 3, 125, 38), (890, 19.25, -1.98, 2, 110, 37),
+  ]
+
+  def test_a_coasted_range_walk_does_not_lock_out_the_real_ranges(self):
+    # The mirror of the 232 lockout: here the RANGE walked and U11 was right. The rate check coasted
+    # the walk (27.81, 28.06 m); measured against that walk alone, the real 25.31 m misses by 2.6 m
+    # and the anchor-only draft rejected this object for 53 s. It is consistent with the last
+    # accepted sample (27.31 m), so it must stay published.
+    ri = make_radar_interface()
+    for i, (ms, d, v, sigma, existence, u10) in enumerate(self.RECORDED_237_TRACK_12):
+      raw = round((d - BOSCH_A_RANGE_OFFSET_M) / BOSCH_A_RANGE_SCALE_M)
+      rr = ri.update(sweep(0, i & 0xF, 0x7, raw, 1024, 1 + 2 * i, ms * 1_000_000, with_aux=True,
+                           direct_vrel_raw=864 + round(v * 64), direct_vrel_uncertainty_raw=u10,
+                           range_sigma_raw=sigma, existence_raw=existence))
+      if i in (4, 5):
+        assert len(rr.points) == 1 and rr.points[0].measured is False
+      if i >= 6:
+        assert len(rr.points) == 1, f"real range {d} m rejected at sweep {i}"
+        assert rr.points[0].dRel == pytest.approx(raw * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
+
+  def test_a_high_u10_birth_coast_does_not_root_the_gate(self):
+    # A coast only advances a gate that already exists. A high-u10 birth was never gated or published;
+    # rooting the gate on it rejected every later sweep 8 m away, as in the first D-054 replay on
+    # 00000239, where the pre-D-054 parser accepted and published them.
+    ri = make_radar_interface()
+    rr = ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=1023))
+    assert len(rr.points) == 0 and len(ri._tracks[1].samples) == 0
+    assert ri._tracks[1].range_anchor is None
+    for i in range(1, 4):
+      rr = ri.update(sweep(0, i, 0x7, 1128 + i, 1024, 1 + 2 * i, i * self.DT_NANOS, with_aux=True,
+                           direct_vrel_raw=864, direct_vrel_uncertainty_raw=0, range_sigma_raw=7))
+    assert len(rr.points) == 1 and rr.points[0].measured is True
+    assert rr.points[0].dRel == pytest.approx(1131 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
+
+  def test_lifecycle_break_clears_the_range_anchor(self):
+    ri = make_radar_interface()
+    self._history_then_coast(ri, coasts=3)
+    assert ri._tracks[1].range_anchor is not None
+    rr = ri.update(sweep(0, 7, 0x7, 900, 1024, 40, 7 * self.DT_NANOS, with_aux=True,
+                         direct_vrel_raw=self.U11_TRUE, direct_vrel_uncertainty_raw=0, range_sigma_raw=7))
+    assert len(rr.points) == 0
+    assert ri._tracks[1].range_anchor == (pytest.approx(7 * self.DT_NANOS * 1e-9),
+                                          pytest.approx(900 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M))
+    assert len(ri._tracks[1].samples) == 1
+
+
+# --- 7a'. D-055: an invalid slot must not hide an identity that is valid elsewhere ------------
+
+class TestInvalidSlotDoesNotHideAMigratedIdentity:
+  """Modelled on 00000237--77313c5a66 track 9 (the followed lead, 21.2 s dark) and 00000232 track 43.
+  The radar moved the object to another wire slot in the same sweep its old slot went invalid. The
+  invalid-observation hide deleted the point, the D-043 rate check then coasted the valid observation,
+  and a coast only updates an existing point, so the lead stayed dark until an accept."""
+  DT_NANOS = 70_000_000
+  U11 = 864  # 0 m/s
+
+  def _history(self, ri, slot=0):
+    for i in range(4):
+      rr = ri.update(sweep(slot, i, 0x7, 1000, 1024, 1 + 2 * i, i * self.DT_NANOS, with_aux=True,
+                           direct_vrel_raw=self.U11, direct_vrel_uncertainty_raw=0))
+    assert len(rr.points) == 1 and rr.points[0].measured is True
+
+  def _migrate(self, ri, i, *, u10, invalid_track_id=0xFF, valid_elsewhere=True):
+    invalid_old_slot = make_main_frames(0, i, 0xF, 1000, 1024, 1 + 2 * i, track_id=invalid_track_id)
+    if valid_elsewhere:
+      return ri.update(sweep(1, i, 0x7, 1000, 1024, 1 + 2 * i, i * self.DT_NANOS, with_aux=True,
+                             direct_vrel_raw=self.U11, direct_vrel_uncertainty_raw=u10,
+                             extra_slots=invalid_old_slot))
+    return ri.update(sweep(2, i, 0x7, 1200, 1024, 1, i * self.DT_NANOS, track_id=2,
+                           extra_slots=invalid_old_slot))
+
+  @pytest.mark.parametrize("invalid_track_id", [0xFF, 1])
+  def test_a_coasted_identity_that_migrated_slots_keeps_its_point(self, invalid_track_id):
+    ri = make_radar_interface()
+    self._history(ri)
+    # u10 above the qualified limit: the valid observation in slot 1 coasts.
+    rr = self._migrate(ri, 4, u10=1023, invalid_track_id=invalid_track_id)
+    assert [p.trackId for p in rr.points] == [1]
+    assert rr.points[0].measured is False
+    assert rr.points[0].vRel == pytest.approx(0.0)
+
+  def test_an_accepted_identity_that_migrated_slots_still_publishes_measured(self):
+    ri = make_radar_interface()
+    self._history(ri)
+    rr = self._migrate(ri, 4, u10=0)
+    assert [p.trackId for p in rr.points] == [1] and rr.points[0].measured is True
+
+  def test_negative_control_an_invalid_slot_still_hides_an_identity_seen_nowhere_else(self):
+    ri = make_radar_interface()
+    self._history(ri)
+    rr = self._migrate(ri, 4, u10=0, valid_elsewhere=False)
+    assert 1 not in [p.trackId for p in rr.points]
+    assert 1 in ri._tracks  # hidden, not retired: the history survives to its stale deadline
+
+
+# --- 7a''. D-057: a lasting, clean range step re-anchors instead of locking the lead out ----
+
+class TestLastingCleanStepReAnchors:
+  """Modelled on 00000236--60bfb34cb1 track 38 at t=1703.6 s and 00000237 track 31 at t=761.5 s. A new
+  object's birth ranges were accepted, then its range settled several metres closer and every later
+  sweep contradicted both baselines. The lead stayed dark for 27.4 s / 20.4 s while it closed to 38 m /
+  20 m, with non-degraded ranges moving at the U11 rate."""
+  DT_NANOS = 70_000_000
+  CLOSING_RAW = 2.24  # 2 m/s over a 70 ms sweep
+
+  def _drive(self, ri, i, raw, u11_mps, sigma=1, existence=126):
+    return ri.update(sweep(0, i & 0xF, 0x7, round(raw), 1024, (1 + 2 * i) & 0xFFF, i * self.DT_NANOS, with_aux=True,
+                           direct_vrel_raw=864 + round(u11_mps * 64), direct_vrel_uncertainty_raw=0,
+                           range_sigma_raw=sigma, existence_raw=existence))
+
+  def _birth(self, ri):
+    raw = 1650  # ~103 m
+    for i in range(6):
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw, -2.0)
+    assert rr.points[0].measured is True
+    return raw
+
+  def test_a_clean_lasting_step_at_the_u11_rate_is_published_again(self):
+    ri = make_radar_interface()
+    raw = self._birth(ri) - 136  # settles 8.5 m closer
+    published_at = None
+    for i in range(6, 60):
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw, -2.0)
+      if rr.points and rr.points[0].measured and published_at is None:
+        published_at = i
+        assert rr.points[0].dRel == pytest.approx(round(raw) * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
+    assert published_at is not None
+    assert (published_at - 6) * self.DT_NANOS * 1e-9 >= BOSCH_A_REANCHOR_MIN_SPAN_S
+    assert (published_at - 6) * self.DT_NANOS * 1e-9 <= BOSCH_A_REANCHOR_MIN_SPAN_S + 0.15
+
+  @pytest.mark.parametrize("sigma,existence", [(7, 126), (1, 0)])
+  def test_negative_control_a_degraded_lasting_step_never_re_anchors(self, sigma, existence):
+    ri = make_radar_interface()
+    raw = self._birth(ri) - 136
+    for i in range(6, 60):
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw, -2.0, sigma=sigma, existence=existence)
+      assert not any(p.measured for p in rr.points)
+
+  def test_negative_control_a_clean_step_that_contradicts_u11_never_re_anchors(self):
+    ri = make_radar_interface()
+    # The range holds still while U11 claims 4 m/s closing. The step is 25 m so the anchor's U11
+    # extrapolation cannot catch the range inside this window: a smaller step lets the existing
+    # stale-anchor "join" publish (D-054 residual finding), which would mask what D-057 does.
+    raw = self._birth(ri) - 400
+    for i in range(6, 60):
+      rr = self._drive(ri, i, raw, -4.0)
+      assert not any(p.measured for p in rr.points)
+
+
+class TestAJoinWaitsForAFreshRateFit:
+  """D-059 (STATUS item 22.5). A range-rejection run ends when a later range passes the gate against the stale anchor's
+  U11 extrapolation (a "join"). D-043 then fitted the pre-gap samples plus the joined range, so the gap,
+  not the object, set the fitted rate. Replayed on 7 routes (232/236/237/239/23a/23b/23e): measured vRel
+  in the second after a join over-closed the next-1 s range slope by >3 m/s on 21.0 % of sweeps
+  (33.1 % where the run's own slope contradicted U11) against 4.6 % for reference points. Measured vRel resumes only once a fit over the post-join ranges
+  alone also agrees."""
+  DT_NANOS = 70_000_000
+  CLOSING_RAW = 2.24  # 2 m/s over a 70 ms sweep
+
+  def _drive(self, ri, i, raw, u11_mps):
+    return ri.update(sweep(0, i & 0xF, 0x7, round(raw), 1024, (1 + 2 * i) & 0xFFF, i * self.DT_NANOS, with_aux=True,
+                           direct_vrel_raw=864 + round(u11_mps * 64), direct_vrel_uncertainty_raw=0,
+                           range_sigma_raw=1, existence_raw=126))
+
+  def _birth(self, ri):
+    raw = 1650
+    for i in range(6):
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw, -2.0)
+    assert rr.points[0].measured is True
+    return raw
+
+  def test_negative_control_a_join_that_contradicts_u11_is_published_unmeasured(self):
+    ri = make_radar_interface()
+    # The range settles 8.5 m closer and holds still while U11 claims 4 m/s closing. The anchor's U11
+    # extrapolation meets it after ~0.84 s. Before 22.5 that join published vRel -4.0 as measured.
+    raw = self._birth(ri) - 136
+    joined_d_rel = round(raw) * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M
+    joined = False
+    for i in range(6, 60):
+      rr = self._drive(ri, i, raw, -4.0)
+      assert not any(p.measured for p in rr.points), f"measured at sweep {i}"
+      if rr.points and rr.points[0].dRel == pytest.approx(joined_d_rel):
+        joined = True
+      elif joined:
+        pytest.fail(f"joined point deleted at sweep {i}")
+    assert joined
+
+  def test_a_walk_that_returns_resumes_measured_after_a_fresh_fit(self):
+    ri = make_radar_interface()
+    raw = self._birth(ri)
+    for i in range(6, 20):  # ~1 s walk 8 m out; the object keeps closing underneath it
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw + 128, -2.0)
+      assert not any(p.measured for p in rr.points)  # held, then deleted past BOSCH_A_STALE_S (unchanged)
+    measured_at = None
+    for i in range(20, 40):
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw, -2.0)
+      assert len(rr.points) == 1, f"point deleted at sweep {i}"
+      if rr.points[0].measured and measured_at is None:
+        measured_at = i
+    assert measured_at is not None
+    assert (measured_at - 20) * self.DT_NANOS * 1e-9 <= 0.5
 
 
 # --- 7b. residual vRel-authority fix: raw one-sweep fallback never becomes a published measurement ----
