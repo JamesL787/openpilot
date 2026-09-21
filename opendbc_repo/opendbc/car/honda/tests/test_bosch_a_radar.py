@@ -9,6 +9,7 @@ from opendbc.car.can_definitions import CanData
 from opendbc.car.honda.hondacan import CanBus
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.radar_interface import (
+  BOSCH_A_REANCHOR_MIN_SPAN_S,
   BOSCH_A_AZIMUTH_SCALE_RAD,
   BOSCH_A_AUX_IDS,
   BOSCH_A_DBC_NAME,
@@ -1121,6 +1122,63 @@ class TestInvalidSlotDoesNotHideAMigratedIdentity:
     rr = self._migrate(ri, 4, u10=0, valid_elsewhere=False)
     assert 1 not in [p.trackId for p in rr.points]
     assert 1 in ri._tracks  # hidden, not retired: the history survives to its stale deadline
+
+
+# --- 7a''. D-057: a lasting, clean range step re-anchors instead of locking the lead out ----
+
+class TestLastingCleanStepReAnchors:
+  """Modelled on 00000236--60bfb34cb1 track 38 at t=1703.6 s and 00000237 track 31 at t=761.5 s. A new
+  object's birth ranges were accepted, then its range settled several metres closer and every later
+  sweep contradicted both baselines. The lead stayed dark for 27.4 s / 20.4 s while it closed to 38 m /
+  20 m, with non-degraded ranges moving at the U11 rate."""
+  DT_NANOS = 70_000_000
+  CLOSING_RAW = 2.24  # 2 m/s over a 70 ms sweep
+
+  def _drive(self, ri, i, raw, u11_mps, sigma=1, existence=126):
+    return ri.update(sweep(0, i & 0xF, 0x7, round(raw), 1024, (1 + 2 * i) & 0xFFF, i * self.DT_NANOS, with_aux=True,
+                           direct_vrel_raw=864 + round(u11_mps * 64), direct_vrel_uncertainty_raw=0,
+                           range_sigma_raw=sigma, existence_raw=existence))
+
+  def _birth(self, ri):
+    raw = 1650  # ~103 m
+    for i in range(6):
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw, -2.0)
+    assert rr.points[0].measured is True
+    return raw
+
+  def test_a_clean_lasting_step_at_the_u11_rate_is_published_again(self):
+    ri = make_radar_interface()
+    raw = self._birth(ri) - 136  # settles 8.5 m closer
+    published_at = None
+    for i in range(6, 60):
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw, -2.0)
+      if rr.points and rr.points[0].measured and published_at is None:
+        published_at = i
+        assert rr.points[0].dRel == pytest.approx(round(raw) * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
+    assert published_at is not None
+    assert (published_at - 6) * self.DT_NANOS * 1e-9 >= BOSCH_A_REANCHOR_MIN_SPAN_S
+    assert (published_at - 6) * self.DT_NANOS * 1e-9 <= BOSCH_A_REANCHOR_MIN_SPAN_S + 0.15
+
+  @pytest.mark.parametrize("sigma,existence", [(7, 126), (1, 0)])
+  def test_negative_control_a_degraded_lasting_step_never_re_anchors(self, sigma, existence):
+    ri = make_radar_interface()
+    raw = self._birth(ri) - 136
+    for i in range(6, 60):
+      raw -= self.CLOSING_RAW
+      rr = self._drive(ri, i, raw, -2.0, sigma=sigma, existence=existence)
+      assert not any(p.measured for p in rr.points)
+
+  def test_negative_control_a_clean_step_that_contradicts_u11_never_re_anchors(self):
+    ri = make_radar_interface()
+    # The range holds still while U11 claims 4 m/s closing. The step is 25 m so the anchor's U11
+    # extrapolation cannot catch the range inside this window: a smaller step lets the existing
+    # stale-anchor "join" publish (D-054 residual finding), which would mask what D-057 does.
+    raw = self._birth(ri) - 400
+    for i in range(6, 60):
+      rr = self._drive(ri, i, raw, -4.0)
+      assert not any(p.measured for p in rr.points)
 
 
 # --- 7b. residual vRel-authority fix: raw one-sweep fallback never becomes a published measurement ----
