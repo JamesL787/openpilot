@@ -27,7 +27,21 @@ _SETTINGS_TIERS = _load_settings_tiers()
 
 try:
   from openpilot.common.params_pyx import Params as _Params, ParamKeyFlag, ParamKeyType, UnknownKeyName
-except Exception:
+except Exception as _params_pyx_err:
+  # The pure-Python Params defined below is backed by a module-level dict: it never touches disk,
+  # so writes are invisible to every other process and vanish when this one exits. A settings
+  # toggle backed by it appears to flip and then do nothing. Falling back is deliberate -- it keeps
+  # the UI importable on a host with no compiled params -- but it must never be silent.
+  import sys as _sys
+
+  print(
+    f"WARNING: openpilot.common.params_pyx unavailable "
+    f"({type(_params_pyx_err).__name__}: {_params_pyx_err}); falling back to NON-PERSISTENT "
+    f"in-process params. Writes will NOT persist and will NOT be seen by other processes. "
+    f"Build it with: scons common/params_pyx.so",
+    file=_sys.stderr,
+  )
+
   class UnknownKeyName(KeyError):
     pass
 

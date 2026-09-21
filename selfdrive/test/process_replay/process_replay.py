@@ -354,7 +354,16 @@ def get_car_params_callback(rc, pm, msgs, fingerprint):
       with car.CarParams.from_bytes(cached_params_raw) as _cached_params:
         cached_params = _cached_params
 
-    CP = get_car(can_recv, lambda _msgs: None, lambda obd: None, params.get_bool("AlphaLongitudinalEnabled"), False, cached_params=cached_params).CP
+    # get_car() takes params positionally and dereferences starpilot_toggles unconditionally
+    # (car_helpers.py reads .force_fingerprint before any None check), so neither may be omitted
+    # despite starpilot_toggles carrying a None default. Imported here rather than at module
+    # scope: get_starpilot_toggles() has a SubMaster as a default argument, which would open a
+    # socket at import time in every process that merely imports this module.
+    from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
+    # read_persisted_force_params stays False: a replay must not inherit force-offroad/onroad or
+    # forced-controller state from whatever device this is running on.
+    CP = get_car(can_recv, lambda _msgs: None, lambda obd: None, params.get_bool("AlphaLongitudinalEnabled"), False,
+                 params, cached_params=cached_params, starpilot_toggles=get_starpilot_toggles()).CP
 
   params.put("CarParams", CP.to_bytes())
 
