@@ -237,6 +237,10 @@ class _BoschATrackState:
   last_seen_nanos: int | None = None
   wire_slot: int | None = None
   samples: deque = field(default_factory=lambda: deque(maxlen=BOSCH_A_VREL_MAX_SAMPLES))
+  # (time, range) of the last observation that PASSED the range-innovation gate, accepted or coasted
+  # (D-054). The gate measures the next sweep against it. It is never a velocity-derivative baseline:
+  # `samples` above stays accepted-only, and a range-rejected sweep never moves either of them.
+  range_anchor: tuple[float, float] | None = None
   last_trusted_vrel: float | None = None
   last_trusted_vrel_nanos: int | None = None
 
@@ -278,6 +282,25 @@ def _bosch_a_range_ratio_vrel(raw_value: int | float | None, d_rel: float, dt: f
   if ratio is None or dt <= 0.0 or not math.isfinite(d_rel):
     return None
   return d_rel * (1.0 - ratio) / dt
+
+
+def _bosch_a_range_innovation_rejected(baseline: tuple[float, float], now_s: float, dRel: float,
+                                       direct_vrel: float | None, ratio: float | None, degraded: bool) -> bool:
+  """Does this range contradict one (time, range) baseline? See the D-054 comment at the call site."""
+  previous_time, previous_range = baseline
+  dt = now_s - previous_time
+  if dt <= 0.0:
+    return True
+  residuals_m = []
+  if direct_vrel is not None:
+    residuals_m.append(abs(dRel - (previous_range + direct_vrel * dt)))
+  if ratio is not None:
+    residuals_m.append(abs(previous_range - dRel * ratio))
+  if not residuals_m:
+    return abs((dRel - previous_range) / dt) > BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS
+  innovation_m = min(residuals_m)
+  return (innovation_m > BOSCH_A_RANGE_INNOVATION_HARD_MAX_M or
+          (degraded and innovation_m > BOSCH_A_RANGE_INNOVATION_MAX_M))
 
 
 def _bosch_a_measurement_degraded(range_sigma_raw: int, existence_raw: int,
@@ -516,6 +539,7 @@ class RadarInterface(RadarInterfaceBase):
         # The CAN identity remains the externally-visible key, but a lifecycle discontinuity starts a
         # new incarnation and must not inherit the previous object's range-rate history.
         track.samples.clear()
+        track.range_anchor = None
         track.last_trusted_vrel = None
         track.last_trusted_vrel_nanos = None
         self.pts.pop(track_id, None)
@@ -556,44 +580,45 @@ class RadarInterface(RadarInterfaceBase):
                             direct_vrel_uncertainty_raw is not None and
                             direct_vrel_uncertainty_raw > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW)
 
-      # Validate against the previous accepted range. Qualified U11 and the range-ratio field are
-      # independent corroboration paths; high-U10 U11 is deliberately excluded from this decision.
+      # Qualified U11 and the range-ratio field are independent corroboration paths for the range;
+      # high-U10 U11 is deliberately excluded from this decision.
+      #
+      # D-054: a sweep is range-rejected only if it contradicts BOTH the last ACCEPTED sample and
+      # `range_anchor`, the last range that passed this gate (a velocity coast also advances it). Each
+      # baseline on its own locked a real object out, measured through this parser on 00000232 / 236 /
+      # 237 / 239 / 23a:
+      # - Accepted sample only (the parser before D-054). A coast held it still while the range kept
+      #   moving, and every later sweep was predicted across the growing gap with the very U11 the coast
+      #   had just distrusted. 00000232 track 43, the followed lead pulling away 78.5 -> 84.5 m: the
+      #   D-043 rate check coasted four sweeps, the error grew 0.86 / 1.12 / 1.53 / 1.87 / 2.11 m, the
+      #   degraded 2.0 m limit rejected it, the point was deleted after BOSCH_A_STALE_S, and radar lost
+      #   the lead for 15 s while it closed from 84 m to 27 m.
+      # - Anchor only (the first D-054 draft). 00000237 track 12, a new object at 25 m whose range walked
+      #   out to 28.06 m while U11 said -2 m/s. The rate check rightly coasted the walk, the walk became
+      #   the baseline, and the real ranges (25.3 m closing to 17 m) were rejected against it for 53 s
+      #   while the accepted sample still tracked them.
+      # The recorded range resets this gate exists for contradict both baselines.
       previous_sample = track.samples[-1] if track.samples else None
-      fallback_vrel = 0.0
+      range_anchor = track.range_anchor
       ratio_vrel = None
       range_rejected = False
       degraded = _bosch_a_measurement_degraded(
         observation['range_sigma_raw'], observation['existence_raw'], direct_vrel_uncertainty_raw,
       )
-      if previous_sample is not None:
-        previous_time, previous_range = previous_sample
-        dt = now_s - previous_time
-        if dt <= 0.0:
-          range_rejected = True
-        else:
-          fallback_vrel = (dRel - previous_range) / dt
-          ratio = _bosch_a_range_ratio(range_ratio_raw)
-          ratio_vrel = _bosch_a_range_ratio_vrel(range_ratio_raw, dRel, dt)
-
-          residuals_m = []
-          if direct_vrel is not None:
-            residuals_m.append(abs(dRel - (previous_range + direct_vrel * dt)))
-          if ratio is not None:
-            residuals_m.append(abs(previous_range - dRel * ratio))
-
-          if residuals_m:
-            innovation_m = min(residuals_m)
-            range_rejected = (
-              innovation_m > BOSCH_A_RANGE_INNOVATION_HARD_MAX_M or
-              (degraded and innovation_m > BOSCH_A_RANGE_INNOVATION_MAX_M)
-            )
-          else:
-            range_rejected = abs(fallback_vrel) > BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS
+      if range_anchor is not None:
+        ratio = _bosch_a_range_ratio(range_ratio_raw)
+        # Deliberately still timed from the last ACCEPTED sample, as before D-054: changing a
+        # published vRel is a separate decision, recorded as open in STATUS.md.
+        if previous_sample is not None and now_s > previous_sample[0]:
+          ratio_vrel = _bosch_a_range_ratio_vrel(range_ratio_raw, dRel, now_s - previous_sample[0])
+        baselines = [range_anchor] if previous_sample in (None, range_anchor) else [range_anchor, previous_sample]
+        range_rejected = all(_bosch_a_range_innovation_rejected(baseline, now_s, dRel, direct_vrel, ratio, degraded)
+                             for baseline in baselines)
 
       if range_rejected:
-        # Keep the last accepted point briefly as an unmeasured coast. The rejected geometry is not
-        # published and never becomes the baseline for a later derivative.
-        accepted_fresh = previous_sample is not None and now_s - previous_sample[0] <= BOSCH_A_STALE_S
+        # Keep the last trusted point briefly as an unmeasured coast. The rejected geometry is not
+        # published and never becomes the baseline for a later derivative or for this gate.
+        accepted_fresh = range_anchor is not None and now_s - range_anchor[0] <= BOSCH_A_STALE_S
         point = self.pts.get(track_id)
         if accepted_fresh and point is not None:
           point.measured = False
@@ -608,6 +633,14 @@ class RadarInterface(RadarInterfaceBase):
             self._slot_track_ids[old_slot] = None
         self._slot_track_ids[slot] = track_id
         continue
+
+      # The range passed the gate: it is the gate's baseline from here on, whatever happens to vRel.
+      # Only a range that was actually GATED can advance it. With no anchor there was no gate, so a
+      # coast now (a high-u10 birth) would root the gate on an unchecked, unpublished range: measured
+      # on 00000239 that withheld 2,236 sweeps the pre-D-054 parser published, rejecting later sweeps
+      # 2-17 m off such a birth range. The first ACCEPTED sample below roots the anchor instead.
+      if range_anchor is not None:
+        track.range_anchor = (now_s, dRel)
 
       # Multi-sweep consistency: does the range actually move the way this velocity claims?
       # Fitted over the accepted range history, so it is immune to the single-sweep blindness above.
@@ -714,6 +747,7 @@ class RadarInterface(RadarInterfaceBase):
         continue
 
       track.samples.append((now_s, dRel))
+      track.range_anchor = (now_s, dRel)
       sample_count = len(track.samples)
 
       # Prefer qualified native U11; otherwise the range-ratio field. The raw one-sweep derivative is
