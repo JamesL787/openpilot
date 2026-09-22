@@ -72,28 +72,36 @@ def test_startup_rotation_requires_completed_fit(monkeypatch):
   assert rotation.load_rotation() == (0.1, 0.2, 0.3)
 
 
-def test_completed_rotation_survives_reboot_but_partial_rotation_does_not(monkeypatch):
-  store = {}
+def test_completed_rotation_survives_reboot_but_partial_rotation_does_not():
+  from openpilot.common.params import Params
 
-  class MemoryParams:
-    def get(self, key):
-      return store.get(key)
-
-    def put(self, key, value, **_kwargs):
-      store[key] = value
-
-  monkeypatch.setattr("openpilot.common.params.Params", MemoryParams)
   fit = Fit((0.01, 0.02, 0.03))
   fit.fits = [(0.04, 0.05, 0.06)] * N_FRAMES
   fit.mean = (0.04, 0.05, 0.06)
   save_completed_rotation((0.04, 0.05, 0.06), fit)
 
+  # Exercise the real synchronous Params API and its on-disk JSON encoding.
+  params = Params()
+  stored = params.get(rotation.ROTATION_PARAM)
+  assert Path(params.get_param_path(rotation.ROTATION_PARAM)).is_file()
+  assert stored == {
+    "rotvec": [0.04, 0.05, 0.06],
+    "geometryVersion": rotation.GEOMETRY_VERSION,
+    "fitted": True,
+    "n": N_FRAMES,
+    "spread_deg": 0.0,
+    "applied": [0.01, 0.02, 0.03],
+  }
+
   # read_rotation() creates a fresh Params instance, modeling the next boot.
-  assert rotation.read_rotation()["fitted"] is True
-  assert rotation.read_rotation()["geometryVersion"] == rotation.GEOMETRY_VERSION
+  assert rotation.read_rotation() == stored
   assert rotation.load_rotation() == (0.04, 0.05, 0.06)
 
-  store[rotation.ROTATION_PARAM] = {"fitted": False, "rotvec": [0.7, 0.8, 0.9]}
+  params.put(rotation.ROTATION_PARAM, {
+    "fitted": False,
+    "geometryVersion": rotation.GEOMETRY_VERSION,
+    "rotvec": [0.7, 0.8, 0.9],
+  })
   assert rotation.read_rotation() == {}
   assert rotation.load_rotation() == rotation.POP_ROTATION
 

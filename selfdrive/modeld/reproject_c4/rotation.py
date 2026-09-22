@@ -49,4 +49,4 @@ def save_rotation(rotvec, **extra) -> None:
     "rotvec": [float(v) for v in rotvec],
     "geometryVersion": GEOMETRY_VERSION,
     **extra,
-  }, block=True)
+  })
