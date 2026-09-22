@@ -13,7 +13,7 @@ from .geometry import C4_NARROW_K, FEATHER_PX, _nv12_index, sample_coords
 from .meter import SeamMeter
 
 IDX_BITS, ALPHA_SHIFT, INVALID_BIT = 0x3fffff, 22, 1 << 30
-TABLE_VERSION = 7  # VFN board/reference lens + 24 px feather + Amy's trimmed table layout.
+TABLE_VERSION = 8  # Phase 2: Amy fleet lens + 50 px feather; never reuse Phase 1 gather tables.
 
 
 def build_tables(src_wh, dst_wh, calib):

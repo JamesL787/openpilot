@@ -65,6 +65,7 @@ class UIState:
         "carControl",
         "liveParameters",
         "rawAudioData",
+        "reprojectState",
         "starpilotCarState",
         "starpilotPlan",
         "starpilotRadarState",

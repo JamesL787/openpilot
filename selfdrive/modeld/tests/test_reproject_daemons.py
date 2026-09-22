@@ -7,7 +7,7 @@ from openpilot.selfdrive.modeld import modeld
 from openpilot.system.manager.process_config import reproject as reproject_process
 from openpilot.selfdrive.modeld.reproject_c4 import cameras, rotation
 from openpilot.selfdrive.modeld.reproject_c4.meter import SeamMeter
-from openpilot.selfdrive.modeld.reprojectcalibd import Fit, MAX_N, MIN_N, save_completed_rotation
+from openpilot.selfdrive.modeld.reprojectcalibd import Fit, N_FRAMES, save_completed_rotation
 from openpilot.selfdrive.modeld.reproject_config import REPROJECT_SESSION_PARAM, reproject_expected, select_reproject_session
 
 
@@ -57,9 +57,18 @@ def test_startup_rotation_requires_completed_fit(monkeypatch):
 
   monkeypatch.setattr("openpilot.common.params.Params", FakeParams)
   assert rotation.read_rotation() == {}
-  assert rotation.load_rotation() == rotation.R_NARROW_FROM_WIDE
+  assert rotation.load_rotation() == rotation.POP_ROTATION
 
+  # A completed Phase 1 fit is deliberately invalid under the new optical ABI.
   FakeParams.value = {"fitted": True, "rotvec": [0.1, 0.2, 0.3]}
+  assert rotation.read_rotation() == {}
+  assert rotation.load_rotation() == rotation.POP_ROTATION
+
+  FakeParams.value = {
+    "fitted": True,
+    "geometryVersion": rotation.GEOMETRY_VERSION,
+    "rotvec": [0.1, 0.2, 0.3],
+  }
   assert rotation.load_rotation() == (0.1, 0.2, 0.3)
 
 
@@ -75,18 +84,18 @@ def test_completed_rotation_survives_reboot_but_partial_rotation_does_not(monkey
 
   monkeypatch.setattr("openpilot.common.params.Params", MemoryParams)
   fit = Fit((0.01, 0.02, 0.03))
-  fit.keep = np.arange(12)
-  fit.spread = 0.01
-  fit.se = 0.005
+  fit.fits = [(0.04, 0.05, 0.06)] * N_FRAMES
+  fit.mean = (0.04, 0.05, 0.06)
   save_completed_rotation((0.04, 0.05, 0.06), fit)
 
   # read_rotation() creates a fresh Params instance, modeling the next boot.
   assert rotation.read_rotation()["fitted"] is True
+  assert rotation.read_rotation()["geometryVersion"] == rotation.GEOMETRY_VERSION
   assert rotation.load_rotation() == (0.04, 0.05, 0.06)
 
   store[rotation.ROTATION_PARAM] = {"fitted": False, "rotvec": [0.7, 0.8, 0.9]}
   assert rotation.read_rotation() == {}
-  assert rotation.load_rotation() == rotation.R_NARROW_FROM_WIDE
+  assert rotation.load_rotation() == rotation.POP_ROTATION
 
 
 def test_reproject_session_is_latched_across_chestnut_disconnect(monkeypatch):
@@ -249,17 +258,42 @@ def test_dark_seam_fallback_holds_per_unit_terms():
   assert np.all(np.abs(state[5:] - 1.5) < np.abs(np.array([0.9, 1.0, 1.1, 1.2]) - 1.5))
 
 
-def test_adaptive_fit_waits_for_minimum_and_stops_by_maximum():
+def test_phase2_geometry_matches_amy_population_optics():
+  from openpilot.selfdrive.modeld.reproject_c4 import geometry, tables
+
+  assert geometry.X3_WIDE_POP == {
+    "f": 597.732, "cx": 963.936, "cy": 603.959,
+    "k": (-0.011968, 0.024043, -0.0091132), "tc": 1.51354,
+  }
+  assert geometry.POP_ROTATION == (0.0154781, -0.0225994, -0.00068013)
+  assert geometry.FEATHER_PX == 50
+  assert tables.TABLE_VERSION == 8
+
+
+def test_fixed_twelve_frame_median_fit(monkeypatch):
   fit = Fit((0.0, 0.0, 0.0))
-  fit.fits = [(0.0, 0.0, 0.0)] * (MIN_N - 1)
-  fit.se = 0.0
+  values = [(0.0, 0.0, 0.0)] * (N_FRAMES - 1) + [(0.1, -0.1, 0.01)]
+  results = iter((value, 15, 0.1) for value in values)
+  monkeypatch.setattr("openpilot.selfdrive.modeld.reprojectcalibd.RC.fit_rotation", lambda *_args, **_kwargs: next(results))
+
+  for frame_id in range(N_FRAMES - 1):
+    assert fit.frame(None, None, frame_id) is not None
   assert not fit.complete
 
-  fit.fits.append((0.0, 0.0, 0.0))
+  assert fit.frame(None, None, N_FRAMES - 1) is not None
   assert fit.complete
+  assert fit.mean == (0.0, 0.0, 0.0)
 
-  fit.fits = [(0.0, 0.0, 0.0)] * (MAX_N - 1)
-  fit.se = float("inf")
-  assert not fit.complete
-  fit.fits.append((0.0, 0.0, 0.0))
-  assert fit.complete
+
+def test_reproject_ui_phase_hold_is_wired():
+  source = (Path(modeld.__file__).parents[1] / "ui/onroad/augmented_road_view.py").read_text()
+  ui_state_source = (Path(modeld.__file__).parents[1] / "ui/ui_state.py").read_text()
+
+  assert "UI_PHASE_TARGET_NS = 22_000_000" in source
+  assert "UI_PHASE_TOLERANCE_NS = 2_000_000" in source
+  assert "FRAME_PERIOD_NS = 50_000_000" in source
+  assert 'sm.alive["reprojectState"]' in source
+  assert "def _restore_fps(self)" in source
+  assert "def hide_event(self)" in source
+  assert "CLOCK_BOOTTIME" in source
+  assert '"reprojectState"' in ui_state_source

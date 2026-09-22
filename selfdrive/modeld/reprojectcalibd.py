@@ -19,8 +19,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.locationd.calibrationd import MAX_YAW_RATE_FILTER, MIN_SPEED_FILTER
 from openpilot.selfdrive.modeld import reproject_c4 as RC
 
-MIN_N, MAX_N = 12, 40
-SE_STOP = 0.02
+N_FRAMES = 12
 MAX_RMS_DEG = 0.25
 C4_CAM = RC.C4_CAM
 NARROW = VisionStreamType.VISION_STREAM_ROAD
@@ -31,10 +30,6 @@ def luma(buf) -> np.ndarray:
   return np.array(buf.data[:buf.uv_offset], dtype=np.uint8).reshape(-1, buf.stride)[:buf.height, :buf.width]
 
 
-def progress_pct(n: int, se: float) -> int:
-  need = max(MIN_N, n * (se / SE_STOP) ** 2 if n and np.isfinite(se) and se > SE_STOP else 0)
-  return int(min(99, 100 * max(n / need, n / MAX_N)))
-
 
 class Fit:
   def __init__(self, applied):
@@ -42,9 +37,6 @@ class Fit:
     self.calib = RC.calib_from_rotvec(self.applied)
     self.fits: list[tuple] = []
     self.mean = self.applied
-    self.keep = np.array([], dtype=int)
-    self.spread = 0.0
-    self.se = float("inf")
     self.last_id = 0
     self.last_ok = False
 
@@ -54,7 +46,11 @@ class Fit:
 
   @property
   def complete(self) -> bool:
-    return (self.n >= MIN_N and self.se < SE_STOP) or self.n >= MAX_N
+    return self.n >= N_FRAMES
+
+  @property
+  def spread(self) -> float:
+    return float(np.degrees(np.abs(np.array(self.fits) - self.mean).max())) if self.fits else 0.0
 
   def frame(self, narrow_y, wide_y, frame_id: int):
     r = (
@@ -67,7 +63,7 @@ class Fit:
     if not self.last_ok:
       return None
     self.fits.append(r[0])
-    self.mean, self.keep, self.spread, self.se = RC.combine_fits(self.fits)
+    self.mean = tuple(float(v) for v in np.median(self.fits, axis=0))
     return r
 
 
@@ -78,7 +74,7 @@ class FitState:
     self.t = 0.0
 
   def publish(self, status: str, fit: Fit, why: str | None = None) -> None:
-    pct = 100 if status in ("building", "fitted") else progress_pct(fit.n, fit.se)
+    pct = 100 if status in ("building", "fitted") else min(99, 100 * fit.n // N_FRAMES)
     mean = [float(v) for v in fit.mean]
     key = (status, why, pct, tuple(mean), fit.last_id, fit.last_ok)
     if key == self.last and time.monotonic() - self.t < 0.5:
@@ -100,9 +96,8 @@ def save_completed_rotation(rotvec, fit: Fit) -> None:
   RC.save_rotation(
     rotvec,
     fitted=True,
-    n=int(len(fit.keep)),
+    n=fit.n,
     spread_deg=round(fit.spread, 3),
-    se_deg=round(fit.se, 3),
     applied=[float(v) for v in fit.applied],
   )
 
@@ -183,15 +178,15 @@ def main():
       continue
 
     cloudlog.warning(
-      "reprojectcalibd: fit %d: %s deg, %d matches, rms %.3f deg, %.1f s; mean %s spread %.3f se %.3f deg",
+      "reprojectcalibd: fit %d/%d: %s deg, %d matches, rms %.3f deg, %.1f s; median %s spread %.3f deg",
       fit.n,
+      N_FRAMES,
       np.degrees(r[0]).round(3),
       r[1],
       r[2],
       time.monotonic() - t0,
       np.degrees(fit.mean).round(3),
       fit.spread,
-      fit.se,
     )
     state.publish("fitting", fit)
     if not fit.complete:

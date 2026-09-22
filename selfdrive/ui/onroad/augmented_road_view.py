@@ -13,6 +13,7 @@ from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.onroad.cameraview import CameraView
 from openpilot.selfdrive.ui.lib.starpilot_status import get_screen_edge_color
+from openpilot.system.hardware import TICI
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.common.transformations.camera import DEVICE_CAMERAS, DeviceCameraConfig, view_frame_from_device_frame
 from openpilot.common.transformations.orientation import rot_from_euler
@@ -30,6 +31,13 @@ CAMERA_VIEW_DRIVER = 1
 CAMERA_VIEW_STANDARD = 2
 CAMERA_VIEW_WIDE = 3
 CAMERA_VIEW_NONE = 4
+
+# Keep the 3X UI render out of the QCOM reprojection/DM windows. These values
+# are Amy's current on-device phase target for the 50 ms camera cycle.
+UI_PHASE_TARGET_NS = 22_000_000
+UI_PHASE_TOLERANCE_NS = 2_000_000
+FRAME_PERIOD_NS = 50_000_000
+UI_PHASE_STEP_FPS = range(10, 31)
 
 BORDER_COLORS = {
   UIStatus.DISENGAGED: rl.Color(0x12, 0x28, 0x39, 0xFF),  # Blue for disengaged state
@@ -60,6 +68,7 @@ class AugmentedRoadView(CameraView):
     self._camera_view_none = False
     self._driver_stream_active = False
     self._draw_road_overlays = True
+    self._phase_fps = 0
     self._draw_hud_controls = True
     self._draw_driver_state = True
 
@@ -71,7 +80,12 @@ class AugmentedRoadView(CameraView):
     # debug
     self._pm = messaging.PubMaster(['uiDebug'])
 
+  def hide_event(self):
+    super().hide_event()
+    self._restore_fps()
+
   def _render(self, rect):
+    self._restore_fps()
     # Only render when system is started to avoid invalid data access
     start_draw = time.monotonic()
     if not ui_state.started:
@@ -136,6 +150,29 @@ class AugmentedRoadView(CameraView):
     msg = messaging.new_message('uiDebug')
     msg.uiDebug.drawTimeMillis = (time.monotonic() - start_draw) * 1000
     self._pm.send('uiDebug', msg)
+    self._hold_ui_phase()
+
+  def _restore_fps(self):
+    if self._phase_fps:
+      rl.set_target_fps(gui_app.target_fps)
+      self._phase_fps = 0
+
+  def _hold_ui_phase(self):
+    sm = ui_state.sm
+    if not TICI or not sm.alive["reprojectState"]:
+      return
+    eof = sm["roadCameraState"].timestampEof
+    if not eof:
+      return
+
+    err = (UI_PHASE_TARGET_NS - (time.clock_gettime_ns(time.CLOCK_BOOTTIME) - eof)) % FRAME_PERIOD_NS
+    if err > FRAME_PERIOD_NS // 2:
+      err -= FRAME_PERIOD_NS
+    if abs(err) > UI_PHASE_TOLERANCE_NS:
+      # Raylib pads every frame to target FPS. One frame at a nearby rate moves
+      # the timer phase without sleeping inside the render/QCOM critical path.
+      self._phase_fps = min(UI_PHASE_STEP_FPS, key=lambda fps: abs(1e9 / fps - FRAME_PERIOD_NS - err))
+      rl.set_target_fps(self._phase_fps)
 
   def _render_extra_road_overlays(self, rect: rl.Rectangle) -> None:
     """Render subclass road overlays inside the content scissor, above the model and below the HUD."""

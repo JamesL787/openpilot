@@ -1,8 +1,7 @@
 """Lens models and geometry for the comma 3X -> comma 4 reprojection stage.
 
-This VFN port deliberately keeps the already-driven board/reference 3X wide-lens
-calibration and 24 px feather. Amy's population lens and 50 px feather remain a
-separate optics experiment.
+Phase 2 intentionally adopts Amy's current fleet-derived 3X wide-lens geometry
+and 50 px composite feather as one coherent optics experiment.
 """
 
 import numpy as np
@@ -10,26 +9,34 @@ import numpy as np
 from openpilot.common.transformations.camera import DEVICE_CAMERAS
 
 
-# VFN's already-driven board/reference 3X lens model.
-X3_WIDE = dict(f=596.669, cx=957.566, cy=581.537,
-               k=(-0.014942, -0.0023814, -0.00064424), tc=1.51354)
+# Amy's fleet median of 40 self-calibrated 3X units. This is paired with the
+# per-unit direct camera rotation fit below, rather than a single board-calibrated
+# wide lens.
+X3_WIDE_POP = dict(f=597.732, cx=963.936, cy=603.959,
+                   k=(-0.011968, 0.024043, -0.0091132), tc=1.51354)
 X3_NARROW = dict(f=2600.85, cx=964.0, cy=604.0, k1=-0.36400)
 C4_WIDE = dict(f=442.555, cx=672.380, cy=378.718,
                k=(0.0089611, 0.029156, -0.015066), tc=1.39626)
 
-# Known-good board/reference seed. The direct image fitter owns the per-unit
-# relative camera rotation; do not seed it from model-derived CalibrationParams.
-R_NARROW_FROM_WIDE = (-0.0167946, 0.0022473, -0.0011422)
+# Fleet-median narrow->wide seed used only when there is no completed per-unit
+# fit and no usable persisted wideFromDeviceEuler to seed from.
+POP_ROTATION = (0.0154781, -0.0225994, -0.00068013)
 
 C4_NARROW_K = DEVICE_CAMERAS[("mici", "os04c10")].fcam.intrinsics
 ZMIN = np.cos(np.radians(88.0))
-FEATHER_PX = 24
+FEATHER_PX = 50
 UV_FILL = 128
 C4_CAM = (1344, 760)
 
 
 def calib_from_rotvec(rotvec):
-  return dict(wide=X3_WIDE, narrow=X3_NARROW, R=tuple(float(v) for v in rotvec))
+  return dict(wide=X3_WIDE_POP, narrow=X3_NARROW, R=tuple(float(v) for v in rotvec))
+
+
+def rotvec_from_wide_from_device_euler(euler):
+  """Convert model/device Euler [roll,pitch,yaw] into camera-axis rotvec [pitch,yaw,roll]."""
+  r, p, y = euler
+  return (float(p), float(y), float(r))
 
 
 def matrix_to_rotvec(M):

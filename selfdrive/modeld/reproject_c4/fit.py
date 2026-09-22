@@ -5,7 +5,6 @@ import numpy as np
 from .geometry import (
   C4_NARROW_K,
   matrix_to_rotvec,
-  rotvec_to_matrix,
   sample_coords,
   unproject_fisheye,
   unproject_pinhole,
@@ -96,7 +95,7 @@ def kabsch(rays_n, rays_w):
   return matrix_to_rotvec(Rm), int(len(rays_n)), float(np.sqrt(np.mean(res[keep] ** 2)))
 
 
-def fit_rotation(narrow_y, wide_y, calib0, dst_wh=(1344, 760), iters=3, coarse=True):
+def fit_rotation(narrow_y, wide_y, calib0, dst_wh=(1344, 760), iters=2, coarse=True):
   calib = dict(calib0)
   R = np.asarray(calib0["R"], float)
   for it in range(iters):
@@ -111,24 +110,3 @@ def fit_rotation(narrow_y, wide_y, calib0, dst_wh=(1344, 760), iters=3, coarse=T
   if n < MIN_MATCHES:
     return None
   return tuple(float(v) for v in R), n, rms
-
-
-def mean_rotvec(rotvecs):
-  M = sum(rotvec_to_matrix(v) for v in rotvecs) / len(rotvecs)
-  U, _, Vt = np.linalg.svd(M)
-  d = np.sign(np.linalg.det(U @ Vt))
-  return tuple(float(v) for v in matrix_to_rotvec(U @ np.diag([1, 1, d]) @ Vt))
-
-
-def combine_fits(rotvecs, trim=0.2):
-  """VFN's conservative trimmed rotation mean plus pitch/yaw SE stop metric."""
-  m = mean_rotvec(rotvecs)
-  dev = np.array([
-    np.linalg.norm(matrix_to_rotvec(rotvec_to_matrix(m).T @ rotvec_to_matrix(v)))
-    for v in rotvecs
-  ])
-  keep = np.argsort(dev)[:max(1, int(round(len(rotvecs) * (1 - trim))))]
-  kept = np.array([rotvecs[i] for i in keep])
-  mean = mean_rotvec(kept)
-  se = float(np.degrees(np.linalg.norm(kept[:, :2].std(0)) / np.sqrt(len(kept)))) if len(kept) > 1 else float("inf")
-  return mean, keep, float(np.degrees(dev[keep].max())), se
