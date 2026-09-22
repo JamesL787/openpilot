@@ -6,9 +6,7 @@ While the roll calibration is a real value that can be estimated, here we assume
 and the image input into the neural network is not corrected for roll.
 '''
 
-import json
 import os
-import time
 import capnp
 import numpy as np
 from typing import NoReturn
@@ -21,6 +19,7 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process
 from openpilot.common.transformations.orientation import rot_from_euler, euler_from_rot
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.modeld.reproject_config import reproject_expected
 
 MIN_SPEED_FILTER = 15 * CV.MPH_TO_MS
 MAX_VEL_ANGLE_STD = np.radians(0.25)
@@ -60,13 +59,6 @@ def sanity_clip(rpy: np.ndarray) -> np.ndarray:
                    np.clip(rpy[2], YAW_LIMITS[0] - .005, YAW_LIMITS[1] + .005)])
 
 
-# Physical C3X narrow<->wide alignment must be applied before normal device->road
-# calibration accumulates model odometry.
-REPROJECT_APPLIED = "/data/reproject_c4/applied.json"
-REPROJECT_CALIBRATED_WITH = "/data/reproject_c4/calibrated_with.json"
-REPROJECT_FIT = "/data/reproject_c4/fit.json"
-REPROJECT_ROTATION = "/data/reproject_c4/rotation.json"
-
 
 def moving_avg_with_linear_decay(prev_mean: np.ndarray, new_val: np.ndarray, idx: int, block_size: float) -> np.ndarray:
   return (idx*prev_mean + (block_size - idx) * new_val) / block_size
@@ -79,7 +71,14 @@ class Calibrator:
 
     # Read saved calibration
     self.params = Params()
+    self._reproject_session_observed = reproject_expected(self.params)
     calibration_params = self.params.get("CalibrationParams")
+    if self._reproject_session_observed:
+      # CalibrationParams are only meaningful after a completed physical
+      # camera-pair fit. A fresh fit removes the old value before publication.
+      from openpilot.selfdrive.modeld.reproject_c4.rotation import read_rotation
+      if not read_rotation():
+        calibration_params = None
     rpy_init = RPY_INIT
     wide_from_device_euler = WIDE_FROM_DEVICE_EULER_INIT
     height = HEIGHT_INIT
@@ -183,82 +182,23 @@ class Calibrator:
   def handle_v_ego(self, v_ego: float) -> None:
     self.v_ego = v_ego
 
-  def reproject_ready(self) -> bool:
-    """Hold liveCalibration until the direct camera fit is actually running in modeld.
-
-    rotation.json alone is not sufficient: reprojectd can publish a fit before modeld
-    has loaded/uploaded the new tables. Also hold during an intentional settings refit.
-    """
-    now = time.monotonic()
-    if now - getattr(self, "_rp_t", 0.0) < 1.0:
-      return getattr(self, "_rp_ready", True)
-    self._rp_t = now
-
-    try:
-      applied = json.load(open(REPROJECT_APPLIED))
-    except (OSError, ValueError):
-      applied = {}
-
-    try:
-      refitting = not json.load(open(REPROJECT_FIT)).get("fitted", True)
-    except (OSError, ValueError):
-      refitting = False
-
-    try:
-      rotation = json.load(open(REPROJECT_ROTATION))
-      swapping = (
-        bool(rotation.get("fitted"))
-        and not np.allclose(
-          rotation["rotvec"],
-          applied.get("rotvec", rotation["rotvec"]),
-          atol=1e-6,
-        )
-      )
-    except (OSError, ValueError, KeyError):
-      swapping = False
-
-    ready = (
-      not applied.get("stage", False)
-      or (bool(applied.get("fitted")) and not refitting and not swapping)
-    )
-
-    if not ready:
-      if self.valid_blocks or self.idx or self.cal_status != log.LiveCalibrationData.Status.uncalibrated:
-        cloudlog.warning("calibrationd: holding until fitted C3X camera geometry is applied")
+  def reproject_ready(self, sm: messaging.SubMaster) -> bool:
+    """Hold road calibration until reprojectd is actually serving the fitted camera-pair geometry."""
+    required = reproject_expected(self.params)
+    if required and not self._reproject_session_observed:
+      # modeld/manager can select virtual C4 after calibrationd has started.
+      # Any samples gathered against native C3X geometry are invalid for the
+      # new camera path, so discard them before waiting for the fitted state.
+      from openpilot.selfdrive.modeld.reproject_c4.rotation import read_rotation
+      samples_accumulated = self.idx > 0 or self.block_idx > 0
+      if samples_accumulated or not read_rotation():
         self.reset()
         self.cal_status = log.LiveCalibrationData.Status.uncalibrated
-    else:
-      rot = applied.get("rotvec") if applied.get("stage") else None
-      try:
-        prev = json.load(open(REPROJECT_CALIBRATED_WITH)).get("rotvec")
-      except (OSError, ValueError):
-        prev = None
-
-      if (
-        rot is not None
-        and prev is not None
-        and not np.allclose(rot, prev, atol=1e-6)
-        and (self.valid_blocks or self.idx)
-      ):
-        # This is our own camera-pair geometry handoff, not evidence that the device
-        # mount moved. Restart as uncalibrated so VFN does not raise a false remount alert.
-        cloudlog.warning(
-          "calibrationd: reprojection rotation changed %s -> %s deg: calibrating again",
-          np.degrees(prev).round(3),
-          np.degrees(rot).round(3),
-        )
-        self.reset()
-        self.cal_status = log.LiveCalibrationData.Status.uncalibrated
-
-      if rot != prev:
-        try:
-          os.makedirs(os.path.dirname(REPROJECT_CALIBRATED_WITH), exist_ok=True)
-          json.dump({"rotvec": rot}, open(REPROJECT_CALIBRATED_WITH, "w"))
-        except OSError:
-          pass
-
-    self._rp_ready = ready
-    return ready
+        self.update_status()
+    self._reproject_session_observed = required
+    if not required:
+      return True
+    return sm.seen["reprojectState"] and sm["reprojectState"].fitted
 
   def get_smooth_rpy(self) -> np.ndarray:
     if self.old_rpy_weight > 0:
@@ -350,7 +290,10 @@ def main() -> NoReturn:
   config_realtime_process([0, 1, 2, 3], 5)
 
   pm = messaging.PubMaster(['liveCalibration'])
-  sm = messaging.SubMaster(['cameraOdometry', 'carState'], poll='cameraOdometry')
+  reproject_services = ['reprojectState', 'reprojectFit']
+  sm = messaging.SubMaster(['cameraOdometry', 'carState'] + reproject_services, poll='cameraOdometry',
+                           ignore_alive=reproject_services, ignore_avg_freq=reproject_services,
+                           ignore_valid=reproject_services)
 
   params_reader = Params()
   CP = messaging.log_from_bytes(params_reader.get("CarParams", block=True), car.CarParams)
@@ -362,7 +305,7 @@ def main() -> NoReturn:
     timeout = 0 if sm.frame == -1 else 100
     sm.update(timeout)
 
-    if sm.updated['cameraOdometry'] and calibrator.reproject_ready():
+    if sm.updated['cameraOdometry'] and calibrator.reproject_ready(sm):
       calibrator.handle_v_ego(sm['carState'].vEgo)
       new_rpy = calibrator.handle_cam_odom(sm['cameraOdometry'].trans,
                                            sm['cameraOdometry'].rot,

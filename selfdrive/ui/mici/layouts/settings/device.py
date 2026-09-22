@@ -250,6 +250,7 @@ class DeviceLayoutMici(NavScroller):
     def reset_calibration_callback():
       params = ui_state.params
       params.remove("CalibrationParams")
+      params.remove("ReprojectRotation")
       params.remove("LiveTorqueParameters")
       params.remove("LiveParameters")
       params.remove("LiveParametersV2")

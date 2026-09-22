@@ -103,6 +103,8 @@ _services: dict[str, tuple] = {
   "livestreamRoadEncodeData": (False, 20., None, QueueSize.MEDIUM),
   "livestreamDriverEncodeData": (False, 20., None, QueueSize.MEDIUM),
   "customReserved9": (True, 0., 1),
+  "reprojectState": (True, 20., 10),
+  "reprojectFit": (True, 2., 1),
   "starpilotLateralState": (True, 100., 10),
   "customReservedRawData0": (True, 0.),
   "customReservedRawData1": (True, 0.),

@@ -2,6 +2,7 @@
 import base64
 from collections.abc import Callable
 import ctypes
+from dataclasses import dataclass
 from functools import cached_property
 import json
 import math
@@ -12,9 +13,6 @@ import usb1
 from openpilot.system.hardware import HARDWARE, TICI
 os.environ['GMMU'] = '0'
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
-# launch_env.sh defaults the shared process environment to 12 for ordinary model/UI
-# scheduling. The direct reprojection path needs the driving QCOM context at priority 1.
-os.environ['QCOM_PRIORITY'] = '1'
 from tinygrad.device import Buffer, Device
 from tinygrad.dtype import DType, dtypes
 from tinygrad.helpers import round_up
@@ -46,7 +44,6 @@ from openpilot.selfdrive.modeld.camera_offset import CameraOffset, DEFAULT_CAMER
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_pose_msg, PublishState, get_curvature_from_output
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
-from openpilot.selfdrive.modeld import reproject_c4 as RC
 from openpilot.selfdrive.modeld.compile_modeld import (
   ARTIFACT_FORMAT_VERSION,
   FAST_POLICY_INPUTS,
@@ -66,6 +63,7 @@ from openpilot.selfdrive.modeld.compile_modeld import (
   tinygrad_commit,
 )
 from openpilot.selfdrive.modeld.helpers import get_tg_input_devices, load_oob, tinygrad_dev_config, usbgpu_present
+from openpilot.selfdrive.modeld.reproject_config import REPROJECT_CAMERA_SIZE, reproject_expected, select_reproject_session
 from openpilot.selfdrive.modeld.usbgpu_link import wait_usbgpu_link
 from openpilot.system.hardware.usb import CHESTNUT_USB_IDS
 from openpilot.starpilot.assets.model_manager import (
@@ -96,9 +94,6 @@ from openpilot.starpilot.common.starpilot_variables import (
 
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
-REPROJECT_C4 = os.getenv("REPROJECT_C4", "1") != "0"
-REPROJECT_C4_REFINE = os.getenv("REPROJECT_C4_REFINE", "0").strip().lower()
-C4_CAM = (1344, 760)
 
 BUILTIN_MODEL_KEY = "rdf43"
 BUILTIN_MODEL_ALIASES = {BUILTIN_MODEL_KEY, "rdf"}
@@ -137,6 +132,31 @@ LAT_SMOOTH_BP = [2.0, 8.0]
 MAX_ABS_EXTERNAL_MODEL_OUTPUT = 1e6
 UPSTREAM_PRECOMPILED_EXECUTION_MODE = "upstream_precompiled"
 UPSTREAM_PRECOMPILED_WARP_PREFIX = "big_driving_warp_"
+
+
+@dataclass(frozen=True)
+class CameraPath:
+  server: str
+  resolution: tuple[int, int]
+
+  def __post_init__(self):
+    if self.server == "reproject" and self.resolution != REPROJECT_CAMERA_SIZE:
+      raise RuntimeError(
+        f"Virtual-C4 server has resolution {self.resolution[0]}x{self.resolution[1]}; "
+        f"expected {REPROJECT_CAMERA_SIZE[0]}x{REPROJECT_CAMERA_SIZE[1]}"
+      )
+
+  def validate_model(self, model: "ModelState") -> None:
+    if getattr(model, "camera_resolution", None) != self.resolution:
+      raise RuntimeError(
+        f"Model {getattr(model, 'model_id', '<unknown>')} was loaded for "
+        f"{getattr(model, 'camera_resolution', None)}, but active camera stream is {self.resolution}"
+      )
+
+  def warp_geometry(self, device_type: str, sensor: str) -> tuple[str, str]:
+    if self.server == "reproject":
+      return "mici", "os04c10"
+    return device_type, sensor
 
 
 def _input_view(buffer: Buffer, shape: tuple[int, ...], dtype: DType, offset: int) -> Tensor:
@@ -534,6 +554,29 @@ def _is_upstream_precompiled_artifact(artifact: dict) -> bool:
   )
 
 
+def _require_artifact_camera_resolution(artifact: dict, cam_w: int, cam_h: int) -> None:
+  """Fail before inference if a VFN model artifact has no warp for this camera."""
+  if _is_upstream_precompiled_artifact(artifact):
+    # Comma's precompiled policy is camera-size agnostic. Its camera-specific
+    # companion warp is checked against the packed NV12 ABI in ModelState.
+    return
+  compiled = artifact.get("run_model") if artifact.get("execution_mode") == "fused" else artifact
+  if not isinstance(compiled, dict) or (cam_w, cam_h) not in compiled:
+    raise ValueError(
+      f"Model artifact has no camera warp for {cam_w}x{cam_h}; "
+      "refusing to run it against a different camera geometry"
+    )
+
+
+def _require_precompiled_warp_abi(warp_specs: dict, cam_w: int, cam_h: int) -> None:
+  stride, y_height, uv_height, _ = get_nv12_info(cam_w, cam_h)
+  expected_frame_shape = (2, nv12_copy_size(stride, y_height, uv_height))
+  if tuple(warp_specs.get("input_frame", ((),))[0]) != expected_frame_shape:
+    raise ValueError(f"Precompiled Chestnut warp frame shape does not match {cam_w}x{cam_h}")
+  if tuple(warp_specs.get("M_inv", ((),))[0]) != (2, 3, 3):
+    raise ValueError("Precompiled Chestnut warp transforms are invalid")
+
+
 def _upstream_output_slices(artifact: dict) -> dict[str, slice]:
   encoded = artifact.get("metadata", {}).get("metadata", {}).get("output_slices")
   if not isinstance(encoded, str):
@@ -734,11 +777,10 @@ class ModelState:
     if not isinstance(warp_artifact, dict) or not callable(warp_artifact.get("run")):
       raise ValueError(f"Invalid precompiled Chestnut warp artifact: {warp_path}")
     warp_specs = warp_artifact.get("input_specs", {})
-    expected_frame_shape = (2, self.frame_copy_size)
-    if tuple(warp_specs.get("input_frame", ((),))[0]) != expected_frame_shape:
-      raise ValueError(f"Precompiled Chestnut warp frame shape does not match {cam_w}x{cam_h}: {warp_path}")
-    if tuple(warp_specs.get("M_inv", ((),))[0]) != (2, 3, 3):
-      raise ValueError(f"Precompiled Chestnut warp transforms are invalid: {warp_path}")
+    try:
+      _require_precompiled_warp_abi(warp_specs, cam_w, cam_h)
+    except ValueError as e:
+      raise ValueError(f"Invalid precompiled Chestnut warp {warp_path}: {e}") from e
     self.run_warp = warp_artifact["run"]
     self.run_model = artifact["run"]
     self.warped_input_shape = tuple(self.input_specs["new_img"][0])
@@ -778,7 +820,8 @@ class ModelState:
   def __init__(self, cam_w: int, cam_h: int, external_gpu_active: bool = False,
                model_id_override: str | None = None, write_model_version: bool = True,
                model_version_override: str | None = None, model_path_override: Path | None = None,
-               force_external_gpu: bool = False, reproject_c4: bool = False):
+               force_external_gpu: bool = False):
+    self.camera_resolution = (cam_w, cam_h)
     params = Params()
     selected_model = model_id_override or _resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY
     model_id = _canonical_model_id(selected_model)
@@ -816,80 +859,13 @@ class ModelState:
     self.model_id = BUILTIN_MODEL_KEY if loaded_builtin else model_id
     self.uses_external_gpu = external_gpu_active and (requires_external_gpu or force_external_gpu) and not loaded_builtin
     artifact = _normalize_model_artifact(_load_model_artifact(model_path))
+    _require_artifact_camera_resolution(artifact, cam_w, cam_h)
     _validate_fused_artifact_device(artifact, self.uses_external_gpu)
 
     self.precompiled = artifact.get("execution_mode") == UPSTREAM_PRECOMPILED_EXECUTION_MODE
-    self.reprojector = None
-    self.reproject_meter = None
-    self.reproject_match = None
-    self.reproject_meter_time = 0.0
-    self.reproject_refiner = None
-    self.reproject_active = False
-    self.reproject_time = 0.0
-    self.reproject_enqueue_time = 0.0
-    self.reproject_rotation = None
-    self.reproject_rot_file = {}
-    self.reproject_pending = None
-    self.reproject_loader: threading.Thread | None = None
-    self.reproject_rot_mtime = 0.0
-    self.source_cam_wh = (cam_w, cam_h)
-    self.source_frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
-    self._reproject_blob_cache: dict[tuple[str, int], Tensor] = {}
-
-    # The C3X->C4 compatibility stage is intentionally limited to Comma's
-    # upstream-precompiled Chestnut path. VFN's other model formats are compiled
-    # against their own camera geometry and must remain untouched.
-    if reproject_c4 and self.precompiled and self.uses_external_gpu and (cam_w, cam_h) == (1928, 1208):
-      # Keep VFN's current optical model/24 px feather, but let reprojectd own the
-      # per-device narrow<->wide rotation. A persisted direct fit wins; otherwise
-      # start from the same known-good board/reference rotation we already drove.
-      self.reproject_rotation = RC.load_rotation()
-      self.reproject_rot_file = RC.read_rotation_file()
-      self.reproject_calib = RC.calib_from_rotvec(self.reproject_rotation)
-      cache_dir = os.environ.get("XDG_CACHE_HOME", "/data/tgcache")
-      self.reprojector = RC.Reprojector(
-        (cam_w, cam_h),
-        C4_CAM,
-        device="QCOM",
-        cache_dir=cache_dir,
-        calib=self.reproject_calib,
-        feather=RC.FEATHER_PX,
-      )
-      self.reproject_meter = RC.SeamMeter(
-        (cam_w, cam_h),
-        C4_CAM,
-        calib=self.reproject_calib,
-        geometry=self.reprojector.meter_geometry,
-      )
-      if REPROJECT_C4_REFINE == "shadow":
-        # Direct image geometry owns calibration; model residual stays a monitor.
-        self.reproject_refiner = RC.RotationRefiner(self.reproject_rotation)
-      self.reproject_cache_dir = cache_dir
-      RC.save_applied(
-        self.reproject_rotation,
-        bool(self.reproject_rot_file.get("fitted")),
-        stage=True,
-      )
-      self.reproject_active = True
-      cam_w, cam_h = C4_CAM
-      cloudlog.warning(
-        "C3X->C4 QCOM reprojection enabled: rotation=%s deg fitted=%s feather=%s refine=%s",
-        np.degrees(self.reproject_rotation).round(3),
-        bool(self.reproject_rot_file.get("fitted")),
-        RC.FEATHER_PX,
-        REPROJECT_C4_REFINE,
-      )
-    elif reproject_c4 and self.uses_external_gpu and (cam_w, cam_h) == (1928, 1208) and not self.precompiled:
-      cloudlog.warning("C3X->C4 reprojection requested, but selected AMD artifact is not upstream-precompiled; leaving native geometry")
 
     if getattr(self, "precompiled", False):
       self._init_upstream_precompiled(artifact, cam_w, cam_h)
-      if self.reprojector is not None:
-        # _init_upstream_precompiled lays frames out as [road/narrow, wide].
-        # Reprojector.bind expects (wide destination, narrow destination).
-        self.reprojector.bind(self.frames[1], self.frames[0])
-        # Runtime source buffers are still full-resolution C3X VisionIPC frames.
-        self.frame_buf_size = self.source_frame_buf_size
     else:
       self.model_type = artifact["model_type"]
       self.metadata = artifact["metadata"]
@@ -1018,103 +994,6 @@ class ModelState:
     if name in self.npy:
       self.npy[name][:] = self.numpy_inputs[name]
 
-  def _reproject_src_tensor(self, key: str, buf) -> Tensor:
-    data = buf.data if hasattr(buf, "data") else buf
-    ptr = np.frombuffer(data, dtype=np.uint8).ctypes.data
-    cache_key = (key, ptr)
-    if cache_key not in self._reproject_blob_cache:
-      self._reproject_blob_cache[cache_key] = Tensor.from_blob(
-        ptr,
-        (self.source_frame_buf_size,),
-        dtype="uint8",
-        device="QCOM",
-      )
-    return self._reproject_blob_cache[cache_key]
-
-  def poll_reproject_fit(self) -> None:
-    """Load a newly completed direct fit without doing numpy geometry work in modeld.
-
-    reprojectd has already built the table + SeamMeter geometry cache. The loader
-    thread explicitly drops inherited SCHED_FIFO before the file read. The final
-    table upload happens between model runs while calibrationd is still holding.
-    """
-    if self.reprojector is None or self.reproject_rotation is None:
-      return
-
-    if self.reproject_pending is not None:
-      tables, calib, meter, rot = self.reproject_pending
-      self.reproject_pending = None
-      self.reproject_loader = None
-      t0 = time.perf_counter()
-      self.reprojector.reload(tables)
-      self.reproject_calib = calib
-      self.reproject_meter = meter
-      self.reproject_rotation = rot
-      self.reproject_rot_file = RC.read_rotation_file()
-      if self.reproject_refiner is not None:
-        self.reproject_refiner = RC.RotationRefiner(rot)
-      RC.save_applied(rot, True, stage=True)
-      cloudlog.warning(
-        "C3X->C4 fitted rotation %s deg swapped in (%.0f ms)",
-        np.degrees(rot).round(3),
-        (time.perf_counter() - t0) * 1000.0,
-      )
-      return
-
-    if self.reproject_loader is not None:
-      return
-
-    try:
-      mtime = os.stat(RC.ROTATION_FILE).st_mtime
-    except OSError:
-      return
-    if mtime == self.reproject_rot_mtime:
-      return
-
-    self.reproject_rot_mtime = mtime
-    d = RC.read_rotation_file()
-    if not d.get("fitted") or np.allclose(d["rotvec"], self.reproject_rotation, atol=1e-6):
-      return
-
-    calib = RC.calib_from_rotvec(d["rotvec"])
-    if not os.path.exists(RC.table_path(
-      self.source_cam_wh,
-      C4_CAM,
-      self.reproject_cache_dir,
-      calib,
-      RC.FEATHER_PX,
-    )):
-      cloudlog.warning("C3X->C4 fitted rotation published before its table cache exists")
-      self.reproject_rot_mtime = 0.0
-      return
-
-    def load():
-      # Python threads inherit modeld's scheduler; never let a 19 MB table read
-      # execute as SCHED_FIFO 54.
-      os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
-      tables = RC.load_tables(
-        self.source_cam_wh,
-        C4_CAM,
-        self.reproject_cache_dir,
-        calib,
-        RC.FEATHER_PX,
-      )
-      meter = RC.SeamMeter(
-        self.source_cam_wh,
-        C4_CAM,
-        calib=calib,
-        geometry=tables.get("meter"),
-      )
-      self.reproject_pending = (
-        tables,
-        calib,
-        meter,
-        tuple(float(v) for v in d["rotvec"]),
-      )
-
-    self.reproject_loader = threading.Thread(target=load, daemon=True)
-    self.reproject_loader.start()
-
   def _parse_split_outputs(self, outputs: list[np.ndarray]) -> dict[str, np.ndarray]:
     vision_output, *policy_outputs = outputs
     parsed = self.parser.parse_vision_outputs(
@@ -1144,7 +1023,6 @@ class ModelState:
       self.prev_desire.fill(0)
       self.prev_blinker_on = False
       self._blob_cache.clear()
-      self._reproject_blob_cache.clear()
       self.last_warp_output = None
       return
 
@@ -1210,19 +1088,8 @@ class ModelState:
     if shared_warp is not None:
       raise RuntimeError("Comma precompiled artifacts cannot share a StarPilot warp graph")
 
-    if self.reprojector is not None:
-      t0 = time.perf_counter()
-      self.reprojector(
-        self._reproject_src_tensor(self.wide_key, bufs[self.wide_key]),
-        self._reproject_src_tensor(self.road_key, bufs[self.road_key]),
-        **inputs.get("reproj_match", {}),
-      )
-      self.reproject_enqueue_time = time.perf_counter() - t0
-      Device["QCOM"].synchronize()
-      self.reproject_time = time.perf_counter() - t0
-    else:
-      for i, key in enumerate(self.vision_input_names):
-        np.copyto(self.frames[i], np.frombuffer(bufs[key].data, dtype=np.uint8, count=self.frame_copy_size))
+    for i, key in enumerate(self.vision_input_names):
+      np.copyto(self.frames[i], np.frombuffer(bufs[key].data, dtype=np.uint8, count=self.frame_copy_size))
 
     for i, key in enumerate(self.vision_input_names):
       self.npy["tfm"][i] = transforms[key]
@@ -1414,7 +1281,7 @@ def _load_model_state(cam_w: int, cam_h: int, selected_model: str, external_gpu_
 
 
 def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str, model_version: str = "",
-                             CP=None, demo: bool = False, reproject_c4: bool = False) -> ModelState | None:
+                             CP=None, demo: bool = False) -> ModelState | None:
   """Load and warm the USB-GPU model without running another tinygrad model concurrently."""
   candidate = None
   try:
@@ -1429,7 +1296,6 @@ def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str, model_
       model_id_override=selected_model,
       write_model_version=False,
       model_version_override=model_version,
-      reproject_c4=reproject_c4,
     )
     if not candidate.uses_external_gpu:
       raise RuntimeError("external GPU model resolved to the builtin model")
@@ -1634,9 +1500,16 @@ def main(demo=False):
     error=model_lab_error or "",
   )
 
+  # Resolve the session camera path once. Every model state (big, small
+  # fallback, or Model Laboratory) is then loaded against this same concrete
+  # frame size; its artifact must contain that resolution's warp ABI. A
+  # transient Chestnut disconnect cannot change the server underneath clients.
+  reproject_session = select_reproject_session(params, chestnut_ready=usbgpu_present_now)
+  camera_server = "reproject" if reproject_session else "camerad"
+
   # visionipc clients
   while True:
-    available_streams = VisionIpcClient.available_streams("camerad", block=False)
+    available_streams = VisionIpcClient.available_streams(camera_server, block=False)
     if available_streams:
       use_extra_client = VisionStreamType.VISION_STREAM_WIDE_ROAD in available_streams and VisionStreamType.VISION_STREAM_ROAD in available_streams
       main_wide_camera = VisionStreamType.VISION_STREAM_ROAD not in available_streams
@@ -1644,8 +1517,8 @@ def main(demo=False):
     time.sleep(.1)
 
   vipc_client_main_stream = VisionStreamType.VISION_STREAM_WIDE_ROAD if main_wide_camera else VisionStreamType.VISION_STREAM_ROAD
-  vipc_client_main = VisionIpcClient("camerad", vipc_client_main_stream, True)
-  vipc_client_extra = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_WIDE_ROAD, False)
+  vipc_client_main = VisionIpcClient(camera_server, vipc_client_main_stream, True)
+  vipc_client_extra = VisionIpcClient(camera_server, VisionStreamType.VISION_STREAM_WIDE_ROAD, False)
   cloudlog.warning(f"vision stream set up, main_wide_camera: {main_wide_camera}, use_extra_client: {use_extra_client}")
 
   while not vipc_client_main.connect(False):
@@ -1657,12 +1530,13 @@ def main(demo=False):
   if use_extra_client:
     cloudlog.warning(f"connected extra cam with buffer size: {vipc_client_extra.buffer_len} ({vipc_client_extra.width} x {vipc_client_extra.height})")
 
-  reproject_c4_requested = bool(
-    REPROJECT_C4
-    and use_extra_client
-    and not main_wide_camera
-    and (vipc_client_main.width, vipc_client_main.height) == (1928, 1208)
-  )
+  camera_path = CameraPath(camera_server, (vipc_client_main.width, vipc_client_main.height))
+  if use_extra_client and (vipc_client_extra.width, vipc_client_extra.height) != camera_path.resolution:
+    raise RuntimeError(
+      f"Main and wide camera streams disagree: {camera_path.resolution} vs "
+      f"{(vipc_client_extra.width, vipc_client_extra.height)}"
+    )
+
 
   start_time = time.monotonic()
   cloudlog.warning("loading model")
@@ -1672,10 +1546,6 @@ def main(demo=False):
   model_lab_longitudinal = None
   model_lab_active = False
   model_lab_timings: list[float] = []
-  reprojection_exec_times: list[float] = []
-  reprojection_stage_times: list[float] = []
-  reprojection_enqueue_times: list[float] = []
-  reprojection_meter_times: list[float] = []
   CP = None
   if model_lab_ready:
     if demo:
@@ -1691,6 +1561,7 @@ def main(demo=False):
       small_model_version,
       False,
     )
+    camera_path.validate_model(small_model)
     versions = _model_versions()
     lateral_id = model_lab_config["lateralModel"]
     longitudinal_id = model_lab_config["longitudinalModel"]
@@ -1706,6 +1577,8 @@ def main(demo=False):
     )
     if pair is not None:
       model, model_lab_longitudinal = pair
+      for runner in pair:
+        camera_path.validate_model(runner)
       model_lab_active = True
       params.put("ModelVersion", model.policy_generation)
       params.put("DrivingModelVersion", model.policy_generation)
@@ -1729,7 +1602,6 @@ def main(demo=False):
       selected_model_version,
       CP,
       demo,
-      reproject_c4_requested,
     )
 
     small_model = _load_model_state(
@@ -1742,6 +1614,7 @@ def main(demo=False):
       False,
     )
     model = big_model if big_model is not None else small_model
+    camera_path.validate_model(model)
     if big_model is not None:
       params.put("ModelVersion", model.policy_generation)
       params.put("DrivingModelVersion", model.policy_generation)
@@ -1759,11 +1632,6 @@ def main(demo=False):
     set_runtime_model_params(params, model.model_id, model.policy_generation)
 
   external_gpu_active = model_lab_active or model.uses_external_gpu
-  # Clear any persisted stage handshake when this runtime did not end up on the
-  # upstream-precompiled C3X->C4 path. Otherwise a previous drive's applied.json
-  # could make calibrationd wait forever after fallback to a small/model-lab path.
-  if not getattr(model, "reproject_active", False):
-    RC.save_applied((0.0, 0.0, 0.0), False, stage=False)
   params.put_bool("UsbGpuCompiled", external_artifact_ready or model_lab_ready)
   params.put_bool("UsbGpuActive", external_gpu_active)
   params.put_bool("UsbGpuLoading", False)
@@ -1868,8 +1736,9 @@ def main(demo=False):
 
     if sm.updated["liveCalibration"] and sm.seen['roadCameraState'] and sm.seen['deviceState']:
       device_from_calib_euler = np.array(sm["liveCalibration"].rpyCalib, dtype=np.float32)
-      warp_device_type = "mici" if getattr(model, "reproject_active", False) else str(sm['deviceState'].deviceType)
-      warp_sensor = "os04c10" if getattr(model, "reproject_active", False) else str(sm['roadCameraState'].sensor)
+      warp_device_type, warp_sensor = camera_path.warp_geometry(
+        str(sm['deviceState'].deviceType), str(sm['roadCameraState'].sensor)
+      )
       dc = DEVICE_CAMERAS[(warp_device_type, warp_sensor)]
       model_transform_main = get_warp_matrix(device_from_calib_euler, dc.ecam.intrinsics if main_wide_camera else dc.fcam.intrinsics, False).astype(np.float32)
       model_transform_extra = get_warp_matrix(device_from_calib_euler, dc.ecam.intrinsics, True).astype(np.float32)
@@ -1899,29 +1768,33 @@ def main(demo=False):
       frames_dropped = 0.
     run_count = run_count + 1
 
-    if model_lab_active and run_count % ModelConstants.MODEL_FREQ == 0 and not usbgpu_present():
+    if external_gpu_active and run_count % ModelConstants.MODEL_FREQ == 0 and not usbgpu_present():
+      if small_model is None:
+        raise RuntimeError("External-GPU model has no active small fallback model")
+      model = small_model
+      camera_path.validate_model(model)
+      was_model_lab_active = model_lab_active
       model_lab_active = False
       model_lab_longitudinal = None
-      if small_model is None:
-        raise RuntimeError("Model Laboratory has no active small fallback model")
-      model = small_model
       external_gpu_active = False
-      model_lab_error = "Chestnut disconnected; using the active small model"
+      big_model = None
+      model_lab_error = "Chestnut disconnected; using the active small model" if was_model_lab_active else model_lab_error
       params.put_bool("UsbGpuPresent", False)
       params.put_bool("UsbGpuActive", False)
       params.put("ModelVersion", model.policy_generation)
       params.put("DrivingModelVersion", model.policy_generation)
       set_runtime_model_params(params, model.model_id, model.policy_generation)
-      _set_model_lab_runtime(
-        params,
-        requested=model_lab_requested,
-        active=False,
-        config=model_lab_config,
-        error=model_lab_error,
-      )
+      if was_model_lab_active:
+        _set_model_lab_runtime(
+          params,
+          requested=model_lab_requested,
+          active=False,
+          config=model_lab_config,
+          error=model_lab_error,
+        )
       if chestnut_state is not None:
         chestnut_state.big = False
-      cloudlog.error(f"Model Laboratory stopped: {model_lab_error}")
+      cloudlog.error("External-GPU model stopped after Chestnut disconnect; using the active small model")
 
     frame_drop_ratio = frames_dropped / (1 + frames_dropped)
     dropped_frame = vipc_dropped_frames > 0
@@ -1994,21 +1867,6 @@ def main(demo=False):
           vec_desire, traffic_convention, lat_action_t, long_action_t,
           prev_action, v_ego, lateral_control_params,
         )
-        if getattr(model, "reprojector", None) is not None:
-          ncs = sm["roadCameraState"]
-          wcs = sm["wideRoadCameraState"]
-          gain = RC.exposure_gain(
-            ncs.gain * ncs.integLines,
-            wcs.gain * wcs.integLines,
-          ) if sm.seen["wideRoadCameraState"] else 1.0
-          # Measure the source C3X buffers directly. This creates no full-frame
-          # copy, resize, or RGB conversion.
-          meter_t0 = time.perf_counter()
-          wide_np = np.frombuffer(buf_extra.data, dtype=np.uint8)
-          narrow_np = np.frombuffer(buf_main.data, dtype=np.uint8)
-          model.reproject_match = model.reproject_meter.update(wide_np, narrow_np, gain)
-          model.reproject_meter_time = time.perf_counter() - meter_t0
-          inputs["reproj_match"] = model.reproject_match
         model_output = model.run(
           bufs,
           transforms,
@@ -2018,40 +1876,14 @@ def main(demo=False):
           after_output_sync=chestnut_state.send if send_chestnut else None,
         )
 
-        # SHADOW ONLY. Never train geometry from an output VFN itself refuses
-        # to publish after a VisionIPC drop. The proposal is logged; it does
-        # not modify calibration, rebuild tables, write disk state, or swap
-        # anything into the running model.
-        if (
-          getattr(model, "reproject_refiner", None) is not None
-          and model_output is not None
-          and vipc_dropped_frames == 0
-          and "wide_from_device_euler" in model_output
-          and "wide_from_device_euler_stds" in model_output
-        ):
-          proposal = model.reproject_refiner.push_shadow(
-            model_output["wide_from_device_euler"][0],
-            model_output["wide_from_device_euler_stds"][0],
-            v_ego,
-          )
-          if proposal is not None:
-            cloudlog.warning(
-              "C3X->C4 SHADOW rotation window %d: residual deg=%s step deg=%s candidate deg=%s converged=%s",
-              model.reproject_refiner.windows,
-              np.degrees(proposal["residual"]).round(3),
-              np.degrees(proposal["step"]).round(3),
-              np.degrees(proposal["candidate"]).round(3),
-              proposal["converged"],
-            )
         lateral_model_output = model_output
-        if getattr(model, "reprojector", None) is not None and run_count % 20 == 0:
-          model.poll_reproject_fit()
     except Exception:
       if model_lab_active:
         cloudlog.exception("Model Laboratory inference failed, falling back to the active small model")
         if small_model is None:
           raise RuntimeError("Model Laboratory has no active small fallback model") from None
         model = small_model
+        camera_path.validate_model(model)
         model_lab_longitudinal = None
         model_lab_active = False
         model_lab_error = "Model Laboratory inference failed; using the active small model"
@@ -2067,10 +1899,10 @@ def main(demo=False):
           raise
         cloudlog.exception("external GPU model failed, falling back to active small model")
         model = small_model
+        camera_path.validate_model(model)
         big_model = None
       params.put_bool("UsbGpuActive", False)
       external_gpu_active = False
-      RC.save_applied((0.0, 0.0, 0.0), False, stage=False)
       params.put("ModelVersion", model.policy_generation)
       params.put("DrivingModelVersion", model.policy_generation)
       set_runtime_model_params(params, model.model_id, model.policy_generation)
@@ -2082,30 +1914,6 @@ def main(demo=False):
 
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
-    if getattr(model, "reprojector", None) is not None:
-      reprojection_exec_times.append(model_execution_time * 1000.0)
-      reprojection_stage_times.append(model.reproject_time * 1000.0)
-      reprojection_enqueue_times.append(model.reproject_enqueue_time * 1000.0)
-      reprojection_meter_times.append(model.reproject_meter_time * 1000.0)
-      if len(reprojection_exec_times) % 200 == 0:
-        recent_exec = reprojection_exec_times[-200:]
-        recent_stage = reprojection_stage_times[-200:]
-        recent_enqueue = reprojection_enqueue_times[-200:]
-        recent_meter = reprojection_meter_times[-200:]
-        match = model.reproject_match or {}
-        cloudlog.warning(
-          "C3X->C4 timing: model p50/p95 %.2f/%.2f ms; reprojection p50/p95 %.2f/%.2f ms "
-          "(enqueue %.2f/%.2f); seam meter p50/p95 %.2f/%.2f ms; "
-          "gain %.3f U %+.1f V %+.1f grad %+.3f/%+.3f; drops %.1f%%",
-          np.percentile(recent_exec, 50), np.percentile(recent_exec, 95),
-          np.percentile(recent_stage, 50), np.percentile(recent_stage, 95),
-          np.percentile(recent_enqueue, 50), np.percentile(recent_enqueue, 95),
-          np.percentile(recent_meter, 50), np.percentile(recent_meter, 95),
-          float(match.get("gain_y", 1.0)),
-          float(match.get("u_off", 0.0)), float(match.get("v_off", 0.0)),
-          float(match.get("gx", 0.0)), float(match.get("gy", 0.0)),
-          frame_drop_ratio * 100.0,
-        )
     if model_lab_active and model_lab_longitudinal is not None:
       model_lab_timings.append(model_execution_time * 1000)
       if run_count % (ModelConstants.MODEL_FREQ * 10) == 0:

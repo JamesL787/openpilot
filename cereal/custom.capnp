@@ -311,10 +311,35 @@ struct StarPilotLateralState @0xc2243c65e0340384 {
   unwindDetected @7 :Bool;
 }
 
-struct CustomReserved12 @0x9ccdc8676701b412 {
+struct ReprojectState @0x9ccdc8676701b412 {
+  frameId @0 :UInt32;
+  stageMs @1 :Float32;
+  rotation @2 :List(Float32);
+  fitted @3 :Bool;
 }
 
-struct CustomReserved13 @0xcd96dafb67a082d0 {
+struct ReprojectFit @0xcd96dafb67a082d0 {
+  enum Status {
+    waiting @0;
+    fitting @1;
+    building @2;
+    fitted @3;
+  }
+  enum Why {
+    none @0;
+    cameras @1;
+    model @2;
+    speed @3;
+    straight @4;
+    pair @5;
+    features @6;
+  }
+  status @0 :Status;
+  why @1 :Why;
+  pct @2 :UInt8;
+  mean @3 :List(Float32);
+  lastFrameId @4 :UInt32;
+  lastAccepted @5 :Bool;
 }
 
 struct CustomReserved14 @0xb057204d7deadf3f {

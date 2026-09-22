@@ -77,7 +77,7 @@ def test_model_lab_moves_driver_monitoring_off_external_gpu_runner_core():
   assert dmonitoringmodeld.dmonitoring_cpu_cores(disabled, chestnut_ready=True) == 7
 
 
-def test_model_lab_loader_uses_installed_artifact_and_manifest_version(monkeypatch):
+def test_model_lab_loader_uses_native_c3x_resolution_and_manifest_version(monkeypatch):
   calls = []
 
   def fake_model_state(cam_w, cam_h, external_gpu_active, **kwargs):

@@ -1,10 +1,12 @@
 import random
+from types import SimpleNamespace
 
 import numpy as np
 
 import cereal.messaging as messaging
 from cereal import log
 from openpilot.common.params import Params
+from openpilot.selfdrive.locationd import calibrationd
 from openpilot.selfdrive.locationd.calibrationd import Calibrator, INPUTS_NEEDED, INPUTS_WANTED, BLOCK_SIZE, MIN_SPEED_FILTER, \
                                                          MAX_YAW_RATE_FILTER, SMOOTH_CYCLES, HEIGHT_INIT, MAX_ALLOWED_PITCH_SPREAD, MAX_ALLOWED_YAW_SPREAD
 
@@ -30,6 +32,50 @@ def process_messages(c, cam_odo_calib, cycles,
                         [cam_odo_height_std, cam_odo_height_std, cam_odo_height_std])
 
 class TestCalibrationd:
+
+  def test_late_reproject_session_discards_native_camera_samples_until_fit(self, monkeypatch):
+    class MemoryParams:
+      def __init__(self):
+        self.values = {"ReprojectSessionActive": False}
+
+      def get_bool(self, key):
+        return bool(self.values.get(key, False))
+
+      def get(self, _key):
+        return None
+
+    class FakeSubMaster:
+      def __init__(self):
+        self.seen = {"reprojectState": False}
+        self.state = SimpleNamespace(fitted=False)
+
+      def __getitem__(self, key):
+        assert key == "reprojectState"
+        return self.state
+
+    params = MemoryParams()
+    monkeypatch.setattr(calibrationd, "Params", lambda: params)
+    monkeypatch.setattr(calibrationd, "reproject_expected", lambda p: p.get_bool("ReprojectSessionActive"))
+    monkeypatch.setattr("openpilot.selfdrive.modeld.reproject_c4.rotation.read_rotation", lambda: {})
+
+    calibrator = Calibrator(param_put=False)
+    sm = FakeSubMaster()
+    assert calibrator.reproject_ready(sm)
+
+    process_messages(calibrator, [0.0, 0.0, 0.0], BLOCK_SIZE + 1)
+    assert calibrator.block_idx > 0 or calibrator.idx > 0
+
+    params.values["ReprojectSessionActive"] = True
+    assert not calibrator.reproject_ready(sm)
+    assert calibrator.valid_blocks == 0
+    assert calibrator.block_idx == 0
+    assert calibrator.idx == 0
+    assert calibrator.cal_status == log.LiveCalibrationData.Status.uncalibrated
+
+    sm.seen["reprojectState"] = True
+    assert not calibrator.reproject_ready(sm)
+    sm.state.fitted = True
+    assert calibrator.reproject_ready(sm)
 
   def test_read_saved_params(self):
     msg = messaging.new_message('liveCalibration')
