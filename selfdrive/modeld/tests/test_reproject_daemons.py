@@ -48,6 +48,13 @@ def test_recv_pair_logs_large_sof_delta_but_returns_pair(monkeypatch):
   assert len(logged) == 1
 
 
+def test_table_cache_dir_imports_the_platform_hardware_module(monkeypatch):
+  from openpilot.selfdrive.modeld.reproject_c4 import tables
+
+  monkeypatch.setenv("XDG_CACHE_HOME", "/tmp/reproject-cache")
+  assert tables.table_cache_dir() == "/tmp/reproject-cache"
+
+
 def test_startup_rotation_requires_completed_fit(monkeypatch):
   class FakeParams:
     value = {"rotvec": [0.1, 0.2, 0.3]}

@@ -95,5 +95,5 @@ def load_tables(src_wh, dst_wh, cache_dir, calib):
 
 
 def table_cache_dir() -> str:
-  from openpilot.common.hardware import PC
+  from openpilot.system.hardware import PC
   return os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache/openpilot") if PC else "/data/tgcache")
