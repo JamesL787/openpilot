@@ -259,6 +259,26 @@ def test_upstream_precompiled_warp_requires_c4_frame_body_and_transform_abi():
     modeld._require_precompiled_warp_abi(specs, 1344, 760)
 
 
+def test_virtual_c4_buffers_keep_venus_padding_outside_image_body():
+  from openpilot.selfdrive.modeld.reproject_c4.vision import allocate_virtual_camera_frames
+
+  frames, body_size, stride, uv_offset = allocate_virtual_camera_frames((1344, 760))
+
+  assert (body_size, stride, uv_offset) == (1_622_016, 1_408, 1_081_344)
+  assert frames.shape == (2, 2_428_928)
+  assert frames.dtype == np.uint8
+  assert np.all(frames[:, body_size:] == 0)
+
+  # Simulate the reprojection kernel writing the active NV12 body. Its bytes
+  # and plane layout are preserved while Venus-only tail padding stays zero.
+  body = frames[0, :body_size]
+  body[:4] = [1, 2, 3, 4]
+  body[uv_offset:uv_offset + 4] = [5, 6, 7, 8]
+  np.testing.assert_array_equal(frames[0, :4], [1, 2, 3, 4])
+  np.testing.assert_array_equal(frames[0, uv_offset:uv_offset + 4], [5, 6, 7, 8])
+  assert np.all(frames[:, body_size:] == 0)
+
+
 def test_dark_seam_fallback_holds_per_unit_terms():
   meter = SeamMeter.__new__(SeamMeter)
   meter.state = np.array([1.0, 3.0, -4.0, 0.1, -0.2, 0.9, 1.0, 1.1, 1.2], dtype=np.float32)
