@@ -433,11 +433,31 @@ def test_upstream_precompiled_warps_build_the_tizi_pair(tmp_path, monkeypatch):
     "big_driving_warp_1928x1208_tinygrad.pkl",
     "big_driving_warp_1344x760_tinygrad.pkl",
   ]
-  assert all("compile_warp.py" in invocation[0][1] for invocation in invocations)
+  assert all(invocation[0][1].endswith("selfdrive/modeld/compile_upstream_warp.py") for invocation in invocations)
   assert all("--layout" in invocation[0] and "yuv420" in invocation[0] for invocation in invocations)
   assert all("--frames" in invocation[0] and "2" in invocation[0] for invocation in invocations)
   assert all(invocation[1]["env"]["DEV"] == "USB+AMD:LLVM" for invocation in invocations)
   assert all("WARP_DEV" not in invocation[1]["env"] for invocation in invocations)
+
+
+def test_upstream_precompiled_warps_use_yuv_body_not_venus_allocation(tmp_path, monkeypatch):
+  invocations = []
+  monkeypatch.setattr(model_compiler, "UPSTREAM_WARP_MODELS_DIR", tmp_path)
+  monkeypatch.setattr(model_compiler, "wait_for_external_gpu", lambda: None)
+  monkeypatch.setattr(model_compiler, "external_gpu_compile_command", lambda command: command)
+  monkeypatch.setattr(model_compiler.subprocess, "run", lambda command, **kwargs: invocations.append(command))
+
+  model_compiler.compile_upstream_precompiled_warps()
+
+  expected = []
+  expected_body_sizes = {(1928, 1208): 3_735_552, (1344, 760): 1_622_016}
+  for width, height in model_compiler.DEFAULT_CAMERA_RESOLUTIONS:
+    stride, y_height, uv_height, full_size = model_compiler.get_nv12_info(width, height)
+    body_size = stride * (y_height + uv_height)
+    assert body_size < full_size
+    assert body_size == expected_body_sizes[(width, height)]
+    expected.append(f"{width},{height},{stride},{y_height},{uv_height},{body_size}")
+  assert [command[command.index("--frame") + 1] for command in invocations] == expected
 
 
 def test_compile_clears_only_selected_model_outputs(tmp_path, monkeypatch):

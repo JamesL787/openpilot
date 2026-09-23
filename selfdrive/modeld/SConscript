@@ -73,7 +73,7 @@ if usbgpu_present():
   from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 
   camera_configs = [(camera.width, camera.height) for camera in (_ar_ox_fisheye, _os_fisheye)]
-  compiler = Dir('#tinygrad_repo/examples/openpilot').abspath
+  warp_compiler = File('#selfdrive/modeld/compile_upstream_warp.py').abspath
   taskset = 'taskset -c 7 ' if arch == 'larch64' else ''
   chestnut_flags = 'DEBUG=1 DEV=USB+AMD:LLVM FRAME_DEV=CPU FLOAT16=1 JIT_BATCH_SIZE=0 GMMU=0 TC_OPT=2 TC_MIN_GLOBALS=32'
   chestnut_lock = File('models/.chestnut.lock').abspath
@@ -98,9 +98,12 @@ if usbgpu_present():
     stride, y_height, uv_height, _ = get_nv12_info(cam_w, cam_h)
     frame_copy_size = stride * (y_height + uv_height)
     command = (
-      f'{chestnut_flags} {taskset}python3 "{compiler}/compile_warp.py" '
+      f'{chestnut_flags} {taskset}python3 "{warp_compiler}" '
       f'--frame {cam_w},{cam_h},{stride},{y_height},{uv_height},{frame_copy_size} '
       f'--warp-to {model_w}x{model_h} --layout yuv420 --frames 2 --output {target}'
     )
-    node = lenv.Command(target, tinygrad_files + warp_deps + [Value(command)], chestnut_action(command))
+    node = lenv.Command(
+      target, tinygrad_files + warp_deps + [File('#selfdrive/modeld/compile_upstream_warp.py'), Value(command)],
+      chestnut_action(command),
+    )
     lenv.SideEffect(chestnut_lock, node)

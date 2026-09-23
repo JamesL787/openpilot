@@ -24,7 +24,7 @@ DEFAULT_OUTPUT_ROOT = Path("/data/openpilot/compiledmodels")
 COMPILE_SCRIPT = REPO_ROOT / "tinygrad_repo/examples/openpilot/compile3.py"
 DRIVING_COMPILE_SCRIPT = REPO_ROOT / "selfdrive/modeld/compile_modeld.py"
 DM_WARP_COMPILE_SCRIPT = REPO_ROOT / "selfdrive/modeld/compile_dm_warp.py"
-UPSTREAM_WARP_COMPILE_SCRIPT = REPO_ROOT / "tinygrad_repo/examples/openpilot/compile_warp.py"
+UPSTREAM_WARP_COMPILE_SCRIPT = REPO_ROOT / "selfdrive/modeld/compile_upstream_warp.py"
 UPSTREAM_WARP_MODELS_DIR = REPO_ROOT / "selfdrive/modeld/models"
 MODEL_VERSIONS_CACHE = Path("/data/models/.model_versions.json")
 MODELS_PATH = MODEL_VERSIONS_CACHE.parent  # runtime dir modeld loads from: /data/models
@@ -675,12 +675,13 @@ def compile_upstream_precompiled_warps() -> list[Path]:
 
   outputs: list[Path] = []
   for cam_w, cam_h in DEFAULT_CAMERA_RESOLUTIONS:
-    stride, y_height, uv_height, frame_size = get_nv12_info(cam_w, cam_h)
+    stride, y_height, uv_height, _ = get_nv12_info(cam_w, cam_h)
+    frame_copy_size = stride * (y_height + uv_height)
     output = UPSTREAM_WARP_MODELS_DIR / f"big_driving_warp_{cam_w}x{cam_h}_tinygrad.pkl"
     command = [
       sys.executable,
       str(UPSTREAM_WARP_COMPILE_SCRIPT),
-      "--frame", f"{cam_w},{cam_h},{stride},{y_height},{uv_height},{frame_size}",
+      "--frame", f"{cam_w},{cam_h},{stride},{y_height},{uv_height},{frame_copy_size}",
       "--warp-to", f"{MEDMODEL_INPUT_SIZE[0]}x{MEDMODEL_INPUT_SIZE[1]}",
       "--layout", "yuv420",
       "--frames", "2",

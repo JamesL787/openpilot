@@ -37,6 +37,9 @@ class Ops(FastEnum):
   # vector creation / item selection
   STACK = auto()
 
+  # RETURNED is a placeholder for a buffer a call writes and returns: it's an input to the call and you AFTER on it
+  RETURNED = auto()
+
   # hcq specific
   GETADDR = auto()
 
@@ -84,7 +87,7 @@ class Ops(FastEnum):
   # ** 6 -- ops that don't exist in programs **
 
   # ops that adjust the behavior of the scheduler
-  CONTIGUOUS_BACKWARD = auto(); DETACH = auto()
+  CONTIGUOUS = auto(); CONTIGUOUS_BACKWARD = auto(); DETACH = auto()
 
   # buffer ops
   STAGE = auto(); COPY = auto(); MSELECT = auto(); MSTACK = auto(); CUSTOM_FUNCTION = auto()
