@@ -23,7 +23,6 @@ from openpilot.common.realtime import config_realtime_process
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.modeld import reproject_c4 as RC
 from openpilot.selfdrive.modeld.reproject_c4.kernel import Reprojector
-from openpilot.selfdrive.modeld.reproject_c4.vision import allocate_virtual_camera_frames
 from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 
 C4_CAM = RC.C4_CAM
@@ -50,13 +49,10 @@ class Stage:
     self.pending = None
     self.loader: threading.Thread | None = None
     self._src_tensors: dict[int, Tensor] = {}
-    # Allocate the full Venus buffer expected by QCOM VisionIPC consumers.
-    # The kernel writes only the active NV12 body; the zeroed tail remains
-    # untouched and is copied with the frame for safe full-allocation mapping.
-    self.out, self.body_size, self.stride, self.uv_offset = allocate_virtual_camera_frames(C4_CAM)
-    if self.body_size != self.rp.body:
-      raise ValueError(f"Virtual camera body mismatch: allocation={self.body_size}, kernel={self.rp.body}")
-    self.rp.bind(self.out[1, :self.body_size], self.out[0, :self.body_size])
+    # [0] composite/narrow, [1] wide. The QCOM kernel writes straight here;
+    # VisionIPC then copies these virtual-camera bodies into its ring.
+    self.out = np.zeros((2, self.rp.body), np.uint8)
+    self.rp.bind(self.out[1], self.out[0])
     self.time = 0.0
 
   def src_tensor(self, buf) -> Tensor:
@@ -137,11 +133,10 @@ def main():
     stage.rp(blank[0], blank[1])
     Device["QCOM"].synchronize()
 
+  stride, y_height, _, _ = get_nv12_info(*C4_CAM)
   server = VisionIpcServer("reproject")
   for stream in (NARROW, WIDE):
-    server.create_buffers_with_sizes(
-      stream, 4, C4_CAM[0], C4_CAM[1], stage.out.shape[1], stage.stride, stage.uv_offset,
-    )
+    server.create_buffers_with_sizes(stream, 4, C4_CAM[0], C4_CAM[1], stage.rp.body, stride, stride * y_height)
   server.start_listener()
   cloudlog.warning("reprojectd: serving after %.1f s", time.monotonic() - t0)
   config_realtime_process(6, 53)

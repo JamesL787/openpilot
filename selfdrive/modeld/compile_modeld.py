@@ -333,85 +333,6 @@ def make_supercombo_input_queues(input_shapes, frame_skip, device):
   return queues, npy
 
 
-def stateful_image_shapes(metadata):
-  """Return the road/wide crop ABI for an ONNX-managed image-history model."""
-  shape = tuple(metadata.get("input_shapes", {}).get("new_img", ()))
-  if len(shape) != 4 or shape[:2] != (2, 6):
-    raise ValueError(f"Unsupported stateful image shape: {shape}")
-  return {"img": (1, *shape[1:]), "big_img": (1, *shape[1:])}
-
-
-def stateful_host_shapes(metadata):
-  state_names = set(metadata.get("state_pairs", {}))
-  return {
-    name: tuple(shape)
-    for name, shape in metadata.get("input_shapes", {}).items()
-    if name != "new_img" and name not in state_names
-  }
-
-
-def make_stateful_input_queues(metadata, device):
-  """Allocate packed host inputs and persistent ONNX state for a stateful model."""
-  input_shapes = metadata.get("input_shapes", {})
-  state_pairs = metadata.get("state_pairs", {})
-  input_dtypes = metadata.get("input_dtypes", {})
-  if not state_pairs:
-    raise ValueError("Stateful supercombo is missing state_pairs")
-
-  image_shapes = stateful_image_shapes(metadata)
-  output_shapes = metadata.get("output_shapes", {})
-  state_specs = {}
-  for name, next_name in state_pairs.items():
-    if name not in input_shapes or name not in input_dtypes or next_name not in output_shapes:
-      raise ValueError(f"Incomplete state metadata for {name} -> {next_name}")
-    shape = tuple(input_shapes[name])
-    if shape != tuple(output_shapes[next_name]):
-      raise ValueError(f"State shape mismatch: {name} -> {next_name}")
-    state_specs[name] = (shape, np.dtype(input_dtypes[name]))
-
-  queues, npy = make_warp_input_queues(image_shapes, 1, device)
-  host_shapes = stateful_host_shapes(metadata)
-  host_sizes = [math.prod(shape) for shape in host_shapes.values()]
-  packed = np.zeros(sum(host_sizes), dtype=np.float32)
-  host_views = np.split(packed, np.cumsum(host_sizes[:-1]))
-  npy.update({
-    name: value.reshape(shape)
-    for (name, shape), value in zip(host_shapes.items(), host_views, strict=True)
-  })
-  queues["packed_npy_inputs"] = Tensor(packed, device="NPY").realize()
-
-  for name, (shape, dtype) in state_specs.items():
-    state = np.zeros(shape, dtype=dtype)
-    queues[name] = Tensor(state, device=device).contiguous().realize()
-  return queues, npy
-
-
-def make_run_stateful_supercombo(model_runner, metadata):
-  """Run a supercombo with ONNX-managed image history and persistent state pairs."""
-  shapes = stateful_host_shapes(metadata)
-  sizes = [math.prod(shape) for shape in shapes.values()]
-
-  def run_policy(warped, packed_npy_inputs, **state):
-    packed = packed_npy_inputs.to(Device.DEFAULT).realize()
-    inputs = {
-      name: value.reshape(shape).cast(model_runner.graph_inputs[name].dtype)
-      for (name, shape), value in zip(shapes.items(), packed.split(sizes), strict=True)
-    }
-    inputs["new_img"] = warped.to(Device.DEFAULT).cast(model_runner.graph_inputs["new_img"].dtype)
-    outputs = {name: value.contiguous() for name, value in model_runner(inputs | state).items()}
-    for name, next_name in metadata["state_pairs"].items():
-      if outputs[next_name].dtype != state[name].dtype:
-        raise ValueError(f"State dtype mismatch: {name} -> {next_name}")
-    Tensor.realize(*outputs.values())
-    Tensor.realize(*(
-      state[name].assign(outputs[next_name])
-      for name, next_name in metadata["state_pairs"].items()
-    ))
-    return outputs["outputs"].cast("float32"),
-
-  return run_policy
-
-
 def make_fused_supercombo_input_queues(input_shapes, frame_skip, device, frame_copy_size=None):
   """Build queues for a fused Chestnut graph.
 
@@ -747,7 +668,7 @@ def compile_fused_jit(jit, make_queues, nv12, benchmark_runs):
       }
     else:
       input_queues, npy = queue_result
-      frames = make_random_frames(("frame", "big_frame"), nv12.size, device=WARP_DEV)
+      frames = make_random_images(("frame", "big_frame"), nv12.size, device=WARP_DEV)
     rng = np.random.default_rng(current_seed)
 
     for index in range(run_count):
@@ -916,37 +837,13 @@ def main():
     output["metadata"]["model"] = make_metadata_dict(model_path)
     validate_metadata(output["metadata"]["model"])
     policy_shapes = output["metadata"]["model"]["input_shapes"]
-    if "new_img" in policy_shapes:
-      if args.image_history_pipeline != IMAGE_HISTORY_IN_POLICY:
-        parser.error("ONNX-managed history requires --image-history-pipeline policy")
-      model_metadata = output["metadata"]["model"]
-      model_metadata["state_pairs"] = {
-        name: f"next_{name}"
-        for name in policy_shapes
-        if f"next_{name}" in model_metadata["output_shapes"]
-      }
-      if not model_metadata["state_pairs"]:
-        raise ValueError("Stateful supercombo is missing next-state outputs")
-      model_metadata["input_dtypes"] = {
-        name: np.dtype(spec.dtype.fmt).name
-        for name, spec in model_runner.graph_inputs.items()
-      }
-      for name, next_name in model_metadata["state_pairs"].items():
-        if policy_shapes[name] != model_metadata["output_shapes"][next_name]:
-          raise ValueError(f"State shape mismatch: {name} -> {next_name}")
-      frame_skip = 1
-      make_policy_queues = partial(make_stateful_input_queues, model_metadata)
-      run_policy = make_run_stateful_supercombo(model_runner, model_metadata)
-      image_shapes = stateful_image_shapes(model_metadata)
-      policy_input_keys = ("packed_npy_inputs", *model_metadata["state_pairs"])
-    else:
-      frame_skip = args.frame_skip or derive_frame_skip(policy_shapes)
-      make_policy_queues = partial(make_supercombo_input_queues, policy_shapes, frame_skip)
-      run_policy = make_run_supercombo(
-        model_runner, output["metadata"], frame_skip, args.image_history_pipeline,
-      )
-      image_shapes = policy_shapes
-      policy_input_keys = FAST_POLICY_INPUTS if args.image_history_pipeline == IMAGE_HISTORY_IN_POLICY else SUPERCOMBO_POLICY_INPUTS
+    frame_skip = args.frame_skip or derive_frame_skip(policy_shapes)
+    make_policy_queues = partial(make_supercombo_input_queues, policy_shapes, frame_skip)
+    run_policy = make_run_supercombo(
+      model_runner, output["metadata"], frame_skip, args.image_history_pipeline,
+    )
+    image_shapes = policy_shapes
+    policy_input_keys = FAST_POLICY_INPUTS if args.image_history_pipeline == IMAGE_HISTORY_IN_POLICY else SUPERCOMBO_POLICY_INPUTS
   else:
     if not args.vision_onnx:
       parser.error("--vision-onnx is required for split models")

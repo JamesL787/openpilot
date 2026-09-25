@@ -523,8 +523,10 @@ def test_upstream_precompiled_artifact_requires_output_slices():
 
 
 def test_upstream_precompiled_warp_path_is_camera_specific():
-  assert modeld._upstream_precompiled_warp_path(1928, 1208).name == "big_driving_warp_1928x1208_tinygrad.pkl"
-  assert modeld._upstream_precompiled_warp_path(1344, 760).name == "big_driving_warp_1344x760_tinygrad.pkl"
+  assert modeld._upstream_precompiled_warp_path(1928, 1208, True).name == "big_driving_warp_1928x1208_tinygrad.pkl"
+  assert modeld._upstream_precompiled_warp_path(1344, 760, True).name == "big_driving_warp_1344x760_tinygrad.pkl"
+  assert modeld._upstream_precompiled_warp_path(1928, 1208, False).name == "small_driving_warp_1928x1208_tinygrad.pkl"
+  assert modeld._upstream_precompiled_warp_path(1344, 760, False).name == "small_driving_warp_1344x760_tinygrad.pkl"
 
 
 def test_upstream_precompiled_runtime_packs_frames_with_warp_inputs(tmp_path, monkeypatch):

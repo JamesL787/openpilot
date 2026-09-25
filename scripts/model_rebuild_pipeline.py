@@ -18,8 +18,9 @@ from model_compiler import REPOSITORY_FILE_LIMIT, split_oversized_artifact
 
 DEFAULT_OPENPILOT = Path.home() / "openpilot"
 DEFAULT_WORKSPACE = Path("/Volumes/T5/StarPilot-Model-Rebuild")
-DEFAULT_SOURCE_MAP = REPO_ROOT / "scripts/model_source_map_v25.json"
-DEFAULT_MANIFEST = DEFAULT_WORKSPACE / "manifests/model_names_v25.json"
+MANIFEST_VERSION = "v26"
+DEFAULT_SOURCE_MAP = REPO_ROOT / f"scripts/model_source_map_{MANIFEST_VERSION}.json"
+DEFAULT_MANIFEST = DEFAULT_WORKSPACE / f"manifests/model_names_{MANIFEST_VERSION}.json"
 REMOTE = os.environ.get("STAR_PILOT_MODEL_REMOTE", "comma@192.168.3.110")
 REMOTE_ROOT = Path("/data/openpilot")
 SSH_OPTIONS = (
@@ -359,8 +360,8 @@ def update_manifest(base_manifest: Path, workspace: Path, source_map: dict) -> d
     model.pop("artifact_sha256", None)
     model.pop("artifact_urls", None)
     model.pop("artifact_chunk_count", None)
+    model.pop("artifact_url", None)
     if not artifact.is_file():
-      model.pop("artifact_url", None)
       continue
     chunks = sorted((workspace / "ready-for-resources").glob(f"{artifact.name}.chunk[0-9][0-9]of[0-9][0-9]"))
     model.update({
@@ -377,7 +378,7 @@ def update_manifest(base_manifest: Path, workspace: Path, source_map: dict) -> d
         "chunks": [path.name for path in chunks],
       })
   output = {"models": models}
-  output_path = workspace / "manifests/model_names_v25.json"
+  output_path = workspace / f"manifests/model_names_{MANIFEST_VERSION}.json"
   output_path.parent.mkdir(parents=True, exist_ok=True)
   output_path.write_text(json.dumps(output, indent=2, ensure_ascii=False) + "\n")
   (workspace / "ready-for-resources" / "artifacts.json").write_text(

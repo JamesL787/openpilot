@@ -13,6 +13,8 @@ import pyray as rl
 from openpilot.common.file_chunker import get_chunk_name, get_manifest_path
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.starpilot.assets.model_manager import (
+  BUILTIN_MODEL_NAME,
+  BUILTIN_MODEL_VERSION,
   CANCEL_DOWNLOAD_PARAM,
   DOWNLOAD_PROGRESS_PARAM,
   MODEL_DOWNLOAD_ALL_PARAM,
@@ -749,13 +751,13 @@ class StarPilotDrivingModelLayout(_SettingsPage):
     default_name = self._params.get_default_value("DrivingModelName")
     if isinstance(default_name, bytes):
       default_name = default_name.decode("utf-8", errors="ignore")
-    return _clean_model_name(default_name or "") or "Regret Driven Framework V4"
+    return _clean_model_name(default_name or "") or BUILTIN_MODEL_NAME
 
   def _default_model_version(self) -> str:
     default_version = self._params.get_default_value("ModelVersion") or self._params.get_default_value("DrivingModelVersion")
     if isinstance(default_version, bytes):
       default_version = default_version.decode("utf-8", errors="ignore")
-    return str(default_version or "").strip() or "v15"
+    return str(default_version or "").strip() or BUILTIN_MODEL_VERSION
 
   def _current_selected_key(self) -> str:
     current_key = self._params.get("Model", encoding="utf-8") or self._params.get("DrivingModel", encoding="utf-8") or ""

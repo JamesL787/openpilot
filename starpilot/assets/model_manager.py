@@ -28,9 +28,11 @@ from openpilot.starpilot.common.starpilot_variables import MODELS_PATH
 from openpilot.common.file_chunker import file_chunked_exists, get_existing_chunks, get_manifest_path
 from openpilot.system.hardware.usb import chestnut_firmware_ready
 
-MANIFEST_CANDIDATES = ("v25",)
+MANIFEST_CANDIDATES = ("v26",)
 MODEL_NAMESPACE_SUFFIX = "3"
 DEFAULT_MODEL_KEY = "rdf43"
+BUILTIN_MODEL_NAME = "Comma small v16"
+BUILTIN_MODEL_VERSION = "v16"
 ACTIVE_BIG_MODEL_PARAM = "ActiveBigModel"
 ACTIVE_BIG_MODEL_NAME_PARAM = "ActiveBigModelName"
 ACTIVE_BIG_MODEL_VERSION_PARAM = "ActiveBigModelVersion"
@@ -52,8 +54,7 @@ MODEL_KEY_CANONICAL_MAP = {
   "napv2": "remove-avgpoolv2",
   "napv3": "remove-avgpoolv3",
   "napv4": "remove-avgpoolv4",
-  # The original bundled RDF key remains valid after the bundled default moves
-  # to the v23 RDF V4 artifact.
+  # Preserve the old RDF key as a stable alias for the bundled small fallback.
   "rdf": DEFAULT_MODEL_KEY,
 }
 LEGACY_DRIVING_PREFIXES = (
@@ -186,8 +187,10 @@ def get_model_profile(params, profile: str) -> tuple[str, str, str]:
   model_name = catalog_name or model_name
   model_version = catalog_version or model_version
   if is_builtin_model_key(model_key):
-    model_name = model_name or "Regret Driven Framework V4"
-    model_version = model_version or "v15"
+    # The stable legacy key now resolves to the bundled Comma v16 artifact.
+    # Ignore stale v15 profile/catalog metadata for this builtin only.
+    model_name = BUILTIN_MODEL_NAME
+    model_version = BUILTIN_MODEL_VERSION
   return model_key, model_name, model_version
 
 
@@ -204,8 +207,13 @@ def set_model_profile(params, profile: str, model_key: str, model_name: str = ""
   catalog_name, catalog_version = _catalog_model_details(params, canonical_key)
   key_param, name_param, version_param = MODEL_PROFILE_PARAMS[profile]
   params.put(key_param, canonical_key)
-  params.put(name_param, model_name or catalog_name or canonical_key)
-  params.put(version_param, model_version or catalog_version or ("v15" if is_builtin_model_key(canonical_key) else ""))
+  if is_builtin_model_key(canonical_key):
+    model_name, model_version = BUILTIN_MODEL_NAME, BUILTIN_MODEL_VERSION
+  else:
+    model_name = model_name or catalog_name or canonical_key
+    model_version = model_version or catalog_version
+  params.put(name_param, model_name)
+  params.put(version_param, model_version)
 
 
 def disable_big_model_profile(params) -> None:
@@ -222,8 +230,8 @@ def set_runtime_model_params(params, model_key: str, model_version: str = "") ->
   model_name = profile_name if profile_key == canonical_key else catalog_name
   resolved_version = model_version or (profile_version if profile_key == canonical_key else catalog_version)
   if is_builtin_model_key(canonical_key):
-    model_name = model_name or "Regret Driven Framework V4"
-    resolved_version = resolved_version or "v15"
+    model_name = BUILTIN_MODEL_NAME
+    resolved_version = BUILTIN_MODEL_VERSION
 
   params.put("Model", canonical_key)
   params.put("DrivingModel", canonical_key)
@@ -364,7 +372,7 @@ class ModelManager:
     selected_model = self._selected_model()
     current_version = self._resolve_mirrored_param("ModelVersion", "DrivingModelVersion")
     if not current_version:
-      current_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or ("v15" if is_builtin_model_key(selected_model) else "v11")
+      current_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or (BUILTIN_MODEL_VERSION if is_builtin_model_key(selected_model) else "v11")
 
     selected_name = self._param_text("DrivingModelName")
     if not selected_name and selected_model in self.available_models:
@@ -606,7 +614,7 @@ class ModelManager:
 
       model_version = version_map.get(model_key) or version_map.get(canonical_key) or ""
       if not model_version and is_builtin_model_key(canonical_key):
-        model_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or "v15"
+        model_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or BUILTIN_MODEL_VERSION
 
       artifact_format = artifact_format_map.get(model_key) or artifact_format_map.get(canonical_key) or ""
       if not self._is_model_downloaded(model_key, artifact_format):
@@ -668,7 +676,7 @@ class ModelManager:
 
     fallback_version = self._resolve_mirrored_param("ModelVersion", "DrivingModelVersion")
     if not fallback_version:
-      fallback_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or ("v15" if is_builtin_model_key(selected) else "v11")
+      fallback_version = self._default_param_text("ModelVersion") or self._default_param_text("DrivingModelVersion") or (BUILTIN_MODEL_VERSION if is_builtin_model_key(selected) else "v11")
     self._set_model_param_keys(selected, name_map.get(selected, ""), fallback_version)
 
   @staticmethod
@@ -893,12 +901,12 @@ class ModelManager:
         default_name = (
           self.available_model_names[default_index]
           if default_index is not None and default_index < len(self.available_model_names)
-          else "Regret Driven Framework V4"
+          else BUILTIN_MODEL_NAME
         )
         default_version = (
           self.model_versions[default_index]
           if default_index is not None and default_index < len(self.model_versions)
-          else "v15"
+          else BUILTIN_MODEL_VERSION
         )
         self._set_model_param_keys(DEFAULT_MODEL_KEY, default_name, default_version)
         self.params_memory.put(DOWNLOAD_PROGRESS_PARAM, "Selected model unavailable; using built-in model.")

@@ -1,4 +1,5 @@
 venv/
+.venv
 .venv/
 .ci_cache
 .env
@@ -66,19 +67,23 @@ cppcheck_report.txt
 comma*.sh
 
 selfdrive/modeld/models/*.pkl
-# driving_tinygrad.pkl is too big for git and ships as .chunkNNofMM parts (which are not
-# *.pkl, so they stay tracked). The assembled file is generated at launch - keep it ignored
-# so a stray `git add -A` on a device cannot stage 126 MB of build output.
+# The bundled Comma-style small policy is stored as repository-safe native chunks;
+# its assembled PKL stays ignored. Camera-specific small warps are separate artifacts.
 !selfdrive/modeld/models/driving_vision_tinygrad.pkl
 !selfdrive/modeld/models/driving_policy_tinygrad.pkl
 !selfdrive/modeld/models/driving_vision_metadata.pkl
 !selfdrive/modeld/models/driving_policy_metadata.pkl
 !selfdrive/modeld/models/dmonitoring_model_tinygrad.pkl
 !selfdrive/modeld/models/dmonitoring_model_metadata.pkl
+!selfdrive/modeld/models/small_driving_warp_*_tinygrad.pkl
 !selfdrive/modeld/models/warp_1928x1208_tinygrad.pkl
 !selfdrive/modeld/models/warp_1344x760_tinygrad.pkl
 !selfdrive/modeld/models/dm_warp_1928x1208_tinygrad.pkl
 !selfdrive/modeld/models/dm_warp_1344x760_tinygrad.pkl
+!selfdrive/modeld/models/big_driving_warp_1928x1208_tinygrad.pkl
+!selfdrive/modeld/models/big_driving_warp_1344x760_tinygrad.pkl
+!selfdrive/modeld/models/small_driving_warp_1928x1208_tinygrad.pkl
+!selfdrive/modeld/models/small_driving_warp_1344x760_tinygrad.pkl
 
 # openpilot log files
 *.bz2

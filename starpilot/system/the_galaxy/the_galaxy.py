@@ -6949,11 +6949,11 @@ def setup(app):
     return canonical_model_key(default_key) or "rdf43"
 
   def _default_model_name():
-    return _param_text(params.get_default_value("DrivingModelName")) or "Regret Driven Framework V4"
+    return _param_text(params.get_default_value("DrivingModelName")) or "Comma small v16"
 
   def _default_model_version():
     default_version = _param_text(params.get_default_value("ModelVersion") or params.get_default_value("DrivingModelVersion"))
-    return default_version or "v15"
+    return default_version or "v16"
 
   def _current_model_key():
     current_model = _param_text(params.get("Model", encoding="utf-8") or params.get("DrivingModel", encoding="utf-8"))

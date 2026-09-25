@@ -59,9 +59,6 @@ from openpilot.selfdrive.modeld.compile_modeld import (
   make_fused_supercombo_input_queues,
   make_split_input_queues,
   make_supercombo_input_queues,
-  make_stateful_input_queues,
-  stateful_host_shapes,
-  stateful_image_shapes,
   nv12_copy_size,
   tinygrad_commit,
 )
@@ -70,6 +67,9 @@ from openpilot.selfdrive.modeld.reproject_config import REPROJECT_CAMERA_SIZE, r
 from openpilot.selfdrive.modeld.usbgpu_link import wait_usbgpu_link
 from openpilot.system.hardware.usb import CHESTNUT_USB_IDS
 from openpilot.starpilot.assets.model_manager import (
+  BUILTIN_MODEL_NAME,
+  BUILTIN_MODEL_VERSION,
+  DEFAULT_MODEL_KEY,
   ModelManager,
   get_model_profile,
   load_model_artifact_metadata,
@@ -98,7 +98,7 @@ from openpilot.starpilot.common.starpilot_variables import (
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 
-BUILTIN_MODEL_KEY = "rdf43"
+BUILTIN_MODEL_KEY = DEFAULT_MODEL_KEY
 BUILTIN_MODEL_ALIASES = {BUILTIN_MODEL_KEY, "rdf"}
 MODEL_ID_ALIASES = {"sc": "sc2"}
 
@@ -134,7 +134,8 @@ EXTERNAL_GPU_POWER_LOG_INTERVAL_SECONDS = 10.0
 LAT_SMOOTH_BP = [2.0, 8.0]
 MAX_ABS_EXTERNAL_MODEL_OUTPUT = 1e6
 UPSTREAM_PRECOMPILED_EXECUTION_MODE = "upstream_precompiled"
-UPSTREAM_PRECOMPILED_WARP_PREFIX = "big_driving_warp_"
+UPSTREAM_PRECOMPILED_BIG_WARP_PREFIX = "big_driving_warp_"
+UPSTREAM_PRECOMPILED_SMALL_WARP_PREFIX = "small_driving_warp_"
 
 
 @dataclass(frozen=True)
@@ -167,8 +168,9 @@ def _input_view(buffer: Buffer, shape: tuple[int, ...], dtype: DType, offset: in
   return Tensor(UOp.from_buffer(view)).reshape(shape)
 
 
-def _upstream_precompiled_warp_path(cam_w: int, cam_h: int) -> Path:
-  return Path(__file__).parent / "models" / f"{UPSTREAM_PRECOMPILED_WARP_PREFIX}{cam_w}x{cam_h}_tinygrad.pkl"
+def _upstream_precompiled_warp_path(cam_w: int, cam_h: int, external_gpu: bool) -> Path:
+  prefix = UPSTREAM_PRECOMPILED_BIG_WARP_PREFIX if external_gpu else UPSTREAM_PRECOMPILED_SMALL_WARP_PREFIX
+  return Path(__file__).parent / "models" / f"{prefix}{cam_w}x{cam_h}_tinygrad.pkl"
 
 
 def _set_hcq_wait_timeout(timeout_ms: int) -> None:
@@ -435,7 +437,7 @@ def _canonical_model_id(model_id: str) -> str:
 def _select_builtin_model(params: Params) -> None:
   params.put("Model", BUILTIN_MODEL_KEY)
   params.put("DrivingModel", BUILTIN_MODEL_KEY)
-  params.put("DrivingModelName", "Regret Driven Framework V4")
+  params.put("DrivingModelName", BUILTIN_MODEL_NAME)
 
 
 def _close_tinygrad_disk_cache_connection() -> None:
@@ -770,7 +772,7 @@ class ModelState:
       state = self.input_queues[name]
       self.model_outputs[next_name] = _input_view(state._buffer(), state.shape, state.dtype, 0)
 
-    warp_path = _upstream_precompiled_warp_path(cam_w, cam_h)
+    warp_path = _upstream_precompiled_warp_path(cam_w, cam_h, self.uses_external_gpu)
     if not warp_path.is_file():
       raise FileNotFoundError(
         f"Missing required precompiled Chestnut warp {warp_path.name}; build it offroad before selecting this model"
@@ -877,10 +879,6 @@ class ModelState:
       self.execution_mode = artifact.get("execution_mode", "split")
       self.fused = self.execution_mode == "fused"
       self.image_history_pipeline = artifact.get("image_history_pipeline", IMAGE_HISTORY_IN_WARP)
-      self.onnx_history = (
-        self.model_type == "supercombo"
-        and bool(self.metadata.get("model", {}).get("state_pairs"))
-      )
       if self.fused:
         self.model_input_keys = tuple(artifact.get("input_keys", FUSED_MODELD_INPUTS))
         self.fused_legacy = self.model_input_keys == FUSED_LEGACY_MODELD_INPUTS
@@ -893,15 +891,7 @@ class ModelState:
         self.warp_enqueue = artifact[(cam_w, cam_h)]
         self.can_prepare_only = self.image_history_pipeline == IMAGE_HISTORY_IN_WARP
 
-      if self.onnx_history:
-        if self.fused or self.image_history_pipeline != IMAGE_HISTORY_IN_POLICY:
-          raise ValueError("ONNX-managed image history requires a non-fused policy-history artifact")
-        model_metadata = self.metadata["model"]
-        input_shapes = stateful_image_shapes(model_metadata)
-        self.output_slices = model_metadata["output_slices"]
-        self.input_queues, self.npy = make_stateful_input_queues(model_metadata, self.QUEUE_DEV)
-        self.policy_input_shapes = stateful_host_shapes(model_metadata)
-      elif self.model_type == "supercombo":
+      if self.model_type == "supercombo":
         input_shapes = self.metadata["model"]["input_shapes"]
         self.output_slices = self.metadata["model"]["output_slices"]
         self.policy_input_shapes = input_shapes
@@ -962,8 +952,8 @@ class ModelState:
         except Exception:
           pass
     if loaded_builtin:
-      model_version = str(artifact.get("behavior_version") or "v15")
-    self.policy_generation = model_version or ("v15" if loaded_builtin else "v8")
+      model_version = str(artifact.get("behavior_version") or BUILTIN_MODEL_VERSION)
+    self.policy_generation = model_version or (BUILTIN_MODEL_VERSION if loaded_builtin else "v8")
     self.is_v9 = self.policy_generation == "v9"
     self.is_v14 = self.policy_generation == "v14"
     self.is_v15 = self.policy_generation == "v15"
@@ -972,6 +962,8 @@ class ModelState:
     if write_model_version:
       params.put("ModelVersion", self.policy_generation)
       params.put("DrivingModelVersion", self.policy_generation)
+      if loaded_builtin:
+        params.put("DrivingModelName", BUILTIN_MODEL_NAME)
 
     if self.prev_desired_curv_key is not None:
       self.full_prev_desired_curv = np.zeros(
@@ -1041,9 +1033,7 @@ class ModelState:
       self.last_warp_output = None
       return
 
-    if getattr(self, "onnx_history", False):
-      self.input_queues, self.npy = make_stateful_input_queues(self.metadata["model"], self.QUEUE_DEV)
-    elif self.model_type == "supercombo":
+    if self.model_type == "supercombo":
       if self.fused:
         if self.fused_legacy:
           self.input_queues, self.npy, self.frame_views = make_fused_supercombo_input_queues(
@@ -1943,7 +1933,7 @@ def main(demo=False):
         model_lab_timings = []
 
     if model_output is not None and vipc_dropped_frames > 0:
-      cloudlog.error(f"suppressing model output after dropping {vipc_dropped_frames} frames")
+      cloudlog.error(f"publishing completed model output after dropping {vipc_dropped_frames} frames; reporting gap in frameDropPerc")
 
     if _should_publish_model_output(model_output, vipc_dropped_frames, external_gpu_active):
       modelv2_send = messaging.new_message('modelV2')
