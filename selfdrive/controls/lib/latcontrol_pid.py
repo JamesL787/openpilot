@@ -1,17 +1,15 @@
 import math
 import numpy as np
 
-from cereal import custom, log
+from cereal import log
 from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_linear_to_physical
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.common.pid import PIDController
-from openpilot.common.swaglog import cloudlog
 from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
-from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import ClarityEpsFirmwareFeedforward
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   RAV4_TSS2_CARS,
   SUBARU_IMPREZA_CARS,
@@ -410,14 +408,6 @@ class LatControlPID(LatControl):
     self.torque_output_lpf_tau_low = NRDR_TORQUE_OUTPUT_LPF_TAU
     self.torque_output_lpf_tau_standard = NRDR_TORQUE_OUTPUT_LPF_TAU
     self.torque_output_lpf_tau_highway = NRDR_TORQUE_OUTPUT_LPF_TAU
-    # nrdr: firmware-inversion feedforward, SHADOW ONLY. Computed every frame and logged on
-    # starpilotLateralState (controlsd publishes it whenever this attribute exists), never added to
-    # the output. See nrdr_eps_firmware_ff.py.
-    self.eps_shadow_ff = None
-    if self.is_eps_modified and CP.carFingerprint == HONDA.HONDA_CLARITY:
-      self.eps_shadow_ff = ClarityEpsFirmwareFeedforward(dt)
-      self.eps_shadow_failed = False
-      self.starpilot_lateral_state = custom.StarPilotLateralState.new_message()
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
@@ -651,27 +641,4 @@ class LatControlPID(LatControl):
       self.prev_angle_steers_des_no_offset = angle_steers_des_no_offset
       self.prev_output_torque = float(output_torque)
 
-    if self.eps_shadow_ff is not None:
-      self._update_eps_shadow(active, angle_steers_des_no_offset, CS.vEgo, params.roll)
-
     return output_torque, angle_steers_des, pid_log
-
-  def _update_eps_shadow(self, active, desired_angle_no_offset, v_ego, roll):
-    state = self.starpilot_lateral_state
-    try:
-      if not active:
-        self.eps_shadow_ff.reset()
-      else:
-        self.eps_shadow_ff.update(float(desired_angle_no_offset), float(v_ego), float(roll))
-      state.epsShadowActive = bool(active)
-      state.epsShadowFeedforward = float(self.eps_shadow_ff.output)
-      state.epsShadowR5 = float(self.eps_shadow_ff.r5)
-      state.epsShadowLoad = float(self.eps_shadow_ff.load)
-      state.epsShadowDesiredRate = float(self.eps_shadow_ff.rate)
-    except Exception:
-      # Shadow only: nothing here may ever reach the steering command.
-      if not self.eps_shadow_failed:
-        cloudlog.exception("nrdr: EPS shadow feedforward failed")
-        self.eps_shadow_failed = True
-      self.eps_shadow_ff.reset()
-      state.epsShadowActive = False
