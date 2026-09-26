@@ -8295,3 +8295,11 @@ The device ran `90487307` (clean): hysteresis on, fade down/up 0.2/0.5 s, `Honda
 - `HondaOverrideFadeUpSecs` 1.0 halves the rebuild rate. That probably slows the cycle to under 1 Hz, but the crossing still happens at the same torque.
 - `HondaOverrideTorqueScale` > 0 (e.g. 0.3–0.5) floors the cut. The pump in this turn would shrink to roughly scale ↔ 0.55. The cost: during genuine overrides like 1637 s, the car keeps pushing at that fraction.
 - Code: stop counting "opposing torque while the wheel moves with the command" as an override (a damping signature). This changes when the override fires, so it needs the owner's decision.
+
+**Addendum, owner feedback.** "The stuttering is at 27:56. Turns at 21:49 was pretty smooth overall."
+- **27:56** (1676 s): a right turn at about 20 mph. The model's desired angle leads to −45° while the hands hold the wheel near +2°, and the torque sensor rises to +1800–2000 against the command.
+  - Two raw presses of 3 and 2 frames (30 and 20 ms), peaking at 2039 and 2029, each cut the output to 0: −0.23 → 0 → −0.50 → 0 → −0.94 within 1.4 s, while the command ramped to −1.0.
+  - The genuine override that follows (1680.93 s: 98 frames, peak 2853) is clean.
+- **21:49** (1309 s): the hands were light (sensor −350 at most), there were no presses, and delivered = command throughout.
+- **Press lengths.** Every cut in the 27:09–27:16 and 27:56 turns was triggered by a 1–5 frame blip peaking at 2005–2300. On 283 and 280, the median press is also 3 frames.
+- **Candidate** (not implemented; it relaxes the override, so it's the owner's decision): debounce the press onset. Require the raw flag for about 8 consecutive frames, or fire instantly above about 1.25× the threshold.
