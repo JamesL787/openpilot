@@ -8303,3 +8303,32 @@ The device ran `90487307` (clean): hysteresis on, fade down/up 0.2/0.5 s, `Honda
 - **21:49** (1309 s): the hands were light (sensor −350 at most), there were no presses, and delivered = command throughout.
 - **Press lengths.** Every cut in the 27:09–27:16 and 27:56 turns was triggered by a 1–5 frame blip peaking at 2005–2300. On 283 and 280, the median press is also 3 frames.
 - **Candidate** (not implemented; it relaxes the override, so it's the owner's decision): debounce the press onset. Require the raw flag for about 8 consecutive frames, or fire instantly above about 1.25× the threshold.
+
+## 160. Onset debounce on the driver-override flag (the STATUS 159 candidate, owner-approved). Implemented; static tests and an open-loop replay only. Not driven.
+
+**Change** (`carcontroller.py`, raw `steeringPressed` path only, `debounce_steering_pressed`):
+- A press counts only after `OVERRIDE_ONSET_FRAMES` = 6 frames (60 ms) on a leaky counter (+1 per raw frame, −1 per frame without one, so a one-frame dropout does not restart it).
+- It counts on the first frame when |steeringTorque| ≥ `OVERRIDE_INSTANT_FRAC` = 1.25 × the threshold (2500 at 2000).
+- Once the override is held, any raw frame refreshes the STATUS 158 release hold.
+- No params were added or changed. The `NrdrIncreaseOverrideTolerance` path is untouched.
+
+**Choosing N and the instant level.** Replay over routes 277, 278, 27a, 280, 283 and 284: 447 blips of ≤ 5 frames and 84 genuine presses of ≥ 0.2 s. The owner asked that the car not fight a takeover, so detection delay was weighted over filtering.
+
+| frames | instant | blips still triggering | takeover delay median / p90 / max | takeovers instant |
+|---|---|---|---|---|
+| 8 | 1.25× | 6% | 60 / 70 / 70 ms | 14% |
+| **6** | **1.25×** | **7%** | **50 / 50 / 50 ms** | **14%** |
+| 6 | 1.15× | 13% | 25 / 50 / 50 ms | 23% |
+| 5 | 1.10× | 35% | 10 / 40 ms | 32% |
+
+**Open-loop replay of 284** (logged torque and press drive the real `_update_steering_torque`; the hands do not react, so this cannot show the closed loop). "Fight" is the time from the raw press onset to delivered < 10% of the command.
+
+| config | cuts < 0.8 (whole route) | 27:09–27:16 turn | 27:56 turn | fight at 18:37 / 28:01 takeovers |
+|---|---|---|---|---|
+| as driven (fade-down 0.2) | 25 | 5 | 1 | 178 / 182 ms |
+| debounce, fade-down 0.2 | 14 | 0 | 0 | 228 / 234 ms |
+| debounce, fade-down 0 | 14 | 0 | 0 | 70 / 58 ms |
+
+- Most of the time the car spends pushing against a takeover comes from `HondaOverrideFadeDownSecs` 0.2, not from the debounce. With the blips filtered, an instant cut (fade-down 0) no longer produces the chop it did on 283. That setting is the owner's to make; this commit does not write it.
+- Keep `HondaOverrideTorqueScale` at 0: any floor means the car keeps pushing through a takeover.
+- **Risk:** a takeover at 2000–2500 now waits 60 ms before the fade begins. A blip that lasts 6 frames or more, or peaks above 2500, still cuts (7% of blips on these routes).

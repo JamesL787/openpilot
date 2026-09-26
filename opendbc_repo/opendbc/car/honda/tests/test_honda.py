@@ -521,8 +521,8 @@ class TestHondaSteeringCommandFidelity:
   def test_override_cut_is_reported_as_limited(self):
     controller = self._controller()
     self._drive(controller, [0.0] * 200)
-    delivered = self._drive(controller, [0.5], steering_pressed=True)
-    assert abs(0.5 - delivered[0]) > 1e-2
+    delivered = self._drive(controller, [0.5] * cc_mod.OVERRIDE_ONSET_FRAMES, steering_pressed=True)
+    assert abs(0.5 - delivered[-1]) > 1e-2
 
   # Route 283's fade settings (HondaOverrideFadeDownSecs 0.2, HondaOverrideFadeUpSecs 0.5).
   LIVE_283 = {"override_fade_down_s": 0.2, "override_fade_up_s": 0.5}
@@ -537,14 +537,33 @@ class TestHondaSteeringCommandFidelity:
       ramps.append(controller.override_ramp)
     return ramps
 
-  def test_hands_holding_flicker_no_longer_pumps_the_ramp(self):
-    # Route 283 seg 33 pattern: sensor 1600-2400 around a 2000 threshold, raw flag 3 frames on / 8 off.
+  def test_hands_holding_blips_do_not_cut_the_output(self):
+    # Routes 283/284 pattern: 1-5 frame blips at 2005-2300 against a 2000 threshold while hands hold.
     controller = self._controller()
     self._drive(controller, [0.0] * 200)
-    cycle = [(True, 2300.0)] * 3 + [(False, 1600.0)] * 8
+    cycle = [(True, 2300.0)] * 5 + [(False, 1600.0)] * 8
     ramps = self._drive_frames(controller, cycle * 10, threshold=2000.0)
-    assert all(b <= a + 1e-9 for a, b in zip(ramps, ramps[1:], strict=False))  # never rebuilds mid-grip
-    assert ramps[-1] == pytest.approx(0.0)  # the grip is honoured as a full override, not a 9 Hz pump
+    assert min(ramps) == pytest.approx(1.0)
+    assert not controller.override_held
+
+  def test_sustained_press_at_the_threshold_confirms_after_the_onset_window(self):
+    controller = self._controller()
+    self._drive(controller, [0.0] * 200)
+    n = cc_mod.OVERRIDE_ONSET_FRAMES
+    ramps = self._drive_frames(controller, [(True, 2100.0)] * (n + 5))
+    assert ramps[n - 2] == pytest.approx(1.0) and controller.override_held and ramps[-1] < 1.0
+
+  def test_firm_press_confirms_on_the_first_frame(self):
+    controller = self._controller()
+    self._drive(controller, [0.0] * 200)
+    self._drive_frames(controller, [(True, 2000.0 * cc_mod.OVERRIDE_INSTANT_FRAC)])
+    assert controller.override_held
+
+  def test_onset_counter_is_leaky_not_reset_by_a_one_frame_dropout(self):
+    controller = self._controller()
+    self._drive(controller, [0.0] * 200)
+    self._drive_frames(controller, [(True, 2100.0)] * 5 + [(False, 1900.0)] + [(True, 2100.0)] * 4)
+    assert controller.override_held
 
   def test_override_releases_after_hold_once_sensor_unloads(self):
     controller = self._controller()
