@@ -30,6 +30,7 @@ import math
 
 import numpy as np
 
+from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.pid import PIDController
 
 # 0xE4 value per unit of lateral output: torqueBP/V = [0, 3840] identity, apply_torque = -u * 3840
@@ -214,6 +215,9 @@ class ClarityEpsLateralCore:
     self.dt = dt
     self.pid = PIDController((kp_bp, kp_v), (ki_bp, ki_v), pos_limit=1.0, neg_limit=-1.0, rate=1.0 / dt)
     self.ff = ff if ff is not None else ClarityEpsFirmwareFeedforward(dt)
+    # The NRDR torque-output LPF, run exactly as LatControlPID runs it (the car controller deliberately does
+    # not filter, so this is the only one): same filter class, same per-band update_alpha, reset to 0.
+    self.output_lpf = FirstOrderFilter(0.0, OUTPUT_LPF_TAU[0], dt)
     self.reset()
 
   def reset(self):
@@ -221,7 +225,8 @@ class ClarityEpsLateralCore:
     self.ff.reset()
     self.ff_ramp = 0.0
     self.ff_weight = 0.0
-    self.output_lpf = 0.0
+    self.output_lpf.x = 0.0
+    self.output_lpf.initialized = True
     self.output = 0.0
 
   output_lpf_enabled = True
@@ -247,9 +252,10 @@ class ClarityEpsLateralCore:
     output = max(min(self.pid.p * speed_band(v_ego, P_SCALE) + self.pid.i + self.pid.d + ff, 1.0), -1.0)
 
     if self.output_lpf_enabled:
-      tau = speed_band(v_ego, self.output_lpf_tau)
-      self.output_lpf += self.dt / (tau + self.dt) * (output - self.output_lpf)
+      self.output_lpf.update_alpha(speed_band(v_ego, self.output_lpf_tau))
+      output = float(self.output_lpf.update(output))
     else:
-      self.output_lpf = output
-    self.output = max(min(self.output_lpf, 1.0), -1.0)
+      self.output_lpf.x = output
+      self.output_lpf.initialized = True
+    self.output = max(min(output, 1.0), -1.0)
     return self.output

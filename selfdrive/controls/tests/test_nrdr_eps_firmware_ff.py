@@ -11,7 +11,9 @@ from opendbc.car import structs
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
 from opendbc.car.vehicle_model import VehicleModel
+from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_CTRL
+from openpilot.selfdrive.controls.lib.latcontrol_pid import _lat_pid_scale_banded
 
 TOGGLES = SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False)
 CLARITY_MODIFIED_FW = b'39990-TRW,A020\x00\x00'
@@ -121,6 +123,35 @@ def test_without_the_feedforward_the_core_is_the_banded_pid():
   p = float(np.interp(15.0, KP_BP, KP_V)) * 5.0 * 1.00    # 15 m/s is the standard band: LatPScale 100
   i = float(np.interp(15.0, KP_BP, KI_V)) * 0.95 * DT_CTRL * 5.0
   assert out == pytest.approx((p + i) * DT_CTRL / (0.05 + DT_CTRL))
+
+
+MPH = 0.44704
+SPEEDS = [0.0, 3.0, 25 * MPH - 1e-6, 25 * MPH, 25 * MPH + 1e-6, 15.0, 50 * MPH - 1e-6, 50 * MPH, 50 * MPH + 1e-6, 30.0]
+
+
+@pytest.mark.parametrize("v", SPEEDS)
+def test_output_lpf_bands_switch_exactly_where_latcontrol_pids_do(v):
+  taus = (0.07, 0.05, 0.01)
+  assert eps_ff.speed_band(v, taus) == _lat_pid_scale_banded(v, *taus)
+
+
+def test_output_lpf_is_latcontrol_pids_filter():
+  # The car controller does not filter (see carcontroller.py), so this LPF must be exactly the one
+  # LatControlPID runs: FirstOrderFilter from 0, update_alpha with the banded tau every frame, then clip.
+  taus = (0.07, 0.05, 0.01)
+  filtered, raw = _core(), _core()
+  filtered.output_lpf_tau = raw.output_lpf_tau = taus
+  raw.output_lpf_enabled = False
+  reference = FirstOrderFilter(0.0, 0.1, DT_CTRL)
+  speeds = np.concatenate([np.linspace(3.0, 30.0, 300), np.linspace(30.0, 3.0, 300)])
+  for k, v in enumerate(speeds):
+    args = (40.0 * math.sin(k * 0.05), 0.5, 38.0 * math.sin(k * 0.05 - 0.1), float(v), 0.0, False, False)
+    out = filtered.update(*args)
+    u = raw.update(*args)
+    reference.update_alpha(_lat_pid_scale_banded(float(v), *taus))
+    assert out == max(min(reference.update(u), 1.0), -1.0)
+  filtered.reset()
+  assert filtered.output_lpf.x == 0.0 and filtered.output == 0.0
 
 
 def test_output_lpf_setting_is_honoured():
