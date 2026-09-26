@@ -350,6 +350,14 @@ struct StarPilotLateralState @0xc2243c65e0340384 {
   frictionJerkDeadzone @5 :Float32;
   lowSpeedFactor @6 :Float32;
   unwindDetected @7 :Bool;
+
+  # nrdr: Clarity modified-EPS firmware-inversion feedforward, computed in SHADOW (logged, never applied).
+  # See selfdrive/controls/lib/nrdr_eps_firmware_ff.py.
+  epsShadowActive @8 :Bool;
+  epsShadowFeedforward @9 :Float32;   # lateral output ([-1, 1]) the feedforward would contribute
+  epsShadowR5 @10 :Float32;           # EPS firmware target counts it asks for
+  epsShadowLoad @11 :Float32;         # firmware output counts the column load model says the motion needs
+  epsShadowDesiredRate @12 :Float32;  # deg/s, filtered desired steering-wheel rate it used
 }
 
 struct CustomReserved12 @0x9ccdc8676701b412 {
