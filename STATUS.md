@@ -8332,3 +8332,9 @@ The device ran `90487307` (clean): hysteresis on, fade down/up 0.2/0.5 s, `Honda
 - Most of the time the car spends pushing against a takeover comes from `HondaOverrideFadeDownSecs` 0.2, not from the debounce. With the blips filtered, an instant cut (fade-down 0) no longer produces the chop it did on 283. That setting is the owner's to make; this commit does not write it.
 - Keep `HondaOverrideTorqueScale` at 0: any floor means the car keeps pushing through a takeover.
 - **Risk:** a takeover at 2000–2500 now waits 60 ms before the fade begins. A blip that lasts 6 frames or more, or peaks above 2500, still cuts (7% of blips on these routes).
+
+**Correction (same day), from the logged `STEERING_CONTROL` frames on 284.** The owner runs `HondaDriverAssistDuringOverride` = 0. With it off, `lkas_active` drops as soon as the override is held, and `create_steering_control` sends `STEER_TORQUE` 0 with `STEER_TORQUE_REQUEST` 0 from that frame on.
+- On 284 the car sent 0 torque on the very frame of each raw press (1676.19 s, 1676.86 s), and ramped back in over the fade-up (0.5 s) once the hold released. `HondaOverrideFadeDownSecs` never reaches the EPS on this configuration.
+- The "fight" column above therefore overstates what was sent. Only the 6-frame onset window (0 ms for presses at 2500 or more) is added pushing time. Driven 284 had none.
+- Retract the fade-down 0 recommendation: it is moot while the toggle is off.
+- Turning the toggle on would keep the request bit set through a takeover, shaping torque only by the fade-down (0.2 s) and `HondaOverrideTorqueScale`. That adds pushing against the driver.
