@@ -1,17 +1,25 @@
 import math
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
-from cereal import car, custom, log
-import openpilot.selfdrive.controls.lib.latcontrol_pid as latcontrol_pid
+from cereal import car, log
+import openpilot.selfdrive.controls.lib.latcontrol_clarity_eps as clarity_eps
 import openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff as eps_ff
-from opendbc.car.car_helpers import interfaces
-from opendbc.car.honda.values import CAR as HONDA, HondaFlags
+from opendbc.car import structs
+from opendbc.car.honda.interface import CarInterface
+from opendbc.car.honda.values import CAR
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.common.realtime import DT_CTRL
-from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 
+TOGGLES = SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False)
+CLARITY_MODIFIED_FW = b'39990-TRW,A020\x00\x00'
+CLARITY_STOCK_FW = b'39990-TRW-A020\x00\x00'
+KP_BP, KP_V, KI_V = [0.0, 11.175, 11.176, 22.352], [0.018, 0.024, 0.048, 0.060], [0.006, 0.008, 0.016, 0.020]
+
+
+# --- firmware model and feedforward -------------------------------------------------------------
 
 @pytest.mark.parametrize("output", [-1.0, -0.4, -0.05, 0.0, 0.02, 0.3, 0.9])
 def test_command_map_round_trips(output):
@@ -51,74 +59,150 @@ def test_target_stays_clear_of_the_rail_and_the_speed_ceiling(v_kph, cap):
 
 def test_desired_rate_tracks_a_ramp_and_resets():
   ff = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL)
-  for k in range(100):
+  for k in range(150):
     ff.update(50.0 * k * DT_CTRL, 10.0, 0.0)
   assert ff.rate == pytest.approx(50.0, abs=1.0)
   ff.reset()
   assert ff.rate == 0.0 and ff.output == 0.0 and ff.prev_angle is None
 
 
+def test_feedforward_output_is_smoothed():
+  raw = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, output_tau=0.0)
+  smooth = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL)
+  for ff in (raw, smooth):
+    ff.update(0.0, 10.0, 0.0)
+    ff.update(30.0, 10.0, 0.0)   # a step in the target
+  assert abs(smooth.output) < 0.2 * abs(raw.output)
+
+
+# --- control core ---------------------------------------------------------------------------------
+
+def _core():
+  return eps_ff.ClarityEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL)
+
+
+def _hold(core, frames, des=20.0, angle=20.0, v=10.0, pressed=False):
+  for _ in range(frames):
+    core.update(des, 0.0, angle, v, 0.0, pressed, False)
+
+
+def test_feedforward_waits_for_the_wheel_to_join_the_path():
+  core = _core()
+  _hold(core, 100, des=60.0, angle=20.0)   # engaged 40 deg off the path
+  assert core.ff_weight == 0.0
+  _hold(core, 25, des=60.0, angle=58.0)    # on the path: fades in over FF_FADE_IN_S
+  assert 0.0 < core.ff_weight < 1.0
+  _hold(core, 40, des=60.0, angle=58.0)
+  assert core.ff_weight == 1.0
+  _hold(core, 10, des=60.0, angle=20.0)    # once in, a later error does not throw it out
+  assert core.ff_weight == 1.0
+
+
+def test_driver_press_and_standstill_take_the_feedforward_out():
+  core = _core()
+  _hold(core, 80)
+  assert core.ff_weight == 1.0
+  _hold(core, 1, pressed=True)
+  assert core.ff_weight == 0.0
+  _hold(core, 80)
+  _hold(core, 1, v=1.0)
+  assert core.ff_weight == 0.0
+  _hold(core, 80, v=3.0)
+  assert core.ff_weight == pytest.approx(0.5)   # faded in with speed between 2 and 4 m/s
+
+
+def test_without_the_feedforward_the_core_is_the_banded_pid():
+  core = _core()
+  eps_ff.FF_JOIN_ERROR_DEG, saved = -1.0, eps_ff.FF_JOIN_ERROR_DEG
+  try:
+    out = core.update(10.0, 0.0, 5.0, 15.0, 0.0, False, False)
+  finally:
+    eps_ff.FF_JOIN_ERROR_DEG = saved
+  p = float(np.interp(15.0, KP_BP, KP_V)) * 5.0 * 1.00    # 15 m/s is the standard band: LatPScale 100
+  i = float(np.interp(15.0, KP_BP, KI_V)) * 0.95 * DT_CTRL * 5.0
+  assert out == pytest.approx((p + i) * DT_CTRL / (0.05 + DT_CTRL))
+
+
+def test_output_lpf_setting_is_honoured():
+  core = _core()
+  core.output_lpf_enabled = False
+  out = core.update(10.0, 0.0, 5.0, 15.0, 0.0, False, False)
+  assert out == pytest.approx(core.pid.p + core.pid.i + core.pid.f)
+
+
+# --- controller shell -----------------------------------------------------------------------------
+
+def _params(fw_version, candidate=CAR.HONDA_CLARITY):
+  car_fw = [structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.eps, fwVersion=fw_version, address=0x18DA30F1, subAddress=0)]
+  return CarInterface.get_params(candidate, {0: {}, 1: {}, 2: {}}, car_fw, False, False, False, TOGGLES)
+
+
 class _Params:
+  def __init__(self, values=None):
+    self.values = values or {}
+
   def get(self, key, *args, **kwargs):
-    return None
+    return self.values.get(key)
 
   def get_bool(self, key, *args, **kwargs):
-    raise KeyError(key)   # -> the controller's own default
+    return self.values.get(key) == "1"
 
 
-def _clarity(monkeypatch):
-  monkeypatch.setattr(latcontrol_pid, "Params", lambda: _Params())
-  CarInterface = interfaces[HONDA.HONDA_CLARITY]
-  CP = CarInterface.get_non_essential_params(HONDA.HONDA_CLARITY)
-  CP.flags |= int(HondaFlags.EPS_MODIFIED)
-  CP.dashcamOnly = True
-  CI = CarInterface(CP, custom.StarPilotCarParams.new_message())
-  lac = LatControlPID(CP.as_reader(), CI, DT_CTRL)
-  params = log.LiveParametersData.new_message()
-  params.steerRatio = CP.steerRatio
-  params.stiffnessFactor = 1.0
-  params.angleOffsetDeg = 0.0
-  return lac, VehicleModel(CP), params
+def _controller(monkeypatch, values=None):
+  monkeypatch.setattr(clarity_eps, "Params", lambda: _Params(values))
+  CP = _params(CLARITY_MODIFIED_FW)
+  return clarity_eps.LatControlClarityEps(CP, None, DT_CTRL), VehicleModel(CP), CP
 
 
-def _drive(lac, VM, params, frames=400):
+def test_only_the_modified_eps_clarity_gets_this_controller():
+  assert clarity_eps.use_clarity_eps_controller(_params(CLARITY_MODIFIED_FW))
+  assert not clarity_eps.use_clarity_eps_controller(_params(CLARITY_STOCK_FW))
+  assert not clarity_eps.use_clarity_eps_controller(_params(b'39990-TBA,A030\x00\x00', CAR.HONDA_CIVIC_BOSCH))
+
+
+def test_nrdr_settings_are_read(monkeypatch):
+  lac, _, _ = _controller(monkeypatch, {
+    "NrdrLatUseFirmwareVgr": "1", "NrdrLatAngleRateLimit": "219", "HondaTorqueOutputLowPassFilter": "1",
+    "HondaTorqueOutputLpfTauLowSpeed": "0.07", "HondaTorqueOutputLpfTauStandard": "0.05", "HondaTorqueOutputLpfTauHighway": "0.01",
+  })
+  assert lac.use_firmware_vgr and lac.vgr_inverse is not None
+  assert lac.angle_rate_limit_deg_s == 219.0
+  assert lac.core.output_lpf_enabled
+  assert lac.core.output_lpf_tau == (0.07, 0.05, 0.01)
+
+
+def _drive(lac, VM, frames=400, v=9.0):
   CS = car.CarState.new_message()
-  CS.vEgo = 9.0
-  outputs = []
+  CS.vEgo = v
+  params = log.LiveParametersData.new_message()
+  params.steerRatio, params.stiffnessFactor = 16.0, 1.0
+  outs = []
   for k in range(frames):
     active = k >= 20
-    curvature = 0.02 * math.sin(k * 0.02)
-    CS.steeringAngleDeg = 10.0 * math.sin(k * 0.02 - 0.3)
-    out, _, _ = lac.update(active, CS, VM, params, False, curvature, False, 0.2, None, None, SimpleNamespace())
-    outputs.append(out)
-  return outputs
+    CS.steeringAngleDeg = 30.0 * math.sin(k * 0.02 - 0.05)
+    out, angle_des, pid_log = lac.update(active, CS, VM, params, False, 0.02 * math.sin(k * 0.02), False, 0.2,
+                                         None, None, SimpleNamespace())
+    outs.append((active, out, angle_des, pid_log))
+  return outs
 
 
-def test_shadow_is_logged_for_the_clarity(monkeypatch):
-  lac, VM, params = _clarity(monkeypatch)
-  assert lac.eps_shadow_ff is not None
-  _drive(lac, VM, params)
+def test_controller_steers_logs_and_rests(monkeypatch):
+  lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1"})
+  outs = _drive(lac, VM)
+  assert all(out == 0.0 and not pid_log.active for active, out, _, pid_log in outs if not active)
+  assert max(abs(out) for _, out, _, _ in outs) > 0.05
+  assert all(abs(out) <= 1.0 and math.isfinite(out) for _, out, _, _ in outs)
   state = lac.starpilot_lateral_state
-  assert state.epsShadowActive
-  assert state.epsShadowR5 != 0.0 and math.isfinite(state.epsShadowFeedforward)
+  assert state.epsFfActive and state.epsFfWeight == 1.0 and state.epsFfR5 != 0.0
   msg = log.Event.new_message(starpilotLateralState=state)   # what controlsd publishes
-  assert msg.starpilotLateralState.epsShadowR5 == pytest.approx(state.epsShadowR5)
+  assert msg.starpilotLateralState.epsFfWeight == 1.0
+  lac.update(False, car.CarState.new_message(), VM, log.LiveParametersData.new_message(), False, 0.0, False, 0.2,
+             None, None, SimpleNamespace())
+  assert lac.core.ff_weight == 0.0 and lac.core.output == 0.0
 
 
-def test_shadow_never_changes_the_steering_command(monkeypatch):
-  lac, VM, params = _clarity(monkeypatch)
-  twin, _, _ = _clarity(monkeypatch)
-  twin.eps_shadow_ff = None
-  assert _drive(lac, VM, params) == _drive(twin, VM, params)
-
-
-def test_a_shadow_failure_cannot_reach_the_command(monkeypatch):
-  lac, VM, params = _clarity(monkeypatch)
-  twin, _, _ = _clarity(monkeypatch)
-  twin.eps_shadow_ff = None
-
-  def boom(*args, **kwargs):
-    raise ValueError("shadow failure")
-  monkeypatch.setattr(lac.eps_shadow_ff, "update", boom)
-  assert _drive(lac, VM, params) == _drive(twin, VM, params)
-  assert not lac.starpilot_lateral_state.epsShadowActive
+def test_target_honours_the_angle_rate_limit(monkeypatch):
+  lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1", "NrdrLatAngleRateLimit": "100"})
+  outs = _drive(lac, VM, frames=120)
+  steps = [abs(b[2] - a[2]) for a, b in zip(outs[20:], outs[21:], strict=False)]
+  assert max(steps) <= 100.0 * DT_CTRL + 1e-6

@@ -351,13 +351,14 @@ struct StarPilotLateralState @0xc2243c65e0340384 {
   lowSpeedFactor @6 :Float32;
   unwindDetected @7 :Bool;
 
-  # nrdr: Clarity modified-EPS firmware-inversion feedforward, computed in SHADOW (logged, never applied).
-  # See selfdrive/controls/lib/nrdr_eps_firmware_ff.py.
-  epsShadowActive @8 :Bool;
-  epsShadowFeedforward @9 :Float32;   # lateral output ([-1, 1]) the feedforward would contribute
-  epsShadowR5 @10 :Float32;           # EPS firmware target counts it asks for
-  epsShadowLoad @11 :Float32;         # firmware output counts the column load model says the motion needs
-  epsShadowDesiredRate @12 :Float32;  # deg/s, filtered desired steering-wheel rate it used
+  # nrdr: Clarity modified-EPS controller (selfdrive/controls/lib/latcontrol_clarity_eps.py). The feedforward
+  # inverts the EPS firmware law; see selfdrive/controls/lib/nrdr_eps_firmware_ff.py.
+  epsFfActive @8 :Bool;
+  epsFfFeedforward @9 :Float32;   # lateral output ([-1, 1]) of the feedforward at full weight
+  epsFfR5 @10 :Float32;           # EPS firmware target counts it asks for
+  epsFfLoad @11 :Float32;         # firmware output counts the column load model says the motion needs
+  epsFfDesiredRate @12 :Float32;  # deg/s, filtered desired steering-wheel rate it used
+  epsFfWeight @13 :Float32;       # 0..1 fade-in; the command carries epsFfWeight * epsFfFeedforward
 }
 
 struct CustomReserved12 @0x9ccdc8676701b412 {
