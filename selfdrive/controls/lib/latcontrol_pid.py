@@ -82,6 +82,16 @@ def phase_with_latch(angle_deg: float, angle_delta_deg: float, v_ego: float,
 _MPH_TO_MS = 0.44704
 _LAT_SCALE_LOW_MAX = 25.0 * _MPH_TO_MS
 _LAT_SCALE_STD_MAX = 50.0 * _MPH_TO_MS
+# nrdr: after a press the carcontroller fades torque back in over HondaOverrideFadeUpSecs, and
+# every faded frame trips steer_limited_by_safety, which froze the integrator at its pre-press
+# value. Route 11c8fa231c0499ed|0000027a--4eae257c95 at 12:34: two override trips held I at 0.19
+# into the turn through the unwind, where it cancelled 35-45 % of P and the car ran wide toward
+# the curb. Below 25 mph, 60-70 % of the non-pressed limited frames on routes 277/278/27a were in
+# that window. The held I now bleeds toward 0 during the fade instead. 0.5 s leaves 37 % of it
+# after a 0.5 s fade.
+NRDR_OVERRIDE_FADE_I_BLEED_TAU = 0.5
+NRDR_OVERRIDE_FADE_UP_S_DEFAULT = 1.5   # carcontroller's HondaOverrideFadeUpSecs default
+
 HONDA_PID_GAIN_SCALE_MIN = 0.1
 HONDA_PID_GAIN_SCALE_MAX = 4.0
 
@@ -251,6 +261,13 @@ class LatControlPID(LatControl):
     self.torque_output_lpf_tau_low = HONDA_TORQUE_OUTPUT_LPF_TAU
     self.torque_output_lpf_tau_standard = HONDA_TORQUE_OUTPUT_LPF_TAU
     self.torque_output_lpf_tau_highway = HONDA_TORQUE_OUTPUT_LPF_TAU
+    self.override_fade_up_s = NRDR_OVERRIDE_FADE_UP_S_DEFAULT
+    self.since_press_s = math.inf  # time since the modified-EPS press detector last fired
+
+  def reset(self):
+    super().reset()
+    self.pid.reset()
+    self.since_press_s = math.inf
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
@@ -348,8 +365,10 @@ class LatControlPID(LatControl):
       self.eps_modified_steering_pressed_filter_s = 0.0
       self.eps_modified_steering_pressed_prev = False
       self.prev_output_torque = 0.0
-      if self.is_eps_modified:
-        self.pid.reset()
+      # nrdr: PR #8 piece 3. controlsd only resets LatControl.sat_time on disengage, so the
+      # integrator carried across it (routes 277/278/27a: up to 0.32 into a fresh engagement).
+      self.pid.reset()
+      self.since_press_s = math.inf
 
     else:
       self.frame += 1
@@ -376,6 +395,7 @@ class LatControlPID(LatControl):
           self.eps_modified_steering_pressed_prev,
         )
         self.eps_modified_steering_pressed_prev = steering_pressed
+        self.since_press_s = 0.0 if steering_pressed else self.since_press_s + self.dt
 
       freeze_threshold = 2.0 if self.is_eps_modified else 5.0
       freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < freeze_threshold
@@ -392,6 +412,9 @@ class LatControlPID(LatControl):
                                 freeze_integrator=freeze_integrator,
                                 integrator_gain_scale=i_scale,
                                 reset_integrator=self.is_eps_modified and (i_scale <= 0.0 or CS.vEgo < freeze_threshold))
+      if (self.is_eps_modified and steer_limited_by_safety and not steering_pressed and
+          self.since_press_s <= self.override_fade_up_s + self.dt):
+        self.pid.i *= math.exp(-self.dt / NRDR_OVERRIDE_FADE_I_BLEED_TAU)
 
       # The Civic Bosch testing ground applies its own hardcoded center taper below; let it own the
       # output scale so the two tapers can never compound.
@@ -413,6 +436,8 @@ class LatControlPID(LatControl):
           self.lat_f_scale_highway = _get_param_float(self.params, "LatFScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
           self.angle_rate_limit_deg_s = _get_param_float(self.params, "HondaEpsAngleRateLimit",
                                                          HONDA_ANGLE_RATE_LIMIT_DEG_S, 0.0, 2000.0)
+          self.override_fade_up_s = _get_param_float(self.params, "HondaOverrideFadeUpSecs",
+                                                     NRDR_OVERRIDE_FADE_UP_S_DEFAULT, 0.0, 10.0)
           self.torque_output_lpf_enabled = _get_param_bool(self.params, "HondaTorqueOutputLowPassFilter", True)
           self.torque_output_lpf_tau_low = _get_param_float(
             self.params, "HondaTorqueOutputLpfTauLowSpeed", HONDA_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0,
