@@ -189,6 +189,16 @@ NRDR_ANGLE_RATE_LIMIT_DEG_S = 300.0  # 0 disables
 # road tune carries over verbatim.
 NRDR_TARGET_SMOOTH_TAU = 0.1
 
+# nrdr: after a press the carcontroller fades torque back in over HondaOverrideFadeUpSecs, and
+# every faded frame trips steer_limited_by_safety, which froze the integrator at its pre-press
+# value. Route 11c8fa231c0499ed|0000027a--4eae257c95 at 12:34: two override trips held I at 0.19
+# into the turn through the unwind, where it cancelled 35-45 % of P and the car ran wide toward
+# the curb. Below 25 mph, 60-70 % of the non-pressed limited frames on routes 277/278/27a were in
+# that window. The held I now bleeds toward 0 during the fade instead. 0.5 s leaves 37 % of it
+# after a 0.5 s fade.
+NRDR_OVERRIDE_FADE_I_BLEED_TAU = 0.5
+NRDR_OVERRIDE_FADE_UP_S_DEFAULT = 1.5   # carcontroller's HondaOverrideFadeUpSecs default
+
 def rate_limit_desired_angle(angle_deg: float, prev_angle_deg: float, max_rate_deg_s: float, dt: float) -> float:
   if max_rate_deg_s <= 0.0 or not math.isfinite(angle_deg):
     return angle_deg
@@ -438,6 +448,13 @@ class LatControlPID(LatControl):
     self.lpf_tau_low = NRDR_TARGET_SMOOTH_TAU
     self.lpf_tau_standard = NRDR_TARGET_SMOOTH_TAU
     self.lpf_tau_highway = NRDR_TARGET_SMOOTH_TAU
+    self.override_fade_up_s = NRDR_OVERRIDE_FADE_UP_S_DEFAULT
+    self.since_press_s = math.inf  # time since the modified-EPS press detector last fired
+
+  def reset(self):
+    super().reset()
+    self.pid.reset()
+    self.since_press_s = math.inf
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
@@ -559,6 +576,10 @@ class LatControlPID(LatControl):
       self.eps_modified_steering_pressed_prev = False
       self.center_taper_scale.x = 1.0
       self.prev_output_torque = 0.0
+      # nrdr: PR #8 piece 3. controlsd only resets LatControl.sat_time on disengage, so the
+      # integrator carried across it (routes 277/278/27a: up to 0.32 into a fresh engagement).
+      self.pid.reset()
+      self.since_press_s = math.inf
 
     else:
       self.frame += 1
@@ -585,6 +606,7 @@ class LatControlPID(LatControl):
           self.eps_modified_steering_pressed_prev,
         )
         self.eps_modified_steering_pressed_prev = steering_pressed
+        self.since_press_s = 0.0 if steering_pressed else self.since_press_s + self.dt
 
       freeze_threshold = 2.0 if self.is_eps_modified else 5.0
       freeze_integrator = steer_limited_by_safety or steering_pressed or CS.vEgo < freeze_threshold
@@ -593,6 +615,9 @@ class LatControlPID(LatControl):
                                 feedforward=ff,
                                 speed=CS.vEgo,
                                 freeze_integrator=freeze_integrator)
+      if (self.is_eps_modified and steer_limited_by_safety and not steering_pressed and
+          self.since_press_s <= self.override_fade_up_s + self.dt):
+        self.pid.i *= math.exp(-self.dt / NRDR_OVERRIDE_FADE_I_BLEED_TAU)
 
       # The Civic Bosch testing ground applies its own hardcoded center taper below; let it own the
       # output scale so the two tapers can never compound.
@@ -622,6 +647,8 @@ class LatControlPID(LatControl):
           self.lpf_tau_standard = _get_param_float(self.params, "HondaLpfTauStandard", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
           self.lpf_tau_highway = _get_param_float(self.params, "HondaLpfTauHighway", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
           self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
+          self.override_fade_up_s = _get_param_float(self.params, "HondaOverrideFadeUpSecs",
+                                                     NRDR_OVERRIDE_FADE_UP_S_DEFAULT, 0.0, 10.0)
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
         i_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_i_scale_low, self.lat_i_scale_standard, self.lat_i_scale_highway)
