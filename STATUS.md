@@ -8268,3 +8268,30 @@ So the stutter becomes one clean handback followed by a 0.5 s re-take mid-turn.
 - Open loop: in the car, the sensor partly reads the car's own push. With the push faded out, the sensor would unload sooner, so the real hold is likely shorter than the replay shows.
 - A slower cycle is possible if the hands keep resisting after the re-take: 0.2 s fade, then at least 0.3 s hold, then 0.5 s rebuild, or about 1 Hz. Replay cannot rule that out.
 - If a full handback feels too abrupt, `HondaOverrideTorqueScale` > 0 keeps partial assist while held. That is an owner param; it was not changed.
+
+## 159. First drive with the STATUS 158 override hysteresis: route 00000284--1109db7c4c. Limited road evidence: one drive, 11.6 engaged minutes. The 9 Hz chop is gone, but a slower, deeper pump appeared in one right turn.
+
+The device ran `90487307` (clean): hysteresis on, fade down/up 0.2/0.5 s, `HondaOverrideTorqueScale` 0, threshold 2000.
+
+**The four bookmarks** (1360, 1495, 1531, 1598 s) are not steering events: straight road (|angle| ≤ 4°), no presses, two hard stops. These are radar/longitudinal bookmarks.
+
+**Override behaviour**, from the logs. Out/cmd is the delivered ratio; a "dip" is a fall below 0.8.
+
+| route | engaged min | min in turns >30° | raw flicker episodes | fast chop (≥3 dips/1 s) | slow pump (≥3 dips/4 s) |
+|---|---|---|---|---|---|
+| 277 | 19.1 | 0.81 | 8 | 8 | 17 |
+| 280 | 24.9 | 0.30 | 10 | 7 | 8 |
+| 283 | 27.3 | 0.44 | 23 | 17 | 16 |
+| 284 | 11.6 | 0.77 | 1 | 2 | 10 |
+
+**The slow pump, 1629–1636 s.** A right turn at about 13 mph with the blinker on, wheel 0 → −149°.
+- The command sits saturated at −1.0. The torque sensor reads +1300 to +2000 against it, while the wheel moves *with* the command: hands damping, not steering against the car.
+- Each brief raw press lets the latch take the output to 0. The latch releases after 0.3 s and the output rebuilds (fade-up 0.5 s). At about 0.5 of the command the sensor crosses 2000 again.
+- Result: 8 cuts to zero in about 6.5 s, roughly 1.2 Hz, output swinging 0 ↔ 0.55. This is the cycle STATUS 158 flagged as possible. The old cycle was 9 Hz at 0.6 ↔ 1.0; this one is slower but deeper.
+- 1117–1120 s (right turn, 13 mph) shows two such cycles.
+- Genuine overrides are clean: at 1637–1642 s the hands turn the wheel against the command to +164° and the output stays at 0 throughout; 1681 s is similar.
+
+**Levers, none applied:**
+- `HondaOverrideFadeUpSecs` 1.0 halves the rebuild rate. That probably slows the cycle to under 1 Hz, but the crossing still happens at the same torque.
+- `HondaOverrideTorqueScale` > 0 (e.g. 0.3–0.5) floors the cut. The pump in this turn would shrink to roughly scale ↔ 0.55. The cost: during genuine overrides like 1637 s, the car keeps pushing at that fraction.
+- Code: stop counting "opposing torque while the wheel moves with the command" as an override (a damping signature). This changes when the override fires, so it needs the owner's decision.
