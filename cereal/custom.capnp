@@ -110,6 +110,16 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   accelHardCruise @28 :Bool;  # current/releasing accel cruise button came from GM hard-press signal
   decelHardCruise @29 :Bool;  # current/releasing decel cruise button came from GM hard-press signal
   pulseAndGlide @30 :Bool;  # developer-only wheel-button pulse-and-glide mode is enabled
+
+  # Honda Bosch LongGasLearner (opendbc car/honda/carcontroller.py), as of the previous controller
+  # frame. gasLearnerAvailable is false (and the rest 0) on cars without it.
+  gasLearnerAvailable @31 :Bool;
+  gasLearnerGasFactor @32 :Float32;     # applied: 7.5 s filter of the raw value; scales the flat-road gas request
+  gasLearnerGasFactorRaw @33 :Float32;  # learner integrator; this is what HondaGasFactorParams persists
+  gasLearnerWindFactor @34 :Float32;    # applied wind/road-load factor
+  gasLearnerWindFactorRaw @35 :Float32; # persisted as HondaWindFactorParams
+  gasLearnerError @36 :Float32;         # m/s^2, last lag-aligned accel command - aEgo the learner used
+  gasLearnerLearning @37 :Bool;         # this tick passed every gate and updated the raw factors
 }
 
 struct StarPilotDeviceState @0xda96579883444c35 {

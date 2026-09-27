@@ -8923,3 +8923,64 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
 - **Trust.** The sim is trusted on 280 (it matches the log). On 285 it reads the error 20 % low and the curve ratio 0.07 high. On 284 it is untrusted (9.0 against 16.3), because the real car trails more than the plant does in sharp slow turns.
 - **Gain from 115 → 130.** Error drops 3–4 %, the curve ratio rises 0.001–0.012, and sign changes rise by up to 0.1/s. From 130 to 150 the gain is smaller for each step and the wiggle rises.
 - **Suggestion:** `LatPScaleLowSpeed` 130, consistent with the STATUS 151 grid. Expect a small improvement in partial-command turns like 7:58. It cannot help 7:12 (already saturated), 9:15 or 10:01 (override cuts). Those need the override change or a feedforward.
+
+## 174. Gas learner (`LongGasLearner`) on 00000286--ba543e3a3e, and its values now go into the drive log (`starpilotCarState.gasLearner*`). The 286 findings are from a CAN decode. The logging has static tests only and has not been driven.
+
+**What 286 shows.** Nothing in the log recorded the learner, so its applied gasfactor was rebuilt from `ACC_CONTROL` in sendcan: `GAS_COMMAND / 375 = gf·(ACCEL_COMMAND + wind·wf) + hill`. The Civic Bosch table is [0, 750] (interface.py `BOSCH_GAS_LOOKUP_V`), not the 1600 in values.py.
+
+- **It runs as built.** It loads the saved value at boot: `HondaGasFactorParams` 1.5616 in initData, and the first gas frame (0:47.6) implies 1.556. A least-squares fit over the drive gives:
+  - gf 1.42
+  - wf 0.92 (saved 0.899)
+  - hill term ×1.05, where the STATUS 154 design is ×1.0, unscaled
+  - rms 0.043 m/s²
+- **Flat-road tracking is close.** The mean gap between command and aEgo is within 0.06 m/s² for commands below 1 m/s², and about 0.12 for commands of 1–2 m/s².
+- **The value swings and sits high.** Median applied gf by minute:
+
+  | Minute | Median gf |
+  |---|---|
+  | 0 | 1.56 |
+  | 2 | 1.49 |
+  | 3 | 1.39 |
+  | 4 | 1.35 |
+  | 5 | 1.20 |
+  | 6 | 1.31 → 1.55 |
+  | 9 | 1.55 |
+  | 10 | 1.48 |
+  | 11 | 1.46 |
+  | 12 | 1.45 |
+
+  - It is above the 1.25 soft band for almost the whole drive. The 0.01/min decay is small next to the learn rate: about 0.04–0.1 per second at 0.3 m/s² error with learn_speed 150.
+  - The saved 1.5616 equals the 1.6 hard ceiling minus about 230 s of decay. The raw value was probably pinned at the ceiling on the previous drive (inference).
+- **The 6:09–6:18 jump (1.35 → 1.49) happened on a climb.** Pitch was +0.03 to +0.05, where learning is frozen (deadband 0.02). The raw value must have moved as the grade started, around 6:09–6:10 or earlier; the applied value trails it by 7.5 s. The CAN decode cannot show the raw value or which tick learned, and that is why the logging below was added.
+- **Open question.** Does gf about 1.4–1.6 describe the car, with the 750 table too small, or is the learner soaking up grade onset and lag? The new fields answer this on the next drive. No gain or gate was changed.
+
+**Logging (new).** These fields are added to `custom.StarPilotCarState`, logged at 100 Hz in the rlog (every 10th frame in the qlog):
+
+| Field | Meaning |
+|---|---|
+| `gasLearnerAvailable` @31 | Honda Bosch only; false elsewhere |
+| `gasLearnerGasFactor` @32 | applied value |
+| `gasLearnerGasFactorRaw` @33 | persisted integrator |
+| `gasLearnerWindFactor` @34 | applied value |
+| `gasLearnerWindFactorRaw` @35 | persisted value |
+| `gasLearnerError` @36 | last lag-aligned command minus aEgo |
+| `gasLearnerLearning` @37 | this tick passed every gate |
+
+How it is wired:
+
+- `LongGasLearner.learning` is the new flag. It is cleared on every tick and when `HondaLiveLearningGas` is off.
+- `CarController.gas_learner_state()` returns the values.
+- `card.set_gas_learner_fields()` copies them in when it publishes. The values are one frame old, and a failure logs once and leaves the fields at their defaults instead of stopping card.
+- It is schema-only on the C++ side, like the epsFf* fields in bca3f9d0. No rebuilt binaries and no params key.
+- The stale comment saying last_gas_error was mirrored into actuators.speed is corrected.
+
+**Tests.** All static:
+
+- `test_carcontroller_learners.py` TestLearningFlag: 3 tests.
+- `selfdrive/car/tests/test_gas_learner_log.py`: 3 tests.
+- The honda tests together with the new file: 307 passed.
+- py39 compat: 14 passed.
+- A smoke test with a real `CarInterface`: HONDA_CIVIC_BOSCH fills the fields; HONDA_CIVIC (Nidec) leaves `gasLearnerAvailable` false.
+- The ruff findings in carcontroller.py and the learner test file were already there; none are on changed lines.
+
+**Reading it back.** `LogReader(...)` → `m.starpilotCarState.gasLearnerGasFactorRaw` etc.

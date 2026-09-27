@@ -316,9 +316,10 @@ class LongGasLearner:
 
     self.car_fingerprint = car_fingerprint
 
-    # MVL telemetry: latest lag-aligned gas error (carcontroller mirrors this into
-    # actuators.speed via temp_errorlogging, matching mvl-boston's debug channel).
+    # Latest lag-aligned gas error (accel command 0.5 s ago - aEgo) and whether the last tick
+    # learned; card logs both with the factors in starpilotCarState.gasLearner*.
     self.last_gas_error = 0.0
+    self.learning = False
 
     # Deque of accel commands (length = _LAG_TICKS + 1 for rate check)
     self._accel_deque: deque = deque(maxlen=_LAG_TICKS + 1)
@@ -376,6 +377,7 @@ class LongGasLearner:
     Always returns finite values — NaN cannot propagate.
     """
     engaged = long_active and long_pid
+    self.learning = False
 
     # Engagement-edge or gasPressed reset
     if (not self._was_engaged and engaged) or gas_pressed:
@@ -409,6 +411,7 @@ class LongGasLearner:
       condition_ok = quasi_steady and pitch_ok and brake_addon_ok
 
       if condition_ok:
+        self.learning = True
         gas_error = lagged_accel - a_ego
         self.last_gas_error = float(gas_error)
 
@@ -771,6 +774,20 @@ class CarController(CarControllerBase):
     lkas_active = CC.latActive and (live["driver_assist_during_override"] or not steering_pressed) and not below_min_steer_speed
     return limited_torque, lkas_active, steering_pressed
 
+  def gas_learner_state(self) -> "dict | None":
+    """LongGasLearner values for the drive log (card copies them into starpilotCarState).
+    None where the Bosch gas path does not use the learner."""
+    if self.CP.carFingerprint not in HONDA_BOSCH:
+      return None
+    return {
+      "gasFactor": float(self._learner.gasfactor),
+      "gasFactorRaw": float(self._learner.raw_gasfactor),
+      "windFactor": float(self._learner.windfactor),
+      "windFactorRaw": float(self._learner.raw_windfactor),
+      "error": float(self._learner.last_gas_error),
+      "learning": bool(self._learner.learning),
+    }
+
   def update(self, CC, CS, now_nanos, starpilot_toggles):
     live = self._get_live_tuning_params()
     actuators = CC.actuators
@@ -971,6 +988,8 @@ class CarController(CarControllerBase):
               brake_addon=float(brake_addon),
               at_accel_max=(gas_pedal_force >= self.params.BOSCH_ACCEL_MAX),
             )
+          else:
+            self._learner.learning = False
 
           # gasfactor scales the flat-road request only; the hill term is added unscaled (see
           # bosch_gas_lookup_accel).

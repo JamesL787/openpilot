@@ -51,6 +51,29 @@ EventName = log.OnroadEvent.EventName
 carlog.addHandler(ForwardingHandler(cloudlog))
 
 
+def set_gas_learner_fields(fpcs, car_controller) -> None:
+  """Copy the Honda Bosch LongGasLearner factors into starpilotCarState for the drive log.
+  Log-only: any failure leaves the fields at their defaults instead of stopping card."""
+  getter = getattr(car_controller, 'gas_learner_state', None)
+  if getter is None:
+    return
+  try:
+    state = getter()
+    if state is None:
+      return
+    fpcs.gasLearnerGasFactor = state["gasFactor"]
+    fpcs.gasLearnerGasFactorRaw = state["gasFactorRaw"]
+    fpcs.gasLearnerWindFactor = state["windFactor"]
+    fpcs.gasLearnerWindFactorRaw = state["windFactorRaw"]
+    fpcs.gasLearnerError = state["error"]
+    fpcs.gasLearnerLearning = state["learning"]
+    fpcs.gasLearnerAvailable = True
+  except Exception:
+    if not getattr(set_gas_learner_fields, "failed", False):
+      set_gas_learner_fields.failed = True  # type: ignore[attr-defined]
+      cloudlog.exception("card: gas learner logging failed")
+
+
 def obd_callback(params: Params) -> ObdCallback:
   def set_obd_multiplexing(obd_multiplexing: bool):
     if params.get_bool("ObdMultiplexingEnabled") != obd_multiplexing:
@@ -420,6 +443,7 @@ class Car:
     fpcs_send = messaging.new_message('starpilotCarState')
     fpcs_send.valid = CS.canValid
     fpcs_send.starpilotCarState = FPCS
+    set_gas_learner_fields(fpcs_send.starpilotCarState, getattr(self.CI, 'CC', None))
     self.pm.send('starpilotCarState', fpcs_send)
 
   def controls_update(self, CS: car.CarState, CC: car.CarControl):
