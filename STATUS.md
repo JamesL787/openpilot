@@ -9285,3 +9285,31 @@ The lateral side of the same drive is in the STATUS 173 thread (commit 1a098438)
 **Tests.** `test_bosch_a_radar.py::TestRailIntervalBoundsTheCoast` has three new tests: a reversing coast is floored and then fit-bounded, a non-reversing coast (unknown, stopped or slower lead) keeps the one-sided bound, and both toggles off is verbatim. The honda tests, py39 compat and the gas learner log tests give 326 passed. Static.
 
 **To watch on the next drive.** Brakes for a lead that coasts after its speed reading went stale: they should be no harder than the range closing supports.
+
+## 180. Longitudinal on 0000028a--0f4ebf7920 (ns-bosch-radar-testing 2ab675ff, NRDR PID lateral, before the STATUS 179 fix; 30 segments). There are four device bookmarks: one mild radar false brake in a curve, one hard brake made harder by the lead switching to a car beside the lane, and two real brakes. The STATUS 179 fix moves nothing here. Log decode and replay only.
+
+Times are log time. Bookmarks sit 2-3 s after the event.
+
+- **5:29.8, mild false brake, aEgo -1.6 (command -1.0 to -1.4).**
+  - Entering a left curve (steer -8 deg), lead #47 was about 3 m off-centre. Its measured range fell from 50.2 m to 40.8 m in 1.3 s, with vRel -5.8 to -7.2 and no coast.
+  - Over the same window the camera lead held at 43-46 m and v about 15 (ego 16.3).
+  - This is consistent with the reflection point moving to the side of the turning car.
+  - Not a coast artefact. It is the same family as the one-sweep blip at 5:21.5 (command -1.39).
+- **13:35.7, hard brake -3.5 (aEgo -4.4) at 13:32.**
+  - Traffic was slowing to about 5 m/s on a right curve (steer +4 to +7 deg).
+  - At 13:31.3, leadOne switched from #42 (70-80 m, y 3.0) to #32 (47-51 m, y 5.5, modelProb 0.86-0.91).
+  - The camera lead was at 65-71 m, y about 5.3 in the radar frame. Scaled to 47 m along the curve, the lane centre sits near y 2.8, so #32 was likely about 2.5 m right of the ego path.
+  - Braking for #32 instead of #42 roughly doubles the required decel.
+  - This is a candidate for D-048 lead arbitration: a model match on lateral position that accepts an 18 m range mismatch. No change on one instance.
+- **18:09.8, -1.2 to -2.0 at 70-105 m for #5, a car slowing to nearly a stop.**
+  - The camera put it at v 1-3; the range rate from 91.8 to 54.9 m over 3.5 s says about -10.5 against measured vRel -7.5.
+  - There was one 0.55 s coast (-10.5, 18:06.75-18:07.30) while the range said about -5.
+  - The coast implies vLead about 9, so it is not reversing and STATUS 179 does not act.
+  - The braking matches v²/2d, about 1.8.
+- **20:05.4, real hard brake -3.5 (aEgo -4.3) at 20:04.** In-lane lead #39 braked hard (radar vRel -9.1, camera v 14 -> 5, prob 1.0). Radar and camera agree.
+
+**Replay of the STATUS 179 fix** (in-tree code, A = v_ego not fed, RF = fed; `/tmp/rv/ab2.py`, which reproduces 287 160.0 -2.00 -> -1.50):
+
+- 0 points lost.
+- None of the 5 braking episodes moved (3 of them protected).
+- Lead values differed in 18 frames, with no planner consequence.
