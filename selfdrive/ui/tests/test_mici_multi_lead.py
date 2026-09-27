@@ -395,3 +395,70 @@ def _ld(d, y, track=-1, v=10.0):
 ])
 def test_same_lead(a, b, expected):
   assert mr.same_lead(a, b) is expected
+
+
+def _radar_renderer(monkeypatch, enabled, points, valid=True):
+  import numpy as np
+  import pyray as rl
+  dots = []
+  monkeypatch.setattr(mr.rl, "draw_circle_v", lambda c, r, color: dots.append((round(c.x), round(c.y), r)))
+  r = mr.ModelRenderer.__new__(mr.ModelRenderer)
+  r._params = SimpleNamespace(get_bool=lambda key, default=False: enabled if key == "RadarTracksUI" else default)
+  r._rect = rl.Rectangle(0, 0, 500, 240)
+  r._clip_region = rl.Rectangle(-500, -500, 1500, 1240)
+  x = np.linspace(0.0, 100.0, 33)
+  r._path = SimpleNamespace(raw_points=np.stack([x, np.zeros_like(x), np.zeros_like(x)], axis=1))
+  r._path_offset_z = 1.2
+  # pinhole: screen x = 250 + 200*y/d, screen y = 100 + 200*z/d
+  r._car_space_transform = np.array([[250.0, 200.0, 0.0], [100.0, 0.0, 200.0], [1.0, 0.0, 0.0]])
+  return r, _TracksSM(valid, points), dots
+
+
+class _TracksSM:
+  def __init__(self, valid, points):
+    self.valid = {"liveTracks": valid}
+    self._tracks = SimpleNamespace(points=points)
+
+  def __getitem__(self, key):
+    return self._tracks
+
+
+def test_radar_points_drawn_as_dots_on_the_road(monkeypatch):
+  pts = [SimpleNamespace(dRel=20.0, yRel=0.0), SimpleNamespace(dRel=40.0, yRel=-2.0)]
+  r, sm, dots = _radar_renderer(monkeypatch, True, pts)
+  r._draw_radar_points(sm)
+  # outline then fill per point; yRel -2 (right) projects right of centre
+  assert dots == [(250, 112, mr.RADAR_POINT_OUTLINE_RADIUS), (250, 112, mr.RADAR_POINT_RADIUS),
+                  (260, 106, mr.RADAR_POINT_OUTLINE_RADIUS), (260, 106, mr.RADAR_POINT_RADIUS)]
+
+
+@pytest.mark.parametrize("enabled, valid", [(False, True), (True, False)])
+def test_radar_points_need_the_toggle_and_valid_tracks(monkeypatch, enabled, valid):
+  r, sm, dots = _radar_renderer(monkeypatch, enabled, [SimpleNamespace(dRel=20.0, yRel=0.0)], valid)
+  r._draw_radar_points(sm)
+  assert dots == []
+
+
+def test_lead_two_that_is_lead_one_again_is_not_drawn():
+  import numpy as np
+  import pyray as rl
+  r = mr.ModelRenderer.__new__(mr.ModelRenderer)
+  r._rect = rl.Rectangle(0, 0, 500, 240)
+  x = np.linspace(0.0, 100.0, 33)
+  r._path = SimpleNamespace(raw_points=np.stack([x, np.zeros_like(x), np.zeros_like(x)], axis=1))
+  r._path_offset_z = 1.2
+  r._map_to_screen = lambda d, y, z: (250.0, 100.0)
+  r._clock = lambda: 0.0
+  same = SimpleNamespace(leadOne=_ld(2.65, -2.04), leadTwo=_ld(2.38, -1.87))  # 0000028a seg 28 1694.8 s
+  r._update_leads(same, x)
+  assert r._lead_vehicles[0].chevron and not r._lead_vehicles[1].chevron
+  apart = SimpleNamespace(leadOne=_ld(19.0, -0.3), leadTwo=_ld(12.4, -1.0, 7))
+  r._update_leads(apart, x)
+  assert r._lead_vehicles[0].chevron and r._lead_vehicles[1].chevron
+
+
+def test_off_screen_radar_points_are_dropped_not_pinned_to_the_edge(monkeypatch):
+  # yRel 30 (left) at 20 m projects to x 250 - 300 = -50: off the 500 px view
+  r, sm, dots = _radar_renderer(monkeypatch, True, [SimpleNamespace(dRel=20.0, yRel=30.0), SimpleNamespace(dRel=20.0, yRel=0.0)])
+  r._draw_radar_points(sm)
+  assert [d[:2] for d in dots] == [(250, 112), (250, 112)]

@@ -10,6 +10,7 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.controls.lib.lane_centering import get_lane_centering_visual_direction
 from openpilot.selfdrive.locationd.calibrationd import HEIGHT_INIT
 from openpilot.selfdrive.ui.lib.starpilot_theme import get_param_color, get_theme_color, get_visual_color, is_stock_color_scheme, with_alpha
+from openpilot.selfdrive.ui.onroad.radar_tracks import project_radar_points
 from openpilot.selfdrive.ui.onroad.starpilot.rainbow_path import RainbowPath
 from openpilot.selfdrive.ui.lib.starpilot_visuals import LeadInfoMode, blend_colors, lead_indicator_enabled, lead_info_mode, multi_lead_ui_enabled
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
@@ -20,6 +21,13 @@ from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets import Widget
 
 CLIP_MARGIN = 500
+# Radar points (liveTracks), behind the "Radar Point Display" toggle (RadarTracksUI) like the big UI; sized down from its
+# 7 / 9 px dots for the 536 px C4 screen (owner request). Drawn over the lead markers, so a lead's radar return shows
+# against its vision marker; points off the screen are dropped rather than pinned to its edge.
+RADAR_POINT_RADIUS = 4.0
+RADAR_POINT_OUTLINE_RADIUS = 5.5
+RADAR_POINT_FILL_COLOR = rl.Color(255, 40, 40, 230)
+RADAR_POINT_OUTLINE_COLOR = rl.Color(0, 0, 0, 170)
 # A close lead's marker is clamped against the bottom of the view and its speed label is cut off below it, so it is
 # flipped: drawn on the lead's roof, pointing down, with its speed above it (owner request).
 LEAD_ROOF_HEIGHT = 1.5         # m above the road where the flipped marker's tip sits
@@ -257,6 +265,27 @@ class ModelRenderer(Widget):
       self._draw_lead_indicator(radar_state)
       if self._multi_lead_ui:
         self._draw_multi_lead_overlay(radar_state, starpilot_radar_state)
+    self._draw_radar_points(sm)
+
+  def _draw_radar_points(self, sm) -> None:
+    """Every radar point (liveTracks) on screen as a small dot on the road."""
+    if not self._params.get_bool("RadarTracksUI") or not sm.valid.get("liveTracks", False) or self._clip_region is None:
+      return
+    points = sm["liveTracks"].points
+    if len(points) == 0 or self._path.raw_points.size == 0:
+      return
+    rect = self._rect
+    bounds = (rect.x, rect.y, rect.x + rect.width, rect.y + rect.height)
+    screen = project_radar_points(
+      np.fromiter((float(p.dRel) for p in points), dtype=np.float64, count=len(points)),
+      np.fromiter((float(-p.yRel) for p in points), dtype=np.float64, count=len(points)),
+      self._path.raw_points[:, 0], self._path.raw_points[:, 2], self._car_space_transform, float(self._path_offset_z),
+      bounds, bounds,  # clip to the view itself: off-screen points are dropped, not clamped to the edge
+    )
+    for x, y in screen:
+      center = rl.Vector2(float(x), float(y))
+      rl.draw_circle_v(center, RADAR_POINT_OUTLINE_RADIUS, RADAR_POINT_OUTLINE_COLOR)
+      rl.draw_circle_v(center, RADAR_POINT_RADIUS, RADAR_POINT_FILL_COLOR)
 
   def _should_render_lead_indicator(self, radar_state) -> bool:
     return radar_state is not None and lead_indicator_enabled(self._params, hide_by_default=True)
@@ -296,6 +325,10 @@ class ModelRenderer(Widget):
     leads = [radar_state.leadOne, radar_state.leadTwo]
 
     for i, lead_data in enumerate(leads):
+      if i == 1 and same_lead(leads[0], lead_data):
+        # leadTwo is often leadOne again; the two slots keep separate flip memories, so drawing both could put one
+        # marker on the roof and the other under the car (00000028a seg 28 1694.8 s, a 2.4 m lead)
+        continue
       if lead_data and lead_data.status:
         d_rel, y_rel, v_rel = lead_data.dRel, lead_data.yRel, lead_data.vRel
         idx = self._get_path_length_idx(path_x_array, d_rel)
