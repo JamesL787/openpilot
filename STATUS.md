@@ -8718,7 +8718,7 @@ Script (in /tmp, not committed): `/tmp/epsff/core_replay.py`.
 - `/tmp/epsff/dither.py` computes the high-pass and command-step figures.
 - 284 was extracted to `/tmp/epsff/00000284--1109db7c4c.npz`. No routes were fetched.
 
-## 167. First drive with the STATUS 160 onset debounce: route 00000285--1cd7a85309. Limited road evidence: one short drive, 7.0 engaged minutes, mostly intersection turns. No code change.
+## 171. First drive with the STATUS 160 onset debounce: route 00000285--1cd7a85309. Limited road evidence: one short drive, 7.0 engaged minutes, mostly intersection turns. No code change.
 
 **Setup.** The device ran `f71648c5` (clean) with `NrdrLatEpsFirmwareFF` off, so this is the NRDR PID.
 - Threshold 2000 with centre boost 2000.
@@ -8895,7 +8895,7 @@ The sim wobble for ClarityEps is 2–3×. On 286 the road shows 4–6×, because
 
 Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r286_resume2.py. Not committed.
 
-## 168. Owner's 285 turn notes, and a LowSpeed P sweep (owner: "try 2 first, then 1"). Log decode and closed-loop sim only; no code or param change.
+## 172. Owner's 285 turn notes, and a LowSpeed P sweep (owner: "try 2 first, then 1"). Renumbered from a duplicate 168; commit d6eafad6's "STATUS 167" is 171 and e686f02a's "STATUS 168" is this entry. Log decode and closed-loop sim only; no code or param change.
 
 **The owner's turns.** No stutter was reported. The notes were: 7:06 R "did not commit", 7:58 R "too wild", 9:15 L "undershoots", 10:01 R "wide".
 - **7:12 R** (5.8 mph, wheel to −250°): the command is saturated at −1.0 and the wheel trails the target by 35–43°. This is an authority limit.
