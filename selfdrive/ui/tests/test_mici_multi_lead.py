@@ -331,3 +331,67 @@ def test_label_near_the_view_edge_is_kept_on_screen(monkeypatch):
   renderer, drawn = _label_renderer(monkeypatch)
   renderer._draw_lead_label(_chevron(395), "12 mph", 26, side=0)
   assert drawn == [400 - 60 - 3]
+
+
+def _placer(t):
+  import pyray as rl
+  r = mr.ModelRenderer.__new__(mr.ModelRenderer)
+  r._rect = rl.Rectangle(0, 0, 500, 240)
+  r._clock = lambda: t[0]
+  return r
+
+
+CLOSE, FAR, ROOF = (250, 400), (250, 100), (250, 60)
+
+
+def test_flip_back_is_held_for_the_minimum_time():
+  t = [0.0]
+  r = _placer(t)
+  assert r._place_lead(("path", 0), 5.0, 0.0, CLOSE, ROOF).flipped
+  t[0] = 0.5  # lead creeps away: geometry says upright, but the flip is only 0.5 s old
+  assert r._place_lead(("path", 0), 12.0, 0.0, FAR, ROOF).flipped
+  t[0] = 1.05
+  assert not r._place_lead(("path", 0), 12.0, 0.0, FAR, ROOF).flipped
+  t[0] = 1.5  # and the upright form is held too
+  assert not r._place_lead(("path", 0), 5.0, 0.0, CLOSE, ROOF).flipped
+  t[0] = 2.1
+  assert r._place_lead(("path", 0), 5.0, 0.0, CLOSE, ROOF).flipped
+
+
+def test_flip_state_survives_a_short_dropout_but_not_a_long_one():
+  t = [0.0]
+  r = _placer(t)
+  sz = 750 / (8.0 / 3 + 30)
+  band = (250, r._rect.height - sz - mr.LEAD_LABEL_ROOM - 0.5 * sz)  # inside the unflip hysteresis band
+  assert r._place_lead(("path", 0), 8.0, 0.0, CLOSE, ROOF).flipped
+  t[0] = 1.5
+  assert r._place_lead(("path", 0), 8.0, 0.0, CLOSE, ROOF).flipped
+  t[0] = 1.6  # 00000267 seg 10 625.0 s: the lead blinks out for a frame and returns inside the band
+  assert r._place_lead(("path", 0), 8.0, 0.0, band, ROOF).flipped
+  t[0] = 3.0  # gone for 1.4 s: starts fresh, upright
+  assert not r._place_lead(("path", 0), 8.0, 0.0, band, ROOF).flipped
+
+
+def test_held_form_that_cannot_be_drawn_gives_way():
+  t = [0.0]
+  r = _placer(t)
+  assert r._place_lead(("path", 0), 5.0, 0.0, CLOSE, ROOF).flipped
+  t[0] = 0.2  # roof no longer projects: draw it upright rather than not at all
+  lead = r._place_lead(("path", 0), 12.0, 0.0, FAR, None)
+  assert not lead.flipped and lead.chevron
+
+
+def _ld(d, y, track=-1, v=10.0):
+  return SimpleNamespace(status=True, dRel=d, yRel=y, vLead=v, vRel=0.0, radarTrackId=track)
+
+
+@pytest.mark.parametrize("a, b, expected", [
+  (_ld(7.9, -3.2, 41), _ld(7.9, -3.2, 41), True),     # 00000267 seg 16 38.2 s: leadOne and leadRight, track 41
+  (_ld(7.9, -3.2, 41), _ld(9.5, -3.0, 41), True),     # same track, positions drifted apart
+  (_ld(40.0, -0.2), _ld(40.8, 0.4), True),            # vision-only (track -1), same spot
+  (_ld(54.9, 0.1, 28), _ld(102.8, 2.8, 44), False),   # seg 13 782.7 s: two cars at the same speed
+  (_ld(10.3, 0.0, 48), _ld(28.2, -3.3, 41), False),   # seg 10 618.5 s
+  (_ld(7.9, -3.2, 41), SimpleNamespace(status=False, dRel=7.9, yRel=-3.2, radarTrackId=41), False),
+])
+def test_same_lead(a, b, expected):
+  assert mr.same_lead(a, b) is expected

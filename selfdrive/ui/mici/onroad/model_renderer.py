@@ -1,5 +1,6 @@
 import colorsys
 import math
+import time
 import numpy as np
 import pyray as rl
 from cereal import messaging, car
@@ -24,6 +25,15 @@ CLIP_MARGIN = 500
 LEAD_ROOF_HEIGHT = 1.5         # m above the road where the flipped marker's tip sits
 LEAD_LABEL_ROOM = 32           # px a speed label needs next to its marker: 2 px gap + the 26 px label box (30.2 px)
 FLIPPED_LEAD_UNFLIP_SZ = 1.0   # hysteresis: stays flipped until the upright label has this many marker sizes to spare
+# Stop-and-go (owner: "flip back without flicker"): a marker holds each flip at least this long, and a lead slot keeps
+# its flip state through a dropout this short (route 00000267 seg 10 625.0 s: a flipped lead blinked out for one frame
+# and came back upright inside the hysteresis band).
+LEAD_FLIP_MIN_HOLD_S = 1.0
+LEAD_FLIP_MEMORY_S = 1.0
+# An adjacent-lane lead this close to an in-path lead is the same car; only the in-path marker and label are drawn
+# (owner: "sometimes the speed label doubles"; 00000267 seg 16 38.2 s: leadOne and leadRight were radar track 41).
+SAME_LEAD_D_REL = 1.5
+SAME_LEAD_Y_REL = 1.0
 MIN_DRAW_DISTANCE = 10.0
 MAX_DRAW_DISTANCE = 100.0
 STOCK_LANE_LINES_COLOR = rl.Color(255, 255, 255, 255)
@@ -103,6 +113,23 @@ def lead_in_adjacent_lane(d_rel: float, y_rel: float, left: bool, lane_lines, la
 
   model_y = -y_rel
   return bool(min(inner, outer) < model_y < max(inner, outer))
+
+
+def same_lead(a, b) -> bool:
+  """Two published leads that are one car: the same radar track, or (vision-only, track -1) the same spot."""
+  if not (a and a.status and b and b.status):
+    return False
+  a_track, b_track = getattr(a, "radarTrackId", -1), getattr(b, "radarTrackId", -1)
+  if a_track >= 0 and a_track == b_track:
+    return True
+  return abs(a.dRel - b.dRel) < SAME_LEAD_D_REL and abs(a.yRel - b.yRel) < SAME_LEAD_Y_REL
+
+
+@dataclass
+class _FlipState:
+  flipped: bool
+  changed_at: float
+  seen_at: float
 
 
 @dataclass
@@ -218,7 +245,7 @@ class ModelRenderer(Widget):
       self._update_model(lead_one, path_x_array)
       if render_lead_indicator:
         self._update_leads(radar_state, path_x_array)
-      self._update_adjacent_leads(starpilot_radar_state, path_x_array)
+      self._update_adjacent_leads(starpilot_radar_state, path_x_array, radar_state if render_lead_indicator else None)
       self._transform_dirty = False
 
     self._draw_lane_lines()
@@ -265,7 +292,6 @@ class ModelRenderer(Widget):
 
   def _update_leads(self, radar_state, path_x_array):
     """Update positions of lead vehicles"""
-    prev = getattr(self, "_lead_vehicles", None) or [LeadVehicle(), LeadVehicle()]
     self._lead_vehicles = [LeadVehicle(), LeadVehicle()]
     leads = [radar_state.leadOne, radar_state.leadTwo]
 
@@ -279,17 +305,19 @@ class ModelRenderer(Widget):
         point = self._map_to_screen(d_rel, -y_rel, z + self._path_offset_z)
         top = self._map_to_screen(d_rel, -y_rel, z + self._path_offset_z - LEAD_ROOF_HEIGHT)
         if point or top:
-          self._lead_vehicles[i] = self._update_lead_vehicle(d_rel, v_rel, point, self._rect, top=top,
-                                                             was_flipped=prev[i].flipped)
+          self._lead_vehicles[i] = self._place_lead(("path", i), d_rel, v_rel, point, top)
 
-  def _update_adjacent_leads(self, starpilot_radar_state, path_x_array):
-    """Screen positions of the left/right adjacent-lane leads (starpilotRadarState), Developer UI only."""
-    prev = getattr(self, "_adjacent_lead_vehicles", None) or [LeadVehicle(), LeadVehicle()]
+  def _update_adjacent_leads(self, starpilot_radar_state, path_x_array, radar_state=None):
+    """Screen positions of the left/right adjacent-lane leads (starpilotRadarState), Developer UI only. A side lead
+    that is the same car as an in-path lead is left out, so it is not drawn and labelled twice."""
+    in_path = (radar_state.leadOne, radar_state.leadTwo) if radar_state is not None else ()
     self._adjacent_lead_vehicles = [LeadVehicle(), LeadVehicle()]
     if starpilot_radar_state is None:
       return
     lane_lines = [line.raw_points for line in self._lane_lines]
     for i, lead_data in enumerate((starpilot_radar_state.leadLeft, starpilot_radar_state.leadRight)):
+      if any(same_lead(lead_data, p) for p in in_path):
+        continue
       if lead_data and lead_data.status and lead_in_adjacent_lane(lead_data.dRel, lead_data.yRel, i == 0,
                                                                   lane_lines, self._lane_line_probs):
         d_rel, y_rel, v_rel = lead_data.dRel, lead_data.yRel, lead_data.vRel
@@ -298,9 +326,29 @@ class ModelRenderer(Widget):
         point = self._map_to_screen(d_rel, -y_rel, z + self._path_offset_z)
         top = self._map_to_screen(d_rel, -y_rel, z + self._path_offset_z - LEAD_ROOF_HEIGHT)
         if point or top:
-          self._adjacent_lead_vehicles[i] = self._update_lead_vehicle(d_rel + abs(y_rel), v_rel, point, self._rect,
-                                                                      scale=ADJACENT_LEAD_SCALE, top=top,
-                                                                      was_flipped=prev[i].flipped)
+          self._adjacent_lead_vehicles[i] = self._place_lead(("side", i), d_rel + abs(y_rel), v_rel, point, top,
+                                                             scale=ADJACENT_LEAD_SCALE)
+
+  def _clock(self) -> float:
+    return time.monotonic()
+
+  def _place_lead(self, key, d_rel, v_rel, point, top, scale: float = 1.0) -> "LeadVehicle":
+    """_update_lead_vehicle with per-slot flip memory: the flip state survives a dropout of up to
+    LEAD_FLIP_MEMORY_S, and a flip is held at least LEAD_FLIP_MIN_HOLD_S before it may switch back."""
+    now = self._clock()
+    states = self.__dict__.setdefault("_flip_states", {})
+    mem = states.get(key)
+    if mem is not None and now - mem.seen_at > LEAD_FLIP_MEMORY_S:
+      mem = None
+    was = mem.flipped if mem else False
+    lead = self._update_lead_vehicle(d_rel, v_rel, point, self._rect, scale=scale, top=top, was_flipped=was)
+    if mem and lead.flipped != was and now - mem.changed_at < LEAD_FLIP_MIN_HOLD_S:
+      held = self._update_lead_vehicle(d_rel, v_rel, point, self._rect, scale=scale, top=top, was_flipped=was, force_flip=was)
+      if held.chevron:
+        lead = held
+    changed_at = mem.changed_at if mem and lead.flipped == was else now
+    states[key] = _FlipState(lead.flipped, changed_at, now)
+    return lead
 
   def _draw_multi_lead_overlay(self, radar_state, starpilot_radar_state) -> None:
     """Developer UI: adjacent-lane lead markers, and each marker's lead speed right beneath it."""
@@ -531,7 +579,8 @@ class ModelRenderer(Widget):
     gradient_top = np.clip((float(np.min(visible_track_y)) - self._rect.y) / self._rect.height, 0.0, 1.0)
     return float(gradient_bottom), float(gradient_top)
 
-  def _update_lead_vehicle(self, d_rel, v_rel, point, rect, scale: float = 1.0, top=None, was_flipped: bool = False):
+  def _update_lead_vehicle(self, d_rel, v_rel, point, rect, scale: float = 1.0, top=None, was_flipped: bool = False,
+                           force_flip: bool | None = None):
     """Marker under the lead (tip up at its bottom edge). When it and its speed label would not fit above the bottom
     of the view (a close lead) and the lead's roof point `top` is known, the marker flips: tip down on the roof."""
     speed_buff, lead_buff = 10.0, 40.0
@@ -551,7 +600,10 @@ class ModelRenderer(Widget):
 
     # flip when the upright marker plus the label under it would not fit above the bottom of the view
     bottom_room = sz + LEAD_LABEL_ROOM + (sz * FLIPPED_LEAD_UNFLIP_SZ if was_flipped else 0.0)
-    if top is not None and (point is None or point[1] > rect.height - bottom_room):
+    flip = top is not None and (point is None or point[1] > rect.height - bottom_room)
+    if force_flip is not None and (top if force_flip else point) is not None:
+      flip = force_flip  # hold the current form (stop-and-go), when that form can be drawn
+    if flip:
       x = np.clip(top[0], 0.0, rect.width - sz / 2)
       y = min(max(top[1], sz + LEAD_LABEL_ROOM), rect.height - sz * 0.6)
       # tip down; points listed in reverse so the fan keeps the winding of the upright marker

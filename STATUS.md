@@ -6065,6 +6065,16 @@ Run: all 17 item 104 routes plus 266 and 267, `--bearings 0.075 --fixes`, at HEA
   - seg 17 45.0 s, an SUV at 3.5 m, stopped: the marker is held at the top, on the rear glass.
   - In all three the marker and label are fully visible; before, each showed only a marker corner at the bottom edge.
   - Owner reviewed these renders and kept `LEAD_ROOF_HEIGHT` at 1.5 m ("it looks fine"). Raising it to about 1.9 m was offered, to put the marker above pickup cabs.
+- **Stop-and-go flicker and doubled labels** (owner, 2026-09-27: "make it flip back without flicker in stop-and-go"; "sometimes the speed label doubles").
+  - Method: a frame-by-frame replay through the real `ModelRenderer` on 00000267 segs 3, 4, 10, 13, 14, 16 and 17 (about 8,400 frames), with the renderer clock pinned to log time. Scratch harness, not committed.
+  - **Flicker cause found.** At seg 10 625.0 s a flipped lead (vision-only, 16 m) blinked out for one frame and came back upright, inside the hysteresis band, because the flip state lived on the per-frame `LeadVehicle` and was lost with it.
+  - **Fix:** `_place_lead` keeps a flip state per lead slot. It survives a dropout of up to 1 s (`LEAD_FLIP_MEMORY_S`), and any flip, either way, is held at least 1 s (`LEAD_FLIP_MIN_HOLD_S`) unless the held form cannot be drawn.
+  - Replayed: that frame now stays flipped. Every remaining form change is a single one, at least 8.9 s apart, including after a gap longer than 1 s.
+  - **Doubled label, cause 1:** a side-lane lead that is the same car as an in-path lead. At seg 16 38.2 s, leadOne and leadRight were both radar track 41; this happened on 29 frames across segs 14 and 16.
+  - **Fix:** `same_lead()` matches the same radar track (≥ 0), or for vision-only leads the same spot (within 1.5 m dRel and 1.0 m yRel). A matching side lead is not drawn. Replayed: 0 such frames.
+  - **Doubled label, cause 2, left alone:** two different cars doing the same speed, for example seg 13 782.7 s (leadOne 55 m, track 28; leadLeft 103 m, track 44), about 170 frames. They are two cars.
+  - Not changed: a lead that blinks out for a few frames (seg 10 625 s, a vision lead at yRel 7–8 m) still makes its marker disappear for those frames. That is the published lead status, not the UI.
+  - 3 flip-memory tests and 6 `same_lead` cases added; 80 passed.
 - **Watch:** a tall lead (truck, SUV) has its roof above 1.5 m, so the marker sits on the rear of the body rather than above it (rendered above). Photograph it if the marker flickers between the two forms in stop-and-go.
 
 ## 109. The item 107 per-track hold is shipped in the planner (ffa72fdc, owner approved); the shipped code reproduces the replay prototype on 19 routes. Replay evidence only; brake-affecting; not driven.
