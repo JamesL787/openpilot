@@ -287,6 +287,11 @@ class NRDRTuningLayout(_SettingsPage):
              "Steer with James's modified-EPS controller: a feedforward that inverts the EPS firmware's own "
              "control law plus a PID on fixed per-band trims. The Lat P/I/F sliders and the other lateral shaping "
              "do not apply while on. Takes effect on the next drive. Off, the feedforward is only logged."),
+      toggle("NrdrLatPidFirmwareFF", "PID Turn Feedforward (Test)",
+             "Keep the NRDR PID and your Lat P/I/F trims, and add James's EPS firmware feedforward in turns only: "
+             "none within 10 deg of centre, full from 30 deg, so it does not bring back the near-centre wobble. "
+             "Fades in once the wheel is within 10 deg of the path; a driver press takes it out. "
+             "No effect while EPS Firmware Feedforward (James's controller) is on."),
       toggle("NrdrLatModelActionInterp", "Model Action Interpolation",
              "Ramp the model's 20 Hz steering action across the model frame instead of holding it. "
              "Removes the 20 Hz staircase in the target that the smoothing filter otherwise has to hide."),

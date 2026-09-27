@@ -9009,3 +9009,46 @@ How it is wired:
 - The ruff findings in carcontroller.py and the learner test file were already there; none are on changed lines.
 
 **Reading it back.** `LogReader(...)` → `m.starpilotCarState.gasLearnerGasFactorRaw` etc.
+
+## 175. `NrdrLatPidFirmwareFF` (new, default off): the NRDR PID gets James's EPS firmware feedforward in turns only, gated by |desired angle|. This is option 3 from STATUS 172. It is separate from James's controller. Static tests and closed-loop sim only; not driven.
+
+- **Owner asks:** "add the fix for nrdr pid lateral tuner to the main branch", and keep James's controller separate. Also: "make sure it's gated behind the actual controller, so whatever fix that works for pid doesnt impact the new controller and vice versa."
+- **What it does.** This is the STATUS 165 crossfade, back in `LatControlPID` behind its own key, with one addition: the weight also scales with |desired angle|. It is 0 below 10° and full from 30°.
+  - In a turn it replaces the kf and rate feedforward (both at 1 − w) with w × the firmware-inversion feedforward.
+  - P and I are unchanged, and the `LatFScale*` trims do not scale the firmware term (as upstream).
+  - Join gate as upstream fd815ef3: the weight ramps in over 0.5 s once the error is under 10°, and a press or v < 2 m/s drops it. It reaches full weight at 4 m/s.
+  - If the feedforward throws or goes non-finite, the weight drops to 0 and the toggle-off command carries on.
+  - `epsFfWeight` on starpilotLateralState now logs the applied weight.
+- **Why the gate.** STATUS 170: ungated, the feedforward makes the wheel follow the model's near-centre wiggle, 4–6× PID's wobble below 12 m/s on 286. The gate keeps it out of exactly that region.
+- **Kept apart from James's controller.**
+  - The gate, the join and the speed constants (`NRDR_PID_EPS_FF_*`, `nrdr_pid_eps_ff_weight`) live in `latcontrol_pid.py`, so a change to `nrdr_eps_firmware_ff.FF_SPEED_BP` or its join constants on clarity-eps-testing does not move the PID.
+  - `LatControlClarityEps` never reads `NrdrLatPidFirmwareFF`. With `NrdrLatEpsFirmwareFF` on, controlsd runs James's controller and this path does not run at all.
+  - What the two share is the feedforward model itself, `ClarityEpsFirmwareFeedforward` and its calibrations. A change there moves both.
+  - Tests pin all of this, including that the PID's weights are unchanged when `nrdr_eps_firmware_ff`'s gate constants are patched.
+- **Sim (tools/lateral/lat_pid_sim.py, C020 banded plant, logged params, this code).** Mean |des − angle| over hands-off frames with |des| > 45°, off → on:
+
+  | route | < 12 mph | 12–25 mph | wobble 2–5 / 5–8 / 8–12 / 12–20 m/s, off → on |
+  |---|---|---|---|
+  | 286 | 23.2 → 15.3° | 14.2 → 10.7° | 1.27/0.27/0.24/0.07 → 1.27/0.27/0.23/0.07 |
+  | 285 | 17.3 → 15.4° | 13.6 → 11.4° | 0.58/0.37/0.20/0.12 → 0.58/0.37/0.20/0.11 |
+  | 280 | 15.6 → 15.3° | 14.0 → 11.6° | unchanged, 0.25/0.19/0.15/0.10 |
+  | 284 | 24.2 → 23.8° | 8.5 → 7.2° | 0.48/0.33/0.13/0.11 → 0.45/0.34/0.13/0.11 |
+
+  - Wobble is the STATUS 170 metric (0.4–3 Hz rms, |angle| and |des| < 12° held 1.5 s).
+  - Ungated, the same feedforward gives the same turn error but 2–3× the wobble. For example, 286 at 5–8 / 8–12 m/s: 1.03 / 0.67.
+  - The 2–5 m/s bin is not closed-loop (the sim re-syncs to the log below 4 m/s), so resume-from-stop is untested.
+  - Sim trust per STATUS 172: good on 280, reads low on 285, untrusted on 284.
+- **What it can and can't fix on 285 (STATUS 172).**
+  - It adds torque in partial-command turns like 7:58 and 10:01.
+  - It cannot help 7:12, where the command was already saturated.
+  - It cannot help 9:15, where a same-direction press made the car send 0; that is option 1.
+- **Params artifacts.** `common/params_pyx.so` and `libcommon.a` were rebuilt natively on aarch64 with the pinned toolchain: clang 18.1.3, Python 3.12.3, Cython 3.1.4, `SP_FORCE_TICI=1`, the repo bind-mounted at `/work`, sconsign and targets cleared.
+  - `params_pyx.cpp` is byte-identical. Keys go 858 → 859, the only addition `NrdrLatPidFirmwareFF`.
+  - Galaxy: Lateral Tune → "PID Turn Feedforward (Test)".
+- **Tests.**
+  - selfdrive/controls/tests/test_latcontrol_pid_eps_ff.py: 6 pass. They cover the gate, the join and drop, default-off identical, on adds turn torque only in turns, and both isolation checks.
+  - The lateral, sim, galaxy-layout and py39 suites pass.
+  - test_latcontrol.py's Bolt and Palisade taper tests fail with and without this change (pre-existing).
+  - selfdrive/ui/tests/test_device_screen_settings.py segfaults on this host in collection (not investigated).
+- **Suggested first drive:** turn it on together with or after `LatPScaleLowSpeed` 130, and note the same intersections as 285.
+- Scratch: /tmp/epsff_pid/gate_sim.py (harness), real_sim.py (this code).

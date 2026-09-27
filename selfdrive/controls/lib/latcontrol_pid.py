@@ -198,6 +198,29 @@ NRDR_TARGET_SMOOTH_TAU = 0.1
 # for the slew as it is asked for. Default 0 = off (STATUS 133 has the sim sweep).
 NRDR_RATE_FF_DEFAULT = 0.0
 
+# nrdr: NrdrLatPidFirmwareFF (STATUS 175) crossfades the kf and rate feedforward into the EPS firmware-inversion
+# feedforward (the STATUS 165 path) in turns only. Join gate as upstream fd815ef3: the weight ramps in over
+# 0.5 s once the error is under 10 deg, a press or v < 2 m/s drops it, full weight from 4 m/s. On top of that
+# the weight scales with |desired angle|, 0 below 10 deg and full from 30 deg: ungated, the feedforward makes
+# the wheel follow the model's near-centre wiggle (STATUS 170, route 286, 4-6x PID wobble below 12 m/s).
+# Closed-loop sim on 280/284/285/286 kept all of the ungated turn gain with wobble at PID level (STATUS 175).
+# Own constants so James's controller (nrdr_eps_firmware_ff.FF_SPEED_BP) can change without moving this.
+NRDR_PID_EPS_FF_JOIN_ERROR_DEG = 10.0
+NRDR_PID_EPS_FF_FADE_IN_S = 0.5
+NRDR_PID_EPS_FF_SPEED_BP = (2.0, 4.0)
+NRDR_PID_EPS_FF_ANGLE_BP = (10.0, 30.0)
+
+
+def nrdr_pid_eps_ff_weight(ramp, error_deg, desired_angle_deg, v_ego, steering_pressed, dt):
+  """Returns (ramp, weight). The ramp is the join state; the weight is what multiplies the feedforward."""
+  if steering_pressed or v_ego < NRDR_PID_EPS_FF_SPEED_BP[0]:
+    ramp = 0.0
+  elif ramp > 0.0 or abs(error_deg) < NRDR_PID_EPS_FF_JOIN_ERROR_DEG:
+    ramp = min(1.0, ramp + dt / NRDR_PID_EPS_FF_FADE_IN_S)
+  speed_w = float(np.interp(v_ego, NRDR_PID_EPS_FF_SPEED_BP, (0.0, 1.0)))
+  angle_w = float(np.interp(abs(desired_angle_deg), NRDR_PID_EPS_FF_ANGLE_BP, (0.0, 1.0)))
+  return ramp, ramp * speed_w * angle_w
+
 # nrdr: the Lat*Scale bands switch hard at 25 and 50 mph, and PIDController integrates at the
 # unscaled gain, so a band with an I trim of 0 hid a live integrator. Route 277 (STATUS 136):
 # at 50 mph, straight, target flat, vEgo 50.00 -> 49.98 mph stepped the I trim 0 -> 0.75 while
@@ -503,10 +526,14 @@ class LatControlPID(LatControl):
     self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
     self.is_rav4_tss2 = CP.carFingerprint in RAV4_TSS2_CARS
     self.prev_angle_steers_des_no_offset = 0.0
-    # nrdr: firmware-inversion feedforward, SHADOW ONLY (upstream JamesL787 52618f42). Computed every frame and
-    # logged on starpilotLateralState (controlsd publishes it whenever this attribute exists), never added to
-    # the output. See nrdr_eps_firmware_ff.py.
+    # nrdr: firmware-inversion feedforward (upstream JamesL787 52618f42). Computed every frame and logged on
+    # starpilotLateralState (controlsd publishes it whenever this attribute exists). Only NrdrLatPidFirmwareFF
+    # puts it in the command, in turns, gated by nrdr_pid_eps_ff_weight. See nrdr_eps_firmware_ff.py, STATUS 175.
     self.eps_shadow_ff = None
+    self.eps_ff_enabled = False
+    self.eps_ff_ok = False
+    self.eps_ff_ramp = 0.0
+    self.eps_ff_weight = 0.0
     eps_shadow_cal = {HONDA.HONDA_CLARITY: CLARITY_A020, HONDA.HONDA_CIVIC_BOSCH: CIVIC_BOSCH_C020}.get(CP.carFingerprint)
     if self.is_eps_modified and eps_shadow_cal is not None:
       self.eps_shadow_ff = ClarityEpsFirmwareFeedforward(dt, cal=eps_shadow_cal)
@@ -665,6 +692,9 @@ class LatControlPID(LatControl):
 
     pid_log.steeringAngleDesiredDeg = angle_steers_des
     pid_log.angleError = error
+    if self.eps_shadow_ff is not None:
+      self._update_eps_shadow(active, angle_steers_des_no_offset, CS.vEgo, params.roll)
+    self.eps_ff_weight = 0.0
     if not active:
       output_torque = 0.0
       pid_log.active = False
@@ -682,6 +712,7 @@ class LatControlPID(LatControl):
       # the integrator carried across it (routes 277/278/27a: up to 0.32 into a fresh engagement).
       self.pid.reset()
       self.since_press_s = math.inf
+      self.eps_ff_ramp = 0.0
 
     else:
       self.frame += 1
@@ -756,6 +787,7 @@ class LatControlPID(LatControl):
           self.lpf_tau_highway = _get_param_float(self.params, "HondaLpfTauHighway", NRDR_TARGET_SMOOTH_TAU, 0.0, 5.0)
           self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
           self.rate_ff = _get_param_float(self.params, "NrdrLatRateFF", NRDR_RATE_FF_DEFAULT, 0.0, 2.0)
+          self.eps_ff_enabled = self.eps_shadow_ff is not None and _get_param_bool(self.params, "NrdrLatPidFirmwareFF")
           self.override_fade_up_s = _get_param_float(self.params, "HondaOverrideFadeUpSecs",
                                                      NRDR_OVERRIDE_FADE_UP_S_DEFAULT, 0.0, 10.0)
 
@@ -782,9 +814,18 @@ class LatControlPID(LatControl):
           self.applied_kp = float(np.clip(kp_target, self.applied_kp - step, self.applied_kp + step))
         if kp_target > 0.0:
           self.pid.p *= self.applied_kp / kp_target
-        output_torque = self.pid.p * p_scale + self.pid.i * i_scale + self.pid.d + self.pid.f * f_scale
+        if self.eps_ff_enabled and self.eps_ff_ok:
+          self.eps_ff_ramp, self.eps_ff_weight = nrdr_pid_eps_ff_weight(self.eps_ff_ramp, error, angle_steers_des_no_offset,
+                                                                        CS.vEgo, steering_pressed, self.dt)
+        else:
+          self.eps_ff_ramp = 0.0
+        w = self.eps_ff_weight
+        output_torque = self.pid.p * p_scale + self.pid.i * i_scale + self.pid.d + (1.0 - w) * self.pid.f * f_scale
+        if w > 0.0:
+          # as upstream: the firmware feedforward is not trimmed by LatFScale*, it replaces what they scaled
+          output_torque += w * float(self.eps_shadow_ff.output)
         if self.rate_ff > 0.0:
-          output_torque += self.rate_ff * desired_angle_delta / (100.0 * self.dt)
+          output_torque += (1.0 - w) * self.rate_ff * desired_angle_delta / (100.0 * self.dt)
 
         lane_change = bool(getattr(CS, "leftBlinker", False) or getattr(CS, "rightBlinker", False))
         if lane_change:
@@ -837,7 +878,7 @@ class LatControlPID(LatControl):
       self.prev_output_torque = float(output_torque)
 
     if self.eps_shadow_ff is not None:
-      self._update_eps_shadow(active, angle_steers_des_no_offset, CS.vEgo, params.roll)
+      self.starpilot_lateral_state.epsFfWeight = float(self.eps_ff_weight)
 
     return output_torque, angle_steers_des, pid_log
 
@@ -853,9 +894,10 @@ class LatControlPID(LatControl):
       state.epsFfR5 = float(self.eps_shadow_ff.r5)
       state.epsFfLoad = float(self.eps_shadow_ff.load)
       state.epsFfDesiredRate = float(self.eps_shadow_ff.rate)
-      state.epsFfWeight = 0.0
+      self.eps_ff_ok = bool(active) and math.isfinite(self.eps_shadow_ff.output)
     except Exception:
-      # Shadow only: nothing here may ever reach the steering command.
+      # A failure never reaches the command: the weight drops to 0 and the kf feedforward carries on.
+      self.eps_ff_ok = False
       if not self.eps_shadow_failed:
         cloudlog.exception("nrdr: EPS shadow feedforward failed")
         self.eps_shadow_failed = True

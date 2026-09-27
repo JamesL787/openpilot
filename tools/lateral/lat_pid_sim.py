@@ -62,6 +62,7 @@ TUNING_KEYS = (
   "HondaCenterScale", "HondaCenterBoostThreshold", "HondaCenterBoostMinSpeed",
   "NrdrLatAngleRateLimit", "HondaTorqueLowPassFilter",
   "HondaLpfTauLowSpeed", "HondaLpfTauStandard", "HondaLpfTauHighway", "NrdrLatUseFirmwareVgr", "NrdrLatRateFF",
+  "NrdrLatPidFirmwareFF",
   "HondaLateralPidKpScale", "HondaLateralPidKiScale",
   "NrdrLearnSteerRatio", "NrdrLearnStiffness", "NrdrLearnAngleOffset",
   # carcontroller steering path (opendbc_repo/opendbc/car/honda/carcontroller.py _update_steering_torque)
