@@ -210,8 +210,24 @@ class TestUploader(UploaderTestCase):
     time.sleep(1)
     self.join_thread()
 
+    # all qlogs first, then rlogs newest route first
     assert log_handler.upload_order == [f"{self.seg_dir}/qlog.zst", f"{seg2_dir}/qlog.zst",
-                                        f"{self.seg_dir}/rlog.zst", f"{seg2_dir}/rlog.zst"]
+                                        f"{seg2_dir}/rlog.zst", f"{self.seg_dir}/rlog.zst"]
+
+  def test_upload_rlogs_current_drive_before_backlog(self):
+    # route 284: an old route's rlog backlog took the whole drive and the drive's own rlogs never went up
+    for i in [0, 1, 2]:
+      self.make_file_with_data(self.seg_format.format(i), "rlog", 1)
+    for i in [11, 3, 10]:
+      self.make_file_with_data(self.seg_format2.format(i), "rlog", 1)
+    self.params.put_bool("UploadRlogs", True)
+    up = Uploader("0000000000000000", Paths.log_root())
+    order = []
+    while (f := up.next_file_to_upload(metered=False)) is not None:
+      order.append(f[1])
+      setxattr(f[2], UPLOAD_ATTR_NAME, UPLOAD_ATTR_VALUE)
+    assert order == [f"{self.seg_format2.format(i)}/rlog" for i in [3, 10, 11]] + \
+                    [f"{self.seg_format.format(i)}/rlog" for i in [0, 1, 2]]
 
   def test_upload_rlogs_skips_locked_uploads_metered(self):
     self.gen_files(lock=True, boot=False)

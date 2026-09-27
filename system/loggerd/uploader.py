@@ -146,11 +146,17 @@ class Uploader:
         return name, key, fn
 
     if self.params.get_bool("UploadRlogs"):
-      for name, key, fn in upload_files:
-        if name in self.rlog_names:
-          return name, key, fn
+      rlogs = [f for f in upload_files if f[0] in self.rlog_names]
+      if rlogs:
+        # newest route first, its segments in order, so the drive in progress goes up before an old backlog
+        return max(rlogs, key=self.rlog_sort_key)
 
     return None
+
+  @staticmethod
+  def rlog_sort_key(f: tuple[str, str, str]) -> tuple[str, str, int]:
+    order, route, seg = (get_directory_sort(f[1].split('/')[0]) + ["", ""])[:3]
+    return order, route, -int(seg) if seg.isdigit() else 0
 
   def do_upload(self, key: str, fn: str):
     url_resp = self.api.get("v1.4/" + self.dongle_id + "/upload_url/", timeout=10, path=key, access_token=self.api.get_token())
