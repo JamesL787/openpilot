@@ -9206,3 +9206,49 @@ How it is wired:
 - The saved value at boot was 1.307, and the first minute implies 1.56.
 - Minute medians were 1.56 (min 2), 1.35 (min 3) and 1.38 (min 5).
 - It swings between 1.3 and 1.6 again, above the 1.25 soft band.
+
+## 178. Longitudinal on 00000289--ba86b1c7c3 (build clarity-turn-shaping 3682a600; 19.4 min, 9 % experimental). The owner's three device bookmarks are real hard brakes for braking leads. Longitudinal did not cause the 9:40/10:30 oversteer or the pull-away wobble. No code change. Log decode only.
+
+The lateral side of the same drive is in the STATUS 173 thread (commit 1a098438). Times are log time.
+
+**Brakes below -1.5.** There are eight. All are real leads that radar and vision agree on.
+
+- **1:19.8, -3.69, chill.** Lead #47 at 21 m, vRel -5, aLeadK -3.7. Device bookmark 1:22.4.
+- **6:21.6, -3.52, chill.** Cut-in: vision lead at 83 m, then radar #5 at 43 m closing at -8 m/s, ego 20 m/s. Device bookmark 6:24.3.
+- **12:47.3, -3.48, chill.** Lead #47 braking at aLeadK -4.9, ego 19 m/s down to 3 m/s. Device bookmark 12:49.5.
+- **Milder ones:**
+  - 1:37.1, -2.4
+  - 9:41, -1.7
+  - 10:21.9, -2.1
+  - 3:40.7, -1.57
+  - 3:55.2, -1.51
+
+  These are ordinary slowing for a lead. aEgo tracks aTarget within about 0.4.
+
+**Coasted leads with vLead < 0 (the STATUS 177 pattern).** There are 99 frames across 7 episodes, and none of them was engaged-and-braking.
+
+- **7:19-7:24, not engaged, driver braking.** Track #48 held vRel -13.5 flat for 2.4 s (7:21.0-7:23.4) at 75 to 52 m. Over the same 2.4 s the range fell at about -9.6 m/s, so the held vRel was about 4 m/s too negative.
+  - This is a second instance of 287's 2:39 stale coast.
+  - The candidate floor vRel >= -(vEgo + margin) would **not** catch it, because -13.5 is roughly -vEgo.
+  - A range-rate bound would catch it. That is the rail-hold-only down side of STATUS 129.
+  - It is recorded for the on-hold coast review. Nothing was applied.
+- **17:04, not engaged, driver on gas in a tight turn.** Radar #55, a stationary object at 6 m closing at 2.5 m/s, drove aTarget to -5.6. Nothing was actuated. It looks like a real object near the turn path, not a coast artefact.
+- **The other five** (4:01, 15:10, 16:02, 16:46, 17:42) are at or near standstill or were never leadOne-for-control.
+
+**Pull-aways (the "wobble when resuming").**
+
+- At 0:39.8, 5:08.9 and 15:20 the driver was on the gas and openpilot sent no accel command (acc 0, gasPressed). The wobble still happened.
+- **2:03.6 is the only pull-away under openpilot longitudinal**, and it is the worst wobble per the lateral agent.
+  - The accel command was steady at +1.5 to +1.7.
+  - aEgo was +1.2 to +1.6, with no 1 Hz fore-aft swing in phase with the ±5-12 deg steering swing.
+- Conclusion: the wobble is not driven by a longitudinal surge. This agrees with STATUS 170/173.
+
+**Oversteer bookmarks.**
+
+- **9:40 (log 9:42.5-9:49), experimental.** aTarget peaked at -1.7 at 9:41 for real lead #48. The driver pressed the gas from 9:42.5 and stayed on it through the turn, so there was no openpilot braking during the turn.
+- **10:30 (log 10:31-10:39).** No longitudinal event. aTarget was -0.1 to +0.7, with lead #35 at 22 m until 10:31.5. The driver was on the gas from 10:30.5.
+
+**Gas learner.** A CAN decode as in STATUS 174; the build predates the a2248077 logging.
+
+- Implied gas factor per minute went from 1.25 at the start, peaked at 1.42 (min 2), eased to about 1.23 (min 7-9), and ended at 1.52 (min 13).
+- That is the same 1.2-1.6 swing as 286 and 287, above the 1.25 soft band. It is still open whether this is a table error or grade and lag. The a2248077 logging answers that on the next build that carries it.
