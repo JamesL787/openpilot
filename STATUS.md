@@ -8359,3 +8359,23 @@ Route 00000284, segments 27–28, bus 1:
 - The Civic sends E4 up to ±4096; the Clarity code assumes 3840.
 
 **Needed before a port:** James's C020 telemetry layout (which word is R5), the E4→key scaling on C020, and the R6 scale at the flashed tracker. Then refit the column load model on the owner's routes. Run it in shadow (logged, not applied) and score it against the telemetry R5 before it steers.
+
+**Addendum: telemetry decoded from the firmware** (owner: "use the xray rwd"). Static disassembly of the Trk4500 image (SH-2A, big-endian, capstone 5; the Trk4000 image differs only in the tracker word and checksums), checked against route 284 segments 27–28.
+- **The hook.** 0x1d8f8 jumps to new code at 0x4c2d4. That code copies 16 RAM words, 4 per frame, into 0x6A0–0x6A3 (mailboxes 51–54), then returns to 0x1d900.
+- **The control law.** The patched call at 0x29006 runs the stock law at 0x292a0 and then new code at 0x4c3c4, which adds `45 * R5 >> 10` (KFF45).
+  - R5 is read from `*(gbr+300)+6`. R6 is at gbr+100 = 0xfff88a28 (gbr 0xfff889c4).
+  - The law stores X (clamped to ±65536) at 0xfff8a970, and `err = R5 - R6 - X` at 0xfff8a974 (and clamped at 0xfff8a978).
+
+| frame | bytes | RAM | meaning |
+|---|---|---|---|
+| 0x6A0 | 0–1 | 0xfff801b2 | not identified |
+| 0x6A0 | 2–3 | 0xfff8a97e | not identified |
+| 0x6A0 | 4–7 | 0xfff8a978 | err, clamped (s32) |
+| 0x6A1 | 0–3 | 0xfff8a970 | X (s32) |
+| 0x6A1 | 4–7 | 0xfff8a974 | err (s32) |
+| 0x6A2 | 0–1 | 0xfff88a28 | **R6** (s16): −169.9 counts per deg/s, corr −0.994 |
+| 0x6A2 | 2–7 | 0xfff887c0, 0xfff8701a, 0xfff8aac4 | not identified |
+| 0x6A3 | 0–7 | 0xfff801d8, 0xfff898ae, 0xfff898b0, 0xfff898c6 | 898b0 (bytes 4–5) tracks driver torque; the rest not identified |
+
+- **R5 = err + X + R6** (all from 0x6A1 and 0x6A2 in the same frame). Against the E4 we sent: corr **0.997**, R5 ≈ **7.4 × E4** at a 0–20 ms lag. The Clarity value is 7.7. The fit is linear over the logged range (E4 up to ±4096).
+- The tracker value cannot be read from this data.
