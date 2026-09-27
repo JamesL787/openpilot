@@ -463,17 +463,29 @@ FIT_DELAYS = (0, 2, 4, 6, 8, 10, 12, 15, 20)
 # low-speed curves at 0.94-0.95 of the desired angle against 0.87 logged (STATUS 147). Fit with centring=True.
 CENTRING_DEG = 2.0
 ANGLE_QUANT_DEG = 0.1
+# The C020 firmware's driver-torque yield ("Helper A"): it scales the LKAS output down as the driver's column
+# torque rises, long before steeringPressed. Civic fraction per |STEER_TORQUE_SENSOR|, from James's split of 0x6A0
+# word 0 on route 289 (250/256 below 400, 0.6-0.7 at ~1000, ~124/256 at ~1800, ~50/256 at ~2300; linear fits,
+# R^2 0.56-0.73); 3000 is the stock table's 0. openpilot never sees it (carOutput = the command), so it lives in
+# the plant. Opt-in: a plant fitted with it carries "hands_yield": true (STATUS 187).
+HANDS_YIELD_TQ = (0.0, 500.0, 1000.0, 1800.0, 2300.0, 3000.0)
+HANDS_YIELD_K = (1.0, 1.0, 0.63, 0.48, 0.20, 0.0)
+
+
+def hands_yield(tq):
+  return np.interp(np.abs(tq), HANDS_YIELD_TQ, HANDS_YIELD_K)
 SIGN_HYST_DEG = 0.15   # lat_tune_analyzer.SIGN_HYST_DEG
 
 
 class Plant:
   """eps: an eps_fw.EpsTable. With one, u in accel() is the table torque (EpsTable.drive of the delivered command)
   rather than the command itself, and the table can be swapped for another image's (with_eps) at sim time."""
-  def __init__(self, coef, delay=0, quant=0.0, eps=None):
+  def __init__(self, coef, delay=0, quant=0.0, eps=None, hands_yield=False):
     self.c = np.asarray(coef, dtype=float)
     self.delay = int(delay)
     self.quant = float(quant)
     self.eps = eps
+    self.hands_yield = bool(hands_yield)
 
   @staticmethod
   def from_json(j):
@@ -484,7 +496,7 @@ class Plant:
     if j.get("eps"):
       from openpilot.tools.lateral.eps_fw import EpsTable
       eps = EpsTable.from_json(j["eps"])
-    return Plant(j["coef"], j.get("delay_frames", 0), j.get("angle_quant_deg", 0.0), eps)
+    return Plant(j["coef"], j.get("delay_frames", 0), j.get("angle_quant_deg", 0.0), eps, j.get("hands_yield", False))
 
   def drive(self, u):
     """Plant input for a delivered command."""
@@ -494,7 +506,7 @@ class Plant:
     """This plant with another image's torque table. Only a plant fitted through a table has the units for it."""
     if self.eps is None:
       raise ValueError("plant was fitted on the raw command; refit it with --eps-rwd before swapping the table")
-    return Plant(self.c, self.delay, self.quant, eps)
+    return Plant(self.c, self.delay, self.quant, eps, self.hands_yield)
 
   def measure(self, theta):
     return float(np.round(theta / self.quant) * self.quant) if self.quant > 0 else theta
@@ -507,7 +519,7 @@ class Plant:
 
   def to_json(self):
     return {"coef": self.c.tolist(), "delay_frames": self.delay, "angle_quant_deg": self.quant,
-            "eps": self.eps.to_json() if self.eps is not None else None,
+            "eps": self.eps.to_json() if self.eps is not None else None, "hands_yield": self.hands_yield,
             "model": "rate' = (c0+c1 v) r + (c2+c3 v^2/100) th + (c4+c5 v+c6 v^2/100) u(t - delay) + c7 + c8 tanh(r/2)" +
                      (" + c9 tanh(th/%g)" % CENTRING_DEG if len(self.c) > 9 else "")}
 
@@ -574,7 +586,8 @@ def _pack(ds, win, stride):
       continue
     idx = st[:, None] + np.arange(win + 1)[None, :]
     uidx = st[:, None] + np.arange(-pre, win + 1)[None, :]
-    parts.append({"v": d["v"][idx], "u": d["co_torque"][uidx], "th": d["angle"][idx] - d["offset"][idx], "r": d["rate"][idx]})
+    parts.append({"v": d["v"][idx], "u": d["co_torque"][uidx], "tq": d["eps_torque"][uidx],
+                  "th": d["angle"][idx] - d["offset"][idx], "r": d["rate"][idx]})
   return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
 
 
@@ -592,12 +605,15 @@ def _plant_freerun(p, plant):
   return out
 
 
-def fit_plant(ds, iters=60, verbose=True, delays=FIT_DELAYS, eps=None, centring=False):
+def fit_plant(ds, iters=60, verbose=True, delays=FIT_DELAYS, eps=None, centring=False, with_hands_yield=False):
   """Fits the coefficients at each candidate delay and keeps the delay with the lowest free-run residual.
-  With eps (an EpsTable) the command goes through that firmware table first; use the image the drives ran on."""
+  With eps (an EpsTable) the command goes through that firmware table first; use the image the drives ran on.
+  with_hands_yield scales the plant input by hands_yield(driver torque), as the C020 firmware does."""
   p = _pack(ds, PLANT_WIN, PLANT_STRIDE)
   if eps is not None:
     p["u"] = eps.drive(p["u"])
+  if with_hands_yield:
+    p["u"] = p["u"] * hands_yield(p["tq"])
   best = None
   for delay in delays:
     plant, cost = _fit_coef(p, delay, iters, verbose, centring)
@@ -607,6 +623,7 @@ def fit_plant(ds, iters=60, verbose=True, delays=FIT_DELAYS, eps=None, centring=
       best = (plant, cost)
   best[0].quant = ANGLE_QUANT_DEG
   best[0].eps = eps
+  best[0].hands_yield = with_hands_yield
   return best[0], p["v"].shape[0]
 
 
@@ -646,6 +663,8 @@ def plant_holdout(ds, plant, win=300, stride=100):
   """Free-run error at the end of `win`-frame windows, and the error of just holding the start angle."""
   p = _pack(ds, win, stride)
   p["u"] = plant.drive(p["u"])
+  if getattr(plant, "hands_yield", False):
+    p["u"] = p["u"] * hands_yield(p["tq"])
   s = _plant_freerun(p, plant)
   return (float(np.sqrt(np.mean((s[:, -1] - p["th"][:, -1]) ** 2))),
           float(np.sqrt(np.mean((p["th"][:, 0] - p["th"][:, -1]) ** 2))), p["v"].shape[0])
@@ -722,7 +741,11 @@ def simulate(d, plant, overrides=None, testing_ground=False, with_raw=False, kin
       steer_limited = (d["active"][k] > 0.5) and abs(out[k] - deliv[k]) > 1e-2
       if sim_on[k]:
         th_rel = th - d["offset"][k]
-        r = r + plant.accel(th_rel, r, plant.drive(deliv[max(k - plant.delay, 0)]), d["v"][k]) * DT
+        kd = max(k - plant.delay, 0)
+        u = plant.drive(deliv[kd])
+        if getattr(plant, "hands_yield", False):
+          u = u * float(hands_yield(d["eps_torque"][kd]))
+        r = r + plant.accel(th_rel, r, u, d["v"][k]) * DT
         th = th + r * DT
   finally:
     ctl.close()
