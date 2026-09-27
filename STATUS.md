@@ -9313,3 +9313,17 @@ Times are log time. Bookmarks sit 2-3 s after the event.
 - 0 points lost.
 - None of the 5 braking episodes moved (3 of them protected).
 - Lead values differed in 18 frames, with no planner consequence.
+
+## 181. Galaxy NRDR PID Tuning tab removed (owner request, 2026-09-27). PID tuning is done in the MetaDrive and replay sims now. Static only.
+
+- **Removed from both UIs:**
+  - the classic `/lat_tune` page (sidebar entry, route, `lat_tune.js`/`.css`);
+  - the mobile `Tuning → NRDR PID lateral tune` tab (`NrdrLatTunePanel.js`);
+  - the `/api/lat_tune/*` endpoints, `lat_tune_workspace.py` and their tests.
+- **Deletions landed in the wrong commit:** they were swept into `eb2cd3bb` (STATUS 180) from the shared index, and this commit finishes the removal. Between the two commits `the_galaxy.py` imported a deleted module, so don't deploy `eb2cd3bb` alone.
+- **Kept:**
+  - the offline tools `tools/lateral/lat_tune_cli.py`, `lat_tune_sim.py`, `lat_pid_sim.py` and `selfdrive/controls/lib/lat_tune_analyzer.py`;
+  - the band params `LatPScale*`, which are unchanged.
+- **Stale links:** an old `/tuning/nrdr-pid` link falls back to the first tab.
+- **On-device data:** trial files in `/data/galaxy/lat_tune/` are left in place.
+- **Tests:** galaxy tests show the same failures as before the removal in this container (e.g. `test_dashboard_stats` 2 date failures reproduce with the old test file).

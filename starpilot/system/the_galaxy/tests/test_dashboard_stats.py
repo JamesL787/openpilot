@@ -403,9 +403,6 @@ def _install_server_import_stubs():
   sys.modules["openpilot.starpilot.system.the_galaxy.flm_workspace"] = _simple_module(
     "openpilot.starpilot.system.the_galaxy.flm_workspace",
   )
-  sys.modules["openpilot.starpilot.system.the_galaxy.lat_tune_workspace"] = _simple_module(
-    "openpilot.starpilot.system.the_galaxy.lat_tune_workspace",
-  )
   sys.modules["openpilot.starpilot.system.the_galaxy.utilities"] = utilities
   sys.modules["openpilot.starpilot.system.wheel_controls"] = _simple_module(
     "openpilot.starpilot.system.wheel_controls",

@@ -25,7 +25,6 @@ import { LivePlots } from "/assets/components/tools/plots.js"
 import { ThemeMaker } from "/assets/components/tools/theme_maker.js"
 import { TestingGround } from "/assets/components/tools/testing_ground.js"
 import { Tuning } from "/assets/components/tools/tuning.js?v=flm-route-length-1"
-import { LatTune } from "/assets/components/tools/lat_tune.js?v=nrdr-pid-2"
 import { Troubleshoot } from "/assets/components/tools/troubleshoot.js"
 import { TmuxLog } from "/assets/components/tools/tmux.js"
 import { ToggleControl } from "/assets/components/tools/toggles.js"
@@ -91,7 +90,6 @@ function Root() {
     createRoute("model_laboratory", "/model_laboratory", ModelLaboratory),
     createRoute("tuning", "/tuning", Tuning),
     createRoute("lateral_maneuvers", "/lateral_maneuvers", Tuning),
-    createRoute("lat_tune", "/lat_tune", LatTune),
     createRoute("maps", "/manage_maps", MapsManager),
     createRoute("plots", "/plots", LivePlots),
     createRoute("thememaker", "/theme_maker", ThemeMaker),

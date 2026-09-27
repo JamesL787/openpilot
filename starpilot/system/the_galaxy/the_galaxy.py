@@ -174,7 +174,7 @@ from openpilot.starpilot.common.testing_grounds import (
 )
 from openpilot.starpilot.navigation.destination_store import normalize_destination_payload, routing_configured, update_recent_destinations
 from openpilot.starpilot.system.the_galaxy.factory_reset import remove_path as _run_factory_reset_delete
-from openpilot.starpilot.system.the_galaxy import flm_workspace, lat_tune_workspace, utilities
+from openpilot.starpilot.system.the_galaxy import flm_workspace, utilities
 from openpilot.starpilot.system.the_galaxy import drive_plots
 from openpilot.starpilot.system.the_galaxy.update_recovery import inspect_interrupted_update, public_recovery_status, recover_interrupted_update
 from openpilot.starpilot.system.bluetooth import BluetoothClient
@@ -8626,85 +8626,6 @@ def setup(app):
       return jsonify({"error": "FLM report not found."}), 404
 
     return jsonify(result), 200
-
-  # ---- NRDR PID Tuning (item 117): FLM-style trials for the modified-EPS Honda P trim. Offroad only.
-  def _lat_tune_error(e):
-    if isinstance(e, FileNotFoundError):
-      return jsonify({"error": str(e)}), 404
-    if isinstance(e, ValueError):
-      return jsonify({"error": str(e)}), 400
-    if isinstance(e, RuntimeError):
-      return jsonify({"error": str(e)}), 409
-    return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
-
-  @app.route("/api/lat_tune/workspace", methods=["GET"])
-  def get_lat_tune_workspace():
-    try:
-      return jsonify(lat_tune_workspace.list_workspace())
-    except Exception as e:  # noqa: BLE001
-      return _lat_tune_error(e)
-
-  @app.route("/api/lat_tune/status", methods=["GET"])
-  def get_lat_tune_status():
-    is_onroad = params.get_bool("IsOnroad")
-    if is_onroad:
-      lat_tune_workspace.cancel_if_onroad()
-    return jsonify({"isOnroad": is_onroad, "status": lat_tune_workspace.public_status()})
-
-  @app.route("/api/lat_tune/analyze", methods=["POST"])
-  def start_lat_tune_analysis():
-    if params.get_bool("IsOnroad"):
-      return jsonify({"error": "NRDR PID Tuning analysis is offroad only; park the car first."}), 409
-    body = request.get_json(silent=True) or {}
-    routes = [str(r) for r in (body.get("routes") or []) if r]
-    if not routes:
-      return jsonify({"error": "Select at least one route."}), 400
-    try:
-      started = lat_tune_workspace.start_background_analysis(routes, FOOTAGE_PATHS)
-    except Exception as e:  # noqa: BLE001
-      return _lat_tune_error(e)
-    if not started:
-      return jsonify({"error": "Could not start the analysis (onroad, or the worker failed to launch)."}), 409
-    return jsonify({"message": f"Started NRDR PID Tuning analysis for {len(routes)} route(s).",
-                    "status": lat_tune_workspace.read_status()})
-
-  @app.route("/api/lat_tune/analyze/stop", methods=["POST"])
-  def stop_lat_tune_analysis():
-    stopped = lat_tune_workspace.stop_background_analysis()
-    return jsonify({"message": "Stopped." if stopped else "Nothing was running.", "stopped": bool(stopped),
-                    "status": lat_tune_workspace.read_status()})
-
-  @app.route("/api/lat_tune/trial/<trial_id>", methods=["GET"])
-  def get_lat_tune_trial(trial_id):
-    try:
-      return jsonify(lat_tune_workspace.load_trial(trial_id))
-    except Exception as e:  # noqa: BLE001
-      return _lat_tune_error(e)
-
-  @app.route("/api/lat_tune/trial/<trial_id>", methods=["DELETE"])
-  def delete_lat_tune_trial(trial_id):
-    try:
-      return jsonify({"message": f"Deleted trial {trial_id}.", "workspace": lat_tune_workspace.delete_trial(trial_id)})
-    except Exception as e:  # noqa: BLE001
-      return _lat_tune_error(e)
-
-  @app.route("/api/lat_tune/trial/<trial_id>/apply", methods=["POST"])
-  def apply_lat_tune_trial(trial_id):
-    body = request.get_json(silent=True) or {}
-    try:
-      result = lat_tune_workspace.apply_trial(trial_id, force=bool(body.get("force", False)))
-    except Exception as e:  # noqa: BLE001
-      return _lat_tune_error(e)
-    written = ", ".join(f"{k}={v}" for k, v in result.get("written", {}).items()) or "no band P change"
-    return jsonify({"message": f"Applied trial {trial_id}: {written}.", **result})
-
-  @app.route("/api/lat_tune/trial/<trial_id>/revert", methods=["POST"])
-  def revert_lat_tune_trial(trial_id):
-    try:
-      result = lat_tune_workspace.revert_trial(trial_id)
-    except Exception as e:  # noqa: BLE001
-      return _lat_tune_error(e)
-    return jsonify({"message": f"Reverted trial {trial_id}: previous P band scales and LatGainSchedule restored.", **result})
 
   @app.route("/api/update/fast/status", methods=["GET"])
   def get_fast_update_status():
