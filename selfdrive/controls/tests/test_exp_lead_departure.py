@@ -4,6 +4,7 @@ import pytest
 
 from openpilot.selfdrive.controls.lib.longitudinal_planner import (
   EXP_LEAD_DEPARTURE_MAX_LIFT,
+  EXP_LEAD_DEPARTURE_MAX_LIFT_FALL,
   EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE,
   LongitudinalPlanner,
   apply_exp_lead_departure,
@@ -99,14 +100,54 @@ def test_planned_stop_disarms():
   assert out < 0.205
 
 
-@pytest.mark.parametrize("closing", [lead(v_rel=-0.2), lead(a_lead=-0.5)])
-def test_drops_at_once_when_lead_closes_or_brakes(closing):
-  p = _planner(lead())
+def _held(p, **kw):
   for _ in range(60):
-    _step(p)
-  p.lead_one = closing
+    out = _step(p, **kw)
+  assert out - 0.2 > 0.4  # lift of 0.42 held
+  return out
+
+
+@pytest.mark.parametrize("gentle", [lead(v_rel=-0.2), lead(a_lead=-0.5), lead(status=False)])
+def test_gentle_disarm_releases_at_the_fall_rate(gentle):
+  p = _planner(lead())
+  prev = _held(p)
+  p.lead_one = gentle
+  for _ in range(20):
+    out = _step(p)
+    assert prev - out <= EXP_LEAD_DEPARTURE_MAX_LIFT_FALL * p.dt + 1e-9  # 0.15 per 50 ms frame, not a step
+    prev = out
+  assert out < 0.205  # closing/braking: 0.42 gone in 3 frames; lost lead: the 0.15 s weight fade
+
+
+def test_closing_lead_release_takes_three_frames():
+  p = _planner(lead())
+  _held(p)
+  p.lead_one = lead(v_rel=-0.2)
+  outs = [_step(p) for _ in range(3)]
+  assert outs[0] > outs[1] > 0.2 and outs[2] == 0.2
+
+
+@pytest.mark.parametrize("urgent", [lead(v_rel=-0.6), lead(a_lead=-1.2)])
+def test_urgent_lead_drops_at_once(urgent):
+  p = _planner(lead())
+  _held(p)
+  p.lead_one = urgent
   assert _step(p) == 0.2
-  assert p.exp_lead_departure_weight == 0.0
+
+
+@pytest.mark.parametrize("kw", [dict(hold=True), dict(toggle=False), dict(e2e=EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE - 0.05)])
+def test_stop_toggle_off_or_e2e_braking_drop_at_once(kw):
+  p = _planner(lead())
+  _held(p)
+  e2e = kw.get("e2e", 0.2)
+  assert _step(p, **kw) == e2e
+
+
+def test_release_never_exceeds_mpc():
+  p = _planner(lead())
+  _held(p)
+  p.lead_one = lead(v_rel=-0.2)
+  assert _step(p, mpc=0.3) <= 0.3 + 1e-9
 
 
 def test_brake_threshold_fades_instead_of_stepping():

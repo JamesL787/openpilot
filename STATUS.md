@@ -7401,6 +7401,21 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
   - 283 13:25 lifted to 0.46 behind a vision lead whose dRel jumped 28 → 55 → 44 → 66 m before it was lost; the model-probability gate passed it.
 - Softening candidate (not applied): limit the release to ~3 m/s³ (0.5 m/s² over ~0.17 s) and keep the instant drop only for a lead closing faster than 0.5 m/s or braking harder than −1.0.
 
+### 136e. `ExpLeadDepartureAssist` release smoothed (owner request after 136d). Unit tests and open-loop replay only; not driven.
+
+- The lift now falls at most 3 m/s³ (`EXP_LEAD_DEPARTURE_MAX_LIFT_FALL`), i.e. a full 0.5 m/s² lift releases over ~0.17 s instead of in one 50 ms frame. The weight still disarms at once on vRel < 0 or aLeadK < −0.2; only the output is ramped.
+- Still instant for:
+  - a lead closing faster than 0.5 m/s or braking harder than −1.0 m/s² (`EXP_LEAD_DEPARTURE_URGENT_*`);
+  - a planned stop / red light;
+  - e2e below −0.15;
+  - the toggle turning off.
+- The held lift is capped so the output never exceeds the MPC estimate.
+- Replay (same code path) on 280 / 283:
+  - largest one-frame release drops from 0.41 / 0.50 to 0.15 / 0.32;
+  - every drop > 0.16 left on 283 is an urgent case (6 frames, vRel −0.9 to −5.3 or aLeadK −1.05);
+  - acting share unchanged (4.2 / 7.1 %); 0 frames lifting > 0.05 while the lead closes faster than 0.5 m/s or brakes harder than −1.0.
+- Tests: `test_exp_lead_departure.py` now checks the gentle release rate (closing, braking, lost lead), the 3-frame release, the urgent instant drops, stop / toggle / e2e-brake instant drops and the MPC cap. 560 passed with `test_longitudinal_planner.py`.
+
 ## 141. Galaxy Plots rebuilt: recorded drives with a lateral/longitudinal analysis. Unit tests and a headless render against a synthetic drive only; not used on a car.
 
 **What changed.** The Plots page (classic `/plots` and mobile `#/plots`) no longer grades a 30 s window with client-side "Great/Good/Fair/Poor" scores. A backend module `starpilot/system/the_galaxy/drive_plots.py` (commit 57cca03c) samples `controlsState`, `carControl`, `carState`, `longitudinalPlan` at ~20 Hz. Requested lateral is `desiredCurvature·v²`, measured is `curvature·v²`; requested longitudinal is `longitudinalPlan.aTarget`, measured is `aEgo`. Only engaged, non-override samples count (`latActive`/`longActive`, no steer/gas press).
