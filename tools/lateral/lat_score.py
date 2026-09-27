@@ -11,6 +11,7 @@ on real desired-angle traces.
                                      closed-loop lat_pid_sim runs of a baseline and a candidate on the C020 plant,
                                      per-route metrics and deltas, and a verdict.
   gate  (same arguments as replay)   the same, and exits 0 only on a "pass" verdict.
+  detect ROUTE_DIR_OR_RLOG [...]     which lateral controller drove a route (rlogs), so it goes to the right owner.
 
 Metrics (per route; 100 Hz lat_pid_sim frames):
   wobble      rms of the 0.4-3 Hz band of the steering angle (MA 15 - MA 125 frames) on near-straight driving:
@@ -47,6 +48,22 @@ controller cannot leak it into the other's run. The resolved toggles are printed
 --clarity-const NAME=a,b sets a list constant of selfdrive/controls/lib/nrdr_eps_firmware_ff.py (FF_SPEED_BP, or
 FF_ANGLE_GATE_DEG where the branch has it) for the candidate only, in the worker process. Sim only; the car cannot
 set these.
+
+detect (per segment, from the rlog; group routing rule 2026-09-27):
+  initData    NrdrLatEpsFirmwareFF (read once when controlsd starts: 1 = LatControlClarityEps, 0 = PID; absent counts
+              as PID only when the logged commit is in this repo and has no latcontrol_clarity_eps.py, e.g. 280),
+              NrdrLatPidFirmwareFF (start value only; it is re-read live) and gitCommit / gitBranch.
+  identity    fraction of engaged v > 4 m/s frames where pidState.f == epsFfWeight * epsFfFeedforward of the same
+              frame (|diff| < 1e-5), counting only frames where either side exceeds 1e-3 (both ~0 would match
+              trivially: weight 0 under clarity_eps, the ~2e-6 Civic kf near centre under pid); under 200 such
+              frames the segment is "undetermined" and only its key counts. LatControlClarityEps logs the feedforward it applied as pid.f, gated or not, so
+              it scores ~1; LatControlPID logs its unscaled kf term there (PidFF crossfades later, in the output), so
+              it scores ~0. > 0.95 = clarity_eps, < 0.2 = pid, else unknown; n/a without starpilotLateralState.
+              Measured: 286 1.00, 285 0.00 (static log check).
+  centre_w    under clarity_eps, the fraction of |des| < 10 deg frames with epsFfWeight > 0: ~1 ungated build,
+              ~0 with the |desired angle| gate (0f27431d). pidff_frac: under pid, the fraction of |des| > 30 deg
+              frames with epsFfWeight > 0.5 (PidFF was on then).
+  The route is routed only when every segment's key and identity agree; otherwise it says ASK PETER.
 
 Limits: the lat_pid_sim limits apply (desired curvature is exogenous, no model in the loop, one fitted plant;
 re-synced to the log below 4 m/s). Every number from this tool is replay/sim evidence only, not driven.
@@ -353,6 +370,154 @@ SHOW = ([f"wobble{lo}-{hi}" for lo, hi in WOBBLE_BINS] + [f"turn_err{n}" for n, 
         [f"err_rms_{b}" for b in ("low", "standard", "highway")] + [f"curve_ratio_{b}" for b in ("low", "standard", "highway")])
 
 
+IDENTITY_TOL = 1e-5
+IDENTITY_FLOOR = 1e-3  # both sides ~0 (weight 0, or the tiny Civic kf near centre) would match trivially
+IDENTITY_MIN_FRAMES = 200
+IDENTITY_CLARITY = 0.95
+IDENTITY_PID = 0.2
+OWNERS = {"clarity_eps": "James's vfn shadow controller session", "pid": "NRDR PID Lateral Tuning"}
+
+
+def classify_frames(f, w, ff, des, v, active):
+  """Controller evidence from one segment's aligned controlsState.pidState / starpilotLateralState frames."""
+  f, w, ff, des, v, active = (np.asarray(x, dtype=float) for x in (f, w, ff, des, v, active))
+  m = (active > 0) & (v > 4.0) & np.isfinite(w) & np.isfinite(ff)
+  r = {"n": int(m.sum()), "identity": None, "by_identity": "n/a", "centre_w": None, "pidff_frac": None}
+  if r["n"] < 100:
+    return r
+  q = m & (np.maximum(np.abs(f), np.abs(w * ff)) > IDENTITY_FLOOR)
+  r["n_identity"] = int(q.sum())
+  if q.sum() < IDENTITY_MIN_FRAMES:
+    r["by_identity"] = "undetermined"
+  else:
+    r["identity"] = float((np.abs(f - w * ff)[q] < IDENTITY_TOL).mean())
+    r["by_identity"] = ("clarity_eps" if r["identity"] > IDENTITY_CLARITY else
+                        "pid" if r["identity"] < IDENTITY_PID else "unknown")
+  centre, turn = m & (np.abs(des) < 10.0), m & (np.abs(des) > 30.0)
+  if centre.sum() >= 100:
+    r["centre_w"] = float((w[centre] > 0).mean())
+  if turn.sum() >= 20:
+    r["pidff_frac"] = float((w[turn] > 0.5).mean())
+  return r
+
+
+def detect_segment(path):
+  from openpilot.tools.lib.logreader import LogReader
+  init, cs, lat, v = {}, [], [], 0.0
+  for msg in LogReader(path):
+    t = msg.which()
+    if t == "initData":
+      keys = ("NrdrLatEpsFirmwareFF", "NrdrLatPidFirmwareFF")
+      init = {e.key: e.value.decode(errors="replace") for e in msg.initData.params.entries if e.key in keys}
+      init["git"] = f"{msg.initData.gitBranch}@{msg.initData.gitCommit[:8]}"
+    elif t == "carState":
+      v = msg.carState.vEgo
+    elif t == "starpilotLateralState":
+      lat.append((msg.logMonoTime, msg.starpilotLateralState.epsFfWeight, msg.starpilotLateralState.epsFfFeedforward))
+    elif t == "controlsState":
+      lcs = msg.controlsState.lateralControlState
+      if lcs.which() == "pidState":
+        ps = lcs.pidState
+        cs.append((msg.logMonoTime, ps.f, ps.steeringAngleDesiredDeg, v, ps.active))
+  # controlsd publishes starpilotLateralState ~0.2 ms after controlsState in the same frame: pair each controlsState
+  # with the next one within 5 ms (by index fails on a segment that starts between the two; a one-frame shift
+  # drops 286 from 1.00 to ~0.05)
+  r = classify_frames([], [], [], [], [], [])
+  if cs and lat:
+    a, b = np.array(cs), np.array(lat)
+    i = np.clip(np.searchsorted(b[:, 0], a[:, 0]), 0, len(b) - 1)
+    ok = (b[i, 0] >= a[:, 0]) & (b[i, 0] - a[:, 0] < 5e6)
+    a, b = a[ok], b[i[ok]]
+    r = classify_frames(a[:, 1], b[:, 1], b[:, 2], a[:, 2], a[:, 3], a[:, 4])
+  eps = init.get("NrdrLatEpsFirmwareFF")
+  by_key = None if eps is None else ("clarity_eps" if eps.strip() == "1" else "pid")
+  if by_key is None and _build_predates_clarity(init.get("git", "")):
+    by_key, eps = "pid", "(build predates LatControlClarityEps)"
+  if by_key == "clarity_eps":
+    r["pidff_frac"] = None  # the weight in turns is this controller's own feedforward, not PidFF
+  else:
+    r["centre_w"] = None  # only tells the gated from the ungated clarity_eps build
+  r.update(seg=path, git=init.get("git", "?"), eps_key=eps, pidff_key=init.get("NrdrLatPidFirmwareFF"), by_key=by_key)
+  return r
+
+
+def _build_predates_clarity(git):
+  """True when the logged commit is in this repo and has no latcontrol_clarity_eps.py: PID by construction."""
+  import subprocess
+  sha = git.rpartition("@")[2]
+  if len(sha) < 7:
+    return False
+  repo = REPO if os.path.isdir(os.path.join(REPO, ".git")) else os.getcwd()  # out-of-tree copy: the cwd's repo
+  run = lambda *c: subprocess.run(["git", "-C", repo, *c], capture_output=True).returncode  # noqa: E731
+  return run("cat-file", "-e", f"{sha}^{{commit}}") == 0 and \
+    run("cat-file", "-e", f"{sha}:selfdrive/controls/lib/latcontrol_clarity_eps.py") != 0
+
+
+def route_verdict(segs):
+  """(controller or None, reasons): None means tell Peter before tuning."""
+  why = []
+  keys = {s["by_key"] for s in segs}
+  ids = {s["by_identity"] for s in segs} - {"n/a", "undetermined"}
+  if None in keys:
+    why.append(f"NrdrLatEpsFirmwareFF missing on {sum(s['by_key'] is None for s in segs)} segment(s)")
+  if len(keys - {None}) > 1:
+    why.append("NrdrLatEpsFirmwareFF differs between segments")
+  if "unknown" in ids:
+    why.append("identity test inconclusive on a segment")
+  if len(ids - {"unknown"}) > 1:
+    why.append("identity test differs between segments")
+  both = (keys - {None}) | (ids - {"unknown"})
+  if len(both) > 1 and not why:
+    why.append("initData key and identity test disagree")
+  if not both:
+    why.append("no evidence")
+  return (None if why else both.pop()), why
+
+
+def _segments(spec):
+  if os.path.isfile(spec):
+    return [spec]
+  segs = []
+  for name in sorted(os.listdir(spec), key=lambda x: int(x) if x.isdigit() else -1):
+    for fn in ("rlog.zst", "rlog.bz2", "rlog"):
+      if name.isdigit() and os.path.isfile(os.path.join(spec, name, fn)):
+        segs.append(os.path.join(spec, name, fn))
+        break
+  return segs
+
+
+def cmd_detect(a):
+  out = {}
+  for spec in a.routes:
+    segs = _segments(os.path.expanduser(spec))
+    if a.max_segments:
+      segs = segs[:a.max_segments]
+    with Pool(max(1, min(a.jobs, len(segs) or 1))) as pool:
+      rows = pool.map(detect_segment, segs)
+    ctrl, why = route_verdict(rows) if rows else (None, ["no rlogs found"])
+    out[spec] = {"segments": rows, "controller": ctrl, "why": why}
+  return out
+
+
+def print_detect(out):
+  for spec, r in out.items():
+    print(f"== {spec}")
+    for s in r["segments"]:
+      seg = os.path.basename(os.path.dirname(s["seg"]))
+      ident = f"identity={_f(s['identity'])} ({s['by_identity']})"
+      weights = f"centre_w={_f(s['centre_w'])} pidff_frac={_f(s['pidff_frac'])}"
+      print(f"  {seg:>4} {s['git']:40} EpsFF={s['eps_key']} PidFF={s['pidff_key']} {ident} {weights}")
+    if r["controller"]:
+      c = r["controller"]
+      extra = ""
+      cw = [s["centre_w"] for s in r["segments"] if s["centre_w"] is not None]
+      if c == "clarity_eps" and cw:
+        extra = "  build: " + ("ungated" if np.median(cw) > 0.5 else "|desired angle| gated")
+      print(f"  -> {c}: send to {OWNERS[c]}{extra}")
+    else:
+      print(f"  -> ASK PETER before tuning: {'; '.join(r['why'])}")
+
+
 def _f(x):
   return "   -  " if _nan(x) is None else f"{x:6.2f}"
 
@@ -399,8 +564,20 @@ def main(argv=None):
     rp.add_argument("--plant", default=DEFAULT_PLANT)
     rp.add_argument("-j", "--jobs", type=int, default=min(4, os.cpu_count() or 1))
     rp.add_argument("--json")
+  dp = sub.add_parser("detect")
+  dp.add_argument("routes", nargs="+")
+  dp.add_argument("--max-segments", type=int, default=0)
+  dp.add_argument("-j", "--jobs", type=int, default=min(4, os.cpu_count() or 1))
+  dp.add_argument("--json")
   a = ap.parse_args(argv)
 
+  if a.cmd == "detect":
+    out = cmd_detect(a)
+    print_detect(out)
+    if a.json:
+      with open(a.json, "w") as f:
+        json.dump(out, f, indent=1, default=float)
+    return 0 if all(r["controller"] for r in out.values()) else 2
   if a.cmd == "score":
     out = cmd_score(a.routes)
     print_score(out)

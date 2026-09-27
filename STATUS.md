@@ -9102,3 +9102,16 @@ How it is wired:
   - It explains the 278 < 12 mph result. The feedforward cuts trailing error (13.9 → 12.1) but the wheel goes past the line more (3.6 → 6.9), mostly in two steady tight turns near 4.5 m/s.
   - On 286 it only cuts trailing (12.0 → 3.9); past-desired is unchanged (11.2 → 11.4).
   - The PID session keeps the code as is and will tell the owner to watch long tight turns near 10 mph. The dither deadband stays at 0.01.
+- **Follow-up: `lat_score.py detect ROUTE_DIR [...]` says which lateral controller drove a route, so the route goes to its owner.** This is step 2 of the tuning group's routing rule; the owner's drives are routed per segment. It reads rlogs only (log decode, static).
+  - **Evidence, in order:**
+    - `initData` `NrdrLatEpsFirmwareFF` and gitCommit. The key is read once at start: 1 is James's controller, 0 is PID. A build whose commit has no `latcontrol_clarity_eps.py` is PID by construction (280 at 63827356, 284 at 90487307).
+    - An identity test. `LatControlClarityEps` logs the feedforward it applied as `pidState.f`, which equals `epsFfWeight × epsFfFeedforward` of the same frame, gated build or not. `LatControlPID` logs its unscaled kf term there; PidFF crossfades later, in the output (checked by the NRDR PID session at latcontrol_pid.py:874).
+      - Frames are counted only where either side exceeds 1e-3, the NRDR PID session's floor: both sides near 0 would match trivially. Under 200 such frames the segment is "undetermined".
+      - Pairing is by timestamp: `starpilotLateralState` follows `controlsState` by about 0.2 ms. Index pairing broke 286 segment 11, which starts between the two.
+    - `centre_w` (the fraction of |des| < 10° frames with weight > 0) separates the ungated build (about 1) from the 0f27431d gated build (about 0).
+  - **Output.** It prints the owner, or "ASK PETER" when a key is missing on a newer build, or when the key and the identity test (or two segments) disagree.
+  - **Measured.**
+    - 286: identity 1.00 on all 14 segments, `centre_w` 0.96–1.00. James's controller, ungated.
+    - 285: identity 0.00 → PID.
+    - 280 and 284 → PID (build predates the controller).
+  - **Not yet measured on a drive:** a gated-James drive and a PidFF-on drive. Those two cases rest on the code (static) and the synthetic tests.

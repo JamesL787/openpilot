@@ -90,3 +90,34 @@ def test_resolve_params_keeps_controllers_apart():
   assert L._toggles(L.resolve_params(logged, "pid", {})) == {"NrdrLatEpsFirmwareFF": "0", "NrdrLatPidFirmwareFF": "1"}
   assert L._toggles(L.resolve_params(logged, "clarity_eps", {})) == {"NrdrLatEpsFirmwareFF": "1", "NrdrLatPidFirmwareFF": "0"}
   assert L.resolve_params({}, "pid", {})["NrdrLatPidFirmwareFF"] == "0"
+
+
+def _frames(clarity, gated=False, n=2000):
+  des = 40.0 * np.sin(np.linspace(0, 6 * np.pi, n))
+  ff = 0.02 * des
+  w = np.where(np.abs(des) > 10, 1.0, 0.0) if gated else np.ones(n)
+  f = w * ff if clarity else 2e-4 * des  # clarity logs the applied FF; pid its own kf term
+  return f, w, ff, des, np.full(n, 8.0), np.ones(n)
+
+
+@pytest.mark.parametrize("clarity,gated,want,centre", [(True, False, "clarity_eps", 1.0), (True, True, "clarity_eps", 0.0),
+                                                       (False, False, "pid", 1.0)])
+def test_detect_identity(clarity, gated, want, centre):
+  r = L.classify_frames(*_frames(clarity, gated))
+  assert r["by_identity"] == want
+  if clarity:
+    assert r["centre_w"] == pytest.approx(centre)
+
+
+def test_detect_floor_ignores_trivial_matches():
+  f, w, ff, des, v, act = _frames(True, gated=True)
+  z = np.zeros_like(f)
+  assert L.classify_frames(z, z, z, des, v, act)["by_identity"] == "undetermined"  # both sides 0: no evidence
+
+
+def test_route_verdict_needs_agreement():
+  seg = lambda k, i: {"by_key": k, "by_identity": i}  # noqa: E731
+  assert L.route_verdict([seg("clarity_eps", "clarity_eps"), seg("clarity_eps", "undetermined")])[0] == "clarity_eps"
+  assert L.route_verdict([seg("pid", "clarity_eps")])[0] is None
+  assert L.route_verdict([seg(None, "pid")])[0] is None
+  assert L.route_verdict([seg("pid", "pid"), seg("pid", "unknown")])[0] is None
