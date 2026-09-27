@@ -371,6 +371,18 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LongPitch", {PERSISTENT, BOOL, "1", "0", 2, SETTINGS_SIMPLE}},
     {"NrdrHondaEcuMatchedLong", {PERSISTENT, BOOL, "0", "0", 2}},
     {"BlotV2", {PERSISTENT, BOOL, "0", "0", 3}},
+    // TEST, default OFF. Bosch-A only. Lets the range-derived closing rate (D-044 shadow
+    // channel) correct the native U11 vRel for the lead track, in one direction only: toward
+    // MORE closing, never less. See RANGE_VREL_ASSIST_* in radard.py and D-053.
+    {"RangeDerivedVrel", {PERSISTENT, BOOL, "0", "0", 3}},
+    // TEST, default ON at the owner's request (stock value off). Bosch-A only, needs RangeDerivedVrel on. Lets
+    // D-053 correct a lead outside the |yRel| lane gate (curves) while the model lead corroborates the closing.
+    // See VISION_ASSIST_* in radard.py.
+    {"RangeVisionAssist", {PERSISTENT, BOOL, "1", "0", 3}},
+    // TEST, default OFF. Bosch-A only. D-063: the parser's range gates read a pinned (railed)
+    // U11 closing speed as a bound, not an exact value, for tracks in our lane, so a lead closing
+    // faster than 13.5 m/s is not dropped. Read once at startup in honda/radar_interface.py.
+    {"BoschARailInterval", {PERSISTENT, BOOL, "0", "0", 3}},
     // Tester rollout: parse the Bosch-A harness's own 16-slot radar object bank into real
     // leadOne/leadTwo tracks instead of treating the car as radarless. RX-only, no CAN authority taken.
     {"BoschARadar", {PERSISTENT, BOOL, "1", "1", 3}},
