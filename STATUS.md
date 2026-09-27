@@ -8346,3 +8346,16 @@ The device ran `90487307` (clean): hysteresis on, fade down/up 0.2/0.5 s, `Honda
 - The "fight" column above therefore overstates what was sent. Only the 6-frame onset window (0 ms for presses at 2500 or more) is added pushing time. Driven 284 had none.
 - Retract the fade-down 0 recommendation: it is moot while the toggle is off.
 - Turning the toggle on would keep the request bit set through a takeover, shaping torque only by the fade-down (0.2 s) and `HondaOverrideTorqueScale`. That adds pushing against the driver.
+
+## 161. EPS telemetry is on the owner's CAN (for porting James's firmware-inversion feedforward). Log statistics only; nothing changed.
+
+James's branch `JamesL787/openpilot` `vfn-controller-shadow` (fd815ef3) adds `LatControlClarityEps`: a feedforward that inverts the EPS firmware law (P + D + KFF45 on target R5 minus filtered rate R6), plus vfn's angle PID on the residual. It is Clarity-only, and its constants come from a Clarity Tracker3200 build. The owner's C020 image has the same P row, KFF45 and Norm1650, but a different torque table, tracker and E4 scale. James says he wrote the C020 telemetry and that the calibration is "close to clarity but not 100% identical". The owner believes the flashed tracker is 4500.
+
+Route 00000284, segments 27–28, bus 1:
+- 0x6A0–0x6A3 arrive at 50 Hz with live data. These IDs are not in the Honda DBCs; they match "Telem6A3" in the Clarity image names.
+- **0x6A2 bytes 0–1** (signed, big-endian) = −169.9 counts per deg/s of `steeringRateDeg`, corr −0.994 at 0 lag. This is the R6 rate term; the Clarity constant is −138.6. If R6 scales with the tracker from 3200, −170 points nearer 4000 (−173) than 4500 (−195). That is unconfirmed; James knows the scaling.
+- 0x6A3 bytes 5–6 track driver torque (corr −0.88).
+- The R5 target word is **not** found. No 16- or 32-bit field correlates above 0.61 with the sent E4, either raw or mapped through the owner's torque table. The layout may differ from the Clarity's.
+- The Civic sends E4 up to ±4096; the Clarity code assumes 3840.
+
+**Needed before a port:** James's C020 telemetry layout (which word is R5), the E4→key scaling on C020, and the R6 scale at the flashed tracker. Then refit the column load model on the owner's routes. Run it in shadow (logged, not applied) and score it against the telemetry R5 before it steers.
