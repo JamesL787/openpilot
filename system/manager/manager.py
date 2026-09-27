@@ -76,6 +76,7 @@ NRDR_HONDA_OVERRIDE_SEMANTICS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_overr
 NRDR_KONIK_DEFAULT_MIGRATION_FLAG = Path("/data") / "nrdr_konik_default_v1"
 NRDR_DM_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_dm_defaults_v1"
 NRDR_LAT_TUNE_2026_09_24_MIGRATION_FLAG = Path("/data") / "nrdr_lat_tune_2026_09_24_v1"
+NRDR_CLARITY_EPS_DEFAULT_MIGRATION_FLAG = Path("/data") / "nrdr_clarity_eps_default_v1"
 STARPILOT_REMOVED_PARAM_KEYS = (
   "CoastUpToLeads", "PrioritizeSmoothFollowing",
   "NrdrTuneLearner", "NrdrTuneLearnerMap", "NrdrTuneLearnerRate", "NrdrTuneLearnerReset", "NrdrTuneLearnerStrength",
@@ -987,6 +988,23 @@ def migrate_nrdr_lat_tune_2026_09_24(params: Params, params_cache: Params) -> No
     cloudlog.exception(f"Failed to write migration flag: {NRDR_LAT_TUNE_2026_09_24_MIGRATION_FLAG}")
 
 
+def migrate_nrdr_clarity_eps_default(params: Params, params_cache: Params) -> None:
+  # clarity-eps-testing: James's LatControlClarityEps is this branch's default controller. Turned on once
+  # (whatever the stored value), so the toggle still switches back to LatControlPID afterwards.
+  if NRDR_CLARITY_EPS_DEFAULT_MIGRATION_FLAG.exists():
+    return
+
+  params.put_bool("NrdrLatEpsFirmwareFF", True)
+  params_cache.put_bool("NrdrLatEpsFirmwareFF", True)
+  cloudlog.warning("Applied one-time clarity-eps-testing default: NrdrLatEpsFirmwareFF on")
+
+  try:
+    NRDR_CLARITY_EPS_DEFAULT_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    NRDR_CLARITY_EPS_DEFAULT_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+  except Exception:
+    cloudlog.exception(f"Failed to write migration flag: {NRDR_CLARITY_EPS_DEFAULT_MIGRATION_FLAG}")
+
+
 def migrate_nrdr_konik_default(params: Params, params_cache: Params) -> None:
   if NRDR_KONIK_DEFAULT_MIGRATION_FLAG.exists():
     return
@@ -1266,6 +1284,7 @@ def manager_init() -> None:
   migrate_nrdr_konik_default(params, params_cache)
   migrate_nrdr_dm_defaults(params, params_cache)
   migrate_nrdr_lat_tune_2026_09_24(params, params_cache)
+  migrate_nrdr_clarity_eps_default(params, params_cache)
   last_timing = _log_boot_timing("manager_init", "starpilot_migrations", manager_init_start, last_timing)
 
   # set unset params to their default value
