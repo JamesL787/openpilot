@@ -8800,3 +8800,56 @@ Scripts (in /tmp, not committed): `/tmp/epsff/r286_*.py`, `roll_all.py`, `press.
   - At 6:35 the command flipped from +0.70 to −1.00 in 1 s. The car delivered −1.78 for about 1 s, 0.8 beyond the command (the item 163 gas-to-brake transient), and speed fell from 56.9 to 50.7 mph.
   - Bounding aLeadK by the model's accel (a camera cross-check, proposed in conversation and not implemented) would have removed this. It would also remove real lead brakes, because the model's lead accel sits near 0 even when the lead slows (12:08: model −0.0 while range fell 16 m/s). One event is not enough to tune on (rule 5).
 - **5:58.2**: a lane change, with the lead dropped and +0.8 acceleration. Nothing longitudinal.
+
+## 170. The wheel wobble the owner felt resuming from a stop on 00000286--ba543e3a3e comes from `LatControlClarityEps`'s feedforward below ~12 m/s. Nothing changed in code. Log decode, replay and closed-loop sim only.
+
+**What the log shows.** Measured as the 0.4–3 Hz band rms of the wheel angle, engaged, no press, no lane change, |angle| and |desired| under 12°, held for 1.5 s.
+
+| speed (m/s) | 286 (ClarityEps) | PID drives 284, 280, 278, 277, 276, 27a |
+|---|---|---|
+| 2–5 | 1.44° | 0.22–0.44° |
+| 5–8 | 1.38° | 0.21–0.38° |
+| 8–12 | 0.90° | 0.14–0.30° |
+| 12–20 | 0.16° | 0.11–0.16° |
+
+- On 286 the wheel moves more than its target in this band (ang > des). On every PID drive it moves less.
+- The model's desired angle in the same band is also 1.5–2× the PID drives' (1.44 vs 0.56–0.80° at 2–5 m/s). The model reacts to the car's wobble, which closes a loop the sim does not have.
+- **Resume 9:01.4, no press.** The wheel runs a ~1 Hz ±3.5° oscillation from 3 to 10 m/s, in phase with the desired angle, and settles by 6 s.
+  - The feedforward joins at 2–4 m/s and is the largest term, up to +0.13 against P +0.09.
+  - I is ~0.
+- **Resumes 0:25.5 and 1:34.8, with the driver holding the wheel at 140–330°.**
+  - The command swings ±1 within 2.5 s after lateral re-engages at ~1 m/s, driven by P on a 100–250° error.
+  - PID drives have the same kind of event: 284 at 2:21, 276 at 1:54 and 21:17, 278 at 1:51. Their fast wheel motion measures 1.3–2.0°, against 2.9° and 1.5° here. So this is not specific to ClarityEps.
+- The carcontroller's override fade-up applies to both controllers.
+
+**Sim (tools/lateral/lat_pid_sim, C020 plant, routes 284, 280, 278, 277 and 286; mean over routes).** In each row one setting was changed, in the sim only. Wobble is the metric above, in degrees. Tracking metrics are the <25 mph hands-off ones from STATUS 167.
+
+| variant | wob 2–5 | wob 5–8 | wob 8–12 | wob 12–20 | low err rms | low entry ratio | low lag s | std err rms |
+|---|---|---|---|---|---|---|---|---|
+| PID (logged tune) | 0.55 | 0.27 | 0.16 | 0.10 | 11.12 | 0.61 | 0.23 | 0.70 |
+| ClarityEps as built | 0.87 | 0.83 | 0.50 | 0.20 | 11.51 | 0.82 | 0.21 | 0.54 |
+| feedforward off | 0.57 | 0.31 | 0.22 | 0.12 | 12.22 | 0.66 | 0.27 | 0.71 |
+| feedforward ×0.7 below 25 mph | 0.75 | 0.63 | 0.41 | 0.19 | 11.53 | 0.77 | 0.23 | 0.54 |
+| feedforward ×0.5 below 25 mph | 0.68 | 0.52 | 0.37 | 0.19 | 11.64 | 0.74 | 0.24 | 0.55 |
+| FF_SPEED_BP 4–8 m/s (from 2–4) | 0.59 | 0.58 | 0.50 | 0.20 | 11.82 | 0.75 | 0.24 | 0.54 |
+| FF_SPEED_BP 6–10 m/s | 0.57 | 0.37 | 0.43 | 0.20 | 12.12 | 0.70 | 0.27 | 0.55 |
+| LEAD_S 0 | 0.87 | 0.82 | 0.49 | 0.19 | 11.51 | 0.82 | 0.21 | 0.54 |
+| DESIRED_RATE_TAU 0.30 | 0.82 | 0.73 | 0.44 | 0.18 | 11.72 | 0.82 | 0.22 | 0.56 |
+| low-band P ×0.8 | 0.83 | 0.75 | 0.46 | 0.20 | 11.92 | 0.79 | 0.22 | 0.54 |
+| output LPF τ 0.15 below 25 mph | 0.84 | 0.83 | 0.50 | 0.20 | 11.85 | 0.81 | 0.22 | 0.54 |
+| 0.3 s low-pass on the FF's desired angle, <25 mph | 0.78 | 0.67 | 0.42 | 0.19 | 11.89 | 0.80 | 0.23 | 0.55 |
+| 0.15 s low-pass on the whole target | 0.76 | 0.68 | 0.40 | 0.16 | 12.80 | 0.70 | 0.29 | 0.67 |
+
+- Turning the feedforward off returns the wobble to PID level. Wobble scales with the feedforward's gain.
+- The rate path (LEAD_S, DESIRED_RATE_TAU), P, and the output LPF barely move it.
+- Mechanism: the firmware-inversion feedforward makes the EPS follow the desired angle almost 1:1, including the model's low-speed wiggle, which PID attenuates. On the road the model then reacts to the resulting yaw.
+- No setting gets PID-level wobble and keeps the turn-entry gain (0.82 vs PID 0.61). It is a trade.
+
+**Candidates, not applied (design change on James's controller; needs the owner's go-ahead and a drive):**
+1. FF_SPEED_BP 2–4 → 4–8 m/s (Civic only). This targets the resume itself: at 2–5 m/s the wobble falls to PID level (0.59 vs 0.55), and low-speed turn entry keeps 0.75.
+2. Feedforward ×0.5–0.7 in the <25 mph band, for the 5–12 m/s wobble. Entry drops to 0.74–0.77.
+3. Both together.
+
+The sim wobble for ClarityEps is 2–3×. On 286 the road shows 4–6×, because of the model loop. The sim ranks the levers but understates the problem, so any fix needs a drive to judge.
+
+Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r286_resume2.py. Not committed.
