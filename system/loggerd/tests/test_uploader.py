@@ -7,6 +7,7 @@ from pathlib import Path
 from openpilot.system.hardware.hw import Paths
 
 from openpilot.common.swaglog import cloudlog
+from openpilot.system.loggerd.rlog_upload import clear_anchor, current_route, get_anchor, rlogs_pending
 from openpilot.system.loggerd.uploader import Uploader, clear_locks, main, UPLOAD_ATTR_NAME, UPLOAD_ATTR_VALUE
 from openpilot.system.loggerd.xattr_cache import getxattr, setxattr
 
@@ -46,6 +47,7 @@ class TestUploader(UploaderTestCase):
     log_handler.reset()
     # UploadRlogs defaults on in StarPilot; the upstream tests cover qlog-only uploading
     self.params.put_bool("UploadRlogs", False)
+    clear_anchor(Paths.log_root())
 
   def start_thread(self):
     self.end_event = threading.Event()
@@ -210,24 +212,52 @@ class TestUploader(UploaderTestCase):
     time.sleep(1)
     self.join_thread()
 
-    # all qlogs first, then rlogs newest route first
-    assert log_handler.upload_order == [f"{self.seg_dir}/qlog.zst", f"{seg2_dir}/qlog.zst",
-                                        f"{seg2_dir}/rlog.zst", f"{self.seg_dir}/rlog.zst"]
+    # all qlogs first, then rlogs from the drive in progress when the toggle was first seen on
+    assert log_handler.upload_order == [f"{self.seg_dir}/qlog.zst", f"{seg2_dir}/qlog.zst", f"{seg2_dir}/rlog.zst"]
 
-  def test_upload_rlogs_current_drive_before_backlog(self):
-    # route 284: an old route's rlog backlog took the whole drive and the drive's own rlogs never went up
-    for i in [0, 1, 2]:
-      self.make_file_with_data(self.seg_format.format(i), "rlog", 1)
-    for i in [11, 3, 10]:
-      self.make_file_with_data(self.seg_format2.format(i), "rlog", 1)
-    self.params.put_bool("UploadRlogs", True)
-    up = Uploader("0000000000000000", Paths.log_root())
+  def drain(self, up):
     order = []
     while (f := up.next_file_to_upload(metered=False)) is not None:
+      assert rlogs_pending(Paths.log_root())
       order.append(f[1])
       setxattr(f[2], UPLOAD_ATTR_NAME, UPLOAD_ATTR_VALUE)
-    assert order == [f"{self.seg_format2.format(i)}/rlog" for i in [3, 10, 11]] + \
-                    [f"{self.seg_format.format(i)}/rlog" for i in [0, 1, 2]]
+    return order
+
+  def test_upload_rlogs_previous_drive_then_current_never_backlog(self):
+    # route 284: an old route's rlog backlog took the whole drive and the drive's own rlogs never went up
+    seg_format3 = "00000006--1109db7c4c--{}"
+    for i in [0, 1, 2]:
+      self.make_file_with_data(self.seg_format.format(i), "rlog", 1)  # backlog from before the toggle
+    for i in [0, 1]:
+      self.make_file_with_data(self.seg_format2.format(i), "rlog", 1)  # drive in progress when turned on
+    self.params.put_bool("UploadRlogs", True)
+    up = Uploader("0000000000000000", Paths.log_root())
+    assert up.next_file_to_upload(metered=False)[1] == f"{self.seg_format2.format(0)}/rlog"
+    assert get_anchor(Paths.log_root()) == current_route(Paths.log_root()) == self.seg_format2.rpartition('--')[0]
+
+    # a new drive starts before the previous one is done: the previous drive finishes first
+    for i in [2, 10]:
+      self.make_file_with_data(self.seg_format2.format(i), "rlog", 1)
+    for i in [1, 0]:
+      self.make_file_with_data(seg_format3.format(i), "rlog", 1)
+    assert self.drain(up) == [f"{self.seg_format2.format(i)}/rlog" for i in [0, 1, 2, 10]] + \
+                             [f"{seg_format3.format(i)}/rlog" for i in [0, 1]]
+    assert not rlogs_pending(Paths.log_root()), "the pre-toggle backlog must not hold shutdown"
+
+  def test_upload_rlogs_off_clears_anchor(self):
+    self.make_file_with_data(self.seg_format.format(0), "rlog", 1)
+    self.params.put_bool("UploadRlogs", True)
+    up = Uploader("0000000000000000", Paths.log_root())
+    assert up.next_file_to_upload(metered=False)[1] == f"{self.seg_format.format(0)}/rlog"
+
+    self.params.put_bool("UploadRlogs", False)
+    assert up.next_file_to_upload(metered=False) is None
+    assert get_anchor(Paths.log_root()) is None and not rlogs_pending(Paths.log_root())
+
+    # back on later: starts again at the newest drive, the one left unsent is backlog now
+    self.make_file_with_data(self.seg_format2.format(0), "rlog", 1)
+    self.params.put_bool("UploadRlogs", True)
+    assert self.drain(up) == [f"{self.seg_format2.format(0)}/rlog"]
 
   def test_upload_rlogs_skips_locked_uploads_metered(self):
     self.gen_files(lock=True, boot=False)

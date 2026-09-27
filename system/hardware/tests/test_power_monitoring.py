@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 from openpilot.common.params import Params
 from openpilot.system.hardware.power_monitoring import PowerMonitoring, CAR_BATTERY_CAPACITY_uWh, \
-                                                CAR_CHARGING_RATE_W, VBATT_PAUSE_CHARGING, DELAY_SHUTDOWN_TIME_S, MAX_TIME_OFFROAD_S
+                                                CAR_CHARGING_RATE_W, VBATT_PAUSE_CHARGING, DELAY_SHUTDOWN_TIME_S, MAX_TIME_OFFROAD_S, \
+                                                RLOG_UPLOAD_HOLD_MAX_S
 
 # Create fake time
 ssb = 0.
@@ -243,3 +244,33 @@ class TestPowerMonitoring:
                                        offroad_timestamp,
                                        started_seen, self.toggles()), \
                     f"Should shutdown after {DELAY_SHUTDOWN_TIME_S} seconds offroad time"
+
+  # StarPilot: UploadRlogs holds only the offroad timer, only while the last drive's rlogs are pending, and at most
+  # RLOG_UPLOAD_HOLD_MAX_S past it
+  @pytest.mark.parametrize("pending, upload_rlogs, past_timeout, expect_shutdown", [
+    (True, True, 60, False),
+    (False, True, 60, True),
+    (True, False, 60, True),
+    (True, True, RLOG_UPLOAD_HOLD_MAX_S + 60, True),
+  ])
+  def test_offroad_timeout_held_for_rlog_upload(self, mocker, pending, upload_rlogs, past_timeout, expect_shutdown):
+    pm_patch(mocker, "rlogs_pending", pending)
+    self.params.put_bool("UploadRlogs", upload_rlogs)
+    pm = PowerMonitoring()
+    pm.car_battery_capacity_uWh = CAR_BATTERY_CAPACITY_uWh
+    pm.car_voltage_mV = GOOD_VOLTAGE
+    timeout = 3600
+    offroad_timestamp = ssb - timeout - past_timeout
+    assert pm.should_shutdown(False, True, offroad_timestamp, True, self.toggles(timeout)) == expect_shutdown
+
+  def test_rlog_hold_never_blocks_low_voltage(self, mocker):
+    pm_patch(mocker, "rlogs_pending", True)
+    self.params.put_bool("UploadRlogs", True)
+    pm = PowerMonitoring()
+    pm.car_battery_capacity_uWh = CAR_BATTERY_CAPACITY_uWh
+    pm.car_voltage_mV = VOLTAGE_BELOW_PAUSE_CHARGING
+    timeout = 3600
+    offroad_timestamp = ssb - timeout - 60
+    reasons = [pm.shutdown_reason(False, True, offroad_timestamp, True, self.toggles(timeout)) for _ in range(40)]
+    # held until the low voltage is sustained, then it shuts down (the timer is past, so it reports offroad_timeout)
+    assert reasons[0] is None and reasons[-1] == "offroad_timeout"

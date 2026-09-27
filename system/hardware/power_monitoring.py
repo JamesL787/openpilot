@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from openpilot.common.params import Params
 from openpilot.system.hardware import HARDWARE
+from openpilot.system.hardware.hw import Paths
+from openpilot.system.loggerd.rlog_upload import rlogs_pending
 from openpilot.common.swaglog import cloudlog
 from openpilot.system.statsd import statlog
 
@@ -21,6 +23,12 @@ DELAY_SHUTDOWN_TIME_S = 300 # Wait at least DELAY_SHUTDOWN_TIME_S seconds after 
 VOLTAGE_SHUTDOWN_MIN_OFFROAD_TIME_S = 60
 VOLTAGE_SHUTDOWN_SUSTAINED_TIME_S = 30.0
 
+# StarPilot variables
+# UploadRlogs: the offroad timer waits for unfinished rlogs (rlog_upload.py), capped so a dead link can't keep the device up.
+# Low voltage and battery-exhausted shutdowns are never held
+RLOG_UPLOAD_HOLD_MAX_S = 2*3600
+RLOG_UPLOAD_CHECK_S = 30.0
+
 class PowerMonitoring:
   def __init__(self):
     self.params = Params()
@@ -32,6 +40,10 @@ class PowerMonitoring:
     self.car_voltage_instant_mV = 12e3          # Last value of peripheralState voltage
     self.low_voltage_start_time = None          # Monotonic timestamp when low voltage was first observed
     self.integration_lock = threading.Lock()
+
+    # StarPilot variables
+    self.rlogs_pending = False
+    self.rlogs_checked_at = None
 
     # Preserve an exhausted persisted value so the shutdown policy can act on it.
     # A missing or malformed value is treated as a newly initialized battery.
@@ -137,7 +149,10 @@ class PowerMonitoring:
       low_voltage_shutdown = False
 
     reason = None
-    if starpilot_toggles.device_shutdown_time > 0 and offroad_time > starpilot_toggles.device_shutdown_time:
+    timed_out = starpilot_toggles.device_shutdown_time > 0 and offroad_time > starpilot_toggles.device_shutdown_time
+    if timed_out and not low_voltage_shutdown and self.car_battery_capacity_uWh > 0:
+      timed_out = not self.hold_for_rlog_upload(now, offroad_time - starpilot_toggles.device_shutdown_time)
+    if timed_out:
       reason = "offroad_timeout"
     elif low_voltage_shutdown:
       reason = "low_voltage"
@@ -156,6 +171,20 @@ class PowerMonitoring:
     if not should_shutdown:
       return None
     return "forced_power_down" if forced else reason
+
+  def hold_for_rlog_upload(self, now: float, time_past_timeout: float) -> bool:
+    if time_past_timeout > RLOG_UPLOAD_HOLD_MAX_S or not self.params.get_bool("UploadRlogs"):
+      return False
+    if self.rlogs_checked_at is None or now - self.rlogs_checked_at >= RLOG_UPLOAD_CHECK_S:
+      self.rlogs_checked_at = now
+      try:
+        self.rlogs_pending = rlogs_pending(Paths.log_root())
+      except Exception:
+        cloudlog.exception("rlog upload hold check failed")
+        self.rlogs_pending = False
+      if self.rlogs_pending:
+        cloudlog.event("offroad_timeout held for rlog upload", time_past_timeout=time_past_timeout)
+    return self.rlogs_pending
 
   def should_shutdown(self, ignition: bool, in_car: bool, offroad_timestamp: float | None,
                       started_seen: bool, starpilot_toggles: SimpleNamespace):

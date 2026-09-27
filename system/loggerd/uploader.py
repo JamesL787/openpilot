@@ -16,6 +16,7 @@ from openpilot.common.utils import get_upload_stream
 from openpilot.common.params import Params
 from openpilot.common.realtime import set_core_affinity
 from openpilot.system.hardware.hw import Paths
+from openpilot.system.loggerd.rlog_upload import RLOG_NAMES, clear_anchor, ensure_anchor, in_upload_window
 from openpilot.system.loggerd.xattr_cache import getxattr, setxattr
 from openpilot.common.swaglog import cloudlog
 
@@ -91,8 +92,9 @@ class Uploader:
     self.immediate_priority = {"qlog": 0, "qlog.zst": 0, "qcamera.ts": 1}
 
     # StarPilot variables
-    # rlogs go after every pending qlog/qcamera; metered is ignored because phone hotspots report metered
-    self.rlog_names = ("rlog", "rlog.zst")
+    # rlogs go after every pending qlog/qcamera; metered is ignored because phone hotspots report metered.
+    # Which drives' rlogs: see rlog_upload.py
+    self.rlog_names = RLOG_NAMES
 
   def list_upload_files(self, metered: bool) -> Iterator[tuple[str, str, str]]:
     r = self.params.get("AthenadRecentlyViewedRoutes")
@@ -146,17 +148,14 @@ class Uploader:
         return name, key, fn
 
     if self.params.get_bool("UploadRlogs"):
-      rlogs = [f for f in upload_files if f[0] in self.rlog_names]
-      if rlogs:
-        # newest route first, its segments in order, so the drive in progress goes up before an old backlog
-        return max(rlogs, key=self.rlog_sort_key)
+      anchor = ensure_anchor(self.root)
+      for name, key, fn in upload_files:
+        if name in self.rlog_names and in_upload_window(key.split('/')[0], anchor):
+          return name, key, fn
+    else:
+      clear_anchor(self.root)
 
     return None
-
-  @staticmethod
-  def rlog_sort_key(f: tuple[str, str, str]) -> tuple[str, str, int]:
-    order, route, seg = (get_directory_sort(f[1].split('/')[0]) + ["", ""])[:3]
-    return order, route, -int(seg) if seg.isdigit() else 0
 
   def do_upload(self, key: str, fn: str):
     url_resp = self.api.get("v1.4/" + self.dongle_id + "/upload_url/", timeout=10, path=key, access_token=self.api.get_token())
