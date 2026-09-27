@@ -9056,3 +9056,45 @@ How it is wired:
   - selfdrive/ui/tests/test_device_screen_settings.py segfaults on this host in collection (not investigated).
 - **Suggested first drive:** turn it on together with or after `LatPScaleLowSpeed` 130, and note the same intersections as 285.
 - Scratch: /tmp/epsff_pid/gate_sim.py (harness), real_sim.py (this code).
+
+## 176. `tools/lateral/lat_score.py`: one scorecard and gate for both lateral controllers, fed by replay and by MetaDrive. Replay (closed-loop sim) only; nothing driven, no controller or param change.
+
+- **Owner asks:** "I don't have all the time to test every single scenario between both controllers … I was hoping that metaldrive could help … speed up the tuning process for both controllers." Also: set up the same pipeline with the NRDR PID session and the MetaDrive session.
+- **The division of labour.** MetaDrive (`sim-lat-training`, `lat_cem_tune.py`) searches for candidate tunes on scenarios the owner has not driven. This tool accepts or rejects a candidate against the owner's own drives. Its metrics are the ones STATUS 170/173/175 used, so a search cannot win on a figure the owner does not feel.
+- **Commands.**
+  - `score FILE_OR_DIR …`: scores a lat_pid_sim-format log as recorded, with no simulation. This covers a real route cache or a MetaDrive `lat_episode.sh` OUTDIR, where `offroad` and `engaged_s` come from `episode.json`. It adds pull-away wobble: the 10 s after each start from a stop.
+  - `replay` / `gate ROUTES --kind pid|clarity_eps --set K=V [--base-kind --base-set] [--clarity-const FF_SPEED_BP=a,b]`: runs a baseline and a candidate on the C020 plant over the 7 default routes (280, 284, 285, 286, 27a, 277, 278). `gate` exits 0 only on "pass".
+  - `--clarity-const` sets a list constant of `nrdr_eps_firmware_ff.py` in the worker only. It is sim only; the car cannot set it.
+  - Toggles are forced per kind:
+    - pid: `NrdrLatEpsFirmwareFF` 0.
+    - clarity_eps: `NrdrLatEpsFirmwareFF` 1 and `NrdrLatPidFirmwareFF` 0.
+    - The toggles are printed, so 286's logged EpsFF=1 cannot leak into a PID run.
+- **Metrics.**
+  - wobble: 0.4–3 Hz rms on near-straight driving, for 2–5 / 5–8 / 8–12 / 12–20 m/s. The mask is taken from the log, so both runs score the same frames.
+  - turn error: |des| > 45°, for < 12 and 12–25 mph. Alongside it: the fraction of those frames with |out| > 0.99, and the mean feedforward weight.
+  - dither: command reversals per second on |des| < 5°. A reversal needs |out| > 0.01 on both sides. Without that, 280's resting command (|out| ≈ 7e-4) counted 0.2/s of noise as a regression.
+  - unwind lag, from `lat_route_check`.
+  - `lat_pid_sim.metrics` err_rms and curve_ratio per band.
+- **Gate.** Per route, agreed with the NRDR PID session. A figure regresses if it gets worse by more than:
+  - wobble (5–8 / 8–12 / 12–20 only): max(0.05°, 15 %). The 2–5 bin is re-synced to the log and is reported, not gated.
+  - turn error: 0.5°.
+  - dither: 0.1/s.
+  - err_rms: 3 %.
+  - An improvement is the same margin in the other direction. The route-trust notes from STATUS 172 are printed; 284's < 12 mph turn error is not gated. "Better on 280, worse elsewhere" is reported as "mixed", not "pass".
+- **Check against STATUS 175.** 286, pid → PidFF: turn error 23.20 / 14.21 → 15.33 / 10.70, identical to STATUS 175.
+- **First runs (7 routes, sim only).**
+  - **PID → PID + `NrdrLatPidFirmwareFF`: mixed.**
+    - Turn error improves on 6 routes. For example, 27a < 12 mph goes 43.8 → 35.4, and 285 goes 17.3 / 13.6 → 15.4 / 11.4.
+    - Wobble and dither are unchanged everywhere.
+    - **278, < 12 mph turn error, regresses 17.45 → 18.95.** This has been passed to the NRDR PID session.
+  - **PID + PidFF → James's controller (this branch, ungated [2, 4]): fail on all 7.**
+    - Wobble 5–8 m/s is 2–5× higher (286: 0.27 → 1.40).
+    - Dither is about 2× higher.
+    - < 12 mph turn error is 1.4–5.4° worse.
+    - Only err_rms at 25–50 and > 50 mph improves (for example, 277 highway 0.83 → 0.47).
+    - This agrees with STATUS 173.
+  - **James's controller, `FF_SPEED_BP` [2, 4] → [4, 8]: mixed.**
+    - Wobble 5–8 m/s improves on all 7 (286: 1.40 → 1.01).
+    - < 12 mph turn error regresses on 6 (286: 16.8 → 21.7).
+    - This is the trade STATUS 173's |desired| gate (clarity-eps-testing 0f27431d) was built to avoid.
+- **Limits.** These are lat_pid_sim's limits: exogenous desired curvature, no model in the loop, one linear plant fitted at 5–21 m/s, and a re-sync to the log below 4 m/s. Pull-away wobble only means something on a MetaDrive or road log. MetaDrive's own caveat (its road departures ended the world at about 40 s, since fixed on its side with `out_of_road_done=False`) is that session's to record.
