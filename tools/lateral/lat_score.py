@@ -18,7 +18,8 @@ Metrics (per route; 100 Hz lat_pid_sim frames):
               Speed bins 2-5 / 5-8 / 8-12 / 12-20 m/s; NaN under 300 frames. The mask always comes from the
               LOG's desired and measured angle, so baseline and candidate score the same frames.
   turn_err    mean |des - angle| with |des| > 45 deg, engaged, hands off, v > 4 m/s; bins < 12 mph and 12-25 mph
-              (4-5.36 and 5.36-11.2 m/s); NaN under 50 frames. turn_sat is the fraction of those frames with
+              (4-5.36 and 5.36-11.2 m/s); NaN under 50 frames. turn_trail + turn_past = turn_err: the part where the
+              wheel trails |des| and the part where it is past it (overshoot, or unwind lag), signed by des. turn_sat is the fraction of those frames with
               |output| > 0.99 (authority-limited, not a tracking failure) and turn_ffw the mean feedforward weight
               there (LatControlClarityEps core.ff_weight or LatControlPID eps_ff_weight; replay only).
   dither      reversals per second of the controller output on |des| < 5 deg, hands off, by the wobble bins; a
@@ -120,6 +121,9 @@ def score_arrays(d, ang, des, out=None, ffw=None, pullaway=False):
     t = hands & (v >= lo) & (v < hi) & (np.abs(des) > 45)
     ok = t.sum() > 50
     res[f"turn_err{name}"] = float(np.mean(np.abs(des - ang)[t])) if ok else None
+    e = ((des - ang) * np.sign(des))[t]  # > 0: the wheel trails the desired angle; < 0: it is past it
+    res[f"turn_trail{name}"] = float(np.mean(np.clip(e, 0, None))) if ok else None
+    res[f"turn_past{name}"] = float(np.mean(np.clip(-e, 0, None))) if ok else None
     res[f"turn_sat{name}"] = float(np.mean(np.abs(out[t]) > 0.99)) if ok and out is not None else None
     res[f"turn_ffw{name}"] = float(np.mean(ffw[t])) if ok and ffw is not None else None
 
@@ -343,6 +347,7 @@ def cmd_replay(a):
 # printing
 
 SHOW = ([f"wobble{lo}-{hi}" for lo, hi in WOBBLE_BINS] + [f"turn_err{n}" for n, _, _ in TURN_BINS] +
+        [f"turn_trail{n}" for n, _, _ in TURN_BINS] + [f"turn_past{n}" for n, _, _ in TURN_BINS] +
         [f"turn_sat{n}" for n, _, _ in TURN_BINS] + [f"turn_ffw{n}" for n, _, _ in TURN_BINS] +
         [f"dither{lo}-{hi}" for lo, hi in WOBBLE_BINS[1:]] + ["unwind_lag"] +
         [f"err_rms_{b}" for b in ("low", "standard", "highway")] + [f"curve_ratio_{b}" for b in ("low", "standard", "highway")])

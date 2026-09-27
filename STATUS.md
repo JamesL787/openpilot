@@ -9098,3 +9098,7 @@ How it is wired:
     - < 12 mph turn error regresses on 6 (286: 16.8 → 21.7).
     - This is the trade STATUS 173's |desired| gate (clarity-eps-testing 0f27431d) was built to avoid.
 - **Limits.** These are lat_pid_sim's limits: exogenous desired curvature, no model in the loop, one linear plant fitted at 5–21 m/s, and a re-sync to the log below 4 m/s. Pull-away wobble only means something on a MetaDrive or road log. MetaDrive's own caveat (its road departures ended the world at about 40 s, since fixed on its side with `out_of_road_done=False`) is that session's to record.
+- **Follow-up: turn error split into trailing and past-desired** (`turn_trail` + `turn_past` = `turn_err`, signed by des). The split is reported, not gated; the NRDR PID session asked for it.
+  - It explains the 278 < 12 mph result. The feedforward cuts trailing error (13.9 → 12.1) but the wheel goes past the line more (3.6 → 6.9), mostly in two steady tight turns near 4.5 m/s.
+  - On 286 it only cuts trailing (12.0 → 3.9); past-desired is unchanged (11.2 → 11.4).
+  - The PID session keeps the code as is and will tell the owner to watch long tight turns near 10 mph. The dither deadband stays at 0.01.

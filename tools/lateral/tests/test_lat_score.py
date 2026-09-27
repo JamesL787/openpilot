@@ -29,9 +29,18 @@ def test_turn_error_saturation_and_ffw_bins():
   out = np.where(np.arange(N) % 4 == 0, 1.0, 0.5)
   r = L.score_arrays(d, d["angle"], des, out=out, ffw=np.full(N, 0.7))
   assert r["turn_err<12mph"] == pytest.approx(10.0)
+  assert r["turn_trail<12mph"] == pytest.approx(10.0) and r["turn_past<12mph"] == 0.0
   assert r["turn_sat<12mph"] == pytest.approx(0.25)
   assert r["turn_ffw<12mph"] == pytest.approx(0.7)
   assert r["turn_err12-25mph"] is None
+
+
+def test_turn_error_split_is_signed_by_desired():
+  des = np.full(N, -60.0)
+  d = _route(v=5.0, des=des, ang=np.where(np.arange(N) % 2 == 0, -64.0, -58.0))  # past by 4, trailing by 2
+  r = L.score_arrays(d, d["angle"], des)
+  assert r["turn_past<12mph"] == pytest.approx(2.0) and r["turn_trail<12mph"] == pytest.approx(1.0)
+  assert r["turn_trail<12mph"] + r["turn_past<12mph"] == pytest.approx(r["turn_err<12mph"])
 
 
 def test_dither_ignores_resting_noise():
