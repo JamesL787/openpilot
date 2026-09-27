@@ -8952,6 +8952,16 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
   - PID + gated feedforward: 286 1.27 / 0.27 / 0.23 / 0.07, 15.3 / 10.7. 285 0.58 / 0.37 / 0.20 / 0.11, 15.4 / 11.4. 284 0.45 / 0.34 / 0.13 / 0.11, 23.8 / 7.2. 280 0.25 / 0.19 / 0.15 / 0.10, 15.3 / 11.6.
   - The first fix here, James + [4, 8], trails it everywhere. It wobbles 2–4× as much at 5–12 m/s, and its turn error is higher (286: 21.7 / 13.2).
   - James's controller with the gate is level on wobble (within 0.07°). Its turn error is equal below 12 mph on 285, 286 and 280, 2 ° worse on 284, and 0.6–1.8° worse at 12–25 mph on all four routes.
+- **MetaDrive, model in the loop (sim only, not driven; one episode per cell; reported by the MetaDrive Sim session, STATUS 177 on `sim-lat-training`).** The setup is TSFDO, the comma 4 camera and torque mode through the fitted C020 EPS. Do not compare these with the earlier stock-model sims.
+  - **Stop and resume on a gentle loop** (40 km/h, cancel and brake to 0, resume at 60 s). This is the pull-away case the replay above cannot see.
+    - pullaway_wobble: ungated 1.99, gated 1.11. Reference: PID 0.48, PID + firmware FF 0.65.
+    - Standard-band err_rms: 4.68 → 3.28. curve_ratio: 1.04 → 0.98.
+    - Both re-engaged, and neither left the road.
+  - **R 60 m loop at 25 km/h**, turn_err / trail / past:
+    - Ungated 7.94 / 6.06 / 1.89; gated 9.41 / 6.75 / 2.66.
+    - Reference: PID 10.65 / 9.72 / 0.92 (one departure); PID + firmware FF 7.31 / 5.12 / 2.19.
+  - **R 40 m** is past the torque limit for every controller, so it is a stress case, not a ranking.
+  - **Read.** The gate roughly halves pull-away wobble and lowers the standard-band error, at about +0.7° trail and +0.8° past in the R 60 turns. Pull-away wobble with the gate is still about 2× PID's. Repeat runs (run-to-run spread) are pending.
 
 ## 174. Gas learner (`LongGasLearner`) on 00000286--ba543e3a3e, and its values now go into the drive log (`starpilotCarState.gasLearner*`). The 286 findings are from a CAN decode. The logging has static tests only and has not been driven.
 
