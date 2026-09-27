@@ -8777,3 +8777,26 @@ Scripts (in /tmp, not committed): `/tmp/r285.py`, `/tmp/r285b.py`, `/tmp/r285c.p
 - Each needs another drive to judge.
 
 Scripts (in /tmp, not committed): `/tmp/epsff/r286_*.py`, `roll_all.py`, `press.py`.
+
+## 169. Longitudinal on 00000286--ba543e3a3e (build f71648c5, chill 89%), the first drive with the item 162 young-track bound: it never fired, and none of the 7 bookmarks is a false brake. Nothing changed in code. Log decode and replay only.
+
+- **Item 162 bound.** A radard replay of the whole route, with the bound off against on, differs on 0 frames. This drive neither tests nor exercises the fix.
+- **10:03 and 12:09: −3.0 brakes for real slow traffic.**
+  - Radar first held each lead at 95-116 m, closing on the −13.5 U11 rail (tracks 50 and 15). Radar and camera ranges both fell 13-18 m/s, so the rail under-read the closing.
+  - The camera under-read the lead's closing too (it read 29-41 mph at 12:06).
+  - Braking began within 0.5 s of the radar pick-up.
+  - At 10:08 the car was 25 m behind a ~9 mph lead. By 12:13 it was 43 m back, level with a 24 mph lead.
+  - At 9:57.7 the lead was a 126 m radar-only leadTwo (−15.5) with modelProb 0.1, not taken as leadOne, which is by design.
+  - Bookmarks 10:05.7 and 12:14.3 fall at the ends of these brakes.
+- **12:47-12:53: −2.2 on a vision-only lead.**
+  - liveTracks had no point in path from 35 to 100 m, with only 1-4 points per sweep. The model's range jumped 54-78 m.
+  - There were real slow cars: the adjacent-lane radar points closed at −8.
+  - Radar misses of this kind also occur on 284 (segment 20 has a point near the vision lead on only 11% of frames). They are not new.
+  - Bookmark 12:52.4.
+- **6:15-6:43, the speed wobble following track 36 at ~55 mph and 47-75 m.** Bookmarks 6:27.1, 6:38.1 and 6:43.6.
+  - Radar and camera are on the same car. The yRel magnitude matches, 4.5 m on a curve converging to 0.
+  - Radar range and vRel agree with each other: +4.5 m/s opening at 6:33, then −4.5 m/s closing at 6:35 (54.4 to 47.0 m). The camera range dipped 53.4 to 49.6 m at the same moment.
+  - aLeadK went from +3.4 to −5.8 in 1.5 s, while the model's lead accel stayed −0.1. The MPC hit the chill floor of −1.0 twice, at 6:22.5 and 6:35.0.
+  - At 6:35 the command flipped from +0.70 to −1.00 in 1 s. The car delivered −1.78 for about 1 s, 0.8 beyond the command (the item 163 gas-to-brake transient), and speed fell from 56.9 to 50.7 mph.
+  - Bounding aLeadK by the model's accel (item 162's "option A") would have removed this. It would also remove real lead brakes, because the model's lead accel sits near 0 even when the lead slows (12:08: model −0.0 while range fell 16 m/s). One event is not enough to tune on (rule 5).
+- **5:58.2**: a lane change, with the lead dropped and +0.8 acceleration. Nothing longitudinal.
