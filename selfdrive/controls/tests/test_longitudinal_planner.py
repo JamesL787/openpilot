@@ -19,7 +19,7 @@ import openpilot.selfdrive.controls.lib.longitudinal_planner as longitudinal_pla
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.selfdrive.controls.lib.longitudinal_planner import (
-  LongitudinalPlanner, get_coast_accel, get_vehicle_min_accel, should_publish_planner_fcw,
+  LongitudinalPlanner, get_coast_accel, get_far_lead_coast_cap, get_vehicle_min_accel, should_publish_planner_fcw,
 )
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import (
   LongitudinalMpc,
@@ -4309,6 +4309,31 @@ def test_off_axis_lead_bound_is_not_applied_off_bosch_a(monkeypatch):
   monkeypatch.setattr(longitudinal_planner_module, "bound_off_axis_leads", fail)
   planner = LongitudinalPlanner(ToyotaCarInterface.get_non_essential_params(TOYOTA_CAR.TOYOTA_PRIUS), init_v=18.6)
   planner.update(_off_axis_sm(y_rel=-11.7, vision_a=-0.08), make_toggles())
+
+
+# Far-lead coast cap (Dom 79c61f479a), built in (was FarLeadCoastCap).
+def test_far_lead_coast_cap_delays_nonurgent_deceleration():
+  lead = make_lead(status=True, d_rel=128.0, v_lead=16.7, a_lead=0.2, radar=True)
+
+  assert get_far_lead_coast_cap(lead, 26.6, 115.0, -0.43) == pytest.approx(-0.20)
+  assert get_far_lead_coast_cap(lead, 26.6, 115.0, 0.10) == pytest.approx(0.10)
+
+
+@pytest.mark.parametrize("d_rel,v_lead,a_lead,desired_gap", [
+  (50.0, 20.0, 0.2, 45.0),  # only a small gap remains
+  (128.0, 8.0, 0.2, 115.0),  # urgent closing time
+  (128.0, 16.7, -0.5, 115.0),  # the lead is braking materially
+])
+def test_far_lead_coast_cap_preserves_urgent_or_close_deceleration(d_rel, v_lead, a_lead, desired_gap):
+  lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=a_lead, radar=True)
+
+  assert get_far_lead_coast_cap(lead, 26.6, desired_gap, -0.43) == pytest.approx(-0.43)
+
+
+def test_far_lead_coast_cap_has_no_toggle():
+  from openpilot.common.basedir import BASEDIR
+  with open(f"{BASEDIR}/common/params_keys.h") as f:
+    assert '"FarLeadCoastCap"' not in f.read()
 
 
 def test_off_axis_lead_hold_covers_route_267_1513_curve_exit():
