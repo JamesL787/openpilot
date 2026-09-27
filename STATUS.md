@@ -8854,11 +8854,27 @@ The sim wobble for ClarityEps is 2–3×. On 286 the road shows 4–6×, because
 
 Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r286_resume2.py. Not committed.
 
-## 171. Branch `clarity-eps-testing` (from 905a3776) carries the first STATUS 170 fix: `FF_SPEED_BP` [2, 4] → [4, 8] m/s, for both the Clarity and the Civic. Static tests and sim only; not driven.
+## 173. Branch `clarity-eps-testing`: James's controller's feedforward is gated by the desired wheel angle, faded in from 10° to 30° of |desired| (`FF_ANGLE_GATE_DEG`). `FF_SPEED_BP` is back to upstream's [2, 4] m/s. This is the fix for the STATUS 170 wobble and applies to both the Clarity and the Civic. Static tests and closed-loop sim only; not driven.
 
-- The owner opened this branch for testing James's controller and for sending changes to James. `ns-bosch-radar-testing` keeps upstream's [2, 4].
-- The change is in `selfdrive/controls/lib/nrdr_eps_firmware_ff.py`. The feedforward now stays out below 4 m/s (a press or dropping under 4 m/s resets its join ramp) and reaches full weight at 8 m/s.
-- `test_driver_press_and_standstill_take_the_feedforward_out` is updated to check weight 0 at 3 m/s and 0.5 at 6 m/s.
-- Sim with the committed code on 284 matches the STATUS 170 sweep: wobble 0.56 / 0.54 / 0.32 / 0.21° by speed band.
-- The evidence is the Civic's (C020 plant, one drive). James's Clarity (A020) has not been simulated or driven on this value.
-- The owner did not take the low-speed feedforward scale (STATUS 170 option 2) or a roll-term fix.
+- **History.** This replaces the branch's first fix, `FF_SPEED_BP` [2, 4] → [4, 8] (commit 2c7518a2, which numbered its entry 171 before the PID session's renumber took 171). The owner asked for that fix to be undone and redone with the PID session's gate. The PID session found the gate in sim inside `LatControlPID`, using the STATUS 165 feedforward.
+- **Why the gate works.** Near straight, the feedforward makes the EPS follow the model's small desired-angle wiggle almost 1:1. In a turn it is what gets the wheel round. The [4, 8] fix removed it by speed, turns included. The gate removes it by angle, so turns keep it.
+- **The change** is in `selfdrive/controls/lib/nrdr_eps_firmware_ff.py`, `ClarityEpsLateralCore.update`: `ff_weight = ramp × interp(v, [2, 4]) × interp(|desired_angle_no_offset|, [10, 30])`. The gate does not reset the join ramp. Leaving a turn fades the feedforward out, and the next turn brings it straight back.
+- **Tests.** `test_feedforward_is_gated_by_the_desired_angle` is new. The `_hold` helper's default is now 40° so the existing weight tests run with the gate open. The sim wiring test steps to curvature 0.02 (past the gate) and checks weight 0 while straight. 179 pass (`test_nrdr_eps_firmware_ff.py` and `tools/lateral/tests/`).
+- **Closed-loop sim** (C020 plant; script /tmp/epsff/gate_eps.py). Wobble is the 0.4–3 Hz wheel rms (STATUS 170 mask) by speed band: 2–5 / 5–8 / 8–12 / 12–20 m/s. Turn error is the mean |error| on |desired| > 45°, hands off, under 12 mph / 12–25 mph.
+
+| route | variant | wobble (°) | turn error (°) |
+|---|---|---|---|
+| 286 | PID | 1.27 / 0.27 / 0.24 / 0.07 | 23.2 / 14.2 |
+| 286 | James, [2, 4], no gate (as driven) | 1.44 / 1.40 / 0.96 / 0.17 | 16.7 / 12.4 |
+| 286 | James, [4, 8] (first fix) | 1.30 / 1.01 / 0.95 / 0.17 | 21.7 / 13.2 |
+| 286 | **James, gate** | 1.28 / 0.34 / 0.30 / 0.09 | 16.9 / 12.5 |
+| 285 | PID / no gate / gate | 0.58 / 0.37 / 0.20 / 0.12 · 1.02 / 0.82 / 0.42 / 0.26 · **0.60 / 0.43 / 0.21 / 0.14** | 17.3 / 13.6 · 17.0 / 13.0 · **17.0 / 13.0** |
+| 284 | PID / no gate / gate | 0.48 / 0.33 / 0.13 / 0.11 · 1.00 / 0.90 / 0.31 / 0.21 · **0.49 / 0.36 / 0.16 / 0.11** | 24.2 / 8.5 · 25.8 / 8.5 · **25.9 / 8.6** |
+| 280 | PID / no gate / gate | 0.25 / 0.19 / 0.15 / 0.10 · 0.54 / 0.65 / 0.37 / 0.21 · **0.27 / 0.23 / 0.17 / 0.14** | 15.6 / 14.0 · 17.2 / 12.1 · **17.3 / 12.2** |
+
+- **Result.** With the gate, wobble is at PID's level in every band on all four routes, and turn error is the same as the ungated controller's. Adding [4, 8] on top of the gate changes nothing except losing turn error on 285 and 286 (18.0 and 21.6 under 12 mph), so it is not used.
+- **Not tested.**
+  - The sim resyncs to the log below ~4 m/s. The 2–5 m/s column therefore barely moves: 286 reads 1.28 for the gate against 1.27 for PID. Pulling away from a stop, the owner's actual symptom, needs a drive.
+  - The sim has no model-in-the-loop, so it under-reads the road wobble (STATUS 170).
+  - James's Clarity (A020 calibration) has not been simulated or driven with the gate.
+- `ns-bosch-radar-testing` keeps upstream's ungated [2, 4] for `LatControlClarityEps`. The PID session's own gate inside `LatControlPID` is separate work.
