@@ -26,6 +26,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
+from openpilot.selfdrive.controls.lib.latcontrol_clarity_eps import LatControlClarityEps, use_clarity_eps_controller
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
@@ -424,6 +425,9 @@ class Controls:
       self.LaC = LatControlAngle(self.CP, self.CI, DT_CTRL)
     elif self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
       self.LaC = LatControlCurvature(self.CP, self.CI, DT_CTRL)
+    elif use_clarity_eps_controller(self.CP, self.params):
+      # NrdrLatEpsFirmwareFF: upstream JamesL787 8c3a3fd8's controller (modified-EPS Clarity / Civic Bosch)
+      self.LaC = LatControlClarityEps(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'pid':
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'torque':

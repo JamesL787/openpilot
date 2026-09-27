@@ -1,10 +1,10 @@
-"""nrdr: modified-EPS feedforward built on the EPS firmware's own control law. Logged always, applied by NrdrLatEpsFirmwareFF.
+"""nrdr: the modified-EPS lateral controller built on the EPS firmware's own control law (Clarity and Civic Bosch C020).
 
-Ported from JamesL787/openpilot vfn-controller-shadow (shadow commit 52618f42, feedforward as of fd815ef3).
-The feedforward below is upstream's, line for line, with the firmware constants moved into a calibration
-so the Civic Bosch C020 image can use its own. Upstream's ClarityEpsLateralCore (the applied controller)
-is not ported: LatControlPID keeps its own PID and tune, and NrdrLatEpsFirmwareFF swaps this in for its
-kf feedforward through upstream's join gate and fade-in (eps_ff_weight, STATUS 165).
+Ported from JamesL787/openpilot vfn-controller-shadow (shadow 52618f42, controller 8c3a3fd8, output LPF fd815ef3).
+The feedforward and ClarityEpsLateralCore below are upstream's, line for line, with the firmware constants moved
+into a calibration and the fixed P/I trims into arguments, so the Civic Bosch C020 image can use its own. The
+feedforward is logged in shadow by LatControlPID; NrdrLatEpsFirmwareFF hands the car to LatControlClarityEps,
+which runs ClarityEpsLateralCore exactly as upstream does on the Clarity (STATUS 164-166).
 
 The Clarity's LKAS path is not a torque command. The firmware turns our 0xE4 value into a target R5,
 compares it with R6 -- a filtered steering RATE (R6 = -138.6 counts per deg/s, corr 0.98 against
@@ -35,6 +35,9 @@ its own comment and STATUS 163.
 import math
 
 import numpy as np
+
+from openpilot.common.filter_simple import FirstOrderFilter
+from openpilot.common.pid import PIDController
 
 # 0xE4 value per unit of lateral output: torqueBP/V = [0, 3840] identity, apply_torque = -u * 3840
 E4_PER_OUTPUT = 3840.0
@@ -84,6 +87,24 @@ LEAD_S = 0.07            # s, covers the output LPF plus CAN/firmware transport 
 FF_OUTPUT_TAU = 0.15     # s, first-order smoothing of the feedforward itself
 R5_CAP = 27000.0         # stay clear of the 30000 rail, where the classic stutter lived (route 154)
 R5_CAP_ENVELOPE_FRAC = 0.9
+
+# ClarityEpsLateralCore. The feedback path is vfn 35ddc44b's modified-EPS angle PID with the P/I trims the car
+# ran on it (2026-09-26, LatPScale 125/100/125, LatIScale 70/95/35), fixed here because the replay validated
+# the feedforward against exactly that PID. The output LPF is the NRDR setting (these are the car's values).
+MPH_TO_MS = 0.44704
+BAND_LOW_MAX = 25.0 * MPH_TO_MS
+BAND_STD_MAX = 50.0 * MPH_TO_MS
+P_SCALE = (1.25, 1.00, 1.25)
+I_SCALE = (0.70, 0.95, 0.35)
+OUTPUT_LPF_TAU = (0.07, 0.05, 0.01)
+INTEGRATOR_MIN_SPEED = 2.0  # m/s, below this the integrator is held at zero (as vfn)
+
+# The Civic Bosch C020 the same way: fixed to the P/I trims the owner's car ran on route 00000284 (initData:
+# LatPScale 115/125/115, LatIScale 75/95/100), the drive the C020 calibration was checked against. The output
+# LPF keeps upstream's values: this branch filters the target instead (HondaLpfTau*), so it has no car value
+# for an output filter, and upstream has no HondaTorqueOutputLpfTau* keys here to read.
+CIVIC_P_SCALE = (1.15, 1.25, 1.15)
+CIVIC_I_SCALE = (0.75, 0.95, 1.00)
 
 # The feedforward asks for the torque that moves the wheel ALONG the desired path, so it is only right
 # once the wheel is on it. Engaging mid-turn at low speed routinely starts 20-70 deg off (45 engagements on
@@ -144,15 +165,6 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
   envelope_v=[1774, 1774, 1774, 1774, 1774, 1552, 1219, 1108, 1108],
   r6_per_deg_s=-173.0,
 )
-
-
-def eps_ff_weight(ramp: float, error_deg: float, v_ego: float, steering_pressed: bool, dt: float):
-  """Upstream ClarityEpsLateralCore's join gate and fade-in, as a function: returns (ramp, weight)."""
-  if steering_pressed or v_ego < FF_SPEED_BP[0]:
-    ramp = 0.0
-  elif ramp > 0.0 or abs(error_deg) < FF_JOIN_ERROR_DEG:
-    ramp = min(1.0, ramp + dt / FF_FADE_IN_S)
-  return ramp, ramp * float(np.interp(v_ego, FF_SPEED_BP, [0.0, 1.0]))
 
 
 def command_key(e4: float) -> int:
@@ -253,4 +265,67 @@ class ClarityEpsFirmwareFeedforward:
     self.r5 = max(min(r5_for_motion(self.load, self.rate, self.r5, self.cal), cap), -cap)
     target = output_from_r5(self.r5, self.cal)
     self.output = target if first else self.output + self.output_alpha * (target - self.output)
+    return self.output
+
+
+def speed_band(v_ego: float, values):
+  return values[0] if v_ego < BAND_LOW_MAX else values[1] if v_ego < BAND_STD_MAX else values[2]
+
+
+class ClarityEpsLateralCore:
+  """Angle PID on the residual + firmware-inversion feedforward, faded in once the wheel is on the path.
+
+  Pure (no messaging, no params), so the closed-loop replay can drive exactly the code the car runs.
+  """
+
+  def __init__(self, kp_bp, kp_v, ki_bp, ki_v, dt: float, ff: ClarityEpsFirmwareFeedforward | None = None,
+               p_scale=P_SCALE, i_scale=I_SCALE):
+    self.dt = dt
+    self.p_scale = p_scale
+    self.i_scale = i_scale
+    self.pid = PIDController((kp_bp, kp_v), (ki_bp, ki_v), pos_limit=1.0, neg_limit=-1.0, rate=1.0 / dt)
+    self.ff = ff if ff is not None else ClarityEpsFirmwareFeedforward(dt)
+    # The NRDR torque-output LPF, run exactly as LatControlPID runs it (the car controller deliberately does
+    # not filter, so this is the only one): same filter class, same per-band update_alpha, reset to 0.
+    self.output_lpf = FirstOrderFilter(0.0, OUTPUT_LPF_TAU[0], dt)
+    self.reset()
+
+  def reset(self):
+    self.pid.reset()
+    self.ff.reset()
+    self.ff_ramp = 0.0
+    self.ff_weight = 0.0
+    self.output_lpf.x = 0.0
+    self.output_lpf.initialized = True
+    self.output = 0.0
+
+  output_lpf_enabled = True
+  output_lpf_tau = OUTPUT_LPF_TAU
+
+  def update(self, desired_angle_no_offset: float, angle_offset: float, angle: float, v_ego: float, roll: float,
+             steering_pressed: bool, steer_limited: bool) -> float:
+    error = desired_angle_no_offset + angle_offset - angle
+    ff_full = self.ff.update(desired_angle_no_offset, v_ego, roll)
+
+    if steering_pressed or v_ego < FF_SPEED_BP[0]:
+      self.ff_ramp = 0.0
+    elif self.ff_ramp > 0.0 or abs(error) < FF_JOIN_ERROR_DEG:
+      self.ff_ramp = min(1.0, self.ff_ramp + self.dt / FF_FADE_IN_S)
+    self.ff_weight = self.ff_ramp * float(np.interp(v_ego, FF_SPEED_BP, [0.0, 1.0]))
+    ff = self.ff_weight * ff_full
+
+    i_scale = speed_band(v_ego, self.i_scale)
+    self.pid.update(error, speed=v_ego, feedforward=ff,
+                    freeze_integrator=steer_limited or steering_pressed or v_ego < INTEGRATOR_MIN_SPEED,
+                    integrator_gain_scale=i_scale,
+                    reset_integrator=i_scale <= 0.0 or v_ego < INTEGRATOR_MIN_SPEED)
+    output = max(min(self.pid.p * speed_band(v_ego, self.p_scale) + self.pid.i + self.pid.d + ff, 1.0), -1.0)
+
+    if self.output_lpf_enabled:
+      self.output_lpf.update_alpha(speed_band(v_ego, self.output_lpf_tau))
+      output = float(self.output_lpf.update(output))
+    else:
+      self.output_lpf.x = output
+      self.output_lpf.initialized = True
+    self.output = max(min(output, 1.0), -1.0)
     return self.output

@@ -284,9 +284,9 @@ class NRDRTuningLayout(_SettingsPage):
              "Convert curvature with the EPS firmware's A (position) table on top of the learned steer "
              "ratio, instead of the road-measured effective-ratio curve. Changes centre gain and taper."),
       toggle("NrdrLatEpsFirmwareFF", "EPS Firmware Feedforward (Test)",
-             "Replace the angle feedforward with one that inverts the modified EPS firmware's own control law "
-             "(James's controller). On the Civic this adds turn torque the P/I terms carry today. Fades in once the "
-             "wheel is within 10 deg of the path; a driver press takes it out. Off, it is only logged."),
+             "Steer with James's modified-EPS controller: a feedforward that inverts the EPS firmware's own "
+             "control law plus a PID on fixed per-band trims. The Lat P/I/F sliders and the other lateral shaping "
+             "do not apply while on. Takes effect on the next drive. Off, the feedforward is only logged."),
       toggle("NrdrLatModelActionInterp", "Model Action Interpolation",
              "Ramp the model's 20 Hz steering action across the model frame instead of holding it. "
              "Removes the 20 Hz staircase in the target that the smoothing filter otherwise has to hide."),

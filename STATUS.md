@@ -8545,3 +8545,71 @@ Scripts (in /tmp, not committed): `/tmp/c020_rows.py`, `/tmp/c020_loadfit*.py`, 
 **Not done.** A Civic load refit, the >100 km/h envelope, and any closed-loop simulation of the PI rebalancing.
 
 Scripts (in /tmp, not committed): `/tmp/epsff/ffmag.py`, `/tmp/epsff/ffcmp.py`.
+
+## 166. `NrdrLatEpsFirmwareFF` now runs James's controller itself, `LatControlClarityEps`, generalized to the Civic Bosch C020. This supersedes the 165 crossfade (owner: "match exactly how James had it, but for the Civic"). Static tests and an open-loop replay on 00000284--1109db7c4c only. Not driven.
+
+**What changed.**
+- **Controller selection.** With the toggle on, `controlsd` builds `LatControlClarityEps` (upstream JamesL787 8c3a3fd8 / fd815ef3) instead of `LatControlPID`.
+  - This applies on the modified-EPS Clarity and Civic Bosch when the lateral tune is `pid`.
+  - The toggle is read once, when controlsd starts, so a change applies on the next drive.
+  - Upstream selects it unconditionally on the Clarity. Here the toggle gates both cars.
+- **`common/pid.py`** is upstream's. `update()` gains `integrator_gain_scale` and `reset_integrator`, and both defaults leave every other caller unchanged.
+- **`LatControlPID` is back to STATUS 164.** It logs the firmware feedforward in shadow and never applies it. The 165 crossfade and `eps_ff_weight` are gone.
+- **`ClarityEpsLateralCore` and `speed_band`** are in `nrdr_eps_firmware_ff.py`, verbatim, except:
+  - the calibration and the P/I trims are constructor arguments;
+  - the Civic gets `CIVIC_BOSCH_C020` (STATUS 164) and its own trims.
+
+**The controller, as upstream.**
+- **Error:** `error = des + offset − angle`.
+- **Gains:** a PID on CP's kp/ki, with limits ±1.
+- **Feedforward:** the firmware-inversion feedforward, through the join gate (10°, 0.5 s fade, 2–4 m/s; a press or v < 2 sets it to 0).
+- **Integrator:** frozen on steer-limited, a press, or v < 2. Its rate is scaled per band by I_SCALE, and it is reset below 2 m/s.
+- **Output:** `clip(p·P_SCALE[band] + i + d + ff)`, then a per-band output low-pass (τ 0.07 / 0.05 / 0.01 s), then clip. Bands split at 25 and 50 mph.
+- **Desired angle:** the shell computes it from the firmware VGR or the sr curve (`NrdrLatUseFirmwareVgr`), rate-limits it by `NrdrLatAngleRateLimit`, and uses the modified-EPS press detector.
+
+**Civic specifics.**
+- **Trims.** The trims are fixed at what the owner drove on 284 (initData):
+  - P (1.15, 1.25, 1.15)
+  - I (0.75, 0.95, 1.00)
+  - Clarity's upstream trims (P 1.25/1.00/1.25, I 0.70/0.95/0.35) stay for the Clarity.
+- **Gains.** The Civic Bosch modified gains are the same numbers as James's (kpV 0.018/0.024/0.048/0.060, kiV 0.006/0.008/0.016/0.020).
+- **Output low-pass.** It uses upstream's constant τ. The `HondaTorqueOutput*` keys do not exist on this branch, and `HondaLpfTau*` (a target filter here) is not used by this controller.
+
+**What does not apply while it is on.** This is upstream's behaviour, not a port gap:
+- `LatP/I/FScale*` and `HondaLateralPidKp/KiScale`
+- the kf and rate feedforward
+- the center taper
+- target smoothing
+- the override fade
+- the testing-ground scale
+- every other `LatControlPID` shaping
+
+The carcontroller does not filter modified-EPS torque, on this branch as upstream.
+
+**Open-loop replay (284, engaged, no press, v > 2 m/s; logged inputs, so the error is the one the old controller left).**
+
+| | rms James | rms logged | corr | James ff / p / i | logged p / i |
+|---|---|---|---|---|---|
+| Turning, < 25 mph | 0.539 | 0.439 | 0.91 | 0.121 / 0.638 / 0.230 | 0.556 / 0.056 |
+| Turning, > 25 mph | 0.136 | 0.067 | 0.83 | 0.078 / 0.046 / 0.070 | 0.036 / 0.043 |
+| Straight | 0.126 | 0.044 | 0.52 | 0.05 / 0.03–0.08 / 0.09–0.16 | 0.03–0.07 / 0.02–0.04 |
+
+- **The excess is mostly the integrator,** integrating error that closed-loop feedforward would have removed.
+- **Open loop cannot size the closed-loop command.** The replay shows the terms have the expected shape and scale, nothing more.
+- **Feedforward weight.** The mean is 0.91, and it is at full weight 88 % of the time.
+- **Roughness.** The rms step is 0.0030 against 0.0036 logged, and the 5–8 Hz energy ratio is 0.92.
+
+**Tests.** `test_nrdr_eps_firmware_ff.py`: 121 pass.
+- James's core tests are included verbatim.
+- A Civic core test checks the banded PID on the Civic trims.
+- Toggle selection on both cars; off, stock, and other Hondas keep `LatControlPID`.
+- The Civic uses its own calibration and trims.
+- Settings are read.
+- It steers, logs and rests.
+- The rate limit holds.
+
+With `test_lat_tune_analyzer` and `test_py39_compat`, 199 pass. `test_latcontrol` has only the 2 pre-existing Bolt/Palisade failures. Ruff is clean on the new files.
+
+**Not done.** A Civic load refit, the >100 km/h envelope, and a closed-loop simulation. The first drive should expect more turn-in torque below 25 mph than today.
+
+Script (in /tmp, not committed): `/tmp/epsff/core_replay.py`.
