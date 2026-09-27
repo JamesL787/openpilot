@@ -8948,6 +8948,10 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
   - The sim has no model-in-the-loop, so it under-reads the road wobble (STATUS 170).
   - James's Clarity (A020 calibration) has not been simulated or driven with the gate.
 - `ns-bosch-radar-testing` keeps upstream's ungated [2, 4] for `LatControlClarityEps`. The PID session's own gate inside `LatControlPID` is separate work.
+- **Against the PID session's fix** (STATUS 175, `NrdrLatPidFirmwareFF` on, ebdd44d7; same sim and routes, /tmp/epsff/pid175_vs_eps.py). The format is wobble by band, then turn error.
+  - PID + gated feedforward: 286 1.27 / 0.27 / 0.23 / 0.07, 15.3 / 10.7. 285 0.58 / 0.37 / 0.20 / 0.11, 15.4 / 11.4. 284 0.45 / 0.34 / 0.13 / 0.11, 23.8 / 7.2. 280 0.25 / 0.19 / 0.15 / 0.10, 15.3 / 11.6.
+  - The first fix here, James + [4, 8], trails it everywhere. It wobbles 2–4× as much at 5–12 m/s, and its turn error is higher (286: 21.7 / 13.2).
+  - James's controller with the gate is level on wobble (within 0.07°). Its turn error is equal below 12 mph on 285, 286 and 280, 2 ° worse on 284, and 1–2 ° worse at 12–25 mph on all four routes.
 
 ## 174. Gas learner (`LongGasLearner`) on 00000286--ba543e3a3e, and its values now go into the drive log (`starpilotCarState.gasLearner*`). The 286 findings are from a CAN decode. The logging has static tests only and has not been driven.
 
