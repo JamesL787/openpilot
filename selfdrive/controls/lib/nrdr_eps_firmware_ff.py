@@ -112,7 +112,13 @@ CIVIC_I_SCALE = (0.75, 0.95, 1.00)
 # angle error is small, then fades in; a driver press or dropping below walking speed takes it out again.
 FF_JOIN_ERROR_DEG = 10.0
 FF_FADE_IN_S = 0.5
-FF_SPEED_BP = [2.0, 4.0]    # m/s, faded in with speed; the desired angle is ill-conditioned near standstill
+# m/s, faded in with speed; the desired angle is ill-conditioned near standstill. nrdr: upstream is [2, 4].
+# Moved to [4, 8] (STATUS 170): on the Civic's first drive (286) the wheel wobbled ~1 Hz, +-3.5 deg, pulling
+# away from a stop, 0.4-3 Hz wheel rms 1.44 deg at 2-5 m/s against 0.22-0.44 on six PID drives. The
+# feedforward makes the EPS follow the model's low-speed desired-angle wiggle almost 1:1. Closed-loop sim
+# (C020 plant, 5 routes): 2-5 m/s wobble 0.87 -> 0.59 (PID 0.55), <25 mph turn entry 0.82 -> 0.75 (PID 0.61).
+# Sim and one drive on the Civic only; not driven on this value, and never on a Clarity.
+FF_SPEED_BP = [4.0, 8.0]
 
 
 class EpsFirmwareCalibration:

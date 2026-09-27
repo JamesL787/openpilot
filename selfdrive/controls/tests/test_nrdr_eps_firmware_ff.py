@@ -247,7 +247,9 @@ def test_driver_press_and_standstill_take_the_feedforward_out():
   _hold(core, 1, v=1.0)
   assert core.ff_weight == 0.0
   _hold(core, 80, v=3.0)
-  assert core.ff_weight == pytest.approx(0.5)   # faded in with speed between 2 and 4 m/s
+  assert core.ff_weight == 0.0                  # below FF_SPEED_BP[0] it stays out
+  _hold(core, 80, v=6.0)
+  assert core.ff_weight == pytest.approx(0.5)   # faded in with speed between 4 and 8 m/s
 
 
 def test_without_the_feedforward_the_core_is_the_banded_pid():

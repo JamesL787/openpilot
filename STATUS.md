@@ -8853,3 +8853,12 @@ Scripts (in /tmp, not committed): `/tmp/epsff/r286_*.py`, `roll_all.py`, `press.
 The sim wobble for ClarityEps is 2–3×. On 286 the road shows 4–6×, because of the model loop. The sim ranks the levers but understates the problem, so any fix needs a drive to judge.
 
 Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r286_resume2.py. Not committed.
+
+## 171. Branch `clarity-eps-testing` (from 905a3776) carries the first STATUS 170 fix: `FF_SPEED_BP` [2, 4] → [4, 8] m/s, for both the Clarity and the Civic. Static tests and sim only; not driven.
+
+- The owner opened this branch for testing James's controller and for sending changes to James. `ns-bosch-radar-testing` keeps upstream's [2, 4].
+- The change is in `selfdrive/controls/lib/nrdr_eps_firmware_ff.py`. The feedforward now stays out below 4 m/s (a press or dropping under 4 m/s resets its join ramp) and reaches full weight at 8 m/s.
+- `test_driver_press_and_standstill_take_the_feedforward_out` is updated to check weight 0 at 3 m/s and 0.5 at 6 m/s.
+- Sim with the committed code on 284 matches the STATUS 170 sweep: wobble 0.56 / 0.54 / 0.32 / 0.21° by speed band.
+- The evidence is the Civic's (C020 plant, one drive). James's Clarity (A020) has not been simulated or driven on this value.
+- The owner did not take the low-speed feedforward scale (STATUS 170 option 2) or a roll-term fix.
