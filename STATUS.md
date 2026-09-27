@@ -8798,5 +8798,5 @@ Scripts (in /tmp, not committed): `/tmp/epsff/r286_*.py`, `roll_all.py`, `press.
   - Radar range and vRel agree with each other: +4.5 m/s opening at 6:33, then −4.5 m/s closing at 6:35 (54.4 to 47.0 m). The camera range dipped 53.4 to 49.6 m at the same moment.
   - aLeadK went from +3.4 to −5.8 in 1.5 s, while the model's lead accel stayed −0.1. The MPC hit the chill floor of −1.0 twice, at 6:22.5 and 6:35.0.
   - At 6:35 the command flipped from +0.70 to −1.00 in 1 s. The car delivered −1.78 for about 1 s, 0.8 beyond the command (the item 163 gas-to-brake transient), and speed fell from 56.9 to 50.7 mph.
-  - Bounding aLeadK by the model's accel (item 162's "option A") would have removed this. It would also remove real lead brakes, because the model's lead accel sits near 0 even when the lead slows (12:08: model −0.0 while range fell 16 m/s). One event is not enough to tune on (rule 5).
+  - Bounding aLeadK by the model's accel (a camera cross-check, proposed in conversation and not implemented) would have removed this. It would also remove real lead brakes, because the model's lead accel sits near 0 even when the lead slows (12:08: model −0.0 while range fell 16 m/s). One event is not enough to tune on (rule 5).
 - **5:58.2**: a lane change, with the lead dropped and +0.8 acceleration. Nothing longitudinal.
