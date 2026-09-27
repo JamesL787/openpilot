@@ -192,7 +192,7 @@ def _truthy(v, default=True):
   return str(v).strip().lower() in ("1", "true")
 
 
-KINDS = ("pid", "torque_upstream", "torque_starpilot")
+KINDS = ("pid", "torque_upstream", "torque_starpilot", "clarity_eps")
 # Torque-controller defaults from the lat-accel study (STATUS 140): LAF ~11-12 m/s^2 per unit command and
 # friction ~0.02-0.03 (command units) above 25 mph, several times that below. SR 15.27 is the pooled fit
 # after the firmware VGR map (model M1), used in place of paramsd's scalar when the map is on.
@@ -225,7 +225,10 @@ class Controller:
   kind "pid" is the car's LatControlPID; "torque_upstream" is comma's LatControlTorque (vendored in
   latcontrol_torque_upstream.py); "torque_starpilot" is StarPilot's LatControlTorque with NNFF off (NNFF is a
   different class that controlsd swaps in; it is never built here). The torque kinds are built on the logged
-  CarParams with the lateral tuning switched to torque and the TORQUE_DEFAULTS values (overridable)."""
+  CarParams with the lateral tuning switched to torque and the TORQUE_DEFAULTS values (overridable).
+  "clarity_eps" is LatControlClarityEps, what controlsd builds on a modified-EPS Clarity / Civic Bosch when
+  NrdrLatEpsFirmwareFF is on (STATUS 166), on the logged CarParams' pid gains; LatP/I/F and the Honda Kp/Ki scales
+  do not reach it, as on the car."""
   def __init__(self, cp_bytes, params, testing_ground=False, kind="pid", torque=None):
     from cereal import car, custom
     from opendbc.car.car_helpers import interfaces
@@ -247,7 +250,7 @@ class Controller:
         setattr(cpb.lateralTuning.pid, k + "V", [float(self.gains[k])])
     if "kf" in self.gains:
       cpb.lateralTuning.pid.kf = float(self.gains["kf"])
-    if kind != "pid":
+    if kind not in ("pid", "clarity_eps"):
       cpb.lateralTuning.init("torque")
       t = cpb.lateralTuning.torque
       t.latAccelFactor = float(self.tq["laf"])
@@ -276,6 +279,12 @@ class Controller:
       self.lac.params = _DictParams(self.params)
       if "kf" in self.gains:
         self.lac.is_modified_eps_kf_car = False
+    elif kind == "clarity_eps":
+      from openpilot.selfdrive.controls.lib import latcontrol_clarity_eps
+      if not latcontrol_clarity_eps.use_clarity_eps_controller(self.CP, _DictParams({"NrdrLatEpsFirmwareFF": "1"})):
+        raise ValueError(f"clarity_eps needs a modified-EPS Clarity or Civic Bosch on pid tuning, not {self.CP.carFingerprint}")
+      self._patch(latcontrol_clarity_eps, "Params", lambda: _DictParams(self.params))
+      self.lac = latcontrol_clarity_eps.LatControlClarityEps(self.CP, self.CI, DT)
     else:
       from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_physical_to_linear
       if self.tq["vgr"]:
@@ -316,7 +325,7 @@ class Controller:
   def raw_target(self):
     """The unshaped target angle (deg, physical): the PID's before the slew clip and smoothing, or for the torque
     kinds the angle the controller's own kinematics (VGR map or not, its sR) give for the desired curvature."""
-    return self.lac.raw_angle_steers_des if self.kind == "pid" else self.target
+    return self.lac.raw_angle_steers_des if self.kind == "pid" else self.target  # clarity_eps: before its rate limit
 
   def _set_friction(self, v):
     fr = self.tq["friction"]
@@ -349,6 +358,12 @@ class Controller:
       if self.gains.get("rate_damp") and active:
         fade = float(np.clip((30 * MPH - CS.vEgo) / (30 * MPH), 0.0, 1.0))
         out = float(np.clip(out - self.gains["rate_damp"] * 0.010 * CS.steeringRateDeg * fade, -1.0, 1.0))
+      return float(out), float(des)
+    if self.kind == "clarity_eps":
+      # the shell's own map (firmware VGR or sr curve) before its rate limit; it recomputes the same value in update
+      self.target = self.lac._desired_angle_no_offset(self.VM, CS.vEgo, lp.roll, curv) + lp.angleOffsetDeg
+      out, des, self.last_log = self.lac.update(active, CS, self.VM, lp, bool(steer_limited), curv,
+                                                False, 0.0, None, None, self.toggles)
       return float(out), float(des)
     from opendbc.car.honda.steer_ratio import vgr_linear_to_physical
     lin = float(np.degrees(self.VM.get_steer_from_curvature(-curv, CS.vEgo, lp.roll)))

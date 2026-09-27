@@ -167,3 +167,43 @@ def test_rate_damping_opposes_the_wheel_rate_below_30_mph_only():
   # 5 m/s: fade (13.4 - 5) / 13.4 = 0.63, so 0.3 * 0.010 * 20 deg/s * 0.63 less command
   assert outs[(5.0, 0.3)] == pytest.approx(outs[(5.0, 0.0)] - 0.3 * 0.010 * 20.0 * (30 * sim.MPH - 5.0) / (30 * sim.MPH), abs=1e-6)
   assert outs[(20.0, 0.3)] == pytest.approx(outs[(20.0, 0.0)])
+
+
+# Wiring only. On a synthetic step both this and the pid kind limit-cycle at +-1 against PLANT and the shipped
+# C020 plant, so convergence is scored on logged routes (STATUS 167), not here.
+@pytest.mark.parametrize("vgr", [False, True])
+def test_clarity_eps_kind_builds_the_car_controller_and_joins_the_feedforward(vgr):
+  from openpilot.selfdrive.controls.lib.latcontrol_clarity_eps import LatControlClarityEps
+  from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import CIVIC_BOSCH_C020
+  d = _route(0.004, vgr=vgr)
+  d["params"]["NrdrLatUseFirmwareVgr"] = "1" if vgr else "0"
+  ctl = sim.Controller(d["cp_bytes"], d["params"], kind="clarity_eps")
+  assert isinstance(ctl.lac, LatControlClarityEps) and ctl.lac.core.ff.cal is CIVIC_BOSCH_C020
+  weights = []
+  for k in range(400):   # wheel held on the target: the feedforward joins and fades in over 0.5 s
+    ctl.step(d, k, ctl.raw_target() if k else 0.0, 0.0, False)
+    weights.append(ctl.lac.core.ff_weight)
+  ctl.close()
+  assert weights[299] == 1.0 and weights[-1] == 1.0
+  assert ctl.last_log.active and ctl.lac.core.ff.output < 0.0   # right turn: a negative feedforward
+  ang, des, out, deliv, raw = sim.simulate(d, PLANT, with_raw=True, kind="clarity_eps")
+  assert raw[-1] < -5.0 and des[-1] == pytest.approx(raw[-1], abs=1e-6)
+  assert np.all(np.isfinite(ang)) and np.max(np.abs(deliv)) <= 1.0 + 1e-9
+
+
+def test_clarity_eps_kind_ignores_the_pid_sliders_as_on_the_car():
+  d = _route(0.004)
+  base = sim.simulate(d, PLANT, kind="clarity_eps")[2]
+  d["params"].update({"LatPScaleStandard": "150", "LatIScaleStandard": "10", "HondaLateralPidKpScale": "0.5"})
+  assert np.array_equal(sim.simulate(d, PLANT, kind="clarity_eps")[2], base)
+  assert not np.array_equal(sim.simulate(d, PLANT, kind="pid")[2], sim.simulate(_route(0.004), PLANT, kind="pid")[2])
+
+
+def test_clarity_eps_kind_is_refused_on_a_stock_eps_and_restores_params():
+  from openpilot.selfdrive.controls.lib import latcontrol_clarity_eps
+  before = latcontrol_clarity_eps.Params
+  sim.simulate(_route(0.002, n=400), PLANT, kind="clarity_eps")
+  assert latcontrol_clarity_eps.Params is before
+  CP = interfaces[HONDA.HONDA_CIVIC_BOSCH].get_non_essential_params(HONDA.HONDA_CIVIC_BOSCH)
+  with pytest.raises(ValueError):
+    sim.Controller(CP.to_bytes(), {}, kind="clarity_eps")

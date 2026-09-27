@@ -1,6 +1,6 @@
 # Status
 
-**As of: 2026-09-26**
+**As of: 2026-09-27**
 
 Update the date above whenever this file changes. If it is stale, trust `git log` over this
 file.
@@ -8613,3 +8613,66 @@ With `test_lat_tune_analyzer` and `test_py39_compat`, 199 pass. `test_latcontrol
 **Not done.** A Civic load refit, the >100 km/h envelope, and a closed-loop simulation. The first drive should expect more turn-in torque below 25 mph than today.
 
 Script (in /tmp, not committed): `/tmp/epsff/core_replay.py`.
+
+## 167. Closed-loop simulation of `LatControlClarityEps` on the Civic C020 plant, six routes. It tracks better at 25 mph and above, the same below 25 mph, and dithers about twice as much everywhere. Sim evidence only. Not driven.
+
+**What was added.** `tools/lateral/lat_pid_sim.py` has a new controller kind, `clarity_eps`.
+- It builds the car's `LatControlClarityEps` through `use_clarity_eps_controller` with `NrdrLatEpsFirmwareFF` = 1, so the Civic gets `CIVIC_BOSCH_C020` and its trims exactly as on the car.
+- It runs through the same `CarControllerSteer` stage and fitted plant (`tools/lateral/plants/civic_bosch_c020.json`) as the `pid` kind.
+- It refuses a stock EPS or a non-pid tune.
+- As on the car, `LatP/I/FScale*` and `HondaLateralPidKp/KiScale` do not reach it. A test checks this: the output is bit-identical when they change, and the `pid` output moves.
+- Tests: 3 new tests in `test_lat_pid_sim_torque.py`.
+  - The wiring test checks the controller, the calibration, the FF joining to weight 1.0, the log and the target.
+  - The slider-isolation test.
+  - The refusal test, which also checks that params are restored.
+- The synthetic-step convergence check was dropped. On the synthetic step, **both** `pid` and `clarity_eps` limit-cycle at ±1, with the test plant and with the C020 plant, at 6, 15 and 25 m/s. The synthetic harness is not representative; it was not investigated further. Convergence is scored on routes instead.
+
+**How the sim is read.**
+- The plant integrates the delivered command only while the car is engaged and hands-off, and resyncs to the log elsewhere.
+- Metrics use the owner-facing report's definitions, per band.
+- `pid` in the sim is the regular path on each route's logged tuning. It is the check that the plant is credible.
+  - At 25–50 mph it reproduces the logged err rms within ~0.1° on 5 of 6 routes (280: 0.73 sim vs 0.97 logged).
+  - Below 25 mph it reproduces within ~1.5° on 5 of 6 routes. On 284 it does not (9.0° sim vs 16.3° logged), so 284's low band is weak evidence.
+
+**Err rms, degrees (sign changes per second on straights, 0.15° hysteresis).**
+
+| route | < 25 mph logged / pid / clarity | 25–50 logged / pid / clarity | > 50 logged / pid / clarity |
+|---|---|---|---|
+| 284 | 16.31 / 9.04 / 9.65 (0.38 / 0.49 / 1.16) | 0.70 / 0.64 / 0.44 (0.30 / 0.38 / 0.54) | 0.39 / 0.50 / 0.30 (0.28 / 0.26 / 0.32) |
+| 280 | 6.09 / 6.14 / 6.10 (0.41 / 0.46 / 1.01) | 0.97 / 0.73 / 0.61 (0.33 / 0.38 / 0.62) | 0.28 / 0.29 / 0.22 (0.34 / 0.34 / 0.45) |
+| 277 | 11.98 / 12.85 / 13.24 (0.43 / 0.31 / 1.10) | 0.94 / 0.95 / 0.72 (0.32 / 0.33 / 0.57) | 0.67 / 0.83 / 0.47 (0.23 / 0.21 / 0.43) |
+| 276 | 16.71 / 16.79 / 18.17 (0.29 / 0.46 / 0.81) | 0.88 / 0.89 / 0.50 (0.33 / 0.32 / 0.57) | 0.52 / 0.62 / 0.30 (0.15 / 0.14 / 0.30) |
+| 278 | 18.22 / 16.91 / 18.36 (0.45 / 0.53 / 1.17) | 0.54 / 0.56 / 0.35 (0.30 / 0.31 / 0.51) | 0.46 / 0.56 / 0.36 (0.30 / 0.25 / 0.32) |
+| 27a | 16.30 / 16.55 / 17.14 (0.25 / 0.38 / 1.02) | 0.77 / 0.82 / 0.50 (0.30 / 0.28 / 0.45) | too little data |
+
+**Findings.**
+- **25–50 mph: better.**
+  - Err rms is 17–44 % lower than sim `pid` on all six routes.
+  - The curve actual/desired ratio is 1.01–1.06, against 0.94–0.98.
+  - Lag is 0.00–0.24 s, against 0.15–0.33 s.
+  - The ratio is slightly above 1 on 284 (1.064, 8 s of curve), which is mild overshoot.
+- **> 50 mph: better.** Err rms is 25–45 % lower on five routes, and the curve ratio is 1.00 on 284 and 0.94 on 277, against 0.93 and 0.71.
+- **Below 25 mph: not better on err rms** (−0.04 to +1.45° against `pid`). It is better on turn entry: entry actual/target is 0.69–0.87 against 0.45–0.71, and the curve ratio is 0.93–1.01 against 0.83–0.97. Low-speed err rms is dominated by large transients the plant only roughly reproduces.
+- **Dither is the thing to watch.** On straights, sign changes are about 2× `pid` at 25–50 mph and 2–3× below 25 mph.
+  - The 1 s high-passed error on near-straights (|des| < 5°) is 40–90 % higher below 25 mph (for example 284: 1.24° against 0.88°) and ~40–100 % higher at 25–50 mph.
+  - The rms step of the delivered command is ~1.7× below 25 mph (0.22–0.30 against 0.13–0.17 /s), and the same or lower above.
+  - p95 |err| on straights is still lower at 25–50 mph (0.62–0.81° against 0.93–1.49°). So above 25 mph this is small, fast wandering around a tighter mean. Below 25 mph it is a real increase in wheel activity.
+  - Whether the car shows it depends on what the fitted plant leaves out: friction and the tracker. Read it as a prediction to check, not a result.
+
+**Limits.**
+- The plant was fitted on PID-driven data (the regular path).
+- It is a black box. It cannot represent the EPS tracker (Trk4000 vs Trk4500), and it has no driver.
+- Desired curvature is exogenous: the model does not react to the controller's path.
+- The FF load constants are still James's Clarity fit. Nothing here refits them.
+
+**First drive with the toggle on: what to check.**
+- **Below 25 mph:** wheel dither on straights and after turn exit, and the turn-in amount (the sim expects more entry and less lag).
+- **25–50 mph:** overshoot on curves (ratio > 1).
+- **Logs:** `epsFfWeight` and the P/I/FF split, against 284.
+
+**Tests.** 192 pass (`tools/lateral/tests/`, `test_nrdr_eps_firmware_ff.py`, `test_py39_compat`). Ruff is clean on the new lines. The one UP031 at `lat_pid_sim.py:511` pre-exists at HEAD.
+
+**Scripts** (in /tmp, not committed):
+- `/tmp/epsff/cl_sim.py` runs the six-route comparison.
+- `/tmp/epsff/dither.py` computes the high-pass and command-step figures.
+- 284 was extracted to `/tmp/epsff/00000284--1109db7c4c.npz`. No routes were fetched.
