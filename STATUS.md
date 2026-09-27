@@ -8879,3 +8879,25 @@ Scripts (in /tmp, not committed): `/tmp/epsff/r286_*.py`, `roll_all.py`, `press.
 The sim wobble for ClarityEps is 2–3×. On 286 the road shows 4–6×, because of the model loop. The sim ranks the levers but understates the problem, so any fix needs a drive to judge.
 
 Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r286_resume2.py. Not committed.
+
+## 168. Owner's 285 turn notes, and a LowSpeed P sweep (owner: "try 2 first, then 1"). Log decode and closed-loop sim only; no code or param change.
+
+**The owner's turns.** No stutter was reported. The notes were: 7:06 R "did not commit", 7:58 R "too wild", 9:15 L "undershoots", 10:01 R "wide".
+- **7:12 R** (5.8 mph, wheel to −250°): the command is saturated at −1.0 and the wheel trails the target by 35–43°. This is an authority limit.
+- **7:58 R** (5 mph): the wheel trails by 13–20° with the command at only −0.3 to −0.47 (P only; I and F are about 0). At 8:01.8 the driver cranks it (−3472) past the target by about 30°, and the override cuts for about 2.5 s.
+- **10:01 R:** a +2099 press at turn-in (9:57.6) cuts the torque for about 0.4 s while the error is 46–49°. The turn-in is late.
+- **9:15 L:** the override is held from 9:15.8 to 9:19 while the driver's torque (+2600 to +3300) is in the **same** direction as the command. The car sends 0 and the driver steers alone.
+- **Across drives (turns with |des| > 45°):** 285 is not worse than 284 or 280. Under 12 mph the mean |err| is 30° (284: 42°, 280: 61°); from 12 to 25 mph it is 16° (284: 21°, 280: 13°).
+- **Cause of the lag:** the Civic's kf feedforward is about 0 below 25 mph, and `NrdrLatRateFF` is 0.
+
+**LowSpeed P sweep** (plant `civic_bosch_c020.json`, closed loop, hands-off frames, low band < 25 mph, err rms / curve ratio / sign changes per s):
+
+| route | log | P 115 (driven) | P 130 | P 140 | P 150 |
+|---|---|---|---|---|---|
+| 285 | 12.48 / 0.864 / 0.8 | 10.02 / 0.931 / 0.9 | 9.54 / 0.937 / 1.0 | 9.29 / 0.941 / 1.1 | 9.08 / 0.945 / 1.1 |
+| 284 | 16.31 / 0.785 / 0.7 | 9.04 / 0.962 / 1.4 | 8.80 / 0.963 / 1.4 | 8.68 / 0.964 / 1.5 | 8.57 / 0.965 / 1.5 |
+| 280 | 6.09 / 0.826 / 0.9 | 6.14 / 0.834 / 1.3 | 5.91 / 0.846 / 1.2 | 5.78 / 0.855 / 1.2 | 5.67 / 0.866 / 1.3 |
+
+- **Trust.** The sim is trusted on 280 (it matches the log). On 285 it reads the error 20 % low and the curve ratio 0.07 high. On 284 it is untrusted (9.0 against 16.3), because the real car trails more than the plant does in sharp slow turns.
+- **Gain from 115 → 130.** Error drops 3–4 %, the curve ratio rises 0.001–0.012, and sign changes rise by up to 0.1/s. From 130 to 150 the gain is smaller for each step and the wiggle rises.
+- **Suggestion:** `LatPScaleLowSpeed` 130, consistent with the STATUS 151 grid. Expect a small improvement in partial-command turns like 7:58. It cannot help 7:12 (already saturated), 9:15 or 10:01 (override cuts). Those need the override change or a feedforward.
