@@ -9355,3 +9355,9 @@ Times are log time. Bookmarks sit 2-3 s after the event.
   - At 14:51, lead #45 moved right and #10 at 61 m became the lead. It was measured at -5.5 to -6.5 for 1 s, and the range agreed (-5 m/s). The camera lead speed fell 21 -> 17.
   - From 14:52.2 the range went flat, while #10 coasted -4.5* for 0.35 s and then measured -3.2 to -2.4.
   - The command stayed at -0.7 to -0.8 for about 0.5 s after the range stopped closing. Mild.
+
+## 184. Desired Rate Feedforward slider removed from the device settings (owner request, 2026-09-27). Static only.
+
+- Removed: the `NrdrLatRateFF` row in `selfdrive/ui/layouts/settings/starpilot/nrdr_tuning.py` and its entry in `starpilot/common/assets/device_settings_layout.json`.
+- Kept: the param (default 0.0) and its term in `latcontrol_pid.py`, which is skipped at 0. The offline sims (`lat_pid_sim.py`, `lat_route_check.py`) still take it as a variant override.
+- Evidence it was off: route 0000028b initData has `NrdrLatRateFF` 0.0. It has been recommended at 0 since STATUS 143, where 0.5 caused the low-speed stutter on 278.

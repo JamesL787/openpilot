@@ -302,13 +302,6 @@ class NRDRTuningLayout(_SettingsPage):
         lambda: f"{p.get_int('NrdrLatAngleRateLimit')} deg/s",
         lambda: self._show_slider("NrdrLatAngleRateLimit", 0, 2000, unit=" deg/s", title="Desired Angle Rate Limit"),
       ),
-      value(
-        "NrdrLatRateFF", "Desired Rate Feedforward",
-        "Extra torque in proportion to how fast the desired steering angle is moving, per 100 deg/s. "
-        "Pays for the rack's damping as a turn is asked for, so the wheel follows with less lag. 0 disables.",
-        lambda: f"{p.get_float('NrdrLatRateFF'):.2f}",
-        lambda: self._show_slider("NrdrLatRateFF", 0.0, 2.0, step=0.05, value_type="float", title="Desired Rate Feedforward"),
-      ),
       toggle("HondaTorqueLowPassFilter", "Steering Target Smoothing", "Smooth the desired steering angle using speed-banded time constants."),
       value(
         "HondaLpfTauLowSpeed", "LPF Tau: Low Speed", "Low-pass time constant below 25 mph.",
