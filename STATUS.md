@@ -6075,6 +6075,13 @@ Run: all 17 item 104 routes plus 266 and 267, `--bearings 0.075 --fixes`, at HEA
   - **Doubled label, cause 2, left alone:** two different cars doing the same speed, for example seg 13 782.7 s (leadOne 55 m, track 28; leadLeft 103 m, track 44), about 170 frames. They are two cars.
   - Not changed: a lead that blinks out for a few frames (seg 10 625 s, a vision lead at yRel 7–8 m) still makes its marker disappear for those frames. That is the published lead status, not the UI.
   - 3 flip-memory tests and 6 `same_lead` cases added; 80 passed.
+  - **Checked on two longer drives** (owner request): 00000280--d02d9c2f8e (build 63827356b) and 00000283--fe4e75f88b (build a37852f8a). Both builds have the flip but not this fix; their renderer is identical to d0b52514.
+    - Frame-by-frame replay of 14 segments (about 16,000 frames), picked from a qlog scan for close leads and same-car side leads: 280 segs 4, 13, 23, 29, 31, 32, 33 and 283 segs 12, 14, 15, 25, 29, 35, 36. Each ran with the drive's own renderer and with the fix.
+    - Flips that switch back within 1 s: 2 → 0 (280 seg 31 1920.5 s, 0.25 s at 10.0 m; 283 seg 36 2212.2 s, 0.75 s at 12.4 m). leadOne form changes: 26 → 24.
+    - Same-car doubled labels: 132 → 4 frames.
+    - The frames that still repeat a speed are different cars doing the same speed: in-path + side 304, side + side 117, and 3 where the repeat was the other side lead.
+    - Radar vs vision, left in the display (4 frames): 280 seg 13 791.8 s, leadOne vision-only (track −1) at 19.0 m while leadTwo, radar track 7, was at 12.4 m with yRel −1.0 at the same speed; and 280 seg 32 1928.4 s, leadOne track 34 at yRel 5.4 against leadTwo vision at yRel 2.2. Both are probably one car. This is upstream of the UI (radard lead selection) and not investigated here.
+    - Route logs deleted after the analysis (owner request).
 - **Watch:** a tall lead (truck, SUV) has its roof above 1.5 m, so the marker sits on the rear of the body rather than above it (rendered above). Photograph it if the marker flickers between the two forms in stop-and-go.
 
 ## 109. The item 107 per-track hold is shipped in the planner (ffa72fdc, owner approved); the shipped code reproduces the replay prototype on 19 routes. Replay evidence only; brake-affecting; not driven.
