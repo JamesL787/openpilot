@@ -8999,6 +8999,24 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
     - Pull-away wobble went 2.17 -> 2.72 (n 6 / 5).
     - Most road pull-aways are turns out of a stop. Only 1-2 per drive are straight: 286 scored 1.88 and 0.17, 287 scored 1.24. That is too few to confirm or refute the sim's 2.01 -> 1.22.
     - Caveat: the hands-off mask uses steeringPressed, which stayed 0 at 1500-2200 driver torque during the 2:44 fight. The 287 turn figures include that fight.
+- **Route 00000289--ba86b1c7c3, the owner's drive of `clarity-turn-shaping` 3682a600 (James's turn smoothing, feedforward ungated; initData `NrdrLatEpsFirmwareFF`=1, `NrdrLatPidFirmwareFF`=0). Limited road evidence, log decode.** The owner reported wobble when resuming at low speed, and oversteer at 9:40 and 10:30. Times below are log time; the owner's bookmarks run about 2-3 s earlier. The bookmarks went to the Radar Work session for the longitudinal side.
+  - **Pull-away wobble is the feedforward riding the model's own swing.** The pull-aways at 0:39.8 and 2:03.6 both do it. From about 9 mph, where the speed fade reaches w = 1, up to about 20 mph, the wheel swings ±5-7° at about 1 Hz (2:06.9-2:08.9: +5.4 / -6.0 / +7.0 / -3.4). Through all of it |desired| stays under 8°.
+    - The desired angle swings in phase, about 0.25 s ahead: +2.9 / -3.8 / +5.5 / -1.2.
+    - f is in phase with the desired and is most of the command (f +0.14-0.15 of out +0.22-0.24), while p opposes the overshoot.
+    - Band-passed rms, 2.5-9 m/s, 15 s after each straight start: 3.49 and 3.80. The 15:20 start scored 1.18.
+    - The same window on gated 287 (4:48 start) scored 2.29, with |f| 0.002 against 289's 0.06.
+    - This is the |desired| < 10° region where 0f27431d's gate holds the feedforward at 0. That is consistent with the gate targeting this wobble, but it is one straight start on each side, on different roads.
+    - Route pull-away wobble (lat_score) is 2.17 over 6 starts, the same as 286 (also ungated).
+  - **9:40 (log 9:42.5-9:49): an unsignalled left turn at about 16 mph through an intersection (lane-line prob 0.00-0.09).**
+    - At the turn peak the wheel went past the plan: 9:45.3-9:45.5, angle +129.8 against desired about +121, while f stayed +0.40 to +0.31 and p opposed it at -0.18 to -0.20. Yaw-rate curvature ran above the desired.
+    - The driver then pulled right at -1800 to -2100 torque, and the wheel trailed afterwards.
+  - **10:30 (log 10:31-10:39): an unsignalled right turn at 12.5-14.4 mph.**
+    - The plan asked for a tight turn: desired -118° (curvature 0.054, about a 19 m radius), path +13 m to the right at 20 m.
+    - The driver held the wheel left at +1800 to +2100 torque from 10:32.1 to 10:35.6 while the wheel was still short of the plan. For example, at 10:34.1 the angle was -62 against -114.
+    - Only one steeringPressed frame registered (10:34.6), which reset the feedforward ramp.
+    - On release the wheel ran to -109 at 10:35.9-10:36.4. It then stayed past the unwinding plan: 10:36.6, -106.9 against -98.3; 10:37.1, -86.8 against -81.4. Through that, f was -0.13 and p was +0.19 opposing.
+    - So there are two parts: the plan itself cut the corner, and then the ungated feedforward overshot on the unwind. The unwind is the same shape as 9:40 and STATUS 170's overshoot.
+  - **Not concluded:** whether the gated build would have avoided either turn overshoot. The gate is fully open above 30° desired, so it does not touch the turn peak. What changes there is the fade-in on the way up, and the Metadrive Civic-plant R60 runs cover that. No controller change is proposed from this route.
 
 ## 174. Gas learner (`LongGasLearner`) on 00000286--ba543e3a3e, and its values now go into the drive log (`starpilotCarState.gasLearner*`). The 286 findings are from a CAN decode. The logging has static tests only and has not been driven.
 
