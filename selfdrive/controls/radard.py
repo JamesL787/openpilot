@@ -244,11 +244,21 @@ SPEED, ACCEL = 0, 1     # Kalman filter states enum
 # slope. Reporting only: the point is published, the KF, the D-053 assist and the association are untouched, and a
 # track whose range falls faster than the rate cap is never bounded. The one-sided coast bound (STATUS 111/129) is
 # unchanged; this acts on radarState leads only, for their first second. Replay evidence only (STATUS 149).
+#
+# Noisy far-range tracks (route 00000284 22:35, BM 22:38). Track 17 was born at ~79 m with U11 -10.5 and held there
+# by the coast for ~1.5 s while its range went 79 -> 83 -> 80 m and vision (p 1.00, own speed) said not closing;
+# chill braked to -1.8. The fit residual was 0.56-1.28 m (> 0.6) and the hold outlasted 1.0 s, so the bound never
+# fired. A fit with residual up to YOUNG_TRACK_NOISY_MAX_RESIDUAL_M now also bounds, but its floor is lowered by
+# YOUNG_TRACK_NOISY_SE_K standard errors of the slope, so noise buys closing rather than removing it; a fit within
+# YOUNG_TRACK_MAX_RESIDUAL_M keeps the original floor exactly. The age window is 2.0 s to cover the hold. Replay on
+# 35 routes: 284 1358 -1.46 -> -0.88, no other event softer by > 0.3 or later at -1.5 (STATUS 162).
 YOUNG_TRACK_FLAT_RANGE_BOUND = True
-YOUNG_TRACK_MAX_AGE_S = 1.0
+YOUNG_TRACK_MAX_AGE_S = 2.0       # 1.0 until STATUS 162
 YOUNG_TRACK_MIN_SAMPLES = 6
 YOUNG_TRACK_MIN_SPAN_S = 0.35
 YOUNG_TRACK_MAX_RESIDUAL_M = 0.6
+YOUNG_TRACK_NOISY_MAX_RESIDUAL_M = 2.0
+YOUNG_TRACK_NOISY_SE_K = 2.0
 YOUNG_TRACK_FLAT_MAX_RATE = 6.0   # 3.0 opened only at 0.61 s on 27a (the first 0.4 s fit is -4.6)
 YOUNG_TRACK_FLAT_MARGIN = 3.0
 # Only when the matching model lead (leadsV3[i]) is confident, not nearer than the radar lead, and itself not closing:
@@ -672,9 +682,15 @@ class Track:
     slope, icpt = np.polyfit(ts, a[:, 1], 1)
     if abs(slope) > YOUNG_TRACK_FLAT_MAX_RATE:
       return None
-    if float(np.sqrt(((a[:, 1] - (icpt + slope * ts)) ** 2).mean())) > YOUNG_TRACK_MAX_RESIDUAL_M:
+    resid = a[:, 1] - (icpt + slope * ts)
+    rms = float(np.sqrt((resid ** 2).mean()))
+    if rms <= YOUNG_TRACK_MAX_RESIDUAL_M:
+      return float(slope) - YOUNG_TRACK_FLAT_MARGIN
+    if rms > YOUNG_TRACK_NOISY_MAX_RESIDUAL_M:
       return None
-    return float(slope) - YOUNG_TRACK_FLAT_MARGIN
+    # Noisy range: widen the floor by the slope's standard error.
+    se = float(np.sqrt((resid ** 2).sum() / (len(ts) - 2) / ((ts - ts.mean()) ** 2).sum()))
+    return float(slope) - YOUNG_TRACK_FLAT_MARGIN - YOUNG_TRACK_NOISY_SE_K * se
 
   def get_RadarState(self, model_prob: float = 0.0, shadow_telemetry: bool = False):
     """`shadow_telemetry` is opt-in because this dict is assigned to TWO different capnp structs:

@@ -8389,3 +8389,34 @@ Route 00000284, segments 27–28, bus 1:
 - At the 1 kHz loop James reports (not verified here), the filter time constant is about 15.4 ms at stock 1996, 7.2 ms at 4000 and 6.3 ms at 4500. So 4000 vs 4500 is about 1 ms of extra lag in the firmware's own damping path. That is invisible at openpilot's 100 Hz and under the feedforward's 100–150 ms smoothing. **James is right for the feedforward.**
 - **Retracted** from this entry: "−170 points nearer 4000 than 4500". The tracker does not scale R6. The Clarity −138.6 vs Civic −169.9 difference must come from raw_rate scaling on the column, so the Civic port uses the measured −169.9 rather than a scaled Clarity constant.
 - **The tracker still matters for the EPS's own stability.** A faster rate filter adds phase margin to the firmware's damping loop, and the eps_tools README records a ~29 Hz hands-off limit cycle when tracker alpha was raised on a high-D CR-V tune. That concerns hands-off buzz, not the feedforward calibration.
+
+## 162. Longitudinal on 00000284--1109db7c4c (chill, RangeDerivedVrel and RangeVisionAssist on): the 22:38 false brake, and a wider young-track range bound. Implemented; static tests and replay only. Not driven.
+
+**Bookmarks (log statistics).**
+- **22:38 (false brake).** At 22:35.4 the lead became a new track 17 at ~79 m. It was born with U11 -10.5, and the D-043 coast held that value for ~1.5 s, while its own range went 79 -> 83 -> 80 m. Vision (p 1.00) was at own speed. Chill aTarget reached -1.47 and aEgo -1.77. D-053 played no part: the replay with RangeDerivedVrel off is identical. The STATUS 149 young-track bound missed it twice:
+  - the fit residual was 0.56-1.28 m against a cap of 0.6 (range noise at 80 m);
+  - the hold outlasted the 1.0 s age window.
+- **25:29 (real).** The lead braked hard: the camera showed it going from 32 to 12 mph in about 2 s. Radar vRel lagged the camera by ~1 s. aTarget reached -3.5 and aEgo -3.86, and the car stopped 23.7 m behind.
+- **26:36 (over-delivery).** A real lead at 40 m, closing about 3 m/s. aTarget was -0.51 but aEgo reached -1.10. This is the known brake over-delivery (option C, open).
+- **24:52 (not a brake).** A cut-in at 22 m, opening at +3.9 m/s. aTarget stayed at +0.6.
+
+**Change.** In `Track.young_flat_range_vrel_floor`:
+- A fit with residual <= `YOUNG_TRACK_MAX_RESIDUAL_M` (0.6) keeps the original floor exactly: slope - 3.
+- A fit with residual up to `YOUNG_TRACK_NOISY_MAX_RESIDUAL_M` (2.0) now also bounds. Its floor is lowered by `YOUNG_TRACK_NOISY_SE_K` (2) standard errors of the slope, so noise allows more closing rather than removing it.
+- `YOUNG_TRACK_MAX_AGE_S` goes from 1.0 to 2.0.
+- The vision gate, the rate cap (|slope| <= 6) and reporting-only publication are unchanged. No point is deleted and the KF is untouched.
+
+**Replay** (35 routes: the 32-route fleet plus 280, 283 and 284, rb283 harness, old rule vs new):
+- 113 frames publish less closing, and 0 publish more.
+- The only output change over 0.3 m/s² is 284 1357.4, where the minimum aTarget goes -1.46 -> -0.88.
+- The other 11 changed runs move out by <= 0.02. This includes 27a 514 (the STATUS 149 case), which stays at -1.38.
+- No -1.5 crossing is later.
+
+**Vision bound on the D-053 correction (tried and dropped, not committed).** The idea was to cap the D-053 correction at vision closing + 3 m/s when a p >= 0.9 model lead matches the track. It fixes 283 9:12 (-3.15 -> -2.30), but it also softened real approaches, so it was dropped:
+
+| rule | softened real approaches |
+|---|---|
+| model range 0.85-1.35 x dRel | 258 3383 (-2.10 -> -1.62; range really fell 12 m in 2 s), 026b 1709 (-2.34 -> -1.88, 0.25 s later), 280 1503 (-2.02 -> -1.62) |
+| model range >= 1.13 x dRel | 280 1503 (-1.95 -> -1.54) |
+
+At 280 1503 the radar range fell 107 -> 64 m in 5 s and the camera's own range fell too, but the model's speed said closing was only 2-4 m/s. The model's lead speed understates real closing often enough that it cannot bound radar closing on its own.

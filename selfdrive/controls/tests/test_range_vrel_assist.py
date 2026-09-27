@@ -1199,8 +1199,50 @@ def test_young_flat_range_bound_ignores_duplicate_cycles_and_noisy_range():
     track.update(63.0, 0.0, -10.7, V_EGO - 10.7, i % 2 == 0, i % 2 == 0, t_now=t, range_assist=True)
   assert len(track.young_range_hist) == 6
   noisy = new_track(18)
-  t = _young_coast(noisy, [63.0 + (1.5 if i % 2 else -1.5) for i in range(13)])
+  t = _young_coast(noisy, [63.0 + (2.5 if i % 2 else -2.5) for i in range(13)])
   assert noisy.young_flat_range_vrel_floor(t) is None   # residual too large to call the range flat
+
+
+# Noisy far-range tracks (route 00000284 22:35): track 17's range history since birth, ~79 m, coasted at -10.5.
+ROUTE_284_TRACK_17 = [79.1, 79.8, 80.9, 81.6, 82.2, 82.6, 83.0, 83.2, 83.1, 82.8, 81.9, 81.4, 80.8, 80.4, 80.0]
+
+
+def _plain_floor(ranges):
+  ts = np.arange(len(ranges)) * DT
+  return float(np.polyfit(ts, ranges, 1)[0]) - radard.YOUNG_TRACK_FLAT_MARGIN
+
+
+def test_young_flat_range_bound_covers_route_284_track_17():
+  track = new_track(17)
+  t = _young_coast(track, ROUTE_284_TRACK_17, v_rel=-10.5)
+  floor = track.young_flat_range_vrel_floor(t)
+  assert floor is not None
+  assert -10.5 + 3.0 < floor < _plain_floor(ROUTE_284_TRACK_17) - 1.0   # bounds, but noise buys back closing
+
+
+def test_young_flat_range_bound_clean_fit_floor_unchanged():
+  # Within YOUNG_TRACK_MAX_RESIDUAL_M the floor is exactly the original slope minus margin (27a unchanged).
+  track = new_track(15)
+  t = _young_coast(track, ROUTE_27A_TRACK_15)
+  assert track.young_flat_range_vrel_floor(t) == pytest.approx(_plain_floor(ROUTE_27A_TRACK_15))
+
+
+def test_young_flat_range_bound_noise_lowers_the_floor():
+  floors = []
+  for amp in (0.0, 1.0, 1.5, 1.9):
+    track = new_track(18)
+    t = _young_coast(track, [63.0 + (amp if i % 2 else -amp) for i in range(13)])
+    floors.append(track.young_flat_range_vrel_floor(t))
+  assert None not in floors
+  assert floors == sorted(floors, reverse=True)   # more noise, more closing allowed
+  assert floors[-1] < floors[0] - 2.0
+
+
+def test_young_flat_range_bound_noisy_off_is_the_old_rule(monkeypatch):
+  monkeypatch.setattr(radard, "YOUNG_TRACK_NOISY_MAX_RESIDUAL_M", radard.YOUNG_TRACK_MAX_RESIDUAL_M)
+  track = new_track(17)
+  t = _young_coast(track, ROUTE_284_TRACK_17, v_rel=-10.5)
+  assert track.young_flat_range_vrel_floor(t) is None
 
 
 def test_young_track_vision_gate():
