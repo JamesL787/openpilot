@@ -204,6 +204,19 @@ BOSCH_A_RAIL_INTERVAL_PARAM = "BoschARailInterval"
 # not from this bound (item 92), so the bound is split out here, one-sided (more closing only; see
 # _bosch_a_coast_vrel). Replay evidence only (STATUS 111).
 BOSCH_A_COAST_RANGE_BOUND_PARAM = "RangeDerivedVrel"
+# A coast that says the car ahead is reversing (vEgo + coasted vRel < -BOSCH_A_COAST_REVERSING_MARGIN_MPS) gets
+# the two-sided bound even outside a rail hold: pulled to within BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS of
+# the coast's own fresh range fit. With no fit yet it is floored at vLead = -margin instead. Everywhere else
+# the STATUS 129 rule stands (less-closing side only inside a rail hold). Route 00000287 2:39 (STATUS 177): track
+# 49 coasted its birth vRel -11.4 for 2.9 s while its range fell at about -4 m/s and ego slowed to 9.6 m/s, so
+# the planner saw a lead reversing at -1.8 m/s and asked for -2.87; vision had the car at vRel -6 and the
+# radar re-measured -6.8 on the next sweep. Replay: the coast publishes -7.2 instead of -11.4. A plain floor at
+# vLead >= -margin only reached -10.8, and widening the down side to 5 m/s on every coast -9.2. STATUS 129's
+# three protected brakes are stale over-closing coasts on real slower cars, not reversing ones, so they keep
+# the one-sided bound. The point is always kept (D-041/D-042); only an implied reversing speed is bounded. A
+# vEgo of None (not yet known) turns this off. Replay evidence only (STATUS 179); rides the same toggles as the
+# coast bound (BoschARailInterval or RangeDerivedVrel).
+BOSCH_A_COAST_REVERSING_MARGIN_MPS = 1.0
 # u10 is a genuine uncertainty on U11, but it is CONFOUNDED WITH DYNAMICS. Measured against an
 # event-local reference (quadratic fit to a centred window, derivative at the centre) over 16,834
 # frames: median |err| rises 0.26 -> 0.88 -> 1.44 -> 1.95 m/s across u10 bins 0-64 / 64-128 /
@@ -462,7 +475,7 @@ def _bosch_a_trailing_fit_window(run: list) -> list:
   return run
 
 
-def _bosch_a_coast_vrel(track, rail_interval: bool, range_bound: bool = False) -> float:
+def _bosch_a_coast_vrel(track, rail_interval: bool, range_bound: bool = False, v_ego: float | None = None) -> float:
   """The vRel a coast publishes. Off (pre-D-063): the last trusted vRel, verbatim. With BoschARailInterval on
   (D-063 addendum, STATUS 92): the same value bounded to within BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS of
   a FRESH fit over the ranges of the coast itself, when one exists. Replayed on 0000025e 6:43 (track 48): the
@@ -485,7 +498,10 @@ def _bosch_a_coast_vrel(track, rail_interval: bool, range_bound: bool = False) -
   With the rail interval on, the down side is likewise limited to a coast inside a hold that a rail-interval
   admission started (`track.rail_hold`, STATUS 129); every other coast gets the one-sided bound. Applied to every
   coast, the down side softened three protected brakes in the 26-route replay (00000232 1147.2 -2.25 -> -1.88,
-  00000266 560.0 -1.79 -> -1.38, 00000266 795.4 -1.5 crossing 3.75 s later), none of them near a rail admission."""
+  00000266 560.0 -1.79 -> -1.38, 00000266 795.4 -1.5 crossing 3.75 s later), none of them near a rail admission.
+
+  Either toggle on, a coast that implies the car ahead is reversing (v_ego + vRel < -BOSCH_A_COAST_REVERSING_MARGIN_MPS)
+  also gets the down side, or with no fit a floor at vLead = -margin (route 00000287 2:39, STATUS 179)."""
   vrel = track.last_trusted_vrel
   if not (rail_interval or range_bound):
     return vrel
@@ -494,10 +510,13 @@ def _bosch_a_coast_vrel(track, rail_interval: bool, range_bound: bool = False) -
     rate = _bosch_a_fresh_range_rate(track.rejoin_samples)
   if rate is None:
     rate = _bosch_a_fresh_range_rate(track.inconsistent_run)
+  reversing = v_ego is not None and v_ego + vrel < -BOSCH_A_COAST_REVERSING_MARGIN_MPS
   if rate is None:
+    if reversing:
+      vrel = max(vrel, -(v_ego + BOSCH_A_COAST_REVERSING_MARGIN_MPS))
     return vrel
   vrel = min(vrel, rate + BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS)
-  if rail_interval and (track.rail_hold or not BOSCH_A_RAIL_INTERVAL_DOWN_SIDE_ONLY_ON_RAIL_HOLD):
+  if reversing or (rail_interval and (track.rail_hold or not BOSCH_A_RAIL_INTERVAL_DOWN_SIDE_ONLY_ON_RAIL_HOLD)):
     vrel = max(vrel, rate - BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS)
   return vrel
 
@@ -535,6 +554,8 @@ class RadarInterface(RadarInterfaceBase):
     self.radar_off_can = CP.radarUnavailable
     self.bosch_a_radar = (not self.radar_off_can and Bus.radar in DBC[CP.carFingerprint] and
                            DBC[CP.carFingerprint][Bus.radar] == BOSCH_A_DBC_NAME)
+    # Ego speed, set by card before each update (STATUS 179's reversing-coast bound). None until then.
+    self.v_ego: float | None = None
 
     if self.radar_off_can:
       self.rcp = None
@@ -1011,7 +1032,7 @@ class RadarInterface(RadarInterfaceBase):
         if point is not None and track.last_trusted_vrel is not None:
           point.dRel = dRel
           point.yRel = yRel
-          point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound)
+          point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
           point.measured = False
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to
@@ -1057,7 +1078,7 @@ class RadarInterface(RadarInterfaceBase):
         if point is not None and track.last_trusted_vrel is not None:
           point.dRel = dRel
           point.yRel = yRel
-          point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound)
+          point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
           point.measured = False
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to

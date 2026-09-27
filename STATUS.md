@@ -9252,3 +9252,36 @@ The lateral side of the same drive is in the STATUS 173 thread (commit 1a098438)
 
 - Implied gas factor per minute went from 1.25 at the start, peaked at 1.42 (min 2), eased to about 1.23 (min 7-9), and ended at 1.52 (min 13).
 - That is the same 1.2-1.6 swing as 286 and 287, above the 1.25 soft band. It is still open whether this is a table error or grade and lag. The a2248077 logging answers that on the next build that carries it.
+
+## 179. A coasted vRel that says the car ahead is reversing is now bounded by the range rate (or floored at a stopped lead). Fix for route 00000287 2:39 (STATUS 177). Replay and static evidence only; not yet driven.
+
+**Problem.** On 287 at 2:39, track #49 coasted a stale vRel of -11.4 for 2.9 s while ego was at about 10 m/s. That coast means the lead was reversing at about -1.8 m/s. The range was really falling at -3.7 m/s, so the true vRel was about -6.8. aTarget reached -2.87 and the owner pressed the gas. STATUS 129 limits the down side of the coast bound (making a coast *less* closing) to rail-interval holds, so this coast kept its stale value.
+
+**Change** (`opendbc/car/honda/radar_interface.py`, `_bosch_a_coast_vrel`; `selfdrive/car/card.py`):
+
+- card feeds `RI.v_ego = CS.vEgo` before `RI.update`.
+- When a coast implies a reversing lead (`v_ego + vRel < -BOSCH_A_COAST_REVERSING_MARGIN_MPS`, 1.0 m/s), it also gets the down side `max(vRel, rate - 3)` against the fresh range fit, outside a rail hold too.
+- With no fit yet (fewer than 4 fresh samples over 0.25 s), it is floored at vLead = -margin.
+- Coasts that imply a stopped or slower car are untouched. These are STATUS 129's protected over-closing brakes.
+- The change rides the existing toggles: it acts only when BoschARailInterval or RangeDerivedVrel is on. With both off, the coast is verbatim.
+- The point is always kept (D-041/D-042).
+
+**Replay** (a copy of the real RadarInterface plus radard and the planner, over the full routes; variants A = current, F = radard floor, K5 = rate-5 down side on every coast, R/RF = this change without/with the no-fit floor):
+
+| Route | F | K5 | R/RF |
+|---|---|---|---|
+| 287 2:39 (track 49 vRel, truth about -6.8) | -10.8 | -9.2 | **-7.2** (A -11.4) |
+| 287 brake episode 160.0 | unchanged | later | **-2.00 -> -1.50** |
+| 232 1147.2 protected | unchanged | **softened -2.25 -> -1.92** | unchanged |
+| 266 560.0 / 795.4 protected | unchanged | **softened / later** | unchanged |
+| 232 90.0 | **new harder brake -2.35 -> -3.50** | unchanged | unchanged |
+| 236, 26b, 289 | no episode moved | 289 381.6 later | no episode moved |
+
+- No variant lost a point on any of the six routes.
+- RF is the only variant that moves just the target event. It is what was applied.
+
+**Not caught.** On 289 at 7:21 (STATUS 178), vRel -13.5 at vEgo 12.9 implies vLead -0.6. That is inside the margin, so it is not bounded. openpilot was not engaged there.
+
+**Tests.** `test_bosch_a_radar.py::TestRailIntervalBoundsTheCoast` has three new tests: a reversing coast is floored and then fit-bounded, a non-reversing coast (unknown, stopped or slower lead) keeps the one-sided bound, and both toggles off is verbatim. The honda tests, py39 compat and the gas learner log tests give 326 passed. Static.
+
+**To watch on the next drive.** Brakes for a lead that coasts after its speed reading went stale: they should be no harder than the range closing supports.
