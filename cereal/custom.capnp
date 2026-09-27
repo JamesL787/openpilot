@@ -322,8 +322,8 @@ struct StarPilotLateralState @0xc2243c65e0340384 {
   unwindDetected @7 :Bool;
 
   # nrdr: modified-EPS firmware-inversion feedforward (selfdrive/controls/lib/nrdr_eps_firmware_ff.py), names and
-  # ordinals as upstream JamesL787 vfn-controller-shadow. SHADOW ONLY on this branch: LatControlPID logs it on the
-  # Clarity and the Civic Bosch C020 and never applies it, so epsFfWeight is always 0.
+  # ordinals as upstream JamesL787 vfn-controller-shadow. LatControlPID logs it on the Clarity and the Civic Bosch
+  # C020 whenever lateral is active; it steers only with NrdrLatEpsFirmwareFF on (default off), else epsFfWeight is 0.
   epsFfActive @8 :Bool;
   epsFfFeedforward @9 :Float32;   # lateral output ([-1, 1]) of the feedforward at full weight
   epsFfR5 @10 :Float32;           # EPS firmware target counts it asks for

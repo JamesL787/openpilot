@@ -8502,3 +8502,46 @@ Scripts (in /tmp, not committed): `/tmp/ob/mild.py` builds the time series, and 
 Pre-existing failures, not touched: `test_latcontrol` Bolt/Palisade taper (2), `test_torqued_lat_accel_offset` (1), `test_starpilot_planner` (1). The collection errors in `test_controlsd`, `test_turn_lead`, `test_longitudinal_planner` and `test_nissan_leaf_fallback` are DeprecationWarnings.
 
 Scripts (in /tmp, not committed): `/tmp/c020_rows.py`, `/tmp/c020_loadfit*.py`, `/tmp/c020_shadow_replay.py`, `/tmp/c020_score.py`.
+
+## 165. The STATUS 164 firmware-inversion feedforward can now steer, behind a toggle (owner-requested, default off). Static tests and an open-loop replay on 00000284--1109db7c4c only. Not driven.
+
+**Toggle.** `NrdrLatEpsFirmwareFF` is "EPS Firmware Feedforward (Test)" under Lateral Tune (advanced) in the Galaxy and the device's NRDR tuning page. It is a bool, default off, and applies to the modified-EPS Clarity and Civic Bosch.
+- The params artifacts were rebuilt: larch64, pinned Cython 3.1.4, 858 → 859 keys.
+- The key is in `lat_tune_analyzer.TUNING_KEYS`. At off it stays out of the fingerprint (`FINGERPRINT_ADDED_OFF`), so earlier routes do not re-hash.
+
+**What it does (`LatControlPID`, modified EPS only).**
+- **Join gate.** The gate is upstream's `ClarityEpsLateralCore`: `FF_JOIN_ERROR_DEG` 10, `FF_FADE_IN_S` 0.5, `FF_SPEED_BP` [2, 4] m/s.
+  - It joins once |angle error| < 10°, then ramps to full over 0.5 s.
+  - A driver press drops the weight to 0 at once, and so does v < 2 m/s. The press is the modified-EPS override detector, with its onset debounce.
+  - After that, it rejoins through the same gate.
+- **Output.** `output = P·p + I·i + D + (1−w)·F·f_scale + w·eps_ff + (1−w)·rate_ff·slew`.
+  - The firmware feedforward replaces the kf feedforward and the desired-rate feedforward. As upstream, it is not trimmed by `LatFScale*`.
+  - P, I, the center taper, the testing-ground scale and alpha, and the clip are unchanged.
+- **Shadow.** It is now updated before the active check, so the log is identical either way. `epsFfWeight` records the weight actually applied.
+- **Failure.** Any exception in the feedforward, or a non-finite output, gives weight 0. The command is then bit-identical to toggle-off (tested).
+
+**Replay: the size of the term it adds (284, engaged, no press, v > 2 m/s).** `F` is the logged kf feedforward before `f_scale`; `eff` is the C020 firmware feedforward at full weight.
+
+| | rms F | rms eff | rms command | corr(eff, command) |
+|---|---|---|---|---|
+| Turning, < 25 mph | 0.004 | 0.236 | 0.439 | 0.50 |
+| Turning, > 25 mph | 0.010 | 0.078 | 0.067 | 0.86 |
+| Straight (\|des\| ≤ 2°) | 0.002 | 0.049 | 0.044 | 0.65 |
+
+- **On the Civic the kf feedforward is almost nothing.** The owner's command is carried by P and I. The toggle therefore **adds** a term about the size of today's whole command in turns. It does not swap like for like.
+- **Expect the P/I loop to rebalance.** I will unwind and P will see a smaller or reversed error. Until it does, expect more turn-in torque and a chance of overshoot on the first turns.
+- **Below 25 mph the load model tracks the command least** (corr 0.50; R² 0.52 in STATUS 164). That is where it is most likely to feel wrong.
+- **Frame-to-frame roughness is not the problem.** The rms step of eff is 0.0020, against 0.0036 for the logged command.
+- **Not scaled by LatF.** `LatFScale*` does not trim this term. If it is too strong, the knobs are LatP/I, or turn it off.
+
+**Tests.** `test_nrdr_eps_firmware_ff.py`: 102 pass, 7 of them new.
+- The gate: join, fade, press, speed.
+- Applied on both cars: the command changes and the weight reaches 1.
+- A press takes the weight to 0, and it rejoins afterwards.
+- An applied failure gives the toggle-off command exactly.
+
+`test_lat_tune_analyzer`, `test_py39_compat` and the Galaxy layout/frontend tests pass. `test_latcontrol` has the 2 pre-existing Bolt/Palisade failures and nothing new.
+
+**Not done.** A Civic load refit, the >100 km/h envelope, and any closed-loop simulation of the PI rebalancing.
+
+Scripts (in /tmp, not committed): `/tmp/epsff/ffmag.py`, `/tmp/epsff/ffcmp.py`.

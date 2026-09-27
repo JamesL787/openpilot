@@ -1,9 +1,10 @@
-"""nrdr: modified-EPS feedforward built on the EPS firmware's own control law. SHADOW ONLY on this branch.
+"""nrdr: modified-EPS feedforward built on the EPS firmware's own control law. Logged always, applied by NrdrLatEpsFirmwareFF.
 
 Ported from JamesL787/openpilot vfn-controller-shadow (shadow commit 52618f42, feedforward as of fd815ef3).
 The feedforward below is upstream's, line for line, with the firmware constants moved into a calibration
 so the Civic Bosch C020 image can use its own. Upstream's ClarityEpsLateralCore (the applied controller)
-is not ported: here the feedforward is only computed and logged, never added to the command.
+is not ported: LatControlPID keeps its own PID and tune, and NrdrLatEpsFirmwareFF swaps this in for its
+kf feedforward through upstream's join gate and fade-in (eps_ff_weight, STATUS 165).
 
 The Clarity's LKAS path is not a torque command. The firmware turns our 0xE4 value into a target R5,
 compares it with R6 -- a filtered steering RATE (R6 = -138.6 counts per deg/s, corr 0.98 against
@@ -84,6 +85,14 @@ FF_OUTPUT_TAU = 0.15     # s, first-order smoothing of the feedforward itself
 R5_CAP = 27000.0         # stay clear of the 30000 rail, where the classic stutter lived (route 154)
 R5_CAP_ENVELOPE_FRAC = 0.9
 
+# The feedforward asks for the torque that moves the wheel ALONG the desired path, so it is only right
+# once the wheel is on it. Engaging mid-turn at low speed routinely starts 20-70 deg off (45 engagements on
+# routes 352/353/34f), where it would have pushed against the PID at up to 0.9. So it joins only once the
+# angle error is small, then fades in; a driver press or dropping below walking speed takes it out again.
+FF_JOIN_ERROR_DEG = 10.0
+FF_FADE_IN_S = 0.5
+FF_SPEED_BP = [2.0, 4.0]    # m/s, faded in with speed; the desired angle is ill-conditioned near standstill
+
 
 class EpsFirmwareCalibration:
   """The per-image constants of the chain above. The law, KFF, SCALE_Q8 and the load model are shared."""
@@ -135,6 +144,15 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
   envelope_v=[1774, 1774, 1774, 1774, 1774, 1552, 1219, 1108, 1108],
   r6_per_deg_s=-173.0,
 )
+
+
+def eps_ff_weight(ramp: float, error_deg: float, v_ego: float, steering_pressed: bool, dt: float):
+  """Upstream ClarityEpsLateralCore's join gate and fade-in, as a function: returns (ramp, weight)."""
+  if steering_pressed or v_ego < FF_SPEED_BP[0]:
+    ramp = 0.0
+  elif ramp > 0.0 or abs(error_deg) < FF_JOIN_ERROR_DEG:
+    ramp = min(1.0, ramp + dt / FF_FADE_IN_S)
+  return ramp, ramp * float(np.interp(v_ego, FF_SPEED_BP, [0.0, 1.0]))
 
 
 def command_key(e4: float) -> int:

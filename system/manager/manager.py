@@ -879,6 +879,7 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "NrdrIncreaseOverrideTolerance": False,
     "NrdrLatModelActionInterp": True,
     "NrdrLatUseFirmwareVgr": False,
+    "NrdrLatEpsFirmwareFF": False,
   }
   desired_float_values = {
     "HondaCenterBoostThreshold": 3.0,

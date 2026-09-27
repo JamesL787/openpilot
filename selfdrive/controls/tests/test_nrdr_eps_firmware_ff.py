@@ -129,15 +129,20 @@ def test_c020_target_stays_clear_of_the_rail():
 # --- shadow in LatControlPID (upstream 52618f42) ------------------------------------------------
 
 class _Params:
+  def __init__(self, applied=False):
+    self.applied = applied
+
   def get(self, key, *args, **kwargs):
     return None
 
   def get_bool(self, key, *args, **kwargs):
+    if key == "NrdrLatEpsFirmwareFF" and self.applied:
+      return True
     raise KeyError(key)   # -> the controller's own default
 
 
-def _car(monkeypatch, candidate=HONDA.HONDA_CLARITY, modified=True):
-  monkeypatch.setattr(latcontrol_pid, "Params", lambda: _Params())
+def _car(monkeypatch, candidate=HONDA.HONDA_CLARITY, modified=True, applied=False):
+  monkeypatch.setattr(latcontrol_pid, "Params", lambda: _Params(applied))
   CarInterface = interfaces[candidate]
   CP = CarInterface.get_non_essential_params(candidate)
   if modified:
@@ -152,16 +157,19 @@ def _car(monkeypatch, candidate=HONDA.HONDA_CLARITY, modified=True):
   return lac, VehicleModel(CP), params
 
 
-def _drive(lac, VM, params, frames=400):
+def _drive(lac, VM, params, frames=400, pressed=(), weights=None):
   CS = car.CarState.new_message()
   CS.vEgo = 9.0
   outputs = []
   for k in range(frames):
     active = k >= 20
+    CS.steeringPressed = k in pressed
     curvature = 0.02 * math.sin(k * 0.02)
     CS.steeringAngleDeg = 10.0 * math.sin(k * 0.02 - 0.3)
     out, _, _ = lac.update(active, CS, VM, params, False, curvature, False, 0.2, None, None, SimpleNamespace())
     outputs.append(out)
+    if weights is not None:
+      weights.append(lac.eps_ff_weight)
   return outputs
 
 
@@ -205,3 +213,54 @@ def test_a_shadow_failure_cannot_reach_the_command(monkeypatch, candidate, cal):
   monkeypatch.setattr(lac.eps_shadow_ff, "update", boom)
   assert _drive(lac, VM, params) == _drive(twin, VM, params)
   assert not lac.starpilot_lateral_state.epsFfActive
+
+
+# --- applied behind NrdrLatEpsFirmwareFF (this branch, STATUS 165; gate is upstream's ClarityEpsLateralCore) ----
+
+def test_join_gate_fades_in_and_drops_on_a_press():
+  ramp, w = eps_ff.eps_ff_weight(0.0, 12.0, 9.0, False, DT_CTRL)
+  assert ramp == w == 0.0                       # does not join outside 10 deg of error
+  for _ in range(25):
+    ramp, w = eps_ff.eps_ff_weight(ramp, 3.0, 9.0, False, DT_CTRL)
+  assert w == pytest.approx(0.5)                # 0.5 s fade
+  ramp, w = eps_ff.eps_ff_weight(ramp, 12.0, 9.0, False, DT_CTRL)
+  assert w > 0.5                                # once joined, a large error does not drop it
+  assert eps_ff.eps_ff_weight(ramp, 3.0, 9.0, True, DT_CTRL) == (0.0, 0.0)
+  assert eps_ff.eps_ff_weight(ramp, 3.0, 1.9, False, DT_CTRL) == (0.0, 0.0)
+  assert eps_ff.eps_ff_weight(1.0, 3.0, 3.0, False, DT_CTRL)[1] == pytest.approx(0.5)   # 2-4 m/s speed fade
+
+
+@pytest.mark.parametrize("candidate,cal", SHADOW_CARS)
+def test_applied_feedforward_replaces_the_kf_feedforward(monkeypatch, candidate, cal):
+  lac, VM, params = _car(monkeypatch, candidate, applied=True)
+  off, _, _ = _car(monkeypatch, candidate)
+  weights = []
+  on_out = _drive(lac, VM, params, weights=weights)
+  off_out = _drive(off, VM, params)
+  assert lac.eps_ff_enabled and not off.eps_ff_enabled
+  assert on_out[:20] == off_out[:20]            # inactive: nothing applied
+  assert weights[-1] == 1.0 and lac.starpilot_lateral_state.epsFfWeight == 1.0
+  assert on_out != off_out
+  assert all(math.isfinite(o) and abs(o) <= lac.steer_max for o in on_out)
+
+
+@pytest.mark.parametrize("candidate,cal", SHADOW_CARS)
+def test_a_press_hands_back_to_the_kf_feedforward(monkeypatch, candidate, cal):
+  lac, VM, params = _car(monkeypatch, candidate, applied=True)
+  weights = []
+  _drive(lac, VM, params, pressed=range(200, 260), weights=weights)
+  assert weights[199] > 0.0
+  assert weights[259] == 0.0                    # once the override detector counts the press
+  assert weights[-1] == 1.0                     # rejoins and fades back in after the press
+
+
+@pytest.mark.parametrize("candidate,cal", SHADOW_CARS)
+def test_an_applied_failure_falls_back_to_the_toggle_off_command(monkeypatch, candidate, cal):
+  lac, VM, params = _car(monkeypatch, candidate, applied=True)
+  off, _, _ = _car(monkeypatch, candidate)
+
+  def boom(*args, **kwargs):
+    raise ValueError("feedforward failure")
+  monkeypatch.setattr(lac.eps_shadow_ff, "update", boom)
+  assert _drive(lac, VM, params) == _drive(off, VM, params)
+  assert lac.eps_ff_weight == 0.0

@@ -78,6 +78,8 @@ TUNING_KEYS = (
   # the factor was learned against changes. The paramsd-learned ratio is deliberately not here:
   # it drifts continuously, and resetting on it would mean never learning.
   "NrdrLatUseFirmwareVgr",
+  # Swaps the feedforward the learned factors were fitted against.
+  "NrdrLatEpsFirmwareFF",
 )
 
 _FIELDS = ("n", "n_act", "n_st", "e2_st", "sc", "n_cur", "ang_cur", "des_cur", "press",
@@ -127,7 +129,7 @@ def _fingerprint_value(v):
 # Keys added to TUNING_KEYS after routes were already hashed, with the value at which they leave the controller
 # unchanged. Unset or at that value they stay out of the hash, so adding one does not re-hash every earlier route
 # (which would split the pool and reset the learned state on update).
-FINGERPRINT_ADDED_OFF = {"NrdrLatRateFF": repr(0.0)}
+FINGERPRINT_ADDED_OFF = {"NrdrLatRateFF": repr(0.0), "NrdrLatEpsFirmwareFF": repr(0.0)}
 
 
 def tuning_fingerprint(values):

@@ -734,6 +734,15 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "NrdrLatEpsFirmwareFF",
+        "label": "EPS Firmware Feedforward (Test)",
+        "description": "Modified-EPS Civic Bosch/Clarity: replace the angle feedforward with one that inverts the EPS firmware's own control law (James's controller). On the Civic this adds turn torque the P/I terms carry today. It fades in once the wheel is within 10 deg of the path and drops out on a driver press. Off: it is only logged.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NrdrLatModelActionInterp",
         "label": "Model Action Interpolation",
         "description": "Ramp the model's 20 Hz steering action across the model frame instead of holding it to remove target stair-stepping.",
