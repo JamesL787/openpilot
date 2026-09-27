@@ -8420,3 +8420,40 @@ Route 00000284, segments 27–28, bus 1:
 | model range >= 1.13 x dRel | 280 1503 (-1.95 -> -1.54) |
 
 At 280 1503 the radar range fell 107 -> 64 m in 5 s and the camera's own range fell too, but the model's speed said closing was only 2-4 m/s. The model's lead speed understates real closing often enough that it cannot bound radar closing on its own.
+
+## 163. The other 00000284--1109db7c4c longitudinal bookmarks (26:36, 25:29, 24:52): nothing changed in code. Log decode and replay evidence only.
+
+Follows item 162. Peter asked for the remaining 284 items to be addressed.
+
+**1. 26:36, a gentle brake that felt too firm: the car, not the command, and not systematic.**
+- The lead was a new radar track, #3 at 44.8 m, against the camera's 54 m. The radar closing speed was −3, against the camera's ~2.1.
+- `aTarget` and `carControl.actuators.accel` were both −0.51, and the command went out unchanged (item 71 point 1).
+- Pitch was ~0, yet `aEgo` went from −0.76 to −1.16 over 1594.1-1595.1 s. The onset was gas-to-brake: the previous command was +0.55, at 21.6 m/s.
+- Census of all 575 brake onsets on the 35-route set (fleet_routes.txt plus 280, 283 and 284):
+  - An onset is the command crossing −0.2 from above −0.05 within 1 s, followed by 3 s of long control with no pedal.
+  - Plateau is the mean of `aEgo(t+0.35)` minus the command while the command is within 80% of its minimum.
+  - Peak is min `aEgo(t+0.35)` minus min command.
+  - Negative means the car braked harder than asked.
+
+| command min | n | plateau median | peak median |
+|---|---|---|---|
+| −0.2 to −0.4 | 163 | +0.05 | −0.21 |
+| −0.4 to −0.7 | 204 | +0.02 | −0.28 |
+| −0.7 to −1.0 | 76 | −0.17 | −0.44 |
+| −1.0 to −1.5 | 75 | −0.14 | −0.41 |
+| −1.5 and deeper | 57 | −0.34 | −0.73 |
+
+- Mild commands are tracked on average. A −0.4 to −0.7 command settles within +0.02 of the request, and gas-to-brake onsets are no worse (+0.06, n = 43).
+- 26:36 (onset 26:32.9) is a transient dip: plateau −0.34, peak −0.64. That is about the worst quarter of mild gas-to-brake onsets (26% have a peak at or below −0.64), and 8% of all mild onsets.
+- Scaling mild commands down would make the typical mild brake too weak in order to trim an occasional ~0.5 s dip, so no compensation was added.
+- The deep bins agree with item 72: over-brake grows with depth. Item 71 option 3 and the 2026-09-23 decision stand.
+
+**2. 25:29, a hard brake for a real lead.**
+- The camera lead dropped from 32 to 12 mph in about 2 s. `aTarget` reached −3.5 and `aEgo` −3.86, and the car stopped 23.7 m behind.
+- The radar vRel trailed the camera by about 1 s. That is filter lag on a real deceleration. Shortening it means changing lead arbitration (D-048), and the stop here still left a 23.7 m margin. No change.
+
+**3. 24:52, a cut-in at 22 m that the car did not brake for.**
+- The cut-in car was opening at +3.9 m/s, so the planner kept +0.6. This is expected: a faster car merging ahead needs no braking.
+- Left as is unless Peter says it felt wrong.
+
+Scripts (in /tmp, not committed): `/tmp/ob/mild.py` builds the time series, and `/tmp/ob/ana.py` runs the census.
