@@ -8962,6 +8962,17 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
     - Reference: PID 10.65 / 9.72 / 0.92 (one departure); PID + firmware FF 7.31 / 5.12 / 2.19.
   - **R 40 m** is past the torque limit for every controller, so it is a stress case, not a ranking.
   - **Read.** The gate roughly halves pull-away wobble and lowers the standard-band error, at about +0.7° trail and +0.8° past in the R 60 turns. Pull-away wobble with the gate is still about 2× PID's. Repeat runs (run-to-run spread) are pending.
+- **MetaDrive repeats, n=3 per cell (sim only, not driven; reported by the MetaDrive Sim session). They settle the gate against run-to-run spread.** All 12 episodes ran at 87-99 Hz.
+  - **Stop and resume.** pullaway_wobble: ungated 1.99 / 1.71 / 2.32 (mean 2.01); gated 1.11 / 1.24 / 1.32 (mean 1.22). The 0.79 gain exceeds both ranges (0.61, 0.21), and the ranges do not overlap.
+    - Centre (|des| < 10) and turning pull-aways both improve.
+    - err_rms_standard: mean 5.50 → 3.67. curve_ratio_standard: 1.11 → 0.99. Gated n=2 on both, because one episode had too little ≥ 25 mph time.
+    - No departures.
+  - **R 60 at 25 km/h**, turn err / trail / past means: ungated 6.87 / 4.99 / 1.89; gated 7.26 / 4.50 / 2.77.
+    - err (+0.39) and trail (−0.49) are inside the spread.
+    - past +0.88 is outside it: ungated 1.62-2.15, gated 2.58-3.06. The gate gives a consistent ~0.9° more overshoot past the desired angle in R 60 turns.
+    - Departures: ungated 2 (one episode), gated 0.
+  - **Read.** The gate's pull-away gain is real in sim. Its turn cost is a small, consistent overshoot, not a turn-error increase. On the road, watch for the wheel going slightly past the line through moderate turns.
+
 - **James's turn smoothing, ported and put on the car's test branch (owner's request, 2026-09-27; static tests only, not driven).**
   - The fix is JamesL787 `vfn-controller-shadow` aa943ad4. The problem it targets: with the blinker on at low speed, the turn hold and turn lead entered the steering target as steps, and at a stop the target could flip between the hold and the model every frame (James's routes 354/355).
   - It applies only when `LatControlClarityEps` is the built controller: `turn_shaping = isinstance(self.LaC, LatControlClarityEps)`, so the PID path is unchanged. The hold/lead floor goes through a 0.25 s low-pass, a release glides onto the model, and a driver-confirmed capture still snaps.
