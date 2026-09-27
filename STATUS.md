@@ -8676,3 +8676,52 @@ Script (in /tmp, not committed): `/tmp/epsff/core_replay.py`.
 - `/tmp/epsff/cl_sim.py` runs the six-route comparison.
 - `/tmp/epsff/dither.py` computes the high-pass and command-step figures.
 - 284 was extracted to `/tmp/epsff/00000284--1109db7c4c.npz`. No routes were fetched.
+
+## 167. First drive with the STATUS 160 onset debounce: route 00000285--1cd7a85309. Limited road evidence: one short drive, 7.0 engaged minutes, mostly intersection turns. No code change.
+
+**Setup.** The device ran `f71648c5` (clean) with `NrdrLatEpsFirmwareFF` off, so this is the NRDR PID.
+- Threshold 2000 with centre boost 2000.
+- `HondaOverrideFadeDownSecs` 0.0 (moot, see 160's correction), fade-up 0.5.
+- Torque scale 0, `HondaDriverAssistDuringOverride` 0.
+- LatP 115/125/115, LatI 75/95/100, LatF 50/115/115.
+- The drive has no bookmarks.
+
+**The debounce runs as built.** Replaying `_update_steering_torque` on the logged inputs with the debounce matches the delivered/command ratio on 94.6 % of frames, against 92.5 % without it.
+- Only 2 blips of ≤ 5 frames started from full output (403.5 s, 643.5 s), and both still cut, probably via the leaky counter.
+- On 284 the same test finds 3.
+
+**What still cuts: 60–190 ms presses just over threshold.** Raw presses by length, 285 vs 284:
+
+| raw press length | 285 | 284 |
+|---|---|---|
+| 1–5 frames | 27 | 34 |
+| 6–19 frames | 37 | 8 |
+| ≥ 20 frames | 18 | 13 |
+
+- The 6–19 frame presses peak at 2020–2200.
+- In 27 of the 37, the torque opposes the command. In 14, the wheel is still moving with the command.
+- Most sit at |angle| < 10° while the target leads by 10–30°. That is hands holding against turn-in or unwind, not blips.
+- There are 85 dips below 0.8 in 7.0 min (12.1/min). On 284 it was 53 in 11.6 min (4.6/min). This drive has more turning: 1.25 min above 30° against 0.77.
+
+Clusters of three or more cuts:
+
+| route time | cuts | notes |
+|---|---|---|
+| 0:39 | 5 | 9 mph |
+| 1:21 | 4 | |
+| 3:41–3:54 | 11 | 17 mph, turn to 123° |
+| 6:19 | 9 | |
+| 6:30–6:44 | 12 | |
+| 7:52 | 3 | |
+| 9:06–9:20 | 11 | 20 mph, turn to 58° |
+| 9:58 | 3 | |
+| 10:44–10:51 | 7 | |
+
+Most of the clusters are with the blinker on.
+
+**Levers, none applied (the owner's call; the threshold is not to be raised):**
+- **Longer onset window for torque between 2000 and 2500, instant above 2500.** At about 20 frames it would filter most of these. The cost: a light takeover waits up to 200 ms before the cut.
+- **A damping signature.** Opposing torque while the wheel still moves with the command does not count as a press. This changes when an override fires.
+- **Slower fade-up.** This softens the rebuild, but does not change how often the car cuts.
+
+Scripts (in /tmp, not committed): `/tmp/r285.py`, `/tmp/r285b.py`, `/tmp/r285c.py`.
