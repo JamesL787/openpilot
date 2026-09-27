@@ -8980,6 +8980,19 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
   - `clarity-eps-testing` 24c9212f + f7655b64: the same port, on top of 0f27431d's angle gate. A one-time migration (`migrate_nrdr_clarity_eps_default`, flag `/data/nrdr_clarity_eps_default_v1`) turns `NrdrLatEpsFirmwareFF` on, which makes James's controller that branch's default. The toggle still turns it off, and the value persists if another branch is flashed. The compiled default stays `"0"`.
   - Tests: 44 pass (James's 7 plus test_controlsd, test_turn_lead and test_nissan_leaf_fallback). A MetaDrive pilot with a latched blinker and a stop before each corner is queued; the full set waits on whether the pilot reproduces the standstill flip-flop.
 
+- **Route 00000287--5cda3437c4, the first drive of `clarity-eps-testing` f7655b64 (limited road evidence; initData confirms the branch, the commit and `NrdrLatEpsFirmwareFF`=1).** The owner reported two events. Neither came from the steering controller: in both, the wheel followed the commanded angle, and the command came from the model.
+  - **2:17-2:26, left curve at 25-32 mph, "hugged left, over the line".**
+    - The controller tracked the plan: yaw-rate curvature matched desiredCurvature within about 3%, and the angle ran 0.4-1 deg past a 27 deg desired.
+    - The plan itself sat left of the lane centre. At 20 m it was about 0.7 m left of the midpoint between the lane lines.
+    - The left line fell to 0.8-1.2 m from the car at x=0, so the left wheels were on the line.
+    - The right line was near invisible (prob 0.02-0.10).
+    - Whether PID on the same plan would sit anywhere different was not tested. A replay comparison is the next check.
+  - **2:38.2, right curve, 23 mph.** The driver pulled left at up to +2100 torque and the angle went from -25 to -11 deg. The feedforward dropped out on the press and came back by 2:39.6.
+  - **2:43.4, left blinker at 19.8 mph, "almost turned into the oncoming traffic waiting at the stoplight".**
+    - The cause is StarPilot's Force Turn Desires (`TurnDesires`=1): below `MinimumLaneChangeSpeed` (20 mph on this car), a single blinker feeds a turnLeft desire to the model. modelV2 desireState went to turnLeft on the next frame.
+    - The model asked for a hard left at once: path 10 m left at 20 m ahead, 80-87 deg of wheel at 19 mph. The controller followed it: desiredCurvature equalled the model action, so the turn lead added nothing.
+    - The driver pushed right at 1500-2200 torque from 2:44.8. The model kept the left turn until about 2:50.
+    - This happens with either lateral controller while that toggle is on.
 
 ## 174. Gas learner (`LongGasLearner`) on 00000286--ba543e3a3e, and its values now go into the drive log (`starpilotCarState.gasLearner*`). The 286 findings are from a CAN decode. The logging has static tests only and has not been driven.
 
