@@ -9327,3 +9327,31 @@ Times are log time. Bookmarks sit 2-3 s after the event.
 - **Stale links:** an old `/tuning/nrdr-pid` link falls back to the first tab.
 - **On-device data:** trial files in `/data/galaxy/lat_tune/` are left in place.
 - **Tests:** galaxy tests show the same failures as before the removal in this container (e.g. `test_dashboard_stats` 2 date failures reproduce with the old test file).
+
+## 182. Longitudinal on 0000028b--ed67104f14: the first drive with the STATUS 179 fix (ns-bosch-radar-testing 99a4e49f, NRDR PID lateral; 32 segments). The fix acted live and never touched a lead. There are five device bookmarks: left-curve light brakes, the third and fourth instances of the pattern; a justified stop after engaging mid-turn; a normal stop; and a short over-held brake on a new lead. Log decode and replay only.
+
+**The fix, live.**
+
+- 3427 coasted points in total. 74 sat exactly at the floor, vRel = -(vEgo + 1).
+- 34 coasted points still implied a reversing lead (18 episodes). Their likely paths are the range-rejected coast, which STATUS 179 leaves untouched, or a fit whose rate-3 bound is still below the floor.
+- None of the 34 was ever leadOne.
+
+**Replay** (`/tmp/rv/ab2.py`, A = v_ego not fed, RF = fed): 0 points lost, 0 of 9 episodes moved (6 protected), 0 lead-difference frames.
+
+**Bookmarks.** Times are log time.
+
+- **6:28.3 / 6:36.5: left curve (steer -5 to -10 deg).**
+  - 6:26.5 (-1.0 command, aEgo -1.88) and 6:30.0 (-1.0, aEgo -1.14): lead #14's measured radar range fell from 43.5 to 30.3 m over 5 s (vLead 10-12). The camera held the lead at 40-45 m with v 14.5-15.
+  - 6:35.5 (-0.68): #8 at y -4.8, with the camera agreeing on the lateral position. Radar vRel was -4.4 against a camera lead speed matching ego.
+  - With 0000028a 5:27 (STATUS 180), that makes four brakes on three stretches, all in left curves, all measured (not coasts), each with radar range and speed below the camera's.
+  - This is the next candidate. Before touching anything, compare radar and camera lead range and speed against steering angle over the corpus.
+- **9:32.0: justified brake.**
+  - The driver braked from 9:20 and engaged at 9:30.0 mid sharp-left turn (steer -30 deg) at 7.6 m/s.
+  - #5 was measured throughout, with vRel -8 to -9.9. Its range fell from 39.0 to 16.4 m in 1.9 s (-12 m/s, more than vEgo), so the object was still moving toward the path.
+  - The camera confirmed it: prob 0.78 -> 0.97, v about 0. It was a stopped car at 12 m.
+  - aTarget -2.6 to -2.7, aEgo -3.4 peak.
+- **11:20.6: normal stop.** Lead #36 braked to a stop (aLeadK down to -3.5). Ego went smoothly from 16 m/s to 0 at -1.5 to -2.3 and stopped 5.2 m behind it after a slow final creep under 2 m/s.
+- **14:54.8: short over-held light brake.**
+  - At 14:51, lead #45 moved right and #10 at 61 m became the lead. It was measured at -5.5 to -6.5 for 1 s, and the range agreed (-5 m/s). The camera lead speed fell 21 -> 17.
+  - From 14:52.2 the range went flat, while #10 coasted -4.5* for 0.35 s and then measured -3.2 to -2.4.
+  - The command stayed at -0.7 to -0.8 for about 0.5 s after the range stopped closing. Mild.
