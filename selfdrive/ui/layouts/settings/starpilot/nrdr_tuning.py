@@ -251,6 +251,9 @@ class NRDRTuningLayout(_SettingsPage):
 
     override_rows = [
       toggle("NrdrIncreaseOverrideTolerance", "Override Hysteresis", "Double the override tolerance after steering input leaves center."),
+      toggle("NrdrSameDirectionAssist", "Keep Steering When Helping a Turn (Test)",
+             "Pushing the wheel the same way openpilot is steering no longer cuts torque, below 25 mph, "
+             "for up to 8 s. Pushing against it, or very hard, still takes over."),
       value(
         "NrdrDriverOverrideThreshold", "Driver Override Threshold", "Raw torque-sensor threshold outside the center boost angle band.",
         lambda: str(p.get_int("NrdrDriverOverrideThreshold")),

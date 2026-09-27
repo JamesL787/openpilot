@@ -4580,6 +4580,13 @@ the bad. Three lead routes are too few to re-tune the D-057 thresholds (rule 5).
 expected road symptom is earlier or harder braking behind a car that is closing slowly, not a late
 brake.
 
+**MetaDrive logic test of 087646dc (static, real `_update_steering_torque`, scripted CS/CC).** Cases 1–7 passed. It found three faults, all fixed in this commit.
+- **Release.** While the release hold kept a let-go press, tq·cmd = 0 read as a fight, so every help release stepped 0.8 → 0 and faded back. Fix: |tq| under the 0.75× release level is neutral and holds the state.
+- **Ceiling hover.** 3500 ± 100 gave 38 edges in 4 s. Fix: a ceiling cut resets the entry hold, and re-entry needs 0.2 s under 1.5× (`SAME_DIR_REENTRY_FRAC`).
+- **Speed edge.** 25 ± 0.5 mph gave 6 transitions. Fix: a speed exit locks until release, like the time cap.
+
+By design, each help press still starts with the ordinary cut: an instant cut, 0.2 s at 0, then a 0.5 s fade-in. That is about a 0.7 s notch, the price of the sign hold.
+
 **Tests (static).** All 260 Honda radar tests pass in docker. Controls suite in docker: 1246 passed, 4 skipped, 3 failed. These are the same three failures as STATUS 66 (two in latcontrol, `test_force_stop_jerk_scale_is_platform_specific`); none is new.
 
 **Next.**
@@ -9361,3 +9368,56 @@ Times are log time. Bookmarks sit 2-3 s after the event.
 - Removed: the `NrdrLatRateFF` row in `selfdrive/ui/layouts/settings/starpilot/nrdr_tuning.py` and its entry in `starpilot/common/assets/device_settings_layout.json`.
 - Kept: the param (default 0.0) and its term in `latcontrol_pid.py`, which is skipped at 0. The offline sims (`lat_pid_sim.py`, `lat_route_check.py`) still take it as a variant override.
 - Evidence it was off: route 0000028b initData has `NrdrLatRateFF` 0.0. It has been recommended at 0 since STATUS 143, where 0.5 caused the low-speed stutter on 278.
+
+## 185. Same-direction assist for NRDR PID (`NrdrSameDirectionAssist`, default off). A driver press that helps the turn no longer cuts the steering. Evidence is unit tests and open-loop replay of 28a/28b. No road evidence yet.
+
+**Problem (routes 0000028a, 0000028b).** Any press above the override threshold cut the PID torque to 0 (HondaOverrideTorqueScale 0), whichever way the driver pushed.
+- On slow tight turns Peter helps the wheel the way openpilot is already steering. The help cut openpilot out, and the car then under-turned.
+- 28b 2:04–2:09: a right turn from a stop. The command was +1 and the wheel was 48° short, but 0 torque was delivered for 5.4 s.
+- 28a 27:40: 3.1 s of same-sign help, all of it cut.
+- Magnitude cannot tell help from a fight: help |tq| p50 is 2530–2650 and a fight's is 2280–2390. Only the sign can.
+
+**Change.** `SameDirectionAssist` in `opendbc_repo/opendbc/car/honda/carcontroller.py`, applied after the debounce/hold chain.
+- A press is exempt from the override when all of these hold:
+  - sign(driver torque) == sign(command) continuously for 0.2 s (`SAME_DIR_ENTRY_S`);
+  - speed ≤ 25 mph;
+  - |torque| < 1.75× the threshold;
+  - the press has been exempt for less than 8 s.
+- On entry, torque returns through the normal fade-up (0.5 s).
+- The carcontroller has no desired angle, so "short of the plan" is read from the command's sign: once the wheel passes the plan, the PID pushes back, the signs disagree, and the press is a fight.
+- A command below 0.05 is neutral: it holds the current state, so a plan crossing zero does not flicker.
+- Exits:
+  - Opposite sign or above the ceiling: instant cut, the same as today.
+  - The 8 s cap or leaving the speed band: a 0.3 s fade-out, then locked until the hand releases.
+- Toggle off, or James's controller: the chain is unchanged. The toggle is under LateralTune (advanced) and in the NRDR tuning layout.
+
+**Tests (static).** There are eleven new cases in `test_honda.py`:
+- help with ±150 jitter, no chatter;
+- toggle off;
+- opposite-then-same, with the entry hold;
+- a fight that starts with a same-sign blip;
+- the ceiling;
+- the 8 s cap fade;
+- the speed band;
+- a command crossing zero;
+- letting go keeps the torque;
+- a grip hovering at the ceiling;
+- speed hovering at the band edge.
+
+All 320 honda tests pass.
+
+**Replay (open loop, logged tq/cmd/pressed through the real `_update_steering_torque`, threshold 2000, fades up 0.5 / down 0).** Open loop means the logged command is not re-run through the PID, so the closed-loop response to the returned torque is not modelled.
+
+| Episode | Result |
+|---|---|
+| 28a 27:40 help | exempt 3.1 of 3.1 s, 0 transitions |
+| 28b 2:04 help | exempt 4.4 of 5.4 s (the first 0.5 s was opposite sign), 1 transition |
+| 28a 27:49 and 28:09 fights; 28b 8:34 fight | 0 s exempt |
+| 28b 20:01–20:09 (Peter leading the plan) | chatter while the command sits within ±0.06 of zero; delivered torque ≤ 0.045 |
+
+Every step above 0.1 is also present with the toggle off: it is the existing debounce cut.
+
+**Watch items for the first drive:**
+- An EPS steer fault during a help press. Combined same-sign torque above 2000 has only 0.1 s of history in the logs, max 2371.
+- The closed-loop PID response when torque returns mid-press.
+- `lat_pid_sim.py`'s CarControllerSteer does not mirror the assist.

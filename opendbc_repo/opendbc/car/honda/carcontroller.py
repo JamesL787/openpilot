@@ -95,6 +95,83 @@ OVERRIDE_ONSET_FRAMES = 6
 OVERRIDE_INSTANT_FRAC = 1.25
 
 
+# Same-direction assist (NrdrSameDirectionAssist, default off; STATUS 182). Routes 0000028a 27:40 and
+# 0000028b 2:04: the driver helped a slow turn the way the controller was already pushing, the press
+# latched, and the delivered torque sat at 0 for 4.3 s / 5.4 s while the command was +1.0 and the wheel
+# trailed the plan by up to 48 deg. While the driver's torque has the same sign as the command, the command
+# still wants more angle (the controller would be pushing back otherwise), so the press is not a takeover.
+#   - Sign convention checked on 28a: positive steeringTorque and positive actuators.torque both move the
+#     angle positive (92 % / 99 % of driver-only / openpilot-only frames).
+#   - No magnitude cut near the threshold: help presses ran |torque| p50 2530-2650, p90 ~2850, and fights
+#     overlap that range (p50 2280-2390, p90 ~3050), so only the sign separates them. A 1.25x ceiling would
+#     have covered 30-40 % of the help frames and toggled the torque as the grip crossed it.
+#   - SAME_DIR_ENTRY_S of agreeing sign before exempting, so a sign blip at the start of a fight is not
+#     exempted; a command within SAME_DIR_MIN_CMD of zero neither enters nor exits (the ang = des crossing).
+#   - Exits: opposite sign or above SAME_DIR_CEILING_FRAC x threshold cut at once (the command is small at a
+#     sign flip, so there is no big step); past SAME_DIR_MAX_S of one press or above SAME_DIR_MAX_SPEED the
+#     torque fades out over SAME_DIR_EXIT_FADE_S. Both of those hold until the press releases.
+#   - A hand letting go (|torque| under OVERRIDE_RELEASE_FRAC x threshold, inside the release hold) is neutral,
+#     not a fight: cutting there dropped 0.8 -> 0 in one frame on every help release (MetaDrive logic test).
+#   - After a ceiling cut, re-entry needs SAME_DIR_ENTRY_S under SAME_DIR_REENTRY_FRAC x threshold; a grip
+#     hovering at 1.75x otherwise toggled the torque every 0.1 s (MetaDrive: 38 edges in 4 s at 3500 +/- 100).
+# Log decode and static only; not driven. Panda's Honda safety has no driver-torque limit; how the modified
+# EPS takes sustained combined torque above threshold is untested on the road.
+SAME_DIR_ENTRY_S = 0.2
+SAME_DIR_MIN_CMD = 0.05
+SAME_DIR_CEILING_FRAC = 1.75
+SAME_DIR_REENTRY_FRAC = 1.5
+SAME_DIR_MAX_S = 8.0
+SAME_DIR_MAX_SPEED = 25.0 * CV.MPH_TO_MS
+SAME_DIR_EXIT_FADE_S = 0.3
+
+
+class SameDirectionAssist:
+  """Decides, per control frame of a confirmed press, whether the press is the driver helping the command."""
+  def __init__(self):
+    self.reset()
+
+  def reset(self):
+    self.agree_s = 0.0
+    self.exempt_s = 0.0
+    self.exempt = False
+    self.locked = False
+    self.ceiling_hit = False
+
+  def update(self, pressed: bool, steering_torque: float, torque_cmd: float, threshold, v_ego: float) -> tuple[bool, bool]:
+    """Returns (exempt, fade_exit): exempt means the press does not cut torque this frame; fade_exit means
+    the exemption just ended and the cut should fade rather than step."""
+    if not pressed:
+      self.reset()
+      return False, False
+    tq, cmd = float(steering_torque), float(torque_cmd)
+    thr = None if threshold is None else float(threshold)
+    was_exempt = self.exempt
+    releasing = thr is not None and abs(tq) < OVERRIDE_RELEASE_FRAC * thr
+    neutral = abs(cmd) < SAME_DIR_MIN_CMD or releasing
+    same = not neutral and tq * cmd > 0.0
+    over_ceiling = thr is not None and abs(tq) >= SAME_DIR_CEILING_FRAC * thr
+    if over_ceiling:
+      self.ceiling_hit = True
+    below_reentry = thr is None or not self.ceiling_hit or abs(tq) < SAME_DIR_REENTRY_FRAC * thr
+    if same and below_reentry:
+      self.agree_s += DT_CTRL
+    elif not neutral:
+      self.agree_s = 0.0
+
+    if over_ceiling or (not same and not neutral):
+      self.exempt = False
+      return False, False
+    if was_exempt:
+      self.exempt_s += DT_CTRL
+      if self.exempt_s >= SAME_DIR_MAX_S or v_ego > SAME_DIR_MAX_SPEED:
+        self.locked = True
+        self.exempt = False
+        return False, True
+      return True, False
+    self.exempt = same and not self.locked and v_ego <= SAME_DIR_MAX_SPEED and self.agree_s >= SAME_DIR_ENTRY_S
+    return self.exempt, False
+
+
 def debounce_steering_pressed(raw_pressed: bool, steering_torque: float, threshold, onset_frames: int) -> tuple[bool, int]:
   """One control frame of the onset debounce. Returns (confirmed press, updated onset counter)."""
   onset_frames = min(onset_frames + 1, OVERRIDE_ONSET_FRAMES) if raw_pressed else max(onset_frames - 1, 0)
@@ -627,6 +704,8 @@ class CarController(CarControllerBase):
     self.override_held = False
     self.override_hold_s = 0.0
     self.override_onset_frames = 0
+    self.same_dir_assist = SameDirectionAssist()
+    self.same_dir_fading = False
     self.bosch_last_gas = 0.0
     self.bosch_braking = False
     if self.CP.carFingerprint in HONDA_BOSCH:
@@ -686,6 +765,7 @@ class CarController(CarControllerBase):
       "ecu_matched_long": self.param_store.get_bool("NrdrHondaEcuMatchedLong", default=False),
       "increase_override_tolerance": self.param_store.get_bool("NrdrIncreaseOverrideTolerance", default=False),
       "min_steer_speed": float(np.clip(self.param_store.get_int("NrdrMinSteerSpeed", default=1), 0, 45)) * CV.MPH_TO_MS,
+      "same_direction_assist": self.param_store.get_bool("NrdrSameDirectionAssist", default=False),
     }
 
   def _update_steering_torque(self, CC, CS, live):
@@ -718,12 +798,22 @@ class CarController(CarControllerBase):
           confirmed or (raw_pressed and self.override_held), sensor_torque, threshold,
           self.override_held, self.override_hold_s)
         steering_pressed = self.override_held
+        if live.get("same_direction_assist", False):
+          exempt, fade_exit = self.same_dir_assist.update(steering_pressed, sensor_torque, torque_cmd, threshold, CS.out.vEgo)
+          if exempt:
+            steering_pressed = False
+          self.same_dir_fading = (self.same_dir_fading or fade_exit) and steering_pressed
+        else:
+          self.same_dir_assist.reset()
+          self.same_dir_fading = False
 
       if not self.lat_active_prev:
         self.override_ramp = 0.0
 
       if steering_pressed:
         fade_down_s = live["override_fade_down_s"]
+        if self.same_dir_fading:
+          fade_down_s = max(fade_down_s, SAME_DIR_EXIT_FADE_S)
         if fade_down_s <= 0.0:
           self.override_ramp = live["override_torque_scale"]
         else:
@@ -759,6 +849,8 @@ class CarController(CarControllerBase):
       self.override_hold_s = 0.0
       self.override_onset_frames = 0
       self.steering_pressed_robust_prev = False
+      self.same_dir_assist.reset()
+      self.same_dir_fading = False
 
     # Opt-in slew limit on the delivered command. Unlike a low-pass filter this genuinely
     # withholds authority for as long as it is saturated, so reporting it as limiting -- and

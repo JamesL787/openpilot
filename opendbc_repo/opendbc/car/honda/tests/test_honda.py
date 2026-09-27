@@ -594,6 +594,126 @@ class TestHondaSteeringCommandFidelity:
       n += 1
     assert n == round(cc_mod.OVERRIDE_RELEASE_HOLD_S / cc_mod.DT_CTRL)
 
+  # Same-direction assist (NrdrSameDirectionAssist, STATUS 182). Routes 28a/28b fades: up 0.5 s, down 0.
+  LIVE_28A = {"override_fade_down_s": 0.0, "override_fade_up_s": 0.5, "same_direction_assist": True}
+
+  def _press(self, controller, frames, live=None, v_ego=6.0, threshold=2000.0):
+    # frames: (command, sensor_torque) with the raw press flag set; returns delivered torque per frame.
+    live = {**self.LIVE_DEFAULTS, **self.LIVE_28A, **(live or {})}
+    out = []
+    for cmd, sensor in frames:
+      pressed = abs(sensor) > threshold
+      delivered, _, _ = controller._update_steering_torque(
+        self._cc(cmd), self._cs(v_ego=v_ego, steering_pressed=pressed, steering_torque=sensor, steer_threshold=threshold), live)
+      out.append(delivered)
+    return out
+
+  def _ready(self):
+    controller = self._controller()
+    self._drive(controller, [0.0] * 200)
+    return controller
+
+  @staticmethod
+  def _transitions(delivered):
+    on = [abs(x) > 1e-3 for x in delivered]
+    return sum(a != b for a, b in zip(on, on[1:], strict=False))
+
+  def test_same_direction_help_press_keeps_torque_without_chatter(self):
+    # 28b 2:04 shape: firm same-sign help around 2600 with +/-150 jitter, 5 s.
+    controller = self._ready()
+    frames = [(0.8, 2600.0 + (150.0 if (n // 10) % 2 else -150.0)) for n in range(500)]
+    out = self._press(controller, frames)
+    assert out[-1] == pytest.approx(0.8)
+    assert self._transitions(out[30:]) == 0
+    # The debounce still cuts first (fade down 0); the exemption then fades torque back in without a step.
+    assert max(abs(x) for x in out[6:20]) == 0.0
+    assert max(abs(b - a) for a, b in zip(out[6:], out[7:], strict=False)) < 0.05
+
+  def test_toggle_off_keeps_the_cut(self):
+    controller = self._ready()
+    out = self._press(controller, [(0.8, 2600.0)] * 300, live={"same_direction_assist": False})
+    assert max(abs(x) for x in out[10:]) == 0.0
+
+  def test_opposite_press_cuts_and_exemption_needs_the_entry_hold(self):
+    # 28b 2:04: 0.5 s opposite (driver turns before the plan), then same sign.
+    controller = self._ready()
+    out = self._press(controller, [(-0.6, 2400.0)] * 50 + [(0.8, 2600.0)] * 200)
+    assert max(abs(x) for x in out[6:50]) == 0.0
+    entry = round(cc_mod.SAME_DIR_ENTRY_S / cc_mod.DT_CTRL)
+    assert max(abs(x) for x in out[50:50 + entry - 1]) == 0.0
+    assert out[-1] > 0.5
+
+  def test_a_short_same_sign_blip_at_the_start_of_a_fight_is_not_exempted(self):
+    controller = self._ready()
+    out = self._press(controller, [(0.8, 2400.0)] * 10 + [(0.8, -2400.0)] * 100)
+    assert max(abs(x) for x in out) < 1e-9 or max(abs(x) for x in out[10:]) == 0.0
+
+  def test_press_above_the_ceiling_cuts_at_once(self):
+    controller = self._ready()
+    self._press(controller, [(0.8, 2600.0)] * 100)
+    out = self._press(controller, [(0.8, 2000.0 * cc_mod.SAME_DIR_CEILING_FRAC + 1.0)])
+    assert out[-1] == 0.0
+
+  def test_time_cap_fades_out_and_holds_until_release(self):
+    controller = self._ready()
+    n = round((cc_mod.SAME_DIR_MAX_S + 1.0) / cc_mod.DT_CTRL)
+    out = self._press(controller, [(0.8, 2600.0)] * n)
+    cap = round((cc_mod.SAME_DIR_MAX_S + cc_mod.SAME_DIR_ENTRY_S) / cc_mod.DT_CTRL)
+    assert out[cap - 10] == pytest.approx(0.8)
+    assert out[-1] == 0.0
+    assert max(abs(b - a) for a, b in zip(out[cap - 20:], out[cap - 19:], strict=False)) < 0.05  # faded, not stepped
+
+  def test_letting_go_of_a_help_press_keeps_the_torque(self):
+    # MetaDrive logic test on 087646dc: the release hold kept the press while |tq| fell to 0, and tq * cmd = 0
+    # read as a fight, so every help release stepped 0.8 -> 0.
+    controller = self._ready()
+    self._press(controller, [(0.8, 2600.0)] * 200)
+    out = self._press(controller, [(0.8, 2600.0 - 260.0 * n) for n in range(10)] + [(0.8, 0.0)] * 100)
+    assert min(out) == pytest.approx(0.8)
+
+  def test_a_grip_hovering_at_the_ceiling_does_not_toggle_the_torque(self):
+    # MetaDrive: 3500 +/- 100 at 5 Hz gave 38 edges in 4 s.
+    controller = self._ready()
+    self._press(controller, [(0.8, 2600.0)] * 100)
+    ceiling = 2000.0 * cc_mod.SAME_DIR_CEILING_FRAC
+    out = self._press(controller, [(0.8, ceiling + (-100.0 if (n // 10) % 2 else 100.0)) for n in range(400)])
+    assert self._transitions(out) == 0
+    assert max(abs(x) for x in out) == 0.0
+    # back under the re-entry level for the entry hold, the help is kept again
+    out = self._press(controller, [(0.8, 2600.0)] * 100)
+    assert out[-1] == pytest.approx(0.8)
+
+  def test_speed_hovering_at_the_band_edge_exits_once(self):
+    # MetaDrive: 25 +/- 0.5 mph at 0.5 Hz gave 6 transitions.
+    controller = self._ready()
+    self._press(controller, [(0.8, 2600.0)] * 100)
+    out = []
+    for n in range(800):
+      v = cc_mod.SAME_DIR_MAX_SPEED + (0.25 if (n // 100) % 2 == 0 else -0.25)
+      out += self._press(controller, [(0.8, 2600.0)], v_ego=v)
+    assert self._transitions(out) == 1
+    assert out[-1] == 0.0
+
+  def test_above_the_speed_band_the_press_cuts(self):
+    controller = self._ready()
+    out = self._press(controller, [(0.8, 2600.0)] * 200, v_ego=cc_mod.SAME_DIR_MAX_SPEED + 0.5)
+    assert max(abs(x) for x in out[10:]) == 0.0
+
+  def test_command_crossing_zero_holds_then_cuts_once_it_is_a_fight(self):
+    # Plan crosses the wheel while the hand holds: command sweeps +0.3 -> -0.3 slowly.
+    controller = self._ready()
+    self._press(controller, [(0.3, 2600.0)] * 100)
+    sweep = [0.3 - 0.6 * n / 200 for n in range(200)]
+    out, exempt = [], []
+    for cmd in sweep:
+      out += self._press(controller, [(cmd, 2600.0)])
+      exempt.append(controller.same_dir_assist.exempt)
+    neutral_end = next(i for i, cmd in enumerate(sweep) if cmd <= -cc_mod.SAME_DIR_MIN_CMD)
+    assert all(exempt[:neutral_end])  # neutral band keeps the state, no flicker
+    assert not any(exempt[neutral_end:])  # command now opposes the hand: a fight, cut
+    assert max(abs(x) for x in out[neutral_end:]) == 0.0
+    assert max(abs(b - a) for a, b in zip(out, out[1:], strict=False)) <= cc_mod.SAME_DIR_MIN_CMD + 1e-6
+
   def test_steer_delta_limiter_is_reported_as_limited(self):
     controller = self._controller()
     self._drive(controller, [0.0] * 200)

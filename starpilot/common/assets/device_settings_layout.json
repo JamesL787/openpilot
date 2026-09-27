@@ -632,6 +632,15 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "NrdrSameDirectionAssist",
+        "label": "Keep Steering When Helping a Turn (Test)",
+        "description": "Pushing the wheel the same way openpilot is steering no longer cuts steering torque, below 25 mph, for up to 8 s. Pushing against it, or very hard, still takes over.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NrdrDriverOverrideThreshold",
         "label": "Driver Override Threshold",
         "description": "Raw torque threshold for driver steering. 1200 is stock Honda scale.",
