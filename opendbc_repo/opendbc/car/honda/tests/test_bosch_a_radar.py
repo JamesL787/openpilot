@@ -1680,7 +1680,7 @@ def test_bosch_a_gate_stays_closed_for_non_bosch_a_platforms(car):
   assert cp.radarUnavailable is True
 
 
-# --- D-063: the rail interval, behind BoschARailInterval (default off) -------------------------
+# --- D-063: the rail interval, built in (was BoschARailInterval) -------------------------------
 
 def test_rail_interval_gate_reads_rail_as_bound_only_when_asked():
   from opendbc.car.honda.radar_interface import (_bosch_a_range_innovation_rejected, _bosch_a_direct_vrel_interval,
@@ -1701,28 +1701,10 @@ def test_rail_interval_gate_reads_rail_as_bound_only_when_asked():
           _bosch_a_range_innovation_rejected((0.0, 100.0), 1.0, 91.0, -5.0, None, False, exact=True))
 
 
-def test_rail_interval_toggle_default_off_and_read_at_startup():
-  p = Params()
-  p.remove("BoschARailInterval")
-  assert make_radar_interface().rail_interval is False
-  p.put_bool("BoschARailInterval", True)
-  try:
-    assert make_radar_interface().rail_interval is True
-  finally:
-    p.remove("BoschARailInterval")
-  assert make_radar_interface().rail_interval is False
-
-
-def test_coast_range_bound_follows_range_derived_vrel_read_at_startup():
-  p = Params()
-  p.remove("RangeDerivedVrel")
-  assert make_radar_interface().coast_range_bound is False
-  p.put_bool("RangeDerivedVrel", True)
-  try:
-    assert make_radar_interface().coast_range_bound is True
-  finally:
-    p.remove("RangeDerivedVrel")
-  assert make_radar_interface().coast_range_bound is False
+def test_rail_interval_and_coast_range_bound_built_in():
+  ri = make_radar_interface()
+  assert ri.rail_interval is True
+  assert ri.coast_range_bound is True
 
 
 class TestRailIntervalBoundsTheCoast:

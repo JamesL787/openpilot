@@ -79,6 +79,7 @@ NRDR_LAT_TUNE_2026_09_24_MIGRATION_FLAG = Path("/data") / "nrdr_lat_tune_2026_09
 STARPILOT_REMOVED_PARAM_KEYS = (
   "CoastUpToLeads", "PrioritizeSmoothFollowing",
   "NrdrTuneLearner", "NrdrTuneLearnerMap", "NrdrTuneLearnerRate", "NrdrTuneLearnerReset", "NrdrTuneLearnerStrength",
+  "HumanAcceleration", "HumanFollowing", "FarLeadCoastCap", "BoschARailInterval", "RangeDerivedVrel", "RangeVisionAssist",
 )
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",

@@ -614,8 +614,10 @@ VEHICLE_FAR_FOLLOW_SLEW_MIN_DISTANCE_TIME = 1.35
 VEHICLE_FAR_FOLLOW_SLEW_MIN_HEADWAY = 1.35
 VEHICLE_FAR_FOLLOW_SLEW_MIN_TTC = 8.0
 VEHICLE_FAR_FOLLOW_SLEW_MAX_LATERAL_OFFSET = 1.5
-# Far-lead coast cap (StarPilot Dom 79c61f479a), parked behind FarLeadCoastCap, default off (STATUS 85).
-# It trusts dRel/vLead at range, where closing speed can read low; replay it before enabling.
+# Far-lead coast cap (StarPilot Dom 79c61f479a), built in (was FarLeadCoastCap; on in the owner's Civic drives
+# through 0000028b). It trusts dRel/vLead at range, where closing speed can read low: the Bosch-A rail interval
+# and range-derived closing speed are what keep that reading honest. Replay of route 00000268 (STATUS 110),
+# forced on vs off: all 9 brake episodes identical; every far approach had a braking lead or a TTC under 8 s.
 FAR_LEAD_COAST_MIN_DISTANCE = 45.0
 FAR_LEAD_COAST_MIN_TTC = 8.0
 FAR_LEAD_COAST_MIN_GAP_MARGIN = 6.0
@@ -3629,7 +3631,6 @@ class LongitudinalPlanner:
     # second lead or an active model brake floor holds it off instead.
     far_lead_coast_other = self.lead_two if comfort_lead is self.lead_one else self.lead_one
     far_lead_coast_allowed = (
-      bool(getattr(starpilot_toggles, "far_lead_coast_cap", False)) and
       not experimental_mode and
       comfort_lead is not None and
       desired_gap is not None and

@@ -79,7 +79,7 @@ const RADAR_REQUIRED_KEYS = new Set(["HumanLaneChanges", "RadarTakeoffs"])
 // car-family gate as the BoschARadar toggle itself rather than each introducing another one.
 // Keep this in step with the rows in selfdrive/ui/layouts/settings/starpilot/longitudinal.py,
 // which gates the same keys through the Bosch-A radar section.
-const BOSCH_A_REQUIRED_KEYS = new Set(["RangeDerivedVrel"])
+const BOSCH_A_REQUIRED_KEYS = new Set([])
 
 // Plain variables — scheduling/routing flags that must NOT be reactive
 let syncScheduled = false

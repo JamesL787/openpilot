@@ -509,16 +509,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_value=self._get_deceleration_profile_label,
                  on_click=self._show_deceleration_profile_selector,
                  visible=self._longitudinal_enabled),
-      SettingRow("HumanAcceleration", "toggle", tr_noop("Human-Like Acceleration"),
-                 subtitle=tr_noop("Gentler acceleration at low set speeds and near the set speed."),
-                 get_state=lambda: self._params.get_bool("HumanAcceleration"),
-                 set_state=lambda s: self._params.put_bool("HumanAcceleration", s),
-                 visible=self._longitudinal_enabled),
-      SettingRow("HumanFollowing", "toggle", tr_noop("Human-Like Following"),
-                 subtitle=tr_noop("Follow the lead using the model's predicted lead path."),
-                 get_state=lambda: self._params.get_bool("HumanFollowing"),
-                 set_state=lambda s: self._params.put_bool("HumanFollowing", s),
-                 visible=self._longitudinal_enabled),
       SettingRow("HumanLaneChanges", "toggle", tr_noop("Human-Like Lane Changes"),
                  subtitle=tr_noop("Radar-informed behavior during lane changes."),
                  get_state=lambda: self._params.get_bool("HumanLaneChanges"),
@@ -636,42 +626,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                                   "way. Restart required to take effect."),
                  get_state=lambda: self._params.get_bool("BoschARadar"),
                  set_state=lambda v: self._params.put_bool("BoschARadar", v)),
-      SettingRow("RangeDerivedVrel", "toggle", tr_noop("Range-Derived Closing Speed"),
-                 subtitle=tr_noop("TEST, default off. Bosch-A radar only. The radar reports closing speed directly, but that "
-                                  "channel lags a lead that starts braking by around a second and pins at 13.5 m/s. This lets "
-                                  "the closing speed measured from how the DISTANCE is changing correct it, in one direction "
-                                  "only: it may report MORE closing, never less. It applies to the lead only and is capped at "
-                                  "8 m/s. It needs about a second of distance history, and a short and a long distance fit "
-                                  "must BOTH show the extra closing for 5 consecutive radar updates before it engages. It "
-                                  "clears when the distance behaves implausibly, below 5 m/s, or when the lead would read as "
-                                  "driving backwards, and fades out as the two agree. It does not change which object is "
-                                  "picked as the lead or the lead acceleration estimate. Replayed on logs only, never "
-                                  "validated on the road, which is why it ships off."),
-                 get_state=lambda: self._params.get_bool("RangeDerivedVrel"),
-                 set_state=lambda v: self._params.put_bool("RangeDerivedVrel", v)),
-      SettingRow("RangeVisionAssist", "toggle", tr_noop("Camera-Confirmed Curve Closing Speed"),
-                 subtitle=tr_noop("TEST, default on. Bosch-A radar only, and only works with Range-Derived Closing Speed also on. On a curve, a "
-                                  "braking car ahead can sit outside the straight-ahead lane the range correction trusts, so the radar's lagging "
-                                  "closing speed was published as-is (route 26c at 4:08). With this on, the range correction may also apply "
-                                  "there, but only while the camera sees the same car at the same distance and position and itself sees it "
-                                  "closing at 5 m/s or more. Then the published closing speed may claim at most 3 m/s more closing than the "
-                                  "camera sees, and the correction drops the moment the camera stops agreeing. It never reports less closing than "
-                                  "Range-Derived Closing Speed alone. Replayed on 32 logged drives only (firm braking began 0.25 s earlier at 26c "
-                                  "4:08, no new hard brakes elsewhere), not yet driven."),
-                 get_state=lambda: self._params.get_bool("RangeVisionAssist"),
-                 set_state=lambda v: self._params.put_bool("RangeVisionAssist", v)),
-      SettingRow("BoschARailInterval", "toggle", tr_noop("Keep Fast-Closing Leads"),
-                 subtitle=tr_noop("TEST, default off. Bosch-A radar only. The radar's closing-speed channel pins at 13.5 m/s. "
-                                  "The parser checks each new distance against the closing speed it expects, and with the "
-                                  "channel pinned it expected exactly 13.5 m/s, so a car closing faster (15-17 m/s on one "
-                                  "recorded route) failed the check and the lead went dark from 100 m until 41 m. With this "
-                                  "on, a pinned reading counts as 'at least 13.5 m/s' (up to 20) in those checks, for objects "
-                                  "within 2 m of straight ahead only. It does not change the closing speed that is published, "
-                                  "only whether the lead is kept. Replayed on logs only (7 routes: no lead points lost, the "
-                                  "dark lead recovered), never driven, which is why it ships off. Restart required to take "
-                                  "effect."),
-                 get_state=lambda: self._params.get_bool("BoschARailInterval"),
-                 set_state=lambda v: self._params.put_bool("BoschARailInterval", v)),
     ]
 
     self._slc_rows = [

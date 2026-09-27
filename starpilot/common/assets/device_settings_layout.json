@@ -911,16 +911,6 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "FarLeadCoastCap",
-        "label": "Coast Toward Far Leads",
-        "description": "When a slower car is far ahead (over 45 m, over 8 s away, not braking hard), limit braking to a gentle coast until it gets closer. Parked for testing: it trusts the radar's closing speed at long range. Not yet driven.",
-        "picker_description": "Coasts instead of braking early for slower cars far ahead.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedLongitudinalTune",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "TrailerLoad",
         "label": "Trailer Load",
         "description": "Add trailer weight to vehicle mass for tow-aware gas, brake, and conservative lateral assist. Enter the loaded trailer weight in pounds.",
@@ -2161,26 +2151,6 @@
         "settings_tier": "simple"
       },
       {
-        "key": "HumanAcceleration",
-        "label": "Human-Like Acceleration",
-        "description": "Limits acceleration when the set speed is low and eases it off as the car nears the set speed, like a human driver. Ported from FrogPilot. Braking is not changed.",
-        "picker_description": "Gentler acceleration at low set speeds and near the set speed.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "LongitudinalTune",
-        "settings_tier": "simple"
-      },
-      {
-        "key": "HumanFollowing",
-        "label": "Human-Like Following",
-        "description": "Follows the lead car using the driving model's predicted lead path instead of extrapolating the lead's current acceleration, falling back to the extrapolation when closing fast (under 3 s to impact). Turning this off returns to the extrapolation everywhere.",
-        "picker_description": "Follow the lead using the model's predicted lead path.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "LongitudinalTune",
-        "settings_tier": "simple"
-      },
-      {
         "key": "HumanLaneChanges",
         "label": "Human-Like Lane Changes",
         "description": "Lane-change behavior that mimics human drivers by anticipating and tracking adjacent vehicles during lane changes.",
@@ -3038,38 +3008,6 @@
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "RangeDerivedVrel",
-        "label": "Range-Derived Closing Speed",
-        "description": "TEST, default off. Bosch-A radar only. The radar reports closing speed directly, but that channel lags a lead that starts braking by around a second and pins at 13.5 m/s. This lets the closing speed measured from how the DISTANCE is changing correct it, in one direction only: it may report MORE closing, never less. It applies to the lead only and is capped at 8 m/s. It needs about a second of distance history, and a short and a long distance fit must BOTH show the extra closing for 5 consecutive radar updates before it engages. It clears when the distance behaves implausibly, below 5 m/s, or when the lead would read as driving backwards, and fades out as the two agree. It does not change which object is picked as the lead or the lead acceleration estimate. Replayed on logs only, never validated on the road, which is why it ships off.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedLongitudinalTune",
-        "requires_offroad": true,
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "RangeVisionAssist",
-        "label": "Camera-Confirmed Curve Closing Speed",
-        "description": "TEST, default on. Bosch-A radar only, and only works with Range-Derived Closing Speed also on. On a curve, a braking car ahead can sit outside the straight-ahead lane the range correction trusts, so the radar's lagging closing speed was published as-is (route 26c at 4:08). With this on, the range correction may also apply there, but only while the camera sees the same car at the same distance and position and itself sees it closing at 5 m/s or more. Then the published closing speed may claim at most 3 m/s more closing than the camera sees, and the correction drops the moment the camera stops agreeing. It never reports less closing than Range-Derived Closing Speed alone. Replayed on 32 logged drives only (firm braking began 0.25 s earlier at 26c 4:08, no new hard brakes elsewhere), not yet driven.",
-        "picker_description": "Lets the radar's closing-speed correction work on curves when the camera confirms the car ahead is closing.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedLongitudinalTune",
-        "requires_offroad": true,
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "BoschARailInterval",
-        "label": "Keep Fast-Closing Leads",
-        "description": "TEST, default off. Bosch-A radar only. The radar's closing-speed channel pins at 13.5 m/s. The parser checks each new distance against the closing speed it expects, and with the channel pinned it expected exactly 13.5 m/s, so a car closing faster (15-17 m/s on one recorded route) failed the check and the lead went dark from 100 m until 41 m. With this on, a pinned reading counts as 'at least 13.5 m/s' (up to 20) in those checks, for objects within 2 m of straight ahead only. It does not change the closing speed that is published, only whether the lead is kept. Replayed on logs only (7 routes: no lead points lost, the dark lead recovered), never driven, which is why it ships off. Restart required to take effect.",
-        "picker_description": "Keeps a lead the radar would otherwise drop when it closes faster than 13.5 m/s.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedLongitudinalTune",
-        "requires_offroad": true,
         "settings_tier": "advanced"
       },
       {
