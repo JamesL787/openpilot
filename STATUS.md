@@ -8725,3 +8725,55 @@ Most of the clusters are with the blinker on.
 - **Slower fade-up.** This softens the rebuild, but does not change how often the car cuts.
 
 Scripts (in /tmp, not committed): `/tmp/r285.py`, `/tmp/r285b.py`, `/tmp/r285c.py`.
+
+## 168. First drive with `LatControlClarityEps` on: 00000286--ba543e3a3e (build f71648c5, `NrdrLatEpsFirmwareFF` 1). It tracks tighter than any PID drive, with 2–3× the straight-line dither the STATUS 167 sim predicted, and a feedforward roll offset the integrator cancels. Limited road evidence (one drive) and log decode; nothing changed in code.
+
+**The drive.** 12.9 min engaged, 10.9 min hands-off.
+- initData confirms build f71648c5 with `NrdrLatEpsFirmwareFF` = 1 and `NrdrLatUseFirmwareVgr` = 1, and the controller logged `epsFf*` all drive.
+- Feedforward weight: mean 0.92 below 25 mph (0.89 of frames at full weight), 1.00 above.
+- 7 bookmarks: 5:58.2, 6:27.1, 6:38.1, 6:43.6, 10:05.7, 12:14.3 and 12:52.4. Across ±10 s of each, the error is under 1°, with no press and no saturation.
+  - 5:58 is a lane change.
+  - 10:05, 12:14 and 12:52 are decelerations from ~50 mph.
+  - What the owner marked them for is not known yet.
+
+**Tracking (logged, hands-off; STATUS 167 definitions).**
+
+| band | 286 err rms | 284 (PID) err rms | 286 straight rms | 284 straight rms | 286 curve ratio | 284 curve ratio | 286 sign changes /s (0.15°) | 284 sign changes /s (0.15°) |
+|---|---|---|---|---|---|---|---|---|
+| < 25 mph | 11.33 | 16.31 | 2.46 | 2.07 | 0.951 | 0.785 | 2.3 (0.95) | 0.7 (0.38) |
+| 25–50 | 0.73 | 0.70 | 0.27 | 0.61 | 0.985 (4 s) | 1.007 | 2.0 (0.54) | 0.9 (0.30) |
+| > 50 | 0.19 | 0.39 | 0.19 | 0.39 | – | 0.943 | 2.9 (0.46) | 1.0 (0.28) |
+
+- On straights at 25 mph and above, 286 has the lowest error of any logged route on this car. The 25–50 band has only 4 s of curve.
+- Below 25 mph it follows turns much better (curve ratio 0.95 against 0.79 on 284, lag 0.14 s against 0.24 s).
+
+**The sim prediction held.** The STATUS 167 `clarity_eps` sim, run on 286's own inputs, matches the logged drive:
+- Sign changes: 2.2 / 1.9 / 1.8 per s simulated, against 2.3 / 2.0 / 2.9 logged.
+- 1 s high-passed error below 25 mph: 1.39° simulated, 1.37° logged.
+- Command step rms below 25 mph: 0.35 simulated, 0.38 logged.
+- So the dither is real, and it is the controller, not the plant model. On the highway it is fast and small (straight rms 0.19°). Below 25 mph the command moves about twice as fast as on PID drives (0.38 against 0.14–0.41 /s).
+
+**Driver presses while engaged.**
+
+| band | 286 | PID routes (276, 277, 278, 27a, 280, 284) |
+|---|---|---|
+| < 25 mph | 10.0 /min | 7.9–27 /min |
+| 25–50 | 0.6 /min | 0.1–3.0 /min |
+| > 50 | 0 | 0 on five routes, 6.9 /min on 277 |
+
+286 is inside the PID range in every band.
+
+**Feedforward roll offset.**
+- On highway near-straights (|des| < 1.5°), the feedforward averages +0.057 while the integrator holds −0.027 and P is ~0. The net +0.029 is what PID drives settle at (+0.02–0.03 on 30 routes).
+- A least-squares fit puts the offset on roll, at 1.01 command per rad.
+- liveParameters roll on this car is +0.03–0.05 rad on every route since 1ba, far more than road crown. The mount or roll estimate is biased, and James's Clarity `LOAD_KROLL` turns that bias into ~2× the torque the Civic needs.
+- The integrator absorbs it. It will lag wherever roll changes (ramps, crowned turns). This belongs to the Civic load refit: a Civic `LOAD_KROLL` / `LOAD_BIAS`, not a change to the Clarity's.
+
+**Not changed.** No code, no params.
+- Candidates, owner's call:
+  - the Civic roll/bias refit above;
+  - a longer low-speed output τ or lower low-speed P trim for the dither;
+  - making those tunable.
+- Each needs another drive to judge.
+
+Scripts (in /tmp, not committed): `/tmp/epsff/r286_*.py`, `roll_all.py`, `press.py`.
