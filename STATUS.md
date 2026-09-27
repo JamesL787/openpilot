@@ -7375,6 +7375,22 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
 - The drive's other hard targets were also outside the window and made with the toggle off (7:28 −3.22, 12:15 −2.59, 14:14 −2.72). The launch at 13:03 (aTarget 0.35 above min(e2e, MPC) from standstill) is another planner path; the assist is disarmed below 4.5 m/s.
 - Verdict: this drive does not show the assist causing either feel. Its effect was too small and too short, and the braking came from real closing/braking leads. The device should update to 65d42a95 before a second trial.
 
+### 136d. Routes 11c8fa231c0499ed|00000280--d02d9c2f8e and |00000283--fe4e75f88b: the tuned assist runs on the road as built. Log decode and replay only; nothing changed.
+
+- Builds 63827356 (280) and a37852f8 (283) both contain 65d42a95; the assist code is unchanged since. Radar alpha long, 89 / 94 % of exp-mode lead time radar.
+- `initData` shows the toggle 0 on 280 (switched on mid-drive, first lift at 7:01) and 1 on 283.
+- On every frame where the replay lifts > 0.05, the logged aTarget − min(e2e, MPC) equals the replayed lift within 0.02 on 96 % (280) and 95 % of frames (283), and is never ~0.
+- 280: 20 episodes, 41 s, 4.2 % of 16.1 exp min, max 0.42. 283: 70 episodes, 116 s, 7.1 % of 27.3 exp min, max 0.50. For example, 283 7:59–8:05 held +0.45 for 5 s behind a radar lead pulling away at +2 m/s, 57–62 mph.
+- The harder brakes within 5 s after an episode were new events, not the assist:
+  - 283 8:10: a slower lead at 45 m closing at 9.7 m/s, MPC −3.2;
+  - 283 18:52.8: the radar lead's vRel swung +4.5 → −5.0 → +4.5 and aLeadK −6.6 in 1.5 s, for a −3.5 target lasting ~0.5 s; the assist had already dropped at 18:52.0 on aLeadK < −0.2;
+  - 283 5:30: a vision cut-in at 49 m, the assist dropped at once;
+  - 283 13:28: e2e's own −0.59 after the vision lead was lost.
+- Two things to watch:
+  - The release is a one-frame step by design: 29 steps > 0.15 and 11 > 0.3 on 283 (largest 0.50), 4 on 280. Every step is felt as a small lift-off.
+  - 283 13:25 lifted to 0.46 behind a vision lead whose dRel jumped 28 → 55 → 44 → 66 m before it was lost; the model-probability gate passed it.
+- Softening candidate (not applied): limit the release to ~3 m/s³ (0.5 m/s² over ~0.17 s) and keep the instant drop only for a lead closing faster than 0.5 m/s or braking harder than −1.0.
+
 ## 141. Galaxy Plots rebuilt: recorded drives with a lateral/longitudinal analysis. Unit tests and a headless render against a synthetic drive only; not used on a car.
 
 **What changed.** The Plots page (classic `/plots` and mobile `#/plots`) no longer grades a 30 s window with client-side "Great/Good/Fair/Poor" scores. A backend module `starpilot/system/the_galaxy/drive_plots.py` (commit 57cca03c) samples `controlsState`, `carControl`, `carState`, `longitudinalPlan` at ~20 Hz. Requested lateral is `desiredCurvature·v²`, measured is `curvature·v²`; requested longitudinal is `longitudinalPlan.aTarget`, measured is `aEgo`. Only engaged, non-override samples count (`latActive`/`longActive`, no steer/gas press).
