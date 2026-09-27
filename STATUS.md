@@ -8457,3 +8457,48 @@ Follows item 162. Peter asked for the remaining 284 items to be addressed.
 - Left as is unless Peter says it felt wrong.
 
 Scripts (in /tmp, not committed): `/tmp/ob/mild.py` builds the time series, and `/tmp/ob/ana.py` runs the census.
+
+## 164. James's firmware-inversion feedforward ported in SHADOW for the Civic Bosch C020 (owner's image, tracker 4500). Logs only, never steers. Static tests, telemetry statistics and an open-loop replay on 00000284--1109db7c4c only. Not driven.
+
+**What it is.** Upstream is JamesL787/openpilot `vfn-controller-shadow`. The shadow commit is 52618f42; the feedforward is as of fd815ef3.
+- `selfdrive/controls/lib/nrdr_eps_firmware_ff.py` is upstream's feedforward line for line. The firmware tables moved into an `EpsFirmwareCalibration`; `CLARITY_A020` reproduces upstream exactly.
+- Upstream's applied controller (`ClarityEpsLateralCore`, `LatControlClarityEps`) is not ported.
+- `LatControlPID` runs the feedforward every frame on a modified-EPS Clarity or Civic Bosch, as 52618f42 did. It is logged on `starpilotLateralState` (100 Hz, rlog) and never added to the output.
+- Fields use upstream's final names and ordinals: `epsFfActive` @8, `epsFfFeedforward` @9, `epsFfR5` @10, `epsFfLoad` @11, `epsFfDesiredRate` @12, `epsFfWeight` @13. `epsFfWeight` is always 0 here.
+- Any exception in the shadow is caught and logged once. A test checks the command is bit-identical with the shadow on, off, or raising.
+
+**C020 calibration.** Read from the flashed `.rwd` and checked against the bus-1 telemetry (R5 = err + X + R6, STATUS 161) on segments 0-29 of 284.
+
+| Item | Value | Evidence |
+|---|---|---|
+| E4 per unit output | 4096 | `torqueBP/V` = [0, 4096] identity |
+| Command map | row 1: axis 0x13806, R5 0x13872 | The seven rows share the R5 row [0 ... 30000] and differ only in the key axis. Row 1 matches R5 at E4 + 10 ms to 385 / 94 / 31 counts RMS at 5-11, 11-20 and >20 m/s. Row 0: 417 / 200 / 179. Rows 2-6: 119-1987. What selects a row is not decoded. |
+| Key clamp | 1663 (0x137F2) | The largest R5 on 284 is 28497, which is row 1 at key 1663. |
+| P row, KFF, Norm | Clarity's (117..265 at 0x13BC0, KFF45, 1650) | Image name and dump |
+| R6 | -173 counts per deg/s | Fit over all engaged frames of 284 (-169.9 on segments 27-28 alone). The tracker does not enter (STATUS 161). |
+| Speed envelope | 1774 to 100 km/h, 1552 at 120, 1219 at 150, 1108 from 160 (axis 0x13644, values 0x136C2) | **Not checked.** 284 never passed 89 km/h, and what `SpeedClamp0` disables is not decoded. |
+
+- New fact: on the Civic, E4 4096 is key 1773, past the 1663 clamp. Commands above |0.938| all land on the same R5. On the Clarity, 3840 is key 1662, so the clamp is never reached.
+- Kp is still indexed by the command key. Row 1 is not linear (19.5 R5 per key at the bottom, 17.4 at the top), so for the C020 Kp is built piecewise over |R5| through the map rather than upstream's constant 18.04 per key. The quadratic solve is unchanged; the tests cover the round trip and inversion.
+
+**The load model is still the Clarity's (route 352 fit).**
+- A refit on 284 lost to it in leave-one-segment-out: R² 0.49-0.52 against 0.51-0.56. It won only above 11 m/s (0.49 vs 0.37).
+- 284 is one drive, mostly straight. Two parking-lot segments (0 and 9, |angle| up to 338°) fit badly under either model.
+- The shadow logs are what a Civic refit needs.
+
+**Open-loop replay on 284.** Feed the logged desired angle (minus `angleOffsetDeg`), vEgo and roll through the shadow, then compare its R5 with the R5 the car ran. Engaged frames only, no driver press, v > 2 m/s.
+
+| | All | Turning (\|angle\| > 2°) | Turning < 25 mph | Turning > 25 mph |
+|---|---|---|---|---|
+| C020 calibration | 0.52 | 0.53 | 0.52 | 0.74 |
+| Clarity calibration | 0.54 | 0.56 | 0.54 | 0.75 |
+
+- James's Clarity figure is 0.79 on turning frames of held-out route 353.
+- The Clarity calibration scores slightly higher here only because the Clarity load model was fitted together with the Clarity damping scale. The firmware constants are the C020's by telemetry.
+- The gap is the load model, which is the reason to log before any apply.
+
+**Not done.** Applying it (upstream's core, fade-in and join gate), a Civic load refit, and the >100 km/h envelope. No param keys and no params artifact were added.
+
+Pre-existing failures, not touched: `test_latcontrol` Bolt/Palisade taper (2), `test_torqued_lat_accel_offset` (1), `test_starpilot_planner` (1). The collection errors in `test_controlsd`, `test_turn_lead`, `test_longitudinal_planner` and `test_nissan_leaf_fallback` are DeprecationWarnings.
+
+Scripts (in /tmp, not committed): `/tmp/c020_rows.py`, `/tmp/c020_loadfit*.py`, `/tmp/c020_shadow_replay.py`, `/tmp/c020_score.py`.
