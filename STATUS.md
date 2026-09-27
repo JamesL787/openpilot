@@ -8379,3 +8379,13 @@ Route 00000284, segments 27–28, bus 1:
 
 - **R5 = err + X + R6** (all from 0x6A1 and 0x6A2 in the same frame). Against the E4 we sent: corr **0.997**, R5 ≈ **7.4 × E4** at a 0–20 ms lag. The Clarity value is 7.7. The fit is linear over the logged range (E4 up to ±4096).
 - The tracker value cannot be read from this data.
+
+**Addendum: what the tracker word does** (owner: James says tracker differences don't matter; why?). Static disassembly of the C020 Trk4500 image.
+- **0x3a080 is a first-order low-pass**, state in Q15: `s += alpha * (x - (s >> 15))`, where alpha is the constant passed in, per 32768. Its DC gain is 1.
+- **R6 is built at 0x28e82:**
+  - x = `1650 * raw_rate >> 8`, where raw_rate is at 0xfff89850 and 1650 is the Norm word inside 0x29ef8.
+  - x is filtered by 0x3a080 with alpha = the tracker word 0x137ee, clamped to ±32765 (0x137f0), and stored at 0xfff88a28. That is R6, the word telemetry sends in 0x6A2 bytes 0–1.
+- The tracker is therefore **the bandwidth of the rate filter, not a gain.** R6 per deg/s in steady state is the same at any tracker.
+- At the 1 kHz loop James reports (not verified here), the filter time constant is about 15.4 ms at stock 1996, 7.2 ms at 4000 and 6.3 ms at 4500. So 4000 vs 4500 is about 1 ms of extra lag in the firmware's own damping path. That is invisible at openpilot's 100 Hz and under the feedforward's 100–150 ms smoothing. **James is right for the feedforward.**
+- **Retracted** from this entry: "−170 points nearer 4000 than 4500". The tracker does not scale R6. The Clarity −138.6 vs Civic −169.9 difference must come from raw_rate scaling on the column, so the Civic port uses the measured −169.9 rather than a scaled Clarity constant.
+- **The tracker still matters for the EPS's own stability.** A faster rate filter adds phase margin to the firmware's damping loop, and the eps_tools README records a ~29 Hz hands-off limit cycle when tracker alpha was raised on a high-D CR-V tune. That concerns hands-off buzz, not the feedforward calibration.
