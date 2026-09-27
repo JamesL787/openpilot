@@ -8993,6 +8993,12 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
     - The model asked for a hard left at once: path 10 m left at 20 m ahead, 80-87 deg of wheel at 19 mph. The controller followed it: desiredCurvature equalled the model action, so the turn lead added nothing.
     - The driver pushed right at 1500-2200 torque from 2:44.8. The model kept the left turn until about 2:50.
     - This happens with either lateral controller while that toggle is on.
+  - **`lat_score.py score`, 286 (ungated) vs 287 (gated).** These are different roads, so the comparison is confounded. Limited road evidence:
+    - Low-speed overshoot (turn_past<12mph) fell 10.55 -> 0.55 deg, but trailing rose 10.1 -> 24.5, so turn error went 20.7 -> 25.1.
+    - At 12-25 mph, past was 4.9 -> 5.1.
+    - Pull-away wobble went 2.17 -> 2.72 (n 6 / 5).
+    - Most road pull-aways are turns out of a stop. Only 1-2 per drive are straight: 286 scored 1.88 and 0.17, 287 scored 1.24. That is too few to confirm or refute the sim's 2.01 -> 1.22.
+    - Caveat: the hands-off mask uses steeringPressed, which stayed 0 at 1500-2200 driver torque during the 2:44 fight. The 287 turn figures include that fight.
 
 ## 174. Gas learner (`LongGasLearner`) on 00000286--ba543e3a3e, and its values now go into the drive log (`starpilotCarState.gasLearner*`). The 286 findings are from a CAN decode. The logging has static tests only and has not been driven.
 
