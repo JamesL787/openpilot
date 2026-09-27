@@ -9156,3 +9156,29 @@ How it is wired:
     - 285: identity 0.00 → PID.
     - 280 and 284 → PID (build predates the controller).
   - **Not yet measured on a drive:** a gated-James drive and a PidFF-on drive. Those two cases rest on the code (static) and the synthetic tests.
+
+## 177. Longitudinal on 00000287--5cda3437c4 (build clarity-eps-testing f7655b64; BoschARailInterval 1, RangeDerivedVrel 1; 7.3 min, 25 % experimental). There are two brakes below -1.5, and one is a stale coasted vRel. No bookmarks, and nothing changed in code. Log decode only.
+
+**2:39.0–2:39.2: aTarget -2.74 → -2.87 for 3 radar frames on track 49, a coast.**
+
+- **The coast.** Track 49 was born at 155.50 s, 54.9 m out at yRel -14.3, during the left turn. Its measured vRel was -11.4 while ego was at 11.5 m/s, which reads as a stationary object.
+  - From 156.31 s it is published `measured=False`, and the last trusted vRel of -11.4 is held for 2.9 s.
+  - Over those 2.9 s its range falls only 45.6 → 35.1 m, a slope of about -3.7 m/s. Ego slows from 11.5 to 9.6 m/s.
+- **The bad frames.** At 159.07 s the point swings in-path (yRel -4.3) and radard makes it leadOne. It carries vRel -11.4 with vLead -1.6 to -1.8, meaning a lead reversing. Vision had the same car at vRel about -6, lead about 4 m/s. At 159.18 s the radar re-measures the track at -6.8, matching vision, and aTarget returns to -1.2.
+- **The driver.** The owner pressed the gas at 2:39.6 and switched to chill at 2:40.6.
+- **Why D-063 did not act.** The coast bound, `_bosch_a_coast_vrel`, pulls a coast toward the range fit only on the closing side unless the coast is inside a rail-interval hold (STATUS 129). This coast was not in one. Its down side would have allowed vRel ≥ fit − 3 ≈ -6.7.
+- **Candidate fix, not applied** (radar gate, needs the owner's OK): a physical floor on coasted vRel only, vRel ≥ -(vEgo + margin). A coast would never publish a lead reversing faster than the margin. The point is kept (D-041/042) and only its implied reversing speed is bounded. Here it would give about -9.6 instead of -11.4. It is untested against STATUS 129's three protected brakes (00000232 1147.2, 00000266 560.0, 00000266 795.4); replay on those comes first.
+- **Same turn as STATUS 173's 2:43 near-turn.** That entry traces the 2:43 near-turn into oncoming traffic to Force Turn Desires.
+
+**4:02.0–4:06: aTarget -1.9 → -2.99, real slow traffic.**
+
+- Radar picks up tracks 10 and 18 at 62–88 m on the U11 rail (-13.5) at 36 mph. Vision puts the lead at 4–7 mph, and the rail is not binding (true closing is about 12–13 m/s).
+- It peaks at -2.99 for about 1 s, then eases to -0.9, then about -1.8 to the stop.
+- This is the same pattern as STATUS 169's 10:03 and 12:09 events: the plan front-loads the stop at about 1.8× the constant decel it needs (about 1.7 m/s² from 62 m).
+- No false brake.
+
+**Gas learner.** A CAN decode as in STATUS 174. The drive was on a build without the new logging.
+
+- The saved value at boot was 1.307, and the first minute implies 1.56.
+- Minute medians were 1.56 (min 2), 1.35 (min 3) and 1.38 (min 5).
+- It swings between 1.3 and 1.6 again, above the 1.25 soft band.
