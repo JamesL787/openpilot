@@ -8962,6 +8962,13 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
     - Reference: PID 10.65 / 9.72 / 0.92 (one departure); PID + firmware FF 7.31 / 5.12 / 2.19.
   - **R 40 m** is past the torque limit for every controller, so it is a stress case, not a ranking.
   - **Read.** The gate roughly halves pull-away wobble and lowers the standard-band error, at about +0.7° trail and +0.8° past in the R 60 turns. Pull-away wobble with the gate is still about 2× PID's. Repeat runs (run-to-run spread) are pending.
+- **James's turn smoothing, ported and put on the car's test branch (owner's request, 2026-09-27; static tests only, not driven).**
+  - The fix is JamesL787 `vfn-controller-shadow` aa943ad4. The problem it targets: with the blinker on at low speed, the turn hold and turn lead entered the steering target as steps, and at a stop the target could flip between the hold and the model every frame (James's routes 354/355).
+  - It applies only when `LatControlClarityEps` is the built controller: `turn_shaping = isinstance(self.LaC, LatControlClarityEps)`, so the PID path is unchanged. The hold/lead floor goes through a 0.25 s low-pass, a release glides onto the model, and a driver-confirmed capture still snaps.
+  - `clarity-turn-shaping` 3682a600: the candidate on this branch's tip, for sim.
+  - `clarity-eps-testing` 24c9212f + f7655b64: the same port, on top of 0f27431d's angle gate. A one-time migration (`migrate_nrdr_clarity_eps_default`, flag `/data/nrdr_clarity_eps_default_v1`) turns `NrdrLatEpsFirmwareFF` on, which makes James's controller that branch's default. The toggle still turns it off, and the value persists if another branch is flashed. The compiled default stays `"0"`.
+  - Tests: 44 pass (James's 7 plus test_controlsd, test_turn_lead and test_nissan_leaf_fallback). A MetaDrive pilot with a latched blinker and a stop before each corner is queued; the full set waits on whether the pilot reproduces the standstill flip-flop.
+
 
 ## 174. Gas learner (`LongGasLearner`) on 00000286--ba543e3a3e, and its values now go into the drive log (`starpilotCarState.gasLearner*`). The 286 findings are from a CAN decode. The logging has static tests only and has not been driven.
 
