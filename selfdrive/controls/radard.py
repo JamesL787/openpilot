@@ -12,7 +12,6 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL, Priority, config_realtime_process
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.simple_kalman import KF1D
-from openpilot.selfdrive.controls.lib.desire_helper import LaneChangeDirection, LaneChangeState
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 from opendbc.car.honda.radar_interface import (BOSCH_A_DIRECT_VREL_CENTER_RAW, BOSCH_A_DIRECT_VREL_MIN_RAW,
                                                BOSCH_A_DIRECT_VREL_SCALE_MPS, BOSCH_A_FREQ_HZ)
@@ -834,12 +833,14 @@ def track_matches_vision(track: Track, lead: capnp._DynamicStructReader, v_ego: 
 def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, model_data: capnp._DynamicStructReader, tracks: dict[int, Track],
                           starpilot_toggles: SimpleNamespace, g90_radar_filter: bool = False,
                           preferred_track_id: int = -1):
-  if model_data.meta.laneChangeState == LaneChangeState.laneChangeStarting and getattr(starpilot_toggles, "human_lane_changes", False):
-    direction = model_data.meta.laneChangeDirection
-    if direction == LaneChangeDirection.left:
-      tracks = {k: v for k, v in tracks.items() if v.yRel > 0}
-    elif direction == LaneChangeDirection.right:
-      tracks = {k: v for k, v in tracks.items() if v.yRel < 0}
+  # No lane-change side filter here. StarPilot's HumanLaneChanges dropped every track on the far side
+  # of 0 m (left change: yRel <= 0) during laneChangeStarting. It never changed WHICH car was followed
+  # -- this function only pairs a radar track with the vision lead, which must also agree laterally --
+  # it only took the radar away from it. Route 00000293 (owner-bookmarked, replay-reproduced): 10:49
+  # the new lane's car (track 61) crossed to y -0.2..-0.4 as we arrived and went vision-only through
+  # the -3.5 brake; 29:13-29:16 track 12 sat at y +0.2..+1.2 on a curve, vision put it 65-73 m away
+  # while radar had 53-62 m, the +0.55 merge push held, and radar's return at 51.6 m forced -1.4.
+  # D-041/D-042: a gate that can only delete radar points is removed rather than tuned.
 
   if g90_radar_filter:
     tracks = {k: v for k, v in tracks.items() if g90_radar_lead_lateral_sane(v)}
