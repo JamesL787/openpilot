@@ -379,7 +379,11 @@ def takeovers(c, t0=None):
     "releases": len(rel),
     "median_release_overshoot_deg": med("release_overshoot_deg"),
     "median_back_on_plan_s": med("back_on_plan_s"),
-    "median_drift_3s_m": med("drift_3s_m", lambda e: e["lanes_ok"] and not e["blinker"]),
+    # Each drift median beside how many takeovers it stands on (James: 3 must never read like 80). Takeovers with a
+    # blinker are lane changes, left out of both counts.
+    **{f"median_drift_{s_:g}s_m": med(f"drift_{s_:g}s_m", lambda e: not e["blinker"]) for s_ in DRIFT_AT_S},
+    **{f"drift_{s_:g}s_measurable": f"{sum(e[f'drift_{s_:g}s_m'] is not None for e in eps if not e['blinker'])} / "
+                                    f"{sum(not e['blinker'] for e in eps)}" for s_ in DRIFT_AT_S},
     "definition": (f"Start: raw carState.steeringPressed rises or |steeringTorque| > {TAKEOVER_TQ_START:g}. Release: "
                    f"|steeringTorque| < {TAKEOVER_TQ_RELEASE:g} for {TAKEOVER_RELEASE_HOLD_S:g} s. Wheel error is "
                    "carState.steeringAngleDeg - pidState.steeringAngleDesiredDeg (the plan is the reference; the "

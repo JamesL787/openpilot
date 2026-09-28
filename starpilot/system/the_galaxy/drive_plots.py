@@ -50,8 +50,9 @@ COLUMNS = [
   # full weight). pidState.p is the P before LatControlClarityEps's per-band scale.
   "lat_out", "ang_err", "pid_active", "ff_active", "ff_w", "ff",
   # Lane from modelV2.laneLines[1]/[2].y[0]: car offset from the lane centre (m, + = car left of centre), lane width,
-  # and the lower of the two laneLineProbs; modelV2.meta.laneChangeState (0 off; a lane change is not wobble).
-  "lane_off", "lane_w", "lane_prob", "lane_change",
+  # the lower of the two laneLineProbs and each one (left, right: which side drops out); modelV2.meta.laneChangeState
+  # (0 off; a lane change is not wobble).
+  "lane_off", "lane_w", "lane_prob", "lane_prob_l", "lane_prob_r", "lane_change",
   # How old controlsState was when this row was taken (ms); a stall shows as a large value.
   "cs_age_ms",
   # Longitudinal: carControl.actuators.accel (sent), plan shouldStop / fcw / hasLead, selfdriveState.experimentalMode
@@ -911,7 +912,7 @@ def _agent_columns(sm, cs, cc, have_cc, car_state, plan, t):
       o["ff_active"], o["ff_w"], o["ff"] = int(bool(ls.epsFfActive)), _f(ls.epsFfWeight, NAN), _f(ls.epsFfFeedforward, NAN)
     except Exception:
       pass
-  o["lane_off"] = o["lane_w"] = o["lane_prob"] = o["lane_change"] = NAN
+  o["lane_off"] = o["lane_w"] = o["lane_prob"] = o["lane_prob_l"] = o["lane_prob_r"] = o["lane_change"] = NAN
   o["mlead_p"] = o["mlead_x"] = o["mlead_y"] = o["mlead_v"] = o["mlead_a"] = NAN
   if _got(sm, "modelV2"):
     try:
@@ -920,7 +921,8 @@ def _agent_columns(sm, cs, cc, have_cc, car_state, plan, t):
       if len(ll) >= 3 and len(ll[1].y) and len(ll[2].y) and len(probs) >= 3:
         y1, y2 = float(ll[1].y[0]), float(ll[2].y[0])
         o["lane_off"], o["lane_w"] = (y1 + y2) / 2.0, y2 - y1   # y is + = right, so the centre's y = car left of it
-        o["lane_prob"] = min(float(probs[1]), float(probs[2]))
+        o["lane_prob_l"], o["lane_prob_r"] = float(probs[1]), float(probs[2])
+        o["lane_prob"] = min(o["lane_prob_l"], o["lane_prob_r"])
       o["lane_change"] = int(md.meta.laneChangeState.raw)
       if len(md.leadsV3):
         ld = md.leadsV3[0]

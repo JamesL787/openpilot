@@ -87,7 +87,7 @@ def expected(m, plan_mono):
     "pid_active": int(pid.active) if pid is not None else NAN,
     "ff_active": int(ls.epsFfActive) if ls is not None else NAN, "ff_w": ls.epsFfWeight if ls is not None else NAN,
     "ff": ls.epsFfFeedforward if ls is not None else NAN,
-    "lane_off": NAN, "lane_w": NAN, "lane_prob": NAN, "lane_change": NAN,
+    "lane_off": NAN, "lane_w": NAN, "lane_prob": NAN, "lane_prob_l": NAN, "lane_prob_r": NAN, "lane_change": NAN,
     "cs_age_ms": max(0.0, (plan_mono - m["_mono"]["controlsState"]) / 1e6),
     "a_cmd": cc.actuators.accel if cc is not None else NAN,
     "should_stop": int(plan.shouldStop), "fcw": int(plan.fcw), "has_lead": int(plan.hasLead),
@@ -108,6 +108,7 @@ def expected(m, plan_mono):
       e["lane_off"] = (left[0] + right[0]) / 2.0   # y is + = right: the lane centre's y is the car left of it
       e["lane_w"] = right[0] - left[0]
       e["lane_prob"] = min(probs[1], probs[2])
+      e["lane_prob_l"], e["lane_prob_r"] = probs[1], probs[2]
     e["lane_change"] = int(md.meta.laneChangeState.raw)
     if len(md.leadsV3):
       ld = md.leadsV3[0]

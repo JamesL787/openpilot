@@ -7619,6 +7619,11 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
   - Route 293 still keeps only 3 drift_3s of 80 (lanes_ok 4). The median lane_ok_frac is 0.04, and 1202.7 is still rejected at 0.45.
   - The lines are faint, not flickering: both lines are above 0.5 on 3% of the frames where the wheel is held (median 0.01), against 64% engaged above 15 m/s. Takeovers here happen at low speed and in turns, where the model does not see both lines.
   - Any both-lines rule keeps few takeovers on such roads. A looser signal (the stronger line alone) would need a new column, and is James's call.
+  - James chose to keep this rule: None is the honest answer on such takeovers. A one-line gate would bring back the lane-width guesses.
+- **Added** (James):
+  - `lane_prob_l` / `lane_prob_r` columns beside the min, to see which side drops out. The mirror check confirms all 71 columns against the rlog.
+  - Each takeover drift median now has `drift_Ns_measurable` ("n / total", blinker takeovers left out) beside it. On route 293: 3 / 49 at 1 s and 3 s, 2 / 49 at 6 s.
+  - The median now uses every measurable takeover without a blinker; drift is gated per window itself.
 - **Not verified:** the rule on a highway route, where takeovers should see the lines.
 
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.

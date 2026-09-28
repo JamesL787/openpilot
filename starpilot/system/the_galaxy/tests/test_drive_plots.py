@@ -564,6 +564,7 @@ def test_build_row_reads_agent_signals_and_nan_when_never_received():
   assert r["ff_active"] == 1 and r["ff_w"] == pytest.approx(0.5) and r["ff"] == pytest.approx(0.2)
   # model y is + = right: lines at -1.6 / +2.0 put the lane centre 0.2 m right, so the car is 0.2 m LEFT of it.
   assert r["lane_off"] == pytest.approx(0.2) and r["lane_w"] == pytest.approx(3.6) and r["lane_prob"] == pytest.approx(0.7)
+  assert r["lane_prob_l"] == pytest.approx(0.9) and r["lane_prob_r"] == pytest.approx(0.7)
   assert r["t_follow"] == pytest.approx(1.45) and r["tracking_lead"] == 1 and r["exp_mode"] == 1
   assert r["lead_id"] == 17 and r["lead_vrr"] == pytest.approx(-0.8) and r["lead2_on"] == 1 and r["lead2_d"] == 60.0
   fresh = _engaged_sm()
@@ -616,7 +617,8 @@ def test_takeover_episode_is_measured():
   e = eps[0]
   assert e["t"] == pytest.approx(30.0, abs=0.06) and e["hold_s"] == pytest.approx(2.0, abs=0.4)
   assert e["tag"] == "long hold" and e["push"] == "left" and e["lanes_ok"] is True
-  assert a["driver_takeovers"]["summary"]["count"] == 1
+  summary = a["driver_takeovers"]["summary"]
+  assert summary["count"] == 1 and summary["drift_3s_measurable"] == "1 / 1"
   assert any(ev["kind"] == "steer_takeover" for ev in a["events"])
   # Position from the press lane's centre, carried across the lane change (raw lane_off at 33 s reads -1.1).
   assert e["lane_press_m"] == pytest.approx(0.1, abs=0.05)
@@ -758,6 +760,9 @@ def test_takeover_lane_numbers_need_both_lines_through_the_window():
   rows[(t >= 30.4) & (t < 31.5), dp.COL["lane_prob"]] = 0.1
   e = dp.analyze(rows)["driver_takeovers"]["episodes"][0]
   assert e["lanes_ok"] is False and e["lane_prob_min"] == pytest.approx(0.1) and e["lane_ok_frac"] < 0.9
+  rows[:, dp.COL["blinker"]] = 0
+  summary = dp.analyze(rows)["driver_takeovers"]["summary"]
+  assert summary["drift_3s_measurable"] == "0 / 1" and summary["median_drift_3s_m"] is None
   assert e["drift_1s_m"] is None and e["drift_3s_m"] is None and e["drift_6s_m"] is None
   assert e["lane_press_m"] is not None and e["lane_release_m"] is None and e["lane_press_3s_m"] is None
   # Faint only after release + 3 s: the 1 s and 3 s drift stand, the 6 s one does not.
