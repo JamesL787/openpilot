@@ -28,15 +28,16 @@ _LEAD_ACCEL_TAU = 0.6
 # it inherits the range channel's ~1% gross outliers: read it as a diagnostic, not as a validated
 # velocity.
 #
-# Telemetry only (D-044) EXCEPT on Bosch-A with the RangeDerivedVrel toggle on, where D-053 lets it
+# Telemetry only (D-044) EXCEPT on Bosch-A with RANGE_VREL_ASSIST on (built in), where D-053 lets it
 # correct the published lead velocity in one direction. The outlier caveat above is precisely why
 # that assist needs RANGE_VREL_ASSIST_ARM_UPDATES; see the block below.
 RANGE_VREL_SAMPLES = 5   # deque length AND the minimum fit length; do not diverge these
 RANGE_VREL_MIN_SPAN_S = 0.12
 RANGE_VREL_MAX_SPAN_S = 0.60
 
-# --- Range-derived vRel assist (TEST, default OFF, param RangeDerivedVrel) --------------------
-# D-053 amends D-044's "nothing consumes it" for Bosch-A only, behind a toggle. ONE-SIDED: the
+# --- Range-derived vRel assist (built in for Bosch-A; was the RangeDerivedVrel param) ----------
+# D-053 amends D-044's "nothing consumes it" for Bosch-A only. On in the owner's drives from 0000023e; replay, static
+# and limited road evidence. RANGE_VREL_ASSIST = False (replays, tests) is the shipped U11 behaviour. ONE-SIDED: the
 # range LSQ above may only make the published closing speed MORE closing, never less. It exists
 # because U11 -- the Bosch-A native relative velocity -- is both late and rail-bounded, and both
 # failures understate closing:
@@ -74,7 +75,8 @@ RANGE_VREL_MAX_SPAN_S = 0.60
 # CLEAR the correction outright. The only clamps are MAX_CORRECTION and the zero-speed cap, and
 # both are physical bounds rather than tuned values. The lead KF is fed the NATIVE speed again;
 # the correction is applied at publish time only, so aLeadK never sees it. Still replay-only:
-# nothing here has been driven.
+# nothing here has been driven. (Since then: on in the owner's Civic drives from 0000023e.)
+RANGE_VREL_ASSIST = True
 
 # Minimum disagreement, m/s, before arming. D-043 deliberately does not chase "the milder
 # 0.6-2.5 m/s overshoots at deceleration onset"; this is the mirror of that, and 2.0 m/s is also
@@ -173,7 +175,7 @@ RANGE_VREL_ASSIST_MAX_BACKWARD_LEAD_MPS = 5.0
 # rail was.
 BOSCH_A_U11_LOW_RAIL_MPS = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) * BOSCH_A_DIRECT_VREL_SCALE_MPS
 
-# --- Rail fast path (2026-09-26, STATUS 130; extends D-053, rides the RangeDerivedVrel toggle).
+# --- Rail fast path (2026-09-26, STATUS 130; extends D-053, rides RANGE_VREL_ASSIST).
 # REPLAY evidence only, open loop. 00000271 9:26 (BM0): a near-stopped car published at 118.8 m
 # with U11 on the rail from before publication; true closing about -21..-23. Both range fits read
 # -21..-28 from the 5th sample on, but the assist could not arm until the 15-sample long history
@@ -194,7 +196,7 @@ RANGE_VREL_RAIL_LONG_MIN_SPAN_S = 0.45
 RANGE_VREL_RAIL_ARM_UPDATES = 3
 RANGE_VREL_RAIL_SIZE_MEAN = True
 
-# --- Vision-corroborated range assist (2026-09-26, extends D-053, rides the RangeDerivedVrel toggle).
+# --- Vision-corroborated range assist (2026-09-26, extends D-053, rides RANGE_VREL_ASSIST).
 # REPLAY evidence only (open- and closed-loop), nothing driven; default OFF. 0000026c--10bec2e200 4:08:
 # a lead braking on a curve at 80 -> 60 m. U11 lagged (-2.7 -> -13.5 over 1.3 s) while the range closed
 # at -7 .. -23, but the track sat at yRel 9.3 -> 6.3 m, so the |yRel| <= 1.5 lane proxy blocked D-053.
@@ -216,8 +218,9 @@ RANGE_VREL_RAIL_SIZE_MEAN = True
 # 5 m/s removed all three and kept 26c 4:08 (vision closing 5.3-6.5). MIN_PROB 0.7, not 0.9: the 26c
 # lead is at p 0.74-0.82 during the onset. The 26c gain is small (0.25 s earlier at -1.5, 0.15 s at
 # -1.0, the same at -2.0): past 257.0 the MPC, not the radar, limits the response.
-# Switched on by the RangeVisionAssist param (Galaxy / device settings, default ON, needs RangeDerivedVrel
-# on too). VISION_ASSIST_GEOMETRY forces it on in code for replay harnesses; it stays False here.
+# Built in (was the RangeVisionAssist param, default on; on in the owner's drives from 0000027e). Acts only with
+# RANGE_VREL_ASSIST on. VISION_ASSIST_GEOMETRY forces it on per track for replay harnesses; it stays False here.
+RANGE_VISION_ASSIST = True
 VISION_ASSIST_GEOMETRY = False
 VISION_ASSIST_MIN_PROB = 0.7
 VISION_ASSIST_RANGE_TOL = 0.15
@@ -363,7 +366,7 @@ class Track:
     # R141-8 U11 diverged from the range by 13.7 m/s while the range moved 1.9 m.
     #
     # Shadow telemetry under D-044; since D-053 it ALSO drives range_assist_correction below, but
-    # only on Bosch-A, only for the lead track, and only with the RangeDerivedVrel toggle on.
+    # only on Bosch-A, only for the lead track, and only with RANGE_VREL_ASSIST on.
     self.range_hist: deque = deque(maxlen=RANGE_VREL_SAMPLES)
     self.vRelRange = float('nan')
     # Freshness bit for the fit above. vRelRange is only ASSIGNED once the deque is full, so after
@@ -381,7 +384,7 @@ class Track:
     self.vRelRangeLongSpan = float('nan')
 
     # D-053 range-derived vRel assist. Inert unless RadarD passes range_assist=True, which needs
-    # the RangeDerivedVrel param, a Bosch-A car, and this track having been leadOne/leadTwo last
+    # RANGE_VREL_ASSIST, a Bosch-A car, and this track having been leadOne/leadTwo last
     # cycle. range_assist_correction is m/s of EXTRA closing and is never negative.
     self.range_assist_active = False
     self.range_assist_arm_count = 0
@@ -1046,41 +1049,9 @@ class RadarD:
     self.starpilot_radar_state = custom.StarPilotRadarState.new_message()
     self.starpilot_toggles = get_starpilot_toggles()
 
-    # D-053 range-derived vRel assist (TEST, default OFF). Read off the param on a cadence
-    # rather than every frame; see _range_vrel_assist_enabled.
-    self._range_assist_params = None
-    self._range_assist_frame = 0
-    self._range_assist_enabled = False
-    self._vision_assist_enabled = False
-
   def _range_vrel_assist_enabled(self) -> bool:
-    """Param read for the D-053 assist. Off unless explicitly enabled. Default OFF.
-
-    Params() is constructed lazily and re-read every 100 frames, because radard runs in a hot
-    loop and a params read is a file read. Any exception -- including the missing-key case on a device whose
-    params_pyx.so predates this key -- falls back to False, i.e. the shipped U11 behaviour.
-
-    NOTE for the next agent: a device whose `common/params_pyx.so` lacks the RangeDerivedVrel key
-    returns False here no matter what the UI shows -- the Galaxy write itself 403s. That shipped
-    once (STATUS.md open item 12, the same trap as open item 4) and b2baba87
-    rebuilt the committed larch64 artifacts with the key. A device on an older build, or one
-    running a natively rebuilt .so, can still hit it; check the key is in initData.params.
-    """
-    self._range_assist_frame += 1
-    if self._range_assist_params is None or self._range_assist_frame % 100 == 0:
-      try:
-        from openpilot.common.params import Params
-        if self._range_assist_params is None:
-          self._range_assist_params = Params()
-        self._range_assist_enabled = self._range_assist_params.get_bool("RangeDerivedVrel")
-      except Exception:
-        self._range_assist_enabled = False
-      # Same cadence, own try: a .so without the RangeVisionAssist key must not take D-053 down with it.
-      try:
-        self._vision_assist_enabled = self._range_assist_enabled and self._range_assist_params.get_bool("RangeVisionAssist")
-      except Exception:
-        self._vision_assist_enabled = False
-    return self._range_assist_enabled
+    """D-053 assist switch, built in for Bosch-A (was the RangeDerivedVrel param). Replays flip RANGE_VREL_ASSIST."""
+    return RANGE_VREL_ASSIST
 
   def _reset_preferred_stale_evidence(self, lead_index: int, track_id: int = -1) -> None:
     self.preferred_stale_track_ids[lead_index] = track_id
@@ -1163,7 +1134,7 @@ class RadarD:
     # else, which is what makes this a reporting change rather than an association change.
     range_assist_enabled = self.honda_bosch_a_radar and self._range_vrel_assist_enabled()
     lead_track_ids = {i for i in self.prev_lead_track_ids if i >= 0} if range_assist_enabled else set()
-    vision_assist = range_assist_enabled and (VISION_ASSIST_GEOMETRY or self._vision_assist_enabled)
+    vision_assist = range_assist_enabled and (VISION_ASSIST_GEOMETRY or RANGE_VISION_ASSIST)
 
     # *** remove missing points from meta data ***
     for ids in list(self.tracks.keys()):

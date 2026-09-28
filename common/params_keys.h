@@ -364,8 +364,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"EngageVolume", {PERSISTENT, INT, "101", "101", 2, SETTINGS_SIMPLE}},
     {"EVTuning", {PERSISTENT, BOOL, "0", "0", 3}},
     {"Fahrenheit", {PERSISTENT, BOOL, "0", "0", 3}},
-    // Dom far-lead coast cap, parked default off until replay shows closing speed at range is trustworthy (STATUS 85).
-    {"FarLeadCoastCap", {PERSISTENT, BOOL, "0", "0", 3}},
     {"FlashPanda", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
     {"GMDashSpoofOffsets", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"GMPedalLongitudinal", {PERSISTENT, BOOL, "1", "1", 2, SETTINGS_SIMPLE}},
@@ -383,18 +381,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // Tester rollout: parse the Bosch-A harness's own 16-slot radar object bank into real
     // leadOne/leadTwo tracks instead of treating the car as radarless. RX-only, no CAN authority taken.
     {"BoschARadar", {PERSISTENT, BOOL, "1", "1", 3}},
-    // TEST, default OFF. Bosch-A only. Lets the range-derived closing rate (D-044 shadow
-    // channel) correct the native U11 vRel for the lead track, in one direction only: toward
-    // MORE closing, never less. See RANGE_VREL_ASSIST_* in radard.py and D-053.
-    {"RangeDerivedVrel", {PERSISTENT, BOOL, "0", "0", 3}},
-    // TEST, default ON at the owner's request (stock value off). Bosch-A only, needs RangeDerivedVrel on. Lets
-    // D-053 correct a lead outside the |yRel| lane gate (curves) while the model lead corroborates the closing.
-    // See VISION_ASSIST_* in radard.py.
-    {"RangeVisionAssist", {PERSISTENT, BOOL, "1", "0", 3}},
-    // TEST, default OFF. Bosch-A only. D-063: the parser's range gates read a pinned (railed)
-    // U11 closing speed as a bound, not an exact value, for tracks in our lane, so a lead closing
-    // faster than 13.5 m/s is not dropped. Read once at startup in honda/radar_interface.py.
-    {"BoschARailInterval", {PERSISTENT, BOOL, "0", "0", 3}},
     // TEST, default OFF. Experimental Mode only. STATUS 136b: when a lead at or beyond the follow
     // distance pulls away and the e2e target is the limit, lift it part of the way toward the MPC
     // target. Never lowers the target, never touches e2e braking. Read in longitudinal_planner.py.
@@ -425,6 +411,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrLatAngleRateLimit", {PERSISTENT, INT, "300", "300", 2}},     // deg/s ceiling on desired wheel-angle slew; 0 disables. Backstops clip_curvature, whose ISO jerk limit is ~1/v^2 in angle space and so does not bind below ~20 mph
     {"NrdrLatModelActionInterp", {PERSISTENT, BOOL, "1", "1", 2}},   // ramp modeld's 20 Hz action across the model frame instead of holding it; removes the 20 Hz staircase in the lateral target
     {"NrdrLatUseFirmwareVgr", {PERSISTENT, BOOL, "0", "0", 2}},      // use the EPS firmware A (position) VGR table instead of the road-measured effective-ratio curve
+    {"NrdrLatPidFirmwareFF", {PERSISTENT, BOOL, "0", "0", 2}},       // modified-EPS Clarity/Civic Bosch, NRDR PID: firmware-inversion feedforward in turns only, gated by |desired angle| (STATUS 175)
     {"NrdrLatEpsFirmwareFF", {PERSISTENT, BOOL, "0", "0", 2}},       // modified-EPS Clarity/Civic Bosch: steer with LatControlClarityEps, James's controller (read when controlsd starts; STATUS 166)
     {"ForceFingerprint", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ForceOffroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
@@ -491,8 +478,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HondaSteerDeltaUp", {PERSISTENT, FLOAT, "3.0", "3.0", 2}},
     {"HondaStoppingDecelRate", {PERSISTENT, INT, "30", "30", 2}},
     {"HondaTorqueLowPassFilter", {PERSISTENT, BOOL, "0", "0", 2}},
-    {"HumanAcceleration", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
-    {"HumanFollowing", {PERSISTENT, BOOL, "1", "0", 2, SETTINGS_SIMPLE}},
     {"HumanLaneChanges", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"IconPack", {PERSISTENT, STRING, "stock", "stock", 0}},
     {"IconToDownload", {CLEAR_ON_MANAGER_START, STRING, "", ""}},
@@ -619,6 +604,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrIncreaseOverrideTolerance", {PERSISTENT, BOOL, "0", "0", 2}},
     {"NrdrMinSteerSpeed", {PERSISTENT, INT, "1", "1", 2}},
     {"NrdrOverrideThresholdCenterBoost", {PERSISTENT, INT, "1200", "1200", 2}},
+    {"NrdrSameDirectionAssist", {PERSISTENT, BOOL, "0", "0", 2}},
     {"NavigationUI", {PERSISTENT, BOOL, "1", "0", 1, SETTINGS_SIMPLE}},
     {"NNFF", {PERSISTENT, BOOL, "0", "0", 2}},
     {"NNFFLite", {PERSISTENT, BOOL, "0", "0", 2}},

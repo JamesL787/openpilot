@@ -251,6 +251,9 @@ class NRDRTuningLayout(_SettingsPage):
 
     override_rows = [
       toggle("NrdrIncreaseOverrideTolerance", "Override Hysteresis", "Double the override tolerance after steering input leaves center."),
+      toggle("NrdrSameDirectionAssist", "Keep Steering When Helping a Turn (Test)",
+             "Pushing the wheel the same way openpilot is steering no longer cuts torque, below 25 mph, "
+             "for up to 8 s. Pushing against it, or very hard, still takes over."),
       value(
         "NrdrDriverOverrideThreshold", "Driver Override Threshold", "Raw torque-sensor threshold outside the center boost angle band.",
         lambda: str(p.get_int("NrdrDriverOverrideThreshold")),
@@ -287,6 +290,11 @@ class NRDRTuningLayout(_SettingsPage):
              "Steer with James's modified-EPS controller: a feedforward that inverts the EPS firmware's own "
              "control law plus a PID on fixed per-band trims. The Lat P/I/F sliders and the other lateral shaping "
              "do not apply while on. Takes effect on the next drive. Off, the feedforward is only logged."),
+      toggle("NrdrLatPidFirmwareFF", "PID Turn Feedforward (Test)",
+             "Keep the NRDR PID and your Lat P/I/F trims, and add James's EPS firmware feedforward in turns only: "
+             "none within 10 deg of centre, full from 30 deg, so it does not bring back the near-centre wobble. "
+             "Fades in once the wheel is within 10 deg of the path; a driver press takes it out. "
+             "No effect while EPS Firmware Feedforward (James's controller) is on."),
       toggle("NrdrLatModelActionInterp", "Model Action Interpolation",
              "Ramp the model's 20 Hz steering action across the model frame instead of holding it. "
              "Removes the 20 Hz staircase in the target that the smoothing filter otherwise has to hide."),
@@ -296,13 +304,6 @@ class NRDRTuningLayout(_SettingsPage):
         "which does not bind below about 20 mph. 0 disables.",
         lambda: f"{p.get_int('NrdrLatAngleRateLimit')} deg/s",
         lambda: self._show_slider("NrdrLatAngleRateLimit", 0, 2000, unit=" deg/s", title="Desired Angle Rate Limit"),
-      ),
-      value(
-        "NrdrLatRateFF", "Desired Rate Feedforward",
-        "Extra torque in proportion to how fast the desired steering angle is moving, per 100 deg/s. "
-        "Pays for the rack's damping as a turn is asked for, so the wheel follows with less lag. 0 disables.",
-        lambda: f"{p.get_float('NrdrLatRateFF'):.2f}",
-        lambda: self._show_slider("NrdrLatRateFF", 0.0, 2.0, step=0.05, value_type="float", title="Desired Rate Feedforward"),
       ),
       toggle("HondaTorqueLowPassFilter", "Steering Target Smoothing", "Smooth the desired steering angle using speed-banded time constants."),
       value(

@@ -78,7 +78,7 @@ def test_eg916_restarts_session_without_echo(mocker, tmp_path, ppp_args):
   hardware.configure_modem()
 
   modify, up = _nmcli_calls(call)
-  assert "--temporary" in modify
+  assert "--temporary" not in modify  # must survive a reboot, see configure_ppp_keepalive
   assert _value(modify, "connection.autoconnect-retries") == "0"
   assert _value(modify, "ppp.lcp-echo-interval") == "5"
   assert _value(modify, "ppp.lcp-echo-failure") == "4"

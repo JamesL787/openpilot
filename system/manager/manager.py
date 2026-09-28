@@ -80,6 +80,7 @@ NRDR_CLARITY_EPS_DEFAULT_MIGRATION_FLAG = Path("/data") / "nrdr_clarity_eps_defa
 STARPILOT_REMOVED_PARAM_KEYS = (
   "CoastUpToLeads", "PrioritizeSmoothFollowing",
   "NrdrTuneLearner", "NrdrTuneLearnerMap", "NrdrTuneLearnerRate", "NrdrTuneLearnerReset", "NrdrTuneLearnerStrength",
+  "HumanAcceleration", "HumanFollowing", "FarLeadCoastCap", "BoschARailInterval", "RangeDerivedVrel", "RangeVisionAssist",
 )
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
@@ -881,6 +882,7 @@ def migrate_nrdr_honda_tuning_defaults(params: Params, params_cache: Params) -> 
     "NrdrLatModelActionInterp": True,
     "NrdrLatUseFirmwareVgr": False,
     "NrdrLatEpsFirmwareFF": False,
+    "NrdrLatPidFirmwareFF": False,
   }
   desired_float_values = {
     "HondaCenterBoostThreshold": 3.0,

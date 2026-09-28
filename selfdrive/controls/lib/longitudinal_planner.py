@@ -439,7 +439,13 @@ EXP_LEAD_DEPARTURE_GAP_FRACTION = 0.6  # share of the e2e -> MPC gap closed at f
 EXP_LEAD_DEPARTURE_MAX_LIFT = 0.5  # m/s^2 added to e2e at most
 EXP_LEAD_DEPARTURE_RISE_TAU = 0.5  # s, weight filter going up
 EXP_LEAD_DEPARTURE_FALL_TAU = 0.15  # s, and going down
-EXP_LEAD_DEPARTURE_MAX_LIFT_RISE = 1.0  # m/s^3, the lift itself never rises faster (drops are not limited)
+EXP_LEAD_DEPARTURE_MAX_LIFT_RISE = 1.0  # m/s^3, the lift itself never rises faster
+# Release: the lift falls at most this fast (0.5 m/s^2 over ~0.17 s) instead of stepping to 0, which on 00000283
+# felt as a lift-off (11 one-frame drops > 0.3, STATUS 136d). Still instant for the urgent cases below, a planned
+# stop, e2e braking, or the toggle turning off; never lets the output exceed the MPC.
+EXP_LEAD_DEPARTURE_MAX_LIFT_FALL = 3.0  # m/s^3
+EXP_LEAD_DEPARTURE_URGENT_VREL = -0.5  # m/s, a lead closing faster than this drops the lift at once
+EXP_LEAD_DEPARTURE_URGENT_LEAD_ACCEL = -1.0  # m/s^2, and a lead braking harder than this
 
 TRACKED_VISION_MODEL_FLOOR_MIN_SPEED = 10.0
 TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_PROB = 0.95
@@ -608,8 +614,10 @@ VEHICLE_FAR_FOLLOW_SLEW_MIN_DISTANCE_TIME = 1.35
 VEHICLE_FAR_FOLLOW_SLEW_MIN_HEADWAY = 1.35
 VEHICLE_FAR_FOLLOW_SLEW_MIN_TTC = 8.0
 VEHICLE_FAR_FOLLOW_SLEW_MAX_LATERAL_OFFSET = 1.5
-# Far-lead coast cap (StarPilot Dom 79c61f479a), parked behind FarLeadCoastCap, default off (STATUS 85).
-# It trusts dRel/vLead at range, where closing speed can read low; replay it before enabling.
+# Far-lead coast cap (StarPilot Dom 79c61f479a), built in (was FarLeadCoastCap; on in the owner's Civic drives
+# through 0000028b). It trusts dRel/vLead at range, where closing speed can read low: the Bosch-A rail interval
+# and range-derived closing speed are what keep that reading honest. Replay of route 00000268 (STATUS 110),
+# forced on vs off: all 9 brake episodes identical; every far approach had a braking lead or a TTC under 8 s.
 FAR_LEAD_COAST_MIN_DISTANCE = 45.0
 FAR_LEAD_COAST_MIN_TTC = 8.0
 FAR_LEAD_COAST_MIN_GAP_MARGIN = 6.0
@@ -2206,13 +2214,20 @@ class LongitudinalPlanner:
     lead_closing = lead is not None and lead.status and (
       float(lead.vRel) < 0.0 or float(getattr(lead, "aLeadK", 0.0)) < EXP_LEAD_DEPARTURE_MIN_LEAD_ACCEL)
     if not enabled or hold_experimental or lead_closing:
-      # Drop at once when the lead closes or brakes or a stop is planned: a step toward braking is the safe side.
+      # Disarm at once when the lead closes or brakes or a stop is planned; the lift then releases below.
       self.exp_lead_departure_weight = 0.0
     else:
       tau = EXP_LEAD_DEPARTURE_RISE_TAU if raw > self.exp_lead_departure_weight else EXP_LEAD_DEPARTURE_FALL_TAU
       self.exp_lead_departure_weight += (raw - self.exp_lead_departure_weight) * self.dt / (tau + self.dt)
     lift = apply_exp_lead_departure(output_a_target, output_a_target_e2e, output_a_target_mpc, self.exp_lead_departure_weight)
     lift = min(lift - output_a_target, self.exp_lead_departure_lift + EXP_LEAD_DEPARTURE_MAX_LIFT_RISE * self.dt)
+    urgent = (not enabled or hold_experimental or output_a_target_e2e < EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE or
+              (lead is not None and lead.status and (float(lead.vRel) < EXP_LEAD_DEPARTURE_URGENT_VREL or
+                                                     float(getattr(lead, "aLeadK", 0.0)) < EXP_LEAD_DEPARTURE_URGENT_LEAD_ACCEL)))
+    if not urgent:
+      released = min(self.exp_lead_departure_lift - EXP_LEAD_DEPARTURE_MAX_LIFT_FALL * self.dt,
+                     output_a_target_mpc - output_a_target)
+      lift = max(lift, released, 0.0)
     self.exp_lead_departure_lift = lift
     return output_a_target + lift
 
@@ -3616,7 +3631,6 @@ class LongitudinalPlanner:
     # second lead or an active model brake floor holds it off instead.
     far_lead_coast_other = self.lead_two if comfort_lead is self.lead_one else self.lead_one
     far_lead_coast_allowed = (
-      bool(getattr(starpilot_toggles, "far_lead_coast_cap", False)) and
       not experimental_mode and
       comfort_lead is not None and
       desired_gap is not None and

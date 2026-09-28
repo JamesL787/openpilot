@@ -4580,6 +4580,13 @@ the bad. Three lead routes are too few to re-tune the D-057 thresholds (rule 5).
 expected road symptom is earlier or harder braking behind a car that is closing slowly, not a late
 brake.
 
+**MetaDrive logic test of 087646dc (static, real `_update_steering_torque`, scripted CS/CC).** Cases 1–7 passed. It found three faults, all fixed in this commit.
+- **Release.** While the release hold kept a let-go press, tq·cmd = 0 read as a fight, so every help release stepped 0.8 → 0 and faded back. Fix: |tq| under the 0.75× release level is neutral and holds the state.
+- **Ceiling hover.** 3500 ± 100 gave 38 edges in 4 s. Fix: a ceiling cut resets the entry hold, and re-entry needs 0.2 s under 1.5× (`SAME_DIR_REENTRY_FRAC`).
+- **Speed edge.** 25 ± 0.5 mph gave 6 transitions. Fix: a speed exit locks until release, like the time cap.
+
+By design, each help press still starts with the ordinary cut: an instant cut, 0.2 s at 0, then a 0.5 s fade-in. That is about a 0.7 s notch, the price of the sign hold.
+
 **Tests (static).** All 260 Honda radar tests pass in docker. Controls suite in docker: 1246 passed, 4 skipped, 3 failed. These are the same three failures as STATUS 66 (two in latcontrol, `test_force_stop_jerk_scale_is_platform_specific`); none is new.
 
 **Next.**
@@ -6065,6 +6072,35 @@ Run: all 17 item 104 routes plus 266 and 267, `--bearings 0.075 --fixes`, at HEA
   - seg 17 45.0 s, an SUV at 3.5 m, stopped: the marker is held at the top, on the rear glass.
   - In all three the marker and label are fully visible; before, each showed only a marker corner at the bottom edge.
   - Owner reviewed these renders and kept `LEAD_ROOF_HEIGHT` at 1.5 m ("it looks fine"). Raising it to about 1.9 m was offered, to put the marker above pickup cabs.
+- **Stop-and-go flicker and doubled labels** (owner, 2026-09-27: "make it flip back without flicker in stop-and-go"; "sometimes the speed label doubles").
+  - Method: a frame-by-frame replay through the real `ModelRenderer` on 00000267 segs 3, 4, 10, 13, 14, 16 and 17 (about 8,400 frames), with the renderer clock pinned to log time. Scratch harness, not committed.
+  - **Flicker cause found.** At seg 10 625.0 s a flipped lead (vision-only, 16 m) blinked out for one frame and came back upright, inside the hysteresis band, because the flip state lived on the per-frame `LeadVehicle` and was lost with it.
+  - **Fix:** `_place_lead` keeps a flip state per lead slot. It survives a dropout of up to 1 s (`LEAD_FLIP_MEMORY_S`), and any flip, either way, is held at least 1 s (`LEAD_FLIP_MIN_HOLD_S`) unless the held form cannot be drawn.
+  - Replayed: that frame now stays flipped. Every remaining form change is a single one, at least 8.9 s apart, including after a gap longer than 1 s.
+  - **Doubled label, cause 1:** a side-lane lead that is the same car as an in-path lead. At seg 16 38.2 s, leadOne and leadRight were both radar track 41; this happened on 29 frames across segs 14 and 16.
+  - **Fix:** `same_lead()` matches the same radar track (≥ 0), or for vision-only leads the same spot (within 1.5 m dRel and 1.0 m yRel). A matching side lead is not drawn. Replayed: 0 such frames.
+  - **Doubled label, cause 2, left alone:** two different cars doing the same speed, for example seg 13 782.7 s (leadOne 55 m, track 28; leadLeft 103 m, track 44), about 170 frames. They are two cars.
+  - Not changed: a lead that blinks out for a few frames (seg 10 625 s, a vision lead at yRel 7–8 m) still makes its marker disappear for those frames. That is the published lead status, not the UI.
+  - 3 flip-memory tests and 6 `same_lead` cases added; 80 passed.
+  - **Checked on two longer drives** (owner request): 00000280--d02d9c2f8e (build 63827356b) and 00000283--fe4e75f88b (build a37852f8a). Both builds have the flip but not this fix; their renderer is identical to d0b52514.
+    - Frame-by-frame replay of 14 segments (about 16,000 frames), picked from a qlog scan for close leads and same-car side leads: 280 segs 4, 13, 23, 29, 31, 32, 33 and 283 segs 12, 14, 15, 25, 29, 35, 36. Each ran with the drive's own renderer and with the fix.
+    - Flips that switch back within 1 s: 2 → 0 (280 seg 31 1920.5 s, 0.25 s at 10.0 m; 283 seg 36 2212.2 s, 0.75 s at 12.4 m). leadOne form changes: 26 → 24.
+    - Same-car doubled labels: 132 → 4 frames.
+    - The frames that still repeat a speed are different cars doing the same speed: in-path + side 304, side + side 117, and 3 where the repeat was the other side lead.
+    - Radar vs vision, left in the display (4 frames): 280 seg 13 791.8 s, leadOne vision-only (track −1) at 19.0 m while leadTwo, radar track 7, was at 12.4 m with yRel −1.0 at the same speed; and 280 seg 32 1928.4 s, leadOne track 34 at yRel 5.4 against leadTwo vision at yRel 2.2. Both are probably one car. This is upstream of the UI (radard lead selection) and not investigated here.
+    - Route logs deleted after the analysis (owner request).
+- **On-device logs, 2026-09-27** (pulled from the comma over ssh, read-only). Routes 0000028a--0f4ebf7920 (build 2ab675ffe) and 0000028b--ed67104f14 (99a4e49f4): both include the fix, and their renderer is identical to HEAD. DeveloperUI, DeveloperWidgets, AdjacentLeadsUI and RadarTracksUI are all on.
+  - Replayed 10 segments (11,815 frames): 28a segs 13, 15, 20, 21, 28 and 28b segs 0, 9, 10, 11, 19.
+    - 0 flips back within 1 s, 0 same-car in-path + side doubles, 17 leadOne form changes.
+    - Repeated speeds are otherwise different cars (in-path + side 315 frames, side + side 95).
+  - **Found and fixed:** leadTwo is often leadOne again. With separate per-slot flip memories the two could split, one marker on the roof and one under the car (28a seg 28 1694.8 s, a 2.4 m lead, 4 frames). leadTwo is now skipped when `same_lead(leadOne, leadTwo)`; 1 test added.
+- **Radar points on the C4** (owner: "is it possible to also show radar points as well"). `_draw_radar_points` ports the big UI's liveTracks overlay: the same "Radar Point Display" toggle (`RadarTracksUI`) and the same `project_radar_points`.
+  - Red dots, 4 px with a 5.5 px outline.
+  - Drawn over the lead markers, so each lead's radar return shows against its vision marker.
+  - Points off the view are dropped. The big UI pins them to the screen edge, which read as stray specks at the C4's size.
+  - 4 tests added; 85 passed.
+  - Rendered on 28a segs 13 and 20 and 28b seg 19: 2–4 tracks per frame. Each in-path and side lead has its dot at the marker tip. Close leads' returns fall below the view, so they have none.
+  - Replay render evidence; not seen on the device.
 - **Watch:** a tall lead (truck, SUV) has its roof above 1.5 m, so the marker sits on the rear of the body rather than above it (rendered above). Photograph it if the marker flickers between the two forms in stop-and-go.
 
 ## 109. The item 107 per-track hold is shipped in the planner (ffa72fdc, owner approved); the shipped code reproduces the replay prototype on 19 routes. Replay evidence only; brake-affecting; not driven.
@@ -7375,6 +7411,37 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
 - The drive's other hard targets were also outside the window and made with the toggle off (7:28 −3.22, 12:15 −2.59, 14:14 −2.72). The launch at 13:03 (aTarget 0.35 above min(e2e, MPC) from standstill) is another planner path; the assist is disarmed below 4.5 m/s.
 - Verdict: this drive does not show the assist causing either feel. Its effect was too small and too short, and the braking came from real closing/braking leads. The device should update to 65d42a95 before a second trial.
 
+### 136d. Routes 11c8fa231c0499ed|00000280--d02d9c2f8e and |00000283--fe4e75f88b: the tuned assist runs on the road as built. Log decode and replay only; nothing changed.
+
+- Builds 63827356 (280) and a37852f8 (283) both contain 65d42a95; the assist code is unchanged since. Radar alpha long, 89 / 94 % of exp-mode lead time radar.
+- `initData` shows the toggle 0 on 280 (switched on mid-drive, first lift at 7:01) and 1 on 283.
+- On every frame where the replay lifts > 0.05, the logged aTarget − min(e2e, MPC) equals the replayed lift within 0.02 on 96 % (280) and 95 % of frames (283), and is never ~0.
+- 280: 20 episodes, 41 s, 4.2 % of 16.1 exp min, max 0.42. 283: 70 episodes, 116 s, 7.1 % of 27.3 exp min, max 0.50. For example, 283 7:59–8:05 held +0.45 for 5 s behind a radar lead pulling away at +2 m/s, 57–62 mph.
+- The harder brakes within 5 s after an episode were new events, not the assist:
+  - 283 8:10: a slower lead at 45 m closing at 9.7 m/s, MPC −3.2;
+  - 283 18:52.8: the radar lead's vRel swung +4.5 → −5.0 → +4.5 and aLeadK −6.6 in 1.5 s, for a −3.5 target lasting ~0.5 s; the assist had already dropped at 18:52.0 on aLeadK < −0.2;
+  - 283 5:30: a vision cut-in at 49 m, the assist dropped at once;
+  - 283 13:28: e2e's own −0.59 after the vision lead was lost.
+- Two things to watch:
+  - The release is a one-frame step by design: 29 steps > 0.15 and 11 > 0.3 on 283 (largest 0.50), 4 on 280. Every step is felt as a small lift-off.
+  - 283 13:25 lifted to 0.46 behind a vision lead whose dRel jumped 28 → 55 → 44 → 66 m before it was lost; the model-probability gate passed it.
+- Softening candidate (not applied): limit the release to ~3 m/s³ (0.5 m/s² over ~0.17 s) and keep the instant drop only for a lead closing faster than 0.5 m/s or braking harder than −1.0.
+
+### 136e. `ExpLeadDepartureAssist` release smoothed (owner request after 136d). Unit tests and open-loop replay only; not driven.
+
+- The lift now falls at most 3 m/s³ (`EXP_LEAD_DEPARTURE_MAX_LIFT_FALL`), i.e. a full 0.5 m/s² lift releases over ~0.17 s instead of in one 50 ms frame. The weight still disarms at once on vRel < 0 or aLeadK < −0.2; only the output is ramped.
+- Still instant for:
+  - a lead closing faster than 0.5 m/s or braking harder than −1.0 m/s² (`EXP_LEAD_DEPARTURE_URGENT_*`);
+  - a planned stop / red light;
+  - e2e below −0.15;
+  - the toggle turning off.
+- The held lift is capped so the output never exceeds the MPC estimate.
+- Replay (same code path) on 280 / 283:
+  - largest one-frame release drops from 0.41 / 0.50 to 0.15 / 0.32;
+  - every drop > 0.16 left on 283 is an urgent case (6 frames, vRel −0.9 to −5.3 or aLeadK −1.05);
+  - acting share unchanged (4.2 / 7.1 %); 0 frames lifting > 0.05 while the lead closes faster than 0.5 m/s or brakes harder than −1.0.
+- Tests: `test_exp_lead_departure.py` now checks the gentle release rate (closing, braking, lost lead), the 3-frame release, the urgent instant drops, stop / toggle / e2e-brake instant drops and the MPC cap. 560 passed with `test_longitudinal_planner.py`.
+
 ## 141. Galaxy Plots rebuilt: recorded drives with a lateral/longitudinal analysis. Unit tests and a headless render against a synthetic drive only; not used on a car.
 
 **What changed.** The Plots page (classic `/plots` and mobile `#/plots`) no longer grades a 30 s window with client-side "Great/Good/Fair/Poor" scores. A backend module `starpilot/system/the_galaxy/drive_plots.py` (commit 57cca03c) samples `controlsState`, `carControl`, `carState`, `longitudinalPlan` at ~20 Hz. Requested lateral is `desiredCurvature·v²`, measured is `curvature·v²`; requested longitudinal is `longitudinalPlan.aTarget`, measured is `aEgo`. Only engaged, non-override samples count (`latActive`/`longActive`, no steer/gas press).
@@ -8677,7 +8744,7 @@ Script (in /tmp, not committed): `/tmp/epsff/core_replay.py`.
 - `/tmp/epsff/dither.py` computes the high-pass and command-step figures.
 - 284 was extracted to `/tmp/epsff/00000284--1109db7c4c.npz`. No routes were fetched.
 
-## 167. First drive with the STATUS 160 onset debounce: route 00000285--1cd7a85309. Limited road evidence: one short drive, 7.0 engaged minutes, mostly intersection turns. No code change.
+## 171. First drive with the STATUS 160 onset debounce: route 00000285--1cd7a85309. Limited road evidence: one short drive, 7.0 engaged minutes, mostly intersection turns. No code change.
 
 **Setup.** The device ran `f71648c5` (clean) with `NrdrLatEpsFirmwareFF` off, so this is the NRDR PID.
 - Threshold 2000 with centre boost 2000.
@@ -8854,7 +8921,29 @@ The sim wobble for ClarityEps is 2–3×. On 286 the road shows 4–6×, because
 
 Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r286_resume2.py. Not committed.
 
-## 173. Branch `clarity-eps-testing`: James's controller's feedforward is gated by the desired wheel angle, faded in from 10° to 30° of |desired| (`FF_ANGLE_GATE_DEG`). `FF_SPEED_BP` is back to upstream's [2, 4] m/s. This is the fix for the STATUS 170 wobble and applies to both the Clarity and the Civic. Static tests and closed-loop sim only; not driven.
+## 172. Owner's 285 turn notes, and a LowSpeed P sweep (owner: "try 2 first, then 1"). Renumbered from a duplicate 168; commit d6eafad6's "STATUS 167" is 171 and e686f02a's "STATUS 168" is this entry. Log decode and closed-loop sim only; no code or param change.
+
+**The owner's turns.** No stutter was reported. The notes were: 7:06 R "did not commit", 7:58 R "too wild", 9:15 L "undershoots", 10:01 R "wide".
+- **7:12 R** (5.8 mph, wheel to −250°): the command is saturated at −1.0 and the wheel trails the target by 35–43°. This is an authority limit.
+- **7:58 R** (5 mph): the wheel trails by 13–20° with the command at only −0.3 to −0.47 (P only; I and F are about 0). At 8:01.8 the driver cranks it (−3472) past the target by about 30°, and the override cuts for about 2.5 s.
+- **10:01 R:** a +2099 press at turn-in (9:57.6) cuts the torque for about 0.4 s while the error is 46–49°. The turn-in is late.
+- **9:15 L:** the override is held from 9:15.8 to 9:19 while the driver's torque (+2600 to +3300) is in the **same** direction as the command. The car sends 0 and the driver steers alone.
+- **Across drives (turns with |des| > 45°):** 285 is not worse than 284 or 280. Under 12 mph the mean |err| is 30° (284: 42°, 280: 61°); from 12 to 25 mph it is 16° (284: 21°, 280: 13°).
+- **Cause of the lag:** the Civic's kf feedforward is about 0 below 25 mph, and `NrdrLatRateFF` is 0.
+
+**LowSpeed P sweep** (plant `civic_bosch_c020.json`, closed loop, hands-off frames, low band < 25 mph, err rms / curve ratio / sign changes per s):
+
+| route | log | P 115 (driven) | P 130 | P 140 | P 150 |
+|---|---|---|---|---|---|
+| 285 | 12.48 / 0.864 / 0.8 | 10.02 / 0.931 / 0.9 | 9.54 / 0.937 / 1.0 | 9.29 / 0.941 / 1.1 | 9.08 / 0.945 / 1.1 |
+| 284 | 16.31 / 0.785 / 0.7 | 9.04 / 0.962 / 1.4 | 8.80 / 0.963 / 1.4 | 8.68 / 0.964 / 1.5 | 8.57 / 0.965 / 1.5 |
+| 280 | 6.09 / 0.826 / 0.9 | 6.14 / 0.834 / 1.3 | 5.91 / 0.846 / 1.2 | 5.78 / 0.855 / 1.2 | 5.67 / 0.866 / 1.3 |
+
+- **Trust.** The sim is trusted on 280 (it matches the log). On 285 it reads the error 20 % low and the curve ratio 0.07 high. On 284 it is untrusted (9.0 against 16.3), because the real car trails more than the plant does in sharp slow turns.
+- **Gain from 115 → 130.** Error drops 3–4 %, the curve ratio rises 0.001–0.012, and sign changes rise by up to 0.1/s. From 130 to 150 the gain is smaller for each step and the wiggle rises.
+- **Suggestion:** `LatPScaleLowSpeed` 130, consistent with the STATUS 151 grid. Expect a small improvement in partial-command turns like 7:58. It cannot help 7:12 (already saturated), 9:15 or 10:01 (override cuts). Those need the override change or a feedforward.
+
+## 173. Branch `clarity-eps-testing` (commit 0f27431d; not merged here): James's controller's feedforward is gated by the desired wheel angle, faded in from 10° to 30° of |desired| (`FF_ANGLE_GATE_DEG`). `FF_SPEED_BP` is back to upstream's [2, 4] m/s. This is the fix for the STATUS 170 wobble and applies to both the Clarity and the Civic. Static tests and closed-loop sim only; not driven.
 
 - **History.** This replaces the branch's first fix, `FF_SPEED_BP` [2, 4] → [4, 8] (commit 2c7518a2, which numbered its entry 171 before the PID session's renumber took 171). The owner asked for that fix to be undone and redone with the PID session's gate. The PID session found the gate in sim inside `LatControlPID`, using the STATUS 165 feedforward.
 - **Why the gate works.** Near straight, the feedforward makes the EPS follow the model's small desired-angle wiggle almost 1:1. In a turn it is what gets the wheel round. The [4, 8] fix removed it by speed, turns included. The gate removes it by angle, so turns keep it.
@@ -8878,3 +8967,513 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
   - The sim has no model-in-the-loop, so it under-reads the road wobble (STATUS 170).
   - James's Clarity (A020 calibration) has not been simulated or driven with the gate.
 - `ns-bosch-radar-testing` keeps upstream's ungated [2, 4] for `LatControlClarityEps`. The PID session's own gate inside `LatControlPID` is separate work.
+- **Against the PID session's fix** (STATUS 175, `NrdrLatPidFirmwareFF` on, ebdd44d7; same sim and routes, /tmp/epsff/pid175_vs_eps.py). The format is wobble by band, then turn error.
+  - PID + gated feedforward: 286 1.27 / 0.27 / 0.23 / 0.07, 15.3 / 10.7. 285 0.58 / 0.37 / 0.20 / 0.11, 15.4 / 11.4. 284 0.45 / 0.34 / 0.13 / 0.11, 23.8 / 7.2. 280 0.25 / 0.19 / 0.15 / 0.10, 15.3 / 11.6.
+  - The first fix here, James + [4, 8], trails it everywhere. It wobbles 2–4× as much at 5–12 m/s, and its turn error is higher (286: 21.7 / 13.2).
+  - James's controller with the gate is level on wobble (within 0.07°). Its turn error is equal below 12 mph on 285, 286 and 280, 2 ° worse on 284, and 0.6–1.8° worse at 12–25 mph on all four routes.
+- **MetaDrive, model in the loop (sim only, not driven; one episode per cell; reported by the MetaDrive Sim session, STATUS 177 on `sim-lat-training`).** The setup is TSFDO, the comma 4 camera and torque mode through the fitted C020 EPS. Do not compare these with the earlier stock-model sims.
+  - **Stop and resume on a gentle loop** (40 km/h, cancel and brake to 0, resume at 60 s). This is the pull-away case the replay above cannot see.
+    - pullaway_wobble: ungated 1.99, gated 1.11. Reference: PID 0.48, PID + firmware FF 0.65.
+    - Standard-band err_rms: 4.68 → 3.28. curve_ratio: 1.04 → 0.98.
+    - Both re-engaged, and neither left the road.
+  - **R 60 m loop at 25 km/h**, turn_err / trail / past:
+    - Ungated 7.94 / 6.06 / 1.89; gated 9.41 / 6.75 / 2.66.
+    - Reference: PID 10.65 / 9.72 / 0.92 (one departure); PID + firmware FF 7.31 / 5.12 / 2.19.
+  - **R 40 m** is past the torque limit for every controller, so it is a stress case, not a ranking.
+  - **Read.** The gate roughly halves pull-away wobble and lowers the standard-band error, at about +0.7° trail and +0.8° past in the R 60 turns. Pull-away wobble with the gate is still about 2× PID's. Repeat runs (run-to-run spread) are pending.
+- **MetaDrive repeats, n=3 per cell (sim only, not driven; reported by the MetaDrive Sim session). They settle the gate against run-to-run spread.** All 12 episodes ran at 87-99 Hz.
+  - **Stop and resume.** pullaway_wobble: ungated 1.99 / 1.71 / 2.32 (mean 2.01); gated 1.11 / 1.24 / 1.32 (mean 1.22). The 0.79 gain exceeds both ranges (0.61, 0.21), and the ranges do not overlap.
+    - Centre (|des| < 10) and turning pull-aways both improve.
+    - err_rms_standard: mean 5.50 → 3.67. curve_ratio_standard: 1.11 → 0.99. Gated n=2 on both, because one episode had too little ≥ 25 mph time.
+    - No departures.
+  - **R 60 at 25 km/h**, turn err / trail / past means: ungated 6.87 / 4.99 / 1.89; gated 7.26 / 4.50 / 2.77.
+    - err (+0.39) and trail (−0.49) are inside the spread.
+    - past +0.88 is outside it: ungated 1.62-2.15, gated 2.58-3.06. The gate gives a consistent ~0.9° more overshoot past the desired angle in R 60 turns.
+    - Departures: ungated 2 (one episode), gated 0.
+  - **Read.** The gate's pull-away gain is real in sim. Its turn cost is a small, consistent overshoot, not a turn-error increase. On the road, watch for the wheel going slightly past the line through moderate turns.
+
+- **James's turn smoothing, ported and put on the car's test branch (owner's request, 2026-09-27; static tests only, not driven).**
+  - The fix is JamesL787 `vfn-controller-shadow` aa943ad4. The problem it targets: with the blinker on at low speed, the turn hold and turn lead entered the steering target as steps, and at a stop the target could flip between the hold and the model every frame (James's routes 354/355).
+  - It applies only when `LatControlClarityEps` is the built controller: `turn_shaping = isinstance(self.LaC, LatControlClarityEps)`, so the PID path is unchanged. The hold/lead floor goes through a 0.25 s low-pass, a release glides onto the model, and a driver-confirmed capture still snaps.
+  - `clarity-turn-shaping` 3682a600: the candidate on this branch's tip, for sim.
+  - `clarity-eps-testing` 24c9212f + f7655b64: the same port, on top of 0f27431d's angle gate. A one-time migration (`migrate_nrdr_clarity_eps_default`, flag `/data/nrdr_clarity_eps_default_v1`) turns `NrdrLatEpsFirmwareFF` on, which makes James's controller that branch's default. The toggle still turns it off, and the value persists if another branch is flashed. The compiled default stays `"0"`.
+  - Tests: 44 pass (James's 7 plus test_controlsd, test_turn_lead and test_nissan_leaf_fallback). A MetaDrive pilot with a latched blinker and a stop before each corner is queued; the full set waits on whether the pilot reproduces the standstill flip-flop.
+
+- **Route 00000287--5cda3437c4, the first drive of `clarity-eps-testing` f7655b64 (limited road evidence; initData confirms the branch, the commit and `NrdrLatEpsFirmwareFF`=1).** The owner reported two events. Neither came from the steering controller: in both, the wheel followed the commanded angle, and the command came from the model.
+  - **2:17-2:26, left curve at 25-32 mph, "hugged left, over the line".**
+    - The controller tracked the plan: yaw-rate curvature matched desiredCurvature within about 3%, and the angle ran 0.4-1 deg past a 27 deg desired.
+    - The plan itself sat left of the lane centre. At 20 m it was about 0.7 m left of the midpoint between the lane lines.
+    - The left line fell to 0.8-1.2 m from the car at x=0, so the left wheels were on the line.
+    - The right line was near invisible (prob 0.02-0.10).
+    - Whether PID on the same plan would sit anywhere different was not tested. A replay comparison is the next check.
+  - **2:38.2, right curve, 23 mph.** The driver pulled left at up to +2100 torque and the angle went from -25 to -11 deg. The feedforward dropped out on the press and came back by 2:39.6.
+  - **2:43.4, left blinker at 19.8 mph, "almost turned into the oncoming traffic waiting at the stoplight".**
+    - The cause is StarPilot's Force Turn Desires (`TurnDesires`=1): below `MinimumLaneChangeSpeed` (20 mph on this car), a single blinker feeds a turnLeft desire to the model. modelV2 desireState went to turnLeft on the next frame.
+    - The model asked for a hard left at once: path 10 m left at 20 m ahead, 80-87 deg of wheel at 19 mph. The controller followed it: desiredCurvature equalled the model action, so the turn lead added nothing.
+    - The driver pushed right at 1500-2200 torque from 2:44.8. The model kept the left turn until about 2:50.
+    - This happens with either lateral controller while that toggle is on.
+  - **`lat_score.py score`, 286 (ungated) vs 287 (gated).** These are different roads, so the comparison is confounded. Limited road evidence:
+    - Low-speed overshoot (turn_past<12mph) fell 10.55 -> 0.55 deg, but trailing rose 10.1 -> 24.5, so turn error went 20.7 -> 25.1.
+    - At 12-25 mph, past was 4.9 -> 5.1.
+    - Pull-away wobble went 2.17 -> 2.72 (n 6 / 5).
+    - Most road pull-aways are turns out of a stop. Only 1-2 per drive are straight: 286 scored 1.88 and 0.17, 287 scored 1.24. That is too few to confirm or refute the sim's 2.01 -> 1.22.
+    - Caveat: the hands-off mask uses steeringPressed, which stayed 0 at 1500-2200 driver torque during the 2:44 fight. The 287 turn figures include that fight.
+- **Route 00000289--ba86b1c7c3, the owner's drive of `clarity-turn-shaping` 3682a600 (James's turn smoothing, feedforward ungated; initData `NrdrLatEpsFirmwareFF`=1, `NrdrLatPidFirmwareFF`=0). Limited road evidence, log decode.** The owner reported wobble when resuming at low speed, and oversteer at 9:40 and 10:30. Times below are log time; the owner's bookmarks run about 2-3 s earlier. The bookmarks went to the Radar Work session for the longitudinal side.
+  - **Pull-away wobble is the feedforward riding the model's own swing.** The pull-aways at 0:39.8 and 2:03.6 both do it. From about 9 mph, where the speed fade reaches w = 1, up to about 20 mph, the wheel swings ±5-7° at about 1 Hz (2:06.9-2:08.9: +5.4 / -6.0 / +7.0 / -3.4). Through all of it |desired| stays under 8°.
+    - The desired angle swings in phase, about 0.25 s ahead: +2.9 / -3.8 / +5.5 / -1.2.
+    - f is in phase with the desired and is most of the command (f +0.14-0.15 of out +0.22-0.24), while p opposes the overshoot.
+    - Band-passed rms, 2.5-9 m/s, 15 s after each straight start: 3.49 and 3.80. The 15:20 start scored 1.18.
+    - The same window on gated 287 (4:48 start) scored 2.29, with |f| 0.002 against 289's 0.06.
+    - This is the |desired| < 10° region where 0f27431d's gate holds the feedforward at 0. That is consistent with the gate targeting this wobble, but it is one straight start on each side, on different roads.
+    - Route pull-away wobble (lat_score) is 2.17 over 6 starts, the same as 286 (also ungated).
+  - **9:40 (log 9:42.5-9:49): an unsignalled left turn at about 16 mph through an intersection (lane-line prob 0.00-0.09).**
+    - At the turn peak the wheel went past the plan: 9:45.3-9:45.5, angle +129.8 against desired about +121, while f stayed +0.40 to +0.31 and p opposed it at -0.18 to -0.20. Yaw-rate curvature ran above the desired.
+    - The driver then pulled right at -1800 to -2100 torque, and the wheel trailed afterwards.
+  - **10:30 (log 10:31-10:39): an unsignalled right turn at 12.5-14.4 mph.**
+    - The plan asked for a tight turn: desired -118° (curvature 0.054, about a 19 m radius), path +13 m to the right at 20 m.
+    - The driver held the wheel left at +1800 to +2100 torque from 10:32.1 to 10:35.6 while the wheel was still short of the plan. For example, at 10:34.1 the angle was -62 against -114.
+    - Only one steeringPressed frame registered (10:34.6), which reset the feedforward ramp.
+    - On release the wheel ran to -109 at 10:35.9-10:36.4. It then stayed past the unwinding plan: 10:36.6, -106.9 against -98.3; 10:37.1, -86.8 against -81.4. Through that, f was -0.13 and p was +0.19 opposing.
+    - So there are two parts: the plan itself cut the corner, and then the ungated feedforward overshot on the unwind. The unwind is the same shape as 9:40 and STATUS 170's overshoot.
+  - **Not concluded:** whether the gated build would have avoided either turn overshoot. The gate is fully open above 30° desired, so it does not touch the turn peak. What changes there is the fade-in on the way up, and the Metadrive Civic-plant R60 runs cover that. No controller change is proposed from this route.
+
+## 174. Gas learner (`LongGasLearner`) on 00000286--ba543e3a3e, and its values now go into the drive log (`starpilotCarState.gasLearner*`). The 286 findings are from a CAN decode. The logging has static tests only and has not been driven.
+
+**What 286 shows.** Nothing in the log recorded the learner, so its applied gasfactor was rebuilt from `ACC_CONTROL` in sendcan: `GAS_COMMAND / 375 = gf·(ACCEL_COMMAND + wind·wf) + hill`. The Civic Bosch table is [0, 750] (interface.py `BOSCH_GAS_LOOKUP_V`), not the 1600 in values.py.
+
+- **It runs as built.** It loads the saved value at boot: `HondaGasFactorParams` 1.5616 in initData, and the first gas frame (0:47.6) implies 1.556. A least-squares fit over the drive gives:
+  - gf 1.42
+  - wf 0.92 (saved 0.899)
+  - hill term ×1.05, where the STATUS 154 design is ×1.0, unscaled
+  - rms 0.043 m/s²
+- **Flat-road tracking is close.** The mean gap between command and aEgo is within 0.06 m/s² for commands below 1 m/s², and about 0.12 for commands of 1–2 m/s².
+- **The value swings and sits high.** Median applied gf by minute:
+
+  | Minute | Median gf |
+  |---|---|
+  | 0 | 1.56 |
+  | 2 | 1.49 |
+  | 3 | 1.39 |
+  | 4 | 1.35 |
+  | 5 | 1.20 |
+  | 6 | 1.31 → 1.55 |
+  | 9 | 1.55 |
+  | 10 | 1.48 |
+  | 11 | 1.46 |
+  | 12 | 1.45 |
+
+  - It is above the 1.25 soft band for almost the whole drive. The 0.01/min decay is small next to the learn rate: about 0.04–0.1 per second at 0.3 m/s² error with learn_speed 150.
+  - The saved 1.5616 equals the 1.6 hard ceiling minus about 230 s of decay. The raw value was probably pinned at the ceiling on the previous drive (inference).
+- **The 6:09–6:18 jump (1.35 → 1.49) happened on a climb.** Pitch was +0.03 to +0.05, where learning is frozen (deadband 0.02). The raw value must have moved as the grade started, around 6:09–6:10 or earlier; the applied value trails it by 7.5 s. The CAN decode cannot show the raw value or which tick learned, and that is why the logging below was added.
+- **Open question.** Does gf about 1.4–1.6 describe the car, with the 750 table too small, or is the learner soaking up grade onset and lag? The new fields answer this on the next drive. No gain or gate was changed.
+
+**Logging (new).** These fields are added to `custom.StarPilotCarState`, logged at 100 Hz in the rlog (every 10th frame in the qlog):
+
+| Field | Meaning |
+|---|---|
+| `gasLearnerAvailable` @31 | Honda Bosch only; false elsewhere |
+| `gasLearnerGasFactor` @32 | applied value |
+| `gasLearnerGasFactorRaw` @33 | persisted integrator |
+| `gasLearnerWindFactor` @34 | applied value |
+| `gasLearnerWindFactorRaw` @35 | persisted value |
+| `gasLearnerError` @36 | last lag-aligned command minus aEgo |
+| `gasLearnerLearning` @37 | this tick passed every gate |
+
+How it is wired:
+
+- `LongGasLearner.learning` is the new flag. It is cleared on every tick and when `HondaLiveLearningGas` is off.
+- `CarController.gas_learner_state()` returns the values.
+- `card.set_gas_learner_fields()` copies them in when it publishes. The values are one frame old, and a failure logs once and leaves the fields at their defaults instead of stopping card.
+- It is schema-only on the C++ side, like the epsFf* fields in bca3f9d0. No rebuilt binaries and no params key.
+- The stale comment saying last_gas_error was mirrored into actuators.speed is corrected.
+
+**Tests.** All static:
+
+- `test_carcontroller_learners.py` TestLearningFlag: 3 tests.
+- `selfdrive/car/tests/test_gas_learner_log.py`: 3 tests.
+- The honda tests together with the new file: 307 passed.
+- py39 compat: 14 passed.
+- A smoke test with a real `CarInterface`: HONDA_CIVIC_BOSCH fills the fields; HONDA_CIVIC (Nidec) leaves `gasLearnerAvailable` false.
+- The ruff findings in carcontroller.py and the learner test file were already there; none are on changed lines.
+
+**Reading it back.** `LogReader(...)` → `m.starpilotCarState.gasLearnerGasFactorRaw` etc.
+
+## 175. `NrdrLatPidFirmwareFF` (new, default off): the NRDR PID gets James's EPS firmware feedforward in turns only, gated by |desired angle|. This is option 3 from STATUS 172. It is separate from James's controller. Static tests and closed-loop sim only; not driven.
+
+- **Owner asks:** "add the fix for nrdr pid lateral tuner to the main branch", and keep James's controller separate. Also: "make sure it's gated behind the actual controller, so whatever fix that works for pid doesnt impact the new controller and vice versa."
+- **What it does.** This is the STATUS 165 crossfade, back in `LatControlPID` behind its own key, with one addition: the weight also scales with |desired angle|. It is 0 below 10° and full from 30°.
+  - In a turn it replaces the kf and rate feedforward (both at 1 − w) with w × the firmware-inversion feedforward.
+  - P and I are unchanged, and the `LatFScale*` trims do not scale the firmware term (as upstream).
+  - Join gate as upstream fd815ef3: the weight ramps in over 0.5 s once the error is under 10°, and a press or v < 2 m/s drops it. It reaches full weight at 4 m/s.
+  - If the feedforward throws or goes non-finite, the weight drops to 0 and the toggle-off command carries on.
+  - `epsFfWeight` on starpilotLateralState now logs the applied weight.
+- **Why the gate.** STATUS 170: ungated, the feedforward makes the wheel follow the model's near-centre wiggle, 4–6× PID's wobble below 12 m/s on 286. The gate keeps it out of exactly that region.
+- **Kept apart from James's controller.**
+  - The gate, the join and the speed constants (`NRDR_PID_EPS_FF_*`, `nrdr_pid_eps_ff_weight`) live in `latcontrol_pid.py`, so a change to `nrdr_eps_firmware_ff.FF_SPEED_BP` or its join constants on clarity-eps-testing does not move the PID.
+  - `LatControlClarityEps` never reads `NrdrLatPidFirmwareFF`. With `NrdrLatEpsFirmwareFF` on, controlsd runs James's controller and this path does not run at all.
+  - What the two share is the feedforward model itself, `ClarityEpsFirmwareFeedforward` and its calibrations. A change there moves both.
+  - Tests pin all of this, including that the PID's weights are unchanged when `nrdr_eps_firmware_ff`'s gate constants are patched.
+- **Sim (tools/lateral/lat_pid_sim.py, C020 banded plant, logged params, this code).** Mean |des − angle| over hands-off frames with |des| > 45°, off → on:
+
+  | route | < 12 mph | 12–25 mph | wobble 2–5 / 5–8 / 8–12 / 12–20 m/s, off → on |
+  |---|---|---|---|
+  | 286 | 23.2 → 15.3° | 14.2 → 10.7° | 1.27/0.27/0.24/0.07 → 1.27/0.27/0.23/0.07 |
+  | 285 | 17.3 → 15.4° | 13.6 → 11.4° | 0.58/0.37/0.20/0.12 → 0.58/0.37/0.20/0.11 |
+  | 280 | 15.6 → 15.3° | 14.0 → 11.6° | unchanged, 0.25/0.19/0.15/0.10 |
+  | 284 | 24.2 → 23.8° | 8.5 → 7.2° | 0.48/0.33/0.13/0.11 → 0.45/0.34/0.13/0.11 |
+
+  - Wobble is the STATUS 170 metric (0.4–3 Hz rms, |angle| and |des| < 12° held 1.5 s).
+  - Ungated, the same feedforward gives the same turn error but 2–3× the wobble. For example, 286 at 5–8 / 8–12 m/s: 1.03 / 0.67.
+  - The 2–5 m/s bin is not closed-loop (the sim re-syncs to the log below 4 m/s), so resume-from-stop is untested.
+  - Sim trust per STATUS 172: good on 280, reads low on 285, untrusted on 284.
+- **What it can and can't fix on 285 (STATUS 172).**
+  - It adds torque in partial-command turns like 7:58 and 10:01.
+  - It cannot help 7:12, where the command was already saturated.
+  - It cannot help 9:15, where a same-direction press made the car send 0; that is option 1.
+- **Params artifacts.** `common/params_pyx.so` and `libcommon.a` were rebuilt natively on aarch64 with the pinned toolchain: clang 18.1.3, Python 3.12.3, Cython 3.1.4, `SP_FORCE_TICI=1`, the repo bind-mounted at `/work`, sconsign and targets cleared.
+  - `params_pyx.cpp` is byte-identical. Keys go 858 → 859, the only addition `NrdrLatPidFirmwareFF`.
+  - Galaxy: Lateral Tune → "PID Turn Feedforward (Test)".
+- **Tests.**
+  - selfdrive/controls/tests/test_latcontrol_pid_eps_ff.py: 6 pass. They cover the gate, the join and drop, default-off identical, on adds turn torque only in turns, and both isolation checks.
+  - The lateral, sim, galaxy-layout and py39 suites pass.
+  - test_latcontrol.py's Bolt and Palisade taper tests fail with and without this change (pre-existing).
+  - selfdrive/ui/tests/test_device_screen_settings.py segfaults on this host in collection (not investigated).
+- **Suggested first drive:** turn it on together with or after `LatPScaleLowSpeed` 130, and note the same intersections as 285.
+- Scratch: /tmp/epsff_pid/gate_sim.py (harness), real_sim.py (this code).
+
+## 176. `tools/lateral/lat_score.py`: one scorecard and gate for both lateral controllers, fed by replay and by MetaDrive. Replay (closed-loop sim) only; nothing driven, no controller or param change.
+
+- **Owner asks:** "I don't have all the time to test every single scenario between both controllers … I was hoping that metaldrive could help … speed up the tuning process for both controllers." Also: set up the same pipeline with the NRDR PID session and the MetaDrive session.
+- **The division of labour.** MetaDrive (`sim-lat-training`, `lat_cem_tune.py`) searches for candidate tunes on scenarios the owner has not driven. This tool accepts or rejects a candidate against the owner's own drives. Its metrics are the ones STATUS 170/173/175 used, so a search cannot win on a figure the owner does not feel.
+- **Commands.**
+  - `score FILE_OR_DIR …`: scores a lat_pid_sim-format log as recorded, with no simulation. This covers a real route cache or a MetaDrive `lat_episode.sh` OUTDIR, where `offroad` and `engaged_s` come from `episode.json`. It adds pull-away wobble: the 10 s after each start from a stop.
+  - `replay` / `gate ROUTES --kind pid|clarity_eps --set K=V [--base-kind --base-set] [--clarity-const FF_SPEED_BP=a,b]`: runs a baseline and a candidate on the C020 plant over the 7 default routes (280, 284, 285, 286, 27a, 277, 278). `gate` exits 0 only on "pass".
+  - `--clarity-const` sets a list constant of `nrdr_eps_firmware_ff.py` in the worker only. It is sim only; the car cannot set it.
+  - Toggles are forced per kind:
+    - pid: `NrdrLatEpsFirmwareFF` 0.
+    - clarity_eps: `NrdrLatEpsFirmwareFF` 1 and `NrdrLatPidFirmwareFF` 0.
+    - The toggles are printed, so 286's logged EpsFF=1 cannot leak into a PID run.
+- **Metrics.**
+  - wobble: 0.4–3 Hz rms on near-straight driving, for 2–5 / 5–8 / 8–12 / 12–20 m/s. The mask is taken from the log, so both runs score the same frames.
+  - turn error: |des| > 45°, for < 12 and 12–25 mph. Alongside it: the fraction of those frames with |out| > 0.99, and the mean feedforward weight.
+  - dither: command reversals per second on |des| < 5°. A reversal needs |out| > 0.01 on both sides. Without that, 280's resting command (|out| ≈ 7e-4) counted 0.2/s of noise as a regression.
+  - unwind lag, from `lat_route_check`.
+  - `lat_pid_sim.metrics` err_rms and curve_ratio per band.
+- **Gate.** Per route, agreed with the NRDR PID session. A figure regresses if it gets worse by more than:
+  - wobble (5–8 / 8–12 / 12–20 only): max(0.05°, 15 %). The 2–5 bin is re-synced to the log and is reported, not gated.
+  - turn error: 0.5°.
+  - dither: 0.1/s.
+  - err_rms: 3 %.
+  - An improvement is the same margin in the other direction. The route-trust notes from STATUS 172 are printed; 284's < 12 mph turn error is not gated. "Better on 280, worse elsewhere" is reported as "mixed", not "pass".
+- **Check against STATUS 175.** 286, pid → PidFF: turn error 23.20 / 14.21 → 15.33 / 10.70, identical to STATUS 175.
+- **First runs (7 routes, sim only).**
+  - **PID → PID + `NrdrLatPidFirmwareFF`: mixed.**
+    - Turn error improves on 6 routes. For example, 27a < 12 mph goes 43.8 → 35.4, and 285 goes 17.3 / 13.6 → 15.4 / 11.4.
+    - Wobble and dither are unchanged everywhere.
+    - **278, < 12 mph turn error, regresses 17.45 → 18.95.** This has been passed to the NRDR PID session.
+  - **PID + PidFF → James's controller (this branch, ungated [2, 4]): fail on all 7.**
+    - Wobble 5–8 m/s is 2–5× higher (286: 0.27 → 1.40).
+    - Dither is about 2× higher.
+    - < 12 mph turn error is 1.4–5.4° worse.
+    - Only err_rms at 25–50 and > 50 mph improves (for example, 277 highway 0.83 → 0.47).
+    - This agrees with STATUS 173.
+  - **James's controller, `FF_SPEED_BP` [2, 4] → [4, 8]: mixed.**
+    - Wobble 5–8 m/s improves on all 7 (286: 1.40 → 1.01).
+    - < 12 mph turn error regresses on 6 (286: 16.8 → 21.7).
+    - This is the trade STATUS 173's |desired| gate (clarity-eps-testing 0f27431d) was built to avoid.
+- **Limits.** These are lat_pid_sim's limits: exogenous desired curvature, no model in the loop, one linear plant fitted at 5–21 m/s, and a re-sync to the log below 4 m/s. Pull-away wobble only means something on a MetaDrive or road log. MetaDrive's own caveat (its road departures ended the world at about 40 s, since fixed on its side with `out_of_road_done=False`) is that session's to record.
+- **Follow-up: turn error split into trailing and past-desired** (`turn_trail` + `turn_past` = `turn_err`, signed by des). The split is reported, not gated; the NRDR PID session asked for it.
+  - It explains the 278 < 12 mph result. The feedforward cuts trailing error (13.9 → 12.1) but the wheel goes past the line more (3.6 → 6.9), mostly in two steady tight turns near 4.5 m/s.
+  - On 286 it only cuts trailing (12.0 → 3.9); past-desired is unchanged (11.2 → 11.4).
+  - The PID session keeps the code as is and will tell the owner to watch long tight turns near 10 mph. The dither deadband stays at 0.01.
+- **Follow-up: `lat_score.py detect ROUTE_DIR [...]` says which lateral controller drove a route, so the route goes to its owner.** This is step 2 of the tuning group's routing rule; the owner's drives are routed per segment. It reads rlogs only (log decode, static).
+  - **Evidence, in order:**
+    - `initData` `NrdrLatEpsFirmwareFF` and gitCommit. The key is read once at start: 1 is James's controller, 0 is PID. A build whose commit has no `latcontrol_clarity_eps.py` is PID by construction (280 at 63827356, 284 at 90487307).
+    - An identity test. `LatControlClarityEps` logs the feedforward it applied as `pidState.f`, which equals `epsFfWeight × epsFfFeedforward` of the same frame, gated build or not. `LatControlPID` logs its unscaled kf term there; PidFF crossfades later, in the output (checked by the NRDR PID session at latcontrol_pid.py:874).
+      - Frames are counted only where either side exceeds 1e-3, the NRDR PID session's floor: both sides near 0 would match trivially. Under 200 such frames the segment is "undetermined".
+      - Pairing is by timestamp: `starpilotLateralState` follows `controlsState` by about 0.2 ms. Index pairing broke 286 segment 11, which starts between the two.
+    - `centre_w` (the fraction of |des| < 10° frames with weight > 0) separates the ungated build (about 1) from the 0f27431d gated build (about 0).
+  - **Output.** It prints the owner, or "ASK PETER" when a key is missing on a newer build, or when the key and the identity test (or two segments) disagree.
+  - **Measured.**
+    - 286: identity 1.00 on all 14 segments, `centre_w` 0.96–1.00. James's controller, ungated.
+    - 285: identity 0.00 → PID.
+    - 280 and 284 → PID (build predates the controller).
+  - **Not yet measured on a drive:** a gated-James drive and a PidFF-on drive. Those two cases rest on the code (static) and the synthetic tests.
+
+## 177. Longitudinal on 00000287--5cda3437c4 (build clarity-eps-testing f7655b64; BoschARailInterval 1, RangeDerivedVrel 1; 7.3 min, 25 % experimental). There are two brakes below -1.5, and one is a stale coasted vRel. No bookmarks, and nothing changed in code. Log decode only.
+
+**2:39.0–2:39.2: aTarget -2.74 → -2.87 for 3 radar frames on track 49, a coast.**
+
+- **The coast.** Track 49 was born at 155.50 s, 54.9 m out at yRel -14.3, during the left turn. Its measured vRel was -11.4 while ego was at 11.5 m/s, which reads as a stationary object.
+  - From 156.31 s it is published `measured=False`, and the last trusted vRel of -11.4 is held for 2.9 s.
+  - Over those 2.9 s its range falls only 45.6 → 35.1 m, a slope of about -3.7 m/s. Ego slows from 11.5 to 9.6 m/s.
+- **The bad frames.** At 159.07 s the point swings in-path (yRel -4.3) and radard makes it leadOne. It carries vRel -11.4 with vLead -1.6 to -1.8, meaning a lead reversing. Vision had the same car at vRel about -6, lead about 4 m/s. At 159.18 s the radar re-measures the track at -6.8, matching vision, and aTarget returns to -1.2.
+- **The driver.** The owner pressed the gas at 2:39.6 and switched to chill at 2:40.6.
+- **Why D-063 did not act.** The coast bound, `_bosch_a_coast_vrel`, pulls a coast toward the range fit only on the closing side unless the coast is inside a rail-interval hold (STATUS 129). This coast was not in one. Its down side would have allowed vRel ≥ fit − 3 ≈ -6.7.
+- **Candidate fix, not applied** (radar gate, needs the owner's OK): a physical floor on coasted vRel only, vRel ≥ -(vEgo + margin). A coast would never publish a lead reversing faster than the margin. The point is kept (D-041/042) and only its implied reversing speed is bounded. Here it would give about -9.6 instead of -11.4. It is untested against STATUS 129's three protected brakes (00000232 1147.2, 00000266 560.0, 00000266 795.4); replay on those comes first.
+- **Same turn as STATUS 173's 2:43 near-turn.** That entry traces the 2:43 near-turn into oncoming traffic to Force Turn Desires.
+
+**4:02.0–4:06: aTarget -1.9 → -2.99, real slow traffic.**
+
+- Radar picks up tracks 10 and 18 at 62–88 m on the U11 rail (-13.5) at 36 mph. Vision puts the lead at 4–7 mph, and the rail is not binding (true closing is about 12–13 m/s).
+- It peaks at -2.99 for about 1 s, then eases to -0.9, then about -1.8 to the stop.
+- This is the same pattern as STATUS 169's 10:03 and 12:09 events: the plan front-loads the stop at about 1.8× the constant decel it needs (about 1.7 m/s² from 62 m).
+- No false brake.
+
+**Gas learner.** A CAN decode as in STATUS 174. The drive was on a build without the new logging.
+
+- The saved value at boot was 1.307, and the first minute implies 1.56.
+- Minute medians were 1.56 (min 2), 1.35 (min 3) and 1.38 (min 5).
+- It swings between 1.3 and 1.6 again, above the 1.25 soft band.
+
+## 178. Longitudinal on 00000289--ba86b1c7c3 (build clarity-turn-shaping 3682a600; 19.4 min, 9 % experimental). The owner's three device bookmarks are real hard brakes for braking leads. Longitudinal did not cause the 9:40/10:30 oversteer or the pull-away wobble. No code change. Log decode only.
+
+The lateral side of the same drive is in the STATUS 173 thread (commit 1a098438). Times are log time.
+
+**Brakes below -1.5.** There are eight. All are real leads that radar and vision agree on.
+
+- **1:19.8, -3.69, chill.** Lead #47 at 21 m, vRel -5, aLeadK -3.7. Device bookmark 1:22.4.
+- **6:21.6, -3.52, chill.** Cut-in: vision lead at 83 m, then radar #5 at 43 m closing at -8 m/s, ego 20 m/s. Device bookmark 6:24.3.
+- **12:47.3, -3.48, chill.** Lead #47 braking at aLeadK -4.9, ego 19 m/s down to 3 m/s. Device bookmark 12:49.5.
+- **Milder ones:**
+  - 1:37.1, -2.4
+  - 9:41, -1.7
+  - 10:21.9, -2.1
+  - 3:40.7, -1.57
+  - 3:55.2, -1.51
+
+  These are ordinary slowing for a lead. aEgo tracks aTarget within about 0.4.
+
+**Coasted leads with vLead < 0 (the STATUS 177 pattern).** There are 99 frames across 7 episodes, and none of them was engaged-and-braking.
+
+- **7:19-7:24, not engaged, driver braking.** Track #48 held vRel -13.5 flat for 2.4 s (7:21.0-7:23.4) at 75 to 52 m. Over the same 2.4 s the range fell at about -9.6 m/s, so the held vRel was about 4 m/s too negative.
+  - This is a second instance of 287's 2:39 stale coast.
+  - The candidate floor vRel >= -(vEgo + margin) would **not** catch it, because -13.5 is roughly -vEgo.
+  - A range-rate bound would catch it. That is the rail-hold-only down side of STATUS 129.
+  - It is recorded for the on-hold coast review. Nothing was applied.
+- **17:04, not engaged, driver on gas in a tight turn.** Radar #55, a stationary object at 6 m closing at 2.5 m/s, drove aTarget to -5.6. Nothing was actuated. It looks like a real object near the turn path, not a coast artefact.
+- **The other five** (4:01, 15:10, 16:02, 16:46, 17:42) are at or near standstill or were never leadOne-for-control.
+
+**Pull-aways (the "wobble when resuming").**
+
+- At 0:39.8, 5:08.9 and 15:20 the driver was on the gas and openpilot sent no accel command (acc 0, gasPressed). The wobble still happened.
+- **2:03.6 is the only pull-away under openpilot longitudinal**, and it is the worst wobble per the lateral agent.
+  - The accel command was steady at +1.5 to +1.7.
+  - aEgo was +1.2 to +1.6, with no 1 Hz fore-aft swing in phase with the ±5-12 deg steering swing.
+- Conclusion: the wobble is not driven by a longitudinal surge. This agrees with STATUS 170/173.
+
+**Oversteer bookmarks.**
+
+- **9:40 (log 9:42.5-9:49), experimental.** aTarget peaked at -1.7 at 9:41 for real lead #48. The driver pressed the gas from 9:42.5 and stayed on it through the turn, so there was no openpilot braking during the turn.
+- **10:30 (log 10:31-10:39).** No longitudinal event. aTarget was -0.1 to +0.7, with lead #35 at 22 m until 10:31.5. The driver was on the gas from 10:30.5.
+
+**Gas learner.** A CAN decode as in STATUS 174; the build predates the a2248077 logging.
+
+- Implied gas factor per minute went from 1.25 at the start, peaked at 1.42 (min 2), eased to about 1.23 (min 7-9), and ended at 1.52 (min 13).
+- That is the same 1.2-1.6 swing as 286 and 287, above the 1.25 soft band. It is still open whether this is a table error or grade and lag. The a2248077 logging answers that on the next build that carries it.
+
+## 179. A coasted vRel that says the car ahead is reversing is now bounded by the range rate (or floored at a stopped lead). Fix for route 00000287 2:39 (STATUS 177). Replay and static evidence only; not yet driven.
+
+**Problem.** On 287 at 2:39, track #49 coasted a stale vRel of -11.4 for 2.9 s while ego was at about 10 m/s. That coast means the lead was reversing at about -1.8 m/s. The range was really falling at -3.7 m/s, so the true vRel was about -6.8. aTarget reached -2.87 and the owner pressed the gas. STATUS 129 limits the down side of the coast bound (making a coast *less* closing) to rail-interval holds, so this coast kept its stale value.
+
+**Change** (`opendbc/car/honda/radar_interface.py`, `_bosch_a_coast_vrel`; `selfdrive/car/card.py`):
+
+- card feeds `RI.v_ego = CS.vEgo` before `RI.update`.
+- When a coast implies a reversing lead (`v_ego + vRel < -BOSCH_A_COAST_REVERSING_MARGIN_MPS`, 1.0 m/s), it also gets the down side `max(vRel, rate - 3)` against the fresh range fit, outside a rail hold too.
+- With no fit yet (fewer than 4 fresh samples over 0.25 s), it is floored at vLead = -margin.
+- Coasts that imply a stopped or slower car are untouched. These are STATUS 129's protected over-closing brakes.
+- The change rides the existing toggles: it acts only when BoschARailInterval or RangeDerivedVrel is on. With both off, the coast is verbatim.
+- The point is always kept (D-041/D-042).
+
+**Replay** (a copy of the real RadarInterface plus radard and the planner, over the full routes; variants A = current, F = radard floor, K5 = rate-5 down side on every coast, R/RF = this change without/with the no-fit floor):
+
+| Route | F | K5 | R/RF |
+|---|---|---|---|
+| 287 2:39 (track 49 vRel, truth about -6.8) | -10.8 | -9.2 | **-7.2** (A -11.4) |
+| 287 brake episode 160.0 | unchanged | later | **-2.00 -> -1.50** |
+| 232 1147.2 protected | unchanged | **softened -2.25 -> -1.92** | unchanged |
+| 266 560.0 / 795.4 protected | unchanged | **softened / later** | unchanged |
+| 232 90.0 | **new harder brake -2.35 -> -3.50** | unchanged | unchanged |
+| 236, 26b, 289 | no episode moved | 289 381.6 later | no episode moved |
+
+- No variant lost a point on any of the six routes.
+- RF is the only variant that moves just the target event. It is what was applied.
+
+**Not caught.** On 289 at 7:21 (STATUS 178), vRel -13.5 at vEgo 12.9 implies vLead -0.6. That is inside the margin, so it is not bounded. openpilot was not engaged there.
+
+**Tests.** `test_bosch_a_radar.py::TestRailIntervalBoundsTheCoast` has three new tests: a reversing coast is floored and then fit-bounded, a non-reversing coast (unknown, stopped or slower lead) keeps the one-sided bound, and both toggles off is verbatim. The honda tests, py39 compat and the gas learner log tests give 326 passed. Static.
+
+**To watch on the next drive.** Brakes for a lead that coasts after its speed reading went stale: they should be no harder than the range closing supports.
+
+## 180. Longitudinal on 0000028a--0f4ebf7920 (ns-bosch-radar-testing 2ab675ff, NRDR PID lateral, before the STATUS 179 fix; 30 segments). There are four device bookmarks: one mild radar false brake in a curve, one hard brake made harder by the lead switching to a car beside the lane, and two real brakes. The STATUS 179 fix moves nothing here. Log decode and replay only.
+
+Times are log time. Bookmarks sit 2-3 s after the event.
+
+- **5:29.8, mild false brake, aEgo -1.6 (command -1.0 to -1.4).**
+  - Entering a left curve (steer -8 deg), lead #47 was about 3 m off-centre. Its measured range fell from 50.2 m to 40.8 m in 1.3 s, with vRel -5.8 to -7.2 and no coast.
+  - Over the same window the camera lead held at 43-46 m and v about 15 (ego 16.3).
+  - This is consistent with the reflection point moving to the side of the turning car.
+  - Not a coast artefact. It is the same family as the one-sweep blip at 5:21.5 (command -1.39).
+- **13:35.7, hard brake -3.5 (aEgo -4.4) at 13:32.**
+  - Traffic was slowing to about 5 m/s on a right curve (steer +4 to +7 deg).
+  - At 13:31.3, leadOne switched from #42 (70-80 m, y 3.0) to #32 (47-51 m, y 5.5, modelProb 0.86-0.91).
+  - The camera lead was at 65-71 m, y about 5.3 in the radar frame. Scaled to 47 m along the curve, the lane centre sits near y 2.8, so #32 was likely about 2.5 m right of the ego path.
+  - Braking for #32 instead of #42 roughly doubles the required decel.
+  - This is a candidate for D-048 lead arbitration: a model match on lateral position that accepts an 18 m range mismatch. No change on one instance.
+- **18:09.8, -1.2 to -2.0 at 70-105 m for #5, a car slowing to nearly a stop.**
+  - The camera put it at v 1-3; the range rate from 91.8 to 54.9 m over 3.5 s says about -10.5 against measured vRel -7.5.
+  - There was one 0.55 s coast (-10.5, 18:06.75-18:07.30) while the range said about -5.
+  - The coast implies vLead about 9, so it is not reversing and STATUS 179 does not act.
+  - The braking matches v²/2d, about 1.8.
+- **20:05.4, real hard brake -3.5 (aEgo -4.3) at 20:04.** In-lane lead #39 braked hard (radar vRel -9.1, camera v 14 -> 5, prob 1.0). Radar and camera agree.
+
+**Replay of the STATUS 179 fix** (in-tree code, A = v_ego not fed, RF = fed; `/tmp/rv/ab2.py`, which reproduces 287 160.0 -2.00 -> -1.50):
+
+- 0 points lost.
+- None of the 5 braking episodes moved (3 of them protected).
+- Lead values differed in 18 frames, with no planner consequence.
+
+## 181. Galaxy NRDR PID Tuning tab removed (owner request, 2026-09-27). PID tuning is done in the MetaDrive and replay sims now. Static only.
+
+- **Removed from both UIs:**
+  - the classic `/lat_tune` page (sidebar entry, route, `lat_tune.js`/`.css`);
+  - the mobile `Tuning → NRDR PID lateral tune` tab (`NrdrLatTunePanel.js`);
+  - the `/api/lat_tune/*` endpoints, `lat_tune_workspace.py` and their tests.
+- **Deletions landed in the wrong commit:** they were swept into `eb2cd3bb` (STATUS 180) from the shared index, and this commit finishes the removal. Between the two commits `the_galaxy.py` imported a deleted module, so don't deploy `eb2cd3bb` alone.
+- **Kept:**
+  - the offline tools `tools/lateral/lat_tune_cli.py`, `lat_tune_sim.py`, `lat_pid_sim.py` and `selfdrive/controls/lib/lat_tune_analyzer.py`;
+  - the band params `LatPScale*`, which are unchanged.
+- **Stale links:** an old `/tuning/nrdr-pid` link falls back to the first tab.
+- **On-device data:** trial files in `/data/galaxy/lat_tune/` are left in place.
+- **Tests:** galaxy tests show the same failures as before the removal in this container (e.g. `test_dashboard_stats` 2 date failures reproduce with the old test file).
+
+## 182. Longitudinal on 0000028b--ed67104f14: the first drive with the STATUS 179 fix (ns-bosch-radar-testing 99a4e49f, NRDR PID lateral; 32 segments). The fix acted live and never touched a lead. There are five device bookmarks: left-curve light brakes, the third and fourth instances of the pattern; a justified stop after engaging mid-turn; a normal stop; and a short over-held brake on a new lead. Log decode and replay only.
+
+**The fix, live.**
+
+- 3427 coasted points in total. 74 sat exactly at the floor, vRel = -(vEgo + 1).
+- 34 coasted points still implied a reversing lead (18 episodes). Their likely paths are the range-rejected coast, which STATUS 179 leaves untouched, or a fit whose rate-3 bound is still below the floor.
+- None of the 34 was ever leadOne.
+
+**Replay** (`/tmp/rv/ab2.py`, A = v_ego not fed, RF = fed): 0 points lost, 0 of 9 episodes moved (6 protected), 0 lead-difference frames.
+
+**Bookmarks.** Times are log time.
+
+- **6:28.3 / 6:36.5: left curve (steer -5 to -10 deg).**
+  - 6:26.5 (-1.0 command, aEgo -1.88) and 6:30.0 (-1.0, aEgo -1.14): lead #14's measured radar range fell from 43.5 to 30.3 m over 5 s (vLead 10-12). The camera held the lead at 40-45 m with v 14.5-15.
+  - 6:35.5 (-0.68): #8 at y -4.8, with the camera agreeing on the lateral position. Radar vRel was -4.4 against a camera lead speed matching ego.
+  - With 0000028a 5:27 (STATUS 180), that makes four brakes on three stretches, all in left curves, all measured (not coasts), each with radar range and speed below the camera's.
+  - This is the next candidate. Before touching anything, compare radar and camera lead range and speed against steering angle over the corpus.
+- **9:32.0: justified brake.**
+  - The driver braked from 9:20 and engaged at 9:30.0 mid sharp-left turn (steer -30 deg) at 7.6 m/s.
+  - #5 was measured throughout, with vRel -8 to -9.9. Its range fell from 39.0 to 16.4 m in 1.9 s (-12 m/s, more than vEgo), so the object was still moving toward the path.
+  - The camera confirmed it: prob 0.78 -> 0.97, v about 0. It was a stopped car at 12 m.
+  - aTarget -2.6 to -2.7, aEgo -3.4 peak.
+- **11:20.6: normal stop.** Lead #36 braked to a stop (aLeadK down to -3.5). Ego went smoothly from 16 m/s to 0 at -1.5 to -2.3 and stopped 5.2 m behind it after a slow final creep under 2 m/s.
+- **14:54.8: short over-held light brake.**
+  - At 14:51, lead #45 moved right and #10 at 61 m became the lead. It was measured at -5.5 to -6.5 for 1 s, and the range agreed (-5 m/s). The camera lead speed fell 21 -> 17.
+  - From 14:52.2 the range went flat, while #10 coasted -4.5* for 0.35 s and then measured -3.2 to -2.4.
+  - The command stayed at -0.7 to -0.8 for about 0.5 s after the range stopped closing. Mild.
+
+## 184. Desired Rate Feedforward slider removed from the device settings (owner request, 2026-09-27). Static only.
+
+- Removed: the `NrdrLatRateFF` row in `selfdrive/ui/layouts/settings/starpilot/nrdr_tuning.py` and its entry in `starpilot/common/assets/device_settings_layout.json`.
+- Kept: the param (default 0.0) and its term in `latcontrol_pid.py`, which is skipped at 0. The offline sims (`lat_pid_sim.py`, `lat_route_check.py`) still take it as a variant override.
+- Evidence it was off: route 0000028b initData has `NrdrLatRateFF` 0.0. It has been recommended at 0 since STATUS 143, where 0.5 caused the low-speed stutter on 278.
+
+## 185. Same-direction assist for NRDR PID (`NrdrSameDirectionAssist`, default off). A driver press that helps the turn no longer cuts the steering. Evidence is unit tests and open-loop replay of 28a/28b. No road evidence yet.
+
+**Problem (routes 0000028a, 0000028b).** Any press above the override threshold cut the PID torque to 0 (HondaOverrideTorqueScale 0), whichever way the driver pushed.
+- On slow tight turns Peter helps the wheel the way openpilot is already steering. The help cut openpilot out, and the car then under-turned.
+- 28b 2:04–2:09: a right turn from a stop. The command was +1 and the wheel was 48° short, but 0 torque was delivered for 5.4 s.
+- 28a 27:40: 3.1 s of same-sign help, all of it cut.
+- Magnitude cannot tell help from a fight: help |tq| p50 is 2530–2650 and a fight's is 2280–2390. Only the sign can.
+
+**Change.** `SameDirectionAssist` in `opendbc_repo/opendbc/car/honda/carcontroller.py`, applied after the debounce/hold chain.
+- A press is exempt from the override when all of these hold:
+  - sign(driver torque) == sign(command) continuously for 0.2 s (`SAME_DIR_ENTRY_S`);
+  - speed ≤ 25 mph;
+  - |torque| < 1.75× the threshold;
+  - the press has been exempt for less than 8 s.
+- On entry, torque returns through the normal fade-up (0.5 s).
+- The carcontroller has no desired angle, so "short of the plan" is read from the command's sign: once the wheel passes the plan, the PID pushes back, the signs disagree, and the press is a fight.
+- A command below 0.05 is neutral: it holds the current state, so a plan crossing zero does not flicker.
+- Exits:
+  - Opposite sign or above the ceiling: instant cut, the same as today.
+  - The 8 s cap or leaving the speed band: a 0.3 s fade-out, then locked until the hand releases.
+- Toggle off, or James's controller: the chain is unchanged. The toggle is under LateralTune (advanced) and in the NRDR tuning layout.
+
+**Tests (static).** There are eleven new cases in `test_honda.py`:
+- help with ±150 jitter, no chatter;
+- toggle off;
+- opposite-then-same, with the entry hold;
+- a fight that starts with a same-sign blip;
+- the ceiling;
+- the 8 s cap fade;
+- the speed band;
+- a command crossing zero;
+- letting go keeps the torque;
+- a grip hovering at the ceiling;
+- speed hovering at the band edge.
+
+All 320 honda tests pass.
+
+**Replay (open loop, logged tq/cmd/pressed through the real `_update_steering_torque`, threshold 2000, fades up 0.5 / down 0).** Open loop means the logged command is not re-run through the PID, so the closed-loop response to the returned torque is not modelled.
+
+| Episode | Result |
+|---|---|
+| 28a 27:40 help | exempt 3.1 of 3.1 s, 0 transitions |
+| 28b 2:04 help | exempt 4.4 of 5.4 s (the first 0.5 s was opposite sign), 1 transition |
+| 28a 27:49 and 28:09 fights; 28b 8:34 fight | 0 s exempt |
+| 28b 20:01–20:09 (Peter leading the plan) | chatter while the command sits within ±0.06 of zero; delivered torque ≤ 0.045 |
+
+Every step above 0.1 is also present with the toggle off: it is the existing debounce cut.
+
+**Watch items for the first drive:**
+- An EPS steer fault during a help press. Combined same-sign torque above 2000 has only 0.1 s of history in the logs, max 2371.
+- The closed-loop PID response when torque returns mid-press.
+- `lat_pid_sim.py`'s CarControllerSteer does not mirror the assist.
+
+## 186. NRDR PID output scale simplified: no turn-in / unwind / centre-boost terms (owner, 2026-09-27). Sim and static evidence only; not driven.
+
+**What changed.** `_clarity_eps_pid_output_scale` (latcontrol_pid.py) is now James's version from
+`clarity-eps-testing` (e3de63be / 66293384 / a08a1bf0). It adds up to +0.0675 through 10–20 deg and
++0.0847 more through 16–28 deg, faded in over 4–14 m/s, and it is the same for left and right. The owner
+removed these terms, which came from starpilot's first Honda PID:
+- the left/right-asymmetric coefficients;
+- the turn-in and unwind (phase) terms;
+- the centre boost (`HondaCenterScale`, `HondaCenterBoostMinSpeed`) and its lane-change fade.
+
+The Center Scale and Center Boost Min Speed sliders are gone from both settings UIs. Their param keys
+stay in params_keys.h, because the sim tools and the tune analyzer still list them. `HondaCenterBoostThreshold`
+stays: carstate uses it for the centre override threshold (`NrdrOverrideThresholdCenterBoost`), not the scale.
+`phase` is still computed, because the Civic testing-ground scale uses it.
+
+**On the owner's car today.** 28a/28b ran with `HondaCenterScale` 0.0, so the centre boost was already off.
+Nothing near centre changes. The change acts only in turns deeper than 10 deg above 9 mph.
+
+**Evidence (sim, `lat_score gate`, C020 plant; routes 280, 284, 285, 286, 27a, 277, 278, 289, 28a, 28b).**
+- Verdict **pass**: 4 routes improve and none regress.
+  - 280: turn_err 12–25 mph 13.96 → 13.16.
+  - 28b: turn_err 12–25 mph 11.93 → 10.58.
+  - 27a: err_rms 25–50 mph 0.82 → 0.75.
+  - 278: err_rms 25–50 mph 0.56 → 0.51.
+- Every other figure is inside the gate margins. The real code reproduces the monkeypatched gate run
+  exactly: max difference 0 over all metrics.
+- Keeping our asymmetry and centre boost and dropping only the phase terms scored the same, and
+  also improved 284 slightly (0.64 → 0.62).
+- 28a/28b open-loop A/B on a plant fitted to those two drives: 25–50 mph rms fell by up to 0.1 deg
+  (28b left 0.77 → 0.66). That plant reads 28b left error 0.77 against 0.48 logged, so the size of the
+  gain is uncertain.
+
+**Not ported from James.** He moved the low-pass filter from the target to the final torque (target
+filter off, output tau 0.1). It fails the gate on all 10 routes: turn_err up 1–10 deg, wobble up at
+5–20 m/s. His integrator reset at low speed and his stop flip-flop hold were not needed; our code already
+handles both cases.
+
+**Tests (static).** `selfdrive/controls/tests/test_latcontrol_pid_output_scale.py` checks that the scale is
+the same both ways, is 1.0 near centre and below 4 m/s, and has the right values in a full turn. The
+latcontrol_pid, analyzer, settings-layout, lateral-tools and py39 suites pass (243).
+
+**Still open.** MetaDrive closed-loop A/B against the parent commit is pending (group rule). First drive:
+watch mid-speed turns, both directions, for over- or under-steer at the apex.

@@ -24,6 +24,7 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_NUM_SLOTS,
   BOSCH_A_RANGE_RATIO_INVALID,
   BOSCH_A_RANGE_OFFSET_M,
+  BOSCH_A_COAST_REVERSING_MARGIN_MPS,
   BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS,
   BOSCH_A_RANGE_SCALE_M,
   BOSCH_A_STALE_S,
@@ -1679,7 +1680,7 @@ def test_bosch_a_gate_stays_closed_for_non_bosch_a_platforms(car):
   assert cp.radarUnavailable is True
 
 
-# --- D-063: the rail interval, behind BoschARailInterval (default off) -------------------------
+# --- D-063: the rail interval, built in (was BoschARailInterval) -------------------------------
 
 def test_rail_interval_gate_reads_rail_as_bound_only_when_asked():
   from opendbc.car.honda.radar_interface import (_bosch_a_range_innovation_rejected, _bosch_a_direct_vrel_interval,
@@ -1700,28 +1701,10 @@ def test_rail_interval_gate_reads_rail_as_bound_only_when_asked():
           _bosch_a_range_innovation_rejected((0.0, 100.0), 1.0, 91.0, -5.0, None, False, exact=True))
 
 
-def test_rail_interval_toggle_default_off_and_read_at_startup():
-  p = Params()
-  p.remove("BoschARailInterval")
-  assert make_radar_interface().rail_interval is False
-  p.put_bool("BoschARailInterval", True)
-  try:
-    assert make_radar_interface().rail_interval is True
-  finally:
-    p.remove("BoschARailInterval")
-  assert make_radar_interface().rail_interval is False
-
-
-def test_coast_range_bound_follows_range_derived_vrel_read_at_startup():
-  p = Params()
-  p.remove("RangeDerivedVrel")
-  assert make_radar_interface().coast_range_bound is False
-  p.put_bool("RangeDerivedVrel", True)
-  try:
-    assert make_radar_interface().coast_range_bound is True
-  finally:
-    p.remove("RangeDerivedVrel")
-  assert make_radar_interface().coast_range_bound is False
+def test_rail_interval_and_coast_range_bound_built_in():
+  ri = make_radar_interface()
+  assert ri.rail_interval is True
+  assert ri.coast_range_bound is True
 
 
 class TestRailIntervalBoundsTheCoast:
@@ -1793,6 +1776,48 @@ class TestRailIntervalBoundsTheCoast:
           coasts += 1
           assert p.vRel == pytest.approx(self.RAIL_MPS, abs=0.05), f"coast softened at sweep {i}"
     assert coasts > 0
+
+  def _coasts(self, ri):
+    return [(i, p.vRel) for i, rr in self._railed_birth_then_walk(ri) for p in rr.points if not p.measured]
+
+  def test_a_coast_that_implies_a_reversing_lead_is_bounded_outside_a_rail_hold(self):
+    """STATUS 179, route 00000287 2:39: a stale over-closing coast outside any rail hold that says the car ahead
+    is reversing. At 10 m/s the -13.5 coast means vLead -3.5. Before a fresh fit exists it is floored at
+    vLead = -margin; once the fit (0 m/s here) exists it is pulled to within 3 m/s of it. The first sweeps
+    after the 8 m step are range-rejected: that path keeps the whole last point (geometry too) untouched and
+    is out of scope here."""
+    ri = make_radar_interface()
+    ri.rail_interval = False
+    ri.coast_range_bound = True
+    ri.v_ego = 10.0
+    coasts = self._coasts(ri)
+    rejected = [(i, v) for i, v in coasts if i < 8]
+    coasts = [(i, v) for i, v in coasts if i >= 8]
+    assert rejected and all(v == pytest.approx(self.RAIL_MPS, abs=0.05) for _, v in rejected)
+    assert coasts
+    floor = -(10.0 + BOSCH_A_COAST_REVERSING_MARGIN_MPS)
+    assert all(v >= floor - 1e-6 for _, v in coasts)
+    assert coasts[0][1] == pytest.approx(floor, abs=0.05)
+    assert coasts[-1][1] == pytest.approx(-BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS, abs=0.2)
+
+  @pytest.mark.parametrize("v_ego", [None, 13.0, 20.0], ids=["unknown", "stationary", "slower_car"])
+  def test_a_coast_that_does_not_imply_reversing_keeps_the_one_sided_bound(self, v_ego):
+    """-13.5 at 13 m/s is a stopped car (within the margin) and at 20 m/s a slower car: STATUS 129's protected
+    over-closing coasts. Neither, nor an unknown ego speed, is softened."""
+    ri = make_radar_interface()
+    ri.rail_interval = False
+    ri.coast_range_bound = True
+    ri.v_ego = v_ego
+    coasts = self._coasts(ri)
+    assert coasts and all(v == pytest.approx(self.RAIL_MPS, abs=0.05) for _, v in coasts)
+
+  def test_both_toggles_off_the_reversing_coast_is_verbatim(self):
+    ri = make_radar_interface()
+    ri.rail_interval = False
+    ri.coast_range_bound = False
+    ri.v_ego = 10.0
+    coasts = self._coasts(ri)
+    assert coasts and all(v == pytest.approx(self.RAIL_MPS, abs=0.05) for _, v in coasts)
 
   def test_on_with_fewer_than_four_fresh_samples_the_coast_is_unchanged(self):
     ri = make_radar_interface()

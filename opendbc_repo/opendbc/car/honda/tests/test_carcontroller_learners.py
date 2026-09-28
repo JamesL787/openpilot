@@ -551,6 +551,28 @@ class TestHillTermOutsideGasfactor(unittest.TestCase):
   def test_min_gas_anchor(self):
     self.assertAlmostEqual(bosch_gas_lookup_accel(0.5, 0.2, 1.2, 0.1), (0.5 - 0.2 - 0.1) * 1.2 + 0.1 + 0.2)
 
+class TestLearningFlag(unittest.TestCase):
+  """learning / last_gas_error are logged to starpilotCarState.gasLearner*; the flag must mean
+  "this tick updated the raw factors", not "was engaged"."""
+
+  def test_flag_set_when_learning(self):
+    learner = _make_learner()
+    _tick_n(learner, _LAG_TICKS + 5, accel_cmd=1.0, a_ego=0.8, gas_pedal_force=1.0)
+    self.assertTrue(learner.learning)
+    self.assertAlmostEqual(learner.last_gas_error, 0.2, places=6)
+
+  def test_flag_cleared_by_gates(self):
+    for gate in (dict(pitch=_PITCH_DEADBAND * 2.0), dict(brake_pressed=True), dict(long_active=False),
+                 dict(at_standstill=True)):
+      learner = _make_learner()
+      _tick_n(learner, _LAG_TICKS + 5, accel_cmd=1.0, a_ego=0.8, gas_pedal_force=1.0)
+      self.assertTrue(learner.learning)
+      learner.update(**_steady_kwargs(accel_cmd=1.0, a_ego=0.8, gas_pedal_force=1.0, **gate))
+      self.assertFalse(learner.learning, msg=str(gate))
+
+  def test_fresh_learner_not_learning(self):
+    self.assertFalse(_make_learner().learning)
+
 
 if __name__ == "__main__":
   unittest.main()

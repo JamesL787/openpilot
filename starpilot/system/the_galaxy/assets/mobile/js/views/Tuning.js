@@ -1,5 +1,4 @@
 import { LateralTuningPanel } from "../components/LateralTuningPanel.js"
-import { NrdrLatTunePanel } from "../components/NrdrLatTunePanel.js"
 import { GalaxyTabs } from "../components/GalaxyTabs.js"
 import { Plots } from "./Plots.js"
 import { TestingGround } from "./TestingGround.js"
@@ -7,16 +6,15 @@ import { useTabRouting } from "../composables.js"
 
 const TABS = {
   lateral: "Lateral Tuning",
-  nrdr: "NRDR PID lateral tune",
   plots: "Plots",
   testing: "Testing Ground",
 }
 
 export const Tuning = {
   name: "Tuning",
-  components: { LateralTuningPanel, NrdrLatTunePanel, Plots, TestingGround, GalaxyTabs },
+  components: { LateralTuningPanel, Plots, TestingGround, GalaxyTabs },
   setup() {
-    return useTabRouting("/tuning", { lateral: "lateral", nrdr: "nrdr-pid", plots: "plots", testing: "testing" })
+    return useTabRouting("/tuning", { lateral: "lateral", plots: "plots", testing: "testing" })
   },
   data() { return { TABS } },
   template: `
@@ -27,10 +25,6 @@ export const Tuning = {
 
       <template v-if="tab === 'lateral'">
         <LateralTuningPanel />
-      </template>
-
-      <template v-else-if="tab === 'nrdr'">
-        <NrdrLatTunePanel />
       </template>
 
       <template v-else-if="tab === 'plots'">

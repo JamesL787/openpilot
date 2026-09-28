@@ -128,16 +128,14 @@ def peak(track, n, **kwargs):
 
 
 # ---------------------------------------------------------------------------------------------
-# Default OFF
+# Built in for Bosch-A (was the RangeDerivedVrel / RangeVisionAssist params)
 # ---------------------------------------------------------------------------------------------
 
-class TestDefaultOff:
-  def test_param_default_is_off(self):
-    """A TEST feature must not change behaviour for anyone who has not opted in."""
-    from openpilot.common.params import Params
-    p = Params()
-    p.remove("RangeDerivedVrel")
-    assert p.get_bool("RangeDerivedVrel") is False
+class TestBuiltIn:
+  def test_built_in_on_for_bosch_a(self):
+    assert radard.RANGE_VREL_ASSIST is True
+    assert radard.RANGE_VISION_ASSIST is True
+    assert radard.RadarD(honda_bosch_a_radar=True)._range_vrel_assist_enabled() is True
 
   def test_track_is_inert_without_the_flag(self):
     """Same geometry as the rail case below, which corrects hard when armed."""
@@ -147,25 +145,13 @@ class TestDefaultOff:
     assert track.get_RadarState()["vRel"] == RAIL
 
   def test_radard_leaves_the_flag_off_for_non_bosch_a(self, monkeypatch):
-    """The toggle is Bosch-A only: the param must not be consulted at all elsewhere."""
+    """The assist is Bosch-A only: the switch must not be consulted at all elsewhere."""
     radar_d = radard.RadarD(honda_bosch_a_radar=False)
     calls = []
     monkeypatch.setattr(radar_d, "_range_vrel_assist_enabled",
                         lambda: calls.append(1) or True)
     assert (radar_d.honda_bosch_a_radar and radar_d._range_vrel_assist_enabled()) is False
-    assert calls == [], "the param was read on a car the assist can never apply to"
-
-  def test_param_read_failure_falls_back_to_off(self, monkeypatch):
-    """A device whose params_pyx.so predates RangeDerivedVrel raises on the read. That must
-    degrade to the shipped U11 behaviour, not to an enabled feature."""
-    radar_d = radard.RadarD(honda_bosch_a_radar=True)
-
-    class Boom:
-      def get_bool(self, _key):
-        raise KeyError("RangeDerivedVrel")
-
-    radar_d._range_assist_params = Boom()
-    assert radar_d._range_vrel_assist_enabled() is False
+    assert calls == [], "the switch was read on a car the assist can never apply to"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -748,29 +734,11 @@ class TestVisionAssistGeometry:
     assert track.range_assist_correction == 0.0
 
   def test_param_switch_matches_code_flag(self):
-    """The RangeVisionAssist param reaches Track as vision_assist=True: same result as the code flag."""
+    """RANGE_VISION_ASSIST reaches Track as vision_assist=True: same result as the code flag."""
     track = new_track()
     settle(track, d0=76.0, range_rate=-19.4, v_rel=RAIL, y_rel=1.7, vision_closing=18.0, vision_assist=True)
     assert track.range_assist_active
     assert track.range_assist_correction == pytest.approx(5.9, abs=0.05)
-
-  @pytest.mark.parametrize("values, expected", [
-    ({"RangeDerivedVrel": True, "RangeVisionAssist": True}, (True, True)),
-    ({"RangeDerivedVrel": True, "RangeVisionAssist": False}, (True, False)),
-    ({"RangeDerivedVrel": False, "RangeVisionAssist": True}, (False, False)),   # needs the parent toggle
-    ({"RangeDerivedVrel": True}, (True, False)),                                # .so without the key: D-053 survives
-  ])
-  def test_param_read(self, values, expected):
-    class FakeParams:
-      def get_bool(self, key):
-        if key not in values:
-          raise KeyError(key)
-        return values[key]
-    rd = radard.RadarD.__new__(radard.RadarD)
-    rd._range_assist_params, rd._range_assist_frame = FakeParams(), 99
-    rd._range_assist_enabled = rd._vision_assist_enabled = False
-    assert rd._range_vrel_assist_enabled() is expected[0]
-    assert rd._vision_assist_enabled is expected[1]
 
   def test_helper_gates(self, monkeypatch):
     f = radard.vision_assist_closing

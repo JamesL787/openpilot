@@ -583,8 +583,15 @@ class Tici(HardwareBase):
       current = dict(zip(want, out.split('\n'), strict=False))
     except (subprocess.CalledProcessError, OSError):
       current = {}
+    # Saved to disk, not --temporary. The stock profile is AGNOS's read-only
+    # /usr/lib/NetworkManager/system-connections/lte.nmconnection (blank APN, no LCP echo, no DNS),
+    # and NM auto-activates it as soon as the modem enables, ~35 s into boot. A temporary change
+    # lived in /run and was gone on every reboot, so each boot's first session ran on the stock
+    # profile and had to be torn down and restarted (seen on the owner's comma 4, 2026-09-27).
+    # Saved, NM writes /etc/NetworkManager/system-connections (-> /data/etc, persistent), which
+    # shadows the /usr/lib copy, so from the next boot the first session already starts right.
     modify = [x for k, v in want.items() for x in (k, v)]
-    subprocess.call(["sudo", "nmcli", "connection", "modify", "--temporary", "lte", *modify])
+    subprocess.call(["sudo", "nmcli", "connection", "modify", "lte", *modify])
 
     # pppd and the bearer read these only when the session starts, so restart a running session
     # once if it came up with anything else. NM always passes the LCP options to pppd, as
