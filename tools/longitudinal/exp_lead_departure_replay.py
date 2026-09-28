@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Open-loop replay of ExpLeadDepartureAssist (STATUS 136b) on logged drives.
+"""Open-loop replay of the experimental-mode lead-departure assist (STATUS 136b-136g) on logged drives.
 
 Runs the planner's own get_exp_lead_departure_weight / apply_exp_lead_departure and the same weight
 filter on each longitudinalPlan frame while engaged in Experimental Mode, using the logged lead
@@ -17,7 +17,6 @@ import argparse
 import os
 import sys
 from collections import defaultdict
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -30,7 +29,6 @@ from openpilot.tools.lib.logreader import _LogFileReader
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ACTION_T = 0.5
 ACT = 0.05  # m/s^2 lift that counts as acting
-TOGGLES = SimpleNamespace(exp_lead_departure_assist=True)
 
 
 def rlog_segments(route_dir):
@@ -79,7 +77,7 @@ def replay_route(route_dir):
           mpc = get_accel_from_plan(list(lp.speeds), list(lp.accels), CONTROL_N_T_IDX, action_t=ACTION_T)[0]
           base = min(mpc, st["e2e"])  # the planner's e2e/MPC arbitration, before its later caps
           planner.lead_one = st["lead"]
-          lift = LongitudinalPlanner.update_exp_lead_departure(planner, base, st["e2e"], mpc, st["v"], st["tf"], TOGGLES,
+          lift = LongitudinalPlanner.update_exp_lead_departure(planner, base, st["e2e"], mpc, st["v"], st["tf"],
                                                                bool(st["stop"] or st["hold"])) - base
           frames.append(((m.logMonoTime - t0) / 1e9, seg, lift, st["e2e"], mpc,
                          st["lead"].vRel if st["lead"].status else np.nan, st["lead"].aLeadK))

@@ -595,18 +595,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_state=lambda: self._params.get_bool("BlotV3"),
                  set_state=lambda v: self._params.put_bool("BlotV3", v),
                  visible=adv),
-      SettingRow("ExpLeadDepartureAssist", "toggle", tr_noop("Follow Departing Leads (Experimental)"),
-                 subtitle=tr_noop("TEST, default off. Experimental Mode only. When the lead ahead is at or beyond your follow distance "
-                                  "and pulling away, and the driving model is asking for less acceleration than the lead-following "
-                                  "planner allows, this lifts the model's target part of the way toward the planner's: up to 60% of the "
-                                  "gap, at most +0.5 m/s2, fading in as the lead pulls away faster (0.5 to 2 m/s). It never lowers the "
-                                  "target, never softens the model's braking, never exceeds what the lead-following planner allows, and "
-                                  "switches off when the lead brakes, when the model plans a stop or red light, and below 10 mph. Found "
-                                  "on 100 vision-only drives, where the model was the slow side in 57 of 518 gas presses with a lead "
-                                  "pulling away. Replayed on logs only, never driven, which is why it ships off."),
-                 get_state=lambda: self._params.get_bool("ExpLeadDepartureAssist"),
-                 set_state=lambda v: self._params.put_bool("ExpLeadDepartureAssist", v),
-                 visible=adv),
     ]
 
     # ── 3. Speed Limit Controller (SLC) Rows ──

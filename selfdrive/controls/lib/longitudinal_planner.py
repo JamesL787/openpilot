@@ -434,12 +434,19 @@ EXPERIMENTAL_RELEASE_ACCEL_MIN_DELTA_A = 0.12
 EXPERIMENTAL_RELEASE_ACCEL_STEP = 0.06
 EXPERIMENTAL_SPEED_HANDOFF_BAND = 5.0 * CV.MPH_TO_MS
 EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE = -0.15
-# Experimental-mode lead-departure assist (TEST, default OFF, param ExpLeadDepartureAssist; STATUS 136b).
-# 518 exp-mode gas presses on 100 vision-only alpha-long routes: 110 had the e2e target below the MPC
-# while asking for accel >= 0, 57 of them with a lead pulling away (e2e +0.0..+0.5 while the MPC
-# allowed +0.7..+0.9). When a lead is at or beyond the follow distance and pulling away, lift the e2e
-# target part of the way toward the MPC. Stateless apart from a weight filter; e2e braking below
-# EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE is never touched, and the result never exceeds the MPC target.
+# Experimental-mode lead-departure assist (STATUS 136b-136g). Started as the TEST toggle
+# ExpLeadDepartureAssist, default off: 518 exp-mode gas presses on 100 vision-only alpha-long routes
+# showed 110 with the e2e target below the MPC while asking for accel >= 0, 57 of them with a lead
+# pulling away (e2e +0.0..+0.5 while the MPC allowed +0.7..+0.9). Tuned on open-loop replay (136b),
+# then confirmed on four logged drives with the toggle on (136c-136f): logged aTarget matched the
+# replay within 0.02 on 95-97% of acting frames, no hard brake in the 5-8 s after an episode was
+# caused by it, and 0 frames lifted while a lead closed faster than 0.5 m/s or braked harder than
+# -1.0. Baked in unconditionally in 136g: still Experimental Mode only (get_exp_lead_departure_weight
+# requires a lead at or beyond the follow distance, and update_exp_lead_departure only runs on the
+# tinygrad-model branch below), and every other gate is unchanged. When a lead is at or beyond the
+# follow distance and pulling away, lift the e2e target part of the way toward the MPC. Stateless
+# apart from a weight filter; e2e braking below EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE is never touched,
+# and the result never exceeds the MPC target.
 EXP_LEAD_DEPARTURE_MIN_SPEED = 4.5  # m/s, ~10 mph
 EXP_LEAD_DEPARTURE_VREL_BP = [0.3, 1.0]  # m/s lead pulling away -> weight 0..1 (replay, STATUS 136b)
 EXP_LEAD_DEPARTURE_MIN_LEAD_ACCEL = -0.2  # m/s^2, a lead braking harder than this disarms
@@ -451,7 +458,7 @@ EXP_LEAD_DEPARTURE_FALL_TAU = 0.15  # s, and going down
 EXP_LEAD_DEPARTURE_MAX_LIFT_RISE = 1.0  # m/s^3, the lift itself never rises faster
 # Release: the lift falls at most this fast (0.5 m/s^2 over ~0.17 s) instead of stepping to 0, which on 00000283
 # felt as a lift-off (11 one-frame drops > 0.3, STATUS 136d). Still instant for the urgent cases below, a planned
-# stop, e2e braking, or the toggle turning off; never lets the output exceed the MPC.
+# stop or e2e braking; never lets the output exceed the MPC.
 EXP_LEAD_DEPARTURE_MAX_LIFT_FALL = 3.0  # m/s^3
 EXP_LEAD_DEPARTURE_URGENT_VREL = -0.5  # m/s, a lead closing faster than this drops the lift at once
 EXP_LEAD_DEPARTURE_URGENT_LEAD_ACCEL = -1.0  # m/s^2, and a lead braking harder than this
@@ -2230,15 +2237,14 @@ class LongitudinalPlanner:
     return bool(tracking_lead and float(d_rel) < (float(t_follow) * 2.0) * float(v_ego))
 
   def update_exp_lead_departure(self, output_a_target, output_a_target_e2e, output_a_target_mpc, v_ego, t_follow,
-                                starpilot_toggles, hold_experimental):
+                                hold_experimental):
     raw = 0.0
-    enabled = bool(getattr(starpilot_toggles, "exp_lead_departure_assist", False))
-    if enabled and not hold_experimental:
+    if not hold_experimental:
       raw = get_exp_lead_departure_weight(self.lead_one, v_ego, t_follow)
     lead = self.lead_one
     lead_closing = lead is not None and lead.status and (
       float(lead.vRel) < 0.0 or float(getattr(lead, "aLeadK", 0.0)) < EXP_LEAD_DEPARTURE_MIN_LEAD_ACCEL)
-    if not enabled or hold_experimental or lead_closing:
+    if hold_experimental or lead_closing:
       # Disarm at once when the lead closes or brakes or a stop is planned; the lift then releases below.
       self.exp_lead_departure_weight = 0.0
     else:
@@ -2246,7 +2252,7 @@ class LongitudinalPlanner:
       self.exp_lead_departure_weight += (raw - self.exp_lead_departure_weight) * self.dt / (tau + self.dt)
     lift = apply_exp_lead_departure(output_a_target, output_a_target_e2e, output_a_target_mpc, self.exp_lead_departure_weight)
     lift = min(lift - output_a_target, self.exp_lead_departure_lift + EXP_LEAD_DEPARTURE_MAX_LIFT_RISE * self.dt)
-    urgent = (not enabled or hold_experimental or output_a_target_e2e < EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE or
+    urgent = (hold_experimental or output_a_target_e2e < EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE or
               (lead is not None and lead.status and (float(lead.vRel) < EXP_LEAD_DEPARTURE_URGENT_VREL or
                                                      float(getattr(lead, "aLeadK", 0.0)) < EXP_LEAD_DEPARTURE_URGENT_LEAD_ACCEL)))
     if not urgent:
@@ -3037,7 +3043,7 @@ class LongitudinalPlanner:
         )
         output_a_target = self.update_exp_lead_departure(
           output_a_target, output_a_target_e2e, output_a_target_mpc, scene_v_ego,
-          sm['starpilotPlan'].tFollow, starpilot_toggles,
+          sm['starpilotPlan'].tFollow,
           bool(
             output_should_stop_e2e or
             getattr(sm['starpilotPlan'], 'forcingStop', False) or

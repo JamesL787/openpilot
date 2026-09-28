@@ -936,11 +936,6 @@ class StarPilotVariables:
     toggle.conditional_stopped_lead = self.get_value("CEStoppedLead", condition=toggle.conditional_lead)
     toggle.conditional_limit = self.get_value("CESpeed", cast=float, condition=toggle.conditional_experimental_mode, conversion=speed_conversion)
     toggle.conditional_limit_lead = self.get_value("CESpeedLead", cast=float, condition=toggle.conditional_experimental_mode, conversion=speed_conversion)
-    try:
-      # STATUS 136b. A device on an older params_pyx.so without the key runs with it off.
-      toggle.exp_lead_departure_assist = self.get_value("ExpLeadDepartureAssist", condition=toggle.openpilot_longitudinal)
-    except Exception:
-      toggle.exp_lead_departure_assist = False
     toggle.conditional_model_stop_time = self.get_value(
       "CEModelStopTime", cast=float, condition=toggle.conditional_experimental_mode and self.get_value("CEStopLights"), default=0.0)
     toggle.conditional_signal = self.get_value("CESignalSpeed", cast=float, condition=toggle.conditional_experimental_mode, conversion=speed_conversion)

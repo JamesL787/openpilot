@@ -381,10 +381,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // Tester rollout: parse the Bosch-A harness's own 16-slot radar object bank into real
     // leadOne/leadTwo tracks instead of treating the car as radarless. RX-only, no CAN authority taken.
     {"BoschARadar", {PERSISTENT, BOOL, "1", "1", 3}},
-    // TEST, default OFF. Experimental Mode only. STATUS 136b: when a lead at or beyond the follow
-    // distance pulls away and the e2e target is the limit, lift it part of the way toward the MPC
-    // target. Never lowers the target, never touches e2e braking. Read in longitudinal_planner.py.
-    {"ExpLeadDepartureAssist", {PERSISTENT, BOOL, "0", "0", 3}},
     {"RemoteStartBootsComma", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"TeslaWakeOnCAN", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"RemapCancelToDistance", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},

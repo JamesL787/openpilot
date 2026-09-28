@@ -66,16 +66,9 @@ def _planner(lead_one):
   return SimpleNamespace(lead_one=lead_one, dt=0.05, exp_lead_departure_weight=0.0, exp_lead_departure_lift=0.0)
 
 
-def _step(p, toggle=True, hold=False, e2e=0.2, mpc=0.9):
+def _step(p, hold=False, e2e=0.2, mpc=0.9):
   return LongitudinalPlanner.update_exp_lead_departure(
-    p, e2e, e2e, mpc, V_EGO, T_FOLLOW, SimpleNamespace(exp_lead_departure_assist=toggle), hold)
-
-
-def test_toggle_off_changes_nothing():
-  p = _planner(lead())
-  for _ in range(100):
-    assert _step(p, toggle=False) == 0.2
-  assert p.exp_lead_departure_weight == 0.0
+    p, e2e, e2e, mpc, V_EGO, T_FOLLOW, hold)
 
 
 def test_weight_fades_in_and_drops_quickly():
@@ -135,8 +128,8 @@ def test_urgent_lead_drops_at_once(urgent):
   assert _step(p) == 0.2
 
 
-@pytest.mark.parametrize("kw", [dict(hold=True), dict(toggle=False), dict(e2e=EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE - 0.05)])
-def test_stop_toggle_off_or_e2e_braking_drop_at_once(kw):
+@pytest.mark.parametrize("kw", [dict(hold=True), dict(e2e=EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE - 0.05)])
+def test_stop_or_e2e_braking_drop_at_once(kw):
   p = _planner(lead())
   _held(p)
   e2e = kw.get("e2e", 0.2)
