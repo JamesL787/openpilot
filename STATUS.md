@@ -6101,6 +6101,7 @@ Run: all 17 item 104 routes plus 266 and 267, `--bearings 0.075 --fixes`, at HEA
   - 4 tests added; 85 passed.
   - Rendered on 28a segs 13 and 20 and 28b seg 19: 2–4 tracks per frame. Each in-path and side lead has its dot at the marker tip. Close leads' returns fall below the view, so they have none.
   - Replay render evidence; not seen on the device.
+- **Deployed to the car, 2026-09-28** (owner: "you can do update and restart on it. But don't change any toggle"). While offroad, with no other agent logged in: `/data/openpilot` fast-forwarded 99e807fd → e0d4aa2c, pure Python, and the `prebuilt` marker was kept. The device's local `starpilot/assets/active_theme/` edits were left as they were. It was rebooted, came back on e0d4aa2c, and `selfdrive.ui.ui` is running with no UI exception in swaglog. No param or toggle was changed. Not yet driven on this build.
 - **Watch:** a tall lead (truck, SUV) has its roof above 1.5 m, so the marker sits on the rear of the body rather than above it (rendered above). Photograph it if the marker flickers between the two forms in stop-and-go.
 
 ## 109. The item 107 per-track hold is shipped in the planner (ffa72fdc, owner approved); the shipped code reproduces the replay prototype on 19 routes. Replay evidence only; brake-affecting; not driven.
