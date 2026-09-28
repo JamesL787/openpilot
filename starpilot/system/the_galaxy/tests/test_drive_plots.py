@@ -373,6 +373,30 @@ def test_read_rows_by_header_tolerates_older_column_sets(tmp_path):
   assert np.all(data[:, dp.COL["ang_ok"]] == 0)
 
 
+def test_a_zoom_reads_only_its_window_and_matches_the_whole_drive_read(tmp_path):
+  # A zoom used to parse the whole drive per tap (~110 MB for 20 min); it now keeps only the window's rows.
+  root, tmp_path = tmp_path, tmp_path / "20260928110259"
+  tmp_path.mkdir()
+  rows = _drive(n_s=120.0)
+  lines = [",".join(dp.COLUMNS)] + [",".join(dp._fmt(x) for x in r) for r in rows]
+  lines.insert(500, "1,2,3")                                   # a short line
+  lines.insert(900, ",".join(["x"] * len(dp.COLUMNS)))         # an unparsable one
+  with gzip.open(tmp_path / "samples.csv.gz", "wt") as f:
+    f.write("\n".join(lines) + "\n" + ",".join(["1"] * 5))   # and a torn last line
+  full = dp.read_rows(tmp_path)
+  assert full.shape == rows.shape and np.allclose(full, rows, equal_nan=True)
+  for start, end in ((0.0, 10.0), (40.0, 100.0), (110.0, 200.0), (500.0, 560.0)):
+    part, t0 = dp.read_rows(tmp_path, start, end)
+    assert t0 == full[0, 0] and len(part) < len(full)
+    assert dp.window(part, start, end, t0=t0) == dp.window(full, start, end)
+  plots = dp.DrivePlots(root, is_onroad=lambda: False)
+  assert plots.get_window(tmp_path.name, 40.0, 100.0)["rows"] == dp.window(full, 40.0, 100.0)
+
+
+def test_malloc_helpers_never_raise():
+  dp.limit_malloc_arenas(2)
+  dp.release_freed_memory()
+
 def test_old_recording_without_angles_or_lead_still_analyzes():
   a = dp.analyze(_drive())
   assert "turns" not in a["lateral"] and a["lateral"]["curve_gain_source"] == "lateral acceleration"

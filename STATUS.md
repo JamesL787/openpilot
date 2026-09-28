@@ -7626,6 +7626,20 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
   - The median now uses every measurable takeover without a blinker; drift is gated per window itself.
 - **Not verified:** the rule on a highway route, where takeovers should see the lines.
 
+## 141g. Plots memory on the comma (2026-09-28): reading a finished drive no longer takes the_galaxy to 667 MB. Device reading (read-only) and local measurements; not yet re-measured on the device.
+
+- **Seen on the device** (route 294 procLog, read-only ssh): while recording, the_galaxy went 78 → 121 MB and levelled off
+  (the live buffer is 60 s, < 1 MB). At the stop it reached 229 MB (finalize), then 667 MB when Plots was opened,
+  device memory 89 %, and it stayed near 510 MB: seven ~33 MB glibc arenas held freed memory.
+- **Cause:** every zoom (`get_window`) and the finalize parsed the whole CSV as text plus Python float lists
+  (~110 MB for 20 min). Taps at once stacked (8 at once: 730 MB peak, 315 MB held, local).
+- **Fix:** `read_rows` streams into one array, and with a window keeps only that window's rows; one whole-session read
+  at a time (`DrivePlots._heavy`); `malloc_trim` after each; the_galaxy caps glibc at 2 arenas in `main()`
+  (`limit_malloc_arenas`, pure Python, no launch change). Local, same 20-min session: 8 zooms at once +8 MB peak,
+  finalize +36 MB peak (was +112). Results are identical to the old reader (whole drive and windows; test).
+- **Not verified:** the device numbers after an update. Check `/proc/<the_galaxy>/status` VmRSS/VmHWM after a drive
+  and a few zooms.
+
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 
 **What was added.**

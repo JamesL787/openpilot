@@ -19,7 +19,6 @@ to the recorded samples and the tune snapshot stored beside them.
 """
 import csv
 import gzip
-import io
 import json
 import os
 import shutil
@@ -778,16 +777,18 @@ def overview(rows, buckets=1200):
   return out
 
 
-def window(rows, start_s, end_s, max_points=3000):
-  """Full-resolution rows between start_s and end_s (seconds from the drive's first sample)."""
+def window(rows, start_s, end_s, max_points=3000, t0=None):
+  """Full-resolution rows between start_s and end_s (seconds from the drive's first sample, t0 when rows is itself
+  only part of the drive)."""
   data = np.asarray(rows, dtype=float).reshape(-1, len(COLUMNS))
   if not len(data):
     return []
-  rel = data[:, 0] - data[0, 0]
+  t0 = data[0, 0] if t0 is None else t0
+  rel = data[:, 0] - t0
   sel = data[(rel >= start_s) & (rel <= end_s)]
   stride = max(1, int(np.ceil(len(sel) / max_points)))
   sel = sel[::stride].copy()
-  sel[:, 0] -= data[0, 0]
+  sel[:, 0] -= t0
   return [_json_row(r) for r in np.round(sel, 4).tolist()]
 
 
@@ -1001,6 +1002,7 @@ class DrivePlots:
     self.last_error = ""
     self.rec = None            # dict while recording
     self._live_cache = (-1, None)
+    self._heavy = threading.Lock()      # one whole-session read at a time: taps on several moments queue, not stack
 
   # ---------------- lifecycle ----------------
   def _make_submaster(self):
@@ -1166,7 +1168,13 @@ class DrivePlots:
     return m
 
   def finalize(self, d):
-    d = Path(d)
+    with self._heavy:
+      try:
+        self._finalize(Path(d))
+      finally:
+        release_freed_memory()
+
+  def _finalize(self, d):
     try:
       rows = read_rows(d)
       try:
@@ -1481,7 +1489,12 @@ class DrivePlots:
 
   def get_window(self, session_id, start_s, end_s):
     d = self._session_dir(session_id)
-    return {"columns": COLUMNS, "rows": window(read_rows(d), start_s, end_s)}
+    with self._heavy:
+      rows, t0 = read_rows(d, start_s, end_s)
+      out = window(rows, start_s, end_s, t0=t0)
+      del rows
+      release_freed_memory()
+    return {"columns": COLUMNS, "rows": out}
 
   def csv_path(self, session_id):
     d = self._session_dir(session_id)
@@ -1501,28 +1514,87 @@ class DrivePlots:
     return True
 
 
-def read_rows(d):
-  """Read a session's samples, tolerating a torn last line from an interrupted write."""
+_M_ARENA_MAX = -8
+
+
+def _libc():
+  try:
+    import ctypes
+    return ctypes.CDLL("libc.so.6")
+  except (OSError, ImportError):
+    return None
+
+
+def limit_malloc_arenas(n=2):
+  """Cap glibc at n malloc arenas. Each Flask request thread otherwise gets its own, and freed memory in them is
+  not returned: the_galaxy held seven ~33 MB arenas after one Plots visit (device, 2026-09-28). Call before the
+  server starts its threads. A no-op off glibc."""
+  libc = _libc()
+  if libc is None:
+    return False
+  try:
+    return bool(libc.mallopt(_M_ARENA_MAX, int(n)))
+  except AttributeError:
+    return False
+
+
+def release_freed_memory():
+  """Hand memory freed by a large read back to the system (glibc malloc_trim). A no-op off glibc."""
+  libc = _libc()
+  try:
+    if libc is not None:
+      libc.malloc_trim(0)
+  except AttributeError:
+    pass
+
+
+def read_rows(d, start_s=None, end_s=None):
+  """Read a session's samples, tolerating a torn last line from an interrupted write.
+
+  Streams the file into one float array: reading the whole text and a list of Python floats first cost ~110 MB for a
+  20-minute drive, several zooms at once took the_galaxy to 667 MB on the device (route 294), and glibc kept most of
+  it. With start_s/end_s (seconds from the drive's first sample) only that window's rows are kept, and the return is
+  (rows, t0) so the caller can place them in the drive."""
   d = Path(d)
+  windowed = start_s is not None
+  empty = np.zeros((0, len(COLUMNS)))
   if (d / "samples.csv.gz").exists():
-    text = gzip.open(d / "samples.csv.gz", "rt").read()
+    f = gzip.open(d / "samples.csv.gz", "rt", newline="")
   elif (d / "samples.csv").exists():
-    text = (d / "samples.csv").read_text()
+    f = open(d / "samples.csv", newline="")
   else:
-    return np.zeros((0, len(COLUMNS)))
-  # Older sessions may lack columns added later; they are read by header name and missing ones are zero.
-  reader = csv.reader(io.StringIO(text))
-  header = next(reader, None)
-  if not header or header[0] != "t":
-    return np.zeros((0, len(COLUMNS)))
-  order = [header.index(name) if name in header else None for name in COLUMNS]
-  rows = []
-  for rec in reader:
-    if len(rec) != len(header):
-      continue
+    return (empty, None) if windowed else empty
+  out, n, t0 = np.empty((1024, len(COLUMNS))), 0, None
+  with f:
+    reader = csv.reader(f)
+    header = next(reader, None)
+    if not header or header[0] != "t":
+      return (empty, None) if windowed else empty
+    # Older sessions may lack columns added later; they are read by header name and missing ones are zero.
+    order = [header.index(name) if name in header else None for name in COLUMNS]
+    fill = [np.nan if name in NAN_COLUMNS else 0.0 for name in COLUMNS]
     try:
-      rows.append([(np.nan if name in NAN_COLUMNS else 0.0) if i is None else float(rec[i])
-                   for name, i in zip(COLUMNS, order, strict=True)])
-    except ValueError:
-      continue
-  return np.asarray(rows, dtype=float).reshape(-1, len(COLUMNS))
+      for rec in reader:
+        if len(rec) != len(header):
+          continue
+        try:
+          if windowed:
+            t = float(rec[0])
+            if t0 is None:
+              t0 = t
+            if t - t0 > end_s:
+              break
+            if t - t0 < start_s:
+              continue
+          row = [fill[k] if i is None else float(rec[i]) for k, i in enumerate(order)]
+        except ValueError:
+          continue
+        if n == len(out):
+          out = np.resize(out, (2 * len(out), len(COLUMNS)))
+        out[n] = row
+        n += 1
+    except (EOFError, OSError):   # a gzip cut short: keep what was read
+      pass
+  rows = out[:n].copy()
+  del out
+  return (rows, t0) if windowed else rows

@@ -10690,6 +10690,8 @@ def setup(app):
     return {"error": "Video not found"}, 404
 
 def main():
+  # Before any thread starts: glibc gives each request thread its own malloc arena and keeps what is freed in it.
+  drive_plots.limit_malloc_arenas(2)
   while not _ensure_galaxy_web_deps():
     print(f"The Galaxy waiting for Flask dependency ({_GALAXY_WEB_DEPS_ERROR}); retrying in 60s.")
     time.sleep(60)
