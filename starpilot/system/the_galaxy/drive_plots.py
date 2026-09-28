@@ -30,6 +30,8 @@ from pathlib import Path
 
 import numpy as np
 
+from openpilot.starpilot.system.the_galaxy import drive_plots_agents as agents
+
 COLUMNS = [
   "t", "v", "a_ego", "enabled", "lat_active", "long_active", "steer_pressed", "gas_pressed", "brake_pressed",
   "lat_des", "lat_act", "long_des", "long_act", "long_state",
@@ -39,9 +41,34 @@ COLUMNS = [
   "ang_des", "ang_act", "ang_ok",
   # radarState.leadOne: distance (m), speed (m/s) and source (0 no lead, 1 radar, 2 camera only).
   "lead_d", "lead_v", "lead_src",
+  # ---- added 2026-09-28 for the lateral / longitudinal agents (drive_plots_agents.py says who asked for what) ----
+  # Driver and actuator: carState.steeringTorque / steeringTorqueEps / steeringRateDeg, either blinker,
+  # carControl.actuators.torque (requested) and carOutput.actuatorsOutput.torque (delivered; the gap is the override
+  # cut and fade).
+  "steer_tq", "steer_tq_eps", "steer_rate", "blinker", "tq_req", "tq_out",
+  # Controller: pidState.output / angleError / active; starpilotLateralState eps FF (active, weight, feedforward at
+  # full weight). pidState.p is the P before LatControlClarityEps's per-band scale.
+  "lat_out", "ang_err", "pid_active", "ff_active", "ff_w", "ff",
+  # Lane from modelV2.laneLines[1]/[2].y[0]: car offset from the lane centre (m, + = car left of centre), lane width,
+  # and the lower of the two laneLineProbs.
+  "lane_off", "lane_w", "lane_prob",
+  # How old controlsState was when this row was taken (ms); a stall shows as a large value.
+  "cs_age_ms",
+  # Longitudinal: carControl.actuators.accel (sent), plan shouldStop / fcw / hasLead, selfdriveState.experimentalMode,
+  # starpilotPlan tFollow / trackingLead, carState.standstill.
+  "a_cmd", "should_stop", "fcw", "has_lead", "exp_mode", "t_follow", "tracking_lead", "standstill",
+  # radarState.leadOne extras, leadTwo, and the camera's own lead (modelV2.leadsV3[0]).
+  "lead_id", "lead_y", "lead_vrel", "lead_a", "lead_prob", "lead_meas", "lead_vrr",
+  "lead2_on", "lead2_d", "lead2_v", "lead2_id",
+  "mlead_p", "mlead_x", "mlead_y", "mlead_v", "mlead_a",
 ]
+# Columns read as NaN ("not recorded") when an older recording lacks them, so no metric is built from zeros.
+_AGENT_COLS = COLUMNS[COLUMNS.index("steer_tq"):]
+NAN_COLUMNS = set(_AGENT_COLS)
 COL = {name: i for i, name in enumerate(COLUMNS)}
-BOOL_COLUMNS = {"enabled", "lat_active", "long_active", "steer_pressed", "gas_pressed", "brake_pressed", "lat_sat", "ang_ok"}
+BOOL_COLUMNS = {"enabled", "lat_active", "long_active", "steer_pressed", "gas_pressed", "brake_pressed", "lat_sat", "ang_ok",
+                "blinker", "pid_active", "ff_active", "should_stop", "fcw", "has_lead", "exp_mode", "tracking_lead",
+                "standstill", "lead_meas", "lead2_on"}
 LEAD_SOURCES = {0: None, 1: "radar", 2: "camera"}
 
 # Lateral controllers the advice can name (see the_galaxy._lateral_controller_info).
@@ -57,6 +84,23 @@ CLIENT_IDLE_TIMEOUT_S = 6.0
 OFFROAD_AUTOSTOP_S = 30.0
 MAX_RECORDING_S = 8 * 3600.0   # ~90 MB of CSV; stops a forgotten recording from filling /data
 FLUSH_EVERY_ROWS = 20
+
+# ---- automatic recording and the copy that goes into the drive's rlog ----
+AUTO_CHECK_S = 2.0               # how often the watcher looks at IsOnroad
+AUTO_KEEP_SESSIONS = 20          # automatic sessions kept (manual ones are never pruned)
+AUTO_KEEP_BYTES = 1_000_000_000  # and at most this much disk for them
+DEFAULT_SETTINGS = {"auto_record": True, "publish_to_log": True}
+# The rlog carrier: cereal's customReservedRawData0 (a logged :Data slot nothing else uses), so the device needs no
+# rebuild. Each message is one JSON object {"schema": RLOG_SCHEMA, "type": "start"|"moment"|"takeover"|"summary"|"end"}.
+# Times in it are monotonic (mono_s / mono_ns, the same clock as logMonoTime), never route-relative.
+RLOG_SERVICE = "customReservedRawData0"
+RLOG_SCHEMA = "drivePlots/1"
+PUBLISH_SCAN_S = 20.0            # moments are looked for this often, over the last LIVE_BUFFER_S of samples
+PUBLISH_MARGIN_S = 8.0           # a moment is published once it is this old, so its whole shape is in the window
+PUBLISH_EDGE_S = 1.0             # moments this close to the window's start may be cut off; the previous scan had them
+TAKEOVER_TAIL_S = 7.0            # a takeover waits for release + this, so the +6 s drift is measured
+PUBLISH_DEDUPE_S = 3.0
+SUMMARY_EVERY_S = 300.0
 
 # ---- analysis thresholds (heuristics; each finding that uses one says so) ----
 SEGMENT_GAP_S = 0.2          # a gap longer than this splits the series; lagged pairs never cross it
@@ -100,8 +144,6 @@ WOBBLE_BINS = [(5.0, 8.0), (8.0, 12.0), (12.0, 20.0)]
 WOBBLE_MIN_S = 3.0
 
 # Moments to check (events).
-EVENT_MERGE_S = 3.0          # crossings closer than this are one event
-GAS_BRAKE_DEMAND = -1.0      # m/s^2; openpilot was braking at least this hard in the second before the gas press
 EVENTS_PER_KIND = 15
 
 
@@ -244,26 +286,13 @@ def _has_angles(c):
   return bool(np.any(c["ang_ok"] > 0.5))
 
 
-def _event_starts(mask, dt):
-  """Indices where mask turns on, with crossings closer than EVENT_MERGE_S folded into the first."""
-  on = np.flatnonzero(mask[1:] & ~mask[:-1]) + 1
-  if len(mask) and mask[0]:
-    on = np.concatenate([[0], on])
-  out, last = [], -1e9
-  gap = EVENT_MERGE_S / dt
-  for i in on:
-    if i - last >= gap:
-      out.append(int(i))
-    last = i
-  return out
-
-
 def _analyze_turns(c, seg, dt):
   """Tight low-speed turns and near-straight wheel wobble, on wheel angle. None without angle data."""
   if not _has_angles(c):
     return None
   t, v, des, act = c["t"], c["v"], c["ang_des"], c["ang_act"]
-  base = (c["ang_ok"] > 0.5) & (c["lat_active"] > 0.5) & (c["steer_pressed"] < 0.5) & (v > TURN_MIN_SPEED)
+  # A driver grab and the first second after it are not the controller's turn (James): left out.
+  base = (c["ang_ok"] > 0.5) & (c["lat_active"] > 0.5) & ~agents.after_release(c) & (v > TURN_MIN_SPEED)
   side = np.sign(des)
   past = np.maximum(0.0, side * (act - des))
   trail = np.maximum(0.0, side * (des - act))
@@ -285,7 +314,7 @@ def _analyze_turns(c, seg, dt):
     same = np.sign(des[s:e]) == sd
     over = np.where(same, sd * (act[s:e] - des[s:e]), 0.0)
     j = s + int(np.argmax(over))
-    turns.append({"i": j, "t": round(float(t[j] - t[0]), 1), "v": _r(v[j], 1), "peak_des": _r(abs(des[k]), 0),
+    turns.append({"i": j, "t": round(float(t[j] - t[0]), 1), "mono_s": round(float(t[j]), 3), "v": _r(v[j], 1), "peak_des": _r(abs(des[k]), 0),
                   "overshoot": _r(max(0.0, float(over[j - s])), 1), "side": "left" if sd > 0 else "right"})
   wobble = []
   h = int(round(0.75 / dt))
@@ -370,50 +399,24 @@ def _analyze_lateral(c, seg, dt, min_engaged_s):
   return out
 
 
-def _lead(c, i):
-  src = LEAD_SOURCES.get(int(round(c["lead_src"][i])))
-  if src is None:
-    return None
-  return {"d": _r(c["lead_d"][i], 1), "v": _r(c["lead_v"][i], 1), "src": src}
-
-
-def _events(c, dt, lateral):
-  """Moments worth a look, with the time into the recording, the speed and the car ahead: hard brakes (planned
-  or felt), gas presses while openpilot was braking, steering take-overs and tight turns that went past the
-  request. Each kind keeps its first EVENTS_PER_KIND."""
-  t, v = c["t"], c["v"]
+def _events(c, dt, lateral, cap=EVENTS_PER_KIND, takeover_data=None):
+  """Moments worth a look, with the time into the recording, the speed and the car ahead: braking moments and
+  lead changes (drive_plots_agents.long_moments, Radar Work's list), driver takeovers while openpilot steered (raw
+  steeringPressed, with release numbers) and tight turns that went past the request. cap: per kind (None = all)."""
+  t = c["t"]
   if len(t) < 2:
     return []
-  n = len(t)
-  after = max(1, int(round(EVENT_MERGE_S / dt)))
-  before = max(1, int(round(1.0 / dt)))
-  rel = lambda i: round(float(t[i] - t[0]), 1)  # noqa: E731
-  out = []
-  long_on = c["long_active"] > 0.5
-  hard = long_on & ((c["long_act"] < HARD_BRAKE) | (c["long_des"] < HARD_BRAKE))
-  for i in _event_starts(hard, dt)[:EVENTS_PER_KIND]:
-    j = slice(i, min(n, i + after))
-    out.append({"kind": "hard_brake", "t": rel(i), "v": _r(v[i], 1), "a_min": _r(np.min(c["long_act"][j]), 2),
-                "plan_min": _r(np.min(c["long_des"][j]), 2), "lead": _lead(c, i),
-                "gas_after": bool(np.any(c["gas_pressed"][j] > 0.5))})
-  gas = (c["gas_pressed"] > 0.5) & (c["enabled"] > 0.5)
-  kept = 0
-  for i in _event_starts(gas, dt):
-    k = slice(max(0, i - before), i + 1)
-    if not (np.any(long_on[k]) and np.min(c["long_des"][k]) <= GAS_BRAKE_DEMAND):
-      continue
-    out.append({"kind": "gas_during_brake", "t": rel(i), "v": _r(v[i], 1), "plan_min": _r(np.min(c["long_des"][k]), 2),
-                "lead": _lead(c, max(0, i - 1))})
-    kept += 1
-    if kept >= EVENTS_PER_KIND:
-      break
-  press = (c["steer_pressed"] > 0.5) & (c["lat_active"] > 0.5)
-  for i in _event_starts(press, dt)[:EVENTS_PER_KIND]:
-    e = {"kind": "steer_takeover", "t": rel(i), "v": _r(v[i], 1)}
-    if c["ang_ok"][i] > 0.5:
-      e["ang_des"], e["ang_act"] = _r(c["ang_des"][i], 0), _r(c["ang_act"][i], 0)
-    out.append(e)
-  for x in ((lateral.get("turns") or {}).get("overshoots") or [])[:EVENTS_PER_KIND]:
+  out = agents.long_moments(c, cap=cap)
+  eps = (takeover_data or agents.takeovers(c))["episodes"]
+  kept = [e for e in eps if e["lat_active"]]
+  for e in (kept[:cap] if cap else kept):
+    x = {"kind": "steer_takeover", **{k: e[k] for k in ("t", "mono_s", "v", "hold_s", "tag", "push", "blinker",
+                                                            "release_overshoot_deg", "back_on_plan_s", "lanes_ok")
+                                      if k in e}}
+    x["drift_3s_m"] = e.get("drift_3s_m")
+    out.append(x)
+  overs = (lateral.get("turns") or {}).get("overshoots") or []
+  for x in (overs[:cap] if cap else overs):
     out.append({"kind": "turn_overshoot", **x})
   out.sort(key=lambda e: e["t"])
   return out
@@ -428,7 +431,8 @@ def _analyze_longitudinal(c, seg, dt, min_engaged_s):
   out = {
     "engaged_s": round(engaged_s, 1),
     "gas_overrides": _rising_edges((c["gas_pressed"] > 0.5) & (c["enabled"] > 0.5)),
-    "hard_brakes": _rising_edges((c["long_act"] < HARD_BRAKE) & (c["long_active"] > 0.5)),
+    # Planned braking (aTarget), not aEgo: hills and driver braking make aEgo alone misleading (Radar Work).
+    "hard_brakes": _rising_edges((c["long_des"] < HARD_BRAKE) & (c["long_active"] > 0.5)),
   }
   if engaged_s < min_engaged_s:
     out["status"] = "insufficient"
@@ -672,15 +676,25 @@ def _longitudinal_findings(m, takeaways):
   return f"{quality} over {_fmt_time(m['engaged_s'])} of engaged driving.", notes
 
 
-def analyze(rows, min_engaged_s=20.0, controller=None):
-  """controller: the lateral controller that drove (CONTROLLER_* or None), so advice names settings that apply."""
+def analyze(rows, min_engaged_s=20.0, controller=None, detail=True, cap=EVENTS_PER_KIND, lateral_delay=None):
+  """controller: the lateral controller that drove (CONTROLLER_* or None), so advice names settings that apply.
+  detail: add the agents' sections (driver takeovers, lateral detail per band); the live 30 s view skips them.
+  cap: moments kept per kind (None = all, for the rlog report)."""
   c = _as_arrays(rows)
   t = c["t"]
   seg = _segments(t)
   dt = _dt(t)
   lat = _analyze_lateral(c, seg, dt, min_engaged_s)
   lon = _analyze_longitudinal(c, seg, dt, min_engaged_s)
-  events = _events(c, dt, lat)
+  take = agents.takeovers(c) if detail else None
+  lat_detail = agents.lateral_detail(c, lateral_delay) if detail else None
+  # Plain-language copies for the Steering card (the full blocks stay under driver_takeovers / lateral_detail).
+  if take is not None and agents.has(c, "steer_tq"):
+    lat["takeovers"] = {k: v for k, v in take["summary"].items() if k != "definition"}
+  if lat_detail and lat_detail.get("status") == "ok":
+    lat["lane_straight"] = [{"band": b["band"], "median_m": b["lane_straight"]["median"]}
+                            for b in lat_detail["bands"] if b.get("lane_straight")]
+  events = _events(c, dt, lat, cap=cap, takeover_data=take)
   lon["gas_during_brake"] = sum(1 for e in events if e["kind"] == "gas_during_brake")
   takeaways = []
   lat_summary, lat_notes = _lateral_findings(lat, takeaways, controller)
@@ -706,6 +720,8 @@ def analyze(rows, min_engaged_s=20.0, controller=None):
     "events": events,
     "lateral": {**lat, "summary": lat_summary, "notes": lat_notes},
     "longitudinal": {**lon, "summary": lon_summary, "notes": lon_notes},
+    "driver_takeovers": take,
+    "lateral_detail": lat_detail,
     "method": ("How this was scored: only moments when openpilot was steering (no hands on the wheel, above "
                f"{LAT_MIN_SPEED * MPH:.0f} mph) or controlling speed (no gas, not stopped) count. The car's response is shifted "
                f"by its measured reaction delay before it is compared with the request. {curve_how}Tight turns (wheel past "
@@ -748,7 +764,24 @@ def window(rows, start_s, end_s, max_points=3000):
   stride = max(1, int(np.ceil(len(sel) / max_points)))
   sel = sel[::stride].copy()
   sel[:, 0] -= data[0, 0]
-  return np.round(sel, 4).tolist()
+  return [_json_row(r) for r in np.round(sel, 4).tolist()]
+
+
+def _json_row(row):
+  """NaN ("not recorded") becomes null: browsers' JSON.parse rejects NaN."""
+  return [None if isinstance(x, float) and x != x else x for x in row]
+
+
+def _json_safe(x):
+  if isinstance(x, dict):
+    return {k: _json_safe(v) for k, v in x.items()}
+  if isinstance(x, (list, tuple)):
+    return [_json_safe(v) for v in x]
+  if isinstance(x, (float, np.floating)):
+    return None if not np.isfinite(x) else float(x)
+  if isinstance(x, (np.integer, np.bool_)):
+    return x.item()
+  return x
 
 
 # =====================================================================================================
@@ -804,7 +837,7 @@ def build_row(sm):
   except Exception:
     long_state = 0
   t = sm.logMonoTime["longitudinalPlan"] / 1e9 if sm.logMonoTime["longitudinalPlan"] else time.monotonic()
-  return [
+  base = [
     round(t, 3), round(v, 3), round(_f(getattr(car_state, "aEgo", 0.0)), 3),
     int(have_cc and bool(cc.enabled)), int(have_cc and bool(cc.latActive)), int(have_cc and bool(cc.longActive)),
     int(bool(getattr(car_state, "steeringPressed", False))), int(bool(getattr(car_state, "gasPressed", False))),
@@ -816,6 +849,97 @@ def build_row(sm):
     round(ang_des, 2), round(_f(getattr(car_state, "steeringAngleDeg", 0.0)), 2), ang_ok,
     round(lead_d, 2), round(lead_v, 2), lead_src,
   ]
+  return base + _agent_columns(sm, cs, cc, have_cc, car_state, plan, t)
+
+
+NAN = float("nan")
+
+
+def _got(sm, name):
+  try:
+    return sm.recv_frame[name] > 0
+  except (KeyError, AttributeError):
+    return False
+
+
+def _agent_columns(sm, cs, cc, have_cc, car_state, plan, t):
+  """The NAN_COLUMNS, in COLUMNS order. A message that never arrived gives NaN (not recorded), not 0."""
+  o = {}
+  o["steer_tq"] = _f(getattr(car_state, "steeringTorque", NAN), NAN)
+  o["steer_tq_eps"] = _f(getattr(car_state, "steeringTorqueEps", NAN), NAN)
+  o["steer_rate"] = _f(getattr(car_state, "steeringRateDeg", NAN), NAN)
+  o["blinker"] = int(bool(getattr(car_state, "leftBlinker", False)) or bool(getattr(car_state, "rightBlinker", False)))
+  o["standstill"] = int(bool(getattr(car_state, "standstill", False)))
+  o["tq_req"] = _f(cc.actuators.torque, NAN) if have_cc else NAN
+  o["a_cmd"] = _f(cc.actuators.accel, NAN) if have_cc else NAN
+  o["tq_out"] = _f(sm["carOutput"].actuatorsOutput.torque, NAN) if _got(sm, "carOutput") else NAN
+  o["lat_out"] = o["ang_err"] = o["pid_active"] = NAN
+  try:
+    lcs = cs.lateralControlState
+    if lcs.which() == "pidState":
+      ps = lcs.pidState
+      o["lat_out"], o["ang_err"], o["pid_active"] = _f(ps.output, NAN), _f(ps.angleError, NAN), int(bool(ps.active))
+  except Exception:
+    pass
+  o["ff_active"] = o["ff_w"] = o["ff"] = NAN
+  if _got(sm, "starpilotLateralState"):
+    try:
+      ls = sm["starpilotLateralState"]
+      o["ff_active"], o["ff_w"], o["ff"] = int(bool(ls.epsFfActive)), _f(ls.epsFfWeight, NAN), _f(ls.epsFfFeedforward, NAN)
+    except Exception:
+      pass
+  o["lane_off"] = o["lane_w"] = o["lane_prob"] = NAN
+  o["mlead_p"] = o["mlead_x"] = o["mlead_y"] = o["mlead_v"] = o["mlead_a"] = NAN
+  if _got(sm, "modelV2"):
+    try:
+      md = sm["modelV2"]
+      ll, probs = md.laneLines, md.laneLineProbs
+      if len(ll) >= 3 and len(ll[1].y) and len(ll[2].y) and len(probs) >= 3:
+        y1, y2 = float(ll[1].y[0]), float(ll[2].y[0])
+        o["lane_off"], o["lane_w"] = (y1 + y2) / 2.0, y2 - y1   # y is + = right, so the centre's y = car left of it
+        o["lane_prob"] = min(float(probs[1]), float(probs[2]))
+      if len(md.leadsV3):
+        ld = md.leadsV3[0]
+        o["mlead_p"] = _f(ld.prob, NAN)
+        o["mlead_x"] = _f(ld.x[0], NAN) if len(ld.x) else NAN
+        o["mlead_y"] = _f(ld.y[0], NAN) if len(ld.y) else NAN
+        o["mlead_v"] = _f(ld.v[0], NAN) if len(ld.v) else NAN
+        o["mlead_a"] = _f(ld.a[0], NAN) if len(ld.a) else NAN
+    except Exception:
+      pass
+  try:
+    cs_mono = sm.logMonoTime["controlsState"]
+    o["cs_age_ms"] = max(0.0, (t * 1e9 - cs_mono) / 1e6) if cs_mono else NAN
+  except Exception:
+    o["cs_age_ms"] = NAN
+  o["should_stop"] = int(bool(getattr(plan, "shouldStop", False)))
+  o["fcw"] = int(bool(getattr(plan, "fcw", False)))
+  o["has_lead"] = int(bool(getattr(plan, "hasLead", False)))
+  o["exp_mode"] = int(bool(sm["selfdriveState"].experimentalMode)) if _got(sm, "selfdriveState") else NAN
+  o["t_follow"] = o["tracking_lead"] = NAN
+  if _got(sm, "starpilotPlan"):
+    try:
+      sp = sm["starpilotPlan"]
+      o["t_follow"], o["tracking_lead"] = _f(sp.tFollow, NAN), int(bool(sp.trackingLead))
+    except Exception:
+      pass
+  for k in ("lead_id", "lead_y", "lead_vrel", "lead_a", "lead_prob", "lead_meas", "lead_vrr",
+            "lead2_on", "lead2_d", "lead2_v", "lead2_id"):
+    o[k] = NAN
+  if _got(sm, "radarState"):
+    try:
+      rs = sm["radarState"]
+      l1, l2 = rs.leadOne, rs.leadTwo
+      if l1.status:
+        o["lead_id"], o["lead_y"], o["lead_vrel"] = _f(l1.radarTrackId, -1), _f(l1.yRel, NAN), _f(l1.vRel, NAN)
+        o["lead_a"], o["lead_prob"] = _f(l1.aLeadK, NAN), _f(l1.modelProb, NAN)
+        o["lead_meas"], o["lead_vrr"] = int(bool(l1.measuredRadar)), _f(l1.vRelRangeDerived, NAN)
+      o["lead2_on"] = int(bool(l2.status))
+      if l2.status:
+        o["lead2_d"], o["lead2_v"], o["lead2_id"] = _f(l2.dRel, NAN), _f(l2.vLead, NAN), _f(l2.radarTrackId, -1)
+    except Exception:
+      pass
+  return [round(o[k], 4) if isinstance(o[k], float) and o[k] == o[k] else o[k] for k in _AGENT_COLS]
 
 
 def _fmt(x):
@@ -826,10 +950,18 @@ def _fmt(x):
 
 
 class DrivePlots:
-  SERVICES = ["controlsState", "carControl", "carState", "longitudinalPlan", "radarState"]
+  SERVICES = ["controlsState", "carControl", "carState", "longitudinalPlan", "radarState", "carOutput", "modelV2",
+              "selfdriveState", "starpilotPlan", "starpilotLateralState"]
 
-  def __init__(self, root, is_onroad, submaster_factory=None, clock=time.monotonic, controller_fn=None):
+  def __init__(self, root, is_onroad, submaster_factory=None, clock=time.monotonic, controller_fn=None,
+               meta_fn=None, route_fn=None, publisher_factory=None):
     self.root = Path(root)
+    self.meta_fn = meta_fn               # -> dict snapshot of car/tune for an automatic recording
+    self.route_fn = route_fn             # -> loggerd's CurrentRoute, or None before it is set
+    self._publisher_factory = publisher_factory
+    self._pm = None
+    self._auto_thread = None
+    self._skip_this_drive = False        # the driver stopped the automatic recording; wait for the next drive
     self.is_onroad = is_onroad
     self.clock = clock
     self.controller_fn = controller_fn   # -> CONTROLLER_* or None, for the live analysis's advice
@@ -958,7 +1090,9 @@ class DrivePlots:
       w = csv.writer(f)
       w.writerow(COLUMNS)
       self.rec = {"id": d.name, "dir": d, "file": f, "writer": w, "rows": 0, "first_t": None, "last_t": None,
-                  "started_mono": self.clock(), "seen_onroad": bool(self.is_onroad()), "offroad_since": None}
+                  "started_mono": self.clock(), "seen_onroad": bool(self.is_onroad()), "offroad_since": None,
+                  "meta": m, "route": m.get("route"), "start_published": False, "last_scan": self.clock(),
+                  "last_summary": self.clock(), "published": [], "counts": {}}
       self._ensure_thread_locked()
       return self._rec_status_locked()
 
@@ -968,6 +1102,9 @@ class DrivePlots:
       self.rec = None
     if rec is None:
       return None
+    if reason == "stopped by user":
+      self._skip_this_drive = True
+    self._publish_end(rec, reason)
     try:
       rec["file"].flush()
       rec["file"].close()
@@ -981,10 +1118,14 @@ class DrivePlots:
     self._update_meta(rec["dir"], {"status": "analyzing", "stopped_at": time.time(), "stop_reason": reason,
                                    "first_sample_at": rec.get("first_wall")})
     if background:
-      threading.Thread(target=self.finalize, args=(rec["dir"],), daemon=True).start()
+      threading.Thread(target=self._finalize_and_prune, args=(rec["dir"],), daemon=True).start()
     else:
-      self.finalize(rec["dir"])
+      self._finalize_and_prune(rec["dir"])
     return {"id": rec["id"], "rows": rec["rows"], "reason": reason}
+
+  def _finalize_and_prune(self, d):
+    self.finalize(d)
+    self.prune_auto_sessions()
 
   def _update_meta(self, d, updates):
     p = d / "meta.json"
@@ -1003,13 +1144,13 @@ class DrivePlots:
     try:
       rows = read_rows(d)
       try:
-        controller = json.loads((d / "meta.json").read_text()).get("lateral_controller")
+        m = json.loads((d / "meta.json").read_text())
       except Exception:
-        controller = None
-      result = analyze(rows, controller=controller)
+        m = {}
+      result = analyze(rows, controller=m.get("lateral_controller"), lateral_delay=m.get("lateral_delay"))
       result["overview"] = overview(rows)
       tmp = d / "analysis.tmp"
-      tmp.write_text(json.dumps(result))
+      tmp.write_text(json.dumps(_json_safe(result)))
       os.replace(tmp, d / "analysis.json")
       raw = d / "samples.csv"
       if raw.exists():
@@ -1040,6 +1181,204 @@ class DrivePlots:
         self._update_meta(d, {"status": "analyzing", "stop_reason": "interrupted (Galaxy restarted)"})
         self.finalize(d)
 
+  # ---------------- automatic recording ----------------
+  def settings(self):
+    out = dict(DEFAULT_SETTINGS)
+    try:
+      saved = json.loads((self.root / "settings.json").read_text())
+      out.update({k: bool(saved[k]) for k in DEFAULT_SETTINGS if k in saved})
+    except Exception:
+      pass
+    return out
+
+  def set_settings(self, updates):
+    cur = self.settings()
+    cur.update({k: bool(v) for k, v in (updates or {}).items() if k in DEFAULT_SETTINGS})
+    self.root.mkdir(parents=True, exist_ok=True)
+    tmp = self.root / "settings.tmp"
+    tmp.write_text(json.dumps(cur))
+    os.replace(tmp, self.root / "settings.json")
+    return cur
+
+  def start_auto(self):
+    """Start the watcher that records every drive (Galaxy calls this once at startup)."""
+    with self.lock:
+      if self._auto_thread is not None and self._auto_thread.is_alive():
+        return
+      self._auto_thread = threading.Thread(target=self._auto_loop, name="galaxy-drive-plots-auto", daemon=True)
+      self._auto_thread.start()
+
+  def _auto_loop(self):
+    while True:
+      try:
+        self.auto_tick()
+      except Exception as e:
+        with self.lock:
+          self.last_error = f"auto: {e}"
+      time.sleep(AUTO_CHECK_S)
+
+  def auto_tick(self):
+    """One watcher step: start a recording when a drive starts, then keep the drive's rlog copy up to date."""
+    onroad = bool(self.is_onroad())
+    settings = self.settings()
+    with self.lock:
+      rec = self.rec
+    if not onroad:
+      self._skip_this_drive = False
+    elif rec is None and settings["auto_record"] and not self._skip_this_drive:
+      meta = {}
+      if self.meta_fn is not None:
+        try:
+          meta = dict(self.meta_fn() or {})
+        except Exception:
+          meta = {}
+      meta["auto"] = True
+      self.start_recording(meta)
+      with self.lock:
+        rec = self.rec
+    if rec is None:
+      return
+    if not rec.get("route") and self.route_fn is not None:
+      try:
+        route = self.route_fn()
+      except Exception:
+        route = None
+      if route:
+        rec["route"] = route
+        rec["meta"]["route"] = route
+        self._update_meta(rec["dir"], {"route": route})
+    if settings["publish_to_log"] and onroad:
+      self._publish_tick(rec)
+
+  def prune_auto_sessions(self):
+    """Drop the oldest automatic sessions past AUTO_KEEP_SESSIONS / AUTO_KEEP_BYTES. Manual ones are kept."""
+    if not self.root.exists():
+      return []
+    with self.lock:
+      active = self.rec["id"] if self.rec else None
+    auto = []
+    for d in self.root.iterdir():
+      if not d.is_dir() or d.name == active:
+        continue
+      try:
+        m = json.loads((d / "meta.json").read_text())
+      except Exception:
+        continue
+      if m.get("auto") and m.get("status") in ("done", "error"):
+        size = sum(f.stat().st_size for f in d.iterdir() if f.is_file())
+        auto.append((m.get("started_at") or 0, d, size))
+    auto.sort(key=lambda x: x[0], reverse=True)
+    removed, total = [], 0
+    for i, (_, d, size) in enumerate(auto):
+      total += size
+      if i >= AUTO_KEEP_SESSIONS or total > AUTO_KEEP_BYTES:
+        shutil.rmtree(d, ignore_errors=True)
+        removed.append(d.name)
+    return removed
+
+  # ---------------- the drive's rlog copy ----------------
+  def _publish(self, kind, body):
+    if self._pm is None:
+      if self._publisher_factory is not None:
+        self._pm = self._publisher_factory()
+      else:
+        from cereal import messaging
+        self._pm = messaging.PubMaster([RLOG_SERVICE])
+    now_ns = int(time.monotonic() * 1e9)
+    payload = json.dumps(_json_safe({"schema": RLOG_SCHEMA, "type": kind, "mono_ns": now_ns, **body}),
+                         separators=(",", ":")).encode()
+    if self._publisher_factory is not None:
+      self._pm.send(RLOG_SERVICE, payload)
+      return payload
+    from cereal import messaging
+    msg = messaging.new_message(None, valid=True)
+    msg.customReservedRawData0 = payload
+    self._pm.send(RLOG_SERVICE, msg)
+    return payload
+
+  def _publish_tick(self, rec):
+    now = self.clock()
+    if not rec["start_published"]:
+      rec["start_published"] = True
+      m = rec["meta"]
+      self._publish("start", {"session": rec["id"], "auto": bool(m.get("auto")), "route": rec.get("route"),
+                              "car": m.get("car"), "lateral_controller": m.get("lateral_controller"),
+                              "lateral_delay": m.get("lateral_delay"), "git_commit": m.get("git_commit"),
+                              "git_branch": m.get("git_branch"), "openpilot_longitudinal": m.get("openpilot_longitudinal"),
+                              "tune": m.get("tune", {}), "columns": COLUMNS})
+    if now - rec["last_scan"] >= PUBLISH_SCAN_S:
+      rec["last_scan"] = now
+      self._scan_and_publish(rec)
+    if now - rec["last_summary"] >= SUMMARY_EVERY_S:
+      rec["last_summary"] = now
+      self._publish_summary(rec)
+
+  def _recent_arrays(self, rec):
+    with self.lock:
+      rows = [r for _, r in self.buffer]
+    first = rec.get("first_t")
+    if first is not None:
+      rows = [r for r in rows if r[0] >= first]
+    return _as_arrays(rows) if len(rows) > 1 else None
+
+  def _seen(self, rec, kind, mono_s):
+    for k, m in rec["published"]:
+      if k == kind and abs(m - mono_s) < PUBLISH_DEDUPE_S:
+        return True
+    rec["published"].append((kind, mono_s))
+    rec["published"] = rec["published"][-400:]
+    rec["counts"][kind] = rec["counts"].get(kind, 0) + 1
+    return False
+
+  def _scan_and_publish(self, rec):
+    """Publish the moments and takeovers that have finished since the last scan. Returns how many."""
+    c = self._recent_arrays(rec)
+    if c is None:
+      return 0
+    t = c["t"]
+    t0 = rec["first_t"] if rec["first_t"] is not None else t[0]
+    lo = t[0] + (PUBLISH_EDGE_S if t[0] > t0 + 0.5 else -1.0)
+    hi = t[-1] - PUBLISH_MARGIN_S
+    sent = 0
+    for e in agents.long_moments(c, t0=t0):
+      if lo <= e["mono_s"] <= hi and not self._seen(rec, e["kind"], e["mono_s"]):
+        self._publish("moment", {"session": rec["id"], "route": rec.get("route"), **e})
+        sent += 1
+    for e in agents.takeovers(c, t0=t0)["episodes"]:
+      release_mono = e["mono_s"] + (e["release_t"] - e["t"])
+      if lo <= e["mono_s"] and release_mono + TAKEOVER_TAIL_S <= t[-1] and not self._seen(rec, "takeover", e["mono_s"]):
+        e = {k: v for k, v in e.items() if not k.startswith("i_") or k in ("i_press", "i_release", "i_release_1s")}
+        self._publish("takeover", {"session": rec["id"], "route": rec.get("route"), **e})
+        sent += 1
+    return sent
+
+  def _publish_summary(self, rec, kind="summary", reason=None):
+    body = {"session": rec["id"], "route": rec.get("route"), "rows": rec["rows"],
+            "elapsed_s": round((rec["last_t"] - rec["first_t"]) if rec["first_t"] is not None else 0.0, 1),
+            "counts": dict(rec["counts"])}
+    if reason:
+      body["reason"] = reason
+    with self.lock:
+      rows = [r for _, r in self.buffer]
+    if len(rows) > 1:
+      try:
+        a = analyze(rows, min_engaged_s=10.0, controller=rec["meta"].get("lateral_controller"), detail=False)
+        body["last_window_s"] = LIVE_BUFFER_S
+        body["lateral"] = a["lateral"]["summary"]
+        body["longitudinal"] = a["longitudinal"]["summary"]
+      except Exception as e:
+        body["error"] = str(e)
+    return self._publish(kind, body)
+
+  def _publish_end(self, rec, reason):
+    if not rec.get("start_published") or not self.settings()["publish_to_log"]:
+      return
+    try:
+      self._scan_and_publish(rec)
+      self._publish_summary(rec, kind="end", reason=reason)
+    except Exception:
+      pass
+
   # ---------------- queries ----------------
   def _rec_status_locked(self):
     if self.rec is None:
@@ -1051,7 +1390,7 @@ class DrivePlots:
   def live(self, since=0):
     self.touch()
     with self.lock:
-      rows = [[s, *r] for s, r in self.buffer if s > since]
+      rows = [[s, *_json_row(r)] for s, r in self.buffer if s > since]
       seq = self.seq
       age = time.time() - self.last_sample_wall if self.last_sample_wall else None
       rec = self._rec_status_locked()
@@ -1070,7 +1409,7 @@ class DrivePlots:
             controller = self.controller_fn()
           except Exception:
             controller = None
-        a = analyze(window_rows, min_engaged_s=10.0, controller=controller)
+        a = analyze(window_rows, min_engaged_s=10.0, controller=controller, detail=False)
         cache = {k: a[k] for k in ("lateral", "longitudinal", "controller")}
       with self.lock:
         self._live_cache = (seq, cache)
@@ -1098,7 +1437,7 @@ class DrivePlots:
       except Exception:
         continue
       out.append({k: m.get(k) for k in ("id", "started_at", "stopped_at", "status", "stop_reason", "duration_s",
-                                        "lateral_summary", "longitudinal_summary", "car", "error")})
+                                        "lateral_summary", "longitudinal_summary", "car", "error", "auto", "route")})
     return out
 
   def get_session(self, session_id):
@@ -1153,7 +1492,8 @@ def read_rows(d):
     if len(rec) != len(header):
       continue
     try:
-      rows.append([0.0 if i is None else float(rec[i]) for i in order])
+      rows.append([(np.nan if name in NAN_COLUMNS else 0.0) if i is None else float(rec[i])
+                   for name, i in zip(COLUMNS, order, strict=True)])
     except ValueError:
       continue
   return np.asarray(rows, dtype=float).reshape(-1, len(COLUMNS))

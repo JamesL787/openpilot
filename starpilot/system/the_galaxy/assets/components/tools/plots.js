@@ -130,6 +130,20 @@ async function startRecording() {
   }
 }
 
+async function setAutoRecord(on) {
+  state.busy = true
+  try {
+    const payload = await fetchJson("/api/plots/settings", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auto_record: !!on }),
+    })
+    if (state.live) state.live = { ...state.live, settings: payload.settings }
+  } catch (error) {
+    state.error = error?.message || String(error)
+  } finally {
+    state.busy = false
+  }
+}
+
 async function stopRecording() {
   state.busy = true
   try {
@@ -368,9 +382,15 @@ function RecordingCard() {
   return html`
     <section class="plotCard plotStatusCard">
       <p class="plotDescription">
-        Press <strong>Start recording</strong> before a drive. Everything openpilot asks for and what the car does is saved
-        at 20 Hz until you press Stop (or 30 s after the car goes offroad), then analyzed. Recordings live on the device.
+        With <strong>Record every drive</strong> on, recording starts by itself when the car goes onroad. Everything
+        openpilot asks for and what the car does is saved at 20 Hz until 30 s after the car goes offroad (or you press
+        Stop), then analyzed. Recordings live on the device; the oldest automatic ones are removed after 20.
       </p>
+      <label class="plotToggle">
+        <input type="checkbox" checked="${() => state.live?.settings?.auto_record !== false}" disabled="${() => state.busy}"
+               @change="${(e) => setAutoRecord(e.target.checked)}">
+        Record every drive, and copy the moments into the drive's logs for later review
+      </label>
       <div class="plotActions">
         ${state.recActive
           ? html`<button class="plotButton plotButtonStop" disabled="${() => state.busy}" @click="${stopRecording}">Stop recording</button>`

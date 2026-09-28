@@ -173,6 +173,17 @@ export const Plots = {
     fmtDuration,
     controllerName,
     statusLabel,
+    async setAutoRecord(on) {
+      this.busy = true
+      try {
+        const payload = await api.setPlotsSettings({ auto_record: !!on })
+        if (this.live) this.live = { ...this.live, settings: payload?.settings }
+      } catch (e) {
+        this.error = e?.message || "Failed to save the setting"
+      } finally {
+        this.busy = false
+      }
+    },
     rebuildLive() {
       this.liveCharts = buildTrackingCharts(this.buffer.view(), { advanced: this.showAdvancedTerms, speed: this.speed,
                                                                  controller: this.lateralController })
@@ -306,9 +317,15 @@ export const Plots = {
         </div>
         <div style="padding: var(--sp-3);">
           <p style="color: var(--text-muted); line-height:1.6; margin:0 0 var(--sp-3);">
-            Press Start recording before a drive. What openpilot asks for and what the car does is saved at 20 Hz until
-            you press Stop (or 30 s after the car goes offroad), then analyzed. Recordings stay on the device.
+            With Record every drive on, recording starts by itself when the car goes onroad. What openpilot asks for and
+            what the car does is saved at 20 Hz until 30 s after the car goes offroad (or you press Stop), then analyzed.
+            Recordings stay on the device; the oldest automatic ones are removed after 20.
           </p>
+          <label style="display:flex; gap:8px; align-items:center; margin:0 0 var(--sp-3); cursor:pointer;">
+            <input type="checkbox" :checked="live?.settings?.auto_record !== false" :disabled="busy"
+                   @change="setAutoRecord($event.target.checked)">
+            <span>Record every drive, and copy the moments into the drive's logs for later review</span>
+          </label>
           <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
             <button v-if="recording" type="button" class="gx-btn gx-btn--danger" :disabled="busy" @click="stopRecording">
               <i class="bi bi-stop-fill"></i> Stop recording

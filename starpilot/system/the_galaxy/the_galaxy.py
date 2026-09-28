@@ -1988,6 +1988,9 @@ try:
 except Exception:
   _NRDR_LATERAL_TUNE_KEYS = ()
 _DRIVE_PLOTS_RADAR_KEYS = ("BlotV3", "BoschARadar", "NrdrHondaEcuMatchedLong")
+# Asked for by the lateral agents: lane centring, the delay the controller assumes, and the firmware-FF switch.
+_DRIVE_PLOTS_AGENT_KEYS = ("LaneCentering", "LaneCenteringE2EAuthority", "LaneCenterOffset", "SteerDelay",
+                           "NrdrLatEpsFirmwareFF", "ExperimentalMode")
 _CLARITY_EPS_CARS = (HONDA_CAR.HONDA_CLARITY, HONDA_CAR.HONDA_CIVIC_BOSCH)
 _lateral_controller_cache = {"key": None, "value": None}
 
@@ -2037,8 +2040,20 @@ def _drive_plots_meta():
       meta[target] = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
     except Exception:
       pass
+  try:
+    meta["route"] = _drive_plots_route()
+  except Exception:
+    meta["route"] = None
+  meta["lateral_delay"] = _drive_plots_lateral_delay()
+  try:
+    all_keys = [k.decode() if isinstance(k, bytes) else str(k) for k in params.all_keys()]
+  except Exception:
+    all_keys = []
+  # Every Nrdr*/HondaOverride* key, so an agent reading the log sees the whole tune (a missing one reads "missing").
+  agent_keys = sorted(k for k in all_keys if k.startswith(("Nrdr", "HondaOverride")))
   tune_keys = dict.fromkeys([*_TROUBLESHOOT_ADVANCED_LATERAL_KEYS, *_NRDR_LATERAL_TUNE_KEYS,
-                              *_TROUBLESHOOT_ADVANCED_LONGITUDINAL_KEYS, *_DRIVE_PLOTS_RADAR_KEYS])
+                              *_TROUBLESHOOT_ADVANCED_LONGITUDINAL_KEYS, *_DRIVE_PLOTS_RADAR_KEYS,
+                              *_DRIVE_PLOTS_AGENT_KEYS, *agent_keys])
   for key in tune_keys:
     try:
       value = params.get(key)
@@ -2048,7 +2063,24 @@ def _drive_plots_meta():
         meta["tune"][key] = value if isinstance(value, (str, int, float, bool)) else str(value)
     except Exception:
       pass
+  for key in agent_keys:
+    meta["tune"].setdefault(key, "missing")
   return meta
+
+def _drive_plots_route():
+  value = params.get("CurrentRoute")
+  return (value.decode("utf-8", "replace") if isinstance(value, bytes) else value) or None
+
+def _drive_plots_lateral_delay():
+  """lagd's learned steering delay (LiveDelay), in seconds, or None."""
+  try:
+    raw = _safe_params_get_live_raw("LiveDelay")
+    if raw:
+      with log.Event.from_bytes(raw) as evt:
+        return round(float(evt.liveDelay.lateralDelay), 3)
+  except Exception:
+    pass
+  return None
 
 _drive_plots = None
 _drive_plots_init_lock = threading.Lock()
@@ -2058,8 +2090,10 @@ def _get_drive_plots():
   with _drive_plots_init_lock:
     if _drive_plots is None:
       _drive_plots = drive_plots.DrivePlots(_get_galaxy_dir() / "drive_plots", is_onroad=lambda: params.get_bool("IsOnroad"),
-                                            controller_fn=_lateral_controller_info)
+                                            controller_fn=_lateral_controller_info, meta_fn=_drive_plots_meta,
+                                            route_fn=_drive_plots_route)
       threading.Thread(target=_drive_plots.recover_interrupted, daemon=True).start()
+      _drive_plots.start_auto()
     return _drive_plots
 
 def _set_fast_update_state(**kwargs):
@@ -8314,7 +8348,18 @@ def setup(app):
     payload["isOnroad"] = params.get_bool("IsOnroad")
     payload["isMetric"] = _safe_params_get_bool("IsMetric")
     payload["lateralController"] = _lateral_controller_info()
+    payload["settings"] = _get_drive_plots().settings()
     return jsonify(payload), 200
+
+  @app.route("/api/plots/settings", methods=["GET", "POST"])
+  def plots_settings():
+    plots = _get_drive_plots()
+    if request.method == "POST":
+      body = request.get_json(silent=True) or {}
+      if not isinstance(body, dict):
+        return jsonify({"error": "Invalid request"}), 400
+      return jsonify({"settings": plots.set_settings(body)}), 200
+    return jsonify({"settings": plots.settings()}), 200
 
   @app.route("/api/plots/recording/start", methods=["POST"])
   def start_plots_recording():
@@ -10652,6 +10697,8 @@ def main():
   app = Flask(__name__, static_folder="assets", static_url_path="/assets")
   setup(app)
   threading.Thread(target=_testing_ground_custom_reserved_worker, daemon=True).start()
+  # Plots records every drive on its own (Plots > "Record every drive"); building it starts that watcher.
+  threading.Thread(target=_get_drive_plots, daemon=True).start()
 
   # Desktop-only debug mode. On-device must stay on 8082 to match Galaxy FRP routing.
   on_device = _is_comma_device_runtime()

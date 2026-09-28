@@ -6,9 +6,10 @@ import json
 import numpy as np
 import pytest
 
-from cereal import car, log
+from cereal import car, custom, log
 
 import starpilot.system.the_galaxy.drive_plots as dp
+import starpilot.system.the_galaxy.drive_plots_agents as agents
 
 DT = 0.05
 
@@ -27,6 +28,8 @@ def _drive(n_s=120.0, lat_lag=0.0, lat_gain=1.0, lat_bias=0.0, wobble_hz=None, w
   long_act = long_gain * np.concatenate([np.full(k_long, long_des[0]), long_des[:n - k_long]])
   rows = np.zeros((n, len(dp.COLUMNS)))
   c = dp.COL
+  for name in dp.NAN_COLUMNS:   # like a recording made before these signals were logged
+    rows[:, c[name]] = np.nan
   rows[:, c["t"]] = 1000.0 + t
   rows[:, c["v"]] = v
   rows[:, c["a_ego"]] = long_act
@@ -127,6 +130,11 @@ class _FakeSM:
     self.car_state = car.CarState.new_message()
     self.plan = log.LongitudinalPlan.new_message()
     self.radar = log.RadarState.new_message()
+    self.car_output = car.CarOutput.new_message()
+    self.model = log.ModelDataV2.new_message()
+    self.selfdrive = log.SelfdriveState.new_message()
+    self.sp_plan = custom.StarPilotPlan.new_message()
+    self.sp_lat = custom.StarPilotLateralState.new_message()
     self.recv_frame = {s: 0 for s in dp.DrivePlots.SERVICES}
     self.updated = {s: False for s in dp.DrivePlots.SERVICES}
     self.logMonoTime = {s: 0 for s in dp.DrivePlots.SERVICES}
@@ -140,7 +148,8 @@ class _FakeSM:
 
   def __getitem__(self, name):
     return {"controlsState": self.cs, "carControl": self.cc, "carState": self.car_state,
-            "longitudinalPlan": self.plan, "radarState": self.radar}[name]
+            "longitudinalPlan": self.plan, "radarState": self.radar, "carOutput": self.car_output, "modelV2": self.model,
+            "selfdriveState": self.selfdrive, "starpilotPlan": self.sp_plan, "starpilotLateralState": self.sp_lat}[name]
 
 
 def _engaged_sm():
@@ -477,7 +486,9 @@ def test_hard_brake_and_overridden_braking_are_moments_with_the_car_ahead():
   assert ev["hard_brake"]["t"] == pytest.approx(40.0, abs=0.06) and ev["hard_brake"]["lead"]["src"] == "radar"
   assert ev["hard_brake"]["a_min"] == pytest.approx(-3.0) and ev["hard_brake"]["gas_after"] is False
   assert ev["gas_during_brake"]["t"] == pytest.approx(81.0, abs=0.06)
-  assert ev["gas_during_brake"]["lead"] == {"d": 30.0, "v": 20.0, "src": "radar"}
+  lead = ev["gas_during_brake"]["lead"]
+  assert {k: lead[k] for k in ("d", "v", "src")} == {"d": 30.0, "v": 20.0, "src": "radar"}
+  assert all(lead.get(k) is None for k in ("track_id", "vrel", "a", "prob")), "not recorded is None, not 0"
   assert ev["steer_takeover"]["t"] == pytest.approx(60.0, abs=0.06)
   assert [e["t"] for e in a["events"]] == sorted(e["t"] for e in a["events"])
   assert a["longitudinal"]["gas_during_brake"] == 1
@@ -487,7 +498,7 @@ def test_hard_brake_and_overridden_braking_are_moments_with_the_car_ahead():
 def test_event_starts_merge_close_crossings():
   m = np.zeros(200, dtype=bool)
   m[10:12] = m[20:22] = m[150:152] = True
-  assert dp._event_starts(m, 0.05) == [10, 150]
+  assert agents._starts(m, np.arange(200) * 0.05, 3.0) == [10, 150]
 
 
 def test_advice_names_the_controller_that_drove():
@@ -520,3 +531,178 @@ def test_live_analysis_carries_the_controller(tmp_path):
   for _ in range(5):
     plots.step(sm)
   assert plots.live()["liveAnalysis"]["controller"] == dp.CONTROLLER_NRDR_PID
+
+
+# ------------------------- signals the lat / long agents asked for -------------------------
+
+def test_build_row_reads_agent_signals_and_nan_when_never_received():
+  sm = _engaged_sm()
+  sm.car_state.steeringTorque = -700.0
+  sm.car_state.leftBlinker = True
+  sm.cc.actuators.torque = 0.4
+  sm.cc.actuators.accel = -1.2
+  sm.car_output.actuatorsOutput.torque = 0.1
+  pid = sm.cs.lateralControlState.init("pidState")
+  pid.angleError, pid.output, pid.active = 1.5, 0.3, True
+  sm.sp_lat.epsFfActive, sm.sp_lat.epsFfWeight, sm.sp_lat.epsFfFeedforward = True, 0.5, 0.2
+  ll = sm.model.init("laneLines", 4)
+  for line, y in zip(ll, (-5.4, -1.6, 2.0, 5.6), strict=True):
+    line.y = [y]
+  sm.model.laneLineProbs = [0.1, 0.9, 0.7, 0.1]
+  sm.sp_plan.tFollow, sm.sp_plan.trackingLead = 1.45, True
+  sm.selfdrive.experimentalMode = True
+  sm.radar.leadOne.status = True
+  sm.radar.leadOne.radarTrackId = 17
+  sm.radar.leadOne.vRelRangeDerived = -0.8
+  sm.radar.leadTwo.status = True
+  sm.radar.leadTwo.dRel = 60.0
+  sm.update()
+  r = dict(zip(dp.COLUMNS, dp.build_row(sm), strict=True))
+  assert r["steer_tq"] == -700.0 and r["blinker"] == 1
+  assert r["tq_req"] == pytest.approx(0.4) and r["tq_out"] == pytest.approx(0.1) and r["a_cmd"] == pytest.approx(-1.2)
+  assert r["ang_err"] == pytest.approx(1.5) and r["lat_out"] == pytest.approx(0.3) and r["pid_active"] == 1
+  assert r["ff_active"] == 1 and r["ff_w"] == pytest.approx(0.5) and r["ff"] == pytest.approx(0.2)
+  # model y is + = right: lines at -1.6 / +2.0 put the lane centre 0.2 m right, so the car is 0.2 m LEFT of it.
+  assert r["lane_off"] == pytest.approx(0.2) and r["lane_w"] == pytest.approx(3.6) and r["lane_prob"] == pytest.approx(0.7)
+  assert r["t_follow"] == pytest.approx(1.45) and r["tracking_lead"] == 1 and r["exp_mode"] == 1
+  assert r["lead_id"] == 17 and r["lead_vrr"] == pytest.approx(-0.8) and r["lead2_on"] == 1 and r["lead2_d"] == 60.0
+  fresh = _engaged_sm()
+  fresh.recv_frame = {s: 0 for s in fresh.recv_frame}
+  fresh.recv_frame["longitudinalPlan"] = fresh.recv_frame["controlsState"] = 1
+  row = dict(zip(dp.COLUMNS, dp.build_row(fresh), strict=True))
+  for name in ("tq_out", "ff", "lane_off", "t_follow", "exp_mode", "lead_id", "mlead_p", "tq_req"):
+    assert np.isnan(row[name]), name
+
+
+def test_nan_is_null_in_live_and_window(tmp_path):
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: True, submaster_factory=lambda s: None)
+  plots._ensure_thread_locked = lambda: None
+  fresh = _engaged_sm()
+  fresh.update()
+  fresh.recv_frame = {s: (1 if s in ("longitudinalPlan", "controlsState", "carState") else 0) for s in fresh.recv_frame}
+  plots.step(fresh)
+  live = plots.live()
+  json.dumps(live, allow_nan=False)
+  assert live["rows"][-1][1 + dp.COL["lane_off"]] is None
+  assert all(x is None for x in dp.window(_drive(n_s=5.0), 0, 5)[0][dp.COL["steer_tq"]:])
+
+
+def _takeover_drive():
+  rows = _drive(n_s=90.0)
+  c = dp.COL
+  t = rows[:, c["t"]] - rows[0, c["t"]]
+  for name in ("steer_tq", "ang_err", "lane_off", "blinker", "lead_id"):
+    rows[:, c[name]] = 0.0
+  rows[:, c["ang_ok"]] = 1
+  rows[:, c["lane_w"]] = 3.6
+  rows[:, c["lane_prob"]] = 0.9
+  hold = (t >= 30.0) & (t < 32.0)
+  rows[hold, c["steer_pressed"]] = 1
+  rows[hold, c["steer_tq"]] = 900.0     # + = left
+  rows[:, c["long_des"]] = 0.0
+  rows[(t >= 50.0) & (t < 52.0), c["long_des"]] = -3.0
+  rows[:, c["lead_src"]], rows[:, c["lead_d"]], rows[:, c["lead_v"]], rows[:, c["lead_id"]] = 1, 30.0, 20.0, 4
+  return rows
+
+
+def test_takeover_episode_is_measured():
+  a = dp.analyze(_takeover_drive())
+  eps = a["driver_takeovers"]["episodes"]
+  assert len(eps) == 1
+  e = eps[0]
+  assert e["t"] == pytest.approx(30.0, abs=0.06) and e["hold_s"] == pytest.approx(2.0, abs=0.4)
+  assert e["tag"] == "long hold" and e["push"] == "left" and e["lanes_ok"] is True
+  assert a["driver_takeovers"]["summary"]["count"] == 1
+  assert any(ev["kind"] == "steer_takeover" for ev in a["events"])
+
+
+# ------------------------------- recording every drive -------------------------------
+
+class _FakePub:
+  def __init__(self):
+    self.sent = []
+
+  def send(self, service, payload):
+    assert service == dp.RLOG_SERVICE
+    self.sent.append(json.loads(payload))
+
+
+def _auto_plots(tmp_path, onroad, now, pub=None):
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: onroad[0], clock=lambda: now[0],
+                        meta_fn=lambda: {"car": "HONDA_TEST", "tune": {"NrdrX": "1"}}, route_fn=lambda: "abc--0123456789",
+                        publisher_factory=(lambda: pub) if pub is not None else None)
+  plots._ensure_thread_locked = lambda: None
+  return plots
+
+
+def test_auto_record_starts_with_the_drive_and_respects_a_manual_stop(tmp_path):
+  onroad, now = [False], [0.0]
+  plots = _auto_plots(tmp_path, onroad, now, _FakePub())
+  plots.auto_tick()
+  assert plots.rec is None
+  onroad[0] = True
+  plots.auto_tick()
+  assert plots.rec is not None
+  meta = json.loads((plots.rec["dir"] / "meta.json").read_text())
+  assert meta["auto"] is True and meta["route"] == "abc--0123456789" and meta["car"] == "HONDA_TEST"
+  plots.stop_recording(reason="stopped by user", background=False)
+  plots.auto_tick()
+  assert plots.rec is None, "a driver's stop holds for the rest of this drive"
+  onroad[0] = False
+  plots.auto_tick()
+  onroad[0] = True
+  plots.auto_tick()
+  assert plots.rec is not None, "and the next drive records again"
+  plots.stop_recording(background=False)
+  plots.set_settings({"auto_record": False, "bogus": 1})
+  assert plots.settings() == {"auto_record": False, "publish_to_log": True}
+  onroad[0] = False
+  plots.auto_tick()
+  onroad[0] = True
+  plots.auto_tick()
+  assert plots.rec is None
+
+
+def test_rlog_copy_has_start_moments_takeovers_and_summary(tmp_path):
+  onroad, now = [True], [0.0]
+  pub = _FakePub()
+  plots = _auto_plots(tmp_path, onroad, now, pub)
+  plots.auto_tick()
+  rows = _takeover_drive()
+  rec = plots.rec
+  plots.buffer = type(plots.buffer)(maxlen=len(rows))
+  for i, row in enumerate(rows.tolist()):
+    plots.buffer.append((i + 1, row))
+  rec["first_t"], rec["last_t"], rec["rows"] = rows[0, 0], rows[-1, 0], len(rows)
+  now[0] = dp.PUBLISH_SCAN_S
+  plots.auto_tick()
+  now[0] = 2 * dp.PUBLISH_SCAN_S
+  plots.auto_tick()   # a second scan over the same window publishes nothing new
+  now[0] = dp.SUMMARY_EVERY_S + 1
+  plots.auto_tick()
+  kinds = [m["type"] for m in pub.sent]
+  assert kinds[0] == "start" and all(m["schema"] == dp.RLOG_SCHEMA and "mono_ns" in m for m in pub.sent)
+  start = pub.sent[0]
+  assert start["route"] == "abc--0123456789" and start["tune"] == {"NrdrX": "1"} and start["columns"] == dp.COLUMNS
+  moments = [m for m in pub.sent if m["type"] == "moment"]
+  takeovers = [m for m in pub.sent if m["type"] == "takeover"]
+  assert [m["kind"] for m in moments] == ["hard_brake"]
+  assert moments[0]["mono_s"] == pytest.approx(rows[0, 0] + 50.0, abs=0.06) and moments[0]["t"] == pytest.approx(50.0, abs=0.1)
+  assert len(takeovers) == 1 and takeovers[0]["push"] == "left"
+  summary = [m for m in pub.sent if m["type"] == "summary"][-1]
+  assert summary["counts"] == {"hard_brake": 1, "takeover": 1} and "lateral" in summary
+  plots.stop_recording(reason="drive ended", background=False)
+  assert pub.sent[-1]["type"] == "end" and pub.sent[-1]["reason"] == "drive ended"
+
+
+def test_prune_keeps_manual_sessions_and_the_newest_auto_ones(tmp_path, monkeypatch):
+  monkeypatch.setattr(dp, "AUTO_KEEP_SESSIONS", 2)
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: False)
+  for i in range(4):
+    d = tmp_path / f"a{i}"
+    d.mkdir()
+    (d / "meta.json").write_text(json.dumps({"id": d.name, "auto": True, "status": "done", "started_at": i}))
+  (tmp_path / "manual").mkdir()
+  (tmp_path / "manual" / "meta.json").write_text(json.dumps({"id": "manual", "status": "done", "started_at": -1}))
+  assert sorted(plots.prune_auto_sessions()) == ["a0", "a1"]
+  assert sorted(p.name for p in tmp_path.iterdir()) == ["a2", "a3", "manual"]

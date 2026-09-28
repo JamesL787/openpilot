@@ -7491,6 +7491,62 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
 
 **Not verified.** No real drive has been recorded with the new columns. The 45 degree / 25 mph tight-turn cut, the 10 degree "went past" cut, and the 2.5 m/s² hard-brake threshold are guesses to be checked against the first real recordings. The controller label mirrors the controlsd selection rule by reading CarParamsPersistent and NrdrLatEpsFirmwareFF; it is not read from the running controller.
 
+## 141c. Galaxy Plots records every drive by itself and copies its moments into the drive's rlog, with the signals the long and lat agents asked for, plus an offline tool that rebuilds the same analysis from any rlog (owner, 2026-09-28). Unit tests, a headless render against a synthetic drive, and a replay of one real route; not yet recorded on a car.
+
+**Why.** Recording only ran when someone pressed Start, and what it found stayed in the Galaxy session folder, where the agents working on long and lat could not see it. The owner asked for recording to start with the drive, for the results to land in the rlogs, and for the plots to carry what those agents need. James, Bob, Kevin and John were asked what they wanted, and all four replied.
+
+**What changed.**
+- **Auto-record.** A watcher starts when the Galaxy starts. It begins recording when the car goes onroad and stops 30 s after offroad.
+  - The setting lives in `drive_plots/settings.json`, not a param, because the device runs a prebuilt tree and a new params key would need a rebuild. It defaults to `{"auto_record": true, "publish_to_log": true}`.
+  - Both Plots pages have a "Record every drive" checkbox (`/api/plots/settings`).
+  - Pressing Stop skips the rest of that drive; the next drive records again.
+  - Only automatic sessions are pruned: the newest 20 are kept, up to 1 GB. Manual recordings are never pruned.
+- **Copy in the rlog.** The recording publishes JSON on `customReservedRawData0`. It is already in the log list and nothing else sends on it; the testing-ground worker uses customReserved9.
+  - The schema is `drivePlots/1`, with `type` start / moment / takeover / summary / end and `mono_ns`.
+  - `start` carries the drive meta: controller, tune snapshot, git and lateral delay.
+  - Moments are published as they finish. Every 20 s the last 60 s are scanned, and a moment is sent once it is 8 s old. Takeovers wait 7 s after release so the recovery is measured.
+  - `summary` goes out every 300 s, and `end` goes out at stop.
+  - loggerd only runs onroad, so nothing published after offroad reaches the rlog. The final analysis stays in the Galaxy session.
+- **New columns** (NaN when that service never arrived, so older recordings and missing services are not read as zeros):
+  - Lateral: `steer_tq`, `steer_tq_eps`, `steer_rate`, `blinker`, `tq_req`, `tq_out`, `lat_out`, `ang_err`, `pid_active`, `ff_active`, `ff_w`, `ff`, `lane_off` (+ = car left of centre), `lane_w`, `lane_prob`.
+  - Timing: `cs_age_ms` (carState age at the plan).
+  - Longitudinal: `a_cmd`, `should_stop`, `fcw`, `has_lead`, `exp_mode`, `t_follow`, `tracking_lead`, `standstill`.
+  - Lead: `lead_id`, `lead_y`, `lead_vrel`, `lead_a`, `lead_prob`, `lead_meas`, `lead_vrr`, `lead2_on/d/v/id`.
+  - Model lead: `mlead_p/x/y/v/a`.
+  - The Galaxy now subscribes to carOutput, modelV2, selfdriveState, starpilotPlan and starpilotLateralState at 20 Hz on every drive. That is extra CPU in the Galaxy process, and it has not been measured on the device.
+- **New moments** (`drive_plots_agents.py`): firm brake, brake with no car ahead, camera-only brake, driver brake override, car appeared close, car vanished close, and track-ID swap.
+  - Steering takeovers are measured as episodes: hold time, push direction, blinker, wheel swing after release, and time back on plan and back within 2 degrees.
+  - Recovery numbers are left empty when lateral was not active after the release.
+  - The drive analysis adds a takeover breakdown and the median lane position on straights per speed band. Under 8 cm reads "centred".
+- **`tools/drive_plots/rlog_report.py ROUTE_DIR_OR_RLOG... --out DIR [--rate plan|carstate] [--no-detect]`** rebuilds the same rows and analysis from raw rlogs. It writes `report.json` and `samples.csv`.
+  - Times are labelled `route_s`, `seg` and `seg_mmss`. Each segment starts at its first carState, because initData repeats in every segment.
+  - The report includes:
+    - the tune snapshot (every Nrdr*/HondaOverride* key in `params_keys.h`; "missing" when not logged)
+    - the controller, detected by `lat_score`
+    - controls gaps from `cs_age_ms`
+    - lateral delay and liveTorqueParameters
+    - the car's own drivePlots messages, when present
+
+**Evidence.**
+- 86 tests pass across `test_drive_plots.py`, the frontend suites and `tools/drive_plots/tests`. They cover:
+  - the agent columns and NaN handling
+  - the takeover episode
+  - auto start and the manual-stop skip
+  - the rlog messages through a fake publisher
+  - pruning
+  - a synthetic rlog through the offline tool
+- Both pages were rendered in headless Chromium at 1400 px and 412 px. The checkbox, takeover moments, takeover rows and lane-position row were checked as text; there were no Plots page errors.
+- Replay: `rlog_report.py` on 3 segments of one real ClarityEps route gave 3529 rows, detected clarity_eps, and found 32 moments and 20 takeovers in about 5 s. That replay found and fixed three bugs:
+  - "car appeared close" fired at standstill
+  - takeovers while disengaged got a recovery overshoot
+  - segment labels were wrong
+
+**Not verified.**
+- No drive has been recorded on the device with this code, and no rlog yet contains a drivePlots message.
+- A takeover held longer than about 50 s is not published live; the offline tool still finds it.
+- The Galaxy CPU cost of the extra subscriptions is unmeasured.
+- All moment thresholds are first guesses, to be checked against real recordings.
+
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 
 **What was added.**

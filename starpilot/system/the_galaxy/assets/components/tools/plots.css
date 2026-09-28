@@ -32,6 +32,21 @@
   margin: 0;
 }
 
+.plotToggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 12px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.plotToggle input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
 .plotActions {
   display: flex;
   gap: var(--gap-sm);

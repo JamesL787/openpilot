@@ -323,6 +323,7 @@ export const api = {
   getPlotsLive(since = 0) { return request(`/api/plots/live?since=${encodeURIComponent(since)}`) },
   startPlotsRecording() { return request("/api/plots/recording/start", { method: "POST" }) },
   stopPlotsRecording() { return request("/api/plots/recording/stop", { method: "POST" }) },
+  setPlotsSettings(data) { return request("/api/plots/settings", { method: "POST", data }) },
   getPlotsSessions() { return request("/api/plots/sessions", { cache: "no-store" }) },
   getPlotsSession(id) { return request(`/api/plots/sessions/${encodeURIComponent(id)}`, { cache: "no-store" }) },
   getPlotsSessionWindow(id, start, end) {

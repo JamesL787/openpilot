@@ -364,7 +364,19 @@ export function keyNumbers(axis, m, speed = DEFAULT_SPEED) {
       rows.push(["Time at steering limit (curves)", m.saturated_curve_frac == null ? "—" : pct(m.saturated_curve_frac)])
     }
     if (m.turns) rows.push(["Tight low-speed turns", String(m.turns.count ?? 0)])
-    rows.push(["Times you took the wheel", String(m.steer_overrides ?? 0)])
+    const tk = m.takeovers
+    if (tk && tk.count != null) {
+      rows.push(["Times you took the wheel", `${tk.count} (${tk.short} brief, ${tk.long} held; ${tk.blinker} with the blinker on)`])
+      if (tk.median_back_on_plan_s != null) rows.push(["Back on openpilot's line after you let go", `${fmtNum(tk.median_back_on_plan_s, 1)} s (typical)`])
+      if (tk.median_release_overshoot_deg != null) rows.push(["Wheel swing after you let go", `${fmtNum(tk.median_release_overshoot_deg, 1)}° (typical)`])
+    } else {
+      rows.push(["Times you took the wheel", String(m.steer_overrides ?? 0)])
+    }
+    // lane_off is + = car left of the lane centre; offsets under 8 cm are inside lane centring's deadband.
+    if (Array.isArray(m.lane_straight) && m.lane_straight.length) {
+      const side = (x) => (x == null ? "—" : Math.abs(x) < 0.08 ? "centred" : `${fmtNum(Math.abs(x), 2)} m ${x > 0 ? "left" : "right"}`)
+      rows.push(["Lane position on straights", m.lane_straight.map((b) => `${b.band}: ${side(b.median_m)}`).join(" · ")])
+    }
   } else {
     if (m.status === "ok") {
       rows.push(["Overall response", m.gain == null ? "—" : `${pct(m.gain)} of what was asked`])
@@ -429,20 +441,52 @@ export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
     let title = ""
     let detail = ""
     let kind = "steer"
-    if (e.kind === "hard_brake") {
+    if (e.kind === "hard_brake" || e.kind === "firm_brake") {
       kind = "brake"
-      title = "Hard brake"
-      detail = `Slowed at up to ${acc(e.a_min)} (plan up to ${acc(e.plan_min)}) from ${fmtSpeed(e.v, speed)}. ${leadText(e.lead, speed)}` +
-        (e.gas_after ? " You pressed the gas right after." : "")
+      title = e.kind === "hard_brake" ? "Hard brake" : "Firm brake"
+      detail = `openpilot asked for up to ${acc(e.plan_min)} from ${fmtSpeed(e.v, speed)}; the car slowed at up to ${acc(e.a_min)}. ` +
+        `${leadText(e.lead_at_peak || e.lead, speed)}` + (e.gas_after ? " You pressed the gas right after." : "")
+    } else if (e.kind === "brake_no_lead") {
+      kind = "brake"
+      title = "Braked with no car ahead"
+      detail = `openpilot asked for up to ${acc(e.plan_min)} at ${fmtSpeed(e.v, speed)} with no car ahead tracked ` +
+        "(a curve, a stop, or a speed limit can do this)."
+    } else if (e.kind === "camera_only_brake") {
+      kind = "brake"
+      title = "Braked for a car only the camera saw"
+      detail = `openpilot asked for up to ${acc(e.plan_min)} at ${fmtSpeed(e.v, speed)}; the radar had no match. ${leadText(e.lead, speed)}`
+    } else if (e.kind === "driver_brake_override") {
+      kind = "brake"
+      title = "You braked while openpilot was not braking hard"
+      detail = `At ${fmtSpeed(e.v, speed)}. ${leadText(e.lead, speed)}`
+    } else if (e.kind === "lead_appeared_close") {
+      kind = "brake"
+      title = "A car appeared close ahead"
+      detail = `At ${fmtSpeed(e.v, speed)}. ${leadText(e.lead, speed)}` +
+        (e.d_before != null ? ` The car tracked before was ${fmtNum(e.d_before, 0)} m away.` : "")
+    } else if (e.kind === "lead_vanished_close") {
+      kind = "brake"
+      title = "A close car ahead disappeared"
+      detail = `At ${fmtSpeed(e.v, speed)}. ${leadText(e.lead, speed)} It was dropped while still close.`
+    } else if (e.kind === "track_id_swap") {
+      kind = "brake"
+      title = "Radar swapped the car ahead's track"
+      detail = `At ${fmtSpeed(e.v, speed)}: track ${e.id_before} became ${e.id_after} at the same distance. ${leadText(e.lead, speed)}`
     } else if (e.kind === "gas_during_brake") {
       kind = "brake"
       title = "You pressed the gas while openpilot braked"
       detail = `openpilot was braking up to ${acc(e.plan_min)} at ${fmtSpeed(e.v, speed)}. ${leadText(e.lead, speed)} ` +
         "If there was no real slower car, this braking was not needed."
     } else if (e.kind === "steer_takeover") {
-      title = "You took the wheel"
-      detail = `At ${fmtSpeed(e.v, speed)}.` + (e.ang_des == null ? ""
-        : ` openpilot wanted the wheel at ${fmtNum(e.ang_des, 0)}°; it was at ${fmtNum(e.ang_act, 0)}°.`)
+      title = e.tag === "short grab" ? "You grabbed the wheel briefly" : "You took the wheel"
+      const parts = [`At ${fmtSpeed(e.v, speed)}`]
+      if (e.hold_s != null) parts.push(`held ${fmtNum(e.hold_s, 1)} s`)
+      if (e.push) parts.push(`pushing ${e.push}`)
+      if (e.blinker) parts.push("blinker on")
+      detail = `${parts.join(", ")}.`
+      if (e.release_overshoot_deg != null) detail += ` After you let go the wheel swung ${fmtNum(e.release_overshoot_deg, 1)}° back past the plan`
+      if (e.back_on_plan_s != null) detail += `${e.release_overshoot_deg != null ? " and" : " After you let go it"} was back on it in ${fmtNum(e.back_on_plan_s, 1)} s`
+      if (e.release_overshoot_deg != null || e.back_on_plan_s != null) detail += "."
     } else if (e.kind === "turn_overshoot") {
       title = "Tight turn went past the request"
       detail = `${e.side === "left" ? "Left" : "Right"} turn at ${fmtSpeed(e.v, speed)}: ${fmtNum(e.peak_des, 0)}° asked, the wheel ` +
@@ -479,7 +523,7 @@ export function tuneGroups(meta) {
   }
   const tune = meta.tune && typeof meta.tune === "object" ? meta.tune : {}
   for (const [k, v] of Object.entries(tune)) {
-    if (v === null || v === undefined || v === "") continue
+    if (v === null || v === undefined || v === "" || v === "missing") continue
     const unused = info && !info.slidersUsed && SLIDER_KEY.test(k)
     const row = { label: k, value: unused ? `${v} (not used)` : String(v), unused: !!unused }
     const idx = TUNE_TEST_ORDER.find((i) => TUNE_GROUPS[i].test(k)) ?? -1
