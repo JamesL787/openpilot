@@ -1,6 +1,6 @@
 # Status
 
-**As of: 2026-09-27**
+**As of: 2026-09-28**
 
 Update the date above whenever this file changes. If it is stale, trust `git log` over this
 file.
@@ -6102,6 +6102,13 @@ Run: all 17 item 104 routes plus 266 and 267, `--bearings 0.075 --fixes`, at HEA
   - Rendered on 28a segs 13 and 20 and 28b seg 19: 2–4 tracks per frame. Each in-path and side lead has its dot at the marker tip. Close leads' returns fall below the view, so they have none.
   - Replay render evidence; not seen on the device.
 - **Deployed to the car, 2026-09-28** (owner: "you can do update and restart on it. But don't change any toggle"). While offroad, with no other agent logged in: `/data/openpilot` fast-forwarded 99e807fd → e0d4aa2c, pure Python, and the `prebuilt` marker was kept. The device's local `starpilot/assets/active_theme/` edits were left as they were. It was rebooted, came back on e0d4aa2c, and `selfdrive.ui.ui` is running with no UI exception in swaglog. No param or toggle was changed. Not yet driven on this build.
+- **First drives with the radar dots, 2026-09-28** (openpilot-51 (Steve); logs pulled from the comma, analysed, then deleted). 0000028f--b6284c4bc9 ran e0d4aa2c; 00000290--af15379c8c, 00000291--edadbd74e6 and 00000292--72e364dd62 ran ea8e066d, whose mici renderer is identical to e0d4aa2c and HEAD. `RadarTracksUI` and `AdjacentLeadsUI` were on for all four.
+  - Method: every segment (62, 70,230 frames) replayed frame by frame through the real `ModelRenderer`, recording markers, labels and radar dots. Selected frames rendered over the qcamera. Replay render evidence; the owner has not yet reported what he saw.
+  - Flip: 56 leadOne form changes, 0 that switch back within 1 s.
+  - Doubled labels: 0 frames with the same car labelled twice. Every repeated speed is two different cars, for example 28f seg 13 785.2 s: leadOne track 46 (its right-lane copy correctly hidden) and left lead track 43, both 19 mph.
+  - Radar dots: a dot sits within 25 px of the in-path marker tip on 11,028 of 12,519 radar-lead frames on 28f, 1,742 of 1,747 on 290 and 4,926 of 6,608 on 292. Nearly all the misses are flipped close leads, whose returns fall below the view. Only 36 upright frames miss, mostly cut-ins whose marker is clamped at the screen edge.
+  - **Marker blinks:** leadOne's status drops for 0.5 s or less and comes back 176 times (28f 20, 290 28, 291 1, 292 127). 152 of these are vision-only leads (track −1). Worst case: 292 seg 1 118.3–120.2 s (render 56.9–57.2 s), stopped at night, disengaged, with a vision lead at 26 m switching on and off every 0.1–0.3 s. Not changed; holding the marker through these dropouts is an owner decision (see the open item in the handoff).
+  - Seen once in a render: 28f seg 8 11.8 s, a flipped right-lane marker (15 m, yRel −2.8) draws over the corner of the speed-limit sign. Label avoidance covers labels, not markers.
 - **Watch:** a tall lead (truck, SUV) has its roof above 1.5 m, so the marker sits on the rear of the body rather than above it (rendered above). Photograph it if the marker flickers between the two forms in stop-and-go.
 
 ## 109. The item 107 per-track hold is shipped in the planner (ffa72fdc, owner approved); the shipped code reproduces the replay prototype on 19 routes. Replay evidence only; brake-affecting; not driven.
