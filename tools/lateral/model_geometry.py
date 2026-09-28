@@ -140,6 +140,18 @@ def geometry_at(state: dict) -> dict | None:
   else:
     row["inside_offset"] = None
 
+  # lookahead distance per James (VFN Shadow controller): clip(vEgo, 8, 35) m, ~1s of travel with an
+  # 8m floor and 35m cap. Shared definition so his/John's/this tool's lookahead numbers line up.
+  x_la = None if row["vEgo"] is None else float(np.clip(row["vEgo"], 8.0, 35.0))
+  py_la = None if x_la is None else _interp_y(path, x_la, strict=False)
+  ly_la = None if x_la is None else _interp_y(left_line, x_la, strict=False)
+  ry_la = None if x_la is None else _interp_y(right_line, x_la, strict=False)
+  row["lookahead_x"] = None if x_la is None else round(x_la, 2)
+  if angle is not None and py_la is not None and ly_la is not None and ry_la is not None:
+    row["path_inside_at_lookahead"] = round(-_sign(angle) * (py_la - (ly_la + ry_la) / 2), 3)
+  else:
+    row["path_inside_at_lookahead"] = None
+
   ly0 = _interp_y(left_line, 0.0, strict=False)
   ry0 = _interp_y(right_line, 0.0, strict=False)
   row["ego_offset_at_x0"] = None if (ly0 is None or ry0 is None) else round(-(ly0 + ry0) / 2, 3)  # ego is y=0 by definition
@@ -159,6 +171,13 @@ def geometry_at(state: dict) -> dict | None:
     if row["lane_width@30"] < 0:
       print(f"WARNING sign-check failed: lane_width@30={row['lane_width@30']} < 0 with both probs > 0.5 "
             f"(left_prob={row['left_prob']} right_prob={row['right_prob']})", file=sys.stderr)
+
+  # steeringAngleDeg is +left; path_curvature/desiredCurvature are +right (see module docstring) --
+  # they should be opposite-signed across any real turn (corr ~ -0.99 per James on routes 290-294).
+  if angle is not None and curv is not None and abs(angle) > 5 and row["vEgo"] is not None and row["vEgo"] > 1.0:
+    if _sign(curv) == _sign(angle):
+      print(f"WARNING sign-check failed: path_curvature={curv} and steeringAngleDeg={angle} have the "
+            f"SAME sign (expected opposite: +right curvature during a +left steer or vice versa)", file=sys.stderr)
 
   return row
 
@@ -386,6 +405,7 @@ def main():
             f"edgeL_y={row[f'edge_left_y@{x:g}']!s:>8}  edgeR_y={row[f'edge_right_y@{x:g}']!s:>8}")
     print(f"    path_curvature (1/m, +right)={row['path_curvature']}  ay={row['ay']}  "
           f"inside_offset={row['inside_offset']}  ego_offset_at_x0={row['ego_offset_at_x0']}")
+    print(f"    lookahead_x={row['lookahead_x']}  path_inside_at_lookahead={row['path_inside_at_lookahead']}")
 
 
 if __name__ == "__main__":
