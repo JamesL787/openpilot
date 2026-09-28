@@ -1408,3 +1408,23 @@ and release edge pair in `buttonEvents` on every hold is the bench question in S
 
 ## D-066 — `eps_tools/rwd_format/` is canonical; `eps_tools/rwd_xray/format/` is reference only
 `eps_tools/rwd_xray/` is cfranyota/rwd-xray at 8d8e1ff3 (MIT), folded in on the owner's request for EPS firmware analysis. Content-hash compare against the tracked tree: `header.py` and `header_value.py` are identical to `rwd_format/`; `base.py`, `x31.py` and `x5a.py` differ only by the Python-3 port (relative imports, bytes indexing instead of `ord`). Run `rwd_format/`; keep `rwd_xray/` unedited as the source of the per-EPS patch offsets and stock/modified table values in `tools/eps_tool.py`.
+
+## D-067 — IMPLEMENTED: no lane-change side filter in `match_vision_to_track`
+StarPilot's `HumanLaneChanges` dropped every radar track on the far side of 0 m (left change: yRel <= 0,
+right change: yRel >= 0) during `laneChangeStarting`. The function only pairs a radar track with the
+vision lead, which must already agree in distance, speed and lateral position, so the filter never
+changed which car was followed. It could only take radar away from it (D-041/D-042: a gate that can only
+delete radar points is removed rather than tuned).
+
+Evidence (replay/closed-loop sim, `--bearings 0.075`, filter re-applied vs removed, route 00000293):
+- 10:49 left change: the new lane's car (track 61) crossed to y -0.2..-0.4 as we arrived. With the filter
+  it went vision-only for ~2.5 s and the sim brake came late, -1.7 then -3.3; without it radar stays on,
+  the brake starts earlier and plateaus at -2.6..-2.9, min gap 11.9 -> 13.1 m.
+- 29:13-29:16 right change on a curve: track 12 at y +0.2..+1.2. With the filter vision put the car at
+  64-79 m (radar 53-67) and the merge push held +0.5 until radar returned at 52.6 m; without it the push
+  releases ~1 s earlier, the later brake is -1.79 vs -1.92, min gap 41.8 -> 43.6 m.
+- 294 13:10: no difference (the lead was lost for another reason).
+- Route 00000296 (device without this change): radar was on the lead for 0-53% of each of 5 lane changes.
+
+Limits: replay only; no road drive with this change yet. `test_leads.py`
+`test_match_vision_to_track_keeps_new_lane_car_during_human_lane_change` pins both 293 geometries.
