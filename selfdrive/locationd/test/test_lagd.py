@@ -6,8 +6,9 @@ import numpy as np
 import pytest
 
 from cereal import messaging, log, car
+from openpilot.selfdrive.locationd import lagd
 from openpilot.selfdrive.locationd.lagd import LateralLagEstimator, retrieve_initial_lag, masked_normalized_cross_correlation, \
-                                               BLOCK_NUM_NEEDED, BLOCK_SIZE, MIN_OKAY_WINDOW_SEC, MAX_LAG
+                                               BLOCK_NUM_NEEDED, BLOCK_SIZE, MIN_OKAY_WINDOW_SEC, MAX_LAG, initial_lag_for_drive
 from openpilot.selfdrive.test.process_replay.migration import migrate, migrate_carParams
 from openpilot.selfdrive.locationd.test.test_locationd_scenarios import TEST_ROUTE
 from openpilot.common.params import Params
@@ -58,6 +59,23 @@ class TestLagd:
     msg = estimator.get_msg(True)
 
     assert msg.liveDelay.lateralDelay == pytest.approx(0.30)
+
+  def test_lag_not_restored_across_drives(self, monkeypatch):
+    params = Params()
+    CP = car.CarParams.new_message(carFingerprint="HONDA_CLARITY")
+    msg = messaging.new_message('liveDelay')
+    msg.liveDelay.lateralDelayEstimate = 0.42
+    msg.liveDelay.validBlocks = 7
+    params.put("LiveDelay", msg.to_bytes())
+    params.put("CarParamsPrevRoute", CP.to_bytes())
+
+    assert initial_lag_for_drive(params, CP) is None
+    assert params.get("LiveDelay") is not None  # kept for the UI's last-estimate display
+
+    monkeypatch.setattr(lagd, "RESTORE_LAG_ACROSS_DRIVES", True)
+    lag, valid_blocks = initial_lag_for_drive(params, CP)
+    assert lag == pytest.approx(0.42)
+    assert valid_blocks == 7
 
   def test_read_saved_params(self):
     params = Params()
