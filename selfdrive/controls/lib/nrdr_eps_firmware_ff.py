@@ -1,9 +1,9 @@
 """nrdr: the Honda Clarity modified-EPS lateral controller, built on the EPS firmware's own control law.
 
 The Clarity's LKAS path is not a torque command. The firmware turns our 0xE4 value into a target R5,
-compares it with R6 -- a filtered steering RATE (R6 = -138.6 counts per deg/s, corr 0.98 against
+compares it with R6 -- a filtered steering RATE (R6 = -133 counts per deg/s, corr 0.98 against
 steeringRateDeg) -- and runs P + D + KFF on the difference at 1 kHz. So every command first has to cancel
-the firmware's own rate damping (Kp * 138.6 / 1024 = 16..36 counts per deg/s, 2-5x the rack's physical
+the firmware's own rate damping (Kp * 133 / 1024 = 15..34 counts per deg/s, 2-5x the rack's physical
 damping), which is why vfn's angle PID trails a turn-in by ~250 ms x steering rate below 25 mph. On a turn
 exit that same damping is the braking that holds the line -- which is why the symmetric rate feedforward
 of 709dbba828 cut exits and was reverted.
@@ -56,8 +56,11 @@ KP_PIECES = [(lo * R5_PER_KEY, hi * R5_PER_KEY, kp_lo, (kp_hi - kp_lo) / ((hi - 
              for lo, hi, kp_lo, kp_hi in zip(KP_KEY_BP[:-1], KP_KEY_BP[1:], KP_V[:-1], KP_V[1:], strict=True)]
 KP_PIECES.append((KP_KEY_BP[-1] * R5_PER_KEY, math.inf, KP_V[-1], 0.0))
 
-R6_PER_DEG_S = -138.6  # measured: NORM 1650 / tracker-1 3200
-SCALE_Q8 = 252.0       # helper A * B / 256 while the request is held (measured median)
+# Both re-measured on routes 35e/360/361 (0x6A3 R6 against steeringRateDeg, 0x6A2 scale word while the request
+# is held): R6 -131..-135 (the -138.6 of route 352 was ~3% high), scale median 256 (252 on 352). Hands off, the
+# scale word only moves on a fast column-torque RATE (A280) or above ~400 counts of torque (helper A), so 256.
+R6_PER_DEG_S = -133.0  # NORM 1650 / tracker-1 3200
+SCALE_Q8 = 256.0       # helper A * B / 256 while the request is held
 
 # Column load model, firmware output counts (A030 sign convention), fitted on route 00000352:
 #   load = k0*th + k1*th*v^2 + c*thd + fr*tanh(thd/w) + bias + kroll*roll*v^2
@@ -70,7 +73,20 @@ LOAD_BIAS = 20.46793
 LOAD_KROLL = -7.20003
 # The fit's friction width is 2 deg/s; 5 deg/s keeps the Coulomb term from flipping on desired-rate
 # noise near straight driving (command roughness 0.0029 -> 0.0020 in replay, tracking nearly unchanged).
+# Keyed on the DESIRED rate, even 5 deg/s turns the model's small path wiggles into a friction square wave
+# in the city: closed-loop sim, a +/-2 deg 1 Hz wiggle at 10 m/s comes out at the wheel with gain 1.40; with
+# 20 deg/s 0.96, and turn-ins (30-200 deg/s) keep the full friction. The price is lag on slow, small motions,
+# which only pays off at city speed: replaying hands-off chunks of routes 35e/360/361, 20 deg/s cut the 0.6-2 Hz
+# wheel/target transfer 0.93 -> 0.73 at 10-16 m/s for +25 ms, but above 16 m/s bought nothing (1.02 -> 0.97) for
+# +45 ms of lag. So 20 deg/s up to 8 m/s, back to 5 by 15 m/s (10-16 m/s: 0.76 at +10 ms; above: unchanged).
 FRICTION_WIDTH_DEG_S = 5.0
+FRICTION_WIDTH_SPEED_BP = [8.0, 15.0]  # m/s
+FRICTION_WIDTH_V = [20.0, FRICTION_WIDTH_DEG_S]  # deg/s
+
+
+def friction_width(v_ego: float) -> float:
+  return float(np.interp(v_ego, FRICTION_WIDTH_SPEED_BP, FRICTION_WIDTH_V))
+
 
 # Smoothing, picked in the closed-loop replay of route 352 over three plants (nominal, the 353 fit, +15 ms
 # motor lag): unsmoothed, the command carried 3.8x vfn's 5-8 Hz content (the Clarity column's stutter band);
@@ -100,6 +116,15 @@ INTEGRATOR_MIN_SPEED = 2.0  # m/s, below this the integrator is held at zero (as
 FF_JOIN_ERROR_DEG = 10.0
 FF_FADE_IN_S = 0.5
 FF_SPEED_BP = [2.0, 4.0]    # m/s, faded in with speed; the desired angle is ill-conditioned near standstill
+
+# At a crawl the feedforward also passes the model's small path wiggles to the wheel 1:1 (target -> wheel gain
+# 1.02 measured below 4 m/s on route 361, 0.41 for the PID alone), and column stiction makes that gain grow with
+# amplitude, so a near-straight crawl can build a ~0.9 Hz wobble through the camera and the model (route 361
+# t 823-829, hands off). Below FF_CRAWL_SPEED_BP the feedforward therefore joins with |desired angle| (none under
+# 5 deg, all from 20 deg: every real crawl turn), fading out of effect by 8 m/s so nothing changes at speed.
+# Replay of that window through firmware + column plant: wheel/target 1.09 (logged 1.05) -> 0.54 (PID alone 0.51).
+FF_CRAWL_ANGLE_BP = [5.0, 20.0]  # deg
+FF_CRAWL_SPEED_BP = [5.0, 8.0]   # m/s
 
 
 def command_key(e4: float) -> int:
@@ -170,12 +195,12 @@ def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0) -> floa
 
 class ClarityEpsFirmwareFeedforward:
   def __init__(self, dt: float, rate_tau: float = DESIRED_RATE_TAU, lead_s: float = LEAD_S,
-               output_tau: float = FF_OUTPUT_TAU, friction_width: float = FRICTION_WIDTH_DEG_S):
+               output_tau: float = FF_OUTPUT_TAU, friction_width: float | None = None):
     self.dt = dt
     self.alpha = dt / (rate_tau + dt)
     self.output_alpha = dt / (output_tau + dt)
     self.lead_s = lead_s
-    self.friction_width = friction_width
+    self.friction_width = friction_width  # None: the speed schedule above
     self.reset()
 
   def reset(self):
@@ -193,7 +218,8 @@ class ClarityEpsFirmwareFeedforward:
     self.prev_angle = desired_angle_no_offset
 
     angle = desired_angle_no_offset + self.lead_s * self.rate
-    self.load = column_load(angle, self.rate, v_ego, roll, self.friction_width)
+    width = self.friction_width if self.friction_width is not None else friction_width(v_ego)
+    self.load = column_load(angle, self.rate, v_ego, roll, width)
     cap = min(R5_CAP, R5_CAP_ENVELOPE_FRAC * float(np.interp(key_ceiling(v_ego), R5_KEY_BP, R5_V)))
     self.r5 = max(min(r5_for_motion(self.load, self.rate, self.r5), cap), -cap)
     target = output_from_r5(self.r5)
@@ -241,7 +267,9 @@ class ClarityEpsLateralCore:
       self.ff_ramp = 0.0
     elif self.ff_ramp > 0.0 or abs(error) < FF_JOIN_ERROR_DEG:
       self.ff_ramp = min(1.0, self.ff_ramp + self.dt / FF_FADE_IN_S)
-    self.ff_weight = self.ff_ramp * float(np.interp(v_ego, FF_SPEED_BP, [0.0, 1.0]))
+    crawl = float(np.interp(v_ego, FF_CRAWL_SPEED_BP, [1.0, 0.0]))
+    crawl_gate = 1.0 - crawl * (1.0 - float(np.interp(abs(desired_angle_no_offset), FF_CRAWL_ANGLE_BP, [0.0, 1.0])))
+    self.ff_weight = self.ff_ramp * float(np.interp(v_ego, FF_SPEED_BP, [0.0, 1.0])) * crawl_gate
     ff = self.ff_weight * ff_full
 
     i_scale = speed_band(v_ego, I_SCALE)

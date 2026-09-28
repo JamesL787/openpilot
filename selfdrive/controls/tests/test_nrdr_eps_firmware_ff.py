@@ -113,6 +113,32 @@ def test_driver_press_and_standstill_take_the_feedforward_out():
   assert core.ff_weight == pytest.approx(0.5)   # faded in with speed between 2 and 4 m/s
 
 
+@pytest.mark.parametrize("v, des, weight", [
+  (3.0, 2.0, 0.0),     # crawling near straight: the model's wiggles do not reach the wheel through the feedforward
+  (3.0, -12.5, 0.25),  # joins with |desired angle| between 5 and 20 deg (0.5 from the 2-4 m/s speed fade)
+  (4.5, 12.5, 0.5),
+  (4.5, -30.0, 1.0),   # every real crawl turn gets all of it
+  (6.5, 2.0, 0.5),     # the crawl gate fades out of effect between 5 and 8 m/s
+  (8.0, 0.0, 1.0),
+  (20.0, 0.5, 1.0),    # at speed it never applies
+])
+def test_crawl_gate_holds_the_feedforward_off_near_straight(v, des, weight):
+  core = _core()
+  _hold(core, 80, des=des, angle=des, v=v)
+  assert core.ff_weight == pytest.approx(weight)
+
+
+def test_friction_knee_is_wide_in_the_city_and_sharp_at_speed():
+  assert eps_ff.friction_width(0.0) == eps_ff.friction_width(8.0) == 20.0
+  assert eps_ff.friction_width(15.0) == eps_ff.friction_width(30.0) == eps_ff.FRICTION_WIDTH_DEG_S == 5.0
+  # a slow desired rate asks for less friction in the city than at speed; a turn-in rate gets it all either way
+  city = eps_ff.column_load(0.0, 5.0, 8.0, 0.0, eps_ff.friction_width(8.0)) - eps_ff.column_load(0.0, 5.0, 8.0, 0.0, 1e9)
+  fast = eps_ff.column_load(0.0, 5.0, 8.0, 0.0, eps_ff.friction_width(20.0)) - eps_ff.column_load(0.0, 5.0, 8.0, 0.0, 1e9)
+  assert abs(city) < 0.4 * abs(fast)
+  turn = [eps_ff.column_load(0.0, 100.0, 8.0, 0.0, w) - eps_ff.column_load(0.0, 100.0, 8.0, 0.0, 1e9) for w in (20.0, 5.0)]
+  assert turn[0] == pytest.approx(turn[1], rel=0.01)
+
+
 def test_without_the_feedforward_the_core_is_the_banded_pid():
   core = _core()
   eps_ff.FF_JOIN_ERROR_DEG, saved = -1.0, eps_ff.FF_JOIN_ERROR_DEG
