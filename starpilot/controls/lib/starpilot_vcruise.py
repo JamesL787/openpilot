@@ -10,6 +10,7 @@ from openpilot.starpilot.controls.lib.curve_speed_controller import (
   CSC_ACTIVE_OFF_DELTA,
   CSC_GLOW_HOLD_TIME,
   CSC_GLOW_ON_DELTA,
+  CSC_TIGHT_MIN_SPEED,
   CurveSpeedController,
   is_user_overriding_longitudinal,
 )
@@ -806,7 +807,7 @@ class StarPilotVCruise:
       self.force_stop_distance_cap = self.tracked_model_length
 
       targets = [v_cruise]
-      if self.csc_target >= CSC_MIN_SPEED:
+      if self.csc_target >= CSC_TIGHT_MIN_SPEED:
         targets.append(self.csc_target)
       slc_control_target = get_active_slc_control_target(
         starpilot_toggles.speed_limit_controller,

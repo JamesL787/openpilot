@@ -15,6 +15,8 @@ from openpilot.starpilot.controls.lib.curve_speed_controller import (
   CSC_LAT_ACCEL_MAX,
   CSC_MAX_LATERAL_ACCEL,
   CSC_MIN_SPEED,
+  CSC_TIGHT_MAX_EGO_SPEED,
+  CSC_TIGHT_MIN_SPEED,
   MAX_CURVATURE,
   PRIOR_CURVATURE_BP,
   PRIOR_LAT_ACCEL_V,
@@ -229,26 +231,37 @@ def test_target_does_not_ratchet_down_with_ego_speed():
   assert controller.target == pytest.approx(target, abs=0.2)
 
 
-@pytest.mark.xfail(strict=True, reason="fails on upstream StarPilot (merge base 249b03a3f5 and Dom 79c61f479a) too: "
-                   "_correct_far_field clamps curvature to MAX_CURVATURE=0.02, so the CSC_MAX_LATERAL_ACCEL cap "
-                   "(14.1 m/s at 0.02) never undercuts the CSC_MIN_SPEED floor (11.18 m/s) for curves tighter than 0.02")
-def test_sharp_curve_target_floors_at_min_speed():
+def test_sharp_curve_target_goes_below_the_city_floor_once_slow():
   _, controller = make_controller(curve_profile=(np.full(33, 0.1), np.linspace(0.0, 100.0, 33)))
 
   target = converge(controller, 15.0, 30.0)
 
-  assert target == pytest.approx(np.sqrt(CSC_MAX_LATERAL_ACCEL / 0.1), abs=0.05)
+  assert CSC_TIGHT_MIN_SPEED <= target < CSC_MIN_SPEED
 
 
-@pytest.mark.xfail(strict=True, reason="fails on upstream StarPilot (merge base 249b03a3f5 and Dom 79c61f479a) too: "
-                   "_correct_far_field clamps curvature to MAX_CURVATURE=0.02, so the CSC_MAX_LATERAL_ACCEL cap "
-                   "(14.1 m/s at 0.02) never undercuts the CSC_MIN_SPEED floor (11.18 m/s) for curves tighter than 0.02")
 def test_sharp_curve_target_respects_lateral_acceleration_cap():
   _, controller = make_controller(curve_profile=(np.full(33, 0.1), np.linspace(0.0, 100.0, 33)))
 
   target = converge(controller, 15.0, 30.0)
 
   assert target**2 * 0.1 <= CSC_MAX_LATERAL_ACCEL + 0.05
+
+
+def test_tight_corner_target_is_under_the_steering_clip():
+  # Metadrive Sim STATUS 181: R17 corner (k 0.0585) at a 40 kph set speed; controlsd clips at 3.0 m/s^2 -> 7.16 m/s.
+  _, controller = make_controller(curve_profile=single_apex_profile(0.0585, 0.0))
+
+  target = converge(controller, 11.0, 11.11)
+
+  assert target < np.sqrt(3.0 / 0.0585)
+
+
+def test_highway_speed_keeps_the_city_floor():
+  _, controller = make_controller(curve_profile=(np.full(33, 0.1), np.linspace(0.0, 100.0, 33)))
+
+  target = converge(controller, CSC_TIGHT_MAX_EGO_SPEED + 5.0, 30.0)
+
+  assert target >= CSC_MIN_SPEED - 0.05
 
 
 def test_weather_reduces_curve_speed():

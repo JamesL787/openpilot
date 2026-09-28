@@ -40,6 +40,16 @@ CSC_TRAINING_QUIET_TIME = 5.0
 CSC_TRAINING_SETTLE_TIME = 2.0
 CSC_COMFORT_MARGIN = 1.0
 
+# Tight corners (sim, Metadrive Sim STATUS 181): an R17 corner needs ~7 m/s but the 25 mph floor held the
+# target at 11.18 m/s and controlsd's 3.0 m/s^2 clip then left the lane. Once the car is already at or below
+# CSC_TIGHT_MAX_EGO_SPEED, curvature past MAX_CURVATURE is read (up to CSC_TIGHT_MAX_CURVATURE, the curve
+# profile's own PROFILE_MAX_CURVATURE) and the floor drops to CSC_TIGHT_MIN_SPEED. Above it, the upstream
+# floor and 0.02 clamp are kept, so a phantom tight reading at highway speed cannot pull the target deeper
+# than before.
+CSC_TIGHT_MIN_SPEED = 5.0
+CSC_TIGHT_MAX_EGO_SPEED = 20.0
+CSC_TIGHT_MAX_CURVATURE = 0.1
+
 CSC_FARFIELD_MIN_CURVATURE = 0.004
 CSC_FARFIELD_MIN_DISTANCE = 30.0
 CSC_FARFIELD_GAIN = 1.23
@@ -380,10 +390,10 @@ class CurveSpeedController:
     return lat_accel
 
   @staticmethod
-  def _correct_far_field(curvatures, distances):
+  def _correct_far_field(curvatures, distances, max_curvature=MAX_CURVATURE):
     """Undo the model's known under-read of distant curvature, where the reading is firm."""
     firm = (curvatures >= CSC_FARFIELD_MIN_CURVATURE) & (distances >= CSC_FARFIELD_MIN_DISTANCE)
-    return np.minimum(np.where(firm, curvatures * CSC_FARFIELD_GAIN, curvatures), MAX_CURVATURE)
+    return np.minimum(np.where(firm, curvatures * CSC_FARFIELD_GAIN, curvatures), max_curvature)
 
   def reset(self, v_cruise):
     self.target = float(v_cruise)
@@ -401,12 +411,13 @@ class CurveSpeedController:
       raw_target = float(v_cruise)
       self.binding_distance = 0.0
     else:
-      curvatures = self._correct_far_field(curvatures, distances)
+      tight = float(v_ego) <= CSC_TIGHT_MAX_EGO_SPEED
+      curvatures = self._correct_far_field(curvatures, distances, CSC_TIGHT_MAX_CURVATURE if tight else MAX_CURVATURE)
       lat_accel = self.lat_accel_for_curvature(curvatures)
       curvature_floor = np.maximum(curvatures, 1e-4)
       point_speeds = np.sqrt(lat_accel / curvature_floor)
       point_speeds = np.minimum(
-        np.maximum(point_speeds, CSC_MIN_SPEED),
+        np.maximum(point_speeds, CSC_TIGHT_MIN_SPEED if tight else CSC_MIN_SPEED),
         np.sqrt(CSC_MAX_LATERAL_ACCEL / curvature_floor),
       )
       allowed_speeds = np.sqrt(point_speeds**2 + 2.0 * CSC_APPROACH_DECEL * np.maximum(distances, 0.0))
