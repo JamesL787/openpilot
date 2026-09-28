@@ -196,6 +196,20 @@ RANGE_VREL_RAIL_LONG_MIN_SPAN_S = 0.45
 RANGE_VREL_RAIL_ARM_UPDATES = 3
 RANGE_VREL_RAIL_SIZE_MEAN = True
 
+# --- Adjacent-lead rail gate (2026-09-28). REPLAY evidence only, nothing driven.
+# The range assist above only runs on leadOne/leadTwo, so every other track publishes the raw U11
+# rail: vLead = vEgo - 13.5 even for a stopped object. 0000028f seg 6 ~30.5-34 s (UI Work, STATUS
+# 108): track 49 at yRel ~3.2, range 74.6 -> 7.9 m in 3.5 s (closing ~ vEgo 21 m/s, i.e. stationary),
+# U11 pinned at -13.5 throughout, was published as leadLeft at ~16 mph; track 43 (yRel ~9) the same.
+# leadLeft/leadRight feed the UI and the conditional-chill adjacent-lead veto.
+# A Bosch-A track stops being ELIGIBLE as leadLeft/leadRight once, on the rail, the fresh short range
+# fit says at least RANGE_VREL_ASSIST_MIN_DISAGREEMENT_MPS more closing than the rail on
+# ADJACENT_RAIL_GATE_UPDATES consecutive measured updates; it stays so until U11 leaves the rail.
+# The point itself is still published and still eligible as leadOne/leadTwo (D-041/D-042); only
+# the adjacent-lead label changes. Set ADJACENT_RAIL_GATE to False to restore the old behaviour.
+ADJACENT_RAIL_GATE = True
+ADJACENT_RAIL_GATE_UPDATES = 3
+
 # --- Vision-corroborated range assist (2026-09-26, extends D-053, rides RANGE_VREL_ASSIST).
 # REPLAY evidence only (open- and closed-loop), nothing driven; default OFF. 0000026c--10bec2e200 4:08:
 # a lead braking on a curve at 80 -> 60 m. U11 lagged (-2.7 -> -13.5 over 1.3 s) while the range closed
@@ -403,6 +417,10 @@ class Track:
     self.t_first = float('nan')
     self.young_range_hist: list = []
 
+    # ADJACENT_RAIL_GATE: consecutive railed updates the range contradicts, and the latch they set
+    self.rail_range_count = 0
+    self.rail_range_inconsistent = False
+
     # deceleration history for the adjacent-lane stopped-vehicle detector
     self.moving_frames = 0
     self.rest_frames = 0
@@ -457,6 +475,9 @@ class Track:
     # publish time. The first version fed the corrected speed here, and aLeadK absorbed every
     # arming step as a hard acceleration (see the rework note at the top of this file).
     self._update_range_assist(range_assist, measurement_update, t_now, vision_closing, vision_assist)
+
+    if measurement_update:
+      self._update_rail_range_inconsistent()
 
     if measurement_update and self.cnt > 0:
       self.kf.update(self.vLead)
@@ -651,6 +672,20 @@ class Track:
       # Never claim more closing than vision corroborates plus the margin: published vRel >= -(closing + margin).
       correction = min(correction, max(self.vRel + vision_closing + VISION_ASSIST_CLOSING_MARGIN_MPS, 0.0))
     self.range_assist_correction = correction
+
+  def _update_rail_range_inconsistent(self) -> None:
+    """ADJACENT_RAIL_GATE latch. Rail-agnostic here; only Bosch-A callers act on it (a -13.5 vRel is a
+    real reading on other radars)."""
+    if self.vRel > BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_DIRECT_VREL_SCALE_MPS / 2:
+      self.rail_range_count = 0
+      self.rail_range_inconsistent = False
+      return
+    if self.vRelRangeFresh and self.vRel - self.vRelRange >= RANGE_VREL_ASSIST_MIN_DISAGREEMENT_MPS:
+      self.rail_range_count += 1
+      if self.rail_range_count >= ADJACENT_RAIL_GATE_UPDATES:
+        self.rail_range_inconsistent = True
+    else:
+      self.rail_range_count = 0
 
   def _fit_long_range(self) -> bool:
     """Plain LSQ over range_hist_long. Sets vRelRangeLong (slope, m/s), vRelRangeLongResidual (RMS,
@@ -976,10 +1011,13 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
   return lead_dict
 
 
-def get_adjacent_lead(tracks: dict[int, Track], standstill: bool, model_data: capnp._DynamicStructReader, left: bool = True) -> dict[str, Any]:
+def get_adjacent_lead(tracks: dict[int, Track], standstill: bool, model_data: capnp._DynamicStructReader, left: bool = True,
+                      honda_bosch_a: bool = False) -> dict[str, Any]:
   lead_dict = {'status': False}
 
-  adjacent_tracks = [c for c in tracks.values() if c.potential_adjacent_lead(left, standstill, model_data)]
+  rail_gate = ADJACENT_RAIL_GATE and honda_bosch_a
+  adjacent_tracks = [c for c in tracks.values()
+                     if c.potential_adjacent_lead(left, standstill, model_data) and not (rail_gate and c.rail_range_inconsistent)]
   if len(adjacent_tracks) > 0:
     closest_track = min(adjacent_tracks, key=lambda c: c.dRel)
     lead_dict = closest_track.get_RadarState()
@@ -1222,8 +1260,10 @@ class RadarD:
           self._reset_preferred_stale_evidence(i)
 
     if self.ready and (self.starpilot_toggles.adjacent_lead_tracking or self.starpilot_toggles.human_lane_changes):
-      self.starpilot_radar_state.leadLeft = get_adjacent_lead(self.tracks, sm['carState'].standstill, sm['modelV2'], left=True)
-      self.starpilot_radar_state.leadRight = get_adjacent_lead(self.tracks, sm['carState'].standstill, sm['modelV2'], left=False)
+      self.starpilot_radar_state.leadLeft = get_adjacent_lead(self.tracks, sm['carState'].standstill, sm['modelV2'], left=True,
+                                                              honda_bosch_a=self.honda_bosch_a_radar)
+      self.starpilot_radar_state.leadRight = get_adjacent_lead(self.tracks, sm['carState'].standstill, sm['modelV2'], left=False,
+                                                              honda_bosch_a=self.honda_bosch_a_radar)
 
     # Not gated on the adjacent-lead toggles: this is a separate signal with a separate
     # consumer (Force Stop), and leaving leadLeft/leadRight untouched keeps existing
