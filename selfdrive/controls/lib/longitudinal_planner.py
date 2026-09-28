@@ -550,8 +550,19 @@ def get_vehicle_min_accel(CP, v_ego):
   return float(ACCEL_MIN)
 
 
-def get_far_lead_coast_cap(lead, v_ego, desired_gap, output_a_target):
+def far_lead_vision_braking(model_msg):
+  """The camera's lead is braking: leadsV3[0].a[0] <= -FAR_LEAD_COAST_MAX_LEAD_BRAKE at prob >= FAR_LEAD_COAST_VISION_MIN_PROB."""
+  leads = getattr(model_msg, "leadsV3", None) if model_msg is not None else None
+  if leads is None or not len(leads) or not len(leads[0].a):
+    return False
+  return (float(leads[0].prob) >= FAR_LEAD_COAST_VISION_MIN_PROB and
+          float(leads[0].a[0]) <= -FAR_LEAD_COAST_MAX_LEAD_BRAKE)
+
+
+def get_far_lead_coast_cap(lead, v_ego, desired_gap, output_a_target, model_msg=None):
   if lead is None or not bool(getattr(lead, "status", False)):
+    return float(output_a_target)
+  if far_lead_vision_braking(model_msg):
     return float(output_a_target)
 
   v_ego = float(v_ego)
@@ -623,6 +634,11 @@ FAR_LEAD_COAST_MIN_TTC = 8.0
 FAR_LEAD_COAST_MIN_GAP_MARGIN = 6.0
 FAR_LEAD_COAST_MAX_LEAD_BRAKE = 0.35
 FAR_LEAD_COAST_MAX_DECEL = 0.20
+# The cap also stands down while the camera sees its lead braking. Route 0000028f 11:29: lead #34 braked
+# ~19 -> 6 m/s; radar aLeadK read +0.1..+0.5 while camera a read -1.2..-1.6, so the cap held -0.20 for
+# 11:29.3-11:30.8 and the car re-braked at -3.6 at 11:33.5. Replay of 6 drives (28f 28b 28a 289 287 286):
+# 4 moments changed, all with the camera lead slowing; no episode minimum below -1.5 changed (open loop).
+FAR_LEAD_COAST_VISION_MIN_PROB = 0.5
 RADAR_DEPART_CONFLICT_MAX_EGO_SPEED = 1.6
 RADAR_DEPART_CONFLICT_MIN_RADAR_LATERAL = 1.5
 RADAR_DEPART_CONFLICT_MAX_RADAR_DISTANCE = 18.0
@@ -3647,7 +3663,8 @@ class LongitudinalPlanner:
       not bool(getattr(sm['starpilotPlan'], 'stopSignConfirmed', False))
     )
     if far_lead_coast_allowed:
-      output_a_target = get_far_lead_coast_cap(comfort_lead, scene_v_ego, desired_gap, output_a_target)
+      output_a_target = get_far_lead_coast_cap(comfort_lead, scene_v_ego, desired_gap, output_a_target,
+                                               sm['modelV2'])
 
     if radar_gap_settle_active:
       output_a_target = RADAR_STANDSTILL_GAP_SETTLE_ACCEL

@@ -4643,3 +4643,25 @@ def test_fast_closing_pass_is_capped_at_max_brake(monkeypatch):
   assert cap is not None and -2.0 - 1e-6 <= cap < -1.0
   monkeypatch.setattr(longitudinal_planner_module, "FAST_CLOSING_LEAD_MAX_BRAKE", 0.0)
   assert longitudinal_planner_module.fast_closing_accel_min(-3.5) == -3.5
+
+
+def _far_lead_cap_case(model_a=None, model_prob=0.9):
+  # Route 0000028f 11:29.5 shape: lead 60 m ahead, closing ~5 m/s, radar aLeadK reads no braking.
+  lead = SimpleNamespace(status=True, dRel=60.0, vLead=20.0, aLeadK=0.2)
+  model = None
+  if model_a is not None:
+    model = SimpleNamespace(leadsV3=[SimpleNamespace(prob=model_prob, a=[model_a])])
+  return longitudinal_planner_module.get_far_lead_coast_cap(lead, 25.0, 30.0, -1.3, model)
+
+
+def test_far_lead_coast_cap_holds_when_camera_sees_no_brake():
+  assert _far_lead_cap_case() == pytest.approx(-longitudinal_planner_module.FAR_LEAD_COAST_MAX_DECEL)
+  assert _far_lead_cap_case(model_a=-0.1) == pytest.approx(-longitudinal_planner_module.FAR_LEAD_COAST_MAX_DECEL)
+
+
+def test_far_lead_coast_cap_stands_down_when_camera_sees_lead_braking():
+  assert _far_lead_cap_case(model_a=-1.4) == pytest.approx(-1.3)
+
+
+def test_far_lead_coast_cap_ignores_low_confidence_camera_brake():
+  assert _far_lead_cap_case(model_a=-1.4, model_prob=0.3) == pytest.approx(-longitudinal_planner_module.FAR_LEAD_COAST_MAX_DECEL)

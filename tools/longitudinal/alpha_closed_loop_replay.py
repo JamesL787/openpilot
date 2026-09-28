@@ -121,12 +121,10 @@ HF_GATE_VARIANT = "hf_gate"
 # --brake-ab (28f 11:33 / 14:19 firm brakes): 'cap_off' = the built-in far-lead coast cap disabled;
 # 'alead_floor' = every radar lead's aLeadK floored at -ALEAD_FLOOR at planner input (diagnostic only,
 # not a proposal: it would also blunt a real hard stop ahead). The vision-corroborated bound for every
-# lead is the existing bearing variant b0. 'cap_vis' = the cap also stands down while vision sees the lead
-# braking (leadsV3[0].a <= -CAP_VIS_MAX_BRAKE at prob >= CAP_VIS_MIN_PROB); the shipped cap reads aLeadK only.
-BRAKE_VARIANTS = ("cap_off", "cap_vis", "alead_floor")
+# lead is the existing bearing variant b0. 'cap_radar' = the cap as it was through a8441f64, reading aLeadK
+# only; the shipped cap also stands down while vision sees its lead braking (far_lead_vision_braking).
+BRAKE_VARIANTS = ("cap_off", "cap_radar", "alead_floor")
 ALEAD_FLOOR = 2.0
-CAP_VIS_MAX_BRAKE = 0.35
-CAP_VIS_MIN_PROB = 0.5
 GUARD_TTC = 3.0
 GUARD_MIN_CLOSING = 0.75
 
@@ -286,13 +284,6 @@ def hf_gated_model_lead_trajectory(builder, lead_detection_probability, fired):
   return build
 
 
-def vision_braking(model) -> bool:
-  if len(model.leadsV3) == 0 or len(model.leadsV3[0].a) == 0:
-    return False
-  ld = model.leadsV3[0]
-  return float(ld.prob) >= CAP_VIS_MIN_PROB and float(ld.a[0]) <= -CAP_VIS_MAX_BRAKE
-
-
 def floored_a_lead(bound):
   """The shipped off-axis bound, then aLeadK floored at -ALEAD_FLOOR for any radar lead (--brake-ab)."""
   def a_lead(lead, model_msg, held=False):
@@ -320,7 +311,7 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
   fix_bounds = {k: FixBound(k) for k in FIX_VARIANTS} if fixes else {}
   original_bound = LP.off_axis_lead_a_lead
   cap_default = LP.FAR_LEAD_COAST_MAX_DECEL
-  original_cap = LP.get_far_lead_coast_cap
+  original_vision_braking = LP.far_lead_vision_braking
   state: dict = {}
   valid: dict = {}
   toggles = default_toggles()
@@ -460,8 +451,8 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
           if v == "alead_floor":
             LP.off_axis_lead_a_lead = floored_a_lead(original_bound)
           LP.FAR_LEAD_COAST_MAX_DECEL = 1e3 if v == "cap_off" else cap_default
-          if v == "cap_vis" and vision_braking(model):
-            LP.get_far_lead_coast_cap = lambda lead, v_ego, gap, a_target: float(a_target)
+          if v == "cap_radar":
+            LP.far_lead_vision_braking = lambda model_msg: False
           if v in HUMAN_VARIANTS:
             vt = copy.copy(toggles)
             vt.human_following = v != "human_off"
@@ -482,7 +473,7 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
           else:
             p.update(sm, toggles)
           LP.off_axis_lead_a_lead = original_bound
-          LP.get_far_lead_coast_cap = original_cap
+          LP.far_lead_vision_braking = original_vision_braking
           if v in fix_bounds:
             fix_fired[v] = fix_bounds[v].fired
           out[v] = float(p.output_a_target)
@@ -495,7 +486,7 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
         LM.build_model_lead_trajectory = original_builder
         LP.MPC_LEAD_BRAKE_PASSES_COMFORT_FLOOR, LP.LC_MERGE_RELEASE_MPC_DEMAND = LATE_DEFAULTS
         LP.FAR_LEAD_COAST_MAX_DECEL = cap_default
-        LP.get_far_lead_coast_cap = original_cap
+        LP.far_lead_vision_braking = original_vision_braking
 
       lg = state["radarState_logged"].leadOne
       lr = rs.leadOne
@@ -662,7 +653,7 @@ def main() -> int:
   ap.add_argument("--hf-gate", action="store_true",
                   help="add 'hf_gate': HumanFollowing also needs the radar lead's modelProb (FrogPilot e7debabe5)")
   ap.add_argument("--brake-ab", action="store_true",
-                  help="add 'cap_off' (cap disabled), 'cap_vis' (cap off while vision sees a braking lead), 'alead_floor'")
+                  help="add 'cap_off' (cap disabled), 'cap_radar' (cap ignores vision, as before), 'alead_floor'")
   ap.add_argument("--json", type=Path, help="write episodes + metadata here (keep it outside the repo)")
   args = ap.parse_args()
 
