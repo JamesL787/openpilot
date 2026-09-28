@@ -9521,3 +9521,28 @@ What arrives:
 
 **Not verified.** No test run on the merged tree; each side's tests passed on its own branch. Next drive: check
 liveDelay reads 0.32 from the start, lateralControlState is the ClarityEps one, and turn-in/unwind timing against 290.
+
+## 189. STATUS 187's MetaDrive evidence is withdrawn pending re-run, and a stronger standard-band angle feedforward does not cut PID corner overshoot. Replay/sim only; docs only.
+
+**MetaDrive PID arms may have run the wrong controller.** Per MetaDrive Sim (John) (2026-09-28), the car-config
+`params.json` from the car's initData carries `NrdrLatEpsFirmwareFF=1`. `launch_openpilot.sh` applies it at launch,
+over the run's `false`, and the run's overrides are only re-applied at +30 s. controlsd can start before that (+25 s in
+one logged episode), so the "PID" arms may have driven LatControlClarityEps. max|f| per run is bimodal within
+arms. **Treat as withdrawn until re-run:** chains 43/44 (Base vs Simple, the ">= 8 m/s" bullet in 187) and chain 49
+(steer delay 0.30 vs 0.47: "no corner benefit, more hunting").
+- The output scale in 187 stays on the branch. Its remaining evidence is the lat_score gate (pass, 3 routes better,
+  wobble flat) plus the owner's call. Its MetaDrive support is pending.
+- The steer-delay question is open again. See 188 for the owner's pinned 0.32 s on James's controller.
+
+**Std-band angle feedforward (replay, lat_score gate, d07dee21 PID, `NrdrLatPidFirmwareFF` 1, 11 routes).**
+Route 28f logs show the angle FF supplies ~0.015 of ~0.09 output in steady 6-25 deg turns at 25-50 mph. The
+integrator carries ~0.068. The test raised `LatFScaleStandard` from 115 to 200 / 300 / 450:
+- The gate verdict goes neutral / pass / pass. err_rms_standard drops 3-6 % (28f 0.77 -> 0.73 at 300) and
+  curve_ratio_standard moves to ~1.0. 12-20 mph dither is up 0.01-0.03 at 450.
+- Per-turn overshoot at 25-50 mph is not reduced. On 28f sharp turns (n=8) it is +3.08 / +3.08 / +3.06 / +3.02 deg
+  (log +2.26). Mild turns are flat to worse (28a n=21: +1.66 -> +1.78 at 450).
+- The replay plant overshoots more than the car does on sharp turns, so it may not resolve this.
+- No change is made. The owner can try `LatFScaleStandard` 300 on a PID drive (param only).
+
+**Civic load constants (`CIVIC_PID_LOAD`, >= 25 mph) are uncommitted in the PID session's working tree.** Replay gate:
+neutral. 28f sharp overshoot: +3.32 -> +2.99. Not shipped.
