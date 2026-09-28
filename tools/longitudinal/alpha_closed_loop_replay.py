@@ -129,6 +129,70 @@ GUARD_TTC = 3.0
 GUARD_MIN_CLOSING = 0.75
 
 
+# --sim-window T0,T1 (route seconds): inside the window every replayed variant drives its own simulated car
+# instead of the logged one, so a variant that brakes earlier also arrives slower. The lead stays as logged in
+# the world: its dRel is shifted by how far the simulated car is behind the logged car, its vRel re-based on
+# the simulated speed, and the camera lead's x shifted the same way. The car's acceleration follows the
+# planner's output through SIM_DELAY and a first-order SIM_TAU lag (fit on 28f 11:20-11:45: accel command ->
+# aEgo, rmse 0.22 m/s^2), plus the logged residual (aEgo minus the same model driven by the logged command),
+# so grade and drag carry over and a variant commanding exactly what the car did reproduces the log.
+# Not modelled: the driver, starpilotPlan (tFollow, vCruise stay as logged), and the rest of modelV2.
+SIM_DELAY = 0.1
+SIM_TAU = 0.3
+
+
+class _Over:
+  """Read-through proxy that overrides a few attributes of a capnp reader."""
+  def __init__(self, base, **over):
+    self._base = base
+    self._over = over
+
+  def __getattr__(self, k):
+    over = self.__dict__["_over"]
+    return over[k] if k in over else getattr(self.__dict__["_base"], k)
+
+
+class _FirstOrderDelay:
+  def __init__(self, a0: float):
+    self.a = a0
+    self.buf: list = []
+
+  def step(self, u: float, dt: float) -> float:
+    self.buf.append(u)
+    ud = self.buf.pop(0) if len(self.buf) > round(SIM_DELAY / 0.05) else self.buf[0]
+    self.a += (ud - self.a) * min(dt / SIM_TAU, 1.0)
+    return self.a
+
+
+class SimCar:
+  """One variant's simulated ego inside --sim-window (see SIM_DELAY)."""
+  def __init__(self, v: float, a: float):
+    self.v = v
+    self.a = a
+    self.gap_shift = 0.0
+    self.model = _FirstOrderDelay(a)
+    self.u = a
+
+  def step(self, dt: float, residual: float, v_log: float):
+    self.a = self.model.step(self.u, dt) + residual
+    v_new = max(self.v + self.a * dt, 0.0)
+    self.gap_shift += (v_log - (self.v + v_new) / 2.0) * dt
+    self.v = v_new
+
+  def views(self, cs, rs, model):
+    shift, v = self.gap_shift, self.v
+
+    def lead(ld):
+      if not ld.status:
+        return ld
+      return _Over(ld, dRel=float(ld.dRel) + shift, vRel=float(ld.vLead) - v)
+
+    cs_v = _Over(cs, vEgo=v, vEgoCluster=v, aEgo=self.a, standstill=v < 0.05)
+    rs_v = _Over(rs, leadOne=lead(rs.leadOne), leadTwo=lead(rs.leadTwo))
+    leads = [_Over(ld, x=[float(x) + shift for x in ld.x]) for ld in model.leadsV3]
+    return cs_v, rs_v, _Over(model, leadsV3=leads)
+
+
 def frogpilot_model_lead_trajectory(lead_detection_probability, guard=False, trips=None):
   """FrogPilot's HumanFollowing lead path: radar anchor + model deltas; `guard` adds the 3 s TTC fallback."""
   def build(model_lead, radar_lead, v_ego, *_):
@@ -298,7 +362,7 @@ def floored_a_lead(bound):
 
 def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bound: bool = False,
            human_ab: bool = False, vision_only: bool = False, late_ab: bool = False, hf_gate: bool = False,
-           brake_ab: bool = False):
+           brake_ab: bool = False, sim_window: tuple | None = None):
   files = segment_files(route_dir)
   if not files:
     raise SystemExit(f"no rlog segments under {route_dir}")
@@ -327,6 +391,10 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
                 "shipped_bearing": LP.OFF_AXIS_LEAD_MIN_BEARING}
   agree = {"both": 0, "radar": 0, "d1m": 0, "track": 0, "status_eq": 0, "ticks": 0}
   frames: list[dict] = []
+  sims: dict = {}
+  sim_resid_model = None
+  t_prev = None
+  meta["sim_window"] = sim_window
 
   for path in files:
     for msg in LogReader(str(path), sort_by_time=True):
@@ -432,16 +500,35 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
       fix_fired = {}
       saved = LP.OFF_AXIS_LEAD_MIN_BEARING
       t_now = (msg.logMonoTime - t0) / 1e9
+      in_sim = sim_window is not None and sim_window[0] <= t_now <= sim_window[1]
+      dt = min(t_now - t_prev, 0.2) if t_prev is not None else 0.05
+      t_prev = t_now
+      logged_cmd = accel_cmd if not meta["logged_op_long"] else float(state["carControl"].actuators.accel)
+      if sim_resid_model is None:
+        sim_resid_model = _FirstOrderDelay(float(cs.aEgo))
+      sim_resid = float(cs.aEgo) - sim_resid_model.step(logged_cmd if np.isfinite(logged_cmd) else float(cs.aEgo), dt)
+      if not in_sim:
+        sims.clear()
+      else:
+        for v in planners:
+          if v == "logged":
+            continue
+          if v not in sims:
+            sims[v] = SimCar(float(cs.vEgo), float(cs.aEgo))
+          else:
+            sims[v].step(dt, sim_resid, float(cs.vEgo))
       try:
         for v, p in planners.items():
           sm = _ReplaySM(state, valid)
           sm["controlsState"] = cstate
+          if v in sims:
+            sm["carState"], rs_sim, sm["modelV2"] = sims[v].views(cs, rs, model)
           if v == "logged":
             sm["radarState"] = state["radarState_logged"]
             sm._valid = {**valid, "radarState": valid["radarState_logged"]}
             LP.OFF_AXIS_LEAD_MIN_BEARING = saved
           else:
-            sm["radarState"] = rs
+            sm["radarState"] = rs_sim if v in sims else rs
             sm._valid = {**valid, "radarState": bool(rd.radar_state_valid)}
             LP.OFF_AXIS_LEAD_MIN_BEARING = float(v[1:]) if v.startswith("b") else saved
           LP.MPC_LEAD_BRAKE_PASSES_COMFORT_FLOOR, LP.LC_MERGE_RELEASE_MPC_DEMAND = LATE_VARIANTS.get(v, LATE_DEFAULTS)
@@ -477,6 +564,8 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
           if v in fix_bounds:
             fix_fired[v] = fix_bounds[v].fired
           out[v] = float(p.output_a_target)
+          if v in sims:
+            sims[v].u = out[v]
           if v == "frog_guard":
             guard_trip = bool(trips)
           src[v] = str(p.mpc.source)
@@ -503,6 +592,7 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
         "accel_cmd": accel_cmd if not meta["logged_op_long"] else float(state["carControl"].actuators.accel),
         "steer": float(cs.steeringAngleDeg), "out": out, "src": src, "brake": bool(cs.brakePressed), "fix": fix_fired, "guard_trip": guard_trip,
         "hf_gate": bool(hf_gate_fired),
+        "sim": {v: [round(c.v, 3), round(c.a, 3), round(c.gap_shift, 2)] for v, c in sims.items()},
         "vis": vision_view(model, float(cs.vEgo)),
         "lead": lead_view(lr, model, bearings), "lead_logged_bearing":
           abs(float(lg.yRel)) / max(float(lg.dRel), 1.0) if lg.status and lg.radar else None,
@@ -654,17 +744,22 @@ def main() -> int:
                   help="add 'hf_gate': HumanFollowing also needs the radar lead's modelProb (FrogPilot e7debabe5)")
   ap.add_argument("--brake-ab", action="store_true",
                   help="add 'cap_off' (cap disabled), 'cap_radar' (cap ignores vision, as before), 'alead_floor'")
+  ap.add_argument("--sim-window", help="T0,T1 route seconds: each variant drives its own simulated car there (SIM_DELAY)")
+  ap.add_argument("--frames-json", type=Path, help="write every replayed frame here, for charts (keep it outside the repo)")
   ap.add_argument("--json", type=Path, help="write episodes + metadata here (keep it outside the repo)")
   args = ap.parse_args()
 
   bearings = [float(x) for x in args.bearings.split(",")]
   frames, meta = replay(args.route_dir, bearings, args.fixes, args.coast_bound, args.human_ab, args.vision_only,
-                        args.late_ab, args.hf_gate, args.brake_ab)
+                        args.late_ab, args.hf_gate, args.brake_ab,
+                        tuple(float(x) for x in args.sim_window.split(",")) if args.sim_window else None)
   eps = episodes(frames, meta, args.threshold)
   diffs = frame_diffs(frames, meta)
   print_report(meta, frames, eps, diffs, args.threshold)
   if args.json:
     args.json.write_text(json.dumps({"meta": meta, "episodes": eps, "diffs": diffs}, indent=1, default=str))
+  if args.frames_json:
+    args.frames_json.write_text(json.dumps({"meta": meta, "frames": frames}, default=str))
   return 0
 
 
