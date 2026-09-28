@@ -599,6 +599,10 @@ def _takeover_drive():
   hold = (t >= 30.0) & (t < 32.0)
   rows[hold, c["steer_pressed"]] = 1
   rows[hold, c["steer_tq"]] = 900.0     # + = left
+  # The push carries the car left 0.8 m/s from 0.1 m for 3 s, across the lane line at 1.8 m (the model then reports
+  # the new lane's centre, 3.6 m over).
+  pos = 0.1 + 0.8 * np.clip(t - 30.0, 0.0, 3.0)
+  rows[:, c["lane_off"]] = np.where(pos > 1.8, pos - 3.6, pos)
   rows[:, c["long_des"]] = 0.0
   rows[(t >= 50.0) & (t < 52.0), c["long_des"]] = -3.0
   rows[:, c["lead_src"]], rows[:, c["lead_d"]], rows[:, c["lead_v"]], rows[:, c["lead_id"]] = 1, 30.0, 20.0, 4
@@ -614,6 +618,14 @@ def test_takeover_episode_is_measured():
   assert e["tag"] == "long hold" and e["push"] == "left" and e["lanes_ok"] is True
   assert a["driver_takeovers"]["summary"]["count"] == 1
   assert any(ev["kind"] == "steer_takeover" for ev in a["events"])
+  # Position from the press lane's centre, carried across the lane change (raw lane_off at 33 s reads -1.1).
+  assert e["lane_press_m"] == pytest.approx(0.1, abs=0.05)
+  assert e["lane_release_m"] == pytest.approx(0.1 + 0.8 * (e["release_t"] - 30.0), abs=0.1)
+  assert e["lane_press_3s_m"] == pytest.approx(2.5, abs=0.05)
+  assert e["lateral_controller"] is None and e["git_commit"] is None
+  tagged = dp.analyze(_takeover_drive(), controller=dp.CONTROLLER_CLARITY_EPS, git_commit="abc123")
+  e = tagged["driver_takeovers"]["episodes"][0]
+  assert e["lateral_controller"] == dp.CONTROLLER_CLARITY_EPS and e["git_commit"] == "abc123"
 
 
 # ------------------------------- recording every drive -------------------------------
@@ -689,6 +701,7 @@ def test_rlog_copy_has_start_moments_takeovers_and_summary(tmp_path):
   assert [m["kind"] for m in moments] == ["hard_brake"]
   assert moments[0]["mono_s"] == pytest.approx(rows[0, 0] + 50.0, abs=0.06) and moments[0]["t"] == pytest.approx(50.0, abs=0.1)
   assert len(takeovers) == 1 and takeovers[0]["push"] == "left"
+  assert {"lateral_controller", "git_commit", "lane_press_3s_m"} <= set(takeovers[0])
   summary = [m for m in pub.sent if m["type"] == "summary"][-1]
   assert summary["counts"] == {"hard_brake": 1, "takeover": 1} and "lateral" in summary
   plots.stop_recording(reason="drive ended", background=False)
@@ -706,3 +719,33 @@ def test_prune_keeps_manual_sessions_and_the_newest_auto_ones(tmp_path, monkeypa
   (tmp_path / "manual" / "meta.json").write_text(json.dumps({"id": "manual", "status": "done", "started_at": -1}))
   assert sorted(plots.prune_auto_sessions()) == ["a0", "a1"]
   assert sorted(p.name for p in tmp_path.iterdir()) == ["a2", "a3", "manual"]
+
+
+def test_lead_moments_are_gated_the_way_radar_work_asked():
+  """Bob, route 28f: next-lane and far leads, sub-second flicker and radar<->camera handoffs were read as close
+  appear / vanish and track swaps."""
+  t = np.arange(0.0, 45.0, 0.05)
+  n = len(t)
+  z = np.zeros(n)
+  c = {"t": t, "v": np.full(n, 20.0), "long_des": z.copy(), "long_act": z.copy(), "long_active": np.ones(n),
+       "gas_pressed": z.copy(), "enabled": np.ones(n), "brake_pressed": z.copy(), "exp_mode": np.ones(n),
+       "lead_src": z.copy(), "lead_d": z.copy(), "lead_v": np.full(n, 18.0), "lead_y": z.copy(),
+       "lead_id": np.full(n, -1.0)}
+
+  def lead(a, b, d, y=0.0, src=2, tid=-1.0):
+    k = (t >= a) & (t < b)
+    c["lead_src"][k], c["lead_d"][k], c["lead_y"][k], c["lead_id"][k] = src, d, y, tid
+
+  lead(5.0, 10.0, 20.0, y=4.0)         # next lane: nothing
+  lead(12.0, 20.0, 20.0)               # appears close, then vanishes close at 20 s
+  lead(25.0, 25.3, 15.0)               # 0.3 s blink: one lead_flicker
+  lead(30.0, 45.0, 60.0, src=1, tid=3)   # far radar lead: no appear
+  lead(32.0, 45.0, 45.0, src=1, tid=3)   # 15 m drop while far: lead_jump
+  lead(34.0, 45.0, 45.0, src=1, tid=7)   # radar to radar at the same distance: track_id_swap
+  lead(36.0, 38.0, 45.0, src=2, tid=-1)  # to the camera: radar_lost; back to radar id 9 at 38 s: radar_acquired
+  lead(38.0, 45.0, 45.0, src=1, tid=9)
+  ms = agents.long_moments(c)
+  got = [(m["kind"], m["t"]) for m in ms]
+  assert got == [("lead_appeared_close", 12.0), ("lead_vanished_close", 20.0), ("lead_flicker", 25.0),
+                 ("lead_jump", 32.0), ("track_id_swap", 34.0), ("radar_lost", 36.0), ("radar_acquired", 38.0)], got
+  assert all(m["experimental_active"] is True and "experimental" not in m for m in ms)

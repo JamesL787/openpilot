@@ -437,7 +437,8 @@ export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
   const base = toNumber(meta?.first_sample_at, 0) || toNumber(meta?.started_at, 0)
   const approx = !toNumber(meta?.first_sample_at, 0)
   const acc = (x) => `${fmtNum(Math.abs(toNumber(x)), 1)} m/s²`
-  return events.map((e) => {
+  // Radar-to-camera handoffs are routine; they stay in the analysis and the drive's logs for the radar work.
+  return events.filter((e) => e.kind !== "radar_acquired" && e.kind !== "radar_lost").map((e) => {
     let title = ""
     let detail = ""
     let kind = "steer"
@@ -468,6 +469,14 @@ export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
       kind = "brake"
       title = "A close car ahead disappeared"
       detail = `At ${fmtSpeed(e.v, speed)}. ${leadText(e.lead, speed)} It was dropped while still close.`
+    } else if (e.kind === "lead_flicker") {
+      kind = "brake"
+      title = "The car ahead blinked in and out"
+      detail = `At ${fmtSpeed(e.v, speed)}, a close car ahead appeared and vanished within a second. ${leadText(e.lead, speed)}`
+    } else if (e.kind === "lead_jump") {
+      kind = "brake"
+      title = "The car ahead suddenly got closer"
+      detail = `At ${fmtSpeed(e.v, speed)}: the tracked distance dropped from ${fmtNum(e.d_before, 0)} m in one step. ${leadText(e.lead, speed)}`
     } else if (e.kind === "track_id_swap") {
       kind = "brake"
       title = "Radar swapped the car ahead's track"

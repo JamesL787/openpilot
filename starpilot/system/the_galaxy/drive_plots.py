@@ -54,7 +54,8 @@ COLUMNS = [
   "lane_off", "lane_w", "lane_prob",
   # How old controlsState was when this row was taken (ms); a stall shows as a large value.
   "cs_age_ms",
-  # Longitudinal: carControl.actuators.accel (sent), plan shouldStop / fcw / hasLead, selfdriveState.experimentalMode,
+  # Longitudinal: carControl.actuators.accel (sent), plan shouldStop / fcw / hasLead, selfdriveState.experimentalMode
+  # (experimental active right now, switched by Conditional Experimental; the driver's setting is in the meta),
   # starpilotPlan tFollow / trackingLead, carState.standstill.
   "a_cmd", "should_stop", "fcw", "has_lead", "exp_mode", "t_follow", "tracking_lead", "standstill",
   # radarState.leadOne extras, leadTwo, and the camera's own lead (modelV2.leadsV3[0]).
@@ -676,7 +677,8 @@ def _longitudinal_findings(m, takeaways):
   return f"{quality} over {_fmt_time(m['engaged_s'])} of engaged driving.", notes
 
 
-def analyze(rows, min_engaged_s=20.0, controller=None, detail=True, cap=EVENTS_PER_KIND, lateral_delay=None):
+def analyze(rows, min_engaged_s=20.0, controller=None, detail=True, cap=EVENTS_PER_KIND, lateral_delay=None,
+            git_commit=None):
   """controller: the lateral controller that drove (CONTROLLER_* or None), so advice names settings that apply.
   detail: add the agents' sections (driver takeovers, lateral detail per band); the live 30 s view skips them.
   cap: moments kept per kind (None = all, for the rlog report)."""
@@ -687,6 +689,9 @@ def analyze(rows, min_engaged_s=20.0, controller=None, detail=True, cap=EVENTS_P
   lat = _analyze_lateral(c, seg, dt, min_engaged_s)
   lon = _analyze_longitudinal(c, seg, dt, min_engaged_s)
   take = agents.takeovers(c) if detail else None
+  if take is not None:
+    for e in take["episodes"]:
+      e["lateral_controller"], e["git_commit"] = controller, git_commit   # Kevin: episodes compare within one controller
   lat_detail = agents.lateral_detail(c, lateral_delay) if detail else None
   # Plain-language copies for the Steering card (the full blocks stay under driver_takeovers / lateral_detail).
   if take is not None and agents.has(c, "steer_tq"):
@@ -1147,7 +1152,8 @@ class DrivePlots:
         m = json.loads((d / "meta.json").read_text())
       except Exception:
         m = {}
-      result = analyze(rows, controller=m.get("lateral_controller"), lateral_delay=m.get("lateral_delay"))
+      result = analyze(rows, controller=m.get("lateral_controller"), lateral_delay=m.get("lateral_delay"),
+                       git_commit=m.get("git_commit"))
       result["overview"] = overview(rows)
       tmp = d / "analysis.tmp"
       tmp.write_text(json.dumps(_json_safe(result)))
@@ -1348,7 +1354,9 @@ class DrivePlots:
       release_mono = e["mono_s"] + (e["release_t"] - e["t"])
       if lo <= e["mono_s"] and release_mono + TAKEOVER_TAIL_S <= t[-1] and not self._seen(rec, "takeover", e["mono_s"]):
         e = {k: v for k, v in e.items() if not k.startswith("i_") or k in ("i_press", "i_release", "i_release_1s")}
-        self._publish("takeover", {"session": rec["id"], "route": rec.get("route"), **e})
+        self._publish("takeover", {"session": rec["id"], "route": rec.get("route"), **e,
+                                   "lateral_controller": rec["meta"].get("lateral_controller"),
+                                   "git_commit": rec["meta"].get("git_commit")})
         sent += 1
     return sent
 

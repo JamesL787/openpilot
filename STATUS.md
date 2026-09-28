@@ -7547,6 +7547,25 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
 - The Galaxy CPU cost of the extra subscriptions is unmeasured.
 - All moment thresholds are first guesses, to be checked against real recordings.
 
+## 141d. Plots moments after the agents' first read of 141c (2026-09-28): takeovers say which controller drove and where the car sat in the lane, and the lead moments stop firing on next-lane blinks and radar/camera handoffs. Unit tests and a replay of one real route only.
+
+- **Takeovers** (Driver override, VFN Shadow controller):
+  - Every episode carries `lateral_controller` and `git_commit`, because takeovers under ClarityEps and the PID are not comparable. The rlog copy and rlog_report carry them too.
+  - Each episode adds `lane_press_m`, `lane_release_m` and `lane_press_3s_m`: position from the centre of the lane at the press (+ = left), carried across a lane change. This is the real-grab counterpart of the design-C sim's "+3 s from press" residual. It is limited road evidence and never scored pass/fail, since a real grab has no no-push twin.
+- **Lead moments** (Radar Work, from route 28f):
+  - `track_id_swap` is now radar to radar only: both IDs >= 0, lead kept, distance within 3 m. Handoffs are `radar_acquired` / `radar_lost`. They stay in the analysis and the rlog but are not listed on the page.
+  - `lead_appeared_close` / `lead_vanished_close` now need the lead within 2 m laterally and under 30 / 40 m, and the new state must hold 0.5 s.
+  - An appear and a vanish within 1 s are one `lead_flicker`.
+  - A distance drop over 8 m while the lead is 30 m or farther is `lead_jump`.
+- **Experimental mode:** the moment field is now `experimental_active`. `selfdriveState.experimentalMode` is switched by Conditional Experimental, so it is not the driver's setting. ConditionalExperimental and ConditionalChill join ExperimentalMode in the tune snapshot.
+- **Replay** of the same 3 segments of one ClarityEps route:
+  - Before: 5 swaps, 7 appeared, 4 vanished.
+  - After: 0 swaps (5 radar_lost, 4 radar_acquired), 2 appeared, 1 lead_jump, 0 vanished.
+  - All 20 takeovers carry clarity_eps, the commit and the three lane positions.
+  - Its snapshot shows ConditionalExperimental = 1.
+- 87 tests pass, including a scenario that exercises every lead gate.
+- **Not verified:** the new 2 m / 0.5 s / 1 s gates are Bob's numbers from one route and have not been checked against a second.
+
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 
 **What was added.**

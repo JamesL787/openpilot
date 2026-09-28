@@ -56,6 +56,9 @@ LEAD_JUMP_D = 8.0             # or whose distance drops by more than this in one
 LEAD_VANISH_D = 40.0          # a lead lost while closer than this, ego moving
 LEAD_VANISH_V = 2.0
 TRACK_SWAP_D = 3.0            # radarTrackId changed while the distance moved less than this: same car, new ID
+LEAD_IN_LANE_Y = 2.0          # |lead y| (m) for appear / vanish: next-lane camera leads flicker (Bob, route 28f: 21 of 29)
+LEAD_HOLD_S = 0.5             # the new lead state must hold this long before an appear / vanish counts
+LEAD_FLICKER_S = 1.0          # an appear and a vanish this close together are one "lead_flicker"
 NO_LEAD_BRAKE = -1.0
 CAMERA_BRAKE = -1.5
 GAS_BRAKE_PLAN = -0.5         # gas press after the plan braked below this ...
@@ -303,6 +306,12 @@ def takeovers(c, t0=None):
       for s_ in DRIFT_AT_S:
         e[f"drift_{s_:g}s_m"] = None
       e["vlat_rel"] = None
+    # James: lateral position from the centre of the lane the car was in at the press (+ = left), carried across a lane
+    # change by the unwrap, at press, release and press + 3 s: the real-grab twin of the design-C sim's "residual at
+    # +3 s from press". Limited road evidence only; a real grab has no no-push twin, so it is never scored pass/fail.
+    for key, k in (("lane_press_m", s), ("lane_release_m", r), ("lane_press_3s_m", _at(t, t[s] + 3.0) if t[-1] >= t[s] + 3.0 else None)):
+      e[key] = (_r(c["lane_off"][s] + (off[k] - off[s]), 2)
+                if lane and k is not None and np.isfinite(c["lane_off"][s]) and np.isfinite(off[k]) else None)
     if prob is not None:
       e["lane_prob_release"] = _r(prob[r], 2)
       e["lanes_ok"] = bool(np.isfinite(prob[r]) and prob[r] > LANES_OK_PROB)
@@ -336,7 +345,10 @@ def takeovers(c, t0=None):
                    f"driver's own target is unknown). Drift is lane offset toward the push, unwrapped across lane "
                    f"changes; trust it only when lanes_ok (both lane lines > {LANES_OK_PROB:g}). releases = grabs above "
                    f"{RELEASE_CLASS_V:g} m/s held under {RELEASE_CLASS_MAX_S:g} s. Swing, overshoot and settle are "
-                   "None when openpilot was not steering within 0.5 s of the release (lat_active_after)."),
+                   "None when openpilot was not steering within 0.5 s of the release (lat_active_after). lane_press_m / "
+                   "lane_release_m / lane_press_3s_m: position from the centre of the lane at the press (+ = left), "
+                   "limited road evidence, never pass/fail. lateral_controller / git_commit: what drove; takeovers "
+                   "under different controllers are not comparable."),
   }
   return {"episodes": eps, "summary": summary}
 
@@ -380,8 +392,11 @@ def long_moments(c, t0=None, cap=None):
   def base(kind, i, **kw):
     e = {"kind": kind, "t": round(float(t[i] - t0), 1), "mono_s": round(float(t[i]), 3), "v": _r(v[i], 1),
          "lead": lead_snapshot(c, i)}
+    # selfdriveState.experimentalMode: experimental active right now. Under Conditional Experimental / Chill the planner
+    # switches it by itself, so it is not the driver's setting (that is in the tune snapshot: ExperimentalMode,
+    # ConditionalExperimental, ConditionalChill).
     if exp is not None and np.isfinite(exp[i]):
-      e["experimental"] = bool(exp[i] > 0.5)
+      e["experimental_active"] = bool(exp[i] > 0.5)
     e.update(kw)
     return e
 
@@ -410,17 +425,54 @@ def long_moments(c, t0=None, cap=None):
 
   prev_on = np.concatenate([[False], lead_on[:-1]])
   prev_d = np.concatenate([[0.0], d[:-1]])
-  # Moving only (like "vanished"): stopped in traffic, the camera lead flickers on and off at a few metres.
-  appear = ((lead_on & ~prev_on & (d < LEAD_APPEAR_D)) | (lead_on & prev_on & (prev_d - d > LEAD_JUMP_D))) & (v > LEAD_VANISH_V)
-  appear[0] = False
-  add("appear", _starts(appear, t, 1.0), lambda i: base("lead_appeared_close", i, d_before=_r(prev_d[i], 1) if prev_on[i] else None))
-  vanish = ~lead_on & prev_on & (prev_d < LEAD_VANISH_D) & (v > LEAD_VANISH_V)
-  add("vanish", _starts(vanish, t, 1.0), lambda i: base("lead_vanished_close", i, lead=lead_snapshot(c, i - 1)))
+  moving = v > LEAD_VANISH_V   # stopped in traffic, the camera lead flickers on and off at a few metres
+  if has(c, "lead_y"):
+    y = np.abs(c["lead_y"])
+    in_lane = ~(y >= LEAD_IN_LANE_Y)                    # NaN y (not recorded) is not gated
+    prev_in_lane = np.concatenate([[True], in_lane[:-1]])
+  else:
+    in_lane = prev_in_lane = np.ones(n, dtype=bool)
+  hold_n = max(1, int(round(LEAD_HOLD_S / dt)))
+
+  def holds(i, state):
+    w = lead_on[i:i + hold_n]
+    return len(w) == hold_n and bool(np.all(w == state))
+
+  # Bob: every appear / vanish needs the car close and in (or next to) our lane; a far distance drop is a lead_jump.
+  appear = lead_on & (~prev_on | (prev_d - d > LEAD_JUMP_D)) & (d < LEAD_APPEAR_D) & in_lane & moving
+  jump = lead_on & prev_on & (prev_d - d > LEAD_JUMP_D) & (d >= LEAD_APPEAR_D) & in_lane & moving
+  vanish = ~lead_on & prev_on & (prev_d < LEAD_VANISH_D) & prev_in_lane & moving
+  appear[0] = jump[0] = vanish[0] = False
+  ups = [(i, "appear") for i in _starts(appear, t, 0.0)]
+  downs = [(i, "vanish") for i in _starts(vanish, t, 0.0)]
+  ev = sorted(ups + downs)
+  flick, used = [], set()
+  for k, (i, kind) in enumerate(ev):
+    if k in used:
+      continue
+    if k + 1 < len(ev) and ev[k + 1][1] != kind and t[ev[k + 1][0]] - t[i] < LEAD_FLICKER_S:
+      used.update((k, k + 1))
+      flick.append(i)
+  ev = [(i, kind) for k, (i, kind) in enumerate(ev) if k not in used and holds(i, kind == "appear")]
+  add("appear", _starts(np.isin(np.arange(n), [i for i, kd in ev if kd == "appear"]), t, 1.0),
+      lambda i: base("lead_appeared_close", i, d_before=_r(prev_d[i], 1) if prev_on[i] else None))
+  add("vanish", _starts(np.isin(np.arange(n), [i for i, kd in ev if kd == "vanish"]), t, 1.0),
+      lambda i: base("lead_vanished_close", i, lead=lead_snapshot(c, i - 1)))
+  add("flicker", _starts(np.isin(np.arange(n), flick), t, 1.0),
+      lambda i: base("lead_flicker", i, lead=lead_snapshot(c, i if lead_on[i] else i - 1)))
+  add("jump", _starts(jump, t, 1.0), lambda i: base("lead_jump", i, d_before=_r(prev_d[i], 1)))
   if has(c, "lead_id"):
-    ids = np.nan_to_num(c["lead_id"])
+    # radarTrackId, -1 on a camera-only lead. A swap is radar to radar (both >= 0, different, lead kept, distance
+    # within TRACK_SWAP_D); a handoff to or from the camera is radar_acquired / radar_lost (Bob).
+    ids = np.where(np.isfinite(c["lead_id"]), c["lead_id"], -1.0)
     prev_id = np.concatenate([[ids[0]], ids[:-1]])
-    swap = lead_on & prev_on & (ids != prev_id) & (np.abs(d - prev_d) < TRACK_SWAP_D)
+    kept = lead_on & prev_on & (np.abs(d - prev_d) < TRACK_SWAP_D) & (ids != prev_id)
+    swap = kept & (ids >= 0) & (prev_id >= 0)
     add("swap", _starts(swap, t, 1.0), lambda i: base("track_id_swap", i, id_before=int(prev_id[i]), id_after=int(ids[i])))
+    add("acquired", _starts(kept & (ids >= 0) & (prev_id < 0), t, 1.0),
+        lambda i: base("radar_acquired", i, id_after=int(ids[i])))
+    add("lost", _starts(kept & (ids < 0) & (prev_id >= 0), t, 1.0),
+        lambda i: base("radar_lost", i, id_before=int(prev_id[i]), lead=lead_snapshot(c, i - 1)))
   add("nolead", _starts(on & (plan < NO_LEAD_BRAKE) & ~lead_on, t),
       lambda i: base("brake_no_lead", i, plan_min=_r(np.min(plan[i:i + win]), 2)))
   add("camera", _starts(on & (plan < CAMERA_BRAKE) & (np.round(src) == 2), t),

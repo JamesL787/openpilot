@@ -49,7 +49,7 @@ from openpilot.starpilot.system.the_galaxy import drive_plots as dp  # noqa: E40
 
 CLARITY_FILE = "selfdrive/controls/lib/latcontrol_clarity_eps.py"
 EXTRA_KEYS = ("LaneCentering", "LaneCenteringE2EAuthority", "LaneCenterOffset", "SteerDelay", "BlotV3", "BoschARadar",
-              "ExperimentalMode", "LongitudinalPersonality")
+              "ExperimentalMode", "ConditionalExperimental", "ConditionalChill", "LongitudinalPersonality")
 RLOG_SERVICE = dp.RLOG_SERVICE
 
 
@@ -243,7 +243,7 @@ def report(seg_paths, rate="plan", detect=True):
   ctrl = controller(seg_paths) if detect else {"controller": None, "reasons": ["not run (--no-detect)"], "segments": []}
   dp_ctrl = {"clarity_eps": dp.CONTROLLER_CLARITY_EPS, "pid": dp.CONTROLLER_NRDR_PID}.get(ctrl["controller"])
   delay = snap["lateralDelay_median"]
-  a = dp.analyze(rows, controller=dp_ctrl, lateral_delay=delay) if len(rows) > 1 else {"status": "no samples"}
+  a = dp.analyze(rows, controller=dp_ctrl, lateral_delay=delay, git_commit=snap["gitCommit"]) if len(rows) > 1 else {"status": "no samples"}
   a.pop("overview", None)
   a = _label_times(dp._json_safe(a), r)
   gaps = None

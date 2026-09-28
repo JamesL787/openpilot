@@ -1990,7 +1990,7 @@ except Exception:
 _DRIVE_PLOTS_RADAR_KEYS = ("BlotV3", "BoschARadar", "NrdrHondaEcuMatchedLong")
 # Asked for by the lateral agents: lane centring, the delay the controller assumes, and the firmware-FF switch.
 _DRIVE_PLOTS_AGENT_KEYS = ("LaneCentering", "LaneCenteringE2EAuthority", "LaneCenterOffset", "SteerDelay",
-                           "NrdrLatEpsFirmwareFF", "ExperimentalMode")
+                           "NrdrLatEpsFirmwareFF", "ExperimentalMode", "ConditionalExperimental", "ConditionalChill")
 _CLARITY_EPS_CARS = (HONDA_CAR.HONDA_CLARITY, HONDA_CAR.HONDA_CIVIC_BOSCH)
 _lateral_controller_cache = {"key": None, "value": None}
 
