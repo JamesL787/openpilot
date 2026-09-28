@@ -1428,3 +1428,27 @@ Evidence (replay/closed-loop sim, `--bearings 0.075`, filter re-applied vs remov
 
 Limits: replay only; no road drive with this change yet. `test_leads.py`
 `test_match_vision_to_track_keeps_new_lane_car_during_human_lane_change` pins both 293 geometries.
+
+## D-068 — REJECTED: publishing a high-U10 birth as a bound
+Route 00000296 5:16 (route 322.05-322.38 s): track 17, the real in-lane lead slowing to a stop at
+66 -> 63 m, had U10 above `BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW` on all six sweeps. With no accepted
+sample and no trusted vRel, the coast path had nothing to coast, so the object was never published.
+
+Tried (not committed): publish such a birth, in lane (|y| <= 2 m) and from 25 m out, once its own ranges fit
+(4 samples over 0.25 s, rms <= 1 m), with vRel = max(live U11, fit - 3 m/s), measured=False. It did not stay
+in the tree. Open-loop A/B replay, `--bearings 0.075`:
+- 00000296: no gain. Track 17 was published for its last two sweeps only and never became the lead. The
+  5:16 command was unchanged; 0 harder and 0 softer frames on the route.
+- 00000294 7:06 (route 426.4 s): track 16, a new in-lane car at 69 m. Its birth U11 was railed at -13.5
+  and its settling birth ranges fit about -13.6, so the bound was -13.5. The radar then read -5.6 a few
+  sweeps later. Vision also said -13 then, so the bound was not a new wrong distance or speed on its own.
+  But radard's lead filter, seeded at -13.5 and then corrected to -5.6, reported the lead ACCELERATING at
+  +3..+5.7 m/s^2 for ~1.1 s (426.9-428.0). Without the change it reported -0.2 falling to -3; the lead was
+  starting to brake. The command was softer by up to 0.5 m/s^2 in that window (peak -2.39 vs -2.76) and
+  crossed -1.5 slightly harder at 428.0 (-1.63 vs -1.47).
+
+Reason: a birth's own ranges are still settling (00000239), and a railed birth U11 is only a bound (D-063).
+Neither gives a vRel good enough to seed radard's filter. A wrong-direction lead acceleration can make a
+real brake late, which is worse than 296's extra 2 s of vision-only lead. Any retry needs a birth vRel
+that does not seed the lead filter's acceleration, and a replay showing a gain. The patch is not kept;
+this entry is the record. Replay evidence only.
