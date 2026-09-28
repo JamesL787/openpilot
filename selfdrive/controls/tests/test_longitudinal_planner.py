@@ -649,7 +649,7 @@ def test_model_lead_trajectory_used_for_braking_lead_with_long_ttc():
 
 
 @pytest.mark.parametrize("d_rel,v_lead,a_lead", [
-  (10.0, 15.0, 0.0),
+  (9.0, 15.0, 0.0),
   (8.0, 0.0, 0.0),
 ])
 def test_model_lead_trajectory_falls_back_for_urgent_raw_lead(d_rel, v_lead, a_lead):

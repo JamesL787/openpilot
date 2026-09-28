@@ -148,7 +148,11 @@ FCW_MAX_TTC = 4.0
 # long silences. STATUS 118 replay, 22 routes fused and radar-dropped: it trips on 1748 frames and
 # changes 4 of 475 brake episodes, all real leads, each firmer (-2.65..-3.11 -> -3.03..-3.49) and
 # none later. Replay only, not road-validated.
-MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC = 3.0
+# 2026-09-28: the owner lowered it to 2.0 s after a 3.0/2.5/2.0/1.5/1.0 replay sweep (1.0 ruled out) and
+# a personality-scaled trial (2.0-2.4 x tFollow, no clear win). 2.0 s is at the low edge of Honda CMBS
+# stage 1 (2.0-2.4 s), which alpha long silences, so the raw-aLeadK fallback now trips later than
+# that FCW would have. Replay only, not road-validated.
+MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC = 2.0
 MODEL_LEAD_TRAJECTORY_MIN_CLOSING_SPEED = 0.75
 DEFAULT_LEAD_DETECTION_PROBABILITY = 0.35
 
