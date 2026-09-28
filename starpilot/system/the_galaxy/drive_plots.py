@@ -361,7 +361,7 @@ def _analyze_lateral(c, seg, dt, min_engaged_s):
   if turns is not None:
     out["turns"] = {k: turns[k] for k in ("bins", "wobble")}
     out["turns"]["count"] = len(turns["turns"])
-    out["turns"]["overshoots"] = [{k: x[k] for k in ("t", "v", "peak_des", "overshoot", "side")}
+    out["turns"]["overshoots"] = [{k: x[k] for k in ("t", "mono_s", "v", "peak_des", "overshoot", "side")}
                                   for x in turns["turns"] if x["overshoot"] >= TURN_EVENT_DEG]
   if engaged_s < min_engaged_s:
     out["status"] = "insufficient"

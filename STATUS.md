@@ -7598,6 +7598,25 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
   - The car check on a drive recorded by the car.
   - Any route other than this one.
 
+## 141f. Plots fixes from James's read of route 293 with rlog_report (2026-09-28): lane drift needs both lines through the window, turns under a light hold are left out and tagged, and overshoots carry route times. Unit tests and a replay of one real route only.
+
+- **Takeover lane numbers:**
+  - drift_1s / 3s / 6s are None unless both lane lines stay above 0.5 from the press to the end of that window. `lanes_ok` is the same test from press to release.
+  - `lane_release_m` and `lane_press_3s_m` are gated the same way. New `lane_prob_min` is the lowest from press to release + 6 s.
+  - At 1202.7 the old release-only check passed (0.72 at release) while the right line sat at 0.02-0.18 in the hold, and the reported 1.06 m was the line jumping.
+- **Holds:**
+  - The "driver's hands plus 1 s after" mask (`agents.after_release`, new `agents.held`) now counts the takeover episodes as well as raw steeringPressed. steeringPressed flickers off in a light hold the torque still shows.
+  - This affects Plots' own turn and wobble figures, the tight-turns list and the lane-straight numbers. The `scorecard` figures stay on lat_score's steeringPressed-only mask.
+  - Each tight turn carries `held_frac`: the share of -10 s .. +5 s around turn-in that the driver was holding.
+- **Overshoots** carry mono_s, so rlog_report adds route_s / seg / seg_mmss and drops the old `t`. That `t` counted from the first sample, not the route start, and was easy to misread against samples.csv's monotonic `t`.
+- **Replay of route 293** (41 segments):
+  - 1202.7 has drift None and lane_prob_min 0.02.
+  - The 234.0 turn is gone. 1166 is tagged held_frac 0.52, and the tight-turn list is down to 8.
+  - One overshoot remains, at route_s 1742.8.
+  - Only 1 of 80 takeovers keeps its drift, against 10 that passed at release before. The median lowest lane probability in a takeover on this route is 0.00, so on this road drift is mostly not measurable.
+- 91 tests pass.
+- **Not verified:** whether 0.5 through the whole window is too strict for other roads.
+
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 
 **What was added.**

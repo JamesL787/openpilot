@@ -749,3 +749,33 @@ def test_lead_moments_are_gated_the_way_radar_work_asked():
   assert got == [("lead_appeared_close", 12.0), ("lead_vanished_close", 20.0), ("lead_flicker", 25.0),
                  ("lead_jump", 32.0), ("track_id_swap", 34.0), ("radar_lost", 36.0), ("radar_acquired", 38.0)], got
   assert all(m["experimental_active"] is True and "experimental" not in m for m in ms)
+
+
+def test_takeover_lane_numbers_need_both_lines_through_the_window():
+  # James (route 293): a faint line during the hold jumped and read as 1 m of drift.
+  rows = _takeover_drive()
+  t = rows[:, dp.COL["t"]] - rows[0, dp.COL["t"]]
+  rows[(t >= 31.0) & (t < 31.5), dp.COL["lane_prob"]] = 0.1
+  e = dp.analyze(rows)["driver_takeovers"]["episodes"][0]
+  assert e["lanes_ok"] is False and e["lane_prob_min"] == pytest.approx(0.1)
+  assert e["drift_1s_m"] is None and e["drift_3s_m"] is None and e["drift_6s_m"] is None
+  assert e["lane_press_m"] is not None and e["lane_release_m"] is None and e["lane_press_3s_m"] is None
+  # Faint only after release + 3 s: the 1 s and 3 s drift stand, the 6 s one does not.
+  rows = _takeover_drive()
+  rel = dp.analyze(rows)["driver_takeovers"]["episodes"][0]["release_t"]
+  rows[(t >= rel + 4.0) & (t < rel + 4.5), dp.COL["lane_prob"]] = 0.1
+  e = dp.analyze(rows)["driver_takeovers"]["episodes"][0]
+  assert e["lanes_ok"] is True and e["drift_3s_m"] is not None and e["drift_6s_m"] is None
+
+
+def test_a_light_hold_without_steering_pressed_is_not_the_controllers_turn():
+  # James (route 293): steeringPressed flickers off in a light hold; the torque still shows the driver steering.
+  rows = _tight_turn_drive(overshoot_deg=12.0)
+  t = rows[:, dp.COL["t"]] - rows[0, dp.COL["t"]]
+  rows[:, dp.COL["steer_tq"]] = 0.0
+  rows[(t >= 19.0) & (t < 27.0), dp.COL["steer_tq"]] = 900.0
+  a = dp.analyze(rows)
+  overs = a["lateral"]["turns"]["overshoots"]
+  assert len(overs) == 2 and all("mono_s" in x for x in overs)
+  tight = a["lateral_detail"]["tight_turns"]
+  assert tight["count"] == 2 and all(0.0 <= x["held_frac"] < 0.5 for x in tight["turns"])

@@ -133,14 +133,25 @@ def band_of(v):
   return BANDS[-1][2]
 
 
+def held(c):
+  """True while the driver holds the wheel: raw steeringPressed or inside a takeover episode (steeringPressed flickers
+  off during a light hold the torque still shows)."""
+  out = _b(c, "steer_pressed").copy()
+  for a, r in _episodes(c):
+    out[a:r + 1] = True
+  return out
+
+
 def after_release(c, s=AFTER_RELEASE_S):
-  """True for frames within s seconds after a raw steeringPressed ended (and while pressed)."""
+  """True while the driver holds the wheel and for s seconds after. A hold is raw steeringPressed or a takeover
+  episode: steeringPressed flickers off during a light hold the torque still shows (James, route 293: tight turns
+  and a 15 s hold leaked through on steeringPressed alone)."""
   t = c["t"]
-  pressed = _b(c, "steer_pressed")
-  out = pressed.copy()
+  h = held(c)
+  out = h.copy()
   last_end = -1e9
   for i in range(len(t)):
-    if i > 0 and pressed[i - 1] and not pressed[i]:
+    if i > 0 and h[i - 1] and not h[i]:
       last_end = t[i]
     if t[i] - last_end < s:
       out[i] = True
@@ -294,11 +305,20 @@ def takeovers(c, t0=None):
         e["release_overshoot_deg"] = None
       e["back_on_plan_s"] = _settle(t, err, r, SETTLE_DEG[0])
       e["back_within_2deg_s"] = _settle(t, ctrl_err, r, SETTLE_DEG[1])
+    # Lane numbers count only while both lines stay above LANES_OK_PROB from the press to the end of the window:
+    # a faint line jumps and reads as drift (James, route 293: 1.06 m "drift" with the right line at 0.02-0.18).
+    def lanes_through(k):
+      if prob is None or k is None:
+        return False
+      p = prob[s:k + 1]
+      return bool(len(p) and np.all(np.isfinite(p)) and np.all(p > LANES_OK_PROB))
+
     if lane and push:
       base = off[r]
       for s_ in DRIFT_AT_S:
-        e[f"drift_{s_:g}s_m"] = (_r(push * (off[_at(t, t[r] + s_)] - base), 2)
-                                 if t[-1] >= t[r] + s_ and np.isfinite(base) else None)
+        k = _at(t, t[r] + s_)
+        e[f"drift_{s_:g}s_m"] = (_r(push * (off[k] - base), 2)
+                                 if t[-1] >= t[r] + s_ and np.isfinite(base) and lanes_through(k) else None)
       a, b = _at(t, t[r] - VLAT_HALF_S), _at(t, t[r] + VLAT_HALF_S)
       e["vlat_rel"] = (_r(push * (off[b] - off[a]) / (t[b] - t[a]), 2)
                        if t[b] > t[a] and np.isfinite(off[a]) and np.isfinite(off[b]) else None)
@@ -311,12 +331,15 @@ def takeovers(c, t0=None):
     # +3 s from press". Limited road evidence only; a real grab has no no-push twin, so it is never scored pass/fail.
     for key, k in (("lane_press_m", s), ("lane_release_m", r), ("lane_press_3s_m", _at(t, t[s] + 3.0) if t[-1] >= t[s] + 3.0 else None)):
       e[key] = (_r(c["lane_off"][s] + (off[k] - off[s]), 2)
-                if lane and k is not None and np.isfinite(c["lane_off"][s]) and np.isfinite(off[k]) else None)
+                if lane and k is not None and np.isfinite(c["lane_off"][s]) and np.isfinite(off[k]) and lanes_through(k)
+                else None)
     if prob is not None:
       e["lane_prob_release"] = _r(prob[r], 2)
-      e["lanes_ok"] = bool(np.isfinite(prob[r]) and prob[r] > LANES_OK_PROB)
+      p = prob[s:_at(t, t[r] + DRIFT_AT_S[-1]) + 1]
+      e["lane_prob_min"] = _r(np.nanmin(p), 2) if np.any(np.isfinite(p)) else None
+      e["lanes_ok"] = lanes_through(r)
     else:
-      e["lane_prob_release"], e["lanes_ok"] = None, False
+      e["lane_prob_release"], e["lane_prob_min"], e["lanes_ok"] = None, None, False
     if has(c, "cs_age_ms"):
       w = slice(s, _at(t, t[r] + DRIFT_AT_S[-1]) + 1)
       e["cs_age_max_ms"] = _r(np.nanmax(c["cs_age_ms"][w]), 0)
@@ -343,7 +366,9 @@ def takeovers(c, t0=None):
                    f"|steeringTorque| < {TAKEOVER_TQ_RELEASE:g} for {TAKEOVER_RELEASE_HOLD_S:g} s. Wheel error is "
                    "carState.steeringAngleDeg - pidState.steeringAngleDesiredDeg (the plan is the reference; the "
                    f"driver's own target is unknown). Drift is lane offset toward the push, unwrapped across lane "
-                   f"changes; trust it only when lanes_ok (both lane lines > {LANES_OK_PROB:g}). releases = grabs above "
+                   f"changes, and None unless both lane lines stay above {LANES_OK_PROB:g} from the press to the end of that window; "
+                   "lanes_ok is the same test from press to release, lane_prob_min the lowest from press to release + "
+                   f"{DRIFT_AT_S[-1]:g} s. lane_press_m / lane_release_m / lane_press_3s_m are gated the same way. releases = grabs above "
                    f"{RELEASE_CLASS_V:g} m/s held under {RELEASE_CLASS_MAX_S:g} s. Swing, overshoot and settle are "
                    "None when openpilot was not steering within 0.5 s of the release (lat_active_after). lane_press_m / "
                    "lane_release_m / lane_press_3s_m: position from the centre of the lane at the press (+ = left), "
@@ -560,6 +585,7 @@ def lateral_detail(c, lateral_delay=None):
   if angles:
     des, act = np.nan_to_num(c["ang_des"]), np.nan_to_num(c["ang_act"])
     ok = _b(c, "lat_active") & ~after_release(c)
+    hold = held(c)
     turns = []
     for i in _starts(ok & (np.abs(des) > TIGHT_DEG), t, 2.0):
       side = np.sign(des[i])
@@ -571,7 +597,9 @@ def lateral_detail(c, lateral_delay=None):
         k += 1
       lag = float(t[j] - t[i]) if j < len(t) and side * act[j] >= TIGHT_DEG else None
       turns.append({"t": round(float(t[i] - t[0]), 1), "mono_s": round(float(t[i]), 3), "v": _r(v[i], 1),
-                    "turn_in_lag_s": _r(lag, 2), "peak_err_deg": _r(np.max(np.abs(act[i:k + 1] - des[i:k + 1])), 1)})
+                    "turn_in_lag_s": _r(lag, 2), "peak_err_deg": _r(np.max(np.abs(act[i:k + 1] - des[i:k + 1])), 1),
+                    # James: the share of -10 s .. +5 s around the turn-in the driver was holding the wheel (0 = clean).
+                    "held_frac": _r(np.mean(hold[_at(t, t[i] - 10.0):_at(t, t[i] + 5.0) + 1]), 2)})
     lags = [x["turn_in_lag_s"] for x in turns if x["turn_in_lag_s"] is not None]
     out["tight_turns"] = {"count": len(turns), "median_turn_in_lag_s": _r(np.median(lags), 2) if lags else None,
                           "lateral_delay_s": _r(lateral_delay, 3),
