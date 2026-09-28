@@ -113,6 +113,14 @@ CIVIC_I_SCALE = (0.75, 0.95, 1.00)
 FF_JOIN_ERROR_DEG = 10.0
 FF_FADE_IN_S = 0.5
 FF_SPEED_BP = [2.0, 4.0]    # m/s, faded in with speed; the desired angle is ill-conditioned near standstill
+# deg of |desired angle|, faded in with it. nrdr, not upstream (STATUS 173): on the Civic's first drive (286) the
+# wheel wobbled ~1 Hz, +-3.5 deg, pulling away from a stop and at low speed, 0.4-3 Hz wheel rms 1.44 deg at
+# 2-5 m/s against 0.22-0.44 on six PID drives (STATUS 170). Near straight the feedforward makes the EPS follow
+# the model's small desired-angle wiggle almost 1:1; in a turn it is what gets the wheel round. Gating on the
+# angle keeps the turn and drops the wiggle. Closed-loop sim (C020 plant, 280/284/285/286) with this gate
+# inside LatControlPID: 5-8 / 8-12 m/s wobble on 286 1.03 / 0.67 -> 0.27 / 0.23, PID's level, and |des| > 45
+# deg turn error kept (286 <12 mph 15.3 against PID 23.2). The sim cannot test 2-4 m/s. Sim only; not driven.
+FF_ANGLE_GATE_DEG = [10.0, 30.0]
 
 
 class EpsFirmwareCalibration:
@@ -311,7 +319,8 @@ class ClarityEpsLateralCore:
       self.ff_ramp = 0.0
     elif self.ff_ramp > 0.0 or abs(error) < FF_JOIN_ERROR_DEG:
       self.ff_ramp = min(1.0, self.ff_ramp + self.dt / FF_FADE_IN_S)
-    self.ff_weight = self.ff_ramp * float(np.interp(v_ego, FF_SPEED_BP, [0.0, 1.0]))
+    self.ff_weight = (self.ff_ramp * float(np.interp(v_ego, FF_SPEED_BP, [0.0, 1.0]))
+                      * float(np.interp(abs(desired_angle_no_offset), FF_ANGLE_GATE_DEG, [0.0, 1.0])))
     ff = self.ff_weight * ff_full
 
     i_scale = speed_band(v_ego, self.i_scale)

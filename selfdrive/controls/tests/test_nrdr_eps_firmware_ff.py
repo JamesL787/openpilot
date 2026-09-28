@@ -220,7 +220,7 @@ def _core():
   return eps_ff.ClarityEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL)
 
 
-def _hold(core, frames, des=20.0, angle=20.0, v=10.0, pressed=False):
+def _hold(core, frames, des=40.0, angle=40.0, v=10.0, pressed=False):
   for _ in range(frames):
     core.update(des, 0.0, angle, v, 0.0, pressed, False)
 
@@ -248,6 +248,18 @@ def test_driver_press_and_standstill_take_the_feedforward_out():
   assert core.ff_weight == 0.0
   _hold(core, 80, v=3.0)
   assert core.ff_weight == pytest.approx(0.5)   # faded in with speed between 2 and 4 m/s
+
+
+def test_feedforward_is_gated_by_the_desired_angle():
+  core = _core()
+  _hold(core, 80, des=40.0, angle=40.0)
+  assert core.ff_weight == 1.0
+  _hold(core, 1, des=20.0, angle=20.0)
+  assert core.ff_weight == pytest.approx(0.5)   # faded in between 10 and 30 deg of |desired|
+  _hold(core, 1, des=-5.0, angle=-5.0)
+  assert core.ff_weight == 0.0                  # near straight it stays out, so the wheel does not chase wiggle
+  _hold(core, 1, des=-40.0, angle=-40.0)
+  assert core.ff_weight == 1.0                  # the join ramp is not reset by the gate
 
 
 def test_without_the_feedforward_the_core_is_the_banded_pid():
