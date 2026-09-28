@@ -50,8 +50,8 @@ COLUMNS = [
   # full weight). pidState.p is the P before LatControlClarityEps's per-band scale.
   "lat_out", "ang_err", "pid_active", "ff_active", "ff_w", "ff",
   # Lane from modelV2.laneLines[1]/[2].y[0]: car offset from the lane centre (m, + = car left of centre), lane width,
-  # and the lower of the two laneLineProbs.
-  "lane_off", "lane_w", "lane_prob",
+  # and the lower of the two laneLineProbs; modelV2.meta.laneChangeState (0 off; a lane change is not wobble).
+  "lane_off", "lane_w", "lane_prob", "lane_change",
   # How old controlsState was when this row was taken (ms); a stall shows as a large value.
   "cs_age_ms",
   # Longitudinal: carControl.actuators.accel (sent), plan shouldStop / fcw / hasLead, selfdriveState.experimentalMode
@@ -297,15 +297,25 @@ def _analyze_turns(c, seg, dt):
   side = np.sign(des)
   past = np.maximum(0.0, side * (act - des))
   trail = np.maximum(0.0, side * (des - act))
+  # tools/lateral/lat_score.py's turn_err mask (the agents' scorecard): pidState.active, hands off, v > 4 m/s. It keeps
+  # the second after a grab, where the wheel is still catching up, so it reads higher than Plots' own figure.
+  active = c["pid_active"] if agents.has(c, "pid_active") else c["lat_active"]
+  score = (c["ang_ok"] > 0.5) & (np.nan_to_num(active) > 0.5) & (c["steer_pressed"] < 0.5) & (v > TURN_MIN_SPEED)
   bins = []
   for lo, hi, label in TURN_BINS:
-    sel = base & (np.abs(des) > TURN_MIN_DEG) & (v >= lo) & (v < hi)
-    n = int(np.count_nonzero(sel))
-    if n * dt < TURN_MIN_S:
+    tight = (np.abs(des) > TURN_MIN_DEG) & (v >= lo) & (v < hi)
+    sel, sc = base & tight, score & tight
+    n, nsc = int(np.count_nonzero(sel)), int(np.count_nonzero(sc))
+    if n * dt < TURN_MIN_S and nsc * dt < TURN_MIN_S:
       continue
-    bins.append({"label": label, "lo_ms": lo, "hi_ms": hi, "time_s": round(n * dt, 1),
-                 "err": _r(np.mean(np.abs(des[sel] - act[sel])), 1), "past": _r(np.mean(past[sel]), 1),
-                 "trail": _r(np.mean(trail[sel]), 1), "at_limit": _r(np.mean(c["lat_sat"][sel] > 0.5), 2)})
+    ok = n * dt >= TURN_MIN_S
+    b = {"label": label, "lo_ms": lo, "hi_ms": hi, "time_s": round(n * dt, 1),
+         "err": _r(np.mean(np.abs(des[sel] - act[sel])), 1) if ok else None, "past": _r(np.mean(past[sel]), 1) if ok else None,
+         "trail": _r(np.mean(trail[sel]), 1) if ok else None, "at_limit": _r(np.mean(c["lat_sat"][sel] > 0.5), 2) if ok else None}
+    if nsc * dt >= TURN_MIN_S:
+      b["scorecard"] = {"time_s": round(nsc * dt, 1), "err": _r(np.mean(np.abs(des[sc] - act[sc])), 1),
+                        "past": _r(np.mean(past[sc]), 1), "trail": _r(np.mean(trail[sc]), 1)}
+    bins.append(b)
   turns = []
   for s, e in _runs(base & (np.abs(des) > TURN_EPISODE_DEG), seg, 2):
     k = s + int(np.argmax(np.abs(des[s:e])))
@@ -321,6 +331,9 @@ def _analyze_turns(c, seg, dt):
   h = int(round(0.75 / dt))
   fast, slow = max(1, int(round(0.15 / dt))), max(3, int(round(1.25 / dt)))
   straight = base & (np.abs(des) < WOBBLE_STRAIGHT_DEG) & (np.abs(act) < WOBBLE_STRAIGHT_DEG)
+  if agents.has(c, "lane_change"):
+    # As lat_score's straight_mask: a lane change is the plan moving the wheel, not wobble.
+    straight &= ~(np.nan_to_num(c["lane_change"]) > 0.5)
   band, keep = [], []
   for s, e in _runs(straight, seg, 2 * h + 1):
     x = act[s:e]
@@ -515,9 +528,14 @@ def _turn_notes(turns, takeaways, controller=None):
   bins = turns.get("bins") or []
   if bins:
     parts = "; ".join(f"{b['label']}: off by {b['err']}° on average ({b['past']}° past the request, {b['trail']}° behind it)"
-                      for b in bins)
+                      for b in bins if b["err"] is not None) or "too little time after leaving out your grabs"
     notes.append(f"Tight turns (wheel past {TURN_MIN_DEG:.0f}°, {turns.get('count', 0)} turn(s)): {parts}. "
                  "'Behind' is mostly the wheel catching up; 'past' is overshoot or a late unwind.")
+    sc = [b for b in bins if b.get("scorecard")]
+    if sc:
+      notes.append("Counting the second after you let go of the wheel, as the agents' scorecard (lat_score) does: " +
+                   "; ".join(f"{b['label']} off by {b['scorecard']['err']}° ({b['scorecard']['past']}° past)" for b in sc) +
+                   ". A big gap between the two numbers means the wheel is still catching up right after your grabs.")
     worst = max(bins, key=lambda b: b["past"] or 0)
     if (worst["past"] or 0) > TURN_PAST_NOTABLE:
       takeaways.append(f"In tight turns {worst['label']} the wheel went {worst['past']}° past the request on average (overshoot "
@@ -893,7 +911,7 @@ def _agent_columns(sm, cs, cc, have_cc, car_state, plan, t):
       o["ff_active"], o["ff_w"], o["ff"] = int(bool(ls.epsFfActive)), _f(ls.epsFfWeight, NAN), _f(ls.epsFfFeedforward, NAN)
     except Exception:
       pass
-  o["lane_off"] = o["lane_w"] = o["lane_prob"] = NAN
+  o["lane_off"] = o["lane_w"] = o["lane_prob"] = o["lane_change"] = NAN
   o["mlead_p"] = o["mlead_x"] = o["mlead_y"] = o["mlead_v"] = o["mlead_a"] = NAN
   if _got(sm, "modelV2"):
     try:
@@ -903,6 +921,7 @@ def _agent_columns(sm, cs, cc, have_cc, car_state, plan, t):
         y1, y2 = float(ll[1].y[0]), float(ll[2].y[0])
         o["lane_off"], o["lane_w"] = (y1 + y2) / 2.0, y2 - y1   # y is + = right, so the centre's y = car left of it
         o["lane_prob"] = min(float(probs[1]), float(probs[2]))
+      o["lane_change"] = int(md.meta.laneChangeState.raw)
       if len(md.leadsV3):
         ld = md.leadsV3[0]
         o["mlead_p"] = _f(ld.prob, NAN)

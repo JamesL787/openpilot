@@ -467,6 +467,7 @@ export const Plots = {
                     </tr>
                   </tbody>
                 </table>
+                <p v-if="b.turns.scorecard" :style="muted + ' margin: 2px 0 0; font-size: var(--fs-xs, 0.8rem);'">Leaves out the second after you let go. Counting it, as the agents' scorecard does: {{ b.turns.scorecard }}.</p>
               </template>
               <template v-if="b.turns && b.turns.wobble.length">
                 <p :style="muted + ' margin: var(--sp-2) 0 2px;'">Wheel wobble on near-straight road</p>

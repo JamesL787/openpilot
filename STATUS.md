@@ -7566,6 +7566,38 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
 - 87 tests pass, including a scenario that exercises every lead gate.
 - **Not verified:** the new 2 m / 0.5 s / 1 s gates are Bob's numbers from one route and have not been checked against a second.
 
+## 141e. Plots checked against the rlogs and the agents' lat_score (owner, 2026-09-28): the tight-turn table now also gives lat_score's figure, wobble leaves out lane changes, and `tools/drive_plots/mirror_check.py` checks all four layers. Unit tests and a replay of one real route only.
+
+- **Mirror check** (`tools/drive_plots/mirror_check.py <route>`), four checks on the same logs:
+  - **columns:** every `build_row` column against the rlog field it names, read on its own at each longitudinalPlan.
+  - **frames:** Plots' angle, desired angle, grab, pidState.active and lane-change state against `lat_pid_sim.extract_logs` (the frames lat_score scores). Rows are lined up by message order, not logMonoTime, because an rlog's logMonoTime is not strictly ordered (a controlsState can be stamped after the plan that follows it in the file). Matching by time put 3% of rows one frame off.
+  - **lat_score:** `score_arrays` turn error / past / behind and wobble beside Plots.
+  - **car:** the drivePlots messages in the rlog beside the same moments and takeovers found offline.
+- **Two gaps it found, both fixed:**
+  - **Tight turns read about 10x lower than lat_score** (under 12 mph: 2.7 vs 26.6 deg). The cause is that Plots leaves out the second after the driver lets go (James asked for that), and those frames average about 30 deg off.
+    - Each turn bin now also carries `scorecard`, which uses lat_score's mask: pidState.active (latActive before that column), hands off, over 4 m/s.
+    - The page shows it under the table as "Counting the second after you let go, as the agents' scorecard does: ...", and the notes carry it too. Plots' own figure is unchanged.
+  - **Wobble 8-12 m/s counted lane changes** (0.36 vs lat_score 0.19). A new column, `lane_change` (modelV2.meta.laneChangeState), lets the straight mask drop them as lat_score does. Older recordings without the column are scored as before.
+- **Replay** of 3 segments of one ClarityEps route:
+  - **columns:** all 69 columns match the rlog fields on 3529 rows.
+  - **frames:** desired angle and pidState.active agree on 100% of rows; angle, grab and lane change on 99.8%+. The rest are rows holding a carState or modelV2 one frame newer than lat_pid_sim's frame.
+  - **lat_score vs Plots:**
+
+    | Metric | lat_score | Plots |
+    |---|---|---|
+    | turn error, under 12 mph | 26.6 | 26.4 |
+    | turn error, 12-25 mph | 18.3 | 18.7 |
+    | wobble 5-8 m/s | 0.524 | 0.54 |
+    | wobble 8-12 m/s | 0.194 | 0.21 |
+    | wobble 12-20 m/s | 0.189 | 0.16 |
+
+    All are within the printed tolerances: 1.5 deg / 10% for turns, 0.03 deg / 15% for wobble.
+  - **car:** this route predates the car's drivePlots messages, so the car check is untested on a real drive.
+- 89 tests pass. Two are new synthetic-drive tests: one with out-of-order stamps, a lane change, a tight turn with a grab and a car message, and one negative control where a column reads the wrong field.
+- **Not verified:**
+  - The car check on a drive recorded by the car.
+  - Any route other than this one.
+
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 
 **What was added.**

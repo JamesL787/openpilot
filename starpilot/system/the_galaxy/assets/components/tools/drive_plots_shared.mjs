@@ -415,6 +415,10 @@ export function turnRows(m, speed = DEFAULT_SPEED) {
       time: fmtDuration(b.time_s), err: deg(b.err), past: deg(b.past), trail: deg(b.trail),
       limit: b.at_limit == null ? "—" : `${Math.round(b.at_limit * 100)}%`,
     })),
+    // lat_score's definition keeps the second after a grab; shown so the page and the agents' scorecard agree.
+    scorecard: (t.bins || []).map((b, i) => b.scorecard &&
+      `${speedRange(i === 0 ? 0 : b.lo_ms, b.hi_ms, speed)} off by ${deg(b.scorecard.err)} (${deg(b.scorecard.past)} past)`)
+      .filter(Boolean).join("; "),
     wobble: (t.wobble || []).map((b) => ({ label: speedRange(b.lo_ms, b.hi_ms, speed), time: fmtDuration(b.time_s),
                                            rms: `${fmtNum(b.rms_deg, 2)}°` })),
   }

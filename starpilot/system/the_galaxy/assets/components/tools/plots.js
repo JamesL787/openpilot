@@ -308,6 +308,7 @@ function TurnTables(m) {
           ${tr.bins.map((b) => html`<tr><td>${b.label}</td><td>${b.time}</td><td>${b.err}</td><td>${b.past}</td><td>${b.trail}</td><td>${b.limit}</td></tr>`)}
         </tbody>
       </table>
+      ${tr.scorecard ? html`<p class="plotTableNote">Leaves out the second after you let go. Counting it, as the agents' scorecard does: ${tr.scorecard}.</p>` : ""}
     ` : ""}
     ${tr.wobble.length ? html`
       <p class="plotTableTitle">Wheel wobble on near-straight road</p>

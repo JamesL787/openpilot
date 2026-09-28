@@ -487,6 +487,12 @@ a.plotButton {
   margin: var(--margin-sm) 0 0;
 }
 
+.plotTableNote {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  margin: var(--margin-xs, 4px) 0 0;
+}
+
 /* Moments to check: each row opens the zoom charts at that time. */
 .plotMomentList {
   display: grid;
