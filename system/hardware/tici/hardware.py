@@ -588,8 +588,9 @@ class Tici(HardwareBase):
     # and NM auto-activates it as soon as the modem enables, ~35 s into boot. A temporary change
     # lived in /run and was gone on every reboot, so each boot's first session ran on the stock
     # profile and had to be torn down and restarted (seen on the owner's comma 4, 2026-09-27).
-    # Saved, NM writes /etc/NetworkManager/system-connections (-> /data/etc, persistent), which
-    # shadows the /usr/lib copy, so from the next boot the first session already starts right.
+    # Saved, AGNOS's NM stores it through netplan as /etc/netplan/90-NM-<uuid>.yaml (-> /data/etc,
+    # persistent; checked on the device 2026-09-28), which replaces the /usr/lib copy at boot, so
+    # from the next boot the first session already starts right.
     modify = [x for k, v in want.items() for x in (k, v)]
     subprocess.call(["sudo", "nmcli", "connection", "modify", "lte", *modify])
 
