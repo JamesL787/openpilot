@@ -587,7 +587,9 @@ def lateral_detail(c, lateral_delay=None):
       st = _stats(off[lb & straight])
       if st:
         st["n_s"] = round(float(np.count_nonzero(lb & straight) * dt), 1)
-      cv = _stats((np.sign(demand) * off)[lb & curve])
+      # lat_des (desiredLateralAccel) is + for a RIGHT curve, lane_off + for the car LEFT of centre: the inside is
+      # -sign(lat_des) (James, 290-294: corr(desiredCurvature, steeringAngleDeg) = -0.99).
+      cv = _stats((-np.sign(demand) * off)[lb & curve])
       if cv:
         cv["n_s"] = round(float(np.count_nonzero(lb & curve) * dt), 1)
       row["lane_straight"] = st                 # + = car left of centre

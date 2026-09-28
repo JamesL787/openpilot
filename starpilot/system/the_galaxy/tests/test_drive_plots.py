@@ -778,6 +778,21 @@ def test_takeover_lane_numbers_need_both_lines_through_the_window():
   assert e["lanes_ok"] is True and e["lane_prob_min"] == 0.0 and e["drift_6s_m"] is not None
 
 
+def test_lane_curve_toward_inside_is_positive_left_of_centre_in_a_left_curve():
+  # lat_des + = right (as openpilot's desiredCurvature), lane_off + = car left of centre.
+  rows = _drive(v=20.0)
+  c = dp.COL
+  rows[:, c["lat_des"]] = -1.0                  # a steady left curve (ang_des > 0)
+  rows[:, c["lat_act"]] = -1.0
+  rows[:, c["lane_prob"]] = 0.9
+  rows[:, c["lane_w"]] = 3.6
+  rows[:, c["lane_off"]] = 0.2                  # car 20 cm left: toward the inside
+  row = agents.lateral_detail(dp._as_arrays(rows))["bands"][0]
+  assert row["lane_curve_toward_inside"]["median"] > 0.15
+  rows[:, c["lat_des"]] = rows[:, c["lat_act"]] = 1.0   # the same offset in a right curve is toward the outside
+  row = agents.lateral_detail(dp._as_arrays(rows))["bands"][0]
+  assert row["lane_curve_toward_inside"]["median"] < -0.15
+
 def test_a_light_hold_without_steering_pressed_is_not_the_controllers_turn():
   # James (route 293): steeringPressed flickers off in a light hold; the torque still shows the driver steering.
   rows = _tight_turn_drive(overshoot_deg=12.0)
