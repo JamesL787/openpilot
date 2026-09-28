@@ -98,6 +98,10 @@ def _replay(seg_dir: str):
       state["enabled"] = m.selfdriveState.enabled
     elif w == "controlsState":
       state["desiredCurvature"] = m.controlsState.desiredCurvature
+    elif w == "carControl":
+      state["latActive"] = m.carControl.latActive
+    elif w == "lateralPlan":
+      state["laneChangeState"] = str(m.lateralPlan.laneChangeState)
     yield t, t_start, state
 
 
@@ -114,6 +118,7 @@ def geometry_at(state: dict) -> dict | None:
     "steeringPressed": state.get("steeringPressed"), "steeringTorque": state.get("steeringTorque"),
     "leftBlinker": state.get("leftBlinker"), "rightBlinker": state.get("rightBlinker"),
     "enabled": state.get("enabled"), "desiredCurvature": state.get("desiredCurvature"),
+    "latActive": state.get("latActive"), "laneChangeState": state.get("laneChangeState"),
   }
   for name, line, prob in zip(LANE_NAMES, lines, probs):
     row[f"{name}_prob"] = round(prob, 3)
@@ -155,6 +160,7 @@ def geometry_at(state: dict) -> dict | None:
   ly0 = _interp_y(left_line, 0.0, strict=False)
   ry0 = _interp_y(right_line, 0.0, strict=False)
   row["ego_offset_at_x0"] = None if (ly0 is None or ry0 is None) else round(-(ly0 + ry0) / 2, 3)  # ego is y=0 by definition
+  row["lane_width_at_x0"] = None if (ly0 is None or ry0 is None) else round(ry0 - ly0, 3)
   ely0 = _interp_y(left_edge, 0.0, strict=False)
   ery0 = _interp_y(right_edge, 0.0, strict=False)
   row["edge_left_y@0"] = None if ely0 is None else round(ely0, 3)
@@ -162,21 +168,31 @@ def geometry_at(state: dict) -> dict | None:
 
   curv = _path_curvature(path)
   row["path_curvature"] = None if curv is None else round(curv, 5)
-  if curv is not None and row["vEgo"] is not None:
-    row["ay"] = round(row["vEgo"] ** 2 * abs(curv), 3)
+  dc = row["desiredCurvature"]
+  if dc is not None and row["vEgo"] is not None:
+    row["ay"] = round(row["vEgo"] ** 2 * abs(dc), 3)  # binned on desiredCurvature per James, not the fitted path
   else:
     row["ay"] = None
+
+  # "outside" line = the outer laneLine on the side away from the turn (+left angle -> outside is
+  # the right side); used for the outside-confidence split, matches James's fov.py.
+  if angle is not None:
+    row["outside_prob"] = row["outer_right_prob"] if angle > 0 else row["outer_left_prob"]
+  else:
+    row["outside_prob"] = None
 
   if row[f"left_y@30"] is not None and row[f"right_y@30"] is not None and row["left_prob"] > 0.5 and row["right_prob"] > 0.5:
     if row["lane_width@30"] < 0:
       print(f"WARNING sign-check failed: lane_width@30={row['lane_width@30']} < 0 with both probs > 0.5 "
             f"(left_prob={row['left_prob']} right_prob={row['right_prob']})", file=sys.stderr)
 
-  # steeringAngleDeg is +left; path_curvature/desiredCurvature are +right (see module docstring) --
-  # they should be opposite-signed across any real turn (corr ~ -0.99 per James on routes 290-294).
-  if angle is not None and curv is not None and abs(angle) > 5 and row["vEgo"] is not None and row["vEgo"] > 1.0:
-    if _sign(curv) == _sign(angle):
-      print(f"WARNING sign-check failed: path_curvature={curv} and steeringAngleDeg={angle} have the "
+  # steeringAngleDeg is +left; desiredCurvature is +right (see module docstring) -- they should be
+  # opposite-signed across any real turn (corr ~ -0.99 per James on routes 290-294). Gated on
+  # |desiredCurvature| > 1e-3 and compared against the CURRENT curvature (not the 0-30m path fit,
+  # which lags the wheel through S-bend transitions and is noisy near zero).
+  if angle is not None and dc is not None and abs(angle) > 5 and abs(dc) > 1e-3 and row["vEgo"] is not None and row["vEgo"] > 1.0:
+    if _sign(dc) == _sign(angle):
+      print(f"WARNING sign-check failed: desiredCurvature={dc} and steeringAngleDeg={angle} have the "
             f"SAME sign (expected opposite: +right curvature during a +left steer or vice versa)", file=sys.stderr)
 
   return row
@@ -208,16 +224,38 @@ def _bin_ay(ay: float) -> str | None:
   return None
 
 
+# Frame filters matching James's fov.py, applied in --summary so takeovers/intersections/lane
+# changes don't leak into the lateral-performance numbers. Each entry: (name, predicate-is-OK).
+_FILTERS = (
+  ("lat_active", lambda r: r.get("latActive") is True),
+  ("not_pressed", lambda r: r.get("steeringPressed") is False),
+  ("no_blinker", lambda r: not r.get("leftBlinker") and not r.get("rightBlinker")),
+  ("lane_change_off", lambda r: r.get("laneChangeState") in ("off", None)),
+  ("speed_11_22.4", lambda r: r.get("vEgo") is not None and 11.0 <= r["vEgo"] < 22.4),
+  ("angle_gt_1deg", lambda r: r.get("steeringAngleDeg") is not None and abs(r["steeringAngleDeg"]) > 1.0),
+  ("lane_width_2.6_4.8", lambda r: r.get("lane_width_at_x0") is not None and 2.6 <= r["lane_width_at_x0"] <= 4.8),
+)
+
+
+def _passes_filters(row: dict) -> bool:
+  return all(pred(row) for _name, pred in _FILTERS)
+
+
 def summarize(rows: list[dict]) -> list[dict]:
+  drop_counts = {name: sum(1 for r in rows if not pred(r)) for name, pred in _FILTERS}
+  print(f"summary: {len(rows)} frames sampled; dropped by filter (not mutually exclusive): {drop_counts}", file=sys.stderr)
+  filtered = [r for r in rows if _passes_filters(r)]
+  print(f"summary: {len(filtered)} frames pass all filters", file=sys.stderr)
+
   out = []
   for lo, hi in AY_BINS:
     label = f"{lo:g}-{hi:g}"
     for conf_label, pred in (
-      ("both>0.6,outside<0.35", lambda r: r["left_prob"] > 0.6 and r["right_prob"] > 0.6 and
-       r["outer_left_prob"] < 0.35 and r["outer_right_prob"] < 0.35),
-      ("all", lambda r: True),
+      ("both_seen(>0.6)", lambda r: r["left_prob"] > 0.6 and r["right_prob"] > 0.6),
+      ("outside_weak(<0.35)", lambda r: r["outside_prob"] is not None and r["outside_prob"] < 0.35),
+      ("all_filtered", lambda r: True),
     ):
-      sel = [r for r in rows if r["ay"] is not None and lo <= r["ay"] < hi and r["inside_offset"] is not None and pred(r)]
+      sel = [r for r in filtered if r["ay"] is not None and lo <= r["ay"] < hi and r["inside_offset"] is not None and pred(r)]
       if not sel:
         out.append({"ay_bin": label, "confidence": conf_label, "n": 0})
         continue
@@ -286,7 +324,8 @@ def episodes_report(seg_dir: str, episodes_file: str) -> list[dict]:
   for ep in eps:
     press_raw_mono = ep["mono_s"] * 1e9
     press_t = (press_raw_mono - t_start) / 1e9
-    release_t = press_t + (ep["release_t"] - ep["t"])
+    hold_s = ep["hold_s"]
+    release_t = press_t + hold_s
     if press_t < -1 or press_t > seg_end + 1:
       continue  # this episode belongs to a different segment
 
@@ -295,13 +334,20 @@ def episodes_report(seg_dir: str, episodes_file: str) -> list[dict]:
     if press_state is None or release_state is None:
       continue
 
-    push_sign = _sign(press_state.get("steeringTorque") or 0.0)
-    if press_state.get("steeringTorque") in (None, 0.0):
-      da = (release_state.get("steeringAngleDeg") or 0) - (press_state.get("steeringAngleDeg") or 0)
-      push_sign = _sign(da) if da else 1.0
+    # push is +1=left/-1=right, in that priority: Live Plots' own "push" field when present
+    # (it's the source of truth per Driver override's cross-check on 294), else torque sign at
+    # press, else the angle delta press->release.
+    push_field = ep.get("push")
+    if push_field in ("left", "right"):
+      push_sign = 1.0 if push_field == "left" else -1.0
+    else:
+      push_sign = _sign(press_state.get("steeringTorque") or 0.0)
+      if press_state.get("steeringTorque") in (None, 0.0):
+        da = (release_state.get("steeringAngleDeg") or 0) - (press_state.get("steeringAngleDeg") or 0)
+        push_sign = _sign(da) if da else 1.0
 
-    snap = {"tag": ep.get("tag"), "hold_s": ep.get("hold_s"), "push_sign": push_sign,
-            "route_s_press": ep.get("t"), "route_s_release": ep.get("release_t")}
+    snap = {"tag": ep.get("tag"), "hold_s": hold_s, "push_sign": push_sign,
+            "route_s_press": ep.get("route_s"), "route_s_release": ep.get("route_s") + hold_s}
     times = {"press": press_t, "release": release_t, "release+1s": release_t + 1.0,
              "release+2s": release_t + 2.0, "release+3s": release_t + 3.0}
     path_off_30 = {}
@@ -314,11 +360,16 @@ def episodes_report(seg_dir: str, episodes_file: str) -> list[dict]:
       if g is None:
         snap[label] = None
         continue
-      path_off_30[label] = g.get("path_offset_from_center@30")
+      # Below prob 0.3 the lane geometry itself is untrustworthy (e.g. route 294: 45/47 episodes
+      # low_confidence, offsets blowing up to +-15-35m) -- print None for offset/path_move columns
+      # rather than a number that looks like a measurement. low_confidence (< 0.5) stays as a
+      # softer flag alongside the raw probs.
+      lanes_trustworthy = g["left_prob"] >= 0.3 and g["right_prob"] >= 0.3
+      path_off_30[label] = g.get("path_offset_from_center@30") if lanes_trustworthy else None
       snap[label] = {
-        "ego_offset_toward_push": None if g["ego_offset_at_x0"] is None else round(push_sign * g["ego_offset_at_x0"], 3),
-        "path_offset_toward_push@15": None if g["path_offset_from_center@15"] is None else round(push_sign * g["path_offset_from_center@15"], 3),
-        "path_offset_toward_push@30": None if g["path_offset_from_center@30"] is None else round(push_sign * g["path_offset_from_center@30"], 3),
+        "ego_offset_toward_push": None if (g["ego_offset_at_x0"] is None or not lanes_trustworthy) else round(push_sign * g["ego_offset_at_x0"], 3),
+        "path_offset_toward_push@15": None if (g["path_offset_from_center@15"] is None or not lanes_trustworthy) else round(push_sign * g["path_offset_from_center@15"], 3),
+        "path_offset_toward_push@30": None if (g["path_offset_from_center@30"] is None or not lanes_trustworthy) else round(push_sign * g["path_offset_from_center@30"], 3),
         "road_edge_margin_push_side@0": round(push_sign * (g["edge_right_y@0"] if push_sign > 0 else g["edge_left_y@0"]), 3)
           if (push_sign > 0 and g["edge_right_y@0"] is not None) or (push_sign < 0 and g["edge_left_y@0"] is not None) else None,
         "left_prob": g["left_prob"], "right_prob": g["right_prob"],
