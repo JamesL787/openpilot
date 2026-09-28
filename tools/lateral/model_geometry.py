@@ -214,11 +214,12 @@ def sample(seg_dir: str, t0: float | None, t1: float | None, step: float):
       if row is not None:
         row = {"t": round(t, 2), **row}
         rows.append(row)
-      # next_sample starts at t0 (or 0.0), but t is route-relative and a segment can start well
-      # past that (e.g. segment 5 at t=300s). Advancing by a bare `+= step` left next_sample
-      # thousands of steps behind on the first message of a later segment, so every message in
-      # that gap passed the t >= next_sample check and got sampled -- inflating row counts ~4.6x
-      # on route 294 (James). Snap forward to whichever is later.
+      # next_sample starts at t0 (or 0.0), but t=0 is anchored to the segment's initData record
+      # (msgs[0]), whose logMonoTime lags the segment's real content by minutes (e.g. segment 5's
+      # first non-initData message is at t=300s). Advancing by a bare `+= step` left next_sample
+      # thousands of steps behind on the first real message of a later segment, so every message
+      # in that gap passed the t >= next_sample check and got sampled -- inflating row counts
+      # ~4.6x on route 294 (James). Snap forward to whichever is later.
       next_sample = max(next_sample + step, t + step)
   return rows
 
