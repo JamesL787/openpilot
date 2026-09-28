@@ -1009,6 +1009,18 @@ hard-braking runs, and also for 1.1 s during the 239 phantom brake), on an exper
 gated behind the `BlotV3` toggle. Both changes widen following distance or keep the jerk
 cost softer for longer; neither deletes a radar point or commands acceleration.
 
+**Part 1 reverted 2026-09-28 (owner request).** The pads again apply only below
+`ONSET_MAX_A_REQ` and slew back out above it. The premise above was wrong: a pad asks the MPC for
+*more* following distance, so a pad held while the car already needs a hard brake makes that brake
+harder, not softer. Evidence (closed-loop replay sim, not driven): route 00000294 6:25, an
+owner-bookmarked bad brake (a real lead braked about -5 m/s² and then turned off at 35 m), peaked
+at -4.23 with BLoTv3 on, -3.54 off and -3.90 after the revert. Across 8 hard brakes on 00000293 and
+00000294, BLoTv3 on braked harder than off in every one (by 0.03-0.8 m/s²) and kept the same closest
+gap within about 1 m. After the revert the gap to BLoTv3-off is 0.0-0.57 m/s², and the closest gap
+moves by at most 0.9 m (293 6:54: 7.8 -> 7.4 m, off 8.8). What is left of the gap to off comes from
+the model-trigger jerk softening, which is BLoTv2's original design and not reverted here. Part 2
+(the crawl hold) is unchanged.
+
 ## D-059 — a join publishes measured vRel only after a fresh post-join rate fit agrees
 
 **Status:** on the car branch 2026-09-17, replay and static only. Closes STATUS item 22.5.

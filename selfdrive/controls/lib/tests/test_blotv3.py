@@ -173,24 +173,33 @@ def test_jerk_scale_holds_floor_through_standstill_with_lead_present():
     assert policy.jerk_scale == pytest.approx(JERK_SCALE_MIN, abs=1e-6)
 
 
-def test_onset_pad_saturates_above_onset_max_a_req():
+def test_onset_pad_released_above_onset_max_a_req():
   # Hard-braking lead at 40 m: required_decel is ~3.8 m/s2, well above ONSET_MAX_A_REQ,
-  # but ttc (4 s) clears MIN_TTC so this is not an emergency. The onset pad used to be
-  # gated off entirely by required_decel >= ONSET_MAX_A_REQ; it must saturate instead.
+  # but ttc (4 s) clears MIN_TTC so this is not an emergency. D-058 part 1 let the onset pad
+  # saturate here; reverted 2026-09-28 (route 294 6:25, see ONSET_MAX_A_REQ): the pad built
+  # while need was mild ramps back out once the car already needs a hard brake.
   supervisor = BLoTv3Supervisor(dt=0.05)
-  lead = LeadObservation(present=True, distance=40.0, speed=10.0, acceleration=-3.0, model_prob=1.0)
-  policy = None
+  mild = LeadObservation(present=True, distance=60.0, speed=19.0, acceleration=-1.5, model_prob=1.0)
   for _ in range(40):
-    policy = supervisor.update(lead, v_ego=20.0, a_mpc=0.0, t_follow_base=1.45)
+    policy = supervisor.update(mild, v_ego=20.0, a_mpc=0.0, t_follow_base=1.45)
+  assert policy.required_decel < ONSET_MAX_A_REQ
+  built = policy.t_follow - 1.45
+  assert built > 0.2
+  hard = LeadObservation(present=True, distance=40.0, speed=10.0, acceleration=-3.0, model_prob=1.0)
+  pads = []
+  for _ in range(40):
+    policy = supervisor.update(hard, v_ego=20.0, a_mpc=0.0, t_follow_base=1.45)
+    pads.append(policy.t_follow - 1.45)
   assert not policy.emergency
   assert policy.required_decel > ONSET_MAX_A_REQ
-  assert (policy.t_follow - 1.45) == pytest.approx(ONSET_PAD_MAX, abs=1e-6)
+  assert all(b <= a + 1e-9 for a, b in zip([built] + pads[:-1], pads, strict=True))  # slews down, never jumps up
+  assert pads[-1] == pytest.approx(0.0, abs=1e-6)
 
 
-def test_stopped_lead_pad_saturates_above_onset_max_a_req():
+def test_stopped_lead_pad_released_above_onset_max_a_req():
   # Stopped lead at 20 m from 15 m/s: required_decel ~7.0 m/s2 and the MPC is already
   # matching it, so the emergency bypass stays clear (see test_matched_mpc_braking_is_not_emergency).
-  # The near-stopped-lead pad must saturate at STOPPED_LEAD_PAD_MAX rather than vanish.
+  # Above ONSET_MAX_A_REQ the near-stopped-lead pad does not build (D-058 part 1 reverted).
   supervisor = BLoTv3Supervisor(dt=0.05)
   lead = LeadObservation(present=True, distance=20.0, speed=0.0, acceleration=0.0, model_prob=1.0)
   policy = None
@@ -198,7 +207,7 @@ def test_stopped_lead_pad_saturates_above_onset_max_a_req():
     policy = supervisor.update(lead, v_ego=15.0, a_mpc=-7.03, t_follow_base=1.45)
   assert not policy.emergency
   assert policy.required_decel > ONSET_MAX_A_REQ
-  assert (policy.t_follow - 1.45) == pytest.approx(STOPPED_LEAD_PAD_MAX, abs=1e-6)
+  assert (policy.t_follow - 1.45) == pytest.approx(0.0, abs=1e-6)
 
 
 def test_partial_softening_is_held_through_the_crawl():

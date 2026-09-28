@@ -59,12 +59,14 @@ ONSET_LEAD_DECEL = 0.4
 ONSET_PAD_MAX = 0.45
 STOPPED_LEAD_PAD_MAX = 0.75
 ONSET_FULL_DECEL = 1.5
-# ONSET_MAX_A_REQ gates the emergency bypass ONLY. It used to also cap both t_follow pads,
-# which made the pads *vanish* exactly where need was highest: above 1.5 m/s2 of required
-# decel the pad snapped to zero in one frame unless the emergency bypass happened to be
-# armed too (it needs TTC < MIN_TTC and a real braking shortfall as well). Upstream BLoTv3
-# (SpysyWeeb/Spysypilot, necessity_supervisor.py) removed the upper bound so the pads
-# saturate at their ceilings instead. Do not reinstate the upper bound.
+# ONSET_MAX_A_REQ gates the emergency bypass AND both t_follow pads: above 1.5 m/s2 of
+# required decel the pads ramp back out (ONSET_RATE_DOWN). D-058 part 1 (7495a6fb, from upstream
+# BLoTv3) removed the pad gate so the pads saturated instead; that was reverted 2026-09-28.
+# A pad asks for more following distance, so adding one while the car already needs a hard
+# brake makes the brake harder. Closed-loop replay sim, routes 00000293/00000294, 8 hard
+# brakes: with BLoTv3 on, every peak was harder than off (by 0.03-0.8 m/s2) and the closest
+# gap was the same within ~1 m. Owner-bookmarked 294 6:25 (lead braked -5 then turned off at
+# 35 m): -4.2 on vs -3.4 off in the sim. Replay evidence only, not driven.
 ONSET_MAX_A_REQ = 1.5
 EMERGENCY_SHORTFALL_MIN = 0.15
 ONSET_RATE_UP = 0.8
@@ -228,9 +230,10 @@ class BLoTv3Supervisor:
           onset_lead_accel = min(onset_lead_accel, predicted_lead_accel)
 
         recovering = v_ego <= lead.speed + 0.2 or lead.acceleration > 0.2
-        # The pads saturate at their ceilings; they never vanish above ONSET_MAX_A_REQ.
+        # The pads only apply below ONSET_MAX_A_REQ of need; see the constant.
         if (
           onset_lead_accel < -ONSET_LEAD_DECEL
+          and required_decel < ONSET_MAX_A_REQ
           and not recovering
         ):
           pad_target = ONSET_PAD_MAX * min(
@@ -239,7 +242,7 @@ class BLoTv3Supervisor:
           )
         if (
           lead.speed < 2.0
-          and required_decel > 0.3
+          and 0.3 < required_decel < ONSET_MAX_A_REQ
           and not recovering
         ):
           pad_target = max(

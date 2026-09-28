@@ -1828,7 +1828,8 @@ decode error — **all objects were firmware no-target sentinels.** See D-027, D
     Upstream `SpysyWeeb/Spysypilot` restructured BLoTv2 into BLoTv3 (`combo-blotv3`, `7aed876`,
     `docs/BLoTv3.md`). Two of those changes are supervisor behavior and are now in
     `selfdrive/controls/lib/blotv3.py`: the `t_follow` pads saturate at their ceilings instead of
-    vanishing above `ONSET_MAX_A_REQ`, and the crawl hold latches on "was necessity-braking"
+    vanishing above `ONSET_MAX_A_REQ` (**reverted 2026-09-28**: it made hard brakes harder,
+    route 00000294 6:25 sim -4.23 -> -3.90; closed-loop replay only, see D-058), and the crawl hold latches on "was necessity-braking"
     instead of on the exact `JERK_SCALE_MIN` floor (released by the emergency bypass and by lead
     loss). The module, class, tests and toggle are renamed (`BlotV2` → `BlotV3`, toggle starts off).
     The BLoTv3 module split (`force_stops.py`, `stop_helpers.py`,
