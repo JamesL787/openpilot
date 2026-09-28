@@ -4414,6 +4414,28 @@ def test_lane_change_merge_floor_releases_on_hard_mpc_lead_brake(mpc_demand, exp
   assert (floor is not None) == expected_floor
 
 
+@pytest.mark.parametrize("a_lead, released", [(0.0, False), (-0.8, False), (-1.3, True)])
+def test_lane_change_merge_floor_releases_on_braking_lead(a_lead, released):
+  # Route 00000293 10:48: the floor held -0.4 at TTC 6-8 s while the lead braked -1.2..-3.5.
+  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC))
+  planner.lead_one = make_lead(status=True, d_rel=39.0, v_lead=18.0, a_lead=a_lead, radar=True, model_prob=1.0)
+  toggles = SimpleNamespace(lane_change_close_gap=True, minimum_lane_change_speed=0.0)
+  floor = planner.get_lane_change_merge_accel_floor(_merge_sm(), toggles, 19.0, 30.0, 0.3, blocked=False)
+  assert (floor is None) == released
+
+
+@pytest.mark.parametrize("v_lead, pushes", [(21.0, True), (15.0, False)])
+def test_lane_change_merge_push_withheld_when_closing_fast(v_lead, pushes):
+  # Route 00000293 29:12: +0.55 pushed toward a car 49 m ahead closing at 6.4 m/s (TTC 7.6 s).
+  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC))
+  planner.allow_throttle = True
+  planner.lead_one = make_lead(status=True, d_rel=49.0, v_lead=v_lead, radar=True, model_prob=1.0)
+  toggles = SimpleNamespace(lane_change_close_gap=True, minimum_lane_change_speed=0.0)
+  floor = planner.get_lane_change_merge_accel_floor(_merge_sm(), toggles, 21.4, 30.0, 0.3, blocked=False)
+  assert floor is not None
+  assert (floor > 0.0) == pushes
+
+
 def _stopped_radar_lead(*, a_lead: float, d_rel: float = 22.9, v_lead: float = -0.3, model_prob: float = 0.97,
                         y_rel: float = 0.4, radar: bool = True, track_id: int = 27):
   lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=a_lead, radar=radar, model_prob=model_prob, y_rel=y_rel)

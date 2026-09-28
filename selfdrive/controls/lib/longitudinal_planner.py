@@ -133,6 +133,15 @@ FAST_CLOSING_LEAD_MAX_BRAKE = 2.0
 # 1338.6 it held -0.4 for 1.3 s while the MPC asked -1.5..-4.2 and the lead braked 3-5 m/s^2,
 # 0.85 s behind stock ACC. It now lets go when the MPC asks this much inside LC_MERGE_TTC_ACCEL.
 LC_MERGE_RELEASE_MPC_DEMAND = -1.5
+# Route 00000293 (owner-bookmarked, both called bad): the TTC gates above use the current closing speed only.
+# 10:48 (left change): the floor held -0.4 for ~1 s while the lead braked at aLeadK -1.2..-3.5 and closed
+# 1 -> 5 m/s at TTC 6-8 s; it let go only at dRel 30 and the car went straight to -3.5 (aEgo -4.0).
+# A lead braking harder than this now releases the floor, so the MPC starts on it while it is still far.
+LC_MERGE_RELEASE_LEAD_BRAKE = -1.0
+# 29:12 (right change): the +0.55 push held for ~4 s toward a car 49-72 m ahead closing at 2-6.4 m/s
+# (TTC 7.6 s) until the change finished, then -1.4 (aEgo -2.0). The push is now withheld while closing
+# faster than this on the lead; the -0.4 floor still applies.
+LC_MERGE_PUSH_MAX_CLOSING = 3.0
 
 A_CRUISE_MAX_BP = [0.0, 5., 10., 15., 20., 25., 40.]
 A_CRUISE_MAX_VALS = [1.125, 1.125, 1.125, 1.125, 1.25, 1.25, 1.5]
@@ -2507,9 +2516,12 @@ class LongitudinalPlanner:
     if (LC_MERGE_RELEASE_MPC_DEMAND is not None and mpc_demand is not None and
         mpc_demand < LC_MERGE_RELEASE_MPC_DEMAND and ttc < LC_MERGE_TTC_ACCEL):
       return None
+    if LC_MERGE_RELEASE_LEAD_BRAKE is not None and float(lead.aLeadK) < LC_MERGE_RELEASE_LEAD_BRAKE:
+      return None
 
     floor = LC_MERGE_BRAKE_FLOOR
-    if (self.allow_throttle and ttc >= LC_MERGE_TTC_ACCEL and d_rel >= LC_MERGE_ACCEL_MIN_DIST and
+    push_ok = LC_MERGE_PUSH_MAX_CLOSING is None or closing <= LC_MERGE_PUSH_MAX_CLOSING
+    if (push_ok and self.allow_throttle and ttc >= LC_MERGE_TTC_ACCEL and d_rel >= LC_MERGE_ACCEL_MIN_DIST and
         np.isfinite(v_cruise) and (v_cruise - scene_v_ego) >= LC_MERGE_HEADROOM_MIN):
       cruise_cap = max(0.0, (v_cruise - scene_v_ego) / max(action_t, self.dt))
       floor = min(LC_MERGE_ACCEL_BIAS, cruise_cap)
