@@ -9497,3 +9497,27 @@ Both sims agreed before it landed:
 in `tools/lateral/lat_pid_sim.py` model the C020 firmware giving less torque while the driver's hands load the
 column (`HANDS_YIELD`). With it on, the plant is closer to the logs in the 800-2000 torque bins, though it still
 under-predicts there. No controller compensates for it: James's new EPS firmware will change the table.
+
+## 188. clarity-eps-testing merged into ns-bosch-radar-testing: LatControlClarityEps becomes the default controller (owner, 2026-09-28). Static and limited road evidence (one drive, 290); not driven from this branch.
+
+**Owner decision.** After route 290 on clarity-eps-testing (ea8e066d: no oversteer, accurate tracking in the owner's words;
+0.4-0.5 deg rms hands-off tracking, one drive), the owner made James's controller the default and asked for the merge.
+Merge `3b4644e0` into `d07dee21`. The two sides touch no file in common since `bfbc0361`, so the merge is textual only.
+
+What arrives:
+- `LatControlClarityEps` feedforward gated on |desired angle| (`FF_ANGLE_GATE_DEG` [10, 30]; STATUS 173). The gate is
+  in `ClarityEpsLateralCore`, which only `latcontrol_clarity_eps.py` uses; LatControlPID is unchanged.
+- James's turn smoothing (`Controls.update_turn_hold`, `TURN_SHAPING_TAU` 0.25 s). Active only when the built
+  controller is `LatControlClarityEps`.
+- `manager.py migrate_nrdr_clarity_eps_default`: on the first boot of this build, puts `NrdrLatEpsFirmwareFF=1` once
+  (flag `/data/nrdr_clarity_eps_default_v1`). Turning the toggle off afterwards returns to NRDR PID and is kept. The
+  owner's device already has it at 1. The compiled default in `params_keys.h` stays 0.
+- lagd is upstream: the fresh-every-drive reset (3b79604f) was reverted in `3b4644e0` before the merge. The owner is
+  pinning the delay instead (Use Auto-Learned Delay off, Actuator Delay 0.32 s; `lagd.py:236` publishes it as is).
+  Why: the Clarity (route 352) re-learned 0.479 s from a fresh start. A rough desired-to-yaw cross-correlation gives
+  0.25-0.36 s on both cars. Which estimate is right is open.
+
+**PID work continues.** NRDR PID stays one toggle away, and its sliders and code are untouched.
+
+**Not verified.** No test run on the merged tree; each side's tests passed on its own branch. Next drive: check
+liveDelay reads 0.32 from the start, lateralControlState is the ClarityEps one, and turn-in/unwind timing against 290.
