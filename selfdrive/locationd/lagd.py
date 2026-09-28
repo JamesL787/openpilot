@@ -385,20 +385,6 @@ def retrieve_initial_lag(params: Params, CP: car.CarParams):
   return None
 
 
-# nrdr: learn the lag fresh on every drive. Upstream restores the previous drive's estimate and its valid blocks from
-# LiveDelay at startup, so a stale estimate (another tune, EPS firmware or load) carries into the next drive until
-# enough new blocks outvote it. Until BLOCK_NUM_NEEDED new blocks are valid, liveDelay publishes the car's default
-# (full_lateral_delay(CP.steerActuatorDelay)), as on a first drive; a custom steer delay toggle still overrides it.
-# LiveDelay is still written every 60 s so the UI and the Galaxy can show the last estimate. True restores upstream.
-RESTORE_LAG_ACROSS_DRIVES = False
-
-
-def initial_lag_for_drive(params: Params, CP: car.CarParams):
-  if not RESTORE_LAG_ACROSS_DRIVES:
-    return None
-  return retrieve_initial_lag(params, CP)
-
-
 def main():
   config_realtime_process([0, 1, 2, 3], 5)
 
@@ -411,7 +397,7 @@ def main():
   CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
 
   lag_learner = LateralLagEstimator(CP, 1. / SERVICE_LIST['livePose'].frequency)
-  if (initial_lag_params := initial_lag_for_drive(params, CP)) is not None:
+  if (initial_lag_params := retrieve_initial_lag(params, CP)) is not None:
     lag, valid_blocks = initial_lag_params
     lag_learner.reset(lag, valid_blocks)
 
