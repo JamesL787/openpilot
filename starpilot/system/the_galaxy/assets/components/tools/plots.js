@@ -1,8 +1,8 @@
 import { html, reactive } from "/assets/vendor/arrow-core.js"
 import {
   HELP_TEXT, LIVE_POLL_MS, LiveBuffer, READING_GUIDE, ZOOM_HALF_WINDOW_S,
-  buildOverviewCharts, buildTrackingCharts, fmtDate, fmtDuration, fmtNum, fmtSpeed, keyNumbers,
-  longStateName, sessionUrl, speedBandRows, speedUnit, statusLabel, timeAtClick, toSeries, tuneRows,
+  buildOverviewCharts, buildTrackingCharts, controllerName, eventRows, fmtDate, fmtDuration, fmtNum, fmtSpeed, keyNumbers,
+  longStateName, sessionUrl, speedBandRows, speedUnit, statusLabel, timeAtClick, toSeries, tuneGroups, turnRows,
 } from "/assets/components/tools/drive_plots_shared.mjs"
 
 const ADVANCED_TERMS_KEY = "plotsShowAdvancedTerms"
@@ -22,6 +22,7 @@ const state = reactive({
   showAdvancedTerms: false,
   showAllSessions: false,
   isMetric: false,
+  lateralController: null,
   recActive: false,
   busy: false,
   live: null,
@@ -55,7 +56,8 @@ async function fetchJson(url, init) {
 }
 
 function rebuildLiveCharts() {
-  state.liveCharts = buildTrackingCharts(buffer.view(), { advanced: state.showAdvancedTerms, speed: speed() })
+  state.liveCharts = buildTrackingCharts(buffer.view(), { advanced: state.showAdvancedTerms, speed: speed(),
+                                                          controller: state.lateralController })
   state.latest = buffer.latest()
 }
 
@@ -66,6 +68,7 @@ async function fetchLiveData() {
   state.error = ""
   state.loading = false
   state.isMetric = !!payload.isMetric
+  state.lateralController = payload.lateralController || null
   state.recActive = !!payload.recording
   if (buffer.ingest(payload)) rebuildLiveCharts()
   // A recording that just ended (stopped here, elsewhere, or auto-stopped offroad) shows up in the list.
@@ -178,15 +181,22 @@ async function deleteSession(id) {
   }
 }
 
-async function zoomAt(event, chart) {
+function zoomAt(event, chart) {
   const t = timeAtClick(event, chart.geo)
-  if (t === null || !state.selectedId) return
+  if (t !== null) zoomTo(t)
+}
+
+// Full-resolution charts around t (seconds into the drive), from a chart tap or a moment in the list.
+async function zoomTo(t, label = "") {
+  if (!state.selectedId) return
   const start = Math.max(0, t - ZOOM_HALF_WINDOW_S)
   const end = start + 2 * ZOOM_HALF_WINDOW_S
   try {
     const payload = await fetchJson(`${sessionUrl(state.selectedId, "/window")}?start=${start.toFixed(1)}&end=${end.toFixed(1)}`)
     const series = toSeries(payload.columns, payload.rows)
-    state.zoom = { start, end, charts: buildTrackingCharts(series, { advanced: state.showAdvancedTerms, tMin: start, tMax: end, speed: speed() }) }
+    const controller = state.detail?.analysis?.controller || state.detail?.meta?.lateral_controller || null
+    state.zoom = { start, end, label, charts: buildTrackingCharts(series, { advanced: state.showAdvancedTerms, tMin: start, tMax: end,
+                                                                           speed: speed(), controller }) }
     requestAnimationFrame(() => document.querySelector(".plotZoom")?.scrollIntoView({ behavior: "smooth", block: "start" }))
   } catch (error) {
     state.detailError = error?.message || String(error)
@@ -264,12 +274,36 @@ function ChartCard(chart, onClick = null) {
           ${g.xTicks.map((x) => html`<span style="left:${x.pct}%; transform:translateX(${xShift(Number(x.pct))})">${x.label}</span>`)}
         </div>
       `}
+      ${chart.note ? html`<p class="plotChartNote">${chart.note}</p>` : ""}
     </section>
   `
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Analysis
+
+function TurnTables(m) {
+  const tr = turnRows(m, speed())
+  if (!tr || (!tr.bins.length && !tr.wobble.length)) return ""
+  return html`
+    ${tr.bins.length ? html`
+      <p class="plotTableTitle">Tight turns (wheel past 45°), steering-wheel degrees</p>
+      <table class="plotBandTable">
+        <thead><tr><th>Speed</th><th>Time</th><th>Off by</th><th>Past</th><th>Behind</th><th>At limit</th></tr></thead>
+        <tbody>
+          ${tr.bins.map((b) => html`<tr><td>${b.label}</td><td>${b.time}</td><td>${b.err}</td><td>${b.past}</td><td>${b.trail}</td><td>${b.limit}</td></tr>`)}
+        </tbody>
+      </table>
+    ` : ""}
+    ${tr.wobble.length ? html`
+      <p class="plotTableTitle">Wheel wobble on near-straight road</p>
+      <table class="plotBandTable">
+        <thead><tr><th>Speed</th><th>Time</th><th>Wobble (RMS)</th></tr></thead>
+        <tbody>${tr.wobble.map((b) => html`<tr><td>${b.label}</td><td>${b.time}</td><td>${b.rms}</td></tr>`)}</tbody>
+      </table>
+    ` : ""}
+  `
+}
 
 function AnalysisBlock(title, axis, m, liveWindow = false) {
   if (!m) return ""
@@ -292,6 +326,7 @@ function AnalysisBlock(title, axis, m, liveWindow = false) {
           </tbody>
         </table>
       ` : ""}
+      ${!liveWindow && axis === "lateral" ? TurnTables(m) : ""}
     </div>
   `
 }
@@ -319,6 +354,7 @@ function StatusGrid() {
       <p><strong>Onroad:</strong> ${live.isOnroad ? "Yes" : "No"}</p>
       <p><strong>Last sample:</strong> ${live.sampleAgeSeconds == null ? "none yet" : `${fmtNum(live.sampleAgeSeconds, 1)} s ago`}</p>
       <p><strong>Speed:</strong> ${latest ? fmtSpeed(latest.v, speed()) : "—"}</p>
+      ${state.lateralController ? html`<p><strong>Steering controller:</strong> ${controllerName(state.lateralController)}</p>` : ""}
       <p><strong>openpilot:</strong> ${!latest ? "—" : latest.enabled
         ? `engaged (steer ${latest.lat_active ? "on" : "off"}, long ${longStateName(latest.long_state)})` : "not engaged"}</p>
     </div>
@@ -412,13 +448,35 @@ function SessionList() {
   `
 }
 
+function MomentsList(a, meta) {
+  const rows = eventRows(a, meta, speed())
+  return html`
+    <div class="qualitySummaryRow plotMoments">
+      <p class="qualitySentence">Moments to check</p>
+      ${rows.length ? html`
+        <p class="plotMuted">Tap a moment to open the charts there.</p>
+        <div class="plotMomentList">
+          ${rows.map((e) => html`
+            <button class="plotMoment ${e.kind}" @click="${() => zoomTo(e.t, e.title)}">
+              <span class="plotMomentHead"><strong>${e.title}</strong><span class="plotMuted">${e.clock ? `${e.clock} · ` : ""}${e.into} in</span></span>
+              <span class="plotMomentDetail">${e.detail}</span>
+            </button>
+          `)}
+        </div>
+      ` : html`<p class="plotMuted">No hard brakes, overridden braking, take-overs or tight-turn overshoots this drive.</p>`}
+    </div>
+  `
+}
+
 function SessionDetail() {
   if (!state.selectedId) return ""
   const d = state.detail
   const a = d?.analysis
   const m = d?.meta || {}
   const overview = a ? buildOverviewCharts(a.overview, { speed: speed() }) : []
-  const tune = tuneRows(m)
+  const groups = tuneGroups(m)
+  const tuneCount = groups.reduce((n, g) => n + g.rows.length, 0)
+  const controller = a?.controller || m.lateral_controller
   return html`
     <section class="plotCard plotStatusCard plotDetail">
       <div class="plotCardHeader">
@@ -438,6 +496,7 @@ function SessionDetail() {
           <p><strong>Disengagements:</strong> ${a.disengagements}</p>
           <p><strong>Car:</strong> ${m.car || "—"}</p>
           <p><strong>Software:</strong> ${m.git_branch || "—"} ${m.git_commit ? `@ ${String(m.git_commit).slice(0, 8)}` : ""}</p>
+          ${controller ? html`<p><strong>Steering controller:</strong> ${controllerName(controller)}</p>` : ""}
         </div>
         ${a.takeaways?.length ? html`
           <div class="qualitySummaryRow plotTakeaways">
@@ -445,6 +504,7 @@ function SessionDetail() {
             <ul class="plotNotes plotTakeawayList">${a.takeaways.map((n) => html`<li>${n}</li>`)}</ul>
           </div>
         ` : ""}
+        ${Array.isArray(a.events) ? MomentsList(a, m) : ""}
         <div class="qualitySummaryGrid">
           ${AnalysisBlock("Steering", "lateral", a.lateral)}
           ${AnalysisBlock("Speed control", "longitudinal", a.longitudinal)}
@@ -453,12 +513,16 @@ function SessionDetail() {
           <summary>How to read these numbers</summary>
           <ul class="plotNotes">${READING_GUIDE.map((n) => html`<li>${n}</li>`)}</ul>
         </details>
-        ${tune.length ? html`
+        ${tuneCount ? html`
           <details class="plotDetails">
-            <summary>Tune in effect for this drive (${tune.length} settings)</summary>
-            <div class="plotKeyGrid">
-              ${tune.map((k) => html`<span class="plotKeyLabel">${k.label}</span><span class="plotKeyValue">${k.value}</span>`)}
-            </div>
+            <summary>Tune in effect for this drive (${tuneCount} settings)</summary>
+            ${groups.map((g) => html`
+              <p class="plotTableTitle">${g.title}</p>
+              ${g.note ? html`<p class="plotMuted">${g.note}</p>` : ""}
+              <div class="plotKeyGrid">
+                ${g.rows.map((k) => html`<span class="plotKeyLabel">${k.label}</span><span class="plotKeyValue ${k.unused ? "plotUnused" : ""}">${k.value}</span>`)}
+              </div>
+            `)}
           </details>
         ` : ""}
         <p class="qualityMethodNote">${a.method}</p>
@@ -471,7 +535,7 @@ function SessionDetail() {
     ${state.zoom ? html`
       <section class="plotCard plotStatusCard plotZoom">
         <div class="plotCardHeader">
-          <h2>Zoom ${fmtDuration(state.zoom.start)} – ${fmtDuration(state.zoom.end)}</h2>
+          <h2>${state.zoom.label ? `${state.zoom.label}: ` : "Zoom "}${fmtDuration(state.zoom.start)} – ${fmtDuration(state.zoom.end)}</h2>
           <button class="plotButton" @click="${() => { state.zoom = null }}">Close zoom</button>
         </div>
       </section>

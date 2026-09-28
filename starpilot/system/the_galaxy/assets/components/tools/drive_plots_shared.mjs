@@ -15,6 +15,7 @@ export const LINE_COLORS = {
   i: "#63d79d",
   d: "#f0b35e",
   f: "#d08bff",
+  lead: "#f7768e",
 }
 
 const LONG_STATE_NAMES = ["off", "pid", "stopping", "starting"]
@@ -47,7 +48,8 @@ export function fmtDate(epochSeconds) {
 
 // Speed display unit from the device's IsMetric setting; samples are stored in m/s.
 export function speedUnit(isMetric) {
-  return isMetric ? { factor: 3.6, unit: "km/h", floor: 20 } : { factor: 2.23694, unit: "mph", floor: 10 }
+  return isMetric ? { factor: 3.6, unit: "km/h", floor: 20, distFactor: 1, distUnit: "m" }
+    : { factor: 2.23694, unit: "mph", floor: 10, distFactor: 3.28084, distUnit: "ft" }
 }
 export const DEFAULT_SPEED = speedUnit(false)
 
@@ -55,11 +57,37 @@ export function fmtSpeed(ms, speed = DEFAULT_SPEED, digits = 0) {
   return `${fmtNum(toNumber(ms) * speed.factor, digits)} ${speed.unit}`
 }
 
-export function bandLabel(b, speed = DEFAULT_SPEED) {
-  const lo = Math.round(toNumber(b.lo_ms) * speed.factor)
-  if (b.hi_ms == null) return `${lo}+ ${speed.unit}`
-  const hi = Math.round(toNumber(b.hi_ms) * speed.factor)
+function speedRange(loMs, hiMs, speed) {
+  const lo = Math.round(toNumber(loMs) * speed.factor)
+  if (hiMs == null) return `${lo}+ ${speed.unit}`
+  const hi = Math.round(toNumber(hiMs) * speed.factor)
   return lo === 0 ? `under ${hi} ${speed.unit}` : `${lo}–${hi} ${speed.unit}`
+}
+
+// "Standard (25–50 mph)": the band names match the Low speed / Standard / Highway tune sliders.
+export function bandLabel(b, speed = DEFAULT_SPEED) {
+  const range = speedRange(b.lo_ms, b.hi_ms, speed)
+  return b.name ? `${b.name} (${range})` : range
+}
+
+// Which steering controller drove, in words, and whether the Lat*Scale speed-band sliders apply to it.
+export const CONTROLLERS = {
+  clarity_eps: { name: "James's controller", slidersUsed: false,
+                 note: "Fixed P and I gains. The LatP / LatI / LatF speed-band sliders and the Honda PID scales are not used by this controller." },
+  nrdr_pid: { name: "NRDR PID", slidersUsed: true,
+              note: "Tuned by the LatP / LatI / LatF sliders for Low speed (under 25 mph), Standard (25–50) and Highway (50+)." },
+}
+
+export function controllerName(controller) {
+  if (!controller) return ""
+  return CONTROLLERS[controller]?.name || String(controller)
+}
+
+// The P line of the controller-terms chart, which is not the P that reached the wheel under James's controller.
+export function termsNote(controller) {
+  if (controller !== "clarity_eps") return ""
+  return "James's controller: the P line is before its fixed speed-band scale (about ×1.15–1.25), and the output is " +
+    "filtered, so P + I + F reads a little below what reached the wheel."
 }
 
 export function longStateName(value) {
@@ -168,9 +196,14 @@ export function buildChart(t, lines, inactive, opts = {}) {
   // Down-sample to ~2 points per horizontal unit so long windows stay light.
   const stride = Math.max(1, Math.floor(n / (W * 2)))
   const paths = lines.map((line) => {
+    // A null value is a gap (no car ahead, for example): the line breaks there instead of dropping to 0.
     let d = ""
+    let pen = false
     for (let i = 0; i < n; i += stride) {
-      d += `${d ? "L" : "M"}${xFor(t[i]).toFixed(1)},${yFor(line.values[i]).toFixed(1)}`
+      const v = line.values[i]
+      if (v === null || v === undefined) { pen = false; continue }
+      d += `${pen ? "L" : "M"}${xFor(t[i]).toFixed(1)},${yFor(v).toFixed(1)}`
+      pen = true
     }
     return { key: line.key, cls: line.cls || line.key, color: line.color, d }
   })
@@ -240,7 +273,7 @@ const LONG_LINES = (s) => [
 ]
 
 // Charts for a column-major series (live view or a zoomed window of a saved drive).
-export function buildTrackingCharts(s, { advanced = false, tMin, tMax, speed = DEFAULT_SPEED } = {}) {
+export function buildTrackingCharts(s, { advanced = false, tMin, tMax, speed = DEFAULT_SPEED, controller = null } = {}) {
   if (!s || !s.t || s.t.length < 2) return []
   const v = (s.v || []).map((x) => toNumber(x) * speed.factor)
   const charts = [
@@ -249,9 +282,23 @@ export function buildTrackingCharts(s, { advanced = false, tMin, tMax, speed = D
     { id: "v", title: "Speed", unit: speed.unit, lines: [{ key: "v", values: v, color: LINE_COLORS.speed, cls: "speed", label: "Speed" }],
       active: s.enabled, floor: speed.floor, zeroBased: true },
   ]
+  const angOk = (s.ang_ok || []).some((x) => toNumber(x) > 0.5)
+  if (angOk) {
+    charts.splice(1, 0, { id: "ang", title: "Steering wheel angle", unit: "°", active: s.lat_active, floor: 5, digits: 1, lines: [
+      { key: "ang_des", values: s.ang_des, color: LINE_COLORS.desired, cls: "desired", label: "Requested" },
+      { key: "ang_act", values: s.ang_act, color: LINE_COLORS.actual, cls: "actual", label: "Measured" },
+    ] })
+  }
+  const leadSrc = s.lead_src || []
+  if (leadSrc.some((x) => toNumber(x) > 0.5)) {
+    // Shaded, with a break in the line, where no car ahead was tracked.
+    const dist = (s.lead_d || []).map((x, i) => (toNumber(leadSrc[i]) > 0.5 ? toNumber(x) * speed.distFactor : null))
+    charts.push({ id: "lead", title: "Car ahead: distance", unit: speed.distUnit, active: leadSrc, floor: 20 * speed.distFactor,
+                  zeroBased: true, digits: 0, lines: [{ key: "lead_d", values: dist, color: LINE_COLORS.lead, cls: "lead", label: "Distance" }] })
+  }
   if (advanced) {
     charts.push(
-      { id: "latTerms", title: "Steering controller terms", unit: "", active: s.lat_active, floor: 0.1, lines: [
+      { id: "latTerms", title: "Steering controller terms", unit: "", active: s.lat_active, floor: 0.1, note: termsNote(controller), lines: [
         { key: "lat_p", values: s.lat_p, color: LINE_COLORS.p, cls: "p", label: "P" },
         { key: "lat_i", values: s.lat_i, color: LINE_COLORS.i, cls: "i", label: "I" },
         { key: "lat_d", values: s.lat_d, color: LINE_COLORS.d, cls: "d", label: "D" },
@@ -267,7 +314,7 @@ export function buildTrackingCharts(s, { advanced = false, tMin, tMax, speed = D
   return charts.map((c) => ({
     ...c,
     legend: c.lines.map((l) => ({ label: l.label, cls: l.cls, color: l.color,
-                                  value: fmtNum(l.values[l.values.length - 1], c.id === "v" ? 0 : 2) })),
+                                  value: fmtNum(l.values[l.values.length - 1], c.digits ?? (c.id === "v" ? 0 : 2)) })),
     geo: buildChart(s.t, c.lines, c.active, { floor: c.floor, zeroBased: c.zeroBased, unit: c.unit, tMin, tMax }),
   }))
 }
@@ -309,12 +356,14 @@ export function keyNumbers(axis, m, speed = DEFAULT_SPEED) {
   }
   if (axis === "lateral") {
     if (m.status === "ok") {
-      rows.push(["Curve response", m.curve_gain == null ? "no sustained curves" : `${pct(m.curve_gain)} of what was asked`])
+      const source = m.curve_gain_source === "wheel angle" ? " (wheel angle)" : ""
+      rows.push([`Curve response${source}`, m.curve_gain == null ? "no sustained curves" : `${pct(m.curve_gain)} of what was asked`])
       rows.push(["Wobble ratio", `${fmtNum(m.wobble_ratio)} (about 1 is steady)`])
       rows.push(["Straight-road lean", m.straight_bias == null ? "—" : Math.abs(m.straight_bias) < 0.005 ? "none"
         : `${fmtNum(Math.abs(m.straight_bias))} m/s² to the ${m.straight_bias > 0 ? "left" : "right"}`])
       rows.push(["Time at steering limit (curves)", m.saturated_curve_frac == null ? "—" : pct(m.saturated_curve_frac)])
     }
+    if (m.turns) rows.push(["Tight low-speed turns", String(m.turns.count ?? 0)])
     rows.push(["Times you took the wheel", String(m.steer_overrides ?? 0)])
   } else {
     if (m.status === "ok") {
@@ -342,18 +391,101 @@ export function speedBandRows(m, speed = DEFAULT_SPEED) {
   }))
 }
 
-// The tune snapshot stored with a recording, as label/value rows (empty values dropped).
-export function tuneRows(meta) {
-  const rows = []
-  if (!meta) return rows
-  if (meta.lateral_tuning) rows.push({ label: "Lateral controller", value: String(meta.lateral_tuning) })
-  if (meta.openpilot_longitudinal != null) rows.push({ label: "openpilot longitudinal", value: meta.openpilot_longitudinal ? "on" : "off" })
+// Tight low-speed turns and near-straight wobble, in steering-wheel degrees, for two small tables.
+export function turnRows(m, speed = DEFAULT_SPEED) {
+  const t = m?.turns
+  if (!t) return null
+  const deg = (x) => (x == null ? "—" : `${fmtNum(x, 1)}°`)
+  return {
+    count: t.count ?? 0,
+    bins: (t.bins || []).map((b, i) => ({
+      label: speedRange(i === 0 ? 0 : b.lo_ms, b.hi_ms, speed),
+      time: fmtDuration(b.time_s), err: deg(b.err), past: deg(b.past), trail: deg(b.trail),
+      limit: b.at_limit == null ? "—" : `${Math.round(b.at_limit * 100)}%`,
+    })),
+    wobble: (t.wobble || []).map((b) => ({ label: speedRange(b.lo_ms, b.hi_ms, speed), time: fmtDuration(b.time_s),
+                                           rms: `${fmtNum(b.rms_deg, 2)}°` })),
+  }
+}
+
+function leadText(lead, speed) {
+  if (!lead) return "No car ahead was tracked."
+  const src = lead.src === "radar" ? "radar" : "camera only"
+  return `Car ahead: ${fmtNum(toNumber(lead.d) * speed.distFactor, 0)} ${speed.distUnit} away at ${fmtSpeed(lead.v, speed)} (${src}).`
+}
+
+function clockTime(epochSeconds) {
+  return new Date(epochSeconds * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+}
+
+// "Moments to check": analysis.events as display rows. t counts from the first sample; the clock time comes from
+// meta.first_sample_at (older recordings: started_at, marked approximate).
+export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
+  const events = Array.isArray(analysis?.events) ? analysis.events : []
+  const base = toNumber(meta?.first_sample_at, 0) || toNumber(meta?.started_at, 0)
+  const approx = !toNumber(meta?.first_sample_at, 0)
+  const acc = (x) => `${fmtNum(Math.abs(toNumber(x)), 1)} m/s²`
+  return events.map((e) => {
+    let title = ""
+    let detail = ""
+    let kind = "steer"
+    if (e.kind === "hard_brake") {
+      kind = "brake"
+      title = "Hard brake"
+      detail = `Slowed at up to ${acc(e.a_min)} (plan up to ${acc(e.plan_min)}) from ${fmtSpeed(e.v, speed)}. ${leadText(e.lead, speed)}` +
+        (e.gas_after ? " You pressed the gas right after." : "")
+    } else if (e.kind === "gas_during_brake") {
+      kind = "brake"
+      title = "You pressed the gas while openpilot braked"
+      detail = `openpilot was braking up to ${acc(e.plan_min)} at ${fmtSpeed(e.v, speed)}. ${leadText(e.lead, speed)} ` +
+        "If there was no real slower car, this braking was not needed."
+    } else if (e.kind === "steer_takeover") {
+      title = "You took the wheel"
+      detail = `At ${fmtSpeed(e.v, speed)}.` + (e.ang_des == null ? ""
+        : ` openpilot wanted the wheel at ${fmtNum(e.ang_des, 0)}°; it was at ${fmtNum(e.ang_act, 0)}°.`)
+    } else if (e.kind === "turn_overshoot") {
+      title = "Tight turn went past the request"
+      detail = `${e.side === "left" ? "Left" : "Right"} turn at ${fmtSpeed(e.v, speed)}: ${fmtNum(e.peak_des, 0)}° asked, the wheel ` +
+        `went ${fmtNum(e.overshoot, 0)}° past it (overshoot or a late unwind).`
+    } else {
+      title = String(e.kind || "Event")
+    }
+    const t = toNumber(e.t)
+    return { t, kind, title, detail, into: fmtDuration(t), clock: base ? `${approx ? "~" : ""}${clockTime(base + t)}` : "" }
+  })
+}
+
+// First match wins, so Radar (NrdrHondaEcuMatchedLong) is tested before Speed control.
+const TUNE_GROUPS = [
+  { title: "Speed control", test: (k) => /long|accel|brake|stop|start|follow|jerk|^EVTuning$|^Truck|^Trailer/i.test(k) },
+  { title: "Radar", test: (k) => /radar|blot|EcuMatchedLong/i.test(k) },
+]
+const TUNE_TEST_ORDER = [1, 0]
+// Keys James's controller does not read (latcontrol_clarity_eps.py docstring): the gain sliders and Honda PID scales.
+const SLIDER_KEY = /^Lat[PIF]Scale(LowSpeed|Standard|Highway)$|^LatGainSchedule$|^HondaLateralPidK[pi]Scale$/
+
+// The tune snapshot stored with a recording, grouped: [{title, note, rows: [{label, value, unused}]}].
+// Under James's controller the speed-band sliders are marked unused rather than hidden.
+export function tuneGroups(meta) {
+  if (!meta) return []
+  const controller = meta.lateral_controller
+  const info = CONTROLLERS[controller]
+  const steering = { title: "Steering", note: info ? `${info.name}. ${info.note}` : "", rows: [] }
+  if (controller) steering.rows.push({ label: "Steering controller", value: controllerName(controller) })
+  if (meta.lateral_tuning) steering.rows.push({ label: "Lateral tuning type", value: String(meta.lateral_tuning) })
+  const groups = TUNE_GROUPS.map((g) => ({ title: g.title, note: "", rows: [] }))
+  if (meta.openpilot_longitudinal != null) {
+    groups[0].rows.push({ label: "openpilot longitudinal", value: meta.openpilot_longitudinal ? "on" : "off" })
+  }
   const tune = meta.tune && typeof meta.tune === "object" ? meta.tune : {}
   for (const [k, v] of Object.entries(tune)) {
     if (v === null || v === undefined || v === "") continue
-    rows.push({ label: k, value: String(v) })
+    const unused = info && !info.slidersUsed && SLIDER_KEY.test(k)
+    const row = { label: k, value: unused ? `${v} (not used)` : String(v), unused: !!unused }
+    const idx = TUNE_TEST_ORDER.find((i) => TUNE_GROUPS[i].test(k)) ?? -1
+    ;(idx >= 0 ? groups[idx].rows : steering.rows).push(row)
   }
-  return rows
+  return [steering, ...groups].filter((g) => g.rows.length)
 }
 
 export function statusLabel(status) {
@@ -366,17 +498,21 @@ export function sessionUrl(id, suffix = "") {
 
 export const HELP_TEXT = "'Requested' is what openpilot asked for, 'Measured' is what the car did. Shaded areas are where openpilot " +
   "was not in control (disengaged, you were steering or pressing the gas); they are left out of the analysis. " +
-  "Lateral 'measured' is computed from the steering angle through the vehicle model, so a wrong steer ratio shows up as a gain error."
+  "Lateral 'measured' is computed from the steering angle through the vehicle model, so a wrong steer ratio shows up as a gain error; " +
+  "the steering-wheel-angle chart compares the wheel itself and has no such bias."
 
 // How to read the numbers, for the drive detail.
 export const READING_GUIDE = [
   "Requested vs measured: openpilot asks for a certain side-to-side (steering) or forward (speed) acceleration; the car delivers some of it. The analysis compares the two.",
   "Typical error: how far the car was from what was asked, on average. Under 0.2 m/s² you will hardly feel it; over 0.4 m/s² you will.",
   "Reaction delay: how long the car takes to start following a change. It comes from the car and the actuator-delay setting; it is not something to chase to zero.",
-  "Curve response: 100% means the car turned exactly as much as asked. Below about 90% it runs wide in curves (feedforward or steer ratio a little low); above about 110% it cuts in.",
+  "Curve response: 100% means the car turned exactly as much as asked. Below about 90% it runs wide in curves (feedforward a little low); above about 110% it cuts in. When it says 'wheel angle' it compares the steering wheel itself, so the steer ratio cannot bias it.",
+  "Tight turns: parking-lot and intersection turns under 25 mph with the wheel past 45°, in degrees of steering wheel. 'Past the request' is overshoot or a late unwind; 'behind' is the wheel catching up.",
+  "Wheel wobble: quick back-and-forth of the wheel itself on near-straight road, in degrees. Lower is steadier; compare drives rather than reading one number.",
+  "Moments to check: hard brakes, gas presses while openpilot braked, times you took the wheel and tight turns that went past the request, each with the car ahead at that moment. Tap one to open the charts there.",
   "Wobble ratio: quick back-and-forth steering compared with what the road needed. Around 1 is steady; above 1.5 is the ping-pong you can feel on straights (gain a little high, or friction/damping a little low).",
   "Straight-road lean: a constant lean to one side on straight roads. A small steering-offset change fixes this, not the gains.",
   "Braking and acceleration vs plan: whether the car did less or more than openpilot asked. 'Less braking than planned' means it arrives a little hot behind a slowing car.",
-  "Speed table: the same numbers split by speed. A tune that is right at one speed and off at another shows up here.",
+  "Speed table: the same numbers split into Low speed, Standard and Highway, the same bands as the steering sliders. A tune that is right at one speed and off at another shows up here.",
   "One drive is a hint, not a verdict. Look for the same finding across a few drives before changing anything.",
 ]

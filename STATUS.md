@@ -7475,6 +7475,22 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
 
 **Not verified.** Still no car. The swallowed-tap fix is verified by node identity across polls, not by a human tap. Band edges and the 5 % saturation threshold are guesses. `ruff` reports the same implicit-string-concatenation and `time.time` classes as the committed version; not changed.
 
+## 141b. Galaxy Plots follow the new lateral controllers and radar work: wheel-angle scoring, tight low-speed turns, a "Moments to check" list with the car ahead, and a tune snapshot that knows which controller drove (owner, 2026-09-28). Unit tests and a headless render against a synthetic drive only; not used on a car.
+
+**Why.** Since 141a the Civic defaults to LatControlClarityEps (STATUS 188), the NRDR PID gains are set per LowSpeed / Standard / Highway band, and the radar work is judged on hard brakes and phantom braking. The page still scored curves on the vehicle-model lateral acceleration, used 30/50/70 mph bands, and advised LatP/LatI changes to a controller that does not read them.
+
+**What changed.**
+- New recorded columns: requested and measured wheel angle (`ang_des`, `ang_act`, `ang_ok`) and the car ahead (`lead_d`, `lead_v`, `lead_src` = none / radar / camera only). Older recordings still analyze; the new metrics are left out.
+- Curve response is measured on wheel angle, so a wrong steer ratio no longer biases it. Tight turns (wheel past 45 degrees under 25 mph) get their own table in degrees: off-by, past the request (overshoot or late unwind), behind, and time at limit. A wheel-wobble table covers near-straight road.
+- Speed bands are now Low speed (under 25 mph), Standard (25-50) and Highway (50+), matching the tuning sliders.
+- "Moments to check" lists hard brakes, gas presses while openpilot braked, steering takeovers and tight turns that went 10 degrees or more past the request. Each moment gives the clock time, speed, and the car ahead with its distance, speed and source. Tapping one opens the charts there.
+- The zoom and live views add a steering-wheel-angle chart and a car-ahead distance chart. The distance line breaks where no car was tracked.
+- The drive meta records which steering controller drove (James's controller, NRDR PID, or the CarParams tuning type) and snapshots the lateral, NRDR, longitudinal and radar params (BlotV3, BoschARadar, NrdrHondaEcuMatchedLong). Under James's controller the Lat*Scale and Honda PID scale values are marked "not used", advice does not suggest slider changes, and the P-term chart notes that the logged P is before its speed-band scale and output filter.
+
+**Evidence.** `test_drive_plots.py` 33 tests (angle-based curve response, planted tight turns and wobble, each moment kind, controller-specific advice, old-column tolerance); with the frontend suites 79 pass. Both pages rendered in headless Chromium against the Flask app with a synthetic drive at 1400 px and 412 px: moments, turn tables, grouped tune, wheel-angle and car-ahead charts checked visually; no page errors from Plots.
+
+**Not verified.** No real drive has been recorded with the new columns. The 45 degree / 25 mph tight-turn cut, the 10 degree "went past" cut, and the 2.5 m/s² hard-brake threshold are guesses to be checked against the first real recordings. The controller label mirrors the controlsd selection rule by reading CarParamsPersistent and NrdrLatEpsFirmwareFF; it is not read from the running controller.
+
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 
 **What was added.**

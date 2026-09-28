@@ -39,7 +39,7 @@ from urllib.parse import quote
 from cereal import car, custom, log, messaging
 from opendbc.can.parser import CANParser
 from opendbc.car.gm.values import GMFlags
-from opendbc.car.honda.values import HONDA_BOSCH_A
+from opendbc.car.honda.values import CAR as HONDA_CAR, HONDA_BOSCH_A, HondaFlags
 from opendbc.car.toyota.carcontroller import LOCK_CMD, UNLOCK_CMD
 from opendbc.car.toyota.values import ToyotaStarPilotFlags
 from openpilot.common.constants import CV
@@ -1981,8 +1981,45 @@ def _get_param_int_value(key, default=0):
   except Exception:
     return int(default)
 
+# Steering tune keys the NRDR PID controller reads (speed-band sliders, Honda PID scales, feedforward
+# switches). Kept in sync with lat_tune_analyzer.TUNING_KEYS; a failed import only drops them from the snapshot.
+try:
+  from openpilot.selfdrive.controls.lib.lat_tune_analyzer import TUNING_KEYS as _NRDR_LATERAL_TUNE_KEYS
+except Exception:
+  _NRDR_LATERAL_TUNE_KEYS = ()
+_DRIVE_PLOTS_RADAR_KEYS = ("BlotV3", "BoschARadar", "NrdrHondaEcuMatchedLong")
+_CLARITY_EPS_CARS = (HONDA_CAR.HONDA_CLARITY, HONDA_CAR.HONDA_CIVIC_BOSCH)
+_lateral_controller_cache = {"key": None, "value": None}
+
+def _lateral_controller_info():
+  """Which steering controller controlsd runs, mirroring use_clarity_eps_controller():
+  "clarity_eps" (James's controller, fixed gains), "nrdr_pid" (the PID the speed-band sliders tune),
+  or the plain lateralTuning type. None when the car is unknown."""
+  cp_bytes = _safe_params_get_live_raw("CarParamsPersistent")
+  if not cp_bytes:
+    return None
+  eps_ff = _safe_params_get_bool("NrdrLatEpsFirmwareFF")
+  cache_key = (bytes(cp_bytes), eps_ff)
+  if _lateral_controller_cache["key"] == cache_key:
+    return _lateral_controller_cache["value"]
+  value = None
+  try:
+    with car.CarParams.from_bytes(cp_bytes) as cp:
+      tuning = str(cp.lateralTuning.which())
+      eps_modified = bool(cp.flags & HondaFlags.EPS_MODIFIED) and str(cp.brand) == "honda"
+      if tuning == "pid" and eps_modified and cp.carFingerprint in _CLARITY_EPS_CARS and eps_ff:
+        value = drive_plots.CONTROLLER_CLARITY_EPS
+      elif tuning == "pid" and eps_modified:
+        value = drive_plots.CONTROLLER_NRDR_PID
+      else:
+        value = tuning
+  except Exception:
+    value = None
+  _lateral_controller_cache.update(key=cache_key, value=value)
+  return value
+
 def _drive_plots_meta():
-  """Snapshot what a recorded drive is being judged against: the car and the tune."""
+  """Snapshot what a recorded drive is being judged against: the car, the steering controller and the tune."""
   meta = {"car": None, "git_commit": None, "tune": {}}
   cp_bytes = _safe_params_get_live_raw("CarParamsPersistent")
   if cp_bytes:
@@ -1993,13 +2030,16 @@ def _drive_plots_meta():
         meta["lateral_tuning"] = str(cp.lateralTuning.which())
     except Exception:
       pass
+  meta["lateral_controller"] = _lateral_controller_info()
   for key, target in (("GitCommit", "git_commit"), ("GitBranch", "git_branch")):
     try:
       value = params.get(key)
       meta[target] = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
     except Exception:
       pass
-  for key in [*_TROUBLESHOOT_ADVANCED_LATERAL_KEYS, *_TROUBLESHOOT_ADVANCED_LONGITUDINAL_KEYS]:
+  tune_keys = dict.fromkeys([*_TROUBLESHOOT_ADVANCED_LATERAL_KEYS, *_NRDR_LATERAL_TUNE_KEYS,
+                              *_TROUBLESHOOT_ADVANCED_LONGITUDINAL_KEYS, *_DRIVE_PLOTS_RADAR_KEYS])
+  for key in tune_keys:
     try:
       value = params.get(key)
       if isinstance(value, bytes):
@@ -2017,7 +2057,8 @@ def _get_drive_plots():
   global _drive_plots
   with _drive_plots_init_lock:
     if _drive_plots is None:
-      _drive_plots = drive_plots.DrivePlots(_get_galaxy_dir() / "drive_plots", is_onroad=lambda: params.get_bool("IsOnroad"))
+      _drive_plots = drive_plots.DrivePlots(_get_galaxy_dir() / "drive_plots", is_onroad=lambda: params.get_bool("IsOnroad"),
+                                            controller_fn=_lateral_controller_info)
       threading.Thread(target=_drive_plots.recover_interrupted, daemon=True).start()
     return _drive_plots
 
@@ -8272,6 +8313,7 @@ def setup(app):
     payload = _get_drive_plots().live(since)
     payload["isOnroad"] = params.get_bool("IsOnroad")
     payload["isMetric"] = _safe_params_get_bool("IsMetric")
+    payload["lateralController"] = _lateral_controller_info()
     return jsonify(payload), 200
 
   @app.route("/api/plots/recording/start", methods=["POST"])

@@ -126,6 +126,7 @@ class _FakeSM:
     self.cc = car.CarControl.new_message()
     self.car_state = car.CarState.new_message()
     self.plan = log.LongitudinalPlan.new_message()
+    self.radar = log.RadarState.new_message()
     self.recv_frame = {s: 0 for s in dp.DrivePlots.SERVICES}
     self.updated = {s: False for s in dp.DrivePlots.SERVICES}
     self.logMonoTime = {s: 0 for s in dp.DrivePlots.SERVICES}
@@ -139,7 +140,7 @@ class _FakeSM:
 
   def __getitem__(self, name):
     return {"controlsState": self.cs, "carControl": self.cc, "carState": self.car_state,
-            "longitudinalPlan": self.plan}[name]
+            "longitudinalPlan": self.plan, "radarState": self.radar}[name]
 
 
 def _engaged_sm():
@@ -166,6 +167,26 @@ def test_build_row_reads_the_right_fields():
   assert r["lat_des"] == pytest.approx(0.002 * 400) and r["lat_act"] == pytest.approx(0.0019 * 400)
   assert r["long_des"] == pytest.approx(-0.7) and r["long_act"] == pytest.approx(-0.5)
   assert r["long_state"] == dp.LONG_STATES["pid"]
+  assert r["ang_ok"] == 0 and r["lead_src"] == 0
+
+
+def test_build_row_reads_wheel_angle_and_car_ahead():
+  sm = _engaged_sm()
+  pid = sm.cs.lateralControlState.init("pidState")
+  pid.steeringAngleDesiredDeg = 12.5
+  sm.car_state.steeringAngleDeg = 11.0
+  sm.radar.leadOne.status = True
+  sm.radar.leadOne.dRel = 35.0
+  sm.radar.leadOne.vLead = 18.0
+  sm.radar.leadOne.radar = True
+  sm.update()
+  r = dict(zip(dp.COLUMNS, dp.build_row(sm)))
+  assert r["ang_ok"] == 1 and r["ang_des"] == pytest.approx(12.5) and r["ang_act"] == pytest.approx(11.0)
+  assert r["lead_d"] == pytest.approx(35.0) and r["lead_v"] == pytest.approx(18.0) and r["lead_src"] == 1
+  sm.radar.leadOne.radar = False
+  assert dict(zip(dp.COLUMNS, dp.build_row(sm)))["lead_src"] == 2
+  sm.radar.leadOne.status = False
+  assert dict(zip(dp.COLUMNS, dp.build_row(sm)))["lead_src"] == 0
 
 
 def test_record_stop_analyze(tmp_path):
@@ -180,6 +201,7 @@ def test_record_stop_analyze(tmp_path):
   d = tmp_path / status["id"]
   meta = json.loads((d / "meta.json").read_text())
   assert meta["status"] == "done" and meta["car"] == "HONDA_TEST"
+  assert meta["started_at"] <= meta["first_sample_at"] <= meta["stopped_at"]
   assert (d / "samples.csv.gz").exists() and not (d / "samples.csv").exists()
   assert len(gzip.open(d / "samples.csv.gz", "rt").read().strip().splitlines()) == 41
   assert plots.get_session(status["id"])["analysis"]["samples"] == 40
@@ -306,12 +328,17 @@ def test_speed_bands_report_gain_per_band():
   rows[fast, dp.COL["v"]] = 27.0
   rows[fast, dp.COL["lat_act"]] *= 0.75
   lat = dp.analyze(rows)["lateral"]
-  bands = {b["lo_ms"]: b for b in lat["speed_bands"]}
-  assert set(bands) == {13.41, 22.35}
-  assert bands[13.41]["gain"] == pytest.approx(1.0, abs=0.03)
-  assert bands[22.35]["gain"] == pytest.approx(0.75, abs=0.03)
-  assert any("By speed" in n and "30-50 mph 100%" in n and "50-70 mph 75%" in n for n in lat["notes"])
+  bands = {b["name"]: b for b in lat["speed_bands"]}
+  assert set(bands) == {"Standard", "Highway"}
+  assert bands["Standard"]["lo_ms"] == pytest.approx(11.18) and bands["Highway"]["hi_ms"] is None
+  assert bands["Standard"]["gain"] == pytest.approx(1.0, abs=0.03)
+  assert bands["Highway"]["gain"] == pytest.approx(0.75, abs=0.03)
+  assert any("By speed" in n and "Standard (25-50 mph) 100%" in n and "Highway (50+ mph) 75%" in n for n in lat["notes"])
   assert any("changes with speed" in x for x in dp.analyze(rows)["takeaways"])
+  pid = [x for x in dp.analyze(rows, controller=dp.CONTROLLER_NRDR_PID)["takeaways"] if "changes with speed" in x]
+  assert pid and "Low speed / Standard / Highway sliders" in pid[0]
+  eps = [x for x in dp.analyze(rows, controller=dp.CONTROLLER_CLARITY_EPS)["takeaways"] if "changes with speed" in x]
+  assert eps and "no per-speed sliders" in eps[0]
   assert dp.analyze(rows)["longitudinal"]["speed_bands"][0]["engaged_s"] > 100
 
 
@@ -326,13 +353,21 @@ def test_saturation_in_curves_is_reported():
 
 
 def test_read_rows_by_header_tolerates_older_column_sets(tmp_path):
-  old = [c for c in dp.COLUMNS if c != "lat_sat"]
+  new_cols = {"lat_sat", "ang_des", "ang_act", "ang_ok", "lead_d", "lead_v", "lead_src"}
+  old = [c for c in dp.COLUMNS if c not in new_cols]
   rows = _drive(n_s=5.0)
-  lines = [",".join(old)] + [",".join(dp._fmt(x) for x in r[:len(old)]) for r in rows]
+  lines = [",".join(old)] + [",".join(dp._fmt(r[dp.COL[c]]) for c in old) for r in rows]
   (tmp_path / "samples.csv").write_text("\n".join(lines) + "\n")
   data = dp.read_rows(tmp_path)
   assert data.shape == (len(rows), len(dp.COLUMNS))
   assert np.all(data[:, dp.COL["lat_sat"]] == 0) and np.allclose(data[:, dp.COL["lat_des"]], rows[:, dp.COL["lat_des"]])
+  assert np.all(data[:, dp.COL["ang_ok"]] == 0)
+
+
+def test_old_recording_without_angles_or_lead_still_analyzes():
+  a = dp.analyze(_drive())
+  assert "turns" not in a["lateral"] and a["lateral"]["curve_gain_source"] == "lateral acceleration"
+  assert all(e["kind"] != "turn_overshoot" for e in a["events"])
 
 
 def test_empty_recording_is_discarded(tmp_path):
@@ -342,3 +377,146 @@ def test_empty_recording_is_discarded(tmp_path):
   stopped = plots.stop_recording(background=False)
   assert stopped["discarded"] is True and stopped["rows"] == 0
   assert not (tmp_path / status["id"]).exists() and plots.list_sessions() == []
+
+
+# ------------------------------- wheel angle, tight turns, moments -------------------------------
+
+def _with_angles(rows, gain=1.0, ratio=15.0):
+  """Wheel angles consistent with the lateral accel columns: angle = ratio * wheelbase-ish * curvature."""
+  c = dp.COL
+  v = np.maximum(rows[:, c["v"]], 1.0)
+  rows[:, c["ang_des"]] = rows[:, c["lat_des"]] / v ** 2 * 2.7 * ratio * 57.3
+  rows[:, c["ang_act"]] = gain * rows[:, c["ang_des"]]
+  rows[:, c["ang_ok"]] = 1
+  return rows
+
+
+def test_curve_response_uses_wheel_angle_when_recorded():
+  # Lateral accel says 70% (a steer-ratio bias in "measured"), the wheel angle says 100%: angle wins.
+  rows = _with_angles(_drive(lat_gain=0.7), gain=1.0)
+  lat = dp.analyze(rows)["lateral"]
+  assert lat["curve_gain_source"] == "wheel angle"
+  assert lat["curve_gain"] == pytest.approx(1.0, abs=0.02)
+  rows = _with_angles(_drive(), gain=0.8)
+  lat = dp.analyze(rows)["lateral"]
+  assert lat["curve_gain"] == pytest.approx(0.8, abs=0.02)
+  assert all(b["gain"] == pytest.approx(0.8, abs=0.03) for b in lat["speed_bands"])
+
+
+def _tight_turn_drive(overshoot_deg=0.0, v=4.5, n_turns=3):
+  """Straight 20 mph cruising with n 90-degree turns at v; the wheel unwinds overshoot_deg late."""
+  rows = _drive(n_s=120.0, v=9.0)
+  c = dp.COL
+  rows[:, c["lat_des"]] = 0.0
+  rows[:, c["lat_act"]] = 0.0
+  rows[:, c["ang_ok"]] = 1
+  t = rows[:, c["t"]] - rows[0, c["t"]]
+  des = np.zeros(len(t))
+  for k in range(n_turns):
+    t0 = 20.0 + 30.0 * k
+    ph = (t - t0) / 6.0
+    inside = (ph >= 0) & (ph <= 1)
+    des[inside] = 90.0 * np.sin(np.pi * ph[inside])
+    rows[inside, c["v"]] = v
+  act = des.copy()
+  if overshoot_deg:
+    act += overshoot_deg * (des > 45.0)
+  rows[:, c["ang_des"]] = des
+  rows[:, c["ang_act"]] = act
+  return rows
+
+
+def test_tight_turns_are_scored_in_degrees():
+  a = dp.analyze(_tight_turn_drive(overshoot_deg=0.0))
+  turns = a["lateral"]["turns"]
+  assert turns["count"] == 3 and [b["label"] for b in turns["bins"]] == ["under 12 mph"]
+  assert turns["bins"][0]["err"] == pytest.approx(0.0, abs=0.01) and turns["overshoots"] == []
+  assert not any("past the request" in x for x in a["takeaways"])
+  a = dp.analyze(_tight_turn_drive(overshoot_deg=12.0), controller=dp.CONTROLLER_NRDR_PID)
+  turns = a["lateral"]["turns"]
+  assert turns["bins"][0]["past"] == pytest.approx(12.0, abs=0.1) and turns["bins"][0]["trail"] == 0.0
+  assert len(turns["overshoots"]) == 3 and turns["overshoots"][0]["side"] == "left"
+  assert any("past the request" in x for x in a["takeaways"])
+  kinds = [e["kind"] for e in a["events"]]
+  assert kinds.count("turn_overshoot") == 3
+  assert any("Tight turns" in n for n in a["lateral"]["notes"])
+
+
+def test_turns_at_higher_speed_land_in_the_second_bin():
+  turns = dp.analyze(_tight_turn_drive(v=8.0))["lateral"]["turns"]
+  assert [b["label"] for b in turns["bins"]] == ["12-25 mph"]
+
+
+def test_wheel_wobble_is_measured_on_straights():
+  rows = _tight_turn_drive(n_turns=0)
+  clean = dp.analyze(rows)["lateral"]["turns"]["wobble"]
+  t = rows[:, dp.COL["t"]]
+  rows[:, dp.COL["ang_act"]] += 1.0 * np.sin(2 * np.pi * 1.5 * t)
+  shaky = dp.analyze(rows)["lateral"]["turns"]["wobble"]
+  assert [b["lo_ms"] for b in clean] == [8.0] and clean[0]["rms_deg"] < 0.05
+  assert shaky[0]["rms_deg"] > 0.4
+
+
+def test_hard_brake_and_overridden_braking_are_moments_with_the_car_ahead():
+  rows = _drive(n_s=120.0)
+  c = dp.COL
+  t = rows[:, c["t"]] - rows[0, c["t"]]
+  rows[:, c["lead_src"]] = 1
+  rows[:, c["lead_d"]] = 30.0
+  rows[:, c["lead_v"]] = 20.0
+  brake = (t >= 40.0) & (t < 42.0)
+  rows[brake, c["long_des"]] = -3.0
+  rows[brake, c["long_act"]] = -3.0
+  plan = (t >= 80.0) & (t < 82.0)
+  rows[plan, c["long_des"]] = -1.5
+  gas = (t >= 81.0) & (t < 81.5)
+  rows[gas, c["gas_pressed"]] = 1
+  rows[(t >= 60.0) & (t < 60.3), c["steer_pressed"]] = 1
+  a = dp.analyze(rows)
+  ev = {e["kind"]: e for e in a["events"]}
+  assert ev["hard_brake"]["t"] == pytest.approx(40.0, abs=0.06) and ev["hard_brake"]["lead"]["src"] == "radar"
+  assert ev["hard_brake"]["a_min"] == pytest.approx(-3.0) and ev["hard_brake"]["gas_after"] is False
+  assert ev["gas_during_brake"]["t"] == pytest.approx(81.0, abs=0.06)
+  assert ev["gas_during_brake"]["lead"] == {"d": 30.0, "v": 20.0, "src": "radar"}
+  assert ev["steer_takeover"]["t"] == pytest.approx(60.0, abs=0.06)
+  assert [e["t"] for e in a["events"]] == sorted(e["t"] for e in a["events"])
+  assert a["longitudinal"]["gas_during_brake"] == 1
+  assert a["takeaways"][0].startswith("You overrode openpilot's braking 1 time")
+
+
+def test_event_starts_merge_close_crossings():
+  m = np.zeros(200, dtype=bool)
+  m[10:12] = m[20:22] = m[150:152] = True
+  assert dp._event_starts(m, 0.05) == [10, 150]
+
+
+def test_advice_names_the_controller_that_drove():
+  rows = _drive(wobble_hz=2.0, wobble_amp=0.3)
+  pid = dp.analyze(rows, controller=dp.CONTROLLER_NRDR_PID)
+  eps = dp.analyze(rows, controller=dp.CONTROLLER_CLARITY_EPS)
+  assert pid["controller"] == dp.CONTROLLER_NRDR_PID
+  assert any("LatP slider" in x for x in pid["takeaways"])
+  assert any("James's controller" in x and "LatP" in x for x in eps["takeaways"])
+  under = dp.analyze(_drive(lat_gain=0.7), controller=dp.CONTROLLER_NRDR_PID)
+  assert any("LatF (feedforward) slider" in x for x in under["takeaways"])
+
+
+def test_finalize_reads_the_controller_from_meta(tmp_path):
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: True, submaster_factory=lambda s: None)
+  plots._ensure_thread_locked = lambda: None
+  status = plots.start_recording({"car": "HONDA_CIVIC_BOSCH", "lateral_controller": dp.CONTROLLER_CLARITY_EPS})
+  sm = _engaged_sm()
+  for _ in range(10):
+    plots.step(sm)
+  plots.stop_recording(background=False)
+  assert plots.get_session(status["id"])["analysis"]["controller"] == dp.CONTROLLER_CLARITY_EPS
+
+
+def test_live_analysis_carries_the_controller(tmp_path):
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: True, submaster_factory=lambda s: None,
+                        controller_fn=lambda: dp.CONTROLLER_NRDR_PID)
+  plots._ensure_thread_locked = lambda: None
+  sm = _engaged_sm()
+  for _ in range(5):
+    plots.step(sm)
+  assert plots.live()["liveAnalysis"]["controller"] == dp.CONTROLLER_NRDR_PID

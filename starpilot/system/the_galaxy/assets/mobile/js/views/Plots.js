@@ -3,8 +3,8 @@ import { usePolling } from "../composables.js"
 import { GalaxyConfirm } from "../components/GalaxyModal.js"
 import {
   HELP_TEXT, LIVE_POLL_MS, LiveBuffer, READING_GUIDE, ZOOM_HALF_WINDOW_S,
-  buildOverviewCharts, buildTrackingCharts, fmtDate, fmtDuration, fmtNum, fmtSpeed, keyNumbers,
-  longStateName, sessionUrl, speedBandRows, speedUnit, statusLabel, timeAtClick, toSeries, tuneRows,
+  buildOverviewCharts, buildTrackingCharts, controllerName, eventRows, fmtDate, fmtDuration, fmtNum, fmtSpeed, keyNumbers,
+  longStateName, sessionUrl, speedBandRows, speedUnit, statusLabel, timeAtClick, toSeries, tuneGroups, turnRows,
 } from "/assets/components/tools/drive_plots_shared.mjs"
 
 const ADVANCED_TERMS_KEY = "plotsShowAdvancedTerms"
@@ -74,6 +74,7 @@ const PlotChart = {
             <span v-for="(x, i) in chart.geo.xTicks" :key="'xl' + i" :style="xStyle(x)">{{ x.label }}</span>
           </div>
         </div>
+        <p v-if="chart.note" style="margin: var(--sp-2) 0 0; color: var(--text-muted); font-size: var(--fs-xs, 0.8rem); line-height:1.5;">{{ chart.note }}</p>
       </div>
     </section>
   `,
@@ -121,6 +122,7 @@ export const Plots = {
   beforeUnmount() { this.poll?.destroy() },
   computed: {
     speed() { return speedUnit(!!this.live?.isMetric) },
+    lateralController() { return this.live?.lateralController || null },
     recording() { return this.live?.recording || null },
     statusRows() {
       const live = this.live || {}
@@ -130,6 +132,7 @@ export const Plots = {
         { label: "Last sample", value: live.sampleAgeSeconds == null ? "none yet" : `${fmtNum(live.sampleAgeSeconds, 1)} s ago` },
         { label: "Speed", value: s ? fmtSpeed(s.v, this.speed) : "—" },
         { label: "openpilot", value: !s ? "—" : s.enabled ? `engaged (steer ${s.lat_active ? "on" : "off"}, long ${longStateName(s.long_state)})` : "not engaged" },
+        ...(this.lateralController ? [{ label: "Steering controller", value: controllerName(this.lateralController) }] : []),
       ]
     },
     liveBlocks() {
@@ -147,12 +150,16 @@ export const Plots = {
       const a = this.analysis
       if (!a) return []
       return [
-        { title: "Steering", m: a.lateral, numbers: keyNumbers("lateral", a.lateral, this.speed), bands: speedBandRows(a.lateral, this.speed) },
+        { title: "Steering", m: a.lateral, numbers: keyNumbers("lateral", a.lateral, this.speed), bands: speedBandRows(a.lateral, this.speed),
+          turns: turnRows(a.lateral, this.speed) },
         { title: "Speed control", m: a.longitudinal, numbers: keyNumbers("longitudinal", a.longitudinal, this.speed),
-          bands: speedBandRows(a.longitudinal, this.speed) },
+          bands: speedBandRows(a.longitudinal, this.speed), turns: null },
       ]
     },
-    tuneRows() { return tuneRows(this.detailMeta) },
+    tuneGroups() { return tuneGroups(this.detailMeta) },
+    tuneCount() { return this.tuneGroups.reduce((n, g) => n + g.rows.length, 0) },
+    detailController() { return this.analysis?.controller || this.detailMeta.lateral_controller || null },
+    moments() { return this.analysis && Array.isArray(this.analysis.events) ? eventRows(this.analysis, this.detailMeta, this.speed) : null },
     software() {
       const m = this.detailMeta
       if (!m.git_branch && !m.git_commit) return "—"
@@ -164,9 +171,11 @@ export const Plots = {
   methods: {
     fmtDate,
     fmtDuration,
+    controllerName,
     statusLabel,
     rebuildLive() {
-      this.liveCharts = buildTrackingCharts(this.buffer.view(), { advanced: this.showAdvancedTerms, speed: this.speed })
+      this.liveCharts = buildTrackingCharts(this.buffer.view(), { advanced: this.showAdvancedTerms, speed: this.speed,
+                                                                 controller: this.lateralController })
       this.latest = this.buffer.latest()
     },
     async load() {
@@ -255,14 +264,16 @@ export const Plots = {
         showSnackbar(e?.message || "Delete failed", "error")
       }
     },
-    async zoomAt(t) {
+    // Full-resolution charts around t (seconds into the drive), from a chart tap or a moment in the list.
+    async zoomAt(t, label = "") {
       if (!this.selectedId) return
       const start = Math.max(0, t - ZOOM_HALF_WINDOW_S)
       const end = start + 2 * ZOOM_HALF_WINDOW_S
       try {
         const payload = await api.getPlotsSessionWindow(this.selectedId, start, end)
         const series = toSeries(payload.columns, payload.rows)
-        this.zoom = { start, end, charts: buildTrackingCharts(series, { advanced: this.showAdvancedTerms, tMin: start, tMax: end, speed: this.speed }) }
+        this.zoom = { start, end, label, charts: buildTrackingCharts(series, { advanced: this.showAdvancedTerms, tMin: start, tMax: end,
+                                                                              speed: this.speed, controller: this.detailController }) }
         this.$nextTick(() => this.$refs.zoom?.scrollIntoView({ behavior: "smooth", block: "start" }))
       } catch (e) {
         this.detailError = e?.message || String(e)
@@ -386,11 +397,31 @@ export const Plots = {
             <div class="gx-row"><span class="gx-row__label">Disengagements</span><span class="gx-row__value">{{ analysis.disengagements }}</span></div>
             <div class="gx-row"><span class="gx-row__label">Car</span><span class="gx-row__value">{{ detailMeta.car || '—' }}</span></div>
             <div class="gx-row"><span class="gx-row__label">Software</span><span class="gx-row__value" style="overflow-wrap:anywhere;">{{ software }}</span></div>
+            <div v-if="detailController" class="gx-row"><span class="gx-row__label">Steering controller</span><span class="gx-row__value">{{ controllerName(detailController) }}</span></div>
             <div v-if="analysis.takeaways && analysis.takeaways.length" style="margin-top: var(--sp-3); padding: var(--sp-2) var(--sp-3); border:1px solid rgba(122,162,247,0.5); border-radius:8px;">
               <p style="margin:0; font-weight: var(--fw-bold, 600);">What stands out</p>
               <ul style="margin: 4px 0 0; padding-left: 1.2em; line-height:1.5; font-size: var(--fs-sm, 0.9rem);">
                 <li v-for="n in analysis.takeaways" :key="n">{{ n }}</li>
               </ul>
+            </div>
+            <div v-if="moments" style="margin-top: var(--sp-3);">
+              <p style="margin:0; font-weight: var(--fw-bold, 600);">Moments to check</p>
+              <p v-if="!moments.length" :style="muted + ' margin: 2px 0 0;'">No hard brakes, overridden braking, take-overs or tight-turn overshoots this drive.</p>
+              <template v-else>
+                <p :style="muted + ' margin: 2px 0 var(--sp-2);'">Tap a moment to open the charts there.</p>
+                <div style="display:grid; gap:6px; max-height: 420px; overflow-y:auto;">
+                  <button v-for="(e, i) in moments" :key="'m' + i" type="button" @click="zoomAt(e.t, e.title)"
+                          :style="{ textAlign: 'left', padding: '8px 10px', borderRadius: '8px', cursor: 'pointer', color: 'inherit',
+                                    background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)',
+                                    borderLeft: '3px solid ' + (e.kind === 'brake' ? '#f7768e' : '#7aa2f7') }">
+                    <span style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                      <strong style="font-size: var(--fs-sm, 0.9rem);">{{ e.title }}</strong>
+                      <span :style="muted">{{ e.clock ? e.clock + ' · ' : '' }}{{ e.into }} in</span>
+                    </span>
+                    <span style="display:block; font-size: var(--fs-xs, 0.8rem); line-height:1.5; margin-top:2px;">{{ e.detail }}</span>
+                  </button>
+                </div>
+              </template>
             </div>
             <div v-for="b in detailBlocks" :key="b.title" style="margin-top: var(--sp-3);">
               <p style="margin:0; font-weight: var(--fw-bold, 600);">{{ b.title }}</p>
@@ -409,22 +440,47 @@ export const Plots = {
                   </tr>
                 </tbody>
               </table>
+              <template v-if="b.turns && b.turns.bins.length">
+                <p :style="muted + ' margin: var(--sp-2) 0 2px;'">Tight turns (wheel past 45°), steering-wheel degrees</p>
+                <table style="border-collapse:collapse; font-size: var(--fs-xs, 0.8rem); width:100%;">
+                  <thead><tr style="color: var(--text-muted); text-align:left;"><th>Speed</th><th>Time</th><th>Off by</th><th>Past</th><th>Behind</th><th>Limit</th></tr></thead>
+                  <tbody>
+                    <tr v-for="row in b.turns.bins" :key="row.label">
+                      <td>{{ row.label }}</td><td>{{ row.time }}</td><td>{{ row.err }}</td><td>{{ row.past }}</td><td>{{ row.trail }}</td><td>{{ row.limit }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </template>
+              <template v-if="b.turns && b.turns.wobble.length">
+                <p :style="muted + ' margin: var(--sp-2) 0 2px;'">Wheel wobble on near-straight road</p>
+                <table style="border-collapse:collapse; font-size: var(--fs-xs, 0.8rem); width:100%;">
+                  <thead><tr style="color: var(--text-muted); text-align:left;"><th>Speed</th><th>Time</th><th>Wobble (RMS)</th></tr></thead>
+                  <tbody>
+                    <tr v-for="row in b.turns.wobble" :key="row.label"><td>{{ row.label }}</td><td>{{ row.time }}</td><td>{{ row.rms }}</td></tr>
+                  </tbody>
+                </table>
+              </template>
             </div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top: var(--sp-3);">
               <button type="button" class="gx-btn gx-btn--tonal" @click="showGuide = !showGuide">
                 <i class="bi bi-question-circle"></i> {{ showGuide ? 'Hide guide' : 'How to read these numbers' }}
               </button>
-              <button v-if="tuneRows.length" type="button" class="gx-btn gx-btn--tonal" @click="showTune = !showTune">
-                <i class="bi bi-sliders"></i> {{ showTune ? 'Hide tune' : 'Tune for this drive (' + tuneRows.length + ')' }}
+              <button v-if="tuneCount" type="button" class="gx-btn gx-btn--tonal" @click="showTune = !showTune">
+                <i class="bi bi-sliders"></i> {{ showTune ? 'Hide tune' : 'Tune for this drive (' + tuneCount + ')' }}
               </button>
             </div>
             <ul v-if="showGuide" style="margin: var(--sp-2) 0 0; padding-left: 1.2em; color: var(--text-muted); font-size: var(--fs-xs, 0.8rem); line-height:1.5;">
               <li v-for="n in readingGuide" :key="n">{{ n }}</li>
             </ul>
             <div v-if="showTune" style="margin-top: var(--sp-2);">
-              <div v-for="k in tuneRows" :key="k.label" class="gx-row">
-                <span class="gx-row__label">{{ k.label }}</span><span class="gx-row__value" style="overflow-wrap:anywhere;">{{ k.value }}</span>
-              </div>
+              <template v-for="g in tuneGroups" :key="g.title">
+                <p style="margin: var(--sp-2) 0 0; font-weight: var(--fw-bold, 600);">{{ g.title }}</p>
+                <p v-if="g.note" :style="muted + ' margin: 2px 0 0; line-height:1.5;'">{{ g.note }}</p>
+                <div v-for="k in g.rows" :key="k.label" class="gx-row">
+                  <span class="gx-row__label">{{ k.label }}</span>
+                  <span class="gx-row__value" :style="{ overflowWrap: 'anywhere', opacity: k.unused ? 0.55 : 1 }">{{ k.value }}</span>
+                </div>
+              </template>
             </div>
             <p :style="muted + ' margin: var(--sp-3) 0 0; line-height:1.6;'">{{ analysis.method }}</p>
           </template>
@@ -440,7 +496,7 @@ export const Plots = {
 
       <template v-if="zoom">
         <div ref="zoom" style="display:flex; align-items:center; gap:8px; margin-top: var(--sp-3);">
-          <strong>Zoom {{ fmtDuration(zoom.start) }} – {{ fmtDuration(zoom.end) }}</strong>
+          <strong>{{ zoom.label ? zoom.label + ':' : 'Zoom' }} {{ fmtDuration(zoom.start) }} – {{ fmtDuration(zoom.end) }}</strong>
           <button type="button" class="gx-btn gx-btn--tonal" @click="zoom = null"><i class="bi bi-x-lg"></i> Close zoom</button>
         </div>
         <div style="display:grid; gap: var(--sp-3); margin-top: var(--sp-2);">
