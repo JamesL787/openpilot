@@ -184,6 +184,48 @@ def test_shadow_is_logged(monkeypatch, candidate, cal):
   assert msg.starpilotLateralState.epsFfR5 == pytest.approx(state.epsFfR5)
 
 
+@pytest.mark.parametrize("candidate,load", [(HONDA.HONDA_CLARITY, None), (HONDA.HONDA_CIVIC_BOSCH, eps_ff.CIVIC_PID_LOAD)])
+def test_pid_feedforward_uses_the_cars_own_load_fit(monkeypatch, candidate, load):
+  lac, _, _ = _car(monkeypatch, candidate)
+  assert lac.eps_shadow_ff.load_coef == load
+
+
+def test_civic_load_fit_stays_out_of_the_clarity_eps_controller(monkeypatch):
+  lac, _, _ = _controller(monkeypatch, HONDA.HONDA_CIVIC_BOSCH, {"NrdrLatEpsFirmwareFF": "1"})
+  assert lac.core.ff.cal is C020 and lac.core.ff.load_coef is None
+
+
+def test_load_fit_defaults_to_the_clarity_constants():
+  args = (30.0, 5.0, 15.0, 0.04)
+  assert eps_ff.column_load(*args) == eps_ff.column_load(*args, load=eps_ff.CLARITY_LOAD)
+  # the Civic fit asks less load in a sharp 25-50 mph corner (28f: the Clarity fit ~1.5x what the car used)
+  assert abs(eps_ff.column_load(*args, load=eps_ff.CIVIC_PID_LOAD)) < abs(eps_ff.column_load(*args))
+
+
+@pytest.mark.parametrize("v", [8.0, 15.0])
+def test_civic_load_fit_applies_from_25_mph(v):
+  civic = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, cal=C020, load=eps_ff.CIVIC_PID_LOAD,
+                                               load_min_v=eps_ff.CIVIC_PID_LOAD_MIN_V)
+  clarity = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, cal=C020)
+  civic.update(30.0, v, 0.04)
+  clarity.update(30.0, v, 0.04)
+  assert (civic.load == clarity.load) == (v < eps_ff.CIVIC_PID_LOAD_MIN_V)
+  if v > eps_ff.CIVIC_PID_LOAD_MIN_V + eps_ff.LOAD_BLEND_V:
+    assert civic.load == pytest.approx(eps_ff.column_load(30.0, 0.0, v, 0.04, load=eps_ff.CIVIC_PID_LOAD))
+
+
+def test_civic_load_fit_blends_in_without_a_step():
+  # crossing 25 mph mid-corner must not step the column load (a hard switch steps it by ~100 at 40 deg;
+  # the load's own speed term moves it ~2 per 0.01 m/s)
+  loads = []
+  for v in np.arange(10.5, 14.0, 0.01):
+    ff = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, cal=C020, load=eps_ff.CIVIC_PID_LOAD,
+                                              load_min_v=eps_ff.CIVIC_PID_LOAD_MIN_V)
+    ff.update(40.0, float(v), 0.0)
+    loads.append(ff.load)
+  assert np.max(np.abs(np.diff(loads))) < 5.0
+
+
 @pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH])
 def test_no_shadow_on_a_stock_eps(monkeypatch, candidate):
   lac, _, _ = _car(monkeypatch, candidate, modified=False)

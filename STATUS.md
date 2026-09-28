@@ -9546,3 +9546,24 @@ integrator carries ~0.068. The test raised `LatFScaleStandard` from 115 to 200 /
 
 **Civic load constants (`CIVIC_PID_LOAD`, >= 25 mph) are uncommitted in the PID session's working tree.** Replay gate:
 neutral. 28f sharp overshoot: +3.32 -> +2.99. Not shipped.
+
+## 190. NRDR PID on the Civic: from 25 mph the firmware feedforward uses the car's own column-load fit instead of the Clarity's (owner, 2026-09-28). Replay and static evidence only; not driven.
+
+**Why.** On route 28f, sharp corners at 25-50 mph overshoot by ~2-4 deg (the owner's "oversteer"). In those corners the
+PID's firmware feedforward (`NrdrLatPidFirmwareFF`) carries the turn. It used the Clarity column-load fit (`LOAD_*`),
+which on 28f's sharp corners asks ~1.5x the load the Civic used.
+
+**What.** `CIVIC_PID_LOAD` in `nrdr_eps_firmware_ff.py` is fitted on 284, 285, 286, 287, 289, 28a, 28b. Held out one
+route at a time, it beats the Clarity fit on 7 of 8. It is used only by LatControlPID's feedforward on the Civic
+Bosch (C020 cal). LatControlClarityEps and the Clarity keep `LOAD_*`.
+- It applies from 25 mph (`CIVIC_PID_LOAD_MIN_V`) and blends in over ~4 mph (`LOAD_BLEND_V`); a hard switch stepped the
+  output by up to 0.026.
+- At all speeds it slowed low-speed turns in replay (27a turn_err <12 mph 35.4 -> 36.1), hence the 25 mph floor.
+
+**Evidence.** lat_score gate (11 routes, d07dee21 PID, `NrdrLatPidFirmwareFF` 1): neutral, no route better or worse.
+Per-turn replay overshoot on 28f sharp corners (n=8): +3.3 -> +3.0 deg (logged drive +2.3). Tests: 166 pass in
+`test_nrdr_eps_firmware_ff.py` + `test_latcontrol_pid_output_scale.py`.
+- Not yet run in MetaDrive (its PID arms are being re-run; STATUS 189).
+- Refit after any EPS reflash.
+
+**This is the last planned NRDR PID change.** Per the owner, the lateral focus moves to LatControlClarityEps.

@@ -74,6 +74,7 @@ LOAD_C = -6.8317
 LOAD_FRICTION = -314.07279
 LOAD_BIAS = 20.46793
 LOAD_KROLL = -7.20003
+CLARITY_LOAD = (LOAD_K0, LOAD_K1, LOAD_C, LOAD_FRICTION, LOAD_BIAS, LOAD_KROLL)
 # The fit's friction width is 2 deg/s; 5 deg/s keeps the Coulomb term from flipping on desired-rate
 # noise near straight driving (command roughness 0.0029 -> 0.0020 in replay, tracking nearly unchanged).
 FRICTION_WIDTH_DEG_S = 5.0
@@ -174,6 +175,20 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
   r6_per_deg_s=-173.0,
 )
 
+# Civic column load for the PID's firmware feedforward only (NrdrLatPidFirmwareFF). latcontrol_clarity_eps
+# keeps the Clarity fit above. Same model and sign as LOAD_*, fitted on the owner's C020 PID drives 284, 285,
+# 286, 287, 289, 28a, 28b (engaged, no press or lane change for 1 s, |command| < 0.9). Target: the firmware
+# output the car's own command implies, firmware_output(r5_from_output(command), rate). Held out one route at
+# a time, R^2 beats the Clarity fit on 7 of 8 routes (e.g. 28f 0.75 vs 0.66, 284 0.49 vs 0.20). On 28f's sharp
+# corners at 25-50 mph (|angle| >= 25 deg) the Clarity fit asks about 1.5x the load the car used; this set ~1.2x.
+# Against the Clarity fit: similar angle terms, far less rate damping (C) and roll (KROLL, cf. STATUS 168),
+# and a negative bias. Refit after any reflash.
+# Closed loop (lat_pid_sim gate, 11 routes) at all speeds it slowed low-speed turns on 27a (turn_err <12 mph
+# 35.4 -> 36.1), so it applies from 25 mph only: gate neutral, 28f sharp-corner overshoot +3.3 -> +3.0 deg (sim).
+CIVIC_PID_LOAD = (-6.2586, -0.16199, -1.6872, -303.29443, -78.01171, -0.57818)
+CIVIC_PID_LOAD_MIN_V = 11.18  # m/s, 25 mph
+LOAD_BLEND_V = 1.8  # m/s: blend from the Clarity fit to the car's own over 25-29 mph (a hard switch stepped up to 0.026)
+
 
 def command_key(e4: float) -> int:
   return int(math.trunc(math.trunc(e4 * 56756 / 32768) / 4))
@@ -208,9 +223,10 @@ def firmware_output(r5: float, steering_rate_deg_s: float, cal: EpsFirmwareCalib
 
 
 def column_load(angle_deg: float, rate_deg_s: float, v_ego: float, roll: float,
-                friction_width: float = FRICTION_WIDTH_DEG_S) -> float:
-  return (LOAD_K0 * angle_deg + LOAD_K1 * angle_deg * v_ego ** 2 + LOAD_C * rate_deg_s
-          + LOAD_FRICTION * math.tanh(rate_deg_s / friction_width) + LOAD_BIAS + LOAD_KROLL * roll * v_ego ** 2)
+                friction_width: float = FRICTION_WIDTH_DEG_S, load=None) -> float:
+  k0, k1, c, fr, bias, kroll = CLARITY_LOAD if load is None else load
+  return (k0 * angle_deg + k1 * angle_deg * v_ego ** 2 + c * rate_deg_s
+          + fr * math.tanh(rate_deg_s / friction_width) + bias + kroll * roll * v_ego ** 2)
 
 
 def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
@@ -244,8 +260,10 @@ def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, cal: Ep
 class ClarityEpsFirmwareFeedforward:
   def __init__(self, dt: float, rate_tau: float = DESIRED_RATE_TAU, lead_s: float = LEAD_S,
                output_tau: float = FF_OUTPUT_TAU, friction_width: float = FRICTION_WIDTH_DEG_S,
-               cal: EpsFirmwareCalibration = CLARITY_A020):
+               cal: EpsFirmwareCalibration = CLARITY_A020, load=None, load_min_v: float = 0.0):
     self.dt = dt
+    self.load_coef = load  # None: the Clarity fit (LOAD_*); see CIVIC_PID_LOAD
+    self.load_min_v = load_min_v  # below this speed the Clarity fit is used; LOAD_BLEND_V above it
     self.alpha = dt / (rate_tau + dt)
     self.output_alpha = dt / (output_tau + dt)
     self.lead_s = lead_s
@@ -269,6 +287,9 @@ class ClarityEpsFirmwareFeedforward:
 
     angle = desired_angle_no_offset + self.lead_s * self.rate
     self.load = column_load(angle, self.rate, v_ego, roll, self.friction_width)
+    if self.load_coef is not None and v_ego > self.load_min_v:
+      own = min((v_ego - self.load_min_v) / LOAD_BLEND_V, 1.0) if self.load_min_v > 0.0 else 1.0
+      self.load += own * (column_load(angle, self.rate, v_ego, roll, self.friction_width, self.load_coef) - self.load)
     cap = min(R5_CAP, R5_CAP_ENVELOPE_FRAC * float(np.interp(key_ceiling(v_ego, self.cal), self.cal.r5_key_bp, self.cal.r5_v)))
     self.r5 = max(min(r5_for_motion(self.load, self.rate, self.r5, self.cal), cap), -cap)
     target = output_from_r5(self.r5, self.cal)
