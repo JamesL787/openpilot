@@ -470,3 +470,58 @@ def test_off_screen_radar_points_are_dropped_not_pinned_to_the_edge(monkeypatch)
   r, sm, dots = _radar_renderer(monkeypatch, True, [SimpleNamespace(dRel=20.0, yRel=30.0), SimpleNamespace(dRel=20.0, yRel=0.0)])
   r._draw_radar_points(sm)
   assert [d[:2] for d in dots] == [(250, 112), (250, 112)]
+
+
+def _side_renderer(monkeypatch, t):
+  import numpy as np
+  import pyray as rl
+  r = mr.ModelRenderer.__new__(mr.ModelRenderer)
+  r._rect = rl.Rectangle(0, 0, 500, 240)
+  x = np.linspace(0.0, 100.0, 33)
+  r._path = SimpleNamespace(raw_points=np.stack([x, np.zeros_like(x), np.zeros_like(x)], axis=1))
+  r._path_offset_z = 1.2
+  r._lane_lines, r._lane_line_probs = [], np.zeros(4)
+  r._map_to_screen = lambda d, y, z: (250.0 - 10.0 * y, 100.0)
+  r._clock = lambda: t[0]
+  monkeypatch.setattr(mr, "lead_in_adjacent_lane", lambda *a: True)
+  return r, x
+
+
+def _shown(r, left, right=None):
+  none = SimpleNamespace(status=False)
+  r._update_adjacent_leads(SimpleNamespace(leadLeft=left, leadRight=right or none), r._path.raw_points[:, 0])
+  return [bool(v.chevron) for v in r._adjacent_lead_vehicles]
+
+
+def test_new_side_lead_has_no_marker_until_its_track_has_held_the_slot(monkeypatch):
+  # 28f 8:37-12:30: oncoming cars held leadLeft ~0.9 s each; only the radar dot shows for the first SIDE_LEAD_MIN_AGE_S
+  t = [0.0]
+  r, _ = _side_renderer(monkeypatch, t)
+  car = _ld(30.0, 3.5, 12)
+  assert _shown(r, car) == [False, False]
+  t[0] = mr.SIDE_LEAD_MIN_AGE_S - 0.05
+  assert _shown(r, car) == [False, False]
+  t[0] = mr.SIDE_LEAD_MIN_AGE_S
+  assert _shown(r, car) == [True, False]
+
+
+def test_side_lead_age_restarts_on_a_new_track_or_a_dropout(monkeypatch):
+  t = [0.0]
+  r, _ = _side_renderer(monkeypatch, t)
+  _shown(r, _ld(30.0, 3.5, 12))
+  t[0] = 1.0
+  assert _shown(r, _ld(30.0, 3.5, 12)) == [True, False]
+  assert _shown(r, _ld(30.0, 3.5, 13)) == [False, False]  # a different track took the slot
+  t[0] = 1.0 + mr.SIDE_LEAD_MIN_AGE_S
+  assert _shown(r, _ld(30.0, 3.5, 13)) == [True, False]
+  assert _shown(r, SimpleNamespace(status=False)) == [False, False]
+  t[0] += 0.1
+  assert _shown(r, _ld(30.0, 3.5, 13)) == [False, False]  # back after a dropout: waits again
+
+
+def test_side_lead_ages_are_kept_per_side(monkeypatch):
+  t = [0.0]
+  r, _ = _side_renderer(monkeypatch, t)
+  _shown(r, _ld(30.0, 3.5, 12))
+  t[0] = mr.SIDE_LEAD_MIN_AGE_S
+  assert _shown(r, _ld(30.0, 3.5, 12), _ld(20.0, -3.5, 20)) == [True, False]

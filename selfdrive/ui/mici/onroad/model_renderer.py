@@ -42,6 +42,11 @@ LEAD_FLIP_MEMORY_S = 1.0
 # (owner: "sometimes the speed label doubles"; 00000267 seg 16 38.2 s: leadOne and leadRight were radar track 41).
 SAME_LEAD_D_REL = 1.5
 SAME_LEAD_Y_REL = 1.0
+# A side-lane lead's marker and label wait until the same radar track has held that slot this long; until then only its
+# radar dot shows (owner: "just radar points on those"). 28f 8:37-12:30 (replay, Radar Work (Bob)): 62 oncoming cars
+# reached leadLeft for ~0.9 s each at a railed ~17 mph, and 6b22b5da's radard latch still lets the first ~0.3 s through;
+# 5 real same-direction side cars in that window held their slot 2.7 s (median).
+SIDE_LEAD_MIN_AGE_S = 0.5
 MIN_DRAW_DISTANCE = 10.0
 MAX_DRAW_DISTANCE = 100.0
 STOCK_LANE_LINES_COLOR = rl.Color(255, 255, 255, 255)
@@ -342,17 +347,29 @@ class ModelRenderer(Widget):
 
   def _update_adjacent_leads(self, starpilot_radar_state, path_x_array, radar_state=None):
     """Screen positions of the left/right adjacent-lane leads (starpilotRadarState), Developer UI only. A side lead
-    that is the same car as an in-path lead is left out, so it is not drawn and labelled twice."""
+    that is the same car as an in-path lead is left out, so it is not drawn and labelled twice, and a side lead gets no
+    marker or label until its radar track has held the slot SIDE_LEAD_MIN_AGE_S (its radar dot still draws)."""
     in_path = (radar_state.leadOne, radar_state.leadTwo) if radar_state is not None else ()
     self._adjacent_lead_vehicles = [LeadVehicle(), LeadVehicle()]
+    ages = self.__dict__.setdefault("_side_lead_since", [None, None])
     if starpilot_radar_state is None:
+      ages[:] = [None, None]
       return
+    now = self._clock()
     lane_lines = [line.raw_points for line in self._lane_lines]
     for i, lead_data in enumerate((starpilot_radar_state.leadLeft, starpilot_radar_state.leadRight)):
+      # how long this radar track has held the slot; a new track id or a status drop starts it over
+      track = getattr(lead_data, "radarTrackId", -1) if lead_data and lead_data.status else None
+      if track is None:
+        ages[i] = None
+        continue
+      if ages[i] is None or ages[i][0] != track:
+        ages[i] = (track, now)
+      if now - ages[i][1] < SIDE_LEAD_MIN_AGE_S:
+        continue
       if any(same_lead(lead_data, p) for p in in_path):
         continue
-      if lead_data and lead_data.status and lead_in_adjacent_lane(lead_data.dRel, lead_data.yRel, i == 0,
-                                                                  lane_lines, self._lane_line_probs):
+      if lead_in_adjacent_lane(lead_data.dRel, lead_data.yRel, i == 0, lane_lines, self._lane_line_probs):
         d_rel, y_rel, v_rel = lead_data.dRel, lead_data.yRel, lead_data.vRel
         idx = self._get_path_length_idx(path_x_array, d_rel)
         z = self._path.raw_points[idx, 2] if idx < len(self._path.raw_points) else 0.0
