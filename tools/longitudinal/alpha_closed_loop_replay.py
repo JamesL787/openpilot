@@ -38,7 +38,8 @@ or the vision-kinematic required decel reaches VISION_REF_MIN_REQ:
 On a stock-ACC route the stock command below STOCK_REF_CMD also counts, since stock ACC is independent of
 alpha. A driver brake press is reported but not used: it can be an override of a false brake.
 
-The toggles are the shipped defaults. BoschARailInterval (D-063) and the D-053 range assist are forced off.
+The toggles are the shipped defaults. The Bosch-A rail interval (D-063), coast range bound and D-053 range assist
+are built in since f9802ed9 and run as on the car.
 
 Route data is never committed (AGENTS.md section 7).
 
@@ -117,6 +118,15 @@ LATE_DEFAULTS = (LP.MPC_LEAD_BRAKE_PASSES_COMFORT_FLOOR, LP.LC_MERGE_RELEASE_MPC
 # modelProb as well as the model lead's prob, so a lead the model never matched (low-speed override,
 # modelProb 0) keeps its aLeadK extrapolation. 'hf_gate' = the shipped builder plus that gate.
 HF_GATE_VARIANT = "hf_gate"
+# --brake-ab (28f 11:33 / 14:19 firm brakes): 'cap_off' = the built-in far-lead coast cap disabled;
+# 'alead_floor' = every radar lead's aLeadK floored at -ALEAD_FLOOR at planner input (diagnostic only,
+# not a proposal: it would also blunt a real hard stop ahead). The vision-corroborated bound for every
+# lead is the existing bearing variant b0. 'cap_vis' = the cap also stands down while vision sees the lead
+# braking (leadsV3[0].a <= -CAP_VIS_MAX_BRAKE at prob >= CAP_VIS_MIN_PROB); the shipped cap reads aLeadK only.
+BRAKE_VARIANTS = ("cap_off", "cap_vis", "alead_floor")
+ALEAD_FLOOR = 2.0
+CAP_VIS_MAX_BRAKE = 0.35
+CAP_VIS_MIN_PROB = 0.5
 GUARD_TTC = 3.0
 GUARD_MIN_CLOSING = 0.75
 
@@ -226,8 +236,8 @@ def build_radar_interface(fingerprint: str):
   ri = CarInterface.RadarInterface(cp)
   if not ri.bosch_a_radar:
     raise SystemExit("RadarInterface did not select the Bosch-A parser")
-  ri.rail_interval = False  # D-063 ships off
-  ri.coast_range_bound = False  # STATUS 111: set by --coast-bound
+  ri.rail_interval = HRI.BOSCH_A_RAIL_INTERVAL  # built in since f9802ed9 (was BoschARailInterval)
+  ri.coast_range_bound = HRI.BOSCH_A_COAST_RANGE_BOUND  # built in since f9802ed9 (was RangeDerivedVrel)
   return ri, cp
 
 
@@ -276,18 +286,41 @@ def hf_gated_model_lead_trajectory(builder, lead_detection_probability, fired):
   return build
 
 
+def vision_braking(model) -> bool:
+  if len(model.leadsV3) == 0 or len(model.leadsV3[0].a) == 0:
+    return False
+  ld = model.leadsV3[0]
+  return float(ld.prob) >= CAP_VIS_MIN_PROB and float(ld.a[0]) <= -CAP_VIS_MAX_BRAKE
+
+
+def floored_a_lead(bound):
+  """The shipped off-axis bound, then aLeadK floored at -ALEAD_FLOOR for any radar lead (--brake-ab)."""
+  def a_lead(lead, model_msg, held=False):
+    shipped = bound(lead, model_msg, held)
+    if lead is None or not bool(getattr(lead, "status", False)) or not bool(getattr(lead, "radar", False)):
+      return shipped
+    raw = float(lead.aLeadK)
+    floored = max(raw if shipped is None else shipped, -ALEAD_FLOOR)
+    return floored if floored > raw else shipped
+  return a_lead
+
+
 def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bound: bool = False,
-           human_ab: bool = False, vision_only: bool = False, late_ab: bool = False, hf_gate: bool = False):
+           human_ab: bool = False, vision_only: bool = False, late_ab: bool = False, hf_gate: bool = False,
+           brake_ab: bool = False):
   files = segment_files(route_dir)
   if not files:
     raise SystemExit(f"no rlog segments under {route_dir}")
 
   variants = ([f"b{b:g}" for b in bearings] + (list(FIX_VARIANTS) if fixes else []) +
               (list(HUMAN_VARIANTS) if human_ab else []) + (list(LATE_VARIANTS) if late_ab else []) +
-              ([HF_GATE_VARIANT] if hf_gate else []) + ["nobound", "logged"])
+              ([HF_GATE_VARIANT] if hf_gate else []) + (list(BRAKE_VARIANTS) if brake_ab else []) +
+              ["nobound", "logged"])
   original_builder = LM.build_model_lead_trajectory
   fix_bounds = {k: FixBound(k) for k in FIX_VARIANTS} if fixes else {}
   original_bound = LP.off_axis_lead_a_lead
+  cap_default = LP.FAR_LEAD_COAST_MAX_DECEL
+  original_cap = LP.get_far_lead_coast_cap
   state: dict = {}
   valid: dict = {}
   toggles = default_toggles()
@@ -330,10 +363,10 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
           planners[v] = p
         meta["bound_active"] = bool(planners[variants[0]].bound_off_axis_radar_leads)
         ri, ocp = build_radar_interface(str(cp.carFingerprint))
-        ri.coast_range_bound = coast_bound
-        meta["coast_bound"] = coast_bound
+        ri.coast_range_bound = coast_bound or HRI.BOSCH_A_COAST_RANGE_BOUND
+        meta["coast_bound"] = ri.coast_range_bound
+        # D-053 range assist is built in (RANGE_VREL_ASSIST); radard reads it, as on the car
         rd = RDM.RadarD(radar_ts=RDM.DT_MDL, delay=float(cp.radarDelay), honda_bosch_a_radar=True)
-        rd._range_vrel_assist_enabled = lambda: False  # D-053 ships off
         from opendbc.car.honda.values import DBC
         dbc = DBC[cp.carFingerprint]
         meta["dbc"] = dbc["pt"] if isinstance(dbc, dict) and "pt" in dbc else str(list(dbc.values())[0])
@@ -424,6 +457,11 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
           if v in fix_bounds:
             fix_bounds[v].observe(rs, t_now, float(cs.vEgo))
             LP.off_axis_lead_a_lead = fix_bounds[v]
+          if v == "alead_floor":
+            LP.off_axis_lead_a_lead = floored_a_lead(original_bound)
+          LP.FAR_LEAD_COAST_MAX_DECEL = 1e3 if v == "cap_off" else cap_default
+          if v == "cap_vis" and vision_braking(model):
+            LP.get_far_lead_coast_cap = lambda lead, v_ego, gap, a_target: float(a_target)
           if v in HUMAN_VARIANTS:
             vt = copy.copy(toggles)
             vt.human_following = v != "human_off"
@@ -444,6 +482,7 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
           else:
             p.update(sm, toggles)
           LP.off_axis_lead_a_lead = original_bound
+          LP.get_far_lead_coast_cap = original_cap
           if v in fix_bounds:
             fix_fired[v] = fix_bounds[v].fired
           out[v] = float(p.output_a_target)
@@ -455,6 +494,8 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
         LP.off_axis_lead_a_lead = original_bound
         LM.build_model_lead_trajectory = original_builder
         LP.MPC_LEAD_BRAKE_PASSES_COMFORT_FLOOR, LP.LC_MERGE_RELEASE_MPC_DEMAND = LATE_DEFAULTS
+        LP.FAR_LEAD_COAST_MAX_DECEL = cap_default
+        LP.get_far_lead_coast_cap = original_cap
 
       lg = state["radarState_logged"].leadOne
       lr = rs.leadOne
@@ -620,12 +661,14 @@ def main() -> int:
                   help="add STATUS 119 variants: 'late_off' (both fixes off), 'late_A' / 'late_B' (one fix only)")
   ap.add_argument("--hf-gate", action="store_true",
                   help="add 'hf_gate': HumanFollowing also needs the radar lead's modelProb (FrogPilot e7debabe5)")
+  ap.add_argument("--brake-ab", action="store_true",
+                  help="add 'cap_off' (cap disabled), 'cap_vis' (cap off while vision sees a braking lead), 'alead_floor'")
   ap.add_argument("--json", type=Path, help="write episodes + metadata here (keep it outside the repo)")
   args = ap.parse_args()
 
   bearings = [float(x) for x in args.bearings.split(",")]
   frames, meta = replay(args.route_dir, bearings, args.fixes, args.coast_bound, args.human_ab, args.vision_only,
-                        args.late_ab, args.hf_gate)
+                        args.late_ab, args.hf_gate, args.brake_ab)
   eps = episodes(frames, meta, args.threshold)
   diffs = frame_diffs(frames, meta)
   print_report(meta, frames, eps, diffs, args.threshold)
