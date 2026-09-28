@@ -177,12 +177,19 @@ def _sign():
   return rl.Rectangle(300, 20, 100, 140)
 
 
-def test_side_label_slides_inward_off_the_speed_limit_sign(monkeypatch):
-  # Outward (right of the sign) would leave the 400 px view, so the label moves left of the sign.
+def test_side_label_on_the_speed_limit_sign_is_dropped(monkeypatch):
+  # Owner 2026-09-28: sliding it left of the sign put it beside the in-path label, where it read as that car's speed.
   renderer, drawn = _label_renderer(monkeypatch, obstacles=[_sign()])
   renderer._draw_lead_label(_chevron(330), "38 mph", 22, side=1)
-  assert drawn == [237.0]
-  assert drawn[0] - 3 + 66 <= 300
+  assert drawn == []
+  assert renderer._lead_label_rects == []
+
+
+def test_side_label_blocked_by_a_label_still_slides_outward(monkeypatch):
+  import pyray as rl
+  renderer, drawn = _label_renderer(monkeypatch, placed=[rl.Rectangle(90, 100, 60, 40)])
+  renderer._draw_lead_label(_chevron(100), "12 mph", 22, side=-1)
+  assert drawn == [27.0]  # box 24..90, left of the placed label
 
 
 def test_in_path_label_slides_off_the_sign(monkeypatch):
@@ -215,20 +222,21 @@ def test_in_path_label_drops_below_the_sign_when_no_side_fits(monkeypatch):
   assert drawn == [320.0]
 
 
-def test_side_label_drops_below_the_sign_when_neither_direction_fits(monkeypatch):
+def test_side_label_does_not_jump_inward_past_the_label_it_hit(monkeypatch):
   import pyray as rl
-  renderer, drawn = _label_renderer(monkeypatch, obstacles=[_sign()], placed=[rl.Rectangle(200, 100, 90, 40)])
-  renderer._draw_lead_label(_chevron(330), "38 mph", 22, side=1)
-  # centred under the 300..400 sign (box x 317), top 2 px below its bottom edge at 160
-  assert drawn == [320.0]
-  assert renderer._lead_label_rects[-1].y == 162
+  # 28f seg 6 51.2 s: the right-lane label touched the in-path label and the sign blocked outward; it went left of
+  # the in-path label and read as a second in-path speed
+  renderer, drawn = _label_renderer(monkeypatch, obstacles=[_sign()], placed=[rl.Rectangle(150, 100, 90, 40)])
+  renderer._draw_lead_label(_chevron(265), "38 mph", 22, side=1)
+  assert drawn == []
 
 
-def test_side_label_hidden_when_below_the_sign_is_taken_too(monkeypatch):
+def test_side_label_is_not_moved_under_the_sign(monkeypatch):
   import pyray as rl
-  placed = [rl.Rectangle(200, 100, 90, 40), rl.Rectangle(300, 165, 100, 30)]
+  # boxed in by labels on the left and the sign on the right: dropped, not parked under the sign
+  placed = [rl.Rectangle(200, 100, 90, 40), rl.Rectangle(100, 100, 100, 40)]
   renderer, drawn = _label_renderer(monkeypatch, obstacles=[_sign()], placed=placed)
-  renderer._draw_lead_label(_chevron(330), "38 mph", 22, side=1)
+  renderer._draw_lead_label(_chevron(260), "38 mph", 22, side=1)
   assert drawn == []
 
 

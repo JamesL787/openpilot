@@ -424,10 +424,11 @@ class ModelRenderer(Widget):
 
   def _draw_lead_label(self, chevron, text: str, font_size: int = LEAD_LABEL_FONT_SIZE, side: int = 0) -> None:
     """Label under the marker (above it when the marker is flipped tip-down). Any label that would overlap another
-    label is dropped. Labels also avoid the HUD obstacles (the speed-limit sign): a side-lane label (side -1 left,
-    +1 right) slides outward, then inward if outward still collides or leaves the screen, then just below the sign,
-    and is dropped if none fits. An in-path label slides off the sign toward the side it is on the same way, and is
-    drawn in place if none fits (the sign alone never hides the in-path speed)."""
+    label is dropped, except that a side-lane label (side -1 left, +1 right) blocked only by other labels first tries
+    sliding outward. A side-lane label never slides inward or off a HUD obstacle (the speed-limit sign): it is dropped,
+    because either way it crossed over the in-path label and read as that car's speed. An in-path label slides off
+    the sign toward the side it is on, then just below the sign, and is drawn in place if none fits (the sign alone
+    never hides the in-path speed)."""
     from openpilot.selfdrive.ui.onroad.starpilot.path import _draw_text_with_outline
 
     font = gui_app.font(FontWeight.SEMI_BOLD)
@@ -455,6 +456,10 @@ class ModelRenderer(Widget):
 
     hits = hits_at(label_rect.x)
     hit_obstacle = next((r for r in hits if any(r is ob for ob in obstacles)), None)
+    if side and hit_obstacle is not None:
+      # owner (2026-09-28): a right-lane label slid 180 px left off the sign, past the in-path label, and read as a
+      # second in-path speed ("47 mph 56 mph ... super confusing"); the marker alone marks that car
+      return
     dodge = side
     if not side and hit_obstacle is not None:
       # in-path label on the sign (e.g. a flipped cut-in at the right edge; owner: "make the cut-in label avoid the
@@ -463,7 +468,9 @@ class ModelRenderer(Widget):
     if hits and dodge:
       outward = (min(r.x for r in hits) - label_rect.width if dodge < 0 else max(r.x + r.width for r in hits))
       inward = (max(r.x + r.width for r in hits) if dodge < 0 else min(r.x for r in hits) - label_rect.width)
-      new_x = next((rx for rx in (outward, inward) if fits(rx)), None)
+      # a side label slid inward lands on the far side of the label it hit (owner 2026-09-28, 28f seg 6: a right-lane
+      # "56 mph" jumped left of the in-path "47 mph")
+      new_x = next((rx for rx in ((outward,) if side else (outward, inward)) if fits(rx)), None)
       if new_x is not None:
         x += new_x - label_rect.x
         label_rect.x = new_x
@@ -471,7 +478,7 @@ class ModelRenderer(Widget):
       else:
         # No room beside it: if the sign is what blocks it, drop the label just below the sign (owner: "drop just
         # below the sign"), centred under it, rather than hiding the speed.
-        below = self._below_obstacle(label_rect, [label_rect.x, outward, inward])
+        below = None if side else self._below_obstacle(label_rect, [label_rect.x, outward, inward])
         if below is not None:
           x += below.x - label_rect.x
           y += below.y - label_rect.y
