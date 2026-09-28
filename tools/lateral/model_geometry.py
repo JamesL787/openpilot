@@ -26,7 +26,7 @@ Usage:
   T0 T1           seconds into this segment's own log (default: the whole segment)
   STEP            sample interval in seconds (default 1.0)
   --csv           machine-readable CSV instead of the human-readable table (one row per sample)
-  --summary       (sample mode) median/p90 of inside_offset for car and path, binned by |ay| =
+  --summary       (sample mode) median/p90 of path_inside_at_lookahead for car and path, binned by |ay| =
                    v^2*|path_curvature| (0.15-0.5 / 0.5-1 / 1-1.5 / 1.5-2.5 m/s^2), split by
                    both-lane-probs > 0.6 vs outside-prob < 0.35, instead of per-frame rows
   --episodes-file path to a report.json written by tools/drive_plots/rlog_report.py on the same
@@ -174,10 +174,11 @@ def geometry_at(state: dict) -> dict | None:
   else:
     row["ay"] = None
 
-  # "outside" line = the outer laneLine on the side away from the turn (+left angle -> outside is
-  # the right side); used for the outside-confidence split, matches James's fov.py.
+  # "outside" line = the ego lane's own laneLine on the side away from the turn (+left angle ->
+  # outside is the ego RIGHT line, not the adjacent outer line); used for the outside-confidence
+  # split, matches James's fov.py.
   if angle is not None:
-    row["outside_prob"] = row["outer_right_prob"] if angle > 0 else row["outer_left_prob"]
+    row["outside_prob"] = row["right_prob"] if angle > 0 else row["left_prob"]
   else:
     row["outside_prob"] = None
 
@@ -255,16 +256,23 @@ def summarize(rows: list[dict]) -> list[dict]:
       ("outside_weak(<0.35)", lambda r: r["outside_prob"] is not None and r["outside_prob"] < 0.35),
       ("all_filtered", lambda r: True),
     ):
-      sel = [r for r in filtered if r["ay"] is not None and lo <= r["ay"] < hi and r["inside_offset"] is not None and pred(r)]
+      sel = [r for r in filtered if r["ay"] is not None and lo <= r["ay"] < hi
+             and r["path_inside_at_lookahead"] is not None and pred(r)]
       if not sel:
         out.append({"ay_bin": label, "confidence": conf_label, "n": 0})
         continue
-      path_vals = np.array([r["inside_offset"] for r in sel])
+      # per James: the lookahead value (clip(vEgo,8,35)), not the fixed-30m inside_offset, is the
+      # number that matches fov.py. inside_offset@30 is kept as a separately labeled column.
+      path_vals = np.array([r["path_inside_at_lookahead"] for r in sel])
+      path_vals_30 = np.array([r["inside_offset"] for r in sel if r["inside_offset"] is not None])
       car_vals = np.array([-_sign(r["steeringAngleDeg"]) * r["ego_offset_at_x0"] for r in sel
                             if r["steeringAngleDeg"] is not None and r["ego_offset_at_x0"] is not None])
       row = {"ay_bin": label, "confidence": conf_label, "n": len(sel),
              "path_inside_offset_median": round(float(np.median(path_vals)), 3),
              "path_inside_offset_p90": round(float(np.percentile(path_vals, 90)), 3)}
+      if path_vals_30.size:
+        row["path_inside@30_median"] = round(float(np.median(path_vals_30)), 3)
+        row["path_inside@30_p90"] = round(float(np.percentile(path_vals_30, 90)), 3)
       if car_vals.size:
         row["car_inside_offset_median"] = round(float(np.median(car_vals)), 3)
         row["car_inside_offset_p90"] = round(float(np.percentile(car_vals, 90)), 3)
