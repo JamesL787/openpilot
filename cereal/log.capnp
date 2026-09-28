@@ -801,9 +801,16 @@ struct RadarState @0x9a185389d6fdd05f {
     modelProb @13 :Float32;
     radar @14 :Bool;
     radarTrackId @15 :Int32 = -1;
-    # Telemetry only, nothing consumes these. vRelRangeDerived is a range-LSQ velocity published
-    # beside the radar's own vRel so the two can be compared on real drives; measuredRadar exposes
-    # whether the last radar update was a real measurement or a coast.
+    # vRelRangeDerived is a range-LSQ velocity published beside the radar's own vRel so the two
+    # can be compared on real drives; measuredRadar exposes whether the last radar update was a
+    # real measurement or a coast.
+    #
+    # Was telemetry-only (D-044). Since D-053 the range rate ALSO feeds control on Bosch-A cars
+    # when the RangeDerivedVrel toggle is on, one-sided and bounded -- see RANGE_VREL_ASSIST_*
+    # in selfdrive/controls/radard.py. When that assist is active, radarState's vRel and vLead
+    # carry the correction; the NATIVE U11 vRel for the same track is still recoverable from
+    # liveTracks by matching rr.points[].trackId against radarTrackId, so the comparison this
+    # channel exists for stays auditable in a log. measuredRadar is unchanged.
     vRelRangeDerived @16 :Float32;
     measuredRadar @17 :Bool;
 

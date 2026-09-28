@@ -138,8 +138,19 @@ LEAD_ACCEL_TAU = 1.5
 FCW_MIN_MODEL_PROB = 0.9
 FCW_MIN_CLOSING_SPEED = 0.5
 FCW_MAX_TTC = 4.0
-MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE = 0.5
-MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC = 7.0
+# HumanFollowing is always on and follows FrogPilot-Testing 728f65472 (long_mpc.py process_lead):
+# the lead path is the radar anchor plus the model's future deltas whenever the model lead prob
+# exceeds LeadDetectionThreshold, bounded by the distance the lead's speed can cover.
+# One StarPilot addition FrogPilot does not have: a 3 s closing-TTC fallback to the raw aLeadK
+# extrapolation. The earlier guards (aLeadK < -0.5, then 7 s TTC) produced the felt -3.5 peaks on
+# 24f (STATUS 62/63); 3 s is kept because it sits under stock ACC's onset (25b: braking from about
+# 6 s TTC, full -3.0 by 4.1 s) and above Honda CMBS stage 1 (FCW at about 2.0-2.4 s), which alpha
+# long silences. STATUS 118 replay, 22 routes fused and radar-dropped: it trips on 1748 frames and
+# changes 4 of 475 brake episodes, all real leads, each firmer (-2.65..-3.11 -> -3.03..-3.49) and
+# none later. Replay only, not road-validated.
+MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC = 3.0
+MODEL_LEAD_TRAJECTORY_MIN_CLOSING_SPEED = 0.75
+DEFAULT_LEAD_DETECTION_PROBABILITY = 0.35
 
 
 # Fewer timestamps don't hurt performance and lead to
@@ -156,13 +167,13 @@ COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
 
 
-def build_model_lead_trajectory(model_lead, radar_lead, v_ego):
-  """Build a model-predicted lead path while preserving the raw h=0 anchor."""
+def build_model_lead_trajectory(model_lead, radar_lead, v_ego, lead_detection_probability=DEFAULT_LEAD_DETECTION_PROBABILITY):
+  """FrogPilot HumanFollowing lead path: the radar dRel/vLead anchor plus the model's future deltas."""
   if model_lead is None or radar_lead is None or not bool(getattr(radar_lead, "status", False)):
     return None
 
   try:
-    if float(model_lead.prob) <= 0.5:
+    if not float(model_lead.prob) > float(lead_detection_probability):
       return None
     model_x = np.asarray(model_lead.x, dtype=np.float64)
     model_v = np.asarray(model_lead.v, dtype=np.float64)
@@ -180,31 +191,29 @@ def build_model_lead_trajectory(model_lead, radar_lead, v_ego):
   if not np.isfinite(raw_d_rel) or not np.isfinite(raw_v_lead):
     return None
 
-  # The model path is a comfort prediction, not the raw safety measurement.
-  # When the measured lead is already braking or the gap is closing quickly,
-  # keep the legacy raw-lead path so an optimistic model horizon cannot delay
-  # the first braking response.
-  raw_lead_brake = max(0.0, -float(getattr(radar_lead, "aLeadK", 0.0)))
-  closing_speed = max(0.0, float(v_ego) - raw_v_lead)
-  ttc = raw_d_rel / max(closing_speed, 1e-3) if closing_speed > 0.1 else float("inf")
-
-  if (raw_lead_brake > MODEL_LEAD_TRAJECTORY_MAX_LEAD_BRAKE or
-      (closing_speed > 0.75 and ttc < MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC)):
+  # Urgent closing: hand the lead back to the raw aLeadK extrapolation (see the block above).
+  closing = float(v_ego) - raw_v_lead
+  if closing > MODEL_LEAD_TRAJECTORY_MIN_CLOSING_SPEED and raw_d_rel / closing < MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC:
     return None
 
-  # The model contributes future deltas only. This preserves raw lead source
-  # selection and keeps the current lead distance/speed safety anchor intact.
+  # The model contributes future deltas only; the current lead distance and speed stay the anchor.
   x_lead_traj = raw_d_rel + (model_x - model_x[0])
   v_lead_traj = raw_v_lead + (model_v - model_v[0])
-  v_lead_traj = np.clip(v_lead_traj, 0.0, 1e8)
 
-  # Match the existing MPC convergence guard using the physical brake limit.
+  # MPC will not converge if an immediate crash is expected: clip the lead distance to what is
+  # still possible to brake for.
   v_ego = float(v_ego)
-  min_x_lead = ((v_ego + v_lead_traj[0]) / 2.0) * (v_ego - v_lead_traj[0]) / (-ACCEL_MIN * 2.0)
+  v_lead_0 = v_lead_traj[0]
+  min_x_lead = ((v_ego + v_lead_0) / 2.0) * (v_ego - v_lead_0) / (-ACCEL_MIN * 2.0)
   x_lead_traj[0] = max(x_lead_traj[0], min_x_lead)
+  v_lead_traj = np.clip(v_lead_traj, 0.0, 1e8)
 
   x_lead_mpc = np.maximum.accumulate(np.interp(T_IDXS, LEAD_T_IDXS_MODEL, x_lead_traj))
   v_lead_mpc = np.interp(T_IDXS, LEAD_T_IDXS_MODEL, v_lead_traj)
+
+  # Forward movement cannot exceed the distance covered by the corrected speed.
+  x_lead_max = x_lead_mpc[0] + np.cumsum(T_DIFFS[1:] * (v_lead_mpc[:-1] + v_lead_mpc[1:]) / 2)
+  x_lead_mpc[1:] = np.minimum(x_lead_mpc[1:], x_lead_max)
   return np.column_stack((x_lead_mpc, v_lead_mpc))
 
 
@@ -628,12 +637,13 @@ class LongitudinalMpc:
     return lead_xv
 
   def process_lead(self, lead, tracking_lead=True, t_follow=None, *, lead_index=0,
-                   smooth_duplicate_vision=False, model_lead=None):
+                   smooth_duplicate_vision=False, model_lead=None,
+                   lead_detection_probability=DEFAULT_LEAD_DETECTION_PROBABILITY):
     v_ego = self.x0[1]
     lead_active = lead is not None and lead.status and tracking_lead
 
     if lead_active:
-      model_lead_xv = build_model_lead_trajectory(model_lead, lead, v_ego)
+      model_lead_xv = build_model_lead_trajectory(model_lead, lead, v_ego, lead_detection_probability)
       if model_lead_xv is not None:
         return model_lead_xv
 
@@ -929,7 +939,8 @@ class LongitudinalMpc:
              lead_obstacle_bias=(0.0, 0.0), tracked_lead_catchup_headway_margins=None,
              tracked_lead_catchup_bias_gain=None, tracked_lead_catchup_bias_cap=None,
              tracked_lead_catchup_speed_range=None, tracked_lead_catchup_fade_margins=None,
-             tracked_lead_catchup_cruise_error_full=None):
+             tracked_lead_catchup_cruise_error_full=None,
+             lead_detection_probability=DEFAULT_LEAD_DETECTION_PROBABILITY):
     v_ego = self.x0[1]
     lead_one = radarstate.leadOne
     lead_two = radarstate.leadTwo
@@ -937,10 +948,12 @@ class LongitudinalMpc:
     model_leads = getattr(modelV2, "leadsV3", ()) if modelV2 is not None else ()
     lead_xv_0 = self.process_lead(lead_one, tracking_lead, t_follow=t_follow, lead_index=0,
                                   smooth_duplicate_vision=smooth_duplicate_vision,
-                                  model_lead=model_leads[0] if len(model_leads) > 0 else None)
+                                  model_lead=model_leads[0] if len(model_leads) > 0 else None,
+                                  lead_detection_probability=lead_detection_probability)
     lead_xv_1 = self.process_lead(lead_two, tracking_lead, t_follow=t_follow, lead_index=1,
                                   smooth_duplicate_vision=smooth_duplicate_vision,
-                                  model_lead=model_leads[1] if len(model_leads) > 1 else None)
+                                  model_lead=model_leads[1] if len(model_leads) > 1 else None,
+                                  lead_detection_probability=lead_detection_probability)
     # Published for offline analysis of the trajectories the MPC actually solved against.
     self.lead_xv_0 = lead_xv_0
     self.lead_xv_1 = lead_xv_1

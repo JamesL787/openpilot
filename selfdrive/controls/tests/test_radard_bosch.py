@@ -26,6 +26,14 @@ def make_radar_data(v_rel=0.0, *, track_id=1, d_rel=7.0, y_rel=0.0, measured=Tru
   return rr
 
 
+def make_empty_radar_data():
+  # What the parser publishes on the sweep where a lifecycle discontinuity retires an incarnation:
+  # the CAN identity is gone from RadarData until its replacement matures.
+  rr = car.RadarData.new_message()
+  rr.init('points', 0)
+  return rr
+
+
 class FakeSubMaster:
   def __init__(self, live_tracks_frame=1, *, model_seen=True):
     self.seen = {'modelV2': model_seen}
@@ -151,6 +159,93 @@ def test_civic_bosch_unmeasured_coast_updates_geometry_without_kf(monkeypatch):
   assert track.cnt == 1
   assert float(track.kf.x[radard.SPEED][0]) == pytest.approx(trusted_kf_speed)
   assert float(track.kf.x[radard.ACCEL][0]) == pytest.approx(trusted_kf_accel)
+
+
+def _bosch_sweeps(radar_d, sm):
+  """Advance the liveTracks receive frame per call, i.e. one Bosch-A sweep per published message."""
+  frame = [sm.recv_frame['liveTracks']]
+
+  def sweep(radar_data):
+    frame[0] += 1
+    sm.recv_frame['liveTracks'] = frame[0]
+    radar_d.update(sm, radar_data)
+  return sweep
+
+
+def test_civic_bosch_incarnation_gap_resets_lead_kalman(monkeypatch):
+  # Bosch-A track IDs are 6-bit and are reused within a segment (00000231--5782493b00: ID 58 covers
+  # two unrelated objects 27 s apart). radar_interface clears its own derivative history on a
+  # lifecycle discontinuity, but radard's lead KF is a separate filter with separate state, and the
+  # only thing that resets it is the CAN identity being absent from a liveTracks radard observes.
+  toggles = make_toggles()
+  monkeypatch.setattr(radard, "get_starpilot_toggles", lambda *_args: toggles)
+
+  radar_d = radard.RadarD(honda_bosch_a_radar=True)
+  sm = FakeSubMaster(live_tracks_frame=1)
+  sweep = _bosch_sweeps(radar_d, sm)
+
+  # Incarnation 1: an object closing hard, tracked long enough to own a settled filter.
+  for _ in range(30):
+    sweep(make_radar_data(v_rel=-12.0, track_id=58, d_rel=70.0))
+  first = radar_d.tracks[58]
+  assert first.cnt == 30
+  assert float(first.kf.x[radard.SPEED][0]) == pytest.approx(-12.0, abs=1e-6)
+
+  # The incarnation boundary is exactly one sweep wide: radar_interface pops the point on the
+  # lifecycle break, and the replacement cannot be republished until a second coherent sample gives
+  # it a finite derivative (`matured`). This is the whole of the reset signal radard receives.
+  sweep(make_empty_radar_data())
+  assert 58 not in radar_d.tracks
+
+  # Incarnation 2 reuses the same CAN identity for a different object, opening instead of closing.
+  for _ in range(3):
+    sweep(make_radar_data(v_rel=3.0, track_id=58, d_rel=45.0))
+  second = radar_d.tracks[58]
+  assert second is not first
+  assert second.cnt == 3
+  # Seeded from the new object's own vLead, so it reports that object and no phantom acceleration.
+  assert float(second.kf.x[radard.SPEED][0]) == pytest.approx(3.0, abs=1e-6)
+  assert float(second.kf.x[radard.ACCEL][0]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_civic_bosch_coalesced_incarnation_gap_injects_phantom_lead_accel(monkeypatch):
+  # Pins the fragility of the reset above, so a regression cannot quietly widen it.
+  #
+  # radard polls modelV2 at DT_MDL (20 Hz) and reads the LATEST liveTracks through SubMaster, which
+  # keeps no queue; card.py publishes liveTracks once per sweep (RadarInterface.update returns None
+  # without a 0x2FF trigger), i.e. at ~14.35 Hz. The one-sweep gap above therefore survives only
+  # while the sweep interval stays longer than the model period -- nominally true (14.35 Hz median,
+  # p95 16.9 Hz on 000001df) but carried by a single message with no redundancy behind it.
+  #
+  # If that message is coalesced or dropped, radard never sees the identity leave, keeps the Track,
+  # and the settled filter absorbs the identity change as a step. The lead KF has no notion of
+  # incarnation -- the parser computes the boundary and does not propagate it.
+  toggles = make_toggles()
+  monkeypatch.setattr(radard, "get_starpilot_toggles", lambda *_args: toggles)
+
+  radar_d = radard.RadarD(honda_bosch_a_radar=True)
+  sm = FakeSubMaster(live_tracks_frame=1)
+  sweep = _bosch_sweeps(radar_d, sm)
+
+  for _ in range(30):
+    sweep(make_radar_data(v_rel=-12.0, track_id=58, d_rel=70.0))
+  first = radar_d.tracks[58]
+
+  # Same sequence as the test above with the gap message missing, and nothing else changed.
+  accels = []
+  for _ in range(10):
+    sweep(make_radar_data(v_rel=3.0, track_id=58, d_rel=45.0))
+    accels.append(float(radar_d.tracks[58].kf.x[radard.ACCEL][0]))
+
+  assert radar_d.tracks[58] is first, "no gap was observed, so the Track is never reconstructed"
+  assert first.cnt == 40
+
+  # Both objects are at constant velocity: the true lead acceleration is 0 throughout. The filter
+  # reports an acceleration that never happened, ~0.92 m/s^2 per m/s of identity step, peaking near
+  # 0.5 s and taking ~2.2 s to fall back under 0.5 m/s^2. For scale, D-042 records a 6 m/s step
+  # injected by a vision fallback driving a measured -3.51 m/s^2 brake on 000001f3.
+  assert max(accels) > 9.0
+  assert accels[6] == pytest.approx(13.73, abs=0.05)
 
 
 def test_civic_bosch_separates_kf_and_model_lead_probability_timing():
