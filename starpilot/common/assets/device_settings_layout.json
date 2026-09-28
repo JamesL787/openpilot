@@ -479,38 +479,14 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "HondaCenterScale",
-        "label": "Honda Center Boost",
-        "description": "Adds extra correction near center. Useful when straight roads feel too soft.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 0.0,
-        "max": 5.0,
-        "step": 0.01,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "HondaCenterBoostThreshold",
         "label": "Honda Center Boost Threshold",
-        "description": "Angle band where center boost is active.",
+        "description": "Angle band near center where the center override threshold applies.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
         "max": 10.0,
         "step": 0.1,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "HondaCenterBoostMinSpeed",
-        "label": "Honda Center Boost Minimum Speed",
-        "description": "Disables center boost below this speed.",
-        "data_type": "int",
-        "ui_type": "numeric",
-        "min": 0.0,
-        "max": 90.0,
-        "step": 1.0,
         "parent_key": "LateralTune",
         "settings_tier": "advanced"
       },

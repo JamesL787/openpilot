@@ -9478,3 +9478,22 @@ latcontrol_pid, analyzer, settings-layout, lateral-tools and py39 suites pass (2
 
 **Still open.** MetaDrive closed-loop A/B against the parent commit is pending (group rule). First drive:
 watch mid-speed turns, both directions, for over- or under-steer at the apex.
+
+## 187. The STATUS 186 output scale is now on the branch, and the lateral sim can model the C020 easing off under hand load. Sim and static evidence only; not driven.
+
+**STATUS 186 lands.** Its text was committed early: it was swept into `e0d4aa2c` from the shared index while the code
+stayed on `pid-simple-output-scale` (87fb0904). This commit brings in that code unchanged: `latcontrol_pid.py`, the
+two removed sliders (`HondaCenterScale`, `HondaCenterBoostMinSpeed`) and `test_latcontrol_pid_output_scale.py`.
+Both sims agreed before it landed:
+- lat_score gate (11 routes, the ab57c707 file as base, `NrdrLatPidFirmwareFF` 1): pass, 3 routes better, wobble flat.
+- MetaDrive chains 43/44 (post camera fix, n=6 per arm, windows where the ISO lateral-accel clip bound excluded;
+  MetaDrive's STATUS 181): at >= 8 m/s, zero-crossings/s 2.05 -> 1.41 (lower in 5/6 pairs), rms error 2.11 -> 2.02 deg
+  (4/6), wheel-rate rms 19.3 -> 20.3 deg/s (+5 %, higher in 5/6). The pre-fix chain 40 zero-crossing concern
+  reversed.
+- **Below 8 m/s neither sim decides.** MetaDrive had 1-15 s per run there, and in the only 2 usable pairs Base had
+  fewer zero-crossings. Pull-away and slow turns rest on the first drive.
+
+**Sim: hands yield (99e807fd, tools only).** `Plant.hands_yield` (off by default) and `fit_plant(with_hands_yield)`
+in `tools/lateral/lat_pid_sim.py` model the C020 firmware giving less torque while the driver's hands load the
+column (`HANDS_YIELD`). With it on, the plant is closer to the logs in the 800-2000 torque bins, though it still
+under-predicts there. No controller compensates for it: James's new EPS firmware will change the table.

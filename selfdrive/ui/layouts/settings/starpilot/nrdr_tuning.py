@@ -232,19 +232,9 @@ class NRDRTuningLayout(_SettingsPage):
 
     center_rows = [
       value(
-        "HondaCenterBoostThreshold", "Center Boost Angle", "Angle band where center boost and straight-line override tuning apply.",
+        "HondaCenterBoostThreshold", "Center Boost Angle", "Angle band where the center override threshold applies.",
         lambda: f"{p.get_float('HondaCenterBoostThreshold'):.1f} deg",
         lambda: self._show_slider("HondaCenterBoostThreshold", 0.0, 10.0, step=0.1, unit=" deg", value_type="float", title="Center Boost Angle"),
-      ),
-      value(
-        "HondaCenterBoostMinSpeed", "Center Boost Min Speed", "Disable center boost below this speed to avoid low-speed oscillation.",
-        lambda: f"{p.get_int('HondaCenterBoostMinSpeed')} mph",
-        lambda: self._show_slider("HondaCenterBoostMinSpeed", 0, 90, unit=" mph", title="Center Boost Min Speed"),
-      ),
-      value(
-        "HondaCenterScale", "Center Scale", "Feedforward scale near center. Lower values reduce torque through straight unwind.",
-        lambda: f"{p.get_float('HondaCenterScale'):.2f}",
-        lambda: self._show_slider("HondaCenterScale", 0.0, 5.0, step=0.05, value_type="float", title="Center Scale"),
       ),
     ]
 
