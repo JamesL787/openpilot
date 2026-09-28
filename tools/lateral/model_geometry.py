@@ -313,11 +313,17 @@ def episodes_report(seg_dir: str, episodes_file: str) -> list[dict]:
       timeline.append((t, dict(state)))
 
   def state_near(target_t: float) -> dict | None:
+    # rlog entries are ordered by loggerd receipt time, not per-topic logMonoTime: across the
+    # ~6 topics mixed into timeline, ~20% of consecutive entries go backward in t (up to ~140ms,
+    # route 294 seg2) even though each topic is independently monotonic. An early break on the
+    # first t > target_t can therefore return a state up to ~140ms stale. Scan the full list and
+    # keep the latest t <= target_t instead.
     best = None
+    best_t = None
     for t, s in timeline:
-      if t > target_t:
-        break
-      best = s
+      if t <= target_t and (best_t is None or t > best_t):
+        best_t = t
+        best = s
     return best
 
   out = []
