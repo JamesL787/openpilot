@@ -755,17 +755,22 @@ def test_takeover_lane_numbers_need_both_lines_through_the_window():
   # James (route 293): a faint line during the hold jumped and read as 1 m of drift.
   rows = _takeover_drive()
   t = rows[:, dp.COL["t"]] - rows[0, dp.COL["t"]]
-  rows[(t >= 31.0) & (t < 31.5), dp.COL["lane_prob"]] = 0.1
+  rows[(t >= 30.4) & (t < 31.5), dp.COL["lane_prob"]] = 0.1
   e = dp.analyze(rows)["driver_takeovers"]["episodes"][0]
-  assert e["lanes_ok"] is False and e["lane_prob_min"] == pytest.approx(0.1)
+  assert e["lanes_ok"] is False and e["lane_prob_min"] == pytest.approx(0.1) and e["lane_ok_frac"] < 0.9
   assert e["drift_1s_m"] is None and e["drift_3s_m"] is None and e["drift_6s_m"] is None
   assert e["lane_press_m"] is not None and e["lane_release_m"] is None and e["lane_press_3s_m"] is None
   # Faint only after release + 3 s: the 1 s and 3 s drift stand, the 6 s one does not.
   rows = _takeover_drive()
   rel = dp.analyze(rows)["driver_takeovers"]["episodes"][0]["release_t"]
-  rows[(t >= rel + 4.0) & (t < rel + 4.5), dp.COL["lane_prob"]] = 0.1
+  rows[(t >= rel + 4.0) & (t < rel + 4.8), dp.COL["lane_prob"]] = 0.1
   e = dp.analyze(rows)["driver_takeovers"]["episodes"][0]
   assert e["lanes_ok"] is True and e["drift_3s_m"] is not None and e["drift_6s_m"] is None
+  # A one-frame dropout (a merge or a gore) no longer throws the window away.
+  rows = _takeover_drive()
+  rows[np.flatnonzero(t >= 31.0)[0], dp.COL["lane_prob"]] = 0.0
+  e = dp.analyze(rows)["driver_takeovers"]["episodes"][0]
+  assert e["lanes_ok"] is True and e["lane_prob_min"] == 0.0 and e["drift_6s_m"] is not None
 
 
 def test_a_light_hold_without_steering_pressed_is_not_the_controllers_turn():

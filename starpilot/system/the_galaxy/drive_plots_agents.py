@@ -41,6 +41,12 @@ RELEASE_STEP_S = 0.5          # largest per-frame change in delivered torque ove
 DRIFT_AT_S = (1.0, 3.0, 6.0)  # lane drift toward the push, measured from the position at release
 VLAT_HALF_S = 0.25            # lateral speed at release: slope of lane_off over +-this
 LANES_OK_PROB = 0.5           # both lane lines at least this likely: lane numbers usable
+# James (route 293): a window's lane numbers count when both lines are above LANES_OK_PROB for LANES_OK_FRAC of its
+# frames and neither stays under LANES_LOST_PROB longer than LANES_LOST_S in a row. Lines flicker to 0 for a frame
+# at merges and gores; requiring every frame kept 1 of 80 takeovers on that route.
+LANES_OK_FRAC = 0.9
+LANES_LOST_PROB = 0.3
+LANES_LOST_S = 0.5
 TORQUE_CUT_FRAC = 0.5         # delivered torque below this fraction of the requested ...
 TORQUE_CUT_MIN = 0.05         # ... while the request is at least this (normalized torque): cut or faded
 STALL_MS = 100.0              # controlsState older than this inside an episode: stalled (John drops these)
@@ -120,6 +126,13 @@ def _starts(mask, t, merge_s=MERGE_S):
     if not out or t[i] - t[out[-1]] >= merge_s:
       out.append(int(i))
   return out
+
+
+def _runs_of(mask):
+  """(start, end) index pairs of the True runs in mask, end exclusive."""
+  m = np.concatenate([[False], np.asarray(mask, dtype=bool), [False]])
+  d = np.flatnonzero(np.diff(m.astype(np.int8)))
+  return list(zip(d[::2], d[1::2], strict=True))
 
 
 def _at(t, t0):
@@ -305,13 +318,17 @@ def takeovers(c, t0=None):
         e["release_overshoot_deg"] = None
       e["back_on_plan_s"] = _settle(t, err, r, SETTLE_DEG[0])
       e["back_within_2deg_s"] = _settle(t, ctrl_err, r, SETTLE_DEG[1])
-    # Lane numbers count only while both lines stay above LANES_OK_PROB from the press to the end of the window:
-    # a faint line jumps and reads as drift (James, route 293: 1.06 m "drift" with the right line at 0.02-0.18).
+    # Lane numbers count only when the lines were seen from the press to the end of the window: a faint line jumps
+    # and reads as drift (James, route 293: 1.06 m "drift" with the right line at 0.02-0.18). lane_prob is already
+    # the lower of the two lines; a missing frame counts as not seen.
     def lanes_through(k):
       if prob is None or k is None:
         return False
-      p = prob[s:k + 1]
-      return bool(len(p) and np.all(np.isfinite(p)) and np.all(p > LANES_OK_PROB))
+      p = np.nan_to_num(prob[s:k + 1], nan=0.0)
+      if not len(p) or np.mean(p > LANES_OK_PROB) < LANES_OK_FRAC:
+        return False
+      lost = [r_ - a_ for a_, r_ in _runs_of(p < LANES_LOST_PROB)]
+      return bool(not lost or max(lost) * dt <= LANES_LOST_S)
 
     if lane and push:
       base = off[r]
@@ -337,9 +354,10 @@ def takeovers(c, t0=None):
       e["lane_prob_release"] = _r(prob[r], 2)
       p = prob[s:_at(t, t[r] + DRIFT_AT_S[-1]) + 1]
       e["lane_prob_min"] = _r(np.nanmin(p), 2) if np.any(np.isfinite(p)) else None
+      e["lane_ok_frac"] = _r(np.mean(np.nan_to_num(p, nan=0.0) > LANES_OK_PROB), 2) if len(p) else None
       e["lanes_ok"] = lanes_through(r)
     else:
-      e["lane_prob_release"], e["lane_prob_min"], e["lanes_ok"] = None, None, False
+      e["lane_prob_release"], e["lane_prob_min"], e["lane_ok_frac"], e["lanes_ok"] = None, None, None, False
     if has(c, "cs_age_ms"):
       w = slice(s, _at(t, t[r] + DRIFT_AT_S[-1]) + 1)
       e["cs_age_max_ms"] = _r(np.nanmax(c["cs_age_ms"][w]), 0)
@@ -366,8 +384,11 @@ def takeovers(c, t0=None):
                    f"|steeringTorque| < {TAKEOVER_TQ_RELEASE:g} for {TAKEOVER_RELEASE_HOLD_S:g} s. Wheel error is "
                    "carState.steeringAngleDeg - pidState.steeringAngleDesiredDeg (the plan is the reference; the "
                    f"driver's own target is unknown). Drift is lane offset toward the push, unwrapped across lane "
-                   f"changes, and None unless both lane lines stay above {LANES_OK_PROB:g} from the press to the end of that window; "
-                   "lanes_ok is the same test from press to release, lane_prob_min the lowest from press to release + "
+                   f"changes, and None unless, from the press to the end of that window, both lane lines are above "
+                   f"{LANES_OK_PROB:g} for {LANES_OK_FRAC:.0%} of frames and neither stays under {LANES_LOST_PROB:g} longer "
+                   f"than {LANES_LOST_S:g} s in a row; lanes_ok is the same test from press to release. lane_prob_min "
+                   "and lane_ok_frac (share of frames with both lines above "
+                   f"{LANES_OK_PROB:g}) cover press to release + "
                    f"{DRIFT_AT_S[-1]:g} s. lane_press_m / lane_release_m / lane_press_3s_m are gated the same way. releases = grabs above "
                    f"{RELEASE_CLASS_V:g} m/s held under {RELEASE_CLASS_MAX_S:g} s. Swing, overshoot and settle are "
                    "None when openpilot was not steering within 0.5 s of the release (lat_active_after). lane_press_m / "
