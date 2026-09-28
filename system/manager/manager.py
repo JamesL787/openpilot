@@ -77,7 +77,7 @@ NRDR_DM_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_dm_defaults_v1"
 STARPILOT_REMOVED_PARAM_KEYS = (
   "CoastUpToLeads", "HumanAcceleration", "HumanFollowing", "PrioritizeSmoothFollowing", "ReverseCruise",
   "NrdrTuneLearner", "NrdrTuneLearnerMap", "NrdrTuneLearnerRate", "NrdrTuneLearnerReset", "NrdrTuneLearnerStrength",
-  "BoschARailInterval", "RangeDerivedVrel", "RangeVisionAssist",
+  "BoschARailInterval", "RangeDerivedVrel", "RangeVisionAssist", "BlotV2",
 )
 LEGACY_CARMODEL_MIGRATIONS = {
   "CHEVROLET_BOLT_CC_2019_2021": "CHEVROLET_BOLT_CC_2018_2021",
