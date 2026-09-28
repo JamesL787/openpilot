@@ -7453,6 +7453,17 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
   - acting share unchanged (4.2 / 7.1 %); 0 frames lifting > 0.05 while the lead closes faster than 0.5 m/s or brakes harder than −1.0.
 - Tests: `test_exp_lead_departure.py` now checks the gentle release rate (closing, braking, lost lead), the 3-frame release, the urgent instant drops, stop / toggle / e2e-brake instant drops and the MPC cap. 560 passed with `test_longitudinal_planner.py`.
 
+### 136f. Route 11c8fa231c0499ed|00000293--9d152a3cdc (owner: drove in Experimental Mode throughout): the smoothed release (136e) runs on the road. Log decode and replay only; nothing changed.
+
+- Build 6b0242f4 (contains a5c342ba, assist code unchanged since); `ExpLeadDepartureAssist` = 1. Radar alpha long; 26.2 engaged min, 24.8 in Experimental Mode (95 %); lead present 66 % of it, 84 % radar.
+- Assist acted 62 s (4.1 % of exp), 40 episodes, lift p50 0.11, max 0.41. The logged aTarget − min(e2e, MPC) matches the replay within 0.02 on 97 % of acting frames.
+- Release: the largest logged one-frame drop during a release is 0.31. Only 2 drops exceed 0.16, and both are urgent cases (lead closing > 0.5 m/s or braking < −1.0). 0 frames lifting while the lead closes/brakes past those limits; 0 frames lifting while e2e < −0.15.
+- 27 brake onsets below −1.5 in exp. 26 have assist ≤ 0.02 in the 5 s before; each has a closing radar/vision lead or, at 19:36, MPC braking with no lead. The one exception is 34:02.5 (−1.6 within 2 s): the assist lifted ≤ 0.22 behind a lead at 46 m / 32 mph, released by 34:01.6, then the lead braked at −1.9.
+- What the assist does not cover — the owner's gas presses on this drive:
+  - 29:23 and 34:12: a radar lead pulling away at +4.8 / +5.9 m/s with MPC +0.6 / −0.15 → +0.3, while e2e itself braked at −0.45 / −0.83. By design the assist never lifts e2e braking below −0.15.
+  - 12:06, 12:16, 14:05: no lead; e2e −0.16 to +0.18 against MPC +0.35 to +0.60. The assist needs a lead.
+  - These are the item 136a `e2e_brake` / no-lead classes, not the class the assist targets.
+
 ## 141. Galaxy Plots rebuilt: recorded drives with a lateral/longitudinal analysis. Unit tests and a headless render against a synthetic drive only; not used on a car.
 
 **What changed.** The Plots page (classic `/plots` and mobile `#/plots`) no longer grades a 30 s window with client-side "Great/Good/Fair/Poor" scores. A backend module `starpilot/system/the_galaxy/drive_plots.py` (commit 57cca03c) samples `controlsState`, `carControl`, `carState`, `longitudinalPlan` at ~20 Hz. Requested lateral is `desiredCurvature·v²`, measured is `curvature·v²`; requested longitudinal is `longitudinalPlan.aTarget`, measured is `aEgo`. Only engaged, non-override samples count (`latActive`/`longActive`, no steer/gas press).
