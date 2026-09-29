@@ -9807,3 +9807,14 @@ Per-turn replay overshoot on 28f sharp corners (n=8): +3.3 -> +3.0 deg (logged d
 - Refit after any EPS reflash.
 
 **This is the last planned NRDR PID change.** Per the owner, the lateral focus moves to LatControlClarityEps.
+
+## 192. ICBM gas-release set speed is baked in (owner request, 2026-09-29); the `SetSpeedOnGasRelease` toggle is gone, and the ICBM description is rewritten. Static and unit evidence only.
+
+- **Why:** `SetSpeedOnGasRelease` has defaulted on since STATUS 84, and the owner's ICBM drives since then ran with it on. STATUS 86/87/126 reworked it into the release set speed, the time-limited gas-release floor and the gas snap. The owner asked for it to be part of ICBM rather than a toggle.
+- **Change:**
+  - `starpilot/common/starpilot_variables.py`: `set_speed_on_gas_release` is now `redneck_cruise` on every ICBM car (Hyundai and Honda), as before by default. The param is no longer read.
+  - `starpilot/common/assets/device_settings_layout.json`: the Galaxy toggle entry is removed. The ICBM description now lists what ICBM adds to stock ACC: curve and speed-limit slowdowns, the Honda far-lead slowdown, launch after a stop, gas-release set speed, Honda counter sync, and driver buttons always win. Stock ACC still does the following and braking.
+  - The comments in `selfdrive/car/cruise.py` and `selfdrive/car/redneck_cruise.py` are updated.
+  - The key stays in `params_keys.h` and `feasibleparams.txt`, so there is no binary rebuild. It is unused.
+- **Effect:** a car that had the toggle turned off now gets the gas-release set speed, floor and snap too. No other behaviour changes.
+- **Tests:** `test_redneck_cruise.py`, `test_cruise_speed.py`, the_galaxy `test_device_settings_layout.py` and `test_device_settings_frontend.py`, and `test_starpilot_variables.py`: 212 pass.

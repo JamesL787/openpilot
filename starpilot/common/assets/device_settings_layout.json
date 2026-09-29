@@ -5555,18 +5555,8 @@
       {
         "key": "RedneckCruise",
         "label": "ICBM",
-        "description": "Intelligent Cruise Button Management. On supported Hyundai and Honda Bosch stock-cruise cars, use RES/SET button presses to match the cluster set speed to StarPilot's target, including Curve Speed Control slowdowns. Stock ACC still does the following and braking.",
+        "description": "Intelligent Cruise Button Management. On supported Hyundai and Honda Bosch cars running stock ACC, StarPilot presses the car's own RES/SET buttons so the set speed on the dash follows StarPilot's target. Stock ACC still does all the following and braking; ICBM only moves its set speed. What it adds to stock ACC: it slows the set speed for curves (Curve Speed Control) and speed limits; on Honda it eases the set speed down early for a much slower car far ahead, before stock ACC reacts; after a stop it raises the set speed so the car pulls away, then hands back to following; when you speed up with the gas past the set speed and let go, the set speed becomes the speed you let go at; and it steps in time with the car's own button count on Honda so the set speed moves quickly. Your own cruise, distance and LKAS button presses always win.",
         "picker_description": "Matches StarPilot's target speed with Hyundai or Honda Bosch RES/SET.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "GalaxyDeveloperMode",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "SetSpeedOnGasRelease",
-        "label": "ICBM Set Speed on Gas Release",
-        "description": "When you speed up past the set speed with the gas pedal and let go, the set speed becomes the speed you let go at (rounded to a whole mph or km/h). ICBM then walks the car's set speed up to it. Not yet driven.",
-        "picker_description": "Letting off the gas above the set speed sets the set speed to your current speed.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "GalaxyDeveloperMode",
