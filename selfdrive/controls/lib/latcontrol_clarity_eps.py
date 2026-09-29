@@ -78,6 +78,8 @@ class LatControlClarityEps(LatControl):
     self.steering_pressed_prev = False
     self.starpilot_lateral_state = custom.StarPilotLateralState.new_message()
     self._read_settings()
+    # once per controlsd start: switching it mid-drive would step the feedforward at speed by up to ~0.9 of its load
+    self.core.speed_gate = _get_param_bool(self.params, "NrdrLatEpsFfAngleGate")
 
   def _read_settings(self):
     self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")

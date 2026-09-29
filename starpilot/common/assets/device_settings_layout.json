@@ -708,11 +708,21 @@
       },
       {
         "key": "NrdrLatEpsFirmwareFF",
-        "label": "EPS Firmware Feedforward (Test)",
-        "description": "Modified-EPS Civic Bosch/Clarity: steer with James's controller, a feedforward that inverts the EPS firmware's own control law plus a PID on fixed per-band trims. The Lat P/I/F sliders and the other lateral shaping do not apply while it is on. Takes effect on the next drive. Off: the feedforward is only logged.",
+        "label": "EPS Firmware Feedforward",
+        "description": "Modified-EPS Civic Bosch/Clarity: steer with James's controller, a feedforward that inverts the EPS firmware's own control law plus a PID on fixed per-band trims. Checked on road drives against the NRDR PID on both cars (Clarity routes 352-361, Civic routes 286-298). The Lat P/I/F sliders and the other lateral shaping do not apply while it is on. Takes effect on the next drive. Off: the feedforward is only logged.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "is_parent_toggle": true,
         "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrLatEpsFfAngleGate",
+        "label": "Feedforward in Turns Only at Speed (Test)",
+        "description": "Above 18 mph, use the feedforward in turns only (none within 10 deg of centre, full from 30 deg), as before PR 10. Off, it also applies near straight, which tracks better but moved the wheel more on straights in the sim. Not yet driven. Takes effect on the next drive.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "NrdrLatEpsFirmwareFF",
         "settings_tier": "advanced"
       },
       {

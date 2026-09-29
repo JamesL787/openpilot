@@ -409,6 +409,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrLatUseFirmwareVgr", {PERSISTENT, BOOL, "0", "0", 2}},      // use the EPS firmware A (position) VGR table instead of the road-measured effective-ratio curve
     {"NrdrLatPidFirmwareFF", {PERSISTENT, BOOL, "0", "0", 2}},       // modified-EPS Clarity/Civic Bosch, NRDR PID: firmware-inversion feedforward in turns only, gated by |desired angle| (STATUS 175)
     {"NrdrLatEpsFirmwareFF", {PERSISTENT, BOOL, "0", "0", 2}},       // modified-EPS Clarity/Civic Bosch: steer with LatControlClarityEps, James's controller (read when controlsd starts; STATUS 166)
+    {"NrdrLatEpsFfAngleGate", {PERSISTENT, BOOL, "0", "0", 2}},      // LatControlClarityEps: hold the feedforward off near straight at speed too (10-30 deg |desired angle|), as before PR 10; 0 = PR 10 (read when controlsd starts)
     {"ForceFingerprint", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ForceOffroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
     {"ForceOnroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},

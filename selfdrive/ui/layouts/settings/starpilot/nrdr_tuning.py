@@ -276,10 +276,16 @@ class NRDRTuningLayout(_SettingsPage):
       toggle("NrdrLatUseFirmwareVgr", "Use Firmware VGR Table",
              "Convert curvature with the EPS firmware's A (position) table on top of the learned steer "
              "ratio, instead of the road-measured effective-ratio curve. Changes centre gain and taper."),
-      toggle("NrdrLatEpsFirmwareFF", "EPS Firmware Feedforward (Test)",
+      toggle("NrdrLatEpsFirmwareFF", "EPS Firmware Feedforward",
              "Steer with James's modified-EPS controller: a feedforward that inverts the EPS firmware's own "
-             "control law plus a PID on fixed per-band trims. The Lat P/I/F sliders and the other lateral shaping "
-             "do not apply while on. Takes effect on the next drive. Off, the feedforward is only logged."),
+             "control law plus a PID on fixed per-band trims. Checked on road drives against the NRDR PID on "
+             "both cars (Clarity routes 352-361, Civic routes 286-298). The Lat P/I/F sliders and the other lateral "
+             "shaping do not apply while on. Takes effect on the next drive. Off, the feedforward is only logged."),
+      toggle("NrdrLatEpsFfAngleGate", "Feedforward in Turns Only at Speed (Test)",
+             "Above 18 mph, use the feedforward in turns only (none within 10 deg of centre, full from 30 deg), as "
+             "before PR 10. Off, it also applies near straight, which tracks better but moved the wheel more on "
+             "straights in the sim. Not yet driven. Takes effect on the next drive.",
+             visible=lambda: p.get_bool("NrdrLatEpsFirmwareFF")),
       toggle("NrdrLatPidFirmwareFF", "PID Turn Feedforward (Test)",
              "Keep the NRDR PID and your Lat P/I/F trims, and add James's EPS firmware feedforward in turns only: "
              "none within 10 deg of centre, full from 30 deg, so it does not bring back the near-centre wobble. "
