@@ -7711,6 +7711,10 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
     1 of 2 with the wheel past the plan toward the request.
   - `tools/drive_plots/sim_export.py` writes John's `lat_pid_sim.npz` per steered segment at the controls rate
     (~97 Hz on 297), t from each segment's first carState. Not yet read by his scorer.
+  - sim_export's export.json also lists John's scoring windows and presses (`0d089047f`), plus every Nrdr* toggle in
+    initData. **NrdrLatEpsFfAngleGate = 1 was written on the comma at 14:42 on 2026-09-29, after 298.** It is absent
+    from 298's initData, so no result from 298 or 297 is credited to the gate. Check export.json `params` on the next drive.
+    298 had 0 s engaged at 25+ m/s.
 
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 
