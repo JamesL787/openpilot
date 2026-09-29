@@ -507,7 +507,7 @@ export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
     } else if (e.kind === "exp_flipflop") {
       kind = "brake"
       title = "Experimental mode switched back and forth"
-      detail = `At ${fmtSpeed(e.v, speed)} it switched ${e.experimental_now ? "on" : "off"} ${fmtNum(e.since_last_s, 1)} s after the last switch` +
+      detail = `At ${fmtSpeed(e.v, speed)} it switched ${e.flips} times in ${fmtNum(e.burst_s, 1)} s, ending ${e.experimental_after ? "on" : "off"}` +
         (e.red_light ? " (a red light was seen)." : ".")
     } else if (e.kind === "false_red_light") {
       kind = "brake"
