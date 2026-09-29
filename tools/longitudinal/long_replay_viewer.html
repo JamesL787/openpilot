@@ -36,6 +36,11 @@ td:first-child,th:first-child{text-align:left}
     <div id="legend" style="margin-top:6px"></div>
   </div>
   <div id="right">
+    <div id="camwrap" style="display:none;margin-bottom:6px">
+      <canvas id="cam"></canvas>
+      <div class="k" style="margin-top:2px">camera tracks <select id="camsel"><option value="near" selected>near path (±6 m)</option><option value="all">all</option><option value="leads">leads only</option></select>
+        <span id="camnote"></span></div>
+    </div>
     <div id="strips"></div>
     <div id="events" style="margin:6px 0"></div>
     <div id="readout"></div>
@@ -263,6 +268,97 @@ function drawBev() {
   g.fillText(`t ${T[i].toFixed(2)} s  v ${f(D.v[i],1)}  aEgo ${f(D.a[i])}  ${D.eng[i]?'engaged':'NOT ENGAGED'}${D.brk[i]?' BRAKE':''}`, 8, 18);
 }
 
+// ---- camera: qcamera frame with radar tracks projected like the onroad UI (calibrated frame: x fwd, y right, z down)
+const CAM = D.cam || null;
+const camImgs = CAM ? CAM.imgs.map(b => { const im = new Image(); im.src = 'data:image/jpeg;base64,' + b; im.onload = () => { if (CAM.idx[i] !== null && camImgs[CAM.idx[i]] === im) drawCam(); }; return im; }) : [];
+let camSel = 'near';
+if (CAM) {
+  $('camwrap').style.display = '';
+  $('camsel').onchange = e => { camSel = e.target.value; drawCam(); };
+  $('camnote').textContent = `  ${CAM.device.join('/')}  box 1.8 × 1.4 m at radar dRel + ${CAM.radar_to_camera} m; ` +
+    'the green model path should lie on the road, else every box is misplaced';
+}
+function camProj(Pm, x, y, z) {  // x fwd, y right, z down (camera at origin) -> pixel, or null behind the camera
+  const u = Pm[0]*x + Pm[1]*y + Pm[2]*z, v = Pm[3]*x + Pm[4]*y + Pm[5]*z, w = Pm[6]*x + Pm[7]*y + Pm[8]*z;
+  return w > 0.5 ? [u/w, v/w] : null;
+}
+function pathLat(d) {  // model path lateral (radar yRel convention, +left) at range d, or null
+  const p = D.path[i]; if (!p || p[0].length < 2 || d > p[0][p[0].length-1] + 20) return null;
+  let k = 0; while (k < p[0].length-2 && p[0][k+1] < d) k++;
+  const x0 = p[0][k], x1 = p[0][k+1]; const a = x1 > x0 ? Math.min(1, Math.max(0, (d - x0) / (x1 - x0))) : 0;
+  return p[1][k] + a * (p[1][k+1] - p[1][k]);
+}
+function drawCam() {
+  if (!CAM) return;
+  const cv = $('cam'), host = $('right');
+  const W = Math.min(CAM.w * 2, Math.max(400, (host.clientWidth || 800) - 6)), s = W / CAM.w, H = Math.round(CAM.h * s);
+  if (cv.width !== W) { cv.width = W; cv.height = H; }
+  const g = cv.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0,0,W,H);
+  const k = CAM.idx[i], Pr = CAM.P[i];
+  if (k !== null && k !== undefined && camImgs[k].complete) g.drawImage(camImgs[k], 0, 0, W, H);
+  else { g.fillStyle = '#888'; g.font = '13px monospace'; g.fillText('no camera frame for this row', 10, 20); }
+  if (!Pr) return;
+  const Pm = Pr.slice(0, 9), hgt = Pr[9], r2c = CAM.radar_to_camera;
+  const px = (x, y, z) => { const q = camProj(Pm, x, y, z); return q ? [q[0]*s, q[1]*s] : null; };
+  g.font = '12px monospace'; g.lineWidth = 2;
+  // model path on the road (its own x is from the camera)
+  const path = D.path[i];
+  if (path && path[0].length > 1) {
+    for (const off of [-M.onpath_half_m, M.onpath_half_m]) {
+      g.strokeStyle = 'rgba(80,200,110,0.8)'; g.beginPath(); let st = false;
+      path[0].forEach((x, j) => { if (x < 3) return; const q = px(x, -(path[1][j] + off), hgt); if (!q) return; st ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); st = true; });
+      g.stroke();
+    }
+  }
+  // boxes: radar dRel/yRel (+left) -> calibrated x = dRel + radar_to_camera, y = -yRel; ground at z = height
+  const box = (d, y, c, dash, lw) => {
+    const x = d + r2c, yl = -y - 0.9, yr = -y + 0.9;
+    const a = px(x, yl, hgt), b = px(x, yr, hgt), t = px(x, yl, hgt - 1.4);
+    if (!a || !b || !t) return null;
+    g.strokeStyle = c; g.lineWidth = lw; g.setLineDash(dash || []);
+    g.strokeRect(a[0], t[1], b[0] - a[0], a[1] - t[1]); g.setLineDash([]); g.lineWidth = 2;
+    return [a[0], t[1], b[0] - a[0], a[1] - t[1]];
+  };
+  const label = (r, txt, c, above) => {  // above: 1, 2, 3 = stacked slots over the box; falsy = under it
+    if (!r) return;
+    const tw = g.measureText(txt).width + 6, yy = above ? r[1] - 16 * above : r[1] + r[3] + 1;
+    g.fillStyle = 'rgba(0,0,0,0.65)'; g.fillRect(r[0], yy, tw, 15); g.fillStyle = c; g.fillText(txt, r[0] + 3, yy + 11);
+  };
+  const onp = new Set(D.onpath[i] || []);
+  const leadIds = new Set([L1[i], D.L2rep[i]].filter(L => L && L[6]).map(L => L[5]));
+  const trs = (D.tr[i] || []).filter(([tid, d, y]) => d !== null && d > 1 && (
+    camSel === 'all' || (camSel === 'leads' ? leadIds.has(tid) : (() => { const pl = pathLat(d); return pl === null ? Math.abs(y) < 6 : Math.abs(y - pl) < 6; })())));
+  trs.sort((p, q) => q[1] - p[1]);  // far first, so near boxes draw on top
+  for (const [tid, d, y, vr, meas] of trs) {
+    const c = onp.has(tid) ? '#ffd60a' : '#b0b0bb';
+    const r = box(d, y, c, meas ? null : [4, 3], 1.5);
+    label(r, `#${tid} ${vr === null ? '' : (vr >= 0 ? '+' : '') + vr.toFixed(1)} ${d.toFixed(0)}m`, c, false);
+  }
+  // model lead (x already radar-referenced in D.vis)
+  for (const [lead, c, lab] of [[vis[i], '#4895ef', 'vis0'], [D.vis2[i], '#2a5a8f', 'vis1']]) {
+    if (!lead || lead[0] === null || lead[3] === null || lead[3] < 0.2) continue;
+    const q = px(lead[0] + r2c, -lead[1], hgt - 0.7); if (!q) continue;
+    g.globalAlpha = 0.3 + 0.7 * lead[3]; g.strokeStyle = g.fillStyle = c; g.beginPath();
+    g.moveTo(q[0], q[1] - 9); g.lineTo(q[0] + 9, q[1]); g.lineTo(q[0], q[1] + 9); g.lineTo(q[0] - 9, q[1]); g.closePath(); g.stroke();
+    const txt = `${lab} p${lead[3].toFixed(2)} v${f(lead[2], 1)}`;
+    g.fillText(txt, q[0] - 12 - g.measureText(txt).width, q[1] + 20); g.globalAlpha = 1;  // below-left, clear of the lead box
+  }
+  // leads last, on top: log L1 dashed, replay L2 orange, replay L1 red
+  const lead = (L, c, lab, ti, ri, dash, above) => {
+    if (!L || L[0] === null) return;
+    const r = box(L[0], L[1], c, dash, 3);
+    label(r, `${lab} ${L[ri] ? '#' + L[ti] : 'vision'} vRel ${f(L[2], 1)}`, c, above);
+  };
+  lead(L1l[i], '#ff6b6b', 'log L1', 4, 5, [6, 4], 2);
+  // leadTwo follows the model's second lead and often lands on L1's track; say so once instead of a second box
+  const L2 = D.L2rep[i], a = L1[i];
+  const same12 = L2 && a && L2[0] !== null && a[0] !== null && Math.abs(L2[0] - a[0]) < 0.5 && L2[6] === a[6] && (!a[6] || L2[5] === a[5]);
+  if (!same12) lead(L2, '#ff8c00', 'L2', 5, 6, null, 3);
+  lead(a, '#e63946', same12 ? 'L1=L2' : 'L1', 5, 6, null, 1);
+  g.fillStyle = '#eee'; g.font = '13px monospace';
+  g.fillText(`t ${T[i].toFixed(2)}  qcamera`, 8, H - 8);
+}
+
 // ---- readout
 function readout() {
   const rows = [];
@@ -320,6 +416,7 @@ $('legend').innerHTML = [
 // ---- control
 function draw() {
   drawBev();
+  drawCam();
   for (const {cv, off} of strips) {
     const g = cv.getContext('2d'); g.drawImage(off,0,0);
     g.strokeStyle='#fff'; g.beginPath(); g.moveTo(tx(cv,T[i]),0); g.lineTo(tx(cv,T[i]),cv.height); g.stroke();

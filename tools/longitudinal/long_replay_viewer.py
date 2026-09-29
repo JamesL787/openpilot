@@ -10,6 +10,12 @@ lines, the model leads, the logged liveTracks and the logged radarState. Output:
                    per-event metrics. Open it in any browser; it needs no network.
   --mp4 OUT.mp4    the same bird's-eye view plus four strips, rendered with PIL and ffmpeg, for sharing.
 
+With the route's qcamera.ts files (--qcamera-dir, default the route dir), the page also shows the road camera with
+every radar track drawn on it: a 1.8 m x 1.4 m box at the track's range and lateral offset, labelled id and vRel,
+plus leadOne/leadTwo and the model path. The projection is the onroad UI's (liveCalibration rpyCalib and height,
+the device's road-camera intrinsics scaled to the qcamera size), so a box that sits on the car it names is a
+cross-check on the radar, and the path should lie on the road; if it does not, the boxes are misplaced too.
+
 What the colours mean is printed in the page legend. Two worlds are shown and they are not the same:
 
   * "log" is what ran on the car: the rlog's liveTracks and radarState.
@@ -29,6 +35,8 @@ first-order actuator, residual from the logged car).
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import json
 import math
 import subprocess
@@ -37,6 +45,8 @@ from pathlib import Path
 
 import numpy as np
 
+from openpilot.common.transformations.camera import DEVICE_CAMERAS, view_frame_from_device_frame
+from openpilot.common.transformations.orientation import rot_from_euler
 from openpilot.tools.lib.logreader import LogReader
 from openpilot.tools.longitudinal.alpha_open_loop_replay import segment_files
 
@@ -45,6 +55,7 @@ ONPATH_HALF_M = 1.8       # a track is on-path when within this of the model pat
 ONPATH_MAX_D = 150.0
 VIS_PROB = 0.5            # model lead counts as present above this
 RADAR_TO_CAMERA = 1.52    # radard.py: leadsV3 x is from the camera, radar dRel from the radar
+CAM_JPEG_Q = 70           # qcamera frames embedded in the page; ~15 kB each at 526x330
 BRAKE_ONSET = -1.0        # m/s^2: "brake onset" for a_target and aEgo
 JERK_WINDOW_S = 0.2       # felt jerk = d(aEgo) over this window
 PAD_BEFORE_S, PAD_AFTER_S = 8.0, 6.0
@@ -85,18 +96,31 @@ def _xy(line, max_x=200.0, step=2):
 
 def read_rlog(files: list[Path]) -> tuple[list[dict], dict]:
   """One snapshot per modelV2, keyed by logMonoTime, with the latest of every other service."""
-  snaps, first_init = [], None
-  tracks, rs, lp_a, cs = [], None, None, None
+  snaps, first_init, cam = [], None, None
+  tracks, rs, lp_a, cs, cal, rs_tracks = [], None, None, None, None, []
+  qframe: dict[int, tuple[int, int]] = {}  # road frameId -> (segment, frame index in that segment's qcamera.ts)
   for path in files:
     for msg in LogReader(str(path), sort_by_time=True):
       w = msg.which()
       if w == "initData":
         if first_init is None:
           first_init = msg.logMonoTime
+        cam = [str(msg.initData.deviceType), cam[1] if cam else "unknown"]
+      elif w == "roadCameraState":
+        if cam is not None and cam[1] == "unknown":
+          cam[1] = str(msg.roadCameraState.sensor)
+      elif w == "qRoadEncodeIdx":
+        e = msg.qRoadEncodeIdx
+        qframe[int(e.frameId)] = (int(e.segmentNum), int(e.segmentId))
+      elif w == "liveCalibration":
+        lc = msg.liveCalibration
+        if len(lc.rpyCalib) == 3:
+          cal = [float(x) for x in lc.rpyCalib] + [float(lc.height[0]) if len(lc.height) else 1.22]
       elif w == "liveTracks":
         tracks = [[int(p.trackId), fnum(p.dRel), fnum(p.yRel), fnum(p.vRel), int(bool(p.measured))] for p in msg.liveTracks.points]
       elif w == "radarState":
         rs = (_lead_rec(msg.radarState.leadOne), _lead_rec(msg.radarState.leadTwo))
+        rs_tracks = tracks  # radard built this radarState from the liveTracks before it, not the next one
       elif w == "longitudinalPlan":
         lp_a = fnum(msg.longitudinalPlan.aTarget)
       elif w == "carState":
@@ -112,8 +136,10 @@ def read_rlog(files: list[Path]) -> tuple[list[dict], dict]:
         lanes = [_xy(md.laneLines[k]) for k in (1, 2)] if len(md.laneLines) >= 3 else [None, None]
         snaps.append({"mono": msg.logMonoTime, "path": _xy(md.position, step=1), "lanes": lanes,
                       "lprob": [fnum(p, 2) for p in list(md.laneLineProbs)[1:3]], "leads": leads,
-                      "tracks": tracks, "rs": rs, "lp_a": lp_a, "cs": cs})
-  return snaps, {"first_init": first_init}
+                      "tracks": tracks, "rs_tracks": rs_tracks, "rs": rs, "lp_a": lp_a, "cs": cs, "cal": cal, "frame_id": int(md.frameId)})
+  for sn in snaps:
+    sn["q"] = qframe.get(sn["frame_id"])
+  return snaps, {"first_init": first_init, "cam": cam}
 
 
 def route_zero_init(route_dir: Path, segments: list[int]) -> int | None:
@@ -191,7 +217,7 @@ def build(frames_path: Path, route_dir: Path | None, window: tuple[float, float]
              "simv": {v: [] for v in sim_variants}, "sima": {v: [] for v in sim_variants},
              "gs": {v: [] for v in sim_variants},
              "L1log": [], "L2log": [], "L1rep": [], "L2rep": [], "vis": [], "vis2": [],
-             "path": [], "lanes": [], "lprob": [], "tr": [], "trlog": []}
+             "path": [], "lanes": [], "lprob": [], "tr": [], "trlog": [], "rs_tracks": [], "cal": [], "q": []}
   for f in sel:
     k = int(np.searchsorted(monos, t0 + int(f["t"] * 1e9)))
     k = min(max(k, 0), len(snaps) - 1)
@@ -232,11 +258,17 @@ def build(frames_path: Path, route_dir: Path | None, window: tuple[float, float]
     D["path"].append(s["path"])
     D["lanes"].append(s["lanes"])
     D["lprob"].append(s["lprob"])
+    D["cal"].append(s["cal"])
+    D["rs_tracks"].append(s["rs_tracks"])
+    D["q"].append(s["q"])
 
-  # native vRel of the lead: replay has it in viz; log takes the raw liveTracks point with the same id
+  # native vRel of the lead: replay has it in viz; log takes the raw point with the same id from the liveTracks
+  # radard built that radarState from (the one before it). Pairing with the same-time liveTracks is one cycle
+  # late and reads as extra closing whenever closing speed changes (Radar Work (Bob), 2026-09-29: 293 412-428
+  # device correction 2.50 -> 0.00, 294 559-567 1.28 -> 0.00, 25e 725 2.05 -> 0.23)
   for i, L in enumerate(D["L1log"]):
     if L is not None and L[5]:
-      pt = next((p for p in (D["trlog"][i] if has_viz else D["tr"][i]) if p[0] == L[4]), None)
+      pt = next((p for p in D["rs_tracks"][i] if p[0] == L[4]), None)
       D["L1log"][i] = L + [pt[3] if pt else None]
     elif L is not None:
       D["L1log"][i] = L + [None]
@@ -257,7 +289,70 @@ def build(frames_path: Path, route_dir: Path | None, window: tuple[float, float]
                "logged_op_long": meta.get("logged_op_long"), "agreement": meta.get("agreement"),
                "onpath_half_m": ONPATH_HALF_M, "vis_prob": VIS_PROB, "event_t": event_t}
   D["metrics"], D["events"] = metrics(D)
+  D["cam_info"] = info["cam"]
   return D
+
+
+# ---------------------------------------------------------------------------------------------- camera
+
+def _qcamera_path(qdir: Path, seg: int) -> Path | None:
+  for p in (qdir / str(seg) / "qcamera.ts", *sorted(qdir.glob(f"*--{seg}/qcamera.ts"))):
+    if p.exists():
+      return p
+  return None
+
+
+def add_camera(D: dict, qdir: Path) -> None:
+  """Embed the qcamera frame behind each row, and the calibrated-frame -> qcamera-pixel matrix to draw on it."""
+  from PIL import Image
+  need: dict[int, set[int]] = {}
+  for q in D["q"]:
+    if q is not None:
+      need.setdefault(q[0], set()).add(q[1])
+  imgs: list[str] = []
+  where: dict[tuple[int, int], int] = {}
+  size = None
+  for seg, ids in sorted(need.items()):
+    path = _qcamera_path(qdir, seg)
+    if path is None:
+      print(f"no qcamera.ts for segment {seg} under {qdir}", file=sys.stderr)
+      continue
+    wh = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                         "-of", "csv=p=0", str(path)], capture_output=True, text=True, check=True).stdout.split()[0].split(",")
+    w, h = int(wh[0]), int(wh[1])
+    size = (w, h)
+    proc = subprocess.Popen(["ffmpeg", "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                            stdout=subprocess.PIPE)
+    k, last = 0, max(ids)
+    while k <= last:
+      buf = proc.stdout.read(w * h * 3)
+      if len(buf) < w * h * 3:
+        break
+      if k in ids:
+        out = io.BytesIO()
+        Image.frombytes("RGB", (w, h), buf).save(out, "JPEG", quality=CAM_JPEG_Q)
+        where[(seg, k)] = len(imgs)
+        imgs.append(base64.b64encode(out.getvalue()).decode())
+      k += 1
+    proc.kill()
+    proc.wait()
+  if not imgs or size is None:
+    return
+  dev, sensor = D.get("cam_info") or ("tici", "unknown")
+  fcam = DEVICE_CAMERAS.get((dev, sensor), DEVICE_CAMERAS[("tici", "unknown")]).fcam
+  K = fcam.intrinsics.copy()
+  K[0] *= size[0] / fcam.width   # qcamera is the full road frame scaled, per axis
+  K[1] *= size[1] / fcam.height
+  mats = []
+  for c in D["cal"]:
+    if c is None:
+      mats.append(None)
+      continue
+    m = K @ view_frame_from_device_frame @ rot_from_euler(c[:3])
+    mats.append([round(float(x), 5) for x in m.ravel()] + [round(c[3], 3)])
+  D["cam"] = {"w": size[0], "h": size[1], "imgs": imgs, "device": [dev, sensor], "radar_to_camera": RADAR_TO_CAMERA,
+              "idx": [where.get(tuple(q)) if q is not None else None for q in D["q"]], "P": mats}
+  print(f"camera: {len(imgs)} qcamera frames {size[0]}x{size[1]} ({dev}/{sensor})", file=sys.stderr)
 
 
 def onpath_ids(tracks, path) -> list[int]:
@@ -332,11 +427,30 @@ def sustained_max(t, x) -> float | None:
 # so the raw sustained figure alone flags a rescue. No same-car camera at VIS_PROB -> unjudged.
 PHANTOM_EXTRA_MPS = 2.0
 PHANTOM_AWAY_MARGIN_MPS = 1.0
+# The camera's speed under-reads closing on far cars (STATUS 162 / 280 15:03). 00000297 53:40: camera v steady
+# while its own x fell 119 -> 49 m in 8 s. So a "phantom" frame whose camera x-rate (a line fit over
+# XRATE_WIN_S, same-car frames only: x is +-5 m noisy and jumps on lead switches) agrees with the radar range fall
+# within XRATE_AGREE_MPS is reclassed neutral: the camera's range backs the radar, its speed does not.
+XRATE_WIN_S = 2.0
+XRATE_MIN_PTS = 15
+XRATE_AGREE_MPS = 2.0
 ASSIST_CLASSES = ("phantom", "helped", "neutral", "unjudged")
 
 
-def assist_classes(t, extra, v_pub, v_nat, vis_v, same) -> dict:
+def fit_rate(t, x, ok) -> np.ndarray:
+  """d(x)/dt from a line fit over XRATE_WIN_S centred on each frame, using only the frames in ok."""
+  out = np.full(len(t), np.nan)
+  good = ok & np.isfinite(x)
+  for i in range(len(t)):
+    w = good & (np.abs(t - t[i]) <= XRATE_WIN_S / 2)
+    if w.sum() >= XRATE_MIN_PTS:
+      out[i] = np.polyfit(t[w], x[w], 1)[0]
+  return out
+
+
+def assist_classes(t, extra, v_pub, v_nat, vis_v, same, d_radar=None, x_cam=None) -> dict:
   """Per class: largest extra closing held >= SUSTAIN_S inside that class, and when it began."""
+  t = np.asarray(t, dtype=float)
   e_pub, e_nat = np.abs(v_pub - vis_v), np.abs(v_nat - vis_v)
   big = np.isfinite(extra) & (extra >= PHANTOM_EXTRA_MPS)
   judged = same & np.isfinite(e_pub) & np.isfinite(e_nat)
@@ -345,6 +459,13 @@ def assist_classes(t, extra, v_pub, v_nat, vis_v, same) -> dict:
     "helped": big & judged & (e_pub < e_nat),
     "unjudged": big & ~judged,
   }
+  if d_radar is not None and x_cam is not None and masks["phantom"].any():
+    near = np.zeros(len(t), dtype=bool)  # only fit around phantom frames
+    for ti in t[masks["phantom"]]:
+      near |= np.abs(t - ti) <= XRATE_WIN_S
+    rate_cam = np.where(near, fit_rate(t, x_cam, same & near), np.nan)
+    rate_rad = np.where(near, fit_rate(t, d_radar, same & near), np.nan)
+    masks["phantom"] &= ~(np.abs(rate_cam - rate_rad) < XRATE_AGREE_MPS)
   masks["neutral"] = big & judged & ~masks["phantom"] & ~masks["helped"]
   out = {}
   for k in ASSIST_CLASSES:
@@ -447,10 +568,10 @@ def metrics(D) -> tuple[dict, list[dict]]:
   for k, vr in (("radar_vs_vision_vlead_err_max_log", vpl), ("native_vs_vision_vlead_err_max_log", vnl)):
     e = np.where(same, v_log + vr - vis_v, np.nan)
     common[k] = fnum(e[np.nanargmax(np.abs(e))]) if np.isfinite(e).any() else None
-  common["assist_log"] = assist_classes(t, vnl - vpl, v_log + vpl, v_log + vnl, vis_v, same)
+  common["assist_log"] = assist_classes(t, vnl - vpl, v_log + vpl, v_log + vnl, vis_v, same, dl, vis_d)
   if D["meta"]["has_viz"]:
     same1 = (radar1 == 1) & (vis_p > VIS_PROB) & (np.abs(d1 - vis_d) < np.maximum(10.0, 0.2 * d1))
-    common["assist"] = assist_classes(t, vn1 - vr1, v_log + vr1, v_log + vn1, vis_v, same1)
+    common["assist"] = assist_classes(t, vn1 - vr1, v_log + vr1, v_log + vn1, vis_v, same1, d1, vis_d)
 
   per: dict = {}
   cars = [(DRIVE, v_log, a_log, arr(D["acmd"]), np.zeros_like(t), None)]
@@ -743,6 +864,9 @@ def main() -> int:
   ap.add_argument("--range", type=float, default=100.0, help="bird's-eye forward range for the mp4, m")
   ap.add_argument("--variants", help="comma list of sim variants drawn in the mp4 (default: all but nobound/logged)")
   ap.add_argument("--metrics-json", type=Path)
+  ap.add_argument("--qcamera-dir", type=Path, help="dir with <seg>/qcamera.ts or <route>--<seg>/qcamera.ts "
+                  + "(default: the route dir); the page shows the road camera with the radar tracks drawn on it")
+  ap.add_argument("--no-camera", action="store_true")
   args = ap.parse_args()
   window = tuple(float(x) for x in args.window.split(",")) if args.window else None
   D = build(args.frames_json, args.route_dir, window, args.event_t)
@@ -750,6 +874,8 @@ def main() -> int:
   if args.metrics_json:
     args.metrics_json.write_text(json.dumps({"meta": D["meta"], **D["metrics"], "events": D["events"]}, indent=1))
   if args.html:
+    if not args.no_camera:
+      add_camera(D, args.qcamera_dir or Path(D["meta"]["route_dir"]))
     write_html(D, args.html)
     print(f"wrote {args.html}", file=sys.stderr)
   if args.mp4:
