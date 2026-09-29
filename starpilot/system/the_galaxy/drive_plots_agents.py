@@ -88,6 +88,7 @@ HWY_V = 20.0                  # m/s: highway moments
 INSIDE_CUT_DEMAND = 0.5       # |lat_des| m/s^2 ...
 INSIDE_CUT_M = 0.25           # ... car toward the inside of the curve by more than this (m) ...
 INSIDE_CUT_S = 2.0            # ... for at least this long
+CURVE_SIDE_MIN_DEG = 0.5      # |wheel angle - angle offset| under this: curve side unknown (James)
 WIGGLE_DEMAND = 0.3           # |lat_des| m/s^2 under this: a straight
 WIGGLE_TQ = 0.05              # |tq_out| (normalized) a swing must pass on each side to count
 WIGGLE_CROSSINGS = 4          # this many sign changes ...
@@ -425,6 +426,9 @@ def takeovers(c, t0=None):
     else:
       e["cut_s"] = e["cut_start"] = e["release_step_max"] = None
     e.update(_turn_fight(c, t, s, r, dt, angles, err))
+    # Kevin: at the car's 20 Hz a 0.1 s slope window holds 2-3 samples, so takeback_rate_peak is noisier than his
+    # 100 Hz road table; label it (rlog_report --rate carstate rebuilds at 100 Hz).
+    e["sample_hz"] = int(round(1.0 / dt)) if dt > 0 else None
     if i_ok:
       e["i_press_min"] = _r(np.nanmin(c["lat_i"][s:r + 1]), 4) if np.any(np.isfinite(c["lat_i"][s:r + 1])) else None
       e["i_press"] = _r(c["lat_i"][s], 4)
@@ -748,14 +752,19 @@ def lat_moments(c, t0=None, cap=None):
   hwy = lat & (v >= HWY_V) & ~after_release(c) & ~_b(c, "blinker") & ~(np.nan_to_num(_col(c, "lane_change", n)) > 0.5)
   dem = _col(c, "lat_des", n)
   if has(c, "lane_off") and has(c, "ang_act") and has(c, "lat_des"):
-    # Curve side from the wheel angle (+ = left, James): lane_off is + for the car left of centre, so + here is inside.
-    inside = np.sign(np.nan_to_num(c["ang_act"])) * c["lane_off"]
+    # Curve side from the wheel angle less liveParameters' offset (+ = left, James): at 25 m/s a 0.5 m/s^2 curve is
+    # ~1.9 deg of wheel and the offset sat at -0.7 to -1.3 deg on 294/296/297, so the raw angle can name the wrong side.
+    # Under CURVE_SIDE_MIN_DEG the side is unknown and the frame is skipped. lane_off is + for the car left of centre,
+    # so + here is inside.
+    side_ang = np.nan_to_num(c["ang_act"]) - np.nan_to_num(_col(c, "ang_off", n))
+    side = np.where(np.abs(side_ang) >= CURVE_SIDE_MIN_DEG, np.sign(side_ang), 0.0)
+    inside = side * c["lane_off"]
     lane_ok = np.nan_to_num(_col(c, "lane_prob", n), nan=1.0) > LANE_PROB_MIN
     cut = hwy & lane_ok & (np.abs(np.nan_to_num(dem)) >= INSIDE_CUT_DEMAND) & (np.nan_to_num(inside) > INSIDE_CUT_M)
     add([x for x in _runs_of(cut) if t[min(x[1], n - 1)] - t[x[0]] >= INSIDE_CUT_S],
         lambda a, b: base("hwy_inside_cut", a, inside_max_m=_r(np.nanmax(inside[a:b]), 2), for_s=_r(t[min(b, n - 1)] - t[a], 1),
                           lat_des=val("lat_des", a), ang=val("ang_act", a, 1), lane_w=val("lane_w", a),
-                          turn="left" if c["ang_act"][a] > 0 else "right"))
+                          ang_off=val("ang_off", a), turn="left" if side[a] > 0 else "right"))
 
   if has(c, "tq_out") and has(c, "lat_des"):
     y = np.nan_to_num(_col(c, "tq_out", n))
