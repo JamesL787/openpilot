@@ -899,7 +899,7 @@ def test_takeover_turn_fight_numbers():
   eps = agents.takeovers(c)["episodes"]
   assert [round(e["t"], 1) for e in eps] == [30.0, 60.0, 61.5]
   e = eps[0]
-  assert e["turn"] is True and e["release_gap_deg"] == pytest.approx(25.0)
+  assert e["turn"] is True and e["release_gap_deg"] == pytest.approx(25.0) and e["sample_hz"] == 20
   assert e["lat_out_release"] == pytest.approx(0.2) and e["takeback_rate_peak"] == pytest.approx(0.6, abs=0.05)
   assert e["t90_s"] == pytest.approx(0.9, abs=0.06)
   assert e["fault_flicker_n"] == 2 and e["fault_flicker_ms"] == pytest.approx(300, abs=60)
@@ -994,6 +994,9 @@ def test_james_lateral_moments():
   c["lane_off"][(t >= 40.0) & (t < 43.0)] = 0.35        # left curve (angle +), car left of centre: inside by 0.35 m
   c["lane_off"][(t >= 50.0) & (t < 51.0)] = 0.35        # only 1 s: not a cut
   c["lane_off"][(t >= 55.0) & (t < 58.0)] = -0.35       # outside: not a cut
+  c["ang_off"][:] = 0.0
+  c["lane_off"][(t >= 60.0) & (t < 63.0)] = 0.35        # raw +0.8 deg is -0.2 deg less a +1.0 offset: side unknown
+  c["ang_act"][(t >= 59.0) & (t < 64.0)], c["ang_off"][(t >= 59.0) & (t < 64.0)] = 0.8, 1.0
   straight = t >= 70.0
   c["lat_des"][straight], c["ang_act"][straight] = 0.1, 0.5
   c["ff"][straight], c["lat_p"][straight] = 0.02, 0.03
