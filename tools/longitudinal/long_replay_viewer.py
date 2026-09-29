@@ -307,9 +307,9 @@ def adoption_lags(t, lead_recs, onpath, track_idx=5):
 SUSTAIN_S = 0.3
 
 
-def sustained_max(t, x) -> float | None:
-  """Largest value x stayed at or above for SUSTAIN_S (a gap in x ends the run)."""
-  best = None
+def sustained_run(t, x) -> tuple[float | None, float | None]:
+  """Largest value x stayed at or above for SUSTAIN_S (a gap in x ends the run), and when that run began."""
+  best, best_t = None, None
   for i in range(len(t)):
     if not np.isfinite(x[i]):
       continue
@@ -318,8 +318,39 @@ def sustained_max(t, x) -> float | None:
       j += 1
       lo = min(lo, x[j])
     if t[j] - t[i] >= SUSTAIN_S - 0.06 and (best is None or lo > best):
-      best = lo
-  return fnum(best) if best is not None else None
+      best, best_t = lo, t[i]
+  return (fnum(best), best_t) if best is not None else (None, None)
+
+
+def sustained_max(t, x) -> float | None:
+  return sustained_run(t, x)[0]
+
+
+# Range-assist classes (Radar Work (Bob), 2026-09-29). Extra closing (native - published vRel) of
+# PHANTOM_EXTRA_MPS or more is a phantom only when it moved the published lead speed AWAY from the
+# camera's; 00000297 39:01.8 (Bob clock) hit the 8.0 cap and pulled a lagging vLead TOWARD the camera,
+# so the raw sustained figure alone flags a rescue. No same-car camera at VIS_PROB -> unjudged.
+PHANTOM_EXTRA_MPS = 2.0
+PHANTOM_AWAY_MARGIN_MPS = 1.0
+ASSIST_CLASSES = ("phantom", "helped", "neutral", "unjudged")
+
+
+def assist_classes(t, extra, v_pub, v_nat, vis_v, same) -> dict:
+  """Per class: largest extra closing held >= SUSTAIN_S inside that class, and when it began."""
+  e_pub, e_nat = np.abs(v_pub - vis_v), np.abs(v_nat - vis_v)
+  big = np.isfinite(extra) & (extra >= PHANTOM_EXTRA_MPS)
+  judged = same & np.isfinite(e_pub) & np.isfinite(e_nat)
+  masks = {
+    "phantom": big & judged & (e_pub > e_nat + PHANTOM_AWAY_MARGIN_MPS),
+    "helped": big & judged & (e_pub < e_nat),
+    "unjudged": big & ~judged,
+  }
+  masks["neutral"] = big & judged & ~masks["phantom"] & ~masks["helped"]
+  out = {}
+  for k in ASSIST_CLASSES:
+    v, ts = sustained_run(t, np.where(masks[k], extra, np.nan))
+    out[k] = {"extra_sustained": v, "t": ts}
+  return out
 
 
 def longest_run(t, mask) -> tuple[float, float | None]:
@@ -416,6 +447,10 @@ def metrics(D) -> tuple[dict, list[dict]]:
   for k, vr in (("radar_vs_vision_vlead_err_max_log", vpl), ("native_vs_vision_vlead_err_max_log", vnl)):
     e = np.where(same, v_log + vr - vis_v, np.nan)
     common[k] = fnum(e[np.nanargmax(np.abs(e))]) if np.isfinite(e).any() else None
+  common["assist_log"] = assist_classes(t, vnl - vpl, v_log + vpl, v_log + vnl, vis_v, same)
+  if D["meta"]["has_viz"]:
+    same1 = (radar1 == 1) & (vis_p > VIS_PROB) & (np.abs(d1 - vis_d) < np.maximum(10.0, 0.2 * d1))
+    common["assist"] = assist_classes(t, vn1 - vr1, v_log + vr1, v_log + vn1, vis_v, same1)
 
   per: dict = {}
   cars = [(DRIVE, v_log, a_log, arr(D["acmd"]), np.zeros_like(t), None)]
@@ -682,6 +717,10 @@ def print_metrics(D: dict) -> None:
             "lead_dropout_s", "radar_vs_vision_d_err_median", "radar_vs_vision_d_err_max",
             "radar_vs_vision_vlead_err_max_log", "native_vs_vision_vlead_err_max_log"):
     print(f"  {k}: {c.get(k)}")
+  for side, key in (("replay", "assist"), ("log", "assist_log")):
+    if key in c:
+      print(f"  range assist ({side}, extra >= {PHANTOM_EXTRA_MPS:g} held {SUSTAIN_S:g} s): " + "  ".join(
+        f"{k} {r['extra_sustained']}" + (f" @{r['t']:.2f}" if r["t"] is not None else "") for k, r in c[key].items()))
   keys = ["min_gap_m", "min_ttc_s", "max_decel", "felt_jerk_rms", "felt_jerk_max", "max_cmd_jerk", "cmd_onset_lag_s",
           "a_onset_lag_s", "cmd_to_a_lag_s", "cut_at_drift"]
   print(f"  {'':>8} " + " ".join(f"{k[:13]:>13}" for k in keys))
