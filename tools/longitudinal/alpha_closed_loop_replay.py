@@ -114,6 +114,24 @@ HUMAN_VARIANTS = ("human_off", "frog", "frog_guard")
 # 'late_A' = only the comfort-floor pass, 'late_B' = only the merge-floor release.
 LATE_VARIANTS = {"late_off": (False, None), "late_A": (True, None), "late_B": (False, -1.5)}
 LATE_DEFAULTS = (LP.MPC_LEAD_BRAKE_PASSES_COMFORT_FLOOR, LP.LC_MERGE_RELEASE_MPC_DEMAND)
+
+
+class LogClock:
+  """time.monotonic() for the planner, read from the log time of the message being replayed.
+
+  The planner's latches (0.8 s low-speed stop-buffer hold, 0.7 s recent-brake window, the post-departure
+  settle latch) are timed with time.monotonic(). With the wall clock, how many frames a latch spans depended
+  on how fast this machine ran the replay, so two identical runs differed (up to 1.0 m/s2 on 293 1965 s).
+  On the car monotonic time and logMonoTime are the same clock. Planner copies loaded outside this module
+  can share it: `module.time = LOG_CLOCK`.
+  """
+  now = 0.0
+
+  def monotonic(self) -> float:
+    return self.now
+
+
+LOG_CLOCK = LogClock()
 # --hf-gate: FrogPilot e7debabe5 (2026-09-20) gates the HumanFollowing model path on the radar lead's own
 # modelProb as well as the model lead's prob, so a lead the model never matched (low-speed override,
 # modelProb 0) keeps its aLeadK extrapolation. 'hf_gate' = the shipped builder plus that gate.
@@ -423,8 +441,10 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
   t_prev = None
   meta["sim_window"] = sim_window
 
+  LP.time = LOG_CLOCK
   for path in files:
     for msg in LogReader(str(path), sort_by_time=True):
+      LOG_CLOCK.now = msg.logMonoTime / 1e9
       which = msg.which()
       if t0 is None and which == "initData":
         t0 = msg.logMonoTime
