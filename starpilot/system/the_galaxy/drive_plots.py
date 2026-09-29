@@ -80,8 +80,9 @@ COLUMNS = [
   "lead_dpath", "lead_tau", "pitch", "v_cruise",
   # starpilotPlan: red light, forcing a stop, road curvature ahead (1/m), approach-stop pre-commit distance (m).
   "red_light", "forcing_stop", "road_curv", "stop_len",
-  # starpilotCarState Honda gas learner: applied gas factor, wind factor, error (m/s^2), learning this tick.
-  "gl_gf", "gl_wf", "gl_err", "gl_learn",
+  # starpilotCarState Honda gas learner: applied gas factor, wind factor, error (m/s^2), learning this tick, and the
+  # raw gas factor before its clip (Bob's gf_clip moment).
+  "gl_gf", "gl_wf", "gl_err", "gl_learn", "gl_gf_raw",
   # starpilotRadarState: a moving lead in the left / right lane, a vehicle stopped in an adjacent lane.
   "adj_l", "adj_r", "adj_stop",
 ]
@@ -1050,13 +1051,14 @@ def _request_columns(sm, o, cs, cc, have_cc, car_state, plan):
       o["road_curv"], o["stop_len"] = _field(sp, "roadCurvature"), _field(sp, "approachStopLength")
     except Exception:
       pass
-  o["gl_gf"] = o["gl_wf"] = o["gl_err"] = o["gl_learn"] = NAN
+  o["gl_gf"] = o["gl_wf"] = o["gl_err"] = o["gl_learn"] = o["gl_gf_raw"] = NAN
   if _got(sm, "starpilotCarState"):
     try:
       scs = sm["starpilotCarState"]
       if scs.gasLearnerAvailable:
         o["gl_gf"], o["gl_wf"] = _field(scs, "gasLearnerGasFactor"), _field(scs, "gasLearnerWindFactor")
         o["gl_err"], o["gl_learn"] = _field(scs, "gasLearnerError"), int(bool(scs.gasLearnerLearning))
+        o["gl_gf_raw"] = _field(scs, "gasLearnerGasFactorRaw")
     except Exception:
       pass
   o["adj_l"] = o["adj_r"] = o["adj_stop"] = NAN
@@ -1498,7 +1500,7 @@ class DrivePlots:
     for e in agents.takeovers(c, t0=t0)["episodes"]:
       release_mono = e["mono_s"] + (e["release_t"] - e["t"])
       if lo <= e["mono_s"] and release_mono + TAKEOVER_TAIL_S <= t[-1] and not self._seen(rec, "takeover", e["mono_s"]):
-        e = {k: v for k, v in e.items() if not k.startswith("i_") or k in ("i_press", "i_release", "i_release_1s")}
+        e = {k: v for k, v in e.items() if not k.startswith("i_") or k in ("i_press", "i_press_min", "i_release", "i_release_1s")}
         self._publish("takeover", {"session": rec["id"], "route": rec.get("route"), **e,
                                    "lateral_controller": rec["meta"].get("lateral_controller"),
                                    "git_commit": rec["meta"].get("git_commit")})

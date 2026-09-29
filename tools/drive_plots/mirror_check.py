@@ -120,6 +120,7 @@ def expected(m, plan_mono):
     "road_curv": sp.roadCurvature if sp is not None else NAN, "stop_len": sp.approachStopLength if sp is not None else NAN,
     "gl_gf": scs.gasLearnerGasFactor if gl else NAN, "gl_wf": scs.gasLearnerWindFactor if gl else NAN,
     "gl_err": scs.gasLearnerError if gl else NAN, "gl_learn": int(scs.gasLearnerLearning) if gl else NAN,
+    "gl_gf_raw": scs.gasLearnerGasFactorRaw if gl else NAN,
     "adj_l": int(srs.leadLeft.status) if srs is not None else NAN,
     "adj_r": int(srs.leadRight.status) if srs is not None else NAN,
     "adj_stop": int(srs.adjacentStopped.status) if srs is not None else NAN,
