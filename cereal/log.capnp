@@ -784,6 +784,10 @@ struct RadarState @0x9a185389d6fdd05f {
 
   leadOne @3 :LeadData;
   leadTwo @4 :LeadData;
+  # Bosch-A only (ONPATH_RADAR_ADOPT in selfdrive/controls/radard.py): a radar-only track that has sat on the
+  # driving path for a second while the model does not see it. leadOne is unchanged; the planner may let this
+  # lead add braking beyond leadOne's, down to ONPATH_LEAD_MAX_BRAKE, until vision or radard's own leadOne takes it.
+  leadOnpath @14 :LeadData;
 
   struct LeadData {
     dRel @0 :Float32;
