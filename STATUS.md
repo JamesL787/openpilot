@@ -7683,6 +7683,19 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
   Evidence is static only: `tests/test_plots_zoom_browser.mjs` runs headless Chromium on both pages against a synthetic
   20-min drive, covering mouse drag, finger drag, vertical swipe, tap, buttons and the band. Not yet tried on a phone
   against the device.
+- **2026-09-29 agent metrics** (Kevin, James, Bob and John asked; static and one-route replay evidence only):
+  - 31 more columns (09d059dac): steering faults, desired/actual curvature, firmware-FF internals, liveParameters,
+    liveDelay, planner source and caps, pitch, set speed, red light, gas learner, adjacent leads. RAM, local x86, a 2 h
+    drive with every column filled: finalize peak 255 MB vs 188 MB before (+67 MB after parking); nothing added
+    while driving (rows stream to disk). About 50 µs of CPU per row.
+  - Per-takeover numbers for Kevin (fcfe0e868): release gap, takeback rate, t90, re-press, fault flicker, near-cut.
+  - Moments (d7c014256, bcd56fd0d): Bob's exp_flipflop, false_red_light, atarget_step, close_lead_cap,
+    radar_coast_near, vrel_disagree, radar_vs_model, overspeed_no_lead and gf_clip; James's fault_flicker,
+    release_snap, hwy_inside_cut and hwy_wiggle. Replay of route 297 (0.96 h): vrel_disagree 263/h is real (the two
+    relative speeds differ by more than 1.5 m/s on about 25 % of radar lead frames), so its threshold is Bob's call.
+    `rlog_report` also writes `moment_windows.csv`, ±2 s of rows around each moment (offline only).
+  - `tools/drive_plots/sim_export.py` writes John's `lat_pid_sim.npz` per steered segment at the controls rate
+    (~97 Hz on 297), t from each segment's first carState. Not yet read by his scorer.
 
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 
