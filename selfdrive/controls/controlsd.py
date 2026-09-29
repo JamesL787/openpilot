@@ -26,7 +26,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
-from openpilot.selfdrive.controls.lib.latcontrol_clarity_eps import LatControlClarityEps, use_clarity_eps_controller
+from openpilot.selfdrive.controls.lib.latcontrol_clarity_eps import LatControlClarityEps, clarity_lateral_delay, use_clarity_eps_controller
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
@@ -449,8 +449,9 @@ class Controls:
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
 
+    self.clarity_eps_controller = use_clarity_eps_controller(self.CP)
     # see TURN_SHAPING_TAU
-    self.turn_shaping = use_clarity_eps_controller(self.CP)
+    self.turn_shaping = self.clarity_eps_controller
 
     self.sm = self.sm.extend(['liveDelay', 'starpilotCarState', 'starpilotPlan'])
 
@@ -925,7 +926,8 @@ class Controls:
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
                                                                jerk_factor)
     lat_smooth_seconds = get_control_lateral_smooth_seconds(self.CP.brand, CS.vEgo, self.CP.lateralSmoothSeconds)
-    lat_delay = self.sm["liveDelay"].lateralDelay + lat_smooth_seconds
+    lateral_delay = clarity_lateral_delay(CS.vEgo) if self.clarity_eps_controller else self.sm["liveDelay"].lateralDelay
+    lat_delay = lateral_delay + lat_smooth_seconds
 
     actuators.curvature = self.desired_curvature
     steer, lateral_output, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,

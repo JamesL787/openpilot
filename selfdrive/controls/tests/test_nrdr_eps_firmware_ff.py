@@ -217,6 +217,16 @@ def test_only_the_modified_eps_clarity_gets_this_controller():
   assert not clarity_eps.use_clarity_eps_controller(_params(b'39990-TBA,A030\x00\x00', CAR.HONDA_CIVIC_BOSCH))
 
 
+@pytest.mark.parametrize("v, delay", [(0.0, 0.18), (3.5, 0.18), (7.0, 0.20), (12.0, 0.23), (20.0, 0.28), (30.0, 0.35), (40.0, 0.35)])
+def test_lateral_delay_follows_the_measured_execution_delay(v, delay):
+  assert clarity_eps.clarity_lateral_delay(v) == pytest.approx(delay)
+
+
+def test_lateral_delay_rises_with_speed():
+  delays = [clarity_eps.clarity_lateral_delay(v) for v in np.linspace(0.0, 40.0, 81)]
+  assert all(b >= a for a, b in zip(delays, delays[1:], strict=False))
+
+
 def test_nrdr_settings_are_read(monkeypatch):
   lac, _, _ = _controller(monkeypatch, {
     "NrdrLatUseFirmwareVgr": "1", "NrdrLatAngleRateLimit": "219", "HondaTorqueOutputLowPassFilter": "1",
