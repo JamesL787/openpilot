@@ -157,7 +157,7 @@ LAUNCH_LEAD_SPEED_MARGIN_MS = 5.0 * CV.MPH_TO_MS
 # speed has been raised and the car has caught up to the normal (lead or plan) target, so ICBM follows the
 # lead again.
 
-# Gas release (SetSpeedOnGasRelease): when the driver releases the gas above the set speed on the dash,
+# Gas release (built into ICBM): when the driver releases the gas above the set speed on the dash,
 # hold the ICBM target at or above the release speed until a cruise button, the brake, a stop or a
 # disengage. Route 262 1:29 and 2:25: the old path moved openpilot's v_cruise (the 55 mph ICBM max), not
 # the dash set speed, so a release at 37 mph over a 24.9 mph set speed changed nothing.

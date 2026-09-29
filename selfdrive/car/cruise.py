@@ -30,7 +30,7 @@ CRUISE_INTERVAL_SIGN = {
   ButtonType.decelCruise: -1,
 }
 ACCEL_CRUISE_BUTTONS = (ButtonType.accelCruise,)
-# Gas-release set speed (SetSpeedOnGasRelease, ICBM only): when the driver lets off the gas above the set speed,
+# Gas-release set speed (ICBM only, built in): when the driver lets off the gas above the set speed,
 # the set speed becomes the speed at release, rounded to a whole display unit. Peter asked for this 2026-09-23.
 # The margin keeps a small overshoot of the set speed from moving it.
 GAS_RELEASE_SET_MARGIN_KPH = 1.0 * CV.MPH_TO_KPH
