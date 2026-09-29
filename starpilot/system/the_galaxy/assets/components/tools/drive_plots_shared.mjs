@@ -441,8 +441,10 @@ export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
   const base = toNumber(meta?.first_sample_at, 0) || toNumber(meta?.started_at, 0)
   const approx = !toNumber(meta?.first_sample_at, 0)
   const acc = (x) => `${fmtNum(Math.abs(toNumber(x)), 1)} m/s²`
-  // Radar-to-camera handoffs are routine; they stay in the analysis and the drive's logs for the radar work.
-  return events.filter((e) => e.kind !== "radar_acquired" && e.kind !== "radar_lost").map((e) => {
+  // Radar-to-camera handoffs are routine, and an experimental-mode burst with long control off never reached the car
+  // (Bob); both stay in the analysis and the drive's logs for the radar work.
+  return events.filter((e) => e.kind !== "radar_acquired" && e.kind !== "radar_lost" &&
+    !(e.kind === "exp_flipflop" && e.long_active === false)).map((e) => {
     let title = ""
     let detail = ""
     let kind = "steer"

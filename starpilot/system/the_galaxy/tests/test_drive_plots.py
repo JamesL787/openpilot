@@ -928,6 +928,7 @@ def test_bob_moments():
   c["exp_mode"][(t >= 5.0) & (t < 5.5)] = 1.0          # on at 5.0, off 0.5 s later: a flip-flop at 5.0
   c["exp_mode"][[400, 402]] = 1.0                        # on/off every frame (0.05 s) from 20.0 ...
   c["exp_mode"][404:500] = 1.0                           # ... ending on at 20.2: 5 flips, then off at 25.0
+  c["long_active"][(t >= 19.5) & (t < 21.0)] = 0        # long control off through that burst: it never reached the car
   c["red_light"][:] = 0.0
   c["red_light"][(t >= 10.0) & (t < 12.0)] = 1.0        # the car stays at 25 m/s: false red light at 10
   c["road_curv"][:] = 0.002
@@ -959,6 +960,8 @@ def test_bob_moments():
   assert f[0]["flips"] == 2 and f[0]["burst_s"] == pytest.approx(0.5) and f[0]["road_curv"] == 0.002
   assert f[1]["flips"] == 5 and f[1]["experimental_after"] is True   # one moment for a burst of quick flips
   assert f[0]["standstill"] == 0
+  assert f[0]["long_active"] is True and f[1]["long_active"] is False
+  assert sorted(e["t"] for e in agents.long_moments(c, cap=1) if e["kind"] == "exp_flipflop") == [5.0, 20.0]  # cap per group
   assert [e["t"] for e in got["false_red_light"]] == [10.0] and got["false_red_light"][0]["v_min_10s"] == 25.0
   assert [e["t"] for e in got["atarget_step"]] == [30.0, 31.0] and got["atarget_step"][1]["a_after"] == 0.0
   assert [e["t"] for e in got["close_lead_cap"]] == [40.0] and got["close_lead_cap"][0]["cl_cap"] == -1.2
