@@ -450,7 +450,7 @@ def _events(c, dt, lateral, cap=EVENTS_PER_KIND, takeover_data=None):
   kept = [e for e in eps if e["lat_active"]]
   for e in (kept[:cap] if cap else kept):
     x = {"kind": "steer_takeover", **{k: e[k] for k in ("t", "mono_s", "v", "hold_s", "tag", "push", "blinker",
-                                                            "release_overshoot_deg", "back_on_plan_s", "lanes_ok")
+                                                            "release_overshoot_deg", "back_on_plan_s", "lanes_ok", "flags")
                                       if k in e}}
     x["drift_3s_m"] = e.get("drift_3s_m")
     out.append(x)
