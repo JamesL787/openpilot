@@ -17,6 +17,8 @@ commanded then, now and over the next 3 s: median, spread, and how close the nea
                                   # in place of the logged one, so an open-loop planner variant gets the same verdicts
   stock_acc_reference.py leadbrake --cache-dir /tmp/sar [ALPHA_ROUTE ...]
                                   # does the command move when the lead starts braking, before the gap closes?
+  stock_acc_reference.py stops    --cache-dir /tmp/sar [ALPHA_ROUTE ...] [--list] [--json OUT]
+                                  # end-of-stop profile behind a lead: command and aEgo on the way down, the lurch
   stock_acc_reference.py augment  FRAMES.json ROUTE_DIR --cache-dir /tmp/sar --out FRAMES_STOCK.json
                                   # adds a `stock_nn` variant to an alpha_closed_loop_replay frames JSON, so
                                   # long_replay_viewer.py draws it next to the planner variants
@@ -627,6 +629,84 @@ def cmd_leadbrake(args) -> int:
   return 0
 
 
+STOP_V = 0.2                 # m/s: stopped
+STOP_BINS = (4.0, 2.0, 1.0, 0.5)  # m/s: speeds the approach is sampled at
+
+
+def stop_events(R: dict, side: np.ndarray) -> list[dict]:
+  """Stops behind a lead: speed falls from >= 4 m/s to below STOP_V and stays there 1 s, engaged throughout and a
+  lead within 30 m at the stop. Samples command and aEgo at STOP_BINS on the way down, and reports how the stop
+  ends: the command over the last second, the aEgo step at standstill (the lurch), the final gap."""
+  t, v, a, cmd = R["t"], R["v"], R["a"], R["cmd"]
+  out = []
+  last = -1e9
+  stopped = v < STOP_V
+  for i in np.flatnonzero(stopped[1:] & ~stopped[:-1]) + 1:
+    j = i + HZ
+    if j >= len(t) or t[i] - last < 10.0 or not np.all(stopped[i:j]) or t[j] - t[i] > 1.2:
+      continue
+    above = np.flatnonzero(v[:i] >= STOP_BINS[0])
+    if not len(above) or t[i] - t[above[-1]] > 20.0:
+      continue
+    s0 = above[-1]
+    if np.any(stopped[s0:i]):  # a creep after an earlier stop, not a fresh approach
+      continue
+    w = slice(s0, j)
+    if (np.any(np.diff(t[w]) > 0.2) or not np.all(side[w] > 0.5) or not np.all(np.isfinite(cmd[w])) or
+        not (np.isfinite(R["d"][i]) and R["d"][i] < 30.0)):
+      continue
+    last = t[i]
+    e = {"t": round(float(t[i]), 1), "approach_s": round(float(t[i] - t[s0]), 1), "gap_at_stop": round(float(R["d"][i]), 1)}
+    for vb in STOP_BINS:
+      k = s0 + int(np.flatnonzero(v[s0:i + 1] <= vb)[0])
+      e[f"cmd_at_{vb:g}"] = round(float(cmd[k]), 2)
+      e[f"aego_at_{vb:g}"] = round(float(a[k]), 2)
+    e["s_below_1"] = round(float(t[i] - t[s0 + int(np.flatnonzero(v[s0:i + 1] <= 1.0)[0])]), 1)
+    e["min_cmd"] = round(float(np.min(cmd[s0:i + 1])), 2)
+    e["min_aego"] = round(float(np.min(a[s0:i + 1])), 2)
+    last1 = slice(max(s0, i - HZ), i + 1)
+    e["cmd_last_1s_min"] = round(float(np.min(cmd[last1])), 2)
+    e["cmd_last_1s_rise"] = round(float(cmd[i] - np.min(cmd[last1])), 2)
+    e["aego_before_stop"] = round(float(np.min(a[last1])), 2)
+    e["lurch"] = round(float(np.max(a[i:j]) - np.min(a[last1])), 2)  # aEgo step from the last braking to standstill
+    e["reversals"] = reversals(cmd[s0:i + 1])
+    out.append(e)
+  return out
+
+
+def cmd_stops(args) -> int:
+  """End-of-stop profile, stock (corpus) against ours (alpha routes given)."""
+  _, routes = load_corpus(args.cache_dir)
+  groups = {"stock": [R for R in routes if not R["meta"]["op_long"]]}
+  groups["ours"] = [R for R in (load(p.expanduser(), args.cache_dir) for p in args.routes) if R["meta"]["op_long"]]
+  keys = [f"{k}_at_{vb:g}" for vb in STOP_BINS for k in ("cmd", "aego")] + \
+         ["approach_s", "s_below_1", "min_cmd", "min_aego", "cmd_last_1s_min", "cmd_last_1s_rise", "aego_before_stop",
+          "lurch", "gap_at_stop", "reversals"]
+  res = {}
+  for who, rs in groups.items():
+    ev = []
+    for R in rs:
+      for e in stop_events(R, R["stock"] if who == "stock" else R["alpha"]):
+        ev.append({"route": R["meta"]["route"], **e})
+    res[who] = ev
+  print(f"stops behind a lead (>= {STOP_BINS[0]:g} m/s to < {STOP_V} m/s, engaged, lead < 30 m): " +
+        ", ".join(f"{w} n {len(ev)}" for w, ev in res.items()))
+  print(f"  {'median (p25..p75)':<18}" + "".join(f"{w:>22}" for w in res))
+  for k in keys:
+    cells = []
+    for ev in res.values():
+      x = np.array([e[k] for e in ev], dtype=float)
+      cells.append(f"{np.median(x):>+8.2f} ({np.percentile(x, 25):+.2f}..{np.percentile(x, 75):+.2f})" if len(x) else "-")
+    print(f"  {k:<18}" + "".join(f"{c:>22}" for c in cells))
+  if args.list:
+    for w, ev in res.items():
+      for e in ev:
+        print(f"  {w:<5} {e['route']:<22} {fmt_t(e['t'])}", {k: e[k] for k in keys})
+  if args.json:
+    Path(args.json).write_text(json.dumps(res, indent=1))
+  return 0
+
+
 def cmd_compare(args) -> int:
   C, _ = load_corpus(args.cache_dir)
   out = []
@@ -685,13 +765,15 @@ def cmd_augment(args) -> int:
 def main() -> int:
   ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
   sub = ap.add_subparsers(dest="mode", required=True)
-  for name in ("build", "validate", "gain", "compare", "leadbrake", "augment"):
+  for name in ("build", "validate", "gain", "compare", "leadbrake", "stops", "augment"):
     s = sub.add_parser(name)
     s.add_argument("--cache-dir", type=Path, required=True, help="per-route npz cache and corpus (outside the repo)")
-    if name in ("build", "gain", "compare", "leadbrake"):
-      s.add_argument("routes", nargs="*" if name in ("gain", "leadbrake") else "+", type=Path)
-    if name == "leadbrake":
-      s.add_argument("--list", action="store_true", help="print every onset")
+    if name in ("build", "gain", "compare", "leadbrake", "stops"):
+      s.add_argument("routes", nargs="*" if name in ("gain", "leadbrake", "stops") else "+", type=Path)
+    if name in ("leadbrake", "stops"):
+      s.add_argument("--list", action="store_true", help="print every event")
+    if name == "stops":
+      s.add_argument("--json")
     if name == "compare":
       s.add_argument("--json")
       s.add_argument("--min-peak", type=float, default=-1.5, help="list episodes where either side goes below this")
@@ -702,7 +784,7 @@ def main() -> int:
       s.add_argument("--out", required=True)
   args = ap.parse_args()
   return {"build": cmd_build, "validate": cmd_validate, "gain": cmd_gain, "compare": cmd_compare,
-          "leadbrake": cmd_leadbrake, "augment": cmd_augment}[args.mode](args)
+          "leadbrake": cmd_leadbrake, "stops": cmd_stops, "augment": cmd_augment}[args.mode](args)
 
 
 if __name__ == "__main__":

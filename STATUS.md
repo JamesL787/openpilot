@@ -9930,7 +9930,7 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **Limits:**
   - The reference is a neighbour median. It says what stock did in similar logged moments, not what it would have done here.
   - No cut-ins, stop-and-go to zero, or adjacent-lane curves are separated out yet.
-  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 6 pass (synthetic routes).
+  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 7 pass (synthetic routes).
 - **Addendum (2026-09-29, Bob's gate3 questions; replay only):**
   - **Radar-vs-model tag.** An episode is tagged `radar closing > model` when radar closing exceeds the model lead's closing on the same car by 3 m/s or more in the second before our peak.
     - Ours harder: 10 of 23 tagged.
@@ -9943,4 +9943,19 @@ Replay of the fixed code (base = the old law, same 10 routes):
     - Ours moves first: in the same hard/closing case, 1 s drop median 0.68 (65 % at ≥ 0.3); control 3 %.
     - Reading: stock's decisiveness does not come from reacting to lead braking. It waits for the gap and closing speed, then commits. Ours reacts to the lead's decel within the first second, which lines up with "ours earlier".
   - **`compare --candidate trace.json`** (one route): scores a {"t", "cmd"} command trace against the stock reference in place of our logged command, for Bob's open-loop gate3+TTC variant.
-  - The end-of-stop profile is not done yet.
+  - **End-of-stop profile, `stops` mode (replay).** A stop behind a lead: speed falls from ≥ 4 m/s to < 0.2, engaged throughout, lead within 30 m. Creeps after an earlier stop are excluded. Stock n 33, ours n 32.
+
+    | median | stock | ours |
+    |---|---|---|
+    | command at 4 m/s | −1.35 | −1.02 |
+    | command at 2 m/s | −1.12 | −0.67 |
+    | command at 1 m/s | −0.82 | −0.42 |
+    | 4 m/s → stop | 4.5 s | 9.1 s |
+    | time below 1 m/s | 1.3 s | 2.4 s |
+    | gap at stop | 4.8 m | 5.1 m |
+    | aEgo step at standstill | +1.90 | +2.09 |
+    | command reversals | 0 | 1 |
+
+    - Stock brakes about twice as firmly through the last 4 m/s and holds roughly −0.8 into the stop. Ours tapers to about −0.4 and creeps for twice as long.
+    - Both stop at about the same gap, and the standstill aEgo step is similar.
+    - Reading: stock's stop is short and firm; ours is a long, soft crawl with one change of mind.

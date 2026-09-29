@@ -70,3 +70,15 @@ def test_lead_brake_onset_needs_a_calm_lead_first():
   assert [e["t"] for e in ev] == [10.0]
   R["alead"][150:200] = -1.0  # already braking the second before: not an onset
   assert sar.lead_brake_events(R, R["stock"]) == []
+
+
+def test_stop_profile_samples_the_approach_and_skips_creeps():
+  R = _route("s0", False, n=1000)
+  n = len(R["t"])
+  v = np.clip(8.0 - 1.0 * R["t"], 0.0, None)  # 8 m/s to a stop at t = 8 s, standing after
+  v[500:520] = 0.5  # creeps forward at t = 25 s and stops again: not a fresh approach
+  R["v"], R["a"], R["cmd"] = v, np.where(v > 0, -1.0, 0.0), np.where(v > 0, -1.0, 0.0)
+  R["d"] = np.full(n, 5.0)
+  ev = sar.stop_events(R, R["stock"])
+  assert len(ev) == 1 and abs(ev[0]["t"] - 7.85) < 0.1  # below STOP_V from 7.85 s
+  assert abs(ev[0]["approach_s"] - 3.85) < 0.1 and ev[0]["cmd_at_2"] == -1.0 and ev[0]["reversals"] == 0
