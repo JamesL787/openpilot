@@ -654,6 +654,7 @@ function timeAtX(el, clientX, geo) {
 export function rangeSelect(getGeo, { onTap = null, onRange = null, onWheelZoom = null } = {}) {
   let drag = null
   const clear = () => {
+    drag?.detach()
     if (drag?.box) drag.box.remove()
     const had = !!drag
     drag = null
@@ -685,7 +686,20 @@ export function rangeSelect(getGeo, { onTap = null, onRange = null, onWheelZoom 
       clear()
       gestureActive = true
       cancelActive = clear
-      drag = { el: e.currentTarget, id: e.pointerId, x0: e.clientX, x1: e.clientX, box: null }
+      // A press released off the chart before it became a drag (so before pointer capture), or lost with the window's
+      // focus, never reaches the chart; without this the gesture would stay open and hold every zoom reply. Bubble
+      // phase, so a release on the chart has already been handled (and has detached this) by the time it gets here.
+      const id = e.pointerId
+      const lost = (ev) => { if (!ev.pointerId || ev.pointerId === id) clear() }
+      window.addEventListener("pointerup", lost)
+      window.addEventListener("pointercancel", lost)
+      window.addEventListener("blur", lost)
+      const detach = () => {
+        window.removeEventListener("pointerup", lost)
+        window.removeEventListener("pointercancel", lost)
+        window.removeEventListener("blur", lost)
+      }
+      drag = { el: e.currentTarget, id, x0: e.clientX, x1: e.clientX, box: null, detach }
     },
     move(e) {
       if (!drag || e.pointerId !== drag.id) return

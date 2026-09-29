@@ -204,6 +204,17 @@ try {
     assert.ok(Math.abs(s - tAt(0.6)) < 8 && Math.abs(e - tAt(0.8)) < 8, `${surface}: drag survived a reply (${s}..${e})`)
     const title = await zoomTitle()
     assert.ok(title.includes('4m 00s'), `${surface}: the drag's range is what shows, with its length: ${title}`)
+    // 4. A press released just off the chart before it became a drag must not leave the zoom stuck.
+    const edge = box.x + box.width - 2
+    await page.mouse.move(edge, y)
+    await page.mouse.down()
+    await page.mouse.move(edge + 4, y + 4)
+    await page.mouse.move(edge + 4, box.y + box.height + 20)
+    await page.mouse.up()
+    const before = await zoomTitle()
+    await btn('Zoom in').click()
+    await settle()
+    assert.notEqual(await zoomTitle(), before, `${surface}: zoom still answers after a press released off the chart`)
     delayMs = 0
 
     // Phones: a sideways drag is ours, an up/down swipe belongs to the page.
