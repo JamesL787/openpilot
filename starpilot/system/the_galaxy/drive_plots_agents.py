@@ -191,6 +191,12 @@ def _held_runs(mask, t, hold_s):
   return out
 
 
+def _near(t, x):
+  """Index of the frame nearest time x (episode times are stored rounded to the ms)."""
+  k = int(np.searchsorted(t, x))
+  return max(0, min(len(t) - 1, k if k < len(t) and (k == 0 or t[k] - x < x - t[k - 1]) else k - 1))
+
+
 def _at(t, t0):
   return int(min(len(t) - 1, max(0, np.searchsorted(t, t0))))
 
@@ -512,6 +518,15 @@ def takeovers(c, t0=None):
     e["repress_after_s"] = _r(gap, 2) if gap is not None and gap <= REPRESS_LATE_S[1] else None
     e["repress"] = bool(gap is not None and REPRESS_S[0] <= gap < REPRESS_S[1])
     e["repress_late"] = bool(gap is not None and REPRESS_LATE_S[0] <= gap < REPRESS_LATE_S[1])
+    # Kevin's sim snap_deg: how far the wheel moved from the release to the re-press (+ = left), and its largest
+    # excursion from the release angle on the way.
+    e["repress_move_deg"] = e["repress_swing_deg"] = None
+    if e["repress_after_s"] is not None and has(c, "ang_act"):
+      a, b = _near(t, e["mono_s"] + e["hold_s"]), _near(t, e2["mono_s"])
+      ang = c["ang_act"][a:b + 1]
+      if b > a and np.isfinite(ang[0]) and np.isfinite(ang[-1]):
+        e["repress_move_deg"] = _r(ang[-1] - ang[0], 1)
+        e["repress_swing_deg"] = _r(np.nanmax(np.abs(ang - ang[0])), 1)
     gd = e.get("release_gap_deg")
     e["flags"] = [f for f, on in (
       ("FLICKER", bool(e.get("fault_in_press"))),
@@ -569,7 +584,9 @@ def takeovers(c, t0=None):
                    f"override threshold); near_cut_s = {NEAR_CUT_TQ[0]:g} <= |steeringTorque| <= {NEAR_CUT_TQ[1]:g} "
                    "without steeringPressed; near_cut_held_s = its longest single run. flags (Kevin's live flags): "
                    "FLICKER = steerFaultTemporary between press and release; SNAPBACK = repress; GAP = |release_gap_deg| > "
-                   f"{GAP_FLAG_DEG:g} under {GAP_FLAG_V:g} m/s (10 mph); NEAR-CUT = near_cut_held_s > {NEAR_CUT_HOLD_S:g} s."),
+                   f"{GAP_FLAG_DEG:g} under {GAP_FLAG_V:g} m/s (10 mph); NEAR-CUT = near_cut_held_s > {NEAR_CUT_HOLD_S:g} s. "
+                   "repress_move_deg = ang_act at the re-press minus at the release (+ = left), repress_swing_deg = its "
+                   "largest |change| in between; set whenever repress_after_s is."),
   }
   return {"episodes": eps, "summary": summary}
 
