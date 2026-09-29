@@ -534,6 +534,16 @@ export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
       title = "Radar lost sight of a close car"
       detail = `At ${fmtSpeed(e.v, speed)} the radar coasted a car within ${fmtNum(toNumber(e.d_min) * speed.distFactor, 0)} ` +
         `${speed.distUnit} for ${fmtNum(e.coast_s, 1)} s.`
+    } else if (e.kind === "unmeasured_lead_cap") {
+      kind = "brake"
+      title = "Braked for a car the radar was not measuring"
+      detail = `At ${fmtSpeed(e.v, speed)} the close-car cap asked for up to ${acc(e.cl_cap_min)} for ${fmtNum(e.for_s, 1)} s ` +
+        `while the radar only coasted a car ${fmtNum(toNumber(e.d) * speed.distFactor, 0)} ${speed.distUnit} ahead.`
+    } else if (e.kind === "brake_overshoot") {
+      kind = "brake"
+      title = "The car braked harder than asked"
+      detail = `At ${fmtSpeed(e.v, speed)} openpilot asked for ${acc(e.a_cmd_min)} and the car slowed at up to ${acc(e.a_ego_min)} ` +
+        `(${fmtNum(e.over_max, 1)} m/s² past it for ${fmtNum(e.for_s, 1)} s). ${leadText(e.lead, speed)}`
     } else if (e.kind === "vrel_disagree") {
       kind = "brake"
       title = "Radar speed readings disagreed"
