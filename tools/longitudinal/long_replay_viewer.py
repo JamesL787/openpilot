@@ -98,7 +98,7 @@ def _xy(line, max_x=200.0, step=2):
 def read_rlog(files: list[Path]) -> tuple[list[dict], dict]:
   """One snapshot per modelV2, keyed by logMonoTime, with the latest of every other service."""
   snaps, first_init, cam = [], None, None
-  tracks, rs, lp_a, cs, cal, rs_tracks = [], None, None, None, None, []
+  tracks, rs, lp_a, cs, cal, rs_tracks, cc_a, yaw = [], None, None, None, None, [], None, None
   qframe: dict[int, tuple[int, int]] = {}  # road frameId -> (segment, frame index in that segment's qcamera.ts)
   for path in files:
     for msg in LogReader(str(path), sort_by_time=True):
@@ -124,6 +124,10 @@ def read_rlog(files: list[Path]) -> tuple[list[dict], dict]:
         rs_tracks = tracks  # radard built this radarState from the liveTracks before it, not the next one
       elif w == "longitudinalPlan":
         lp_a = fnum(msg.longitudinalPlan.aTarget)
+      elif w == "carControl":
+        cc_a = float(msg.carControl.actuators.accel) if msg.carControl.longActive else None
+      elif w == "livePose":  # carState.yawRate is 0 on the Clarity
+        yaw = float(msg.livePose.angularVelocityDevice.z)
       elif w == "carState":
         cs = (float(msg.carState.vEgo), float(msg.carState.aEgo))
       elif w == "modelV2":
@@ -137,7 +141,8 @@ def read_rlog(files: list[Path]) -> tuple[list[dict], dict]:
         lanes = [_xy(md.laneLines[k]) for k in (1, 2)] if len(md.laneLines) >= 3 else [None, None]
         snaps.append({"mono": msg.logMonoTime, "path": _xy(md.position, step=1), "lanes": lanes,
                       "lprob": [fnum(p, 2) for p in list(md.laneLineProbs)[1:3]], "leads": leads,
-                      "tracks": tracks, "rs_tracks": rs_tracks, "rs": rs, "lp_a": lp_a, "cs": cs, "cal": cal, "frame_id": int(md.frameId)})
+                      "tracks": tracks, "rs_tracks": rs_tracks, "rs": rs, "lp_a": lp_a, "cs": cs, "cc_a": cc_a, "yaw": yaw,
+                      "cal": cal, "frame_id": int(md.frameId)})
   for sn in snaps:
     sn["q"] = qframe.get(sn["frame_id"])
   return snaps, {"first_init": first_init, "cam": cam}
@@ -522,6 +527,18 @@ def xrate_verdict(t, x, d, v_rel_pub=None) -> dict:
 def assist_classes(t, extra, v_pub, v_nat, vis_v, same, d_radar=None, x_cam=None, v_rel_pub=None) -> dict:
   """Per class: largest extra closing held >= SUSTAIN_S inside that class, and when it began."""
   t = np.asarray(t, dtype=float)
+  masks, flips = assist_masks(t, extra, v_pub, v_nat, vis_v, same, d_radar, x_cam, v_rel_pub)
+  out = {}
+  for k in ASSIST_CLASSES:
+    v, ts = sustained_run(t, np.where(masks[k], extra, np.nan))
+    out[k] = {"extra_sustained": v, "t": ts}
+  out["xrate_flips"] = flips
+  return out
+
+
+def assist_masks(t, extra, v_pub, v_nat, vis_v, same, d_radar=None, x_cam=None, v_rel_pub=None) -> tuple[dict, list]:
+  """Per-frame class masks (extra closing >= PHANTOM_EXTRA_MPS only) and the camera-distance check's flips."""
+  t = np.asarray(t, dtype=float)
   e_pub, e_nat = np.abs(v_pub - vis_v), np.abs(v_nat - vis_v)
   big = np.isfinite(extra) & (extra >= PHANTOM_EXTRA_MPS)
   judged = same & np.isfinite(e_pub) & np.isfinite(e_nat)
@@ -554,12 +571,7 @@ def assist_classes(t, extra, v_pub, v_nat, vis_v, same, d_radar=None, x_cam=None
     for f in flips:
       f.pop("_i")
   masks["neutral"] = big & judged & ~masks["phantom"] & ~masks["helped"] & ~masks["unjudged"]
-  out = {}
-  for k in ASSIST_CLASSES:
-    v, ts = sustained_run(t, np.where(masks[k], extra, np.nan))
-    out[k] = {"extra_sustained": v, "t": ts}
-  out["xrate_flips"] = flips
-  return out
+  return masks, flips
 
 
 # Cut-in at range-assist arm, for Fix A v3 (range assist blocked while a track is still cutting in). Radar Work (Bob),
@@ -584,6 +596,7 @@ CUTIN_DOFF_M = 1.5
 CONFIRM_WIN_S = 2.0
 CONFIRM_CLOSING_MPS = 1.0
 BRAKE_WIN_S = 4.0         # logged brake after an arm: min command and aEgo over [arm, arm + BRAKE_WIN_S]
+DD_PRE_S = 1.5            # trailing window for dd_rate_pre / range_slope_pre: [arm - DD_PRE_S, arm], what radard saw at the arm
 
 
 def _slope(t, x, min_pts, min_span):
@@ -626,6 +639,13 @@ def range_assist_arms(t, corr, ser, lead_recs, tracks, vis, v_ego, a_ego, cmd) -
   t = np.asarray(t, dtype=float)
   vis_d, vis_p = _col(vis, 0), _col(vis, 3)
   arms, i, n = [], 0, len(t)
+
+  def track_d(mask, tid):
+    # range of track tid on the ticks in mask; loops only over those ticks so hour-long routes stay cheap
+    out = np.full(n, np.nan)
+    for k in np.flatnonzero(mask):
+      out[k] = next((p[1] for p in tracks[k] if p[0] == tid), np.nan)
+    return out
   while i < n:
     tid = ser["id"][i]
     if not (np.isfinite(corr[i]) and corr[i] > 0 and tid is not None) or (i > 0 and np.isfinite(corr[i - 1]) and corr[i - 1] > 0
@@ -638,7 +658,7 @@ def range_assist_arms(t, corr, ser, lead_recs, tracks, vis, v_ego, a_ego, cmd) -
     rate, doff = ser["rate"][i], ser["doff"][i]
     cut = bool((np.isfinite(rate) and abs(rate) > CUTIN_RATE_MPS) or (np.isfinite(doff) and abs(doff) > CUTIN_DOFF_M))
     w = (t >= t[i]) & (t <= t[i] + CONFIRM_WIN_S)
-    d_tr = np.array([next((p[1] for p in tracks[k] if p[0] == tid), None) if w[k] else None for k in range(n)], dtype=float)
+    d_tr = track_d(w, tid)
     rng = _slope(t[w], d_tr[w], 10, 1.0)
     same = w & (vis_p > VIS_PROB) & np.isfinite(d_tr) & (np.abs(vis_d - d_tr) < np.maximum(10.0, 0.2 * d_tr))
     cam = _slope(t[same], vis_d[same], 10, 1.0)
@@ -647,9 +667,23 @@ def range_assist_arms(t, corr, ser, lead_recs, tracks, vis, v_ego, a_ego, cmd) -
     # radar lead range minus camera x on the armed track, ungated: a range that starts long and walks down
     # onto the camera shrinks the gap at about the range slope while the camera holds; a car that really
     # closes keeps the gap and moves both (Radar Work (Bob), 2026-09-29, 10:55 vs 53:40)
-    dd = np.array([L_[0] - vis_d[k] if (L_ is not None and L_[0] is not None and ser["id"][k] == tid and vis_p[k] > VIS_PROB)
-                   else np.nan for k, L_ in enumerate(lead_recs)], dtype=float)
+    dd = np.full(n, np.nan)
+    for k in np.flatnonzero((t >= t[i] - DD_PRE_S) & (t <= t[i] + BRAKE_WIN_S + 0.25)):
+      L_ = lead_recs[k]
+      if L_ is not None and L_[0] is not None and ser["id"][k] == tid and vis_p[k] > VIS_PROB:
+        dd[k] = L_[0] - vis_d[k]
     ddw = w & np.isfinite(dd)
+    # trailing twins of dd_rate and range_slope over [arm - DD_PRE_S, arm]: what radard could see when it armed
+    # (10:55's correction peaks 0.6 s after the arm, inside the forward window; Bob, 2026-09-29)
+    pw = (t >= t[i] - DD_PRE_S) & (t <= t[i])
+    ddp = pw & np.isfinite(dd)
+    d_pre = track_d(pw, tid)
+    d_lead = np.full(n, np.nan)
+    for k in np.flatnonzero(ddp):
+      d_lead[k] = lead_recs[k][0]
+    same_pre = ddp & (np.abs(dd) < np.maximum(10.0, 0.2 * d_lead))
+    rng_pre = _slope(t[pw], d_pre[pw], 10, 1.0)
+    dd_rate_pre = _slope(t[ddp], dd[ddp], 10, 1.0)
 
     def dd_at(tk, dd=dd):
       m = np.isfinite(dd) & (np.abs(t - tk) <= 0.25)
@@ -662,6 +696,9 @@ def range_assist_arms(t, corr, ser, lead_recs, tracks, vis, v_ego, a_ego, cmd) -
       "range_slope": fnum(rng), "cam_slope": fnum(cam),
       "dd_arm": dd_at(t[i]), "dd_2s": dd_at(t[i] + CONFIRM_WIN_S), "dd_4s": dd_at(t[i] + BRAKE_WIN_S),
       "dd_rate": fnum(_slope(t[ddw], dd[ddw], 10, 1.0)),
+      "dd_rate_pre": fnum(dd_rate_pre), "dd_n_pre": int(ddp.sum()), "dd_same_n_pre": int(same_pre.sum()), "range_slope_pre": fnum(rng_pre),
+      "dd_over_range_pre": fnum(dd_rate_pre / rng_pre) if np.isfinite(dd_rate_pre) and np.isfinite(rng_pre)
+      and abs(rng_pre) > 0.5 else None,
       "range_confirms": bool(np.isfinite(rng) and rng < -CONFIRM_CLOSING_MPS),
       "cam_confirms": None if not np.isfinite(cam) else bool(cam < -CONFIRM_CLOSING_MPS),
       "min_cmd": fnum(np.nanmin(cmd[b])) if np.isfinite(cmd[b]).any() else None,
@@ -1059,6 +1096,8 @@ def print_metrics(D: dict) -> None:
             f"offset change {r['doff']} m in {CUTIN_RATE_WIN_S:g} s); correction peak {r['corr_peak']} @{r['t_peak']:.2f};",
             f"range slope {r['range_slope']} cam slope {r['cam_slope']};",
             f"radar - camera {r['dd_arm']} m at arm, {r['dd_2s']} +2 s, {r['dd_4s']} +4 s, rate {r['dd_rate']} m/s;",
+            f"trailing {DD_PRE_S:g} s: radar - camera rate {r['dd_rate_pre']} m/s ({r['dd_n_pre']} pts), range slope",
+            f"{r['range_slope_pre']}, ratio {r['dd_over_range_pre']};",
             f"min cmd {r['min_cmd']} min aEgo {r['min_a_ego']}")
   keys = ["min_gap_m", "min_ttc_s", "max_decel", "felt_jerk_rms", "felt_jerk_max", "max_cmd_jerk", "cmd_onset_lag_s",
           "a_onset_lag_s", "cmd_to_a_lag_s", "cut_at_drift"]
