@@ -244,6 +244,59 @@ VISION_ASSIST_MAX_AZIMUTH_DEG = 10.8
 VISION_ASSIST_ARM_UPDATES = 3          # arm updates needed while corroborated on every one of them
 VISION_ASSIST_SHORT_ONLY = True        # corroborated: a long fit failing span/residual falls back to the short fit
 
+# --- Camera x-rate cap on a range walk (2026-09-29, extends D-053, rides RANGE_VREL_ASSIST). ON (owner, 2026-09-29).
+# REPLAY evidence only (open-loop radarState from logged CAN, plus the closed-loop planner tool on logged ego); not driven.
+# The assist fits the radar range and cannot see a range error. 00000297--f971b5896f 40:23.5 and 42:18.3: the radar
+# range fell faster than the matched camera lead's own x did, and the assist published that extra closing.
+# This judges the correction against the CAMERA'S RANGE (leadsV3[0].x), not its speed output: the model's speed
+# under-reads real far closing (STATUS 162; 297 53:40, 280 25:03 and 236 18:55 have the camera x falling 5-9 m/s
+# while its speed said 2-4), which is why the camera-speed version of this cap was dropped there.
+# Every model cycle a same-car camera sample (prob >= MIN_PROB, VISION_ASSIST_RANGE_TOL / MAX_DY_M geometry) is kept
+# on the lead track with the track's own dRel, over the trailing WINDOW_S. camera_xrate_verdict() then judges it; the
+# rules are the ones in the UI Work replay viewer (keep the two identical):
+#   FEW     fewer than MIN_POINTS                                               -> no action
+#   STEP    a two-level fit (>= STEP_MIN_SIDE points a side) with SSE_S < STEP_SSE_RATIO * SSE_L and a level change
+#           > STEP_MIN_M is a camera lead switch (a plain fit reads the 297 10:55 74 -> 60 m jump as 7-10 m/s of
+#           closing). Only the points after the break are kept; fewer than POST_MIN_POINTS or a span under
+#           POST_MIN_SPAN_S of them                                              -> no action
+#   NOISY   line residual sd >= max(MAX_RESID_SD_M, RESID_SD_REL * mean camera range)  -> no action
+#   AGREE   |camera slope - radar dRel slope| over the same samples < max(AGREE_MPS, AGREE_REL * mean range) -> none
+#   JUDGED  otherwise: published closing may exceed the camera x-rate closing by at most MARGIN_MPS.
+# It only LOWERS a correction: never arms one, never touches U11, the KF, selection or the point (D-041/D-042).
+# The U11 rail is exempt (D-041, 000001f9 29:52), as the rail rules above decide alone there.
+# Chosen on replay (per-event m/s*s of leadOne correction, base -> cap):
+#   WINDOW 3 s, MIN_POINTS 20: a 2 s window cut 237 19:49 to 12.84 and 258 56:18 to 0.47.
+#   MIN_PROB 0.9: 0.8 cut 280 25:03 to 20.62 (0.7: 18.77 under the fixed-sd rule); 0.9 keeps 21.81.
+#   MARGIN 2: margin 3 left 297 42:18.3 at 7.34 (2: 6.81).
+#   Cut: 297 42:18.3 8.45 -> 6.81, 40:23.5 1.77 -> 1.15, 283 9:12 4.40 -> 0.34 (post-break refit).
+#   Kept (within 0.02): 297 39:01.7, 53:40.5, 15:00, 236 12:51, 236 18:55, 237 5:21, 258 56:18, 026b 28:27, 280 25:03,
+#   271 9:26, 026c 4:08. Cost: 237 14:25 9.80 -> 8.72 and 19:49 15.74 -> 15.01 (radar range fell ~9.5 m/s against a
+#   camera x of ~5 at the tail of a real approach).
+#   AGREE_REL 0: 0.03 is what cost 42:18. At 95-107 m it widens agreement to ~3 m/s and the walk's 2.0-2.6 m/s
+#   disagreement passed as AGREE (6.81). At 0, 42:18 goes to 2.34 (planner cmd -1.95 -> -1.50) and every kept event
+#   is unchanged (237 19:49 14.92). The UI Work viewer uses 0 too (40c62a24d).
+#   Corpus (UI Work arm scan, 378 arms, 40 routes, 635e99ca3): the one hard phantom is 283 9:12 (a radar track walking
+#   in behind a lead change; U11 alone read -6.6, so this cap removes the assist's extra only). 241 3:36, the other
+#   hard one, was a real slow car. A camera-SPEED gate was re-tested there and rejected again: it caught 14/87 helped
+#   arms and 241, whose camera speed lagged its real slowdown.
+#   NOT FIXED: 297 10:55.1 (7.22 -> 7.22) and 0000025e 7:04.2 (10.53 -> 10.53). The walk arms at the camera's own
+#   lead switch and peaks within 1 s, before 20 matched points exist; after that the 60 m camera range scatters
+#   3.2-3.7 m (limit max(3, 2.5)) and reads NOISY until the correction has decayed.
+RANGE_VREL_CAM_XRATE = True
+RANGE_VREL_CAM_XRATE_MIN_PROB = 0.9
+RANGE_VREL_CAM_XRATE_WINDOW_S = 3.0
+RANGE_VREL_CAM_XRATE_MIN_POINTS = 20
+RANGE_VREL_CAM_XRATE_STEP_MIN_SIDE = 5
+RANGE_VREL_CAM_XRATE_STEP_SSE_RATIO = 0.5
+RANGE_VREL_CAM_XRATE_STEP_MIN_M = 6.0
+RANGE_VREL_CAM_XRATE_POST_MIN_POINTS = 10
+RANGE_VREL_CAM_XRATE_POST_MIN_SPAN_S = 1.0
+RANGE_VREL_CAM_XRATE_MAX_RESID_SD_M = 3.0
+RANGE_VREL_CAM_XRATE_RESID_SD_REL = 0.04
+RANGE_VREL_CAM_XRATE_AGREE_MPS = 2.0
+RANGE_VREL_CAM_XRATE_AGREE_REL = 0.0
+RANGE_VREL_CAM_XRATE_MARGIN_MPS = 2.0
+
 # Last, the correction is capped at the native lead speed, so a corrected vLead is never published
 # below zero. A physical bound like MAX_CORRECTION, not a tuned value: on the replay it bound only
 # at 236 12:51, where it trimmed 0.2 m/s*s.
@@ -361,6 +414,57 @@ def vision_assist_closing(d_rel: float, y_rel: float, vis, v_ego: float) -> floa
   return closing if closing >= VISION_ASSIST_MIN_CLOSING_MPS else None
 
 
+def camera_xrate_sample(d_rel: float, y_rel: float, vis) -> float | None:
+  """RANGE_VREL_CAM_XRATE: the camera range (m, radar frame) of a confident model lead matched to this track, else None."""
+  if vis is None or float(vis.prob) < RANGE_VREL_CAM_XRATE_MIN_PROB or not len(vis.x) or not len(vis.y):
+    return None
+  cam_d = float(vis.x[0]) - RADAR_TO_CAMERA
+  if abs(cam_d - float(d_rel)) > VISION_ASSIST_RANGE_TOL * max(float(d_rel), 1.0):
+    return None
+  if abs(float(y_rel) + float(vis.y[0])) > VISION_ASSIST_MAX_DY_M:
+    return None
+  return cam_d
+
+
+def _line_fit(t, y) -> tuple[float, float]:
+  """Least-squares slope and residual sum of squares of y on t."""
+  tm, ym = t.mean(), y.mean()
+  slope = float(((t - tm) * (y - ym)).sum()) / float(((t - tm) ** 2).sum())
+  return slope, float(((y - ym - slope * (t - tm)) ** 2).sum())
+
+
+def camera_xrate_verdict(samples) -> tuple[str, float | None]:
+  """RANGE_VREL_CAM_XRATE. `samples` are (t, camera range, radar dRel). Returns (verdict, camera closing m/s, + closes);
+  the closing is only meaningful for AGREE and JUDGED. See the constant block for the rules."""
+  n = len(samples)
+  if n < RANGE_VREL_CAM_XRATE_MIN_POINTS:
+    return "FEW", None
+  arr = np.asarray(samples, dtype=float)
+  t, x, d = arr[:, 0] - arr[-1, 0], arr[:, 1], arr[:, 2]
+  slope, sse_l = _line_fit(t, x)
+  k = RANGE_VREL_CAM_XRATE_STEP_MIN_SIDE
+  if n >= 2 * k:
+    c1, c2 = np.cumsum(x), np.cumsum(x * x)
+    n1 = np.arange(k, n - k + 1, dtype=float)
+    s1, q1 = c1[k - 1:n - k], c2[k - 1:n - k]
+    s2, q2 = c1[-1] - s1, c2[-1] - q1
+    n2 = n - n1
+    sse_s = (q1 - s1 * s1 / n1) + (q2 - s2 * s2 / n2)
+    i = int(np.argmin(sse_s))
+    if sse_s[i] < RANGE_VREL_CAM_XRATE_STEP_SSE_RATIO * sse_l and abs(s2[i] / n2[i] - s1[i] / n1[i]) > RANGE_VREL_CAM_XRATE_STEP_MIN_M:
+      t, x, d = t[k + i:], x[k + i:], d[k + i:]   # a camera lead switch: judge only what came after it
+      if len(t) < RANGE_VREL_CAM_XRATE_POST_MIN_POINTS or t[-1] - t[0] < RANGE_VREL_CAM_XRATE_POST_MIN_SPAN_S:
+        return "STEP", None
+      slope, sse_l = _line_fit(t, x)
+  radar_slope, _ = _line_fit(t, d)
+  m, x_mean = len(t), float(x.mean())
+  if (sse_l / max(m - 2, 1)) ** 0.5 >= max(RANGE_VREL_CAM_XRATE_MAX_RESID_SD_M, RANGE_VREL_CAM_XRATE_RESID_SD_REL * x_mean):
+    return "NOISY", None
+  if abs(slope - radar_slope) < max(RANGE_VREL_CAM_XRATE_AGREE_MPS, RANGE_VREL_CAM_XRATE_AGREE_REL * x_mean):
+    return "AGREE", -slope
+  return "JUDGED", -slope
+
+
 class Track:
   def __init__(self, identifier: int, v_lead: float, kalman_params: KalmanParams):
     self.identifier = identifier
@@ -411,6 +515,8 @@ class Track:
     # measurement_update is False for both and they need opposite handling -- see
     # _update_range_assist.
     self._range_assist_last_t = float('nan')
+    # RANGE_VREL_CAM_XRATE: (model t, camera range, dRel) of same-car camera samples over the trailing window.
+    self.cam_hist: deque = deque()
     # YOUNG_TRACK_FLAT_RANGE_BOUND: first update time and every fresh-sweep (t, dRel) of the track's first
     # YOUNG_TRACK_MAX_AGE_S. Coasted sweeps count: a Bosch-A coast holds vRel but publishes the live gated range.
     self.t_first = float('nan')
@@ -427,7 +533,8 @@ class Track:
 
   def update(self, d_rel: float, y_rel: float, v_rel: float, v_lead: float, measured: bool,
              measurement_update: bool | None = None, t_now: float = 0.0,
-             range_assist: bool = False, vision_closing: float | None = None, vision_assist: bool = False):
+             range_assist: bool = False, vision_closing: float | None = None, vision_assist: bool = False,
+             camera_sample: tuple[float, float | None] | None = None):
     # relative values, copy
     self.dRel = d_rel   # LONG_DIST
     self.yRel = y_rel   # -LAT_DIST
@@ -473,6 +580,13 @@ class Track:
     # fed the NATIVE speed, and get_RadarState applies the correction to vRel, vLead and vLeadK at
     # publish time. The first version fed the corrected speed here, and aLeadK absorbed every
     # arming step as a hard acceleration (see the rework note at the top of this file).
+    if camera_sample is not None:
+      # One call per radard (model) cycle: append the matched camera range, then drop what left the window.
+      t_cam, cam_d = camera_sample
+      if cam_d is not None:
+        self.cam_hist.append((float(t_cam), float(cam_d), float(d_rel)))
+      while self.cam_hist and self.cam_hist[0][0] < t_cam - RANGE_VREL_CAM_XRATE_WINDOW_S:
+        self.cam_hist.popleft()
     self._update_range_assist(range_assist, measurement_update, t_now, vision_closing, vision_assist)
 
     if measurement_update:
@@ -670,6 +784,11 @@ class Track:
     if self.vision_assist_early:
       # Never claim more closing than vision corroborates plus the margin: published vRel >= -(closing + margin).
       correction = min(correction, max(self.vRel + vision_closing + VISION_ASSIST_CLOSING_MARGIN_MPS, 0.0))
+    if RANGE_VREL_CAM_XRATE and correction > 0.0 and not on_rail:
+      verdict, cam_closing = camera_xrate_verdict(self.cam_hist)
+      if verdict == "JUDGED":
+        # Range walk: published closing may exceed the camera's own x-rate closing by at most the margin.
+        correction = min(correction, max(self.vRel + cam_closing + RANGE_VREL_CAM_XRATE_MARGIN_MPS, 0.0))
     self.range_assist_correction = correction
 
   def _update_rail_range_inconsistent(self) -> None:
@@ -1195,10 +1314,14 @@ class RadarD:
       vis_closing = None
       if vision_assist and ids in lead_track_ids and len(sm['modelV2'].leadsV3):
         vis_closing = vision_assist_closing(rpt[0], rpt[1], sm['modelV2'].leadsV3[0], self.v_ego)
+      cam_sample = None
+      if RANGE_VREL_CAM_XRATE and ids in lead_track_ids:
+        vis = sm['modelV2'].leadsV3[0] if len(sm['modelV2'].leadsV3) else None
+        cam_sample = (sm.logMonoTime['modelV2'] * 1e-9, camera_xrate_sample(rpt[0], rpt[1], vis))
       self.tracks[ids].update(rpt[0], rpt[1], rpt[2], v_lead, measured, measurement_update,
                               t_now=sm.logMonoTime['liveTracks'] * 1e-9,
                               range_assist=ids in lead_track_ids, vision_closing=vis_closing,
-                              vision_assist=vision_assist)
+                              vision_assist=vision_assist, camera_sample=cam_sample)
 
     # *** publish radarState ***
     self.radar_state_valid = sm.all_checks()

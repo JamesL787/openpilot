@@ -50,12 +50,14 @@ def new_track(track_id: int = 1, v_lead: float = V_EGO) -> radard.Track:
 
 
 def feed(track, n, *, d0, range_rate, v_rel, y_rel=0.0, t0=0.0, dt=DT, v_ego=V_EGO,
-         range_assist=True, measured=True, d_offsets=None, vision_closing=None, vision_assist=False):
+         range_assist=True, measured=True, d_offsets=None, vision_closing=None, vision_assist=False,
+         camera=None):
   """Drive `track` through n Bosch-A sweeps of a constant-rate range series.
 
   `range_rate` is d(dRel)/dt in m/s -- negative closes. `v_rel` is what U11 claims, independently,
   so a test can make the two disagree by exactly the amount it wants. `d_offsets` injects a
-  per-sample range error for the outlier tests. Returns the list of (t, dRel) actually fed.
+  per-sample range error for the outlier tests. `camera(t, d)` gives the matched camera range for
+  RANGE_VREL_CAM_XRATE (None: no matched lead that sweep). Returns the list of (t, dRel) actually fed.
   """
   fed = []
   for i in range(n):
@@ -63,8 +65,10 @@ def feed(track, n, *, d0, range_rate, v_rel, y_rel=0.0, t0=0.0, dt=DT, v_ego=V_E
     d = d0 + range_rate * (i * dt)
     if d_offsets is not None:
       d += d_offsets.get(i, 0.0)
+    camera_sample = None if camera is None else (t, camera(t, d))
     track.update(d, y_rel, v_rel, v_ego + v_rel, measured, measured,
-                 t_now=t, range_assist=range_assist, vision_closing=vision_closing, vision_assist=vision_assist)
+                 t_now=t, range_assist=range_assist, vision_closing=vision_closing, vision_assist=vision_assist,
+                 camera_sample=camera_sample)
     fed.append((t, d))
   return fed
 
@@ -949,6 +953,171 @@ class TestTheRangeWalkFault:
     worst = max(-6.02 - fitted for fitted in (-4.5, -5.0, -5.5, -6.0, -6.4))
     assert worst == pytest.approx(0.38, abs=0.01)
     assert RANGE_VREL_ASSIST_MIN_DISAGREEMENT_MPS - worst == pytest.approx(1.62, abs=0.01)
+
+
+WALK_297 = dict(d0=72.0, range_rate=-7.0, v_rel=-1.0, y_rel=0.5)   # 00000297 10:55.1 / 42:18.3 shape
+CAM_SWEEPS = 40      # 2.8 s of sweeps: past MIN_POINTS and MIN_SPAN, inside the 3 s window
+
+
+def xrate_samples(cam, radar, n=60, dt=DT_MDL):
+  """(t, camera range, dRel) at the 20 Hz model rate from two functions of t."""
+  return [(i * dt, cam(i * dt), radar(i * dt)) for i in range(n)]
+
+
+# Steve's 297 10:55 camera table (UI Work replay viewer, his t): t, radar dRel, camera x-derived range.
+STEVE_1055 = [(661.14, 75.1, 74.2), (661.45, 73.6, 72.1), (661.59, 72.9, 77.6), (661.74, 72.1, 68.3),
+              (661.89, 70.7, 61.5), (662.04, 69.5, 59.2), (662.19, 68.2, 61.3), (662.35, 67.5, 58.1),
+              (662.64, 65.1, 60.4), (662.95, 63.3, 62.6), (663.25, 61.7, 68.5), (663.54, 60.6, 59.1)]
+
+
+@pytest.fixture
+def xrate_on(monkeypatch):
+  monkeypatch.setattr(radard, "RANGE_VREL_CAM_XRATE", True)
+
+
+class TestCameraXrateVerdict:
+  """RANGE_VREL_CAM_XRATE's discriminator, static. Same rules as the UI Work replay viewer's test."""
+
+  def test_a_fresh_camera_lead_switch_is_unjudged(self):
+    """A 74 -> 60 m camera jump (the 297 10:55.1 lead switch) 0.6 s ago, the radar walking down through it: a line
+    fit reads ~7-10 m/s of closing and would AGREE with the walk. The step fit must catch it, and with under
+    POST_MIN_SPAN_S after the break there is nothing left to judge."""
+    rng = np.random.default_rng(0)
+    noise = rng.normal(0.0, 1.0, 60)
+    s = xrate_samples(lambda t: 74.0 if t < 2.35 else 60.0, lambda t: 75.0 - 5.0 * t)
+    s = [(t, x + noise[i], d) for i, (t, x, d) in enumerate(s)]
+    assert radard.camera_xrate_verdict(s)[0] == "STEP"
+    line = -np.polyfit([a[0] for a in s], [a[1] for a in s], 1)[0]
+    assert abs(line - 5.0) < radard.RANGE_VREL_CAM_XRATE_AGREE_MPS   # the false agreement the step test refuses
+
+  def test_after_a_lead_switch_only_the_new_level_is_judged(self):
+    """The same jump 2 s ago: the 40 points after it are flat against a radar still falling 5 m/s. JUDGED on the
+    post-break points alone, camera closing ~0, not the ~5 m/s the whole window's line would read."""
+    rng = np.random.default_rng(0)
+    noise = rng.normal(0.0, 1.0, 60)
+    s = xrate_samples(lambda t: 74.0 if t < 1.0 else 60.0, lambda t: 75.0 - 5.0 * t)
+    s = [(t, x + noise[i], d) for i, (t, x, d) in enumerate(s)]
+    verdict, closing = radard.camera_xrate_verdict(s)
+    assert verdict == "JUDGED"
+    assert abs(closing) < 1.0
+
+  def test_steves_1055_table_is_never_agreement(self):
+    """The table itself is 12 points (FEW). Held at 20 Hz it must still not read as agreement."""
+    assert radard.camera_xrate_verdict(STEVE_1055)[0] == "FEW"
+    ts = np.arange(STEVE_1055[0][0], STEVE_1055[-1][0], DT_MDL)
+    held = [(t, *[r for r in STEVE_1055 if r[0] <= t][-1][2:0:-1]) for t in ts]
+    assert radard.camera_xrate_verdict(held)[0] != "AGREE"
+
+  def test_a_noisy_flat_camera_is_not_judged(self):
+    rng = np.random.default_rng(1)
+    noise = rng.normal(0.0, 4.0, 60)
+    s = xrate_samples(lambda t: 60.0, lambda t: 62.0 - 5.0 * t)
+    s = [(t, x + noise[i], d) for i, (t, x, d) in enumerate(s)]
+    assert radard.camera_xrate_verdict(s)[0] == "NOISY"
+
+  def test_a_true_closing_agrees(self):
+    rng = np.random.default_rng(2)
+    noise = rng.normal(0.0, 1.0, 60)
+    s = xrate_samples(lambda t: 70.0 - 6.0 * t, lambda t: 70.5 - 6.5 * t)
+    s = [(t, x + noise[i], d) for i, (t, x, d) in enumerate(s)]
+    verdict, closing = radard.camera_xrate_verdict(s)
+    assert verdict == "AGREE"
+    assert closing == pytest.approx(6.0, abs=1.0)
+
+  def test_a_flat_camera_against_a_falling_range_is_judged(self):
+    rng = np.random.default_rng(3)
+    noise = rng.normal(0.0, 1.0, 60)
+    s = xrate_samples(lambda t: 60.0, lambda t: 64.0 - 5.0 * t)
+    s = [(t, x + noise[i], d) for i, (t, x, d) in enumerate(s)]
+    verdict, closing = radard.camera_xrate_verdict(s)
+    assert verdict == "JUDGED"
+    assert abs(closing) < 1.0
+
+  def test_too_few_is_few(self):
+    flat = xrate_samples(lambda t: 60.0, lambda t: 64.0 - 5.0 * t, n=radard.RANGE_VREL_CAM_XRATE_MIN_POINTS - 1)
+    assert radard.camera_xrate_verdict(flat)[0] == "FEW"
+    assert radard.camera_xrate_verdict([])[0] == "FEW"
+
+  def test_far_cars_get_relative_limits(self, monkeypatch):
+    """At 100 m a 3.5 m scatter is inside max(3, 0.04 * d). Agreement is a flat 2 m/s at any range (AGREE_REL 0), so a
+    2.5 m/s slope gap at 100 m is judged -- the 297 42:18 walk at 95-107 m was 2.0-2.6 -- while 0.03 would have
+    widened agreement to ~3 m/s and let it through."""
+    rng = np.random.default_rng(4)
+    noise = rng.normal(0.0, 3.5, 60)
+    s = xrate_samples(lambda t: 100.0 - 2.0 * t, lambda t: 101.0 - 4.5 * t)
+    s = [(t, x + noise[i] - np.mean(noise), d) for i, (t, x, d) in enumerate(s)]
+    assert radard.camera_xrate_verdict(s)[0] in ("AGREE", "JUDGED")   # not NOISY
+    clean = xrate_samples(lambda t: 100.0 - 2.0 * t, lambda t: 101.0 - 4.5 * t)
+    assert radard.camera_xrate_verdict(clean)[0] == "JUDGED"
+    monkeypatch.setattr(radard, "RANGE_VREL_CAM_XRATE_AGREE_REL", 0.03)
+    assert radard.camera_xrate_verdict(clean)[0] == "AGREE"
+
+
+class TestCameraXrateCapOnARangeWalk:
+  """RANGE_VREL_CAM_XRATE on the Track, static. 00000297--f971b5896f 42:18.3: the radar range fell ~7 m/s while
+  the matched camera lead's own range held; the assist published that walk as closing. The same-car gate is
+  camera_xrate_sample (RadarD); here the Track is handed the camera range directly."""
+
+  def test_default_is_on(self):
+    assert radard.RANGE_VREL_CAM_XRATE is True
+    assert radard.RANGE_VREL_CAM_XRATE_AGREE_REL == 0.0   # 0.03 let the 42:18 walk pass as AGREE
+
+  def test_the_walk_arms_with_the_cap_off(self, monkeypatch):
+    """Negative control (D-009): flag off, the same feed claims the full ~6 m/s."""
+    monkeypatch.setattr(radard, "RANGE_VREL_CAM_XRATE", False)
+    track = new_track()
+    feed(track, CAM_SWEEPS, **WALK_297, camera=lambda t, d: 65.0)
+    assert track.range_assist_correction == pytest.approx(6.0, abs=0.05)
+
+  def test_a_flat_camera_bounds_the_walk(self, xrate_on):
+    track = new_track()
+    feed(track, CAM_SWEEPS, **WALK_297, camera=lambda t, d: 65.0)
+    bound = -(0.0 + radard.RANGE_VREL_CAM_XRATE_MARGIN_MPS)   # camera closing 0 plus the margin
+    assert track.get_RadarState()["vRel"] == pytest.approx(bound, abs=1e-6)
+
+  def test_a_camera_closing_with_the_range_keeps_it(self, xrate_on):
+    """A real approach the camera's own range also shows (AGREE): untouched."""
+    track = new_track()
+    feed(track, CAM_SWEEPS, **WALK_297, camera=lambda t, d: d + 0.3)
+    assert track.range_assist_correction == pytest.approx(6.0, abs=0.05)
+
+  def test_a_camera_lead_switch_keeps_it(self, xrate_on):
+    """STEP is unjudged: we do not remove braking on uncertain evidence."""
+    track = new_track()
+    feed(track, CAM_SWEEPS, **WALK_297, camera=lambda t, d: 65.0 if t < 2.2 else 58.0)
+    assert track.range_assist_correction == pytest.approx(6.0, abs=0.05)
+
+  def test_no_camera_lead_keeps_it(self, xrate_on):
+    track = new_track()
+    feed(track, CAM_SWEEPS, **WALK_297, camera=lambda t, d: None)
+    assert track.range_assist_correction == pytest.approx(6.0, abs=0.05)
+
+  def test_the_rail_is_exempt(self, xrate_on):
+    """000001f9 29:52 (D-041): on the rail U11 is a bound and the rail rules decide alone."""
+    track = new_track()
+    feed(track, CAM_SWEEPS, **RAIL_CASE, camera=lambda t, d: 70.0)
+    assert track.range_assist_correction == pytest.approx(5.9, abs=0.05)
+
+  @pytest.mark.parametrize("cam", [lambda t, d: 65.0, lambda t, d: 80.0 + 5.0 * t, lambda t, d: d])
+  def test_never_creates_a_correction(self, xrate_on, cam):
+    """The recorded U11-followed walk (TestTheRangeWalkFault) stays inert whatever the camera says."""
+    track = new_track()
+    feed(track, CAM_SWEEPS, d0=71.8, range_rate=-6.0, v_rel=-6.02, camera=cam)
+    assert track.range_assist_correction == 0.0
+
+  def test_the_window_forgets(self, xrate_on):
+    """Samples older than the window are dropped, so an old flat stretch cannot judge a later approach."""
+    track = new_track()
+    feed(track, CAM_SWEEPS, **WALK_297, camera=lambda t, d: 65.0)
+    assert track.cam_hist[-1][0] - track.cam_hist[0][0] <= radard.RANGE_VREL_CAM_XRATE_WINDOW_S
+
+  def test_sample_gates(self):
+    f = radard.camera_xrate_sample
+    assert f(76.0, 1.7, FakeVisionLead()) == pytest.approx(76.0)
+    assert f(76.0, 1.7, None) is None
+    assert f(76.0, 1.7, FakeVisionLead(prob=0.85)) is None      # under MIN_PROB (0.8 cut 280 25:03 on replay)
+    assert f(76.0, 1.7, FakeVisionLead(x=100.0)) is None        # a different object
+    assert f(76.0, 1.7, FakeVisionLead(y=2.0)) is None          # lateral mismatch
 
 
 # ---------------------------------------------------------------------------------------------
