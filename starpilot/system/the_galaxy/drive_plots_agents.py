@@ -100,8 +100,8 @@ RED_LIGHT_WINDOW_S = 10.0     # ... within this long after it came on: false_red
 ATARGET_STEP = 0.5            # |aTarget change| between consecutive plan frames (m/s^2)
 COAST_NEAR_D = 40.0           # radar lead closer than this (m) ...
 COAST_NEAR_S = 0.5            # ... coasting (measuredRadar false) longer than this
-VREL_DISAGREE = 1.5           # |vRel - vRelRangeDerived| (m/s) ...
-VREL_DISAGREE_S = 0.5         # ... for longer than this
+VREL_DISAGREE = 3.0           # |vRel - vRelRangeDerived| (m/s) ...
+VREL_DISAGREE_S = 1.0         # ... for longer than this, moving (Bob: 1.5 / 0.5 s gave 263 in 0.96 h of route 297)
 MODEL_DISAGREE_D = (5.0, 0.15)  # |radar d - model d| > max(5 m, 0.15 d) ...
 MODEL_DISAGREE_S = 1.0        # ... for longer than this, model lead prob above MODEL_PROB_MIN
 MODEL_PROB_MIN = 0.5
@@ -786,6 +786,19 @@ def lat_moments(c, t0=None, cap=None):
   return out
 
 
+def vrel_gap_stats(c):
+  """|vRel - vRelRangeDerived| over moving radar-lead frames (Bob): the spread behind vrel_disagree's threshold."""
+  if not (has(c, "lead_vrel") and has(c, "lead_vrr")):
+    return None
+  radar = np.round(np.nan_to_num(c["lead_src"])) == 1 if "lead_src" in c else np.zeros(len(c["t"]), dtype=bool)
+  g = np.abs(c["lead_vrel"] - c["lead_vrr"])[radar & (np.nan_to_num(c["v"]) > LEAD_VANISH_V)]
+  g = g[np.isfinite(g)]
+  if not len(g):
+    return None
+  return {"frames": len(g), "p50": _r(np.percentile(g, 50), 2), "p90": _r(np.percentile(g, 90), 2),
+          "over_threshold_pct": _r(100.0 * np.mean(g > VREL_DISAGREE), 1)}
+
+
 def _col(c, name, n):
   x = c.get(name)
   return np.full(n, np.nan) if x is None or len(x) != n else x
@@ -803,6 +816,8 @@ def _bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap):
 
   def val(name, i, k=2):
     return _r(_col(c, name, n)[i], k)
+
+  standstill = _b(c, "standstill") | (v < 0.3)
 
   def mode(i):
     return {"red_light": bool(_b(c, "red_light")[i]) if has(c, "red_light") else None, "road_curv": val("road_curv", i, 4)}
@@ -822,7 +837,7 @@ def _bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap):
         bursts.append([p, i, 2])
     add([(p, i, k) for p, i, k in bursts],
         lambda p, i, k: base("exp_flipflop", p, flips=k, burst_s=_r(t[i] - t[p], 2), experimental_after=bool(x[i] > 0.5),
-                             **mode(p)))
+                             standstill=int(standstill[p]), **mode(p)))   # Bob: stopped bursts are a separate CEM issue
 
   if has(c, "red_light"):
     def red(i):

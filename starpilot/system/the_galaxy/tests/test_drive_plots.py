@@ -939,7 +939,9 @@ def test_bob_moments():
   c["lead_vrel"][radar], c["lead_vrr"][radar] = -1.0, -1.0
   c["lead_meas"][(t >= 52.0) & (t < 53.0)] = 0.0        # coasting 1 s at 30 m
   c["lead_meas"][(t >= 55.0) & (t < 55.3)] = 0.0        # 0.3 s: too short
-  c["lead_vrr"][(t >= 58.0) & (t < 59.0)] = 1.0         # vRel off by 2 m/s for 1 s
+  c["lead_vrr"][(t >= 56.0) & (t < 58.0)] = 1.0         # vRel off by 2 m/s for 2 s: under 3 m/s, not flagged
+  c["lead_vrr"][(t >= 58.0) & (t < 59.5)] = 3.0         # off by 4 m/s for 1.5 s
+  c["lead_vrr"][(t >= 60.0) & (t < 60.5)] = 3.0         # 0.5 s: too short
   c["mlead_p"][radar], c["mlead_x"][radar] = 0.9, 30.0
   c["mlead_x"][(t >= 62.0) & (t < 64.0)] = 40.0         # model 10 m further for 2 s
   c["v_cruise"][:] = 90.0                               # km/h: 25 m/s set
@@ -956,12 +958,15 @@ def test_bob_moments():
   f = got["exp_flipflop"]
   assert f[0]["flips"] == 2 and f[0]["burst_s"] == pytest.approx(0.5) and f[0]["road_curv"] == 0.002
   assert f[1]["flips"] == 5 and f[1]["experimental_after"] is True   # one moment for a burst of quick flips
+  assert f[0]["standstill"] == 0
   assert [e["t"] for e in got["false_red_light"]] == [10.0] and got["false_red_light"][0]["v_min_10s"] == 25.0
   assert [e["t"] for e in got["atarget_step"]] == [30.0, 31.0] and got["atarget_step"][1]["a_after"] == 0.0
   assert [e["t"] for e in got["close_lead_cap"]] == [40.0] and got["close_lead_cap"][0]["cl_cap"] == -1.2
   assert [e["t"] for e in got["radar_coast_near"]] == [52.0]
   assert got["radar_coast_near"][0]["coast_s"] == pytest.approx(1.0)
-  assert [e["t"] for e in got["vrel_disagree"]] == [58.0] and got["vrel_disagree"][0]["gap_max"] == 2.0
+  assert [e["t"] for e in got["vrel_disagree"]] == [58.0] and got["vrel_disagree"][0]["gap_max"] == 4.0
+  g = agents.vrel_gap_stats(c)
+  assert g["p50"] == 0.0 and g["frames"] == 400 and g["over_threshold_pct"] == pytest.approx(10.0)
   assert [e["t"] for e in got["radar_vs_model"]] == [62.0] and got["radar_vs_model"][0]["d_gap_max"] == 10.0
   over = got["overspeed_no_lead"]
   assert [e["t"] for e in over] == [80.0] and over[0]["for_s"] == pytest.approx(5.0) and over[0]["pitch"] == -0.03

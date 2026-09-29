@@ -731,6 +731,7 @@ def analyze(rows, min_engaged_s=20.0, controller=None, detail=True, cap=EVENTS_P
   dt = _dt(t)
   lat = _analyze_lateral(c, seg, dt, min_engaged_s)
   lon = _analyze_longitudinal(c, seg, dt, min_engaged_s)
+  lon["radar_vrel_gap"] = agents.vrel_gap_stats(c)
   take = agents.takeovers(c) if detail else None
   if take is not None:
     for e in take["episodes"]:
