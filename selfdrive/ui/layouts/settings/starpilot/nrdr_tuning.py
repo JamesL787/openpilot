@@ -46,15 +46,22 @@ class NRDRManagerView(AetherSettingsView):
 
   def __init__(self, controller: "NRDRTuningLayout"):
     super().__init__(controller, [], panel_style=PANEL_STYLE)
-    self._grid = TileGrid(columns=2, padding=12)
+    self._grid = TileGrid(columns=3, padding=12)
     self._grid.set_touch_valid_callback(lambda: self._scroll_panel.is_touch_valid())
     self._child(self._grid)
 
     self._grid.add_tile(HubTile(
       title=tr("NRDR Lateral"),
-      desc=tr("Configure Clarity EPS behavior, speed-banded PID gains, driver override, filters, and online tuning."),
+      desc=tr("Pick the steering controller; driver override, filters, and online tuning for both."),
       icon_key="steering",
       on_click=lambda: controller._navigate_to("lateral"),
+      bg_color="#8B5CF6",
+    ))
+    self._grid.add_tile(HubTile(
+      title=tr("NRDR PID Control"),
+      desc=tr("Everything the NRDR PID uses: P/I/F per speed band, turn feedforward, target smoothing."),
+      icon_key="steering",
+      on_click=lambda: controller._navigate_to("pid"),
       bg_color="#8B5CF6",
     ))
     self._grid.add_tile(HubTile(
@@ -224,6 +231,42 @@ class NRDRTuningLayout(_SettingsPage):
         ),
       ]))
 
+    controller_rows = [
+      toggle("NrdrLatEpsFirmwareFF", "EPS Firmware Feedforward (Test)",
+             "On: steer with James's modified-EPS controller, a feedforward that inverts the EPS firmware's own "
+             "control law plus a PID on fixed per-band trims. Off: steer with the NRDR PID, set up under NRDR PID "
+             "Control. Takes effect on the next drive. Off, James's feedforward is only logged."),
+    ]
+
+    pid_turn_rows = [
+      toggle("NrdrLatPidFirmwareFF", "PID Turn Feedforward (Test)",
+             "Add James's EPS firmware feedforward in turns only: none within 10 deg of centre, full from 30 deg, "
+             "so it does not bring back the near-centre wobble. Fades in once the wheel is within 10 deg of the "
+             "path; a driver press takes it out."),
+    ]
+
+    pid_smoothing_rows = [
+      toggle("HondaTorqueLowPassFilter", "Steering Target Smoothing", "Smooth the desired steering angle using speed-banded time constants."),
+      value(
+        "HondaLpfTauLowSpeed", "LPF Tau: Low Speed", "Low-pass time constant below 25 mph.",
+        lambda: f"{p.get_float('HondaLpfTauLowSpeed'):.2f}",
+        lambda: self._show_slider("HondaLpfTauLowSpeed", 0.0, 5.0, step=0.01, value_type="float", title="LPF Tau: Low Speed"),
+        visible=lambda: p.get_bool("HondaTorqueLowPassFilter"),
+      ),
+      value(
+        "HondaLpfTauStandard", "LPF Tau: Standard", "Low-pass time constant from 25 to 50 mph.",
+        lambda: f"{p.get_float('HondaLpfTauStandard'):.2f}",
+        lambda: self._show_slider("HondaLpfTauStandard", 0.0, 5.0, step=0.01, value_type="float", title="LPF Tau: Standard"),
+        visible=lambda: p.get_bool("HondaTorqueLowPassFilter"),
+      ),
+      value(
+        "HondaLpfTauHighway", "LPF Tau: Highway", "Low-pass time constant above 50 mph.",
+        lambda: f"{p.get_float('HondaLpfTauHighway'):.2f}",
+        lambda: self._show_slider("HondaLpfTauHighway", 0.0, 5.0, step=0.01, value_type="float", title="LPF Tau: Highway"),
+        visible=lambda: p.get_bool("HondaTorqueLowPassFilter"),
+      ),
+    ]
+
     learning_rows = [
       toggle("NrdrLearnSteerRatio", "Learn Steering Ratio", "Use paramsd's learned steering ratio instead of the static car value."),
       toggle("NrdrLearnStiffness", "Learn Tire Stiffness", "Use paramsd's learned tire stiffness instead of 1.0."),
@@ -276,15 +319,6 @@ class NRDRTuningLayout(_SettingsPage):
       toggle("NrdrLatUseFirmwareVgr", "Use Firmware VGR Table",
              "Convert curvature with the EPS firmware's A (position) table on top of the learned steer "
              "ratio, instead of the road-measured effective-ratio curve. Changes centre gain and taper."),
-      toggle("NrdrLatEpsFirmwareFF", "EPS Firmware Feedforward (Test)",
-             "Steer with James's modified-EPS controller: a feedforward that inverts the EPS firmware's own "
-             "control law plus a PID on fixed per-band trims. The Lat P/I/F sliders and the other lateral shaping "
-             "do not apply while on. Takes effect on the next drive. Off, the feedforward is only logged."),
-      toggle("NrdrLatPidFirmwareFF", "PID Turn Feedforward (Test)",
-             "Keep the NRDR PID and your Lat P/I/F trims, and add James's EPS firmware feedforward in turns only: "
-             "none within 10 deg of centre, full from 30 deg, so it does not bring back the near-centre wobble. "
-             "Fades in once the wheel is within 10 deg of the path; a driver press takes it out. "
-             "No effect while EPS Firmware Feedforward (James's controller) is on."),
       toggle("NrdrLatModelActionInterp", "Model Action Interpolation",
              "Ramp the model's 20 Hz steering action across the model frame instead of holding it. "
              "Removes the 20 Hz staircase in the target that the smoothing filter otherwise has to hide."),
@@ -294,25 +328,6 @@ class NRDRTuningLayout(_SettingsPage):
         "which does not bind below about 20 mph. 0 disables.",
         lambda: f"{p.get_int('NrdrLatAngleRateLimit')} deg/s",
         lambda: self._show_slider("NrdrLatAngleRateLimit", 0, 2000, unit=" deg/s", title="Desired Angle Rate Limit"),
-      ),
-      toggle("HondaTorqueLowPassFilter", "Steering Target Smoothing", "Smooth the desired steering angle using speed-banded time constants."),
-      value(
-        "HondaLpfTauLowSpeed", "LPF Tau: Low Speed", "Low-pass time constant below 25 mph.",
-        lambda: f"{p.get_float('HondaLpfTauLowSpeed'):.2f}",
-        lambda: self._show_slider("HondaLpfTauLowSpeed", 0.0, 5.0, step=0.01, value_type="float", title="LPF Tau: Low Speed"),
-        visible=lambda: p.get_bool("HondaTorqueLowPassFilter"),
-      ),
-      value(
-        "HondaLpfTauStandard", "LPF Tau: Standard", "Low-pass time constant from 25 to 50 mph.",
-        lambda: f"{p.get_float('HondaLpfTauStandard'):.2f}",
-        lambda: self._show_slider("HondaLpfTauStandard", 0.0, 5.0, step=0.01, value_type="float", title="LPF Tau: Standard"),
-        visible=lambda: p.get_bool("HondaTorqueLowPassFilter"),
-      ),
-      value(
-        "HondaLpfTauHighway", "LPF Tau: Highway", "Low-pass time constant above 50 mph.",
-        lambda: f"{p.get_float('HondaLpfTauHighway'):.2f}",
-        lambda: self._show_slider("HondaLpfTauHighway", 0.0, 5.0, step=0.01, value_type="float", title="LPF Tau: Highway"),
-        visible=lambda: p.get_bool("HondaTorqueLowPassFilter"),
       ),
       toggle("HondaSteerDeltaLimiter", "Steer Delta Limiter", "Legacy torque rate limiter. Leave off unless testing."),
       value(
@@ -363,7 +378,7 @@ class NRDRTuningLayout(_SettingsPage):
 
     lateral_sections = [
       SettingSection(title=tr_noop("Tune Report"), rows=tune_report_rows),
-      *pid_sections,
+      SettingSection(title=tr_noop("Steering Controller"), rows=controller_rows),
       SettingSection(title=tr_noop("Live Parameters / Auto Tuning"), rows=learning_rows),
       SettingSection(title=tr_noop("Center Response"), rows=center_rows),
       SettingSection(title=tr_noop("Driver Override"), rows=override_rows),
@@ -417,7 +432,21 @@ class NRDRTuningLayout(_SettingsPage):
       self,
       lateral_sections,
       header_title=tr_noop("NRDR Lateral"),
-      header_subtitle=tr_noop("Clarity EPS tuning, driver override, filtering, and online learning."),
+      header_subtitle=tr_noop("Steering controller choice, driver override, filtering, and online learning. "
+                              "These apply to both controllers."),
+      panel_style=PANEL_STYLE,
+    )
+    # Everything that only the NRDR PID reads (latcontrol_pid.py), in one place. James's controller
+    # (EPS Firmware Feedforward on) ignores all of it.
+    self._sub_panels["pid"] = AetherSettingsView(
+      self,
+      [
+        *pid_sections,
+        SettingSection(title=tr_noop("Turn Help"), rows=pid_turn_rows),
+        SettingSection(title=tr_noop("Steering Target Smoothing"), rows=pid_smoothing_rows),
+      ],
+      header_title=tr_noop("NRDR PID Control"),
+      header_subtitle=tr_noop("Only used while EPS Firmware Feedforward (James's controller) is off."),
       panel_style=PANEL_STYLE,
     )
     self._sub_panels["longitudinal"] = AetherSettingsView(
@@ -438,6 +467,7 @@ class NRDRTuningLayout(_SettingsPage):
     path = [(tr("NRDR"), "action:nrdr:root")]
     labels = {
       "lateral": tr("NRDR Lateral"),
+      "pid": tr("NRDR PID Control"),
       "longitudinal": tr("NRDR Long"),
     }
     if self._current_sub_panel in labels:
