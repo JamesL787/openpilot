@@ -573,3 +573,125 @@ export const READING_GUIDE = [
   "Speed table: the same numbers split into Low speed, Standard and Highway, the same bands as the steering sliders. A tune that is right at one speed and off at another shows up here.",
   "One drive is a hint, not a verdict. Look for the same finding across a few drives before changing anything.",
 ]
+
+// ---------------------------------------------------------------------------------------------------------------
+// Zooming: drag across a chart to pick a stretch, tap for a minute around a spot, then zoom/pan with buttons.
+
+export const ZOOM_MIN_S = 4
+export const ZOOM_MAX_S = 900
+export const DRAG_MIN_PX = 6
+
+// [start, end] kept inside the drive (0..total) and between ZOOM_MIN_S and ZOOM_MAX_S long.
+export function clampRange(start, end, total = Infinity) {
+  let a = Math.min(start, end)
+  let b = Math.max(start, end)
+  const limit = Number.isFinite(total) && total > 0 ? total : Infinity
+  let span = Math.min(Math.max(b - a, ZOOM_MIN_S), ZOOM_MAX_S, limit)
+  const mid = (a + b) / 2
+  a = mid - span / 2
+  b = mid + span / 2
+  if (a < 0) { b -= a; a = 0 }
+  if (b > limit) { a = Math.max(0, a - (b - limit)); b = limit }
+  return { start: a, end: b }
+}
+
+// factor < 1 zooms in, > 1 zooms out, around `at` (default: the middle).
+export function zoomRange(z, factor, total = Infinity, at = null) {
+  const c = at === null ? (z.start + z.end) / 2 : at
+  const f = (c - z.start) / Math.max(1e-9, z.end - z.start)
+  const span = (z.end - z.start) * factor
+  return clampRange(c - f * span, c + (1 - f) * span, total)
+}
+
+// frac of the current span: -0.5 is half a screen earlier.
+export function panRange(z, frac, total = Infinity) {
+  const span = z.end - z.start
+  let a = z.start + frac * span
+  if (a < 0) a = 0
+  if (Number.isFinite(total) && total > 0 && a + span > total) a = Math.max(0, total - span)
+  return { start: a, end: a + span }
+}
+
+// Where the zoomed stretch sits on a whole-drive chart, as CSS percentages; null when it is off the chart.
+export function zoomBand(z, geo) {
+  if (!z || !geo || geo.empty || !(geo.tMax > geo.tMin)) return null
+  const pct = (t) => Math.max(0, Math.min(100, (100 * (t - geo.tMin)) / (geo.tMax - geo.tMin)))
+  const left = pct(z.start)
+  const width = pct(z.end) - left
+  return width > 0 ? { left: left.toFixed(2), width: Math.max(0.4, width).toFixed(2) } : null
+}
+
+function timeAtX(el, clientX, geo) {
+  const rect = el.getBoundingClientRect()
+  if (!rect.width || !geo || geo.empty) return null
+  const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+  return geo.tMin + frac * (geo.tMax - geo.tMin)
+}
+
+// Pointer handlers for one chart (mouse, pen and finger alike). A movement under DRAG_MIN_PX is a tap -> onTap(t);
+// a drag draws a band and ends in onRange(t0, t1). While dragging only the DOM is touched, never app state: a
+// re-render mid-gesture would replace the element and drop the gesture. The chart needs `touch-action: pan-y` so a
+// sideways drag selects while an up/down swipe still scrolls the page (the browser then sends pointercancel).
+// onWheelZoom(factor, t) is called for ctrl + wheel, which is also what a trackpad pinch sends.
+export function rangeSelect(getGeo, { onTap = null, onRange = null, onWheelZoom = null } = {}) {
+  let drag = null
+  const clear = () => {
+    if (drag?.box) drag.box.remove()
+    drag = null
+  }
+  const place = () => {
+    const rect = drag.el.getBoundingClientRect()
+    const x0 = Math.max(rect.left, Math.min(rect.right, Math.min(drag.x0, drag.x1)))
+    const x1 = Math.max(rect.left, Math.min(rect.right, Math.max(drag.x0, drag.x1)))
+    const parent = drag.el.parentElement.getBoundingClientRect()
+    drag.box.style.left = `${x0 - parent.left}px`
+    drag.box.style.width = `${x1 - x0}px`
+    drag.box.style.top = `${rect.top - parent.top}px`
+    drag.box.style.height = `${rect.height}px`
+  }
+  return {
+    down(e) {
+      if (e.button > 0) return
+      clear()
+      drag = { el: e.currentTarget, id: e.pointerId, x0: e.clientX, x1: e.clientX, box: null }
+    },
+    move(e) {
+      if (!drag || e.pointerId !== drag.id) return
+      drag.x1 = e.clientX
+      if (!drag.box && Math.abs(drag.x1 - drag.x0) >= DRAG_MIN_PX && onRange) {
+        try { drag.el.setPointerCapture(e.pointerId) } catch { /* the pointer is already gone */ }
+        const box = document.createElement("div")
+        box.className = "plotBrush"
+        Object.assign(box.style, { position: "absolute", pointerEvents: "none", background: "rgba(122,162,247,0.22)",
+                                   borderLeft: "2px solid #7aa2f7", borderRight: "2px solid #7aa2f7", zIndex: "2" })
+        drag.el.parentElement.appendChild(box)
+        drag.box = box
+      }
+      if (drag.box) {
+        e.preventDefault()
+        place()
+      }
+    },
+    up(e) {
+      if (!drag || e.pointerId !== drag.id) return
+      const d = drag
+      clear()
+      const geo = getGeo()
+      if (!d.box) {
+        const t = timeAtX(d.el, d.x0, geo)
+        if (t !== null && onTap) onTap(t)
+        return
+      }
+      const a = timeAtX(d.el, Math.min(d.x0, d.x1), geo)
+      const b = timeAtX(d.el, Math.max(d.x0, d.x1), geo)
+      if (a !== null && b !== null) onRange(a, b)
+    },
+    cancel() { clear() },
+    wheel(e) {
+      if (!onWheelZoom || !e.ctrlKey) return
+      e.preventDefault()
+      const t = timeAtX(e.currentTarget, e.clientX, getGeo())
+      if (t !== null) onWheelZoom(e.deltaY > 0 ? 1.25 : 0.8, t)
+    },
+  }
+}
