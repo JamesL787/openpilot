@@ -508,10 +508,10 @@ export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
         "FIGHT": `you pushed against openpilot's steering for ${fmtNum(e.fought_first_s, 1)} s before taking over` }
       const flags = (Array.isArray(e.flags) ? e.flags : []).filter((f) => flagText[f])
       if (flags.length) detail += ` Flagged: ${flags.map((f) => flagText[f]).join("; ")}.`
-    } else if (e.kind === "held_against_request") {
-      title = "Held the wheel against openpilot's steering"
-      detail = `At ${fmtSpeed(e.v, speed)} for ${fmtNum(e.fought_first_s, 1)} s, around ${fmtNum(Math.abs(toNumber(e.fought_first_tq_med)), 0)} ` +
-        "torque, without taking over. A hand on the wheel reads like this whenever openpilot steers; context, not a problem."
+      if (e.held_against_request) {
+        detail += ` You held the wheel against openpilot's steering for ${fmtNum(e.fought_first_s, 1)} s without taking over. ` +
+          "A hand on the wheel reads like this whenever openpilot steers; context, not a problem."
+      }
     } else if (e.kind === "turn_overshoot") {
       title = "Tight turn went past the request"
       detail = `${e.side === "left" ? "Left" : "Right"} turn at ${fmtSpeed(e.v, speed)}: ${fmtNum(e.peak_des, 0)}° asked, the wheel ` +
