@@ -974,6 +974,14 @@ def test_bob_moments():
   c["lead_vrr"][(t >= 58.0) & (t < 59.5)] = 3.0         # off by 4 m/s for 1.5 s
   c["lead_vrr"][(t >= 60.0) & (t < 60.5)] = 3.0         # 0.5 s: too short
   c["mlead_p"][radar], c["mlead_x"][radar] = 0.9, 30.0
+  c["cl_cap"][(t >= 52.0) & (t < 52.8)] = -0.9           # the cap brakes 0.8 s for the coasted car: unmeasured_lead_cap
+  c["cl_cap"][(t >= 64.0) & (t < 65.0)] = -0.9           # measured the whole time: not flagged
+  c["a_cmd"][:], c["a_ego"][:] = -3.5, -3.5
+  c["a_ego"][(t >= 70.5) & (t < 71.0)] = -4.5           # 1.0 past the command for 0.5 s: brake_overshoot
+  c["a_ego"][(t >= 71.5) & (t < 71.7)] = -4.5           # 0.2 s: too short
+  c["a_ego"][(t >= 72.0) & (t < 73.0)] = -4.1           # 0.6 past: under the 0.8 threshold
+  c["a_ego"][(t >= 74.0) & (t < 74.4)] = -4.5           # two held runs 0.4 s apart: one moment
+  c["a_ego"][(t >= 74.8) & (t < 75.2)] = -4.5
   c["mlead_x"][(t >= 62.0) & (t < 64.0)] = 40.0         # model 10 m further for 2 s
   c["v_cruise"][:] = 90.0                               # km/h: 25 m/s set
   c["v"][(t >= 80.0) & (t < 85.0)] = 26.0               # 1 m/s over for 5 s with no lead
@@ -994,7 +1002,14 @@ def test_bob_moments():
   assert sorted(e["t"] for e in agents.long_moments(c, cap=1) if e["kind"] == "exp_flipflop") == [5.0, 20.0]  # cap per group
   assert [e["t"] for e in got["false_red_light"]] == [10.0] and got["false_red_light"][0]["v_min_10s"] == 25.0
   assert [e["t"] for e in got["atarget_step"]] == [30.0, 31.0] and got["atarget_step"][1]["a_after"] == 0.0
-  assert [e["t"] for e in got["close_lead_cap"]] == [40.0] and got["close_lead_cap"][0]["cl_cap"] == -1.2
+  assert [e["t"] for e in got["close_lead_cap"]] == [40.0, 52.0, 64.0] and got["close_lead_cap"][0]["cl_cap"] == -1.2
+  u = got["unmeasured_lead_cap"]
+  assert [e["t"] for e in u] == [52.0] and u[0]["cl_cap_min"] == -0.9 and u[0]["d"] == 30.0
+  assert u[0]["for_s"] == pytest.approx(0.8, abs=0.06)   # to the first frame off (20 Hz)
+  b = got["brake_overshoot"]
+  assert [e["t"] for e in b] == [70.5, 74.0] and b[0]["a_cmd_min"] == -3.5 and b[0]["a_ego_min"] == -4.5
+  assert b[0]["over_max"] == 1.0 and b[0]["for_s"] == pytest.approx(0.5, abs=0.06)
+  assert b[1]["for_s"] == pytest.approx(1.2, abs=0.06)
   assert [e["t"] for e in got["radar_coast_near"]] == [52.0]
   assert got["radar_coast_near"][0]["coast_s"] == pytest.approx(1.0)
   assert [e["t"] for e in got["vrel_disagree"]] == [58.0] and got["vrel_disagree"][0]["gap_max"] == 4.0
@@ -1010,11 +1025,12 @@ def test_bob_moments():
   kinds = [e["kind"] for e in agents.long_moments(c)]
   assert "false_red_light" not in kinds and "overspeed_no_lead" not in kinds
   # Older recordings without these columns give none of them.
-  for k in ("exp_mode", "red_light", "cl_cap", "lead_meas", "lead_vrr", "mlead_x", "v_cruise", "gl_gf_raw"):
+  for k in ("exp_mode", "red_light", "cl_cap", "lead_meas", "lead_vrr", "mlead_x", "v_cruise", "gl_gf_raw", "a_cmd"):
     c[k][:] = np.nan
   assert not {e["kind"] for e in agents.long_moments(c)} & {"exp_flipflop", "false_red_light", "close_lead_cap",
                                                             "radar_coast_near", "vrel_disagree", "radar_vs_model",
-                                                            "overspeed_no_lead", "gf_clip"}
+                                                            "overspeed_no_lead", "gf_clip", "unmeasured_lead_cap",
+                                                            "brake_overshoot"}
 
 
 def test_james_lateral_moments():

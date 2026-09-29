@@ -106,6 +106,10 @@ RED_LIGHT_WINDOW_S = 10.0     # ... within this long after it came on: false_red
 ATARGET_STEP = 0.5            # |aTarget change| between consecutive plan frames (m/s^2)
 COAST_NEAR_D = 40.0           # radar lead closer than this (m) ...
 COAST_NEAR_S = 0.5            # ... coasting (measuredRadar false) longer than this
+OVERSHOOT_A = 0.8             # aEgo this far (m/s^2) below a negative a_cmd ...
+OVERSHOOT_S = 0.3             # ... for longer than this, long active: brake_overshoot (route 298: -4.7 vs -3.5)
+FAR_CAP_S = 0.3               # radar lead not measured (coasting) while the close-lead cap brakes: unmeasured_lead_cap
+JOIN_S = 1.0                  # both: runs this close together are one moment (route 297 split one approach into 5)
 VREL_DISAGREE = 3.0           # |vRel - vRelRangeDerived| (m/s) ...
 VREL_DISAGREE_S = 1.0         # ... for longer than this, moving (Bob: 1.5 / 0.5 s gave 263 in 0.96 h of route 297)
 MODEL_DISAGREE_D = (5.0, 0.15)  # |radar d - model d| > max(5 m, 0.15 d) ...
@@ -188,6 +192,17 @@ def _held_runs(mask, t, hold_s):
     dur = float(t[min(b, len(t) - 1)] - t[a])   # until the first False frame (or the last frame)
     if dur > hold_s:
       out.append((int(a), int(b), dur))
+  return out
+
+
+def _join_runs(runs, t, gap_s):
+  """Held runs from _held_runs with the ones starting within gap_s of the previous end joined into one."""
+  out = []
+  for a, b, dur in runs:
+    if out and t[a] - t[min(out[-1][1], len(t) - 1)] < gap_s:
+      a = out.pop()[0]
+      dur = float(t[min(b, len(t) - 1)] - t[a])
+    out.append((a, b, dur))
   return out
 
 
@@ -909,6 +924,13 @@ def _bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap):
     coast = radar & (d < COAST_NEAR_D) & np.isfinite(c["lead_meas"]) & ~_b(c, "lead_meas")
     add(_held_runs(coast, t, COAST_NEAR_S),
         lambda a, b, dur: base("radar_coast_near", a, coast_s=_r(dur, 2), d_min=_r(np.min(d[a:b]), 1)))
+    if has(c, "cl_cap"):
+      # Bob, route 298: a 121 m point with measuredRadar false and vRel stuck at -13.5 set a -0.9 cap for seconds.
+      capx = _col(c, "cl_cap", n)
+      far_cap = radar & np.isfinite(c["lead_meas"]) & ~_b(c, "lead_meas") & (np.nan_to_num(capx) < -1e-3)
+      add(_join_runs(_held_runs(far_cap, t, FAR_CAP_S), t, JOIN_S),
+          lambda a, b, dur: base("unmeasured_lead_cap", a, for_s=_r(dur, 2), cl_cap_min=_r(np.nanmin(capx[a:b]), 2),
+                                 d=_r(d[a], 1), vrel=val("lead_vrel", a), a_target_min=_r(np.nanmin(plan[a:b]), 2)))
   if has(c, "lead_vrel") and has(c, "lead_vrr"):
     gap = np.abs(c["lead_vrel"] - c["lead_vrr"])
     # Moving only: stopped behind a stopped car the range-derived speed is noise (route 297: 9 m/s gaps at 0 m/s).
@@ -921,6 +943,15 @@ def _bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap):
     add(_held_runs(far, t, MODEL_DISAGREE_S),
         lambda a, b, dur: base("radar_vs_model", a, model_d=val("mlead_x", a, 1), d_gap_max=_r(np.max(dm[a:b]), 1),
                                for_s=_r(dur, 2)))
+
+  if has(c, "a_cmd") and has(c, "a_ego"):
+    # Bob: the car braking well past what was asked (route 298: a_cmd -3.5, aEgo -4.7 as a curve began).
+    ac, ae = _col(c, "a_cmd", n), _col(c, "a_ego", n)
+    over = on & np.isfinite(ac) & np.isfinite(ae) & (ac < 0) & (ae < ac - OVERSHOOT_A)
+    add(_join_runs(_held_runs(over, t, OVERSHOOT_S), t, JOIN_S),
+        lambda a, b, dur: base("brake_overshoot", a, for_s=_r(dur, 2), a_cmd_min=_r(np.min(ac[a:b]), 2),
+                               a_ego_min=_r(np.min(ae[a:b]), 2), over_max=_r(np.max(ac[a:b] - ae[a:b]), 2),
+                               lead_d=_r(d[a], 1) if lead_on[a] else None, road_curv=val("road_curv", a, 4)))
 
   if has(c, "v_cruise"):
     vc = _col(c, "v_cruise", n)

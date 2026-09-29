@@ -7698,6 +7698,10 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
   - Kevin's live flags on each takeover (`flags`, published as it finishes): FLICKER, SNAPBACK, GAP (> 20° under
     10 mph), NEAR-CUT (1500-1800 held > 1 s). Route 297 replay: 20 of 91 takeovers flagged (6 / 10 / 5 / 0).
     `rlog_report` also writes `moment_windows.csv`, ±2 s of rows around each moment (offline only).
+  - Bob's brake_overshoot (long active, aEgo more than 0.8 below a negative a_cmd held > 0.3 s) and
+    unmeasured_lead_cap (radar lead with measuredRadar false while closeLeadBrakeCap < 0, held > 0.3 s); runs under
+    1 s apart are one moment. Replay: 298 has 1 overshoot (its bookmark 1, -3.5 asked, -4.72 reached) and 6 caps (its
+    bookmark 3 is the 121 m one); 297 has 2 and 4. 7 of the 10 caps start with vRel at -13.3 to -13.5 m/s.
   - `tools/drive_plots/sim_export.py` writes John's `lat_pid_sim.npz` per steered segment at the controls rate
     (~97 Hz on 297), t from each segment's first carState. Not yet read by his scorer.
 
