@@ -210,13 +210,25 @@ NRDR_PID_EPS_FF_JOIN_ERROR_DEG = 10.0
 NRDR_PID_EPS_FF_FADE_IN_S = 0.5
 NRDR_PID_EPS_FF_SPEED_BP = (2.0, 4.0)
 NRDR_PID_EPS_FF_ANGLE_BP = (10.0, 30.0)
+# nrdr: trailing rejoin. The join above waits for |error| < 10 deg, so after a release in a turn, with the wheel
+# short of the path, the feedforward stayed out and the plain PID trailed (road, 28a/28b/28f: 23-33 % of turn time
+# latched out, mostly within 1 s of the release). It now also joins when the wheel is short of the turn
+# (error * desired > 0) once there has been no press for this long. Replay on 10 PID routes (277-28f, no driver):
+# 12-25 mph turn error 14.81 -> 13.51 deg, 93 % of it on turns left hands-off for 2 s or more, overshoot past the
+# path +0.28 (27a right 1.46 -> 2.79, 28b left 1.75 -> 2.43); 0 s gained more but fires while the hand comes back
+# (road: 64 % of joins meet a press within 0.5 s, 43 % at 0.5 s), 1.0 s kept half as much. A re-grab usually pushes
+# against the turn (50 of 60), which replay cannot score: John's sim re-grab row is pending. inf turns it off.
+NRDR_PID_EPS_FF_REJOIN_HOLD_S = 0.5
 
 
-def nrdr_pid_eps_ff_weight(ramp, error_deg, desired_angle_deg, v_ego, steering_pressed, dt):
-  """Returns (ramp, weight). The ramp is the join state; the weight is what multiplies the feedforward."""
+def nrdr_pid_eps_ff_weight(ramp, error_deg, desired_angle_deg, v_ego, steering_pressed, dt, since_press_s=0.0):
+  """Returns (ramp, weight). The ramp is the join state; the weight is what multiplies the feedforward.
+  since_press_s: time since the last press, for the trailing rejoin (the default 0 leaves it out)."""
   if steering_pressed or v_ego < NRDR_PID_EPS_FF_SPEED_BP[0]:
     ramp = 0.0
   elif ramp > 0.0 or abs(error_deg) < NRDR_PID_EPS_FF_JOIN_ERROR_DEG:
+    ramp = min(1.0, ramp + dt / NRDR_PID_EPS_FF_FADE_IN_S)
+  elif error_deg * desired_angle_deg > 0.0 and since_press_s >= NRDR_PID_EPS_FF_REJOIN_HOLD_S:
     ramp = min(1.0, ramp + dt / NRDR_PID_EPS_FF_FADE_IN_S)
   speed_w = float(np.interp(v_ego, NRDR_PID_EPS_FF_SPEED_BP, (0.0, 1.0)))
   angle_w = float(np.interp(abs(desired_angle_deg), NRDR_PID_EPS_FF_ANGLE_BP, (0.0, 1.0)))
@@ -778,7 +790,8 @@ class LatControlPID(LatControl):
           self.pid.p *= self.applied_kp / kp_target
         if self.eps_ff_enabled and self.eps_ff_ok:
           self.eps_ff_ramp, self.eps_ff_weight = nrdr_pid_eps_ff_weight(self.eps_ff_ramp, error, angle_steers_des_no_offset,
-                                                                        CS.vEgo, steering_pressed, self.dt)
+                                                                        CS.vEgo, steering_pressed, self.dt,
+                                                                        self.since_press_s)
         else:
           self.eps_ff_ramp = 0.0
         w = self.eps_ff_weight

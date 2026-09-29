@@ -9814,3 +9814,39 @@ Per-turn replay overshoot on 28f sharp corners (n=8): +3.3 -> +3.0 deg (logged d
 - Refit after any EPS reflash.
 
 **This is the last planned NRDR PID change.** Per the owner, the lateral focus moves to LatControlClarityEps.
+
+## 191. NRDR PID turn feedforward now comes back 0.5 s after a release while the wheel is short of the turn (`NrdrLatPidFirmwareFF`, still default off; owner, 2026-09-29). Replay and static evidence only; not driven, and the driver re-grab is unscored.
+
+**Why.** The owner saw no benefit from `NrdrLatPidFirmwareFF`. A press drops its feedforward, and it only rejoined once
+the wheel was within 10 deg of the path. After a release mid-turn the wheel is usually further behind than that, so
+the plain PID carried the turn and trailed. On 28a/28b/28f, 23-33 % of turn time was latched out this way, mostly in
+the first second after a release (never 3 s or more).
+
+**What.** `nrdr_pid_eps_ff_weight` in `latcontrol_pid.py` also joins when `error * desired > 0` (the wheel is short of
+the turn) and there has been no press for `NRDR_PID_EPS_FF_REJOIN_HOLD_S` = 0.5 s. The fade-in, the |desired| gate,
+the 2-4 m/s speed gate and "a press drops it" are unchanged. `inf` turns the rejoin off. James's controller is not
+touched. The toggle keeps its key, so a device with it off is unchanged.
+
+**Evidence (replay, `lat_score` gate, 10 PID routes 277-28f, no driver in the loop).**
+
+| hold-off | turn_err 12-25 mph | turn_err < 12 mph | turn_past 12-25 mph |
+|---|---|---|---|
+| none (old law) | 14.81 | 23.60 | 5.73 |
+| 0 s | 12.84 | 22.74 | 5.95 |
+| **0.5 s (shipped)** | **13.51** | **22.91** | **6.01** |
+| 1.0 s | 14.16 | 23.10 | 6.00 |
+| 1.5 s | 14.57 | 23.33 | 5.90 |
+
+- Joining when *past* the path instead (negative control) changes nothing, so the "short of the turn" sign carries it.
+- Wobble and dither are unchanged in every arm. Verdict: pass.
+- At 12-25 mph, 93 % of the gain is on turns left hands-off for 2 s or more after the join (mean -2.62 deg, overshoot
+  +0.41).
+- Nearly all of the gain is on right turns (sides from the desired angle, + = left). Left-turn error barely moves.
+  The overshoot rises to watch: 27a right 1.46 -> 2.79, 28b left 1.75 -> 2.43.
+
+**Open: the re-grab.** Replay re-syncs to the log on every press, so it cannot score a driver who grabs the wheel back.
+- From the road logs, 43 % of 0.5 s joins meet a press within 0.5 s (64 % at 0 s).
+- 50 of those 60 re-presses push against the turn: 23 at the exit, 17 while the plan still turns in, 10 mid-turn.
+- John's MetaDrive re-grab row (base / 0 s / 0.5 s, re-grab drawn from those road events) is to be preregistered and
+  is not yet run.
+- The owner's left turns on the PID are gentle and need little correction. Report any change by turn side.
