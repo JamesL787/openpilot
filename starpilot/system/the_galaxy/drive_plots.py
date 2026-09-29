@@ -62,6 +62,28 @@ COLUMNS = [
   "lead_id", "lead_y", "lead_vrel", "lead_a", "lead_prob", "lead_meas", "lead_vrr",
   "lead2_on", "lead2_d", "lead2_v", "lead2_id",
   "mlead_p", "mlead_x", "mlead_y", "mlead_v", "mlead_a",
+  # ---- added 2026-09-29 from the agents' metric requests (Kevin, James, Bob, John) ----
+  # Steering faults (carState.steerFaultTemporary / Permanent): a flicker during a takeover is what Kevin counts.
+  "fault_t", "fault_p",
+  # controlsState.desiredCurvature / curvature in 1/km (+ = right, as lat_des): lat_des is curvature * v^2 and so
+  # loses the sign and size of the request at low speed. James.
+  "des_curv", "curv",
+  # starpilotLateralState firmware feedforward internals: R5 counts it asks for, the column-load counts, and the
+  # filtered desired wheel rate (deg/s). James.
+  "ff_r5", "ff_load", "ff_rate",
+  # liveParameters.angleOffsetDeg / roll (rad) and liveDelay.lateralDelay (s). James, John.
+  "ang_off", "roll", "lat_delay",
+  # longitudinalPlan: source (0 cruise, 1-3 lead0-2, 4 e2e), allowThrottle / allowBrake, the close-lead brake cap
+  # (0 when it did not engage) and the accel the lead geometry requires. Bob.
+  "plan_src", "allow_thr", "allow_brk", "cl_cap", "geo_acc",
+  # radarState.leadOne dPath (m) and aLeadTau (s); carControl.orientationNED[1] pitch (rad); carState.vCruise (km/h).
+  "lead_dpath", "lead_tau", "pitch", "v_cruise",
+  # starpilotPlan: red light, forcing a stop, road curvature ahead (1/m), approach-stop pre-commit distance (m).
+  "red_light", "forcing_stop", "road_curv", "stop_len",
+  # starpilotCarState Honda gas learner: applied gas factor, wind factor, error (m/s^2), learning this tick.
+  "gl_gf", "gl_wf", "gl_err", "gl_learn",
+  # starpilotRadarState: a moving lead in the left / right lane, a vehicle stopped in an adjacent lane.
+  "adj_l", "adj_r", "adj_stop",
 ]
 # Columns read as NaN ("not recorded") when an older recording lacks them, so no metric is built from zeros.
 _AGENT_COLS = COLUMNS[COLUMNS.index("steer_tq"):]
@@ -69,7 +91,8 @@ NAN_COLUMNS = set(_AGENT_COLS)
 COL = {name: i for i, name in enumerate(COLUMNS)}
 BOOL_COLUMNS = {"enabled", "lat_active", "long_active", "steer_pressed", "gas_pressed", "brake_pressed", "lat_sat", "ang_ok",
                 "blinker", "pid_active", "ff_active", "should_stop", "fcw", "has_lead", "exp_mode", "tracking_lead",
-                "standstill", "lead_meas", "lead2_on"}
+                "standstill", "lead_meas", "lead2_on", "fault_t", "fault_p", "allow_thr", "allow_brk", "red_light",
+                "forcing_stop", "gl_learn", "adj_l", "adj_r", "adj_stop"}
 LEAD_SOURCES = {0: None, 1: "radar", 2: "camera"}
 
 # Lateral controllers the advice can name (see the_galaxy._lateral_controller_info).
@@ -967,7 +990,83 @@ def _agent_columns(sm, cs, cc, have_cc, car_state, plan, t):
         o["lead2_d"], o["lead2_v"], o["lead2_id"] = _f(l2.dRel, NAN), _f(l2.vLead, NAN), _f(l2.radarTrackId, -1)
     except Exception:
       pass
+  _request_columns(sm, o, cs, cc, have_cc, car_state, plan)
   return [round(o[k], 4) if isinstance(o[k], float) and o[k] == o[k] else o[k] for k in _AGENT_COLS]
+
+
+def _field(msg, name, default=NAN):
+  return _f(getattr(msg, name, default), default)
+
+
+def _request_columns(sm, o, cs, cc, have_cc, car_state, plan):
+  """The 2026-09-29 columns. Each message is read in its own try so one missing field cannot blank the others."""
+  o["fault_t"] = int(bool(getattr(car_state, "steerFaultTemporary", False)))
+  o["fault_p"] = int(bool(getattr(car_state, "steerFaultPermanent", False)))
+  o["v_cruise"] = _field(car_state, "vCruise")
+  o["des_curv"] = _field(cs, "desiredCurvature") * 1000.0
+  o["curv"] = _field(cs, "curvature") * 1000.0
+  o["pitch"] = NAN
+  if have_cc:
+    try:
+      ned = cc.orientationNED
+      o["pitch"] = _f(ned[1], NAN) if len(ned) >= 2 else NAN
+    except Exception:
+      pass
+  o["ff_r5"] = o["ff_load"] = o["ff_rate"] = NAN
+  if _got(sm, "starpilotLateralState"):
+    try:
+      ls = sm["starpilotLateralState"]
+      o["ff_r5"], o["ff_load"], o["ff_rate"] = _field(ls, "epsFfR5"), _field(ls, "epsFfLoad"), _field(ls, "epsFfDesiredRate")
+    except Exception:
+      pass
+  o["ang_off"] = o["roll"] = NAN
+  if _got(sm, "liveParameters"):
+    try:
+      lp = sm["liveParameters"]
+      o["ang_off"], o["roll"] = _field(lp, "angleOffsetDeg"), _field(lp, "roll")
+    except Exception:
+      pass
+  o["lat_delay"] = _field(sm["liveDelay"], "lateralDelay") if _got(sm, "liveDelay") else NAN
+  o["plan_src"] = o["allow_thr"] = o["allow_brk"] = o["cl_cap"] = o["geo_acc"] = NAN
+  try:
+    o["plan_src"] = int(plan.longitudinalPlanSource.raw)
+    o["allow_thr"], o["allow_brk"] = int(bool(plan.allowThrottle)), int(bool(plan.allowBrake))
+    o["cl_cap"], o["geo_acc"] = _field(plan, "closeLeadBrakeCap"), _field(plan, "leadGeometryRequiredAccel")
+  except Exception:
+    pass
+  o["lead_dpath"] = o["lead_tau"] = NAN
+  if _got(sm, "radarState"):
+    try:
+      l1 = sm["radarState"].leadOne
+      if l1.status:
+        o["lead_dpath"], o["lead_tau"] = _field(l1, "dPath"), _field(l1, "aLeadTau")
+    except Exception:
+      pass
+  o["red_light"] = o["forcing_stop"] = o["road_curv"] = o["stop_len"] = NAN
+  if _got(sm, "starpilotPlan"):
+    try:
+      sp = sm["starpilotPlan"]
+      o["red_light"], o["forcing_stop"] = int(bool(sp.redLight)), int(bool(sp.forcingStop))
+      o["road_curv"], o["stop_len"] = _field(sp, "roadCurvature"), _field(sp, "approachStopLength")
+    except Exception:
+      pass
+  o["gl_gf"] = o["gl_wf"] = o["gl_err"] = o["gl_learn"] = NAN
+  if _got(sm, "starpilotCarState"):
+    try:
+      scs = sm["starpilotCarState"]
+      if scs.gasLearnerAvailable:
+        o["gl_gf"], o["gl_wf"] = _field(scs, "gasLearnerGasFactor"), _field(scs, "gasLearnerWindFactor")
+        o["gl_err"], o["gl_learn"] = _field(scs, "gasLearnerError"), int(bool(scs.gasLearnerLearning))
+    except Exception:
+      pass
+  o["adj_l"] = o["adj_r"] = o["adj_stop"] = NAN
+  if _got(sm, "starpilotRadarState"):
+    try:
+      sr = sm["starpilotRadarState"]
+      o["adj_l"], o["adj_r"] = int(bool(sr.leadLeft.status)), int(bool(sr.leadRight.status))
+      o["adj_stop"] = int(bool(sr.adjacentStopped.status))
+    except Exception:
+      pass
 
 
 def _fmt(x):
@@ -979,7 +1078,8 @@ def _fmt(x):
 
 class DrivePlots:
   SERVICES = ["controlsState", "carControl", "carState", "longitudinalPlan", "radarState", "carOutput", "modelV2",
-              "selfdriveState", "starpilotPlan", "starpilotLateralState"]
+              "selfdriveState", "starpilotPlan", "starpilotLateralState", "liveParameters", "liveDelay", "starpilotCarState",
+              "starpilotRadarState"]
 
   def __init__(self, root, is_onroad, submaster_factory=None, clock=time.monotonic, controller_fn=None,
                meta_fn=None, route_fn=None, publisher_factory=None):

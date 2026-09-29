@@ -135,6 +135,10 @@ class _FakeSM:
     self.selfdrive = log.SelfdriveState.new_message()
     self.sp_plan = custom.StarPilotPlan.new_message()
     self.sp_lat = custom.StarPilotLateralState.new_message()
+    self.live_params = log.LiveParametersData.new_message()
+    self.live_delay = log.LiveDelayData.new_message()
+    self.sp_car = custom.StarPilotCarState.new_message()
+    self.sp_radar = custom.StarPilotRadarState.new_message()
     self.recv_frame = {s: 0 for s in dp.DrivePlots.SERVICES}
     self.updated = {s: False for s in dp.DrivePlots.SERVICES}
     self.logMonoTime = {s: 0 for s in dp.DrivePlots.SERVICES}
@@ -149,7 +153,9 @@ class _FakeSM:
   def __getitem__(self, name):
     return {"controlsState": self.cs, "carControl": self.cc, "carState": self.car_state,
             "longitudinalPlan": self.plan, "radarState": self.radar, "carOutput": self.car_output, "modelV2": self.model,
-            "selfdriveState": self.selfdrive, "starpilotPlan": self.sp_plan, "starpilotLateralState": self.sp_lat}[name]
+            "selfdriveState": self.selfdrive, "starpilotPlan": self.sp_plan, "starpilotLateralState": self.sp_lat,
+            "liveParameters": self.live_params, "liveDelay": self.live_delay, "starpilotCarState": self.sp_car,
+            "starpilotRadarState": self.sp_radar}[name]
 
 
 def _engaged_sm():
@@ -838,3 +844,33 @@ def test_a_light_hold_without_steering_pressed_is_not_the_controllers_turn():
   assert len(overs) == 2 and all("mono_s" in x for x in overs)
   tight = a["lateral_detail"]["tight_turns"]
   assert tight["count"] == 2 and all(0.0 <= x["held_frac"] < 0.5 for x in tight["turns"])
+
+
+def test_request_columns_read_the_right_fields():
+  sm = _engaged_sm()
+  r = dict(zip(dp.COLUMNS, dp.build_row(sm)))
+  # Nothing received yet: every added column is NaN (not recorded), never 0.
+  assert all(r[k] != r[k] for k in ("ang_off", "lat_delay", "gl_gf", "adj_l", "red_light", "ff_r5"))
+  sm.car_state.steerFaultTemporary, sm.car_state.vCruise = True, 105.0
+  sm.cc.orientationNED = [0.0, -0.03, 0.0]
+  sm.sp_lat.epsFfR5, sm.sp_lat.epsFfLoad, sm.sp_lat.epsFfDesiredRate = 120.0, 80.0, 14.0
+  sm.live_params.angleOffsetDeg, sm.live_params.roll = 0.4, 0.02
+  sm.live_delay.lateralDelay = 0.21
+  sm.plan.longitudinalPlanSource = "lead0"
+  sm.plan.allowThrottle, sm.plan.closeLeadBrakeCap, sm.plan.leadGeometryRequiredAccel = True, -1.2, -0.8
+  sm.radar.leadOne.status, sm.radar.leadOne.dPath, sm.radar.leadOne.aLeadTau = True, 0.3, 1.5
+  sm.sp_plan.redLight, sm.sp_plan.roadCurvature, sm.sp_plan.approachStopLength = True, 0.004, 42.0
+  sm.sp_car.gasLearnerAvailable, sm.sp_car.gasLearnerGasFactor, sm.sp_car.gasLearnerWindFactor = True, 1.1, 0.95
+  sm.sp_car.gasLearnerError, sm.sp_car.gasLearnerLearning = 0.05, True
+  sm.sp_radar.leadLeft.status, sm.sp_radar.adjacentStopped.status = True, True
+  sm.update()
+  r = dict(zip(dp.COLUMNS, dp.build_row(sm)))
+  assert (r["fault_t"], r["fault_p"], r["v_cruise"], r["pitch"]) == (1, 0, 105.0, -0.03)
+  assert (r["des_curv"], r["curv"]) == (2.0, 1.9)
+  assert (r["ff_r5"], r["ff_load"], r["ff_rate"]) == (120.0, 80.0, 14.0)
+  assert (r["ang_off"], r["roll"], r["lat_delay"]) == (0.4, 0.02, 0.21)
+  assert (r["plan_src"], r["allow_thr"], r["allow_brk"], r["cl_cap"], r["geo_acc"]) == (1, 1, 0, -1.2, -0.8)
+  assert (r["lead_dpath"], r["lead_tau"]) == (0.3, 1.5)
+  assert (r["red_light"], r["forcing_stop"], r["road_curv"], r["stop_len"]) == (1, 0, 0.004, 42.0)
+  assert (r["gl_gf"], r["gl_wf"], r["gl_err"], r["gl_learn"]) == (1.1, 0.95, 0.05, 1)
+  assert (r["adj_l"], r["adj_r"], r["adj_stop"]) == (1, 0, 1)

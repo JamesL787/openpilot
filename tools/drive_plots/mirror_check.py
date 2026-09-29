@@ -102,6 +102,28 @@ def expected(m, plan_mono):
     "mlead_p": NAN, "mlead_x": NAN, "mlead_y": NAN, "mlead_v": NAN, "mlead_a": NAN,
   }
   e["long_state"] = dp.LONG_STATES.get(str(cs.longControlState), 0)
+  lp, ld_, scs, srs = m.get("liveParameters"), m.get("liveDelay"), m.get("starpilotCarState"), m.get("starpilotRadarState")
+  gl = scs is not None and scs.gasLearnerAvailable
+  ned = list(cc.orientationNED) if cc is not None else []
+  e.update({
+    "fault_t": int(car.steerFaultTemporary), "fault_p": int(car.steerFaultPermanent), "v_cruise": car.vCruise,
+    "des_curv": cs.desiredCurvature * 1000.0, "curv": cs.curvature * 1000.0,
+    "pitch": ned[1] if len(ned) >= 2 else NAN,
+    "ff_r5": ls.epsFfR5 if ls is not None else NAN, "ff_load": ls.epsFfLoad if ls is not None else NAN,
+    "ff_rate": ls.epsFfDesiredRate if ls is not None else NAN,
+    "ang_off": lp.angleOffsetDeg if lp is not None else NAN, "roll": lp.roll if lp is not None else NAN,
+    "lat_delay": ld_.lateralDelay if ld_ is not None else NAN,
+    "plan_src": int(plan.longitudinalPlanSource.raw), "allow_thr": int(plan.allowThrottle),
+    "allow_brk": int(plan.allowBrake), "cl_cap": plan.closeLeadBrakeCap, "geo_acc": plan.leadGeometryRequiredAccel,
+    "lead_dpath": l1.dPath if l1 else NAN, "lead_tau": l1.aLeadTau if l1 else NAN,
+    "red_light": int(sp.redLight) if sp is not None else NAN, "forcing_stop": int(sp.forcingStop) if sp is not None else NAN,
+    "road_curv": sp.roadCurvature if sp is not None else NAN, "stop_len": sp.approachStopLength if sp is not None else NAN,
+    "gl_gf": scs.gasLearnerGasFactor if gl else NAN, "gl_wf": scs.gasLearnerWindFactor if gl else NAN,
+    "gl_err": scs.gasLearnerError if gl else NAN, "gl_learn": int(scs.gasLearnerLearning) if gl else NAN,
+    "adj_l": int(srs.leadLeft.status) if srs is not None else NAN,
+    "adj_r": int(srs.leadRight.status) if srs is not None else NAN,
+    "adj_stop": int(srs.adjacentStopped.status) if srs is not None else NAN,
+  })
   if md is not None:
     left, right, probs = md.laneLines[1].y, md.laneLines[2].y, md.laneLineProbs
     if len(md.laneLines) >= 3 and len(left) and len(right) and len(probs) >= 3:
