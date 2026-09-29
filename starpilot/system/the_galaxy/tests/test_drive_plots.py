@@ -872,5 +872,42 @@ def test_request_columns_read_the_right_fields():
   assert (r["plan_src"], r["allow_thr"], r["allow_brk"], r["cl_cap"], r["geo_acc"]) == (1, 1, 0, -1.2, -0.8)
   assert (r["lead_dpath"], r["lead_tau"]) == (0.3, 1.5)
   assert (r["red_light"], r["forcing_stop"], r["road_curv"], r["stop_len"]) == (1, 0, 0.004, 42.0)
-  assert (r["gl_gf"], r["gl_wf"], r["gl_err"], r["gl_learn"]) == (1.1, 0.95, 0.05, 1)
+  sm.sp_car.gasLearnerGasFactorRaw = 1.6
+  sm.update()
+  r = dict(zip(dp.COLUMNS, dp.build_row(sm)))
+  assert (r["gl_gf"], r["gl_wf"], r["gl_err"], r["gl_learn"], r["gl_gf_raw"]) == (1.1, 0.95, 0.05, 1, 1.6)
   assert (r["adj_l"], r["adj_r"], r["adj_stop"]) == (1, 0, 1)
+
+
+def test_takeover_turn_fight_numbers():
+  """Kevin's per-episode numbers on a slow-turn fight: a fault flicker and a target re-seed during the press, a
+  wheel 25 deg short of the plan at release, a 0.6 /s takeback, and a second grab re-pressed 0.5 s after release."""
+  rows = _takeover_drive()
+  c = dp._as_arrays(rows)
+  t = c["t"] - c["t"][0]
+  c["lat_active"][:] = 1
+  c["fault_t"] = np.where(((t >= 30.5) & (t < 30.7)) | ((t >= 31.2) & (t < 31.3)), 1.0, 0.0)
+  c["ang_des"] = np.where(t < 31.0, 40.0, 140.0)
+  c["ang_act"] = c["ang_des"] - 25.0
+  near = (t >= 31.5) & (t < 32.0)
+  c["steer_tq"][near], c["steer_pressed"][near] = 1600.0, 0.0
+  c["lat_out"] = np.where(t < 32.0, 0.2, np.minimum(0.8, 0.2 + 0.6 * (t - 32.0)))
+  c["lat_i"] = np.where((t >= 31.0) & (t < 31.05), -0.3, 0.1)
+  for a, b in ((60.0, 61.0), (61.5, 61.7)):   # released at 61.0, re-pressed 0.5 s later
+    m = (t >= a) & (t < b)
+    c["steer_pressed"][m], c["steer_tq"][m] = 1.0, 900.0
+  eps = agents.takeovers(c)["episodes"]
+  assert [round(e["t"], 1) for e in eps] == [30.0, 60.0, 61.5]
+  e = eps[0]
+  assert e["turn"] is True and e["release_gap_deg"] == pytest.approx(25.0)
+  assert e["lat_out_release"] == pytest.approx(0.2) and e["takeback_rate_peak"] == pytest.approx(0.6, abs=0.05)
+  assert e["t90_s"] == pytest.approx(0.9, abs=0.06)
+  assert e["fault_flicker_n"] == 2 and e["fault_flicker_ms"] == pytest.approx(300, abs=60)
+  assert e["ang_des_step_max_dps"] == pytest.approx(2000, rel=0.1)
+  assert e["i_press"] == pytest.approx(0.1) and e["i_press_min"] == pytest.approx(-0.3)
+  assert e["near_cut_s"] == pytest.approx(0.5, abs=0.06) and e["override_cut_s"] == pytest.approx(1.5, abs=0.06)
+  assert e["repress"] is False and e["repress_after_s"] is None
+  assert eps[1]["repress"] is True and eps[1]["repress_after_s"] == pytest.approx(0.5, abs=0.06)
+  assert eps[1]["t90_s"] is None   # pressed again before lat_out settled
+  s = agents.takeovers(c)["summary"]
+  assert (s["repress"], s["repress_late"], s["fault_flicker"], s["near_cut"]) == (1, 0, 1, 1)

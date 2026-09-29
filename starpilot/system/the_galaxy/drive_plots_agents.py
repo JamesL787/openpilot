@@ -52,6 +52,17 @@ TORQUE_CUT_MIN = 0.05         # ... while the request is at least this (normaliz
 STALL_MS = 100.0              # controlsState older than this inside an episode: stalled (John drops these)
 RELEASE_CLASS_V = 15.0        # James's "driver release": a grab above this speed (m/s) ...
 RELEASE_CLASS_MAX_S = 3.0     # ... held under this long
+# Kevin's turn-fight numbers (2026-09-29): slow turns where the plan is tighter than the wheel, the EPS faulting while
+# pressed, and drivers holding just under the cut.
+TURN_ANG_DES = 30.0           # |ang_des| at release above this (deg): a turn, else a straight
+SLOPE_HALF_S = 0.05           # takeback rate: least-squares slope of lat_out over +-this (a 0.1 s window); a frame
+                              # difference at 20 Hz measured timestamp jitter (3-4 /s fake against ~2 /s real)
+TAKEBACK_WINDOW_S = 1.0       # peak takeback rate over [release, +this)
+T90_SETTLE_S = (2.5, 3.0)     # lat_out's settled value: its median over [release + a, release + b]
+T90_MIN_CHANGE = 0.05         # a takeback smaller than this (normalized output) has no t90
+REPRESS_S = (0.3, 0.8)        # a re-press this long after the release: the snapback Kevin flags
+REPRESS_LATE_S = (0.8, 1.3)   # report-only count
+NEAR_CUT_TQ = (1500.0, 1800.0)  # |steeringTorque| held in this band without steeringPressed: holding just under the cut
 
 # ---- radar / longitudinal moments (Bob) ----
 BRAKE_LIST = -1.5             # aTarget below this is a braking moment (Bob's replay episodes use -1.5)
@@ -249,6 +260,81 @@ def _settle(t, err, r, thr):
   return None
 
 
+def _ls_slope(t, y, k, half):
+  """Least-squares slope of y against t over the frames within +-half s of frame k (None under 3 frames)."""
+  a, b = int(np.searchsorted(t, t[k] - half - 1e-6)), int(np.searchsorted(t, t[k] + half + 1e-6))
+  tt, yy = t[a:b], y[a:b]
+  ok = np.isfinite(yy)
+  tt, yy = tt[ok], yy[ok]
+  if len(tt) < 3:
+    return None
+  tt = tt - tt.mean()
+  den = float(np.sum(tt * tt))
+  return float(np.sum(tt * (yy - yy.mean())) / den) if den > 0 else None
+
+
+def _frames_s(t, mask):
+  """Seconds covered by the True frames of mask, each frame lasting until the next (gaps over 0.2 s cut to 0.2)."""
+  if len(t) < 2 or not np.any(mask):
+    return 0.0
+  d = np.clip(np.diff(t, append=t[-1]), 0.0, 0.2)
+  return float(np.sum(d[mask]))
+
+
+def _turn_fight(c, t, s, r, dt, angles, err):
+  """Kevin's per-episode numbers (see TURN_ANG_DES and below). NaN-only columns give None."""
+  v = c["v"]
+  e = {"v_release": _r(v[r], 1)}
+  ang_des = c["ang_des"] if angles else None
+  e["turn"] = bool(abs(ang_des[r]) > TURN_ANG_DES) if ang_des is not None and np.isfinite(ang_des[r]) else None
+  e["release_gap_deg"] = _r(-err[r], 1) if err is not None and np.isfinite(err[r]) else None
+  out = c["lat_out"] if has(c, "lat_out") else None
+  e["lat_out_release"] = _r(abs(out[r]), 3) if out is not None and np.isfinite(out[r]) else None
+  e["takeback_rate_peak"] = e["t90_s"] = None
+  if out is not None:
+    hi = _at(t, t[r] + TAKEBACK_WINDOW_S)
+    rates = [_ls_slope(t, out, k, SLOPE_HALF_S) for k in range(r, hi)]
+    rates = [abs(x) for x in rates if x is not None]
+    e["takeback_rate_peak"] = _r(max(rates), 2) if rates else None
+    if t[-1] >= t[r] + T90_SETTLE_S[1] and np.isfinite(out[r]):
+      a, b = _at(t, t[r] + T90_SETTLE_S[0]), _at(t, t[r] + T90_SETTLE_S[1])
+      pressed_again = bool(np.any(_b(c, "steer_pressed")[r + 1:b + 1]))
+      tail = out[a:b + 1]
+      if not pressed_again and np.any(np.isfinite(tail)):
+        change = float(np.nanmedian(tail)) - float(out[r])
+        if abs(change) >= T90_MIN_CHANGE:
+          frac = (out[r:b + 1] - out[r]) / change
+          hit = np.flatnonzero(np.nan_to_num(frac, nan=-1.0) >= 0.9)
+          e["t90_s"] = _r(t[r + hit[0]] - t[r], 2) if len(hit) else None
+  w = slice(s, r + 1)
+  fault = _b(c, "fault_t")[w] if has(c, "fault_t") else None
+  lat_on = _b(c, "lat_active")[w] if has(c, "lat_active") else None
+  if fault is not None or lat_on is not None:
+    flick = np.zeros(r + 1 - s, dtype=bool)
+    if fault is not None:
+      flick |= fault
+    if lat_on is not None and len(lat_on) and lat_on[0]:
+      flick |= ~lat_on
+    e["fault_flicker_n"] = len(_runs_of(flick))
+    e["fault_flicker_ms"] = _r(_frames_s(t[w], flick) * 1000.0, 0)
+  else:
+    e["fault_flicker_n"] = e["fault_flicker_ms"] = None
+  if ang_des is not None and r > s:
+    d = np.abs(np.diff(ang_des[w])) / np.maximum(np.diff(t[w]), 0.01)
+    e["ang_des_step_max_dps"] = _r(np.nanmax(d), 0) if np.any(np.isfinite(d)) else None
+  else:
+    e["ang_des_step_max_dps"] = None
+  if has(c, "steer_tq"):
+    tq = np.abs(c["steer_tq"][w])
+    pressed = _b(c, "steer_pressed")[w]
+    lat_now = _b(c, "lat_active")[w]
+    e["override_cut_s"] = _r(_frames_s(t[w], lat_now & pressed), 2)
+    e["near_cut_s"] = _r(_frames_s(t[w], (tq >= NEAR_CUT_TQ[0]) & (tq <= NEAR_CUT_TQ[1]) & ~pressed), 2)
+  else:
+    e["override_cut_s"] = e["near_cut_s"] = None
+  return e
+
+
 def takeovers(c, t0=None):
   """Every driver takeover with the per-episode numbers, plus route-wide counts."""
   t = c["t"]
@@ -300,7 +386,9 @@ def takeovers(c, t0=None):
       e["release_step_max"] = _r(np.max(d), 4) if len(d) else None
     else:
       e["cut_s"] = e["cut_start"] = e["release_step_max"] = None
+    e.update(_turn_fight(c, t, s, r, dt, angles, err))
     if i_ok:
+      e["i_press_min"] = _r(np.nanmin(c["lat_i"][s:r + 1]), 4) if np.any(np.isfinite(c["lat_i"][s:r + 1])) else None
       e["i_press"] = _r(c["lat_i"][s], 4)
       e["i_release"] = _r(c["lat_i"][r], 4)
       e["i_release_1s"] = _r(c["lat_i"][_at(t, t[r] + 1.0)], 4) if t[-1] >= t[r] + 1.0 else None
@@ -366,6 +454,14 @@ def takeovers(c, t0=None):
       e["cs_age_max_ms"], e["stalled"] = None, None
     eps.append(e)
 
+  # Re-press: the next takeover's press this long after this one's release.
+  for k, e in enumerate(eps):
+    e2 = eps[k + 1] if k + 1 < len(eps) else None
+    gap = (e2["mono_s"] - (e["mono_s"] + e["hold_s"])) if e2 is not None else None
+    e["repress_after_s"] = _r(gap, 2) if gap is not None and gap <= REPRESS_LATE_S[1] else None
+    e["repress"] = bool(gap is not None and REPRESS_S[0] <= gap < REPRESS_S[1])
+    e["repress_late"] = bool(gap is not None and REPRESS_LATE_S[0] <= gap < REPRESS_LATE_S[1])
+
   def med(key, sel=lambda e: True):
     x = [e[key] for e in eps if sel(e) and e.get(key) is not None]
     return _r(np.median(x), 2) if x else None
@@ -377,6 +473,9 @@ def takeovers(c, t0=None):
     "blinker": sum(e["blinker"] for e in eps), "no_blinker": sum(not e["blinker"] for e in eps),
     "lanes_usable": sum(e["lanes_ok"] for e in eps),
     "releases": len(rel),
+    "repress": sum(e["repress"] for e in eps), "repress_late": sum(e["repress_late"] for e in eps),
+    "fault_flicker": sum(bool(e.get("fault_flicker_n")) for e in eps),
+    "near_cut": sum((e.get("near_cut_s") or 0) > 0 for e in eps),
     "median_release_overshoot_deg": med("release_overshoot_deg"),
     "median_back_on_plan_s": med("back_on_plan_s"),
     # Each drift median beside how many takeovers it stands on (James: 3 must never read like 80). Takeovers with a
@@ -398,7 +497,19 @@ def takeovers(c, t0=None):
                    "None when openpilot was not steering within 0.5 s of the release (lat_active_after). lane_press_m / "
                    "lane_release_m / lane_press_3s_m: position from the centre of the lane at the press (+ = left), "
                    "limited road evidence, never pass/fail. lateral_controller / git_commit: what drove; takeovers "
-                   "under different controllers are not comparable."),
+                   "under different controllers are not comparable. Kevin's turn-fight numbers: v_release; turn = |ang_des| > "
+                   f"{TURN_ANG_DES:g} deg at release; release_gap_deg = ang_des - ang_act at release (signed); "
+                   "lat_out_release = |pidState.output|; takeback_rate_peak = the largest |least-squares slope| of lat_out "
+                   f"over {2 * SLOPE_HALF_S:g} s windows in the {TAKEBACK_WINDOW_S:g} s after release (per s); t90_s = release "
+                   f"to 90% of lat_out's settled value (median over release + {T90_SETTLE_S[0]:g}-{T90_SETTLE_S[1]:g} s; None "
+                   f"when it moves less than {T90_MIN_CHANGE:g} or the driver presses again first); repress = the next press "
+                   f"{REPRESS_S[0]:g}-{REPRESS_S[1]:g} s after release (repress_late {REPRESS_LATE_S[0]:g}-{REPRESS_LATE_S[1]:g} s, "
+                   "report only); fault_flicker_n / _ms = steerFaultTemporary on, or latActive dropping, between press and "
+                   "release; ang_des_step_max_dps = the largest frame-to-frame ang_des step during the press, per s "
+                   "(the target re-seed); i_press_min = lat_i's lowest during the press, beside i_press; override_cut_s = "
+                   "latActive with raw steeringPressed (Honda sets it from |steeringTorque| against the effective "
+                   f"override threshold); near_cut_s = {NEAR_CUT_TQ[0]:g} <= |steeringTorque| <= {NEAR_CUT_TQ[1]:g} "
+                   "without steeringPressed."),
   }
   return {"episodes": eps, "summary": summary}
 
