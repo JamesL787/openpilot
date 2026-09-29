@@ -261,8 +261,27 @@
   margin-bottom: var(--margin-base);
 }
 
+/* Sideways drags select a stretch to zoom into; up/down swipes still scroll the page. */
 .plotSvgClickable {
-  cursor: zoom-in;
+  cursor: crosshair;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The zoomed stretch, shown on each whole-drive chart. */
+.plotZoomBand {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  background: rgba(122, 162, 247, 0.14);
+  border-left: 1px solid rgba(122, 162, 247, 0.7);
+  border-right: 1px solid rgba(122, 162, 247, 0.7);
+}
+
+.plotZoomControls .plotButton {
+  min-width: 2.6em;
 }
 
 .plotYRange {

@@ -7675,6 +7675,14 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
     72 MB of which is the rows themselves. 10 zooms at once on 2 h: +8 MB.
   - A stop in the background (by hand, or MAX_RECORDING_S mid-drive) now waits until IsOnroad is false before the
     whole-drive analysis, so it never runs while driving.
+- **2026-09-29 zoom:** drag sideways across any whole-drive chart to zoom to that stretch (a tap still gives a minute).
+  Buttons pan and zoom in/out, and ctrl + scroll or a trackpad pinch zooms around the pointer. The zoomed stretch is
+  shaded on the whole-drive charts, and a drag inside a zoomed chart zooms further in. Spans are 4 s to 900 s, kept
+  inside the drive, and the newest request wins. Charts use `touch-action: pan-y`, so an up/down swipe still scrolls the
+  phone page. Each zoom is still one `/window` read under the `_heavy` lock (+8 MB for 10 at once, above).
+  Evidence is static only: `tests/test_plots_zoom_browser.mjs` runs headless Chromium on both pages against a synthetic
+  20-min drive, covering mouse drag, finger drag, vertical swipe, tap, buttons and the band. Not yet tried on a phone
+  against the device.
 
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 

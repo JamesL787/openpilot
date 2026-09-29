@@ -2,7 +2,8 @@ import { html, reactive } from "/assets/vendor/arrow-core.js"
 import {
   HELP_TEXT, LIVE_POLL_MS, LiveBuffer, READING_GUIDE, ZOOM_HALF_WINDOW_S,
   buildOverviewCharts, buildTrackingCharts, controllerName, eventRows, fmtDate, fmtDuration, fmtNum, fmtSpeed, keyNumbers,
-  longStateName, sessionUrl, speedBandRows, speedUnit, statusLabel, timeAtClick, toSeries, tuneGroups, turnRows,
+  longStateName, panRange, rangeSelect, sessionUrl, speedBandRows, speedUnit, statusLabel, toSeries, tuneGroups, turnRows,
+  zoomBand, zoomRange, clampRange,
 } from "/assets/components/tools/drive_plots_shared.mjs"
 
 const ADVANCED_TERMS_KEY = "plotsShowAdvancedTerms"
@@ -166,7 +167,7 @@ async function stopRecording() {
 async function openSession(id, { scroll = false } = {}) {
   state.selectedId = id
   state.detailError = ""
-  state.zoom = null
+  closeZoom()
   try {
     state.detail = await fetchJson(sessionUrl(id))
   } catch (error) {
@@ -181,7 +182,7 @@ async function openSession(id, { scroll = false } = {}) {
 function closeSession() {
   state.selectedId = ""
   state.detail = null
-  state.zoom = null
+  closeZoom()
 }
 
 async function deleteSession(id) {
@@ -195,27 +196,61 @@ async function deleteSession(id) {
   }
 }
 
-function zoomAt(event, chart) {
-  const t = timeAtClick(event, chart.geo)
-  if (t !== null) zoomTo(t)
-}
+const driveLength = () => state.detail?.analysis?.duration_s ?? state.detail?.meta?.duration_s ?? Infinity
+let zoomRequest = 0
 
-// Full-resolution charts around t (seconds into the drive), from a chart tap or a moment in the list.
-async function zoomTo(t, label = "") {
+// Full-resolution charts for [start, end] (seconds into the drive). A newer request wins over a slower older one,
+// so a quick run of pan/zoom presses settles on the last one pressed.
+async function showRange(start, end, label = "") {
   if (!state.selectedId) return
-  const start = Math.max(0, t - ZOOM_HALF_WINDOW_S)
-  const end = start + 2 * ZOOM_HALF_WINDOW_S
+  const r = clampRange(start, end, driveLength())
+  const id = ++zoomRequest
+  const opening = !state.zoom
   try {
-    const payload = await fetchJson(`${sessionUrl(state.selectedId, "/window")}?start=${start.toFixed(1)}&end=${end.toFixed(1)}`)
+    const payload = await fetchJson(`${sessionUrl(state.selectedId, "/window")}?start=${r.start.toFixed(1)}&end=${r.end.toFixed(1)}`)
+    if (id !== zoomRequest) return
     const series = toSeries(payload.columns, payload.rows)
     const controller = state.detail?.analysis?.controller || state.detail?.meta?.lateral_controller || null
-    state.zoom = { start, end, label, charts: buildTrackingCharts(series, { advanced: state.showAdvancedTerms, tMin: start, tMax: end,
-                                                                           speed: speed(), controller }) }
-    requestAnimationFrame(() => document.querySelector(".plotZoom")?.scrollIntoView({ behavior: "smooth", block: "start" }))
+    state.zoom = { start: r.start, end: r.end, label, charts: buildTrackingCharts(series, { advanced: state.showAdvancedTerms,
+                   tMin: r.start, tMax: r.end, speed: speed(), controller }) }
+    if (opening) requestAnimationFrame(() => document.querySelector(".plotZoom")?.scrollIntoView({ behavior: "smooth", block: "start" }))
   } catch (error) {
-    state.detailError = error?.message || String(error)
+    if (id === zoomRequest) state.detailError = error?.message || String(error)
   }
 }
+
+// A minute around t, from a chart tap or a moment in the list.
+const zoomTo = (t, label = "") => showRange(t - ZOOM_HALF_WINDOW_S, t + ZOOM_HALF_WINDOW_S, label)
+
+function closeZoom() {
+  zoomRequest++
+  state.zoom = null
+}
+
+function zoomBy(factor, at = null) {
+  if (!state.zoom) return
+  const r = zoomRange(state.zoom, factor, driveLength(), at)
+  showRange(r.start, r.end, state.zoom.label)
+}
+
+function panBy(frac) {
+  if (!state.zoom) return
+  const r = panRange(state.zoom, frac, driveLength())
+  showRange(r.start, r.end, state.zoom.label)
+}
+
+// Whole-drive charts: tap = a minute around there, drag = that stretch, pinch/ctrl+wheel = zoom around there.
+const overviewGestures = (chart) => rangeSelect(() => chart.geo, {
+  onTap: (t) => zoomTo(t),
+  onRange: (a, b) => showRange(a, b),
+  onWheelZoom: (f, t) => (state.zoom ? zoomBy(f, t) : zoomTo(t)),
+})
+
+// Zoomed charts: drag = zoom further into that stretch, pinch/ctrl+wheel = zoom around there.
+const zoomGestures = (chart) => rangeSelect(() => chart.geo, {
+  onRange: (a, b) => showRange(a, b, state.zoom?.label || ""),
+  onWheelZoom: (f, t) => zoomBy(f, t),
+})
 
 function togglePaused() {
   state.paused = !state.paused
@@ -243,14 +278,16 @@ function toggleAdvancedTerms() {
 // ---------------------------------------------------------------------------------------------------------------
 // Charts
 
-function ChartSvg(chart, onClick) {
+function ChartSvg(chart, gestures) {
   const g = chart.geo
   if (g.empty) return html`<div class="plotEmpty">Waiting for data...</div>`
   const [l0, l1, l2, l3] = g.slots
   // Nested html`` inside <svg> would land in the XHTML namespace, so the SVG has a fixed set of element slots.
   return html`
-    <svg class="plotSvg ${onClick ? "plotSvgClickable" : ""}" viewBox="0 0 ${g.width} ${g.height}" preserveAspectRatio="none"
-      role="img" aria-label="${chart.title}" @click="${(e) => onClick && onClick(e, chart)}">
+    <svg class="plotSvg ${gestures ? "plotSvgClickable" : ""}" viewBox="0 0 ${g.width} ${g.height}" preserveAspectRatio="none"
+      role="img" aria-label="${chart.title}"
+      @pointerdown="${(e) => gestures?.down(e)}" @pointermove="${(e) => gestures?.move(e)}" @pointerup="${(e) => gestures?.up(e)}"
+      @pointercancel="${(e) => gestures?.cancel(e)}" @wheel="${(e) => gestures?.wheel(e)}">
       <path class="plotShade" d="${g.shadeD}"></path>
       <path class="plotGridLine" d="${g.gridD}"></path>
       <path class="plotZeroLine" d="${g.zeroD}"></path>
@@ -265,7 +302,9 @@ function ChartSvg(chart, onClick) {
 const yShift = (pct) => (pct < 5 ? "0" : pct > 95 ? "-100%" : "-50%")
 const xShift = (pct) => (pct < 3 ? "0" : pct > 97 ? "-100%" : "-50%")
 
-function ChartCard(chart, onClick = null) {
+// gestures: from overviewGestures / zoomGestures, or null for a chart that does not zoom (live).
+// band: the zoomed stretch drawn on a whole-drive chart.
+function ChartCard(chart, gestures = null, band = null) {
   const g = chart.geo
   const yLabels = g.empty ? [] : g.grid.filter((_, j) => j % 2 === 0)
   return html`
@@ -280,7 +319,8 @@ function ChartCard(chart, onClick = null) {
         `)}
       </div>
       <div class="plotSvgWrap">
-        ${ChartSvg(chart, onClick)}
+        ${ChartSvg(chart, gestures)}
+        ${band ? html`<div class="plotZoomBand" style="left:${band.left}%; width:${band.width}%"></div>` : ""}
         ${yLabels.map((l) => html`<span class="plotYLabel" style="top:${l.pct}%; transform:translateY(${yShift(Number(l.pct))})">${l.label}</span>`)}
       </div>
       ${g.empty ? "" : html`
@@ -550,17 +590,25 @@ function SessionDetail() {
       ` : ""}
     </section>
     ${overview.length ? html`
-      <p class="plotMuted">Tap a chart to zoom into ${2 * ZOOM_HALF_WINDOW_S} s at full resolution.</p>
-      <div class="plotCharts">${overview.map((c) => ChartCard(c, zoomAt))}</div>
+      <p class="plotMuted">Drag across a chart to zoom into that stretch, or tap for ${2 * ZOOM_HALF_WINDOW_S} s around a spot.
+        Pinch or ctrl + scroll zooms too.</p>
+      <div class="plotCharts">${overview.map((c) => ChartCard(c, overviewGestures(c), zoomBand(state.zoom, c.geo)))}</div>
     ` : ""}
     ${state.zoom ? html`
       <section class="plotCard plotStatusCard plotZoom">
         <div class="plotCardHeader">
           <h2>${state.zoom.label ? `${state.zoom.label}: ` : "Zoom "}${fmtDuration(state.zoom.start)} – ${fmtDuration(state.zoom.end)}</h2>
-          <button class="plotButton" @click="${() => { state.zoom = null }}">Close zoom</button>
+          <div class="plotActions plotActionsInline plotZoomControls">
+            <button class="plotButton" title="Earlier" @click="${() => panBy(-0.5)}">◀</button>
+            <button class="plotButton" title="Zoom out" @click="${() => zoomBy(2)}">−</button>
+            <button class="plotButton" title="Zoom in" @click="${() => zoomBy(0.5)}">+</button>
+            <button class="plotButton" title="Later" @click="${() => panBy(0.5)}">▶</button>
+            <button class="plotButton" @click="${closeZoom}">Close zoom</button>
+          </div>
         </div>
+        <p class="plotMuted">Drag across a chart below to zoom in further.</p>
       </section>
-      <div class="plotCharts">${state.zoom.charts.map((c) => ChartCard(c))}</div>
+      <div class="plotCharts">${state.zoom.charts.map((c) => ChartCard(c, zoomGestures(c)))}</div>
     ` : ""}
   `
 }
