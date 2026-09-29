@@ -4,20 +4,24 @@
   a = drive(u(t - lag(v))) + r0 + r2*v^2 - g*sin(theta),  u = gas/375, theta = CC pitch - 0.013 rad
   drive(u) = 0 (u <= 0), step + s1*min(u, 0.7) + s2*max(u - 0.7, 0) (u > 0)
 
-Input: 20 Hz npz per route with fields t v gas ccp aE la gp bp acmd (route data stays out of the repo).
+Input: route directories (~/routes/<route>, the same the replay tools take; read whole unless --window) or
+20 Hz npz files with fields t v gas ccp aE la gp bp acmd, as bosch_hill_sim.read_route returns. Route data stays
+out of the repo: --cache-dir keeps one npz per route read.
 
-  bosch_hill_plant_fit.py fit   A.npz B.npz   # least squares over tau1 x lag offset, per-route / per-band rms
-  bosch_hill_plant_fit.py check A.npz B.npz   # the sim's own plant constants: aEgo rms and 30 s integrated v drift
+  bosch_hill_plant_fit.py fit   ~/routes/00000280--d02d9c2f8e ~/routes/00000286--...   # least squares over
+                                                  # tau1 x lag offset, per-route / per-band rms
+  bosch_hill_plant_fit.py check A.npz B.npz       # the sim's own plant constants: aEgo rms and 30 s v drift
 
 2026-09-29, routes 00000280 + 00000286: aEgo rms 0.132 / 0.118, 30 s v drift rms ~1.0 / 0.7 m/s.
 """
-import os
-import sys
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import bosch_hill_sim as sim
+from openpilot.tools.longitudinal import bosch_hill_sim as sim
 
 g = 9.81
 DT = 0.05
@@ -25,9 +29,12 @@ BIAS = 0.013
 UK = 0.7
 
 
-def load(p):
-  z = np.load(p)
-  d = {k: z[k] for k in z.files}
+def load(p: Path, window: tuple[float, float] | None = None, cache_dir: Path | None = None) -> dict:
+  cache = None
+  if cache_dir is not None and p.is_dir():
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache = cache_dir / f'{p.name}_{window[0]:g}-{window[1]:g}.npz' if window else cache_dir / f'{p.name}.npz'
+  d = dict(sim.load_route(p, window, cache))
   d['u'] = d['gas'] / 375.0
   d['th'] = np.radians(d['ccp']) - BIAS
   return d
@@ -112,8 +119,17 @@ def check(D, names):
           f'30 s windows {len(drift)}: v drift rms {np.sqrt(np.mean(drift ** 2)):.2f} m/s, p90 |drift| {np.percentile(abs(drift), 90):.2f}')
 
 
+def main() -> int:
+  ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+  ap.add_argument('mode', choices=['fit', 'check'])
+  ap.add_argument('routes', nargs='+', type=Path, help='route directories or 20 Hz npz files')
+  ap.add_argument('--window', type=sim.parse_window, metavar='T0,T1', help='route seconds to read (default all)')
+  ap.add_argument('--cache-dir', type=Path, help='npz cache of route reads (keep it outside the repo)')
+  args = ap.parse_args()
+  D = [load(p.expanduser(), args.window, args.cache_dir) for p in args.routes]
+  (fit if args.mode == 'fit' else check)(D, [p.name for p in args.routes])
+  return 0
+
+
 if __name__ == '__main__':
-  if len(sys.argv) < 3 or sys.argv[1] not in ('fit', 'check'):
-    sys.exit(__doc__)
-  paths = sys.argv[2:]
-  (fit if sys.argv[1] == 'fit' else check)([load(p) for p in paths], [os.path.basename(p) for p in paths])
+  raise SystemExit(main())

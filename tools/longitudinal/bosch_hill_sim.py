@@ -1,40 +1,65 @@
 #!/usr/bin/env python3
-"""Closed-loop hill / wind simulator for the Honda Civic Bosch gas path.
+"""Closed-loop hill / wind simulator for the Honda Civic Bosch gas path. Simulation, not driven.
+
+Where it sits in the longitudinal replay family (tools/longitudinal, Radar Work (Bob), 2026-09-29):
+  alpha_open_loop_replay.py    planner variants against the logged scene, open loop
+  alpha_closed_loop_replay.py  planner variants, each driving its own sim car (--sim-window, --frames-json)
+  plan_variant_compare.py      pages from those frames: planner command, sim a / v, gap to the lead per variant
+  long_replay_viewer.py        radar / camera / lead frames of one window
+  range_arm_scan.py            logged range-assist arms across routes
+  bosch_hill_sim.py            this: the car side below the planner command, on hills and in wind
+  bosch_hill_plant_fit.py      fits and checks this file's plant on logged routes
+The replay tools stop at the planner command and move their sim car with a first-order accel lag. This one starts at
+the command and runs the Civic's gas path (LongGasLearner, gas lookup, gas ramp, brake hysteresis) into a fitted
+drivetrain, so a planner variant's command from alpha_closed_loop_replay can be driven through it
+(--frames-json F --frames-variant K). Route input is the same route directory the replay tools take
+(~/routes/<route>/<seg>/rlog.zst) and route time t is theirs: seconds from the first initData of segment 0.
+Output follows plan_variant_compare: --out DIR gets index.html, summary.json (+ table.txt, traces.json).
+
+  bosch_hill_sim.py --out /tmp/hill                                   # synthetic hills, wind, mixed drive, flat
+  bosch_hill_sim.py --route ~/routes/00000280--d02d9c2f8e --window 1740,1980 --scenarios a --out /tmp/hill280
+  bosch_hill_sim.py --route ~/routes/00000280--d02d9c2f8e --window 1740,1980 --scenarios a \\
+      --frames-json /tmp/rv/plan/f.json --frames-variant b0.075 --out /tmp/hill280_b   # a replayed planner command
 
 Controller: the real opendbc carcontroller pieces (LongGasLearner, bosch_gas_lookup_accel,
 get_honda_bosch_wind_brake_mps2, update_honda_bosch_braking, CarControllerParams) imported from
-the repo
-the ~15-line Bosch gas block of CarController.update() is mirrored in `GasPath.step`.
+the repo; the ~15-line Bosch gas block of CarController.update() is mirrored in `GasPath.step`.
 Variants never touch the repo file: learner_min is applied here by passing the extra lookup
 args and feeding the learner pitch - 0.013 (pitch is used only by the learner's pitch gate).
 
-Plant (fitted by plantfit.py on routes 280 + 286, see plant_fit.npy):
-  a = drive(u(t - lag(v)), first-order 0.1 s) + r0 + r2*v^2 - k*g*sin(theta)   (k = --plant-hill up/down, default 1) - CD*((v+w)|v+w| - v^2)
+Plant (fitted by bosch_hill_plant_fit.py on routes 280 + 286):
+  a = drive(u(t - lag(v)), first-order 0.1 s) + r0 + r2*v^2 - k*g*sin(theta) - CD*((v+w)|v+w| - v^2)
+  k = --plant-hill (up / down, default 1); CD = -r2 (all speed-squared road load treated as aero, so wind w,
+  + = headwind, scales it)
   drive(u) = 0 for u <= 0.02, else step + s1*min(u, 0.7) + s2*max(u - 0.7, 0),  u = GAS_COMMAND/375
   lag(v) 0.68 s below 3 m/s -> 0.48 s above 7 m/s. Gas saturates at 750 (u = 2).
-  CD = -r2 (all speed-squared road load treated as aero, so wind w (+ = headwind) scales it).
-  Brake mode (gas_force below BOSCH_BRAKE_FORCE_ON): the Bosch ECU is assumed to achieve
-  min(coast, ACCEL_COMMAND) through a 0.3 s first-order lag. Not fitted
-  descents only.
-Sensors: aEgo = a through 0.15 s lowpass + N(0, 0.03)
-pitch = theta + 0.013 + lowpassed noise
-  (sd 0.003 rad, 1 s). vEgo exact.
+  Brake mode (gas_force below BOSCH_BRAKE_FORCE_ON): the Bosch ECU is assumed to achieve min(coast, ACCEL_COMMAND)
+  through a 0.3 s first-order lag. Not fitted; it matters on descents only.
+Sensors: aEgo = a through 0.15 s lowpass + N(0, 0.03); pitch = theta + 0.013 + lowpassed noise (sd 0.003 rad, 1 s);
+  vEgo exact.
 Planner: cruise to set speed, a_target = clip(KV*(v_set - v), A_CRUISE_MIN, A_CRUISE_MAX(v)),
   jerk limited +1.0/-2.0 m/s^3, at 20 Hz. longcontrol kp = ki = 0, so actuators.accel = a_target.
-  Or --atarget log: the recorded aTarget of the route replayed open loop by time.
+  Or, route scenario (a) only: --atarget log replays the logged aTarget, and --frames-json replays a variant's
+  planner command from alpha_closed_loop_replay, both open loop by time. A replayed command starts at the logged
+  speed and is scored as sim v - logged v (the plant alone drifts ~1 m/s rms over 30 s open loop, so read that
+  column against the `logged` variant's, not against zero).
+Set speed for (a): --vset, else the logged carState.vCruise while long is active.
+--route-npz takes a 20 Hz npz (fields as read_route returns) in its own clock: /tmp/rv/hill/g280full.npz runs
+  1.6 s behind route t.
+Run from the repo with PYTHONPATH=$(dirname $PWD):$PWD, as the other tools/longitudinal scripts.
 """
+from __future__ import annotations
+
 import argparse
 import html
 import json
 import math
-import os
 import sys
 from collections import deque
+from pathlib import Path
 
 import numpy as np
 
-REPO = os.environ.get('OP_REPO', '/home/ubuntu/openpilot')
-sys.path[:0] = [REPO, os.path.join(REPO, 'opendbc_repo')]
 from opendbc.car.honda import carcontroller as ccmod
 from opendbc.car.honda.values import CarControllerParams
 
@@ -157,8 +182,10 @@ def smoothstep(x):
 class Scenario:
   """grade(s) in rad by distance, wind(t) m/s (+ head), vset(t) m/s, duration s."""
 
-  def __init__(self, name, duration, vset, grade=None, wind=None, atarget=None, group=''):
+  def __init__(self, name, duration, vset, grade=None, wind=None, atarget=None, group='', v0=None, vlog=None):
     self.name, self.duration, self.group = name, duration, group
+    self.v0 = v0  # start speed (default vset(0)); a replayed command starts at the logged speed
+    self.vlog = vlog  # logged speed(t), scored against the sim speed when the command is replayed
     self.vset = vset if callable(vset) else (lambda t, v=vset: v)
     self.grade = grade or (lambda s: 0.0)
     self.wind = wind or (lambda t: 0.0)
@@ -174,15 +201,104 @@ def hill_profile(deg, start, length=500.0, ramp=100.0):
   return f
 
 
-def route280_grade(npz, src='pitch'):
-  d = np.load(npz)
-  t, v = d['t'], d['v']
-  m = (t >= 29 * 60) & (t < 33 * 60)
-  s = np.cumsum(np.where(m, v, 0.0)) * 0.05
+# ---------------------------------------------------------------- route input
+RDT = 0.05  # route arrays are resampled to 20 Hz
+
+
+def segment_files(route_dir: Path) -> list[Path]:
+  # same rule as alpha_open_loop_replay.segment_files; importing that module loads the planner and Params
+  segs = []
+  for d in route_dir.iterdir():
+    if d.is_dir() and d.name.isdigit():
+      for name in ('rlog.zst', 'rlog.bz2', 'rlog'):
+        if (d / name).exists():
+          segs.append((int(d.name), d / name))
+          break
+  return [p for _, p in sorted(segs)]
+
+
+def read_route(route_dir: Path, window: tuple[float, float] | None = None) -> dict:
+  """20 Hz arrays of one route, t in route seconds (the replay tools' clock: first initData of segment 0).
+
+  Fields: t v aE gp bp vcruise la acmd ccp (carControl.orientationNED pitch, deg) alt aT gas. Only the segments
+  covering `window` are read (segment 0 too, for its first initData when it is not one of them).
+  """
+  from openpilot.tools.lib.logreader import LogReader
+  route_dir = Path(route_dir).expanduser()
+  files = segment_files(route_dir)
+  if not files:
+    raise SystemExit(f'{route_dir}: no <seg>/rlog.zst')
+  if window is not None:
+    files = [f for f in files if window[0] - 60 < int(f.parent.name) * 60 < window[1] + 1]
+  t0 = None
+  for f in segment_files(route_dir)[:1]:
+    if f.parent.name == '0':
+      t0 = next((m.logMonoTime for m in LogReader(str(f)) if m.which() == 'initData'), None)
+  raw: dict[str, list] = {k: [] for k in ('cs', 'cc', 'co', 'lp', 'gps')}
+  for f in files:
+    for m in LogReader(str(f), sort_by_time=True):
+      w = m.which()
+      if t0 is None:  # no segment 0: fall back to seg * 60 s from this segment's first message
+        t0 = m.logMonoTime - int(int(f.parent.name) * 60e9)
+      t = (m.logMonoTime - t0) / 1e9
+      if w == 'carState':
+        c = m.carState
+        # set speed: openpilot's vCruise (km/h, 255 = unset); this car logs cruiseState.speed as 0
+        vc = c.vCruise / 3.6 if 0 < c.vCruise < 250 else c.cruiseState.speed
+        raw['cs'].append((t, c.vEgo, c.aEgo, c.gasPressed, c.brakePressed, vc))
+      elif w == 'carControl':
+        c = m.carControl
+        o = list(c.orientationNED)
+        raw['cc'].append((t, c.longActive, c.actuators.accel, o[1] if len(o) == 3 else np.nan))
+      elif w == 'carOutput':
+        raw['co'].append((t, m.carOutput.actuatorsOutput.gas))
+      elif w == 'longitudinalPlan':
+        raw['lp'].append((t, m.longitudinalPlan.aTarget))
+      elif w == 'gpsLocationExternal':
+        raw['gps'].append((t, m.gpsLocationExternal.altitude))
+  a = {k: np.array(sorted(v), dtype=float).reshape(-1, 2 if k in ('co', 'lp', 'gps') else (6 if k == 'cs' else 4))
+       for k, v in raw.items()}
+  if len(a['cs']) < 2:
+    raise SystemExit(f'{route_dir}: no carState in the segments read')
+  t = np.arange(a['cs'][0, 0] + 1, a['cs'][-1, 0] - 1, RDT)
+
+  def at(k, c):
+    return np.interp(t, a[k][:, 0], a[k][:, c]) if len(a[k]) else np.full_like(t, np.nan)
+  return {'t': t, 'v': at('cs', 1), 'aE': at('cs', 2), 'gp': at('cs', 3), 'bp': at('cs', 4), 'vcruise': at('cs', 5),
+          'la': at('cc', 1), 'acmd': at('cc', 2), 'ccp': np.degrees(at('cc', 3)), 'gas': at('co', 1), 'aT': at('lp', 1),
+          'alt': at('gps', 1)}
+
+
+def load_route(src: str | Path, window: tuple[float, float] | None = None, cache: Path | None = None) -> dict:
+  """A route directory (read with read_route), or an npz of the same 20 Hz fields (bosch_hill_plant_fit input).
+
+  cache: npz written after a route read and reused on the next run with the same route and window. Keep it outside
+  the repo; route data is never committed.
+  """
+  src = Path(src).expanduser()
+  if src.suffix == '.npz':
+    z = np.load(src)
+    return {k: z[k] for k in z.files}
+  if cache is not None:
+    cache = cache.with_suffix('.npz')  # np.savez would add it anyway
+  if cache is not None and cache.exists():
+    z = np.load(cache)
+    if str(z['src']) == f'{src.resolve()}|{window}':
+      return {k: z[k] for k in z.files if k != 'src'}
+  R = read_route(src, window)
+  if cache is not None:
+    np.savez(cache, src=f'{src.resolve()}|{window}', **R)
+  return R
+
+
+def route_grade(R, window, src='pitch'):
+  t, v = R['t'], R['v']
+  m = (t >= window[0]) & (t < window[1])
+  s = np.cumsum(np.where(m, v, 0.0)) * RDT
   s = s[m] - s[m][0]
   if src == 'gps':
-    alt = d['alt'][m]
-    k = int(2.5 / 0.05)  # GPS altitude lags 2-3 s: shift it forward
+    alt = R['alt'][m]
+    k = int(2.5 / RDT)  # GPS altitude lags 2-3 s: shift it forward
     alt = np.concatenate([alt[k:], np.full(k, alt[-1])])
     # grade = d(alt)/ds over a 50 m window
     ss = np.arange(0, s[-1], 5.0)
@@ -191,25 +307,69 @@ def route280_grade(npz, src='pitch'):
     gr = np.zeros_like(ss)
     gr[w:-w] = (a[2 * w:] - a[:-2 * w]) / (ss[2 * w:] - ss[:-2 * w])
     return lambda x: float(np.interp(x, ss, np.arctan(gr)))
-  th = np.radians(d['ccp'][m]) - PITCH_BIAS
+  th = np.radians(R['ccp'][m]) - PITCH_BIAS
   th = np.convolve(th, np.ones(20) / 20, mode='same')  # 1 s smoothing of the CC pitch
   return lambda x: float(np.interp(x, s, th))
 
 
-def route280_atarget(npz):
-  d = np.load(npz)
-  m = (d['t'] >= 29 * 60) & (d['t'] < 33 * 60)
-  t, aT = d['t'][m] - d['t'][m][0], d['aT'][m]
-  return lambda x: float(np.interp(x, t, aT))
+def route_series(R, window, key):
+  m = (R['t'] >= window[0]) & (R['t'] < window[1])
+  t, y = R['t'][m] - R['t'][m][0], R[key][m]
+  return lambda x: float(np.interp(x, t, y))
 
 
-def scenarios(which, grade_src='pitch', atarget=None, npz=None):
+FRAMES_ALIGN_S = 3.0  # frames JSON clock checked against the route's vEgo within +-this (the npz clock can differ by ~1 s)
+
+
+def frames_atarget(path: Path, variant: str, R, window):
+  """A planner variant's command (frame `out`) from alpha_closed_loop_replay --frames-json, on the route window.
+
+  The frames' own v_ego is matched to the route's vEgo to confirm (or find) the clock offset; returns (fn, offset_s).
+  """
+  F = json.loads(Path(path).read_text())['frames']
+  fr = [f for f in F if f.get('out', {}).get(variant) is not None]
+  if not fr:
+    keys = sorted({k for f in F for k in f.get('out', {})})
+    raise SystemExit(f'{path}: no frames with out[{variant!r}]; variants there: {", ".join(keys)}')
+  ft = np.array([f['t'] for f in fr])
+  fa = np.array([f['out'][variant] for f in fr], dtype=float)
+  fv = np.array([f['v_ego'] for f in fr], dtype=float)
+  m = (R['t'] >= window[0]) & (R['t'] < window[1])
+  rt, rv = R['t'][m], R['v'][m]
+  cover = (rt >= ft[0]) & (rt <= ft[-1])
+  if cover.mean() < 0.9:
+    raise SystemExit(f'{path}: frames cover {ft[0]:.1f}-{ft[-1]:.1f} s, only {cover.mean():.0%} of the window {window}')
+  offs = np.arange(-FRAMES_ALIGN_S, FRAMES_ALIGN_S + 1e-9, RDT)
+  err = [np.nanmean((np.interp(rt[cover] + o, ft, fv) - rv[cover]) ** 2) for o in offs]
+  off = float(offs[int(np.argmin(err))])
+  t0 = rt[0]
+  return (lambda x: float(np.interp(t0 + x + off, ft, fa))), off
+
+
+def scenarios(which, grade_src='pitch', atarget=None, route=None):
+  """route: {'R': load_route(...), 'window': (t0, t1), 'name': str, 'vset': m/s or None, 'frames': (path, variant)}"""
   out = []
-  if 'a' in which and npz is None:
-    print('scenario a skipped: pass --route-npz (route 280 20 Hz npz)', file=sys.stderr)
+  if 'a' in which and route is None:
+    print('scenario a skipped: pass --route DIR --window T0,T1 (or --route-npz)', file=sys.stderr)
   elif 'a' in which:
-    out.append(Scenario(f'a_280_29-32_{grade_src}', 240.0, 50 * MPH, grade=route280_grade(npz, grade_src),
-                        atarget=route280_atarget(npz) if atarget == 'log' else None, group='a'))
+    R, win = route['R'], route['window']
+    vset = route.get('vset')
+    if vset is None and 'vcruise' in R:
+      m = (R['t'] >= win[0]) & (R['t'] < win[1]) & (R['la'] > 0.5) & (R['vcruise'] > 1)
+      vset = float(np.median(R['vcruise'][m])) if m.any() else None
+    if vset is None:
+      vset = 50 * MPH
+    at, tag = None, ''
+    if route.get('frames'):
+      at, off = frames_atarget(*route['frames'], R, win)
+      tag = f'_{route["frames"][1]}'
+      print(f'scenario a: {route["frames"][0]} out[{route["frames"][1]}], frames clock {off:+.2f} s against the route', file=sys.stderr)
+    elif atarget == 'log':
+      at, tag = route_series(R, win, 'aT'), '_logaT'
+    vlog = route_series(R, win, 'v') if at is not None else None
+    out.append(Scenario(f'a_{route["name"]}_{win[0]:g}-{win[1]:g}_{grade_src}{tag}', float(win[1] - win[0]), vset,
+                        grade=route_grade(R, win, grade_src), atarget=at, group='a',
+                        v0=vlog(0.0) if vlog else None, vlog=vlog))
   if 'b' in which:
     for mph in (30, 45, 65):
       for deg in (2, 4, 6):
@@ -287,7 +447,7 @@ class Noise:
 def run(sc, variant, gf0=1.25, wf0=1.0, seed=1, hill_gain=1.2, kv=0.4, trace_hz=5):
   gp = GasPath(variant, gf0, wf0, hill_gain)
   nz = Noise(seed)
-  v = sc.vset(0.0)
+  v = sc.v0 if sc.v0 is not None else sc.vset(0.0)
   x = 0.0
   n = int(sc.duration / DT)
   # prime drivetrain delay line and filters at a steady state for the initial speed and grade
@@ -363,11 +523,15 @@ def run(sc, variant, gf0=1.25, wf0=1.0, seed=1, hill_gain=1.2, kv=0.4, trace_hz=
         rec[kk].append(round(float(val), 4))
     # metric accumulators at full rate
     if i == 0:
-      acc = {'e2': 0.0, 'n': 0, 'peak_over': -99.0, 'min_under': 99.0}
+      acc = {'e2': 0.0, 'n': 0, 'peak_over': -99.0, 'min_under': 99.0, 'l2': 0.0, 'lmax': 0.0}
     e = a_true - accel_cmd
     acc['e2'] += e * e
     acc['n'] += 1
     dv = (v - vs) / MPH
+    if sc.vlog is not None:
+      dl = (v - sc.vlog(t)) / MPH
+      acc['l2'] += dl * dl
+      acc['lmax'] = max(acc['lmax'], abs(dl))
     acc['peak_over'] = max(acc['peak_over'], dv)
     if th > math.radians(1.0):
       climb_until = t + 10.0  # count the 10 s after the crest too: the car is still recovering
@@ -385,6 +549,8 @@ def run(sc, variant, gf0=1.25, wf0=1.0, seed=1, hill_gain=1.2, kv=0.4, trace_hz=
     'wf_end': wf, 'wf_min': min(rec['wf']), 'wf_max': max(rec['wf']),
     'ga_end': ga,
     't_gas_sat_s': sat * 2 * DT,
+    'v_vs_log_rms_mph': math.sqrt(acc['l2'] / acc['n']) if sc.vlog is not None else float('nan'),
+    'v_vs_log_max_mph': acc['lmax'] if sc.vlog is not None else float('nan'),
   }
   return metrics, rec
 
@@ -397,6 +563,9 @@ def fmt_table(rows):
           'wf_end', 't_gas_sat_s']
   hdr = ['scenario', 'variant', 'pk_over', 't>+1mph', 'climb_und', 'rms(a-aT)', 'jerk_rms', 'gf_end', 'gf_min',
          'gf_max', 'wf_end', 't_gas_sat']
+  if any(not math.isnan(m.get('v_vs_log_rms_mph', float('nan'))) for _, _, m in rows):
+    cols.append('v_vs_log_rms_mph')
+    hdr.append('v-vlog_rms')
   lines = ['  '.join(f'{h:>10s}' if i > 1 else f'{h:<16s}' if i == 0 else f'{h:<11s}' for i, h in enumerate(hdr))]
   last = None
   for sc, var, m in rows:
@@ -408,15 +577,26 @@ def fmt_table(rows):
   return '\n'.join(lines)
 
 
-# ---------------------------------------------------------------- html report
-COLORS = {'head': '#1f77b4', 'prefix': '#d62728', 'learner_min': '#2ca02c', 'mvl': '#9467bd'}
-PANELS = [('v - vset (mph)', lambda r, i: (r['v'][i] - r['vset'][i]) / 0.44704),
-          ('a (solid) / aT (dotted) m/s²', lambda r, i: r['a'][i]),
+# ---------------------------------------------------------------- report
+# family colours (plan_variant_compare): the repo code is blue, mvl green
+COLORS = {'head': '#1f5fbf', 'prefix': '#bcbd22', 'learner_min': '#e377c2', 'mvl': '#2ca02c'}
+LABELS = {'head': 'head', 'prefix': 'prefix', 'learner_min': 'learner_min', 'mvl': 'mvl'}
+WIND_COLOR = '#ff7f0e'
+PANELS = [('v - vset (mph)', lambda r, i: (r['v'][i] - r['vset'][i]) / MPH),
+          ('a (solid) / command (dotted) m/s²', lambda r, i: r['a'][i]),
           ('gas (0-750)', lambda r, i: r['gas'][i]),
           ('gasfactor', lambda r, i: r['gf'][i]),
           ('windfactor', lambda r, i: r['wf'][i]),
           ('grade ° / wind m/s', lambda r, i: r['grade'][i])]
 W, H, PADL = 900, 110, 60
+COLS = [('peak_over_mph', 'peak over set mph', 2), ('t_over_1mph_s', 's over set +1 mph', 1),
+        ('climb_under_mph', 'lowest on climbs mph', 2), ('rms_a_err', 'rms(a - cmd) m/s²', 3), ('jerk_rms', 'jerk rms m/s³', 2),
+        ('gf_end', 'gf end', 3), ('gf_max', 'gf max', 3), ('wf_end', 'wf end', 3), ('t_gas_sat_s', 's at gas 750', 1),
+        ('v_vs_log_rms_mph', 'sim v - logged v rms mph', 2)]
+
+
+def label(v: str) -> str:
+  return LABELS.get(v, v)
 
 
 def svg_panel(title, traces, fn, extra=None, tmax=None):
@@ -456,42 +636,71 @@ def svg_panel(title, traces, fn, extra=None, tmax=None):
   return '\n'.join(out)
 
 
-def write_html(path):
-  D = json.load(open(path))
-  out_dir = os.path.dirname(path)
-  table = open(os.path.join(out_dir, 'table.txt')).read()
-  body = ['<h1>hillsim: Civic Bosch gas path, closed loop</h1>',
-          ('<p>Simulated plant fitted on routes 280/286 (open-loop aEgo RMS 0.13/0.12). Real LongGasLearner and ' +
-          'bosch_gas_lookup_accel in the loop, cruise-to-set planner, feed-forward longcontrol. Simulation evidence only; ' +
-          'see the plant and sensor assumptions in bosch_hill_sim.py.</p>'),
-          '<p>' + ' '.join(f'<span style="color:{c};font-weight:bold">■ {v}</span>' for v, c in COLORS.items()) + '</p>',
-          f'<pre style="font-size:11px">{html.escape(table)}</pre>']
-  for sc, traces in D['traces'].items():
-    body.append(f'<h3 id="{sc}">{sc}</h3>')
-    first = next(iter(traces.values()))
+def index_html(meta: dict, rows: list[dict], traces: dict) -> str:
+  scs = list(dict.fromkeys(r['scenario'] for r in rows))
+  head = ''.join(f'<th>{html.escape(t)}</th>' for _, t, _ in COLS)
+  trs = []
+  for sc in scs:
+    rs = [r for r in rows if r['scenario'] == sc]
+    for j, r in enumerate(rs):
+      name = f'<td rowspan="{len(rs)}"><a href="#{html.escape(sc)}">{html.escape(sc)}</a></td>' if j == 0 else ''
+      cells = ''.join('<td>-</td>' if r[k] is None or (isinstance(r[k], float) and math.isnan(r[k])) else f'<td>{r[k]:.{nd}f}</td>'
+                      for k, _, nd in COLS)
+      trs.append(f'<tr>{name}<td style="color:{COLORS.get(r["variant"], "#000")};font-weight:bold">'
+                 + f'{html.escape(label(r["variant"]))}</td>{cells}</tr>')
+  plots = []
+  for sc, tr in traces.items():
+    plots.append(f'<h3 id="{html.escape(sc)}">{html.escape(sc)}</h3>')
+    first = next(iter(tr.values()))
     for title, fn in PANELS:
       extra = None
       if title.startswith('a '):
-        extra = [('2,2', list(zip(r['t'], r['aT'], strict=False)), COLORS.get(v, '#000')) for v, r in traces.items()]
+        extra = [('2,2', list(zip(r['t'], r['aT'], strict=False)), COLORS.get(v, '#000')) for v, r in tr.items()]
       if title.startswith('grade'):
-        tr = {'grade': first}
-        extra = [('4,2', list(zip(first['t'], first['wind'], strict=False)), '#ff7f0e')]
-        body.append(svg_panel(title + ' (grade solid, wind dashed)', tr, fn, extra))
+        extra = [('4,2', list(zip(first['t'], first['wind'], strict=False)), WIND_COLOR)]
+        plots.append(svg_panel(title + ' (grade solid, wind dashed)', {'grade': first}, fn, extra))
         continue
-      body.append(svg_panel(title, traces, fn, extra))
-  page = ('<!doctype html><html><head><meta charset="utf-8"><title>hillsim</title>' +
-          '<style>body{font-family:sans-serif;margin:16px} svg{display:block;margin:2px 0}</style></head><body>'
-          + '\n'.join(body) + '</body></html>')
-  dst = os.path.join(out_dir, 'hillsim.html')
-  open(dst, 'w').write(page)
-  return dst
+      plots.append(svg_panel(title, tr, fn, extra))
+  legend = ' '.join(f'<span style="color:{COLORS.get(v, "#000")};font-weight:bold">■ {html.escape(label(v))}</span>'
+                    for v in meta['variants'])
+  src = meta.get('route') or 'synthetic scenarios only'
+  cmd = meta.get('command_source') or 'cruise-to-set planner'
+  return f"""<!doctype html><html><head><meta charset="utf-8"><title>Civic gas path on hills — simulation</title><style>
+body{{font:13px system-ui,sans-serif;margin:14px;max-width:1500px}} table{{border-collapse:collapse}}
+td,th{{border:1px solid #ccc;padding:3px 8px;text-align:right}} td:first-child{{text-align:left}} svg{{display:block;margin:2px 0}}
+.warn{{background:#fff4d6;border:1px solid #e0b000;padding:6px 10px;margin:6px 0}}</style></head><body>
+<h2>Civic Bosch gas path on hills and in wind — simulation, not driven</h2>
+<div class="warn">Closed-loop simulation. The controller is the repo's LongGasLearner and gas lookup; the car is a drivetrain
+fitted on routes 00000280 / 00000286 (open-loop aEgo rms 0.13 / 0.12 m/s², bosch_hill_plant_fit.py), plant hill term
+up/down {meta['plant_hill'][0]:g} / {meta['plant_hill'][1]:g}. Wind and grade are what the scenario says, not measured.
+Command: {html.escape(cmd)}. Route: {html.escape(str(src))}.
+learner_min is applied in this file only (hill gain {meta['hill_gain']:g}); it is not in the car.</div>
+<p>{legend} &nbsp; gf0 {meta['gf0']:g}, wf0 {meta['wf0']:g}, kv {meta['kv']:g} 1/s, grade from {meta['grade_src']}, seed {meta['seed']},
+build {html.escape(str(meta.get('git_commit')))}. "lowest on climbs" is the lowest v - vset on grade &gt; 1° and the 10 s after.</p>
+<table><tr><th>scenario</th><th>variant</th>{head}</tr>{''.join(trs)}</table>
+{''.join(plots)}
+</body></html>"""
 
 
+def git_commit() -> str | None:
+  import subprocess
+  try:
+    return subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=Path(__file__).parent, capture_output=True, text=True,
+                          check=True).stdout.strip()
+  except (OSError, subprocess.CalledProcessError):
+    return None
 
-def main():
+
+def parse_window(s: str) -> tuple[float, float]:
+  a, b = (float(x) for x in s.split(','))
+  return a, b
+
+
+def main() -> int:
   ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+  ap.add_argument('--out', type=Path, required=True, help='directory for index.html, summary.json, table.txt, traces.json')
   ap.add_argument('--variants', default=','.join(VARIANTS))
-  ap.add_argument('--scenarios', default='abcde', help='letters from abcde')
+  ap.add_argument('--scenarios', default='bcde', help='letters from abcde (a needs --route or --route-npz)')
   ap.add_argument('--gf0', type=float, default=1.25)
   ap.add_argument('--wf0', type=float, default=1.0)
   ap.add_argument('--hill-gain', type=float, default=1.2, help='learner_min hill gain')
@@ -499,31 +708,69 @@ def main():
   ap.add_argument('--plant-hill', type=float, nargs='+', default=[1.0], metavar='K',
                   help='plant grade coefficient: one value, or uphill downhill (e.g. 0.81 1.01)')
   ap.add_argument('--grade-src', default='pitch', choices=['pitch', 'gps'])
-  ap.add_argument('--atarget', default=None, choices=[None, 'log'], help="scenario a: replay the logged aTarget")
   ap.add_argument('--seed', type=int, default=1)
-  ap.add_argument('--route-npz', default=None, help='route 280 npz for scenario a (fields t v ccp alt aT, 20 Hz)')
-  ap.add_argument('--out', default='/tmp/bosch_hill_sim')
+  ap.add_argument('--route', type=Path, help='route directory (<seg>/rlog.zst), as the replay tools take it')
+  ap.add_argument('--window', type=parse_window, metavar='T0,T1', help='route seconds for scenario a')
+  ap.add_argument('--vset', type=float, metavar='MPH', help='scenario a set speed (default: logged cruise set speed, median)')
+  ap.add_argument('--cache', type=Path, help='npz cache of the route read (keep it outside the repo)')
+  ap.add_argument('--route-npz', type=Path, help='20 Hz route npz instead of --route (default window 1740,1980, 50 mph)')
+  ap.add_argument('--atarget', default=None, choices=[None, 'log'], help='scenario a: replay the logged aTarget')
+  ap.add_argument('--frames-json', type=Path, help='scenario a: replay a planner command from alpha_closed_loop_replay')
+  ap.add_argument('--frames-variant', default='b0.075', help='frame `out` key for --frames-json (default the repo planner)')
+  ap.add_argument('--label', action='append', default=[], metavar='KEY=NAME', help='display name for a variant key')
   args = ap.parse_args()
+  for kv in args.label:
+    k, v = kv.split('=', 1)
+    LABELS[k] = v
   HILL_K[:] = (args.plant_hill * 2)[:2]
-  os.makedirs(args.out, exist_ok=True)
+  route = None
+  if args.route is not None or args.route_npz is not None:
+    if args.route is not None and args.window is None:
+      ap.error('--route needs --window T0,T1')
+    window = args.window or (29 * 60.0, 33 * 60.0)
+    src = args.route if args.route is not None else args.route_npz
+    R = load_route(src, window, args.cache)
+    name = src.name.split('--')[0] if args.route is not None else src.stem
+    vset = args.vset * MPH if args.vset else (None if args.route is not None else 50 * MPH)
+    route = {'R': R, 'window': window, 'name': name, 'vset': vset,
+             'frames': (args.frames_json, args.frames_variant) if args.frames_json else None}
+  elif args.frames_json or args.atarget:
+    ap.error('--frames-json / --atarget replay a command on a route: pass --route DIR --window T0,T1')
+  args.out.mkdir(parents=True, exist_ok=True)
+  variants = args.variants.split(',')
   rows, traces = [], {}
-  for sc in scenarios(args.scenarios, args.grade_src, args.atarget, args.route_npz):
-    for var in args.variants.split(','):
+  for sc in scenarios(args.scenarios, args.grade_src, args.atarget, route):
+    for var in variants:
       m, rec = run(sc, var, args.gf0, args.wf0, args.seed, args.hill_gain, args.kv)
       rows.append((sc.name, var, m))
       traces.setdefault(sc.name, {})[var] = rec
       print(f'{sc.name} {var} done', file=sys.stderr)
+  if not rows:
+    print('no scenarios ran', file=sys.stderr)
+    return 1
+  meta = {'variants': variants, 'scenarios': args.scenarios, 'gf0': args.gf0, 'wf0': args.wf0, 'hill_gain': args.hill_gain,
+          'kv': args.kv, 'plant_hill': list(HILL_K), 'grade_src': args.grade_src, 'seed': args.seed,
+          'route': str(args.route or args.route_npz or '') or None, 'window': route['window'] if route else None,
+          'command_source': (f'{args.frames_json} out[{args.frames_variant}]' if args.frames_json else
+                             'logged aTarget' if args.atarget == 'log' else None),
+          'plant': {'step': STEP, 's1': S1, 's2': S2, 'r0': R0, 'r2': R2, 'tau1': TAU1, 'lag_s': [0.68, 0.48]},
+          'git_commit': git_commit()}
   table = fmt_table(rows)
   hdr = (f'# hillsim  gf0 {args.gf0} wf0 {args.wf0} hill_gain {args.hill_gain} kv {args.kv} grade {args.grade_src} ' +
-         f'atarget {args.atarget} seed {args.seed}\n' +
+         f'atarget {meta["command_source"]} seed {args.seed}\n' +
          f'# plant: step {STEP:.3f} s1 {S1:.3f} s2 {S2:.3f} r0 {R0:+.3f} r2 {R2:+.6f} tau1 {TAU1} lag 0.68->0.48 s hill_k up/down {HILL_K[0]}/{HILL_K[1]}\n' +
          '# pk_over: peak v - vset (mph); t>+1mph: s above set + 1 mph; climb_und: lowest v - vset on grade > 1 deg (mph)\n' +
          '# rms(a-aT): true accel - accel cmd; jerk_rms: of 0.15 s-filtered a (m/s^3); t_gas_sat: s at GAS 750\n')
-  open(os.path.join(args.out, 'table.txt'), 'w').write(hdr + table + '\n')
-  json.dump({'args': vars(args), 'rows': rows, 'traces': traces}, open(os.path.join(args.out, 'runs.json'), 'w'))
+  (args.out / 'table.txt').write_text(hdr + table + '\n')
+  S = [{'scenario': s, 'variant': v, **{k: (None if isinstance(x, float) and math.isnan(x) else x) for k, x in m.items()}}
+       for s, v, m in rows]
+  (args.out / 'summary.json').write_text(json.dumps({'meta': meta, 'rows': S}, indent=1, default=str))
+  (args.out / 'traces.json').write_text(json.dumps(traces))
+  (args.out / 'index.html').write_text(index_html(meta, S, traces))
   print(hdr + table)
-  print(write_html(os.path.join(args.out, 'runs.json')), file=sys.stderr)
+  print(f'wrote index.html, summary.json, table.txt, traces.json to {args.out}', file=sys.stderr)
+  return 0
 
 
 if __name__ == '__main__':
-  main()
+  sys.exit(main())
