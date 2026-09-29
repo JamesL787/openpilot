@@ -316,6 +316,18 @@ ONPATH_LEAD_MAX_BRAKE = 1.0
 # Costs: a brake hold of up to |a| / J seconds longer (-2.5 -> 0 takes 1 s) before throttle on a lead pull-away.
 BRAKE_RELEASE_LIMIT = True
 BRAKE_RELEASE_JERK = 2.5  # m/s^3
+# Release dwell (closed-loop replay only, not driven; 2026-09-29 plan2 study vs mvl sp-honda-dev-202608). Near a
+# close lead the MPC answer can alternate every cycle (25e 732.5-733.0: raw MPC -1.99, -0.50, -1.70, -0.46, ... at
+# 2 m/s, 4.5 m) and the published target dithered -1.00 <-> -0.88 between the comfort-floor clip and the release
+# slew above. The alternation rides on the caps writing self.a_desired into the next MPC x0; cutting that feedback
+# diverged the replay (725: min gap 5.3 -> -98.8 m), so the feedback stays and only the output is held: a brake may
+# rise only after it has asked for no rise for BRAKE_RELEASE_DWELL_TICKS cycles (a short running-min). It only
+# ever holds more braking, so it cannot delay onset. Log-clock replay, 16 windows vs the shipped slew: geo-mean
+# jerk RMS 0.986x, 23 fewer accel sign flips (725 24 -> 15, 559 25 -> 19), onset never later, trusted min gap never
+# below base -0.1 m, 725/1965 peak brake unchanged. 4 ticks, or holding only after a fall, removed fewer flips.
+# Costs: every brake release starts BRAKE_RELEASE_DWELL_TICKS * DT_MDL (0.1 s) later.
+BRAKE_RELEASE_DWELL = True
+BRAKE_RELEASE_DWELL_TICKS = 2
 
 
 # Experimental-mode exit crossfade (log, open-loop and closed-loop replay evidence only; not driven).
@@ -355,6 +367,16 @@ def brake_release_limited_target(prev: float, target: float, dt: float) -> float
   if prev >= 0.0:
     return float(target)
   return float(min(target, prev + BRAKE_RELEASE_JERK * dt))
+
+
+def brake_release_dwell_target(prev: float, target: float, rise_ticks: int) -> tuple[float, int]:
+  """While braking, a rise is held for the first BRAKE_RELEASE_DWELL_TICKS cycles that ask for it; returns (target, rise_ticks)."""
+  if target <= prev + 1e-3:
+    return float(target), 0
+  rise_ticks += 1
+  if prev < 0.0 and rise_ticks <= BRAKE_RELEASE_DWELL_TICKS:
+    return float(prev), rise_ticks
+  return float(target), rise_ticks
 
 
 def onpath_lead_view(sm):
@@ -1154,6 +1176,7 @@ class LongitudinalPlanner:
     self.v_model_error = 0.0
     self.output_a_target = 0.0
     self.mpc_lead_demand_hist = []
+    self.brake_release_rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
     self.fast_closing_lead_track = None
     self.stopped_radar_lead_hold_track = None
     self.stopped_radar_lead_hold_active = False
@@ -3869,6 +3892,11 @@ class LongitudinalPlanner:
     if BRAKE_RELEASE_LIMIT and not reset_state and not bool(sm['carState'].standstill):
       # prev is the last published target (after the on-path bound in update(), which runs after this)
       output_a_target = brake_release_limited_target(prev_output_a_target, output_a_target, self.dt)
+    if BRAKE_RELEASE_DWELL and not reset_state and not bool(sm['carState'].standstill):
+      output_a_target, self.brake_release_rise_ticks = brake_release_dwell_target(
+        prev_output_a_target, output_a_target, self.brake_release_rise_ticks)
+    else:
+      self.brake_release_rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
 
     self.output_a_target = output_a_target
     self.output_should_stop = bool(output_should_stop or vision_low_speed_stop_active)

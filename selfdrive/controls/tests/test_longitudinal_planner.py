@@ -1600,7 +1600,9 @@ def test_acc_mode_pretracking_vision_far_slower_lead_starts_braking_before_track
 
   no_lead_outputs = []
   lead_outputs = []
-  for _ in range(8):
+  # 12 frames, compared from frame 8: both planners first release a start-up brake from init, and the
+  # BRAKE_RELEASE_DWELL hold makes that release 2 frames later, so frames 5-7 no longer isolate the lead.
+  for _ in range(12):
     planner_no_lead.update(sm_no_lead, make_toggles(model_version))
     planner_with_lead.update(sm_with_lead, make_toggles(model_version))
     no_lead_outputs.append(planner_no_lead.output_a_target)
@@ -1609,8 +1611,8 @@ def test_acc_mode_pretracking_vision_far_slower_lead_starts_braking_before_track
   assert planner_with_lead.mode == "acc"
   assert not planner_with_lead.raw_close_lead_needs_control(sm_with_lead["radarState"].leadOne, v_ego)
   assert all(lead_output <= no_lead_output + 1e-6
-             for lead_output, no_lead_output in zip(lead_outputs[5:], no_lead_outputs[5:]))
-  assert min(lead_outputs[5:]) < min(no_lead_outputs[5:]) - 0.08
+             for lead_output, no_lead_output in zip(lead_outputs[8:], no_lead_outputs[8:]))
+  assert min(lead_outputs[8:]) < min(no_lead_outputs[8:]) - 0.08
   assert lead_outputs[-1] < no_lead_outputs[-1] - 0.15
 
 
@@ -4920,3 +4922,46 @@ def test_exp_mode_reentry_during_fade_returns_to_exp_target_at_once():
   ref.update(exp, make_toggles())
   assert on.exp_mode_blend_weight == 1.0
   assert float(on.output_a_target) <= float(ref.output_a_target) + 0.05
+
+
+def test_brake_release_dwell_only_holds_more_braking():
+  m = longitudinal_planner_module
+  hold = m.BRAKE_RELEASE_DWELL_TICKS
+  seq = [-0.88, -1.0] * 6 + [-0.5] * (hold + 2)              # the 25e 732.5 two-cycle dither, then a real release
+  prev, n, pub = 0.0, hold + 1, []
+  for t in seq:
+    prev, n = m.brake_release_dwell_target(prev, t, n)
+    pub.append(prev)
+  assert all(p <= t + 1e-12 for p, t in zip(pub, seq, strict=True))   # never less braking than asked
+  assert pub[1:12] == [pytest.approx(-1.0)] * 11                        # dither removed: held at the deeper value
+  assert pub[12:12 + hold] == [pytest.approx(-1.0)] * hold              # a release waits BRAKE_RELEASE_DWELL_TICKS
+  assert pub[12 + hold] == pytest.approx(-0.5)                          # then passes (the slew above limits its rate)
+  assert m.brake_release_dwell_target(-0.4, -2.0, 1) == (pytest.approx(-2.0), 0)   # deeper braking passes at once
+  assert m.brake_release_dwell_target(0.2, 0.8, 0)[0] == pytest.approx(0.8)         # throttle is never held
+
+def test_brake_release_dwell_brakes_as_early_and_is_skipped_on_reset():
+  brake = make_sm(13.4, 0.0, -3.5, experimental_mode=False, tracking_lead=True,
+                  lead_one=make_lead(status=True, d_rel=20.0, v_lead=0.0, radar=True))
+  clear = make_sm(13.4, 0.0, -3.5, experimental_mode=False)
+  saved = longitudinal_planner_module.BRAKE_RELEASE_DWELL
+  try:
+    longitudinal_planner_module.BRAKE_RELEASE_DWELL = True
+    on, _ = _release_run(brake, clear, limit=True)
+    longitudinal_planner_module.BRAKE_RELEASE_DWELL = False
+    off, _ = _release_run(brake, clear, limit=True)
+  finally:
+    longitudinal_planner_module.BRAKE_RELEASE_DWELL = saved
+  def first(xs):
+    return next(i for i, x in enumerate(xs) if x <= -0.5)
+  assert first(on) == first(off)                                         # brake onset unchanged
+  assert all(a <= b + 1e-9 for a, b in zip(on, off, strict=True))       # never less braking
+  off_sm = make_sm(13.4, 0.0, -3.5, experimental_mode=False)
+  off_sm["controlsState"].longControlState = LongCtrlState.off
+  off_sm["selfdriveState"].enabled = False
+  r_on, _ = _release_run(brake, off_sm, limit=True, release_frames=2)
+  longitudinal_planner_module.BRAKE_RELEASE_DWELL = False
+  try:
+    r_off, _ = _release_run(brake, off_sm, limit=True, release_frames=2)
+  finally:
+    longitudinal_planner_module.BRAKE_RELEASE_DWELL = saved
+  assert r_on[-1] == pytest.approx(r_off[-1])                            # reset re-seeds from aEgo, no hold
