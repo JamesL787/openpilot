@@ -197,7 +197,22 @@ def get_honda_bosch_wind_brake_mps2(v_ego: float) -> float:
   return float(np.interp(v_ego, [0.0, 13.4, 22.4, 31.3, 40.2], [0.000, 0.049, 0.136, 0.267, 0.441]))
 
 
-def bosch_gas_lookup_accel(gas_pedal_force: float, hill_brake: float, gasfactor: float, min_gas: float) -> float:
+# Civic Bosch hill gain (2026-09-29, offline fit over 26 Bosch-A op-long routes, 101k quasi-steady samples,
+# leave-one-route-out). The unscaled hill term under-pushes climbs: aEgo - predicted -0.045 at pitch
+# 0.02-0.04 and -0.093 at 0.04-0.06, +0.068 downhill. Closed loop on 8cb8af187 builds, aEgo - cmd was
+# -0.03/-0.06 at hill 0.3-0.5/0.5-0.7 m/s^2 against +0.02/+0.03 on the builds before it. A gain of 1.2
+# brings those to -0.009/-0.032/+0.033 and keeps route 280's climb (below) at +0.031 (1.3 zeroes the fleet
+# bias but gives +0.051 on 280). CC pitch reads +0.013 rad (0.76 deg, 0.56..1.05 per route, 18/18 routes)
+# against GPS grade, so the gain acts about that level and flat-road gas is unchanged. The bias belongs
+# to this device mount. Log/offline evidence only. Shipped at 1.1, not 1.2: in Steve's hill sim
+# (tools/longitudinal/bosch_hill_sim.py, plant grade coefficient 0.84) 1.2 doubled crest overshoot vs
+# HEAD (+1.01 vs +0.50 mph at 6% / 30 mph); 1.1 gives +0.75 and keeps most of the climb gain. Sim only.
+CIVIC_BOSCH_HILL_GAS_GAIN = 1.1
+CIVIC_BOSCH_PITCH_BIAS = 0.013  # rad
+
+
+def bosch_gas_lookup_accel(gas_pedal_force: float, hill_brake: float, gasfactor: float, min_gas: float,
+                           hill_gain: float = 1.0, hill_level: float = 0.0) -> float:
   # The learned gasfactor scales the flat-road part of the request only; the hill feed-forward is
   # added on top unscaled. LongGasLearner freezes above |pitch| 0.02 rad, so gasfactor is fitted on
   # flat road and was never checked against the hill term. Route 280 segs 29-31 (gasfactor 1.248,
@@ -207,7 +222,7 @@ def bosch_gas_lookup_accel(gas_pedal_force: float, hill_brake: float, gasfactor:
   # (gasfactor - 1) * hill = +0.10..+0.22 of that. Static/log evidence only; not yet driven.
   # Anchored at min_gas so gasfactor scales the offset from the pedal-on threshold rather than
   # shifting where gas starts.
-  return (gas_pedal_force - hill_brake - min_gas) * gasfactor + min_gas + hill_brake
+  return (gas_pedal_force - hill_brake - min_gas) * gasfactor + min_gas + hill_brake + (hill_gain - 1.0) * (hill_brake - hill_level)
 
 
 def update_honda_bosch_braking(braking: bool, gas_pedal_force: float, stopping: bool, long_active: bool) -> bool:
@@ -483,7 +498,7 @@ class LongGasLearner:
       quasi_steady = accel_rate < _ACCEL_RATE_THRESH
 
       # Hill / saturation deadband (G4 rail 7)
-      pitch_ok = abs(pitch) < _PITCH_DEADBAND
+      pitch_ok = abs(pitch - (CIVIC_BOSCH_PITCH_BIAS if self.car_fingerprint == "HONDA_CIVIC_BOSCH" else 0.0)) < _PITCH_DEADBAND
       brake_addon_ok = abs(brake_addon) < _BRAKE_ADDON_DEADBAND
       condition_ok = quasi_steady and pitch_ok and brake_addon_ok
 
@@ -1083,10 +1098,14 @@ class CarController(CarControllerBase):
           else:
             self._learner.learning = False
 
-          # gasfactor scales the flat-road request only; the hill term is added unscaled (see
-          # bosch_gas_lookup_accel).
+          # gasfactor scales the flat-road request only; the hill term is added outside it, with the
+          # Civic hill gain about its pitch bias (see bosch_gas_lookup_accel).
           min_gas = self.params.BOSCH_GAS_LOOKUP_BP[0]
-          self.gas = float(np.interp(bosch_gas_lookup_accel(gas_pedal_force, hill_brake, self._learner.gasfactor, min_gas),
+          civic = self.CP.carFingerprint == CAR.HONDA_CIVIC_BOSCH
+          hill_gain = CIVIC_BOSCH_HILL_GAS_GAIN if civic else 1.0
+          hill_level = math.sin(CIVIC_BOSCH_PITCH_BIAS) * ACCELERATION_DUE_TO_GRAVITY if civic else 0.0
+          self.gas = float(np.interp(bosch_gas_lookup_accel(gas_pedal_force, hill_brake, self._learner.gasfactor, min_gas,
+                                                            hill_gain, hill_level),
                                      self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V))
           # limit gas ramp to 60 units per frame, matches stock. Higher sometimes causes powertrain
           # to ignore gas command.
