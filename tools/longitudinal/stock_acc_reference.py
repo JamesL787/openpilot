@@ -80,6 +80,7 @@ BRAKE_ON = -1.0              # episode starts when either side goes below this
 REVERSAL_MIN = 0.3           # m/s^2 swing that counts as the command changing its mind
 LEADBRAKE_ON = -1.0          # m/s^2 lead accel slope that counts as the lead starting to brake
 RADAR_MODEL_GAP = 3.0        # m/s radar closing faster than the model lead on the same car (Bob's gate3 condition)
+LINGER_S = 1.0               # s: ours takes this much longer than stock to back off half its peak (Bob, 299 bm1)
 FIELDS = ("t", "v", "a", "d", "vrel", "alead", "aleadk", "yrel", "radar", "mprob", "mx", "mv",
           "cmd", "stock", "alpha", "icbm", "setv")
 
@@ -351,6 +352,15 @@ def onset(t, x, s, e, level=BRAKE_ON):
   return float(t[s + k[0]]) if len(k) else math.nan
 
 
+def release(t, x, s, e):
+  # seconds from the peak brake until the command is back above half of it; stock is sharp in and sharp out
+  k = s + int(np.nanargmin(x[s:e + 1]))
+  if not x[k] < BRAKE_ON:
+    return math.nan
+  r = np.flatnonzero(x[k:e + 1] > 0.5 * x[k])
+  return float(t[k + r[0]] - t[k]) if len(r) else float(t[e] - t[k])
+
+
 def fmt_t(t: float) -> str:
   return f"{int(t // 60)}:{t % 60:04.1f}" if math.isfinite(t) else "  -  "
 
@@ -481,6 +491,7 @@ def compare_route(R: dict, C: Corpus) -> dict:
     dist = float(np.nanmedian(pred["dist"][seg]))
     ours_pk, st_pk = float(np.nanmin(ours[seg])), float(np.nanmin(stock[seg]))
     on_o, on_s = onset(t, ours, s, e), onset(t, stock, s, e)
+    rel_o, rel_s = release(t, ours, s, e), release(t, stock, s, e)
     k = s + int(np.nanargmin(ours[seg]))
     # radar vs model on the same car, over the second leading up to our peak: model lead speed minus radar lead
     # speed, positive when radar says the lead is closing faster. Only where the lead is radar-backed and the model's
@@ -496,6 +507,8 @@ def compare_route(R: dict, C: Corpus) -> dict:
       "stock_peak_p25": round(float(np.nanmin(pred["p25"][seg, 0])), 2),
       "ours_onset": round(on_o, 2) if math.isfinite(on_o) else None,
       "stock_onset": round(on_s, 2) if math.isfinite(on_s) else None,
+      "ours_release": round(rel_o, 2) if math.isfinite(rel_o) else None,
+      "stock_release": round(rel_s, 2) if math.isfinite(rel_s) else None,
       "ours_reversals": reversals(ours[seg]),
       "stock_reversals": round(C.reversals_per_min * (e - s + 1) / HZ / 60, 1),
       "ours_s_below_2p5": round(float(np.sum(ours[seg] < -2.5) / HZ), 2),
@@ -532,6 +545,9 @@ def verdict(e: dict) -> str:
         tags.append("ours earlier")
     elif e["ours_onset"] is not None and e["stock_peak"] > -0.7:
       tags.append("stock would not brake")
+    if e.get("ours_release") is not None and e.get("stock_release") is not None and \
+       e["ours_release"] - e["stock_release"] > LINGER_S:
+      tags.append("ours lingers")
     if e["ours_reversals"] >= e["stock_reversals"] + 2:
       tags.append("ours twitchier")
   if (e.get("radar_minus_model_closing") or 0.0) >= RADAR_MODEL_GAP:
@@ -719,7 +735,7 @@ def cmd_compare(args) -> int:
     res = compare_route(R, C)
     print(f"\n{res['route']} ({res['who']} long, {res['minutes_with_lead']} min engaged with a lead): command reversals " +
           f"per minute ours {res['ours_reversals_per_min']} vs stock precedent {res['stock_reversals_per_min']}")
-    print(f"  {'time':>7s} {'ours pk':>7s} {'stock pk':>8s} {'onset o/s':>11s} {'rev o/s':>7s} {'<-2.5s o/s':>10s} " +
+    print(f"  {'time':>7s} {'ours pk':>7s} {'stock pk':>8s} {'onset o/s':>11s} {'rel o/s':>9s} {'rev o/s':>7s} {'<-2.5s o/s':>10s} " +
           f"{'aEgo':>5s} {'v':>4s} {'d':>5s} {'vrel':>5s} {'aLd':>5s} {'aLdK':>5s} {'prec':>4s}  verdict")
     for e in res["episodes"]:
       if e["ours_peak"] > args.min_peak and e["stock_peak"] > args.min_peak:
@@ -727,7 +743,8 @@ def cmd_compare(args) -> int:
       k = e["at_ours_peak"]
       on = (f"{e['ours_onset'] - e['stock_onset']:+.1f}s" if e["ours_onset"] is not None and e["stock_onset"] is not None
             else f"{'o' if e['ours_onset'] is not None else '-'}/{'s' if e['stock_onset'] is not None else '-'}")
-      print(f"  {fmt_t(e['t0']):>7s} {e['ours_peak']:+7.2f} {e['stock_peak']:+8.2f} {on:>11s} " +
+      rel = "/".join(f"{x:.1f}" if x is not None else "-" for x in (e["ours_release"], e["stock_release"]))
+      print(f"  {fmt_t(e['t0']):>7s} {e['ours_peak']:+7.2f} {e['stock_peak']:+8.2f} {on:>11s} {rel:>9s} " +
             f"{e['ours_reversals']:>3d}/{e['stock_reversals']:<4.1f} {e['ours_s_below_2p5']:4.1f}/{e['stock_s_below_2p5']:<4.1f} " +
             f"{e['min_a_ego']:+5.1f} {k['v']:4.0f} {k['d']:5.0f} {k['vrel']:+5.1f} {k['alead']:+5.1f} {k['aleadk']:+5.1f} " +
             f"{e['precedent_dist']:4.1f}  {verdict(e)}")

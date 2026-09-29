@@ -82,3 +82,17 @@ def test_stop_profile_samples_the_approach_and_skips_creeps():
   ev = sar.stop_events(R, R["stock"])
   assert len(ev) == 1 and abs(ev[0]["t"] - 7.85) < 0.1  # below STOP_V from 7.85 s
   assert abs(ev[0]["approach_s"] - 3.85) < 0.1 and ev[0]["cmd_at_2"] == -1.0 and ev[0]["reversals"] == 0
+
+
+def test_release_measures_how_long_the_brake_lingers_after_its_peak():
+  t = np.arange(200) / sar.HZ
+  sharp = np.where((t >= 2) & (t < 3), -3.0, 0.0)  # full brake for 1 s, then off
+  slow = sharp.copy()
+  slow[(t >= 3) & (t < 6)] = -2.0  # peaks the same, then holds -2 for 3 s more
+  assert abs(sar.release(t, sharp, 0, 199) - 1.0) < 0.06
+  assert abs(sar.release(t, slow, 0, 199) - 4.0) < 0.06
+  assert np.isnan(sar.release(t, np.full(200, -0.5), 0, 199))  # never braked
+  e = {"no_precedent": False, "ours_peak": -3.0, "stock_peak": -3.0, "stock_peak_p25": -3.2, "ours_onset": 2.0,
+       "stock_onset": 2.0, "ours_release": 4.0, "stock_release": 1.0, "ours_reversals": 0, "stock_reversals": 0.0,
+       "at_ours_peak": {"alead": -3.0, "aleadk": -3.0}}
+  assert sar.verdict(e) == "ours lingers"

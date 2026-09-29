@@ -9930,7 +9930,7 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **Limits:**
   - The reference is a neighbour median. It says what stock did in similar logged moments, not what it would have done here.
   - No cut-ins, stop-and-go to zero, or adjacent-lane curves are separated out yet.
-  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 7 pass (synthetic routes).
+  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 8 pass (synthetic routes).
 - **Addendum (2026-09-29, Bob's gate3 questions; replay only):**
   - **Radar-vs-model tag.** An episode is tagged `radar closing > model` when radar closing exceeds the model lead's closing on the same car by 3 m/s or more in the second before our peak.
     - Ours harder: 10 of 23 tagged.
@@ -9959,3 +9959,9 @@ Replay of the fixed code (base = the old law, same 10 routes):
     - Stock brakes about twice as firmly through the last 4 m/s and holds roughly −0.8 into the stop. Ours tapers to about −0.4 and creeps for twice as long.
     - Both stop at about the same gap, and the standstill aEgo step is similar.
     - Reading: stock's stop is short and firm; ours is a long, soft crawl with one change of mind.
+  - **Route 299 added (2026-09-29), stock ACC with ICBM off:** `11c8fa231c0499ed|00000299--cfcac519b7`, 38.6 min usable with a lead. Stock stops n 45 now; the stock stop profile barely moved (command at 2 m/s −1.16, 4 m/s → stop 4.6 s).
+    - The dash BRAKE warning Peter saw at bookmarks 1 and 3 is ACC_CONTROL 0x1DF `AEB_PREPARE` on bus 1, set at 11:49.9 and 19:56.7 and nowhere else. `AEB_STATUS`, `AEB_BRAKING`, `stockFcw` and `stockAeb` never set. Bob found other rare bits (0x1FA, 0x374, 0x1DF 11/13/19) toggling at the same two moments; not yet decoded.
+    - Bookmark 1: stock hit its −3.0 limit within 0.5 s of the warning and was back to −0.43 by +2.5 s. Bob's shadow planner on the same moment reached −2.4 at +0.75 s and was still −1.06 at +3 s.
+  - **Release time and the `ours lingers` tag (Bob's suggestion, replay):** seconds from an episode's peak until the command is back above half of it. `ours lingers` when ours takes more than 1.0 s longer than the stock reference.
+    - Over the 6 alpha routes, among 70 real brakes with stock precedent (stock peak < −1.5): ours lingers in 29. Median release ours 2.1 s vs stock 0.6 s.
+    - Reading: stock is sharp in and sharp out. Along with the soft stop, the long tail after the peak is the main shape difference on real brakes.
