@@ -275,9 +275,9 @@
   top: 0;
   bottom: 0;
   pointer-events: none;
-  background: rgba(122, 162, 247, 0.14);
-  border-left: 1px solid rgba(122, 162, 247, 0.7);
-  border-right: 1px solid rgba(122, 162, 247, 0.7);
+  background: rgba(122, 162, 247, 0.18);
+  border-left: 1.5px solid rgba(122, 162, 247, 0.8);
+  border-right: 1.5px solid rgba(122, 162, 247, 0.8);
 }
 
 .plotZoomControls .plotButton {

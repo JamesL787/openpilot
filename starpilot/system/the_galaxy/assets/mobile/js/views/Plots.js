@@ -4,7 +4,7 @@ import { GalaxyConfirm } from "../components/GalaxyModal.js"
 import {
   HELP_TEXT, LIVE_POLL_MS, LiveBuffer, READING_GUIDE, ZOOM_HALF_WINDOW_S,
   buildOverviewCharts, buildTrackingCharts, controllerName, eventRows, fmtDate, fmtDuration, fmtNum, fmtSpeed, keyNumbers,
-  clampRange, longStateName, panRange, rangeSelect, sessionUrl, speedBandRows, speedUnit, statusLabel, toSeries, tuneGroups, turnRows,
+  clampRange, longStateName, panRange, rangeSelect, sameRange, sessionUrl, speedBandRows, speedUnit, statusLabel, toSeries, tuneGroups, turnRows,
   zoomBand, zoomRange,
 } from "/assets/components/tools/drive_plots_shared.mjs"
 
@@ -88,8 +88,8 @@ const PlotChart = {
                     stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
             </svg>
             <div v-if="band" :style="{ position: 'absolute', top: 0, height: '180px', left: band.left + '%', width: band.width + '%',
-                                       pointerEvents: 'none', background: 'rgba(122,162,247,0.14)',
-                                       borderLeft: '1px solid rgba(122,162,247,0.7)', borderRight: '1px solid rgba(122,162,247,0.7)' }"></div>
+                                       pointerEvents: 'none', background: 'rgba(122,162,247,0.18)',
+                                       borderLeft: '1.5px solid rgba(122,162,247,0.8)', borderRight: '1.5px solid rgba(122,162,247,0.8)' }"></div>
             <span v-for="(l, i) in yLabels" :key="'yl' + i" :style="yStyle(l)">{{ l.label }}</span>
           </div>
           <div style="position:relative; height:14px; margin-top:2px;">
@@ -134,6 +134,8 @@ export const Plots = {
     this.readingGuide = READING_GUIDE
     this.zoomSeconds = 2 * ZOOM_HALF_WINDOW_S
     this.zoomRequest = 0
+    // The range last asked for: presses build on it, not on the range last loaded (see showRange).
+    this.zoomTarget = null
     this.muted = MUTED
     try {
       this.showAdvancedTerms = localStorage.getItem(ADVANCED_TERMS_KEY) === "1"
@@ -300,10 +302,13 @@ export const Plots = {
       }
     },
     // Full-resolution charts for [start, end] (seconds into the drive). A newer request wins over a slower older
-    // one, so a quick run of pan/zoom presses settles on the last one pressed.
+    // one, and presses build on the range last asked for, so three quick "later" presses move three half-screens.
+    // (Vue patches the charts in place, so a response landing mid-drag does not disturb the drag.)
     async showRange(start, end, label = "") {
       if (!this.selectedId) return
       const r = clampRange(start, end, this.driveLength)
+      if (sameRange(r, this.zoomTarget) && this.zoomTarget.label === label) return
+      this.zoomTarget = { ...r, label }
       const id = ++this.zoomRequest
       const opening = !this.zoom
       try {
@@ -314,7 +319,9 @@ export const Plots = {
                       tMin: r.start, tMax: r.end, speed: this.speed, controller: this.detailController }) }
         if (opening) this.$nextTick(() => this.$refs.zoom?.scrollIntoView({ behavior: "smooth", block: "start" }))
       } catch (e) {
-        if (id === this.zoomRequest) this.detailError = e?.message || String(e)
+        if (id !== this.zoomRequest) return
+        this.zoomTarget = this.zoom ? { start: this.zoom.start, end: this.zoom.end, label: this.zoom.label } : null
+        this.detailError = e?.message || String(e)
       }
     },
     // A minute around t, from a chart tap or a moment in the list.
@@ -323,20 +330,22 @@ export const Plots = {
     },
     closeZoom() {
       this.zoomRequest++
+      this.zoomTarget = null
       this.zoom = null
     },
+    // Zooming around the middle keeps a moment in view, so its label stays; panning or zooming around a point may not.
     zoomBy(factor, at = null) {
-      if (!this.zoom) return
-      const r = zoomRange(this.zoom, factor, this.driveLength, at)
-      this.showRange(r.start, r.end, this.zoom.label)
+      if (!this.zoomTarget) return
+      const r = zoomRange(this.zoomTarget, factor, this.driveLength, at)
+      this.showRange(r.start, r.end, at === null ? this.zoomTarget.label : "")
     },
     panBy(frac) {
-      if (!this.zoom) return
-      const r = panRange(this.zoom, frac, this.driveLength)
-      this.showRange(r.start, r.end, this.zoom.label)
+      if (!this.zoomTarget) return
+      const r = panRange(this.zoomTarget, frac, this.driveLength)
+      this.showRange(r.start, r.end)
     },
     overviewWheel(f, t) {
-      if (this.zoom) this.zoomBy(f, t)
+      if (this.zoomTarget) this.zoomBy(f, t)
       else this.zoomAt(t)
     },
     togglePaused() {
@@ -565,6 +574,7 @@ export const Plots = {
       <template v-if="zoom">
         <div ref="zoom" style="margin-top: var(--sp-3);">
           <strong>{{ zoom.label ? zoom.label + ':' : 'Zoom' }} {{ fmtDuration(zoom.start) }} – {{ fmtDuration(zoom.end) }}</strong>
+          <span :style="muted"> ({{ fmtDuration(zoom.end - zoom.start) }})</span>
           <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top: var(--sp-2);">
             <button type="button" class="gx-btn gx-btn--tonal" aria-label="Earlier" @click="panBy(-0.5)"><i class="bi bi-chevron-left"></i></button>
             <button type="button" class="gx-btn gx-btn--tonal" aria-label="Zoom out" @click="zoomBy(2)"><i class="bi bi-zoom-out"></i></button>
@@ -576,7 +586,7 @@ export const Plots = {
         </div>
         <div style="display:grid; gap: var(--sp-3); margin-top: var(--sp-2);">
           <PlotChart v-for="c in zoom.charts" :key="'z' + c.id" :chart="c" selectable
-                     @range="(a, b) => showRange(a, b, zoom.label)" @wheelzoom="zoomBy"></PlotChart>
+                     @range="(a, b) => showRange(a, b)" @wheelzoom="zoomBy"></PlotChart>
         </div>
       </template>
 

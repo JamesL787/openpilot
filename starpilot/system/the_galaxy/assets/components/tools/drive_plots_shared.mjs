@@ -621,6 +621,24 @@ export function zoomBand(z, geo) {
   return width > 0 ? { left: left.toFixed(2), width: Math.max(0.4, width).toFixed(2) } : null
 }
 
+export const sameRange = (a, b) => !!a && !!b && Math.abs(a.start - b.start) < 0.05 && Math.abs(a.end - b.end) < 0.05
+
+// One gesture at a time across all charts. A page whose re-render would replace a chart mid-drag (arrow-core does)
+// holds its update with afterGesture(fn), which runs fn now, or as soon as the finger or button is lifted.
+let gestureActive = false
+let cancelActive = null
+let afterGestureQueue = []
+export function afterGesture(fn) {
+  if (!gestureActive) return fn()
+  afterGestureQueue.push(fn)
+}
+function endGesture() {
+  gestureActive = false
+  const q = afterGestureQueue
+  afterGestureQueue = []
+  q.forEach((fn) => fn())
+}
+
 function timeAtX(el, clientX, geo) {
   const rect = el.getBoundingClientRect()
   if (!rect.width || !geo || geo.empty) return null
@@ -637,7 +655,12 @@ export function rangeSelect(getGeo, { onTap = null, onRange = null, onWheelZoom 
   let drag = null
   const clear = () => {
     if (drag?.box) drag.box.remove()
+    const had = !!drag
     drag = null
+    if (had) {
+      cancelActive = null
+      endGesture()
+    }
   }
   const place = () => {
     const rect = drag.el.getBoundingClientRect()
@@ -651,8 +674,17 @@ export function rangeSelect(getGeo, { onTap = null, onRange = null, onWheelZoom 
   }
   return {
     down(e) {
+      // A second finger (a pinch) cancels the drag, on whichever chart it started, rather than restarting it from
+      // where that finger landed.
+      if (!e.isPrimary) {
+        cancelActive?.()
+        return
+      }
       if (e.button > 0) return
+      cancelActive?.()
       clear()
+      gestureActive = true
+      cancelActive = clear
       drag = { el: e.currentTarget, id: e.pointerId, x0: e.clientX, x1: e.clientX, box: null }
     },
     move(e) {
@@ -662,7 +694,7 @@ export function rangeSelect(getGeo, { onTap = null, onRange = null, onWheelZoom 
         try { drag.el.setPointerCapture(e.pointerId) } catch { /* the pointer is already gone */ }
         const box = document.createElement("div")
         box.className = "plotBrush"
-        Object.assign(box.style, { position: "absolute", pointerEvents: "none", background: "rgba(122,162,247,0.22)",
+        Object.assign(box.style, { position: "absolute", pointerEvents: "none", background: "rgba(122,162,247,0.24)",
                                    borderLeft: "2px solid #7aa2f7", borderRight: "2px solid #7aa2f7", zIndex: "2" })
         drag.el.parentElement.appendChild(box)
         drag.box = box
