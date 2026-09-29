@@ -93,6 +93,25 @@ function stripDefs() {
     {n:'L1 replay', a:d1, c:'#e63946'}].concat(sims.map(v=>({n:v+' gap', a:add(d1, D.gs[v]), c:COL[v], dash:[6,3], drift:M.drift[v]})))});
   s.push({title:'vRel m/s', zero:true, series:[{n:'vision', a:visVr, c:'#4895ef', w:1}, {n:'log published', a:col(L1l,2), c:'#7a3c3c', w:1},
     {n:'range-derived', a:col(L1,4), c:'#4cc9f0'}, {n:'native', a:col(L1,3), c:'#ff9f1c'}, {n:'published', a:col(L1,2), c:'#e63946'}]});
+  // Fix A v3: the radar leadOne's track against the model path, and the range-assist correction; arm ticks marked
+  // (red = cutting in at arm, green = not). Placeholder thresholds from the python side.
+  const CI = M.cutin || {}, ci = D.cutin_rep, cil = D.cutin_log;
+  const arms = (D.metrics.common.arms || []).concat(D.metrics.common.arms_log || []);
+  const marks = arms.map(r => ({t:r.t, c:r.cutting_in ? '#ff4d6d' : '#52b788'}));
+  if (cil) s.push({title:'L1 path offset m (yRel − path) / lateral rate m/s', zero:true, marks,
+    hlines:[CI.rate_mps, -CI.rate_mps], series:(ci ? [{n:'offset', a:ci.off, c:'#e63946'}, {n:'lat rate', a:ci.rate, c:'#ffd60a', w:1}] : [])
+      .concat([{n:'log offset', a:cil.off, c:'#7a3c3c', w:1}, {n:'log lat rate', a:cil.rate, c:'#8c7a14', w:1, dash:[4,3]},
+               {n:'log Δoffset 1 s', a:cil.doff, c:'#6c757d', w:1, dash:[2,2]}])});
+  s.push({title:'range-assist correction, native − published vRel m/s', zero:true, marks,
+    series:[{n:'replay', a:sub(col(L1,3), col(L1,2)), c:'#e63946'}, {n:'log', a:sub(col(L1l,7), col(L1l,2)), c:'#7a3c3c', w:1}]});
+  // radar lead dRel − camera x (both from the radar): thin = any radar lead with camera p > vis_prob, thick = same-car
+  // gate (|Δ| < max(10, 0.2 dRel)). A range walking onto the camera falls toward 0; a real close holds its offset.
+  const dd = (L,kr) => L.map((r,j) => r && r[0]!==null && r[kr]===1 && vis[j] && vis[j][0]!==null && vis[j][3] > M.vis_prob ? r[0]-vis[j][0] : null);
+  const gate = (a,L) => a.map((x,j) => x===null || Math.abs(x) >= Math.max(10, 0.2*L[j][0]) ? null : x);
+  const ddr = dd(L1,6), ddl = dd(L1l,5);
+  s.push({title:'radar L1 dRel − camera x m (thick = same-car gate)', zero:true, marks,
+    series:[{n:'log', a:ddl, c:'#7a3c3c', w:1, dash:[4,3]}, {n:'log same-car', a:gate(ddl,L1l), c:'#b5651d', w:1},
+            {n:'replay', a:ddr, c:'#e63946', w:1, dash:[4,3]}, {n:'replay same-car', a:gate(ddr,L1), c:'#e63946'}]});
   s.push({title:'lead source', lanes:true});
   s.push({title:'model prob', fixed:[0,1], series:[{n:'lead0 p', a:col(vis,3), c:'#4895ef'}, {n:'lead1 p', a:col(D.vis2,3), c:'#2a5a8f', w:1},
     {n:'L1 modelProb', a:col(L1,7), c:'#e63946', w:1}], hline:M.vis_prob});
@@ -151,6 +170,8 @@ function renderStrip(cv, s) {
   for (const v of [lo,(lo+hi)/2,hi]) g.fillText(v.toFixed(1), 2, Math.min(Math.max(y(v)+4,26),H-18));
   g.strokeStyle='#333';
   if (lo<0 && hi>0) { g.beginPath(); g.moveTo(50,y(0)); g.lineTo(W-10,y(0)); g.stroke(); }
+  for (const hv of (s.hlines||[])) if (hv!==undefined && hv>lo && hv<hi) { g.strokeStyle='#553'; g.setLineDash([3,3]); g.beginPath(); g.moveTo(50,y(hv)); g.lineTo(W-10,y(hv)); g.stroke(); g.setLineDash([]); g.strokeStyle='#333'; }
+  for (const mk of (s.marks||[])) { g.strokeStyle=mk.c; g.lineWidth=1.5; g.beginPath(); g.moveTo(tx(cv,mk.t),6); g.lineTo(tx(cv,mk.t),H-16); g.stroke(); g.lineWidth=1; g.strokeStyle='#333'; }
   if (s.hline!==undefined) { g.setLineDash([3,3]); g.beginPath(); g.moveTo(50,y(s.hline)); g.lineTo(W-10,y(s.hline)); g.stroke(); g.setLineDash([]); }
   for (const se of s.series) {
     g.lineWidth = se.w || 1.6; g.setLineDash(se.dash || []);
@@ -391,6 +412,7 @@ function metricsTable() {
   h += '</table><table style="margin-top:6px">';
   const adop = g => g.map(a=>`#${a.track}: on-path ${f(a.onpath_t)} s at ${f(a.d_at_onpath,1)} m → L1 ${f(a.adopt_t)} s, lag ${a.since_window_start?'≥':''}${f(a.lag_s)} s`).join('<br>') || '-';
   const assist = a => a ? ['phantom','helped','neutral','unjudged'].map(k=>a[k].extra_sustained==null?'-':`${f(a[k].extra_sustained)} @${f(a[k].t)}`).join(' / ') : '-';
+  const armRows = g => (g||[]).filter(r=>r.corr_peak>=0.5).map(r=>`<span data-t="${r.t}" style="cursor:pointer;color:${r.cutting_in?'#ff4d6d':'#52b788'}">${f(r.t)} #${r.track} ${r.cutting_in?'YES':'no'}</span> off ${f(r.off)} m, lat rate ${f(r.rate)}, Δoff ${f(r.doff)}; corr peak ${f(r.corr_peak)} @${f(r.t_peak)}; range/cam slope ${f(r.range_slope)}/${f(r.cam_slope)}; radar − cam ${f(r.dd_arm)} → ${f(r.dd_2s)} → ${f(r.dd_4s)} m (rate ${f(r.dd_rate)}); min cmd ${f(r.min_cmd)}, aEgo ${f(r.min_a_ego)}`).join('<br>') || '-';
   const rows = [['lead event t (first adoption in window)', f(c.lead_event_t)], ['first on-path → leadOne (replay)', adop(c.adoption)]];
   if (c.adoption_log) rows.push(['first on-path → leadOne (log)', adop(c.adoption_log)]);
   rows.push(['max extra closing, native − published vRel (replay / log)', `${f(c.max_extra_closing_vrel)} / ${f(c.max_extra_closing_vrel_log)}`],
@@ -401,11 +423,13 @@ function metricsTable() {
             ['largest radar − camera vLead, published / native (log) m/s', `${f(c.radar_vs_vision_vlead_err_max_log)} / ${f(c.native_vs_vision_vlead_err_max_log)}`],
             ['range assist ≥ 2 m/s held ≥ 0.3 s: phantom (away from camera) / helped / neutral / unjudged (replay)', assist(c.assist)],
             ['same (log)', assist(c.assist_log)],
+            ['cutting-in at arm (replay)', armRows(c.arms)], ['cutting-in at arm (log)', armRows(c.arms_log)],
             ['replay/log agreement', M.agreement ? `both-lead ${M.agreement.both}: same track ${(100*M.agreement.track/Math.max(M.agreement.both,1)).toFixed(0)}%, |dRel|<1m ${(100*M.agreement.d1m/Math.max(M.agreement.both,1)).toFixed(0)}%` : '-']);
   h += rows.map(r=>`<tr><td class="k">${r[0]}</td><td style="text-align:left">${r[1]}</td></tr>`).join('') + '</table>';
   $('metrics').innerHTML = h;
   $('events').innerHTML = 'events: ' + D.events.map(e=>`<span data-t="${e.t}" style="color:${e.kind==='drift'?'#999':e.kind==='onset'?'#ff9f1c':'#ffd60a'}">${e.t.toFixed(2)} ${e.label}</span>`).join(' ');
   for (const s of $('events').querySelectorAll('span')) s.onclick = () => seekT(+s.dataset.t);
+  for (const s of $('metrics').querySelectorAll('span[data-t]')) s.onclick = () => seekT(+s.dataset.t);
 }
 $('legend').innerHTML = [
   ['#ffd60a','● on-path track (≤'+M.onpath_half_m+' m from model path)'],['#8c8c96','● other track (hollow = coasted)'],

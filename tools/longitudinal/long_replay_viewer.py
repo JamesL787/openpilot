@@ -39,7 +39,6 @@ import base64
 import io
 import json
 import math
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -56,6 +55,7 @@ ONPATH_HALF_M = 1.8       # a track is on-path when within this of the model pat
 ONPATH_MAX_D = 150.0
 VIS_PROB = 0.5            # model lead counts as present above this
 RADAR_TO_CAMERA = 1.52    # radard.py: leadsV3 x is from the camera, radar dRel from the radar
+SEGMENT_S = 60.0          # rlog segment length; window_segments() maps route seconds to segment numbers with it
 CAM_JPEG_Q = 70           # qcamera frames embedded in the page; ~15 kB each at 526x330
 BRAKE_ONSET = -1.0        # m/s^2: "brake onset" for a_target and aEgo
 JERK_WINDOW_S = 0.2       # felt jerk = d(aEgo) over this window
@@ -157,6 +157,15 @@ def route_zero_init(route_dir: Path, segments: list[int]) -> int | None:
   return None
 
 
+def window_segments(files: list[Path], window: tuple[float, float]) -> list[Path]:
+  """The rlogs that cover a window in route seconds, plus the segment before it so the latest tracks,
+  radarState and calibration are already known at the window start. Segment k holds route t of about
+  60k + 2.7 .. 60k + 62.7 (00000297: segments 1, 30, 53); reading only these takes a 22 s window from
+  about 100 s to a few seconds. build() falls back to every segment if the snapshots miss the window."""
+  lo, hi = int(window[0] // SEGMENT_S) - 1, int(window[1] // SEGMENT_S)
+  return [p for p in files if p.parent.name.isdigit() and lo <= int(p.parent.name) <= hi]
+
+
 def pick_t0(frames: list[dict], snaps: list[dict], candidates: list[int]) -> int:
   """The candidate t0 whose carState vEgo best matches the frames' v_ego."""
   monos = np.array([s["mono"] for s in snaps], dtype=np.int64)
@@ -186,8 +195,25 @@ def build(frames_path: Path, route_dir: Path | None, window: tuple[float, float]
   files = segment_files(rdir)
   if not files:
     raise SystemExit(f"no rlogs under {rdir}")
-  print(f"reading {len(files)} rlog segment(s) under {rdir} ...", file=sys.stderr)
-  snaps, info = read_rlog(files)
+  if window is None:
+    sw = meta.get("sim_window")
+    if sw:
+      window = (sw[0] - PAD_BEFORE_S, sw[1] + PAD_AFTER_S)
+    else:
+      window = (frames[0]["t"], frames[-1]["t"])
+  snaps = None
+  if "t0_mono" in meta:
+    t0 = int(meta["t0_mono"])
+    sub = window_segments(files, window)
+    if sub:
+      print(f"reading {len(sub)} of {len(files)} rlog segment(s) under {rdir} ...", file=sys.stderr)
+      snaps, info = read_rlog(sub)
+      m = [s["mono"] for s in snaps]
+      if not m or m[0] > t0 + window[0] * 1e9 or m[-1] < t0 + window[1] * 1e9:
+        snaps = None
+  if snaps is None:
+    print(f"reading {len(files)} rlog segment(s) under {rdir} ...", file=sys.stderr)
+    snaps, info = read_rlog(files)
   if "t0_mono" in meta:
     t0 = int(meta["t0_mono"])
   else:
@@ -196,13 +222,6 @@ def build(frames_path: Path, route_dir: Path | None, window: tuple[float, float]
     if z is not None:
       cands.append(z)
     t0 = pick_t0(frames, snaps, cands)
-
-  if window is None:
-    sw = meta.get("sim_window")
-    if sw:
-      window = (sw[0] - PAD_BEFORE_S, sw[1] + PAD_AFTER_S)
-    else:
-      window = (frames[0]["t"], frames[-1]["t"])
   sel = [f for f in frames if window[0] <= f["t"] <= window[1]]
   if len(sel) < 10:
     raise SystemExit(f"window {window} holds {len(sel)} frames; frames span {frames[0]['t']:.1f}..{frames[-1]['t']:.1f}")
@@ -288,7 +307,8 @@ def build(frames_path: Path, route_dir: Path | None, window: tuple[float, float]
                "drift": drift, "drift_m": DRIFT_M, "has_viz": has_viz, "git_commit": meta.get("git_commit"),
                "fingerprint": meta.get("fingerprint"), "blotv3": meta.get("blotv3"),
                "logged_op_long": meta.get("logged_op_long"), "agreement": meta.get("agreement"),
-               "onpath_half_m": ONPATH_HALF_M, "vis_prob": VIS_PROB, "event_t": event_t}
+               "onpath_half_m": ONPATH_HALF_M, "vis_prob": VIS_PROB, "event_t": event_t,
+               "cutin": {"rate_mps": CUTIN_RATE_MPS, "doff_m": CUTIN_DOFF_M, "win_s": CUTIN_RATE_WIN_S}}
   D["metrics"], D["events"] = metrics(D)
   D["cam_info"] = info["cam"]
   return D
@@ -455,10 +475,13 @@ XRATE_RESID_SD_M = 3.0
 XRATE_RESID_SD_FRAC = 0.04
 XRATE_AGREE_MPS = 2.0
 XRATE_AGREE_FRAC = 0.0
-# Also require the camera's x-rate to back the PUBLISHED vRel within the same tolerance. Off by default (Bob's rule
-# does not have it). Radar and camera range agreeing only says the radar is on the camera's car: 00000297 ph4024
-# 2430.2 both fell at 2-3 m/s while published vRel said -6.4, and Bob's rule labels that neutral.
-XRATE_VS_PUBLISHED = os.environ.get("LRV_XRATE_VS_PUBLISHED") == "1"
+# Published vRel minus the radar range slope over the same window is reported, never used in the class: the trailing
+# 3 s camera slope lags a change in closing by ~1.5 s while published vRel does not, so camera vs published would call
+# phantom at the onset of every real closing (00000297 drop: 3227.5). Radar vs radar range lags equally on both sides.
+# A frame the camera calls neutral with |published - range slope| over XRATE_OVERSHOOT_MPS is tagged "assist
+# overshoot": the ranges agree, so the radar is on the camera's car, but the assist's short fit overshot its own range
+# (00000297 40:24 2430.2: published -6.44, range slope -2.87, camera -1.68). Radar-only; Bob, 2026-09-29.
+XRATE_OVERSHOOT_MPS = 2.0
 ASSIST_CLASSES = ("phantom", "helped", "neutral", "unjudged")
 
 
@@ -488,10 +511,11 @@ def xrate_verdict(t, x, d, v_rel_pub=None) -> dict:
   if r["resid_sd_m"] > max(XRATE_RESID_SD_M, XRATE_RESID_SD_FRAC * xm):
     return {**r, "verdict": "unjudged", "why": "noisy"}
   tol = max(XRATE_AGREE_MPS, XRATE_AGREE_FRAC * xm)
-  if v_rel_pub is not None:
-    r["pub_mps"] = float(v_rel_pub)
-  if abs(r["cam_mps"] - r["radar_mps"]) < tol and (v_rel_pub is None or abs(r["cam_mps"] - v_rel_pub) < tol):
-    return {**r, "verdict": "neutral", "why": "agree"}
+  if v_rel_pub is not None and np.isfinite(v_rel_pub):
+    r.update(pub_mps=float(v_rel_pub), pub_minus_range_mps=float(v_rel_pub) - r["radar_mps"])
+  if abs(r["cam_mps"] - r["radar_mps"]) < tol:
+    over = abs(r.get("pub_minus_range_mps", 0.0)) > XRATE_OVERSHOOT_MPS
+    return {**r, "verdict": "neutral", "why": "agree, assist overshoot" if over else "agree"}
   return {**r, "verdict": "phantom", "why": "disagree"}
 
 
@@ -512,7 +536,7 @@ def assist_classes(t, extra, v_pub, v_nat, vis_v, same, d_radar=None, x_cam=None
     to = {}
     for i in np.where(masks["phantom"])[0]:
       w = ok & (t <= t[i]) & (t >= t[i] - XRATE_WIN_S)
-      r = xrate_verdict(t[w], x_cam[w], d_radar[w], v_rel_pub[i] if XRATE_VS_PUBLISHED and v_rel_pub is not None else None)
+      r = xrate_verdict(t[w], x_cam[w], d_radar[w], v_rel_pub[i] if v_rel_pub is not None else None)
       if r["verdict"] != "phantom":
         to[i] = r
     for i, r in to.items():
@@ -536,6 +560,116 @@ def assist_classes(t, extra, v_pub, v_nat, vis_v, same, d_radar=None, x_cam=None
     out[k] = {"extra_sustained": v, "t": ts}
   out["xrate_flips"] = flips
   return out
+
+
+# Cut-in at range-assist arm, for Fix A v3 (range assist blocked while a track is still cutting in). Radar Work (Bob),
+# 2026-09-29. PLACEHOLDER numbers: the Fix A agent settles the real ones and Bob sends them so the two stay identical.
+# - path offset of a track = its yRel minus the model path's lateral at its dRel (both +left; past the end of the path
+#   hold its last lateral, as onpath_ids does). Kept per track id from every liveTracks point, so the history exists
+#   before the track becomes leadOne.
+# - lateral rate = slope of a line fit to that track's offset over the trailing CUTIN_RATE_WIN_S (>= CUTIN_MIN_PTS
+#   points spanning >= CUTIN_MIN_SPAN_S, else none). Offset change = offset now minus the oldest offset in the same
+#   window.
+# - an arm is the tick the correction (native - published vRel of the radar leadOne) first goes above 0; its episode
+#   runs until the correction is back to <= 0 or leadOne changes track. Cutting in at arm: |lateral rate| >
+#   CUTIN_RATE_MPS or |offset change| > CUTIN_DOFF_M. 00000297 10:55 (track 41, yRel 5.2 -> 0.5 while range walked
+#   75 -> 60) is the case it must show.
+CUTIN_RATE_WIN_S = 1.0
+CUTIN_MIN_PTS = 8
+CUTIN_MIN_SPAN_S = 0.5
+CUTIN_RATE_MPS = 1.0
+CUTIN_DOFF_M = 1.5
+# After an arm, did the gap really close? Line fit over [arm, arm + CONFIRM_WIN_S] of the same track's radar range,
+# and of the camera lead's x while it is the same car; a slope below -CONFIRM_CLOSING_MPS confirms real closing.
+CONFIRM_WIN_S = 2.0
+CONFIRM_CLOSING_MPS = 1.0
+BRAKE_WIN_S = 4.0         # logged brake after an arm: min command and aEgo over [arm, arm + BRAKE_WIN_S]
+
+
+def _slope(t, x, min_pts, min_span):
+  ok = np.isfinite(x)
+  if ok.sum() < min_pts or t[ok][-1] - t[ok][0] < min_span:
+    return np.nan
+  return float(np.polyfit(t[ok], x[ok], 1)[0])
+
+
+def cutin_series(t, lead_recs, id_k, tracks, paths) -> dict:
+  """Per frame, for the radar leadOne's track: path offset, trailing lateral rate and offset change."""
+  hist: dict[int, list[tuple[float, float]]] = {}
+  n = len(t)
+  out = {k: np.full(n, np.nan) for k in ("off", "rate", "doff")}
+  out["id"] = [None] * n
+  for i in range(n):
+    path = paths[i]
+    if path and path[0]:
+      for tid, d, y, _vr, _meas in tracks[i]:
+        if d is not None and y is not None:
+          hist.setdefault(tid, []).append((t[i], y - float(np.interp(d, path[0], path[1]))))
+    L = lead_recs[i]
+    if L is None or not L[id_k + 1]:
+      continue
+    tid = L[id_k]
+    h = hist[tid] = [p for p in hist.get(tid, []) if t[i] - CUTIN_RATE_WIN_S <= p[0] <= t[i]]
+    if not h or h[-1][0] != t[i]:
+      continue
+    ht, ho = np.array([p[0] for p in h]), np.array([p[1] for p in h])
+    out["id"][i] = tid
+    out["off"][i] = ho[-1]
+    out["rate"][i] = _slope(ht, ho, CUTIN_MIN_PTS, CUTIN_MIN_SPAN_S)
+    if ht[-1] - ht[0] >= CUTIN_MIN_SPAN_S:
+      out["doff"][i] = ho[-1] - ho[0]
+  return out
+
+
+def range_assist_arms(t, corr, ser, lead_recs, tracks, vis, v_ego, a_ego, cmd) -> list[dict]:
+  """Every range-assist arm: cut-in state at the arm tick, correction peak, whether the gap really closed, the brake."""
+  t = np.asarray(t, dtype=float)
+  vis_d, vis_p = _col(vis, 0), _col(vis, 3)
+  arms, i, n = [], 0, len(t)
+  while i < n:
+    tid = ser["id"][i]
+    if not (np.isfinite(corr[i]) and corr[i] > 0 and tid is not None) or (i > 0 and np.isfinite(corr[i - 1]) and corr[i - 1] > 0
+                                                                          and ser["id"][i - 1] == tid):
+      i += 1
+      continue
+    j = i
+    while j + 1 < n and np.isfinite(corr[j + 1]) and corr[j + 1] > 0 and ser["id"][j + 1] == tid:
+      j += 1
+    rate, doff = ser["rate"][i], ser["doff"][i]
+    cut = bool((np.isfinite(rate) and abs(rate) > CUTIN_RATE_MPS) or (np.isfinite(doff) and abs(doff) > CUTIN_DOFF_M))
+    w = (t >= t[i]) & (t <= t[i] + CONFIRM_WIN_S)
+    d_tr = np.array([next((p[1] for p in tracks[k] if p[0] == tid), None) if w[k] else None for k in range(n)], dtype=float)
+    rng = _slope(t[w], d_tr[w], 10, 1.0)
+    same = w & (vis_p > VIS_PROB) & np.isfinite(d_tr) & (np.abs(vis_d - d_tr) < np.maximum(10.0, 0.2 * d_tr))
+    cam = _slope(t[same], vis_d[same], 10, 1.0)
+    b = (t >= t[i]) & (t <= t[i] + BRAKE_WIN_S)
+    L = lead_recs[i]
+    # radar lead range minus camera x on the armed track, ungated: a range that starts long and walks down
+    # onto the camera shrinks the gap at about the range slope while the camera holds; a car that really
+    # closes keeps the gap and moves both (Radar Work (Bob), 2026-09-29, 10:55 vs 53:40)
+    dd = np.array([L_[0] - vis_d[k] if (L_ is not None and L_[0] is not None and ser["id"][k] == tid and vis_p[k] > VIS_PROB)
+                   else np.nan for k, L_ in enumerate(lead_recs)], dtype=float)
+    ddw = w & np.isfinite(dd)
+
+    def dd_at(tk, dd=dd):
+      m = np.isfinite(dd) & (np.abs(t - tk) <= 0.25)
+      return fnum(np.median(dd[m])) if m.any() else None
+    arms.append({
+      "t": float(t[i]), "t_end": float(t[j]), "track": int(tid), "d": L[0], "y": L[1], "v_pub": L[2],
+      "off": fnum(ser["off"][i]), "rate": fnum(rate), "doff": fnum(doff), "cutting_in": cut,
+      "corr_at_arm": fnum(corr[i]), "corr_peak": fnum(np.nanmax(corr[i:j + 1])),
+      "t_peak": float(t[i + int(np.nanargmax(corr[i:j + 1]))]),
+      "range_slope": fnum(rng), "cam_slope": fnum(cam),
+      "dd_arm": dd_at(t[i]), "dd_2s": dd_at(t[i] + CONFIRM_WIN_S), "dd_4s": dd_at(t[i] + BRAKE_WIN_S),
+      "dd_rate": fnum(_slope(t[ddw], dd[ddw], 10, 1.0)),
+      "range_confirms": bool(np.isfinite(rng) and rng < -CONFIRM_CLOSING_MPS),
+      "cam_confirms": None if not np.isfinite(cam) else bool(cam < -CONFIRM_CLOSING_MPS),
+      "min_cmd": fnum(np.nanmin(cmd[b])) if np.isfinite(cmd[b]).any() else None,
+      "min_a_ego": fnum(np.nanmin(a_ego[b])) if np.isfinite(a_ego[b]).any() else None,
+      "v_ego": fnum(v_ego[i]),
+    })
+    i = j + 1
+  return arms
 
 
 def longest_run(t, mask) -> tuple[float, float | None]:
@@ -633,7 +767,14 @@ def metrics(D) -> tuple[dict, list[dict]]:
     e = np.where(same, v_log + vr - vis_v, np.nan)
     common[k] = fnum(e[np.nanargmax(np.abs(e))]) if np.isfinite(e).any() else None
   common["assist_log"] = assist_classes(t, vnl - vpl, v_log + vpl, v_log + vnl, vis_v, same, dl, vis_d, vpl)
+  cmd = arr(D["acmd"])
+  ser = cutin_series(t, L1l, 4, D["rs_tracks"], D["path"])
+  D["cutin_log"] = {k: [fnum(x) for x in ser[k]] for k in ("off", "rate", "doff")}
+  common["arms_log"] = range_assist_arms(t, vnl - vpl, ser, L1l, D["rs_tracks"], D["vis"], v_log, a_log, cmd)
   if D["meta"]["has_viz"]:
+    ser = cutin_series(t, L1, 5, D["tr"], D["path"])
+    D["cutin_rep"] = {k: [fnum(x) for x in ser[k]] for k in ("off", "rate", "doff")}
+    common["arms"] = range_assist_arms(t, vn1 - vr1, ser, L1, D["tr"], D["vis"], v_log, a_log, cmd)
     same1 = (radar1 == 1) & (vis_p > VIS_PROB) & (np.abs(d1 - vis_d) < np.maximum(10.0, 0.2 * d1))
     common["assist"] = assist_classes(t, vn1 - vr1, v_log + vr1, v_log + vn1, vis_v, same1, d1, vis_d, vr1)
 
@@ -910,7 +1051,15 @@ def print_metrics(D: dict) -> None:
       for fl in c[key].get("xrate_flips", []):
         print(f"    camera-distance check {side}: phantom -> {fl['to']} ({fl['why']}) {fl['t0']:.2f}-{fl['t1']:.2f}",
               f"({fl['n']} frames)", " ".join(f"{k} {fl[k]}" for k in ("cam_mps", "radar_mps", "cam_x_m", "resid_sd_m",
-                                                                       "pub_mps", "step_m", "step_sse_frac", "break_t") if k in fl))
+                                                                       "pub_mps", "pub_minus_range_mps", "step_m", "step_sse_frac", "break_t") if k in fl))
+  for side, key in (("replay", "arms"), ("log", "arms_log")):
+    for r in c.get(key, []):
+      print(f"  range-assist arm ({side}) {r['t']:.2f}-{r['t_end']:.2f} track {r['track']} d {r['d']}:",
+            f"cutting-in at arm {'YES' if r['cutting_in'] else 'no'} (offset {r['off']} m, lat rate {r['rate']} m/s,",
+            f"offset change {r['doff']} m in {CUTIN_RATE_WIN_S:g} s); correction peak {r['corr_peak']} @{r['t_peak']:.2f};",
+            f"range slope {r['range_slope']} cam slope {r['cam_slope']};",
+            f"radar - camera {r['dd_arm']} m at arm, {r['dd_2s']} +2 s, {r['dd_4s']} +4 s, rate {r['dd_rate']} m/s;",
+            f"min cmd {r['min_cmd']} min aEgo {r['min_a_ego']}")
   keys = ["min_gap_m", "min_ttc_s", "max_decel", "felt_jerk_rms", "felt_jerk_max", "max_cmd_jerk", "cmd_onset_lag_s",
           "a_onset_lag_s", "cmd_to_a_lag_s", "cut_at_drift"]
   print(f"  {'':>8} " + " ".join(f"{k[:13]:>13}" for k in keys))
