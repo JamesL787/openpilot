@@ -802,8 +802,18 @@ def _bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap):
     x = _col(c, "exp_mode", n)
     ok = np.isfinite(x)
     flips = [i for i in range(1, n) if ok[i] and ok[i - 1] and (x[i] > 0.5) != (x[i - 1] > 0.5)]
-    add([(i, p) for p, i in zip(flips[:-1], flips[1:], strict=True) if t[i] - t[p] < EXP_FLIP_S],
-        lambda i, p: base("exp_flipflop", i, experimental_now=bool(x[i] > 0.5), since_last_s=_r(t[i] - t[p], 2), **mode(i)))
+    # One moment per burst: flips each under EXP_FLIP_S after the one before (route 297 had bursts of 0.05 s flips).
+    bursts = []
+    for p, i in zip(flips[:-1], flips[1:], strict=True):
+      if t[i] - t[p] >= EXP_FLIP_S:
+        continue
+      if bursts and bursts[-1][1] == p:
+        bursts[-1][1], bursts[-1][2] = i, bursts[-1][2] + 1
+      else:
+        bursts.append([p, i, 2])
+    add([(p, i, k) for p, i, k in bursts],
+        lambda p, i, k: base("exp_flipflop", p, flips=k, burst_s=_r(t[i] - t[p], 2), experimental_after=bool(x[i] > 0.5),
+                             **mode(p)))
 
   if has(c, "red_light"):
     def red(i):
@@ -815,7 +825,7 @@ def _bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap):
       return base("false_red_light", i, v_min_10s=_r(np.min(v[i:k + 1]), 1), plan_min_10s=_r(np.min(plan[i:k + 1]), 2),
                   road_curv=val("road_curv", i, 4), stop_len=val("stop_len", i, 1),
                   forcing_stop=bool(_b(c, "forcing_stop")[i]) if has(c, "forcing_stop") else None)
-    add(_starts(_b(c, "red_light"), t, 1.0), red)
+    add(_starts(_b(c, "red_light"), t, RED_LIGHT_WINDOW_S), red)   # the flag flickers: one moment per window
 
   if has(c, "long_des"):
     ld = _col(c, "long_des", n)
@@ -828,7 +838,7 @@ def _bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap):
     cap_x = _col(c, "cl_cap", n)
     engaged = np.isfinite(cap_x) & (np.abs(np.nan_to_num(cap_x)) > 1e-3)
     prev_zero = np.concatenate([[False], np.isfinite(cap_x[:-1]) & ~engaged[:-1]])
-    add(_starts(engaged & prev_zero, t, 1.0),
+    add(_starts(engaged & prev_zero, t),
         lambda i: base("close_lead_cap", i, cl_cap=_r(cap_x[i], 2), a_target=_r(plan[i], 2), geo_acc=val("geo_acc", i)))
 
   radar = lead_on & (np.round(np.nan_to_num(c["lead_src"]) if "lead_src" in c else np.zeros(n)) == 1)
@@ -838,7 +848,8 @@ def _bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap):
         lambda a, b, dur: base("radar_coast_near", a, coast_s=_r(dur, 2), d_min=_r(np.min(d[a:b]), 1)))
   if has(c, "lead_vrel") and has(c, "lead_vrr"):
     gap = np.abs(c["lead_vrel"] - c["lead_vrr"])
-    add(_held_runs(radar & (np.nan_to_num(gap) > VREL_DISAGREE), t, VREL_DISAGREE_S),
+    # Moving only: stopped behind a stopped car the range-derived speed is noise (route 297: 9 m/s gaps at 0 m/s).
+    add(_held_runs(radar & (v > LEAD_VANISH_V) & (np.nan_to_num(gap) > VREL_DISAGREE), t, VREL_DISAGREE_S),
         lambda a, b, dur: base("vrel_disagree", a, gap_max=_r(np.max(gap[a:b]), 2), for_s=_r(dur, 2)))
   if has(c, "mlead_x") and has(c, "mlead_p"):
     dm = np.abs(d - np.nan_to_num(c["mlead_x"], nan=np.inf))
