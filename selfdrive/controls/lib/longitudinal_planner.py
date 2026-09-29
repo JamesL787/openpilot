@@ -318,6 +318,38 @@ BRAKE_RELEASE_LIMIT = True
 BRAKE_RELEASE_JERK = 2.5  # m/s^3
 
 
+# Experimental-mode exit crossfade (log, open-loop and closed-loop replay evidence only; not driven).
+# The planner publishes min(mpc, e2e) while experimental mode is on and mpc the frame it turns off, so every
+# EXP->ACC flip is a one-frame target step of mpc - min(mpc, e2e).
+# Route 00000280--d02d9c2f8e 30:42.89: CEM released on an open 3-5 deg climb and aTarget stepped +0.01 -> +0.99
+# in one 20 Hz frame; CURVATURE then re-entered/released at 30:43.49/30:44.09 and 30:46.14/30:46.84, each
+# release another ~+1.1 step. Corpus (45 routes, 10 h engaged, 995 flips): 79 of 561 exits stepped > 0.5.
+# Change: on EXP->ACC fade from min(mpc, e2e) to mpc over EXP_MODE_EXIT_BLEND_TIME. Entries are NOT slowed:
+# the weight jumps back to 1 on the frame experimental mode turns on, so a stop is braked for exactly as today.
+# A fade that allowed slowing entries was rejected: with any e2e bypass threshold tried (-0.5, -0.3, 0.0) it
+# held up to 1.44 m/s^2 more accel than HEAD on entries followed by a real stop within 10 s.
+# Cost (open loop, 1.0 s): the car keeps the experimental (lower) target for up to 1 s longer after a release;
+# speed withheld vs HEAD over 1.5 s p50 0.02 p90 0.26 max 0.72 m/s. If e2e is braking when CEM releases, that
+# braking fades out over <= 1 s instead of ending at once. Closed-loop replay (CEM fed from shadow replay, with
+# STOP_LIGHT_HOLD_CLEAR_RELEASE_TIME and CURVE_MODE_HOLD_TIME): route 280 29:30-31:10 aTarget steps > 0.5 9 -> 5;
+# red-light stops 00000293 ~7:00 and 00000296 ~9:30 brake at the same frame with the same or larger min gap.
+EXP_MODE_EXIT_BLEND = True
+EXP_MODE_EXIT_BLEND_TIME = 1.0  # s for a full min(mpc, e2e) -> mpc fade after experimental mode turns off
+
+
+def exp_mode_blend_weight(weight: float, exp_active: bool, dt: float) -> float:
+  """Weight of min(mpc, e2e) against mpc: 1 at once while experimental mode is on, then decays to 0
+  at 1/EXP_MODE_EXIT_BLEND_TIME per second after it turns off."""
+  if exp_active or not EXP_MODE_EXIT_BLEND:
+    return 1.0 if exp_active else 0.0
+  return float(max(0.0, weight - dt / EXP_MODE_EXIT_BLEND_TIME))
+
+
+def exp_mode_blend_target(a_mpc: float, a_e2e: float, weight: float) -> float:
+  """mpc at weight 0, min(mpc, e2e) at weight 1; never above mpc and never below min(mpc, e2e)."""
+  return float(a_mpc + weight * min(0.0, a_e2e - a_mpc))
+
+
 def brake_release_limited_target(prev: float, target: float, dt: float) -> float:
   """While braking, the target may rise at most BRAKE_RELEASE_JERK * dt per step; it may always fall."""
   if prev >= 0.0:
@@ -1184,6 +1216,7 @@ class LongitudinalPlanner:
     self.exp_lead_departure_weight = 0.0
     self.exp_lead_departure_lift = 0.0
     self.experimental_release_accel_until = 0.0
+    self.exp_mode_blend_weight = 0.0
 
     if self.is_preap:
       try:
@@ -3094,11 +3127,15 @@ class LongitudinalPlanner:
       output_a_target_e2e = sm['modelV2'].action.desiredAcceleration
       output_should_stop_e2e = sm['modelV2'].action.shouldStop
 
-      if self.mode == 'acc' or self.generation == 'v9':
-        output_a_target = output_a_target_mpc
+      exp_active = not (self.mode == 'acc' or self.generation == 'v9')
+      if reset_state or sm['carState'].standstill:
+        self.exp_mode_blend_weight = 1.0 if exp_active else 0.0
+      else:
+        self.exp_mode_blend_weight = exp_mode_blend_weight(self.exp_mode_blend_weight, exp_active, self.dt)
+      output_a_target = exp_mode_blend_target(output_a_target_mpc, output_a_target_e2e, self.exp_mode_blend_weight)
+      if not exp_active:
         output_should_stop = output_should_stop_mpc
       else:
-        output_a_target = min(output_a_target_mpc, output_a_target_e2e)
         output_should_stop = output_should_stop_e2e or output_should_stop_mpc
         cem_following_lead = self.is_cem_following_lead(
           tracking_lead,

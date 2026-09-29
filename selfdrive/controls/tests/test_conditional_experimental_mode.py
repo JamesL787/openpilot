@@ -1239,3 +1239,123 @@ def test_starpilot_planner_updates_cem_with_current_frame_state(monkeypatch):
       }
   finally:
     planner.shutdown()
+
+
+class _Clock:
+  def __init__(self, t=10.0):
+    self.t = t
+
+  def __call__(self):
+    return self.t
+
+
+def _run_clocked(cem, clock, v_ego, model_length, seconds, *, model_stopped=False):
+  seen = []
+  for _ in range(round(seconds / 0.05)):
+    clock.t += 0.05
+    cem.starpilot_planner.model_length = model_length
+    cem.starpilot_planner.model_stopped = model_stopped
+    cem.stop_sign_and_light(v_ego, make_sm(), model_time=7.7)
+    seen.append(cem.stop_light_detected)
+  return seen
+
+
+def _armed_cem(monkeypatch, v_ego, dip_length, *, model_stopped=False):
+  clock = _Clock()
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", clock)
+  cem = make_cem(model_length=dip_length)
+  assert any(_run_clocked(cem, clock, v_ego, dip_length, 1.5, model_stopped=model_stopped))
+  assert cem.stop_light_detected_hold_until > clock.t
+  return cem, clock
+
+
+def test_stop_light_hold_releases_early_once_model_clears(monkeypatch):
+  # 00000280--d02d9c2f8e 30:37.94: a brief slowdown plan (x_end ~86 m at 17.2 m/s, no stop) armed the 4 s hold,
+  # the model cleared (x_end 140-165 m) and redLight still held EXP for ~4 s on an open climb.
+  v_ego = 17.2
+  cem, clock = _armed_cem(monkeypatch, v_ego, 86.0)
+  seen = _run_clocked(cem, clock, v_ego, 160.0, 3.0)
+  assert seen[0]                                     # still bridged right after the plan clears
+  release = seen.index(False) * 0.05
+  assert release < 2.5                               # HEAD holds the full 4 s
+  assert not any(seen[seen.index(False):])
+
+
+def test_stop_light_hold_still_bridges_short_model_flicker(monkeypatch):
+  v_ego = 17.2
+  cem, clock = _armed_cem(monkeypatch, v_ego, 86.0)
+  seen = _run_clocked(cem, clock, v_ego, 160.0, 1.2)  # flicker shorter than the clear-release time
+  seen += _run_clocked(cem, clock, v_ego, 86.0, 1.0)  # the stop comes back
+  assert all(seen)
+
+
+def test_stop_light_hold_not_released_while_model_stopped(monkeypatch):
+  # 0000027a 1:33: creeping at ~1 m/s to the line the plan end sits just past the OFF margin; model_stopped
+  # (x_end < 50 m) must keep the hold.
+  v_ego = 1.0
+  cem, clock = _armed_cem(monkeypatch, v_ego, 2.0, model_stopped=True)
+  seen = _run_clocked(cem, clock, v_ego, 12.0, 3.0, model_stopped=True)
+  assert all(seen)
+
+
+def test_reset_stop_light_state_clears_release_timer():
+  cem = make_cem(model_length=200.0)
+  cem.stop_light_clear_since = 5.0
+  cem.reset_stop_light_state()
+  assert cem.stop_light_clear_since == 0.0
+
+
+def _curve_cem(monkeypatch):
+  clock = _Clock()
+  monkeypatch.setattr(conditional_experimental_mode_module.time, "monotonic", clock)
+  cem = make_cem(model_length=200.0)
+  curve = [False]
+  monkeypatch.setattr(cem, "curve_detection", lambda v_ego, toggles: setattr(cem, "curve_detected", curve[0]))
+  toggles = make_update_toggles()
+  toggles.conditional_curves = True
+  return cem, clock, curve, toggles
+
+
+def _run_curve(cem, clock, curve, toggles, pattern, v_ego=20.0):
+  seen = []
+  for on in pattern:
+    clock.t += 0.05
+    curve[0] = on
+    cem.update(v_ego, make_update_sm(standstill=False), toggles)
+    seen.append(cem.experimental_mode)
+  return seen
+
+
+def test_curve_mode_turns_on_on_the_first_curve_frame(monkeypatch):
+  cem, clock, curve, toggles = _curve_cem(monkeypatch)
+  seen = _run_curve(cem, clock, curve, toggles, [False] * 10 + [True])
+  assert not any(seen[:10])
+  assert seen[10]
+  assert cem.status_value == conditional_experimental_mode_module.CEStatus["CURVATURE"]
+
+
+def test_curve_mode_bridges_threshold_chatter(monkeypatch):
+  # 00000280--d02d9c2f8e 30:42-30:47: rc*v^2 0.8-1.03 against the 1.0 threshold toggled CURVATURE with ~1 s gaps and
+  # stepped aTarget by ~1 m/s^2 on each toggle.
+  cem, clock, curve, toggles = _curve_cem(monkeypatch)
+  seen = _run_curve(cem, clock, curve, toggles, ([True] * 8 + [False] * 24) * 4)
+  assert all(seen)
+
+
+def test_curve_mode_release_is_bounded_after_the_curve(monkeypatch):
+  cem, clock, curve, toggles = _curve_cem(monkeypatch)
+  _run_curve(cem, clock, curve, toggles, [True] * 20)
+  seen = _run_curve(cem, clock, curve, toggles, [False] * 60)
+  release = seen.index(False) * 0.05
+  assert 1.4 <= release <= cem.CURVE_MODE_HOLD_TIME + cem.CEM_TRANSITION_BUFFER_TIME + 0.1
+  assert not any(seen[seen.index(False):])
+
+
+def test_non_curve_triggers_keep_the_short_release_guard(monkeypatch):
+  cem, clock, curve, toggles = _curve_cem(monkeypatch)
+  toggles.conditional_limit = 30.0
+  _run_curve(cem, clock, curve, toggles, [False] * 10, v_ego=10.0)
+  assert cem.experimental_mode
+  assert cem.status_value == conditional_experimental_mode_module.CEStatus["SPEED"]
+  seen = _run_curve(cem, clock, curve, toggles, [False] * 40, v_ego=35.0)
+  assert seen.index(False) * 0.05 <= cem.CEM_TRANSITION_GUARD_TIME + cem.CEM_TRANSITION_BUFFER_TIME + 0.1

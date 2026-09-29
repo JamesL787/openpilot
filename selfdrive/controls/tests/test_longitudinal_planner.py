@@ -4844,3 +4844,79 @@ def test_brake_release_limit_keeps_the_onpath_bound_one_sided():
   assert min(bounded) == pytest.approx(-cap, abs=1e-6)  # the limiter never pushes the bounded target below the cap
   head, _ = _run(_onpath_sm(13.4, onpath=_stopped_car()), bound=False, frames=40)
   assert all(b <= h + 1e-9 for b, h in zip(bounded, head, strict=True))
+
+
+@pytest.mark.parametrize("w,exp_active", [(0.0, True), (0.3, True), (1.0, False), (0.02, False), (0.0, False)])
+def test_exp_mode_blend_weight_enters_at_once_and_fades_out(w, exp_active):
+  dt = 0.05
+  out = longitudinal_planner_module.exp_mode_blend_weight(w, exp_active, dt)
+  if exp_active:
+    assert out == 1.0                                # entering experimental mode is never slowed
+  else:
+    assert out == pytest.approx(max(0.0, w - dt / longitudinal_planner_module.EXP_MODE_EXIT_BLEND_TIME))
+
+
+@pytest.mark.parametrize("a_mpc,a_e2e,w", [(1.0, 0.0, 0.5), (0.2, 1.0, 0.7), (-1.0, -2.0, 0.0), (-1.0, -2.0, 1.0)])
+def test_exp_mode_blend_target_stays_between_mpc_and_exp_target(a_mpc, a_e2e, w):
+  out = longitudinal_planner_module.exp_mode_blend_target(a_mpc, a_e2e, w)
+  assert min(a_mpc, a_e2e) - 1e-12 <= out <= a_mpc + 1e-12
+  assert longitudinal_planner_module.exp_mode_blend_target(a_mpc, a_e2e, 0.0) == pytest.approx(a_mpc)
+  assert longitudinal_planner_module.exp_mode_blend_target(a_mpc, a_e2e, 1.0) == pytest.approx(min(a_mpc, a_e2e))
+
+
+def _exp_mode_run(sm_a, sm_b, *, blend, a_frames=40, b_frames=40):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
+  CP.longitudinalActuatorDelay = 0.5
+  saved = longitudinal_planner_module.EXP_MODE_EXIT_BLEND
+  longitudinal_planner_module.EXP_MODE_EXIT_BLEND = blend
+  try:
+    planner = LongitudinalPlanner(CP, init_v=float(sm_a["carState"].vEgo))
+    out = []
+    for i in range(a_frames + b_frames):
+      planner.update(sm_a if i < a_frames else sm_b, make_toggles())
+      out.append(float(planner.output_a_target))
+  finally:
+    longitudinal_planner_module.EXP_MODE_EXIT_BLEND = saved
+  return out
+
+
+def test_exp_mode_release_fades_instead_of_stepping():
+  # 00000280--d02d9c2f8e 30:42.89: EXP (e2e ~0) -> ACC (mpc ~+1) stepped aTarget +0.01 -> +0.99 in one frame.
+  exp = make_sm(17.0, 0.0, -3.5, experimental_mode=True)
+  acc = make_sm(17.0, 0.0, -3.5, experimental_mode=False)
+  on = _exp_mode_run(exp, acc, blend=True)
+  off = _exp_mode_run(exp, acc, blend=False)
+  k = 40
+  assert on[:k] == pytest.approx(off[:k])            # nothing changes before the flip
+  jump_off = off[k] - off[k - 1]
+  assert jump_off > 0.3                              # the step this removes
+  assert on[k] - on[k - 1] < 0.5 * jump_off
+  assert all(a <= b + 0.02 for a, b in zip(on[k:], off[k:], strict=True))   # release is only held back
+  assert on[-1] == pytest.approx(off[-1], abs=0.05)  # converged once the fade is done
+
+
+@pytest.mark.parametrize("red_light,desired_accel", [(False, 0.0), (False, -0.2), (True, 0.0), (False, -1.5)])
+def test_exp_mode_entry_is_not_delayed(red_light, desired_accel):
+  acc = make_sm(17.0, desired_accel, -3.5, experimental_mode=False)
+  exp = make_sm(17.0, desired_accel, -3.5, experimental_mode=True)
+  exp["starpilotPlan"].redLight = red_light
+  on = _exp_mode_run(acc, exp, blend=True, b_frames=10)
+  off = _exp_mode_run(acc, exp, blend=False, b_frames=10)
+  assert on == pytest.approx(off)                    # same frame, same target as without the fade
+
+
+def test_exp_mode_reentry_during_fade_returns_to_exp_target_at_once():
+  exp = make_sm(17.0, 0.0, -3.5, experimental_mode=True)
+  acc = make_sm(17.0, 0.0, -3.5, experimental_mode=False)
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
+  CP.longitudinalActuatorDelay = 0.5
+  on = LongitudinalPlanner(CP, init_v=17.0)
+  ref = LongitudinalPlanner(CP, init_v=17.0)
+  for sm in [exp] * 40 + [acc] * 8:
+    on.update(sm, make_toggles())
+  for sm in [exp] * 48:
+    ref.update(sm, make_toggles())
+  on.update(exp, make_toggles())
+  ref.update(exp, make_toggles())
+  assert on.exp_mode_blend_weight == 1.0
+  assert float(on.output_a_target) <= float(ref.output_a_target) + 0.05
