@@ -3672,13 +3672,18 @@ def test_no_throttle_cap_stays_at_coast_limit_until_throttle_returns():
   sm["carControl"].orientationNED = [0.0, 0.1, 0.0]
   toggles = make_toggles()
 
-  for _ in range(5):
+  # COAST_CEILING_SLEW eases the ceiling down at COAST_CEILING_JERK, so allow it time to reach the coast limit.
+  outputs = []
+  for _ in range(20):
     planner.update(sm, toggles)
+    outputs.append(planner.output_a_target)
 
   accel_coast = max(get_vehicle_min_accel(CP, v_ego), get_coast_accel(sm["carControl"].orientationNED[1]))
 
   assert not planner.allow_throttle
   assert planner.output_a_target == pytest.approx(accel_coast, abs=1e-3)
+  step = longitudinal_planner_module.COAST_CEILING_JERK * planner.dt
+  assert all(b >= a - step - 1e-6 for a, b in zip(outputs[1:], outputs[2:], strict=False))
 
 
 def test_experimental_release_state_arms_only_on_falling_edge():
@@ -4965,3 +4970,18 @@ def test_brake_release_dwell_brakes_as_early_and_is_skipped_on_reset():
   finally:
     longitudinal_planner_module.BRAKE_RELEASE_DWELL = saved
   assert r_on[-1] == pytest.approx(r_off[-1])                            # reset re-seeds from aEgo, no hold
+
+
+def test_coast_ceiling_slew_moves_at_most_j_dt_from_the_output():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
+  planner = LongitudinalPlanner(CP, init_v=5.4)
+  step = longitudinal_planner_module.COAST_CEILING_JERK * planner.dt
+  assert planner.slew_coast_ceiling(2.0, 0.46, reset=True) == pytest.approx(2.0)
+  out = [planner.slew_coast_ceiling(-0.42, 0.46, reset=False)]           # throttle gate closes (294 568.16)
+  assert out[0] == pytest.approx(0.46 - step)
+  for _ in range(20):
+    out.append(planner.slew_coast_ceiling(-0.42, out[-1], reset=False))
+  assert all(b >= a - step - 1e-9 for a, b in zip(out, out[1:], strict=False))
+  assert out[-1] == pytest.approx(-0.42)                                 # reaches the coast limit
+  assert planner.slew_coast_ceiling(2.0, -0.42, reset=False) == pytest.approx(-0.42 + step)   # rises at J too
+  assert planner.slew_coast_ceiling(-0.42, 0.3, reset=True) == pytest.approx(-0.42)            # reset passes through

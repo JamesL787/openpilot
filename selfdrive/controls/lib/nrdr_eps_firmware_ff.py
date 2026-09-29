@@ -77,20 +77,7 @@ LOAD_KROLL = -7.20003
 CLARITY_LOAD = (LOAD_K0, LOAD_K1, LOAD_C, LOAD_FRICTION, LOAD_BIAS, LOAD_KROLL)
 # The fit's friction width is 2 deg/s; 5 deg/s keeps the Coulomb term from flipping on desired-rate
 # noise near straight driving (command roughness 0.0029 -> 0.0020 in replay, tracking nearly unchanged).
-# Keyed on the DESIRED rate, even 5 deg/s turns the model's small path wiggles into a friction square wave in the
-# city: closed-loop sim, a +/-2 deg 1 Hz wiggle at 10 m/s comes out at the wheel with gain 1.63 on the C020 (1.40
-# Clarity); with 20 deg/s 1.22 (0.96), and turn-ins (30-200 deg/s) keep the full friction. The price is lag on slow,
-# small motions, which only pays off at city speed (upstream vfn b45f7a23, Clarity routes 35e/360/361: 0.6-2 Hz
-# wheel/target 0.93 -> 0.76 at 10-16 m/s for +10 ms; a global 20 deg/s cost +45 ms above 16 m/s for nothing).
-# So 20 deg/s up to 8 m/s, back to 5 by 15 m/s.
 FRICTION_WIDTH_DEG_S = 5.0
-FRICTION_WIDTH_SPEED_BP = [8.0, 15.0]  # m/s
-FRICTION_WIDTH_V = [20.0, FRICTION_WIDTH_DEG_S]  # deg/s
-
-
-def friction_width(v_ego: float) -> float:
-  return float(np.interp(v_ego, FRICTION_WIDTH_SPEED_BP, FRICTION_WIDTH_V))
-
 
 # Smoothing, picked in the closed-loop replay of route 352 over three plants (nominal, the 353 fit, +15 ms
 # motor lag): unsmoothed, the command carried 3.8x vfn's 5-8 Hz content (the Clarity column's stutter band);
@@ -127,17 +114,14 @@ CIVIC_I_SCALE = (0.75, 0.95, 1.00)
 FF_JOIN_ERROR_DEG = 10.0
 FF_FADE_IN_S = 0.5
 FF_SPEED_BP = [2.0, 4.0]    # m/s, faded in with speed; the desired angle is ill-conditioned near standstill
-# At a crawl the feedforward passes the model's small desired-angle wiggle to the wheel almost 1:1, and column
-# stiction makes that grow with amplitude: the Civic's first drive (286) wobbled ~1 Hz, +-3.5 deg, pulling away
-# from a stop (STATUS 170/173), and so did the Clarity hands off (route 361 t 823-829, target -> wheel 1.02 below
-# 4 m/s against 0.41 for the PID alone). So below FF_CRAWL_SPEED_BP the feedforward joins with |desired angle|
-# (none under 5 deg, all from 20 deg: every real crawl turn), fading out of effect by 8 m/s. It replaces the
-# 10-30 deg gate that applied at every speed, which also held the feedforward off on the highway (weight 0.07 at
-# 12-20 m/s, 0 above). Replay of hands-off chunks of routes 287/289/294 through firmware + the C020 column plant,
-# against that gate: RMS error 1.25 -> 0.92 deg at 8-12 m/s and 0.58 -> 0.41 at 12-16, turn (|des| > 20) error
-# 2.97 -> 1.93, and 0.6-2 Hz wheel/target ~1.0 either way; the gate reaching up to 12 or 15 m/s bought nothing.
-FF_CRAWL_ANGLE_BP = [5.0, 20.0]  # deg
-FF_CRAWL_SPEED_BP = [5.0, 8.0]   # m/s
+# deg of |desired angle|, faded in with it. nrdr, not upstream (STATUS 173): on the Civic's first drive (286) the
+# wheel wobbled ~1 Hz, +-3.5 deg, pulling away from a stop and at low speed, 0.4-3 Hz wheel rms 1.44 deg at
+# 2-5 m/s against 0.22-0.44 on six PID drives (STATUS 170). Near straight the feedforward makes the EPS follow
+# the model's small desired-angle wiggle almost 1:1; in a turn it is what gets the wheel round. Gating on the
+# angle keeps the turn and drops the wiggle. Closed-loop sim (C020 plant, 280/284/285/286) with this gate
+# inside LatControlPID: 5-8 / 8-12 m/s wobble on 286 1.03 / 0.67 -> 0.27 / 0.23, PID's level, and |des| > 45
+# deg turn error kept (286 <12 mph 15.3 against PID 23.2). The sim cannot test 2-4 m/s. Sim only; not driven.
+FF_ANGLE_GATE_DEG = [10.0, 30.0]
 
 
 class EpsFirmwareCalibration:
@@ -191,8 +175,8 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
   r6_per_deg_s=-173.0,
 )
 
-# Civic column load for the PID's firmware feedforward only (NrdrLatPidFirmwareFF). latcontrol_clarity_eps uses
-# CIVIC_EPS_LOAD below. Same model and sign as LOAD_*, fitted on the owner's C020 PID drives 284, 285,
+# Civic column load for the PID's firmware feedforward only (NrdrLatPidFirmwareFF). latcontrol_clarity_eps
+# keeps the Clarity fit above. Same model and sign as LOAD_*, fitted on the owner's C020 PID drives 284, 285,
 # 286, 287, 289, 28a, 28b (engaged, no press or lane change for 1 s, |command| < 0.9). Target: the firmware
 # output the car's own command implies, firmware_output(r5_from_output(command), rate). Held out one route at
 # a time, R^2 beats the Clarity fit on 7 of 8 routes (e.g. 28f 0.75 vs 0.66, 284 0.49 vs 0.20). On 28f's sharp
@@ -204,18 +188,6 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
 CIVIC_PID_LOAD = (-6.2586, -0.16199, -1.6872, -303.29443, -78.01171, -0.57818)
 CIVIC_PID_LOAD_MIN_V = 11.18  # m/s, 25 mph
 LOAD_BLEND_V = 1.8  # m/s: blend from the Clarity fit to the car's own over 25-29 mph (a hard switch stepped up to 0.026)
-
-# Civic column load for LatControlClarityEps on the C020, at every speed. Fitted on the firmware's OWN output rather
-# than the command: P + KFF rebuilt from the bus 1 0x6A1 error telemetry (R5 = err + R6, Kp from the P row), hands
-# off (not pressed, |steeringTorque| < 400), engaged above 2 m/s, jointly on routes 287 + 289 + 294, friction width
-# 5 deg/s. Held out one route at a time, R^2 0.64 / 0.74 / 0.79 against 0.61 / 0.70 / 0.76 for the Clarity fit, which
-# over-asks this column (actual / Clarity model 0.77-0.98 at 4-22 m/s, 0.5-0.8 at 2-4 m/s). The fit is in pre-scale
-# counts (the firmware multiplies by A * B / 256 after it, 256 hands off on both cars), so it is carried to this
-# module's SCALE_Q8 here. Replaying route 294's grass-island loop (t 114-134) through firmware + the C020 plant:
-# RMS error 4.28 -> 3.61 deg against the Clarity fit, wheel inside the target +0.93 -> +0.64 deg. Refit after any
-# reflash.
-CIVIC_EPS_LOAD_PRESCALE = (-5.574, -0.1831, -4.540, -326.5, -83.6, -3.185)
-CIVIC_EPS_LOAD = tuple(c * SCALE_Q8 / 256.0 for c in CIVIC_EPS_LOAD_PRESCALE)
 
 
 def command_key(e4: float) -> int:
@@ -287,7 +259,7 @@ def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, cal: Ep
 
 class ClarityEpsFirmwareFeedforward:
   def __init__(self, dt: float, rate_tau: float = DESIRED_RATE_TAU, lead_s: float = LEAD_S,
-               output_tau: float = FF_OUTPUT_TAU, friction_width: float | None = None,
+               output_tau: float = FF_OUTPUT_TAU, friction_width: float = FRICTION_WIDTH_DEG_S,
                cal: EpsFirmwareCalibration = CLARITY_A020, load=None, load_min_v: float = 0.0):
     self.dt = dt
     self.load_coef = load  # None: the Clarity fit (LOAD_*); see CIVIC_PID_LOAD
@@ -295,7 +267,7 @@ class ClarityEpsFirmwareFeedforward:
     self.alpha = dt / (rate_tau + dt)
     self.output_alpha = dt / (output_tau + dt)
     self.lead_s = lead_s
-    self.friction_width = friction_width  # None: the speed schedule, friction_width()
+    self.friction_width = friction_width
     self.cal = cal
     self.reset()
 
@@ -314,11 +286,10 @@ class ClarityEpsFirmwareFeedforward:
     self.prev_angle = desired_angle_no_offset
 
     angle = desired_angle_no_offset + self.lead_s * self.rate
-    width = self.friction_width if self.friction_width is not None else friction_width(v_ego)
-    self.load = column_load(angle, self.rate, v_ego, roll, width)
+    self.load = column_load(angle, self.rate, v_ego, roll, self.friction_width)
     if self.load_coef is not None and v_ego > self.load_min_v:
       own = min((v_ego - self.load_min_v) / LOAD_BLEND_V, 1.0) if self.load_min_v > 0.0 else 1.0
-      self.load += own * (column_load(angle, self.rate, v_ego, roll, width, self.load_coef) - self.load)
+      self.load += own * (column_load(angle, self.rate, v_ego, roll, self.friction_width, self.load_coef) - self.load)
     cap = min(R5_CAP, R5_CAP_ENVELOPE_FRAC * float(np.interp(key_ceiling(v_ego, self.cal), self.cal.r5_key_bp, self.cal.r5_v)))
     self.r5 = max(min(r5_for_motion(self.load, self.rate, self.r5, self.cal), cap), -cap)
     target = output_from_r5(self.r5, self.cal)
@@ -369,9 +340,8 @@ class ClarityEpsLateralCore:
       self.ff_ramp = 0.0
     elif self.ff_ramp > 0.0 or abs(error) < FF_JOIN_ERROR_DEG:
       self.ff_ramp = min(1.0, self.ff_ramp + self.dt / FF_FADE_IN_S)
-    crawl = float(np.interp(v_ego, FF_CRAWL_SPEED_BP, [1.0, 0.0]))
-    crawl_gate = 1.0 - crawl * (1.0 - float(np.interp(abs(desired_angle_no_offset), FF_CRAWL_ANGLE_BP, [0.0, 1.0])))
-    self.ff_weight = self.ff_ramp * float(np.interp(v_ego, FF_SPEED_BP, [0.0, 1.0])) * crawl_gate
+    self.ff_weight = (self.ff_ramp * float(np.interp(v_ego, FF_SPEED_BP, [0.0, 1.0]))
+                      * float(np.interp(abs(desired_angle_no_offset), FF_ANGLE_GATE_DEG, [0.0, 1.0])))
     ff = self.ff_weight * ff_full
 
     i_scale = speed_band(v_ego, self.i_scale)

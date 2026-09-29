@@ -328,6 +328,14 @@ BRAKE_RELEASE_JERK = 2.5  # m/s^3
 # Costs: every brake release starts BRAKE_RELEASE_DWELL_TICKS * DT_MDL (0.1 s) later.
 BRAKE_RELEASE_DWELL = True
 BRAKE_RELEASE_DWELL_TICKS = 2
+# Coast-ceiling slew (closed-loop replay only, not driven; same study). When the model's throttle gate closes, the
+# output ceiling drops from the accel limit to the coast accel in one cycle (294 568.16: +0.46 -> -0.42 at 5.4 m/s).
+# mvl reaches the same coast limit through a jerk-limited cruise target. The ceiling now moves at most
+# COAST_CEILING_JERK * dt per cycle from where the output was. It only ever allows more throttle than the ceiling for
+# a few cycles and never overrides a lower MPC or cap target. Alone it cost 0.4 m of min gap in 294 559 (fails the
+# gap rule); with BRAKE_RELEASE_DWELL it passed (16 windows: jerk RMS 0.975x, 27 fewer flips vs the shipped slew).
+COAST_CEILING_SLEW = True
+COAST_CEILING_JERK = 2.5  # m/s^3
 
 
 # Experimental-mode exit crossfade (log, open-loop and closed-loop replay evidence only; not driven).
@@ -1177,6 +1185,7 @@ class LongitudinalPlanner:
     self.output_a_target = 0.0
     self.mpc_lead_demand_hist = []
     self.brake_release_rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
+    self.coast_ceiling = None
     self.fast_closing_lead_track = None
     self.stopped_radar_lead_hold_track = None
     self.stopped_radar_lead_hold_active = False
@@ -2574,6 +2583,17 @@ class LongitudinalPlanner:
       return False
     return True
 
+  def slew_coast_ceiling(self, ceiling, prev_output, reset):
+    # Output ceiling moved at most COAST_CEILING_JERK * dt per cycle; a falling ceiling starts from the last output.
+    step = COAST_CEILING_JERK * self.dt
+    if reset or self.coast_ceiling is None:
+      self.coast_ceiling = float(ceiling)
+    elif ceiling < self.coast_ceiling:
+      self.coast_ceiling = float(max(ceiling, min(self.coast_ceiling, prev_output) - step))
+    else:
+      self.coast_ceiling = float(min(ceiling, self.coast_ceiling + step))
+    return self.coast_ceiling
+
   def get_mpc_lead_brake_accel_min(self, accel_min, mpc_target):
     # Output floor for the final clip: accel_min, lowered to a persistent MPC lead-brake demand.
     lead_demand = None
@@ -3704,6 +3724,9 @@ class LongitudinalPlanner:
         output_a_target = max(output_a_target, tracked_vision_model_brake_cap)
 
     output_accel_max = no_throttle_output_max if not self.allow_throttle else accel_limits_turns[1]
+    if COAST_CEILING_SLEW:
+      output_accel_max = self.slew_coast_ceiling(output_accel_max, prev_output_a_target,
+                                                 reset_state or bool(sm['carState'].standstill))
     final_accel_min = self.get_mpc_lead_brake_accel_min(output_accel_min, output_a_target_mpc)
     output_a_target = float(np.clip(output_a_target, final_accel_min, output_accel_max))
 
