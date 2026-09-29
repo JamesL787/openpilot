@@ -9874,7 +9874,12 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - Below 12 mph, the engagement join was a small *loss*: before any release, error was 0.66 deg worse and overshoot
   0.89 deg higher on those frames. The fix removes it, and those frames now match the old law exactly.
 - Wobble and dither are unchanged. Verdict: pass (replay).
-- The table figures above for 0 s, 1.0 s and 1.5 s used the flawed harness. They rank the hold-offs but are not restated.
+- The hold-off rows restated on the fixed code (turn_err 12-25 / turn_err < 12 / turn_past 12-25):
+  - 0 s: 12.85 / 22.71 / 5.96.
+  - 1.0 s: 14.17 / 23.07 / 6.01.
+  - 1.5 s: 14.58 / 23.31 / 5.91.
+  - All are within 0.03 of the flawed-harness rows, and the ranking is unchanged. Wobble and dither are unchanged, and every arm passes.
+  - 0.5 s is still a pick between 0 s (the most gain) and the road re-grab rate (64 % vs 43 % of joins meet a press within 0.5 s). RG1's t0 arm is the test of it.
 - A car without the modified-EPS press detector never sets `since_press_s`, so it never takes this rejoin.
 - The sim re-grab row (RG1) uses base = the pre-build `latcontrol_pid.py` blob `ef28076db`, not hold = `inf`.
 
