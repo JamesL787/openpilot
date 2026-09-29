@@ -7667,6 +7667,14 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
   finalize +36 MB peak (was +112). Results are identical to the old reader (whole drive and windows; test).
 - **Not verified:** the device numbers after an update. Check `/proc/<the_galaxy>/status` VmRSS/VmHWM after a drive
   and a few zooms.
+- **2026-09-29 follow-up:**
+  - Device on the fix (ffe96749), route 297, ~58 min, auto-record off: the_galaxy held at 96-109 MB (qlog procLog), device
+    memory 78-82 %. There is still no device reading with a recording.
+  - Local worst case, a 2-hour drive (the 20-min session tiled): finalize peaked at +250 MB, because `read_rows` grew its array by
+    doubling. It now fills fixed 2048-row blocks and joins them one at a time: a clean 2 h read + analyze is +90 MB,
+    72 MB of which is the rows themselves. 10 zooms at once on 2 h: +8 MB.
+  - A stop in the background (by hand, or MAX_RECORDING_S mid-drive) now waits until IsOnroad is false before the
+    whole-drive analysis, so it never runs while driving.
 
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 

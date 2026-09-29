@@ -393,6 +393,16 @@ def test_a_zoom_reads_only_its_window_and_matches_the_whole_drive_read(tmp_path)
   assert plots.get_window(tmp_path.name, 40.0, 100.0)["rows"] == dp.window(full, 40.0, 100.0)
 
 
+def test_whole_drive_analysis_waits_until_the_car_is_parked(tmp_path):
+  onroad = [True, True, True]
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: bool(onroad) and onroad.pop(0))
+  slept, done = [], []
+  plots._sleep = slept.append
+  plots.finalize = done.append
+  plots.prune_auto_sessions = lambda: None
+  plots._finalize_and_prune(tmp_path / "x", wait_until_parked=True)
+  assert len(slept) == 3 and done == [tmp_path / "x"]
+
 def test_malloc_helpers_never_raise():
   dp.limit_malloc_arenas(2)
   dp.release_freed_memory()
