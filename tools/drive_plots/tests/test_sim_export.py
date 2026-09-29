@@ -22,3 +22,22 @@ def test_sim_export_writes_john_keys_per_segment(tmp_path):
   assert np.allclose(z["des_curv"], 0.001) and np.allclose(z["out"], 0.3)
   assert info["segments"][1]["rate_hz"] > 90
   assert json.loads((tmp_path / "out" / "export.json").read_text())["keys"] == list(se.KEYS)
+
+
+def test_find_windows_labels_band_shape_and_presses():
+  """John's P' labels: engaged no-press runs split by speed band and straight / curve, totals, and press runs."""
+  t = np.arange(0.0, 20.0, 0.01)
+  n = len(t)
+  d = {k: np.zeros(n) for k in se.KEYS}
+  d["t"], d["active"] = t, np.ones(n)
+  d["v"] = np.where(t < 10.0, 27.0, 6.0)                   # 25+ then 5-8
+  d["des_angle"] = np.where(t < 10.0, 2.0, 20.0)           # straight, then a curve
+  d["des_angle"][(t >= 14.0) & (t < 15.0)] = 40.0          # past the curve band: other
+  d["pressed"][(t >= 17.0) & (t < 18.0)] = 1.0             # a press: not engaged-no-press
+  w, tot, pr = se.find_windows(d, "3")
+  assert [(x["band"], x["shape"]) for x in w] == [("25+", "straight"), ("5-8", "curve"), ("5-8", "curve")]
+  assert w[0]["s"] == 10.0 and w[0]["seg"] == "3" and w[1]["s"] == 4.0
+  assert tot["25+"]["straight"] == 10.0 and round(tot["5-8"]["other"], 2) == 1.0
+  assert abs(tot["5-8"]["curve"] - 8.0) < 0.02         # 10-14, 15-17 and 18-20 (the last frame has no dt)
+  assert len(pr) == 1 and pr[0]["t_press"] == 17.0 and pr[0]["band"] == "5-8" and pr[0]["active_before"] is True
+  assert se.band_of(4.9) is None and se.band_of(25.0) == "25+" and se.shape_of(-7.0) == "other"

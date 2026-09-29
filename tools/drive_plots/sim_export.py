@@ -26,6 +26,15 @@ Keys (float64 arrays, one per row):
               des_curv (the device z axis points down; route 297: corr with des_curv +0.80, with angle -0.98)
 Before the first message of a service a key is NaN. No lane offset: real drives have no ground truth, and a model
 estimate must not be scored as one. No GPS.
+
+export.json also carries, for John's P' rows:
+  params      every Nrdr* toggle as initData stored it (a toggle never written is absent; the CLI warns for each
+              of REQUIRED_PARAMS that is missing)
+  windows     engaged runs with no press (active, not pressed), each one speed band (BANDS, m/s) and one shape
+              (straight: |des_angle| < 5 deg; curve: 10-30 deg; other), at least WINDOW_MIN_S long:
+              {seg, t0, t1, s, band, shape}; t as in the npz
+  window_totals_s   {band: {shape: seconds}} over every engaged no-press frame, whatever its run length
+  presses     each raw steeringPressed run: {seg, t_press, t_release, v, band, active_before}
 """
 from __future__ import annotations
 
@@ -45,20 +54,31 @@ KEYS = ("t", "angle", "des_angle", "cc_torque", "co_torque", "v", "eps_torque", 
         "log_p", "log_i", "log_f", "rate", "lblink", "rblink", "lane_change", "sr", "stiff", "offset", "roll", "des_curv",
         "yaw_curv")
 YAW_MIN_V = 1.0
+BANDS = ((5.0, 8.0, "5-8"), (8.0, 12.0, "8-12"), (12.0, 16.0, "12-16"), (16.0, 25.0, "16-25"), (25.0, np.inf, "25+"))
+STRAIGHT_DEG = 5.0
+CURVE_DEG = (10.0, 30.0)
+WINDOW_MIN_S = 2.0
+# Toggles a scored drive must have stored (D-053: a toggle never written is not in initData, and its drive can't be
+# attributed). John scores PR 10 drives against NrdrLatEpsFfAngleGate.
+REQUIRED_PARAMS = ("NrdrLatEpsFfAngleGate",)
 NAN = float("nan")
 
 
 def read_segment(path):
-  """Rows (dict of arrays over KEYS) and the segment's liveDelay.lateralDelay values."""
+  """Rows (dict of arrays over KEYS), the segment's liveDelay.lateralDelay values and its initData Nrdr* params."""
   from openpilot.tools.lib.logreader import LogReader
-  rows, delays = [], []
+  rows, delays, params = [], [], {}
   cs = lp = cc = co = pose = None
   lane_change = NAN
   t0 = None
   try:
     for m in LogReader(path):
       w = m.which()
-      if w == "carState":
+      if w == "initData":
+        for p in m.initData.params.entries:
+          if p.key.startswith("Nrdr"):
+            params[p.key] = bytes(p.value).decode(errors="replace")
+      elif w == "carState":
         if t0 is None:   # not the first message: every segment repeats initData stamped at the route's start
           t0 = m.logMonoTime
         cs = m.carState
@@ -96,7 +116,63 @@ def read_segment(path):
   if len(arr):
     keep = np.concatenate([[True], np.diff(arr[:, 0]) > 0])   # t strictly increasing
     arr = arr[keep]
-  return {k: arr[:, i] for i, k in enumerate(KEYS)}, delays
+  return {k: arr[:, i] for i, k in enumerate(KEYS)}, delays, params
+
+
+def band_of(v):
+  for lo, hi, name in BANDS:
+    if lo <= v < hi:
+      return name
+  return None
+
+
+def shape_of(des):
+  a = abs(des)
+  if a < STRAIGHT_DEG:
+    return "straight"
+  if CURVE_DEG[0] <= a <= CURVE_DEG[1]:
+    return "curve"
+  return "other"
+
+
+def _runs(keys):
+  """(start, end exclusive, key) runs of equal non-None keys."""
+  out, a = [], 0
+  for i in range(1, len(keys) + 1):
+    if i == len(keys) or keys[i] != keys[a]:
+      if keys[a] is not None:
+        out.append((a, i, keys[a]))
+      a = i
+  return out
+
+
+def find_windows(d, seg):
+  """John's P' labels on one segment's rows: engaged no-press windows, per-frame totals, and press runs."""
+  t, n = d["t"], len(d["t"])
+  if n < 2:
+    return [], {}, []
+  dt = np.clip(np.diff(t, append=t[-1]), 0.0, 0.1)
+  engaged = (np.nan_to_num(d["active"]) > 0.5) & (np.nan_to_num(d["pressed"]) < 0.5)
+  keys = [(band_of(d["v"][i]), shape_of(d["des_angle"][i])) if engaged[i] and np.isfinite(d["des_angle"][i])
+          and band_of(d["v"][i]) else None for i in range(n)]
+  totals = {}
+  for i, k in enumerate(keys):
+    if k is not None:
+      totals.setdefault(k[0], {}).setdefault(k[1], 0.0)
+      totals[k[0]][k[1]] += float(dt[i])
+  windows = []
+  for a, b, (band, shape) in _runs(keys):
+    dur = float(t[b - 1] - t[a] + dt[b - 1])
+    if dur >= WINDOW_MIN_S:
+      windows.append({"seg": seg, "t0": round(float(t[a]), 3), "t1": round(float(t[b - 1] + dt[b - 1]), 3),
+                      "s": round(dur, 2), "band": band, "shape": shape})
+  pressed = np.nan_to_num(d["pressed"]) > 0.5
+  presses = []
+  for a, b, _ in _runs([True if p else None for p in pressed]):
+    presses.append({"seg": seg, "t_press": round(float(t[a]), 3), "t_release": round(float(t[b - 1]), 3),
+                    "v": round(float(d["v"][a]), 2), "band": band_of(d["v"][a]),
+                    "active_before": bool(np.nan_to_num(d["active"][max(0, a - 1)]) > 0.5)})
+  return windows, totals, presses
 
 
 def _seg_name(path, i):
@@ -106,11 +182,14 @@ def _seg_name(path, i):
 
 def export(seg_paths, out_dir, route=None, all_segments=False):
   os.makedirs(out_dir, exist_ok=True)
-  info = {"schema": "drivePlotsSimExport/1", "route": route, "keys": list(KEYS), "segments": []}
+  info = {"schema": "drivePlotsSimExport/1", "route": route, "keys": list(KEYS), "segments": [], "params": {},
+          "bands_ms": [b[2] for b in BANDS], "straight_deg": STRAIGHT_DEG, "curve_deg": list(CURVE_DEG),
+          "window_min_s": WINDOW_MIN_S, "windows": [], "window_totals_s": {}, "presses": []}
   delays = []
   for i, path in enumerate(seg_paths):
-    d, dl = read_segment(path)
+    d, dl, params = read_segment(path)
     delays += dl
+    info["params"].update(params)
     n = len(d["t"])
     steer_s = float(np.sum(np.clip(np.diff(d["t"]), 0, 0.1)[d["active"][1:] > 0.5])) if n > 1 else 0.0
     seg = {"seg": _seg_name(path, i), "rows": n, "steering_s": round(steer_s, 1),
@@ -121,6 +200,13 @@ def export(seg_paths, out_dir, route=None, all_segments=False):
       np.savez_compressed(os.path.join(out_dir, rel), **d)
       seg["file"] = rel
     info["segments"].append(seg)
+    windows, totals, presses = find_windows(d, seg["seg"])
+    info["windows"] += windows
+    info["presses"] += presses
+    for band, shapes in totals.items():
+      for shape, sec in shapes.items():
+        tot = info["window_totals_s"].setdefault(band, {})
+        tot[shape] = round(tot.get(shape, 0.0) + sec, 2)
   info["lateral_delay_median_s"] = round(float(np.median(delays)), 3) if delays else None
   with open(os.path.join(out_dir, "export.json"), "w") as f:
     json.dump(info, f, indent=1)
@@ -139,8 +225,16 @@ def main(argv=None):
   route = os.path.basename(os.path.normpath(a.routes[0])) if len(a.routes) == 1 and os.path.isdir(a.routes[0]) else None
   info = export(seg_paths, a.out, route, a.all)
   written = [s for s in info["segments"] if "file" in s]
-  print(f"{len(written)} of {len(info['segments'])} segment(s) written to {a.out}; "
+  print(f"{len(written)} of {len(info['segments'])} segment(s) written to {a.out}; " +
         f"lateralDelay median {info['lateral_delay_median_s']}")
+  print(f"params: {info['params'] or 'no Nrdr* toggle in initData'}")
+  for k in REQUIRED_PARAMS:
+    print(f"  {k} = {info['params'][k]}" if k in info["params"] else f"  WARNING: {k} is not in initData (never stored)")
+  for band in info["bands_ms"]:
+    sh = info["window_totals_s"].get(band, {})
+    print(f"  {band:>6} m/s engaged, no press: straight {sh.get('straight', 0):7.1f} s  curve {sh.get('curve', 0):7.1f} s  " +
+          f"other {sh.get('other', 0):7.1f} s")
+  print(f"  {len(info['windows'])} window(s) >= {WINDOW_MIN_S:g} s, {len(info['presses'])} press(es)")
 
 
 if __name__ == "__main__":
