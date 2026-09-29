@@ -39,6 +39,7 @@ import base64
 import io
 import json
 import math
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -428,51 +429,73 @@ def sustained_max(t, x) -> float | None:
 PHANTOM_EXTRA_MPS = 2.0
 PHANTOM_AWAY_MARGIN_MPS = 1.0
 # The camera's speed under-reads closing on far cars (STATUS 162 / 280 15:03). 00000297 53:40: camera v steady
-# while its own x fell 119 -> 49 m in 8 s. So a "phantom" frame gets a second look at the camera's distance over
-# XRATE_WIN_S (same-car frames only, >= XRATE_MIN_PTS of them), rule from Radar Work (Bob), 2026-09-29, provisional
-# pending Fix A v2:
+# while its own x fell 119 -> 49 m in 8 s. So a "phantom" frame gets a second look at the camera's distance. Rule
+# from Radar Work (Bob), 2026-09-29, provisional pending Fix A v2 and kept identical to it:
+# - trailing window [t - XRATE_WIN_S, t], same-car points only: radard only sees the past, so judge t as it would.
+#   Fewer than XRATE_MIN_PTS -> unjudged.
 # - camera x is +-5 m noisy and steps on lead switches. At 00000297 10:55 it sat at 72-77 m, dropped 13 m in 0.3 s,
-#   then stayed flat at 58-63 m, and a 2 s line fit across that read as 7-10 m/s of closing. So first fit a step
-#   (two flat levels, break at any split leaving >= XRATE_STEP_MIN_SIDE points a side). If it leaves less than
-#   XRATE_STEP_SSE_FRAC of the line's squared error and the step is over XRATE_STEP_M, the window is a STEP: unjudged.
-# - otherwise the camera backs the radar (neutral) when the line slope is within XRATE_AGREE_MPS of the radar range
-#   slope over the same frames and the line's residual sd is under XRATE_RESID_SD_M.
-# - otherwise it stays phantom, as it does when there are too few points to judge.
+#   then stayed flat at 58-63 m, and a line fit across that read as 7-10 m/s of closing. So fit a step first (two
+#   flat levels, >= XRATE_STEP_MIN_SIDE points a side). If it leaves less than XRATE_STEP_SSE_FRAC of the line's
+#   squared error and the step is over XRATE_STEP_M, keep only the points after the break; fewer than
+#   XRATE_POST_MIN_PTS or under XRATE_POST_MIN_S of them -> unjudged.
+# - on the clean points refit a line. Camera x noise grows with range (53:40: resid sd 3.1-3.5 m at 100-120 m), so the
+#   limits scale with mean camera x: resid sd over max(XRATE_RESID_SD_M, XRATE_RESID_SD_FRAC * x) -> unjudged; slope
+#   within max(XRATE_AGREE_MPS, XRATE_AGREE_FRAC * x) of the radar range slope -> neutral; otherwise phantom.
+#   Resid sd uses n-2 degrees of freedom; the radar slope is fitted on the same (post-break) samples.
+#   XRATE_AGREE_FRAC is 0 (Bob, 2026-09-29): at 95-107 m on 00000297 42:18 0.03 * x widened agreement to ~3 m/s and let
+#   the radar walk pass as agree. Kept as a named term so Fix A v2 and the viewer stay the same.
 XRATE_WIN_S = 3.0
 XRATE_MIN_PTS = 20
-XRATE_AGREE_MPS = 2.0
-XRATE_RESID_SD_M = 3.0
 XRATE_STEP_MIN_SIDE = 5
 XRATE_STEP_SSE_FRAC = 0.5
 XRATE_STEP_M = 6.0
+XRATE_POST_MIN_PTS = 10
+XRATE_POST_MIN_S = 1.0
+XRATE_RESID_SD_M = 3.0
+XRATE_RESID_SD_FRAC = 0.04
+XRATE_AGREE_MPS = 2.0
+XRATE_AGREE_FRAC = 0.0
+# Also require the camera's x-rate to back the PUBLISHED vRel within the same tolerance. Off by default (Bob's rule
+# does not have it). Radar and camera range agreeing only says the radar is on the camera's car: 00000297 ph4024
+# 2430.2 both fell at 2-3 m/s while published vRel said -6.4, and Bob's rule labels that neutral.
+XRATE_VS_PUBLISHED = os.environ.get("LRV_XRATE_VS_PUBLISHED") == "1"
 ASSIST_CLASSES = ("phantom", "helped", "neutral", "unjudged")
 
 
-def xrate_verdict(t, x, d) -> dict | None:
-  """Camera-distance check on one window of same-car points: 'step', 'agree' or 'disagree' (None: too few points)."""
+def xrate_verdict(t, x, d, v_rel_pub=None) -> dict:
+  """Camera-distance check on one trailing window of same-car points: verdict 'phantom', 'neutral' or 'unjudged'."""
+  r = {"n": len(t)}
   if len(t) < XRATE_MIN_PTS:
-    return None
+    return {**r, "verdict": "unjudged", "why": "few points"}
   o = np.argsort(t)
   t, x, d = t[o], x[o], d[o]
-  pc, pd = np.polyfit(t, x, 1), np.polyfit(t, d, 1)
-  sse_l = float(np.sum((x - np.polyval(pc, t)) ** 2))
+  sse_l = float(np.sum((x - np.polyval(np.polyfit(t, x, 1), t)) ** 2))
   n, k = len(x), np.arange(XRATE_STEP_MIN_SIDE, len(x) - XRATE_STEP_MIN_SIDE + 1)
   c1, c2 = np.concatenate([[0], np.cumsum(x)]), np.concatenate([[0], np.cumsum(x * x)])
   sse_s = (c2[k] - c1[k] ** 2 / k) + (c2[n] - c2[k] - (c1[n] - c1[k]) ** 2 / (n - k))
   j = int(np.argmin(sse_s))
-  step = float(c1[k[j]] / k[j] - (c1[n] - c1[k[j]]) / (n - k[j]))
-  r = {"cam_mps": float(pc[0]), "radar_mps": float(pd[0]), "resid_sd_m": float(np.sqrt(sse_l / n)),
-       "step_m": abs(step), "step_sse_frac": float(sse_s[j] / sse_l) if sse_l > 0 else 1.0}
+  r["step_m"] = abs(float(c1[k[j]] / k[j] - (c1[n] - c1[k[j]]) / (n - k[j])))
+  r["step_sse_frac"] = float(sse_s[j] / sse_l) if sse_l > 0 else 1.0
   if r["step_sse_frac"] < XRATE_STEP_SSE_FRAC and r["step_m"] > XRATE_STEP_M:
-    r["verdict"] = "step"
-  elif abs(r["cam_mps"] - r["radar_mps"]) < XRATE_AGREE_MPS and r["resid_sd_m"] < XRATE_RESID_SD_M:
-    r["verdict"] = "agree"
-  else:
-    r["verdict"] = "disagree"
-  return r
+    r["break_t"] = float(t[k[j]])
+    t, x, d = t[k[j]:], x[k[j]:], d[k[j]:]
+    if len(t) < XRATE_POST_MIN_PTS or t[-1] - t[0] < XRATE_POST_MIN_S:
+      return {**r, "verdict": "unjudged", "why": "step, short after"}
+  pc, pd = np.polyfit(t, x, 1), np.polyfit(t, d, 1)
+  xm = float(np.mean(x))
+  r.update(cam_mps=float(pc[0]), radar_mps=float(pd[0]), cam_x_m=xm,
+           resid_sd_m=float(np.sqrt(np.sum((x - np.polyval(pc, t)) ** 2) / (len(t) - 2))))
+  if r["resid_sd_m"] > max(XRATE_RESID_SD_M, XRATE_RESID_SD_FRAC * xm):
+    return {**r, "verdict": "unjudged", "why": "noisy"}
+  tol = max(XRATE_AGREE_MPS, XRATE_AGREE_FRAC * xm)
+  if v_rel_pub is not None:
+    r["pub_mps"] = float(v_rel_pub)
+  if abs(r["cam_mps"] - r["radar_mps"]) < tol and (v_rel_pub is None or abs(r["cam_mps"] - v_rel_pub) < tol):
+    return {**r, "verdict": "neutral", "why": "agree"}
+  return {**r, "verdict": "phantom", "why": "disagree"}
 
 
-def assist_classes(t, extra, v_pub, v_nat, vis_v, same, d_radar=None, x_cam=None) -> dict:
+def assist_classes(t, extra, v_pub, v_nat, vis_v, same, d_radar=None, x_cam=None, v_rel_pub=None) -> dict:
   """Per class: largest extra closing held >= SUSTAIN_S inside that class, and when it began."""
   t = np.asarray(t, dtype=float)
   e_pub, e_nat = np.abs(v_pub - vis_v), np.abs(v_nat - vis_v)
@@ -488,22 +511,22 @@ def assist_classes(t, extra, v_pub, v_nat, vis_v, same, d_radar=None, x_cam=None
     ok = same & np.isfinite(x_cam) & np.isfinite(d_radar)
     to = {}
     for i in np.where(masks["phantom"])[0]:
-      w = ok & (np.abs(t - t[i]) <= XRATE_WIN_S / 2)
-      r = xrate_verdict(t[w], x_cam[w], d_radar[w])
-      if r is not None and r["verdict"] != "disagree":
+      w = ok & (t <= t[i]) & (t >= t[i] - XRATE_WIN_S)
+      r = xrate_verdict(t[w], x_cam[w], d_radar[w], v_rel_pub[i] if XRATE_VS_PUBLISHED and v_rel_pub is not None else None)
+      if r["verdict"] != "phantom":
         to[i] = r
     for i, r in to.items():
       masks["phantom"][i] = False
-      if r["verdict"] == "step":
+      if r["verdict"] == "unjudged":
         masks["unjudged"][i] = True
     # contiguous runs of frames the camera-distance check moved out of phantom, for the log and Bob's table
     for i in sorted(to):
-      r, cls = to[i], "unjudged" if to[i]["verdict"] == "step" else "neutral"
-      if flips and flips[-1]["to"] == cls and flips[-1]["_i"] == i - 1:
+      r = to[i]
+      if flips and flips[-1]["to"] == r["verdict"] and flips[-1]["why"] == r["why"] and flips[-1]["_i"] == i - 1:
         flips[-1].update(t1=float(t[i]), n=flips[-1]["n"] + 1, _i=i)
       else:
-        flips.append({"to": cls, "t0": float(t[i]), "t1": float(t[i]), "n": 1, "_i": i,
-                      **{k: round(v, 2) for k, v in r.items() if k != "verdict"}})
+        flips.append({"to": r["verdict"], "why": r["why"], "t0": float(t[i]), "t1": float(t[i]), "n": 1, "_i": i,
+                      **{k: round(v, 2) for k, v in r.items() if isinstance(v, float)}})
     for f in flips:
       f.pop("_i")
   masks["neutral"] = big & judged & ~masks["phantom"] & ~masks["helped"] & ~masks["unjudged"]
@@ -609,10 +632,10 @@ def metrics(D) -> tuple[dict, list[dict]]:
   for k, vr in (("radar_vs_vision_vlead_err_max_log", vpl), ("native_vs_vision_vlead_err_max_log", vnl)):
     e = np.where(same, v_log + vr - vis_v, np.nan)
     common[k] = fnum(e[np.nanargmax(np.abs(e))]) if np.isfinite(e).any() else None
-  common["assist_log"] = assist_classes(t, vnl - vpl, v_log + vpl, v_log + vnl, vis_v, same, dl, vis_d)
+  common["assist_log"] = assist_classes(t, vnl - vpl, v_log + vpl, v_log + vnl, vis_v, same, dl, vis_d, vpl)
   if D["meta"]["has_viz"]:
     same1 = (radar1 == 1) & (vis_p > VIS_PROB) & (np.abs(d1 - vis_d) < np.maximum(10.0, 0.2 * d1))
-    common["assist"] = assist_classes(t, vn1 - vr1, v_log + vr1, v_log + vn1, vis_v, same1, d1, vis_d)
+    common["assist"] = assist_classes(t, vn1 - vr1, v_log + vr1, v_log + vn1, vis_v, same1, d1, vis_d, vr1)
 
   per: dict = {}
   cars = [(DRIVE, v_log, a_log, arr(D["acmd"]), np.zeros_like(t), None)]
@@ -885,9 +908,9 @@ def print_metrics(D: dict) -> None:
         f"{k} {c[key][k]['extra_sustained']}" + (f" @{c[key][k]['t']:.2f}" if c[key][k]["t"] is not None else "")
         for k in ASSIST_CLASSES))
       for fl in c[key].get("xrate_flips", []):
-        print(f"    camera-distance check {side}: phantom -> {fl['to']} {fl['t0']:.2f}-{fl['t1']:.2f} ({fl['n']} frames)",
-              f"cam {fl['cam_mps']:+.1f} radar {fl['radar_mps']:+.1f} m/s, resid sd {fl['resid_sd_m']:.1f} m,",
-              f"step {fl['step_m']:.1f} m sse x{fl['step_sse_frac']:.2f}")
+        print(f"    camera-distance check {side}: phantom -> {fl['to']} ({fl['why']}) {fl['t0']:.2f}-{fl['t1']:.2f}",
+              f"({fl['n']} frames)", " ".join(f"{k} {fl[k]}" for k in ("cam_mps", "radar_mps", "cam_x_m", "resid_sd_m",
+                                                                       "pub_mps", "step_m", "step_sse_frac", "break_t") if k in fl))
   keys = ["min_gap_m", "min_ttc_s", "max_decel", "felt_jerk_rms", "felt_jerk_max", "max_cmd_jerk", "cmd_onset_lag_s",
           "a_onset_lag_s", "cmd_to_a_lag_s", "cut_at_drift"]
   print(f"  {'':>8} " + " ".join(f"{k[:13]:>13}" for k in keys))
