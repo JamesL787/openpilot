@@ -28,18 +28,49 @@ from pathlib import Path
 import numpy as np
 
 from openpilot.tools.longitudinal.alpha_open_loop_replay import segment_files
-from openpilot.tools.longitudinal.long_replay_viewer import (ASSIST_CLASSES, DD_PRE_S, VIS_PROB, _col, arr, assist_masks,
-                                                             cutin_series, range_assist_arms, read_rlog)
+from openpilot.tools.longitudinal.long_replay_viewer import (ASSIST_CLASSES, DD_PRE_S, VIS_PROB, XRATE_STEP_M,
+                                                             XRATE_STEP_MIN_SIDE, XRATE_STEP_SSE_FRAC, _col, arr,
+                                                             assist_masks, cutin_series, range_assist_arms, read_rlog)
 
 U11_PRE_S = 3.0      # max liveTracks vRel (U11) of the armed track over [arm - 3 s, arm]  (Bob: range swings OUT first)
 YAW_PRE_S = 5.0      # max |livePose yaw rate| over [arm - 5 s, arm]  (bend)
 MIN_PEAK_MPS = 0.5    # arms whose correction never reaches this are listed only as a count (one-tick 0.04 blips)
 PAIR_MIN_PTS = 10     # a same-car camera pair in [arm - DD_PRE_S, arm]: at least this many gated points
+# Overshoot after the arm (Bob, 2026-09-29, separator for Fix A: does the assist push vLead BELOW the camera's speed?).
+# ov = published vLead (vEgo + radarState vRel) - camera lead v, on same-car camera points with modelProb >= OV_PROB.
+# ov_min over [arm, arm + OV_WIN_S], NaN under OV_MIN_PTS points. Bob's step rule (the camera-distance check's) runs on
+# those points' camera x; on a step only the points before it are kept, the car the camera had at the arm (ov_step 1).
+# ov_at_arm, raw_minus_cam (vEgo + U11 of the armed track, i.e. no assist, - camera v) and cam_v_minus_ego use the
+# gated camera point nearest the arm, within OV_ARM_DT_S, else NaN.
+OV_PROB = 0.9
+OV_WIN_S = 2.0
+OV_MIN_PTS = 5
+OV_ARM_DT_S = 0.25
 
 COLS = ["route", "t", "seg", "track", "d", "v_ego", "corr_at_arm", "corr_peak", "t_peak", "t_end",
         "dd_arm", "dd_rate_pre", "range_slope_pre", "dd_over_range_pre", "dd_n_pre", "dd_same_n_pre", "pair",
         "dd_2s", "dd_rate", "range_slope", "cam_slope", "cutting_in", "off", "rate",
-        "min_cmd", "min_a_ego", "u11_max_pre", "yaw_abs_max_pre", "cls", "n_phantom", "n_helped", "n_neutral", "n_unjudged"]
+        "min_cmd", "min_a_ego", "u11_max_pre", "yaw_abs_max_pre",
+        "ov_min", "ov_n", "ov_step", "ov_at_arm", "raw_minus_cam", "cam_v_minus_ego", "cls", "n_phantom", "n_helped", "n_neutral", "n_unjudged"]
+
+
+def _r(x, nd=2):
+  return round(float(x), nd) if x is not None and np.isfinite(x) else None
+
+
+def step_index(x) -> int | None:
+  """Bob's step rule, as in xrate_verdict: index of the first point after a camera-x step, else None."""
+  n = len(x)
+  if n < 2 * XRATE_STEP_MIN_SIDE:
+    return None
+  sse_l = float(np.sum((x - np.polyval(np.polyfit(np.arange(n), x, 1), np.arange(n))) ** 2))
+  k = np.arange(XRATE_STEP_MIN_SIDE, n - XRATE_STEP_MIN_SIDE + 1)
+  c1, c2 = np.concatenate([[0], np.cumsum(x)]), np.concatenate([[0], np.cumsum(x * x)])
+  sse_s = (c2[k] - c1[k] ** 2 / k) + (c2[n] - c2[k] - (c1[n] - c1[k]) ** 2 / (n - k))
+  j = int(np.argmin(sse_s))
+  step_m = abs(float(c1[k[j]] / k[j] - (c1[n] - c1[k[j]]) / (n - k[j])))
+  frac = float(sse_s[j] / sse_l) if sse_l > 0 else 1.0
+  return int(k[j]) if frac < XRATE_STEP_SSE_FRAC and step_m > XRATE_STEP_M else None
 
 
 def scan_route(rdir: str) -> dict:
@@ -88,6 +119,8 @@ def scan_route(rdir: str) -> dict:
   vis_d, vis_p, vis_v = _col(vis, 0), _col(vis, 3), _col(vis, 2)
   same = (rl == 1) & (vis_p > VIS_PROB) & (np.abs(dl - vis_d) < np.maximum(10.0, 0.2 * dl))
   masks, _ = assist_masks(t, corr, v + vpl, v + vnl, vis_v, same, dl, vis_d, vpl)
+  ov_ok = same & (vis_p >= OV_PROB) & np.isfinite(vis_v) & np.isfinite(vpl) & np.isfinite(v)
+  ov = v + vpl - vis_v
 
   rows, blips = [], 0
   for r in arms:
@@ -100,18 +133,54 @@ def scan_route(rdir: str) -> dict:
     lo_y = np.searchsorted(t, r["t"] - YAW_PRE_S)
     yw = yaw[lo_y:hi][np.isfinite(yaw[lo_y:hi])]
     n = {k: int((masks[k] & ep).sum()) for k in ASSIST_CLASSES}
+    w = np.where(ov_ok & (t >= r["t"]) & (t <= r["t"] + OV_WIN_S))[0]
+    brk = step_index(vis_d[w]) if w.size else None
+    if brk is not None:
+      w = w[:brk]
+    near = np.where(ov_ok & (np.abs(t - r["t"]) <= OV_ARM_DT_S))[0]
+    i0 = near[np.argmin(np.abs(t[near] - r["t"]))] if near.size else None
+    u0 = None
+    if i0 is not None:
+      u0 = next((q[3] for q in tracks[i0] if q[0] == r["track"] and q[3] is not None), None)
     cls = max(ASSIST_CLASSES, key=lambda k: (n[k], -ASSIST_CLASSES.index(k))) if any(n.values()) else "none"
     rows.append({"route": rdir_p.name, "seg": int(r["t"] // 60), **{k: r.get(k) for k in COLS if k in r},
                  "t": round(r["t"], 2), "t_end": round(r["t_end"], 2), "t_peak": round(r["t_peak"], 2),
                  "u11_max_pre": round(max(u11), 2) if u11 else None,
                  "yaw_abs_max_pre": round(float(yw.max()), 4) if yw.size else None,
                  "pair": int((r["dd_same_n_pre"] or 0) >= PAIR_MIN_PTS), "cls": cls,
+                 "ov_min": _r(ov[w].min()) if w.size >= OV_MIN_PTS else None, "ov_n": int(w.size),
+                 "ov_step": int(brk is not None), "ov_at_arm": _r(ov[i0]) if i0 is not None else None,
+                 "raw_minus_cam": _r(v[i0] + u0 - vis_v[i0]) if u0 is not None else None,
+                 "cam_v_minus_ego": _r(vis_v[i0] - v[i0]) if i0 is not None else None,
                  **{f"n_{k}": n[k] for k in ASSIST_CLASSES}})
   return {**base, "arms": rows, "blips": blips, "secs": round(time.monotonic() - t_start, 1)}
 
 
 def _f(x, nd=2):
   return "" if x is None else (f"{x:.{nd}f}" if isinstance(x, float) else str(x))
+
+
+OV_SWEEP = (0.5, 1.0, 1.5, 2.0, 3.0, 4.0)
+OV_CUT_M = (80.0, 120.0)   # Bob's far-arm cut on d at the arm
+
+
+def ov_summary(rows: list[dict]) -> str:
+  """Does ov_min < -X split phantom from helped? Counts per class, all arms and the 80-120 m cut; plain text."""
+  out = []
+  for name, sub in (("all arms", rows), (f"d {OV_CUT_M[0]:g}-{OV_CUT_M[1]:g} m",
+                                          [r for r in rows if r["d"] is not None and OV_CUT_M[0] <= r["d"] <= OV_CUT_M[1]])):
+    out.append(f"{name}: {len(sub)} arms")
+    for c in ASSIST_CLASSES + ("none",):
+      cr = [r for r in sub if r["cls"] == c]
+      if not cr:
+        continue
+      got = sorted(r["ov_min"] for r in cr if r["ov_min"] is not None)
+      any_pt = sum(1 for r in cr if r["ov_n"] > 0)
+      med = f"{got[len(got) // 2]:.2f}" if got else "-"
+      sweep = "  ".join(f"<-{x:g}:{sum(1 for g in got if g < -x)}" for x in OV_SWEEP)
+      out.append(f"  {c:9s} n {len(cr):3d}  any camera pt in 2 s {any_pt:3d}  ov_min (>= {OV_MIN_PTS} pts) {len(got):3d}"
+                 + f"  median {med:>6s}  {sweep}")
+  return "\n".join(out)
 
 
 def write_html(out: Path, rows: list[dict], routes: list[dict]) -> None:
@@ -159,6 +228,9 @@ Class = the viewer's assist class held by the most frames of the episode (extra 
 correction never reached 2 m/s. 00000297 10:55 ≈ 2.6, 53:40 ≈ 0.0.</p>
 <h2>ratio = dd_rate_pre / range_slope_pre, by class (pair arms)</h2>{hist(pair)}
 <h2>scatter (pair arms; dot size = correction peak; hover for route/time)</h2>{''.join(svg)}
+<h2>overshoot after the arm: ov_min = min over [arm, arm + {OV_WIN_S:g} s] of published vLead - camera v
+(same car, p ≥ {OV_PROB:g}, ≥ {OV_MIN_PTS} pts); "&lt;-X:n" = arms of that class with ov_min below -X</h2>
+<pre>{html.escape(ov_summary(rows))}</pre>
 <h2>every arm (pair arms first)</h2><table><tr>{''.join(f'<th>{c}</th>' for c in COLS)}</tr>{''.join(trs)}</table>
 <h2>routes</h2><table><tr><th>route</th><th>segments</th><th>minutes</th><th>arms</th><th>blips &lt; {MIN_PEAK_MPS}</th><th>note</th></tr>{rt}</table>
 """)
@@ -190,6 +262,8 @@ def main() -> int:
       w.writerow({c: r.get(c) for c in COLS})
   (args.out / "routes.json").write_text(json.dumps([{k: v for k, v in x.items() if k != "arms"} for x in routes], indent=1))
   write_html(args.out / "arms.html", rows, routes)
+  (args.out / "ov_summary.txt").write_text(ov_summary(rows) + "\n")
+  print(ov_summary(rows), file=sys.stderr)
   print(f"wrote {args.out / 'arms.csv'} ({len(rows)} arms) and {args.out / 'arms.html'}", file=sys.stderr)
   return 0
 
