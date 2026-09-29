@@ -83,6 +83,7 @@ LIVE_WINDOW_S = 30.0
 NOMINAL_DT = 0.05
 CLIENT_IDLE_TIMEOUT_S = 6.0
 OFFROAD_AUTOSTOP_S = 30.0
+FINALIZE_ONROAD_POLL_S = 5.0
 MAX_RECORDING_S = 8 * 3600.0   # ~90 MB of CSV; stops a forgotten recording from filling /data
 FLUSH_EVERY_ROWS = 20
 
@@ -1002,6 +1003,7 @@ class DrivePlots:
     self.last_error = ""
     self.rec = None            # dict while recording
     self._live_cache = (-1, None)
+    self._sleep = time.sleep
     self._heavy = threading.Lock()      # one whole-session read at a time: taps on several moments queue, not stack
 
   # ---------------- lifecycle ----------------
@@ -1146,12 +1148,25 @@ class DrivePlots:
     self._update_meta(rec["dir"], {"status": "analyzing", "stopped_at": time.time(), "stop_reason": reason,
                                    "first_sample_at": rec.get("first_wall")})
     if background:
-      threading.Thread(target=self._finalize_and_prune, args=(rec["dir"],), daemon=True).start()
+      threading.Thread(target=self._finalize_and_prune, args=(rec["dir"], True), daemon=True).start()
     else:
       self._finalize_and_prune(rec["dir"])
     return {"id": rec["id"], "rows": rec["rows"], "reason": reason}
 
-  def _finalize_and_prune(self, d):
+  def _wait_until_parked(self):
+    """The whole-drive analysis waits until the car is offroad, so it never competes with openpilot for RAM or CPU
+    while driving (a stop by hand, or MAX_RECORDING_S, can happen mid-drive)."""
+    while True:
+      try:
+        if not self.is_onroad():
+          return
+      except Exception:
+        return
+      self._sleep(FINALIZE_ONROAD_POLL_S)
+
+  def _finalize_and_prune(self, d, wait_until_parked=False):
+    if wait_until_parked:
+      self._wait_until_parked()
     self.finalize(d)
     self.prune_auto_sessions()
 
@@ -1214,6 +1229,7 @@ class DrivePlots:
         continue
       if m.get("status") in ("recording", "analyzing") and not (d / "analysis.json").exists():
         self._update_meta(d, {"status": "analyzing", "stop_reason": "interrupted (Galaxy restarted)"})
+        self._wait_until_parked()
         self.finalize(d)
 
   # ---------------- automatic recording ----------------
@@ -1548,6 +1564,9 @@ def release_freed_memory():
     pass
 
 
+_READ_BLOCK = 2048
+
+
 def read_rows(d, start_s=None, end_s=None):
   """Read a session's samples, tolerating a torn last line from an interrupted write.
 
@@ -1564,7 +1583,9 @@ def read_rows(d, start_s=None, end_s=None):
     f = open(d / "samples.csv", newline="")
   else:
     return (empty, None) if windowed else empty
-  out, n, t0 = np.empty((1024, len(COLUMNS))), 0, None
+  # Fixed blocks, joined one at a time at the end: growing one array by doubling held ~3 copies at once
+  # (a 2-hour drive peaked at +250 MB).
+  blocks, block, k, n, t0 = [], np.empty((_READ_BLOCK, len(COLUMNS))), 0, 0, None
   with f:
     reader = csv.reader(f)
     header = next(reader, None)
@@ -1589,12 +1610,20 @@ def read_rows(d, start_s=None, end_s=None):
           row = [fill[k] if i is None else float(rec[i]) for k, i in enumerate(order)]
         except ValueError:
           continue
-        if n == len(out):
-          out = np.resize(out, (2 * len(out), len(COLUMNS)))
-        out[n] = row
+        if k == _READ_BLOCK:
+          blocks.append(block)
+          block, k = np.empty((_READ_BLOCK, len(COLUMNS))), 0
+        block[k] = row
+        k += 1
         n += 1
     except (EOFError, OSError):   # a gzip cut short: keep what was read
       pass
-  rows = out[:n].copy()
-  del out
+  blocks.append(block[:k])
+  del block
+  rows = np.empty((n, len(COLUMNS)))
+  i = 0
+  while blocks:
+    b = blocks.pop(0)
+    rows[i:i + len(b)] = b
+    i += len(b)
   return (rows, t0) if windowed else rows
