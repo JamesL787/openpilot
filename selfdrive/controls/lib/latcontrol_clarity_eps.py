@@ -37,10 +37,26 @@ from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import ClarityEpsLate
 
 SETTINGS_REFRESH_FRAMES = 300
 
+# Lateral delay the model is told (liveDelay.lateralDelay's role in lat_action_t), scheduled on speed. It
+# replaces the single SteerDelay / lagd value for this controller, whose real execution delay is not one
+# number: measured as the lag of car curvature behind the logged model action on routes 363-369 (SteerDelay
+# 0.22), the car ran 43 ms early at 2-5 m/s, on time at 5-15 m/s, and late above 15 m/s. Each value is that
+# measured lag minus the fixed pipeline offset, so the car reaches the requested curvature when the model
+# intends it to. Above 15 m/s lane centering pulls 6-10% of a curve back out through its 0.4 s smoothing and
+# reads as extra lag; that is not delay and the model cannot aim around it, so those values use the lag from
+# controlsd's output to the car plus the action ramp. lagd only learns above 15 m/s, so it cannot find the
+# low-speed end.
+CLARITY_LAT_DELAY_BP = [3.5, 7.0, 12.0, 20.0, 30.0]  # m/s, centres of the measured bands
+CLARITY_LAT_DELAY_V = [0.18, 0.20, 0.23, 0.28, 0.35]  # s
+
 
 def use_clarity_eps_controller(CP) -> bool:
   return (CP.carFingerprint == HONDA.HONDA_CLARITY and bool(CP.flags & HondaFlags.EPS_MODIFIED)
           and CP.lateralTuning.which() == "pid")
+
+
+def clarity_lateral_delay(v_ego: float) -> float:
+  return float(np.interp(v_ego, CLARITY_LAT_DELAY_BP, CLARITY_LAT_DELAY_V))
 
 
 class LatControlClarityEps(LatControl):
