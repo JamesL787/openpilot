@@ -889,6 +889,8 @@ def test_takeover_turn_fight_numbers():
   c["fault_t"] = np.where(((t >= 30.5) & (t < 30.7)) | ((t >= 31.2) & (t < 31.3)), 1.0, 0.0)
   c["ang_des"] = np.where(t < 31.0, 40.0, 140.0)
   c["ang_act"] = c["ang_des"] - 25.0
+  c["ang_act"][(t >= 61.2) & (t < 61.4)] += 10.0          # after the 61.0 release: 10 deg left, then 6 at the re-press
+  c["ang_act"][t >= 61.4] += 6.0
   near = (t >= 31.5) & (t < 32.0)
   c["steer_tq"][near], c["steer_pressed"][near] = 1600.0, 0.0
   c["lat_out"] = np.where(t < 32.0, 0.2, np.minimum(0.8, 0.2 + 0.6 * (t - 32.0)))
@@ -908,6 +910,8 @@ def test_takeover_turn_fight_numbers():
   assert e["near_cut_s"] == pytest.approx(0.5, abs=0.06) and e["override_cut_s"] == pytest.approx(1.5, abs=0.06)
   assert e["repress"] is False and e["repress_after_s"] is None
   assert eps[1]["repress"] is True and eps[1]["repress_after_s"] == pytest.approx(0.5, abs=0.06)
+  assert eps[1]["repress_move_deg"] == pytest.approx(6.0) and eps[1]["repress_swing_deg"] == pytest.approx(10.0)
+  assert e["repress_move_deg"] is None
   assert eps[1]["t90_s"] is None   # pressed again before lat_out settled
   s = agents.takeovers(c)["summary"]
   assert (s["repress"], s["repress_late"], s["fault_flicker"], s["near_cut"]) == (1, 0, 1, 1)
