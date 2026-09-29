@@ -9855,6 +9855,29 @@ touched. The toggle keeps its key, so a device with it off is unchanged.
   is not yet run.
 - The owner's left turns on the PID are gentle and need little correction. Report any change by turn side.
 
+**Correction (2026-09-29, found by James, static).** As pushed in `1a0dc489e`, the rejoin also fired at a mid-turn
+engagement with no press at all. `since_press_s` is `inf` from engagement until the first press, and `inf >= 0.5` let
+it through, so the feedforward faded in 20-70 deg short of the turn right at engagement. The commit text ("0.5 s after
+you let go") did not describe that. Now the new branch needs `0.5 <= since_press_s < inf`: only a real release counts.
+`since_press_s` itself still starts at `inf`, because the override fade reads it. A test pins the engagement case.
+
+My replay harness had the same flaw (its clock started at 1e9 per route), so the table above included engagement joins.
+Replay of the fixed code (base = the old law, same 10 routes):
+
+| | turn_err 12-25 mph | turn_err < 12 mph | turn_past 12-25 mph |
+|---|---|---|---|
+| old law | 14.81 | 23.59 | 5.73 |
+| 0.5 s, as pushed in 1a0dc489e (superseded) | 13.51 | 22.91 | 6.01 |
+| **0.5 s, fixed** | **13.52** | **22.88** | **6.02** |
+
+- The 12-25 mph gain is unchanged. 94.7 % of it is on turns left hands-off for 2 s or more (93.3 % before).
+- Below 12 mph, the engagement join was a small *loss*: before any release, error was 0.66 deg worse and overshoot
+  0.89 deg higher on those frames. The fix removes it, and those frames now match the old law exactly.
+- Wobble and dither are unchanged. Verdict: pass (replay).
+- The table figures above for 0 s, 1.0 s and 1.5 s used the flawed harness. They rank the hold-offs but are not restated.
+- A car without the modified-EPS press detector never sets `since_press_s`, so it never takes this rejoin.
+- The sim re-grab row (RG1) uses base = the pre-build `latcontrol_pid.py` blob `ef28076db`, not hold = `inf`.
+
 ## 192. ICBM gas-release set speed is baked in (owner request, 2026-09-29); the `SetSpeedOnGasRelease` toggle is gone, and the ICBM description is rewritten. Static and unit evidence only.
 
 - **Why:** `SetSpeedOnGasRelease` has defaulted on since STATUS 84, and the owner's ICBM drives since then ran with it on. STATUS 86/87/126 reworked it into the release set speed, the time-limited gas-release floor and the gas snap. The owner asked for it to be part of ICBM rather than a toggle.

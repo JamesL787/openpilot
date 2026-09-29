@@ -1,4 +1,5 @@
 """NrdrLatPidFirmwareFF (STATUS 175): the EPS firmware-inversion feedforward in the NRDR PID, in turns only."""
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -92,6 +93,8 @@ def test_trailing_rejoin_after_hold_off_only_when_short_of_the_turn():
   # a press still drops it, and the default since_press_s leaves the old join law unchanged
   assert nrdr_pid_eps_ff_weight(1.0, 20.0, 60.0, 10.0, True, DT_CTRL, since_press_s=10.0) == (0.0, 0.0)
   assert nrdr_pid_eps_ff_weight(0.0, 20.0, 60.0, 10.0, False, DT_CTRL) == (0.0, 0.0)
+  # no press yet this engagement (since_press_s inf): an engagement 20 deg short of the turn waits for the 10 deg join
+  assert nrdr_pid_eps_ff_weight(0.0, 20.0, 60.0, 10.0, False, DT_CTRL, since_press_s=math.inf) == (0.0, 0.0)
 
 
 def test_trailing_rejoin_off_with_infinite_hold(monkeypatch):

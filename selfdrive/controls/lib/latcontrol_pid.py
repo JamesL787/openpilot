@@ -218,17 +218,20 @@ NRDR_PID_EPS_FF_ANGLE_BP = (10.0, 30.0)
 # path +0.28 (27a right 1.46 -> 2.79, 28b left 1.75 -> 2.43); 0 s gained more but fires while the hand comes back
 # (road: 64 % of joins meet a press within 0.5 s, 43 % at 0.5 s), 1.0 s kept half as much. A re-grab usually pushes
 # against the turn (50 of 60), which replay cannot score: John's sim re-grab row is pending. inf turns it off.
+# Only after a real release: since_press_s is inf from engagement until the first press, and 1a0dc489e let that
+# through, so it also joined at a mid-turn engagement 20-70 deg short (James, static). An inf since_press_s never joins.
 NRDR_PID_EPS_FF_REJOIN_HOLD_S = 0.5
 
 
 def nrdr_pid_eps_ff_weight(ramp, error_deg, desired_angle_deg, v_ego, steering_pressed, dt, since_press_s=0.0):
   """Returns (ramp, weight). The ramp is the join state; the weight is what multiplies the feedforward.
-  since_press_s: time since the last press, for the trailing rejoin (the default 0 leaves it out)."""
+  since_press_s: time since the last press, for the trailing rejoin (the default 0 leaves it out; inf, no press yet
+  this engagement, leaves it out too)."""
   if steering_pressed or v_ego < NRDR_PID_EPS_FF_SPEED_BP[0]:
     ramp = 0.0
   elif ramp > 0.0 or abs(error_deg) < NRDR_PID_EPS_FF_JOIN_ERROR_DEG:
     ramp = min(1.0, ramp + dt / NRDR_PID_EPS_FF_FADE_IN_S)
-  elif error_deg * desired_angle_deg > 0.0 and since_press_s >= NRDR_PID_EPS_FF_REJOIN_HOLD_S:
+  elif error_deg * desired_angle_deg > 0.0 and NRDR_PID_EPS_FF_REJOIN_HOLD_S <= since_press_s < math.inf:
     ramp = min(1.0, ramp + dt / NRDR_PID_EPS_FF_FADE_IN_S)
   speed_w = float(np.interp(v_ego, NRDR_PID_EPS_FF_SPEED_BP, (0.0, 1.0)))
   angle_w = float(np.interp(abs(desired_angle_deg), NRDR_PID_EPS_FF_ANGLE_BP, (0.0, 1.0)))
