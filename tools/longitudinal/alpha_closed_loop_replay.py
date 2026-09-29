@@ -341,6 +341,28 @@ def vision_view(model, v_ego: float) -> dict | None:
   return {"p": float(ld.prob), "x": x, "v": v, "a": a, "req": req}
 
 
+def _r(x: float, nd: int = 2):
+  x = float(x)
+  return round(x, nd) if math.isfinite(x) else None
+
+
+def viz_view(rd, rs) -> dict:
+  """Every radard track and both published leads, for tools/longitudinal/long_replay_viewer.py.
+
+  tr: [id, dRel, yRel, native vRel, vRelRange, measured] per track. l1/l2: [dRel, yRel, published vRel,
+  native vRel of its track, vRelRangeDerived, track id, radar, modelProb], or None."""
+  tr = [[int(k), _r(t.dRel), _r(t.yRel), _r(t.vRel), _r(t.vRelRange), int(bool(t.measured))] for k, t in rd.tracks.items()]
+
+  def lead(ld):
+    if not ld.status:
+      return None
+    tid = int(ld.radarTrackId)
+    native = rd.tracks[tid].vRel if ld.radar and tid in rd.tracks else float("nan")
+    return [_r(ld.dRel), _r(ld.yRel), _r(ld.vRel), _r(native), _r(ld.vRelRangeDerived), tid, int(bool(ld.radar)),
+            _r(ld.modelProb, 3)]
+  return {"tr": tr, "l1": lead(rs.leadOne), "l2": lead(rs.leadTwo)}
+
+
 def hf_gated_model_lead_trajectory(builder, lead_detection_probability, fired):
   """The shipped HumanFollowing builder, refused when the radar lead is not vision-matched (FrogPilot e7debabe5)."""
   def build(model_lead, radar_lead, v_ego, *args, **kwargs):
@@ -606,8 +628,10 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
         "vis": vision_view(model, float(cs.vEgo)),
         "lead": lead_view(lr, model, bearings), "lead_logged_bearing":
           abs(float(lg.yRel)) / max(float(lg.dRel), 1.0) if lg.status and lg.radar else None,
+        "viz": viz_view(rd, rs),
       })
   meta["agreement"] = agree
+  meta["t0_mono"] = t0
   meta["variants"] = variants
   return frames, meta
 

@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<!-- Template for tools/longitudinal/long_replay_viewer.py. The script replaces the DATA marker with the event's JSON. -->
+<html><head><meta charset="utf-8"><title>Longitudinal replay viewer</title>
+<style>
+body{margin:0;background:#121216;color:#ddd;font:12px/1.35 ui-monospace,Menlo,Consolas,monospace}
+#top{display:flex;gap:10px;padding:6px 10px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #333}
+#top button{background:#2a2a33;color:#eee;border:1px solid #444;padding:3px 8px;cursor:pointer}
+#main{display:flex;gap:8px;padding:8px}
+#left{flex:0 0 440px}
+#right{flex:1;min-width:500px}
+canvas{display:block;background:#0a0c10}
+#scrub{width:100%}
+.strip{margin-bottom:4px;cursor:crosshair}
+table{border-collapse:collapse}
+td,th{padding:1px 6px;border-bottom:1px solid #2a2a2a;text-align:right}
+th{color:#999;font-weight:normal}
+td:first-child,th:first-child{text-align:left}
+.k{color:#999}
+#events span{cursor:pointer;margin-right:10px;white-space:nowrap}
+#events span:hover{text-decoration:underline}
+.warn{color:#ffb703}
+#legend span{margin-right:10px;white-space:nowrap}
+</style></head><body>
+<div id="top">
+  <b>Longitudinal replay viewer</b><span class="k" id="hdr"></span>
+  <button id="play">play</button>
+  <select id="speed"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option></select>x
+  <button id="back">&lt;</button><button id="fwd">&gt;</button>
+  range <select id="range"><option>40</option><option selected>100</option><option>160</option></select> m
+  <span id="vtoggles"></span>
+</div>
+<div style="padding:0 10px"><input type="range" id="scrub" min="0" value="0"></div>
+<div id="main">
+  <div id="left">
+    <canvas id="bev" width="440" height="700"></canvas>
+    <div id="legend" style="margin-top:6px"></div>
+  </div>
+  <div id="right">
+    <div id="strips"></div>
+    <div id="events" style="margin:6px 0"></div>
+    <div id="readout"></div>
+    <h4 style="margin:10px 0 4px">Metrics (replay)</h4>
+    <div id="metrics"></div>
+  </div>
+</div>
+<script>
+const D = /*__DATA__*/null;
+const M = D.meta, N = D.t.length, T = D.t;
+const COL = {drive:'#ebebeb','b0.075':'#3ddc84',mvl:'#ff9f1c',mvlvis:'#c77dff',mvl50:'#ffd60a',nobound:'#4cc9f0',logged:'#8d99ae'};
+const EXTRA = ['#ef476f','#06d6a0','#118ab2','#ffd166'];
+M.variants.forEach((v,k)=>{ if(!COL[v]) COL[v]=EXTRA[k%EXTRA.length]; });
+const on = {}; M.variants.forEach(v=>on[v] = (v!=='nobound' && v!=='logged'));
+let i = 0, playing = false, range = 100, lastTs = null, tPlay = T[0];
+
+const $ = id => document.getElementById(id);
+const col = (recs,k) => recs.map(r => (r && r[k] !== undefined && r[k] !== null) ? r[k] : null);
+const sub = (a,b) => a.map((x,j)=> x===null||b[j]===null ? null : x-b[j]);
+const add = (a,b) => a.map((x,j)=> x===null||b[j]===null ? null : x+b[j]);
+const f = (x,n=2) => x===null||x===undefined ? '-' : (typeof x === 'number' ? x.toFixed(n) : String(x));
+
+$('hdr').textContent = `${M.route_dir.split('/').slice(-1)[0]}  window ${M.window.join('..')} s  sim ${M.sim_window?M.sim_window.join('..'):'none'}  build ${M.git_commit||'?'}  tracks: ${M.has_viz?'replay (this tree)':'LOG ONLY (frames predate viz)'}`;
+$('scrub').max = N-1;
+
+// ---- variant toggles
+for (const v of M.variants) {
+  const l = document.createElement('label');
+  l.style.color = COL[v];
+  l.innerHTML = `<input type="checkbox" ${on[v]?'checked':''}> ${v}${M.sim_variants.includes(v)?'':' (open loop)'} `;
+  l.firstChild.onchange = e => { on[v] = e.target.checked; buildStrips(); draw(); };
+  $('vtoggles').appendChild(l);
+}
+
+// ---- strips
+const L1 = D.L1rep, L1l = D.L1log;
+const vis = D.vis;
+const visVr = sub(col(vis,2), D.v);
+const d1 = col(L1,0);
+function stripDefs() {
+  const sims = M.sim_variants.filter(v=>on[v]);
+  const opens = M.variants.filter(v=>on[v] && !M.sim_variants.includes(v));
+  const s = [];
+  s.push({title:'speed m/s', series:[{n:'drive', a:D.v, c:COL.drive}].concat(sims.map(v=>({n:v, a:D.simv[v], c:COL[v], drift:M.drift[v]})))});
+  s.push({title:'accel m/s²', zero:true, series:[{n:'drive cmd', a:D.acmd, c:COL.drive}, {n:'drive aEgo', a:D.a, c:'#888', dash:[4,3]}]
+    .concat(sims.map(v=>({n:v+' target', a:D.out[v], c:COL[v], drift:M.drift[v]})))
+    .concat(sims.map(v=>({n:v+' a', a:D.sima[v], c:COL[v], dash:[4,3], drift:M.drift[v]})))
+    .concat(opens.map(v=>({n:v+' target', a:D.out[v], c:COL[v], w:1})))});
+  s.push({title:'dRel / gap m', series:[{n:'vision x', a:col(vis,0), c:'#4895ef', w:1}, {n:'L1 log', a:col(L1l,0), c:'#7a3c3c', w:1},
+    {n:'L1 replay', a:d1, c:'#e63946'}].concat(sims.map(v=>({n:v+' gap', a:add(d1, D.gs[v]), c:COL[v], dash:[6,3], drift:M.drift[v]})))});
+  s.push({title:'vRel m/s', zero:true, series:[{n:'vision', a:visVr, c:'#4895ef', w:1}, {n:'log published', a:col(L1l,2), c:'#7a3c3c', w:1},
+    {n:'range-derived', a:col(L1,4), c:'#4cc9f0'}, {n:'native', a:col(L1,3), c:'#ff9f1c'}, {n:'published', a:col(L1,2), c:'#e63946'}]});
+  s.push({title:'lead source', lanes:true});
+  s.push({title:'model prob', fixed:[0,1], series:[{n:'lead0 p', a:col(vis,3), c:'#4895ef'}, {n:'lead1 p', a:col(D.vis2,3), c:'#2a5a8f', w:1},
+    {n:'L1 modelProb', a:col(L1,7), c:'#e63946', w:1}], hline:M.vis_prob});
+  return s;
+}
+let strips = [];
+function tx(cv, t) { return 50 + (t - T[0]) / (T[N-1] - T[0]) * (cv.width - 60); }
+function buildStrips() {
+  const host = $('strips'); host.innerHTML = ''; strips = [];
+  const W = host.clientWidth || 800;
+  for (const s of stripDefs()) {
+    const cv = document.createElement('canvas'); cv.className = 'strip';
+    cv.width = W; cv.height = s.lanes ? 70 : 118;
+    host.appendChild(cv);
+    const off = document.createElement('canvas'); off.width = cv.width; off.height = cv.height;
+    renderStrip(off, s); strips.push({cv, off, s});
+    cv.onmousedown = e => { seekX(cv, e); cv.onmousemove = ev => seekX(cv, ev); };
+    cv.onmouseup = cv.onmouseleave = () => { cv.onmousemove = null; };
+  }
+}
+function seekX(cv, e) {
+  const r = cv.getBoundingClientRect();
+  const t = T[0] + (e.clientX - r.left - 50) / (cv.width - 60) * (T[N-1] - T[0]);
+  seekT(t);
+}
+function renderStrip(cv, s) {
+  const g = cv.getContext('2d'), W = cv.width, H = cv.height;
+  g.fillStyle = '#0a0c10'; g.fillRect(0,0,W,H);
+  g.font = '11px monospace';
+  // engaged / brake band
+  for (let k=0;k<N-1;k++) {
+    if (!D.eng[k]) { g.fillStyle='#5a1e1e'; g.fillRect(tx(cv,T[k]),0,tx(cv,T[k+1])-tx(cv,T[k])+1,3); }
+    if (D.brk[k]) { g.fillStyle='#b00'; g.fillRect(tx(cv,T[k]),3,tx(cv,T[k+1])-tx(cv,T[k])+1,3); }
+  }
+  if (M.sim_window) { g.fillStyle='#1b1b24'; const a=tx(cv,M.sim_window[0]), b=tx(cv,M.sim_window[1]); g.fillRect(a,6,b-a,H-22); }
+  for (const e of D.events) {
+    if (e.kind!=='onpath' && e.kind!=='adopt') continue;
+    g.strokeStyle = e.kind==='adopt' ? '#8c6e14' : '#4a3c10'; g.setLineDash([2,2]);
+    g.beginPath(); g.moveTo(tx(cv,e.t),6); g.lineTo(tx(cv,e.t),H-16); g.stroke(); g.setLineDash([]);
+  }
+  g.fillStyle='#bbb'; g.fillText(s.title, 2, 16);
+  if (s.lanes) { renderLanes(cv, g); return; }
+  let lo=Infinity, hi=-Infinity;
+  if (s.fixed) { [lo,hi] = s.fixed; } else {
+    const vals = [];
+    for (const se of s.series) for (const x of se.a) if (x!==null && isFinite(x)) vals.push(x);
+    vals.sort((a,b)=>a-b);
+    if (vals.length) { lo = vals[Math.floor(vals.length*0.005)]; hi = vals[Math.ceil(vals.length*0.995)-1]; }
+    if (s.zero) { lo = Math.min(lo,0); hi = Math.max(hi,0); }
+    if (!isFinite(lo)) { lo=-1; hi=1; }
+    if (hi-lo<1) { lo-=0.5; hi+=0.5; }
+    const p=(hi-lo)*0.08; lo-=p; hi+=p;
+  }
+  const y = x => 8 + (hi - x) / (hi - lo) * (H - 26);
+  g.fillStyle='#777';
+  for (const v of [lo,(lo+hi)/2,hi]) g.fillText(v.toFixed(1), 2, Math.min(Math.max(y(v)+4,26),H-18));
+  g.strokeStyle='#333';
+  if (lo<0 && hi>0) { g.beginPath(); g.moveTo(50,y(0)); g.lineTo(W-10,y(0)); g.stroke(); }
+  if (s.hline!==undefined) { g.setLineDash([3,3]); g.beginPath(); g.moveTo(50,y(s.hline)); g.lineTo(W-10,y(s.hline)); g.stroke(); g.setLineDash([]); }
+  for (const se of s.series) {
+    g.lineWidth = se.w || 1.6; g.setLineDash(se.dash || []);
+    let pen = false, grey = null;
+    g.beginPath(); g.strokeStyle = se.c;
+    for (let k=0;k<N;k++) {
+      const x = se.a[k];
+      if (x===null || !isFinite(x) || x<lo-1e3) { pen=false; continue; }
+      if (se.drift!==undefined && grey===null && T[k]>=se.drift) {
+        g.stroke(); g.beginPath(); g.strokeStyle='#555'; grey=k; pen=false;
+      }
+      const X=tx(cv,T[k]), Y=Math.min(Math.max(y(x),6),H-16);
+      if (pen) g.lineTo(X,Y); else g.moveTo(X,Y);
+      pen = true;
+    }
+    g.stroke();
+  }
+  g.setLineDash([]); g.lineWidth=1;
+  for (const [v,td] of Object.entries(M.drift)) {
+    if (!on[v]) continue;
+    g.fillStyle='rgba(80,80,80,0.25)'; g.fillRect(tx(cv,td),6,W-10-tx(cv,td),H-22);
+  }
+  let lx = 50;
+  for (const se of s.series) { g.fillStyle = se.c; g.fillText(se.n, lx, H-3); lx += g.measureText(se.n).width + 12; }
+}
+function renderLanes(cv, g) {
+  const rows = [['L1 replay', k => L1[k], 5, 6], ['L1 log', k => L1l[k], 4, 5]];
+  const W = cv.width;
+  rows.forEach(([name, get, ti, ri], r) => {
+    const y0 = 8 + r*16;
+    g.fillStyle='#999'; g.fillText(name, W-80, y0+11);
+    let prev = undefined;
+    for (let k=0;k<N-1;k++) {
+      const L = get(k);
+      const key = L===null ? 'none' : (L[ri] ? 'r'+L[ti] : 'vision');
+      g.fillStyle = L===null ? '#1a1a1a' : (L[ri] ? '#7d2a30' : '#1f3d66');
+      g.fillRect(tx(cv,T[k]), y0, tx(cv,T[k+1])-tx(cv,T[k])+1, 13);
+      if (key!==prev) { g.fillStyle='#eee'; g.fillText(key==='none'?'-':key.startsWith('r')?'#'+key.slice(1):'vis', tx(cv,T[k])+2, y0+11); prev=key; }
+    }
+  });
+  const sims = M.variants.filter(v=>on[v]).slice(0,2);
+  sims.forEach((v, r) => {
+    const y0 = 40 + r*14;
+    g.fillStyle=COL[v]; g.fillText(v+' src', W-80, y0+10);
+    let prev;
+    for (let k=0;k<N;k++) { const s = D.src[v][k]; if (s!==prev) { g.fillText(String(s), tx(cv,T[k])+2, y0+10); g.fillRect(tx(cv,T[k]), y0, 1, 12); prev=s; } }
+  });
+}
+
+// ---- bird's-eye view
+function drawBev() {
+  const cv = $('bev'), g = cv.getContext('2d'), W = cv.width, H = cv.height;
+  const ox = W/2, oy = H-60, lat = 16, fs = (H-100)/range;
+  const P = (d,l) => [ox - l*lat, oy - d*fs];
+  g.fillStyle='#0a0c10'; g.fillRect(0,0,W,H);
+  g.font='11px monospace';
+  const step = range<=40?5:range<=100?10:20;
+  for (let d=0; d<=range; d+=step) { const [,yy]=P(d,0); g.strokeStyle='#23262d'; g.beginPath(); g.moveTo(0,yy); g.lineTo(W,yy); g.stroke(); g.fillStyle='#5a5a64'; g.fillText(d+'', 3, yy-2); }
+  const path = D.path[i];
+  if (path && path[0].length > 1) {
+    const L=[], R=[], C=[];
+    path[0].forEach((x,k)=>{ if (x<=range*1.05) { L.push(P(x,path[1][k]+M.onpath_half_m)); R.push(P(x,path[1][k]-M.onpath_half_m)); C.push(P(x,path[1][k])); }});
+    g.fillStyle='rgba(40,110,60,0.25)'; g.beginPath(); L.concat(R.reverse()).forEach(([a,b],k)=>k?g.lineTo(a,b):g.moveTo(a,b)); g.fill();
+    g.strokeStyle='#3c8c50'; g.lineWidth=2; g.beginPath(); C.forEach(([a,b],k)=>k?g.lineTo(a,b):g.moveTo(a,b)); g.stroke(); g.lineWidth=1;
+  }
+  (D.lanes[i]||[]).forEach((ln,k) => {
+    if (!ln || ln[0].length<2) return;
+    const p = (D.lprob[i]||[])[k]; g.strokeStyle = `rgba(200,180,70,${0.2+0.8*(p||0)})`;
+    g.beginPath(); ln[0].forEach((x,j)=>{ if(x<=range*1.05){ const [a,b]=P(x,ln[1][j]); j?g.lineTo(a,b):g.moveTo(a,b);} }); g.stroke();
+  });
+  if (D.trlog) for (const [tid,d,y] of D.trlog[i]) { if (d===null||d>range) continue; const [x,yy]=P(d,y); g.strokeStyle='#555'; g.strokeRect(x-2,yy-2,4,4); }
+  const onp = new Set(D.onpath[i]);
+  for (const [tid,d,y,vr,meas] of D.tr[i]) {
+    if (d===null || d>range) continue;
+    const [x,yy] = P(d,y); const c = onp.has(tid) ? '#ffd60a' : '#8c8c96';
+    g.strokeStyle=g.fillStyle=c; g.beginPath(); g.arc(x,yy,4,0,7); meas?g.fill():g.stroke();
+    g.fillText(`${tid} ${vr===null?'':(vr>=0?'+':'')+vr.toFixed(1)}`, x+6, yy+4);
+  }
+  for (const [lead, c, lab] of [[vis[i],'#4895ef','vis0'],[D.vis2[i],'#2a5a8f','vis1']]) {
+    if (!lead || lead[0]===null || lead[3]===null || lead[3]<0.2 || lead[0]>range) continue;
+    const [x,yy]=P(lead[0],lead[1]); g.strokeStyle=c; g.lineWidth=2; g.globalAlpha=0.3+0.7*lead[3];
+    g.beginPath(); g.moveTo(x,yy-9); g.lineTo(x+9,yy); g.lineTo(x,yy+9); g.lineTo(x-9,yy); g.closePath(); g.stroke();
+    g.fillStyle=c; g.fillText(`${lab} p${lead[3].toFixed(2)}`, x-88, yy+4); g.globalAlpha=1; g.lineWidth=1;
+  }
+  const box = (L, c, lab, ti, ri, dy, dash) => {
+    if (!L || L[0]===null || L[0]>range) return;
+    const [x,yy]=P(L[0],L[1]); g.strokeStyle=c; g.lineWidth=2; g.setLineDash(dash||[]);
+    g.strokeRect(x-0.9*lat, yy-12, 1.8*lat, 14); g.setLineDash([]); g.lineWidth=1;
+    g.fillStyle=c; g.fillText(`${lab} ${L[ri]?'#'+L[ti]:'vision'}`, x+0.9*lat+4, yy+dy);
+  };
+  box(L1l[i], '#a05050', 'log L1', 4, 5, -14, [3,3]);
+  box(D.L2rep[i], '#ff8c00', 'L2', 5, 6, 14);
+  box(L1[i], '#e63946', 'L1', 5, 6, 0);
+  // ego and sim cars (gap_shift > 0 = the sim car is behind the logged one)
+  g.fillStyle='#ebebeb'; g.fillRect(ox-0.9*lat, oy, 1.8*lat, 4.5*fs+4);
+  let k=0, banner=[];
+  for (const v of M.sim_variants) {
+    if (!on[v]) continue;
+    const gs = D.gs[v][i]; if (gs===null) continue;
+    const drifted = Math.abs(gs) > M.drift_m; if (drifted) banner.push(`${v} ${gs.toFixed(1)} m`);
+    const c = drifted ? '#666' : COL[v]; k++;
+    const yy = oy + gs*fs;
+    g.strokeStyle=g.fillStyle=c; g.lineWidth=2;
+    if (yy > H-20) g.fillText(`▼ ${v} ${(-gs).toFixed(1)} m`, 10, H-20-12*(k-1));
+    else { g.strokeRect(ox-0.9*lat-2*k, yy, 1.8*lat+4*k, 4.5*fs+4); g.fillText(`${v} ${(-gs)>=0?'+':''}${(-gs).toFixed(1)} m`, ox+0.9*lat+2*k+4, yy+10+12*(k-1)); }
+    g.lineWidth=1;
+  }
+  if (banner.length) {
+    g.fillStyle='rgba(60,60,60,0.55)'; g.fillRect(0,0,W,H);
+    g.fillStyle='#ffb703'; g.font='13px monospace';
+    g.fillText(`SIM DRIFT > ${M.drift_m} m: ${banner.join(', ')}`, 8, 40);
+    g.fillText('camera/radar world no longer matches that sim car', 8, 56);
+  }
+  g.font='13px monospace'; g.fillStyle='#eee';
+  g.fillText(`t ${T[i].toFixed(2)} s  v ${f(D.v[i],1)}  aEgo ${f(D.a[i])}  ${D.eng[i]?'engaged':'NOT ENGAGED'}${D.brk[i]?' BRAKE':''}`, 8, 18);
+}
+
+// ---- readout
+function readout() {
+  const rows = [];
+  const lead = (L, ti, ri, vn, vrr) => L ? `d ${f(L[0],1)} y ${f(L[1],1)} vRel ${f(L[2])} native ${f(vn)} range ${f(vrr)} ${L[ri]?'#'+L[ti]:'vision'}` : 'none';
+  rows.push(['L1 replay', lead(L1[i],5,6, L1[i]&&L1[i][3], L1[i]&&L1[i][4])]);
+  rows.push(['L2 replay', lead(D.L2rep[i],5,6, D.L2rep[i]&&D.L2rep[i][3], D.L2rep[i]&&D.L2rep[i][4])]);
+  rows.push(['L1 log', lead(L1l[i],4,5, L1l[i]&&L1l[i][7], L1l[i]&&L1l[i][3])]);
+  const vv = vis[i];
+  rows.push(['vision lead0', vv ? `d ${f(vv[0],1)} y ${f(vv[1],1)} vRel ${f(vv[2]!==null?vv[2]-D.v[i]:null)} p ${f(vv[3])}` : 'none']);
+  rows.push(['on-path tracks', D.onpath[i].join(', ') || '-']);
+  let h = '<table>' + rows.map(r=>`<tr><td class="k">${r[0]}</td><td style="text-align:left">${r[1]}</td></tr>`).join('') + '</table>';
+  h += '<table style="margin-top:4px"><tr><th>variant</th><th>a_target</th><th>src</th><th>sim v</th><th>sim a</th><th>gap_shift</th></tr>';
+  h += `<tr><td style="color:${COL.drive}">drive</td><td>${f(D.acmd[i])}</td><td></td><td>${f(D.v[i])}</td><td>${f(D.a[i])}</td><td></td></tr>`;
+  for (const v of M.variants) {
+    const sim = M.sim_variants.includes(v);
+    h += `<tr><td style="color:${COL[v]}">${v}</td><td>${f(D.out[v][i])}</td><td>${D.src[v][i]}</td><td>${sim?f(D.simv[v][i]):''}</td><td>${sim?f(D.sima[v][i]):''}</td><td>${sim?f(D.gs[v][i],1):''}</td></tr>`;
+  }
+  $('readout').innerHTML = h + '</table>';
+}
+
+function metricsTable() {
+  const c = D.metrics.common, per = D.metrics.per;
+  let h = '<table><tr><th></th><th>min gap m</th><th>min TTC s</th><th>max decel</th><th>felt jerk rms</th><th>felt jerk max</th><th>max cmd jerk</th><th>cmd onset lag</th><th>aEgo onset lag</th><th>cmd→aEgo</th><th>cut at drift</th></tr>';
+  for (const [v,r] of Object.entries(per)) {
+    if (r.open_loop) continue;
+    h += `<tr><td style="color:${COL[v]||'#eee'}">${v}</td>` + ['min_gap_m','min_ttc_s','max_decel','felt_jerk_rms','felt_jerk_max','max_cmd_jerk','cmd_onset_lag_s','a_onset_lag_s','cmd_to_a_lag_s','cut_at_drift'].map(k=>`<td>${f(r[k])}</td>`).join('') + '</tr>';
+  }
+  h += '</table><table style="margin-top:6px"><tr><th>open-loop variant</th><th>min a_target</th><th>max cmd jerk</th><th>onset lag</th></tr>';
+  for (const [v,r] of Object.entries(per)) if (r.open_loop) h += `<tr><td style="color:${COL[v]}">${v}</td><td>${f(r.min_cmd)}</td><td>${f(r.max_cmd_jerk)}</td><td>${f(r.cmd_onset_lag_s)}</td></tr>`;
+  h += '</table><table style="margin-top:6px">';
+  const adop = g => g.map(a=>`#${a.track}: on-path ${f(a.onpath_t)} s at ${f(a.d_at_onpath,1)} m → L1 ${f(a.adopt_t)} s, lag ${a.since_window_start?'≥':''}${f(a.lag_s)} s`).join('<br>') || '-';
+  const rows = [['lead event t (first adoption in window)', f(c.lead_event_t)], ['first on-path → leadOne (replay)', adop(c.adoption)]];
+  if (c.adoption_log) rows.push(['first on-path → leadOne (log)', adop(c.adoption_log)]);
+  rows.push(['max extra closing, native − published vRel (replay / log)', `${f(c.max_extra_closing_vrel)} / ${f(c.max_extra_closing_vrel_log)}`],
+            ['max |native − range-derived| vRel', f(c.max_native_minus_rangederived_vrel)],
+            ['longest vision-lead-without-radar-L1 run s', f(c.lead_dropout_s)],
+            ['radar vs vision dRel err median / max m', `${f(c.radar_vs_vision_d_err_median)} / ${f(c.radar_vs_vision_d_err_max)}`],
+            ['replay/log agreement', M.agreement ? `both-lead ${M.agreement.both}: same track ${(100*M.agreement.track/Math.max(M.agreement.both,1)).toFixed(0)}%, |dRel|<1m ${(100*M.agreement.d1m/Math.max(M.agreement.both,1)).toFixed(0)}%` : '-']);
+  h += rows.map(r=>`<tr><td class="k">${r[0]}</td><td style="text-align:left">${r[1]}</td></tr>`).join('') + '</table>';
+  $('metrics').innerHTML = h;
+  $('events').innerHTML = 'events: ' + D.events.map(e=>`<span data-t="${e.t}" style="color:${e.kind==='drift'?'#999':e.kind==='onset'?'#ff9f1c':'#ffd60a'}">${e.t.toFixed(2)} ${e.label}</span>`).join('');
+  for (const s of $('events').querySelectorAll('span')) s.onclick = () => seekT(+s.dataset.t);
+}
+$('legend').innerHTML = [
+  ['#ffd60a','● on-path track (≤'+M.onpath_half_m+' m from model path)'],['#8c8c96','● other track (hollow = coasted)'],
+  ['#e63946','□ L1 replay'],['#ff8c00','□ L2 replay'],['#a05050','□ log L1 (dashed)'],['#4895ef','◇ model lead'],
+  ['#3c8c50','model path ±'+M.onpath_half_m+' m'],['#ebebeb','■ logged car'],['#aaa','□ sim cars at −gap_shift'],
+  ...(M.has_viz ? [['#555','▫ logged liveTracks']] : [])].map(([c,t])=>`<span style="color:${c}">${t}</span>`).join('');
+
+// ---- control
+function draw() {
+  drawBev();
+  for (const {cv, off} of strips) {
+    const g = cv.getContext('2d'); g.drawImage(off,0,0);
+    g.strokeStyle='#fff'; g.beginPath(); g.moveTo(tx(cv,T[i]),0); g.lineTo(tx(cv,T[i]),cv.height); g.stroke();
+  }
+  readout();
+  $('scrub').value = i;
+}
+function seekT(t) { let k = 0; while (k < N-1 && T[k+1] <= t) k++; i = k; tPlay = T[i]; draw(); }
+$('scrub').oninput = e => { i = +e.target.value; tPlay = T[i]; draw(); };
+$('play').onclick = () => { playing = !playing; $('play').textContent = playing ? 'pause' : 'play'; lastTs = null; if (playing) requestAnimationFrame(tick); };
+$('back').onclick = () => { i = Math.max(0,i-1); tPlay=T[i]; draw(); };
+$('fwd').onclick = () => { i = Math.min(N-1,i+1); tPlay=T[i]; draw(); };
+$('range').onchange = e => { range = +e.target.value; draw(); };
+document.onkeydown = e => {
+  if (e.key===' ') { e.preventDefault(); $('play').click(); }
+  if (e.key==='ArrowLeft') $('back').click();
+  if (e.key==='ArrowRight') $('fwd').click();
+};
+function tick(ts) {
+  if (!playing) return;
+  if (lastTs !== null) tPlay += (ts - lastTs) / 1000 * +$('speed').value;
+  lastTs = ts;
+  if (tPlay >= T[N-1]) { tPlay = T[0]; }
+  while (i < N-1 && T[i+1] <= tPlay) i++;
+  if (T[i] > tPlay) i = 0;
+  draw(); requestAnimationFrame(tick);
+}
+window.onresize = () => { buildStrips(); draw(); };
+buildStrips(); metricsTable(); draw();
+</script></body></html>
