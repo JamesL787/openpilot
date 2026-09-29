@@ -835,9 +835,13 @@ def _bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap):
         bursts[-1][1], bursts[-1][2] = i, bursts[-1][2] + 1
       else:
         bursts.append([p, i, 2])
-    add([(p, i, k) for p, i, k in bursts],
-        lambda p, i, k: base("exp_flipflop", p, flips=k, burst_s=_r(t[i] - t[p], 2), experimental_after=bool(x[i] > 0.5),
-                             standstill=int(standstill[p]), **mode(p)))   # Bob: stopped bursts are a separate CEM issue
+    # Bob: stopped bursts are a separate CEM issue (standstill), and a burst with long control off the whole time never
+    # reached the car (long_active False: kept in the analysis and the CSVs, left out of the drive's list). The cap
+    # applies to each group, so the off bursts never crowd the listed ones out.
+    ff = [base("exp_flipflop", p, flips=k, burst_s=_r(t[i] - t[p], 2), experimental_after=bool(x[i] > 0.5),
+               standstill=int(standstill[p]), long_active=bool(np.any(on[p:i + 1])), **mode(p)) for p, i, k in bursts]
+    for grp in ([e for e in ff if e["long_active"]], [e for e in ff if not e["long_active"]]):
+      out.extend(grp[:cap] if cap else grp)
 
   if has(c, "red_light"):
     def red(i):
