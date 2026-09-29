@@ -321,8 +321,11 @@ def build(frames_path: Path, route_dir: Path | None, window: tuple[float, float]
 
 # ---------------------------------------------------------------------------------------------- camera
 
-def _qcamera_path(qdir: Path, seg: int) -> Path | None:
-  for p in (qdir / str(seg) / "qcamera.ts", *sorted(qdir.glob(f"*--{seg}/qcamera.ts"))):
+def _qcamera_path(qdir: Path, seg: int, route: str) -> Path | None:
+  # Only this route's own segments: a shared dir holds other routes with the same segment numbers, and a
+  # bare *--<seg> glob embedded another drive's video behind the radar tracks.
+  name = route.split("|")[-1]
+  for p in (qdir / str(seg) / "qcamera.ts", *sorted(qdir.glob(f"*{name}--{seg}/qcamera.ts"))):
     if p.exists():
       return p
   return None
@@ -339,7 +342,7 @@ def add_camera(D: dict, qdir: Path) -> None:
   where: dict[tuple[int, int], int] = {}
   size = None
   for seg, ids in sorted(need.items()):
-    path = _qcamera_path(qdir, seg)
+    path = _qcamera_path(qdir, seg, Path(D["meta"]["route_dir"]).name)
     if path is None:
       print(f"no qcamera.ts for segment {seg} under {qdir}", file=sys.stderr)
       continue
@@ -1121,7 +1124,7 @@ def main() -> int:
   ap.add_argument("--range", type=float, default=100.0, help="bird's-eye forward range for the mp4, m")
   ap.add_argument("--variants", help="comma list of sim variants drawn in the mp4 (default: all but nobound/logged)")
   ap.add_argument("--metrics-json", type=Path)
-  ap.add_argument("--qcamera-dir", type=Path, help="dir with <seg>/qcamera.ts or <route>--<seg>/qcamera.ts "
+  ap.add_argument("--qcamera-dir", type=Path, help="dir with <seg>/qcamera.ts or <route>--<seg>/qcamera.ts (this route only) "
                   + "(default: the route dir); the page shows the road camera with the radar tracks drawn on it")
   ap.add_argument("--no-camera", action="store_true")
   args = ap.parse_args()
