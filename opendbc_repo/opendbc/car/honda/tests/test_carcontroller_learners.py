@@ -59,6 +59,8 @@ from opendbc.car.honda.carcontroller import (  # noqa: E402
   _FACTOR_FILTER_ALPHA,
   _PITCH_DEADBAND,
   LEARN_VERSION,
+  CIVIC_BOSCH_HILL_GAS_GAIN,
+  CIVIC_BOSCH_PITCH_BIAS,
   bosch_gas_lookup_accel,
 )
 
@@ -550,6 +552,66 @@ class TestHillTermOutsideGasfactor(unittest.TestCase):
 
   def test_min_gas_anchor(self):
     self.assertAlmostEqual(bosch_gas_lookup_accel(0.5, 0.2, 1.2, 0.1), (0.5 - 0.2 - 0.1) * 1.2 + 0.1 + 0.2)
+
+class TestCivicHillGain(unittest.TestCase):
+  """Offline gas fit (26 routes): the Civic hill term needs gain ~1.2 about the CC pitch bias."""
+
+  LEVEL = math.sin(CIVIC_BOSCH_PITCH_BIAS) * 9.81
+
+  def test_level_road_gas_unchanged(self):
+    # At the pitch bias (true level road) the Civic law equals the shipped law exactly.
+    for gf in (0.8, 1.0, 1.43):
+      for accel in (0.0, 0.3, 1.2):
+        f = accel + self.LEVEL
+        self.assertAlmostEqual(bosch_gas_lookup_accel(f, self.LEVEL, gf, 0.0, CIVIC_BOSCH_HILL_GAS_GAIN, self.LEVEL),
+                               bosch_gas_lookup_accel(f, self.LEVEL, gf, 0.0))
+
+  def test_climb_gets_gain(self):
+    accel, hill, gf = 0.05, 0.69, 1.248
+    out = bosch_gas_lookup_accel(accel + hill, hill, gf, 0.0, CIVIC_BOSCH_HILL_GAS_GAIN, self.LEVEL)
+    self.assertAlmostEqual(out, accel * gf + hill + (CIVIC_BOSCH_HILL_GAS_GAIN - 1.0) * (hill - self.LEVEL))
+    self.assertGreater(out, bosch_gas_lookup_accel(accel + hill, hill, gf, 0.0))  # more gas than shipped
+    self.assertLess(out, (accel + hill) * gf)  # less than the pre-8cb8af187 law at this gasfactor
+
+  def test_descent_cuts_more_gas(self):
+    hill = -0.4
+    self.assertLess(bosch_gas_lookup_accel(0.6 + hill, hill, 1.0, 0.0, CIVIC_BOSCH_HILL_GAS_GAIN, self.LEVEL),
+                    bosch_gas_lookup_accel(0.6 + hill, hill, 1.0, 0.0))
+
+  def test_defaults_are_shipped_law(self):
+    self.assertAlmostEqual(bosch_gas_lookup_accel(0.5, 0.2, 1.2, 0.1, 1.0, 0.0), bosch_gas_lookup_accel(0.5, 0.2, 1.2, 0.1))
+
+  def test_gain_in_evidence_range(self):
+    self.assertGreaterEqual(CIVIC_BOSCH_HILL_GAS_GAIN, 1.0)
+    self.assertLessEqual(CIVIC_BOSCH_HILL_GAS_GAIN, 1.4)
+
+
+class TestPitchGateCentredOnBias(unittest.TestCase):
+  """Civic: the hill freeze is centred on the CC pitch bias (true level road), not on pitch 0."""
+
+  def _learns(self, pitch, fingerprint="HONDA_CIVIC_BOSCH"):
+    learner = _make_learner(fingerprint=fingerprint)
+    _tick_n(learner, _LAG_TICKS + 5, accel_cmd=1.0, a_ego=1.0, pitch=pitch)
+    before = learner.raw_gasfactor
+    _tick_n(learner, 300, accel_cmd=1.0, a_ego=0.0, gas_pedal_force=1.0, pitch=pitch)
+    return learner.raw_gasfactor > before + 1e-6
+
+  def test_civic_symmetric_about_bias(self):
+    b = CIVIC_BOSCH_PITCH_BIAS
+    self.assertTrue(self._learns(b + 0.8 * _PITCH_DEADBAND))
+    self.assertTrue(self._learns(b - 0.8 * _PITCH_DEADBAND))
+    self.assertFalse(self._learns(b + 1.2 * _PITCH_DEADBAND))
+    self.assertFalse(self._learns(b - 1.2 * _PITCH_DEADBAND))
+
+  def test_true_downhill_now_frozen(self):
+    # pitch -0.015 is a 1.6 deg true descent on this mount: learned before, frozen now.
+    self.assertFalse(self._learns(-0.015))
+    self.assertTrue(self._learns(-0.015, fingerprint="HONDA_ACCORD"))
+
+  def test_other_cars_unchanged(self):
+    self.assertTrue(self._learns(0.019, fingerprint="HONDA_ACCORD"))
+    self.assertFalse(self._learns(0.021, fingerprint="HONDA_ACCORD"))
+
 
 class TestLearningFlag(unittest.TestCase):
   """learning / last_gas_error are logged to starpilotCarState.gasLearner*; the flag must mean
