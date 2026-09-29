@@ -266,7 +266,9 @@ def onpath_ids(tracks, path) -> list[int]:
   px, pl = path
   out = []
   for tid, d, y, _vr, meas in tracks:
-    if d is None or y is None or not meas or d > ONPATH_MAX_D or d > px[-1]:
+    # past the end of the model path, hold its last lateral offset: while braking the path is short
+    # (00000297 31:06: stopped car at 31 m, path ended at 30 m, so it dropped off-path 0.3 s before adoption)
+    if d is None or y is None or not meas or d > ONPATH_MAX_D:
       continue
     if abs(y - float(np.interp(d, px, pl))) < ONPATH_HALF_M:
       out.append(tid)
@@ -279,6 +281,9 @@ def _col(recs, k):
   return arr([r[k] if r is not None and len(r) > k else None for r in recs])
 
 
+ONPATH_GAP_S = 0.5  # an on-path run survives off-path flickers this short (path jitter, one missed measurement)
+
+
 def adoption_lags(t, lead_recs, onpath, track_idx=5):
   """For each radar track that becomes leadOne: how long it sat on-path (measured) first."""
   out, seen = [], set()
@@ -289,12 +294,32 @@ def adoption_lags(t, lead_recs, onpath, track_idx=5):
     if tid in seen:
       continue
     seen.add(tid)
-    j = i
-    while j > 0 and tid in onpath[j - 1]:
-      j -= 1
+    j = k = i
+    while k > 0 and (tid in onpath[k - 1] or t[j] - t[k - 1] <= ONPATH_GAP_S):
+      k -= 1
+      if tid in onpath[k]:
+        j = k
     out.append({"track": int(tid), "onpath_t": t[j], "adopt_t": t[i], "lag_s": round(t[i] - t[j], 2),
                 "d_at_onpath": None, "since_window_start": j == 0})
   return out
+
+
+SUSTAIN_S = 0.3
+
+
+def sustained_max(t, x) -> float | None:
+  """Largest value x stayed at or above for SUSTAIN_S (a gap in x ends the run)."""
+  best = None
+  for i in range(len(t)):
+    if not np.isfinite(x[i]):
+      continue
+    lo, j = x[i], i
+    while j + 1 < len(t) and np.isfinite(x[j + 1]) and t[j + 1] - t[i] <= SUSTAIN_S:
+      j += 1
+      lo = min(lo, x[j])
+    if t[j] - t[i] >= SUSTAIN_S - 0.06 and (best is None or lo > best):
+      best = lo
+  return fnum(best) if best is not None else None
 
 
 def longest_run(t, mask) -> tuple[float, float | None]:
@@ -374,9 +399,23 @@ def metrics(D) -> tuple[dict, list[dict]]:
     common["radar_vs_vision_d_err_max"] = fnum(np.max(err))
   if "onpath_log" in D:
     common["adoption_log"] = adoption_lags(D["t"], D["L1log"], D["onpath_log"], track_idx=4)
+    for g in common["adoption_log"]:
+      i = D["t"].index(g["onpath_t"])
+      tr = next((p for p in D["trlog"][i] if p[0] == g["track"]), None)
+      g["d_at_onpath"] = tr[1] if tr else None
   L1l = D["L1log"]
   vpl, vnl = _col(L1l, 2), _col(L1l, 7)
   common["max_extra_closing_vrel_log"] = fnum(np.nanmax(vnl - vpl)) if np.isfinite(vnl - vpl).any() else None
+  # the raw max catches one-tick spikes (00000297 17:50: 3.6 m/s for one 50 ms frame at low speed);
+  # the sustained figure is the largest extra closing that held for SUSTAIN_S
+  common["max_extra_closing_vrel_sustained"] = sustained_max(t, vn1 - vr1)
+  common["max_extra_closing_vrel_log_sustained"] = sustained_max(t, vnl - vpl)
+  # logged radar lead speed (published, and native Doppler) vs the camera's, when both see the same car
+  dl, rl, vis_v = _col(L1l, 0), _col(L1l, 5), _col(D["vis"], 2)
+  same = (rl == 1) & (vis_p > VIS_PROB) & (np.abs(dl - vis_d) < np.maximum(10.0, 0.2 * dl))
+  for k, vr in (("radar_vs_vision_vlead_err_max_log", vpl), ("native_vs_vision_vlead_err_max_log", vnl)):
+    e = np.where(same, v_log + vr - vis_v, np.nan)
+    common[k] = fnum(e[np.nanargmax(np.abs(e))]) if np.isfinite(e).any() else None
 
   per: dict = {}
   cars = [(DRIVE, v_log, a_log, arr(D["acmd"]), np.zeros_like(t), None)]
@@ -633,12 +672,15 @@ def print_metrics(D: dict) -> None:
   m = D["metrics"]
   c = m["common"]
   print(f"window {D['meta']['window']}  sim {D['meta']['sim_window']}  viz={'replay' if D['meta']['has_viz'] else 'log only'}  (replay)")
-  for g in c["adoption"]:
-    pre = ">=" if g["since_window_start"] else ""
-    lag = f"lag {pre}{g['lag_s']} s" if g["lag_s"] is not None else "lag n/a (JSON has no replay tracks)"
-    print(f"  track {g['track']:>3}: on-path {g['onpath_t']:.2f} at {g['d_at_onpath']} m -> leadOne {g['adopt_t']:.2f}  {lag}")
-  for k in ("max_extra_closing_vrel", "max_extra_closing_vrel_log", "max_native_minus_rangederived_vrel",
-            "lead_dropout_s", "radar_vs_vision_d_err_median", "radar_vs_vision_d_err_max"):
+  for side, key in (("replay", "adoption"), ("log", "adoption_log")):
+    for g in c.get(key, []):
+      pre = ">=" if g["since_window_start"] else ""
+      lag = f"lag {pre}{g['lag_s']} s" if g["lag_s"] is not None else "lag n/a (JSON has no replay tracks)"
+      print(f"  {side:>6} track {g['track']:>3}: on-path {g['onpath_t']:.2f} at {g['d_at_onpath']} m -> leadOne {g['adopt_t']:.2f}  {lag}")
+  for k in ("max_extra_closing_vrel", "max_extra_closing_vrel_log", "max_extra_closing_vrel_sustained",
+            "max_extra_closing_vrel_log_sustained", "max_native_minus_rangederived_vrel",
+            "lead_dropout_s", "radar_vs_vision_d_err_median", "radar_vs_vision_d_err_max",
+            "radar_vs_vision_vlead_err_max_log", "native_vs_vision_vlead_err_max_log"):
     print(f"  {k}: {c.get(k)}")
   keys = ["min_gap_m", "min_ttc_s", "max_decel", "felt_jerk_rms", "felt_jerk_max", "max_cmd_jerk", "cmd_onset_lag_s",
           "a_onset_lag_s", "cmd_to_a_lag_s", "cut_at_drift"]
