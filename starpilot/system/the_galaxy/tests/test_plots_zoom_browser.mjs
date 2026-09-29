@@ -67,6 +67,7 @@ try {
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 900 },
                                                hasTouch: mobile, isMobile: mobile })
     const windows = []
+    let delayMs = 0 // like the device, where a window read waits for the one-at-a-time lock
     const page = await context.newPage()
     page.on('pageerror', (e) => failures.push(`${surface}: ${e.message}`))
     await context.route('**/*', async (route) => {
@@ -80,6 +81,7 @@ try {
       if (p === `/api/plots/sessions/${ID}/window`) {
         const start = Number(url.searchParams.get('start')); const end = Number(url.searchParams.get('end'))
         windows.push([start, end])
+        if (delayMs) await new Promise((r) => setTimeout(r, delayMs))
         return route.fulfill({ json: { columns: COLUMNS, rows: windowRows(start, end) } })
       }
       if (p.startsWith('/api/')) return route.fulfill({ json: {} })
@@ -163,6 +165,47 @@ try {
     [s, e] = windows.at(-1)
     assert.ok(e - s < 60 && e - s >= 4, `${surface}: narrower window ${s}..${e}`)
 
+    // Slow replies from here on (Steve's review of 46e3bfd9).
+    delayMs = 600
+    const settle = () => page.waitForTimeout(delayMs + 300)
+    const zoomTitle = () => (mobile ? page.locator('div:has(> strong)').last() : page.locator('.plotZoom h2')).innerText()
+    await btn('Zoom out').click()
+    await settle()
+    // 1. Quick presses add up: three "earlier" presses while the first read is still out move three half-screens,
+    //    and each press asks for a different range (no repeated reads under the device lock).
+    const base = windows.at(-1)
+    const span = base[1] - base[0]
+    const n1 = windows.length
+    for (let i = 0; i < 3; i++) await btn('Earlier').click()
+    await settle()
+    const asked = windows.slice(n1)
+    assert.equal(asked.length, new Set(asked.map((w) => w.join())).size, `${surface}: no repeated reads ${JSON.stringify(asked)}`)
+    assert.ok(Math.abs(windows.at(-1)[0] - Math.max(0, base[0] - 1.5 * span)) < 1, `${surface}: three presses ${JSON.stringify(asked)} from ${base}`)
+    //    A press that cannot change anything (zoom out at the widest allowed span) asks for nothing.
+    for (let i = 0; i < 6; i++) await btn('Zoom out').click()
+    await settle()
+    const n3 = windows.length
+    await btn('Zoom out').click()
+    await settle()
+    assert.equal(windows.length, n3, `${surface}: zoom out at the limit asks for nothing`)
+    // 2. A reply that lands during a drag does not lose the drag.
+    await svg.scrollIntoViewIfNeeded()
+    box = await svg.boundingBox()
+    y = box.y + box.height / 2
+    await btn('Zoom in').click()
+    await page.mouse.move(xAt(0.6), y)
+    await page.mouse.down()
+    for (let f = 0.62; f <= 0.8; f += 0.02) { await page.mouse.move(xAt(f), y); await page.waitForTimeout(60) }
+    await page.mouse.move(xAt(0.8), y)
+    await page.waitForTimeout(delayMs) // the zoom-in reply lands now, mid-drag
+    await page.mouse.up()
+    await settle();
+    [s, e] = windows.at(-1)
+    assert.ok(Math.abs(s - tAt(0.6)) < 8 && Math.abs(e - tAt(0.8)) < 8, `${surface}: drag survived a reply (${s}..${e})`)
+    const title = await zoomTitle()
+    assert.ok(title.includes('4m 00s'), `${surface}: the drag's range is what shows, with its length: ${title}`)
+    delayMs = 0
+
     // Phones: a sideways drag is ours, an up/down swipe belongs to the page.
     const ta = await svg.evaluate((el) => getComputedStyle(el).touchAction)
     assert.equal(ta, 'pan-y', `${surface}: touch-action`)
@@ -174,18 +217,18 @@ try {
       box = await svg.boundingBox()
       y = box.y + box.height / 2
       const before = windows.length
-      await touch('touchStart', xAt(0.6), y)
-      for (let f = 0.62; f <= 0.8; f += 0.02) await touch('touchMove', xAt(f), y)
-      await touch('touchMove', xAt(0.8), y)
+      await touch('touchStart', xAt(0.4), y)
+      for (let f = 0.42; f <= 0.7; f += 0.02) await touch('touchMove', xAt(f), y)
+      await touch('touchMove', xAt(0.7), y)
       await touch('touchEnd')
       await page.waitForTimeout(300)
       assert.ok(windows.length > before, 'mobile: finger drag asked for a window');
       [s, e] = windows.at(-1)
-      assert.ok(Math.abs(s - tAt(0.6)) < 8 && Math.abs(e - tAt(0.8)) < 8, `mobile: finger drag asked for ${s}..${e}`)
+      assert.ok(Math.abs(s - tAt(0.4)) < 8 && Math.abs(e - tAt(0.7)) < 8, `mobile: finger drag asked for ${s}..${e}`)
       await svg.scrollIntoViewIfNeeded()
       box = await svg.boundingBox()
       const scroll0 = await page.evaluate(() => window.scrollY)
-      const n2 = windows.length
+      const nv = windows.length
       const x = xAt(0.3)
       await touch('touchStart', x, box.y + box.height - 10)
       for (let k = 1; k <= 12; k++) await touch('touchMove', x, box.y + box.height - 10 - 15 * k)
@@ -193,7 +236,23 @@ try {
       await page.waitForTimeout(400)
       const scroll1 = await page.evaluate(() => window.scrollY)
       assert.ok(scroll1 > scroll0 + 50, `mobile: a vertical swipe scrolls the page (${scroll0} -> ${scroll1})`)
-      assert.equal(windows.length, n2, 'mobile: a vertical swipe does not zoom')
+      assert.equal(windows.length, nv, 'mobile: a vertical swipe does not zoom')
+      // 3. A second finger cancels the drag instead of restarting it where that finger landed.
+      await svg.scrollIntoViewIfNeeded()
+      box = await svg.boundingBox()
+      y = box.y + box.height / 2
+      const nf = windows.length
+      const pts = (...xs) => xs.map((x, i) => ({ x, y, id: i + 1 }))
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: pts(xAt(0.3)) })
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: pts(xAt(0.35)) })
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: pts(xAt(0.35), xAt(0.55)) })
+      for (let k = 1; k <= 5; k++) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: pts(xAt(0.35 - 0.02 * k), xAt(0.55 + 0.04 * k)) })
+      }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+      await page.waitForTimeout(300)
+      assert.equal(windows.length, nf, `mobile: a two-finger spread zooms nothing ${JSON.stringify(windows.slice(nf))}`)
+      assert.equal(await page.locator('.plotBrush').count(), 0)
     }
     await context.close()
     console.log(`${surface}: drag, tap, band, buttons and nested drag ok`)

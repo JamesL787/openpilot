@@ -2,7 +2,7 @@ import { html, reactive } from "/assets/vendor/arrow-core.js"
 import {
   HELP_TEXT, LIVE_POLL_MS, LiveBuffer, READING_GUIDE, ZOOM_HALF_WINDOW_S,
   buildOverviewCharts, buildTrackingCharts, controllerName, eventRows, fmtDate, fmtDuration, fmtNum, fmtSpeed, keyNumbers,
-  longStateName, panRange, rangeSelect, sessionUrl, speedBandRows, speedUnit, statusLabel, toSeries, tuneGroups, turnRows,
+  afterGesture, longStateName, panRange, rangeSelect, sameRange, sessionUrl, speedBandRows, speedUnit, statusLabel, toSeries, tuneGroups, turnRows,
   zoomBand, zoomRange, clampRange,
 } from "/assets/components/tools/drive_plots_shared.mjs"
 
@@ -198,24 +198,36 @@ async function deleteSession(id) {
 
 const driveLength = () => state.detail?.analysis?.duration_s ?? state.detail?.meta?.duration_s ?? Infinity
 let zoomRequest = 0
+// The range last asked for. Button presses and wheel steps build on it rather than on the range last loaded, so three
+// quick "later" presses move three half-screens even while the first read is still on its way.
+let zoomTarget = null
 
-// Full-resolution charts for [start, end] (seconds into the drive). A newer request wins over a slower older one,
-// so a quick run of pan/zoom presses settles on the last one pressed.
+// Full-resolution charts for [start, end] (seconds into the drive). A newer request wins over a slower older one.
+// A response that lands while a finger or button is down on a chart waits until it is lifted: this block re-renders
+// on state.zoom, which would replace the chart under the drag.
 async function showRange(start, end, label = "") {
   if (!state.selectedId) return
   const r = clampRange(start, end, driveLength())
+  if (sameRange(r, zoomTarget) && zoomTarget.label === label) return
+  zoomTarget = { ...r, label }
   const id = ++zoomRequest
-  const opening = !state.zoom
   try {
     const payload = await fetchJson(`${sessionUrl(state.selectedId, "/window")}?start=${r.start.toFixed(1)}&end=${r.end.toFixed(1)}`)
     if (id !== zoomRequest) return
     const series = toSeries(payload.columns, payload.rows)
     const controller = state.detail?.analysis?.controller || state.detail?.meta?.lateral_controller || null
-    state.zoom = { start: r.start, end: r.end, label, charts: buildTrackingCharts(series, { advanced: state.showAdvancedTerms,
+    const zoom = { start: r.start, end: r.end, label, charts: buildTrackingCharts(series, { advanced: state.showAdvancedTerms,
                    tMin: r.start, tMax: r.end, speed: speed(), controller }) }
-    if (opening) requestAnimationFrame(() => document.querySelector(".plotZoom")?.scrollIntoView({ behavior: "smooth", block: "start" }))
+    afterGesture(() => {
+      if (id !== zoomRequest) return
+      const opening = !state.zoom
+      state.zoom = zoom
+      if (opening) requestAnimationFrame(() => document.querySelector(".plotZoom")?.scrollIntoView({ behavior: "smooth", block: "start" }))
+    })
   } catch (error) {
-    if (id === zoomRequest) state.detailError = error?.message || String(error)
+    if (id !== zoomRequest) return
+    zoomTarget = state.zoom ? { start: state.zoom.start, end: state.zoom.end, label: state.zoom.label } : null
+    state.detailError = error?.message || String(error)
   }
 }
 
@@ -224,31 +236,34 @@ const zoomTo = (t, label = "") => showRange(t - ZOOM_HALF_WINDOW_S, t + ZOOM_HAL
 
 function closeZoom() {
   zoomRequest++
+  zoomTarget = null
   state.zoom = null
 }
 
+// Zooming in or out around the middle keeps a moment in view, so its label stays; panning or zooming around the
+// pointer may not, so the label goes.
 function zoomBy(factor, at = null) {
-  if (!state.zoom) return
-  const r = zoomRange(state.zoom, factor, driveLength(), at)
-  showRange(r.start, r.end, state.zoom.label)
+  if (!zoomTarget) return
+  const r = zoomRange(zoomTarget, factor, driveLength(), at)
+  showRange(r.start, r.end, at === null ? zoomTarget.label : "")
 }
 
 function panBy(frac) {
-  if (!state.zoom) return
-  const r = panRange(state.zoom, frac, driveLength())
-  showRange(r.start, r.end, state.zoom.label)
+  if (!zoomTarget) return
+  const r = panRange(zoomTarget, frac, driveLength())
+  showRange(r.start, r.end)
 }
 
 // Whole-drive charts: tap = a minute around there, drag = that stretch, pinch/ctrl+wheel = zoom around there.
 const overviewGestures = (chart) => rangeSelect(() => chart.geo, {
   onTap: (t) => zoomTo(t),
   onRange: (a, b) => showRange(a, b),
-  onWheelZoom: (f, t) => (state.zoom ? zoomBy(f, t) : zoomTo(t)),
+  onWheelZoom: (f, t) => (zoomTarget ? zoomBy(f, t) : zoomTo(t)),
 })
 
 // Zoomed charts: drag = zoom further into that stretch, pinch/ctrl+wheel = zoom around there.
 const zoomGestures = (chart) => rangeSelect(() => chart.geo, {
-  onRange: (a, b) => showRange(a, b, state.zoom?.label || ""),
+  onRange: (a, b) => showRange(a, b),
   onWheelZoom: (f, t) => zoomBy(f, t),
 })
 
@@ -597,7 +612,8 @@ function SessionDetail() {
     ${state.zoom ? html`
       <section class="plotCard plotStatusCard plotZoom">
         <div class="plotCardHeader">
-          <h2>${state.zoom.label ? `${state.zoom.label}: ` : "Zoom "}${fmtDuration(state.zoom.start)} – ${fmtDuration(state.zoom.end)}</h2>
+          <h2>${state.zoom.label ? `${state.zoom.label}: ` : "Zoom "}${fmtDuration(state.zoom.start)} – ${fmtDuration(state.zoom.end)}
+            <span class="plotMuted">(${fmtDuration(state.zoom.end - state.zoom.start)})</span></h2>
           <div class="plotActions plotActionsInline plotZoomControls">
             <button class="plotButton" title="Earlier" @click="${() => panBy(-0.5)}">◀</button>
             <button class="plotButton" title="Zoom out" @click="${() => zoomBy(2)}">−</button>
