@@ -190,9 +190,12 @@ def test_pid_feedforward_uses_the_cars_own_load_fit(monkeypatch, candidate, load
   assert lac.eps_shadow_ff.load_coef == load
 
 
-def test_civic_load_fit_stays_out_of_the_clarity_eps_controller(monkeypatch):
+def test_clarity_eps_controller_runs_the_c020_on_its_own_eps_load(monkeypatch):
+  # the PID-shadow fit (CIVIC_PID_LOAD, from 25 mph) stays out; the firmware-output fit applies at every speed
   lac, _, _ = _controller(monkeypatch, HONDA.HONDA_CIVIC_BOSCH, {"NrdrLatEpsFirmwareFF": "1"})
-  assert lac.core.ff.cal is C020 and lac.core.ff.load_coef is None
+  assert lac.core.ff.cal is C020 and lac.core.ff.load_coef is eps_ff.CIVIC_EPS_LOAD and lac.core.ff.load_min_v == 0.0
+  lac, _, _ = _controller(monkeypatch, HONDA.HONDA_CLARITY, {"NrdrLatEpsFirmwareFF": "1"})
+  assert lac.core.ff.load_coef is None
 
 
 def test_load_fit_defaults_to_the_clarity_constants():
@@ -292,16 +295,47 @@ def test_driver_press_and_standstill_take_the_feedforward_out():
   assert core.ff_weight == pytest.approx(0.5)   # faded in with speed between 2 and 4 m/s
 
 
-def test_feedforward_is_gated_by_the_desired_angle():
+@pytest.mark.parametrize("v, des, weight", [
+  (3.0, 2.0, 0.0),     # crawling near straight: the model's wiggles do not reach the wheel through the feedforward
+  (3.0, -12.5, 0.25),  # joins with |desired angle| between 5 and 20 deg (0.5 from the 2-4 m/s speed fade)
+  (4.5, 12.5, 0.5),
+  (4.5, -30.0, 1.0),   # every real crawl turn gets all of it
+  (6.5, 2.0, 0.5),     # the crawl gate fades out of effect between 5 and 8 m/s
+  (8.0, 0.0, 1.0),
+  (20.0, 0.5, 1.0),    # at speed it never applies, so the highway keeps the feedforward
+])
+def test_crawl_gate_holds_the_feedforward_off_near_straight(v, des, weight):
   core = _core()
-  _hold(core, 80, des=40.0, angle=40.0)
+  _hold(core, 80, des=des, angle=des, v=v)
+  assert core.ff_weight == pytest.approx(weight)
+
+
+def test_crawl_gate_does_not_reset_the_join_ramp():
+  core = _core()
+  _hold(core, 80, des=40.0, angle=40.0, v=4.5)
+  _hold(core, 1, des=1.0, angle=1.0, v=4.5)
+  assert core.ff_weight == 0.0
+  _hold(core, 1, des=-40.0, angle=-40.0, v=4.5)
   assert core.ff_weight == 1.0
-  _hold(core, 1, des=20.0, angle=20.0)
-  assert core.ff_weight == pytest.approx(0.5)   # faded in between 10 and 30 deg of |desired|
-  _hold(core, 1, des=-5.0, angle=-5.0)
-  assert core.ff_weight == 0.0                  # near straight it stays out, so the wheel does not chase wiggle
-  _hold(core, 1, des=-40.0, angle=-40.0)
-  assert core.ff_weight == 1.0                  # the join ramp is not reset by the gate
+
+
+def test_friction_knee_is_wide_in_the_city_and_sharp_at_speed():
+  assert eps_ff.friction_width(0.0) == eps_ff.friction_width(8.0) == 20.0
+  assert eps_ff.friction_width(15.0) == eps_ff.friction_width(30.0) == eps_ff.FRICTION_WIDTH_DEG_S == 5.0
+  # a slow desired rate asks for less friction in the city than at speed; a turn-in rate gets it all either way
+  city = eps_ff.column_load(0.0, 5.0, 8.0, 0.0, eps_ff.friction_width(8.0)) - eps_ff.column_load(0.0, 5.0, 8.0, 0.0, 1e9)
+  fast = eps_ff.column_load(0.0, 5.0, 8.0, 0.0, eps_ff.friction_width(20.0)) - eps_ff.column_load(0.0, 5.0, 8.0, 0.0, 1e9)
+  assert abs(city) < 0.4 * abs(fast)
+  turn = [eps_ff.column_load(0.0, 100.0, 8.0, 0.0, w) - eps_ff.column_load(0.0, 100.0, 8.0, 0.0, 1e9) for w in (20.0, 5.0)]
+  assert turn[0] == pytest.approx(turn[1], rel=0.01)
+
+
+def test_c020_eps_load_is_its_own_at_every_speed():
+  assert eps_ff.CIVIC_EPS_LOAD == pytest.approx(tuple(c * eps_ff.SCALE_Q8 / 256.0 for c in eps_ff.CIVIC_EPS_LOAD_PRESCALE))
+  for v in (3.0, 10.0, 25.0):
+    ff = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, cal=eps_ff.CIVIC_BOSCH_C020, load=eps_ff.CIVIC_EPS_LOAD)
+    ff.update(30.0, v, 0.02)
+    assert ff.load == pytest.approx(eps_ff.column_load(30.0, 0.0, v, 0.02, eps_ff.friction_width(v), eps_ff.CIVIC_EPS_LOAD))
 
 
 def test_without_the_feedforward_the_core_is_the_banded_pid():
