@@ -1477,7 +1477,8 @@ def test_acc_mode_pretracking_vision_slow_lead_blocks_positive_catchup(model_ver
   sm_no_lead["starpilotPlan"].vCruise = v_ego + 6.0
   sm_with_lead["starpilotPlan"].vCruise = v_ego + 6.0
 
-  for _ in range(6):
+  # 10 frames: the brake release limit holds the shared -0.5 start ~2 frames longer on both planners
+  for _ in range(10):
     planner_no_lead.update(sm_no_lead, make_toggles(model_version))
     planner_with_lead.update(sm_with_lead, make_toggles(model_version))
 
@@ -4775,3 +4776,71 @@ def test_onpath_lead_never_adds_acceleration():
 def test_onpath_lead_bound_is_bosch_a_only():
   _, planner = _run(_onpath_sm(13.4, onpath=_stopped_car()), car=CAR.HONDA_CIVIC, frames=1)  # Nidec
   assert planner.onpath_planner is None
+
+
+@pytest.mark.parametrize("prev,target", [
+  (-2.0, 0.5), (-2.0, -1.0), (-2.0, -2.9), (-0.1, 1.0), (0.0, 1.5), (0.4, -2.0), (-1.3, -0.3), (-0.5, -0.5),
+])
+def test_brake_release_limit_only_slows_a_brake_release(prev, target):
+  dt = 0.05
+  out = longitudinal_planner_module.brake_release_limited_target(prev, target, dt)
+  assert out <= target + 1e-12                       # never less braking than asked
+  if target <= prev or prev >= 0.0:
+    assert out == pytest.approx(target)              # onset and deeper braking pass through unchanged
+  else:
+    assert out == pytest.approx(min(target, prev + longitudinal_planner_module.BRAKE_RELEASE_JERK * dt))
+
+
+def _release_run(sm_brake, sm_release, *, limit, brake_frames=30, release_frames=40):
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
+  CP.longitudinalActuatorDelay = 0.5
+  saved = longitudinal_planner_module.BRAKE_RELEASE_LIMIT
+  longitudinal_planner_module.BRAKE_RELEASE_LIMIT = limit
+  try:
+    planner = LongitudinalPlanner(CP, init_v=float(sm_brake["carState"].vEgo))
+    out = []
+    for i in range(brake_frames + release_frames):
+      planner.update(sm_brake if i < brake_frames else sm_release, make_toggles())
+      out.append(float(planner.output_a_target))
+  finally:
+    longitudinal_planner_module.BRAKE_RELEASE_LIMIT = saved
+  return out, planner
+
+
+def test_brake_release_limit_brakes_as_early_and_releases_slower():
+  brake = make_sm(13.4, 0.0, -3.5, experimental_mode=False, tracking_lead=True,
+                  lead_one=make_lead(status=True, d_rel=20.0, v_lead=0.0, radar=True))
+  clear = make_sm(13.4, 0.0, -3.5, experimental_mode=False)
+  on, _ = _release_run(brake, clear, limit=True)
+  off, _ = _release_run(brake, clear, limit=False)
+  step = longitudinal_planner_module.BRAKE_RELEASE_JERK * 0.05
+  assert min(off) < -1.0
+  def first(xs):
+    return next(i for i, x in enumerate(xs) if x <= -0.5)
+  assert first(on) == first(off)                     # brake onset unchanged
+  assert all(a <= b + 1e-9 for a, b in zip(on, off, strict=True))   # never less braking
+  for a, b in zip(on, on[1:], strict=False):
+    if a < 0.0:
+      assert b - a <= step + 1e-6                    # rises at most J*dt while braking
+  assert sum(off) > sum(on)                          # the release is actually slowed
+
+
+def test_brake_release_limit_is_skipped_on_reset():
+  brake = make_sm(13.4, 0.0, -3.5, experimental_mode=False, tracking_lead=True,
+                  lead_one=make_lead(status=True, d_rel=20.0, v_lead=0.0, radar=True))
+  off_sm = make_sm(13.4, 0.0, -3.5, experimental_mode=False)
+  off_sm["controlsState"].longControlState = LongCtrlState.off
+  off_sm["selfdriveState"].enabled = False          # reset on either path (op-long or stock-long CP)
+  on, _ = _release_run(brake, off_sm, limit=True, release_frames=2)
+  ref, _ = _release_run(brake, off_sm, limit=False, release_frames=2)
+  assert on[-1] == pytest.approx(ref[-1])            # reset re-seeds from aEgo, no slewed hold
+
+
+def test_brake_release_limit_keeps_the_onpath_bound_one_sided():
+  cap = longitudinal_planner_module.ONPATH_LEAD_MAX_BRAKE
+  bounded, planner = _run(_onpath_sm(13.4, onpath=_stopped_car()), frames=40)
+  assert planner.onpath_bound_active
+  assert planner.onpath_planner.onpath_planner is None   # the shadow has no shadow of its own
+  assert min(bounded) == pytest.approx(-cap, abs=1e-6)  # the limiter never pushes the bounded target below the cap
+  head, _ = _run(_onpath_sm(13.4, onpath=_stopped_car()), bound=False, frames=40)
+  assert all(b <= h + 1e-9 for b, h in zip(bounded, head, strict=True))

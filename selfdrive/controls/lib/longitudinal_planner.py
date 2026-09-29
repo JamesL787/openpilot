@@ -300,6 +300,31 @@ ONPATH_LEAD_BOUND = True
 ONPATH_LEAD_MAX_BRAKE = 1.0
 
 
+# Brake release rate limit (replay only, no road evidence). While the previous published target is a brake
+# (< 0), the next target may rise by at most BRAKE_RELEASE_JERK * dt. It never lowers a target by more than that
+# step allows, never delays brake onset (a falling target passes through unchanged), and is skipped on reset and
+# at standstill so a stop-and-go departure is not slowed. Evidence, closed-loop replay of 12 windows on
+# 00000294/293/292/25e (tools/longitudinal/alpha_closed_loop_replay.py, forced engagement, 2026-09-29):
+# the step-to-step movement of our target is dominated by the close-lead caps (close_lead_brake_cap moved it on
+# 468 cycles, mean |step| 0.72 m/s^2) and by vision_low_speed_stop_buffer toggling -1.3 <-> -0.3 at a creep.
+# Removing the caps outright gives mvl-like smoothness but loses the 293 1965 stop, so the caps stay and only
+# their release is slewed. J = 2.5: geo-mean RMS d(cmd)/dt 0.74x base (1.5 gave 0.69x, 4.0 gave 0.76x),
+# first-brake time unchanged in every window, peak brake within 0.1, min gap >= base - 0.1 m.
+# Rerun on the repeatable log-clock replay (45e9d316c, 16 windows incl. 725/1383/2304 stop-and-go): mean jerk RMS
+# 0.82x today, 9 fewer accel sign flips, brake onset identical in all 16, no trusted min gap below today's.
+# Shipped ON (owner, 2026-09-29) with no road evidence yet.
+# Costs: a brake hold of up to |a| / J seconds longer (-2.5 -> 0 takes 1 s) before throttle on a lead pull-away.
+BRAKE_RELEASE_LIMIT = True
+BRAKE_RELEASE_JERK = 2.5  # m/s^3
+
+
+def brake_release_limited_target(prev: float, target: float, dt: float) -> float:
+  """While braking, the target may rise at most BRAKE_RELEASE_JERK * dt per step; it may always fall."""
+  if prev >= 0.0:
+    return float(target)
+  return float(min(target, prev + BRAKE_RELEASE_JERK * dt))
+
+
 def onpath_lead_view(sm):
   """SubMaster view with radarState.leadOne replaced by leadOnpath, or None when there is no on-path lead."""
   try:
@@ -3803,6 +3828,10 @@ class LongitudinalPlanner:
     if accord_stop_go_target < output_a_target:
       self.a_desired = min(self.a_desired, accord_stop_go_target)
       output_a_target = accord_stop_go_target
+
+    if BRAKE_RELEASE_LIMIT and not reset_state and not bool(sm['carState'].standstill):
+      # prev is the last published target (after the on-path bound in update(), which runs after this)
+      output_a_target = brake_release_limited_target(prev_output_a_target, output_a_target, self.dt)
 
     self.output_a_target = output_a_target
     self.output_should_stop = bool(output_should_stop or vision_low_speed_stop_active)
