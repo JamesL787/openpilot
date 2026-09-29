@@ -9893,3 +9893,41 @@ Replay of the fixed code (base = the old law, same 10 routes):
   - The key stays in `params_keys.h` and `feasibleparams.txt`, so there is no binary rebuild. It is unused.
 - **Effect:** a car that had the toggle turned off now gets the gas-release set speed, floor and snap too. No other behaviour changes.
 - **Tests:** `test_redneck_cruise.py`, `test_cruise_speed.py`, the_galaxy `test_device_settings_layout.py` and `test_device_settings_frontend.py`, and `test_starpilot_variables.py`: 212 pass.
+
+## 193. `tools/longitudinal/stock_acc_reference.py`: what stock Honda ACC would have commanded in the same situation, learned from the stock routes and scored against our planner (owner request, 2026-09-29). Replay only; a reference, not a controller.
+
+- **What it does:**
+  - Reads stock ACC's own ACCEL_COMMAND (0x1DF, bus 1 on this car) from every stock route.
+  - For each 20 Hz moment of an alpha-long route, finds the 15 nearest stock moments and reports their median command now and 0.5–3 s ahead.
+  - It matches on vEgo, log gap, vRel, the lead's 1 s accel slope and set speed − vEgo. aEgo is left out because it leaks braking already under way.
+  - Modes:
+    - `build`: npz cache per route.
+    - `validate`: leave one route out.
+    - `gain`: delivered aEgo against the command.
+    - `compare`: per-brake-episode verdicts, `--json`.
+    - `augment`: adds a `stock_nn` variant to a long_replay_viewer frames file.
+  - Episodes where the nearest stock moments are far away are tagged `no stock precedent` rather than scored.
+- **Corpus:** 16 stock routes (25b–292), 120k rows, about 100 min with a lead within 120 m. Only about 60 s of stock braking is below −2.5.
+  - ICBM steps the stock set speed down during stock braking. On 270 that is 60 % of moving-with-lead rows, so set speed is a matching feature and its share is reported.
+  - Peter's next drive is ICBM-off, for a clean base.
+- **Validation (leave one route out):**
+  - Command MAE 0.19 m/s² overall; 0.65 while stock is below −1.5.
+  - 20 stock brake episodes: peak error median +0.05; onset error median −0.52 s, |dt| p75 1.9 s.
+  - Peak level is usable; onset timing is loose.
+  - Adding inverse TTC tightened onset to |dt| p75 1.46 s on the same 20 episodes. Not adopted on that little evidence.
+- **Command → aEgo at a firm brake (cmd < −1.5 held 0.5 s):**
+  - Stock: gain 1.09, lag 0.1 s, rms 0.22 (161 s).
+  - Ours: gain 1.10, lag 0.2 s, rms 0.35 (125 s).
+  - The ~1.1× over-delivery is the car under both, so a fix belongs in the command, not a gain correction.
+- **Compare, 118 brake episodes on 23e, 280, 283, 286, 297 and 298:**
+  - 44 have no stock precedent, mostly highway closing at 6–13 m/s from 40–95 m.
+  - Of the 74 with precedent: ours harder 23, ours earlier 23, ours twitchier 18, similar 14, ours later 10, ours softer 8, stock would not brake 6.
+  - Command reversals per minute with a lead: ours 10.2–13.6 on 23e/280/283/286/297 and 7.9 on 298, against stock's logged 6.4.
+- **Peter's labelled moments:**
+  - 283 881.5 (14:43): ours −3.50 with 2.6 s below −2.5; stock reference −2.21 with 0 s. Ours harder and 0.8 s earlier (precedent 1.3).
+  - 298 bm1 = P6 (9:39.8, bookmark at route t 582.2): ours −3.50; stock reference −1.38. No stock precedent (1.8).
+  - 298 789.7 (13:11.7, labelled over-braked): ours −3.50 vs −1.96, harder and 2.6 s earlier (precedent 1.2). Agrees with the label.
+- **Limits:**
+  - The reference is a neighbour median. It says what stock did in similar logged moments, not what it would have done here.
+  - No cut-ins, stop-and-go to zero, or adjacent-lane curves are separated out yet.
+  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 4 pass (synthetic routes).
