@@ -69,6 +69,13 @@ NEAR_CUT_TQ = (1500.0, 1800.0)  # |steeringTorque| held in this band without ste
 GAP_FLAG_DEG = 20.0
 GAP_FLAG_V = 4.47             # m/s: 10 mph
 NEAR_CUT_HOLD_S = 1.0
+# FIGHT (Kevin, 2026-09-29): latActive, no steeringPressed, |steeringTorque| >= FIGHT_TQ against the sign of the torque
+# openpilot requests (carControl), held > FIGHT_HOLD_S. On its own that is what a hand on the wheel reads whenever
+# openpilot applies torque (route 297: 24 of 27 such runs), so only a run with steeringPressed within FIGHT_PRESS_S
+# after it raises FIGHT on that takeover; the rest are held_against_request moments, context only.
+FIGHT_TQ = 600.0
+FIGHT_HOLD_S = 1.0
+FIGHT_PRESS_S = 1.0
 
 # ---- radar / longitudinal moments (Bob) ----
 BRAKE_LIST = -1.5             # aTarget below this is a braking moment (Bob's replay episodes use -1.5)
@@ -310,6 +317,27 @@ def _episodes(c):
   return eps
 
 
+def fight_runs(c):
+  """Kevin's held-against-request runs: dicts with a / b (indices, b exclusive), fought_first_s, fought_first_tq_med,
+  fought_first_err_deg (ang_act - ang_des at the run's last frame, + = past the plan toward the request) and
+  pressed_after (steeringPressed within FIGHT_PRESS_S after the run)."""
+  if not (has(c, "steer_tq") and has(c, "tq_req")):
+    return []
+  t = c["t"]
+  n = len(t)
+  tq, req = c["steer_tq"], c["tq_req"]
+  pressed = _b(c, "steer_pressed")
+  m = _b(c, "lat_active") & ~pressed & (np.abs(np.nan_to_num(tq)) >= FIGHT_TQ) & (np.sign(np.nan_to_num(tq)) * np.sign(np.nan_to_num(req)) < 0)
+  out = []
+  for a, b, dur in _held_runs(m, t, FIGHT_HOLD_S):
+    k = b - 1
+    err = (c["ang_act"][k] - c["ang_des"][k]) * np.sign(req[k]) if has(c, "ang_des") and has(c, "ang_act") else None
+    out.append({"a": a, "b": b, "fought_first_s": _r(dur, 2), "fought_first_tq_med": _r(np.median(tq[a:b]), 0),
+                "fought_first_err_deg": _r(err, 1),
+                "pressed_after": bool(np.any(pressed[min(b, n - 1):_at(t, t[min(b, n - 1)] + FIGHT_PRESS_S) + 1]))})
+  return out
+
+
 def _settle(t, err, r, thr):
   end = t[r] + SETTLE_MAX_S
   since = None
@@ -422,6 +450,7 @@ def takeovers(c, t0=None):
   prob = c["lane_prob"] if has(c, "lane_prob") else None
   out_ok, req_ok = has(c, "tq_out"), has(c, "tq_req")
   i_ok = has(c, "lat_i")
+  fights = [f for f in fight_runs(c) if f["pressed_after"]]
   eps = []
   for s, r in _episodes(c):
     hold = float(t[r] - t[s])
@@ -542,12 +571,17 @@ def takeovers(c, t0=None):
       if b > a and np.isfinite(ang[0]) and np.isfinite(ang[-1]):
         e["repress_move_deg"] = _r(ang[-1] - ang[0], 1)
         e["repress_swing_deg"] = _r(np.nanmax(np.abs(ang - ang[0])), 1)
+    fr = [f for f in fights if e["mono_s"] - 0.1 <= t[f["a"]] <= e["mono_s"] + e["hold_s"]]
+    fr = max(fr, key=lambda f: f["fought_first_s"]) if fr else {}
+    for key in ("fought_first_s", "fought_first_tq_med", "fought_first_err_deg"):
+      e[key] = fr.get(key)
     gd = e.get("release_gap_deg")
     e["flags"] = [f for f, on in (
       ("FLICKER", bool(e.get("fault_in_press"))),
       ("SNAPBACK", e["repress"]),
       ("GAP", gd is not None and abs(gd) > GAP_FLAG_DEG and e["v_release"] is not None and e["v_release"] < GAP_FLAG_V),
-      ("NEAR-CUT", (e.get("near_cut_held_s") or 0.0) > NEAR_CUT_HOLD_S)) if on]
+      ("NEAR-CUT", (e.get("near_cut_held_s") or 0.0) > NEAR_CUT_HOLD_S),
+      ("FIGHT", e["fought_first_s"] is not None)) if on]
 
   def med(key, sel=lambda e: True):
     x = [e[key] for e in eps if sel(e) and e.get(key) is not None]
@@ -563,7 +597,7 @@ def takeovers(c, t0=None):
     "repress": sum(e["repress"] for e in eps), "repress_late": sum(e["repress_late"] for e in eps),
     "fault_flicker": sum(bool(e.get("fault_flicker_n")) for e in eps),
     "near_cut": sum((e.get("near_cut_s") or 0) > 0 for e in eps),
-    "flags": {f: sum(f in e["flags"] for e in eps) for f in ("FLICKER", "SNAPBACK", "GAP", "NEAR-CUT")},
+    "flags": {f: sum(f in e["flags"] for e in eps) for f in ("FLICKER", "SNAPBACK", "GAP", "NEAR-CUT", "FIGHT")},
     "median_release_overshoot_deg": med("release_overshoot_deg"),
     "median_back_on_plan_s": med("back_on_plan_s"),
     # Each drift median beside how many takeovers it stands on (James: 3 must never read like 80). Takeovers with a
@@ -601,7 +635,11 @@ def takeovers(c, t0=None):
                    "FLICKER = steerFaultTemporary between press and release; SNAPBACK = repress; GAP = |release_gap_deg| > "
                    f"{GAP_FLAG_DEG:g} under {GAP_FLAG_V:g} m/s (10 mph); NEAR-CUT = near_cut_held_s > {NEAR_CUT_HOLD_S:g} s. "
                    "repress_move_deg = ang_act at the re-press minus at the release (+ = left), repress_swing_deg = its "
-                   "largest |change| in between; set whenever repress_after_s is."),
+                   "largest |change| in between; set whenever repress_after_s is. FIGHT = latActive, no steeringPressed, "
+                   f"|steeringTorque| >= {FIGHT_TQ:g} against the sign of carControl's torque request held > {FIGHT_HOLD_S:g} s, "
+                   f"with steeringPressed within {FIGHT_PRESS_S:g} s after; fought_first_s / _tq_med / _err_deg describe that "
+                   "run (err = ang_act - ang_des at its end, + = past the plan toward the request). Runs with no press after "
+                   "are held_against_request moments (context, no flag)."),
   }
   return {"episodes": eps, "summary": summary}
 
@@ -745,7 +783,7 @@ def long_moments(c, t0=None, cap=None):
 
 
 def lat_moments(c, t0=None, cap=None):
-  """James's lateral moments: fault_flicker, release_snap, hwy_inside_cut and hwy_wiggle."""
+  """James's lateral moments: fault_flicker, release_snap, hwy_inside_cut and hwy_wiggle; Kevin's held_against_request."""
   t = c["t"]
   n = len(t)
   if n < 2:
@@ -798,6 +836,10 @@ def lat_moments(c, t0=None, cap=None):
                   repress=bool(again), repress_after_s=_r(t[nxt[0]] - t[r], 2) if again else None,
                   ang=val("ang_act", r, 1), ang_des=val("ang_des", r, 1))
     add(_starts(fall, t, 1.0), snap)
+
+  add([f for f in fight_runs(c) if not f["pressed_after"]],
+      lambda f: base("held_against_request", f["a"], **{k: f[k] for k in ("fought_first_s", "fought_first_tq_med",
+                                                                          "fought_first_err_deg")}))
 
   hwy = lat & (v >= HWY_V) & ~after_release(c) & ~_b(c, "blinker") & ~(np.nan_to_num(_col(c, "lane_change", n)) > 0.5)
   dem = _col(c, "lat_des", n)

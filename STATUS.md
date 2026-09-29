@@ -7702,6 +7702,11 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
     unmeasured_lead_cap (radar lead with measuredRadar false while closeLeadBrakeCap < 0, held > 0.3 s); runs under
     1 s apart are one moment. Replay: 298 has 1 overshoot (its bookmark 1, -3.5 asked, -4.72 reached) and 6 caps (its
     bookmark 3 is the 121 m one); 297 has 2 and 4. 7 of the 10 caps start with vRel at -13.3 to -13.5 m/s.
+  - Kevin's FIGHT flag: latActive, no steeringPressed, |steeringTorque| >= 600 against the sign of carControl's torque
+    request, held > 1 s, then steeringPressed within 1 s. Adds fought_first_s / _tq_med / _err_deg to that takeover.
+    The same run with no press after is a held_against_request moment (context: a hand on the wheel reads this way
+    whenever openpilot applies torque). Replay: FIGHT 11 on 297 and 5 on 298, held 13 and 5. Peter's seg-12 left turn
+    on 298 is a FIGHT, and it is 1 of 2 with the wheel past the plan toward the request.
   - `tools/drive_plots/sim_export.py` writes John's `lat_pid_sim.npz` per steered segment at the controls rate
     (~97 Hz on 297), t from each segment's first carState. Not yet read by his scorer.
 
