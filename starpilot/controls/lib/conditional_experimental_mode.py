@@ -48,6 +48,23 @@ class ConditionalExperimentalMode:
   STOP_LIGHT_LEAD_BLOCK_MARGIN = 15.0
   STOP_LIGHT_HANDOFF_MAX_LEAD_SPEED = 2.0
   STOP_LIGHT_DETECTED_HOLD_TIME = 4.0
+  # Early release of the 4 s STOP_LIGHT hold (log + shadow-replay evidence only; not driven).
+  # The hold bridges model flicker on a real approach, but it also keeps EXP (min(mpc, e2e)) for the full 4 s
+  # after a plan that only slowed briefly. Route 00000280--d02d9c2f8e 30:37.94: a sag/curve-reversal dip
+  # (x_end 164 -> 86 m at 17 m/s, vEnd never below 5.7 m/s, no stop) armed the hold; the model was clear
+  # (x_end 140-165 m, above the OFF margin) from ~30:38.4 yet redLight held to 30:42.36 on a 3-5 deg climb with
+  # aTarget ~+0.05 against mpc ~+1.0. Corpus (45 routes, 10 h engaged): 153 of 272 redLight episodes had no stop
+  # within 10 s; 95 of them on a curve, only 15 near a pitch change > 1.5 deg.
+  # Change: once the model is clear (not stopping by the OFF margin, detector filter off, no relevant lead, and
+  # not model_stopped) for STOP_LIGHT_HOLD_CLEAR_RELEASE_TIME, drop the hold. Arming and detection are unchanged,
+  # so redLight turns on at the same frame (0 entry delay on 371 shadow episodes).
+  # 1.5 s vs 1.0 s: shadow replay lost EXP before a real stop on 2 episodes, 0.30 s total (1.0 s: 3, 0.85 s); both
+  # were plans at vEnd ~ v with the stop only later re-detected on the same frame as HEAD. CURVE_MODE_HOLD_TIME
+  # bridges 00000294 1:01 and two more curve-exit releases before a slowdown (00000237, 00000283); the one left,
+  # in 00000237 (1.85 s at 10 m/s), had vEnd >= vEgo and e2e > 0, and a vEnd/vEgo gate that kept it would also
+  # keep the route 280 hold (ratio 0.76-0.94 there). Without the model_stopped guard a 1 m/s creep at the line
+  # (0000027a 1:33) dropped EXP for 1 s.
+  STOP_LIGHT_HOLD_CLEAR_RELEASE_TIME = 1.5
   STOP_APPROACH_LATCH_TIME = 1.0
   STOP_APPROACH_MAX_LEAD_SPEED = 4.5
   STOP_APPROACH_MIN_MODEL_PROB = 0.9
@@ -86,6 +103,16 @@ class ConditionalExperimentalMode:
   # Small latch to avoid frame-to-frame mode chatter.
   CEM_TRANSITION_GUARD_TIME = 0.50
   CEM_TRANSITION_BUFFER_TIME = 0.25
+  # CURVATURE release guard (log + shadow-replay evidence only; not driven). The 0.50 s guard lets a curve that
+  # sits at the 1.0 m/s^2 predicted lateral-accel threshold toggle EXP (min(mpc, e2e)) on and off about once a
+  # second, and each toggle steps aTarget by ~1 m/s^2. Route 00000280--d02d9c2f8e 30:42-30:47 (open climb, rc*v^2
+  # 0.8-1.03) logged +0.91 -> -0.16 -> +0.83 -> -0.16 -> +0.86. Corpus (45 routes, 10 h engaged): 123 of 254
+  # logged sub-1 s flips were CURVATURE. Holding CURVATURE for 1.5 s after its last trigger cut shadow sub-1 s flips
+  # 347 -> 175 (hysteresis on lateral accel, exit below 0.8 / 0.9: 264 / 283). Entry is unchanged (0 frames where
+  # HEAD is in EXP and this is not). Cost: every curve exit keeps EXP 1.0 s longer (430 exits), open-loop speed
+  # held back per exit p50 0.08, p90 0.59, max 1.28 m/s. It also bridges 3 of the 4 pre-slowdown EXP gaps that
+  # STOP_LIGHT_HOLD_CLEAR_RELEASE_TIME opens (see there).
+  CURVE_MODE_HOLD_TIME = 1.5
 
   @staticmethod
   def get_speed_based_param(speed_mph, param_array):
@@ -112,6 +139,7 @@ class ConditionalExperimentalMode:
     self.stop_light_detected = False
     self.stop_light_model_detected = False
     self.stop_light_detected_hold_until = 0.0
+    self.stop_light_clear_since = 0.0
     self.stop_approach_hold_until = 0.0
     self.standstill_stop_reason = None
     self.prev_experimental_mode = False  # For hysteresis
@@ -165,7 +193,7 @@ class ConditionalExperimentalMode:
       open_road_enabled = bool(getattr(starpilot_toggles, "conditional_open_road", False))
       if triggered:
         self.open_road_lead_hold_until = 0.0
-        self.mode_hold_until = now + self.CEM_TRANSITION_GUARD_TIME
+        self.mode_hold_until = now + (self.CURVE_MODE_HOLD_TIME if self.status_value == CEStatus["CURVATURE"] else self.CEM_TRANSITION_GUARD_TIME)
         self.mode_false_since = 0.0
         if self.status_value == CEStatus["LEAD"]:
           self.slow_lead_mode_hold_until = now + self.SLOW_LEAD_MODE_RELEASE_HOLD_TIME
@@ -467,6 +495,7 @@ class ConditionalExperimentalMode:
     self.stop_light_detected = False
     self.stop_light_model_detected = False
     self.stop_light_detected_hold_until = 0.0
+    self.stop_light_clear_since = 0.0
     self.lead_clear_filter.x = 0
     self.stop_approach_hold_until = 0.0
 
@@ -601,6 +630,14 @@ class ConditionalExperimentalMode:
       )
       if model_detector_active and model_hold_qualifies:
         self.stop_light_detected_hold_until = now + self.STOP_LIGHT_DETECTED_HOLD_TIME
+
+      model_clear = not (model_stopping or detector_active or lead_relevant or self.starpilot_planner.model_stopped)
+      if not model_clear:
+        self.stop_light_clear_since = 0.0
+      elif self.stop_light_clear_since == 0.0:
+        self.stop_light_clear_since = now
+      elif now - self.stop_light_clear_since >= self.STOP_LIGHT_HOLD_CLEAR_RELEASE_TIME:
+        self.stop_light_detected_hold_until = 0.0
 
       hold_context_ok = bool((not lead_relevant) or trackable_stop_approach)
       self.stop_light_detected = bool(
