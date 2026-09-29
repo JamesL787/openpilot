@@ -4687,3 +4687,91 @@ def test_far_lead_coast_cap_stands_down_when_camera_sees_lead_braking():
 
 def test_far_lead_coast_cap_ignores_low_confidence_camera_brake():
   assert _far_lead_cap_case(model_a=-1.4, model_prob=0.3) == pytest.approx(-longitudinal_planner_module.FAR_LEAD_COAST_MAX_DECEL)
+
+
+
+def _onpath_sm(v_ego, *, lead_one=None, onpath=None):
+  sm = make_sm(v_ego, 0.0, -3.5, experimental_mode=False, tracking_lead=lead_one is not None, lead_one=lead_one)
+  sm["radarState"].leadOnpath = onpath if onpath is not None else make_lead(status=False)
+  return sm
+
+
+def _run(sm, *, bound=True, car=CAR.HONDA_CIVIC_BOSCH, frames=20):
+  CP = CarInterface.get_non_essential_params(car)
+  CP.longitudinalActuatorDelay = 0.5
+  saved = longitudinal_planner_module.ONPATH_LEAD_BOUND
+  longitudinal_planner_module.ONPATH_LEAD_BOUND = bound
+  try:
+    planner = LongitudinalPlanner(CP, init_v=float(sm["carState"].vEgo))
+  finally:
+    longitudinal_planner_module.ONPATH_LEAD_BOUND = saved
+  out = []
+  for _ in range(frames):
+    planner.update(sm, make_toggles())
+    out.append(float(planner.output_a_target))
+  return out, planner
+
+
+def _stopped_car(d_rel=66.0):
+  # 00000297--f971b5896f 31:08.0: track 6, stopped car on the path at 66 m, ego 13.4 m/s, no model lead
+  return make_lead(status=True, d_rel=d_rel, v_lead=0.0, radar=True, model_prob=0.0)
+
+
+@pytest.mark.parametrize("own,with_onpath", [
+  (-0.3, -1.8), (-0.3, -0.6), (-0.3, 0.4), (0.8, -2.5), (-1.4, -3.0), (-2.7, -2.9), (-1.0, -1.0), (0.5, 1.5),
+])
+def test_onpath_bounded_target_is_one_sided(own, with_onpath):
+  cap = longitudinal_planner_module.ONPATH_LEAD_MAX_BRAKE
+  out = longitudinal_planner_module.onpath_bounded_target(own, with_onpath)
+  assert out <= own                                 # never less braking, never more acceleration
+  assert out >= min(own, -cap)                      # extra braking only down to the cap
+  assert out == pytest.approx(min(own, max(with_onpath, min(own, -cap))))
+
+
+def test_onpath_lead_brakes_only_down_to_the_cap():
+  cap = longitudinal_planner_module.ONPATH_LEAD_MAX_BRAKE
+  sm = _onpath_sm(13.4, onpath=_stopped_car())
+  bounded, planner = _run(sm)
+  assert planner.onpath_bound_active
+  assert min(bounded) == pytest.approx(-cap, abs=1e-6)
+  # the same object as leadOne gets full authority, and asks for more than the cap
+  full, _ = _run(_onpath_sm(13.4, lead_one=_stopped_car()))
+  assert min(full) < -cap - 0.3
+  # without the bound the on-path lead does nothing at all (HEAD)
+  head, _ = _run(sm, bound=False)
+  assert min(bounded) < min(head) - 0.2
+  assert all(b <= h + 1e-9 for b, h in zip(bounded, head, strict=True))
+
+
+def test_onpath_lead_bound_lifts_when_radard_stops_publishing_it():
+  # radard withdraws leadOnpath as soon as its own leadOne takes the track (vision match, or its radar path):
+  # the planner is then byte-for-byte HEAD
+  sm = _onpath_sm(13.4, lead_one=_stopped_car())
+  bounded, planner = _run(sm)
+  head, _ = _run(sm, bound=False)
+  assert not planner.onpath_bound_active
+  assert bounded == head
+
+
+def test_onpath_lead_never_softens_a_harder_leadone_brake():
+  near = make_lead(status=True, d_rel=18.0, v_lead=4.0, a_lead=-1.5, radar=False, model_prob=0.9)
+  sm = _onpath_sm(13.4, lead_one=near, onpath=_stopped_car(12.0))
+  bounded, _ = _run(sm)
+  head, _ = _run(_onpath_sm(13.4, lead_one=near), bound=False)
+  assert min(head) < -longitudinal_planner_module.ONPATH_LEAD_MAX_BRAKE
+  assert all(b <= h + 1e-9 for b, h in zip(bounded, head, strict=True))
+  assert all(b >= min(h, -longitudinal_planner_module.ONPATH_LEAD_MAX_BRAKE) - 1e-9 for b, h in zip(bounded, head, strict=True))
+
+
+def test_onpath_lead_never_adds_acceleration():
+  # an on-path lead far ahead and pulling away: the second planner would accelerate harder; the output stays HEAD's
+  far = make_lead(status=True, d_rel=120.0, v_lead=25.0, radar=True)
+  slow = make_lead(status=True, d_rel=30.0, v_lead=12.0, radar=False, model_prob=0.9)
+  bounded, _ = _run(_onpath_sm(13.4, lead_one=slow, onpath=far))
+  head, _ = _run(_onpath_sm(13.4, lead_one=slow), bound=False)
+  assert all(b <= h + 1e-9 for b, h in zip(bounded, head, strict=True))
+
+
+def test_onpath_lead_bound_is_bosch_a_only():
+  _, planner = _run(_onpath_sm(13.4, onpath=_stopped_car()), car=CAR.HONDA_CIVIC, frames=1)  # Nidec
+  assert planner.onpath_planner is None

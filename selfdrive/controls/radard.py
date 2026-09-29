@@ -340,6 +340,56 @@ YOUNG_TRACK_VISION_MAX_CLOSING = 2.0
 YOUNG_TRACK_VISION_MIN_ACCEL = -1.0
 YOUNG_TRACK_VISION_RANGE_MARGIN_M = 5.0
 
+# ONPATH_RADAR_ADOPT: a radar-only track that sits on the driving path for a second is published as
+# radarState.leadOnpath, beside an unchanged leadOne, so the planner can brake for it before the camera sees it. Above
+# V_EGO_STATIONARY, get_lead only consults radar when the model lead's probability clears lead_detection_probability,
+# and then only the track that matches the model lead; the only radar-only path is the low-speed override
+# (v_ego < 4 m/s, dRel < 25 m). A car the model does not yet see is therefore invisible to the planner however long
+# radar has it on the path. Route 00000297--f971b5896f (owner bookmark 31:11.2): track 6, a stopped car on a curve
+# (yRel -9 .. -14 m, path offset within ~1.3 m), measured on every sweep from 94 m down to 39 m over 3.5 s while
+# leadsV3[0].prob was 0.00-0.28; the lead arrived at 31:09.6 (vision, 38 m) and the brake was -3.1 .. -3.5 with aEgo
+# -4.1 .. -4.35. 46:49-46:51 (bookmark 46:54): track 45, a car at ~6 m/s, on path 106 -> 69 m for ~2 s while the lead
+# was none and then a vision lead at 118 m that the track could not match; brake -3.5.
+#
+# The gate is persistence on the path, not a single sweep: every fresh measured sweep of the last
+# ONPATH_ADOPT_MIN_SPAN_S has |yRel + model path y at dRel| <= ONPATH_ADOPT_HARD_WIDTH_M, their median is within
+# ONPATH_ADOPT_MEDIAN_WIDTH_M and ONPATH_ADOPT_CORE_FRAC of them are within ONPATH_ADOPT_CORE_WIDTH_M; a coast longer
+# than ONPATH_ADOPT_MAX_COAST_S or one sweep outside the hard width restarts it. The median/fraction form, not a
+# plain 1.0 m width, is from 297 31:06-31:09: the model path 70-90 m out on that curve put the stopped car at
+# -1.7 .. +1.3 m on single sweeps, and a strict 1.0 m width never held it for a second before vision had it.
+# The track must also close (mean U11 <= -ONPATH_ADOPT_MIN_CLOSING_MPS) and its own ranges must agree: an LSQ over
+# the window with rms <= ONPATH_ADOPT_MAX_RANGE_RESIDUAL_M whose slope is within ONPATH_ADOPT_RATE_TOL_MPS of the mean
+# U11, except that a slope FASTER than U11 is accepted when U11 sits near the rail (D-041/D-063: a railed U11 is a
+# bound; 297 track 6 read -13.5 railed against a range slope of -13 .. -19).
+#
+# Why it is a separate field and not leadOne: stationary on-path returns also come from overhead structures and
+# roadside clutter on curves, and Bosch-A publishes no elevation. Over 50 routes (replay, 2026-09-29) the gate made
+# 109 adoptions, 76 later confirmed by HEAD or the model; of 33 unconfirmed most were real cars (a lead leaving the
+# lane, a far car on a curve the model saw at low probability), but 00000297--f971b5896f 30:18.1 was a stationary
+# object at 28 m on a sharp curve (engaged, 9 m/s) that the car passed ~2.5 m to the side, and its window was better
+# centred (median 0.66 m, 87 % within 1.0 m) than the true stopped car at 31:07 (0.67 m, 80 %). No width in this form
+# separates them (and D-061: path gates made a brake worse). As leadOne it drew -3.5 m/s^2 for ~1 s. So the track
+# gets bounded authority (D-048): the planner lets leadOnpath add braking only down to ONPATH_LEAD_MAX_BRAKE
+# (longitudinal_planner.py), leadOne is never changed, and leadOnpath is withdrawn the cycle radard's own leadOne
+# becomes a radar lead (vision match or its normal radar path) or a vision leadOne is not
+# ONPATH_ADOPT_VISION_MARGIN_M farther away. Nothing is deleted and no range is moved (D-041/D-042).
+# ON (owner, 2026-09-29), with the planner cap. Replay evidence only, no road evidence. Cost: a second planner/MPC
+# instance every cycle (1.44 -> 2.89 ms per planner step on the aarch64 VM); not yet timed on the device.
+ONPATH_RADAR_ADOPT = True
+ONPATH_ADOPT_MIN_SPAN_S = 1.0
+ONPATH_ADOPT_MIN_SAMPLES = 10          # ~14 sweeps a second at BOSCH_A_FREQ_HZ; a few coasts are tolerated
+ONPATH_ADOPT_HARD_WIDTH_M = 2.0
+ONPATH_ADOPT_MEDIAN_WIDTH_M = 0.8
+ONPATH_ADOPT_CORE_WIDTH_M = 1.0
+ONPATH_ADOPT_CORE_FRAC = 0.7
+ONPATH_ADOPT_MAX_COAST_S = 0.15
+ONPATH_ADOPT_MIN_CLOSING_MPS = 2.0
+ONPATH_ADOPT_MAX_RANGE_RESIDUAL_M = 1.0
+ONPATH_ADOPT_RATE_TOL_MPS = 2.5
+ONPATH_ADOPT_RAIL_VREL_MPS = -12.5     # mean U11 at or below this is treated as railed (the rail is -13.5)
+ONPATH_ADOPT_MAX_D_REL_M = 120.0
+ONPATH_ADOPT_VISION_MARGIN_M = 5.0
+
 # stationary qualification parameters
 V_EGO_STATIONARY = 4.   # no stationary object flag below this speed
 
@@ -522,6 +572,11 @@ class Track:
     self.t_first = float('nan')
     self.young_range_hist: list = []
 
+    # ONPATH_RADAR_ADOPT: fresh measured sweeps (t, dRel, vRel, path offset) of the current on-path run
+    self.onpath_hist: deque = deque(maxlen=64)
+    self._onpath_last_meas_t = float('nan')
+    self.onpath_adopted = False  # published as leadOnpath (ONPATH_RADAR_ADOPT); cleared with the run
+
     # ADJACENT_RAIL_GATE: consecutive railed updates the range contradicts, and the latch they set
     self.rail_range_count = 0
     self.rail_range_inconsistent = False
@@ -621,6 +676,45 @@ class Track:
         self.rest_frames = 0
 
       self.cnt += 1
+
+  def update_onpath(self, t_now: float, path_offset: float, measured: bool) -> None:
+    """ONPATH_RADAR_ADOPT bookkeeping, once per fresh liveTracks message. `path_offset` is NaN off the model path."""
+    if measured:
+      if path_offset == path_offset and abs(path_offset) <= ONPATH_ADOPT_HARD_WIDTH_M:
+        if not self.onpath_hist or t_now > self.onpath_hist[-1][0]:
+          self.onpath_hist.append((float(t_now), float(self.dRel), float(self.vRel), float(path_offset)))
+      else:
+        self.onpath_hist.clear()
+      self._onpath_last_meas_t = float(t_now)
+    elif not (t_now - self._onpath_last_meas_t <= ONPATH_ADOPT_MAX_COAST_S):
+      self.onpath_hist.clear()
+    if not self.onpath_hist:
+      self.onpath_adopted = False
+
+  def onpath_adoptable(self, held: bool = False) -> bool:
+    """True when this track has been on the driving path long enough to be a radar-only lead.
+    `held`: it was leadOnpath last cycle, so only an unbroken on-path run is required."""
+    if not self.onpath_hist or not (self.dRel <= ONPATH_ADOPT_MAX_D_REL_M):
+      return False
+    if held:
+      return True
+    t_last = self.onpath_hist[-1][0]
+    win = [x for x in self.onpath_hist if x[0] >= t_last - ONPATH_ADOPT_MIN_SPAN_S - 1e-6]
+    if len(win) < ONPATH_ADOPT_MIN_SAMPLES or self.onpath_hist[0][0] > t_last - ONPATH_ADOPT_MIN_SPAN_S + 1e-6:
+      return False
+    offs = np.abs(np.array([x[3] for x in win]))
+    if np.median(offs) > ONPATH_ADOPT_MEDIAN_WIDTH_M or np.mean(offs <= ONPATH_ADOPT_CORE_WIDTH_M) < ONPATH_ADOPT_CORE_FRAC:
+      return False
+    ts = np.array([x[0] for x in win]) - t_last
+    ds = np.array([x[1] for x in win])
+    v_mean = float(np.mean([x[2] for x in win]))
+    if v_mean > -ONPATH_ADOPT_MIN_CLOSING_MPS:
+      return False
+    slope, icpt = np.polyfit(ts, ds, 1)
+    rms = float(np.sqrt(np.mean((ds - (slope * ts + icpt)) ** 2)))
+    if rms > ONPATH_ADOPT_MAX_RANGE_RESIDUAL_M or slope > v_mean + ONPATH_ADOPT_RATE_TOL_MPS:
+      return False
+    return bool(slope >= v_mean - ONPATH_ADOPT_RATE_TOL_MPS or v_mean <= ONPATH_ADOPT_RAIL_VREL_MPS)
 
   def _clear_range_assist(self) -> None:
     self.range_assist_active = False
@@ -1024,6 +1118,23 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, model_
   return None
 
 
+def get_onpath_lead(v_ego: float, tracks: dict[int, Track], lead_one, preferred_track_id: int = -1) -> dict[str, Any] | None:
+  """ONPATH_RADAR_ADOPT (see the constant block): the radar-only on-path lead, published as radarState.leadOnpath
+  beside an unchanged leadOne. None when leadOne is already a radar lead (it is never replaced), when the nearest
+  adoptable track is not ONPATH_ADOPT_VISION_MARGIN_M nearer than a vision leadOne, or below V_EGO_STATIONARY."""
+  if v_ego < V_EGO_STATIONARY or (lead_one.status and lead_one.radar):
+    return None
+  candidates = [c for c in tracks.values()
+                if c.onpath_adoptable(held=c.onpath_adopted and c.identifier == preferred_track_id)]
+  if not candidates:
+    return None
+  closest_track = min(candidates, key=lambda c: c.dRel)
+  if lead_one.status and not closest_track.dRel < lead_one.dRel - ONPATH_ADOPT_VISION_MARGIN_M:
+    return None
+  closest_track.onpath_adopted = True
+  return closest_track.get_RadarState(shadow_telemetry=True)
+
+
 def get_RadarState_from_vision(lead_msg: capnp._DynamicStructReader, v_ego: float, model_v_ego: float, model_prob: float):
   prev_aLeadK = getattr(get_RadarState_from_vision, "prev_aLeadK", 0.0)
   blended_aLeadK = 0.8 * float(lead_msg.a[0]) + 0.2 * prev_aLeadK
@@ -1190,6 +1301,7 @@ class RadarD:
     lead_prob_dt = DT_MDL if self.honda_bosch_a_radar else radar_ts
     self.lead_prob_filters = [FirstOrderFilter(0.0, 0.2, lead_prob_dt) for _ in range(2)]
     self.prev_lead_track_ids = [-1, -1]
+    self.prev_onpath_track_id = -1  # radarState.leadOnpath last cycle (ONPATH_RADAR_ADOPT)
     self.preferred_stale_track_ids = [-1, -1]
     self.preferred_challenger_stale_counts = [0, 0]
     self.preferred_gross_distance_stale_counts = [0, 0]
@@ -1323,6 +1435,18 @@ class RadarD:
                               range_assist=ids in lead_track_ids, vision_closing=vis_closing,
                               vision_assist=vision_assist, camera_sample=cam_sample)
 
+    # ONPATH_RADAR_ADOPT: path offset of every track on a fresh sweep (yRel + = left, model y + = right)
+    if ONPATH_RADAR_ADOPT and self.honda_bosch_a_radar and radar_fresh:
+      position = getattr(sm['modelV2'], 'position', None) if self.ready else None
+      px = np.asarray(position.x) if position is not None and len(position.x) else None
+      py = np.asarray(position.y) if px is not None else None
+      t_live = sm.logMonoTime['liveTracks'] * 1e-9
+      for ids, rpt in ar_pts.items():
+        off = float('nan')
+        if px is not None and 1.0 < rpt[0] <= px[-1]:
+          off = rpt[1] + float(np.interp(rpt[0], px, py))
+        self.tracks[ids].update_onpath(t_live, off, bool(rpt[3]))
+
     # *** publish radarState ***
     self.radar_state_valid = sm.all_checks()
     self.radar_state = log.RadarState.new_message()
@@ -1359,9 +1483,18 @@ class RadarD:
                                           preferred_track_id=self.prev_lead_track_ids[1],
                                           honda_bosch_a_radar=self.honda_bosch_a_radar)
 
+      if ONPATH_RADAR_ADOPT and self.honda_bosch_a_radar:
+        onpath = get_onpath_lead(self.v_ego, self.tracks, self.radar_state.leadOne, self.prev_onpath_track_id)
+        if onpath is not None:
+          self.radar_state.leadOnpath = onpath
+        self.prev_onpath_track_id = onpath['radarTrackId'] if onpath is not None else -1
+
       if YOUNG_TRACK_FLAT_RANGE_BOUND and self.honda_bosch_a_radar:
         t_live = sm.logMonoTime['liveTracks'] * 1e-9
-        for lead, vis in ((self.radar_state.leadOne, leads_v3[0]), (self.radar_state.leadTwo, leads_v3[1])):
+        young_leads = [(self.radar_state.leadOne, leads_v3[0]), (self.radar_state.leadTwo, leads_v3[1])]
+        if ONPATH_RADAR_ADOPT and self.honda_bosch_a_radar:
+          young_leads.append((self.radar_state.leadOnpath, leads_v3[0]))
+        for lead, vis in young_leads:
           track = self.tracks.get(int(lead.radarTrackId)) if lead.status and lead.radar else None
           if track is not None and YOUNG_TRACK_VISION_GATE and not young_track_vision_contradicts(lead, vis, self.v_ego):
             track = None

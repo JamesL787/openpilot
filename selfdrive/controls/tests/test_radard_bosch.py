@@ -538,3 +538,105 @@ def test_bosch_full_update_clears_stale_preference_then_strictly_reacquires(monk
   assert radar_d.preferred_stale_track_ids[0] == 27
   assert radar_d.preferred_challenger_stale_counts[0] == 0
   assert radar_d.preferred_gross_distance_stale_counts[0] == 0
+
+
+def make_onpath_track(track_id, *, d0=94.0, v_rel=-13.5, range_rate=None, seconds=1.05, offsets=(0.6, -0.9, 0.3, -0.4),
+                      t0=100.0):
+  """Fresh measured Bosch-A sweeps of one track, with its path offset per sweep (yRel + model y at dRel)."""
+  track = radard.Track(track_id, 0.0, radard.KalmanParams(radard.HONDA_BOSCH_A_RADAR_TS))
+  rate = v_rel if range_rate is None else range_rate
+  n = int(round(seconds * radard.BOSCH_A_FREQ_HZ)) + 1
+  for i in range(n):
+    t = t0 + i / radard.BOSCH_A_FREQ_HZ
+    d = d0 + rate * (t - t0)
+    track.update(d, 0.0, v_rel, v_rel + 13.5, True, True, t_now=t)
+    track.update_onpath(t, offsets[i % len(offsets)], True)
+  return track
+
+
+def onpath_leads(tracks, *, v_ego=13.5, lead_msg=None, lead_prob=0.0, preferred_track_id=-1):
+  """(leadOne as HEAD publishes it, radarState.leadOnpath or None), the way RadarD.update() builds them."""
+  lead_one = radard.get_lead(
+    v_ego, True, tracks, lead_msg if lead_msg is not None else make_lead(60.0, probability=lead_prob), v_ego,
+    make_model_data(), False, make_plan(), make_toggles(), lead_prob=lead_prob, low_speed_override=True,
+    preferred_track_id=preferred_track_id, honda_bosch_a_radar=True,
+  )
+  return lead_one, radard.get_onpath_lead(v_ego, tracks, SimpleNamespace(**lead_one), preferred_track_id)
+
+
+def onpath_lead(tracks, **kwargs):
+  return onpath_leads(tracks, **kwargs)[1]
+
+
+def test_bosch_onpath_radar_only_track_is_adopted_after_a_second():
+  # 00000297--f971b5896f 31:06-31:09: track 6, a stopped car on a curve, railed U11 -13.5, path offset within
+  # ~1.3 m on single sweeps, model lead prob 0.00-0.28. HEAD published no lead until vision had it at 38 m.
+  track = make_onpath_track(6, offsets=(0.7, -0.6, 1.2, -0.2, 0.4, -0.9, 0.1))
+  lead_one, onpath = onpath_leads({6: track})
+  assert onpath['status'] and onpath['radar'] and onpath['radarTrackId'] == 6
+  # leadOne is exactly what HEAD publishes; the planner decides how much the on-path lead may brake
+  assert not lead_one['status']
+
+
+def test_bosch_onpath_adoption_needs_the_full_second():
+  track = make_onpath_track(6, seconds=0.6)
+  assert onpath_lead({6: track}) is None
+
+
+@pytest.mark.parametrize("kwargs", [
+  {"offsets": (0.3, -0.2, 0.4, 2.4, 0.1, -0.3, 0.2, 0.0, -0.1, 0.3, 0.2, -0.2, 0.1, 0.0, 0.2)},  # one sweep off path
+  {"offsets": (1.1, -1.2, 0.9, 1.3)},                          # beside the path, never centred on it
+  {"v_rel": -1.0, "d0": 60.0},                                 # not closing
+  {"v_rel": -8.0, "range_rate": -1.0, "d0": 60.0},             # ranges flat while U11 says closing
+  {"v_rel": -6.0, "range_rate": -12.0, "d0": 90.0},            # ranges closing twice as fast as an unrailed U11
+])
+def test_bosch_onpath_adoption_rejects(kwargs):
+  track = make_onpath_track(9, **kwargs)
+  assert onpath_lead({9: track}) is None
+
+
+def test_bosch_onpath_adoption_coast_restarts_the_run():
+  track = make_onpath_track(9, seconds=1.05)
+  t = track.onpath_hist[-1][0] + 0.3
+  track.update(track.dRel - 4.0, 0.0, -13.5, 0.0, False, False, t_now=t)
+  track.update_onpath(t, float('nan'), False)
+  assert onpath_lead({9: track}) is None
+
+
+def test_bosch_onpath_adoption_never_replaces_a_radar_lead_and_needs_a_margin_over_vision():
+  near = make_onpath_track(6, d0=60.0)
+  # 297 46:50: the only lead was vision at 118 m, 4 m to the side of the radar car at 86 m, so they never matched
+
+  def side_lead(d_rel):
+    lead_msg = make_lead(d_rel)
+    lead_msg.y = [4.0]
+    return lead_msg
+
+  lead_one, onpath = onpath_leads({6: near}, lead_msg=side_lead(near.dRel + 10.0), lead_prob=0.9)
+  assert lead_one['status'] and not lead_one['radar']
+  assert onpath['radarTrackId'] == 6
+  lead_one, onpath = onpath_leads({6: near}, lead_msg=side_lead(near.dRel + 3.0), lead_prob=0.9)
+  assert lead_one['status'] and not lead_one['radar'] and onpath is None
+  # a vision-matched radar leadOne (the lift): leadOnpath is withdrawn and leadOne has full authority
+  tracks = {2: make_track(2, 70.0, 10), 6: near}
+  lead_one, onpath = onpath_leads(tracks, lead_msg=make_lead(70.0), lead_prob=0.99)
+  assert lead_one['radarTrackId'] == 2 and onpath is None
+  lead_one, onpath = onpath_leads({6: near}, lead_msg=make_lead(near.dRel), lead_prob=0.99)
+  assert lead_one['radar'] and lead_one['radarTrackId'] == 6 and onpath is None
+
+
+def test_bosch_onpath_lead_is_held_while_it_stays_on_the_path():
+  track = make_onpath_track(6)
+  assert onpath_lead({6: track})['radarTrackId'] == 6
+  # later sweeps widen past the adoption test; the held track needs only its unbroken on-path run
+  t = track.onpath_hist[-1][0]
+  for i in range(1, 10):
+    track.update(track.dRel - 1.0, 0.0, -13.5, 0.0, True, True, t_now=t + i / radard.BOSCH_A_FREQ_HZ)
+    track.update_onpath(t + i / radard.BOSCH_A_FREQ_HZ, 1.6, True)
+  assert onpath_lead({6: track}) is None
+  assert onpath_lead({6: track}, preferred_track_id=6)['radarTrackId'] == 6
+
+
+def test_bosch_onpath_adoption_is_not_used_below_the_low_speed_override_speed():
+  track = make_onpath_track(6, d0=45.0, v_rel=-3.0)
+  assert onpath_lead({6: track}, v_ego=3.0) is None

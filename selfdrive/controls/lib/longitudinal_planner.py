@@ -276,6 +276,45 @@ OFF_AXIS_LEAD_VISION_MIN_PROB = 0.5
 # to vision's closing less a margin and aLeadK to vision's accel with a floor. Planner input only, like the off-axis
 # bound: radarState and radard are untouched, the point stays published and its range is kept (D-041/D-042).
 REASSOC_LEAD_BOUND = True
+
+# Radar-only on-path lead (radarState.leadOnpath, ONPATH_RADAR_ADOPT in radard.py): a Bosch-A track that sat on the
+# driving path for a second while the model did not see it. radard publishes it BESIDE an unchanged leadOne, and it
+# gets bounded authority here (D-048: a lead without vision corroboration does not get full authority). A second
+# planner instance runs every cycle on the same inputs with leadOne replaced by leadOnpath, so its state stays in
+# step; while leadOnpath is present the published target is that planner's, clipped to
+# [min(own, -ONPATH_LEAD_MAX_BRAKE), own]. One-sided: it can only add braking to what this planner already asks,
+# never remove braking and never add acceleration, and it adds nothing once this planner itself brakes harder than
+# the cap. Full authority returns when radard's own leadOne takes the track (vision match or its normal radar path),
+# because leadOnpath is then not published; the output is this planner's again on that cycle. The point is never
+# deleted and its range is never moved (D-041/D-042), so nothing here can pull the car toward a stopped object.
+# The cap is on the resulting target, not a delta: from +0.46 it may go to -0.80 (00000276 13:45.2).
+# 1.0 m/s^2: the off-axis bound's accepted residue on a false brake was -1.01 .. -1.22 (25f 13:58.4, 260 9:07.8).
+# Replay evidence only (closed-loop alpha_closed_loop_replay, 2026-09-29), route 00000297--f971b5896f:
+#   31:08.0 stopped car, adopted 1.35 s before HEAD's radar lead: -1.00 from 31:08.0 (HEAD -0.3); peak -2.86 vs HEAD
+#     -3.24 (uncapped -2.37), sim aEgo min -3.79 vs -4.06; ends 1.4 m farther back than HEAD (uncapped 2.4 m).
+#   30:18.1 stationary object on a curve edge, passed ~2.5 m to the side: -1.00 for 0.35 s (uncapped -2.87 and 1.0 s
+#     of extra braking), 0.4 m/s lost vs HEAD (uncapped 1.9 m/s).
+# A deeper cap buys back the uncapped gap on 31:08 and gives back the false brake at 30:18 one for one; there is no
+# road evidence either way.
+ONPATH_LEAD_BOUND = True
+ONPATH_LEAD_MAX_BRAKE = 1.0
+
+
+def onpath_lead_view(sm):
+  """SubMaster view with radarState.leadOne replaced by leadOnpath, or None when there is no on-path lead."""
+  try:
+    radar_state = sm['radarState']
+  except (KeyError, AttributeError):
+    return None
+  lead = getattr(radar_state, 'leadOnpath', None)
+  if lead is None or not bool(getattr(lead, 'status', False)):
+    return None
+  return _BoundedSubMaster(sm, _BoundedRadarState(radar_state, lead, radar_state.leadTwo))
+
+
+def onpath_bounded_target(own: float, with_onpath: float) -> float:
+  """The on-path lead may lower the target by at most down to -ONPATH_LEAD_MAX_BRAKE, and never raise it."""
+  return float(np.clip(with_onpath, min(own, -ONPATH_LEAD_MAX_BRAKE), own))
 REASSOC_LEAD_WINDOW_FRAMES = 30         # 1.5 s of history per radar track
 REASSOC_LEAD_MIN_OFFSET_M = 10.0        # track was this far beyond the vision lead ...
 REASSOC_LEAD_MIN_DROP_M = 6.0           # ... and its range has since dropped this much
@@ -1013,8 +1052,13 @@ class LongitudinalPlanner:
         self._blotv3_enabled = False
     return self._blotv3_enabled
 
-  def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL):
+  def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL, onpath_shadow=False):
     self.CP = CP
+    # ONPATH_LEAD_BOUND: the planner that sees leadOnpath as leadOne; never nested
+    self.onpath_planner = None
+    if ONPATH_LEAD_BOUND and not onpath_shadow and uses_off_axis_lead_bound(CP):
+      self.onpath_planner = LongitudinalPlanner(CP, init_v, init_a, dt, onpath_shadow=True)
+    self.onpath_bound_active = False
     self.bound_off_axis_radar_leads = uses_off_axis_lead_bound(CP)
     self.off_axis_lead_hold = OffAxisLeadHold()
     self.reassociation_hold = ReassociationHold()
@@ -2534,6 +2578,16 @@ class LongitudinalPlanner:
     return floor
 
   def update(self, sm, starpilot_toggles):
+    self._update(sm, starpilot_toggles)
+    if self.onpath_planner is None:
+      return
+    onpath_sm = onpath_lead_view(sm)
+    self.onpath_planner._update(onpath_sm if onpath_sm is not None else sm, starpilot_toggles)
+    self.onpath_bound_active = onpath_sm is not None
+    if self.onpath_bound_active:
+      self.output_a_target = onpath_bounded_target(self.output_a_target, self.onpath_planner.output_a_target)
+
+  def _update(self, sm, starpilot_toggles):
     if self.bound_off_axis_radar_leads:
       if REASSOC_LEAD_BOUND:
         sm = bound_reassociated_leads(sm, self.reassociation_hold)
