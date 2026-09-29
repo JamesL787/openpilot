@@ -12,6 +12,11 @@ commanded then, now and over the next 3 s: median, spread, and how close the nea
   stock_acc_reference.py gain     --cache-dir /tmp/sar [ALPHA_ROUTE ...]  # command -> aEgo at a firm brake, stock vs ours
   stock_acc_reference.py compare  ~/routes/00000298--... --cache-dir /tmp/sar [--json OUT]
                                   # every alpha-long brake episode: our command vs stock's precedent, onset, peak, twitch
+  stock_acc_reference.py compare  ROUTE_DIR --cache-dir /tmp/sar --candidate TRACE.json
+                                  # scores a candidate command trace ({"t": [...], "cmd": [...]}, route seconds)
+                                  # in place of the logged one, so an open-loop planner variant gets the same verdicts
+  stock_acc_reference.py leadbrake --cache-dir /tmp/sar [ALPHA_ROUTE ...]
+                                  # does the command move when the lead starts braking, before the gap closes?
   stock_acc_reference.py augment  FRAMES.json ROUTE_DIR --cache-dir /tmp/sar --out FRAMES_STOCK.json
                                   # adds a `stock_nn` variant to an alpha_closed_loop_replay frames JSON, so
                                   # long_replay_viewer.py draws it next to the planner variants
@@ -36,7 +41,7 @@ What it is NOT (read before quoting a number)
   reports the share of its neighbours that were set-speed limited (`setbind_share`) or had an ICBM press in the
   last ICBM_WINDOW_S (`icbm_share`).
 * Where the nearest precedent is further than NO_PRECEDENT, the answer is "no stock precedent", never a guess.
-* Corpus as of 2026-09-29: 19 stock routes, about 122 stock-engaged minutes, one car (HONDA_CIVIC_BOSCH, dongle
+* Corpus as of 2026-09-29: 16 stock routes, about 100 stock-engaged minutes with a lead within 120 m, one car (HONDA_CIVIC_BOSCH, dongle
   11c8fa231c0499ed). Hard braking (aEgo < -2.5) is about 60 s of that. Everything it says is replay evidence.
 
 Route data is never committed (AGENTS.md section 7): route directories are arguments, the cache lives outside the
@@ -52,7 +57,7 @@ from pathlib import Path
 
 import numpy as np
 
-HZ = 20.0
+HZ = 20
 ACC_CONTROL_ADDR = 0x1DF
 SCM_BUTTONS = 0x296          # CRUISE_BUTTONS = (dat[0] >> 5) & 7: 3 = DECEL_SET, 4 = RES_ACCEL
 LEAD_MAX_D = 120.0           # m: rows with a farther (or no) lead are not in the corpus and are never queried
@@ -71,6 +76,8 @@ SCALES = np.array([3.0, 0.15, 1.2, 0.7, 1.5])
 NO_PRECEDENT = 1.5           # median neighbour distance past which the answer is "no stock precedent"
 BRAKE_ON = -1.0              # episode starts when either side goes below this
 REVERSAL_MIN = 0.3           # m/s^2 swing that counts as the command changing its mind
+LEADBRAKE_ON = -1.0          # m/s^2 lead accel slope that counts as the lead starting to brake
+RADAR_MODEL_GAP = 3.0        # m/s radar closing faster than the model lead on the same car (Bob's gate3 condition)
 FIELDS = ("t", "v", "a", "d", "vrel", "alead", "aleadk", "yrel", "radar", "mprob", "mx", "mv",
           "cmd", "stock", "alpha", "icbm", "setv")
 
@@ -473,6 +480,14 @@ def compare_route(R: dict, C: Corpus) -> dict:
     ours_pk, st_pk = float(np.nanmin(ours[seg])), float(np.nanmin(stock[seg]))
     on_o, on_s = onset(t, ours, s, e), onset(t, stock, s, e)
     k = s + int(np.nanargmin(ours[seg]))
+    # radar vs model on the same car, over the second leading up to our peak: model lead speed minus radar lead
+    # speed, positive when radar says the lead is closing faster. Only where the lead is radar-backed and the model's
+    # lead sits at the radar's range (else the two are different cars and the difference means nothing).
+    w = slice(max(s, k - HZ), k + 1)
+    vr_lead = R["v"][w] + R["vrel"][w]
+    same = (R["radar"][w] > 0.5) & (np.abs(R["mx"][w] - R["d"][w]) < np.maximum(5.0, 0.2 * R["d"][w]))
+    gap = np.where(same, R["mv"][w] - vr_lead, np.nan)
+    gap_max = float(np.nanmax(gap)) if np.isfinite(gap).any() else math.nan
     eps.append({
       "t0": round(float(t[s]) + 2.0, 1), "t1": round(float(t[e]) - 2.0, 1),
       "ours_peak": round(ours_pk, 2), "stock_peak": round(st_pk, 2),
@@ -486,6 +501,7 @@ def compare_route(R: dict, C: Corpus) -> dict:
       "at_ours_peak": {"v": round(float(R["v"][k]), 1), "d": round(float(R["d"][k]), 1), "vrel": round(float(R["vrel"][k]), 1),
                        "alead": round(float(R["alead"][k]), 2), "aleadk": round(float(R["aleadk"][k]), 2),
                        "radar": bool(R["radar"][k] > 0.5), "model_v_minus_radar": round(float(R["mv"][k] - (R["v"][k] + R["vrel"][k])), 1)},
+      "radar_minus_model_closing": round(gap_max, 1) if math.isfinite(gap_max) else None,
       "min_a_ego": round(float(np.nanmin(R["a"][seg])), 2),
       "precedent_dist": round(dist, 2), "no_precedent": bool(dist > NO_PRECEDENT),
       "icbm_share": round(float(np.nanmean(pred["icbm"][seg])), 2),
@@ -499,32 +515,127 @@ def compare_route(R: dict, C: Corpus) -> dict:
 
 
 def verdict(e: dict) -> str:
-  if e["no_precedent"]:
-    return "no stock precedent"
   tags = []
-  if e["ours_peak"] < e["stock_peak_p25"] - 0.5 and e["ours_peak"] < -1.5:
-    tags.append("ours harder")
-  if e["stock_peak"] < -1.5 and e["ours_peak"] > e["stock_peak"] + 1.0:
-    tags.append("ours softer")
-  if e["ours_onset"] is not None and e["stock_onset"] is not None:
-    if e["ours_onset"] - e["stock_onset"] > 0.5:
-      tags.append("ours later")
-    elif e["stock_onset"] - e["ours_onset"] > 0.5:
-      tags.append("ours earlier")
-  elif e["ours_onset"] is not None and e["stock_peak"] > -0.7:
-    tags.append("stock would not brake")
-  if e["ours_reversals"] >= e["stock_reversals"] + 2:
-    tags.append("ours twitchier")
+  if e["no_precedent"]:
+    tags.append("no stock precedent")
+  else:
+    if e["ours_peak"] < e["stock_peak_p25"] - 0.5 and e["ours_peak"] < -1.5:
+      tags.append("ours harder")
+    if e["stock_peak"] < -1.5 and e["ours_peak"] > e["stock_peak"] + 1.0:
+      tags.append("ours softer")
+    if e["ours_onset"] is not None and e["stock_onset"] is not None:
+      if e["ours_onset"] - e["stock_onset"] > 0.5:
+        tags.append("ours later")
+      elif e["stock_onset"] - e["ours_onset"] > 0.5:
+        tags.append("ours earlier")
+    elif e["ours_onset"] is not None and e["stock_peak"] > -0.7:
+      tags.append("stock would not brake")
+    if e["ours_reversals"] >= e["stock_reversals"] + 2:
+      tags.append("ours twitchier")
+  if (e.get("radar_minus_model_closing") or 0.0) >= RADAR_MODEL_GAP:
+    tags.append("radar closing > model")
   if e["at_ours_peak"]["aleadk"] is not None and e["at_ours_peak"]["aleadk"] < -4 and e["at_ours_peak"]["alead"] > -1.5:
     tags.append("aLeadK spike")
   return ", ".join(tags) or "similar"
 
 
+def with_candidate(R: dict, path: Path) -> dict:
+  """R with its command replaced by a candidate trace ({"t": [...], "cmd": [...]} in route seconds, e.g. an
+  open-loop planner variant). Rows the trace does not cover within 0.1 s get NaN and drop out of the scoring."""
+  doc = json.loads(Path(path).read_text())
+  ct, cc = np.asarray(doc["t"], float), np.asarray(doc["cmd"], float)
+  o = np.argsort(ct)
+  ct, cc = ct[o], cc[o]
+  k = np.clip(np.searchsorted(ct, R["t"]), 1, len(ct) - 1)
+  k = np.where(np.abs(ct[k - 1] - R["t"]) < np.abs(ct[k] - R["t"]), k - 1, k)
+  R = dict(R)
+  R["cmd"] = np.where(np.abs(ct[k] - R["t"]) < 0.1, cc[k], np.nan)
+  R["meta"] = dict(R["meta"], candidate=str(path))
+  return R
+
+
+def lead_brake_events(R: dict, side: np.ndarray) -> list[dict]:
+  """Moments the lead starts braking while the gap is not yet closing: lead accel slope first below
+  LEADBRAKE_ON after a calm second, vRel > -1 m/s, lead within 100 m, engaged from 0.5 s before to 2 s after. Measures the
+  command's change from its value at the start, and when the gap starts closing (vRel < -1)."""
+  t, al, vr, cmd = R["t"], R["alead"], R["vrel"], R["cmd"]
+  out = []
+  last = -1e9
+  for i in range(HZ, len(t) - 2 * HZ):
+    if not (al[i] < LEADBRAKE_ON and al[i - 1] >= LEADBRAKE_ON) or t[i] - last < 5.0:
+      continue
+    w = slice(i - HZ // 2, i + 2 * HZ + 1)
+    if (np.any(np.diff(t[w]) > 0.2) or not np.all(side[w] > 0.5) or not np.all(np.isfinite(cmd[w])) or
+        not (vr[i] > -1.0 and R["d"][i] < 100 and R["v"][i] > 5.0) or not np.nanmedian(al[i - HZ:i]) > -0.5):
+      continue
+    last = t[i]
+    closing = np.flatnonzero(vr[i:i + 2 * HZ] < -1.0)
+    tc = float(closing[0] / HZ) if len(closing) else math.inf
+    c0 = cmd[i]
+    before = cmd[i:i + (closing[0] if len(closing) else 2 * HZ) + 1]
+    out.append({"t": round(float(t[i]), 1), "v": round(float(R["v"][i]), 1), "d": round(float(R["d"][i]), 1),
+                "lead_accel_1s": round(float(np.nanmin(al[i:i + HZ])), 2), "t_gap_closing": tc,
+                "drop_before_closing": round(float(c0 - np.min(before)), 2),
+                "drop_1s": round(float(c0 - np.min(cmd[i:i + HZ + 1])), 2),
+                "drop_2s": round(float(c0 - np.min(cmd[i:i + 2 * HZ + 1])), 2)})
+  return out
+
+
+def cmd_leadbrake(args) -> int:
+  """Q3 (Bob): does the command move when the lead starts braking, before the gap starts closing? Stock from the
+  corpus, ours from the alpha routes given. The control is every calm-lead moment with the same gate (vRel > -1,
+  lead within 100 m, lead accel above -0.5): how often the command drops that much anyway."""
+  _, routes = load_corpus(args.cache_dir)
+  groups = {"stock": [R for R in routes if not R["meta"]["op_long"]]}
+  groups["ours"] = [R for R in (load(p.expanduser(), args.cache_dir) for p in args.routes) if R["meta"]["op_long"]]
+  for who, rs in groups.items():
+    ev, base1 = [], []
+    for R in rs:
+      side = R["stock"] if who == "stock" else R["alpha"]
+      if len(R["t"]) < 5 * HZ:
+        continue
+      ev += lead_brake_events(R, side)
+      cmd = R["cmd"]
+      calm = ((side > 0.5) & (R["vrel"] > -1.0) & (R["d"] < 100) & (R["v"] > 5.0) & (R["alead"] > -0.5) &
+              np.isfinite(cmd))
+      for i in np.flatnonzero(calm[:-HZ])[::HZ]:
+        seg = cmd[i:i + HZ + 1]
+        if np.all(np.isfinite(seg)) and R["t"][i + HZ] - R["t"][i] < 1.2:
+          base1.append(cmd[i] - np.min(seg))
+    if not ev:
+      print(f"{who}: no lead-brake onsets")
+      continue
+    d1 = np.array([e["drop_1s"] for e in ev])
+    db = np.array([e["drop_before_closing"] for e in ev])
+    tc = np.array([e["t_gap_closing"] for e in ev])
+    base1 = np.array(base1)
+    print(f"{who}: {len(ev)} lead-brake onsets (lead accel < {LEADBRAKE_ON} after a calm second, vRel > -1, d < 100)")
+    print(f"  command drop in the first 1 s: median {np.median(d1):.2f}, >= 0.3 in {np.mean(d1 >= 0.3):.0%}" +
+          f"   (calm-lead control, n {len(base1)}: median {np.median(base1):.2f}, >= 0.3 in {np.mean(base1 >= 0.3):.0%})")
+    print(f"  drop before the gap starts closing (vRel < -1): median {np.nanmedian(db):.2f}, >= 0.3 in {np.mean(db >= 0.3):.0%};" +
+          f" when it closes within 2 s it starts after median {np.median(tc[np.isfinite(tc)]):.1f} s ({np.mean(np.isinf(tc)):.0%} not within 2 s)")
+    la, d2 = np.array([e["lead_accel_1s"] for e in ev]), np.array([e["drop_2s"] for e in ev])
+    for lo, hi, name in [(-99, -3.0, "hard (< -3)"), (-3.0, -1.5, "medium"), (-1.5, 0.0, "light (> -1.5)")]:
+      for gap, gname in [(np.isfinite(tc), "gap closes within 2 s"), (np.isinf(tc), "gap still open at 2 s")]:
+        m = (la >= lo) & (la < hi) & gap
+        if m.any():
+          print(f"    lead brake {name:<14} {gname}: n {m.sum():>3}  drop 1 s median {np.median(d1[m]):.2f}" +
+                f" (>= 0.3 {np.mean(d1[m] >= 0.3):>4.0%})  drop 2 s median {np.median(d2[m]):.2f} (>= 0.3 {np.mean(d2[m] >= 0.3):>4.0%})")
+    if args.list:
+      for e in ev:
+        print("   ", e)
+  return 0
+
+
 def cmd_compare(args) -> int:
   C, _ = load_corpus(args.cache_dir)
   out = []
+  if args.candidate and len(args.routes) != 1:
+    raise SystemExit("--candidate scores one route at a time")
   for p in args.routes:
     R = load(p.expanduser(), args.cache_dir)
+    if args.candidate:
+      R = with_candidate(R, args.candidate)
     res = compare_route(R, C)
     print(f"\n{res['route']} ({res['who']} long, {res['minutes_with_lead']} min engaged with a lead): command reversals " +
           f"per minute ours {res['ours_reversals_per_min']} vs stock precedent {res['stock_reversals_per_min']}")
@@ -574,21 +685,24 @@ def cmd_augment(args) -> int:
 def main() -> int:
   ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
   sub = ap.add_subparsers(dest="mode", required=True)
-  for name in ("build", "validate", "gain", "compare", "augment"):
+  for name in ("build", "validate", "gain", "compare", "leadbrake", "augment"):
     s = sub.add_parser(name)
     s.add_argument("--cache-dir", type=Path, required=True, help="per-route npz cache and corpus (outside the repo)")
-    if name in ("build", "gain", "compare"):
-      s.add_argument("routes", nargs="*" if name == "gain" else "+", type=Path)
+    if name in ("build", "gain", "compare", "leadbrake"):
+      s.add_argument("routes", nargs="*" if name in ("gain", "leadbrake") else "+", type=Path)
+    if name == "leadbrake":
+      s.add_argument("--list", action="store_true", help="print every onset")
     if name == "compare":
       s.add_argument("--json")
       s.add_argument("--min-peak", type=float, default=-1.5, help="list episodes where either side goes below this")
+      s.add_argument("--candidate", type=Path, help='score this command trace instead: JSON {"t": [...], "cmd": [...]}')
     if name == "augment":
       s.add_argument("frames", type=Path)
       s.add_argument("route", type=Path)
       s.add_argument("--out", required=True)
   args = ap.parse_args()
   return {"build": cmd_build, "validate": cmd_validate, "gain": cmd_gain, "compare": cmd_compare,
-          "augment": cmd_augment}[args.mode](args)
+          "leadbrake": cmd_leadbrake, "augment": cmd_augment}[args.mode](args)
 
 
 if __name__ == "__main__":

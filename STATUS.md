@@ -9930,4 +9930,17 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **Limits:**
   - The reference is a neighbour median. It says what stock did in similar logged moments, not what it would have done here.
   - No cut-ins, stop-and-go to zero, or adjacent-lane curves are separated out yet.
-  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 4 pass (synthetic routes).
+  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 6 pass (synthetic routes).
+- **Addendum (2026-09-29, Bob's gate3 questions; replay only):**
+  - **Radar-vs-model tag.** An episode is tagged `radar closing > model` when radar closing exceeds the model lead's closing on the same car by 3 m/s or more in the second before our peak.
+    - Ours harder: 10 of 23 tagged.
+    - Ours earlier: 7 of 23 tagged.
+    - Twitchier: 4 of 24. Similar: 0 of 72. No precedent: 25 of 58.
+    - Reading: the tag is concentrated where we out-brake stock and absent where we match it. But it covers under half of the harder and earlier cases, so gate3 is aimed at a real subset, not at the whole gap.
+  - **Q3, does stock react to the lead braking before the gap closes?** `leadbrake` mode.
+    - Event: the lead's accel slope first drops below −1.0 after a calm second, with vRel > −1 and lead within 100 m. Stock has 183 events, ours 206.
+    - Stock barely moves: 1 s command drop median 0.04, ≥ 0.3 in 9 %, against a 4 % calm-lead control. With a hard lead brake (< −3) and the gap closing within 2 s, the 1 s drop is 0.04 (0 % at ≥ 0.3) and the 2 s drop is 0.19.
+    - Ours moves first: in the same hard/closing case, 1 s drop median 0.68 (65 % at ≥ 0.3); control 3 %.
+    - Reading: stock's decisiveness does not come from reacting to lead braking. It waits for the gap and closing speed, then commits. Ours reacts to the lead's decel within the first second, which lines up with "ours earlier".
+  - **`compare --candidate trace.json`** (one route): scores a {"t", "cmd"} command trace against the stock reference in place of our logged command, for Bob's open-loop gate3+TTC variant.
+  - The end-of-stop profile is not done yet.

@@ -51,3 +51,22 @@ def test_compare_flags_harder_and_twitchier_than_stock():
   assert res["episodes"]
   v = [sar.verdict(e) for e in res["episodes"] if e["stock_peak"] < -1.5]
   assert v and all("ours harder" in x and "ours twitchier" in x for x in v)
+
+
+def test_radar_closing_faster_than_model_is_tagged():
+  C = sar.Corpus([_route(f"s{i}", False, seed=i) for i in range(3)])
+  A = _route("a0", True, seed=9, brake_gain=2.0)
+  assert not any("radar closing > model" in sar.verdict(e) for e in sar.compare_route(A, C)["episodes"])
+  A["mv"] = A["mv"] + sar.RADAR_MODEL_GAP + 1.0  # the model thinks the lead is 4 m/s faster than radar does
+  eps = sar.compare_route(A, C)["episodes"]
+  assert eps and all("radar closing > model" in sar.verdict(e) for e in eps)
+
+
+def test_lead_brake_onset_needs_a_calm_lead_first():
+  R = _route("s0", False, n=400)
+  R["vrel"][:] = 0.0
+  R["alead"][200:260] = -2.0
+  ev = sar.lead_brake_events(R, R["stock"])
+  assert [e["t"] for e in ev] == [10.0]
+  R["alead"][150:200] = -1.0  # already braking the second before: not an onset
+  assert sar.lead_brake_events(R, R["stock"]) == []
