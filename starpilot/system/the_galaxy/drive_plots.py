@@ -440,12 +440,12 @@ def _analyze_lateral(c, seg, dt, min_engaged_s):
 
 def _events(c, dt, lateral, cap=EVENTS_PER_KIND, takeover_data=None):
   """Moments worth a look, with the time into the recording, the speed and the car ahead: braking moments and
-  lead changes (drive_plots_agents.long_moments, Radar Work's list), driver takeovers while openpilot steered (raw
+  lead changes (drive_plots_agents.long_moments, Radar Work's list), James's lateral moments (lat_moments), driver takeovers while openpilot steered (raw
   steeringPressed, with release numbers) and tight turns that went past the request. cap: per kind (None = all)."""
   t = c["t"]
   if len(t) < 2:
     return []
-  out = agents.long_moments(c, cap=cap)
+  out = agents.long_moments(c, cap=cap) + agents.lat_moments(c, cap=cap)
   eps = (takeover_data or agents.takeovers(c))["episodes"]
   kept = [e for e in eps if e["lat_active"]]
   for e in (kept[:cap] if cap else kept):
@@ -1493,7 +1493,7 @@ class DrivePlots:
     lo = t[0] + (PUBLISH_EDGE_S if t[0] > t0 + 0.5 else -1.0)
     hi = t[-1] - PUBLISH_MARGIN_S
     sent = 0
-    for e in agents.long_moments(c, t0=t0):
+    for e in agents.long_moments(c, t0=t0) + agents.lat_moments(c, t0=t0):
       if lo <= e["mono_s"] <= hi and not self._seen(rec, e["kind"], e["mono_s"]):
         self._publish("moment", {"session": rec["id"], "route": rec.get("route"), **e})
         sent += 1

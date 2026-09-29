@@ -9,6 +9,7 @@ it: it is route data):
   report.json   one flat JSON: tune snapshot, controller, the Galaxy Plots analysis (lateral / longitudinal / tight
                 turns / lateral_detail / driver_takeovers / moments) and the drivePlots messages the car logged.
   samples.csv   every row the analysis used, with seg and route_s.
+  moment_windows.csv  +-2 s of rows around every moment in the report (moment index, kind, seconds from it).
 
 Times. Every time an agent sees is route_s: seconds from the route's first logMonoTime (the first message of the
 first segment given), plus seg and mm:ss inside that segment. mono_s is the raw logMonoTime in seconds, the join key
@@ -51,6 +52,7 @@ CLARITY_FILE = "selfdrive/controls/lib/latcontrol_clarity_eps.py"
 EXTRA_KEYS = ("LaneCentering", "LaneCenteringE2EAuthority", "LaneCenterOffset", "SteerDelay", "BlotV3", "BoschARadar",
               "ExperimentalMode", "ConditionalExperimental", "ConditionalChill", "LongitudinalPersonality")
 RLOG_SERVICE = dp.RLOG_SERVICE
+MOMENT_WINDOW_S = 2.0          # moment_windows.csv: rows this far either side of each moment
 
 
 def segments(spec):
@@ -277,6 +279,23 @@ def write(out_dir, rep, r):
     w.writerow(["seg", "route_s", *dp.COLUMNS])
     for seg, row in zip(r["seg"], rows, strict=True):
       w.writerow([int(seg), round(row[0] - r["route_t0"] / 1e9, 3), *("" if x != x else dp._fmt(x) for x in row)])
+  write_moment_windows(os.path.join(out_dir, "moment_windows.csv"), rep, r)
+
+
+def write_moment_windows(path, rep, r, half_s=MOMENT_WINDOW_S):
+  """Every moment in the report with +-half_s of rows around it (Bob, James): moment index, kind, seconds from the
+  moment, then the samples.csv columns. Offline only; the car keeps just the moment and the UI zooms to it."""
+  rows = r["rows"]
+  events = [e for e in ((rep.get("analysis") or {}).get("events") or []) if e.get("mono_s") is not None]
+  t = np.array([row[0] for row in rows])
+  with open(path, "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["moment", "kind", "rel_s", "route_s", *dp.COLUMNS])
+    for k, e in enumerate(events):
+      a, b = np.searchsorted(t, e["mono_s"] - half_s), np.searchsorted(t, e["mono_s"] + half_s, side="right")
+      for row in rows[a:b]:
+        w.writerow([k, e["kind"], round(row[0] - e["mono_s"], 3), round(row[0] - r["route_t0"] / 1e9, 3),
+                    *("" if x != x else dp._fmt(x) for x in row)])
 
 
 def main(argv=None):

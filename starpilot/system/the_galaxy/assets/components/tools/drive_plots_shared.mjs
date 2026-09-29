@@ -504,6 +504,60 @@ export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
       title = "Tight turn went past the request"
       detail = `${e.side === "left" ? "Left" : "Right"} turn at ${fmtSpeed(e.v, speed)}: ${fmtNum(e.peak_des, 0)}° asked, the wheel ` +
         `went ${fmtNum(e.overshoot, 0)}° past it (overshoot or a late unwind).`
+    } else if (e.kind === "exp_flipflop") {
+      kind = "brake"
+      title = "Experimental mode switched back and forth"
+      detail = `At ${fmtSpeed(e.v, speed)} it switched ${e.experimental_now ? "on" : "off"} ${fmtNum(e.since_last_s, 1)} s after the last switch` +
+        (e.red_light ? " (a red light was seen)." : ".")
+    } else if (e.kind === "false_red_light") {
+      kind = "brake"
+      title = "Red light seen, but the car kept going"
+      detail = `A red light came on at ${fmtSpeed(e.v, speed)}; the car stayed above ${fmtSpeed(e.v_min_10s, speed)} for 10 s.`
+    } else if (e.kind === "atarget_step") {
+      kind = "brake"
+      title = "Speed request jumped"
+      detail = `At ${fmtSpeed(e.v, speed)} openpilot's requested acceleration jumped from ${fmtNum(e.a_before, 1)} to ` +
+        `${fmtNum(e.a_after, 1)} m/s² in one step.`
+    } else if (e.kind === "close_lead_cap") {
+      kind = "brake"
+      title = "Close-car brake cap kicked in"
+      detail = `At ${fmtSpeed(e.v, speed)}, capped at ${acc(e.cl_cap)}. ${leadText(e.lead, speed)}`
+    } else if (e.kind === "radar_coast_near") {
+      kind = "brake"
+      title = "Radar lost sight of a close car"
+      detail = `At ${fmtSpeed(e.v, speed)} the radar coasted a car within ${fmtNum(toNumber(e.d_min) * speed.distFactor, 0)} ` +
+        `${speed.distUnit} for ${fmtNum(e.coast_s, 1)} s.`
+    } else if (e.kind === "vrel_disagree") {
+      kind = "brake"
+      title = "Radar speed readings disagreed"
+      detail = `At ${fmtSpeed(e.v, speed)} the car ahead's two speed readings differed by up to ${fmtNum(e.gap_max, 1)} m/s ` +
+        `for ${fmtNum(e.for_s, 1)} s. ${leadText(e.lead, speed)}`
+    } else if (e.kind === "radar_vs_model") {
+      kind = "brake"
+      title = "Radar and camera disagreed on the distance"
+      detail = `At ${fmtSpeed(e.v, speed)} they differed by up to ${fmtNum(e.d_gap_max, 0)} m for ${fmtNum(e.for_s, 1)} s. ${leadText(e.lead, speed)}`
+    } else if (e.kind === "overspeed_no_lead") {
+      kind = "brake"
+      title = "Went over the set speed with no car ahead"
+      detail = `Up to ${fmtNum(toNumber(e.over_max) * speed.factor, 1)} ${speed.unit} over for ${fmtNum(e.for_s, 0)} s.`
+    } else if (e.kind === "gf_clip") {
+      kind = "brake"
+      title = "Gas learner hit its limit"
+      detail = `At ${fmtSpeed(e.v, speed)} the learned gas factor reached ${fmtNum(e.gl_gf_raw, 2)}.`
+    } else if (e.kind === "fault_flicker") {
+      title = "Steering dropped out for a moment"
+      detail = `At ${fmtSpeed(e.v, speed)} a temporary steering fault lasted ${fmtNum(e.fault_s, 1)} s` +
+        (e.steer_pressed ? " while you held the wheel." : ".")
+    } else if (e.kind === "release_snap") {
+      title = "Wheel pulled back fast after you let go"
+      detail = `At ${fmtSpeed(e.v, speed)}` + (e.repress ? `; you grabbed it again ${fmtNum(e.repress_after_s, 1)} s later.` : ".")
+    } else if (e.kind === "hwy_inside_cut") {
+      title = "Cut the inside of a highway curve"
+      detail = `${e.turn === "left" ? "Left" : "Right"} curve at ${fmtSpeed(e.v, speed)}: up to ${fmtNum(e.inside_max_m, 2)} m toward ` +
+        `the inside for ${fmtNum(e.for_s, 0)} s.`
+    } else if (e.kind === "hwy_wiggle") {
+      title = "Wheel wiggled on a highway straight"
+      detail = `At ${fmtSpeed(e.v, speed)} the steering torque swung back and forth at least 4 times in 3 s.`
     } else {
       title = String(e.kind || "Event")
     }

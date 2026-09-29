@@ -740,12 +740,12 @@ def test_rlog_copy_has_start_moments_takeovers_and_summary(tmp_path):
   assert start["route"] == "abc--0123456789" and start["tune"] == {"NrdrX": "1"} and start["columns"] == dp.COLUMNS
   moments = [m for m in pub.sent if m["type"] == "moment"]
   takeovers = [m for m in pub.sent if m["type"] == "takeover"]
-  assert [m["kind"] for m in moments] == ["hard_brake"]
+  assert [m["kind"] for m in moments] == ["hard_brake", "atarget_step"]   # the brake is a step in aTarget
   assert moments[0]["mono_s"] == pytest.approx(rows[0, 0] + 50.0, abs=0.06) and moments[0]["t"] == pytest.approx(50.0, abs=0.1)
   assert len(takeovers) == 1 and takeovers[0]["push"] == "left"
   assert {"lateral_controller", "git_commit", "lane_press_3s_m"} <= set(takeovers[0])
   summary = [m for m in pub.sent if m["type"] == "summary"][-1]
-  assert summary["counts"] == {"hard_brake": 1, "takeover": 1} and "lateral" in summary
+  assert summary["counts"] == {"hard_brake": 1, "atarget_step": 1, "takeover": 1} and "lateral" in summary
   plots.stop_recording(reason="drive ended", background=False)
   assert pub.sent[-1]["type"] == "end" and pub.sent[-1]["reason"] == "drive ended"
 
@@ -911,3 +911,108 @@ def test_takeover_turn_fight_numbers():
   assert eps[1]["t90_s"] is None   # pressed again before lat_out settled
   s = agents.takeovers(c)["summary"]
   assert (s["repress"], s["repress_late"], s["fault_flicker"], s["near_cut"]) == (1, 0, 1, 1)
+
+
+def _blank(seconds=120.0, hz=20.0):
+  t = np.arange(0.0, seconds, 1.0 / hz) + 1000.0
+  c = {k: np.full(len(t), np.nan) for k in dp.COLUMNS}
+  c["t"] = t
+  return c, t - t[0]
+
+
+def test_bob_moments():
+  """Bob's 2026-09-29 moments, one of each on a synthetic 20 Hz drive, and none where the column is missing."""
+  c, t = _blank()
+  c["v"][:], c["long_active"][:], c["long_des"][:], c["lead_src"][:], c["lead_d"][:] = 25.0, 1, 0.0, 0, 0.0
+  c["exp_mode"][:] = 0.0
+  c["exp_mode"][(t >= 5.0) & (t < 5.5)] = 1.0          # on at 5.0, off 0.5 s later: one flip-flop at 5.5
+  c["red_light"][:] = 0.0
+  c["red_light"][(t >= 10.0) & (t < 12.0)] = 1.0        # the car stays at 25 m/s: false red light at 10
+  c["road_curv"][:] = 0.002
+  c["long_des"][(t >= 30.0) & (t < 31.0)] = 0.8         # +0.8 step at 30, -0.8 step at 31
+  c["cl_cap"][:] = 0.0
+  c["cl_cap"][(t >= 40.0) & (t < 42.0)] = -1.2
+  radar = (t >= 50.0) & (t < 70.0)
+  c["lead_src"][radar], c["lead_d"][radar], c["lead_meas"][radar] = 1, 30.0, 1.0
+  c["lead_vrel"][radar], c["lead_vrr"][radar] = -1.0, -1.0
+  c["lead_meas"][(t >= 52.0) & (t < 53.0)] = 0.0        # coasting 1 s at 30 m
+  c["lead_meas"][(t >= 55.0) & (t < 55.3)] = 0.0        # 0.3 s: too short
+  c["lead_vrr"][(t >= 58.0) & (t < 59.0)] = 1.0         # vRel off by 2 m/s for 1 s
+  c["mlead_p"][radar], c["mlead_x"][radar] = 0.9, 30.0
+  c["mlead_x"][(t >= 62.0) & (t < 64.0)] = 40.0         # model 10 m further for 2 s
+  c["v_cruise"][:] = 90.0                               # km/h: 25 m/s set
+  c["v"][(t >= 80.0) & (t < 85.0)] = 26.0               # 1 m/s over for 5 s with no lead
+  c["pitch"][:], c["gl_gf"][:] = -0.03, 1.4
+  c["gl_gf_raw"][:] = 1.2
+  c["gl_gf_raw"][(t >= 90.0) & (t < 100.0)] = 1.6
+  c["gl_gf_raw"][(t >= 95.0) & (t < 95.5)] = 1.58      # dips under for 0.5 s: still the same clip
+  m = agents.long_moments(c)
+  got = {}
+  for e in m:
+    got.setdefault(e["kind"], []).append(e)
+  assert [e["t"] for e in got["exp_flipflop"]] == [5.5]
+  assert got["exp_flipflop"][0]["since_last_s"] == pytest.approx(0.5) and got["exp_flipflop"][0]["road_curv"] == 0.002
+  assert [e["t"] for e in got["false_red_light"]] == [10.0] and got["false_red_light"][0]["v_min_10s"] == 25.0
+  assert [e["t"] for e in got["atarget_step"]] == [30.0, 31.0] and got["atarget_step"][1]["a_after"] == 0.0
+  assert [e["t"] for e in got["close_lead_cap"]] == [40.0] and got["close_lead_cap"][0]["cl_cap"] == -1.2
+  assert [e["t"] for e in got["radar_coast_near"]] == [52.0]
+  assert got["radar_coast_near"][0]["coast_s"] == pytest.approx(1.0)
+  assert [e["t"] for e in got["vrel_disagree"]] == [58.0] and got["vrel_disagree"][0]["gap_max"] == 2.0
+  assert [e["t"] for e in got["radar_vs_model"]] == [62.0] and got["radar_vs_model"][0]["d_gap_max"] == 10.0
+  over = got["overspeed_no_lead"]
+  assert [e["t"] for e in over] == [80.0] and over[0]["for_s"] == pytest.approx(5.0) and over[0]["pitch"] == -0.03
+  assert [e["t"] for e in got["gf_clip"]] == [90.0]
+  # A car that stopped for the light is not a false red light, and an unset set speed (255) never overspeeds.
+  c["v"][(t >= 15.0) & (t < 16.0)] = 1.0
+  c["v_cruise"][:] = 255.0
+  kinds = [e["kind"] for e in agents.long_moments(c)]
+  assert "false_red_light" not in kinds and "overspeed_no_lead" not in kinds
+  # Older recordings without these columns give none of them.
+  for k in ("exp_mode", "red_light", "cl_cap", "lead_meas", "lead_vrr", "mlead_x", "v_cruise", "gl_gf_raw"):
+    c[k][:] = np.nan
+  assert not {e["kind"] for e in agents.long_moments(c)} & {"exp_flipflop", "false_red_light", "close_lead_cap",
+                                                            "radar_coast_near", "vrel_disagree", "radar_vs_model",
+                                                            "overspeed_no_lead", "gf_clip"}
+
+
+def test_james_lateral_moments():
+  c, t = _blank()
+  c["v"][:], c["lat_active"][:], c["steer_pressed"][:], c["steer_tq"][:] = 5.0, 1, 0, 0.0
+  c["fault_t"][:], c["fault_p"][:] = 0.0, 0.0
+  c["fault_t"][(t >= 5.0) & (t < 5.2)] = 1.0            # a 0.2 s flicker while steering
+  c["tq_out"][:] = 0.0
+  c["steer_pressed"][(t >= 10.0) & (t < 12.0)] = 1.0    # release at 12, tq_out ramps 2 /s, re-pressed at 13
+  c["tq_out"][(t >= 12.0) & (t < 12.2)] = 2.0 * (t[(t >= 12.0) & (t < 12.2)] - 12.0)
+  c["tq_out"][(t >= 12.2) & (t < 20.0)] = 0.4
+  c["steer_pressed"][(t >= 13.0) & (t < 14.0)] = 1.0
+  hwy = t >= 30.0
+  c["v"][hwy], c["lat_des"][hwy], c["ang_act"][hwy], c["lane_off"][hwy], c["lane_prob"][hwy] = 30.0, -0.8, 12.0, 0.0, 0.9
+  c["lane_off"][(t >= 40.0) & (t < 43.0)] = 0.35        # left curve (angle +), car left of centre: inside by 0.35 m
+  c["lane_off"][(t >= 50.0) & (t < 51.0)] = 0.35        # only 1 s: not a cut
+  c["lane_off"][(t >= 55.0) & (t < 58.0)] = -0.35       # outside: not a cut
+  straight = t >= 70.0
+  c["lat_des"][straight], c["ang_act"][straight] = 0.1, 0.5
+  c["ff"][straight], c["lat_p"][straight] = 0.02, 0.03
+  c["tq_out"][hwy] = 0.0
+  w = (t >= 80.0) & (t < 82.5)
+  c["tq_out"][w] = 0.1 * np.sign(np.sin(2 * np.pi * 1.0 * (t[w] - 80.0) + 0.1))   # 1 Hz square wave: 4 flips in 2.5 s
+  small = (t >= 100.0) & (t < 105.0)
+  c["tq_out"][small] = 0.02 * np.sign(np.sin(2 * np.pi * 2.0 * (t[small] - 100.0) + 0.1))  # under the floor
+  got = {}
+  for e in agents.lat_moments(c):
+    got.setdefault(e["kind"], []).append(e)
+  assert [e["t"] for e in got["fault_flicker"]] == [5.0] and got["fault_flicker"][0]["fault_s"] == pytest.approx(0.2)
+  assert [e["t"] for e in got["release_snap"]] == [12.0, 14.0]
+  s = got["release_snap"][0]
+  assert s["tq_out_rate_peak"] == pytest.approx(2.0, abs=0.3) and s["repress"] is True
+  assert s["repress_after_s"] == pytest.approx(1.0)
+  assert got["release_snap"][1]["repress"] is False
+  cut = got["hwy_inside_cut"]
+  assert [e["t"] for e in cut] == [40.0] and cut[0]["turn"] == "left" and cut[0]["inside_max_m"] == 0.35
+  wig = got["hwy_wiggle"]
+  assert len(wig) == 1 and 80.0 <= wig[0]["t"] < 81.0 and wig[0]["ff"] == 0.02 and wig[0]["lat_p"] == 0.03
+  # The events list and the column-free case.
+  assert {"fault_flicker", "hwy_inside_cut"} <= {e["kind"] for e in dp._events(c, 0.05, {})}
+  c2, _ = _blank(10.0)
+  c2["v"][:] = 30.0
+  assert agents.lat_moments(c2) == []
