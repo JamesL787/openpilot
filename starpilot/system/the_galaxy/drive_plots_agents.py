@@ -13,9 +13,9 @@ number built from zeros. Times: ``t`` in the output is seconds from the start of
 frame's logMonoTime in seconds, so a caller can convert exactly (the rlog report turns it into seconds from the
 route's first logMonoTime).
 
-Sign conventions: wheel angle, steeringTorque and lat_des are + = left. lane_off is the car's offset from the lane
-centre, + = car left of centre (modelV2 laneLines y is + = right, so the centre's y at x=0 is the car's offset to the
-left). "Toward the push" is + in the direction the driver pushed the wheel.
+Sign conventions: wheel angle and steeringTorque are + = left; lat_des and des_curv are + = right. lane_off is the
+car's offset from the lane centre, + = car left of centre (modelV2 laneLines y is + = right, so the centre's y at x=0
+is the car's offset to the left). "Toward the push" is + in the direction the driver pushed the wheel.
 
 Not recorded, so never reconstructed here (James): the controller output before its low-pass filter, ff_ramp on its
 own, the modified EPS's own pressed signal, and design C's driver-led offset/flag. carState.steeringPressed is the raw
@@ -81,6 +81,34 @@ CAMERA_BRAKE = -1.5
 GAS_BRAKE_PLAN = -0.5         # gas press after the plan braked below this ...
 GAS_BRAKE_HOLD_S = 0.3        # ... for at least this long
 DRIVER_BRAKE_PLAN = -0.5      # brake press while openpilot's plan was gentler than this
+# James's 2026-09-29 lateral moments.
+SNAP_WINDOW_S = 1.0           # release_snap: peak |d tq_out/dt| over [release, +this) ...
+SNAP_REPRESS_S = 1.5          # ... and whether steeringPressed rises again within this
+HWY_V = 20.0                  # m/s: highway moments
+INSIDE_CUT_DEMAND = 0.5       # |lat_des| m/s^2 ...
+INSIDE_CUT_M = 0.25           # ... car toward the inside of the curve by more than this (m) ...
+INSIDE_CUT_S = 2.0            # ... for at least this long
+WIGGLE_DEMAND = 0.3           # |lat_des| m/s^2 under this: a straight
+WIGGLE_TQ = 0.05              # |tq_out| (normalized) a swing must pass on each side to count
+WIGGLE_CROSSINGS = 4          # this many sign changes ...
+WIGGLE_S = 3.0                # ... within this long
+# Bob's 2026-09-29 moments.
+EXP_FLIP_S = 1.0              # experimental mode switched again this soon after its previous switch: exp_flipflop
+RED_LIGHT_STOP_V = 2.0        # a red light the car did not slow below this (m/s) ...
+RED_LIGHT_WINDOW_S = 10.0     # ... within this long after it came on: false_red_light
+ATARGET_STEP = 0.5            # |aTarget change| between consecutive plan frames (m/s^2)
+COAST_NEAR_D = 40.0           # radar lead closer than this (m) ...
+COAST_NEAR_S = 0.5            # ... coasting (measuredRadar false) longer than this
+VREL_DISAGREE = 1.5           # |vRel - vRelRangeDerived| (m/s) ...
+VREL_DISAGREE_S = 0.5         # ... for longer than this
+MODEL_DISAGREE_D = (5.0, 0.15)  # |radar d - model d| > max(5 m, 0.15 d) ...
+MODEL_DISAGREE_S = 1.0        # ... for longer than this, model lead prob above MODEL_PROB_MIN
+MODEL_PROB_MIN = 0.5
+OVERSPEED_MS = 0.45           # vEgo above the set speed by this (m/s) with no lead ...
+OVERSPEED_S = 3.0             # ... for longer than this
+V_CRUISE_UNSET = 250.0        # carState.vCruise (km/h) at or above this is "not set" (255)
+GF_CLIP = 1.59                # gasLearnerGasFactorRaw at the clip
+GF_REARM_S = 5.0
 
 # ---- lateral detail (James) ----
 LANE_PROB_MIN = 0.4
@@ -144,6 +172,16 @@ def _runs_of(mask):
   m = np.concatenate([[False], np.asarray(mask, dtype=bool), [False]])
   d = np.flatnonzero(np.diff(m.astype(np.int8)))
   return list(zip(d[::2], d[1::2], strict=True))
+
+
+def _held_runs(mask, t, hold_s):
+  """(start, end, seconds) of the True runs of mask lasting longer than hold_s; end exclusive."""
+  out = []
+  for a, b in _runs_of(mask):
+    dur = float(t[min(b, len(t) - 1)] - t[a])   # until the first False frame (or the last frame)
+    if dur > hold_s:
+      out.append((int(a), int(b), dur))
+  return out
 
 
 def _at(t, t0):
@@ -647,7 +685,186 @@ def long_moments(c, t0=None, cap=None):
       return None
     return base("driver_brake_override", i, plan_min=_r(np.min(plan[k]), 2), lead=lead_snapshot(c, i - 1))
   add("driver", _starts(_b(c, "brake_pressed"), t), driver_brake)
+  out.extend(_bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap))
   out.sort(key=lambda e: e["t"])
+  return out
+
+
+def lat_moments(c, t0=None, cap=None):
+  """James's lateral moments: fault_flicker, release_snap, hwy_inside_cut and hwy_wiggle."""
+  t = c["t"]
+  n = len(t)
+  if n < 2:
+    return []
+  t0 = t[0] if t0 is None else t0
+  v = np.nan_to_num(c["v"])
+  lat = _b(c, "lat_active")
+  out = []
+
+  def base(kind, i, **kw):
+    e = {"kind": kind, "t": round(float(t[i] - t0), 1), "mono_s": round(float(t[i]), 3), "v": _r(v[i], 1)}
+    e.update(kw)
+    return e
+
+  def add(idx, fn):
+    kept = [e for e in (fn(*x) if isinstance(x, tuple) else fn(x) for x in idx) if e is not None]
+    out.extend(kept[:cap] if cap else kept)
+
+  def val(name, i, k=2):
+    return _r(_col(c, name, n)[i], k)
+
+  pressed = _b(c, "steer_pressed")
+  tq = _col(c, "steer_tq", n)
+  if has(c, "fault_t"):
+    f = _b(c, "fault_t")
+    was = np.concatenate([[False], lat[:-1]])
+    for a, b in _runs_of(f):
+      if a == 0 or not (lat[a] or was[a]):
+        continue
+      if cap and sum(e["kind"] == "fault_flicker" for e in out) >= cap:
+        break
+      out.append(base("fault_flicker", a, fault_s=_r(t[min(b, n - 1)] - t[a], 2), steer_pressed=bool(pressed[a]),
+                      steer_tq_abs=_r(abs(tq[a]), 0), ang=val("ang_act", a, 1), fault_permanent=bool(_b(c, "fault_p")[a])))
+
+  if has(c, "tq_out") and has(c, "steer_pressed"):
+    y = _col(c, "tq_out", n)
+    fall = np.zeros(n, dtype=bool)
+    fall[1:] = pressed[:-1] & ~pressed[1:] & lat[1:]
+    rise = np.flatnonzero(pressed[1:] & ~pressed[:-1]) + 1
+
+    def snap(r):
+      k = int(np.searchsorted(t, t[r] + SNAP_WINDOW_S))
+      slopes = [(abs(sl), j) for j in range(r, k) if (sl := _ls_slope(t, y, j, SLOPE_HALF_S)) is not None]
+      if not slopes:
+        return None
+      peak, j = max(slopes)
+      nxt = rise[rise > r]
+      again = len(nxt) > 0 and t[nxt[0]] - t[r] < SNAP_REPRESS_S
+      return base("release_snap", r, tq_out_rate_peak=_r(peak, 2), peak_after_s=_r(t[j] - t[r], 2),
+                  repress=bool(again), repress_after_s=_r(t[nxt[0]] - t[r], 2) if again else None,
+                  ang=val("ang_act", r, 1), ang_des=val("ang_des", r, 1))
+    add(_starts(fall, t, 1.0), snap)
+
+  hwy = lat & (v >= HWY_V) & ~after_release(c) & ~_b(c, "blinker") & ~(np.nan_to_num(_col(c, "lane_change", n)) > 0.5)
+  dem = _col(c, "lat_des", n)
+  if has(c, "lane_off") and has(c, "ang_act") and has(c, "lat_des"):
+    # Curve side from the wheel angle (+ = left, James): lane_off is + for the car left of centre, so + here is inside.
+    inside = np.sign(np.nan_to_num(c["ang_act"])) * c["lane_off"]
+    lane_ok = np.nan_to_num(_col(c, "lane_prob", n), nan=1.0) > LANE_PROB_MIN
+    cut = hwy & lane_ok & (np.abs(np.nan_to_num(dem)) >= INSIDE_CUT_DEMAND) & (np.nan_to_num(inside) > INSIDE_CUT_M)
+    add([x for x in _runs_of(cut) if t[min(x[1], n - 1)] - t[x[0]] >= INSIDE_CUT_S],
+        lambda a, b: base("hwy_inside_cut", a, inside_max_m=_r(np.nanmax(inside[a:b]), 2), for_s=_r(t[min(b, n - 1)] - t[a], 1),
+                          lat_des=val("lat_des", a), ang=val("ang_act", a, 1), lane_w=val("lane_w", a),
+                          turn="left" if c["ang_act"][a] > 0 else "right"))
+
+  if has(c, "tq_out") and has(c, "lat_des"):
+    y = np.nan_to_num(_col(c, "tq_out", n))
+    ok = hwy & (np.abs(np.nan_to_num(dem, nan=np.inf)) < WIGGLE_DEMAND)
+    starts = []
+    for a, b in _runs_of(ok):
+      big = [j for j in range(a, b) if abs(y[j]) > WIGGLE_TQ]    # a swing counts once it passes the floor
+      cross = [j for p, j in zip(big[:-1], big[1:], strict=True) if np.sign(y[j]) != np.sign(y[p])]
+      k = WIGGLE_CROSSINGS - 1
+      starts += [cross[m] for m in range(len(cross) - k) if t[cross[m + k]] - t[cross[m]] <= WIGGLE_S]
+
+    def wiggle(i):
+      k = int(np.searchsorted(t, t[i] + WIGGLE_S))
+      return base("hwy_wiggle", i, tq_out_pp=_r(np.max(y[i:k]) - np.min(y[i:k]), 3), lat_des=val("lat_des", i),
+                  ff=val("ff", i, 3), ff_w=val("ff_w", i), lat_p=val("lat_p", i, 3), lat_f=val("lat_f", i, 3),
+                  lane_off=val("lane_off", i))
+    add(_starts(np.isin(np.arange(n), starts), t), wiggle)
+  out.sort(key=lambda e: e["t"])
+  return out
+
+
+def _col(c, name, n):
+  x = c.get(name)
+  return np.full(n, np.nan) if x is None or len(x) != n else x
+
+
+def _bob_moments(c, t, t0, v, plan, on, lead_on, d, base, cap):
+  """Bob's 2026-09-29 moments: planner switching, radar lead quality, and the gas learner. Each is None-safe: a
+  column that was not recorded gives no moments of that kind."""
+  n = len(t)
+  out = []
+
+  def add(idx, fn):
+    kept = [e for e in (fn(*x) if isinstance(x, tuple) else fn(x) for x in idx) if e is not None]
+    out.extend(kept[:cap] if cap else kept)
+
+  def val(name, i, k=2):
+    return _r(_col(c, name, n)[i], k)
+
+  def mode(i):
+    return {"red_light": bool(_b(c, "red_light")[i]) if has(c, "red_light") else None, "road_curv": val("road_curv", i, 4)}
+
+  if has(c, "exp_mode"):
+    x = _col(c, "exp_mode", n)
+    ok = np.isfinite(x)
+    flips = [i for i in range(1, n) if ok[i] and ok[i - 1] and (x[i] > 0.5) != (x[i - 1] > 0.5)]
+    add([(i, p) for p, i in zip(flips[:-1], flips[1:], strict=True) if t[i] - t[p] < EXP_FLIP_S],
+        lambda i, p: base("exp_flipflop", i, experimental_now=bool(x[i] > 0.5), since_last_s=_r(t[i] - t[p], 2), **mode(i)))
+
+  if has(c, "red_light"):
+    def red(i):
+      k = int(np.searchsorted(t, t[i] + RED_LIGHT_WINDOW_S))
+      if k >= n:     # the drive ended inside the window: not judged
+        return None
+      if np.min(v[i:k + 1]) < RED_LIGHT_STOP_V:
+        return None
+      return base("false_red_light", i, v_min_10s=_r(np.min(v[i:k + 1]), 1), plan_min_10s=_r(np.min(plan[i:k + 1]), 2),
+                  road_curv=val("road_curv", i, 4), stop_len=val("stop_len", i, 1),
+                  forcing_stop=bool(_b(c, "forcing_stop")[i]) if has(c, "forcing_stop") else None)
+    add(_starts(_b(c, "red_light"), t, 1.0), red)
+
+  if has(c, "long_des"):
+    ld = _col(c, "long_des", n)
+    step = np.zeros(n, dtype=bool)
+    step[1:] = on[1:] & on[:-1] & (np.abs(np.diff(ld)) > ATARGET_STEP)   # NaN compares False
+    add(_starts(step, t, 1.0), lambda i: base("atarget_step", i, a_before=_r(ld[i - 1], 2), a_after=_r(ld[i], 2),
+                                            plan_src=val("plan_src", i, 0), cl_cap=val("cl_cap", i)))
+
+  if has(c, "cl_cap"):
+    cap_x = _col(c, "cl_cap", n)
+    engaged = np.isfinite(cap_x) & (np.abs(np.nan_to_num(cap_x)) > 1e-3)
+    prev_zero = np.concatenate([[False], np.isfinite(cap_x[:-1]) & ~engaged[:-1]])
+    add(_starts(engaged & prev_zero, t, 1.0),
+        lambda i: base("close_lead_cap", i, cl_cap=_r(cap_x[i], 2), a_target=_r(plan[i], 2), geo_acc=val("geo_acc", i)))
+
+  radar = lead_on & (np.round(np.nan_to_num(c["lead_src"]) if "lead_src" in c else np.zeros(n)) == 1)
+  if has(c, "lead_meas"):
+    coast = radar & (d < COAST_NEAR_D) & np.isfinite(c["lead_meas"]) & ~_b(c, "lead_meas")
+    add(_held_runs(coast, t, COAST_NEAR_S),
+        lambda a, b, dur: base("radar_coast_near", a, coast_s=_r(dur, 2), d_min=_r(np.min(d[a:b]), 1)))
+  if has(c, "lead_vrel") and has(c, "lead_vrr"):
+    gap = np.abs(c["lead_vrel"] - c["lead_vrr"])
+    add(_held_runs(radar & (np.nan_to_num(gap) > VREL_DISAGREE), t, VREL_DISAGREE_S),
+        lambda a, b, dur: base("vrel_disagree", a, gap_max=_r(np.max(gap[a:b]), 2), for_s=_r(dur, 2)))
+  if has(c, "mlead_x") and has(c, "mlead_p"):
+    dm = np.abs(d - np.nan_to_num(c["mlead_x"], nan=np.inf))
+    lim = np.maximum(MODEL_DISAGREE_D[0], MODEL_DISAGREE_D[1] * d)
+    far = radar & (np.nan_to_num(c["mlead_p"]) > MODEL_PROB_MIN) & np.isfinite(dm) & (dm > lim)
+    add(_held_runs(far, t, MODEL_DISAGREE_S),
+        lambda a, b, dur: base("radar_vs_model", a, model_d=val("mlead_x", a, 1), d_gap_max=_r(np.max(dm[a:b]), 1),
+                               for_s=_r(dur, 2)))
+
+  if has(c, "v_cruise"):
+    vc = _col(c, "v_cruise", n)
+    set_ok = np.isfinite(vc) & (vc > 0) & (vc < V_CRUISE_UNSET)
+    over = on & ~lead_on & set_ok & (v > np.nan_to_num(vc) / 3.6 + OVERSPEED_MS)
+    add(_held_runs(over, t, OVERSPEED_S),
+        lambda a, b, dur: base("overspeed_no_lead", a, v_cruise_ms=_r(vc[a] / 3.6, 2), over_max=_r(np.max(v[a:b] - vc[a:b] / 3.6), 2),
+                               for_s=_r(dur, 1), pitch=val("pitch", a, 3), gl_gf=val("gl_gf", a, 3), gl_wf=val("gl_wf", a, 3),
+                               a_target=_r(plan[a], 2)))
+
+  if has(c, "gl_gf_raw"):
+    raw = _col(c, "gl_gf_raw", n)
+    clip = np.nan_to_num(raw) >= GF_CLIP
+    # Rising edge only, after at least GF_REARM_S under the clip: a factor sitting on the clip dithers across it.
+    edges = [i for i in _starts(clip, t, 0.0) if not np.any(clip[int(np.searchsorted(t, t[i] - GF_REARM_S)):i])]
+    add(edges,
+        lambda i: base("gf_clip", i, gl_gf_raw=_r(raw[i], 3), gl_gf=val("gl_gf", i, 3), gl_err=val("gl_err", i, 3),
+                       pitch=val("pitch", i, 3)))
   return out
 
 

@@ -61,3 +61,7 @@ def test_report_times_are_route_relative_and_car_messages_are_read(tmp_path):
   rr.write(str(tmp_path / "out"), rep, r)
   assert json.loads((tmp_path / "out" / "report.json").read_text())["schema"] == "drivePlotsReport/1"
   assert (tmp_path / "out" / "samples.csv").read_text().splitlines()[0].startswith("seg,route_s,t,")
+  win = (tmp_path / "out" / "moment_windows.csv").read_text().splitlines()
+  assert win[0].startswith("moment,kind,rel_s,route_s,t,")
+  brake = [x.split(",") for x in win[1:] if x.split(",")[1] == "hard_brake"]
+  assert 80 <= len(brake) <= 81 and -2.0 <= float(brake[0][2]) < -1.9 and 1.9 < float(brake[-1][2]) <= 2.0   # +-2 s, 20 Hz

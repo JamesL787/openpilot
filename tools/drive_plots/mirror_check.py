@@ -262,7 +262,7 @@ def check_car(rows, messages):
   off = []
   if len(rows) > 1:
     c = dp._as_arrays(rows)
-    off = [(e["kind"], e["mono_s"]) for e in agents.long_moments(c, t0=c["t"][0])]
+    off = [(e["kind"], e["mono_s"]) for e in agents.long_moments(c, t0=c["t"][0]) + agents.lat_moments(c, t0=c["t"][0])]
     off += [("takeover", e["mono_s"]) for e in agents.takeovers(c, t0=c["t"][0])["episodes"]]
   for kind in sorted({k for k, _ in car} | {k for k, _ in off}):
     a = sorted(t for k, t in car if k == kind)
