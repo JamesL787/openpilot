@@ -63,6 +63,12 @@ T90_MIN_CHANGE = 0.05         # a takeback smaller than this (normalized output)
 REPRESS_S = (0.3, 0.8)        # a re-press this long after the release: the snapback Kevin flags
 REPRESS_LATE_S = (0.8, 1.3)   # report-only count
 NEAR_CUT_TQ = (1500.0, 1800.0)  # |steeringTorque| held in this band without steeringPressed: holding just under the cut
+# Kevin's live flags on each takeover (published as it finishes): FLICKER = steerFaultTemporary during the press;
+# SNAPBACK = repress; GAP = |release_gap_deg| over GAP_FLAG_DEG under GAP_FLAG_V; NEAR-CUT = near-cut band held in one
+# run longer than NEAR_CUT_HOLD_S.
+GAP_FLAG_DEG = 20.0
+GAP_FLAG_V = 4.47             # m/s: 10 mph
+NEAR_CUT_HOLD_S = 1.0
 
 # ---- radar / longitudinal moments (Bob) ----
 BRAKE_LIST = -1.5             # aTarget below this is a braking moment (Bob's replay episodes use -1.5)
@@ -368,9 +374,12 @@ def _turn_fight(c, t, s, r, dt, angles, err):
     pressed = _b(c, "steer_pressed")[w]
     lat_now = _b(c, "lat_active")[w]
     e["override_cut_s"] = _r(_frames_s(t[w], lat_now & pressed), 2)
-    e["near_cut_s"] = _r(_frames_s(t[w], (tq >= NEAR_CUT_TQ[0]) & (tq <= NEAR_CUT_TQ[1]) & ~pressed), 2)
+    near = (tq >= NEAR_CUT_TQ[0]) & (tq <= NEAR_CUT_TQ[1]) & ~pressed
+    e["near_cut_s"] = _r(_frames_s(t[w], near), 2)
+    e["near_cut_held_s"] = _r(max([x[2] for x in _held_runs(near, t[w], 0.0)], default=0.0), 2)
   else:
-    e["override_cut_s"] = e["near_cut_s"] = None
+    e["override_cut_s"] = e["near_cut_s"] = e["near_cut_held_s"] = None
+  e["fault_in_press"] = bool(np.any(fault)) if fault is not None else None
   return e
 
 
@@ -503,6 +512,12 @@ def takeovers(c, t0=None):
     e["repress_after_s"] = _r(gap, 2) if gap is not None and gap <= REPRESS_LATE_S[1] else None
     e["repress"] = bool(gap is not None and REPRESS_S[0] <= gap < REPRESS_S[1])
     e["repress_late"] = bool(gap is not None and REPRESS_LATE_S[0] <= gap < REPRESS_LATE_S[1])
+    gd = e.get("release_gap_deg")
+    e["flags"] = [f for f, on in (
+      ("FLICKER", bool(e.get("fault_in_press"))),
+      ("SNAPBACK", e["repress"]),
+      ("GAP", gd is not None and abs(gd) > GAP_FLAG_DEG and e["v_release"] is not None and e["v_release"] < GAP_FLAG_V),
+      ("NEAR-CUT", (e.get("near_cut_held_s") or 0.0) > NEAR_CUT_HOLD_S)) if on]
 
   def med(key, sel=lambda e: True):
     x = [e[key] for e in eps if sel(e) and e.get(key) is not None]
@@ -518,6 +533,7 @@ def takeovers(c, t0=None):
     "repress": sum(e["repress"] for e in eps), "repress_late": sum(e["repress_late"] for e in eps),
     "fault_flicker": sum(bool(e.get("fault_flicker_n")) for e in eps),
     "near_cut": sum((e.get("near_cut_s") or 0) > 0 for e in eps),
+    "flags": {f: sum(f in e["flags"] for e in eps) for f in ("FLICKER", "SNAPBACK", "GAP", "NEAR-CUT")},
     "median_release_overshoot_deg": med("release_overshoot_deg"),
     "median_back_on_plan_s": med("back_on_plan_s"),
     # Each drift median beside how many takeovers it stands on (James: 3 must never read like 80). Takeovers with a
@@ -551,7 +567,9 @@ def takeovers(c, t0=None):
                    "(the target re-seed); i_press_min = lat_i's lowest during the press, beside i_press; override_cut_s = "
                    "latActive with raw steeringPressed (Honda sets it from |steeringTorque| against the effective "
                    f"override threshold); near_cut_s = {NEAR_CUT_TQ[0]:g} <= |steeringTorque| <= {NEAR_CUT_TQ[1]:g} "
-                   "without steeringPressed."),
+                   "without steeringPressed; near_cut_held_s = its longest single run. flags (Kevin's live flags): "
+                   "FLICKER = steerFaultTemporary between press and release; SNAPBACK = repress; GAP = |release_gap_deg| > "
+                   f"{GAP_FLAG_DEG:g} under {GAP_FLAG_V:g} m/s (10 mph); NEAR-CUT = near_cut_held_s > {NEAR_CUT_HOLD_S:g} s."),
   }
   return {"episodes": eps, "summary": summary}
 

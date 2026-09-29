@@ -7691,8 +7691,12 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
   - Per-takeover numbers for Kevin (fcfe0e868): release gap, takeback rate, t90, re-press, fault flicker, near-cut.
   - Moments (d7c014256, bcd56fd0d): Bob's exp_flipflop, false_red_light, atarget_step, close_lead_cap,
     radar_coast_near, vrel_disagree, radar_vs_model, overspeed_no_lead and gf_clip; James's fault_flicker,
-    release_snap, hwy_inside_cut and hwy_wiggle. Replay of route 297 (0.96 h): vrel_disagree 263/h is real (the two
-    relative speeds differ by more than 1.5 m/s on about 25 % of radar lead frames), so its threshold is Bob's call.
+    release_snap, hwy_inside_cut and hwy_wiggle. Bob then set vrel_disagree to > 3.0 m/s held > 1.0 s, moving only
+    (f9511da9e): 8 on route 297 (0.96 h), was 263; `radar_vrel_gap` p50 0.74, p90 2.39 m/s. exp_flipflop carries
+    standstill and long_active; bursts with long control off stay in the analysis but leave the drive's list
+    (3afd48749): 10 of 25 listed on 297.
+  - Kevin's live flags on each takeover (`flags`, published as it finishes): FLICKER, SNAPBACK, GAP (> 20° under
+    10 mph), NEAR-CUT (1500-1800 held > 1 s). Route 297 replay: 20 of 91 takeovers flagged (6 / 10 / 5 / 0).
     `rlog_report` also writes `moment_windows.csv`, ±2 s of rows around each moment (offline only).
   - `tools/drive_plots/sim_export.py` writes John's `lat_pid_sim.npz` per steered segment at the controls rate
     (~97 Hz on 297), t from each segment's first carState. Not yet read by his scorer.

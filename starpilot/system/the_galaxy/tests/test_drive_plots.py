@@ -911,6 +911,32 @@ def test_takeover_turn_fight_numbers():
   assert eps[1]["t90_s"] is None   # pressed again before lat_out settled
   s = agents.takeovers(c)["summary"]
   assert (s["repress"], s["repress_late"], s["fault_flicker"], s["near_cut"]) == (1, 0, 1, 1)
+  assert e["near_cut_held_s"] == pytest.approx(0.5, abs=0.06) and e["fault_in_press"] is True
+  assert e["v_release"] > 4.47 and e["flags"] == ["FLICKER"]       # a 25 deg gap, but not at a crawl; 0.5 s near the cut
+  assert eps[1]["flags"] == ["SNAPBACK"] and eps[2]["flags"] == []
+  assert s["flags"] == {"FLICKER": 1, "SNAPBACK": 1, "GAP": 0, "NEAR-CUT": 0}
+
+
+def test_takeover_live_flags_gap_and_near_cut():
+  """Kevin's GAP (release gap > 20 deg under 10 mph) and NEAR-CUT (1500-1800 held in one run > 1 s) flags."""
+  rows = _takeover_drive()
+  c = dp._as_arrays(rows)
+  t = c["t"] - c["t"][0]
+  c["lat_active"][:] = 1
+  c["fault_t"] = np.zeros(len(t))
+  c["v"][(t >= 29.0) & (t < 34.0)] = 3.0                 # 6.7 mph through the first takeover
+  c["ang_des"] = np.full(len(t), 40.0)
+  c["ang_act"] = c["ang_des"] - 25.0
+  for a, b in ((30.2, 30.6), (30.7, 31.9)):              # 0.4 s, then 1.2 s just under the cut
+    m = (t >= a) & (t < b)
+    c["steer_tq"][m], c["steer_pressed"][m] = 1700.0, 0.0
+  eps = agents.takeovers(c)["episodes"]
+  e = eps[0]
+  assert round(e["t"], 1) == 30.0 and e["v_release"] == 3.0
+  assert e["near_cut_held_s"] == pytest.approx(1.2, abs=0.06) and e["near_cut_s"] == pytest.approx(1.6, abs=0.1)
+  assert e["flags"] == ["GAP", "NEAR-CUT"] and e["fault_in_press"] is False
+  ev = [x for x in dp._events(c, 0.05, {}) if x["kind"] == "steer_takeover"]
+  assert ev[0]["flags"] == ["GAP", "NEAR-CUT"]                  # the drive's list carries them
 
 
 def _blank(seconds=120.0, hz=20.0):

@@ -502,6 +502,11 @@ export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
       if (e.release_overshoot_deg != null) detail += ` After you let go the wheel swung ${fmtNum(e.release_overshoot_deg, 1)}° back past the plan`
       if (e.back_on_plan_s != null) detail += `${e.release_overshoot_deg != null ? " and" : " After you let go it"} was back on it in ${fmtNum(e.back_on_plan_s, 1)} s`
       if (e.release_overshoot_deg != null || e.back_on_plan_s != null) detail += "."
+      // Kevin's live flags, in plain words.
+      const flagText = { "FLICKER": "the steering faulted while you held it", "SNAPBACK": "you grabbed it again right after letting go",
+        "GAP": "at a crawl you let go far from the plan", "NEAR-CUT": "you held just under the takeover limit" }
+      const flags = (Array.isArray(e.flags) ? e.flags : []).filter((f) => flagText[f])
+      if (flags.length) detail += ` Flagged: ${flags.map((f) => flagText[f]).join("; ")}.`
     } else if (e.kind === "turn_overshoot") {
       title = "Tight turn went past the request"
       detail = `${e.side === "left" ? "Left" : "Right"} turn at ${fmtSpeed(e.v, speed)}: ${fmtNum(e.peak_des, 0)}° asked, the wheel ` +
