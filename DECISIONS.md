@@ -1452,3 +1452,141 @@ Neither gives a vRel good enough to seed radard's filter. A wrong-direction lead
 real brake late, which is worse than 296's extra 2 s of vision-only lead. Any retry needs a birth vRel
 that does not seed the lead filter's acceleration, and a replay showing a gain. The patch is not kept;
 this entry is the record. Replay evidence only.
+
+## D-069 — REJECTED: NC-at-rail (NORMALIZED_CLOSING past the U11 low rail)
+Recorded 2026-09-30 on `stopshadow-radar` only. Replay evidence only; nothing driven.
+
+The idea: U11 rails at −13.5 m/s, and F2 NORMALIZED_CLOSING (23|10, 1/64, centre raw 512) times dRel is an
+unrailed closing channel (stopshadow corpus: 0.91–0.95 of the long-window range rate past the rail, sigma
+F2 46|7 < 32 on 99.7 % of stopped railed rows < 50 m). The parser change (c40fe684f, `BOSCH_A_NC_RAIL_VREL`)
+replaced a low-rail U11 with −NC·dRel for |yRel| ≤ 2 m, 0 < dRel < 50 m, sigma < 32, and only when it agreed
+within 3 m/s with the trailing range fit; clamped to [−20, rail], 0.3 s hold.
+
+Replay (tools/longitudinal/stopshadow/ncrail.txt, 8f3b15028; 22 routes, open-loop planner), ON vs OFF:
+- No gain. 148 point-sweeps changed on 14 routes; 38 of 44 episodes were never a lead and 31 tracks were
+  oncoming. Zero leadOne/leadTwo/leadOnpath selection changes, identical planner minimum and FCW counts,
+  identical time to correct closing on all 6 railed leadOne episodes. radard's D-053 rail-fast assist
+  (radard.py:793-819) already covers those leads at publish time; under NC it shrinks and never doubles.
+- Added roughness on the KF input. Sweep |dvRel| p95 5.6 vs 0.4 m/s, 76 steps > 3 m/s vs 0, mostly the full
+  −13.5 ↔ −20 step on |y| or rate-check release. Over-close > 3 m/s vs the next-1 s range slope on 19.6 % of
+  changed sweeps vs 7.1 % for the rail (mean error +2.4 vs +6.3).
+- D-068 check clean: no fake lead acceleration (aLeadK > +1 only in ON) anywhere; protected brakes unchanged.
+
+Reason: a change with no measured benefit that makes the native vRel flicker is not worth carrying. The
+switch is False and the code and TestNcAtRail stay for the record. A retry needs a case D-053 rail-fast
+misses (a railed in-lane car that is not leadOne/leadTwo but matters to the planner), and must publish NC as
+a bound at radard publish time, not as the native vRel, so the lead KF never sees the step.
+
+Addendum (3bac76a7b, replay): 000001f9 29:52, the D-041 origin case (segments 28-30; 288 not scored, its full
+name is unrecorded). Rail-fast already published correct closing for the stopped car (tid 61, U11 railed on every
+sweep) at 1801.94, identical ON and OFF. NC engaged only for 4 sweeps at 42-39 m, 1.1 s later, over-reading closing by
+3.2 m/s vs 2.3 for the rail. Planner min −5.85 vs −5.86. At NC engage, leadOne aLeadK stepped −3.41 → −5.3 for ~0.4 s
+(OFF −3.4), and on tid 7 at 1731.49 ON added a real FCW frame (aLeadK −4.95 vs −3.54). That is the harder-braking sign,
+not D-068's softening, but the same mechanism: an NC step fed into the lead KF. D-069 stands.
+
+## D-070 — PROPOSED (switch OFF): cap RAIL_FAST with NORMALIZED_CLOSING (`RANGE_VREL_RAIL_NC_CAP`)
+**Superseded by D-071 (2026-09-30): the cap code and `RANGE_VREL_RAIL_NC_CAP` are removed** (inert on all six
+episodes). RadarPoint ncVRel/ncValid now carry NC with no range or sigma limit, plus ncSigma; consumers apply their
+own limits. `tools/longitudinal/stopshadow/nccap_ab.py` is kept as the historical replay and no longer runs against HEAD.
+Recorded 2026-09-30 on `stopshadow-radar`. Plan: docs/PLAN_NC_CAP_RAIL_FAST.md (approved by Peter). Code f6cb7630e.
+Static unit tests + open-loop replay only; nothing driven. Enabling the switch is Peter's call.
+
+Implemented: the parser publishes RadarPoint.ncVRel/ncValid (from `_bosch_a_nc_vrel`, independent of D-069's switch;
+ncValid False on coasts). With the switch on, a RAIL_FAST correction on a railed point with valid NC is shrunk so
+published vRel >= ncVRel - 3.0; floored at zero, so it never publishes less closing than the U11 rail (D-041) and never
+drops or coasts a point. Static: switch off is byte-identical; honda 345 passed, radard/lead/range-assist 290 passed.
+Note: the plan's test "NC -10, RAIL_FAST -16.2 -> published >= -13.0" is unreachable without going above the rail;
+the cap zeroes the correction there (published -13.5), which is what the test asserts.
+
+Replay (tools/longitudinal/stopshadow/nccap_ab.py, nccap_ab.txt). NOT Bob's setup: code f6cb7630e (stopshadow), not
+07b66420; params = each route's own initData params, not the 2026-09-30T16:44:42Z set. Current parser re-run on logged
+CAN -> RadarD OFF/OFF2/ON -> LongitudinalPlanner, open loop. Time = logMonoTime - seg-0 initData. rlogs (Konik) only,
+episode segment + the one before, all fetched (99.4-99.5 Hz CAN, 893-894 liveTracks/segment). A/A: 0 differing
+frames. OFF matches the car on 297: lead1 -16.54 vs logged -16.56; aTarget -3.65 vs logged -3.64.
+
+| episode | min lead1 vRel (OFF = ON) | lead ncValid share | max rail corr | planner min (OFF = ON) | frames changed |
+|---|---|---|---|---|---|
+| 00000271--4e9b9502db 9:26 | -20.00 @ 9:27.21, d 104 | 0.23 | 6.50 | -6.29 | 0 |
+| 00000236--60bfb34cb1 12:51 | -18.43 @ 12:51.00, d 102 | 0.16 | 4.93 | -3.29 | 0 |
+| 00000236--60bfb34cb1 12:54 | same window minimum | 0.18 | 4.93 | -3.29 | 0 |
+| 00000237--77313c5a66 10:00 | -17.39 @ 9:58.95, d 81 | 0.06 | 3.89 | -2.60 | 0 |
+| 00000298--c4d2a4acbc 4:10 | -14.58 @ 4:11.67, d 57 | 0.00 | 1.08 | -3.61 | 0 |
+| 00000297--f971b5896f 48:12 | -16.54 @ 48:12.52, d 64 | 0.00 | 3.04 | -3.65 | 0 |
+
+Result (replay): the cap is INERT. Pass conditions: no lost gain on 271/236/237 (met, trivially); 298 unchanged (met);
+297 -16.2 excursion gone (NOT met: -16.54/-16.24/-15.85 at 48:12.47-12.60, identical OFF and ON). Reason: NC is valid
+only under 50 m (`BOSCH_A_NC_RAIL_MAX_D_REL_M`) and at sigma < 32; 297 track 4 was at 55.9-72.9 m with sigma 20-42, and
+298's railed leads at 60-92 m. Diagnostic only (limit ignored): 297 -NC*dRel read -8.0..-11.4, so a valid NC would have
+removed the correction; 298 read -18.4..-23.3, agreeing with the rail. Positive control (harness margin 0, 271): 22
+frames change lead vRel, 0 change the planner. The -4.4 at 297 was logged aEgo (-4.50 @ 48:13.17), not the planner.
+
+Status: kept OFF. Not recommended to enable as is: it changes nothing on the six episodes. Making it act at 297 needs
+NC trusted past 50 m and above sigma 32, a constant change that needs its own evidence (D-042's lesson) and Peter's call.
+
+## D-071 — PROPOSED (switch OFF): veto RAIL_FAST when NORMALIZED_CLOSING says clearly less closing than the rail (`RANGE_VREL_RAIL_NC_VETO`)
+Recorded 2026-09-30 on nc-cap-v2 (PR #11, base d9ca5b342). Static unit tests + log analysis + open-loop replay only; nothing
+driven. Enabling the switch is Peter's call. Evidence and harness: tools/longitudinal/stopshadow/ncveto.txt, ncveto_*.py.
+
+Problem: D-070's cap is inert at 297 48:12 (00000297--f971b5896f, tid 4), where RAIL_FAST published -16.54/-16.24/-15.85
+at 61.8-64 m while the truth was about -8.5, because NC there is outside ncValid (> 50 m, sigma 20-42).
+
+Rule: on a railed lead with a RAIL_FAST correction, if the median of the track's last <= 5 NC vRels within 0.5 s (>= 3,
+each limited in radard by `RANGE_VREL_RAIL_NC_VETO_MAX_D_REL_M` 80 m and `RANGE_VREL_RAIL_NC_VETO_MAX_SIGMA_RAW` 64, read
+from RadarPoint.ncVRel/ncValid/ncSigma, which the parser publishes with no range or sigma limit) is >= rail + 3.5 m/s, the correction is zeroed and the rail itself is published. One-sided:
+it only ever removes a RAIL_FAST correction, never publishes less closing than the U11 rail (D-041), never drops or coasts a
+point (D-041/D-042). No existing constant or gate is changed (ncValid keeps 50 m / sigma 32). Off: byte-identical (static).
+
+Evidence (log; truth = future ground-frame range fit t+0.2..t+1.2 s, which uses no NC, no U11 and no past range):
+- NC 5-sweep median minus truth on 1248 non-oncoming railed rows, 8 routes: median -0.3 / +0.1 m/s at 50-75 / 75-100 m
+  (p10/p90 -4.9/+3.4 and -6.2/+5.1), +3.1 past 100 m. NC under-reads closing far out (271 9:27 at 104 m: -16.2 vs
+  -19.5..-22.5), so the veto stops at 80 m and uses NC only one-sidedly, against the rail.
+- On every RAIL_FAST firing row of the six episodes: 297 median -8.4..-8.7 (rail +4.8..+5.1); nearest gain case 236
+  12:52.60-12:53.35 median -10.9..-11.5 (rail +2.0..+2.6, truth -15..-21); 271 -13.0..-17.3; 237 -13.3..-14.5; 298 -20.3.
+- Over all railed rows < 80 m (not only RAIL_FAST rows), the rule would fire on 26 non-oncoming rows, 3 with truth past
+  rail - 1 (26b 24:11 tid 30, truth -14.8..-15.3, never a RAIL_FAST row).
+
+Open-loop A/B replay (ncveto_ab.py; OFF / OFF2 A/A / ON; each route's own initData params; A/A 0 diffs everywhere):
+
+| episode | min lead1 vRel OFF → ON | max rail corr OFF/ON | planner min OFF/ON | changed frames (vRel / accel) |
+|---|---|---|---|---|
+| 271 9:26 | -20.00 → -20.00 | 6.50 / 6.50 | -6.29 / -6.29 | 0 / 0 |
+| 236 12:51, 12:54 | -18.43 → -18.43 | 4.93 / 4.93 | -3.29 / -3.29 | 0 / 0 |
+| 237 10:00 | -17.39 → -17.39 | 3.89 / 3.89 | -2.60 / -2.60 | 0 / 0 |
+| 298 4:10 | -14.58 → -14.58 | 1.08 / 1.08 | -3.61 / -3.61 | 0 / 0 |
+| 297 48:12 | -16.54 → -13.50 | 3.04 / 0.00 | -3.65 / -3.66 | 5 / 84 (max 0.46 softer) |
+| negatives: 245 3:59, 245 11:30, 26b 24:11, 26b 25:55.7, 289 15:11.9, 297 46:59.2 | unchanged | 0 / 0 | unchanged | 0 / 0 |
+
+Result: the 297 excursion is gone; the RAIL_FAST gain on 271/236/237/298 is untouched. The planner minimum at 297 is NOT
+improved (-3.66 vs -3.65, ON softer by up to 0.46 for 0.6 s first): the rail itself (-13.5 vs truth ~-8.5) still drives
+that brake, and the rail is the D-041 floor this rule may not cross. The negatives are weak (RAIL_FAST never corrected in
+them). The threshold window is narrow and set by one case per side: Y 2.0 loses 236's gain for 16 frames, Y 5.0 misses one
+297 sweep; 3.5 sits ~1 m/s from each.
+
+Rejected: (a) D-070's cap with NC trusted to 80-100 m — per sweep it also cuts real gain on 236 (20-25 sweeps, up to
+4.3 m/s), 237 (8-10) and 271 (4-12), because NC past 50 m is noisy and the cap compares NC to RAIL_FAST's output, not to
+the rail; (b) short/long range-fit agreement on young tracks — at 297 the fits agree (|diff| 0.1-0.8, both on the newborn
+convergence tail) while 271 disagrees (3.3-4.4): it would cut 271 and keep 297. Min-age / rsig gates stay rejected.
+
+Car-matched A/B (Bob, 2026-09-30; code 5d7be6e730, params 2026-09-30T17:50:49Z, OFF and ON in separate processes,
+OFF-vs-OFF 0 diffs on 6 windows; replay and static only). Does not include ns-bosch-radar-testing's later radard changes
+(e.g. 3fc070837 FAR_RAIL_VISION_BOUND).
+- Named episodes: 271 9:26, 236 12:51/12:54, 237 10:00 and 298 4:10 never fire, and 0 frames change (closest 236, 0.90
+  below the threshold). 294 7:06 has no RAIL_FAST correction. 297 48:12 fires on 3/3 calls (NC median -8.41..-8.74,
+  sigma 25-26, 61.8-63.0 m): lead vRel -16.24 → -13.50, planner min -3.63 → -3.61.
+- 109 rail windows on 40 routes, RAIL_FAST armed in 20: the veto fires only at 297 48:12 and at a NEW case, 278 4:37
+  (00000278--8f101d683e, tid 61, 62.6-65.7 m). It fires on 4/12 calls there, with NC median 3.72-3.97 above the rail
+  (sigma 14-17). OFF published -15.29 while the replayed range slope was -13.15..-13.55 (at the rail), so the fire looks
+  correct: lead min -15.29 → -14.96, planner min -2.42 → -2.41. Largest planner-min change anywhere: 0.01.
+  Caveat: that slope is a rough least-squares fit of the replayed lead distance, not the ground-frame truth above; at
+  297 it reads -5.3..-6.2 against truth -8.1..-8.8.
+- Near misses that do not fire (NC above rail, closing less than the rail, so a fire would be harmless): 023e 24:09
+  (2.90), 266 8:03 (2.84), 278 4:39 (3.23-3.38).
+- Threshold window: 278 4:37 shows the upper bound near 3.72, not 4.8, so the window is about (2.6, 3.72) and 3.5 sits
+  0.22 below its top. The largest real-gain case is still 236 at 2.60. The constant is unchanged.
+- Tests on a built aarch64 tree: test_range_vrel_assist 147 passed, test_bosch_a_radar 157 passed, honda tests 346
+  passed. The 2 Mac TestBuiltIn failures were the params fallback.
+
+Synced 2026-09-30 from `stopshadow-radar` 7aaf780be2 to `ns-bosch-radar-testing` and `ns-bosch-radar-testing-pr10-smooth` at
+Peter's request, with `RANGE_VREL_RAIL_NC_VETO`, `BOSCH_A_NC_RAIL_VREL` (D-069) both OFF. Code only; no behaviour change
+until the switch is turned on. FAR_RAIL_VISION_BOUND (3fc070837) applies at >= 80 m and the veto below 80 m; both only
+raise vRel, so they compose as floors (static). Bob's A/B above did not include FAR_RAIL_VISION_BOUND.

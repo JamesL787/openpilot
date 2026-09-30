@@ -72,10 +72,13 @@ def make_f1(frame_idx=0, existence_raw=126):
   return bytes([0, 0, 0, (frame_idx & 0xF) << 1, 0, existence_raw & 0x7F, 0, 0])
 
 
-def make_f2(frame_idx=0, life=0):
+def make_f2(frame_idx=0, life=0, nc_raw=512, nc_sigma_raw=0):
   B1 = (frame_idx & 0xF) | ((life & 0xF) << 4)
   B0 = (life >> 4) & 0xFF
-  return bytes([B0, B1, 0, 0, 0, 0, 0, 0])
+  B2 = (nc_raw >> 2) & 0xFF
+  B3 = (nc_raw & 0x3) << 6
+  B5 = nc_sigma_raw & 0x7F
+  return bytes([B0, B1, B2, B3, 0, B5, 0, 0])
 
 
 def make_f3(frame_idx=0, edge_a_raw=0, edge_b_raw=0, sigma_a_raw=0, track_id=0xFF):
@@ -102,12 +105,12 @@ def make_aux(frame_idx=0, rawc9=0, rawca=0, direct_vrel_raw=BOSCH_A_DIRECT_VREL_
 
 
 def make_main_frames(slot, frame_idx, status, range_raw, angle_raw, life, track_id=1,
-                     range_sigma_raw=1, existence_raw=126):
+                     range_sigma_raw=1, existence_raw=126, nc_raw=512, nc_sigma_raw=0):
   f0, f1, f2, f3 = BOSCH_A_MAIN_IDS[slot]
   return [
     CanData(f0, make_f0(frame_idx, status, range_raw, angle_raw, range_sigma_raw), BUS),
     CanData(f1, make_f1(frame_idx, existence_raw), BUS),
-    CanData(f2, make_f2(frame_idx, life), BUS),
+    CanData(f2, make_f2(frame_idx, life, nc_raw, nc_sigma_raw), BUS),
     CanData(f3, make_f3(frame_idx, track_id=track_id), BUS),
   ]
 
@@ -149,7 +152,7 @@ def _stamp(frame: CanData) -> CanData:
 
 def sweep(slot, frame_idx, status, range_raw, angle_raw, life, t_nanos, with_aux=False, aux_frame_idx=None,
           rawc9=0, rawca=BOSCH_A_RANGE_RATIO_INVALID, extra_slots=(), track_id=1, direct_vrel_raw=BOSCH_A_DIRECT_VREL_INVALID,
-          direct_vrel_uncertainty_raw=0x3FF, range_sigma_raw=1, existence_raw=126):
+          direct_vrel_uncertainty_raw=0x3FF, range_sigma_raw=1, existence_raw=126, nc_raw=512, nc_sigma_raw=0):
   """Build one update() input: a full main-frame set for `slot` (+ optional aux), plus the trigger
   frame (slot 15's f3) so update() always processes the cycle unless the caller is testing slot 15
   itself or an incomplete-frame scenario via extra_slots."""
@@ -157,7 +160,7 @@ def sweep(slot, frame_idx, status, range_raw, angle_raw, life, t_nanos, with_aux
   aux = BOSCH_A_AUX_IDS[slot]
   frames = make_main_frames(
     slot, frame_idx, status, range_raw, angle_raw, life, track_id,
-    range_sigma_raw=range_sigma_raw, existence_raw=existence_raw,
+    range_sigma_raw=range_sigma_raw, existence_raw=existence_raw, nc_raw=nc_raw, nc_sigma_raw=nc_sigma_raw,
   )
   if with_aux:
     frames.append(CanData(aux, make_aux(aux_frame_idx if aux_frame_idx is not None else frame_idx, rawc9, rawca,
@@ -2073,3 +2076,169 @@ def test_degraded_rail_corroboration_fits_the_tail_of_the_run_not_the_finished_w
   assert len(tail) == 5
   assert _bosch_a_distance_to_interval(_bosch_a_fresh_range_rate(tail), interval) > BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
   assert _bosch_a_distance_to_interval(_bosch_a_fresh_range_rate(run), interval) <= BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
+
+
+# --- NC-at-rail (stopshadow-radar, replay only) ----------------------------------------------------------
+
+class TestNcFields:
+  """RadarPoint.ncVRel / ncValid / ncSigma for radard's RANGE_VREL_RAIL_NC_VETO (D-071, off). Filled on every measured
+  Bosch-A point with NO range or sigma limit (radard applies its own), independent of BOSCH_A_NC_RAIL_VREL (D-069, left
+  off here), and never changing vRel. Coasts carry ncValid False. Static unit tests only."""
+  DT_NS = 70_000_000
+
+  @staticmethod
+  def _nc_raw(d_rel, vrel):
+    return int(round(512 + (-vrel / d_rel) * 64))
+
+  def _drive(self, start_raw=700, n=6, nc_vrel=-10.0, nc_sigma_raw=0, nc_raw=None):
+    ri = make_radar_interface()
+    rr = None
+    for i in range(n):
+      raw = start_raw - 20 * i   # 17.9 m/s, past the rail, so the D-043 check keeps the sweep measured
+      d_rel = raw / 16.0 - 3.0
+      raw_nc = self._nc_raw(d_rel, nc_vrel) if nc_raw is None else nc_raw
+      rr = ri.update(sweep(0, i & 0xF, 0x7, raw, 1024, 1 + 2 * i, i * self.DT_NS, with_aux=True,
+                           direct_vrel_raw=BOSCH_A_DIRECT_VREL_MIN_RAW, direct_vrel_uncertainty_raw=90,
+                           nc_raw=raw_nc, nc_sigma_raw=nc_sigma_raw))
+    return rr.points[0]
+
+  def test_switch_is_off_by_default(self):
+    from opendbc.car.honda import radar_interface as HRI
+    assert HRI.BOSCH_A_NC_RAIL_VREL is False
+
+  def test_valid_nc_is_published_without_touching_vrel(self):
+    pt = self._drive()
+    assert pt.measured
+    assert pt.ncValid
+    assert pt.ncVRel == pytest.approx(-10.0, abs=0.3)
+    assert pt.ncSigma == 0
+    assert pt.vRel == pytest.approx(-13.5), "with BOSCH_A_NC_RAIL_VREL off, vRel stays the U11 rail"
+
+  def test_sigma_is_published_not_gated(self):
+    # D-069's value limit (sigma < 32) is not applied to the published field; radard's consumer applies its own.
+    pt = self._drive(nc_sigma_raw=40)
+    assert pt.measured and pt.ncValid and pt.ncSigma == 40
+
+  def test_no_reading_raw_512_is_invalid(self):
+    pt = self._drive(nc_raw=512)
+    assert pt.measured and not pt.ncValid
+
+  def test_297_shape_60_m_sigma_40_is_published(self):
+    # 297 48:12 tid 4: 61.8-64.0 m, sigma 24-42, NC about -8.5. Outside D-069's 50 m / 32; published for the veto.
+    pt = self._drive(start_raw=1100, nc_vrel=-8.5, nc_sigma_raw=40)
+    assert 50.0 < pt.dRel < 80.0 and pt.measured
+    assert pt.ncValid and pt.ncSigma == 40
+    assert pt.ncVRel == pytest.approx(-8.5, abs=0.3)
+    assert pt.vRel == pytest.approx(-13.5), "the NC fields never change vRel"
+
+  def test_opening_nc_is_invalid(self):
+    pt = self._drive(nc_vrel=+2.0)
+    assert pt.measured and not pt.ncValid
+
+  def test_d069_limits_are_unchanged(self):
+    from opendbc.car.honda import radar_interface as HRI
+    assert HRI.BOSCH_A_NC_RAIL_MAX_D_REL_M == 50.0 and HRI.BOSCH_A_NC_MAX_SIGMA_RAW == 32
+
+  def test_gross_disagreement_coast_is_invalid(self):
+    # test_gross_velocity_range_disagreement_coasts' shape, with a valid NC on every sweep.
+    ri = make_radar_interface()
+    for i, raw in enumerate((500, 510, 520, 530)):
+      rr = ri.update(sweep(0, i, 0x7, raw, 1024, 1 + 2 * i, i * self.DT_NS, with_aux=True,
+                           direct_vrel_raw=864 + 40, direct_vrel_uncertainty_raw=0,
+                           nc_raw=self._nc_raw(raw / 16.0 - 3.0, -2.0)))
+    assert rr.points[0].measured and rr.points[0].ncValid, "the control sweep must carry a valid NC"
+    rr = ri.update(sweep(0, 4, 0x7, 540, 1024, 9, 4 * self.DT_NS, with_aux=True,
+                         direct_vrel_raw=864 - 11 * 64, direct_vrel_uncertainty_raw=0,
+                         nc_raw=self._nc_raw(540 / 16.0 - 3.0, -2.0)))
+    assert len(rr.points) == 1
+    assert not rr.points[0].measured
+    assert not rr.points[0].ncValid
+
+  def test_range_rejected_coast_is_invalid(self):
+    # test_discontinuous_range_coasts_last_accepted_point_unmeasured's shape, with a valid NC throughout.
+    ri = make_radar_interface()
+    nc = self._nc_raw(500 / 16.0 - 3.0, -2.0)
+    ri.update(sweep(0, 0, 0x7, 500, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=864, direct_vrel_uncertainty_raw=80, rawca=500, nc_raw=nc))
+    rr = ri.update(sweep(0, 1, 0x7, 510, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=80, rawca=500, nc_raw=nc))
+    assert rr.points[0].measured and rr.points[0].ncValid
+    rr = ri.update(sweep(0, 2, 0x7, 100, 1024, 5, 100_000_000, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=80, rawca=509,
+                         range_sigma_raw=4, existence_raw=0, nc_raw=nc))
+    assert len(rr.points) == 1
+    assert rr.points[0].measured is False
+    assert rr.points[0].ncValid is False
+
+
+class TestNcAtRail:
+  """A low-rail U11 in our lane under 50 m is replaced by NORMALIZED_CLOSING only when the range agrees, only ever
+  toward MORE closing, and is held across short NC dropouts instead of flickering back to the rail."""
+  STEP_RAW = 20            # 1.25 m per 70 ms sweep: closing at 17.86 m/s, past the -13.5 rail
+  DT_NS = 70_000_000
+  TRUE_VREL = -STEP_RAW / 16.0 / 0.07
+
+  @pytest.fixture(autouse=True)
+  def _switch_on(self, monkeypatch):
+    # D-069 rejected the switch (default False); these tests pin the kept code path with it on.
+    from opendbc.car.honda import radar_interface as HRI
+    monkeypatch.setattr(HRI, 'BOSCH_A_NC_RAIL_VREL', True)
+
+  @staticmethod
+  def _nc_raw(d_rel, vrel):
+    return int(round(512 + (-vrel / d_rel) * 64))
+
+  def _drive(self, start_raw=720, n=10, angle_raw=1024, nc=lambda i, d: None, nc_sigma_raw=0):
+    ri = make_radar_interface()
+    out = []
+    for i in range(n):
+      raw = start_raw - self.STEP_RAW * i
+      d_rel = raw / 16.0 - 3.0
+      nc_raw = nc(i, d_rel)
+      rr = ri.update(sweep(0, i & 0xF, 0x7, raw, angle_raw, 1 + 2 * i, i * self.DT_NS, with_aux=True,
+                           direct_vrel_raw=BOSCH_A_DIRECT_VREL_MIN_RAW, direct_vrel_uncertainty_raw=90,
+                           nc_raw=512 if nc_raw is None else nc_raw, nc_sigma_raw=nc_sigma_raw))
+      out.append(rr.points[0].vRel if rr is not None and rr.points else None)
+    return out
+
+  def _true_nc(self, i, d):
+    return self._nc_raw(d, self.TRUE_VREL)
+
+  def test_railed_close_stopped_car_publishes_nc_closing(self):
+    vrels = self._drive(nc=self._true_nc)
+    assert vrels[-1] == pytest.approx(self.TRUE_VREL, abs=1.0)
+    assert vrels[-1] < -15.0
+
+  def test_no_nc_reading_keeps_the_rail(self):
+    assert self._drive()[-1] == pytest.approx(-13.5)
+
+  def test_low_confidence_nc_keeps_the_rail(self):
+    assert self._drive(nc=self._true_nc, nc_sigma_raw=32)[-1] == pytest.approx(-13.5)
+
+  def test_beyond_50_m_keeps_the_rail(self):
+    assert self._drive(start_raw=1100, nc=self._true_nc)[-1] == pytest.approx(-13.5)
+
+  def test_adjacent_lane_keeps_the_rail(self):
+    # 0.10 rad left (1/2048 rad per raw) at ~35 m: yRel ~3.6 m, outside the in-lane bound
+    assert self._drive(angle_raw=1024 + 210, nc=self._true_nc)[-1] == pytest.approx(-13.5)
+
+  def test_nc_disagreeing_with_range_keeps_the_rail(self):
+    vrels = self._drive(nc=lambda i, d: self._nc_raw(d, -30.0))
+    assert vrels[-1] == pytest.approx(-13.5)
+
+  def test_nc_can_never_publish_less_closing_than_the_rail(self):
+    vrels = self._drive(nc=lambda i, d: self._nc_raw(d, -12.0))
+    assert all(v is None or v <= -13.5 + 1e-6 for v in vrels)
+
+  def test_short_dropout_holds_the_nc_value(self):
+    vrels = self._drive(n=12, nc=lambda i, d: None if i in (9, 10) else self._true_nc(i, d))
+    assert vrels[9] < -15.0 and vrels[10] < -15.0
+
+  def test_long_dropout_returns_to_the_rail(self):
+    vrels = self._drive(n=14, nc=lambda i, d: None if i >= 8 else self._true_nc(i, d))
+    assert vrels[-1] == pytest.approx(-13.5)
+
+  def test_switch_off_is_the_old_behaviour(self, monkeypatch):
+    from opendbc.car.honda import radar_interface as HRI
+    monkeypatch.setattr(HRI, 'BOSCH_A_NC_RAIL_VREL', False)
+    assert self._drive(nc=self._true_nc)[-1] == pytest.approx(-13.5)

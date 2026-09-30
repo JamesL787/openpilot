@@ -1291,6 +1291,167 @@ class TestRailFastPath:
     assert on == off
 
 
+
+def _closing(rate, d0=95.0):
+  return lambda i, t: d0 + rate * t
+
+
+def rail_series_veto(track, n, d_of, nc_of, v_ego=30.0, nc_sigma=30):
+  """Railed sweeps with the parser's unlimited NC (ncVRel/ncValid/ncSigma); nc_of(i) -> (value, valid).
+  Returns (correction, published vRel) per sweep."""
+  out = []
+  for i in range(n):
+    t = i * DT
+    nc, ok = nc_of(i)
+    track.update(d_of(i, t), 0.0, RAIL, v_ego + RAIL, True, True, t_now=t, range_assist=True,
+                 nc_vrel=nc, nc_valid=ok, nc_sigma=nc_sigma)
+    out.append((track.range_assist_correction, track.vRel - track.range_assist_correction))
+  return out
+
+
+def _const_nc(v, ok=True):
+  return lambda i: (v, ok)
+
+
+def _veto_ab(monkeypatch, d_of, nc_of, n=25, nc_sigma=30):
+  off = rail_series_veto(new_track(v_lead=30.0 + RAIL), n, d_of, nc_of, nc_sigma=nc_sigma)
+  monkeypatch.setattr(radard, "RANGE_VREL_RAIL_NC_VETO", True)
+  on = rail_series_veto(new_track(v_lead=30.0 + RAIL), n, d_of, nc_of, nc_sigma=nc_sigma)
+  monkeypatch.setattr(radard, "RANGE_VREL_RAIL_NC_VETO", False)
+  return off, on
+
+
+def _assert_gain_kept(off, on, min_gain_vrel):
+  assert min(v for _, v in off) < min_gain_vrel, "RAIL_FAST must publish its gain in the flag-off control"
+  assert on == off, "the veto must not touch this case"
+
+
+class TestRailFastNcVeto:
+  """RANGE_VREL_RAIL_NC_VETO (D-071 PROPOSED, default off). Static unit tests only; shapes from the replay in
+  tools/longitudinal/stopshadow/ncveto.txt. Nothing here is road evidence."""
+
+  def test_default_is_off(self):
+    assert radard.RANGE_VREL_RAIL_NC_VETO is False
+    assert radard.RANGE_VREL_RAIL_NC_VETO_ABOVE_RAIL_MPS == 3.5
+    assert (radard.RANGE_VREL_RAIL_NC_VETO_SAMPLES, radard.RANGE_VREL_RAIL_NC_VETO_MIN_SAMPLES) == (5, 3)
+    assert radard.RANGE_VREL_RAIL_NC_VETO_WINDOW_S == 0.5
+    assert (radard.RANGE_VREL_RAIL_NC_VETO_MAX_D_REL_M, radard.RANGE_VREL_RAIL_NC_VETO_MAX_SIGMA_RAW) == (80.0, 64)
+    assert not hasattr(radard, "RANGE_VREL_RAIL_NC_CAP"), "D-070's inert cap was removed (superseded by D-071)"
+
+  def test_297_shape_sigma_40_vetoes_but_sigma_64_does_not(self, monkeypatch):
+    # 297's NC sigma was 20-42: inside the veto's limit. At 64 (the unusable tail) the samples are ignored.
+    ncs = [-9.2, -8.0, -9.8, -8.7, -8.4, -9.5]
+    _, on = _veto_ab(monkeypatch, _closing(-16.2, d0=72.0), lambda i: (ncs[i % len(ncs)], True), nc_sigma=40)
+    assert all(c == 0.0 for c, _ in on)
+    off, on = _veto_ab(monkeypatch, _closing(-16.2, d0=72.0), lambda i: (ncs[i % len(ncs)], True), nc_sigma=64)
+    assert on == off and any(c > 0.0 for c, _ in on)
+
+  def test_nc_at_or_beyond_80_m_does_not_veto(self, monkeypatch):
+    # Same NC as 297 but the track sits past 80 m, where NC under-reads closing: the correction is kept.
+    off, on = _veto_ab(monkeypatch, _closing(-16.2, d0=110.0), _const_nc(-8.5))
+    assert on == off and any(c > 0.0 for c, _ in on)
+
+  @pytest.mark.parametrize("nc,ok", [(-8.5, True), (-20.0, True), (-8.5, False), (0.0, False)])
+  def test_flag_off_is_byte_identical(self, nc, ok):
+    base = rail_series(new_track(v_lead=30.0 + RAIL), 25, _closing(-16.2))
+    with_nc = rail_series_veto(new_track(v_lead=30.0 + RAIL), 25, _closing(-16.2), _const_nc(nc, ok))
+    assert [c for _, _, c in base] == [c for c, _ in with_nc]
+    assert any(c > 0.0 for _, _, c in base), "RAIL_FAST must arm, or the comparison is empty"
+
+  def test_297_shape_nc_well_above_the_rail_removes_the_excursion(self, monkeypatch):
+    # 297 48:12 tid 4: RAIL_FAST -16.5 from a -16.2 range tail, NC -8.0..-9.8 per sweep (median -8.4..-8.7).
+    ncs = [-9.2, -8.0, -9.8, -8.7, -8.4, -9.5]
+    off, on = _veto_ab(monkeypatch, _closing(-16.2, d0=72.0), lambda i: (ncs[i % len(ncs)], True))
+    assert min(v for _, v in off) < -16.0, "the flag-off control must reproduce the excursion"
+    assert all(c == 0.0 for c, _ in on)
+    assert all(v == RAIL for _, v in on), "the rail itself is published (D-041 bound), never less closing"
+
+  def test_278_437_shape_fires_just_inside_the_threshold(self, monkeypatch):
+    # 278 4:37 tid 61 (Bob's car-matched A/B): RAIL_FAST -15.3 at 62.6-65.7 m, NC median -9.53..-9.78 (3.72-3.97
+    # above the rail), sigma 14-17. The veto fires; this case is the upper edge of the (2.6, 3.72) threshold window.
+    # A clean synthetic -15.3 slope does not arm RAIL_FAST (the logged one armed on a noisy newborn tail), so the range
+    # uses the -16.2 arming shape; what is under test is the NC side.
+    ncs = [-9.6, -9.8, -9.5, -9.7, -9.6]
+    off, on = _veto_ab(monkeypatch, _closing(-16.2, d0=66.0), lambda i: (ncs[i % len(ncs)], True), nc_sigma=15)
+    assert any(c > 0.0 for c, _ in off), "RAIL_FAST must arm in the flag-off control"
+    assert all(c == 0.0 for c, _ in on) and all(v == RAIL for _, v in on)
+
+  def test_278_439_near_miss_does_not_fire(self, monkeypatch):
+    # 278 4:39: NC 3.23-3.38 above the rail, below the 3.5 threshold: the correction is kept.
+    off, on = _veto_ab(monkeypatch, _closing(-16.2, d0=66.0), _const_nc(RAIL + 3.3), nc_sigma=15)
+    assert on == off and any(c > 0.0 for c, _ in on)
+
+  def test_271_shape_nc_past_the_rail_keeps_the_gain(self, monkeypatch):
+    # 271 9:27 tid 24: range about -21, NC median -14.8..-17.3 (never above the rail).
+    off, on = _veto_ab(monkeypatch, _closing(-21.0, d0=78.0), _const_nc(-16.2))
+    _assert_gain_kept(off, on, -18.0)
+
+  def test_236_shape_nc_just_above_the_rail_keeps_the_gain(self, monkeypatch):
+    # 236 12:52.5-12:53.35 tid 40 at 64-79 m: NC median -10.9..-11.5 (2.0-2.6 above the rail) while the range closed
+    # at -17..-21. NC under-read closing here; the 3.5 threshold is what keeps this gain.
+    ncs = [-11.0, -10.4, -11.4, -11.2, -12.1]
+    off, on = _veto_ab(monkeypatch, _closing(-18.0, d0=79.0), lambda i: (ncs[i % len(ncs)], True))
+    _assert_gain_kept(off, on, -16.0)
+
+  def test_298_and_237_shapes_nc_at_or_past_the_rail_keep_the_gain(self, monkeypatch):
+    for nc, rate in ((-20.3, -18.0), (-13.8, -17.0)):
+      off, on = _veto_ab(monkeypatch, _closing(rate, d0=75.0), _const_nc(nc))
+      _assert_gain_kept(off, on, -15.5)
+
+  def test_one_outlier_sweep_does_not_veto(self, monkeypatch):
+    # 236 12:52.85: a single NC of -10.4 with truth -18.1. Here one sweep in five reads -8.0; the median stays -16.
+    off, on = _veto_ab(monkeypatch, _closing(-18.0, d0=75.0), lambda i: (-8.0 if i % 5 == 4 else -16.0, True))
+    _assert_gain_kept(off, on, -16.0)
+
+  def test_too_few_or_stale_nc_samples_do_not_veto(self, monkeypatch):
+    # Only every fourth sweep carries NC: at most 2 inside 0.5 s (DT 0.07), under MIN_SAMPLES.
+    off, on = _veto_ab(monkeypatch, _closing(-16.2, d0=72.0), lambda i: (-8.5, i % 4 == 0))
+    assert on == off
+    # NC valid only on the first 4 sweeps: by the time RAIL_FAST arms, those samples are older than 0.5 s.
+    off, on = _veto_ab(monkeypatch, _closing(-16.2, d0=72.0), lambda i: (-8.5, i < 4))
+    assert on == off
+    assert any(c > 0.0 for c, _ in on)
+
+  def test_off_the_rail_the_veto_changes_nothing(self, monkeypatch):
+    def run():
+      track = new_track(v_lead=30.0 + RAIL + Q)
+      res = []
+      for i in range(30):
+        t = i * DT
+        track.update(90.0 - 20.0 * t, 0.0, RAIL + Q, 30.0 + RAIL + Q, True, True, t_now=t, range_assist=True,
+                     nc_vrel=-5.0, nc_valid=True, nc_sigma=30)
+        res.append(track.range_assist_correction)
+      return res
+    off = run()
+    monkeypatch.setattr(radard, "RANGE_VREL_RAIL_NC_VETO", True)
+    assert run() == off
+    assert any(c > 0.0 for c in off)
+
+  def test_veto_is_one_sided_and_never_leaves_the_rail(self, monkeypatch):
+    for nc in (-3.0, -8.5, -10.0, -12.0, -13.5, -16.0, -25.0):
+      off, on = _veto_ab(monkeypatch, _closing(-16.2, d0=72.0), _const_nc(nc))
+      for (c_off, v_off), (c_on, v_on) in zip(off, on, strict=True):
+        assert c_on in (0.0, c_off)
+        assert v_off <= v_on <= RAIL
+
+  def test_negative_control_a_broken_rule_fails_these_tests(self, monkeypatch):
+    # (1) threshold lowered to 2.0: the 236 shape loses its gain, so the gain-kept assertion must fail.
+    monkeypatch.setattr(radard, "RANGE_VREL_RAIL_NC_VETO_ABOVE_RAIL_MPS", 2.0)
+    with pytest.raises(AssertionError):
+      self.test_236_shape_nc_just_above_the_rail_keeps_the_gain(monkeypatch)
+    monkeypatch.setattr(radard, "RANGE_VREL_RAIL_NC_VETO_ABOVE_RAIL_MPS", 3.5)
+    # (2) median replaced by the latest single sweep: the outlier test must fail.
+    monkeypatch.setattr(radard.Track, "nc_veto_median",
+                        lambda self, t_now: self.nc_veto_hist[-1][1] if self.nc_veto_hist else None)
+    with pytest.raises(AssertionError):
+      self.test_one_outlier_sweep_does_not_veto(monkeypatch)
+    monkeypatch.undo()
+    # (3) veto disabled inside the ON run (switch has no effect): the 297 test must fail.
+    monkeypatch.setattr(radard, "RANGE_VREL_RAIL_NC_VETO_ABOVE_RAIL_MPS", 99.0)
+    with pytest.raises(AssertionError):
+      self.test_297_shape_nc_well_above_the_rail_removes_the_excursion(monkeypatch)
+
+
 # YOUNG_TRACK_FLAT_RANGE_BOUND (route 0000027a ~8:33, BM2): a newborn track coasted at -10.7 on a flat range.
 def _young_coast(track, ranges, v_rel=-10.7, measured_first=3, t0=0.0):
   for i, d in enumerate(ranges):
