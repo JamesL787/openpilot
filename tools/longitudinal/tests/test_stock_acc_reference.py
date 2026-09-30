@@ -107,7 +107,7 @@ def test_stock_brake_warning_is_carried_to_the_neighbours_and_unknown_on_old_cac
   eps = sar.compare_route(A, sar.Corpus(S))["episodes"]
   hard = [e for e in eps if e["stock_peak"] < -1.5]
   assert hard and all(e["stock_alert_share"] >= sar.ALERT_SHARE and "stock would warn" in sar.verdict(e) for e in hard)
-  assert all(e["dash_alert"] is False for e in eps)  # our own route: dash never warned
+  assert all(e["dash_alert"] is None for e in eps)  # openpilot long: the radar's FCW is off, n/a not "never warned"
   for R in S:
     R["alert"] = R["alert"] * np.nan  # cache from before the column
   eps = sar.compare_route(A, sar.Corpus(S))["episodes"]

@@ -550,7 +550,8 @@ def compare_route(R: dict, C: Corpus) -> dict:
       "setbind_share": round(float(np.nanmean(pred["setbind"][seg])), 2),
       # share of stock neighbours at a dash BRAKE warning, at the row where the most of them were
       "stock_alert_share": round(float(np.nanmax(pred["alert"][seg])), 2) if np.isfinite(pred["alert"][seg]).any() else None,
-      "dash_alert": bool(np.nanmax(R["alert"][seg]) > 0.5) if np.isfinite(R["alert"][seg]).any() else None,
+      # n/a (None) under openpilot long: the radar is silenced (disable_ecu), so the car's own FCW/AEB is off
+      "dash_alert": None if R["meta"]["op_long"] or not np.isfinite(R["alert"][seg]).any() else bool(np.nanmax(R["alert"][seg]) > 0.5),
     })
   rate_min = m.sum() / HZ / 60
   return {"route": R["meta"]["route"], "who": who, "minutes_with_lead": round(rate_min, 1),
