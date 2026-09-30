@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from cereal import car, log
+import openpilot.selfdrive.controls.lib.clarity_rack_map as rack
 import openpilot.selfdrive.controls.lib.latcontrol_clarity_eps as clarity_eps
 import openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff as eps_ff
 from opendbc.car import structs
@@ -309,8 +310,8 @@ def test_rack_map_reproduces_the_identified_ratio():
   rack_map = _rack_map()
   angle, v = 154.0, 7.0
   lin = math.radians(vgr_physical_to_linear(angle, get_honda_vgr_inverse(HondaFlags.VGR_CLARITY_TRW_A020)))
-  ratio = float(np.interp(angle, clarity_eps.CLARITY_RATIO_BP, clarity_eps.CLARITY_RATIO_V))
-  expected = -lin / (ratio * 2.75 * (1.0 - clarity_eps.CLARITY_SLIP_FACTOR * v ** 2))
+  ratio = float(np.interp(angle, rack.CLARITY_RATIO_BP, rack.CLARITY_RATIO_V))
+  expected = -lin / (ratio * 2.75 * (1.0 - rack.CLARITY_SLIP_FACTOR * v ** 2))
   assert rack_map.curvature_from_angle(angle, v, 0.0) == pytest.approx(expected, rel=1e-3)
 
 
