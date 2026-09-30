@@ -2,6 +2,7 @@ import re
 from types import SimpleNamespace
 import pytest
 
+from cereal import custom
 from opendbc.car import Bus, structs
 from opendbc.car.structs import CarParams
 from opendbc.car import gen_empty_fingerprint
@@ -15,6 +16,7 @@ from opendbc.car.honda.carcontroller import (
 )
 from opendbc.car.honda.hondacan import create_brake_command, create_lkas_hud
 from opendbc.car.honda.fingerprints import FW_VERSIONS
+from opendbc.car.tests.test_car_interfaces import get_test_starpilot_toggles
 from opendbc.car.honda.values import CAR, DBC, HONDA_BOSCH, HONDA_BOSCH_TJA_CONTROL, CarControllerParams, HondaFlags, HondaSafetyFlags, \
                                      HondaStarPilotFlags
 
@@ -224,6 +226,23 @@ class TestHondaFingerprint:
     CP = CarInterface.get_non_essential_params(CAR.HONDA_CLARITY)
 
     assert CP.flags & HondaFlags.HYBRID
+
+  @pytest.mark.parametrize("frame, yaw_deg_s", [
+    ("989f88b60c000c72", 25.5),    # right turn onto Sanitarium Rd, route 36b
+    ("645f4759f1000c62", -26.75),  # left turn, same route
+    ("7f5f4801f0000c72", 0.25),    # straight
+  ])
+  def test_honda_clarity_yaw_rate_from_vsa(self, frame, yaw_deg_s):
+    CP = CarInterface.get_non_essential_params(CAR.HONDA_CLARITY)
+    CI = CarInterface(CP, custom.StarPilotCarParams.new_message())
+    cp = CI.can_parsers[Bus.pt]
+    cp.update([(1_000_000_000, [(0x94, bytes.fromhex(frame), 0)])])  # register KINEMATICS before its first frame
+    cp.vl["KINEMATICS"]
+    cp.update([(1_010_000_000, [(0x94, bytes.fromhex(frame), 0)])])
+
+    assert cp.vl["KINEMATICS"]["YAW_RATE"] == pytest.approx(yaw_deg_s)
+    ret, _ = CI.CS.update(CI.can_parsers, get_test_starpilot_toggles())
+    assert ret.yawRate == pytest.approx(-yaw_deg_s * CV.DEG_TO_RAD)  # left-positive, like steeringAngleDeg
 
   def test_honda_clarity_brake_command_uses_hybrid_signals(self):
     class FakePacker:
