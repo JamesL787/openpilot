@@ -115,6 +115,11 @@ def _build_vgr_position_inverse(raw_x, raw_y, raw_units_per_degree=10.0, max_raw
 # (A) and those at 0x1FE98/0x1FE9A to 0x130E4/0x13120 (B), matching the C020 order where
 # A divides the position and B divides the rate input.  Y[0] is exactly 16384 = 2**14,
 # i.e. unity at centre, which the B table's 16204 is not.
+# Checked on routes 366/369: 0x14A STEER_ANGLE_RATE = 0x18F raw rate * 2**14 / B(|raw angle|),
+# with B's X in the same 0.1 deg raw units as A's (within 0.8% at every angle; not indexed by
+# rate).  B Y = [16204 x4, 16205, 16229, 16284, 16368, 16481, 16783, 17825, 18866, 19421, 19445...]
+# at X = [0, 40, ..., 320, 400, 600, 800, 1000, 1100...].  So the published rate is not the
+# derivative of the published angle: 1.1% fast at centre, 2-5% slow at 45-100 deg.
 _CLARITY_POSITION_X = [0, 40, 80, 119, 158, 198, 237, 277, 317, 398,
                        604, 820, 1047, 1164, 1210, 1257, 1305, 1352, 1398, 1447,
                        1493, 1540, 1588, 1634, 1989, 2344, 2700, 3056, 3413, 5020]

@@ -57,12 +57,15 @@ KP_PIECES = [(lo * R5_PER_KEY, hi * R5_PER_KEY, kp_lo, (kp_hi - kp_lo) / ((hi - 
              for lo, hi, kp_lo, kp_hi in zip(KP_KEY_BP[:-1], KP_KEY_BP[1:], KP_V[:-1], KP_V[1:], strict=True)]
 KP_PIECES.append((KP_KEY_BP[-1] * R5_PER_KEY, math.inf, KP_V[-1], 0.0))
 
-# R6 comes from the column rate BEFORE the firmware's angle table, the domain 0x18F STEER_ANGLE_RATE reports
-# (R6 = -31.6 per 0x18F count, flat to 2% at every angle on route 369). The published angle and rate (0x14A,
-# steeringRateDeg) come AFTER that table, so per deg/s of steeringRateDeg the damping grows with angle, by the
-# table's local slope: engaged, routes 363/365/366/369, -119 near centre and -141..-146 past 60 deg, where a
-# single -133 was 11% too strong near centre and 10% too weak in big turns. Scaled by the slope it is flat at
-# -120..-123 on each route (-122 pooled).
+# R6 comes from the column rate BEFORE the firmware's angle tables, the domain 0x18F STEER_ANGLE_RATE reports
+# (R6 = -31.6 per 0x18F count, flat to 2% at every angle on route 369). The feedforward's rate is the derivative
+# of the published (0x14A) angle, which the A (position) table compresses, so per deg/s of it the damping grows
+# with angle by the A table's local slope (the chain rule): engaged, routes 363/365/366/369, -119 near centre
+# and -141..-146 past 60 deg, where a single -133 was 11% too strong near centre and 10% too weak in big turns.
+# Scaled by the slope it is flat at -120..-123 on each route (-122 pooled).
+# steeringRateDeg (0x14A STEER_ANGLE_RATE) is NOT that derivative: the firmware publishes it through its second,
+# B (rate) table, indexed by angle. It reads 1.1% fast at centre (B[0] 16204 vs 16384) and 2-5% slow at 45-100
+# deg, so don't feed it here without converting (see steer_ratio.py).
 R6_PER_CENTRE_DEG_S = -122.0  # NORM 1650 / tracker-1 3200
 # d(pre-table angle) / d(published angle) along the A020 angle table, 1.0 at centre, ~1.19 from 150 deg
 _VGR_SLOPE = np.gradient(NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP)
