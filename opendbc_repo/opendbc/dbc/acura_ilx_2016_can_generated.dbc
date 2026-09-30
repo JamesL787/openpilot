@@ -26,8 +26,8 @@ BO_ 145 KINEMATICS_ALT: 8 XXX
  SG_ CHECKSUM : 59|4@0+ (1,0) [0|3] "" EON
 
 BO_ 148 KINEMATICS: 8 XXX
- SG_ YAW_RATE : 7|10@0+ (0.25,-127) [-127|128.75] "deg/s" EON
- SG_ LONG_ACCEL : 24|9@0- (-0.02,0) [-20|20] "m/s2" EON
+ SG_ YAW_RATE : 7|10@0+ (0.25,-128) [-128|127.75] "deg/s" EON
+ SG_ LONG_ACCEL : 24|9@0- (-0.049,0) [-12.544|12.544] "m/s2" EON
  SG_ CHECKSUM : 59|4@0+ (1,0) [0|3] "" EON
  SG_ COUNTER : 61|2@0+ (1,0) [0|3] "" EON
 
@@ -229,7 +229,8 @@ CM_ SG_ 780 PCM_SPEED "Used by Nidec";
 CM_ SG_ 780 PCM_GAS "Used by Nidec";
 CM_ SG_ 804 CRUISE_SPEED_PCM "255 = no speed";
 
-CM_ SG_ 148 YAW_RATE "Vehicle yaw rate from the chassis yaw sensor, positive = clockwise (right turn). Verified on the 2018 Clarity: 0.2494 deg/s per count vs GPS heading over 59 turns, zero 508 counts (507.8-507.9 measured), 17 ms behind wheel-speed yaw. Replaces an unused LAT_ACCEL definition (0.02, -512) that was not lateral acceleration.";
+CM_ SG_ 148 YAW_RATE "Vehicle yaw rate from the chassis yaw sensor, positive = clockwise (right turn), nominal zero 512 counts. Each car sits a few counts off that zero (2018 Clarity 508, 2019 Civic Bosch 513, both constant at every standstill), so learn it at standstill. Scale checked against GPS heading: Clarity 0.2494-0.2522, Civic Bosch 0.241-0.245 deg/s per count. Replaces an unused LAT_ACCEL definition (0.02, -512) that was not lateral acceleration.";
+CM_ SG_ 148 LONG_ACCEL "Longitudinal accelerometer, gravity included (reads road grade at standstill), positive = accelerating. -0.049 m/s2 per count (about 0.005 g) against the comma IMU on 17 Clarity and 2 Civic Bosch routes, correlation 0.98-0.998; the former -0.02 read 2.4x low.";
 
 VAL_ 450 EPB_STATE 3 "engaged" 2 "disengaging" 1 "engaging" 0 "disengaged" ;
 VAL_ 780 CRUISE_SPEED 255 "no_speed" 252 "stopped";
