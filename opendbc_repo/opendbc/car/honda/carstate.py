@@ -7,6 +7,7 @@ from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, DT_CTRL, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda.hondacan import CanBus
+from opendbc.car.honda.yaw_rate import get_yaw_rate_calibration
 from opendbc.car.honda.values import CAR, DBC, STEER_THRESHOLD, HONDA_BOSCH, HONDA_BOSCH_ALT_RADAR, HONDA_BOSCH_CANFD, \
                                                  HONDA_NIDEC_ALT_SCM_MESSAGES, HONDA_BOSCH_RADARLESS, HONDA_BOSCH_TJA_CONTROL, \
                                                  HondaFlags, CruiseButtons, CruiseSettings, GearShifter, CarControllerParams, HondaStarPilotFlags
@@ -49,6 +50,7 @@ class CarState(CarStateBase):
       self.car_state_scm_msg = "SCM_BUTTONS"
 
     self.brake_error_msg = "HYBRID_BRAKE_ERROR" if CP.flags & HondaFlags.HYBRID else "STANDSTILL"
+    self.yaw_rate = get_yaw_rate_calibration(CP.carFingerprint)
 
     # Written by card.py each frame; read by the carcontroller to spam cruise buttons
     self.redneck_send_button = 0
@@ -193,10 +195,10 @@ class CarState(CarStateBase):
 
     ret.steeringAngleDeg = cp.vl["STEERING_SENSORS"]["STEER_ANGLE"]
     ret.steeringRateDeg = cp.vl["STEERING_SENSORS"]["STEER_ANGLE_RATE"]
-    # VSA yaw sensor, verified against GPS on the Clarity only. The DBC signal is clockwise-positive;
-    # yawRate is left-positive like steeringAngleDeg.
-    if self.CP.carFingerprint == CAR.HONDA_CLARITY:
-      ret.yawRate = -cp.vl["KINEMATICS"]["YAW_RATE"] * CV.DEG_TO_RAD
+    # VSA yaw sensor, on the cars whose scale has been checked against GPS (yaw_rate.py). The DBC signal is
+    # clockwise-positive; yawRate is left-positive like steeringAngleDeg.
+    if self.yaw_rate is not None:
+      ret.yawRate = -self.yaw_rate.update(cp.vl["KINEMATICS"]["YAW_RATE"], ret.standstill) * CV.DEG_TO_RAD
 
     ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_stalk(
       250, cp.vl["SCM_FEEDBACK"]["LEFT_BLINKER"], cp.vl["SCM_FEEDBACK"]["RIGHT_BLINKER"])

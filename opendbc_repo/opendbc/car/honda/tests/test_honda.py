@@ -14,8 +14,10 @@ from opendbc.car.honda.carcontroller import (
   get_honda_bosch_wind_brake_mps2,
   update_honda_bosch_live_learning,
 )
-from opendbc.car.honda.hondacan import create_brake_command, create_lkas_hud
+from opendbc.car.honda import yaw_rate
+from opendbc.car.honda.hondacan import CanBus, create_brake_command, create_lkas_hud
 from opendbc.car.honda.fingerprints import FW_VERSIONS
+from opendbc.car.honda.yaw_rate import YawRateCalibration, get_yaw_rate_calibration
 from opendbc.car.tests.test_car_interfaces import get_test_starpilot_toggles
 from opendbc.car.honda.values import CAR, DBC, HONDA_BOSCH, HONDA_BOSCH_TJA_CONTROL, CarControllerParams, HondaFlags, HondaSafetyFlags, \
                                      HondaStarPilotFlags
@@ -227,22 +229,60 @@ class TestHondaFingerprint:
 
     assert CP.flags & HondaFlags.HYBRID
 
-  @pytest.mark.parametrize("frame, yaw_deg_s", [
-    ("989f88b60c000c72", 25.5),    # right turn onto Sanitarium Rd, route 36b
-    ("645f4759f1000c62", -26.75),  # left turn, same route
-    ("7f5f4801f0000c72", 0.25),    # straight
+  @pytest.mark.parametrize("car, frame, yaw_deg_s", [
+    (CAR.HONDA_CLARITY, "989f88b60c000c72", 25.5),       # 610 counts, zero 508: right turn onto Sanitarium Rd, route 36b
+    (CAR.HONDA_CLARITY, "645f4759f1000c62", -26.75),     # 401 counts: left turn, same route
+    (CAR.HONDA_CLARITY, "7f5f4801f0000c72", 0.25),       # 509 counts: straight
+    (CAR.HONDA_CIVIC_BOSCH, "8263880e02000c57", 1.952),  # 521 counts, zero 513, 0.244 deg/s: Peter's route 154
+    (CAR.HONDA_CIVIC_BOSCH, "6d638735ea000c40", -18.544),  # 437 counts
+    (CAR.HONDA_CIVIC_BOSCH, "806387ddfa000c48", 0.0),    # 513 counts
   ])
-  def test_honda_clarity_yaw_rate_from_vsa(self, frame, yaw_deg_s):
-    CP = CarInterface.get_non_essential_params(CAR.HONDA_CLARITY)
+  def test_honda_yaw_rate_from_vsa(self, car, frame, yaw_deg_s):
+    CP = CarInterface.get_non_essential_params(car)
     CI = CarInterface(CP, custom.StarPilotCarParams.new_message())
-    cp = CI.can_parsers[Bus.pt]
-    cp.update([(1_000_000_000, [(0x94, bytes.fromhex(frame), 0)])])  # register KINEMATICS before its first frame
+    cp, bus = CI.can_parsers[Bus.pt], CanBus(CP).pt
+    cp.update([(1_000_000_000, [(0x94, bytes.fromhex(frame), bus)])])  # register KINEMATICS before its first frame
     cp.vl["KINEMATICS"]
-    cp.update([(1_010_000_000, [(0x94, bytes.fromhex(frame), 0)])])
+    cp.update([(1_010_000_000, [(0x94, bytes.fromhex(frame), bus)])])
 
-    assert cp.vl["KINEMATICS"]["YAW_RATE"] == pytest.approx(yaw_deg_s)
-    ret, _ = CI.CS.update(CI.can_parsers, get_test_starpilot_toggles())
+    d = bytes.fromhex(frame)
+    assert cp.vl["KINEMATICS"]["YAW_RATE"] == pytest.approx(((d[0] << 2 | d[1] >> 6) - 512) * 0.25)  # nominal zero
+    ret, _ = CI.CS.update(CI.can_parsers, get_test_starpilot_toggles())  # one frame: the seeded zero, nothing learned yet
     assert ret.yawRate == pytest.approx(-yaw_deg_s * CV.DEG_TO_RAD)  # left-positive, like steeringAngleDeg
+
+  def test_honda_long_accel_scale(self):
+    CP = CarInterface.get_non_essential_params(CAR.HONDA_CLARITY)
+    cp = CarInterface(CP, custom.StarPilotCarParams.new_message()).can_parsers[Bus.pt]
+    frame = bytes.fromhex("989f88b60c000c72")   # LONG_ACCEL raw +12 (braking) through the Sanitarium Rd turn
+    cp.update([(1_000_000_000, [(0x94, frame, 0)])])
+    cp.vl["KINEMATICS"]
+    cp.update([(1_010_000_000, [(0x94, frame, 0)])])
+    assert cp.vl["KINEMATICS"]["LONG_ACCEL"] == pytest.approx(12 * -0.049)
+
+  def test_yaw_rate_zero_is_learned_at_standstill(self):
+    cal = YawRateCalibration(0.25, 508.0)
+    to_dbc = lambda counts: (counts - 512.0) * 0.25  # noqa: E731
+    assert cal.update(to_dbc(510.0), standstill=False) == pytest.approx(0.5)   # seeded zero 508
+    for _ in range(yaw_rate.SETTLE_FRAMES):
+      cal.update(to_dbc(530.0), standstill=True)       # still settling: ignored
+    for _ in range(yaw_rate.LEARN_FRAMES - 1):
+      cal.update(to_dbc(509.5), standstill=True)
+    assert cal.zero == 508.0                            # not enough standstill yet
+    assert cal.update(to_dbc(509.5), standstill=True) == pytest.approx(0.0)
+    assert cal.zero == pytest.approx(509.5)
+    assert cal.update(to_dbc(519.5), standstill=False) == pytest.approx(2.5)  # moving: learned zero kept
+    assert cal.samples == 0
+
+  def test_yaw_rate_zero_rejects_a_faulted_sensor(self):
+    cal = YawRateCalibration(0.25, 508.0)
+    for _ in range(yaw_rate.SETTLE_FRAMES + yaw_rate.LEARN_FRAMES + 10):
+      cal.update((530.0 - 512.0) * 0.25, standstill=True)  # 18 counts off nominal
+    assert cal.zero == 508.0
+
+  def test_yaw_rate_only_on_checked_cars(self):
+    assert get_yaw_rate_calibration(CAR.HONDA_CLARITY) is not None
+    assert get_yaw_rate_calibration(CAR.HONDA_CIVIC_BOSCH) is not None
+    assert get_yaw_rate_calibration(CAR.HONDA_ACCORD) is None
 
   def test_honda_clarity_brake_command_uses_hybrid_signals(self):
     class FakePacker:
