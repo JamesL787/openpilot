@@ -563,7 +563,9 @@ def compare_route(R: dict, C: Corpus) -> dict:
     s0 = int(brk[-1]) if brk.size else 0
     # no range sigma in the cache: a segment that starts where the lead appears may be a new track's range still
     # converging (297 48:12: 95 -> 72 m in 0.9 s while rsig fell 59 -> 11), which reads as fake closing (Jason)
-    seg_new = bool(s0 > 0 and not np.isfinite(dw[s0 - 1]))
+    # a jump start ("swap") is marked too: the car is new to openpilot either way, and the cache can't tell a newborn
+    # track from an established one (298 4:10, -23.5 over 1.2 s). Coarse, display only (Jason)
+    seg_start = None if s0 == 0 else "new" if not np.isfinite(dw[s0 - 1]) else "swap"
     ssm = sm[s0:]
     seg_fit = int(ssm.sum()) >= HZ
     tss = tw[s0:][ssm]
@@ -589,7 +591,7 @@ def compare_route(R: dict, C: Corpus) -> dict:
       "radar_vrel_on_rail": on_rail, "rail_rows": f"{rail_rows}/{same_rows}", "radar_model_low_n": low_n,
       "slope_fit_rows": int(sm.sum()), "model_dist_slope": slopes["mx"], "radar_dist_slope": slopes["d"],
       "slope_spans_lead_swap": lead_swap, "radar_dist_slope_seg": seg_slope,
-      "slope_seg_s": round(float(tw[-1] - tw[s0]), 1), "slope_seg_new_lead": seg_new,
+      "slope_seg_s": round(float(tw[-1] - tw[s0]), 1), "slope_seg_start": seg_start,
       "radar_vrel_median": round(float(np.nanmedian(R["vrel"][ws][sm])), 1) if fit else None,
       "min_a_ego": round(float(np.nanmin(R["a"][seg])), 2),
       "precedent_dist": round(dist, 2), "no_precedent": bool(dist > NO_PRECEDENT),
@@ -611,7 +613,7 @@ def slope_cell(e):
   # dRel6 column, display only: radar dRel slope since the last lead swap, and how long that segment is. "-" when it
   # has under 1 s of same-car rows; never a fit across a swap, which mixes two cars (Jason, Bob)
   s = e.get("radar_dist_slope_seg")
-  return "-" if s is None else f"{s:+.1f} ({e['slope_seg_s']:.1f}s{' new' if e.get('slope_seg_new_lead') else ''})"
+  return "-" if s is None else f"{s:+.1f} ({e['slope_seg_s']:.1f}s{' ' + e['slope_seg_start'] if e.get('slope_seg_start') else ''})"
 
 
 def verdict(e: dict) -> str:
@@ -974,7 +976,8 @@ def cmd_compare(args) -> int:
             f"{e['min_a_ego']:+5.1f} {k['v']:4.0f} {k['d']:5.0f} {k['vrel']:+5.1f} {k['alead']:+5.1f} {k['aleadk']:+5.1f} " +
             f"{e['precedent_dist']:4.1f} {slope_cell(e):>16s}  {verdict(e)}")
     print(f"  dRel6: radar distance slope (m/s) from the last lead swap (at most {SLOPE_WINDOW_S:.0f} s back) to our peak, " +
-          "(segment length; 'new' = starts where the lead appears, may be a new track's range converging); " +
+          "(segment length; 'new' = starts where the lead appears, 'swap' = where it jumps to another car: " +
+          "either may be a new track's range converging); " +
           "'-' = under 1 s of same-car rows. Display only")
     out.append({k: v for k, v in res.items() if not k.startswith("_")} | {"verdicts": [verdict(e) for e in res["episodes"]]})
   if args.json:
