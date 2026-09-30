@@ -10004,3 +10004,25 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - The counter-case is 298 4:10 (newborn tracks 33→35): the rail was a correct bound there, with true closing about −21.6 by range and NC.
 - Open, owner's call: should RAIL_FAST require a minimum track age or a settled rsig?
 - Tooling note: old `/tmp/rv/298/scan_*.pkl` clocks zeroed on the first carState, which is a per-route offset (297 +7.0 s, 298 +4.1 s vs initData route time). Do not trust times from those scans.
+
+## 195. Short Plan Read-Ahead (`PlannerShortActionTime`) ON vs OFF on 2a6/2a4 jab windows: no effect; and the longitudinal replay plant under-reads transient brakes (owner request, 2026-09-30). Replay only.
+- **Setup:** Bob's closed-loop crawler (`r6.py`), with the planner from 87505f426 (the build 2a6 ran). Each drive's own initData params. Bob's fitted table plant (`PLANT_NOGRADE=1`). Only `_short_action_t_active` is toggled.
+- **Windows (11):** 5 owner bookmarks on 000002a6--f5f92c6f78 (158, 245, 326, 537, 904 s) and 6 jab spots on 000002a4--4736f8e372 (961, 1019, 1105, 1144, 1386, 1510 s). 2a4 ran 44918d843, before the toggle existed.
+- **Validation:** open loop on logged state reproduces the logged `actuators.accel` with a median |err| of 0.007–0.04 (one-tick shift). At 2a6 904 s (15:10) it gives −2.65 vs −2.68 logged.
+- **Result:** ON vs OFF is the same within about 0.1 in every window.
+  - Means over the 11 windows, ON vs OFF: min cmd −1.89 vs −1.87; cmd jerk RMS 1.69 vs 1.68; min gap 23.6 vs 23.7 m.
+  - Open loop, ON == OFF exactly at the jab onsets.
+  - The only visible difference is 2a4 1510 s: −1.99 vs −1.84.
+  - Raising the plant lag to 0.4 s gives the same picture.
+  - **The toggle did not cause or sharpen the 2a6 jabs.** They follow real lead slowdowns. At 904 s, the radar check and the model-path check agree it was a real brake tap.
+- **🟠 Plant limit — applies to every closed-loop longitudinal replay:** on transient brakes the real aEgo lags the command by about 0.5 s, then overshoots it by about 0.8–0.9 m/s². The fitted plant (LAG 0.1, TAU_BRAKE 0.2) settles on the command instead.
+
+  | 2a6 window | cmd | real aEgo | plant aEgo |
+  |---|---|---|---|
+  | 904 s | −2.68 | −3.60 | −2.18 |
+  | 537 s | −3.15 | −3.88 | −3.00 |
+  | 326 s | −2.06 | −2.63 | −1.96 |
+
+  - LAG 0.4 still does not reproduce the overshoot (904 s plant −2.67).
+  - **So closed-loop replays under-read how harsh a jab feels.** Compare candidates on the command, not on the simulated aEgo peak.
+  - A plant with a brake overshoot term is open.
