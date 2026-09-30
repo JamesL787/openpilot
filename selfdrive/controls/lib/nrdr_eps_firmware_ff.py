@@ -138,12 +138,19 @@ FF_SPEED_BP = [2.0, 4.0]    # m/s, faded in with speed; the desired angle is ill
 # 2.97 -> 1.93, and 0.6-2 Hz wheel/target ~1.0 either way; the gate reaching up to 12 or 15 m/s bought nothing.
 FF_CRAWL_ANGLE_BP = [5.0, 20.0]  # deg
 FF_CRAWL_SPEED_BP = [5.0, 8.0]   # m/s
-# Opt-in (NrdrLatEpsFfAngleGate, default off): above the crawl band, bring back that 10-30 deg gate. The PR 10 sim
-# verdict (sha1 15223963, sim only, not driven) failed the crawl-only gate on wheel wiggle at speed: straight-road
-# wheel-rate RMS 0.84 -> 1.26 deg/s hands off at 45 mph and 0.91-1.21 -> 1.63-2.03 on the route-296 replays, and
-# route 298 (limited road evidence) read 1.10 vs 0.63 on the highway. Fix chosen after seeing the fail; not yet
-# re-run in the sim. Off, the weight is exactly PR 10's.
-FF_ANGLE_GATE_DEG = [10.0, 30.0]
+# At speed the feedforward also applies near straight (weight 1 from 8 m/s). An opt-in 10-30 deg gate above the
+# crawl band (NrdrLatEpsFfAngleGate) was tried against the PR 10 sim verdict's highway wiggle (sha1 15223963: F2
+# wig ratio, unitless 0.6-2 Hz wheel/desired, 0.84 -> 1.26 hands off at 45 mph and 0.91-1.21 -> 1.63-2.03 on the
+# route-296 replays) and removed 2026-09-30 (owner's call). In the P' sim rounds (R2-R4) it was no smoother than
+# without it, and its step fails against the pre-PR 10 controller were not shown to come from the gate. On the
+# road (limited road evidence, steeringRateDeg, hands off, |dcurv| < 0.0005, 22.4-25 m/s only; 16-25 m/s reads
+# 1.31 vs 1.00) route 298 without it read 1.10 deg/s against 0.63 on 297 (pre-PR 10), but 299 with it read 1.33
+# with the feedforward at weight 0 on every straight frame, so that gap was road spread. The key stays in
+# params_keys.h and is not read.
+# Open question (sim only, 5-8 m/s): with the old 10-30 gate at every speed, the closed-loop sim took the 5-8 /
+# 8-12 m/s wobble on route 286 from 1.03 / 0.67 to 0.27 / 0.23 (29698ea5a). Here the feedforward keeps some
+# weight near straight in that band (0.62 in the P' R4 sim), and that sim read rough 0.032 vs 0.015 against the
+# pre-PR 10 controller (5.0-5.7 m/s only, content not matched). Not yet checked on the road.
 
 
 class EpsFirmwareCalibration:
@@ -343,9 +350,8 @@ class ClarityEpsLateralCore:
   """
 
   def __init__(self, kp_bp, kp_v, ki_bp, ki_v, dt: float, ff: ClarityEpsFirmwareFeedforward | None = None,
-               p_scale=P_SCALE, i_scale=I_SCALE, speed_gate: bool = False):
+               p_scale=P_SCALE, i_scale=I_SCALE):
     self.dt = dt
-    self.speed_gate = speed_gate
     self.p_scale = p_scale
     self.i_scale = i_scale
     self.pid = PIDController((kp_bp, kp_v), (ki_bp, ki_v), pos_limit=1.0, neg_limit=-1.0, rate=1.0 / dt)
@@ -378,8 +384,6 @@ class ClarityEpsLateralCore:
       self.ff_ramp = min(1.0, self.ff_ramp + self.dt / FF_FADE_IN_S)
     crawl = float(np.interp(v_ego, FF_CRAWL_SPEED_BP, [1.0, 0.0]))
     crawl_gate = 1.0 - crawl * (1.0 - float(np.interp(abs(desired_angle_no_offset), FF_CRAWL_ANGLE_BP, [0.0, 1.0])))
-    if self.speed_gate:
-      crawl_gate *= 1.0 - (1.0 - crawl) * (1.0 - float(np.interp(abs(desired_angle_no_offset), FF_ANGLE_GATE_DEG, [0.0, 1.0])))
     self.ff_weight = self.ff_ramp * float(np.interp(v_ego, FF_SPEED_BP, [0.0, 1.0])) * crawl_gate
     ff = self.ff_weight * ff_full
 

@@ -319,29 +319,6 @@ def test_crawl_gate_does_not_reset_the_join_ramp():
   assert core.ff_weight == 1.0
 
 
-@pytest.mark.parametrize("v, des", [(3.0, 2.0), (4.5, 12.5), (6.5, 2.0), (6.5, 20.0), (8.0, 0.0), (20.0, 0.5), (20.0, 20.0)])
-def test_angle_gate_off_is_the_crawl_gate_exactly(v, des):
-  plain, gated = _core(), eps_ff.ClarityEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL, speed_gate=False)
-  for _ in range(80):
-    assert gated.update(des, 0.0, des, v, 0.0, False, False) == plain.update(des, 0.0, des, v, 0.0, False, False)
-    assert gated.ff_weight == plain.ff_weight
-
-
-@pytest.mark.parametrize("v, des, weight", [
-  (20.0, 0.5, 0.0),    # at speed near straight: held off, as before PR 10
-  (20.0, -20.0, 0.5),  # joins between 10 and 30 deg
-  (20.0, 35.0, 1.0),
-  (8.0, 5.0, 0.0),
-  (6.5, 15.0, 0.8333 * 0.625),  # mid-band: (1 - 0.5 * (1 - 0.667)) crawl x (1 - 0.5 * (1 - 0.25)) angle
-  (4.5, 12.5, 0.5),    # below the crawl band it is the crawl gate alone
-  (3.0, 2.0, 0.0),
-])
-def test_angle_gate_on_holds_the_feedforward_off_near_straight_at_speed(v, des, weight):
-  core = eps_ff.ClarityEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL, speed_gate=True)
-  _hold(core, 80, des=des, angle=des, v=v)
-  assert core.ff_weight == pytest.approx(weight, abs=1e-3)
-
-
 def test_friction_knee_is_wide_in_the_city_and_sharp_at_speed():
   assert eps_ff.friction_width(0.0) == eps_ff.friction_width(8.0) == 20.0
   assert eps_ff.friction_width(15.0) == eps_ff.friction_width(30.0) == eps_ff.FRICTION_WIDTH_DEG_S == 5.0
@@ -460,15 +437,6 @@ def test_the_toggle_selects_this_controller_on_a_modified_eps(candidate):
 
 def test_other_modified_eps_hondas_keep_latcontrol_pid():
   assert not clarity_eps.use_clarity_eps_controller(_cp(HONDA.HONDA_CIVIC), _ValueParams({"NrdrLatEpsFirmwareFF": "1"}))
-
-
-@pytest.mark.parametrize("values, on", [(None, False), ({"NrdrLatEpsFfAngleGate": "1"}, True)])
-def test_angle_gate_is_read_once_at_start(monkeypatch, values, on):
-  lac, _, _ = _controller(monkeypatch, HONDA.HONDA_CIVIC_BOSCH, values)
-  assert lac.core.speed_gate is on
-  lac.params = _ValueParams({"NrdrLatEpsFfAngleGate": "0" if on else "1"})
-  lac._read_settings()
-  assert lac.core.speed_gate is on
 
 
 def test_the_civic_runs_its_own_calibration_and_trims(monkeypatch):

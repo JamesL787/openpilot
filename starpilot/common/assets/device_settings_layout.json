@@ -717,15 +717,6 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "NrdrLatEpsFfAngleGate",
-        "label": "Feedforward in Turns Only at Speed (Test)",
-        "description": "Above 18 mph, use the feedforward in turns only (none within 10 deg of centre, full from 30 deg), as before PR 10. Off, it also applies near straight, which tracks better but moved the wheel more on straights in the sim. Not yet driven. Takes effect on the next drive.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "NrdrLatEpsFirmwareFF",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "NrdrLatPidFirmwareFF",
         "label": "PID Turn Feedforward (Test)",
         "description": "Modified-EPS Civic Bosch/Clarity, NRDR PID: keep the PID and the Lat P/I/F trims, and add James's EPS firmware feedforward in turns only (none within 10 deg of centre, full from 30 deg). It fades in once the wheel is within 10 deg of the path and drops out on a driver press. No effect while EPS Firmware Feedforward is on.",

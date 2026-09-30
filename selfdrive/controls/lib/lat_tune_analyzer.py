@@ -80,8 +80,6 @@ TUNING_KEYS = (
   "NrdrLatUseFirmwareVgr",
   # Swaps the whole lateral controller (LatControlClarityEps) the learned factors were fitted against.
   "NrdrLatEpsFirmwareFF",
-  # Gates LatControlClarityEps's feedforward near straight at speed.
-  "NrdrLatEpsFfAngleGate",
   # Swaps the feedforward the learned factors were fitted against, in turns.
   "NrdrLatPidFirmwareFF",
 )
@@ -134,7 +132,7 @@ def _fingerprint_value(v):
 # unchanged. Unset or at that value they stay out of the hash, so adding one does not re-hash every earlier route
 # (which would split the pool and reset the learned state on update).
 FINGERPRINT_ADDED_OFF = {"NrdrLatRateFF": repr(0.0), "NrdrLatEpsFirmwareFF": repr(0.0),
-                         "NrdrLatPidFirmwareFF": repr(0.0), "NrdrLatEpsFfAngleGate": repr(0.0)}
+                         "NrdrLatPidFirmwareFF": repr(0.0)}
 
 
 def tuning_fingerprint(values):

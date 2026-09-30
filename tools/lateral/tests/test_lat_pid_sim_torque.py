@@ -175,7 +175,7 @@ def test_rate_damping_opposes_the_wheel_rate_below_30_mph_only():
 def test_clarity_eps_kind_builds_the_car_controller_and_joins_the_feedforward(vgr):
   from openpilot.selfdrive.controls.lib.latcontrol_clarity_eps import LatControlClarityEps
   from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import CIVIC_BOSCH_C020
-  d = _route(0.02, vgr=vgr)   # a turn past FF_ANGLE_GATE_DEG, so the gate is fully open
+  d = _route(0.02, vgr=vgr)   # a turn past FF_CRAWL_ANGLE_BP, so the crawl gate is fully open
   d["params"]["NrdrLatUseFirmwareVgr"] = "1" if vgr else "0"
   ctl = sim.Controller(d["cp_bytes"], d["params"], kind="clarity_eps")
   assert isinstance(ctl.lac, LatControlClarityEps) and ctl.lac.core.ff.cal is CIVIC_BOSCH_C020

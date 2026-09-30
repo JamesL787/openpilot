@@ -46,7 +46,7 @@ their kind (pid: EpsFF 0, PidFF as logged unless --set; clarity_eps: EpsFF 1, Pi
 controller cannot leak it into the other's run. The resolved toggles are printed.
 
 --clarity-const NAME=a,b sets a list constant of selfdrive/controls/lib/nrdr_eps_firmware_ff.py (FF_SPEED_BP, or
-FF_ANGLE_GATE_DEG where the branch has it) for the candidate only, in the worker process. Sim only; the car cannot
+FF_CRAWL_ANGLE_BP / FF_CRAWL_SPEED_BP) for the candidate only, in the worker process. Sim only; the car cannot
 set these.
 
 detect (per segment, from the rlog; group routing rule 2026-09-27):
