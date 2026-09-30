@@ -9,7 +9,8 @@ import openpilot.selfdrive.controls.lib.latcontrol_clarity_eps as clarity_eps
 import openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff as eps_ff
 from opendbc.car import structs
 from opendbc.car.honda.interface import CarInterface
-from opendbc.car.honda.values import CAR
+from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_linear_to_physical, vgr_physical_to_linear
+from opendbc.car.honda.values import CAR, HondaFlags
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_CTRL
@@ -273,3 +274,59 @@ def test_target_honours_the_angle_rate_limit(monkeypatch):
   outs = _drive(lac, VM, frames=120)
   steps = [abs(b[2] - a[2]) for a, b in zip(outs[20:], outs[21:], strict=False)]
   assert max(steps) <= 100.0 * DT_CTRL + 1e-6
+
+
+def _rack_map():
+  rack_map = clarity_eps.get_clarity_rack_map(_params(CLARITY_MODIFIED_FW))
+  assert rack_map is not None
+  return rack_map
+
+
+def test_rack_map_is_only_built_for_the_identified_car():
+  _rack_map()
+  assert clarity_eps.get_clarity_rack_map(_params(CLARITY_STOCK_FW)) is None
+
+
+@pytest.mark.parametrize("v", [0.0, 7.0, 15.0, 30.0])
+@pytest.mark.parametrize("roll", [0.0, 0.03, -0.03])
+def test_rack_map_round_trips(v, roll):
+  rack_map = _rack_map()
+  for angle in (-430.0, -154.0, -40.0, -3.0, 0.0, 2.0, 25.0, 90.0, 300.0):
+    curvature = rack_map.curvature_from_angle(angle, v, roll)
+    assert rack_map.angle_from_curvature(curvature, v, roll) == pytest.approx(angle, abs=1e-3)
+
+
+def test_rack_map_signs_follow_openpilot():
+  rack_map = _rack_map()
+  assert rack_map.angle_from_curvature(0.05, 7.0, 0.0) < 0.0   # right-positive curvature, left-positive wheel
+  assert rack_map.curvature_from_angle(120.0, 7.0, 0.0) < 0.0
+  curvatures = [rack_map.curvature_from_angle(a, 7.0, 0.0) for a in np.linspace(-430.0, 430.0, 861)]
+  assert all(b < a for a, b in zip(curvatures, curvatures[1:], strict=False))
+
+
+def test_rack_map_reproduces_the_identified_ratio():
+  # measured at 154 deg / 7 m/s (the Sanitarium Rd right turn): R 16.4, slip -0.0005
+  rack_map = _rack_map()
+  angle, v = 154.0, 7.0
+  lin = math.radians(vgr_physical_to_linear(angle, get_honda_vgr_inverse(HondaFlags.VGR_CLARITY_TRW_A020)))
+  ratio = float(np.interp(angle, clarity_eps.CLARITY_RATIO_BP, clarity_eps.CLARITY_RATIO_V))
+  expected = -lin / (ratio * 2.75 * (1.0 - clarity_eps.CLARITY_SLIP_FACTOR * v ** 2))
+  assert rack_map.curvature_from_angle(angle, v, 0.0) == pytest.approx(expected, rel=1e-3)
+
+
+def test_controller_steers_through_the_rack_map(monkeypatch):
+  lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1"})
+  VM.update_params(1.0, 17.3)   # a paramsd ratio must no longer change the target
+  for curvature, v, roll in ((0.06, 7.0, 0.0), (-0.002, 30.0, 0.02), (0.0, 12.0, 0.0)):
+    assert lac._desired_angle_no_offset(VM, v, roll, curvature) == pytest.approx(
+      lac.rack_map.angle_from_curvature(curvature, v, roll))
+
+
+def test_rack_map_asks_less_wheel_than_the_paramsd_ratio_in_tight_turns(monkeypatch):
+  # the city over-steer: paramsd's single ratio over VGR asked 5-9% too much wheel at 100-250 deg
+  lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1"})
+  VM.update_params(1.0, 17.3)
+  for curvature in (0.04, 0.06, 0.1):
+    old = vgr_linear_to_physical(math.degrees(VM.get_steer_from_curvature(-curvature, 7.0, 0.0)), lac.vgr_inverse)
+    new = lac.rack_map.angle_from_curvature(curvature, 7.0, 0.0)
+    assert 0.90 < new / old < 0.96
