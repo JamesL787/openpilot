@@ -9987,3 +9987,12 @@ Replay of the fixed code (base = the old law, same 10 routes):
       - 299 11:49.8 (bm1): plain TTC never, TTC(alead) 3.4.
       - These fit Bob's reading of the Bosch-A doc: lead accel and time gap are inputs, and plain TTC alone explains none of them. Three events cannot fit the 4.75/4.375/4.0 thresholds; that is Bob's corpus scan.
     - **Limits:** one car. The `threat` regime is 3 events. `set speed` (n 74) is mostly ICBM stock routes. Ours is 6 alpha routes. The lead-accel TTC treats a lead that is speeding up as steady.
+  - **Warning thresholds and AEB ramp (Bob's corpus scan, 2026-09-30; log evidence; `/tmp/rv/boscha/alerts_corpus.txt`, not committed):**
+    - The scan finds the same 6 stock BRAKE warnings and no others. 266 1690.1 is with ACC off.
+    - Chime (0x1FA byte 5 = 41/42) and AEB_PREPARE fire 0.17–0.21 s before dash 185. The tool's ±1 s window already covers that lead time.
+    - Dash 187 (24 transitions, including alpha routes and standstill) is not a forward-collision warning. The tool keys on 185 only.
+    - AEB_STATUS and AEB_BRAKING never assert on any route. The stock AEB brake ramp (idea 4) cannot be measured from these drives.
+    - The doc's TTC ladder (4.75 / 4.375 / 4.0) does not fit:
+      - 3 warnings fire at a 0.5–0.73 s gap with little or no closing (270 267.4, 299 709.9, 299 1196.7); 270 275.1 is at 1.04 s.
+      - 35 stretches at TTC < 4 s have no warning; stock was already braking in them.
+    - `stock would warn` needs no change. It already comes from stock neighbours matched on speed, gap, closing speed and lead accel, not from a TTC threshold. Same 6-event limit as above.
