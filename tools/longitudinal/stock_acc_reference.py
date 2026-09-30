@@ -561,6 +561,9 @@ def compare_route(R: dict, C: Corpus) -> dict:
     # dRel6 column: fit only the last same-car segment, from the latest swap (or the window start) to our peak. With a
     # 6 s fit every rail episode on 297/298/29c spanned a swap, so the slope said nothing where it was needed (Jason).
     s0 = int(brk[-1]) if brk.size else 0
+    # no range sigma in the cache: a segment that starts where the lead appears may be a new track's range still
+    # converging (297 48:12: 95 -> 72 m in 0.9 s while rsig fell 59 -> 11), which reads as fake closing (Jason)
+    seg_new = bool(s0 > 0 and not np.isfinite(dw[s0 - 1]))
     ssm = sm[s0:]
     seg_fit = int(ssm.sum()) >= HZ
     tss = tw[s0:][ssm]
@@ -586,7 +589,7 @@ def compare_route(R: dict, C: Corpus) -> dict:
       "radar_vrel_on_rail": on_rail, "rail_rows": f"{rail_rows}/{same_rows}", "radar_model_low_n": low_n,
       "slope_fit_rows": int(sm.sum()), "model_dist_slope": slopes["mx"], "radar_dist_slope": slopes["d"],
       "slope_spans_lead_swap": lead_swap, "radar_dist_slope_seg": seg_slope,
-      "slope_seg_s": round(float(tw[-1] - tw[s0]), 1),
+      "slope_seg_s": round(float(tw[-1] - tw[s0]), 1), "slope_seg_new_lead": seg_new,
       "radar_vrel_median": round(float(np.nanmedian(R["vrel"][ws][sm])), 1) if fit else None,
       "min_a_ego": round(float(np.nanmin(R["a"][seg])), 2),
       "precedent_dist": round(dist, 2), "no_precedent": bool(dist > NO_PRECEDENT),
@@ -608,7 +611,7 @@ def slope_cell(e):
   # dRel6 column, display only: radar dRel slope since the last lead swap, and how long that segment is. "-" when it
   # has under 1 s of same-car rows; never a fit across a swap, which mixes two cars (Jason, Bob)
   s = e.get("radar_dist_slope_seg")
-  return "-" if s is None else f"{s:+.1f} ({e['slope_seg_s']:.1f}s)"
+  return "-" if s is None else f"{s:+.1f} ({e['slope_seg_s']:.1f}s{' new' if e.get('slope_seg_new_lead') else ''})"
 
 
 def verdict(e: dict) -> str:
@@ -958,7 +961,7 @@ def cmd_compare(args) -> int:
     print(f"\n{res['route']} ({res['who']} long, {res['minutes_with_lead']} min engaged with a lead): command reversals " +
           f"per minute ours {res['ours_reversals_per_min']} vs stock precedent {res['stock_reversals_per_min']}")
     print(f"  {'time':>7s} {'ours pk':>7s} {'stock pk':>8s} {'onset o/s':>11s} {'rel o/s':>9s} {'rev o/s':>7s} {'<-2.5s o/s':>10s} " +
-          f"{'aEgo':>5s} {'v':>4s} {'d':>5s} {'vrel':>5s} {'aLd':>5s} {'aLdK':>5s} {'prec':>4s} {'dRel6':>12s}  verdict")
+          f"{'aEgo':>5s} {'v':>4s} {'d':>5s} {'vrel':>5s} {'aLd':>5s} {'aLdK':>5s} {'prec':>4s} {'dRel6':>16s}  verdict")
     for e in res["episodes"]:
       if e["ours_peak"] > args.min_peak and e["stock_peak"] > args.min_peak:
         continue
@@ -969,9 +972,10 @@ def cmd_compare(args) -> int:
       print(f"  {fmt_t(e['t0']):>7s} {e['ours_peak']:+7.2f} {e['stock_peak']:+8.2f} {on:>11s} {rel:>9s} " +
             f"{e['ours_reversals']:>3d}/{e['stock_reversals']:<4.1f} {e['ours_s_below_2p5']:4.1f}/{e['stock_s_below_2p5']:<4.1f} " +
             f"{e['min_a_ego']:+5.1f} {k['v']:4.0f} {k['d']:5.0f} {k['vrel']:+5.1f} {k['alead']:+5.1f} {k['aleadk']:+5.1f} " +
-            f"{e['precedent_dist']:4.1f} {slope_cell(e):>12s}  {verdict(e)}")
+            f"{e['precedent_dist']:4.1f} {slope_cell(e):>16s}  {verdict(e)}")
     print(f"  dRel6: radar distance slope (m/s) from the last lead swap (at most {SLOPE_WINDOW_S:.0f} s back) to our peak, " +
-          "(segment length); '-' = under 1 s of same-car rows. Display only")
+          "(segment length; 'new' = starts where the lead appears, may be a new track's range converging); " +
+          "'-' = under 1 s of same-car rows. Display only")
     out.append({k: v for k, v in res.items() if not k.startswith("_")} | {"verdicts": [verdict(e) for e in res["episodes"]]})
   if args.json:
     Path(args.json).write_text(json.dumps(out, indent=1))

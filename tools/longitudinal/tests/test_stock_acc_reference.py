@@ -108,8 +108,14 @@ def test_distance_slope_is_fitted_only_since_the_last_lead_swap():
   eps = sar.compare_route(A, C)["episodes"]
   assert eps and all(e["slope_spans_lead_swap"] and e["slope_seg_s"] <= 1.5 for e in eps)
   assert all(abs(e["radar_dist_slope_seg"]) < 1.0 for e in eps if e["radar_dist_slope_seg"] is not None)  # no step fitted
-  blank = {"radar_dist_slope_seg": None, "slope_seg_s": 0.0, "slope_spans_lead_swap": False}
+  assert not any(e["slope_seg_new_lead"] for e in eps)  # a jump in dRel, not the lead appearing
+  blank = {"radar_dist_slope_seg": None, "slope_seg_s": 0.0, "slope_spans_lead_swap": False, "slope_seg_new_lead": True}
   assert all(sar.verdict(e) == sar.verdict(e | blank) for e in eps)  # display only (moving d moves the precedent)
+  B = _route("a0", True, seed=9, brake_gain=2.0)
+  B["d"][(B["t"] % 3.0) < 1.5] = np.nan  # the lead is gone every other 1.5 s: each segment starts at its appearance
+  eps = sar.compare_route(B, C)["episodes"]
+  seg = [e for e in eps if e["radar_dist_slope_seg"] is not None]
+  assert seg and all(e["slope_seg_new_lead"] and sar.slope_cell(e).endswith(" new)") for e in seg)
   A["d"] = A["d"] + 10.0 * (A["t"] % 1.0 < 0.5)  # segments under 1 s of rows: nothing to fit
   A["mx"] = A["d"].copy()
   assert all(sar.slope_cell(e) == "-" for e in sar.compare_route(A, C)["episodes"])
