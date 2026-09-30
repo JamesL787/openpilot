@@ -9930,7 +9930,7 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **Limits:**
   - The reference is a neighbour median. It says what stock did in similar logged moments, not what it would have done here.
   - No cut-ins, stop-and-go to zero, or adjacent-lane curves are separated out yet.
-  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 8 pass (synthetic routes).
+  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 9 pass (synthetic routes).
 - **Addendum (2026-09-29, Bob's gate3 questions; replay only):**
   - **Radar-vs-model tag.** An episode is tagged `radar closing > model` when radar closing exceeds the model lead's closing on the same car by 3 m/s or more in the second before our peak.
     - Ours harder: 10 of 23 tagged.
@@ -9965,3 +9965,8 @@ Replay of the fixed code (base = the old law, same 10 routes):
   - **Release time and the `ours lingers` tag (Bob's suggestion, replay):** seconds from an episode's peak until the command is back above half of it. `ours lingers` when ours takes more than 1.0 s longer than the stock reference.
     - Over the 6 alpha routes, among 70 real brakes with stock precedent (stock peak < −1.5): ours lingers in 29. Median release ours 2.1 s vs stock 0.6 s.
     - Reading: stock is sharp in and sharp out. Along with the soft stop, the long tail after the peak is the main shape difference on real brakes.
+  - **Dash BRAKE warning column (2026-09-30, Bob's decode; replay):** 0x374 STALK_STATUS byte 4 (`DASHBOARD_ALERT`) == 185 on the ACC bus, about 1.1 s per warning. Cached as `alert`; caches from before it read as unknown, not "never warned" (rebuilt cache: `/tmp/sar2`).
+    - Across the 17 stock routes it fires 6 times: 25e 726.3, 266 1690.3, 270 267.6 and 275.4, 299 710.1 and 1196.9.
+    - `compare` reports `stock_alert_share`, the share of stock neighbours within 1 s of a warning, and tags `stock would warn` at ≥ 0.2. It also reports `dash_alert` for the route's own dash; that was never set on the 6 alpha routes (not known whether the car still raises it under openpilot long).
+    - 18 of 200 alpha episodes are `stock would warn`. Six are also `ours lingers`, and 4 are `ours later` (2 of them also `ours softer`): in the moments where stock would have warned, ours sometimes comes in later and trails off.
+    - Limit: the precedent is only 6 warnings, so a share of 0.8 means neighbours drawn from one or two events, not a rate.

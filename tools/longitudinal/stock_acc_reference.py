@@ -61,6 +61,8 @@ import numpy as np
 
 HZ = 20
 ACC_CONTROL_ADDR = 0x1DF
+DASH_ADDR = 0x374            # STALK_STATUS: DASHBOARD_ALERT = dat[4]; 185 = the dash BRAKE warning (Bob, route 299)
+DASH_BRAKE = 185
 SCM_BUTTONS = 0x296          # CRUISE_BUTTONS = (dat[0] >> 5) & 7: 3 = DECEL_SET, 4 = RES_ACCEL
 LEAD_MAX_D = 120.0           # m: rows with a farther (or no) lead are not in the corpus and are never queried
 MOVING_MIN_V = 1.0           # m/s: stock holds ACCEL_COMMAND at -4.0 at standstill; a hold, not a brake
@@ -80,9 +82,11 @@ BRAKE_ON = -1.0              # episode starts when either side goes below this
 REVERSAL_MIN = 0.3           # m/s^2 swing that counts as the command changing its mind
 LEADBRAKE_ON = -1.0          # m/s^2 lead accel slope that counts as the lead starting to brake
 RADAR_MODEL_GAP = 3.0        # m/s radar closing faster than the model lead on the same car (Bob's gate3 condition)
+ALERT_WINDOW_S = 1.0         # s either side of a dash BRAKE warning that counts as "stock warned here"
+ALERT_SHARE = 0.2            # share of stock neighbours that warned before an episode is tagged "stock would warn"
 LINGER_S = 1.0               # s: ours takes this much longer than stock to back off half its peak (Bob, 299 bm1)
 FIELDS = ("t", "v", "a", "d", "vrel", "alead", "aleadk", "yrel", "radar", "mprob", "mx", "mv",
-          "cmd", "stock", "alpha", "icbm", "setv")
+          "cmd", "stock", "alpha", "icbm", "setv", "alert")
 
 
 # ------------------------------------------------------------------------------------------------ read
@@ -118,6 +122,7 @@ def read_route(route_dir: Path) -> dict:
   cs = cc = md = None
   parser = None
   stock_cmd = math.nan
+  dash = 0
   last_icbm = -1e9
   vhist: list[tuple[float, float]] = []
   for path in segment_files(route_dir):
@@ -149,6 +154,9 @@ def read_route(route_dir: Path) -> dict:
               parser = CANParser(_dbc(meta["fingerprint"]), [("ACC_CONTROL", 50)], int(f.src))
               break
         if parser is not None:
+          for f in m.can:
+            if f.address == DASH_ADDR and f.src == meta["acc_bus"] and len(f.dat) > 4:
+              dash = bytes(f.dat)[4]
           fr = [(f.address, bytes(f.dat), f.src) for f in m.can if f.address == ACC_CONTROL_ADDR and f.src < 128]
           if fr and ACC_CONTROL_ADDR in parser.update([(m.logMonoTime, fr)]):
             stock_cmd = float(parser.vl["ACC_CONTROL"]["ACCEL_COMMAND"])
@@ -184,6 +192,7 @@ def read_route(route_dir: Path) -> dict:
         rows["stock"].append(float(engaged and not meta["op_long"]))
         rows["alpha"].append(float(alpha))
         rows["icbm"].append(float(t - last_icbm < ICBM_WINDOW_S))
+        rows["alert"].append(float(dash == DASH_BRAKE))
         # set speed: the cluster's under stock ACC; under alpha long it is openpilot's vCruise (km/h, 255 = unset)
         sc = float(cs.cruiseState.speedCluster)
         vc = float(cs.vCruise) / 3.6 if 0 < cs.vCruise < 250 else math.nan
@@ -193,12 +202,18 @@ def read_route(route_dir: Path) -> dict:
   return out
 
 
+def from_cache(z) -> dict:
+  # caches written before the alert column: alert unknown (NaN), not "never warned"
+  R = {k: z[k] if k in z.files else np.full(len(z["t"]), np.nan) for k in FIELDS}
+  R["meta"] = json.loads(str(z["meta"]))
+  return R
+
+
 def load(route_dir: Path, cache_dir: Path | None) -> dict:
   f = cache_dir / f"{route_dir.name}.npz" if cache_dir else None
   if f is not None and f.exists():
     z = np.load(f, allow_pickle=False)
-    R = {k: z[k] for k in FIELDS}
-    R["meta"] = json.loads(str(z["meta"]))
+    R = from_cache(z)
     return R
   R = read_route(route_dir)
   if f is not None:
@@ -248,7 +263,7 @@ class Corpus:
       Y.append(future(R, m)[m])
       X.append(features(R)[m])
       setbind = np.isfinite(R["setv"]) & (R["setv"] < R["v"] + SETBIND_MS)
-      W.append(np.vstack([R["icbm"][m], R["t"][m], setbind[m]]).T)
+      W.append(np.vstack([R["icbm"][m], R["t"][m], setbind[m], near_alert(R)[m]]).T)
       I.append(np.full(m.sum(), len(self.names)))
       self.names.append(R["meta"]["route"])
       for s, e in runs(m):
@@ -274,6 +289,7 @@ class Corpus:
     dist = np.full(n, np.nan)
     icbm = np.full(n, np.nan)
     setbind = np.full(n, np.nan)
+    alert = np.full(n, np.nan)
     x2 = np.sum(X * X, axis=1)
     for s in range(0, n, 256):
       q = Q[s:s + 256]
@@ -286,15 +302,17 @@ class Corpus:
       p75[s:s + 256] = np.nanpercentile(y, 75, axis=1)
       icbm[s:s + 256] = W[nn, 0].mean(axis=1)
       setbind[s:s + 256] = W[nn, 2].mean(axis=1)
-    return {"med": med, "p25": p25, "p75": p75, "dist": dist, "icbm": icbm, "setbind": setbind}
+      a = W[nn, 3]
+      known = np.isfinite(a).sum(axis=1)
+      alert[s:s + 256] = np.where(known > 0, np.nansum(a, axis=1) / np.maximum(known, 1), np.nan)
+    return {"med": med, "p25": p25, "p75": p75, "dist": dist, "icbm": icbm, "setbind": setbind, "alert": alert}
 
 
 def load_corpus(cache_dir: Path) -> tuple[Corpus, list[dict]]:
   routes = []
   for f in sorted(cache_dir.glob("*.npz")):
     z = np.load(f, allow_pickle=False)
-    R = {k: z[k] for k in FIELDS}
-    R["meta"] = json.loads(str(z["meta"]))
+    R = from_cache(z)
     routes.append(R)
   return Corpus(routes), routes
 
@@ -359,6 +377,15 @@ def release(t, x, s, e):
     return math.nan
   r = np.flatnonzero(x[k:e + 1] > 0.5 * x[k])
   return float(t[k + r[0]] - t[k]) if len(r) else float(t[e] - t[k])
+
+
+def near_alert(R: dict) -> np.ndarray:
+  # 1 within ALERT_WINDOW_S of a dash BRAKE warning, 0 elsewhere, NaN for a cache written before the column
+  a = R["alert"]
+  if not np.isfinite(a).any():
+    return np.full(len(a), np.nan)
+  w = int(ALERT_WINDOW_S * HZ)
+  return (np.convolve(a > 0.5, np.ones(2 * w + 1), "same") > 0).astype(float)
 
 
 def fmt_t(t: float) -> str:
@@ -474,8 +501,8 @@ def compare_route(R: dict, C: Corpus) -> dict:
     m = usable(R, "stock")
     who = "stock"
   Q = features(R)
-  pred = {k: np.full((len(R["t"]),) + (() if k in ("dist", "icbm", "setbind") else (len(HORIZONS),)), np.nan)
-          for k in ("med", "p25", "p75", "dist", "icbm", "setbind")}
+  pred = {k: np.full((len(R["t"]),) + (() if k in ("dist", "icbm", "setbind", "alert") else (len(HORIZONS),)), np.nan)
+          for k in ("med", "p25", "p75", "dist", "icbm", "setbind", "alert")}
   exclude = C.names.index(R["meta"]["route"]) if R["meta"]["route"] in C.names else None
   if m.any():
     r = C.query(Q[m], exclude=exclude)
@@ -521,6 +548,9 @@ def compare_route(R: dict, C: Corpus) -> dict:
       "precedent_dist": round(dist, 2), "no_precedent": bool(dist > NO_PRECEDENT),
       "icbm_share": round(float(np.nanmean(pred["icbm"][seg])), 2),
       "setbind_share": round(float(np.nanmean(pred["setbind"][seg])), 2),
+      # share of stock neighbours at a dash BRAKE warning, at the row where the most of them were
+      "stock_alert_share": round(float(np.nanmax(pred["alert"][seg])), 2) if np.isfinite(pred["alert"][seg]).any() else None,
+      "dash_alert": bool(np.nanmax(R["alert"][seg]) > 0.5) if np.isfinite(R["alert"][seg]).any() else None,
     })
   rate_min = m.sum() / HZ / 60
   return {"route": R["meta"]["route"], "who": who, "minutes_with_lead": round(rate_min, 1),
@@ -550,6 +580,10 @@ def verdict(e: dict) -> str:
       tags.append("ours lingers")
     if e["ours_reversals"] >= e["stock_reversals"] + 2:
       tags.append("ours twitchier")
+  if (e.get("stock_alert_share") or 0.0) >= ALERT_SHARE:
+    tags.append("stock would warn")
+  if e.get("dash_alert"):
+    tags.append("dash BRAKE shown")
   if (e.get("radar_minus_model_closing") or 0.0) >= RADAR_MODEL_GAP:
     tags.append("radar closing > model")
   if e["at_ours_peak"]["aleadk"] is not None and e["at_ours_peak"]["aleadk"] < -4 and e["at_ours_peak"]["alead"] > -1.5:

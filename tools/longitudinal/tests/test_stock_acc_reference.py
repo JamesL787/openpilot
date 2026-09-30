@@ -12,6 +12,7 @@ def _route(name, op_long, n=2000, seed=0, brake_gain=1.0):
   z = np.zeros(n)
   R = {"t": t, "v": z + 20.0, "a": cmd.copy(), "d": z + 30.0, "vrel": vrel, "alead": z, "aleadk": z, "yrel": z,
        "radar": z + 1, "mprob": z + 1, "mx": z + 30, "mv": 20 + vrel, "cmd": cmd, "stock": z + (not op_long),
+       "alert": z.copy(),
        "alpha": z + op_long, "icbm": z, "setv": z + 30.0}
   R["meta"] = {"route": name, "op_long": op_long, "fingerprint": "X", "acc_bus": 1}
   return R
@@ -96,3 +97,18 @@ def test_release_measures_how_long_the_brake_lingers_after_its_peak():
        "stock_onset": 2.0, "ours_release": 4.0, "stock_release": 1.0, "ours_reversals": 0, "stock_reversals": 0.0,
        "at_ours_peak": {"alead": -3.0, "aleadk": -3.0}}
   assert sar.verdict(e) == "ours lingers"
+
+
+def test_stock_brake_warning_is_carried_to_the_neighbours_and_unknown_on_old_caches():
+  S = [_route(f"s{i}", False, seed=i) for i in range(3)]
+  for R in S:
+    R["alert"] = (R["vrel"] < -2.5).astype(float)  # stock's dash BRAKE shows on its hardest closing
+  A = _route("a0", True, seed=9, brake_gain=2.0)
+  eps = sar.compare_route(A, sar.Corpus(S))["episodes"]
+  hard = [e for e in eps if e["stock_peak"] < -1.5]
+  assert hard and all(e["stock_alert_share"] >= sar.ALERT_SHARE and "stock would warn" in sar.verdict(e) for e in hard)
+  assert all(e["dash_alert"] is False for e in eps)  # our own route: dash never warned
+  for R in S:
+    R["alert"] = R["alert"] * np.nan  # cache from before the column
+  eps = sar.compare_route(A, sar.Corpus(S))["episodes"]
+  assert eps and all(e["stock_alert_share"] is None and "warn" not in sar.verdict(e) for e in eps)
