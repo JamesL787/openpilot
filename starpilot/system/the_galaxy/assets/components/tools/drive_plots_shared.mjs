@@ -591,7 +591,7 @@ export function eventRows(analysis, meta = {}, speed = DEFAULT_SPEED) {
 // First match wins, so Radar (NrdrHondaEcuMatchedLong) is tested before Speed control.
 const TUNE_GROUPS = [
   { title: "Speed control", test: (k) => /long|accel|brake|stop|start|follow|jerk|^EVTuning$|^Truck|^Trailer/i.test(k) },
-  { title: "Radar", test: (k) => /radar|blot|EcuMatchedLong/i.test(k) },
+  { title: "Radar", test: (k) => /radar|EcuMatchedLong/i.test(k) },
 ]
 const TUNE_TEST_ORDER = [1, 0]
 // Keys James's controller does not read (latcontrol_clarity_eps.py docstring): the gain sliders and Honda PID scales.

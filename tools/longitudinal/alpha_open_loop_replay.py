@@ -26,8 +26,8 @@ What it is NOT (read before quoting a number)
   `pcmCruise` off (the alpha-long configuration) and synthesises `controlsState.longControlState`:
   `pid` while the car's cruise is engaged and the brake pedal is up, `off` otherwise. Under stock ACC
   the logged state is always `off`, which would reset the planner every frame.
-* BLoTv3 is set from the route's own initData param (STATUS 52: leaving it at the replay host's value
-  was the largest replay-vs-car gap found so far).
+* BLoTv3 was removed on 2026-09-30. The route's own initData BlotV3 is still printed, because a route driven
+  with it ON cannot be reproduced by this replay (STATUS 52 found that the largest replay-vs-car gap).
 * radarState is the logged one, produced on-device by the build that drove. It is not re-run through the
   current radard or Bosch-A parser. Name that build next to any result.
 
@@ -214,9 +214,6 @@ def replay(route_dir: Path) -> tuple[list[Frame], dict]:
         alpha, nobound = LP.LongitudinalPlanner(acp), LP.LongitudinalPlanner(acp)
         nobound.bound_off_axis_radar_leads = False
         meta["bound_active"] = bool(alpha.bound_off_axis_radar_leads)
-        blot = bool(meta.get("blotv3", False))
-        for p in (alpha, nobound):
-          p._blotv3_active = (lambda b=blot: b)
         from opendbc.car.honda.values import DBC
         dbc = DBC[cp.carFingerprint]
         meta["dbc"] = dbc["pt"] if isinstance(dbc, dict) and "pt" in dbc else str(list(dbc.values())[0])
@@ -356,7 +353,7 @@ def fnum(x, nd=2):
 def print_report(meta: dict, frames: list[Frame], eps: list[dict], thr: float) -> None:
   engaged = [f for f in frames if f.engaged]
   print("  ".join([f"route {meta['route_dir']}", f"build {meta.get('git_commit')}", str(meta.get("fingerprint")),
-                   f"segs {len(meta['segments'])}", f"BLoTv3 {meta.get('blotv3')}", f"bound {meta.get('bound_active')}",
+                   f"segs {len(meta['segments'])}", f"BLoTv3 logged {meta.get('blotv3')} (removed; not replayed)", f"bound {meta.get('bound_active')}",
                    f"ACC_CONTROL bus {meta.get('acc_control_bus')}"]))
   print(f"frames {len(frames)}, engaged {len(engaged)} ({len(engaged) * 0.05:.0f} s); episodes below {thr}: {len(eps)}")
   # ramp = start of the run below -0.5 that leads into the minimum (context only, not used for lag).

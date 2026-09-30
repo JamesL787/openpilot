@@ -19,7 +19,7 @@ is the car's offset to the left). "Toward the push" is + in the direction the dr
 
 Not recorded, so never reconstructed here (James): the controller output before its low-pass filter, ff_ramp on its
 own, the modified EPS's own pressed signal, and design C's driver-led offset/flag. carState.steeringPressed is the raw
-pressed bit, so takeovers are labelled "raw pressed". BLoTv3 and Bosch-A gate internals are not published on any
+pressed bit, so takeovers are labelled "raw pressed". Bosch-A gate internals are not published on any
 cereal message (Bob); leadOne.radar and radarTrackId are the published proxies.
 """
 import numpy as np

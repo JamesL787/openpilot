@@ -1987,7 +1987,7 @@ try:
   from openpilot.selfdrive.controls.lib.lat_tune_analyzer import TUNING_KEYS as _NRDR_LATERAL_TUNE_KEYS
 except Exception:
   _NRDR_LATERAL_TUNE_KEYS = ()
-_DRIVE_PLOTS_RADAR_KEYS = ("BlotV3", "BoschARadar", "NrdrHondaEcuMatchedLong")
+_DRIVE_PLOTS_RADAR_KEYS = ("BoschARadar", "NrdrHondaEcuMatchedLong")
 # Asked for by the lateral agents: lane centring, the delay the controller assumes, the firmware-FF switch, and
 # (Bob, 2026-09-29) the conditional-experimental override state the drive started in.
 _DRIVE_PLOTS_AGENT_KEYS = ("LaneCentering", "LaneCenteringE2EAuthority", "LaneCenterOffset", "SteerDelay",

@@ -20,7 +20,7 @@ by the same build_row), sampled on longitudinalPlan (20 Hz, what the car records
 carState (100 Hz; the analysis thresholds were written for 20 Hz, so compare like with like).
 
 Tune snapshot (initData of the first segment): gitCommit / gitBranch, every Nrdr* and HondaOverride* key in
-common/params_keys.h ("missing" when the log has no entry), the lane-centring and delay keys, BlotV3,
+common/params_keys.h ("missing" when the log has no entry), the lane-centring and delay keys,
 openpilotLongitudinalControl (carParams), the sha1 of selfdrive/controls/lib/latcontrol_clarity_eps.py at the logged
 commit (from this repo's git; "working tree" when the commit is not here), liveDelay.lateralDelay (median and last)
 and the last liveTorqueParameters. The controller is tools/lateral/lat_score.py's detect rule (route_verdict).
@@ -49,7 +49,7 @@ sys.path.insert(1, ROOT)
 from openpilot.starpilot.system.the_galaxy import drive_plots as dp  # noqa: E402
 
 CLARITY_FILE = "selfdrive/controls/lib/latcontrol_clarity_eps.py"
-EXTRA_KEYS = ("LaneCentering", "LaneCenteringE2EAuthority", "LaneCenterOffset", "SteerDelay", "BlotV3", "BoschARadar",
+EXTRA_KEYS = ("LaneCentering", "LaneCenteringE2EAuthority", "LaneCenterOffset", "SteerDelay", "BoschARadar",
               "ExperimentalMode", "ConditionalExperimental", "ConditionalChill", "LongitudinalPersonality")
 RLOG_SERVICE = dp.RLOG_SERVICE
 MOMENT_WINDOW_S = 2.0          # moment_windows.csv: rows this far either side of each moment
