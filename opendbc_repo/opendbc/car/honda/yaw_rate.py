@@ -3,14 +3,19 @@
 The DBC decodes against the nominal zero, 512 counts, but every unit sits a few counts off it (2018 Clarity 508,
 2019 Civic Bosch 513) and holds that offset exactly at every stop. With the wheels stopped the true yaw rate is
 zero, so the average reading there is the zero. The scale is not learnable that way and is measured per model
-against GPS heading.
+against GPS heading, using only stretches that start and end driving straight (there the ~0.4 s lag of the 1 Hz
+GPS bearing and the car's sideslip cancel; fits over arbitrary windows are biased by both).
 
-The Clarity's sensor also under-reads clockwise (right) turns by 0.18 deg/s from about 1 deg/s up, while left
-turns and small rates read true. Against GPS heading over 1434 five-second windows on 15 routes: +0.18 +/- 0.03
-deg/s, positive on every route that has enough right turns (6/6), and the best held-out fit of every decode
-tried (per-side scales overfit; a matching left-turn term is -0.04 +/- 0.03, i.e. none). The count
-histogram shows why: +4 is a double-width code (as common as +3, then +5 falls off 2-4x). So the correction
-ramps in across +3..+5 counts rather than stepping.
+The Clarity's sensor also under-reads clockwise (right) turns by ~0.24 deg/s from about 1 deg/s up, while left
+turns and small rates read true (mechanism unknown). Measured on GPS windows where the yaw rate is steady at
+both ends: straights +0.007 +/- 0.004, right 0.75-1.5 deg/s +0.17..0.18, right 1.5-2.5 deg/s +0.21..0.23
+(at 0.25/count; ~0.02 more at 0.246), left 0.75-2.5 deg/s +0.03..0.06, which the scale below accounts for.
+It ramps in across +3..+5 counts.
+
+Clarity scale 0.246 (not 0.25): 12 whole turns, straight before and after, 0.2456-0.2470; 1670 straight-to-
+straight GPS pairs on 9 routes, 0.2468 +/- 0.0008 with the clockwise correction (every route 0.244-0.250). Left
+and right turns agree only with the correction (without it, 0.2514 right vs 0.2447 left). On those pairs the
+heading error falls from 1.81 deg rms (0.25, no correction) to ~0.9 deg.
 """
 from opendbc.car.honda.values import CAR
 
@@ -20,7 +25,7 @@ DBC_ZERO = 512.0   # counts
 # (deg/s per count, standstill zero in counts until this drive's own standstill replaces it, clockwise
 # under-read in deg/s)
 YAW_RATE_CALIBRATION = {
-  CAR.HONDA_CLARITY: (0.25, 508.0, 0.18),       # GPS 0.2494-0.2522 over 11 routes; 508.00 at every stop on 19 routes
+  CAR.HONDA_CLARITY: (0.246, 508.0, 0.24),      # see above; 508.00 at every stop on 19 routes
   CAR.HONDA_CIVIC_BOSCH: (0.244, 513.0, 0.0),   # GPS 0.2446 / 0.2412 on two routes; 513 at every stop; not checked
 }
 RIGHT_LOSS_BP = (3.0, 5.0)  # counts from zero over which the clockwise under-read comes in

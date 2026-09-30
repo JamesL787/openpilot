@@ -3,7 +3,7 @@
 
   PYTHONPATH=<repo>:<repo>/opendbc_repo python tools/clarity_lateral_report/report.py <rlog.zst | route dir> ...
 
-Everything is judged in true units: car curvature = VSA yaw / vEgo, decoded as carstate does (0.25 deg/s per count, zero learned at standstill,
+Everything is judged in true units: car curvature = VSA yaw / vEgo, decoded as carstate does (yaw_rate.py: 0.246 deg/s per count, zero learned at standstill,
 508 on this Clarity, clockwise under-read corrected), 17 ms latency,
 decoded straight from CAN so routes from before the carState.yawRate change work too. Sections:
   yaw sources   VSA zero on straights; livePose yaw (the comma's estimate) scale and lag against the VSA

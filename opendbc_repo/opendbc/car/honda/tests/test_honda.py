@@ -230,9 +230,9 @@ class TestHondaFingerprint:
     assert CP.flags & HondaFlags.HYBRID
 
   @pytest.mark.parametrize("car, frame, yaw_deg_s", [
-    (CAR.HONDA_CLARITY, "989f88b60c000c72", 25.68),      # 610 counts, zero 508, +0.18 clockwise: right onto Sanitarium Rd, 36b
-    (CAR.HONDA_CLARITY, "645f4759f1000c62", -26.75),     # 401 counts: left turn, same route
-    (CAR.HONDA_CLARITY, "7f5f4801f0000c72", 0.25),       # 509 counts: straight
+    (CAR.HONDA_CLARITY, "989f88b60c000c72", 25.332),     # 610 counts, zero 508, 0.246, +0.24 clockwise: right onto Sanitarium Rd
+    (CAR.HONDA_CLARITY, "645f4759f1000c62", -26.322),    # 401 counts: left turn, same route
+    (CAR.HONDA_CLARITY, "7f5f4801f0000c72", 0.246),      # 509 counts: straight
     (CAR.HONDA_CIVIC_BOSCH, "8263880e02000c57", 1.952),  # 521 counts, zero 513, 0.244 deg/s: Peter's route 154
     (CAR.HONDA_CIVIC_BOSCH, "6d638735ea000c40", -18.544),  # 437 counts
     (CAR.HONDA_CIVIC_BOSCH, "806387ddfa000c48", 0.0),    # 513 counts
@@ -273,9 +273,9 @@ class TestHondaFingerprint:
     assert cal.update(to_dbc(519.5), standstill=False) == pytest.approx(2.5)  # moving: learned zero kept
     assert cal.samples == 0
 
-  @pytest.mark.parametrize("counts, yaw_deg_s", [(-40, -10.0), (-4, -1.0), (0, 0.0), (3, 0.75), (4, 1.09), (5, 1.43), (40, 10.18)])
+  @pytest.mark.parametrize("counts, yaw_deg_s", [(-40, -9.84), (-4, -0.984), (0, 0.0), (3, 0.738), (4, 1.104), (5, 1.47), (40, 10.08)])
   def test_clarity_clockwise_under_read_is_corrected(self, counts, yaw_deg_s):
-    # left turns and small rates read true; clockwise from +3..+5 counts under-reads by 0.18 deg/s (GPS, 15 routes)
+    # 0.246 deg/s per count; left turns and small rates read true; clockwise from +3..+5 counts under-reads by 0.24
     cal = get_yaw_rate_calibration(CAR.HONDA_CLARITY)
     assert cal.update((508.0 + counts - 512.0) * 0.25, standstill=False) == pytest.approx(yaw_deg_s)
 
