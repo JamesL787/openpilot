@@ -34,7 +34,15 @@ export.json also carries, for John's P' rows:
               (straight: |des_angle| < 5 deg; curve: 10-30 deg; other), at least WINDOW_MIN_S long:
               {seg, t0, t1, s, band, shape}; t as in the npz
   window_totals_s   {band: {shape: seconds}} over every engaged no-press frame, whatever its run length
-  presses     each raw steeringPressed run: {seg, t_press, t_release, v, band, active_before}
+  presses     each raw steeringPressed run: {seg, t_press, t_release, held_s, v, band, active_before, blinker, episode};
+              blinker: a blinker or a lane change from BLINKER_BEFORE_S before the press to its release.
+              episode numbers the drive's press episodes: a press starting within EPISODE_JOIN_S of the previous
+              release in the same segment joins its episode.
+  press_summary     Kevin's drive-to-drive press counts, per band of the press (episode: of its first press), only
+              presses made while openpilot was steering: {band: {presses, presses_long, episodes, episodes_blinker}},
+              where presses_long counts presses held >= PRESS_LONG_S and episodes_blinker the episodes with a
+              blinker press (a lane change or turn the driver signalled, not a correction). Compare drives on episodes and presses_long,
+              not raw presses (most raw onsets on 299 were <= 0.1 s blips near the threshold).
 """
 from __future__ import annotations
 
@@ -58,6 +66,9 @@ BANDS = ((5.0, 8.0, "5-8"), (8.0, 12.0, "8-12"), (12.0, 16.0, "12-16"), (16.0, 2
 STRAIGHT_DEG = 5.0
 CURVE_DEG = (10.0, 30.0)
 WINDOW_MIN_S = 2.0
+EPISODE_JOIN_S = 2.0
+PRESS_LONG_S = 0.3
+BLINKER_BEFORE_S = 2.0
 # Toggles a scored drive must have stored (D-053: a toggle never written is not in initData, and its drive can't be
 # attributed). John scores PR 10 drives against NrdrLatEpsFfAngleGate.
 REQUIRED_PARAMS = ("NrdrLatEpsFfAngleGate",)
@@ -167,12 +178,39 @@ def find_windows(d, seg):
       windows.append({"seg": seg, "t0": round(float(t[a]), 3), "t1": round(float(t[b - 1] + dt[b - 1]), 3),
                       "s": round(dur, 2), "band": band, "shape": shape})
   pressed = np.nan_to_num(d["pressed"]) > 0.5
+  signal = (np.nan_to_num(d["lblink"]) > 0.5) | (np.nan_to_num(d["rblink"]) > 0.5) | (np.nan_to_num(d["lane_change"]) > 0.5)
   presses = []
   for a, b, _ in _runs([True if p else None for p in pressed]):
     presses.append({"seg": seg, "t_press": round(float(t[a]), 3), "t_release": round(float(t[b - 1]), 3),
+                    "held_s": round(float(t[b - 1] - t[a] + dt[b - 1]), 3),
                     "v": round(float(d["v"][a]), 2), "band": band_of(d["v"][a]),
-                    "active_before": bool(np.nan_to_num(d["active"][max(0, a - 1)]) > 0.5)})
+                    "active_before": bool(np.nan_to_num(d["active"][max(0, a - 1)]) > 0.5),
+                    "blinker": bool(signal[np.searchsorted(t, t[a] - BLINKER_BEFORE_S):b].any())})
   return windows, totals, presses
+
+
+def press_summary(presses):
+  """Numbers each press's episode in place and counts engaged presses, long presses and episodes per band.
+  An episode counts when its first press was made while openpilot was steering, in that press's band."""
+  out, ep, prev, head = {}, -1, None, None
+  for p in presses:
+    if prev is None or p["seg"] != prev["seg"] or p["t_press"] - prev["t_release"] > EPISODE_JOIN_S:
+      ep += 1
+      head = None
+      if p["active_before"] and p["band"] is not None:
+        head = out.setdefault(p["band"], {"presses": 0, "presses_long": 0, "episodes": 0, "episodes_blinker": 0})
+        head["episodes"] += 1
+      blinker = False
+    p["episode"] = ep
+    prev = p
+    if head is not None and p.get("blinker") and not blinker:
+      blinker = True
+      head["episodes_blinker"] += 1
+    if p["active_before"] and p["band"] is not None:
+      c = out.setdefault(p["band"], {"presses": 0, "presses_long": 0, "episodes": 0, "episodes_blinker": 0})
+      c["presses"] += 1
+      c["presses_long"] += p["held_s"] >= PRESS_LONG_S
+  return out
 
 
 def _seg_name(path, i):
@@ -184,7 +222,8 @@ def export(seg_paths, out_dir, route=None, all_segments=False):
   os.makedirs(out_dir, exist_ok=True)
   info = {"schema": "drivePlotsSimExport/1", "route": route, "keys": list(KEYS), "segments": [], "params": {},
           "bands_ms": [b[2] for b in BANDS], "straight_deg": STRAIGHT_DEG, "curve_deg": list(CURVE_DEG),
-          "window_min_s": WINDOW_MIN_S, "windows": [], "window_totals_s": {}, "presses": []}
+          "window_min_s": WINDOW_MIN_S, "episode_join_s": EPISODE_JOIN_S, "press_long_s": PRESS_LONG_S,
+          "windows": [], "window_totals_s": {}, "presses": []}
   delays = []
   for i, path in enumerate(seg_paths):
     d, dl, params = read_segment(path)
@@ -207,6 +246,7 @@ def export(seg_paths, out_dir, route=None, all_segments=False):
       for shape, sec in shapes.items():
         tot = info["window_totals_s"].setdefault(band, {})
         tot[shape] = round(tot.get(shape, 0.0) + sec, 2)
+  info["press_summary"] = press_summary(info["presses"])
   info["lateral_delay_median_s"] = round(float(np.median(delays)), 3) if delays else None
   with open(os.path.join(out_dir, "export.json"), "w") as f:
     json.dump(info, f, indent=1)
@@ -235,6 +275,11 @@ def main(argv=None):
     print(f"  {band:>6} m/s engaged, no press: straight {sh.get('straight', 0):7.1f} s  curve {sh.get('curve', 0):7.1f} s  " +
           f"other {sh.get('other', 0):7.1f} s")
   print(f"  {len(info['windows'])} window(s) >= {WINDOW_MIN_S:g} s, {len(info['presses'])} press(es)")
+  for band in info["bands_ms"]:
+    c = info["press_summary"].get(band, {})
+    print(f"  {band:>6} m/s while steering: {c.get('episodes', 0):4d} episode(s) " +
+          f"({c.get('episodes_blinker', 0)} with a blinker), " +
+          f"{c.get('presses_long', 0):4d} press(es) >= {PRESS_LONG_S:g} s, {c.get('presses', 0):4d} raw")
 
 
 if __name__ == "__main__":
