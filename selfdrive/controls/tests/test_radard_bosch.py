@@ -541,8 +541,9 @@ def test_bosch_full_update_clears_stale_preference_then_strictly_reacquires(monk
 
 
 def make_onpath_track(track_id, *, d0=94.0, v_rel=-13.5, range_rate=None, seconds=1.05, offsets=(0.6, -0.9, 0.3, -0.4),
-                      t0=100.0):
-  """Fresh measured Bosch-A sweeps of one track, with its path offset per sweep (yRel + model y at dRel)."""
+                      t0=100.0, existence=None):
+  """Fresh measured Bosch-A sweeps of one track, with its path offset per sweep (yRel + model y at dRel).
+  `existence`: RadarPoint.existence per sweep (cycled), or None for the unset default (-1)."""
   track = radard.Track(track_id, 0.0, radard.KalmanParams(radard.HONDA_BOSCH_A_RADAR_TS))
   rate = v_rel if range_rate is None else range_rate
   n = int(round(seconds * radard.BOSCH_A_FREQ_HZ)) + 1
@@ -550,7 +551,7 @@ def make_onpath_track(track_id, *, d0=94.0, v_rel=-13.5, range_rate=None, second
     t = t0 + i / radard.BOSCH_A_FREQ_HZ
     d = d0 + rate * (t - t0)
     track.update(d, 0.0, v_rel, v_rel + 13.5, True, True, t_now=t)
-    track.update_onpath(t, offsets[i % len(offsets)], True)
+    track.update_onpath(t, offsets[i % len(offsets)], True, -1.0 if existence is None else existence[i % len(existence)])
   return track
 
 
@@ -635,6 +636,63 @@ def test_bosch_onpath_lead_is_held_while_it_stays_on_the_path():
     track.update_onpath(t + i / radard.BOSCH_A_FREQ_HZ, 1.6, True)
   assert onpath_lead({6: track}) is None
   assert onpath_lead({6: track}, preferred_track_id=6)['radarTrackId'] == 6
+
+
+# 00000298--c4d2a4acbc 1018.35: track 2, born at 42 m, U11 railed at -13.5, ranges closing at -15.96 m/s (band edge
+# -16.00), path median 0.76 m (limit 0.8); OBJECT_EXISTENCE_PROBABILITY fell 59 -> 0 over the window (median 0.055).
+BLIP_GEOMETRY = {"d0": 42.1, "v_rel": -13.5, "range_rate": -15.96, "offsets": (0.76, 0.7, 0.9, 0.5, 0.8, 1.1, 0.6)}
+BLIP_EXISTENCE = tuple(r / 127.0 for r in (59, 50, 40, 30, 20, 12, 7, 5, 3, 1, 0, 0, 0, 0, 0, 0))
+
+
+def test_bosch_onpath_adoption_blocked_by_low_median_existence():
+  track = make_onpath_track(2, existence=BLIP_EXISTENCE, **BLIP_GEOMETRY)
+  lead_one, onpath = onpath_leads({2: track})
+  assert onpath is None
+  # nothing else moves: the track is still there with its measured state, and leadOne is what HEAD publishes
+  assert not lead_one['status'] and track.onpath_hist and not track.onpath_adopted
+
+
+def test_bosch_onpath_existence_negative_control_same_geometry_is_adopted():
+  # the blip's geometry alone passes every other gate, so the block above is the existence gate and nothing else
+  assert onpath_lead({2: make_onpath_track(2, **BLIP_GEOMETRY)})['radarTrackId'] == 2
+  # and a real car's value passes: 263 track 25, the lowest real adoption median seen (0.535)
+  real = make_onpath_track(2, existence=(0.535,), **BLIP_GEOMETRY)
+  assert onpath_lead({2: real})['radarTrackId'] == 2
+
+
+def test_bosch_onpath_existence_uses_the_median_not_one_zero_sweep():
+  # 270 track 63 / 280 track 7: real cars with single sweeps at existence 0 inside a 0.92-0.98 median window
+  ex = (0.976,) * 6 + (0.0,)
+  assert onpath_lead({6: make_onpath_track(6, existence=ex, offsets=(0.7, -0.6, 1.2, -0.2, 0.4, -0.9, 0.1))}) \
+    is not None
+  # boundary: a window median just under the floor blocks, just over adopts
+  floor = radard.ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE
+  assert onpath_lead({6: make_onpath_track(6, existence=(floor - 0.01,))}) is None
+  assert onpath_lead({6: make_onpath_track(6, existence=(floor + 0.01,))})['radarTrackId'] == 6
+
+
+def test_bosch_onpath_existence_does_not_drop_a_held_lead():
+  track = make_onpath_track(6, existence=(0.98,))
+  assert onpath_lead({6: track})['radarTrackId'] == 6
+  # existence collapses on the next second of on-path sweeps: a held lead is not re-checked
+  t = track.onpath_hist[-1][0]
+  for i in range(1, 16):
+    tt = t + i / radard.BOSCH_A_FREQ_HZ
+    track.update(track.dRel - 1.0, 0.0, -13.5, 0.0, True, True, t_now=tt)
+    track.update_onpath(tt, 0.3, True, 0.0)
+  assert onpath_lead({6: track}, preferred_track_id=6)['radarTrackId'] == 6
+  # the same window would not be NEWLY adopted
+  assert onpath_lead({6: track}) is None
+
+
+def test_bosch_onpath_existence_unset_keeps_the_old_behaviour():
+  # -1 (every other radar, and logs recorded before RadarPoint.existence) is ignored, so the blip is adopted as before
+  assert onpath_lead({2: make_onpath_track(2, existence=(-1.0,), **BLIP_GEOMETRY)})['radarTrackId'] == 2
+  # a window where only some sweeps carry a value uses those values only
+  mixed = make_onpath_track(6, existence=(-1.0, -1.0, 0.9))
+  assert onpath_lead({6: mixed})['radarTrackId'] == 6
+  mixed_low = make_onpath_track(6, existence=(-1.0, -1.0, 0.05))
+  assert onpath_lead({6: mixed_low}) is None
 
 
 def test_bosch_onpath_adoption_is_not_used_below_the_low_speed_override_speed():

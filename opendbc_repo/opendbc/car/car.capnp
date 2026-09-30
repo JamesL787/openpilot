@@ -331,6 +331,11 @@ struct RadarData @0x888ad6581cf0aacb {
     ncVRel @7 :Float32; # m/s
     ncValid @8 :Bool;
     ncSigma @9 :UInt8;
+
+    # Honda Bosch-A only: OBJECT_EXISTENCE_PROBABILITY_RAW / 127 (0..1) from the observation that produced this point.
+    # -1 (the default) means "not provided": every other radar, and every log recorded before this field existed.
+    # radard gates only NEW onpath adoption on its window median (ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE).
+    existence @10 :Float32 = -1.0;
   }
 
   enum ErrorDEPRECATED {
