@@ -595,6 +595,14 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_state=lambda: self._params.get_bool("BlotV3"),
                  set_state=lambda v: self._params.put_bool("BlotV3", v),
                  visible=adv),
+      SettingRow("PlannerShortActionTime", "toggle", tr_noop("Short Plan Read-Ahead (Test)"),
+                 subtitle=tr_noop("Test. Takes the gas/brake command from 0.30 s ahead on the plan "
+                                  "instead of about 0.55 s, for a smoother command with fewer light "
+                                  "brake taps. In replay, braking starts 0.1-0.3 s later and following "
+                                  "sits slightly closer. On by default; applies within a second."),
+                 get_state=lambda: self._params.get_bool("PlannerShortActionTime"),
+                 set_state=lambda v: self._params.put_bool("PlannerShortActionTime", v),
+                 visible=adv),
     ]
 
     # ── 3. Speed Limit Controller (SLC) Rows ──

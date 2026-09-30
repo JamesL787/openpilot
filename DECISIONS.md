@@ -1452,3 +1452,68 @@ Neither gives a vRel good enough to seed radard's filter. A wrong-direction lead
 real brake late, which is worse than 296's extra 2 s of vision-only lead. Any retry needs a birth vRel
 that does not seed the lead filter's acceleration, and a replay showing a gain. The patch is not kept;
 this entry is the record. Replay evidence only.
+
+## D-072 — PROPOSED (switch OFF): planner-local MPC action time 0.30 s (`PLANNER_ACTION_T_OVERRIDE`)
+The longitudinal planner reads its output off the MPC trajectory at action_t = actuator delay + DT_MDL,
+0.55 s on the Civic (CP delay 0.50). mvl-boston/openpilot sp-honda-dev-202608 (5372439bf) reads at
+0.30 s. `PLANNER_ACTION_T_OVERRIDE = True` in `selfdrive/controls/lib/longitudinal_planner.py` makes the
+planner read at `PLANNER_ACTION_T_S` = 0.30 s instead, in all three read-off paths (tinygrad, plain,
+classic). Nothing else moves: `CP.longitudinalActuatorDelay` (the Honda carcontroller learner's lag is
+aligned to it), the live `LongitudinalActuatorDelay` toggle, `self.longitudinal_actuator_delay` and every
+`reaction_t` gate built on it, the model-launch read, and the cruise and lane-change caps all keep the
+actuator delay. Default OFF: with it off the read-off time is exactly delay + DT_MDL, as before
+(unit tests; replay of the 4 older routes is frame-for-frame identical to the 44918d843 base).
+
+Replay, open loop (logged inputs, planner at 44918d843 + this change; no plant, so the car's response
+to the new command is not modelled). A = off (0.55 s), B = on (0.30 s). The 4 older routes are the
+episode windows used in the MVL comparison; the 6 routes from 2026-09-30 are replayed over all segments
+(engaged frames only). Taps = a dip below -0.5 that returns within 1 s on the same lead.
+
+| route (segs) | eng min | RMS jerk A→B | frames >2 m/s³ A→B | taps A→B | hardest brake: -0.5 onset B−A, min A/B |
+|---|---|---|---|---|---|
+| 00000236 (11-12) | 1.2 | 0.761→0.762 | 11→9 | 0→0 | 774.3: +0.00 s, -3.29/-3.28 |
+| 00000237 (9-10) | 1.7 | 0.991→0.923 | 36→29 | 2→1 | 601.5: +0.05 s, -2.67/-2.63 |
+| 00000297 (47-48) | 1.2 | 1.154→1.096 | 63→61 | 4→2 | 2893.1: +0.30 s, -3.62/-3.54 |
+| 00000298 (3-4) | 1.3 | 0.750→0.743 | 19→17 | 1→1 | 251.6: +0.00 s, -3.59/-3.53 |
+| 0000029b (all) | 4.6 | 0.353→0.350 | 21→21 | 2→2 | 501.0: +0.00 s, -1.00/-1.00 |
+| 0000029c (all) | 8.1 | 0.786→0.744 | 97→84 | 2→3 | 256.3: +0.00 s, -3.49/-3.49 |
+| 0000029d (all) | 5.2 | 0.947→0.933 | 37→34 | 1→1 | 230.3: +0.20 s, -2.47/-2.40 |
+| 0000029e (all) | 6.3 | 0.484→0.480 | 31→25 | 1→1 | 332.9: +0.25 s, -3.10/-3.01 |
+| 0000029f (all) | 2.8 | 0.678→0.667 | 43→41 | 7→7 | 495.7: +0.00 s, -1.00/-1.00 |
+| 000002a2 (all) | 5.0 | 0.720→0.693 | 85→75 | 4→5 | 453.8: +0.00 s, -3.55/-3.51 |
+| total | 37.4 | geo-mean ×0.973 | 443→396 | 24→23 | |
+
+Episodes: 237 10:00 crosses -0.5 and -1.0 0.05 s later, min -2.67 → -2.63; 297 48:12 crosses -0.5
+0.30 s later (2888.57 → 2888.87), -1.0 unchanged (2891.97), min -3.62 → -3.54; 236 12:51 and 298 4:10
+unchanged in timing, min softer by 0.01 and 0.06. The two new taps (0000029c 387.9, 000002a2 438.0) are
+dips A also made (A -0.63 / -0.56, B -0.61 / -0.52); B's is shorter, so it counts. Bookmarks (±10 s):
+0000029c 4:49 no timing change, max |B−A| 0.06; 0000029e 5:17 crosses -1.0 0.10 s later, min -1.12 →
+-1.07; 000002a2 7:39.2 (the -3.55 brake at 453.8, 5 s before it; 2 m/s behind a lead at 17 m at the bookmark) crosses -0.5 and -1.0 at
+the same time, min -3.55 → -3.51, frames >2 m/s³ 30 → 23.
+
+A/A (A run twice): identical on 8 routes; 0000029c differs on 1 engaged frame by 0.008, 0000029f on
+262 disengaged frames (the planner's wall-clock timers); every metric above is unchanged by it.
+
+The first MVL study moved the whole delay (0.25 s, so every `reaction_t` gate too), not only the
+read-off: on the 4 older routes that gave RMS ×0.94, >2 m/s³ 129 → 108, taps 7 → 3. The read-off alone
+gives ×0.97, 129 → 116, taps 7 → 4, with the same 297 onset cost. The rest came from the gates, which
+also size brake caps for closing leads and are not changed here.
+
+Rejected alternative: changing `CP.longitudinalActuatorDelay` or the live delay toggle. It would also
+move the Honda carcontroller's learner alignment and every lead-brake `reaction_t` gate.
+
+Cost to weigh: later and slightly softer braking onsets (up to 0.3 s, up to 0.09 m/s² at the peak) on
+real brakes. Open-loop replay cannot show how the car responds to the smoother command. Replay and
+unit-test evidence only; not road-validated. To try it: set `PLANNER_ACTION_T_OVERRIDE = True`.
+
+**Update 2026-09-30 — closed-loop replay and a driver trial toggle.** Closed loop on the fitted plant,
+car-matched to pr10-smooth 07b66420 (17 episodes): the command is smoother (RMS jerk ×0.64-0.93, light
+taps 19 → 14) but the simulated car's own accel changes only ~3 %. Brakes that build slowly start
+0.10-0.30 s later; on 0000029d's hardest brake the closest gap goes 6.0 → 5.6 m, and steady following
+sits 0.4-2.2 m closer. Six episodes trip the flag rule. The replay recommendation was not to turn it on;
+Peter asked to try it on the road, so it ships behind the `PlannerShortActionTime` param (Advanced
+Longitudinal Tuning), default ON at his request, still switchable (re-read about once a second; a params
+error reads as off).
+`PLANNER_ACTION_T_OVERRIDE` stays False and still forces it on for replays. With the toggle off, a
+closed-loop replay of 7 car-matched jobs is frame-for-frame identical to the 44918d843 base. Replay
+evidence only; not road-validated. Status stays PROPOSED until drives with it on are reviewed.
