@@ -7,10 +7,11 @@ between the curvature commanded and the curvature the car turns. The VSA yaw rat
 car curvature = yaw rate / speed, ~17 ms behind the wheels and GPS-verified. This estimates that ratio per
 speed and scales the requested curvature by its inverse.
 
-Left and right are estimated separately and the correction uses their mean. From 9 m/s up the car turns
-5-12% more than the map says in left turns and 2-6% less in right turns (routes 363/365/366/369): an additive
-bias of ~2e-4 1/m (~0.5 deg of wheel angle), not a ratio. A single gain chases whichever way the last turn
-went (+/-7% within one drive at 12 m/s); in the mean of the two sides a bias cancels and a ratio does not.
+Left and right are estimated separately and the correction uses their mean, so an additive bias (an angle
+offset) cancels while a ratio does not. The left/right split this was built for (lefts 5-12% hot, rights 2-6%
+cold from 9 m/s up) turned out to be the yaw sensor's clockwise under-read, fixed in the decode; since the
+rack map refit on the corrected decode, both sides land within ~1% below 16 m/s and 1-5% above on held-out
+routes, so this is a small safety net.
 The ratio is estimated against what was commanded (requested x the applied gain), so it is a plant estimate
 that the correction does not feed back into.
 

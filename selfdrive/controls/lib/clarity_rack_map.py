@@ -5,17 +5,21 @@ import numpy as np
 
 # Wheel angle <-> curvature, identified against the car's own yaw sensor (0x94, GPS-verified) on routes 341-36b.
 # VehicleModel's form is kept, lin = R * L * [k (1 - sf v^2) - g sf roll], with lin the firmware-VGR linear
-# angle of the physical wheel angle. But its single ratio (paramsd, learned from a comma gyro that reads 3% low)
+# angle of the physical wheel angle. But its single ratio (paramsd's, one value for every wheel angle)
 # and its slip factor (-0.00061 from the tyre stiffness defaults) are replaced by what the car does:
-# - The effective ratio R still falls with angle after the firmware table, 18.2 near centre to 15.8 at 400 deg.
+# - The effective ratio R still falls with angle after the firmware table, 17.3 near centre to 16.0 at 400 deg.
 #   The rack is quicker off centre than the A table says.
-# - The slip factor is -0.0005.
-# Each value is the median of left and right turns, so an angle offset cancels. Against the yaw sensor this map
-# predicts car curvature from wheel angle within 0.7% at 20-500 deg below 15 m/s and within 3.7% everywhere.
+# - The slip factor is -0.0005: fitted from how R changes with speed within one wheel-angle band, so R's angle
+#   shape can't leak into it. Left turns alone give -0.00052, right turns -0.00045.
+# Each value is the mean of the left and right medians, so an angle offset cancels. Fitted on the corrected yaw
+# decode (opendbc honda/yaw_rate.py). The first fit used 0.25 deg/s per count and no clockwise correction, which
+# made right turns read 19.6 near centre against 16.5 for lefts and put the centre 4-5% high. Fitted on routes
+# 341-35d alone the table is within 0.04 of this one, and on held-out routes 363-36b it predicts the car's
+# curvature within ~1% below 16 m/s (the first fit was 1-5% short at 9-16 m/s) and 1-5% above.
 # The paramsd ratio with VM's slip factor over-predicted the angle needed by 3-6% in the city, the over-steer
 # through tight turns.
 CLARITY_RATIO_BP = [6.5, 15.0, 32.0, 57.0, 85.0, 125.0, 175.0, 230.0, 305.0, 400.0]  # physical wheel angle, deg
-CLARITY_RATIO_V = [18.21, 17.63, 17.12, 16.77, 16.69, 16.52, 16.31, 16.19, 16.10, 15.83]
+CLARITY_RATIO_V = [17.34, 17.08, 16.94, 16.78, 16.78, 16.65, 16.48, 16.37, 16.29, 16.02]
 CLARITY_SLIP_FACTOR = -0.0005  # 1 / (m/s)^2
 GRAVITY = 9.81
 
