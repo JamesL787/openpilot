@@ -446,15 +446,14 @@ def migrate_starpilot_param_renames(params: Params, params_cache: Params) -> Non
 # so nothing reads it; the new key reads its default; and the driver believes a feature is on that
 # never runs. This is the D-053 failure mode -- believed on, never stored -- and it cost a drive:
 # route 0000023f was recorded with BLoTv3 disabled after BlotV2 became BlotV3 (STATUS item 41).
+# BLoTv3 itself was removed on 2026-09-30, so the table is empty; clear_all() drops a stored BlotV3.
 #
 # READ THIS BEFORE RENAMING A CONTROL TOGGLE. There is exactly ONE boot in which the old value is
 # still recoverable. manager_init calls clear_all() a few lines after this migration, and clear_all
 # DELETES keys the schema does not know (see the comment above migrate_starpilot_param_renames).
 # So the entry has to land in the same release as the rename. Added later it is a no-op, because
 # the old key is already gone -- which is why this table cannot repair 0000023f retroactively.
-LEGACY_STARPILOT_BOOL_RENAMES = {
-  "BlotV2": "BlotV3",
-}
+LEGACY_STARPILOT_BOOL_RENAMES: dict[str, str] = {}
 
 
 def migrate_starpilot_bool_param_renames(params: Params, params_cache: Params) -> None:

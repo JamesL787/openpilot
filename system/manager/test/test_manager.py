@@ -426,53 +426,55 @@ class TestManager:
   # --- Renamed PERSISTENT BOOL toggles (STATUS item 41) ---------------------------------------
   #
   # BlotV2 -> BlotV3 shipped with no migration and a default of OFF, so the supervisor a driver
-  # had enabled came back disabled. These pin the migration that stops the next rename doing it.
+  # had enabled came back disabled. These pin the migration that stops the next rename doing it,
+  # on stand-in keys since BLoTv3 itself was removed.
 
   def _bool_rename_flag(self, tmp_path, monkeypatch):
     flag = tmp_path / "starpilot_bool_rename_v1"
     monkeypatch.setattr(manager, "STARPILOT_BOOL_RENAME_MIGRATION_FLAG", flag)
+    monkeypatch.setattr(manager, "LEGACY_STARPILOT_BOOL_RENAMES", {"OldToggle": "NewToggle"})
     return flag
 
   def test_migrate_bool_rename_carries_an_enabled_toggle(self, tmp_path, monkeypatch):
     flag = self._bool_rename_flag(tmp_path, monkeypatch)
-    params = FileBackedFakeParams(tmp_path / "params", {"BlotV2": True})
+    params = FileBackedFakeParams(tmp_path / "params", {"OldToggle": True})
     params_cache = FileBackedFakeParams(tmp_path / "cache")
 
     manager.migrate_starpilot_bool_param_renames(params, params_cache)
 
-    assert params.get_bool("BlotV3")
-    assert params_cache.get_bool("BlotV3")
+    assert params.get_bool("NewToggle")
+    assert params_cache.get_bool("NewToggle")
     assert flag.exists()
 
   def test_migrate_bool_rename_carries_a_deliberately_disabled_toggle(self, tmp_path, monkeypatch):
     # A stored 0 is a choice, not an absence. It must survive the rename too, otherwise the
     # migration only ever turns things on.
     self._bool_rename_flag(tmp_path, monkeypatch)
-    params = FileBackedFakeParams(tmp_path / "params", {"BlotV2": False})
+    params = FileBackedFakeParams(tmp_path / "params", {"OldToggle": False})
     params_cache = FileBackedFakeParams(tmp_path / "cache")
 
     manager.migrate_starpilot_bool_param_renames(params, params_cache)
 
-    assert params.get("BlotV3") == "0"
+    assert params.get("NewToggle") == "0"
 
   def test_migrate_bool_rename_never_overwrites_an_explicit_new_value(self, tmp_path, monkeypatch):
     # The worse error for a toggle that gates longitudinal control is turning it ON unasked.
     self._bool_rename_flag(tmp_path, monkeypatch)
-    params = FileBackedFakeParams(tmp_path / "params", {"BlotV2": True, "BlotV3": False})
+    params = FileBackedFakeParams(tmp_path / "params", {"OldToggle": True, "NewToggle": False})
     params_cache = FileBackedFakeParams(tmp_path / "cache")
 
     manager.migrate_starpilot_bool_param_renames(params, params_cache)
 
-    assert not params.get_bool("BlotV3")
+    assert not params.get_bool("NewToggle")
 
   def test_migrate_bool_rename_respects_an_explicit_new_value_in_the_cache(self, tmp_path, monkeypatch):
     self._bool_rename_flag(tmp_path, monkeypatch)
-    params = FileBackedFakeParams(tmp_path / "params", {"BlotV2": True})
-    params_cache = FileBackedFakeParams(tmp_path / "cache", {"BlotV3": False})
+    params = FileBackedFakeParams(tmp_path / "params", {"OldToggle": True})
+    params_cache = FileBackedFakeParams(tmp_path / "cache", {"NewToggle": False})
 
     manager.migrate_starpilot_bool_param_renames(params, params_cache)
 
-    assert not params.get_bool("BlotV3")
+    assert not params.get_bool("NewToggle")
 
   def test_migrate_bool_rename_is_a_noop_once_the_old_key_is_gone(self, tmp_path, monkeypatch):
     # The state every already-updated device is in: clear_all() deleted the unknown BlotV2 on the
@@ -483,23 +485,23 @@ class TestManager:
 
     manager.migrate_starpilot_bool_param_renames(params, params_cache)
 
-    assert params.get("BlotV3") is None
+    assert params.get("NewToggle") is None
     assert flag.exists()
 
   def test_migrate_bool_rename_runs_only_once(self, tmp_path, monkeypatch):
     flag = self._bool_rename_flag(tmp_path, monkeypatch)
     flag.parent.mkdir(parents=True, exist_ok=True)
     flag.write_text("already done\n")
-    params = FileBackedFakeParams(tmp_path / "params", {"BlotV2": True})
+    params = FileBackedFakeParams(tmp_path / "params", {"OldToggle": True})
     params_cache = FileBackedFakeParams(tmp_path / "cache")
 
     manager.migrate_starpilot_bool_param_renames(params, params_cache)
 
-    assert params.get("BlotV3") is None
+    assert params.get("NewToggle") is None
 
-  def test_the_bool_rename_table_covers_the_blot_supervisor_toggle(self, tmp_path, monkeypatch):
-    # Guards the table itself: BlotV3 is the toggle that cost a drive, and it must stay covered.
-    assert manager.LEGACY_STARPILOT_BOOL_RENAMES.get("BlotV2") == "BlotV3"
+  def test_the_bool_rename_table_no_longer_lists_the_removed_blot_toggle(self):
+    # BLoTv3 was removed on 2026-09-30; renaming onto a key the schema no longer has would fail.
+    assert "OldToggle" not in manager.LEGACY_STARPILOT_BOOL_RENAMES
 
   def test_cleanup_removed_starpilot_params(self, tmp_path):
     params = FileBackedFakeParams(tmp_path / "params", {

@@ -147,9 +147,6 @@ GUARD_TTC = 3.0
 GUARD_MIN_CLOSING = 0.75
 
 
-# --blot-ab: 'noblot' = the same planner with the BLoTv3 supervisor off (it is on in the car, BlotV3=1).
-# Each frame also records what the supervisor did in the first variant (jerk scale, t_follow, triggers).
-BLOT_OFF_VARIANT = "noblot"
 
 # --sim-window T0,T1 (route seconds): inside the window every replayed variant drives its own simulated car
 # instead of the logged one, so a variant that brakes earlier also arrives slower. The lead stays as logged in
@@ -406,7 +403,7 @@ def floored_a_lead(bound):
 
 def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bound: bool = False,
            human_ab: bool = False, vision_only: bool = False, late_ab: bool = False, hf_gate: bool = False,
-           brake_ab: bool = False, blot_ab: bool = False, sim_window: tuple | None = None):
+           brake_ab: bool = False, sim_window: tuple | None = None):
   files = segment_files(route_dir)
   if not files:
     raise SystemExit(f"no rlog segments under {route_dir}")
@@ -414,7 +411,6 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
   variants = ([f"b{b:g}" for b in bearings] + (list(FIX_VARIANTS) if fixes else []) +
               (list(HUMAN_VARIANTS) if human_ab else []) + (list(LATE_VARIANTS) if late_ab else []) +
               ([HF_GATE_VARIANT] if hf_gate else []) + (list(BRAKE_VARIANTS) if brake_ab else []) +
-              ([BLOT_OFF_VARIANT] if blot_ab else []) +
               ["nobound", "logged"])
   original_builder = LM.build_model_lead_trajectory
   fix_bounds = {k: FixBound(k) for k in FIX_VARIANTS} if fixes else {}
@@ -460,10 +456,8 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
         meta["fingerprint"] = str(cp.carFingerprint)
         meta["logged_op_long"] = bool(cp.openpilotLongitudinalControl)
         acp = alpha_car_params(cp)
-        blot = bool(meta.get("blotv3", False))
         for v in variants:
           p = LP.LongitudinalPlanner(acp)
-          p._blotv3_active = (lambda b=blot and v != BLOT_OFF_VARIANT: b)
           if v == "nobound":
             p.bound_off_axis_radar_leads = False
           planners[v] = p
@@ -545,7 +539,6 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
       guard_trip = False
       hf_gate_fired = []
       fix_fired = {}
-      blot_rec = None
       saved = LP.OFF_AXIS_LEAD_MIN_BEARING
       t_now = (msg.logMonoTime - t0) / 1e9
       in_sim = sim_window is not None and sim_window[0] <= t_now <= sim_window[1]
@@ -612,10 +605,6 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
           if v in fix_bounds:
             fix_fired[v] = fix_bounds[v].fired
           out[v] = float(p.output_a_target)
-          if v == variants[0] and p._blotv3_policy is not None:
-            bp = p._blotv3_policy
-            blot_rec = [round(float(bp.jerk_scale), 3), round(float(bp.t_follow), 3), round(float(bp.required_decel), 2),
-                    int(bp.emergency), int(bp.recovery_active), int(bp.model_active), int(bp.launch_active)]
           if v in sims:
             sims[v].u = out[v]
           if v == "frog_guard":
@@ -643,7 +632,7 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
         "t": (msg.logMonoTime - t0) / 1e9, "engaged": engaged, "v_ego": float(cs.vEgo), "a_ego": float(cs.aEgo),
         "accel_cmd": accel_cmd if not meta["logged_op_long"] else float(state["carControl"].actuators.accel),
         "steer": float(cs.steeringAngleDeg), "out": out, "src": src, "brake": bool(cs.brakePressed), "fix": fix_fired, "guard_trip": guard_trip,
-        "hf_gate": bool(hf_gate_fired), "blot": blot_rec,
+        "hf_gate": bool(hf_gate_fired),
         "sim": {v: [round(c.v, 3), round(c.a, 3), round(c.gap_shift, 2)] for v, c in sims.items()},
         "vis": vision_view(model, float(cs.vEgo)),
         "lead": lead_view(lr, model, bearings), "lead_logged_bearing":
@@ -763,7 +752,7 @@ def print_report(meta, frames, eps, diffs, thr):
   def pct(n, d):
     return f"{100.0 * n / d:.2f}%" if d else "-"
   print("  ".join([f"route {meta['route_dir']}", f"build {meta.get('git_commit')}", str(meta.get("fingerprint")),
-                   f"segs {len(meta['segments'])}", f"opLong {meta.get('logged_op_long')}", f"BLoTv3 {meta.get('blotv3')}",
+                   f"segs {len(meta['segments'])}", f"opLong {meta.get('logged_op_long')}", f"BLoTv3 logged {meta.get('blotv3')} (removed; not replayed)",
                    f"bound {meta.get('bound_active')}", f"bearings {meta['bearings']}"]))
   print(f"frames {len(frames)}, engaged {engaged} ({engaged * 0.05:.0f} s); episodes below {thr}: {len(eps)}")
   print(f"validity (replayed vs logged leadOne): status {pct(a['status_eq'], a['ticks'])}; both-lead {a['both']} ticks: " +
@@ -798,7 +787,6 @@ def main() -> int:
                   help="add 'hf_gate': HumanFollowing also needs the radar lead's modelProb (FrogPilot e7debabe5)")
   ap.add_argument("--brake-ab", action="store_true",
                   help="add 'cap_off' (cap disabled), 'cap_radar' (cap ignores vision, as before), 'alead_floor'")
-  ap.add_argument("--blot-ab", action="store_true", help="add 'noblot': the BLoTv3 supervisor off")
   ap.add_argument("--sim-window", help="T0,T1 route seconds: each variant drives its own simulated car there (SIM_DELAY)")
   ap.add_argument("--frames-json", type=Path, help="write every replayed frame here, for charts (keep it outside the repo)")
   ap.add_argument("--json", type=Path, help="write episodes + metadata here (keep it outside the repo)")
@@ -806,7 +794,7 @@ def main() -> int:
 
   bearings = [float(x) for x in args.bearings.split(",")]
   frames, meta = replay(args.route_dir, bearings, args.fixes, args.coast_bound, args.human_ab, args.vision_only,
-                        args.late_ab, args.hf_gate, args.brake_ab, args.blot_ab,
+                        args.late_ab, args.hf_gate, args.brake_ab,
                         tuple(float(x) for x in args.sim_window.split(",")) if args.sim_window else None)
   eps = episodes(frames, meta, args.threshold)
   diffs = frame_diffs(frames, meta)

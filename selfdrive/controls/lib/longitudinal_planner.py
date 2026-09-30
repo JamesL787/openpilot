@@ -21,8 +21,6 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDX
 from openpilot.selfdrive.controls.lib.lead_behavior import is_radarless_matched_follow_window
 from openpilot.selfdrive.controls.lib.lead_follow_policy import apply as apply_follow_policy
 from openpilot.selfdrive.controls.lib.lead_follow_policy import is_nonurgent_duplicate_vision_follow
-from openpilot.selfdrive.controls.lib.blotv3 import JERK_SCALE_MIN, BLoTv3Supervisor, model_predicted_acceleration
-from openpilot.selfdrive.controls.lib.longitudinal_lead import LeadObservation
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import (
   get_far_follow_output_slew_rates,
   get_follow_prebrake_min_headway,
@@ -1156,24 +1154,9 @@ def bound_off_axis_leads(sm, hold=None):
 
 
 class LongitudinalPlanner:
-  def _blotv3_active(self) -> bool:
-    """Gated only on BlotV3, matching MLT's own unconditional scope -- BLoTv3 works off
-    any car's radar-tracked lead, nothing here is Civic-Bosch-specific. Re-read about once a
-    second so the toggle applies without a restart."""
-    self._blotv3_frame += 1
-    if self._blotv3_params is None or self._blotv3_frame % 100 == 0:
-      try:
-        from openpilot.common.params import Params
-        if self._blotv3_params is None:
-          self._blotv3_params = Params()
-        self._blotv3_enabled = self._blotv3_params.get_bool("BlotV3")
-      except Exception:
-        self._blotv3_enabled = False
-    return self._blotv3_enabled
-
   def _short_action_t_active(self) -> bool:
     """D-072 trial: PLANNER_ACTION_T_OVERRIDE (replays) or the PlannerShortActionTime toggle.
-    Re-read about once a second like BlotV3; a params error (key missing from an old params
+    Re-read about once a second; a params error (key missing from an old params
     library) reads as off."""
     if PLANNER_ACTION_T_OVERRIDE:
       return True
@@ -1215,16 +1198,6 @@ class LongitudinalPlanner:
     self.nap_adaptive_accel = False
     self._preap_params = None
     self._preap_param_frame = 0
-
-    # Model Lead Trajectory (commaai/openpilot#37824) now runs unconditionally for every
-    # car -- StarPilot ships it that way upstream, so we match rather than keep our own
-    # narrower gate. BLoTv3 (SpysyWeeb/Spysypilot) follows the same scope: it was built
-    # assuming MLT as a precondition, so it runs for every car too, behind its own param.
-    self._blotv3 = BLoTv3Supervisor(dt)
-    self._blotv3_policy = None
-    self._blotv3_enabled = False
-    self._blotv3_frame = 0
-    self._blotv3_params = None
     self._short_action_t_enabled = False
     self._short_action_t_frame = 0
     self._short_action_t_params = None
@@ -1241,8 +1214,6 @@ class LongitudinalPlanner:
     self.fast_closing_lead_track = None
     self.stopped_radar_lead_hold_track = None
     self.stopped_radar_lead_hold_active = False
-    # The MPC's own solution, kept separately from the arbitrated output_a_target.
-    self.last_mpc_a_target = 0.0
     self.output_should_stop = False
     self.far_follow_brake_slew_rate, self.far_follow_release_slew_rate = get_far_follow_output_slew_rates(CP)
     self.untracked_slow_lead_decel_scale = get_untracked_slow_lead_decel_scale(CP)
@@ -2799,7 +2770,6 @@ class LongitudinalPlanner:
       self.v_desired_filter.x = v_ego
       # Clip aEgo to cruise limits to prevent large accelerations when becoming active
       self.a_desired = np.clip(sm['carState'].aEgo, accel_limits[0], accel_limits[1])
-      self.last_mpc_a_target = float(self.a_desired)
       self.model_allow_throttle = True
       self.model_allow_throttle_transition_t = 0.0
 
@@ -2885,25 +2855,6 @@ class LongitudinalPlanner:
     lead_control_active = lead_control_active or self.stopped_radar_lead_hold_active
     lead_one_active = bool(self.lead_one.status and lead_control_active)
     effective_t_follow = self.get_dynamic_t_follow(sm['starpilotPlan'].tFollow, self.lead_one if lead_one_active else None, v_ego)
-
-    # BLoTv3 supervisor (SpysyWeeb/Spysypilot BLoTv3). It never commands acceleration --
-    # it returns a jerk-cost scale and a following-time pad, both bounded and slew limited.
-    # Run it after effective_t_follow is final and after the follow policy has had its say,
-    # so its pad is additive rather than competing with our own t_follow modifiers.
-    self._blotv3_policy = None
-    if self._blotv3_active():
-      model_leads_now = sm['modelV2'].leadsV3
-      self._blotv3_policy = self._blotv3.update(
-        LeadObservation.from_radar(self.lead_one if lead_one_active else None,
-                                   sm.all_checks(['radarState'])),
-        v_ego,
-        float(self.last_mpc_a_target),
-        effective_t_follow,
-        model_predicted_acceleration(model_leads_now[0] if len(model_leads_now) > 0 else None),
-      )
-      effective_t_follow = float(self._blotv3_policy.t_follow)
-    else:
-      self._blotv3.reset()
 
     if self.is_preap and self.nap_adaptive_accel and lead_one_active:
       follow_limit = get_preap_follow_limit(v_ego)
@@ -3079,14 +3030,7 @@ class LongitudinalPlanner:
 
     personality = get_longitudinal_personality(sm)
 
-    # BLoTv3 softens the acceleration-jerk cost when it detects a need to respond. Applied
-    # as a multiplier so our speed-scheduled costs still set the baseline.
-    blotv3_jerk_scale = float(self._blotv3_policy.jerk_scale) if self._blotv3_policy is not None else 1.0
-    # The supervisor already bounds this by construction; clip anyway so set_weights is the
-    # single clip source if the scale ever comes from somewhere else (matches upstream).
-    blotv3_jerk_scale = float(np.clip(blotv3_jerk_scale, JERK_SCALE_MIN, 1.0))
-
-    self.mpc.set_weights(sm['starpilotPlan'].accelerationJerk * blotv3_jerk_scale,
+    self.mpc.set_weights(sm['starpilotPlan'].accelerationJerk,
                          sm['starpilotPlan'].dangerJerk,
                          sm['starpilotPlan'].speedJerk,
                          prev_accel_constraint,
@@ -3267,13 +3211,6 @@ class LongitudinalPlanner:
       output_a_target, output_should_stop = get_accel_from_plan(
         self.v_desired_trajectory, self.a_desired_trajectory,
         action_t=plan_action_t, vEgoStopping=starpilot_toggles.vEgoStopping)
-
-    # BLoT reads the MPC's own solution, not the arbitrated output. Upstream
-    # (SpysyWeeb/Spysypilot) keeps these as two fields for this reason: everything below
-    # -- the vision caps, the curve limiter, e2e, the force-decel floor, the stop-go
-    # target -- can brake for reasons the lead policy never asked for, and feeding that
-    # back in arms the recovery trigger on it and masks the emergency shortfall.
-    self.last_mpc_a_target = float(output_a_target_mpc if output_a_target_mpc is not None else output_a_target)
 
     comfort_output_accel_min = get_vehicle_min_accel(self.CP, v_ego) if experimental_mlsim else accel_limits_turns[0]
     vision_cap_accel_min = min(comfort_output_accel_min, get_vehicle_min_accel(self.CP, v_ego))

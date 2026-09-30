@@ -1084,8 +1084,8 @@ class Track:
     derivative is radial rate and NOT longitudinal velocity, so publishing it there would be
     misleading as well as a schema error."""
     # D-053. The KF runs on the native speed, so the correction is applied here, once, to all three
-    # published speeds: vRel and vLead (long_mpc) and vLeadK (longitudinal_lead.py, which feeds
-    # blotv3 and the planner), keeping the published lead self-consistent. aLeadK and aLeadTau stay
+    # published speeds: vRel and vLead (long_mpc) and vLeadK (the planner), keeping the published lead
+    # self-consistent. aLeadK and aLeadTau stay
     # native on purpose -- see the rework note at the top of this file. The correction is zero
     # unless RadarD armed the assist for this track, so every other caller is unchanged. Note
     # self.vRel and self.vLead themselves stay NATIVE -- the adjacent-lane detectors and the vision
