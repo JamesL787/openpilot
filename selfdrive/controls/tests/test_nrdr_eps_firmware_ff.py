@@ -341,10 +341,10 @@ def test_controller_steers_through_the_rack_map(monkeypatch):
 
 
 def test_rack_map_asks_less_wheel_than_the_paramsd_ratio_in_tight_turns(monkeypatch):
-  # the city over-steer: paramsd's single ratio over VGR asked 5-9% too much wheel at 100-250 deg
+  # the city over-steer: paramsd's single ratio over VGR asks 3.5-6% too much wheel at 100-250 deg
   lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1"})
   VM.update_params(1.0, 17.3)
   for curvature in (0.04, 0.06, 0.1):
     old = vgr_linear_to_physical(math.degrees(VM.get_steer_from_curvature(-curvature, 7.0, 0.0)), lac.vgr_inverse)
     new = lac.rack_map.angle_from_curvature(curvature, 7.0, 0.0)
-    assert 0.90 < new / old < 0.96
+    assert 0.93 < new / old < 0.97
