@@ -44,6 +44,23 @@ def test_inversion_reproduces_the_requested_load(load, rate, guess):
   assert eps_ff.firmware_output(r5, rate) == pytest.approx(load, abs=1e-6)
 
 
+@pytest.mark.parametrize("angle", [0.0, 45.0, 150.0, -300.0])
+@pytest.mark.parametrize("load,rate", [(800, 40), (-4000, 120), (300, -60)])
+def test_inversion_reproduces_the_requested_load_at_an_angle(load, rate, angle):
+  r5 = eps_ff.r5_for_motion(load, rate, 0.0, angle)
+  assert eps_ff.firmware_output(r5, rate, angle) == pytest.approx(load, abs=1e-6)
+
+
+def test_firmware_damping_grows_with_angle_like_its_table():
+  # R6 is taken before the firmware's angle table: per deg/s of the published rate it is -119 near centre
+  # and -141..-146 past 60 deg on routes 363/365/366/369, flat per count of the pre-table 0x18F rate
+  assert eps_ff.firmware_r6(10.0, 0.0) == pytest.approx(-1220.0, rel=0.01)
+  assert eps_ff.firmware_r6(10.0, 5.0) == pytest.approx(-1220.0, rel=0.02)
+  assert eps_ff.firmware_r6(10.0, 200.0) == pytest.approx(-1220.0 * 1.19, rel=0.02)
+  assert eps_ff.firmware_r6(10.0, -200.0) == eps_ff.firmware_r6(10.0, 200.0)
+  assert eps_ff.firmware_r6(-10.0, 200.0) == -eps_ff.firmware_r6(10.0, 200.0)
+
+
 def test_turn_in_asks_more_than_a_hold_and_an_exit_less():
   # left turn (positive angle and output) at 60 deg, 8 m/s
   def out(rate):

@@ -1,8 +1,8 @@
 """nrdr: the Honda Clarity modified-EPS lateral controller, built on the EPS firmware's own control law.
 
 The Clarity's LKAS path is not a torque command. The firmware turns our 0xE4 value into a target R5,
-compares it with R6 -- a filtered steering RATE (R6 = -133 counts per deg/s, corr 0.98 against
-steeringRateDeg) -- and runs P + D + KFF on the difference at 1 kHz. So every command first has to cancel
+compares it with R6 -- a filtered steering RATE, taken before its angle table (see R6_PER_CENTRE_DEG_S) --
+and runs P + D + KFF on the difference at 1 kHz. So every command first has to cancel
 the firmware's own rate damping (Kp * 133 / 1024 = 15..34 counts per deg/s, 2-5x the rack's physical
 damping), which is why vfn's angle PID trails a turn-in by ~250 ms x steering rate below 25 mph. On a turn
 exit that same damping is the braking that holds the line -- which is why the symmetric rate feedforward
@@ -30,6 +30,7 @@ import math
 
 import numpy as np
 
+from opendbc.car.honda.steer_ratio import NRDR_CLARITY_VGR_ANGLE_BP, NRDR_CLARITY_VGR_LINEAR_BP
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.pid import PIDController
 
@@ -56,10 +57,19 @@ KP_PIECES = [(lo * R5_PER_KEY, hi * R5_PER_KEY, kp_lo, (kp_hi - kp_lo) / ((hi - 
              for lo, hi, kp_lo, kp_hi in zip(KP_KEY_BP[:-1], KP_KEY_BP[1:], KP_V[:-1], KP_V[1:], strict=True)]
 KP_PIECES.append((KP_KEY_BP[-1] * R5_PER_KEY, math.inf, KP_V[-1], 0.0))
 
-# Both re-measured on routes 35e/360/361 (0x6A3 R6 against steeringRateDeg, 0x6A2 scale word while the request
-# is held): R6 -131..-135 (the -138.6 of route 352 was ~3% high), scale median 256 (252 on 352). Hands off, the
-# scale word only moves on a fast column-torque RATE (A280) or above ~400 counts of torque (helper A), so 256.
-R6_PER_DEG_S = -133.0  # NORM 1650 / tracker-1 3200
+# R6 comes from the column rate BEFORE the firmware's angle table, the domain 0x18F STEER_ANGLE_RATE reports
+# (R6 = -31.6 per 0x18F count, flat to 2% at every angle on route 369). The published angle and rate (0x14A,
+# steeringRateDeg) come AFTER that table, so per deg/s of steeringRateDeg the damping grows with angle, by the
+# table's local slope: engaged, routes 363/365/366/369, -119 near centre and -141..-146 past 60 deg, where a
+# single -133 was 11% too strong near centre and 10% too weak in big turns. Scaled by the slope it is flat at
+# -120..-123 on each route (-122 pooled).
+R6_PER_CENTRE_DEG_S = -122.0  # NORM 1650 / tracker-1 3200
+# d(pre-table angle) / d(published angle) along the A020 angle table, 1.0 at centre, ~1.19 from 150 deg
+_VGR_SLOPE = np.gradient(NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP)
+R6_ANGLE_BP = np.asarray(NRDR_CLARITY_VGR_ANGLE_BP)
+R6_ANGLE_GAIN = _VGR_SLOPE / _VGR_SLOPE[0]
+# 0x6A2 scale word while the request is held, re-measured on routes 35e/360/361: median 256 (252 on 352). Hands
+# off it only moves on a fast column-torque RATE (A280) or above ~400 counts of torque (helper A).
 SCALE_Q8 = 256.0       # helper A * B / 256 while the request is held
 
 # Column load model, firmware output counts (A030 sign convention), fitted on route 00000352:
@@ -153,9 +163,14 @@ def firmware_kp(r5: float) -> float:
   return float(np.interp(abs(r5) / R5_PER_KEY, KP_KEY_BP, KP_V))
 
 
-def firmware_output(r5: float, steering_rate_deg_s: float) -> float:
+def firmware_r6(steering_rate_deg_s: float, angle_deg: float) -> float:
+  """The firmware's rate feedback for a published steering rate at a published angle."""
+  return R6_PER_CENTRE_DEG_S * float(np.interp(abs(angle_deg), R6_ANGLE_BP, R6_ANGLE_GAIN)) * steering_rate_deg_s
+
+
+def firmware_output(r5: float, steering_rate_deg_s: float, angle_deg: float = 0.0) -> float:
   """Steady-state firmware output for a target and a rate (D term omitted): scale*(Kp*(R5-R6) + KFF*R5)/1024/256."""
-  r6 = R6_PER_DEG_S * steering_rate_deg_s
+  r6 = firmware_r6(steering_rate_deg_s, angle_deg)
   return SCALE_Q8 * (firmware_kp(r5) * (r5 - r6) + KFF * r5) / 1024.0 / 256.0
 
 
@@ -165,8 +180,8 @@ def column_load(angle_deg: float, rate_deg_s: float, v_ego: float, roll: float,
           + LOAD_FRICTION * math.tanh(rate_deg_s / friction_width) + LOAD_BIAS + LOAD_KROLL * roll * v_ego ** 2)
 
 
-def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0) -> float:
-  """Solve the firmware law for the target that yields `load` while the wheel moves at `rate_deg_s`.
+def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, angle_deg: float = 0.0) -> float:
+  """Solve the firmware law for the target that yields `load` while the wheel moves at `rate_deg_s` through `angle_deg`.
 
   load = scale * (Kp*(R5 - R6) + KFF*R5) / 1024 / 256, with Kp piecewise linear in |R5|. On each piece
   that is a quadratic in R5, so solve every piece exactly and keep the root nearest `r5_guess` (more than
@@ -174,7 +189,7 @@ def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0) -> floa
   here: it is 1-4% off after three passes from rest and need not contract during a fast unwind.
   """
   x = 1024.0 * load * 256.0 / SCALE_Q8
-  r6 = R6_PER_DEG_S * rate_deg_s
+  r6 = firmware_r6(rate_deg_s, angle_deg)
   roots = []
   for lo, hi, kp_lo, slope in KP_PIECES:
     for side in (1.0, -1.0):
@@ -221,7 +236,7 @@ class ClarityEpsFirmwareFeedforward:
     width = self.friction_width if self.friction_width is not None else friction_width(v_ego)
     self.load = column_load(angle, self.rate, v_ego, roll, width)
     cap = min(R5_CAP, R5_CAP_ENVELOPE_FRAC * float(np.interp(key_ceiling(v_ego), R5_KEY_BP, R5_V)))
-    self.r5 = max(min(r5_for_motion(self.load, self.rate, self.r5), cap), -cap)
+    self.r5 = max(min(r5_for_motion(self.load, self.rate, self.r5, angle), cap), -cap)
     target = output_from_r5(self.r5)
     self.output = target if first else self.output + self.output_alpha * (target - self.output)
     return self.output
