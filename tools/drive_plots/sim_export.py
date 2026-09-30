@@ -41,7 +41,11 @@ export.json also carries, for John's P' rows:
   press_summary     Kevin's drive-to-drive press counts, per band of the press (episode: of its first press), only
               presses made while openpilot was steering: {band: {presses, presses_long, episodes, episodes_blinker}},
               where presses_long counts presses held >= PRESS_LONG_S and episodes_blinker the episodes with a
-              blinker press (a lane change or turn the driver signalled, not a correction). Compare drives on episodes and presses_long,
+              blinker press (a lane change or turn the driver signalled, not a correction). An episode is counted
+              once, in the band at its first press's onset, and only if openpilot was steering then. Its blinker
+              window is from BLINKER_BEFORE_S before its first press to its last release (the presses' own windows
+              join into that, since presses in one episode are at most EPISODE_JOIN_S apart). presses and
+              presses_long count each press in its own band. Compare drives on episodes and presses_long,
               not raw presses (most raw onsets on 299 were <= 0.1 s blips near the threshold).
 """
 from __future__ import annotations
