@@ -9996,3 +9996,11 @@ Replay of the fixed code (base = the old law, same 10 routes):
       - 3 warnings fire at a 0.5–0.73 s gap with little or no closing (270 267.4, 299 709.9, 299 1196.7); 270 275.1 is at 1.04 s.
       - 35 stretches at TTC < 4 s have no warning; stock was already braking in them.
     - `stock would warn` needs no change. It already comes from stock neighbours matched on speed, gap, closing speed and lead accel, not from a TTC threshold. Same 6-event limit as above.
+
+## 194. 297 48:12 harder-than-needed brake: a newborn track's birth rail, plus a short RAIL_FAST add-on (2026-09-30). Replay (car-matched 07b66420, params 2026-09-30T16:44:42Z) + log; no gate change.
+- A newborn track 4 (born at 95 m) sat on the U11 birth rail (−13.5) from 48:11.97 to 48:13.33, while the true closing was about −10 by settled range and NC. This is the known class in D-068 (294 7:06); a railed birth U11 is only a bound (D-063).
+- `RANGE_VREL_RAIL_FAST` armed on the 0.5 s-old track, with rail_count 3 and corr 2.74. It fitted the track's range-convergence tail (rsig 11→9; bank range −16.3 m/s, then −8.5 over the next 0.5 s), which added about 2.7 m/s of fake closing for 0.25 s (lead1 −16.2). The rsig 59/18 birth rows never reached radard.
+- The ego peak of −4.4 came at 48:13.1, after the assist ended, so the rail value drove most of the brake.
+- The counter-case is 298 4:10 (newborn tracks 33→35): the rail was a correct bound there, with true closing about −21.6 by range and NC.
+- Open, owner's call: should RAIL_FAST require a minimum track age or a settled rsig?
+- Tooling note: old `/tmp/rv/298/scan_*.pkl` clocks zeroed on the first carState, which is a per-route offset (297 +7.0 s, 298 +4.1 s vs initData route time). Do not trust times from those scans.
