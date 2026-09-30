@@ -1014,6 +1014,7 @@ class RadarInterface(RadarInterfaceBase):
           point.yRel = yRel
           point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
           point.measured = False
+          point.existence = observation['existence_raw'] / 127.0
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to
           # coast and no way to publish a defensible vRel.
@@ -1060,6 +1061,7 @@ class RadarInterface(RadarInterfaceBase):
           point.yRel = yRel
           point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
           point.measured = False
+          point.existence = observation['existence_raw'] / 127.0
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to
           # coast and no way to publish a defensible vRel.
@@ -1106,6 +1108,9 @@ class RadarInterface(RadarInterfaceBase):
         self.pts[track_id].yRel = yRel
         self.pts[track_id].vRel = vRel
         self.pts[track_id].measured = True
+        # The radar's own OBJECT_EXISTENCE_PROBABILITY for this sweep, carried for radard's onpath adoption gate
+        # (ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE). Informational only here: it gates no point in this file.
+        self.pts[track_id].existence = observation['existence_raw'] / 127.0
       else:
         self.pts.pop(track_id, None)
 
