@@ -3,7 +3,8 @@
 
   PYTHONPATH=<repo>:<repo>/opendbc_repo python tools/clarity_lateral_report/report.py <rlog.zst | route dir> ...
 
-Everything is judged in true units: car curvature = VSA yaw / vEgo, 0.25 deg/s per count, zero learned at standstill (508 on this Clarity), 17 ms latency,
+Everything is judged in true units: car curvature = VSA yaw / vEgo, decoded as carstate does (0.25 deg/s per count, zero learned at standstill,
+508 on this Clarity, clockwise under-read corrected), 17 ms latency,
 decoded straight from CAN so routes from before the carState.yawRate change work too. Sections:
   yaw sources   VSA zero on straights; livePose yaw (the comma's estimate) scale and lag against the VSA
   map           car curvature vs what the shipped ClarityRackMap says the ACTUAL wheel angle gives (1.000 = exact)
@@ -28,10 +29,12 @@ import zstandard as zstd
 
 from cereal import log
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse
-from opendbc.car.honda.values import HondaFlags
+from opendbc.car.honda.values import CAR, HondaFlags
+from opendbc.car.honda.yaw_rate import RIGHT_LOSS_BP, YAW_RATE_CALIBRATION
 from openpilot.selfdrive.controls.lib.clarity_rack_map import ClarityRackMap
 
-VSA_ADDR, VSA_ZERO, VSA_DEG_S, VSA_LATENCY = 0x94, 508.0, 0.25, 0.017  # zero: fallback when the drive never stops
+VSA_ADDR, VSA_LATENCY = 0x94, 0.017
+VSA_DEG_S, VSA_ZERO, VSA_RIGHT_LOSS = YAW_RATE_CALIBRATION[CAR.HONDA_CLARITY]  # zero: fallback when the drive never stops
 PIPELINE_OFFSET = 0.038  # logged action -> on-time execution (publish + smoothing), see the delay schedule
 WHEEL_TO_YAW_LAG = ([3.75, 7.0, 12.0, 20.0, 30.0], [0.08, 0.06, 0.06, 0.08, 0.10])  # s, measured
 SPEED_BANDS = ((2.5, 5), (5, 9), (9, 15), (15, 25), (25, 40))
@@ -112,7 +115,9 @@ def build(R, info):
   s['vsa_raw'] = at(R['vsa'], 1, VSA_LATENCY)
   stopped = s['v'] < 0.01
   s['vsa_zero'] = float(np.mean(s['vsa_raw'][stopped])) if stopped.sum() > 200 else VSA_ZERO  # true yaw is 0 when stopped
-  s['yaw'] = np.radians((s['vsa_raw'] - s['vsa_zero']) * VSA_DEG_S)  # rad/s, RIGHT-positive like openpilot curvature
+  counts = s['vsa_raw'] - s['vsa_zero']
+  right_loss = VSA_RIGHT_LOSS * np.clip((counts - RIGHT_LOSS_BP[0]) / (RIGHT_LOSS_BP[1] - RIGHT_LOSS_BP[0]), 0.0, 1.0)
+  s['yaw'] = np.radians(counts * VSA_DEG_S + right_loss)  # rad/s, RIGHT-positive like openpilot curvature (yaw_rate.yaw_rate_deg_s)
   s['k'] = np.convolve(s['yaw'], np.ones(10) / 10, 'same') / np.maximum(s['v'], 0.1)
   s['gyro'] = at(R['pose'], 1)
 
