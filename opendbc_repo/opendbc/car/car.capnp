@@ -328,8 +328,6 @@ struct RadarData @0x888ad6581cf0aacb {
     # Honda Bosch-A only: closing vRel implied by NORMALIZED_CLOSING (-NC * dRel) on a measured sweep, with NO range or
     # sigma limit applied; ncValid when NC has a closing reading (raw != 512), else ignore ncVRel. ncSigma is the raw NC
     # sigma (7-bit, 127 when absent). Consumers apply their own limits (radard's RANGE_VREL_RAIL_NC_VETO, D-071).
-    # Declared here byte-identical to stopshadow-radar 5d7be6e730 so the ordinals stay compatible; NOT filled on this
-    # branch (Cap'n Proto ordinals must be contiguous, so @10 below needs @7-@9 declared).
     ncVRel @7 :Float32; # m/s
     ncValid @8 :Bool;
     ncSigma @9 :UInt8;

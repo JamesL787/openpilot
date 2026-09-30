@@ -194,6 +194,32 @@ BOSCH_A_RAIL_INTERVAL_DOWN_SIDE_ONLY_ON_RAIL_HOLD = True
 # D-063 is built in (was the BoschARailInterval toggle; on in the owner's drives 00000287-0000028b). Replay, static and
 # limited road evidence. Set False (replays, tests) and both gate calls below run `exact`, the pre-D-063 gate.
 BOSCH_A_RAIL_INTERVAL = True
+# NC-at-rail (stopshadow-radar ONLY -- do not sync this file to another branch until a DECISIONS entry exists; REPLAY
+# ONLY, no road evidence). F2's
+# NORMALIZED_CLOSING (23|10, 1/64, -8; raw 512 = 0 = no reading) is a closing-only inverse-TTC channel the rail does not
+# clamp: over the stopshadow corpus (tools/longitudinal/stopshadow/summary.txt, followup.txt) -NC * dRel tracked the long-window
+# range rate past the -13.5 rail at 0.91-0.95 of truth (stopped fit k -1.03, c +1.07 m on parser dRel, c=0 inside the CI),
+# with NORMALIZED_CLOSING_SIGMA_RAW (F2 46|7) < 32 as its confidence gate. Moving same-direction tracks fit only k -0.75 and
+# NC reads 0 on 13-39 % of closing rows, so it is NOT a general vRel: it only replaces a LOW-RAIL U11, in our lane, under
+# 50 m, and only when it agrees with the track's own accepted range slope (two-sided, the D-043 tolerance), which also
+# covers the newborn-NC ramp (4.6-5.8 s median convergence). The result is clamped to [-BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS,
+# rail], so it can only publish MORE closing than the rail, never less (D-041/D-042: understatement is the known hazard).
+# A valid reading is held across NC dropouts for BOSCH_A_NC_RAIL_HOLD_S while U11 stays railed and the held value still
+# agrees with the range slope, so vRel does not flicker rail <-> NC sweep to sweep. The range-innovation gate, the D-063
+# rail interval and rail_hold are untouched: they still read the rail U11; NC only changes the published/trusted vRel
+# of a measured sweep, which coasts then start from under the existing _bosch_a_coast_vrel bounds.
+# D-069 REJECTED (replay, 8f3b15028 ncrail.txt, 22 routes): no measurable gain over radard's D-053 rail-fast assist (zero
+# lead selection, planner-min or FCW changes; identical time to correct closing on all 6 leadOne episodes), while it made
+# native vRel flicker (p95 sweep |dvRel| 5.6 vs 0.4, 76 steps > 3 m/s vs 0, mostly the full -13.5 <-> -20 step) and
+# over-closed > 3 m/s on 19.6 % of changed sweeps vs 7.1 % for the rail. Off by default; code kept for the record.
+BOSCH_A_NC_RAIL_VREL = False
+BOSCH_A_NC_CENTER_RAW = 512
+BOSCH_A_NC_SCALE = 1.0 / 64.0
+BOSCH_A_NC_MAX_SIGMA_RAW = 32
+BOSCH_A_NC_RAIL_MAX_D_REL_M = 50.0
+BOSCH_A_NC_RAIL_HOLD_S = 0.3
+# RadarPoint.ncSigma when the frame carries no sigma (the 7-bit field's top value, never a usable reading).
+BOSCH_A_NC_SIGMA_ABSENT_RAW = 127
 # The D-063 addendum's coast bound (_bosch_a_coast_vrel) also runs, without the rail interval, when the
 # D-053 range-derived vRel switch is on. The coast is exactly where D-053 cannot act: radard disarms its
 # assist on every unmeasured sample. Route 00000268 9:52.3-9:54.7 (STATUS 110): a 5 m range step as track
@@ -337,6 +363,9 @@ class _BoschATrackState:
   # D-063: the current D-059 hold was started (or joined) by a rail-interval admission. Only such a hold's coast
   # may be pulled LESS closing toward its fresh fit (_bosch_a_coast_vrel); cleared whenever the hold ends.
   rail_hold: bool = False
+  # NC-at-rail: the last NORMALIZED_CLOSING vRel that passed its gates, and when; held across NC dropouts.
+  nc_vrel: float | None = None
+  nc_vrel_nanos: int | None = None
   last_trusted_vrel: float | None = None
   last_trusted_vrel_nanos: int | None = None
 
@@ -391,6 +420,25 @@ def _bosch_a_direct_vrel_interval(direct_vrel: float, exact: bool = False) -> tu
   if direct_vrel >= high_rail:
     return direct_vrel, BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS
   return direct_vrel, direct_vrel
+
+
+def _bosch_a_nc_vrel(nc_raw: int | None, nc_sigma_raw: int | None, d_rel: float) -> float | None:
+  """NC-at-rail: the closing vRel NORMALIZED_CLOSING implies at this range, or None when NC has no confident reading."""
+  if nc_raw is None or nc_sigma_raw is None or int(nc_raw) == BOSCH_A_NC_CENTER_RAW:
+    return None
+  if int(nc_sigma_raw) >= BOSCH_A_NC_MAX_SIGMA_RAW or not 0.0 < d_rel < BOSCH_A_NC_RAIL_MAX_D_REL_M:
+    return None
+  vrel = -(int(nc_raw) - BOSCH_A_NC_CENTER_RAW) * BOSCH_A_NC_SCALE * d_rel
+  return vrel if vrel < 0.0 else None
+
+
+def _bosch_a_nc_published(nc_raw: int | None, nc_sigma_raw: int | None, d_rel: float) -> tuple[float, bool, int]:
+  """(ncVRel, ncValid, ncSigma) for RadarPoint: -NC * dRel with no range or sigma limit (consumers apply their own)."""
+  sigma = BOSCH_A_NC_SIGMA_ABSENT_RAW if nc_sigma_raw is None else min(max(int(nc_sigma_raw), 0), BOSCH_A_NC_SIGMA_ABSENT_RAW)
+  if nc_raw is None or int(nc_raw) == BOSCH_A_NC_CENTER_RAW or not d_rel > 0.0:
+    return 0.0, False, sigma
+  vrel = -(int(nc_raw) - BOSCH_A_NC_CENTER_RAW) * BOSCH_A_NC_SCALE * d_rel
+  return (vrel, True, sigma) if vrel < 0.0 else (0.0, False, sigma)
 
 
 def _bosch_a_distance_to_interval(value: float, interval: tuple[float, float]) -> float:
@@ -648,6 +696,8 @@ class RadarInterface(RadarInterfaceBase):
       angle_raw = int(v0['AZIMUTH_RAW'])
       range_sigma_raw = int(v0['RANGE_SIGMA_RAW'])
       existence_raw = int(v1['OBJECT_EXISTENCE_PROBABILITY_RAW'])
+      nc_raw = int(v2['NORMALIZED_CLOSING_RAW'])
+      nc_sigma_raw = int(v2['NORMALIZED_CLOSING_SIGMA_RAW'])
       life = int(v2['LIFECYCLE_RAW'])
       track_id = int(v3['TRACK_ID'])
       track_id_valid = BOSCH_A_TRACK_ID_MIN <= track_id <= BOSCH_A_TRACK_ID_MAX
@@ -688,6 +738,8 @@ class RadarInterface(RadarInterfaceBase):
         'direct_vrel_raw': direct_vrel_raw,
         'direct_vrel_uncertainty_raw': direct_vrel_uncertainty_raw,
         'range_ratio_raw': range_ratio_raw,
+        'nc_raw': nc_raw,
+        'nc_sigma_raw': nc_sigma_raw,
       })
 
     # First collapse duplicate wire observations of one CAN identity. The dictionary is also the
@@ -767,6 +819,8 @@ class RadarInterface(RadarInterfaceBase):
         track.inconsistent_run.clear()
         track.rejoin_samples = None
         track.rail_hold = False
+        track.nc_vrel = None
+        track.nc_vrel_nanos = None
         track.last_trusted_vrel = None
         track.last_trusted_vrel_nanos = None
         self.pts.pop(track_id, None)
@@ -889,6 +943,7 @@ class RadarInterface(RadarInterfaceBase):
         point = self.pts.get(track_id)
         if accepted_fresh and point is not None:
           point.measured = False
+          point.ncValid = False
         else:
           self.pts.pop(track_id, None)
         track.prev_frame_idx = idx0
@@ -1015,6 +1070,7 @@ class RadarInterface(RadarInterfaceBase):
           point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
           point.measured = False
           point.existence = observation['existence_raw'] / 127.0
+          point.ncValid = False
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to
           # coast and no way to publish a defensible vRel.
@@ -1062,6 +1118,7 @@ class RadarInterface(RadarInterfaceBase):
           point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
           point.measured = False
           point.existence = observation['existence_raw'] / 127.0
+          point.ncValid = False
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to
           # coast and no way to publish a defensible vRel.
@@ -1089,6 +1146,8 @@ class RadarInterface(RadarInterfaceBase):
         vRel = direct_vrel
       else:
         vRel = ratio_vrel
+      if BOSCH_A_NC_RAIL_VREL:
+        vRel = self._bosch_a_nc_rail_vrel(track, observation, direct_vrel, vRel, dRel, yRel, now)
       trustworthy_vrel = True
 
       # A birth observation has no range-rate yet. Keep it as history, but do not publish a RadarPoint
@@ -1111,6 +1170,10 @@ class RadarInterface(RadarInterfaceBase):
         # The radar's own OBJECT_EXISTENCE_PROBABILITY for this sweep, carried for radard's onpath adoption gate
         # (ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE). Informational only here: it gates no point in this file.
         self.pts[track_id].existence = observation['existence_raw'] / 127.0
+        # NC is published beside vRel, unlimited, for radard's RANGE_VREL_RAIL_NC_VETO (D-071, off), which applies its own
+        # range and sigma limits. Computed independently of BOSCH_A_NC_RAIL_VREL (D-069, off); never changes vRel here.
+        pt = self.pts[track_id]
+        pt.ncVRel, pt.ncValid, pt.ncSigma = _bosch_a_nc_published(observation['nc_raw'], observation['nc_sigma_raw'], dRel)
       else:
         self.pts.pop(track_id, None)
 
@@ -1125,6 +1188,27 @@ class RadarInterface(RadarInterfaceBase):
 
     ret.points = [self.pts[track_id] for track_id in sorted(self.pts)]
     return ret
+
+  def _bosch_a_nc_rail_vrel(self, track, observation, direct_vrel, vrel, d_rel, y_rel, now):
+    """NC-at-rail (see BOSCH_A_NC_RAIL_VREL): a low-rail U11 in our lane replaced by NORMALIZED_CLOSING when the range agrees."""
+    low_rail = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) * BOSCH_A_DIRECT_VREL_SCALE_MPS
+    if direct_vrel is None or direct_vrel > low_rail + 1e-6 or abs(y_rel) > BOSCH_A_RAIL_INTERVAL_MAX_Y_M:
+      track.nc_vrel = None
+      track.nc_vrel_nanos = None
+      return vrel
+    candidate = _bosch_a_nc_vrel(observation['nc_raw'], observation['nc_sigma_raw'], d_rel)
+    fresh = candidate is not None
+    if not fresh and track.nc_vrel is not None and (now - track.nc_vrel_nanos) * 1e-9 <= BOSCH_A_NC_RAIL_HOLD_S:
+      candidate = track.nc_vrel
+    if candidate is None:
+      return vrel
+    rate = _bosch_a_fresh_range_rate(_bosch_a_trailing_fit_window(list(track.samples)))
+    if rate is None or abs(candidate - rate) > BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS:
+      return vrel
+    if fresh:
+      track.nc_vrel = candidate
+      track.nc_vrel_nanos = now
+    return max(-BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS, min(vrel, candidate))
 
   def _update_nidec(self, updated_messages):
     ret = structs.RadarData()
