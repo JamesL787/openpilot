@@ -44,6 +44,15 @@ def test_rows_decode_every_frame_and_join_the_lead():
   assert np.all(tab["trk_have"]) and tab["trk_raw"].shape == (5, 5, 8)
   assert np.all(tab["trk_valid"] == 1) and list(tab["trk_brk"]) == [1, 0, 0, 0, 0]
   assert any(",f0_RANGE_SIGMA_RAW,FW_LID_" in n or "_lid_b" in n for n in tab["lid_names"])
+  assert np.all(tab["trk_u11_railed"] == 0) and np.all(np.isfinite(tab["trk_u10"])) and np.all(tab["trk_spread_ms"] >= 0)
+
+
+def test_u11_on_a_rail_is_flagged():
+  ex = bat.Extractor()
+  ex.t0 = 0
+  for i in range(2):
+    ex.on_can(int(i * 0.07e9), _sweep(4, 7, 50.0, 100 + 2 * i, i, u11_raw=0))
+  assert list(ex.table({"route": "synthetic", "segments": [0]})["trk_u11_railed"]) == [1.0, 1.0]
 
 
 def test_identity_breaks_on_a_counter_reset_and_holds_through_saturation():
@@ -59,8 +68,20 @@ def test_lsq_slope_reads_a_closing_track_and_restarts_at_a_new_incarnation():
   d = 60.0 - 12.0 * t
   inc = np.where(np.arange(20) < 10, 1, 2)
   s = bat.lsq_slope(t, d, inc)
-  assert np.allclose(s[5:10], -12.0) and np.isnan(s[10])  # needs 0.25 s of the new incarnation first
-  assert np.allclose(s[15:], -12.0)
+  assert np.isnan(s[2]) and np.allclose(s[3:10], -12.0) and np.isnan(s[10])  # 4 points of the new incarnation first
+  assert np.allclose(s[13:], -12.0)
+  assert np.isnan(bat.lsq_slope(t, d, inc, 0.5)[5]) and np.allclose(bat.lsq_slope(t, d, inc, 0.5)[6:10], -12.0)
+
+
+def test_a_saturated_hold_ends_the_strict_fit_window():
+  n = 16
+  t = np.arange(n) * 0.07
+  d = 60.0 - 12.0 * t
+  brk = np.array([1] + [0] * 7 + [3] * 3 + [0] * 5)
+  key, sat = bat.strict_key(np.full(n, 7), np.ones(n), brk)
+  s = bat.lsq_slope(t, np.where(sat, np.nan, d), key)
+  assert np.allclose(s[3:8], -12.0) and np.all(np.isnan(s[8:14])) and np.allclose(s[14:], -12.0)
+  assert np.allclose(bat.lsq_slope(t, d, np.ones(n))[3:], -12.0)  # the parser-mirror key keeps fitting through it
 
 
 def test_parse_segs_and_svg():

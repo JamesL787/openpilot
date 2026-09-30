@@ -17,7 +17,11 @@ Table (npz, columnar, numpy only):
           valid (the parser's STATUS / range / azimuth / life / id validity), brk, inc, age_s,
           d_rel, az_rad, y_rel (parser geometry: tan projection, left positive), vrel_u11 (the parser's
           _bosch_a_direct_vrel, no uncertainty qualification), vrel_ratio (_bosch_a_range_ratio_vrel over
-          the time since this incarnation's last row), then f0_* f1_* f2_* f3_* aux_* for every DBC signal
+          the time since this incarnation's last row), u10 (aux REL_VELOCITY_UNCERTAINTY_RAW, the name the
+          radar_interface.py comments use), u11_railed (U11 raw on a rail, 0 or 1728), aux_lag_ms (AUX receive
+          time minus F0's) and spread_ms (last minus first frame receive time of the slot: the jitter floor of
+          a receive-time latency), then f0_* f1_* f2_* f3_* aux_* for every DBC signal. d_rel is the parser's
+          (RANGE_RAW scale plus BOSCH_A_RANGE_OFFSET_M); f0_RANGE is the DBC value without that offset
           and raw (n, 5, 8) uint8 for F0..F3, AUX with have (n, 5).
           FW_LID_* names differ per slot but sit on the same bits, so they are stored by position,
           <frame>_lid_b<lsb>w<size>; lid_names maps each back to its per-slot DBC name. A LID on the same
@@ -58,13 +62,17 @@ RADAR_SRCS = (2, 128)  # the object bank arrives on 2 and again on 128; one is u
 NX_IDS = tuple(range(0x240, 0x24B)) + (0x669, 0x400, 0x410, 0x420, 0x1DF, 0x1FA, 0x30C, 0x33D, 0x39F, DASH_ADDR)
 RADAR_TO_CAMERA = 1.52  # radard.py: model x is from the camera, radar dRel from the radar
 KINDS = ("f0", "f1", "f2", "f3", "aux")
-LSQ_SWEEPS = RI.BOSCH_A_VREL_MAX_SAMPLES  # range-slope window, the parser's vRel history length
-LSQ_MIN_SPAN_S = 0.25
+LSQ_WINDOWS_S = (0.25, 0.5)  # stopshadow plan: the D-043 minimum and a 0.5 s window
+LSQ_MIN_PTS = 4  # D-043 minimum samples per fit
+LSQ_MIN_SPAN_FRAC = 0.75  # the fit's points must cover this share of the window (4 sweeps at ~70 ms span 0.21 s)
+# vision association (modelV2 lead 0 on this track): tool defaults, not calibrated. Position and prob only: vision
+# understates closing on fast or far approaches, so a speed gate would drop the stopped-car matches; vis_dv logs it
+VIS_DX_M, VIS_DX_FRAC, VIS_DY_M = 3.0, 0.10, 2.0
 
 CTX = ("v_ego", "a_ego", "brake", "brake_pressed", "gas_pressed", "yaw", "yaw_cs", "cruise_on", "stock_acc",
        "op_long_active", "lead1_tid", "lead2_tid", "lead1_d", "lead1_v", "lead1_radar", "m_prob", "m_x", "m_y", "m_v")
 BASE = ("sweep", "mono", "t", "slot", "tid", "life", "frame_idx", "idx_ok", "valid", "brk", "inc", "age_s",
-        "d_rel", "az_rad", "y_rel", "vrel_u11", "vrel_ratio", "is_lead", "path_y")
+        "d_rel", "az_rad", "y_rel", "vrel_u11", "vrel_ratio", "u10", "u11_railed", "aux_lag_ms", "spread_ms", "is_lead", "path_y")
 
 
 def parse_segs(spec: str | None) -> set[int] | None:
@@ -242,6 +250,9 @@ class Extractor:
       for col, s in self.layout[addrs[k]][2]:
         row[col] = decode(s, dat)
     mono = fr[0][1] if 0 in fr else fr[3][1]
+    monos = [m for _, m in fr.values()]
+    aux_lag = (fr[4][1] - fr[0][1]) / 1e6 if 0 in fr and 4 in fr else math.nan  # receive jitter floor for latency (E)
+    spread = (max(monos) - min(monos)) / 1e6
     t = (mono - self.t0) / 1e9
     st, rr, ar = row.get("f0_STATUS", math.nan), row.get("f0_RANGE_RAW", math.nan), row.get("f0_AZIMUTH_RAW", math.nan)
     life = row.get("f2_LIFECYCLE_RAW", math.nan)
@@ -254,9 +265,12 @@ class Extractor:
       d_rel = RI.BOSCH_A_RANGE_SCALE_M * rr + RI.BOSCH_A_RANGE_OFFSET_M
       az = RI.BOSCH_A_AZIMUTH_SCALE_RAD * (ar - RI.BOSCH_A_AZIMUTH_CENTER)
       y_rel = d_rel * (math.tan(az) if RI.BOSCH_A_USE_TAN_LATERAL_PROJECTION else math.sin(az))
+    u10 = row.get("aux_REL_VELOCITY_UNCERTAINTY_RAW", math.nan)  # "u10" in radar_interface.py comments
+    railed = math.nan
     if "aux_REL_VELOCITY_RAW" in row:
       v = RI._bosch_a_direct_vrel(row["aux_REL_VELOCITY_RAW"])
       vu = math.nan if v is None else v
+      railed = float(row["aux_REL_VELOCITY_RAW"] in RI.BOSCH_A_DIRECT_VREL_RAILS_RAW)
 
     brk, inc = -1, self.inc.get(tid, 0)
     p = self.prev.get(tid)
@@ -289,7 +303,7 @@ class Extractor:
       path_y = float(np.interp(d_rel, self.path[0], self.path[1]))
     base = dict(sweep=self.sweep, mono=mono, t=t, slot=slot, tid=tid, life=life, frame_idx=idx[0] if idx[0] is not None else math.nan,
                 idx_ok=float(idx_ok), valid=float(valid), brk=brk, inc=inc, age_s=age, d_rel=d_rel, az_rad=az, y_rel=y_rel,
-                vrel_u11=vu, vrel_ratio=vr, is_lead=is_lead, path_y=path_y)
+                vrel_u11=vu, vrel_ratio=vr, u10=u10, u11_railed=railed, aux_lag_ms=aux_lag, spread_ms=spread, is_lead=is_lead, path_y=path_y)
     self.rows.add({**base, **{k: float(c[k]) for k in CTX}, **row})
     self.raw.append(bytes(raw))
     self.have.append(have)
@@ -378,26 +392,45 @@ def trk(D: dict, tid: int | None = None, t0: float = -math.inf, t1: float = math
   return {k[4:]: v[sel] for k, v in D.items() if k.startswith("trk_")}
 
 
-def lsq_slope(t: np.ndarray, d: np.ndarray, inc: np.ndarray, n: int = LSQ_SWEEPS) -> np.ndarray:
-  """Least-squares dRel slope over the last n rows of the same incarnation (NaN until they span LSQ_MIN_SPAN_S)."""
+def lsq_slope(t: np.ndarray, d: np.ndarray, key: np.ndarray, win_s: float = LSQ_WINDOWS_S[0]) -> np.ndarray:
+  """Trailing least-squares slope of d over the rows of the same key within win_s (rows ordered by time within a key).
+
+  NaN until the window holds LSQ_MIN_PTS finite points covering LSQ_MIN_SPAN_FRAC of win_s."""
   out = np.full(len(t), np.nan)
   for i in range(len(t)):
     j = i
-    while j > 0 and i - j + 1 < n and inc[j - 1] == inc[i]:
+    while j > 0 and key[j - 1] == key[i] and t[i] - t[j - 1] <= win_s + 1e-6:
       j -= 1
     tt, dd = t[j:i + 1], d[j:i + 1]
     ok = np.isfinite(dd)
-    if ok.sum() >= 3 and tt[ok][-1] - tt[ok][0] >= LSQ_MIN_SPAN_S:
+    if ok.sum() >= LSQ_MIN_PTS and tt[ok][-1] - tt[ok][0] >= LSQ_MIN_SPAN_FRAC * win_s:
       out[i] = np.polyfit(tt[ok] - tt[ok][-1], dd[ok], 1)[0]
   return out
 
 
-def derived(T: dict) -> dict:
-  slope = lsq_slope(T["t"], T["d_rel"], T["inc"])
+def strict_key(tid: np.ndarray, inc: np.ndarray, brk: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+  """Fit key for ground truth: a saturated hold (brk 3) cannot testify, so it ends the window and its rows drop out."""
+  sat = brk == 3
+  runs = np.cumsum(np.r_[False, sat[1:] != sat[:-1]])
+  return tid * 1e9 + inc * 1e5 + runs, sat
+
+
+def derived(T: dict, win_s: float = LSQ_WINDOWS_S[0]) -> dict:
+  key = T["tid"] * 1e9 + T["inc"] * 1e5
+  slope = lsq_slope(T["t"], T["d_rel"], key, win_s)
+  skey, sat = strict_key(T["tid"], T["inc"], T["brk"])
+  slope_strict = lsq_slope(T["t"], np.where(sat, np.nan, T["d_rel"]), skey, win_s)
   yaw = np.where(np.isfinite(T["yaw"]), T["yaw"], T["yaw_cs"])
-  stat = -T["v_ego"] + yaw * T["y_rel"]  # range rate of a stationary point: -v + w*y (w left positive)
-  return {"slope": slope, "stat_ref": stat, "nc_d": T["f2_NORMALIZED_CLOSING"] * T["d_rel"],
-          "v_abs": T["v_ego"] + slope - yaw * T["y_rel"], "v_abs_u11": T["v_ego"] + T["vrel_u11"] - yaw * T["y_rel"]}
+  # range rate of a stationary point: -v + w*y, w and y both left positive. Replay check (0000025e, 00000297,
+  # 82 range-confirmed stopped rows on 37 tracks): dy/dt follows -w*x (median |r| 0.5-1.1 m/s) not +w*x (2.8-3.5).
+  stat = -T["v_ego"] + yaw * T["y_rel"]
+  v_abs = T["v_ego"] + slope - yaw * T["y_rel"]
+  vis = ((np.abs(T["m_x"] - T["d_rel"]) < np.maximum(VIS_DX_M, VIS_DX_FRAC * T["d_rel"])) & (np.abs(T["m_y"] - T["y_rel"]) < VIS_DY_M)
+         & (T["m_prob"] > 0.5))
+  return {"slope": slope, "slope_strict": slope_strict, "stat_ref": stat, "nc_d": T["f2_NORMALIZED_CLOSING"] * T["d_rel"],
+          "v_abs": v_abs, "v_abs_strict": T["v_ego"] + slope_strict - yaw * T["y_rel"],
+          "v_abs_u11": T["v_ego"] + T["vrel_u11"] - yaw * T["y_rel"], "vis_assoc": vis.astype(float),
+          "vis_dv": np.where(vis, T["m_v"] - v_abs, np.nan)}
 
 
 def cmd_tracks(args) -> int:
@@ -469,7 +502,7 @@ def _svg_panels(title: str, t0: float, t1: float, panels: list[dict], marks: lis
     out.append(f'<text x="{sx(v):.1f}" y="{y}" text-anchor="middle">{v:.1f}</text>')
   out.append(f'<text x="{W - right + 30}" y="{y}">route s</text>')
   for k, (color, label) in enumerate(dict.fromkeys((c, lbl) for _, c, lbl in marks)):
-    out.append(f'<text x="{W - right + 6}" y="{top + len(panels) * (ph + gap) - 60 + 12 * k}" fill="{color}">- - {label}</text>')
+    out.append(f'<text x="{W - right + 6}" y="{14 + 12 * k}" fill="{color}">- - {label}</text>')  # above the first panel's legend
   out.append("</svg>")
   return "\n".join(out)
 
@@ -483,7 +516,7 @@ def cmd_plot(args) -> int:
     return 1
   t0 = args.t0 if math.isfinite(args.t0) else float(T["t"][0])
   t1 = args.t1 if math.isfinite(args.t1) else float(T["t"][-1])
-  X = derived(T)
+  X = derived(T, args.win)
   t = T["t"]
   lead1 = T["is_lead"] == 1
   marks = [(float(a), "#d62728", "lifecycle break / return") for a in t[np.isin(T["brk"], (2, 4))]]
@@ -499,8 +532,9 @@ def cmd_plot(args) -> int:
     {"label": "dRel (m)", "series": [("dRel", t, T["d_rel"], "#1f77b4", "dots"),
                                       ("lead one dRel", t, np.where(np.isfinite(T["lead1_d"]), T["lead1_d"], np.nan), "#999"),
                                       ("model lead x", t, np.where(T["m_prob"] > 0.5, T["m_x"], np.nan), "#2ca02c")]},
-    {"label": f"LSQ dRel slope ({LSQ_SWEEPS} sweeps) vs stationary -vEgo+wy (m/s)",
-     "series": [("slope", t, X["slope"], "#1f77b4"), ("-vEgo + w*y", t, X["stat_ref"], "#999")]},
+    {"label": f"LSQ dRel slope ({args.win:g} s, >= {LSQ_MIN_PTS} pts) vs stationary -vEgo+wy (m/s)",
+     "series": [("slope", t, X["slope"], "#1f77b4"), ("slope, sat hold ends fit", t, X["slope_strict"], "#ff7f0e", "dots"),
+                ("-vEgo + w*y", t, X["stat_ref"], "#999")]},
     {"label": "U11 vRel and range-ratio vRel (m/s)",
      "series": [("U11 vRel", t, T["vrel_u11"], "#1f77b4", "dots"), ("ratio vRel", t, T["vrel_ratio"], "#9467bd", "dots"),
                 ("slope", t, X["slope"], "#bbb")]},
@@ -514,19 +548,28 @@ def cmd_plot(args) -> int:
     {"label": "lead / ACC", "series": [("is lead one", t, lead1.astype(float) * 3, "#d62728"),
                                        ("is lead two", t, (T["is_lead"] == 2).astype(float) * 2.5, "#ff7f0e"),
                                        ("stock ACC", t, T["stock_acc"] * 2, "#2ca02c"), ("OP long", t, T["op_long_active"] * 1.5, "#1f77b4"),
-                                       ("brake pedal", t, T["brake_pressed"], "#8c564b"), ("aEgo/4", t, T["a_ego"] / 4, "#999")]},
+                                       ("brake pedal", t, T["brake_pressed"], "#8c564b"), ("aEgo/4", t, T["a_ego"] / 4, "#999"),
+                                       ("vision on track", t, X["vis_assoc"] * 1.2, "#9467bd"),
+                                       ("U11 railed", t, T.get("u11_railed", t * np.nan) * 0.6, "#e377c2")]},
   ]
   if acc_key:
     at = D[acc_key[:acc_key.rindex("_ACCEL_COMMAND")] + "_t"]
     s = (at >= t0) & (at <= t1)
     panels[-1]["series"].append(("stock cmd/4", at[s], D[acc_key][s] / 4, "#17becf"))
+  hud_key = next((x for x in D if x.startswith(f"nx_{0x30C:03x}_") and x.endswith("_HUD_LEAD")), None)
+  if hud_key:  # dash lead icon: 0 no car, 1 dashed, 2 solid, 3 acc off
+    ht = D[hud_key[:hud_key.rindex("_HUD_LEAD")] + "_t"]
+    s = (ht >= t0) & (ht <= t1)
+    panels[-1]["series"].append(("dash lead icon/2", ht[s], D[hud_key][s] / 2, "#bcbd22"))
   title = f"{meta['route']} track {args.track}  {t0:.1f}..{t1:.1f} s  ({len(t)} sweeps, incarnations {sorted({int(x) for x in T['inc']})})"
   out = Path(args.out or f"/tmp/bosch_a_track_{meta['route']}_{args.track}_{t0:.0f}.svg")
   out.write_text(_svg_panels(title, t0, t1, panels, marks))
   print(out)
   if args.csv:
     cols = ["t", "inc", "brk", "d_rel", "y_rel", "path_y", "vrel_u11", "vrel_ratio", "f2_NORMALIZED_CLOSING", "f2_NORMALIZED_CLOSING_SIGMA_RAW",
-            "f1_OBJECT_EXISTENCE_PROBABILITY_RAW", "f0_RANGE_SIGMA_RAW", "v_ego", "yaw", "is_lead", "stock_acc", "op_long_active"]
+            "f1_OBJECT_EXISTENCE_PROBABILITY_RAW", "f0_RANGE_SIGMA_RAW", "f0_RANGE", "u10", "u11_railed", "aux_lag_ms", "spread_ms",
+            "v_ego", "yaw", "is_lead", "stock_acc", "op_long_active", "m_x", "m_y", "m_v", "m_prob"]
+    cols = [c for c in cols if c in T]  # tables extracted before a column existed
     with open(args.csv, "w") as f:
       f.write(",".join(cols + list(X)) + "\n")
       for i in range(len(t)):
@@ -553,6 +596,7 @@ def main(argv=None) -> int:
       p.add_argument("--track", type=int, required=True)
       p.add_argument("--out")
       p.add_argument("--csv")
+      p.add_argument("--win", type=float, default=LSQ_WINDOWS_S[0], help="LSQ slope window, s (plan: 0.25 or 0.5)")
   args = ap.parse_args(argv)
   return {"extract": cmd_extract, "tracks": cmd_tracks, "plot": cmd_plot}[args.mode](args)
 
