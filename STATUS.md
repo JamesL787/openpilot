@@ -9930,7 +9930,7 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **Limits:**
   - The reference is a neighbour median. It says what stock did in similar logged moments, not what it would have done here.
   - No cut-ins, stop-and-go to zero, or adjacent-lane curves are separated out yet.
-  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 9 pass (synthetic routes).
+  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 11 pass (synthetic routes).
 - **Addendum (2026-09-29, Bob's gate3 questions; replay only):**
   - **Radar-vs-model tag.** An episode is tagged `radar closing > model` when radar closing exceeds the model lead's closing on the same car by 3 m/s or more in the second before our peak.
     - Ours harder: 10 of 23 tagged.
@@ -9970,3 +9970,20 @@ Replay of the fixed code (base = the old law, same 10 routes):
     - `compare` reports `stock_alert_share`, the share of stock neighbours within 1 s of a warning, and tags `stock would warn` at ≥ 0.2. It also reports `dash_alert` for the route's own dash. That is n/a under openpilot long, not "never warned": our init silences the radar (disable_ecu), so the car's own FCW/AEB is off on every alpha route (Bob, route 298 seg 14 log). A missing warning there says nothing about ours being calmer.
     - 18 of 200 alpha episodes are `stock would warn`. Six are also `ours lingers`, and 4 are `ours later` (2 of them also `ours softer`): in the moments where stock would have warned, ours sometimes comes in later and trails off.
     - Limit: the precedent is only 6 warnings, so a share of 0.8 means neighbours drawn from one or two events, not a rate.
+  - **`law` mode: stock's brake law by regime (2026-09-30, Peter via Bob's Bosch-A relay, ideas 2 and 3; replay, /tmp/sar2).** Each brake onset (command < −1 with a lead) is sorted into one of three regimes:
+    - `threat`: a dash BRAKE warning within 1 s. Stock only; the dash is silenced under openpilot long.
+    - `set speed`: set speed at or below ego speed at the onset, meaning ICBM or a set-speed cut rather than the lead.
+    - `following`: everything else.
+    - It reports the situation at the onset: time gap, closing speed, and TTC three ways (plain, lead-accel-extrapolated with the 1 s slope, and with aLeadK; ego at constant speed, and the lead stops at 0). It also reports peak, time to peak, half-release time, and the release measured from the moment the gap stops closing. A grid gives the share of following-regime rows that are braking, by time gap × TTC(alead), for stock and ours.
+    - **Stock following** (n 69): brakes at median closing −1.3 m/s, 1.8 s gap and TTC(alead) 5.7 s, with the lead at −1.0. Peak −1.5, reached in 1.0 s.
+    - **Ours** (n 121): brakes at closing −3.7 m/s, 2.5 s gap and TTC(alead) 4.4 s, with the lead at −2.2. Peak −2.0, reached in 0.7 s.
+    - The grid holds the situation fixed. At TTC 4–6 s with a 1.2–3 s gap, stock is braking in 42–45 % of rows and ours in 26–33 %. At TTC 2–3 s, it is 87–98 % vs 80–82 %. (At gaps above 3 s ours brakes more: 32 % vs 22 %.)
+    - **Reading:** ours starts later in the 2–6 s TTC band, then brakes harder. Stock starts earlier at a lower closing speed and brakes gently.
+    - **Release, on each side's own real brakes (peak < −1.5):** about the same, 1.7 s stock (n 34) vs 1.7 s ours (n 77). Stock lets go 0.25 s after the gap stops closing (p25..p75 −0.1..0.6); ours 0.0 s (−0.8..0.3).
+    - So the `ours lingers` gap above (2.1 vs 0.6 s) comes from matched situations and the kNN precedent. It does not reproduce as a difference in release law between the two sides' own brakes. Treat `ours lingers` as situation-specific (bm1-like), not a general tail.
+    - **Threat** (n 3 of 6 warnings; the other 3 were stock disengaged or never went below −1):
+      - 25e 12:05: a cut-in at 22 m/s, closing −11. TTC plain 7.1, alead 4.3.
+      - 270 4:27: gap 0.51 s, not closing, TTC 12.
+      - 299 11:49.8 (bm1): plain TTC never, TTC(alead) 3.4.
+      - These fit Bob's reading of the Bosch-A doc: lead accel and time gap are inputs, and plain TTC alone explains none of them. Three events cannot fit the 4.75/4.375/4.0 thresholds; that is Bob's corpus scan.
+    - **Limits:** one car. The `threat` regime is 3 events. `set speed` (n 74) is mostly ICBM stock routes. Ours is 6 alpha routes. The lead-accel TTC treats a lead that is speeding up as steady.

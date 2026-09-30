@@ -19,6 +19,9 @@ commanded then, now and over the next 3 s: median, spread, and how close the nea
                                   # does the command move when the lead starts braking, before the gap closes?
   stock_acc_reference.py stops    --cache-dir /tmp/sar [ALPHA_ROUTE ...] [--list] [--json OUT]
                                   # end-of-stop profile behind a lead: command and aEgo on the way down, the lurch
+  stock_acc_reference.py law      --cache-dir /tmp/sar [ALPHA_ROUTE ...] [--list] [--json OUT]
+                                  # stock's brake law in regimes (following / dash BRAKE threat / set speed): the
+                                  # time gap and TTC it starts braking at, how fast it lets go; ours beside it
   stock_acc_reference.py augment  FRAMES.json ROUTE_DIR --cache-dir /tmp/sar --out FRAMES_STOCK.json
                                   # adds a `stock_nn` variant to an alpha_closed_loop_replay frames JSON, so
                                   # long_replay_viewer.py draws it next to the planner variants
@@ -758,6 +761,140 @@ def cmd_stops(args) -> int:
   return 0
 
 
+TTC_CAP = 20.0               # s: TTCs past this (or opening) print as the cap; no brake law looks that far ahead
+GAP_BINS = (0.0, 0.8, 1.2, 1.8, 3.0, math.inf)   # s time gap d / vEgo
+TTC_BINS = (0.0, 2.0, 3.0, 4.0, 6.0, 10.0, math.inf)  # s extrapolated TTC; 4.0..4.75 is where the doc puts prefill/HUD
+LAW_MIN_ROWS = 5 * HZ        # a cell needs 5 s of driving before its braking share is printed
+
+
+def ttc(d, v, vrel, alead):
+  """Seconds until ego at constant speed reaches a lead that keeps its accel (and stops at 0, never reverses);
+  TTC_CAP where it never does. alead = 0 gives the plain d / closing speed."""
+  d, v, vrel, alead = (np.asarray(x, dtype=float) for x in np.broadcast_arrays(d, v, vrel, alead))
+  vl = np.maximum(v + vrel, 0.0)
+  al = np.minimum(np.nan_to_num(alead), 0.0)  # a lead speeding up is taken as steady: a bound on the threat
+  out = np.full(d.shape, TTC_CAP)
+  with np.errstate(divide="ignore", invalid="ignore"):
+    # while the lead still moves: d + vrel t + al t^2 / 2 = 0, first positive root
+    disc = vrel * vrel - 2.0 * al * d
+    t_q = np.where(al < -1e-3, (-vrel - np.sqrt(np.maximum(disc, 0.0))) / al, d / -vrel)
+    t_q = np.where((al < -1e-3) & (disc < 0), np.inf, t_q)
+    t_q = np.where((al >= -1e-3) & (vrel >= 0), np.inf, t_q)
+    t_stop = np.where(al < -1e-3, vl / -al, np.inf)
+    # after the lead has stopped: ego covers the gap plus the lead's stopping distance
+    t_after = (d + vl * vl / np.where(al < -1e-3, -2.0 * al, np.inf)) / v
+    hit = np.where((t_q > 0) & (t_q <= t_stop), t_q, np.where(np.isfinite(t_stop) & (v > 0), t_after, np.inf))
+  ok = np.isfinite(hit) & (hit >= 0) & np.isfinite(d)
+  out[ok] = np.minimum(hit[ok], TTC_CAP)
+  return out
+
+
+def law_events(R: dict, who: str) -> list[dict]:
+  """Every brake (command below BRAKE_ON) with a lead, the situation at its onset, and how it lets go.
+  regime: 'threat' = a dash BRAKE warning within ALERT_WINDOW_S of the brake (stock only; the radar is silenced
+  under openpilot long), 'set speed' = set speed at or below ego speed at the onset (ICBM or a set-speed cut, not
+  the lead), 'following' = the rest. The following law is what our planner should be shaped against."""
+  t, v, a, cmd, d, vrel = R["t"], R["v"], R["a"], R["cmd"], R["d"], R["vrel"]
+  m = usable(R, who)
+  alert = near_alert(R) if who == "stock" else np.full(len(t), np.nan)
+  out = []
+  for s, e in episodes(t, cmd, cmd, m):
+    if np.any(np.diff(t[s:e + 1]) > 0.2):  # a cut-in has no lead before the onset, so only the onset row must be usable
+      continue
+    k = np.flatnonzero(cmd[s:e + 1] < BRAKE_ON)
+    if not len(k):
+      continue
+    i = s + int(k[0])
+    if not m[i]:
+      continue
+    if who == "stock" and np.isfinite(alert[s:e + 1]).any() and np.nanmax(alert[s:e + 1]) > 0.5:
+      regime = "threat"
+    elif np.isfinite(R["setv"][i]) and R["setv"][i] < v[i] + SETBIND_MS:
+      regime = "set speed"
+    else:
+      regime = "following"
+    p = s + int(np.nanargmin(cmd[s:e + 1]))
+    rel = release(t, cmd, s, e)
+    vr = smooth(vrel[s:e + 1])
+    z = np.flatnonzero((vr >= 0) & (np.arange(s, e + 1) >= i))
+    out.append({
+      "t": round(float(t[i]), 1), "regime": regime, "v": round(float(v[i]), 1), "d": round(float(d[i]), 1),
+      "gap_s": round(float(d[i] / max(v[i], MOVING_MIN_V)), 2), "vrel": round(float(vrel[i]), 2),
+      "alead": round(float(R["alead"][i]), 2), "aleadk": round(float(R["aleadk"][i]), 2),
+      "aego": round(float(a[i]), 2),
+      "ttc_plain": round(float(ttc(d[i], v[i], vrel[i], 0.0)), 2),
+      "ttc_alead": round(float(ttc(d[i], v[i], vrel[i], R["alead"][i])), 2),
+      "ttc_aleadk": round(float(ttc(d[i], v[i], vrel[i], R["aleadk"][i])), 2),
+      "peak_cmd": round(float(cmd[p]), 2), "to_peak_s": round(float(t[p] - t[i]), 2),
+      "release_s": round(rel, 2) if math.isfinite(rel) else None,
+      # half-release time minus the moment the gap stopped closing: positive = still braking after it opened
+      "release_after_open_s": (round(float(t[p] + rel - t[s + z[0]]), 2) if len(z) and math.isfinite(rel) else None),
+      "reversals": reversals(cmd[i:e + 1]),
+    })
+  return out
+
+
+def law_grid(R: dict, who: str) -> np.ndarray:
+  """Per (time gap bin, TTC bin) cell: [rows, braking rows] over non-threat, non-set-speed rows."""
+  m = usable(R, who) & ~(np.isfinite(R["setv"]) & (R["setv"] < R["v"] + SETBIND_MS))
+  if who == "stock":
+    m &= ~(near_alert(R) > 0.5)
+  g = np.digitize(R["d"][m] / R["v"][m], GAP_BINS[1:-1])
+  c = np.digitize(ttc(R["d"][m], R["v"][m], R["vrel"][m], R["alead"][m]), TTC_BINS[1:-1])
+  out = np.zeros((len(GAP_BINS) - 1, len(TTC_BINS) - 1, 2))
+  np.add.at(out[..., 0], (g, c), 1)
+  np.add.at(out[..., 1], (g, c), (R["cmd"][m] < BRAKE_ON).astype(float))
+  return out
+
+
+def cmd_law(args) -> int:
+  """Stock's brake law split into its regimes, and ours beside it: when it starts braking, how it lets go."""
+  _, routes = load_corpus(args.cache_dir)
+  ours = [load(p.expanduser(), args.cache_dir) for p in args.routes] if args.routes else routes
+  groups = {"stock": [R for R in routes if not R["meta"]["op_long"]], "ours": [R for R in ours if R["meta"]["op_long"]]}
+  keys = ["v", "gap_s", "vrel", "alead", "aleadk", "ttc_plain", "ttc_alead", "ttc_aleadk", "peak_cmd", "to_peak_s",
+          "release_s", "release_after_open_s", "reversals"]
+  res, grids = {}, {}
+  for who, rs in groups.items():
+    ev = []
+    grids[who] = sum((law_grid(R, who) for R in rs), np.zeros((len(GAP_BINS) - 1, len(TTC_BINS) - 1, 2)))
+    for R in rs:
+      ev += [{"route": R["meta"]["route"], **e} for e in law_events(R, who)]
+    res[who] = ev
+  cols = [(w, g) for w in res for g in ("following", "threat", "set speed") if not (w == "ours" and g == "threat")]
+  cols = [(w, g, [e for e in res[w] if e["regime"] == g]) for w, g in cols]
+  print(f"brake onsets (command < {BRAKE_ON:g}) with a lead; TTC = ego at constant speed vs the lead keeping its accel, " +
+        f"capped at {TTC_CAP:g} s")
+  print(f"  {'median (p25..p75)':<21}" + "".join(f"{w + ' ' + g + f' n {len(ev)}':>24}" for w, g, ev in cols))
+  for k in keys:
+    cells = []
+    for _, _, ev in cols:
+      x = np.array([e[k] for e in ev if e[k] is not None], dtype=float)
+      cells.append(f"{np.median(x):+.2f} ({np.percentile(x, 25):+.1f}..{np.percentile(x, 75):+.1f})" if len(x) else "-")
+    print(f"  {k:<21}" + "".join(f"{c:>24}" for c in cells))
+  print(f"\nfollowing regime: share of rows braking (command < {BRAKE_ON:g}) by time gap and TTC(alead), stock / ours " +
+        f"('.' = under {LAW_MIN_ROWS // HZ} s of driving)")
+  lab = [f"{lo:g}-{hi:g}" if math.isfinite(hi) else f">{lo:g}" for lo, hi in zip(TTC_BINS[:-1], TTC_BINS[1:], strict=True)]
+  print(f"  {'gap | TTC':<10}" + "".join(f"{x:>14}" for x in lab))
+  for gi, (lo, hi) in enumerate(zip(GAP_BINS[:-1], GAP_BINS[1:], strict=True)):
+    row = []
+    for ci in range(len(TTC_BINS) - 1):
+      c = []
+      for w in ("stock", "ours"):
+        n, b = grids[w][gi, ci]
+        c.append(f"{100 * b / n:3.0f}" if n >= LAW_MIN_ROWS else "  .")
+      row.append(" / ".join(c))
+    print(f"  {(f'{lo:g}-{hi:g}' if math.isfinite(hi) else f'>{lo:g}'):<10}" + "".join(f"{x:>14}" for x in row))
+  if args.list:
+    for w, ev in res.items():
+      for e in ev:
+        print(f"  {w:<5} {e['route']:<22} {fmt_t(e['t'])} {e['regime']:<9}", {k: e[k] for k in keys})
+  if args.json:
+    Path(args.json).write_text(json.dumps({"events": res, "grid": {w: g.tolist() for w, g in grids.items()},
+                                           "gap_bins": GAP_BINS[1:-1], "ttc_bins": TTC_BINS[1:-1]}, indent=1))
+  return 0
+
+
 def cmd_compare(args) -> int:
   C, _ = load_corpus(args.cache_dir)
   out = []
@@ -817,14 +954,14 @@ def cmd_augment(args) -> int:
 def main() -> int:
   ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
   sub = ap.add_subparsers(dest="mode", required=True)
-  for name in ("build", "validate", "gain", "compare", "leadbrake", "stops", "augment"):
+  for name in ("build", "validate", "gain", "compare", "leadbrake", "stops", "law", "augment"):
     s = sub.add_parser(name)
     s.add_argument("--cache-dir", type=Path, required=True, help="per-route npz cache and corpus (outside the repo)")
-    if name in ("build", "gain", "compare", "leadbrake", "stops"):
-      s.add_argument("routes", nargs="*" if name in ("gain", "leadbrake", "stops") else "+", type=Path)
-    if name in ("leadbrake", "stops"):
+    if name in ("build", "gain", "compare", "leadbrake", "stops", "law"):
+      s.add_argument("routes", nargs="*" if name in ("gain", "leadbrake", "stops", "law") else "+", type=Path)
+    if name in ("leadbrake", "stops", "law"):
       s.add_argument("--list", action="store_true", help="print every event")
-    if name == "stops":
+    if name in ("stops", "law"):
       s.add_argument("--json")
     if name == "compare":
       s.add_argument("--json")
@@ -836,7 +973,7 @@ def main() -> int:
       s.add_argument("--out", required=True)
   args = ap.parse_args()
   return {"build": cmd_build, "validate": cmd_validate, "gain": cmd_gain, "compare": cmd_compare,
-          "leadbrake": cmd_leadbrake, "stops": cmd_stops, "augment": cmd_augment}[args.mode](args)
+          "leadbrake": cmd_leadbrake, "stops": cmd_stops, "law": cmd_law, "augment": cmd_augment}[args.mode](args)
 
 
 if __name__ == "__main__":

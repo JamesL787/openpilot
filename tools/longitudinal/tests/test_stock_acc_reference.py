@@ -112,3 +112,26 @@ def test_stock_brake_warning_is_carried_to_the_neighbours_and_unknown_on_old_cac
     R["alert"] = R["alert"] * np.nan  # cache from before the column
   eps = sar.compare_route(A, sar.Corpus(S))["episodes"]
   assert eps and all(e["stock_alert_share"] is None and "warn" not in sar.verdict(e) for e in eps)
+
+
+def test_ttc_counts_the_lead_braking_and_stopping():
+  assert abs(sar.ttc(30.0, 20.0, -3.0, 0.0) - 10.0) < 1e-6  # plain: gap / closing speed
+  assert sar.ttc(30.0, 20.0, +1.0, 0.0) == sar.TTC_CAP  # opening, lead steady: never
+  # no closing yet, lead braking at -4 from 20 m/s: 30 = 2 t^2 -> 3.87 s, before the lead stops at 5 s
+  assert abs(sar.ttc(30.0, 20.0, 0.0, -4.0) - np.sqrt(15.0)) < 1e-6
+  # slow lead stops first (2 m/s at -4: stopped in 0.5 m), ego at 10 m/s covers 20.5 m
+  assert abs(sar.ttc(20.0, 10.0, -8.0, -4.0) - 2.05) < 1e-6
+  assert sar.ttc(30.0, 20.0, -3.0, +2.0) == sar.ttc(30.0, 20.0, -3.0, 0.0)  # a lead speeding up is taken as steady
+
+
+def test_law_events_split_threat_following_and_set_speed():
+  R = _route("s0", False)
+  R["alert"] = ((R["t"] > 60) & (R["t"] < 61)).astype(float)  # dash BRAKE during the brake around 66 s
+  ev = sar.law_events(R, "stock")
+  assert ev and {e["regime"] for e in ev} == {"threat", "following"}
+  assert [e for e in ev if e["regime"] == "threat"][0]["t"] < 66
+  assert all(e["release_s"] is not None and e["ttc_plain"] < sar.TTC_CAP for e in ev)
+  R["setv"][:] = 15.0  # set speed below ego: stock is cutting speed, not following the lead
+  assert all(e["regime"] in ("threat", "set speed") for e in sar.law_events(R, "stock"))
+  A = _route("a0", True)
+  assert all(e["regime"] == "following" for e in sar.law_events(A, "ours"))  # no dash warning under op long
