@@ -193,6 +193,10 @@ class CarState(CarStateBase):
 
     ret.steeringAngleDeg = cp.vl["STEERING_SENSORS"]["STEER_ANGLE"]
     ret.steeringRateDeg = cp.vl["STEERING_SENSORS"]["STEER_ANGLE_RATE"]
+    # VSA yaw sensor, verified against GPS on the Clarity only. The DBC signal is clockwise-positive;
+    # yawRate is left-positive like steeringAngleDeg.
+    if self.CP.carFingerprint == CAR.HONDA_CLARITY:
+      ret.yawRate = -cp.vl["KINEMATICS"]["YAW_RATE"] * CV.DEG_TO_RAD
 
     ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_stalk(
       250, cp.vl["SCM_FEEDBACK"]["LEFT_BLINKER"], cp.vl["SCM_FEEDBACK"]["RIGHT_BLINKER"])
