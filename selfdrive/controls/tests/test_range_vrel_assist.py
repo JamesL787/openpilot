@@ -1394,3 +1394,53 @@ def test_young_track_vision_gate():
   assert not radard.young_track_vision_contradicts(lead, vis(x=50.0), 22.2)    # camera lead nearer than the radar one
   assert not radard.young_track_vision_contradicts(lead, vis(p=0.5), 22.2)
   assert not radard.young_track_vision_contradicts(lead, vis(a=-2.0), 22.2)
+
+
+# FAR_RAIL_VISION_BOUND (route 00000298 Bookmark 3, ~1020.3): far leadOne track 60 at ~121 m on the U11 rail with no
+# range fit, while the camera saw a car at that range doing 16-18 m/s. Numbers below are from that event.
+def _far_lead(d_rel=121.0, v_rel=RAIL, v_range=float('nan'), radar=True, status=True):
+  from types import SimpleNamespace
+  return SimpleNamespace(dRel=d_rel, vRel=v_rel, vRelRangeDerived=v_range, radar=radar, status=status)
+
+
+def _far_hist(n=20, x=121.0 + radard.RADAR_TO_CAMERA, v=17.0, p=0.5, spread=0.0):
+  from types import SimpleNamespace
+  vis = [SimpleNamespace(prob=p, x=[x], v=[v + (spread if i % 2 else -spread)]) for i in range(n)]
+  return [radard.far_rail_model_sample(m) for m in vis]
+
+
+def test_far_rail_bound_covers_route_298_bm3():
+  floor = radard.far_rail_vrel_floor(_far_lead(), _far_hist(), 21.5)
+  assert floor == pytest.approx(17.0 - 21.5 - radard.FAR_RAIL_MARGIN_MPS)
+  assert floor > RAIL + 5.0   # the rail claimed -13.5; the camera says ~-4.5
+
+
+def test_far_rail_bound_needs_far_railed_radar_lead():
+  hist = _far_hist()
+  assert radard.far_rail_vrel_floor(_far_lead(d_rel=79.0), _far_hist(x=79.0 + radard.RADAR_TO_CAMERA), 21.5) is None
+  assert radard.far_rail_vrel_floor(_far_lead(v_rel=RAIL + 0.1), hist, 21.5) is None   # off the rail: U11 is a reading
+  assert radard.far_rail_vrel_floor(_far_lead(radar=False), hist, 21.5) is None
+  assert radard.far_rail_vrel_floor(_far_lead(status=False), hist, 21.5) is None
+
+
+def test_far_rail_bound_needs_a_steady_camera_match():
+  lead = _far_lead()
+  n = radard.FAR_RAIL_MIN_MATCHES
+  assert radard.far_rail_vrel_floor(lead, _far_hist(n=n - 1) + [None], 21.5) is None
+  assert radard.far_rail_vrel_floor(lead, _far_hist(n=n), 21.5) is not None
+  assert radard.far_rail_vrel_floor(lead, _far_hist(x=100.0), 21.5) is None          # camera car at another range
+  assert radard.far_rail_vrel_floor(lead, _far_hist(p=0.1), 21.5) is None
+  assert radard.far_rail_vrel_floor(lead, _far_hist(spread=2.5), 21.5) is None       # camera speed not steady
+
+
+def test_far_rail_bound_range_veto_keeps_a_real_rail():
+  # 266 484: a real rail approach whose own range fit read -15..-19. Without this veto it braked 0.05 s later.
+  hist = _far_hist()
+  assert radard.far_rail_vrel_floor(_far_lead(v_range=-16.0), hist, 21.5) is None
+  assert radard.far_rail_vrel_floor(_far_lead(v_range=-2.0), hist, 21.5) is not None   # range agrees with camera
+
+
+def test_far_rail_bound_floor_follows_camera_speed_less_margin():
+  # The floor is the camera closing plus FAR_RAIL_MARGIN_MPS; it only ever raises a railed vRel, never lowers it.
+  floor = radard.far_rail_vrel_floor(_far_lead(), _far_hist(v=30.0), 21.5)
+  assert floor == pytest.approx(30.0 - 21.5 - radard.FAR_RAIL_MARGIN_MPS)
