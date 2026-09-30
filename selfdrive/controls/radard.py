@@ -390,6 +390,31 @@ ONPATH_ADOPT_RAIL_VREL_MPS = -12.5     # mean U11 at or below this is treated as
 ONPATH_ADOPT_MAX_D_REL_M = 120.0
 ONPATH_ADOPT_VISION_MARGIN_M = 5.0
 
+# Far birth-rail vision bound (route 00000298 Bookmark 3, ~1020.3-1021.4). Far leadOne track 60 was born at ~121 m
+# with U11 on the low rail (-13.5) and no range fit yet, while the camera saw a car at that range doing 16-18 m/s;
+# the planner held ~-0.85 for 1.2 s and the car reached aEgo -1.21. A railed U11 is only a bound (D-063). For a
+# Bosch-A radar lead (leadOne, leadTwo or leadOnpath) at dRel >= FAR_RAIL_MIN_D_REL_M whose published vRel is on the
+# rail, when the model lead in the same slot sat at the same range (|x - RADAR_TO_CAMERA - dRel| <=
+# max(FAR_RAIL_RANGE_TOL_M, FAR_RAIL_RANGE_TOL_FRAC * dRel), prob >= FAR_RAIL_VISION_MIN_PROB) on at least
+# FAR_RAIL_MIN_MATCHES of the last FAR_RAIL_HIST_FRAMES model frames with steady speed (pstdev <=
+# FAR_RAIL_MAX_SPEED_STDEV_MPS), the published vRel may claim at most FAR_RAIL_MARGIN_MPS more closing than
+# median(camera v) - vEgo. vLead/vLeadK move by the same amount; aLeadK, the track, U11, the KF and lead selection are
+# untouched, and nothing is deleted or coasted (D-041/D-042). Range veto: when the track's own vRelRangeDerived closes
+# at least as fast as the floor, the rail stands -- without it 266 484 (range fit -15..-19) braked 0.05 s later.
+# Replay (car-matched 07b66420, params 2026-09-30T16:44:42Z, fitted plant): 298 BM3 sim accel -1.20 -> -0.58; 283
+# 881.5, 23e 2342.9, 297 525.6, 263 358, 266 484, 266 560 identical to base. Does not touch the 0.2 s leadOnpath step
+# at 298 1018.35 (25 m). Replay evidence only; not road-validated.
+FAR_RAIL_VISION_BOUND = True
+FAR_RAIL_MIN_D_REL_M = 80.0
+FAR_RAIL_VREL_TOL_MPS = 0.05          # published vRel within this of BOSCH_A_U11_LOW_RAIL_MPS counts as railed
+FAR_RAIL_HIST_FRAMES = 20             # model frames (radard runs once per modelV2)
+FAR_RAIL_MIN_MATCHES = 12
+FAR_RAIL_VISION_MIN_PROB = 0.15
+FAR_RAIL_RANGE_TOL_M = 8.0
+FAR_RAIL_RANGE_TOL_FRAC = 0.08
+FAR_RAIL_MAX_SPEED_STDEV_MPS = 2.0
+FAR_RAIL_MARGIN_MPS = 3.0
+
 # stationary qualification parameters
 V_EGO_STATIONARY = 4.   # no stationary object flag below this speed
 
@@ -449,6 +474,29 @@ def young_track_vision_contradicts(lead, vis, v_ego: float) -> bool:
   return (float(vis.x[0]) >= float(lead.dRel) - YOUNG_TRACK_VISION_RANGE_MARGIN_M and
           float(vis.v[0]) - float(v_ego) >= -YOUNG_TRACK_VISION_MAX_CLOSING and
           float(vis.a[0]) >= YOUNG_TRACK_VISION_MIN_ACCEL)
+
+
+def far_rail_model_sample(vis) -> tuple[float, float, float] | None:
+  """FAR_RAIL_VISION_BOUND history entry for one model lead: (prob, range at the radar, speed), or None."""
+  if vis is None or not len(vis.x) or not len(vis.v):
+    return None
+  return float(vis.prob), float(vis.x[0]) - RADAR_TO_CAMERA, float(vis.v[0])
+
+
+def far_rail_vrel_floor(lead, hist, v_ego: float) -> float | None:
+  """FAR_RAIL_VISION_BOUND: the least vRel a far railed Bosch-A radar lead may publish, or None when it does not apply."""
+  if not (lead.status and lead.radar and lead.dRel >= FAR_RAIL_MIN_D_REL_M and
+          lead.vRel <= BOSCH_A_U11_LOW_RAIL_MPS + FAR_RAIL_VREL_TOL_MPS):
+    return None
+  tol = max(FAR_RAIL_RANGE_TOL_M, FAR_RAIL_RANGE_TOL_FRAC * lead.dRel)
+  speeds = [h[2] for h in hist if h is not None and h[0] >= FAR_RAIL_VISION_MIN_PROB and abs(h[1] - lead.dRel) <= tol]
+  if len(speeds) < FAR_RAIL_MIN_MATCHES or float(np.std(speeds)) > FAR_RAIL_MAX_SPEED_STDEV_MPS:
+    return None
+  floor = float(np.median(speeds)) - float(v_ego) - FAR_RAIL_MARGIN_MPS
+  v_range = float(lead.vRelRangeDerived)
+  if math.isfinite(v_range) and v_range <= floor:
+    return None  # the track's own range fit closes at least as fast: the rail stands
+  return floor
 
 
 def vision_assist_closing(d_rel: float, y_rel: float, vis, v_ego: float) -> float | None:
@@ -1293,6 +1341,8 @@ class RadarD:
     self.tracks: dict[int, Track] = {}
     self.honda_bosch_a_radar = honda_bosch_a_radar
     self.young_flat_bound_count = 0
+    self.far_rail_bound_count = 0
+    self.far_rail_hist = [deque(maxlen=FAR_RAIL_HIST_FRAMES) for _ in range(2)]  # per model lead slot
     # The lead KF consumes Bosch measurements at the physical radar cadence. Lead probability
     # filters, however, consume modelV2 leads every model cycle and must retain model-loop timing.
     kf_dt = HONDA_BOSCH_A_RADAR_TS if self.honda_bosch_a_radar else radar_ts
@@ -1462,6 +1512,9 @@ class RadarD:
       model_v_ego = self.v_ego
 
     leads_v3 = sm['modelV2'].leadsV3
+    if FAR_RAIL_VISION_BOUND and self.honda_bosch_a_radar:
+      for i in range(2):
+        self.far_rail_hist[i].append(far_rail_model_sample(leads_v3[i]) if len(leads_v3) > i else None)
     if len(leads_v3) > 1:
       for i in range(2):
         lead_prob = float(leads_v3[i].prob)
@@ -1505,6 +1558,19 @@ class RadarD:
             lead.vLead = lead.vLead + dv
             lead.vLeadK = lead.vLeadK + dv
             self.young_flat_bound_count += 1
+
+      if FAR_RAIL_VISION_BOUND and self.honda_bosch_a_radar:
+        far_leads = [(self.radar_state.leadOne, 0), (self.radar_state.leadTwo, 1)]
+        if ONPATH_RADAR_ADOPT:
+          far_leads.append((self.radar_state.leadOnpath, 0))
+        for lead, slot in far_leads:
+          floor = far_rail_vrel_floor(lead, self.far_rail_hist[slot], self.v_ego)
+          if floor is not None and lead.vRel < floor:
+            dv = floor - lead.vRel
+            lead.vRel = floor
+            lead.vLead = lead.vLead + dv
+            lead.vLeadK = lead.vLeadK + dv
+            self.far_rail_bound_count += 1
 
       for i, lead in enumerate((self.radar_state.leadOne, self.radar_state.leadTwo)):
         if lead.status and getattr(lead, "radar", False):
