@@ -61,6 +61,39 @@ def test_radar_closing_faster_than_model_is_tagged():
   A["mv"] = A["mv"] + sar.RADAR_MODEL_GAP + 1.0  # the model thinks the lead is 4 m/s faster than radar does
   eps = sar.compare_route(A, C)["episodes"]
   assert eps and all("radar closing > model" in sar.verdict(e) for e in eps)
+  assert all(e["model_dist_slope"] is not None and e["slope_fit_rows"] >= sar.HZ for e in eps)  # read-only columns
+
+
+def test_radar_model_spike_is_not_tagged_unless_vrel_is_on_the_rail():
+  C = sar.Corpus([_route(f"s{i}", False, seed=i) for i in range(3)])
+  A = _route("a0", True, seed=9, brake_gain=2.0)
+  A["mv"][::5] += sar.RADAR_MODEL_GAP + 1.0  # one row in five: the max passes the gate, the median does not
+  eps = sar.compare_route(A, C)["episodes"]
+  assert eps and all(e["radar_minus_model_closing_max"] >= sar.RADAR_MODEL_GAP for e in eps)
+  assert not any("radar closing" in sar.verdict(e) for e in eps)
+  A["vrel"] = np.minimum(A["vrel"], -1.0)
+  A["vrel"][A["vrel"] < -2.5] = -13.5  # on the rail the gap is a bound, so the max decides again
+  A["mv"] = A["v"] + A["vrel"]
+  A["mv"][::5] += sar.RADAR_MODEL_GAP + 1.0
+  eps = [e for e in sar.compare_route(A, C)["episodes"] if e["radar_vrel_on_rail"]]
+  assert eps and all("radar closing > model (rail)" in sar.verdict(e) for e in eps)
+  B = _route("a0", True, seed=9, brake_gain=2.0)
+  B["vrel"][np.flatnonzero(B["vrel"] < -2.5)[::20]] = -13.5  # a single rail row now and then: a touch, not a bound
+  B["mv"] = B["v"] + B["vrel"]
+  B["mv"][::5] += sar.RADAR_MODEL_GAP + 1.0
+  eps = sar.compare_route(B, C)["episodes"]
+  assert eps and all(not e["radar_vrel_on_rail"] and "radar closing" not in sar.verdict(e) for e in eps)
+  assert any(int(e["rail_rows"].split("/")[0]) > 0 for e in eps)
+
+
+def test_radar_model_gap_needs_enough_same_car_rows():
+  C = sar.Corpus([_route(f"s{i}", False, seed=i) for i in range(3)])
+  A = _route("a0", True, seed=9, brake_gain=2.0)
+  A["mv"] = A["mv"] + sar.RADAR_MODEL_GAP + 1.0
+  A["mx"][np.arange(len(A["t"])) % 4 != 0] = 80.0  # model lead elsewhere 3 rows in 4: ~5 same-car rows a second
+  eps = sar.compare_route(A, C)["episodes"]
+  assert eps and all(e["radar_model_low_n"] for e in eps)
+  assert all("radar closing" not in sar.verdict(e) and "radar/model low n" in sar.verdict(e) for e in eps)
 
 
 def test_lead_brake_onset_needs_a_calm_lead_first():

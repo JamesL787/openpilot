@@ -85,6 +85,10 @@ BRAKE_ON = -1.0              # episode starts when either side goes below this
 REVERSAL_MIN = 0.3           # m/s^2 swing that counts as the command changing its mind
 LEADBRAKE_ON = -1.0          # m/s^2 lead accel slope that counts as the lead starting to brake
 RADAR_MODEL_GAP = 3.0        # m/s radar closing faster than the model lead on the same car (Bob's gate3 condition)
+VREL_RAIL = -13.5 + 1 / 128  # m/s: radar vRel at or below this is on its rail, a bound not a value (Jason)
+MIN_SAME_ROWS = 10           # same-car rows (0.5 s) in the 1 s window before the radar/model gap can tag (Jason)
+RAIL_SHARE = 0.25           # share of the same-car rows on the rail before the radar/model tag falls back to the max gap
+SLOPE_WINDOW_S = 6.0         # s of same-car rows the read-only distance-slope columns are fitted over
 ALERT_WINDOW_S = 1.0         # s either side of a dash BRAKE warning that counts as "stock warned here"
 ALERT_SHARE = 0.2            # share of stock neighbours that warned before an episode is tagged "stock would warn"
 LINGER_S = 1.0               # s: ours takes this much longer than stock to back off half its peak (Bob, 299 bm1)
@@ -531,6 +535,22 @@ def compare_route(R: dict, C: Corpus) -> dict:
     same = (R["radar"][w] > 0.5) & (np.abs(R["mx"][w] - R["d"][w]) < np.maximum(5.0, 0.2 * R["d"][w]))
     gap = np.where(same, R["mv"][w] - vr_lead, np.nan)
     gap_max = float(np.nanmax(gap)) if np.isfinite(gap).any() else math.nan
+    # the tag fires on the median gap: 5 of 17 tags on 297/298/29c/29d were a one-row spike (Bob, Jason). With radar
+    # vRel on its rail the gap is only a lower bound and the median under-reports, so there the max still decides.
+    gap_med = float(np.nanmedian(gap)) if np.isfinite(gap).any() else math.nan
+    # one rail row among many is a touch, not a bound on the whole second (Jason): the max decides only past RAIL_SHARE
+    rail_rows, same_rows = int(np.sum(same & (R["vrel"][w] <= VREL_RAIL))), int(same.sum())
+    on_rail = same_rows > 0 and rail_rows >= RAIL_SHARE * same_rows
+    # too few same-car rows to call the second either way: no tag, only a "low n" note when the max would have fired
+    low_n = same_rows < MIN_SAME_ROWS
+    gap_trig = math.nan if low_n else gap_max if on_rail else gap_med
+    # read-only, in no verdict yet: does the model's own distance close like the radar's? On 29d 4:40 the model lead
+    # speed said no closing while its distance closed at -4.1 m/s against radar dRel -4.0. 2 s fits are too noisy.
+    ws = slice(max(0, k - int(SLOPE_WINDOW_S * HZ)), k + 1)
+    sm = (R["radar"][ws] > 0.5) & (np.abs(R["mx"][ws] - R["d"][ws]) < np.maximum(5.0, 0.2 * R["d"][ws]))
+    fit = int(sm.sum()) >= HZ
+    ts = t[ws][sm]
+    slopes = {c: round(float(np.polyfit(ts - ts[0], R[c][ws][sm], 1)[0]), 1) if fit else None for c in ("mx", "d")}
     eps.append({
       "t0": round(float(t[s]) + 2.0, 1), "t1": round(float(t[e]) - 2.0, 1),
       "ours_peak": round(ours_pk, 2), "stock_peak": round(st_pk, 2),
@@ -546,7 +566,12 @@ def compare_route(R: dict, C: Corpus) -> dict:
       "at_ours_peak": {"v": round(float(R["v"][k]), 1), "d": round(float(R["d"][k]), 1), "vrel": round(float(R["vrel"][k]), 1),
                        "alead": round(float(R["alead"][k]), 2), "aleadk": round(float(R["aleadk"][k]), 2),
                        "radar": bool(R["radar"][k] > 0.5), "model_v_minus_radar": round(float(R["mv"][k] - (R["v"][k] + R["vrel"][k])), 1)},
-      "radar_minus_model_closing": round(gap_max, 1) if math.isfinite(gap_max) else None,
+      "radar_minus_model_closing": round(gap_trig, 1) if math.isfinite(gap_trig) else None,
+      "radar_minus_model_closing_max": round(gap_max, 1) if math.isfinite(gap_max) else None,
+      "radar_minus_model_closing_median": round(gap_med, 1) if math.isfinite(gap_med) else None,
+      "radar_vrel_on_rail": on_rail, "rail_rows": f"{rail_rows}/{same_rows}", "radar_model_low_n": low_n,
+      "slope_fit_rows": int(sm.sum()), "model_dist_slope": slopes["mx"], "radar_dist_slope": slopes["d"],
+      "radar_vrel_median": round(float(np.nanmedian(R["vrel"][ws][sm])), 1) if fit else None,
       "min_a_ego": round(float(np.nanmin(R["a"][seg])), 2),
       "precedent_dist": round(dist, 2), "no_precedent": bool(dist > NO_PRECEDENT),
       "icbm_share": round(float(np.nanmean(pred["icbm"][seg])), 2),
@@ -589,7 +614,9 @@ def verdict(e: dict) -> str:
   if e.get("dash_alert"):
     tags.append("dash BRAKE shown")
   if (e.get("radar_minus_model_closing") or 0.0) >= RADAR_MODEL_GAP:
-    tags.append("radar closing > model")
+    tags.append("radar closing > model (rail)" if e.get("radar_vrel_on_rail") else "radar closing > model")
+  elif e.get("radar_model_low_n") and (e.get("radar_minus_model_closing_max") or 0.0) >= RADAR_MODEL_GAP:
+    tags.append("radar/model low n")
   if e["at_ours_peak"]["aleadk"] is not None and e["at_ours_peak"]["aleadk"] < -4 and e["at_ours_peak"]["alead"] > -1.5:
     tags.append("aLeadK spike")
   return ", ".join(tags) or "similar"
