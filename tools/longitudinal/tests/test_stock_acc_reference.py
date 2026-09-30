@@ -96,18 +96,23 @@ def test_radar_model_gap_needs_enough_same_car_rows():
   assert all("radar closing" not in sar.verdict(e) and "radar/model low n" in sar.verdict(e) for e in eps)
 
 
-def test_distance_slope_is_starred_when_its_window_spans_a_lead_swap():
+def test_distance_slope_is_fitted_only_since_the_last_lead_swap():
   C = sar.Corpus([_route(f"s{i}", False, seed=i) for i in range(3)])
   A = _route("a0", True, seed=9, brake_gain=2.0)
   eps = sar.compare_route(A, C)["episodes"]
   assert eps and not any(e["slope_spans_lead_swap"] for e in eps)
-  assert all(sar.slope_cell(e) == f"{e['radar_dist_slope']:+.1f}" for e in eps)
-  swap = (A["t"] % 5.0) < 2.5  # the lead alternates with a car 10 m nearer every 2.5 s, vRel unchanged
-  A["d"][swap], A["mx"][swap] = 20.0, 20.0
+  assert all(e["slope_seg_s"] >= sar.SLOPE_WINDOW_S - 0.1 and sar.slope_cell(e).endswith(f"({e['slope_seg_s']:.1f}s)")
+             for e in eps)
+  A["d"] = A["d"] + 10.0 * (A["t"] % 3.0 < 1.5)  # a car 10 m farther every other 1.5 s: segments of 1.5 s
+  A["mx"] = A["d"].copy()
   eps = sar.compare_route(A, C)["episodes"]
-  assert eps and all(e["slope_spans_lead_swap"] and sar.slope_cell(e).endswith("*") for e in eps)
-  assert all(sar.verdict(e) == sar.verdict(e | {"slope_spans_lead_swap": False}) for e in eps)  # display only
-  assert sar.slope_cell({"radar_dist_slope": None, "slope_spans_lead_swap": True}) == "-"
+  assert eps and all(e["slope_spans_lead_swap"] and e["slope_seg_s"] <= 1.5 for e in eps)
+  assert all(abs(e["radar_dist_slope_seg"]) < 1.0 for e in eps if e["radar_dist_slope_seg"] is not None)  # no step fitted
+  blank = {"radar_dist_slope_seg": None, "slope_seg_s": 0.0, "slope_spans_lead_swap": False}
+  assert all(sar.verdict(e) == sar.verdict(e | blank) for e in eps)  # display only (moving d moves the precedent)
+  A["d"] = A["d"] + 10.0 * (A["t"] % 1.0 < 0.5)  # segments under 1 s of rows: nothing to fit
+  A["mx"] = A["d"].copy()
+  assert all(sar.slope_cell(e) == "-" for e in sar.compare_route(A, C)["episodes"])
 
 
 def test_lead_brake_onset_needs_a_calm_lead_first():

@@ -556,7 +556,15 @@ def compare_route(R: dict, C: Corpus) -> dict:
     # vRel explains. A slope across one mixes two cars (297 48:05, 298 7:27: the lead left and revealed another).
     dw, vw, tw = R["d"][ws], R["vrel"][ws], t[ws]
     jump = np.abs(np.diff(dw) - vw[1:] * np.diff(tw)) > np.maximum(LEAD_SWAP_M, 0.1 * dw[1:])
-    lead_swap = bool(np.any(np.isfinite(dw[1:]) != np.isfinite(dw[:-1])) or np.any(jump[np.isfinite(jump)]))
+    brk = np.flatnonzero((np.isfinite(dw[1:]) != np.isfinite(dw[:-1])) | np.where(np.isfinite(jump), jump, False)) + 1
+    lead_swap = bool(brk.size)
+    # dRel6 column: fit only the last same-car segment, from the latest swap (or the window start) to our peak. With a
+    # 6 s fit every rail episode on 297/298/29c spanned a swap, so the slope said nothing where it was needed (Jason).
+    s0 = int(brk[-1]) if brk.size else 0
+    ssm = sm[s0:]
+    seg_fit = int(ssm.sum()) >= HZ
+    tss = tw[s0:][ssm]
+    seg_slope = round(float(np.polyfit(tss - tss[0], dw[s0:][ssm], 1)[0]), 1) if seg_fit else None
     eps.append({
       "t0": round(float(t[s]) + 2.0, 1), "t1": round(float(t[e]) - 2.0, 1),
       "ours_peak": round(ours_pk, 2), "stock_peak": round(st_pk, 2),
@@ -577,7 +585,8 @@ def compare_route(R: dict, C: Corpus) -> dict:
       "radar_minus_model_closing_median": round(gap_med, 1) if math.isfinite(gap_med) else None,
       "radar_vrel_on_rail": on_rail, "rail_rows": f"{rail_rows}/{same_rows}", "radar_model_low_n": low_n,
       "slope_fit_rows": int(sm.sum()), "model_dist_slope": slopes["mx"], "radar_dist_slope": slopes["d"],
-      "slope_spans_lead_swap": lead_swap,
+      "slope_spans_lead_swap": lead_swap, "radar_dist_slope_seg": seg_slope,
+      "slope_seg_s": round(float(tw[-1] - tw[s0]), 1),
       "radar_vrel_median": round(float(np.nanmedian(R["vrel"][ws][sm])), 1) if fit else None,
       "min_a_ego": round(float(np.nanmin(R["a"][seg])), 2),
       "precedent_dist": round(dist, 2), "no_precedent": bool(dist > NO_PRECEDENT),
@@ -596,9 +605,10 @@ def compare_route(R: dict, C: Corpus) -> dict:
 
 
 def slope_cell(e):
-  # dRel6 column: display only. "*" = the window holds a lead swap, so the slope mixes two cars (Jason, Bob)
-  s = e.get("radar_dist_slope")
-  return "-" if s is None else f"{s:+.1f}" + ("*" if e.get("slope_spans_lead_swap") else "")
+  # dRel6 column, display only: radar dRel slope since the last lead swap, and how long that segment is. "-" when it
+  # has under 1 s of same-car rows; never a fit across a swap, which mixes two cars (Jason, Bob)
+  s = e.get("radar_dist_slope_seg")
+  return "-" if s is None else f"{s:+.1f} ({e['slope_seg_s']:.1f}s)"
 
 
 def verdict(e: dict) -> str:
@@ -948,7 +958,7 @@ def cmd_compare(args) -> int:
     print(f"\n{res['route']} ({res['who']} long, {res['minutes_with_lead']} min engaged with a lead): command reversals " +
           f"per minute ours {res['ours_reversals_per_min']} vs stock precedent {res['stock_reversals_per_min']}")
     print(f"  {'time':>7s} {'ours pk':>7s} {'stock pk':>8s} {'onset o/s':>11s} {'rel o/s':>9s} {'rev o/s':>7s} {'<-2.5s o/s':>10s} " +
-          f"{'aEgo':>5s} {'v':>4s} {'d':>5s} {'vrel':>5s} {'aLd':>5s} {'aLdK':>5s} {'prec':>4s} {'dRel6':>6s}  verdict")
+          f"{'aEgo':>5s} {'v':>4s} {'d':>5s} {'vrel':>5s} {'aLd':>5s} {'aLdK':>5s} {'prec':>4s} {'dRel6':>12s}  verdict")
     for e in res["episodes"]:
       if e["ours_peak"] > args.min_peak and e["stock_peak"] > args.min_peak:
         continue
@@ -959,9 +969,9 @@ def cmd_compare(args) -> int:
       print(f"  {fmt_t(e['t0']):>7s} {e['ours_peak']:+7.2f} {e['stock_peak']:+8.2f} {on:>11s} {rel:>9s} " +
             f"{e['ours_reversals']:>3d}/{e['stock_reversals']:<4.1f} {e['ours_s_below_2p5']:4.1f}/{e['stock_s_below_2p5']:<4.1f} " +
             f"{e['min_a_ego']:+5.1f} {k['v']:4.0f} {k['d']:5.0f} {k['vrel']:+5.1f} {k['alead']:+5.1f} {k['aleadk']:+5.1f} " +
-            f"{e['precedent_dist']:4.1f} {slope_cell(e):>6s}  {verdict(e)}")
-    print(f"  dRel6: radar distance slope (m/s) over the {SLOPE_WINDOW_S:.0f} s before our peak, display only; " +
-          "* window spans a track change")
+            f"{e['precedent_dist']:4.1f} {slope_cell(e):>12s}  {verdict(e)}")
+    print(f"  dRel6: radar distance slope (m/s) from the last lead swap (at most {SLOPE_WINDOW_S:.0f} s back) to our peak, " +
+          "(segment length); '-' = under 1 s of same-car rows. Display only")
     out.append({k: v for k, v in res.items() if not k.startswith("_")} | {"verdicts": [verdict(e) for e in res["episodes"]]})
   if args.json:
     Path(args.json).write_text(json.dumps(out, indent=1))
