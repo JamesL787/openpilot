@@ -1575,14 +1575,22 @@ OFF-vs-OFF 0 diffs on 6 windows; replay and static only). Does not include ns-bo
   sigma 25-26, 61.8-63.0 m): lead vRel -16.24 → -13.50, planner min -3.63 → -3.61.
 - 109 rail windows on 40 routes, RAIL_FAST armed in 20: the veto fires only at 297 48:12 and at a NEW case, 278 4:37
   (00000278--8f101d683e, tid 61, 62.6-65.7 m). It fires on 4/12 calls there, with NC median 3.72-3.97 above the rail
-  (sigma 14-17). OFF published -15.29 while the replayed range slope was -13.15..-13.55 (at the rail), so the fire looks
-  correct: lead min -15.29 → -14.96, planner min -2.42 → -2.41. Largest planner-min change anywhere: 0.01.
-  Caveat: that slope is a rough least-squares fit of the replayed lead distance, not the ground-frame truth above; at
-  297 it reads -5.3..-6.2 against truth -8.1..-8.8.
-- Near misses that do not fire (NC above rail, closing less than the rail, so a fire would be harmless): 023e 24:09
-  (2.90), 266 8:03 (2.84), 278 4:39 (3.23-3.38).
-- Threshold window: 278 4:37 shows the upper bound near 3.72, not 4.8, so the window is about (2.6, 3.72) and 3.5 sits
-  0.22 below its top. The largest real-gain case is still 236 at 2.60. The constant is unchanged.
+  (sigma 14-17). Lead min -15.29 → -14.96 (ON publishes the rail, -13.50), planner min -2.42 → -2.41. Largest planner-min
+  change anywhere: 0.01.
+- **278 is a WRONG fire (log; Bob, ground-frame truth by ncveto_extract/ncveto_truth, same method as 297).** The fires are
+  at 4:38.48-4:38.68 (tid 61, 62.6-65.7 m). Truth is -14.88/-14.77/-14.70/-14.57, i.e. 0.07-0.38 PAST rail - 1, so the
+  veto removed a real correction. OFF (RAIL_FAST -15.29..-15.09) was 0.41-0.52 more closing than truth; ON (-13.50) is
+  1.07-1.38 less closing. On this track NC read about 5 m/s less closing than truth from 62 to 86 m (median -9.7 vs
+  -14.9; 50-75 m NC minus truth +4.82, n 54, 80% > +3.5). The rough lead-distance fit used first had called it correct.
+  Near misses 4:38.78-4:39.23 (NC 3.23-3.38 above the rail) did not fire; truth there is -14.50..-14.21.
+  Before Bob's truth run, ncveto_extract.py spied `_bosch_a_nc_vrel`, which runs only with D-069 on, so it produced
+  empty NC; it now spies `_bosch_a_nc_published`.
+- **Threshold: no evidence-backed window.** 236 needs Y > 2.60 to keep its gain, 278 needs Y > 3.97 to avoid this wrong fire,
+  and 297 needs Y <= ~4.8 to fire on every sweep. That leaves (3.97, 4.8), set by one case at each edge. NC past 50 m
+  can be off by about 5 m/s in EITHER direction: right at 297 (range tail wrong), wrong at 278 (range right). Moving
+  the constant to fit these three cases is the offline re-tune the repo warns against. The constant stays 3.5 and
+  the switch stays OFF. The 278 cost is small (0.07-0.38 past rail - 1 for 0.2 s, planner -0.01), but this rule
+  can only be justified by a gain, and at 297 its planner gain is also ~0.
 - Tests on a built aarch64 tree: test_range_vrel_assist 147 passed, test_bosch_a_radar 157 passed, honda tests 346
   passed. The 2 Mac TestBuiltIn failures were the params fallback.
 

@@ -1366,9 +1366,10 @@ class TestRailFastNcVeto:
     assert all(c == 0.0 for c, _ in on)
     assert all(v == RAIL for _, v in on), "the rail itself is published (D-041 bound), never less closing"
 
-  def test_278_437_shape_fires_just_inside_the_threshold(self, monkeypatch):
-    # 278 4:37 tid 61 (Bob's car-matched A/B): RAIL_FAST -15.3 at 62.6-65.7 m, NC median -9.53..-9.78 (3.72-3.97
-    # above the rail), sigma 14-17. The veto fires; this case is the upper edge of the (2.6, 3.72) threshold window.
+  def test_278_shape_fires_though_truth_says_the_correction_was_real(self, monkeypatch):
+    # 278 4:38.48-.68 tid 61 (Bob's car-matched A/B): RAIL_FAST -15.3 at 62.6-65.7 m, NC median -9.53..-9.78 (3.72-3.97
+    # above the rail), sigma 14-17. The veto fires. This pins current behaviour; it is NOT a correct fire: ground-frame
+    # truth was -14.57..-14.88, past rail - 1, so the veto removes a real correction here (D-071).
     # A clean synthetic -15.3 slope does not arm RAIL_FAST (the logged one armed on a noisy newborn tail), so the range
     # uses the -16.2 arming shape; what is under test is the NC side.
     ncs = [-9.6, -9.8, -9.5, -9.7, -9.6]
