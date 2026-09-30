@@ -40,15 +40,17 @@ SETTINGS_REFRESH_FRAMES = 300
 
 # Lateral delay the model is told (liveDelay.lateralDelay's role in lat_action_t), scheduled on speed. It
 # replaces the single SteerDelay / lagd value for this controller, whose real execution delay is not one
-# number: measured as the lag of car curvature behind the logged model action on routes 363-369 (SteerDelay
-# 0.22), the car ran 43 ms early at 2-5 m/s, on time at 5-15 m/s, and late above 15 m/s. Each value is that
-# measured lag minus the fixed pipeline offset, so the car reaches the requested curvature when the model
-# intends it to. Above 15 m/s lane centering pulls 6-10% of a curve back out through its 0.4 s smoothing and
-# reads as extra lag; that is not delay and the model cannot aim around it, so those values use the lag from
-# controlsd's output to the car plus the action ramp. lagd only learns above 15 m/s, so it cannot find the
-# low-speed end.
+# number. Each value is the measured lag of car curvature behind the logged model action minus the fixed
+# pipeline offset (0.038 s), so the car reaches the requested curvature when the model intends it to.
+# - Car curvature comes from the yaw sensor (0x94). The comma gyro runs ~50 ms behind the car and put the
+#   first version of this table that much too long.
+# - The lag hardly depends on the delay the model was told (5-9 m/s: 0.15 / 0.15 / 0.17 s at 0.22 / 0.30 /
+#   0.48), so routes 354-36b are pooled.
+# - Above 15 m/s lane centering pulls 6-10% of a curve back out through its 0.4 s smoothing and reads as extra
+#   lag. That is not delay and the model cannot aim around it, so those values sum the stage lags without it.
+# lagd only learns above 15 m/s, so it cannot find the low-speed end.
 CLARITY_LAT_DELAY_BP = [3.5, 7.0, 12.0, 20.0, 30.0]  # m/s, centres of the measured bands
-CLARITY_LAT_DELAY_V = [0.18, 0.20, 0.23, 0.28, 0.35]  # s
+CLARITY_LAT_DELAY_V = [0.12, 0.12, 0.15, 0.20, 0.30]  # s
 
 # Wheel angle <-> curvature, identified against the car's own yaw sensor (0x94, GPS-verified) on routes 341-36b.
 # VehicleModel's form is kept, lin = R * L * [k (1 - sf v^2) - g sf roll], with lin the firmware-VGR linear
