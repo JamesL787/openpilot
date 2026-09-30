@@ -26,7 +26,8 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
-from openpilot.selfdrive.controls.lib.latcontrol_clarity_eps import LatControlClarityEps, clarity_lateral_delay, use_clarity_eps_controller
+from openpilot.selfdrive.controls.lib.latcontrol_clarity_eps import LatControlClarityEps, clarity_lateral_delay, get_clarity_rack_map, \
+  use_clarity_eps_controller
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
@@ -450,6 +451,7 @@ class Controls:
       self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
 
     self.clarity_eps_controller = use_clarity_eps_controller(self.CP)
+    self.clarity_rack_map = get_clarity_rack_map(self.CP)
     # see TURN_SHAPING_TAU
     self.turn_shaping = self.clarity_eps_controller
 
@@ -726,7 +728,11 @@ class Controls:
 
     angle_offset = lp.angleOffsetDeg if self.learn_angle_offset else 0.0
     steer_angle_without_offset = math.radians(CS.steeringAngleDeg - angle_offset)
-    self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
+    if self.clarity_rack_map is not None:
+      # the same map the controller steers through, so a held or seeded curvature comes back as the same wheel angle
+      self.curvature = self.clarity_rack_map.curvature_from_angle(CS.steeringAngleDeg - angle_offset, CS.vEgo, lp.roll)
+    else:
+      self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
     # Update Torque Params
     # The Clarity hybrid keeps self.CP on the pid union but still runs an NNFF half
