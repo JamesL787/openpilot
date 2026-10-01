@@ -3089,13 +3089,14 @@ class LongitudinalPlanner:
         self.v_desired_trajectory, self.a_desired_trajectory,
         action_t=action_t, vEgoStopping=starpilot_toggles.vEgoStopping)
       output_a_target_e2e = sm['modelV2'].action.desiredAcceleration
-      if bool(getattr(starpilot_toggles, "gas_override_boost", False)):
+      accel_boost_on = bool(getattr(starpilot_toggles, "gas_override_boost", True))
+      if accel_boost_on:
         # Port of commaai/openpilot PR 39015: boost the e2e target ahead of arbitration.
         # Upstream compares against min(mpc, a_cruise). a_cruise here is the accel that reaches v_cruise
         # within the actuator delay, the same formula as the downstream lead cruise cap.
         a_cruise = max(0.0, (v_cruise - scene_v_ego + 0.01) / max(action_t, self.dt))
         model_limited = experimental_mode and self.accel_boost.apply(output_a_target_e2e) < min(output_a_target_mpc, a_cruise)
-        self.accel_boost.update(bool(sm['selfdriveState'].enabled), bool(sm['carState'].gasPressed),
+        self.accel_boost.update(bool(sm['selfdriveState'].enabled), bool(getattr(sm['carState'], 'gasPressed', False)),
                                 scene_v_ego, model_limited)
         output_a_target_e2e = self.accel_boost.apply(output_a_target_e2e)
       else:
@@ -3137,11 +3138,14 @@ class LongitudinalPlanner:
           getattr(sm['starpilotPlan'], 'forcingStop', False) or
           getattr(sm['starpilotPlan'], 'redLight', False)
         )
-        if bool(getattr(starpilot_toggles, "gas_override_boost", True)):
+        if accel_boost_on:
           output_a_target = self.update_exp_lead_departure(
             output_a_target, output_a_target_e2e, output_a_target_mpc, scene_v_ego,
             sm['starpilotPlan'].tFollow, hold_experimental,
           )
+        else:
+          self.exp_lead_departure_weight = 0.0
+          self.exp_lead_departure_lift = 0.0
     else:
       output_a_target, output_should_stop = get_accel_from_plan(
         self.v_desired_trajectory, self.a_desired_trajectory,

@@ -5041,3 +5041,30 @@ def test_accel_boost_toggle_gates_the_lead_departure_assist():
   assert on.exp_lead_departure_weight > 0.0
   assert off.exp_lead_departure_weight == 0.0
   assert off.exp_lead_departure_lift == 0.0
+
+
+def test_accel_boost_toggle_off_mid_drive_zeroes_the_lead_departure_state():
+  lead = make_lead(status=True, d_rel=70.0, v_lead=19.0, a_lead=0.1, radar=True, model_prob=1.0)
+  lead.vRel = 2.0
+  planner = _boost_planner_run(True, lead_one=lead, presses=0)
+  assert planner.exp_lead_departure_weight > 0.0
+  sm = make_sm(17.0, -0.3, -3.5, experimental_mode=True, lead_one=lead)
+  sm["carState"].gasPressed = False
+  planner.update(sm, _boost_toggles(False))
+  assert planner.exp_lead_departure_weight == 0.0
+  assert planner.exp_lead_departure_lift == 0.0
+
+
+def test_accel_boost_defaults_on_when_the_toggle_attribute_is_missing():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=17.0)
+  sm = make_sm(17.0, -0.3, -3.5, experimental_mode=True)
+  toggles = make_toggles()  # no gas_override_boost attribute
+  for _ in range(20):
+    planner.update(sm, toggles)
+  for _ in range(2):
+    sm["carState"].gasPressed = True
+    planner.update(sm, toggles)
+    sm["carState"].gasPressed = False
+    planner.update(sm, toggles)
+  assert planner.accel_boost.value > 0.0
