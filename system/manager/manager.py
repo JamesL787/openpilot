@@ -990,7 +990,7 @@ def migrate_nrdr_lat_tune_2026_09_24(params: Params, params_cache: Params) -> No
 
 
 def migrate_nrdr_clarity_eps_default(params: Params, params_cache: Params) -> None:
-  # clarity-eps-testing: James's LatControlClarityEps is this branch's default controller. Turned on once
+  # clarity-eps-testing: James's LatControlHondaEps is this branch's default controller. Turned on once
   # (whatever the stored value), so the toggle still switches back to LatControlPID afterwards.
   if NRDR_CLARITY_EPS_DEFAULT_MIGRATION_FLAG.exists():
     return

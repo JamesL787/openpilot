@@ -4,7 +4,7 @@
   sim_export.py ROUTE_DIR_OR_RLOG [...] --out DIR [--all]
 
 The 20 Hz Plots rows are too slow for the sim's 5-8 Hz torque roughness and per-frame torque steps, so this is
-rebuilt from the rlog: one row per controlsState that carries pidState (~100 Hz; LatControlClarityEps publishes
+rebuilt from the rlog: one row per controlsState that carries pidState (~100 Hz; LatControlHondaEps publishes
 pidState too). Writes DIR/<seg>/lat_pid_sim.npz for every segment with openpilot steering (every segment with --all)
 and DIR/export.json. DIR is route data: never commit it.
 

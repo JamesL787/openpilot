@@ -173,12 +173,12 @@ def test_rate_damping_opposes_the_wheel_rate_below_30_mph_only():
 # C020 plant, so convergence is scored on logged routes (STATUS 167), not here.
 @pytest.mark.parametrize("vgr", [False, True])
 def test_clarity_eps_kind_builds_the_car_controller_and_joins_the_feedforward(vgr):
-  from openpilot.selfdrive.controls.lib.latcontrol_clarity_eps import LatControlClarityEps
+  from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps
   from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import CIVIC_BOSCH_C020
   d = _route(0.02, vgr=vgr)   # a turn past FF_CRAWL_ANGLE_BP, so the crawl gate is fully open
   d["params"]["NrdrLatUseFirmwareVgr"] = "1" if vgr else "0"
   ctl = sim.Controller(d["cp_bytes"], d["params"], kind="clarity_eps")
-  assert isinstance(ctl.lac, LatControlClarityEps) and ctl.lac.core.ff.cal is CIVIC_BOSCH_C020
+  assert isinstance(ctl.lac, LatControlHondaEps) and ctl.lac.core.ff.cal is CIVIC_BOSCH_C020
   weights = []
   for k in range(400):   # wheel held on the target: the feedforward joins and fades in over 0.5 s
     ctl.step(d, k, ctl.raw_target() if k else 0.0, 0.0, False)
@@ -200,10 +200,10 @@ def test_clarity_eps_kind_ignores_the_pid_sliders_as_on_the_car():
 
 
 def test_clarity_eps_kind_is_refused_on_a_stock_eps_and_restores_params():
-  from openpilot.selfdrive.controls.lib import latcontrol_clarity_eps
-  before = latcontrol_clarity_eps.Params
+  from openpilot.selfdrive.controls.lib import latcontrol_honda_eps
+  before = latcontrol_honda_eps.Params
   sim.simulate(_route(0.002, n=400), PLANT, kind="clarity_eps")
-  assert latcontrol_clarity_eps.Params is before
+  assert latcontrol_honda_eps.Params is before
   CP = interfaces[HONDA.HONDA_CIVIC_BOSCH].get_non_essential_params(HONDA.HONDA_CIVIC_BOSCH)
   with pytest.raises(ValueError):
     sim.Controller(CP.to_bytes(), {}, kind="clarity_eps")

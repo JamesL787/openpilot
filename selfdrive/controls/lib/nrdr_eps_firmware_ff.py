@@ -1,10 +1,10 @@
 """nrdr: the modified-EPS lateral controller built on the EPS firmware's own control law (Clarity and Civic Bosch C020).
 
 Ported from JamesL787/openpilot vfn-controller-shadow (shadow 52618f42, controller 8c3a3fd8, output LPF fd815ef3).
-The feedforward and ClarityEpsLateralCore below are upstream's, line for line, with the firmware constants moved
+The feedforward and HondaEpsLateralCore below are upstream's, line for line, with the firmware constants moved
 into a calibration and the fixed P/I trims into arguments, so the Civic Bosch C020 image can use its own. The
-feedforward is logged in shadow by LatControlPID; NrdrLatEpsFirmwareFF hands the car to LatControlClarityEps,
-which runs ClarityEpsLateralCore exactly as upstream does on the Clarity (STATUS 164-166).
+feedforward is logged in shadow by LatControlPID; NrdrLatEpsFirmwareFF hands the car to LatControlHondaEps,
+which runs HondaEpsLateralCore exactly as upstream does on the Clarity (STATUS 164-166).
 
 The Clarity's LKAS path is not a torque command. The firmware turns our 0xE4 value into a target R5,
 compares it with R6 -- a filtered steering RATE (R6 = -138.6 counts per deg/s, corr 0.98 against
@@ -102,7 +102,7 @@ FF_OUTPUT_TAU = 0.15     # s, first-order smoothing of the feedforward itself
 R5_CAP = 27000.0         # stay clear of the 30000 rail, where the classic stutter lived (route 154)
 R5_CAP_ENVELOPE_FRAC = 0.9
 
-# ClarityEpsLateralCore. The feedback path is vfn 35ddc44b's modified-EPS angle PID with the P/I trims the car
+# HondaEpsLateralCore. The feedback path is vfn 35ddc44b's modified-EPS angle PID with the P/I trims the car
 # ran on it (2026-09-26, LatPScale 125/100/125, LatIScale 70/95/35), fixed here because the replay validated
 # the feedforward against exactly that PID. The output LPF is the NRDR setting (these are the car's values).
 MPH_TO_MS = 0.44704
@@ -204,7 +204,7 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
   r6_per_deg_s=-173.0,
 )
 
-# Civic column load for the PID's firmware feedforward only (NrdrLatPidFirmwareFF). latcontrol_clarity_eps uses
+# Civic column load for the PID's firmware feedforward only (NrdrLatPidFirmwareFF). latcontrol_honda_eps uses
 # CIVIC_EPS_LOAD below. Same model and sign as LOAD_*, fitted on the owner's C020 PID drives 284, 285,
 # 286, 287, 289, 28a, 28b (engaged, no press or lane change for 1 s, |command| < 0.9). Target: the firmware
 # output the car's own command implies, firmware_output(r5_from_output(command), rate). Held out one route at
@@ -218,7 +218,7 @@ CIVIC_PID_LOAD = (-6.2586, -0.16199, -1.6872, -303.29443, -78.01171, -0.57818)
 CIVIC_PID_LOAD_MIN_V = 11.18  # m/s, 25 mph
 LOAD_BLEND_V = 1.8  # m/s: blend from the Clarity fit to the car's own over 25-29 mph (a hard switch stepped up to 0.026)
 
-# Civic column load for LatControlClarityEps on the C020, at every speed. Fitted on the firmware's OWN output rather
+# Civic column load for LatControlHondaEps on the C020, at every speed. Fitted on the firmware's OWN output rather
 # than the command: P + KFF rebuilt from the bus 1 0x6A1 error telemetry (R5 = err + R6, Kp from the P row), hands
 # off (not pressed, |steeringTorque| < 400), engaged above 2 m/s, jointly on routes 287 + 289 + 294, friction width
 # 5 deg/s. Held out one route at a time, R^2 0.64 / 0.74 / 0.79 against 0.61 / 0.70 / 0.76 for the Clarity fit, which
@@ -298,7 +298,7 @@ def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, cal: Ep
   return min(roots, key=lambda r: abs(r - r5_guess))
 
 
-class ClarityEpsFirmwareFeedforward:
+class HondaEpsFirmwareFeedforward:
   def __init__(self, dt: float, rate_tau: float = DESIRED_RATE_TAU, lead_s: float = LEAD_S,
                output_tau: float = FF_OUTPUT_TAU, friction_width: float | None = None,
                cal: EpsFirmwareCalibration = CLARITY_A020, load=None, load_min_v: float = 0.0):
@@ -343,19 +343,19 @@ def speed_band(v_ego: float, values):
   return values[0] if v_ego < BAND_LOW_MAX else values[1] if v_ego < BAND_STD_MAX else values[2]
 
 
-class ClarityEpsLateralCore:
+class HondaEpsLateralCore:
   """Angle PID on the residual + firmware-inversion feedforward, faded in once the wheel is on the path.
 
   Pure (no messaging, no params), so the closed-loop replay can drive exactly the code the car runs.
   """
 
-  def __init__(self, kp_bp, kp_v, ki_bp, ki_v, dt: float, ff: ClarityEpsFirmwareFeedforward | None = None,
+  def __init__(self, kp_bp, kp_v, ki_bp, ki_v, dt: float, ff: HondaEpsFirmwareFeedforward | None = None,
                p_scale=P_SCALE, i_scale=I_SCALE):
     self.dt = dt
     self.p_scale = p_scale
     self.i_scale = i_scale
     self.pid = PIDController((kp_bp, kp_v), (ki_bp, ki_v), pos_limit=1.0, neg_limit=-1.0, rate=1.0 / dt)
-    self.ff = ff if ff is not None else ClarityEpsFirmwareFeedforward(dt)
+    self.ff = ff if ff is not None else HondaEpsFirmwareFeedforward(dt)
     # The NRDR torque-output LPF, run exactly as LatControlPID runs it (the car controller deliberately does
     # not filter, so this is the only one): same filter class, same per-band update_alpha, reset to 0.
     self.output_lpf = FirstOrderFilter(0.0, OUTPUT_LPF_TAU[0], dt)

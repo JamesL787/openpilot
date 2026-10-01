@@ -5,7 +5,7 @@ through tools/drive_plots/rlog_report.py, from any route's rlogs:
   same definitions (hold swing, release overshoot, back on plan, release step, drift toward the push);
 - radar / longitudinal moments: Radar Work (Bob);
 - lane centring, angle tracking, feedforward, integrator and tight-turn lag per speed band: VFN Shadow controller
-  (James), for LatControlClarityEps.
+  (James), for LatControlHondaEps.
 
 Pure functions over the recorder's column dict ``c`` (name -> float array). NaN means "not recorded" (a recording made
 before the column existed, or a message that never arrived); every metric that needs a missing column is None, never a
@@ -999,7 +999,7 @@ def lateral_detail(c, lateral_delay=None):
   err = np.abs(c["ang_act"] - c["ang_des"]) if angles else None
   out = {"status": "ok", "engaged_s": round(float(np.count_nonzero(eng) * dt), 1), "bands": [],
          "sample_dt_s": round(dt, 3),
-         "notes": [("pidState.p is the P before the per-band p_scale (1.25 / 1.00 / 1.25 on LatControlClarityEps), and the "
+         "notes": [("pidState.p is the P before the per-band p_scale (1.25 / 1.00 / 1.25 on LatControlHondaEps), and the "
                     "output is clipped and low-pass filtered, so p + i + f is not the output."),
                    f"Lane offsets under {LANE_DEADBAND * 100:.0f} cm are inside lane centring's deadband.",
                    "Frames with the wheel pressed (raw steeringPressed) and the first second after a release are left out."]}

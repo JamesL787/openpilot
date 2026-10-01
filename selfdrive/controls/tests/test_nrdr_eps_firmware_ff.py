@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from cereal import car, custom, log
-import openpilot.selfdrive.controls.lib.latcontrol_clarity_eps as clarity_eps
+import openpilot.selfdrive.controls.lib.latcontrol_honda_eps as clarity_eps
 import openpilot.selfdrive.controls.lib.latcontrol_pid as latcontrol_pid
 import openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff as eps_ff
 from opendbc.car.car_helpers import interfaces
@@ -53,14 +53,14 @@ def test_turn_in_asks_more_than_a_hold_and_an_exit_less():
 
 @pytest.mark.parametrize("v_kph,cap", [(40.0, eps_ff.R5_CAP), (130.0, 0.9 * 24000)])
 def test_target_stays_clear_of_the_rail_and_the_speed_ceiling(v_kph, cap):
-  ff = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL)
+  ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL)
   for k in range(200):
     ff.update(400.0 + k, v_kph / 3.6, 0.0)
   assert abs(ff.r5) <= cap + 1e-6
 
 
 def test_desired_rate_tracks_a_ramp_and_resets():
-  ff = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL)
+  ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL)
   for k in range(150):
     ff.update(50.0 * k * DT_CTRL, 10.0, 0.0)
   assert ff.rate == pytest.approx(50.0, abs=1.0)
@@ -69,8 +69,8 @@ def test_desired_rate_tracks_a_ramp_and_resets():
 
 
 def test_feedforward_output_is_smoothed():
-  raw = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, output_tau=0.0)
-  smooth = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL)
+  raw = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, output_tau=0.0)
+  smooth = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL)
   for ff in (raw, smooth):
     ff.update(0.0, 10.0, 0.0)
     ff.update(30.0, 10.0, 0.0)   # a step in the target
@@ -123,7 +123,7 @@ def test_c020_rate_damping_is_the_c020s():
 
 
 def test_c020_target_stays_clear_of_the_rail():
-  ff = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, cal=C020)
+  ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, cal=C020)
   for k in range(200):
     ff.update(400.0 + k, 40.0 / 3.6, 0.0)
   assert abs(ff.r5) <= eps_ff.R5_CAP + 1e-6
@@ -207,9 +207,9 @@ def test_load_fit_defaults_to_the_clarity_constants():
 
 @pytest.mark.parametrize("v", [8.0, 15.0])
 def test_civic_load_fit_applies_from_25_mph(v):
-  civic = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, cal=C020, load=eps_ff.CIVIC_PID_LOAD,
+  civic = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, cal=C020, load=eps_ff.CIVIC_PID_LOAD,
                                                load_min_v=eps_ff.CIVIC_PID_LOAD_MIN_V)
-  clarity = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, cal=C020)
+  clarity = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, cal=C020)
   civic.update(30.0, v, 0.04)
   clarity.update(30.0, v, 0.04)
   assert (civic.load == clarity.load) == (v < eps_ff.CIVIC_PID_LOAD_MIN_V)
@@ -222,7 +222,7 @@ def test_civic_load_fit_blends_in_without_a_step():
   # the load's own speed term moves it ~2 per 0.01 m/s)
   loads = []
   for v in np.arange(10.5, 14.0, 0.01):
-    ff = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, cal=C020, load=eps_ff.CIVIC_PID_LOAD,
+    ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, cal=C020, load=eps_ff.CIVIC_PID_LOAD,
                                               load_min_v=eps_ff.CIVIC_PID_LOAD_MIN_V)
     ff.update(40.0, float(v), 0.0)
     loads.append(ff.load)
@@ -262,7 +262,7 @@ KP_BP, KP_V, KI_V = [0.0, 11.175, 11.176, 22.352], [0.018, 0.024, 0.048, 0.060],
 
 
 def _core():
-  return eps_ff.ClarityEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL)
+  return eps_ff.HondaEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL)
 
 
 def _hold(core, frames, des=40.0, angle=40.0, v=10.0, pressed=False):
@@ -333,7 +333,7 @@ def test_friction_knee_is_wide_in_the_city_and_sharp_at_speed():
 def test_c020_eps_load_is_its_own_at_every_speed():
   assert eps_ff.CIVIC_EPS_LOAD == pytest.approx(tuple(c * eps_ff.SCALE_Q8 / 256.0 for c in eps_ff.CIVIC_EPS_LOAD_PRESCALE))
   for v in (3.0, 10.0, 25.0):
-    ff = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, cal=eps_ff.CIVIC_BOSCH_C020, load=eps_ff.CIVIC_EPS_LOAD)
+    ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, cal=eps_ff.CIVIC_BOSCH_C020, load=eps_ff.CIVIC_EPS_LOAD)
     ff.update(30.0, v, 0.02)
     assert ff.load == pytest.approx(eps_ff.column_load(30.0, 0.0, v, 0.02, eps_ff.friction_width(v), eps_ff.CIVIC_EPS_LOAD))
 
@@ -387,7 +387,7 @@ def test_output_lpf_setting_is_honoured():
 
 
 def test_civic_core_is_the_banded_pid_on_the_civic_trims():
-  core = eps_ff.ClarityEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL, ff=eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, cal=C020),
+  core = eps_ff.HondaEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL, ff=eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, cal=C020),
                                       p_scale=eps_ff.CIVIC_P_SCALE, i_scale=eps_ff.CIVIC_I_SCALE)
   eps_ff.FF_JOIN_ERROR_DEG, saved = -1.0, eps_ff.FF_JOIN_ERROR_DEG
   try:
@@ -424,19 +424,33 @@ def _cp(candidate, modified=True):
 def _controller(monkeypatch, candidate, values=None):
   monkeypatch.setattr(clarity_eps, "Params", lambda: _ValueParams(values))
   CP = _cp(candidate)
-  return clarity_eps.LatControlClarityEps(CP.as_reader(), None, DT_CTRL), VehicleModel(CP), CP
+  return clarity_eps.LatControlHondaEps(CP.as_reader(), None, DT_CTRL), VehicleModel(CP), CP
 
 
 @pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH])
 def test_the_toggle_selects_this_controller_on_a_modified_eps(candidate):
   on, off = _ValueParams({"NrdrLatEpsFirmwareFF": "1"}), _ValueParams()
-  assert clarity_eps.use_clarity_eps_controller(_cp(candidate), on)
-  assert not clarity_eps.use_clarity_eps_controller(_cp(candidate), off)
-  assert not clarity_eps.use_clarity_eps_controller(_cp(candidate, modified=False), on)
+  assert clarity_eps.use_honda_eps_controller(_cp(candidate), on)
+  assert not clarity_eps.use_honda_eps_controller(_cp(candidate), off)
+  assert not clarity_eps.use_honda_eps_controller(_cp(candidate, modified=False), on)
+
+
+@pytest.mark.parametrize("v, delay", [(0.0, 0.12), (3.5, 0.12), (7.0, 0.12), (12.0, 0.15), (20.0, 0.20), (30.0, 0.30), (40.0, 0.30)])
+def test_the_clarity_tells_the_model_its_speed_scheduled_delay(v, delay):
+  schedule = clarity_eps.eps_lateral_delay_schedule(_cp(HONDA.HONDA_CLARITY), _ValueParams({"NrdrLatEpsFirmwareFF": "1"}))
+  assert clarity_eps.eps_lateral_delay(schedule, v, 0.5) == pytest.approx(delay)
+
+
+def test_cars_without_a_measured_schedule_keep_live_delay():
+  on, off = _ValueParams({"NrdrLatEpsFirmwareFF": "1"}), _ValueParams()
+  assert clarity_eps.eps_lateral_delay_schedule(_cp(HONDA.HONDA_CIVIC_BOSCH), on) is None      # not measured yet
+  assert clarity_eps.eps_lateral_delay_schedule(_cp(HONDA.HONDA_CLARITY), off) is None         # controller off
+  assert clarity_eps.eps_lateral_delay_schedule(_cp(HONDA.HONDA_CLARITY, modified=False), on) is None
+  assert clarity_eps.eps_lateral_delay(None, 12.0, 0.27) == 0.27
 
 
 def test_other_modified_eps_hondas_keep_latcontrol_pid():
-  assert not clarity_eps.use_clarity_eps_controller(_cp(HONDA.HONDA_CIVIC), _ValueParams({"NrdrLatEpsFirmwareFF": "1"}))
+  assert not clarity_eps.use_honda_eps_controller(_cp(HONDA.HONDA_CIVIC), _ValueParams({"NrdrLatEpsFirmwareFF": "1"}))
 
 
 def test_the_civic_runs_its_own_calibration_and_trims(monkeypatch):

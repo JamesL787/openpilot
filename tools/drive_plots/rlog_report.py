@@ -21,7 +21,7 @@ carState (100 Hz; the analysis thresholds were written for 20 Hz, so compare lik
 
 Tune snapshot (initData of the first segment): gitCommit / gitBranch, every Nrdr* and HondaOverride* key in
 common/params_keys.h ("missing" when the log has no entry), the lane-centring and delay keys,
-openpilotLongitudinalControl (carParams), the sha1 of selfdrive/controls/lib/latcontrol_clarity_eps.py at the logged
+openpilotLongitudinalControl (carParams), the sha1 of selfdrive/controls/lib/latcontrol_honda_eps.py (latcontrol_clarity_eps.py before the rename) at the logged
 commit (from this repo's git; "working tree" when the commit is not here), liveDelay.lateralDelay (median and last)
 and the last liveTorqueParameters. The controller is tools/lateral/lat_score.py's detect rule (route_verdict).
 
@@ -48,7 +48,8 @@ sys.path.insert(1, ROOT)
 
 from openpilot.starpilot.system.the_galaxy import drive_plots as dp  # noqa: E402
 
-CLARITY_FILE = "selfdrive/controls/lib/latcontrol_clarity_eps.py"
+# newest name first: the module was latcontrol_clarity_eps.py before the rename
+CONTROLLER_FILES = ("selfdrive/controls/lib/latcontrol_honda_eps.py", "selfdrive/controls/lib/latcontrol_clarity_eps.py")
 EXTRA_KEYS = ("LaneCentering", "LaneCenteringE2EAuthority", "LaneCenterOffset", "SteerDelay", "BoschARadar",
               "ExperimentalMode", "ConditionalExperimental", "ConditionalChill", "LongitudinalPersonality")
 RLOG_SERVICE = dp.RLOG_SERVICE
@@ -79,16 +80,17 @@ def agent_param_keys():
 def clarity_sha1(commit):
   if commit:
     try:
-      blob = subprocess.run(["git", "-C", ROOT, "show", f"{commit}:{CLARITY_FILE}"], capture_output=True, timeout=20)
-      if blob.returncode == 0:
-        return {"sha1": hashlib.sha1(blob.stdout).hexdigest(), "from": f"git {commit[:12]}"}
+      for path in CONTROLLER_FILES:
+        blob = subprocess.run(["git", "-C", ROOT, "show", f"{commit}:{path}"], capture_output=True, timeout=20)
+        if blob.returncode == 0:
+          return {"sha1": hashlib.sha1(blob.stdout).hexdigest(), "from": f"git {commit[:12]}"}
       missing = subprocess.run(["git", "-C", ROOT, "cat-file", "-e", f"{commit}^{{commit}}"], capture_output=True, timeout=20)
       if missing.returncode == 0:
         return {"sha1": None, "from": f"git {commit[:12]} (file not in that commit)"}
     except Exception:
       pass
   try:
-    with open(os.path.join(ROOT, CLARITY_FILE), "rb") as f:
+    with open(os.path.join(ROOT, CONTROLLER_FILES[0]), "rb") as f:
       return {"sha1": hashlib.sha1(f.read()).hexdigest(), "from": "working tree (the logged commit is not in this repo)"}
   except OSError:
     return {"sha1": None, "from": "not found"}

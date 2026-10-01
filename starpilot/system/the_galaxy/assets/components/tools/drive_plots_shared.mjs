@@ -589,7 +589,7 @@ const TUNE_GROUPS = [
   { title: "Radar", test: (k) => /radar|EcuMatchedLong/i.test(k) },
 ]
 const TUNE_TEST_ORDER = [1, 0]
-// Keys James's controller does not read (latcontrol_clarity_eps.py docstring): the gain sliders and Honda PID scales.
+// Keys James's controller does not read (latcontrol_honda_eps.py docstring): the gain sliders and Honda PID scales.
 const SLIDER_KEY = /^Lat[PIF]Scale(LowSpeed|Standard|Highway)$|^LatGainSchedule$|^HondaLateralPidK[pi]Scale$/
 
 // The tune snapshot stored with a recording, grouped: [{title, note, rows: [{label, value, unused}]}].

@@ -802,7 +802,7 @@ class CarController(CarControllerBase):
       # Clarity's behaviour, now shared by every modified-EPS Honda: the command path uses raw
       # steeringPressed and only debounces when NrdrIncreaseOverrideTolerance is explicitly on.
       # Civic Bosch used to force the filter on here regardless; that exception is gone.
-      # NrdrLatVfnOverride: vfn-yaw-trim's override policy, written for LatControlClarityEps. Every press goes
+      # NrdrLatVfnOverride: vfn-yaw-trim's override policy, written for LatControlHondaEps. Every press goes
       # through the same 0.28 s modified-EPS filter that controller uses for its own pressed state, with no
       # debounce, hold or same-direction assist: a raw threshold crossing chatters around the driver-torque
       # boundary, and fading the actuator while the controller sees a different override state reads as safety

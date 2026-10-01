@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One lateral scorecard for both controllers (LatControlPID and LatControlClarityEps), from replay and from MetaDrive.
+"""One lateral scorecard for both controllers (LatControlPID and LatControlHondaEps), from replay and from MetaDrive.
 
 The MetaDrive gain search (branch sim-lat-training) proposes tunes; this tool accepts or rejects them against the
 owner's drives, with the metrics STATUS 173/175 used, so a candidate reaches the car only if it does not regress
@@ -22,7 +22,7 @@ Metrics (per route; 100 Hz lat_pid_sim frames):
               (4-5.36 and 5.36-11.2 m/s); NaN under 50 frames. turn_trail + turn_past = turn_err: the part where the
               wheel trails |des| and the part where it is past it (overshoot, or unwind lag), signed by des. turn_sat is the fraction of those frames with
               |output| > 0.99 (authority-limited, not a tracking failure) and turn_ffw the mean feedforward weight
-              there (LatControlClarityEps core.ff_weight or LatControlPID eps_ff_weight; replay only).
+              there (LatControlHondaEps core.ff_weight or LatControlPID eps_ff_weight; replay only).
   dither      reversals per second of the controller output on |des| < 5 deg, hands off, by the wobble bins; a
               reversal needs |out| > 0.01 on both sides (hysteresis), so resting near 0 does not count.
   unwind_lag  mean best time shift (s) of angle onto desired over the unwind half of low-speed turns with a peak
@@ -50,13 +50,14 @@ FF_CRAWL_ANGLE_BP / FF_CRAWL_SPEED_BP) for the candidate only, in the worker pro
 set these.
 
 detect (per segment, from the rlog; group routing rule 2026-09-27):
-  initData    NrdrLatEpsFirmwareFF (read once when controlsd starts: 1 = LatControlClarityEps, 0 = PID; absent counts
-              as PID only when the logged commit is in this repo and has no latcontrol_clarity_eps.py, e.g. 280),
+  initData    NrdrLatEpsFirmwareFF (read once when controlsd starts: 1 = LatControlHondaEps, 0 = PID; absent counts
+              as PID only when the logged commit is in this repo and has no latcontrol_honda_eps.py
+              (latcontrol_clarity_eps.py before the rename), e.g. 280),
               NrdrLatPidFirmwareFF (start value only; it is re-read live) and gitCommit / gitBranch.
   identity    fraction of engaged v > 4 m/s frames where pidState.f == epsFfWeight * epsFfFeedforward of the same
               frame (|diff| < 1e-5), counting only frames where either side exceeds 1e-3 (both ~0 would match
               trivially: weight 0 under clarity_eps, the ~2e-6 Civic kf near centre under pid); under 200 such
-              frames the segment is "undetermined" and only its key counts. LatControlClarityEps logs the feedforward it applied as pid.f, gated or not, so
+              frames the segment is "undetermined" and only its key counts. LatControlHondaEps logs the feedforward it applied as pid.f, gated or not, so
               it scores ~1; LatControlPID logs its unscaled kf term there (PidFF crossfades later, in the output), so
               it scores ~0. > 0.95 = clarity_eps, < 0.2 = pid, else unknown; n/a without starpilotLateralState.
               Measured: 286 1.00, 285 0.00 (static log check).
@@ -432,7 +433,7 @@ def detect_segment(path):
   eps = init.get("NrdrLatEpsFirmwareFF")
   by_key = None if eps is None else ("clarity_eps" if eps.strip() == "1" else "pid")
   if by_key is None and _build_predates_clarity(init.get("git", "")):
-    by_key, eps = "pid", "(build predates LatControlClarityEps)"
+    by_key, eps = "pid", "(build predates LatControlHondaEps)"
   if by_key == "clarity_eps":
     r["pidff_frac"] = None  # the weight in turns is this controller's own feedforward, not PidFF
   else:
@@ -441,8 +442,12 @@ def detect_segment(path):
   return r
 
 
+# LatControlHondaEps's module, newest name first (it was latcontrol_clarity_eps.py before the rename).
+CONTROLLER_FILES = ("selfdrive/controls/lib/latcontrol_honda_eps.py", "selfdrive/controls/lib/latcontrol_clarity_eps.py")
+
+
 def _build_predates_clarity(git):
-  """True when the logged commit is in this repo and has no latcontrol_clarity_eps.py: PID by construction."""
+  """True when the logged commit is in this repo and has neither controller file: PID by construction."""
   import subprocess
   sha = git.rpartition("@")[2]
   if len(sha) < 7:
@@ -450,7 +455,7 @@ def _build_predates_clarity(git):
   repo = REPO if os.path.isdir(os.path.join(REPO, ".git")) else os.getcwd()  # out-of-tree copy: the cwd's repo
   run = lambda *c: subprocess.run(["git", "-C", repo, *c], capture_output=True).returncode  # noqa: E731
   return run("cat-file", "-e", f"{sha}^{{commit}}") == 0 and \
-    run("cat-file", "-e", f"{sha}:selfdrive/controls/lib/latcontrol_clarity_eps.py") != 0
+    all(run("cat-file", "-e", f"{sha}:{f}") != 0 for f in CONTROLLER_FILES)
 
 
 def route_verdict(segs):
