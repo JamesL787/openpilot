@@ -6,7 +6,7 @@ import pytest
 
 from cereal import car, log
 import openpilot.selfdrive.controls.lib.clarity_rack_map as rack
-import openpilot.selfdrive.controls.lib.latcontrol_clarity_eps as clarity_eps
+import openpilot.selfdrive.controls.lib.latcontrol_honda_eps as honda_eps
 import openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff as eps_ff
 from opendbc.car import structs
 from opendbc.car.honda.interface import CarInterface
@@ -72,14 +72,14 @@ def test_turn_in_asks_more_than_a_hold_and_an_exit_less():
 
 @pytest.mark.parametrize("v_kph,cap", [(40.0, eps_ff.R5_CAP), (130.0, 0.9 * 24000)])
 def test_target_stays_clear_of_the_rail_and_the_speed_ceiling(v_kph, cap):
-  ff = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL)
+  ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL)
   for k in range(200):
     ff.update(400.0 + k, v_kph / 3.6, 0.0)
   assert abs(ff.r5) <= cap + 1e-6
 
 
 def test_desired_rate_tracks_a_ramp_and_resets():
-  ff = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL)
+  ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL)
   for k in range(150):
     ff.update(50.0 * k * DT_CTRL, 10.0, 0.0)
   assert ff.rate == pytest.approx(50.0, abs=1.0)
@@ -88,8 +88,8 @@ def test_desired_rate_tracks_a_ramp_and_resets():
 
 
 def test_feedforward_output_is_smoothed():
-  raw = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL, output_tau=0.0)
-  smooth = eps_ff.ClarityEpsFirmwareFeedforward(DT_CTRL)
+  raw = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, output_tau=0.0)
+  smooth = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL)
   for ff in (raw, smooth):
     ff.update(0.0, 10.0, 0.0)
     ff.update(30.0, 10.0, 0.0)   # a step in the target
@@ -99,7 +99,7 @@ def test_feedforward_output_is_smoothed():
 # --- control core ---------------------------------------------------------------------------------
 
 def _core():
-  return eps_ff.ClarityEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL)
+  return eps_ff.HondaEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL)
 
 
 def _hold(core, frames, des=20.0, angle=20.0, v=10.0, pressed=False):
@@ -225,24 +225,24 @@ class _Params:
 
 
 def _controller(monkeypatch, values=None):
-  monkeypatch.setattr(clarity_eps, "Params", lambda: _Params(values))
+  monkeypatch.setattr(honda_eps, "Params", lambda: _Params(values))
   CP = _params(CLARITY_MODIFIED_FW)
-  return clarity_eps.LatControlClarityEps(CP, None, DT_CTRL), VehicleModel(CP), CP
+  return honda_eps.LatControlHondaEps(CP, None, DT_CTRL), VehicleModel(CP), CP
 
 
 def test_only_the_modified_eps_clarity_gets_this_controller():
-  assert clarity_eps.use_clarity_eps_controller(_params(CLARITY_MODIFIED_FW))
-  assert not clarity_eps.use_clarity_eps_controller(_params(CLARITY_STOCK_FW))
-  assert not clarity_eps.use_clarity_eps_controller(_params(b'39990-TBA,A030\x00\x00', CAR.HONDA_CIVIC_BOSCH))
+  assert honda_eps.use_honda_eps_controller(_params(CLARITY_MODIFIED_FW))
+  assert not honda_eps.use_honda_eps_controller(_params(CLARITY_STOCK_FW))
+  assert not honda_eps.use_honda_eps_controller(_params(b'39990-TBA,A030\x00\x00', CAR.HONDA_CIVIC_BOSCH))
 
 
 @pytest.mark.parametrize("v, delay", [(0.0, 0.12), (3.5, 0.12), (7.0, 0.12), (12.0, 0.15), (20.0, 0.20), (30.0, 0.30), (40.0, 0.30)])
 def test_lateral_delay_follows_the_measured_execution_delay(v, delay):
-  assert clarity_eps.clarity_lateral_delay(v) == pytest.approx(delay)
+  assert honda_eps.clarity_lateral_delay(v) == pytest.approx(delay)
 
 
 def test_lateral_delay_rises_with_speed():
-  delays = [clarity_eps.clarity_lateral_delay(v) for v in np.linspace(0.0, 40.0, 81)]
+  delays = [honda_eps.clarity_lateral_delay(v) for v in np.linspace(0.0, 40.0, 81)]
   assert all(b >= a for a, b in zip(delays, delays[1:], strict=False))
 
 
@@ -295,14 +295,14 @@ def test_target_honours_the_angle_rate_limit(monkeypatch):
 
 
 def _rack_map():
-  rack_map = clarity_eps.get_clarity_rack_map(_params(CLARITY_MODIFIED_FW))
+  rack_map = honda_eps.get_clarity_rack_map(_params(CLARITY_MODIFIED_FW))
   assert rack_map is not None
   return rack_map
 
 
 def test_rack_map_is_only_built_for_the_identified_car():
   _rack_map()
-  assert clarity_eps.get_clarity_rack_map(_params(CLARITY_STOCK_FW)) is None
+  assert honda_eps.get_clarity_rack_map(_params(CLARITY_STOCK_FW)) is None
 
 
 @pytest.mark.parametrize("v", [0.0, 7.0, 15.0, 30.0])

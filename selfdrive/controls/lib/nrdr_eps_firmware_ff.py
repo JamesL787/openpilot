@@ -12,7 +12,7 @@ This inverts the chain instead. A column load model (stiffness, speed stiffness,
 road roll) says what motor output a motion needs; the firmware law is solved for the R5 that produces it,
 rate damping included; the command map is inverted back to a lateral output. On a turn-in the load and
 damping terms add, on an exit they cancel, so no hand-tuned asymmetry is needed. vfn's angle PID stays on
-the residual (ClarityEpsLateralCore), with the gains and output filter the car ran on vfn 35ddc44b.
+the residual (HondaEpsLateralCore), with the gains and output filter the car ran on vfn 35ddc44b.
 
 Evidence, routes 00000352 / 00000353 (vfn 35ddc44b, P-minus-5 firmware):
   - E4 = -3840 * u; R5 = 7.7 * E4 ~20 ms later (corr 0.998); firmware output reproduced to 1-2 counts
@@ -111,7 +111,7 @@ FF_OUTPUT_TAU = 0.15     # s, first-order smoothing of the feedforward itself
 R5_CAP = 27000.0         # stay clear of the 30000 rail, where the classic stutter lived (route 154)
 R5_CAP_ENVELOPE_FRAC = 0.9
 
-# ClarityEpsLateralCore. The feedback path is vfn 35ddc44b's modified-EPS angle PID with the P/I trims the car
+# HondaEpsLateralCore. The feedback path is vfn 35ddc44b's modified-EPS angle PID with the P/I trims the car
 # ran on it (2026-09-26, LatPScale 125/100/125, LatIScale 70/95/35), fixed here because the replay validated
 # the feedforward against exactly that PID. The output LPF is the NRDR setting (these are the car's values).
 MPH_TO_MS = 0.44704
@@ -211,7 +211,7 @@ def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, angle_d
   return min(roots, key=lambda r: abs(r - r5_guess))
 
 
-class ClarityEpsFirmwareFeedforward:
+class HondaEpsFirmwareFeedforward:
   def __init__(self, dt: float, rate_tau: float = DESIRED_RATE_TAU, lead_s: float = LEAD_S,
                output_tau: float = FF_OUTPUT_TAU, friction_width: float | None = None):
     self.dt = dt
@@ -249,16 +249,16 @@ def speed_band(v_ego: float, values):
   return values[0] if v_ego < BAND_LOW_MAX else values[1] if v_ego < BAND_STD_MAX else values[2]
 
 
-class ClarityEpsLateralCore:
+class HondaEpsLateralCore:
   """Angle PID on the residual + firmware-inversion feedforward, faded in once the wheel is on the path.
 
   Pure (no messaging, no params), so the closed-loop replay can drive exactly the code the car runs.
   """
 
-  def __init__(self, kp_bp, kp_v, ki_bp, ki_v, dt: float, ff: ClarityEpsFirmwareFeedforward | None = None):
+  def __init__(self, kp_bp, kp_v, ki_bp, ki_v, dt: float, ff: HondaEpsFirmwareFeedforward | None = None):
     self.dt = dt
     self.pid = PIDController((kp_bp, kp_v), (ki_bp, ki_v), pos_limit=1.0, neg_limit=-1.0, rate=1.0 / dt)
-    self.ff = ff if ff is not None else ClarityEpsFirmwareFeedforward(dt)
+    self.ff = ff if ff is not None else HondaEpsFirmwareFeedforward(dt)
     # The NRDR torque-output LPF, run exactly as LatControlPID runs it (the car controller deliberately does
     # not filter, so this is the only one): same filter class, same per-band update_alpha, reset to 0.
     self.output_lpf = FirstOrderFilter(0.0, OUTPUT_LPF_TAU[0], dt)
