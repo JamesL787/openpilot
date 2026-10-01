@@ -47,12 +47,17 @@ SETTINGS_REFRESH_FRAMES = 300
 # - Car curvature comes from the yaw sensor (0x94). The comma gyro runs ~50 ms behind the car and put the
 #   first version of this table that much too long.
 # - The lag hardly depends on the delay the model was told (5-9 m/s: 0.15 / 0.15 / 0.17 s at 0.22 / 0.30 /
-#   0.48), so routes 354-36b are pooled.
+#   0.48), so routes are pooled.
+# - The lag is fitted with a gain per route (tools/clarity_lateral_report timing). The first table (0.12 / 0.12 /
+#   0.15 at 3.5 / 7 / 12 m/s, routes 354-36b) compared raw curves, and the car delivering only 0.85-0.96 of the
+#   request there read as extra lag: on 36c-377 the car turned 40-70 ms early in the city. Refit 2026-10-01 on
+#   36c/36d/373/377 and, separately, 362-36b (same answer): 2.5-5 m/s 0.18 / 0.14, 5-9 m/s 0.08 / 0.08,
+#   9-15 m/s 0.10 / 0.10 s. Crawl is slower than town because the wheel gets ~0.8 of small targets there.
 # - Above 15 m/s lane centering pulls 6-10% of a curve back out through its 0.4 s smoothing and reads as extra
 #   lag. That is not delay and the model cannot aim around it, so those values sum the stage lags without it.
 # lagd only learns above 15 m/s, so it cannot find the low-speed end.
 CLARITY_LAT_DELAY_BP = [3.5, 7.0, 12.0, 20.0, 30.0]  # m/s, centres of the measured bands
-CLARITY_LAT_DELAY_V = [0.12, 0.12, 0.15, 0.20, 0.30]  # s
+CLARITY_LAT_DELAY_V = [0.15, 0.08, 0.10, 0.20, 0.30]  # s
 
 
 def use_honda_eps_controller(CP) -> bool:
