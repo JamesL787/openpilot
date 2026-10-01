@@ -13,7 +13,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.starpilot.common.testing_grounds import testing_ground
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import CIVIC_BOSCH_C020, CIVIC_PID_LOAD, CIVIC_PID_LOAD_MIN_V, \
-  CLARITY_A020, ClarityEpsFirmwareFeedforward
+  CLARITY_A020, HondaEpsFirmwareFeedforward
 from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   RAV4_TSS2_CARS,
   SUBARU_IMPREZA_CARS,
@@ -520,7 +520,7 @@ class LatControlPID(LatControl):
     eps_shadow_cal = {HONDA.HONDA_CLARITY: CLARITY_A020, HONDA.HONDA_CIVIC_BOSCH: CIVIC_BOSCH_C020}.get(CP.carFingerprint)
     if self.is_eps_modified and eps_shadow_cal is not None:
       eps_shadow_load = CIVIC_PID_LOAD if eps_shadow_cal is CIVIC_BOSCH_C020 else None
-      self.eps_shadow_ff = ClarityEpsFirmwareFeedforward(dt, cal=eps_shadow_cal, load=eps_shadow_load,
+      self.eps_shadow_ff = HondaEpsFirmwareFeedforward(dt, cal=eps_shadow_cal, load=eps_shadow_load,
                                                          load_min_v=CIVIC_PID_LOAD_MIN_V)
       self.eps_shadow_failed = False
       self.starpilot_lateral_state = custom.StarPilotLateralState.new_message()

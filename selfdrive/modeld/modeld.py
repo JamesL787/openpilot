@@ -32,6 +32,7 @@ from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 from openpilot.system import sentry
 from opendbc.car.car_helpers import get_demo_car_params
 from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import eps_lateral_delay, eps_lateral_delay_schedule
 from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan_tomb_raider, smooth_value
 from openpilot.selfdrive.modeld.camera_offset import CameraOffset, DEFAULT_CAMERA_HEIGHT
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
@@ -1304,6 +1305,8 @@ def main(demo=False):
     else:
       CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
   cloudlog.info("modeld got CarParams: %s", CP.brand)
+  # the EPS controller's speed-scheduled lateral delay, the same one controlsd uses; None keeps liveDelay
+  lat_delay_schedule = eps_lateral_delay_schedule(CP, params)
 
   lat_smooth_seconds = _model_smooth_seconds(params, "LatSmoothSeconds", LAT_SMOOTH_SECONDS)
   long_smooth_seconds = _model_smooth_seconds(params, "LongSmoothSeconds", LONG_SMOOTH_SECONDS)
@@ -1358,7 +1361,7 @@ def main(demo=False):
     lat_smooth_default = CP.lateralSmoothSeconds if (CP.brand == "rivian" or CP.lateralSmoothSeconds > 0.0) else LAT_SMOOTH_SECONDS
     lat_smooth_maximum = _model_smooth_seconds(params, "LatSmoothSeconds", lat_smooth_default)
     lat_smooth_seconds = get_car_lateral_smooth_seconds(CP.brand, v_ego, lat_smooth_maximum)
-    lat_delay = sm["liveDelay"].lateralDelay + lat_smooth_seconds
+    lat_delay = eps_lateral_delay(lat_delay_schedule, v_ego, sm["liveDelay"].lateralDelay) + lat_smooth_seconds
     lateral_control_params = np.array([v_ego, lat_delay], dtype=np.float32)
     if sm.frame % 60 == 0:
       camera_offset.set_target(params.get_float("CameraOffset", return_default=True))

@@ -227,7 +227,7 @@ class Controller:
   latcontrol_torque_upstream.py); "torque_starpilot" is StarPilot's LatControlTorque with NNFF off (NNFF is a
   different class that controlsd swaps in; it is never built here). The torque kinds are built on the logged
   CarParams with the lateral tuning switched to torque and the TORQUE_DEFAULTS values (overridable).
-  "clarity_eps" is LatControlClarityEps, what controlsd builds on a modified-EPS Clarity / Civic Bosch when
+  "clarity_eps" is LatControlHondaEps, what controlsd builds on a modified-EPS Clarity / Civic Bosch when
   NrdrLatEpsFirmwareFF is on (STATUS 166), on the logged CarParams' pid gains; LatP/I/F and the Honda Kp/Ki scales
   do not reach it, as on the car."""
   def __init__(self, cp_bytes, params, testing_ground=False, kind="pid", torque=None):
@@ -281,11 +281,11 @@ class Controller:
       if "kf" in self.gains:
         self.lac.is_modified_eps_kf_car = False
     elif kind == "clarity_eps":
-      from openpilot.selfdrive.controls.lib import latcontrol_clarity_eps
-      if not latcontrol_clarity_eps.use_clarity_eps_controller(self.CP, _DictParams({"NrdrLatEpsFirmwareFF": "1"})):
+      from openpilot.selfdrive.controls.lib import latcontrol_honda_eps
+      if not latcontrol_honda_eps.use_honda_eps_controller(self.CP, _DictParams({"NrdrLatEpsFirmwareFF": "1"})):
         raise ValueError(f"clarity_eps needs a modified-EPS Clarity or Civic Bosch on pid tuning, not {self.CP.carFingerprint}")
-      self._patch(latcontrol_clarity_eps, "Params", lambda: _DictParams(self.params))
-      self.lac = latcontrol_clarity_eps.LatControlClarityEps(self.CP, self.CI, DT)
+      self._patch(latcontrol_honda_eps, "Params", lambda: _DictParams(self.params))
+      self.lac = latcontrol_honda_eps.LatControlHondaEps(self.CP, self.CI, DT)
     else:
       from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_physical_to_linear
       if self.tq["vgr"]:
