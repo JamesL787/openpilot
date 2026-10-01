@@ -26,7 +26,8 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
-from openpilot.selfdrive.controls.lib.latcontrol_clarity_eps import LatControlClarityEps, use_clarity_eps_controller
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, eps_lateral_delay, \
+  eps_lateral_delay_schedule, use_honda_eps_controller
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
@@ -442,16 +443,18 @@ class Controls:
       self.LaC = LatControlAngle(self.CP, self.CI, DT_CTRL)
     elif self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
       self.LaC = LatControlCurvature(self.CP, self.CI, DT_CTRL)
-    elif use_clarity_eps_controller(self.CP, self.params):
+    elif use_honda_eps_controller(self.CP, self.params):
       # NrdrLatEpsFirmwareFF: upstream JamesL787 8c3a3fd8's controller (modified-EPS Clarity / Civic Bosch)
-      self.LaC = LatControlClarityEps(self.CP, self.CI, DT_CTRL)
+      self.LaC = LatControlHondaEps(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'pid':
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
 
     # see TURN_SHAPING_TAU
-    self.turn_shaping = isinstance(self.LaC, LatControlClarityEps)
+    self.turn_shaping = isinstance(self.LaC, LatControlHondaEps)
+    # speed-scheduled model delay for that controller (EPS_LAT_DELAY_SCHEDULE); modeld tells the model the same
+    self.lat_delay_schedule = eps_lateral_delay_schedule(self.CP, self.params) if self.turn_shaping else None
 
     self.sm = self.sm.extend(['liveDelay', 'starpilotCarState', 'starpilotPlan'])
 
@@ -927,7 +930,7 @@ class Controls:
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
                                                                jerk_factor)
     lat_smooth_seconds = get_control_lateral_smooth_seconds(self.CP.brand, CS.vEgo, self.CP.lateralSmoothSeconds)
-    lat_delay = self.sm["liveDelay"].lateralDelay + lat_smooth_seconds
+    lat_delay = eps_lateral_delay(self.lat_delay_schedule, CS.vEgo, self.sm["liveDelay"].lateralDelay) + lat_smooth_seconds
 
     actuators.curvature = self.desired_curvature
     steer, lateral_output, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
