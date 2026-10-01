@@ -6,8 +6,12 @@ from openpilot.selfdrive.controls.lib.longitudinal_planner import (
   EXP_LEAD_DEPARTURE_MAX_LIFT,
   EXP_LEAD_DEPARTURE_MAX_LIFT_FALL,
   EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE,
+  GAS_OVERRIDE_BOOST_MAX,
+  GAS_OVERRIDE_BOOST_MIN_SPEED,
+  GAS_OVERRIDE_BOOST_PER_PRESS,
   LongitudinalPlanner,
   apply_exp_lead_departure,
+  apply_gas_override_boost,
   get_exp_lead_departure_weight,
 )
 
@@ -156,3 +160,99 @@ def test_lift_rise_is_rate_limited():
     out = _step(p, mpc=2.0)
     assert out - prev <= 0.05 + 1e-9
     prev = out
+
+
+# -- GasOverrideBoost (STATUS 136h): gas-press boost, alongside the assist above, not instead of it --
+
+def test_apply_boost_zero_presses_is_a_noop():
+  assert apply_gas_override_boost(0.2, 0.2, 0.9, 0) == 0.2
+
+
+def test_apply_boost_scales_per_press_and_caps():
+  assert apply_gas_override_boost(0.2, 0.2, 0.9, 1) == pytest.approx(0.2 + GAS_OVERRIDE_BOOST_PER_PRESS)
+  assert apply_gas_override_boost(0.2, 0.2, 0.9, 4) == pytest.approx(0.2 + GAS_OVERRIDE_BOOST_MAX)
+  assert apply_gas_override_boost(0.2, 0.2, 0.9, 40) == pytest.approx(0.2 + GAS_OVERRIDE_BOOST_MAX)  # still capped
+
+
+def test_apply_boost_never_exceeds_mpc():
+  assert apply_gas_override_boost(0.2, 0.2, 0.21, 4) == pytest.approx(0.21)
+
+
+def test_apply_boost_never_lowers_output_or_fires_when_mpc_not_above_e2e():
+  assert apply_gas_override_boost(0.5, 0.2, 0.3, 4) == 0.5  # something already higher (speed handoff/lift)
+  assert apply_gas_override_boost(0.2, 0.5, 0.3, 4) == 0.2  # e2e already at/above MPC: no gap to boost into
+
+
+def _gas_planner(presses=0, prev_pressed=False):
+  return SimpleNamespace(gas_override_boost_presses=presses, gas_override_boost_prev_pressed=prev_pressed, dt=0.05)
+
+
+def _gas_step(p, e2e=0.2, mpc=0.9, v_ego=V_EGO, gas=False, hold=False):
+  return LongitudinalPlanner.update_gas_override_boost(p, e2e, e2e, mpc, v_ego, gas, hold)
+
+
+def test_press_increments_only_on_rising_edge():
+  p = _gas_planner()
+  _gas_step(p, gas=True)
+  assert p.gas_override_boost_presses == 1
+  _gas_step(p, gas=True)  # still held, not a new edge
+  assert p.gas_override_boost_presses == 1
+  _gas_step(p, gas=False)
+  _gas_step(p, gas=True)  # released and pressed again: a second edge
+  assert p.gas_override_boost_presses == 2
+
+
+def test_press_below_min_speed_does_not_count():
+  p = _gas_planner()
+  _gas_step(p, gas=True, v_ego=GAS_OVERRIDE_BOOST_MIN_SPEED - 0.1)
+  assert p.gas_override_boost_presses == 0
+  _gas_step(p, gas=False, v_ego=GAS_OVERRIDE_BOOST_MIN_SPEED - 0.1)
+  _gas_step(p, gas=True, v_ego=GAS_OVERRIDE_BOOST_MIN_SPEED)
+  assert p.gas_override_boost_presses == 1
+
+
+def test_press_when_e2e_already_at_or_above_mpc_does_not_count():
+  p = _gas_planner()
+  _gas_step(p, e2e=0.5, mpc=0.3, gas=True)
+  assert p.gas_override_boost_presses == 0
+
+
+def test_output_caps_at_four_presses_worth():
+  p = _gas_planner()
+  for _ in range(8):
+    _gas_step(p, gas=True)
+    _gas_step(p, gas=False)
+  assert p.gas_override_boost_presses == 8
+  out = _gas_step(p, e2e=0.2, mpc=0.9)
+  assert out == pytest.approx(0.2 + GAS_OVERRIDE_BOOST_MAX)
+
+
+def test_does_not_fade_while_e2e_is_braking():
+  # Deliberately more permissive than the lead-departure assist: no EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE
+  # floor. A held press boost still applies even while e2e itself is braking hard.
+  p = _gas_planner(presses=4)
+  e2e_brake = EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE - 0.5
+  out = _gas_step(p, e2e=e2e_brake, mpc=0.9)
+  assert out == pytest.approx(e2e_brake + GAS_OVERRIDE_BOOST_MAX)
+
+
+def test_no_lead_required():
+  # apply_gas_override_boost/update_gas_override_boost take no lead argument at all -- the
+  # mechanism cannot require one. This just documents that as a locked-in property.
+  import inspect
+  assert "lead" not in inspect.signature(LongitudinalPlanner.update_gas_override_boost).parameters
+
+
+def test_hold_experimental_suppresses_the_boost_but_keeps_the_press_count():
+  p = _gas_planner(presses=4)
+  out = _gas_step(p, e2e=0.2, mpc=0.9, hold=True)
+  assert out == 0.2  # suppressed during the hold, same instant-drop as the lead-departure assist
+  assert p.gas_override_boost_presses == 4  # not reset -- resumes once the hold clears
+  out = _gas_step(p, e2e=0.2, mpc=0.9, hold=False)
+  assert out == pytest.approx(0.2 + GAS_OVERRIDE_BOOST_MAX)
+
+
+def test_hold_experimental_blocks_new_presses_too():
+  p = _gas_planner()
+  _gas_step(p, gas=True, hold=True)
+  assert p.gas_override_boost_presses == 0

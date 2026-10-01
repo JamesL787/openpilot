@@ -618,6 +618,18 @@ EXP_LEAD_DEPARTURE_MAX_LIFT_RISE = 1.0  # m/s^3, the lift itself never rises fas
 EXP_LEAD_DEPARTURE_MAX_LIFT_FALL = 3.0  # m/s^3
 EXP_LEAD_DEPARTURE_URGENT_VREL = -0.5  # m/s, a lead closing faster than this drops the lift at once
 EXP_LEAD_DEPARTURE_URGENT_LEAD_ACCEL = -1.0  # m/s^2, and a lead braking harder than this
+# TEST, default off. STATUS 136/136g found upstream PR 39015 ("gas override boost") not worth
+# porting as a replacement for the lead-departure assist above: its trigger does not check the
+# sign of the e2e target, so on our census routes 12 of 16 matching gas presses were the model
+# braking harder than the MPC for a reason off-radar, not a departing lead. This is that same
+# mechanism anyway (owner request, STATUS 136h), run alongside the lead-departure assist rather
+# than instead of it, specifically to cover what 136f found uncovered: a gas press with no lead,
+# or with e2e already braking. It is more permissive than the lead-departure assist on purpose
+# (no lead required, no e2e-braking floor) and carries that same risk unreplayed. Read in
+# update_gas_override_boost; never exceeds the MPC target, never lowers the e2e target.
+GAS_OVERRIDE_BOOST_MIN_SPEED = 4.4704  # m/s, ~10 mph, matches PR 39015
+GAS_OVERRIDE_BOOST_PER_PRESS = 0.05  # m/s^2 added per gas press while e2e < MPC
+GAS_OVERRIDE_BOOST_MAX = 0.2  # m/s^2 cap, matches PR 39015 (4 presses)
 
 TRACKED_VISION_MODEL_FLOOR_MIN_SPEED = 10.0
 TRACKED_VISION_MODEL_FLOOR_MIN_MODEL_PROB = 0.95
@@ -895,6 +907,16 @@ def apply_exp_lead_departure(output_a_target, output_a_target_e2e, output_a_targ
   brake_fade = float(np.interp(output_a_target_e2e, [EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE, 0.0], [0.0, 1.0]))
   lift = brake_fade * min(EXP_LEAD_DEPARTURE_MAX_LIFT, EXP_LEAD_DEPARTURE_GAP_FRACTION * (output_a_target_mpc - output_a_target_e2e))
   return max(output_a_target, min(output_a_target_mpc, output_a_target_e2e + weight * lift))
+
+
+def apply_gas_override_boost(output_a_target, output_a_target_e2e, output_a_target_mpc, press_count):
+  """Lift the arbitrated target toward the MPC by a fixed amount per gas press. Never lowers it.
+  Unlike apply_exp_lead_departure, this does not fade out while e2e is braking -- a deliberate,
+  unreplayed risk (STATUS 136h)."""
+  boost = min(GAS_OVERRIDE_BOOST_MAX, press_count * GAS_OVERRIDE_BOOST_PER_PRESS)
+  if boost <= 0.0 or output_a_target_mpc <= output_a_target_e2e:
+    return output_a_target
+  return max(output_a_target, min(output_a_target_mpc, output_a_target_e2e + boost))
 
 
 def get_planner_v_ego(CP, car_state):
@@ -1270,6 +1292,8 @@ class LongitudinalPlanner:
     self.prev_experimental_mode = None
     self.exp_lead_departure_weight = 0.0
     self.exp_lead_departure_lift = 0.0
+    self.gas_override_boost_presses = 0
+    self.gas_override_boost_prev_pressed = False
     self.experimental_release_accel_until = 0.0
     self.exp_mode_blend_weight = 0.0
 
@@ -2419,6 +2443,21 @@ class LongitudinalPlanner:
     self.exp_lead_departure_lift = lift
     return output_a_target + lift
 
+  def update_gas_override_boost(self, output_a_target, output_a_target_e2e, output_a_target_mpc, v_ego,
+                                 gas_pressed, hold_experimental):
+    """hold_experimental (planned stop, red light, forcingStop) suppresses the applied boost --
+    not just new increments -- the same as the lead-departure assist's instant drop. The press
+    count is kept, not reset, so the boost resumes once the hold clears."""
+    rising_edge = bool(gas_pressed) and not self.gas_override_boost_prev_pressed
+    self.gas_override_boost_prev_pressed = bool(gas_pressed)
+    if (not hold_experimental and rising_edge and float(v_ego) >= GAS_OVERRIDE_BOOST_MIN_SPEED and
+        output_a_target_e2e < output_a_target_mpc):
+      self.gas_override_boost_presses += 1
+    if hold_experimental:
+      return output_a_target
+    return apply_gas_override_boost(output_a_target, output_a_target_e2e, output_a_target_mpc,
+                                     self.gas_override_boost_presses)
+
   @staticmethod
   def apply_experimental_speed_handoff(output_a_target, output_a_target_mpc, output_a_target_e2e, speed_handoff):
     if speed_handoff <= 0.0:
@@ -3157,6 +3196,8 @@ class LongitudinalPlanner:
     if self.mode == 'acc':
       self.exp_lead_departure_weight = 0.0
       self.exp_lead_departure_lift = 0.0
+      self.gas_override_boost_presses = 0
+      self.gas_override_boost_prev_pressed = False
     if classic_model:
       output_a_target, output_should_stop = get_accel_from_plan_classic(
         self.CP, self.v_desired_trajectory, self.a_desired_trajectory, starpilot_toggles.vEgoStopping,
@@ -3198,15 +3239,20 @@ class LongitudinalPlanner:
         output_a_target = self.apply_experimental_speed_handoff(
           output_a_target, output_a_target_mpc, output_a_target_e2e, speed_handoff,
         )
+        hold_experimental = bool(
+          output_should_stop_e2e or
+          getattr(sm['starpilotPlan'], 'forcingStop', False) or
+          getattr(sm['starpilotPlan'], 'redLight', False)
+        )
         output_a_target = self.update_exp_lead_departure(
           output_a_target, output_a_target_e2e, output_a_target_mpc, scene_v_ego,
-          sm['starpilotPlan'].tFollow,
-          bool(
-            output_should_stop_e2e or
-            getattr(sm['starpilotPlan'], 'forcingStop', False) or
-            getattr(sm['starpilotPlan'], 'redLight', False)
-          ),
+          sm['starpilotPlan'].tFollow, hold_experimental,
         )
+        if bool(getattr(starpilot_toggles, "gas_override_boost", False)):
+          output_a_target = self.update_gas_override_boost(
+            output_a_target, output_a_target_e2e, output_a_target_mpc, scene_v_ego,
+            bool(sm['carState'].gasPressed), hold_experimental,
+          )
     else:
       output_a_target, output_should_stop = get_accel_from_plan(
         self.v_desired_trajectory, self.a_desired_trajectory,
