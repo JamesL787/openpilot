@@ -1664,6 +1664,10 @@ error reads as off).
 closed-loop replay of 7 car-matched jobs is frame-for-frame identical to the 44918d843 base. Replay
 evidence only; not road-validated. Status stays PROPOSED until drives with it on are reviewed.
 
+Shadow marker added 2026-10-01 (Peter's request, STATUS 197): radarState leadOne/leadTwo `ncVetoShadow` is True on each update
+where this rule would zero a RAIL_FAST correction, with the switch on or off. With the switch off, control is unchanged (static). New
+drives are screened from it, and each marked moment is judged with ncveto_truth.py before it counts as evidence either way.
+
 ## D-073 — ACCEPTED (default ON): Experimental Mode close-lead cap goes deeper than chill's floor at 1.5 m/s³, closing-speed demand at once
 Recorded 2026-10-01, owner-approved ("Yeah let's tune this limit … ideally I want it to work as well as chill"; "Yeah go
 ahead" on the rate-limited version). Replay (open loop + closed loop with the fitted plant, car planner 87505f426,

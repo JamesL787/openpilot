@@ -643,6 +643,7 @@ class Track:
     self.vRelRange = float('nan')
     # RANGE_VREL_RAIL_NC_VETO: (t, ncVRel) of the last measured sweeps whose NC passed the veto's range and sigma limits.
     self.nc_veto_hist: deque = deque(maxlen=RANGE_VREL_RAIL_NC_VETO_SAMPLES)
+    self.nc_veto_shadow = False
     # Freshness bit for the fit above. vRelRange is only ASSIGNED once the deque is full, so after
     # a dropout clears it the field holds the pre-gap value for up to four updates. That is
     # harmless for telemetry and unacceptable for control, so D-053 reads this rather than
@@ -845,6 +846,7 @@ class Track:
     self.range_assist_arm_count = 0
     self.range_assist_rail_count = 0
     self.range_assist_correction = 0.0
+    self.nc_veto_shadow = False
 
   def _update_range_assist(self, enabled: bool, measurement_update: bool, t_now: float,
                            vision_closing: float | None = None, vision_assist: bool = False) -> None:
@@ -890,6 +892,7 @@ class Track:
       self._clear_range_assist()
       return
 
+    self.nc_veto_shadow = False
     if not (self.measured and self.vRelRangeFresh):
       self._clear_range_assist()
       return
@@ -997,9 +1000,11 @@ class Track:
     # Active with a negative smaller disagreement (only possible on the rail) publishes zero while
     # staying armed. The last bound keeps a corrected vLead from being published below zero.
     correction = float(min(max(size, 0.0), RANGE_VREL_ASSIST_MAX_CORRECTION_MPS, max(self.vLead, 0.0)))
-    if RANGE_VREL_RAIL_NC_VETO and rail_fast and correction > 0.0:
+    if rail_fast and correction > 0.0:
       nc_med = self.nc_veto_median(t_now)
-      if nc_med is not None and nc_med >= BOSCH_A_U11_LOW_RAIL_MPS + RANGE_VREL_RAIL_NC_VETO_ABOVE_RAIL_MPS:
+      # nc_veto_shadow marks every update where the veto WOULD fire, switch on or off (leadOne/leadTwo ncVetoShadow).
+      self.nc_veto_shadow = nc_med is not None and nc_med >= BOSCH_A_U11_LOW_RAIL_MPS + RANGE_VREL_RAIL_NC_VETO_ABOVE_RAIL_MPS
+      if RANGE_VREL_RAIL_NC_VETO and self.nc_veto_shadow:
         # NC says clearly less closing than the rail: publish the rail itself (D-041 bound), no RAIL_FAST correction.
         correction = 0.0
     if self.vision_assist_early:
@@ -1108,6 +1113,7 @@ class Track:
     if shadow_telemetry:
       state["vRelRangeDerived"] = float(self.vRelRange)
       state["measuredRadar"] = bool(self.measured)
+      state["ncVetoShadow"] = bool(self.nc_veto_shadow)
     return state
 
   def potential_adjacent_lead(self, left: bool, standstill: bool, model_data: capnp._DynamicStructReader):
@@ -1290,6 +1296,7 @@ def get_RadarState_from_vision(lead_msg: capnp._DynamicStructReader, v_ego: floa
     # measurement. Explicit so the telemetry is not read as "range LSQ said zero".
     "vRelRangeDerived": float('nan'),
     "measuredRadar": False,
+    "ncVetoShadow": False,
   }
 
 

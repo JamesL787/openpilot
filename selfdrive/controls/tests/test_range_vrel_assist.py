@@ -1358,6 +1358,46 @@ class TestRailFastNcVeto:
     assert [c for _, _, c in base] == [c for c, _ in with_nc]
     assert any(c > 0.0 for _, _, c in base), "RAIL_FAST must arm, or the comparison is empty"
 
+  def _shadow_run(self, d_of, nc_of, n=25):
+    track = new_track(v_lead=30.0 + RAIL)
+    out = []
+    for i in range(n):
+      t = i * DT
+      nc, ok = nc_of(i)
+      track.update(d_of(i, t), 0.0, RAIL, 30.0 + RAIL, True, True, t_now=t, range_assist=True,
+                   nc_vrel=nc, nc_valid=ok, nc_sigma=30)
+      out.append((track.range_assist_correction, track.nc_veto_shadow, track.get_RadarState(shadow_telemetry=True)))
+    return out
+
+  def test_shadow_marks_297_with_the_switch_off_and_changes_nothing(self, monkeypatch):
+    # ncVetoShadow: the would-fire marker. Switch off: correction identical to the plain flag-off run, marker set.
+    ncs = [-9.2, -8.0, -9.8, -8.7, -8.4, -9.5]
+    def nc_of(i):
+      return ncs[i % len(ncs)], True
+    off = self._shadow_run(_closing(-16.2, d0=72.0), nc_of)
+    base = rail_series_veto(new_track(v_lead=30.0 + RAIL), 25, _closing(-16.2, d0=72.0), nc_of)
+    assert [c for c, _, _ in off] == [c for c, _ in base]
+    assert any(s for _, s, _ in off) and all(c > 0.0 for c, s, _ in off if s)
+    assert all(st["ncVetoShadow"] == s for _, s, st in off)
+    monkeypatch.setattr(radard, "RANGE_VREL_RAIL_NC_VETO", True)
+    on = self._shadow_run(_closing(-16.2, d0=72.0), nc_of)
+    assert [s for _, s, _ in on] == [s for _, s, _ in off], "the marker must not depend on the switch"
+    assert all(c == 0.0 for c, s, _ in on if s)
+
+  def test_shadow_stays_clear_on_the_236_gain_shape_and_off_the_rail(self):
+    # NC 2.0-2.6 above the rail (236 12:52.6) never marks; nor does a track with no RAIL_FAST correction.
+    assert not any(s for _, s, _ in self._shadow_run(_closing(-16.2), _const_nc(RAIL + 2.3)))
+    assert not any(s for _, s, _ in self._shadow_run(_closing(-13.5), _const_nc(-8.5)))
+
+  def test_shadow_field_is_in_the_schema_and_false_for_vision_leads(self):
+    from cereal import log
+    state = self._shadow_run(_closing(-16.2, d0=72.0), _const_nc(-8.5))[-1][2]
+    assert log.RadarState.LeadData.new_message(**state).ncVetoShadow == state["ncVetoShadow"]
+    track = new_track(v_lead=30.0 + RAIL)
+    rail_series_veto(track, 5, _closing(-16.2, d0=72.0), _const_nc(-8.5))
+    assert "ncVetoShadow" not in track.get_RadarState(), "adjacent-lane leads (custom LeadData) must not carry it"
+    assert log.RadarState.LeadData.new_message().ncVetoShadow is False
+
   def test_297_shape_nc_well_above_the_rail_removes_the_excursion(self, monkeypatch):
     # 297 48:12 tid 4: RAIL_FAST -16.5 from a -16.2 range tail, NC -8.0..-9.8 per sweep (median -8.4..-8.7).
     ncs = [-9.2, -8.0, -9.8, -8.7, -8.4, -9.5]
