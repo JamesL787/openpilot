@@ -1752,7 +1752,7 @@ decode error — **all objects were firmware no-target sentinels.** See D-027, D
       while the rate check coasts: it should stay published, with measured=False.
     - **Residuals, investigated 2026-09-17 (replay and static only):** the `ratio_vrel` timing has no
       effect in replay. Lasting steps and stale rate history are real causes. The proposals are in
-      D-055 / D-056 / D-057, on branch `archive/proposal/d054-residuals`, which is not for the car.
+      D-055 / D-056 / D-057, on tag `archive/proposal/d054-residuals`, which is not for the car.
 
 18. **CHARACTERISED 2026-09-17 (see item 27): `00000239` 10:33.7 phantom hard brake is a same-identity range walk at 10:30.3, not an association fault.** Original note: Looks like a lead association fault (lead
     track yRel −0.9 → −3.7 m while range fell 74 → 61.5 m, U11 +1.5 → −7.5, vision held 69–75 m).
@@ -9196,7 +9196,7 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
 - **Gain from 115 → 130.** Error drops 3–4 %, the curve ratio rises 0.001–0.012, and sign changes rise by up to 0.1/s. From 130 to 150 the gain is smaller for each step and the wiggle rises.
 - **Suggestion:** `LatPScaleLowSpeed` 130, consistent with the STATUS 151 grid. Expect a small improvement in partial-command turns like 7:58. It cannot help 7:12 (already saturated), 9:15 or 10:01 (override cuts). Those need the override change or a feedforward.
 
-## 173. Branch `archive/clarity-eps-testing` (commit 0f27431d; not merged here): James's controller's feedforward is gated by the desired wheel angle, faded in from 10° to 30° of |desired| (`FF_ANGLE_GATE_DEG`). `FF_SPEED_BP` is back to upstream's [2, 4] m/s. This is the fix for the STATUS 170 wobble and applies to both the Clarity and the Civic. Static tests and closed-loop sim only; not driven.
+## 173. Tag `archive/clarity-eps-testing` (commit 0f27431d; not merged here): James's controller's feedforward is gated by the desired wheel angle, faded in from 10° to 30° of |desired| (`FF_ANGLE_GATE_DEG`). `FF_SPEED_BP` is back to upstream's [2, 4] m/s. This is the fix for the STATUS 170 wobble and applies to both the Clarity and the Civic. Static tests and closed-loop sim only; not driven.
 
 - **History.** This replaces the branch's first fix, `FF_SPEED_BP` [2, 4] → [4, 8] (commit 2c7518a2, which numbered its entry 171 before the PID session's renumber took 171). The owner asked for that fix to be undone and redone with the PID session's gate. The PID session found the gate in sim inside `LatControlPID`, using the STATUS 165 feedforward.
 - **Why the gate works.** Near straight, the feedforward makes the EPS follow the model's small desired-angle wiggle almost 1:1. In a turn it is what gets the wheel round. The [4, 8] fix removed it by speed, turns included. The gate removes it by angle, so turns keep it.
