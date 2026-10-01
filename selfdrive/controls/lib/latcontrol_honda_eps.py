@@ -57,7 +57,10 @@ SETTINGS_REFRESH_FRAMES = 300
 #   lag. That is not delay and the model cannot aim around it, so those values sum the stage lags without it.
 # lagd only learns above 15 m/s, so it cannot find the low-speed end.
 CLARITY_LAT_DELAY_BP = [3.5, 7.0, 12.0, 20.0, 30.0]  # m/s, centres of the measured bands
-CLARITY_LAT_DELAY_V = [0.15, 0.08, 0.10, 0.20, 0.30]  # s
+# 2026-10-01 EXPERIMENT (owner's call): the measured values above (0.15 / 0.08 / 0.10 / 0.20 / 0.30) put the car on
+# time but town driving felt worse than LatControlPID, which ran told 0.48 s. Testing whether this model drives better
+# told a longer delay than the car's real one: 0.35 s everywhere, 0.40 at 30 m/s. Revert if it does not feel better.
+CLARITY_LAT_DELAY_V = [0.35, 0.35, 0.35, 0.35, 0.40]  # s
 
 
 def use_honda_eps_controller(CP) -> bool:
