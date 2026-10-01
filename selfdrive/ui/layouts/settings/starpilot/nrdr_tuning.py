@@ -248,7 +248,7 @@ class NRDRTuningLayout(_SettingsPage):
       toggle("NrdrLatPidFirmwareFF", "PID Turn Feedforward (Test)",
              "Add James's EPS firmware feedforward in turns only: none within 10 deg of centre, full from 30 deg, "
              "so it does not bring back the near-centre wobble. Fades in once the wheel is within 10 deg of the "
-             "path; a driver press takes it out."),
+             "path, or 0.5 s after you let go while the wheel is short of the turn; a driver press takes it out."),
     ]
 
     pid_smoothing_rows = [

@@ -918,7 +918,7 @@ def test_takeover_turn_fight_numbers():
   assert e["near_cut_held_s"] == pytest.approx(0.5, abs=0.06) and e["fault_in_press"] is True
   assert e["v_release"] > 4.47 and e["flags"] == ["FLICKER"]       # a 25 deg gap, but not at a crawl; 0.5 s near the cut
   assert eps[1]["flags"] == ["SNAPBACK"] and eps[2]["flags"] == []
-  assert s["flags"] == {"FLICKER": 1, "SNAPBACK": 1, "GAP": 0, "NEAR-CUT": 0}
+  assert s["flags"] == {"FLICKER": 1, "SNAPBACK": 1, "GAP": 0, "NEAR-CUT": 0, "FIGHT": 0}
 
 
 def test_takeover_live_flags_gap_and_near_cut():
@@ -941,6 +941,39 @@ def test_takeover_live_flags_gap_and_near_cut():
   assert e["flags"] == ["GAP", "NEAR-CUT"] and e["fault_in_press"] is False
   ev = [x for x in dp._events(c, 0.05, {}) if x["kind"] == "steer_takeover"]
   assert ev[0]["flags"] == ["GAP", "NEAR-CUT"]                  # the drive's list carries them
+
+
+def test_fight_flag_and_held_against_request():
+  """Kevin's FIGHT: >= 600 against openpilot's torque request, unpressed, held > 1 s, with a press within 1 s after.
+  The same run without a press marks its takeover held_against_request, with no flag and no separate moment."""
+  c, t = _blank(60.0)
+  c["lat_active"][:], c["steer_pressed"][:], c["steer_tq"][:], c["tq_req"][:] = 1, 0, 0.0, 0.3
+  c["v"][:], c["ang_des"][:], c["ang_act"][:], c["ang_ok"][:] = 5.0, 60.0, 62.0, 1
+  c["steer_tq"][(t >= 10.0) & (t < 11.5)] = -900.0       # 1.5 s against a left request ...
+  p = (t >= 11.8) & (t < 12.5)
+  c["steer_tq"][p], c["steer_pressed"][p] = -2000.0, 1   # ... then the press 0.3 s later: FIGHT
+  c["steer_tq"][(t >= 20.0) & (t < 21.5)] = -900.0       # the same with no press: held_against_request
+  c["steer_tq"][(t >= 30.0) & (t < 30.8)] = -900.0       # 0.8 s: too short
+  c["steer_tq"][(t >= 40.0) & (t < 41.5)] = 900.0        # with the request: a hand helping, not counted
+  eps = agents.takeovers(c)["episodes"]
+  fight = [e for e in eps if "FIGHT" in e["flags"]]
+  assert [round(e["t"], 1) for e in fight] == [10.0]
+  e = fight[0]
+  assert e["fought_first_s"] == pytest.approx(1.5, abs=0.06) and e["fought_first_tq_med"] == -900.0
+  assert e["fought_first_err_deg"] == 2.0                # 2 deg past the plan toward the request
+  assert e["held_against_request"] is False
+  held = [x for x in eps if x["held_against_request"]]
+  assert [round(x["t"], 1) for x in held] == [20.0] and held[0]["flags"] == []
+  assert held[0]["fought_first_tq_med"] == -900.0 and held[0]["fought_first_s"] == pytest.approx(1.5, abs=0.06)
+  assert all(x["fought_first_s"] is None for x in eps if x is not e and x is not held[0])
+  s = agents.takeovers(c)["summary"]
+  assert s["flags"]["FIGHT"] == 1 and s["held_against_request"] == 1
+  ev = [x for x in dp._events(c, 0.05, {}) if x["t"] >= 19.0 and x["t"] < 22.0]
+  assert [x["kind"] for x in ev] == ["steer_takeover"] and ev[0]["held_against_request"] is True   # one row
+  # No torque request recorded (older drives): neither.
+  c["tq_req"][:] = np.nan
+  assert not any("FIGHT" in e["flags"] for e in agents.takeovers(c)["episodes"])
+  assert not any(e["held_against_request"] for e in agents.takeovers(c)["episodes"])
 
 
 def _blank(seconds=120.0, hz=20.0):

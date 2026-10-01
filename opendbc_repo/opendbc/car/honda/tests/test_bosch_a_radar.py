@@ -2078,23 +2078,6 @@ def test_degraded_rail_corroboration_fits_the_tail_of_the_run_not_the_finished_w
   assert _bosch_a_distance_to_interval(_bosch_a_fresh_range_rate(run), interval) <= BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS
 
 
-def test_existence_probability_is_carried_on_the_point():
-  """RadarPoint.existence = OBJECT_EXISTENCE_PROBABILITY_RAW / 127 of the sweep that produced the point, for radard's
-  ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE. It gates nothing here: a 0 sweep still publishes the same measured point."""
-  from opendbc.car import structs
-  ri = make_radar_interface()
-  rr = None
-  for i, (rng, ex) in enumerate([(1000, 59), (990, 40), (980, 0), (970, 126)]):
-    rr = ri.update(sweep(0, i, 0x7, rng, 1024, 1 + 2 * i, i * 50_000_000, with_aux=True,
-                         direct_vrel_raw=760, direct_vrel_uncertainty_raw=84, existence_raw=ex))
-    if i >= 1:
-      assert len(rr.points) == 1 and rr.points[0].measured
-      assert rr.points[0].existence == pytest.approx(ex / 127.0)
-  # every other radar, and every log recorded before the field existed, reads the "not provided" default
-  assert structs.RadarData.RadarPoint().existence == -1.0
-  assert structs.RadarData.RadarPoint(dRel=5.0).existence < 0.0
-
-
 # --- NC-at-rail (stopshadow-radar, replay only) ----------------------------------------------------------
 
 class TestNcFields:
@@ -2259,3 +2242,20 @@ class TestNcAtRail:
     from opendbc.car.honda import radar_interface as HRI
     monkeypatch.setattr(HRI, 'BOSCH_A_NC_RAIL_VREL', False)
     assert self._drive(nc=self._true_nc)[-1] == pytest.approx(-13.5)
+
+
+def test_existence_probability_is_carried_on_the_point():
+  """RadarPoint.existence = OBJECT_EXISTENCE_PROBABILITY_RAW / 127 of the sweep that produced the point, for radard's
+  ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE. It gates nothing here: a 0 sweep still publishes the same measured point."""
+  from opendbc.car import structs
+  ri = make_radar_interface()
+  rr = None
+  for i, (rng, ex) in enumerate([(1000, 59), (990, 40), (980, 0), (970, 126)]):
+    rr = ri.update(sweep(0, i, 0x7, rng, 1024, 1 + 2 * i, i * 50_000_000, with_aux=True,
+                         direct_vrel_raw=760, direct_vrel_uncertainty_raw=84, existence_raw=ex))
+    if i >= 1:
+      assert len(rr.points) == 1 and rr.points[0].measured
+      assert rr.points[0].existence == pytest.approx(ex / 127.0)
+  # every other radar, and every log recorded before the field existed, reads the "not provided" default
+  assert structs.RadarData.RadarPoint().existence == -1.0
+  assert structs.RadarData.RadarPoint(dRel=5.0).existence < 0.0

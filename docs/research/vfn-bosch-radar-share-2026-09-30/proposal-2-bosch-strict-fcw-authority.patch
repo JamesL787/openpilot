@@ -1,0 +1,144 @@
+diff --git a/selfdrive/controls/radard.py b/selfdrive/controls/radard.py
+--- a/selfdrive/controls/radard.py
++++ b/selfdrive/controls/radard.py
+@@ -315,6 +315,7 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
+              preferred_track_id: int = -1, honda_bosch_a_radar: bool = False) -> dict[str, Any]:
+   lead_detection_probability = float(getattr(starpilot_toggles, "lead_detection_probability", 0.35))
+   filtered_lead_prob = float(lead_msg.prob if lead_prob is None else lead_prob)
++  model_lead_available = ready and filtered_lead_prob > lead_detection_probability
+ 
+   # Determine leads, this is where the essential logic happens
+   if len(tracks) > 0 and ready and filtered_lead_prob > lead_detection_probability:
+@@ -337,8 +338,6 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
+     else:
+       low_speed_tracks = [c for c in tracks.values() if c.potential_low_speed_lead(v_ego)]
+ 
+-    model_lead_available = ready and filtered_lead_prob > lead_detection_probability
+-
+     # Keep a previously selected Bosch radar track through ordinary model-probability fluctuations
+     # when it is still coherent. If the model has a valid lead, the old track must still agree with
+     # that lead; no model lead leaves the mature radar track eligible for continuity.
+@@ -381,6 +380,19 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
+       if (not lead_dict['status']) or (closest_track.dRel < lead_dict['dRel']):
+         lead_dict = closest_track.get_RadarState()
+ 
++  # A Civic Bosch-A preferred track may remain useful for ordinary continuity after it
++  # misses the strict model gate, but that relaxed-only association must not independently
++  # authorize a planner FCW. A later normal strict match restores FCW authority naturally.
++  if (honda_bosch_a_radar and lead_dict.get('status', False) and lead_dict.get('radar', False) and
++      model_lead_available):
++    selected_track = tracks.get(lead_dict.get('radarTrackId', -1))
++    strict_match = selected_track is not None and track_matches_vision(
++      selected_track, lead_msg, v_ego,
++      dist_scale=0.25, dist_floor=5.0,
++      vel_limit=10.0, y_std_scale=1.0, y_floor=1.0,
++    )
++    lead_dict['fcw'] = bool(lead_dict.get('fcw', False) and strict_match)
++
+   for track in tracks.values():
+     track.leadTrackID = lead_dict.get('radarTrackId', -1)
+ 
+diff --git a/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py b/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py
+--- a/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py
++++ b/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py
+@@ -226,9 +226,11 @@ def build_model_lead_trajectory(model_lead, radar_lead, v_ego, *, raw_geometry_g
+   return np.column_stack((x_lead_mpc, v_lead_mpc))
+ 
+ 
+-def should_trigger_planner_fcw(lead, v_ego: float) -> bool:
++def should_trigger_planner_fcw(lead, v_ego: float, *, require_lead_fcw=False) -> bool:
+   if lead is None or not lead.status or float(getattr(lead, "modelProb", 0.0)) <= FCW_MIN_MODEL_PROB:
+     return False
++  if require_lead_fcw and not bool(getattr(lead, "fcw", False)):
++    return False
+ 
+   closing_speed = max(0.0, float(v_ego) - float(getattr(lead, "vLead", 0.0)))
+   if closing_speed < FCW_MIN_CLOSING_SPEED:
+@@ -1105,7 +1107,7 @@ class LongitudinalMpc:
+ 
+     self.run()
+     if (np.any(lead_xv_0[FCW_IDXS,0] - self.x_sol[FCW_IDXS,0] < CRASH_DISTANCE) and
+-            should_trigger_planner_fcw(lead_one, v_ego)):
++            should_trigger_planner_fcw(lead_one, v_ego, require_lead_fcw=self.raw_geometry_model_guard)):
+       self.crash_cnt += 1
+     else:
+       self.crash_cnt = 0
+diff --git a/selfdrive/controls/lib/longitudinal_planner.py b/selfdrive/controls/lib/longitudinal_planner.py
+--- a/selfdrive/controls/lib/longitudinal_planner.py
++++ b/selfdrive/controls/lib/longitudinal_planner.py
+@@ -359,11 +359,11 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
+   return [a_target[0], min(a_target[1], a_x_allowed)]
+ 
+ 
+-def should_publish_planner_fcw(crash_cnt: int, car_state, radar_state) -> bool:
++def should_publish_planner_fcw(crash_cnt: int, car_state, radar_state, *, require_lead_fcw=False) -> bool:
+   return (
+     crash_cnt > 2 and
+     not car_state.standstill and
+-    should_trigger_planner_fcw(radar_state.leadOne, float(car_state.vEgo))
++    should_trigger_planner_fcw(radar_state.leadOne, float(car_state.vEgo), require_lead_fcw=require_lead_fcw)
+   )
+ 
+ 
+@@ -2377,7 +2377,10 @@ class LongitudinalPlanner:
+     self.j_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC[:-1], self.mpc.j_solution)
+ 
+     # TODO counter is only needed because radar is glitchy, remove once radar is gone
+-    self.fcw = should_publish_planner_fcw(self.mpc.crash_cnt, sm['carState'], sm['radarState'])
++    self.fcw = should_publish_planner_fcw(
++      self.mpc.crash_cnt, sm['carState'], sm['radarState'],
++      require_lead_fcw=self.honda_bosch_a_radar,
++    )
+     if self.fcw:
+       cloudlog.info("FCW triggered")
+ 
+diff --git a/selfdrive/controls/tests/test_radard_bosch.py b/selfdrive/controls/tests/test_radard_bosch.py
+--- a/selfdrive/controls/tests/test_radard_bosch.py
++++ b/selfdrive/controls/tests/test_radard_bosch.py
+@@ -228,6 +228,26 @@ def test_bosch_preferred_lead_survives_model_probability_fluctuation():
+   assert lead['radarTrackId'] == 7
+ 
+ 
++def test_bosch_relaxed_preferred_lead_keeps_control_but_loses_fcw_authority():
++  tracks = {7: make_track(7, 10.0, 5, y_rel=1.4)}
++  lead = radard.get_lead(
++    10.0, True, tracks, make_lead(10.0), 10.0, make_model_data(), False, make_plan(), make_toggles(),
++    low_speed_override=False, lead_prob=0.99, preferred_track_id=7, honda_bosch_a_radar=True,
++  )
++  assert lead['radarTrackId'] == 7
++  assert not lead['fcw']
++
++
++def test_bosch_strictly_matched_lead_retains_fcw_authority():
++  tracks = {7: make_track(7, 10.0, 5, y_rel=0.2)}
++  lead = radard.get_lead(
++    10.0, True, tracks, make_lead(10.0), 10.0, make_model_data(), False, make_plan(), make_toggles(),
++    low_speed_override=False, lead_prob=0.99, preferred_track_id=7, honda_bosch_a_radar=True,
++  )
++  assert lead['radarTrackId'] == 7
++  assert lead['fcw']
++
++
+ def test_bosch_arm_a_clears_after_two_better_challenger_cycles():
+   radar_d = make_staleness_radar_d()
+   radar_d.tracks = {
+diff --git a/selfdrive/controls/tests/test_longitudinal_planner.py b/selfdrive/controls/tests/test_longitudinal_planner.py
+--- a/selfdrive/controls/tests/test_longitudinal_planner.py
++++ b/selfdrive/controls/tests/test_longitudinal_planner.py
+@@ -1100,6 +1100,16 @@ def test_planner_fcw_keeps_real_low_speed_closing_alerts():
+   )
+ 
+ 
++def test_bosch_planner_fcw_requires_radard_authority():
++  relaxed_lead = make_lead(status=True, d_rel=8.0, v_lead=2.0, a_lead=-2.0, radar=True, model_prob=0.99)
++  relaxed_lead.fcw = False
++  assert should_trigger_planner_fcw(relaxed_lead, 8.0)
++  assert not should_trigger_planner_fcw(relaxed_lead, 8.0, require_lead_fcw=True)
++
++  relaxed_lead.fcw = True
++  assert should_trigger_planner_fcw(relaxed_lead, 8.0, require_lead_fcw=True)
++
++
+ def test_publish_planner_fcw_suppresses_crawl_speed_false_positive():
+   car_state = SimpleNamespace(vEgo=0.29, standstill=False)
+   radar_state = SimpleNamespace(

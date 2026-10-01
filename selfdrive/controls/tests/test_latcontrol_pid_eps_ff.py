@@ -1,4 +1,5 @@
 """NrdrLatPidFirmwareFF (STATUS 175): the EPS firmware-inversion feedforward in the NRDR PID, in turns only."""
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -76,6 +77,29 @@ def test_weight_joins_on_small_error_and_drops_on_press_or_low_speed():
   assert w > 0.0   # once joined, a large error keeps it
   assert nrdr_pid_eps_ff_weight(1.0, 0.0, 60.0, 10.0, True, DT_CTRL) == (0.0, 0.0)
   assert nrdr_pid_eps_ff_weight(1.0, 0.0, 60.0, 1.5, False, DT_CTRL) == (0.0, 0.0)
+
+
+def test_trailing_rejoin_after_hold_off_only_when_short_of_the_turn():
+  hold = latcontrol_pid.NRDR_PID_EPS_FF_REJOIN_HOLD_S
+  # wheel 20 deg short of a 60 deg left turn, hands off long enough: joins and fades in
+  ramp, w = nrdr_pid_eps_ff_weight(0.0, 20.0, 60.0, 10.0, False, DT_CTRL, since_press_s=hold)
+  assert 0.0 < ramp < 1.0 and w > 0.0
+  # same for a right turn (both negative)
+  assert nrdr_pid_eps_ff_weight(0.0, -20.0, -60.0, 10.0, False, DT_CTRL, since_press_s=hold)[0] > 0.0
+  # inside the hold-off after a release: no join yet
+  assert nrdr_pid_eps_ff_weight(0.0, 20.0, 60.0, 10.0, False, DT_CTRL, since_press_s=hold - 0.1) == (0.0, 0.0)
+  # past the path (error opposite the turn) never joins through this branch
+  assert nrdr_pid_eps_ff_weight(0.0, -20.0, 60.0, 10.0, False, DT_CTRL, since_press_s=10.0) == (0.0, 0.0)
+  # a press still drops it, and the default since_press_s leaves the old join law unchanged
+  assert nrdr_pid_eps_ff_weight(1.0, 20.0, 60.0, 10.0, True, DT_CTRL, since_press_s=10.0) == (0.0, 0.0)
+  assert nrdr_pid_eps_ff_weight(0.0, 20.0, 60.0, 10.0, False, DT_CTRL) == (0.0, 0.0)
+  # no press yet this engagement (since_press_s inf): an engagement 20 deg short of the turn waits for the 10 deg join
+  assert nrdr_pid_eps_ff_weight(0.0, 20.0, 60.0, 10.0, False, DT_CTRL, since_press_s=math.inf) == (0.0, 0.0)
+
+
+def test_trailing_rejoin_off_with_infinite_hold(monkeypatch):
+  monkeypatch.setattr(latcontrol_pid, "NRDR_PID_EPS_FF_REJOIN_HOLD_S", float("inf"))
+  assert nrdr_pid_eps_ff_weight(0.0, 20.0, 60.0, 10.0, False, DT_CTRL, since_press_s=1e9) == (0.0, 0.0)
 
 
 def test_default_off_leaves_the_command_unchanged(monkeypatch):

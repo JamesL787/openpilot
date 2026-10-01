@@ -1530,8 +1530,7 @@ class RadarD:
       radar_fresh = sm.recv_frame['liveTracks'] != self._last_tracks_frame
       self._last_tracks_frame = sm.recv_frame['liveTracks']
 
-    ar_pts = {pt.trackId: [pt.dRel, pt.yRel, pt.vRel, pt.measured, pt.ncVRel, pt.ncValid, pt.ncSigma, getattr(pt, 'existence', -1.0)]
-              for pt in rr.points}
+    ar_pts = {pt.trackId: [pt.dRel, pt.yRel, pt.vRel, pt.measured, pt.ncVRel, pt.ncValid, pt.ncSigma, getattr(pt, 'existence', -1.0)] for pt in rr.points}
 
     # D-053. Bosch-A only, and only for the tracks that were the lead on the previous cycle.
     # prev_lead_track_ids is the authoritative "which track is the lead" state; Track.leadTrackID

@@ -144,6 +144,13 @@ path outside this repo to find them.
   vendor it.
 - Check `git ls-files --others --ignored --exclude-standard` after adding anything under a
   vendored subtree — that subtree's own `.gitignore` applies to whatever you put beneath it.
+- **A shared download folder keeps the 20 newest drives plus pinned ones** (Peter,
+  2026-10-01). Before you download a new route into it, run
+  `python tools/prune_routes.py <routes_dir>` and read the plan; it deletes only with
+  `--apply`, and only after the owner has said yes in your own chat. A route you still need
+  (one cited in signed evidence, a preregistration, or an open analysis) goes in
+  `<routes_dir>/KEEP` with your name and why; remove your lines when you are done. Pruning
+  keeps each route's small sim cache (`lat_pid_sim.npz`) and never touches non-route folders.
 
 ## 8. Definition of done for a radar or longitudinal change
 

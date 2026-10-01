@@ -857,7 +857,7 @@ is still rejected.
 - Against the first draft: the walk and the birth-coast tests fail.
 
 **Residuals, investigated 2026-09-17. Replay and static only; nothing below is on this branch.**
-Prototypes are on `proposal/d054-residuals` (not for the car). Replay covered 00000232, 00000236,
+Prototypes are on `archive/proposal/d054-residuals` (not for the car). Replay covered 00000232, 00000236,
 00000237, 00000239 and 0000023a on the D-054 parser.
 - *Ratio vRel timed from the last accepted sample:* no effect in replay. 0 published vRel values
   were ratio-sourced. No change proposed.

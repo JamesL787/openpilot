@@ -6,8 +6,9 @@ Update the date above whenever this file changes. If it is stale, trust `git log
 file.
 
 Repo: StarPilot / openpilot fork `openpilot-radar`. Working branch
-`ns-bosch-radar-testing`; `claude/radar-testing-state-88vt2t` is kept identical to it (every commit
-is pushed to both). For the current tip, trust `git log`, not this line.
+`ns-bosch-radar-testing`. (`claude/radar-testing-state-88vt2t` used to mirror it; it was deleted on
+2026-09-30 and survives as tag `archive/claude/radar-testing-state-88vt2t`.) Branches deleted in that
+cleanup are cited below as their `archive/<name>` tags. For the current tip, trust `git log`, not this line.
 
 **Latest work (2026-09-24), start here:** item 116 (on-device adaptive P trim prototype, `LatAdaptiveTune` default 0 = off, 1 shadow, 2 apply: one bounded 0.05 step per knot per drive at 20/30/40/50 mph, 0.85–1.15, resets when the manual lateral tuning changes; shadow replay over 19 routes holds 1.00 at every knot on the current tuning, 20 mph never steps up because of override onsets; unit-test/log-replay only, not driven; try shadow first). Then item 115 (continuous lateral gain schedule `LatGainSchedule`, default off, falls back to the bands when absent or invalid, plus offline tuner `tools/lateral/lat_autotune.py`; on 26b+263 it suggests P 120/110/120/105 at 20/30/40/50 mph with I unchanged, about 2 % better on holdout; highway untrusted and frozen; unit-test/replay/sim only, not driven). Then item 114 (route 0000026b: sensor-reaction blips over `NrdrDriverOverrideThreshold` 2000 cut steering torque for ~1 s in low-speed turns and explain the owner's 32:40 exit oversteer and 48:10 stutter; corrected the same day: the 32:40 blips were a sustained driver push below the 2000 threshold, so do NOT raise it; 0.5 s fade-up, then `LatPScaleStandard` 115; replay/sim only). Then item 113 (lateral PID simulator `tools/lateral/lat_pid_sim.py`: open-loop torque replay, fitted steering plant, closed-loop sweeps of the banded lateral scales; validated in the 25–50 mph band on 263 and held-out 268; found that Kp 0.65 was not in effect on 268; suggests I 75 and a trial of `LatPScaleStandard` 115–125; sim evidence only). Then item 112 (radar: route 0000026b, the owner's "best drive yet" on d0b525140 with the hold: all six bookmarks are genuine approaches, the FCW at 39:30.7 was real; the item 111 bound changes nothing here; replay only). Then item 111 (radar: one-sided range bound on Bosch-A coasts behind `RangeDerivedVrel`: on 21 routes only 268 9:55.2 moves (−2.16 → −2.17), 0 protected episodes softened; the 268 9:52 latch brakes about 0.9 s earlier; replay only, not driven, needs a device build). Then item 110 (route 00000268, the owner's first alpha-long drive on build b6619f55, without the hold: the hold changes none of its 9 episodes in replay; the FCW at 11:43.8 was a real approach into slowing traffic, braked hard only after about 1.2 s at −1.0; a D-062 latch at 9:52 coasted a wrong-sign vRel +4.06 for 2.35 s while the live range closed at 6 m/s, and the D-053 assist was blind to it because it disarms on coasts; open design item; replay only). Then item 109 (the item 107 per-track 1 s hold shipped in ffa72fdc after the owner confirmed 237 18:09.4 was a phantom brake; the shipped planner reproduces the prototype on all 214 episodes of 19 routes, 0 protected episodes changed; replay only, not driven; watch curve exits with a lead at 40–70 m). Item 108 is the other agent's C4 marker work. Then item 107 (both item 106 fixes replayed on 19 routes: the 1 s per-track hold fixes 267 15:13.3 (−3.45 → −1.45) and touches only 237 18:09.4, a circular-label alpha brake; the vision-disagreement bound delays a real closing brake on 25f 8:02.6 by 0.35 s and is rejected; nothing shipped, owner decision pending). Then item 106 (stock-ACC routes 266/267 on d20a18d28: 0 protected episodes changed at 0.075; new off-axis false brake 267 15:13.3 lands at bearing 0.070–0.074, under 0.075, so the bearing threshold alone cannot close this class; design question open; replay only). Then item 105 (C4 lead speed labels enlarged to 26 px in-path / 22 px side-lane after the owner's on-road photo; UI only, not rendered). Then item 104 (closed-loop radar + planner replay on 17 routes; `OFF_AXIS_LEAD_MIN_BEARING` 0.10 → 0.075 shipped: 25f 13:58.4 and 260 9:07.8 false brakes −3.45/−3.20 → −1.22/−1.01, 0 of 125 genuine-brake episodes changed; replay only, not driven; 23e 4:54.6 turned out to be a pre-74e live alpha false brake on a curve, which the bound removes; 104a reran with a vision-based label, protected = either label: 0 of 125 protected episodes changed, 0.075 stays). Then item 103 (74c open-loop alpha replay on stock-ACC routes 25d–263: the 25b ~0.7 s hard-lead trail does not reproduce, median +0.05 s vs ACCEL_COMMAND; 25f 13:58.4 is an off-axis false brake at bearing 0.078–0.101, just under the 0.10 bound). Before that: item 91 (D-063 toggle replayed on all 22 alpha-long routes: keep it off; 1 spurious hard brake, 1 delayed brake), item 90 (D-063 variant D'' behind `BoschARailInterval`, default off) and item 89 (stock-ACC route scan, alpha-long watchlist). Earlier: item 74 (route 0000025b) and its sub-items 74a–74g.
 74e is a shipped planner change (off-axis Bosch-A lead aLeadK bound); 74f is the stock-ACC data
@@ -1751,7 +1752,7 @@ decode error — **all objects were firmware no-target sentinels.** See D-027, D
       while the rate check coasts: it should stay published, with measured=False.
     - **Residuals, investigated 2026-09-17 (replay and static only):** the `ratio_vrel` timing has no
       effect in replay. Lasting steps and stale rate history are real causes. The proposals are in
-      D-055 / D-056 / D-057, on branch `proposal/d054-residuals`, which is not for the car.
+      D-055 / D-056 / D-057, on tag `archive/proposal/d054-residuals`, which is not for the car.
 
 18. **CHARACTERISED 2026-09-17 (see item 27): `00000239` 10:33.7 phantom hard brake is a same-identity range walk at 10:30.3, not an association fault.** Original note: Looks like a lead association fault (lead
     track yRel −0.9 → −3.7 m while range fell 74 → 61.5 m, U11 +1.5 → −7.5, vision held 69–75 m).
@@ -7702,8 +7703,19 @@ Tests: `test_latcontrol_pid_rate_ff.py` (3 new: default off and param read, torq
     unmeasured_lead_cap (radar lead with measuredRadar false while closeLeadBrakeCap < 0, held > 0.3 s); runs under
     1 s apart are one moment. Replay: 298 has 1 overshoot (its bookmark 1, -3.5 asked, -4.72 reached) and 6 caps (its
     bookmark 3 is the 121 m one); 297 has 2 and 4. 7 of the 10 caps start with vRel at -13.3 to -13.5 m/s.
+  - Kevin's FIGHT flag: latActive, no steeringPressed, |steeringTorque| >= 600 against the sign of carControl's torque
+    request, held > 1 s, then steeringPressed within 1 s. Adds fought_first_s / _tq_med / _err_deg to that takeover.
+    A takeover whose run had no press after is marked held_against_request with the same fields and no flag (context:
+    a hand on the wheel reads this way whenever openpilot applies torque); one row per takeover, no separate moment.
+    Replay: FIGHT 11 on 297 and 5 on 298; held_against_request 9 and 4 takeovers, covering 13 and 5 runs (two
+    takeovers hold two runs, three held runs sit in FIGHT takeovers). Peter's seg-12 left turn on 298 is a FIGHT and
+    1 of 2 with the wheel past the plan toward the request.
   - `tools/drive_plots/sim_export.py` writes John's `lat_pid_sim.npz` per steered segment at the controls rate
     (~97 Hz on 297), t from each segment's first carState. Not yet read by his scorer.
+  - sim_export's export.json also lists John's scoring windows and presses (`0d089047f`), plus every Nrdr* toggle in
+    initData. **NrdrLatEpsFfAngleGate = 1 was written on the comma at 14:42 on 2026-09-29, after 298.** It is absent
+    from 298's initData, so no result from 298 or 297 is credited to the gate. Check export.json `params` on the next drive.
+    298 had 0 s engaged at 25+ m/s.
 
 ## 142. Step 2 toward a torque controller: comma's torque controller (2a) and StarPilot's (2b, NNFF off) against the NRDR PID in the closed-loop sim, with and without the firmware VGR map. Sim only; nothing on the car changed.
 
@@ -9184,7 +9196,7 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
 - **Gain from 115 → 130.** Error drops 3–4 %, the curve ratio rises 0.001–0.012, and sign changes rise by up to 0.1/s. From 130 to 150 the gain is smaller for each step and the wiggle rises.
 - **Suggestion:** `LatPScaleLowSpeed` 130, consistent with the STATUS 151 grid. Expect a small improvement in partial-command turns like 7:58. It cannot help 7:12 (already saturated), 9:15 or 10:01 (override cuts). Those need the override change or a feedforward.
 
-## 173. Branch `clarity-eps-testing` (commit 0f27431d; not merged here): James's controller's feedforward is gated by the desired wheel angle, faded in from 10° to 30° of |desired| (`FF_ANGLE_GATE_DEG`). `FF_SPEED_BP` is back to upstream's [2, 4] m/s. This is the fix for the STATUS 170 wobble and applies to both the Clarity and the Civic. Static tests and closed-loop sim only; not driven.
+## 173. Tag `archive/clarity-eps-testing` (commit 0f27431d; not merged here): James's controller's feedforward is gated by the desired wheel angle, faded in from 10° to 30° of |desired| (`FF_ANGLE_GATE_DEG`). `FF_SPEED_BP` is back to upstream's [2, 4] m/s. This is the fix for the STATUS 170 wobble and applies to both the Clarity and the Civic. Static tests and closed-loop sim only; not driven.
 
 - **History.** This replaces the branch's first fix, `FF_SPEED_BP` [2, 4] → [4, 8] (commit 2c7518a2, which numbered its entry 171 before the PID session's renumber took 171). The owner asked for that fix to be undone and redone with the PID session's gate. The PID session found the gate in sim inside `LatControlPID`, using the STATUS 165 feedforward.
 - **Why the gate works.** Near straight, the feedforward makes the EPS follow the model's small desired-angle wiggle almost 1:1. In a turn it is what gets the wheel round. The [4, 8] fix removed it by speed, turns included. The gate removes it by angle, so turns keep it.
@@ -9236,11 +9248,11 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
 - **James's turn smoothing, ported and put on the car's test branch (owner's request, 2026-09-27; static tests only, not driven).**
   - The fix is JamesL787 `vfn-controller-shadow` aa943ad4. The problem it targets: with the blinker on at low speed, the turn hold and turn lead entered the steering target as steps, and at a stop the target could flip between the hold and the model every frame (James's routes 354/355).
   - It applies only when `LatControlClarityEps` is the built controller: `turn_shaping = isinstance(self.LaC, LatControlClarityEps)`, so the PID path is unchanged. The hold/lead floor goes through a 0.25 s low-pass, a release glides onto the model, and a driver-confirmed capture still snaps.
-  - `clarity-turn-shaping` 3682a600: the candidate on this branch's tip, for sim.
-  - `clarity-eps-testing` 24c9212f + f7655b64: the same port, on top of 0f27431d's angle gate. A one-time migration (`migrate_nrdr_clarity_eps_default`, flag `/data/nrdr_clarity_eps_default_v1`) turns `NrdrLatEpsFirmwareFF` on, which makes James's controller that branch's default. The toggle still turns it off, and the value persists if another branch is flashed. The compiled default stays `"0"`.
+  - `archive/clarity-turn-shaping` 3682a600: the candidate on this branch's tip, for sim.
+  - `archive/clarity-eps-testing` 24c9212f + f7655b64: the same port, on top of 0f27431d's angle gate. A one-time migration (`migrate_nrdr_clarity_eps_default`, flag `/data/nrdr_clarity_eps_default_v1`) turns `NrdrLatEpsFirmwareFF` on, which makes James's controller that branch's default. The toggle still turns it off, and the value persists if another branch is flashed. The compiled default stays `"0"`.
   - Tests: 44 pass (James's 7 plus test_controlsd, test_turn_lead and test_nissan_leaf_fallback). A MetaDrive pilot with a latched blinker and a stop before each corner is queued; the full set waits on whether the pilot reproduces the standstill flip-flop.
 
-- **Route 00000287--5cda3437c4, the first drive of `clarity-eps-testing` f7655b64 (limited road evidence; initData confirms the branch, the commit and `NrdrLatEpsFirmwareFF`=1).** The owner reported two events. Neither came from the steering controller: in both, the wheel followed the commanded angle, and the command came from the model.
+- **Route 00000287--5cda3437c4, the first drive of `archive/clarity-eps-testing` f7655b64 (limited road evidence; initData confirms the branch, the commit and `NrdrLatEpsFirmwareFF`=1).** The owner reported two events. Neither came from the steering controller: in both, the wheel followed the commanded angle, and the command came from the model.
   - **2:17-2:26, left curve at 25-32 mph, "hugged left, over the line".**
     - The controller tracked the plan: yaw-rate curvature matched desiredCurvature within about 3%, and the angle ran 0.4-1 deg past a 27 deg desired.
     - The plan itself sat left of the lane centre. At 20 m it was about 0.7 m left of the midpoint between the lane lines.
@@ -9259,7 +9271,7 @@ Scratch scripts: /tmp/epsff/lowspd_wobble.py, sim_wobble.py, variants.py and r28
     - Pull-away wobble went 2.17 -> 2.72 (n 6 / 5).
     - Most road pull-aways are turns out of a stop. Only 1-2 per drive are straight: 286 scored 1.88 and 0.17, 287 scored 1.24. That is too few to confirm or refute the sim's 2.01 -> 1.22.
     - Caveat: the hands-off mask uses steeringPressed, which stayed 0 at 1500-2200 driver torque during the 2:44 fight. The 287 turn figures include that fight.
-- **Route 00000289--ba86b1c7c3, the owner's drive of `clarity-turn-shaping` 3682a600 (James's turn smoothing, feedforward ungated; initData `NrdrLatEpsFirmwareFF`=1, `NrdrLatPidFirmwareFF`=0). Limited road evidence, log decode.** The owner reported wobble when resuming at low speed, and oversteer at 9:40 and 10:30. Times below are log time; the owner's bookmarks run about 2-3 s earlier. The bookmarks went to the Radar Work session for the longitudinal side.
+- **Route 00000289--ba86b1c7c3, the owner's drive of `archive/clarity-turn-shaping` 3682a600 (James's turn smoothing, feedforward ungated; initData `NrdrLatEpsFirmwareFF`=1, `NrdrLatPidFirmwareFF`=0). Limited road evidence, log decode.** The owner reported wobble when resuming at low speed, and oversteer at 9:40 and 10:30. Times below are log time; the owner's bookmarks run about 2-3 s earlier. The bookmarks went to the Radar Work session for the longitudinal side.
   - **Pull-away wobble is the feedforward riding the model's own swing.** The pull-aways at 0:39.8 and 2:03.6 both do it. From about 9 mph, where the speed fade reaches w = 1, up to about 20 mph, the wheel swings ±5-7° at about 1 Hz (2:06.9-2:08.9: +5.4 / -6.0 / +7.0 / -3.4). Through all of it |desired| stays under 8°.
     - The desired angle swings in phase, about 0.25 s ahead: +2.9 / -3.8 / +5.5 / -1.2.
     - f is in phase with the desired and is most of the command (f +0.14-0.15 of out +0.22-0.24), while p opposes the overshoot.
@@ -9678,7 +9690,7 @@ Every step above 0.1 is also present with the toggle off: it is the existing deb
 ## 186. NRDR PID output scale simplified: no turn-in / unwind / centre-boost terms (owner, 2026-09-27). Sim and static evidence only; not driven.
 
 **What changed.** `_clarity_eps_pid_output_scale` (latcontrol_pid.py) is now James's version from
-`clarity-eps-testing` (e3de63be / 66293384 / a08a1bf0). It adds up to +0.0675 through 10–20 deg and
+`archive/clarity-eps-testing` (e3de63be / 66293384 / a08a1bf0). It adds up to +0.0675 through 10–20 deg and
 +0.0847 more through 16–28 deg, faded in over 4–14 m/s, and it is the same for left and right. The owner
 removed these terms, which came from starpilot's first Honda PID:
 - the left/right-asymmetric coefficients;
@@ -9726,7 +9738,7 @@ watch mid-speed turns, both directions, for over- or under-steer at the apex.
 ## 187. The STATUS 186 output scale is now on the branch, and the lateral sim can model the C020 easing off under hand load. Sim and static evidence only; not driven.
 
 **STATUS 186 lands.** Its text was committed early: it was swept into `e0d4aa2c` from the shared index while the code
-stayed on `pid-simple-output-scale` (87fb0904). This commit brings in that code unchanged: `latcontrol_pid.py`, the
+stayed on `archive/pid-simple-output-scale` (87fb0904). This commit brings in that code unchanged: `latcontrol_pid.py`, the
 two removed sliders (`HondaCenterScale`, `HondaCenterBoostMinSpeed`) and `test_latcontrol_pid_output_scale.py`.
 Both sims agreed before it landed:
 - lat_score gate (11 routes, the ab57c707 file as base, `NrdrLatPidFirmwareFF` 1): pass, 3 routes better, wobble flat.
@@ -9812,6 +9824,70 @@ Per-turn replay overshoot on 28f sharp corners (n=8): +3.3 -> +3.0 deg (logged d
 
 **This is the last planned NRDR PID change.** Per the owner, the lateral focus moves to LatControlClarityEps.
 
+## 191. NRDR PID turn feedforward now comes back 0.5 s after a release while the wheel is short of the turn (`NrdrLatPidFirmwareFF`, still default off; owner, 2026-09-29). Replay and static evidence only; not driven, and the driver re-grab is unscored.
+
+**Why.** The owner saw no benefit from `NrdrLatPidFirmwareFF`. A press drops its feedforward, and it only rejoined once
+the wheel was within 10 deg of the path. After a release mid-turn the wheel is usually further behind than that, so
+the plain PID carried the turn and trailed. On 28a/28b/28f, 23-33 % of turn time was latched out this way, mostly in
+the first second after a release (never 3 s or more).
+
+**What.** `nrdr_pid_eps_ff_weight` in `latcontrol_pid.py` also joins when `error * desired > 0` (the wheel is short of
+the turn) and there has been no press for `NRDR_PID_EPS_FF_REJOIN_HOLD_S` = 0.5 s. The fade-in, the |desired| gate,
+the 2-4 m/s speed gate and "a press drops it" are unchanged. `inf` turns the rejoin off. James's controller is not
+touched. The toggle keeps its key, so a device with it off is unchanged.
+
+**Evidence (replay, `lat_score` gate, 10 PID routes 277-28f, no driver in the loop).**
+
+| hold-off | turn_err 12-25 mph | turn_err < 12 mph | turn_past 12-25 mph |
+|---|---|---|---|
+| none (old law) | 14.81 | 23.60 | 5.73 |
+| 0 s | 12.84 | 22.74 | 5.95 |
+| **0.5 s (shipped)** | **13.51** | **22.91** | **6.01** |
+| 1.0 s | 14.16 | 23.10 | 6.00 |
+| 1.5 s | 14.57 | 23.33 | 5.90 |
+
+- Joining when *past* the path instead (negative control) changes nothing, so the "short of the turn" sign carries it.
+- Wobble and dither are unchanged in every arm. Verdict: pass.
+- At 12-25 mph, 93 % of the gain is on turns left hands-off for 2 s or more after the join (mean -2.62 deg, overshoot
+  +0.41).
+- Nearly all of the gain is on right turns (sides from the desired angle, + = left). Left-turn error barely moves.
+  The overshoot rises to watch: 27a right 1.46 -> 2.79, 28b left 1.75 -> 2.43.
+
+**Open: the re-grab.** Replay re-syncs to the log on every press, so it cannot score a driver who grabs the wheel back.
+- From the road logs, 43 % of 0.5 s joins meet a press within 0.5 s (64 % at 0 s).
+- 50 of those 60 re-presses push against the turn: 23 at the exit, 17 while the plan still turns in, 10 mid-turn.
+- John's MetaDrive re-grab row (base / 0 s / 0.5 s, re-grab drawn from those road events) is to be preregistered and
+  is not yet run.
+- The owner's left turns on the PID are gentle and need little correction. Report any change by turn side.
+
+**Correction (2026-09-29, found by James, static).** As pushed in `1a0dc489e`, the rejoin also fired at a mid-turn
+engagement with no press at all. `since_press_s` is `inf` from engagement until the first press, and `inf >= 0.5` let
+it through, so the feedforward faded in 20-70 deg short of the turn right at engagement. The commit text ("0.5 s after
+you let go") did not describe that. Now the new branch needs `0.5 <= since_press_s < inf`: only a real release counts.
+`since_press_s` itself still starts at `inf`, because the override fade reads it. A test pins the engagement case.
+
+My replay harness had the same flaw (its clock started at 1e9 per route), so the table above included engagement joins.
+Replay of the fixed code (base = the old law, same 10 routes):
+
+| | turn_err 12-25 mph | turn_err < 12 mph | turn_past 12-25 mph |
+|---|---|---|---|
+| old law | 14.81 | 23.59 | 5.73 |
+| 0.5 s, as pushed in 1a0dc489e (superseded) | 13.51 | 22.91 | 6.01 |
+| **0.5 s, fixed** | **13.52** | **22.88** | **6.02** |
+
+- The 12-25 mph gain is unchanged. 94.7 % of it is on turns left hands-off for 2 s or more (93.3 % before).
+- Below 12 mph, the engagement join was a small *loss*: before any release, error was 0.66 deg worse and overshoot
+  0.89 deg higher on those frames. The fix removes it, and those frames now match the old law exactly.
+- Wobble and dither are unchanged. Verdict: pass (replay).
+- The hold-off rows restated on the fixed code (turn_err 12-25 / turn_err < 12 / turn_past 12-25):
+  - 0 s: 12.85 / 22.71 / 5.96.
+  - 1.0 s: 14.17 / 23.07 / 6.01.
+  - 1.5 s: 14.58 / 23.31 / 5.91.
+  - All are within 0.03 of the flawed-harness rows, and the ranking is unchanged. Wobble and dither are unchanged, and every arm passes.
+  - 0.5 s is still a pick between 0 s (the most gain) and the road re-grab rate (64 % vs 43 % of joins meet a press within 0.5 s). RG1's t0 arm is the test of it.
+- A car without the modified-EPS press detector never sets `since_press_s`, so it never takes this rejoin.
+- The sim re-grab row (RG1) uses base = the pre-build `latcontrol_pid.py` blob `ef28076db`, not hold = `inf`.
+
 ## 192. ICBM gas-release set speed is baked in (owner request, 2026-09-29); the `SetSpeedOnGasRelease` toggle is gone, and the ICBM description is rewritten. Static and unit evidence only.
 
 - **Why:** `SetSpeedOnGasRelease` has defaulted on since STATUS 84, and the owner's ICBM drives since then ran with it on. STATUS 86/87/126 reworked it into the release set speed, the time-limited gas-release floor and the gas snap. The owner asked for it to be part of ICBM rather than a toggle.
@@ -9822,6 +9898,139 @@ Per-turn replay overshoot on 28f sharp corners (n=8): +3.3 -> +3.0 deg (logged d
   - The key stays in `params_keys.h` and `feasibleparams.txt`, so there is no binary rebuild. It is unused.
 - **Effect:** a car that had the toggle turned off now gets the gas-release set speed, floor and snap too. No other behaviour changes.
 - **Tests:** `test_redneck_cruise.py`, `test_cruise_speed.py`, the_galaxy `test_device_settings_layout.py` and `test_device_settings_frontend.py`, and `test_starpilot_variables.py`: 212 pass.
+
+## 193. `tools/longitudinal/stock_acc_reference.py`: what stock Honda ACC would have commanded in the same situation, learned from the stock routes and scored against our planner (owner request, 2026-09-29). Replay only; a reference, not a controller.
+
+- **What it does:**
+  - Reads stock ACC's own ACCEL_COMMAND (0x1DF, bus 1 on this car) from every stock route.
+  - For each 20 Hz moment of an alpha-long route, finds the 15 nearest stock moments and reports their median command now and 0.5–3 s ahead.
+  - It matches on vEgo, log gap, vRel, the lead's 1 s accel slope and set speed − vEgo. aEgo is left out because it leaks braking already under way.
+  - Modes:
+    - `build`: npz cache per route.
+    - `validate`: leave one route out.
+    - `gain`: delivered aEgo against the command.
+    - `compare`: per-brake-episode verdicts, `--json`.
+    - `augment`: adds a `stock_nn` variant to a long_replay_viewer frames file.
+  - Episodes where the nearest stock moments are far away are tagged `no stock precedent` rather than scored.
+- **Corpus:** 16 stock routes (25b–292), 120k rows, about 100 min with a lead within 120 m. Only about 60 s of stock braking is below −2.5.
+  - ICBM steps the stock set speed down during stock braking. On 270 that is 60 % of moving-with-lead rows, so set speed is a matching feature and its share is reported.
+  - Peter's next drive is ICBM-off, for a clean base.
+- **Validation (leave one route out):**
+  - Command MAE 0.19 m/s² overall; 0.65 while stock is below −1.5.
+  - 20 stock brake episodes: peak error median +0.05; onset error median −0.52 s, |dt| p75 1.9 s.
+  - Peak level is usable; onset timing is loose.
+  - Adding inverse TTC tightened onset to |dt| p75 1.46 s on the same 20 episodes. Not adopted on that little evidence.
+- **Command → aEgo at a firm brake (cmd < −1.5 held 0.5 s):**
+  - Stock: gain 1.09, lag 0.1 s, rms 0.22 (161 s).
+  - Ours: gain 1.10, lag 0.2 s, rms 0.35 (125 s).
+  - The ~1.1× over-delivery is the car under both, so a fix belongs in the command, not a gain correction.
+- **Compare, 118 brake episodes on 23e, 280, 283, 286, 297 and 298:**
+  - 44 have no stock precedent, mostly highway closing at 6–13 m/s from 40–95 m.
+  - Of the 74 with precedent: ours harder 23, ours earlier 23, ours twitchier 18, similar 14, ours later 10, ours softer 8, stock would not brake 6.
+  - Command reversals per minute with a lead: ours 10.2–13.6 on 23e/280/283/286/297 and 7.9 on 298, against stock's logged 6.4.
+- **Peter's labelled moments:**
+  - 283 881.5 (14:43): ours −3.50 with 2.6 s below −2.5; stock reference −2.21 with 0 s. Ours harder and 0.8 s earlier (precedent 1.3).
+  - 298 bm1 = P6 (9:39.8, bookmark at route t 582.2): ours −3.50; stock reference −1.38. No stock precedent (1.8).
+  - 298 789.7 (13:11.7, labelled over-braked): ours −3.50 vs −1.96, harder and 2.6 s earlier (precedent 1.2). Agrees with the label.
+- **Limits:**
+  - The reference is a neighbour median. It says what stock did in similar logged moments, not what it would have done here.
+  - No cut-ins, stop-and-go to zero, or adjacent-lane curves are separated out yet.
+  - Tests: `tools/longitudinal/tests/test_stock_acc_reference.py`, 11 pass (synthetic routes).
+- **Addendum (2026-09-29, Bob's gate3 questions; replay only):**
+  - **Radar-vs-model tag.** An episode is tagged `radar closing > model` when radar closing exceeds the model lead's closing on the same car by 3 m/s or more in the second before our peak.
+    - Ours harder: 10 of 23 tagged.
+    - Ours earlier: 7 of 23 tagged.
+    - Twitchier: 4 of 24. Similar: 0 of 72. No precedent: 25 of 58.
+    - Reading: the tag is concentrated where we out-brake stock and absent where we match it. But it covers under half of the harder and earlier cases, so gate3 is aimed at a real subset, not at the whole gap.
+  - **Q3, does stock react to the lead braking before the gap closes?** `leadbrake` mode.
+    - Event: the lead's accel slope first drops below −1.0 after a calm second, with vRel > −1 and lead within 100 m. Stock has 183 events, ours 206.
+    - Stock barely moves: 1 s command drop median 0.04, ≥ 0.3 in 9 %, against a 4 % calm-lead control. With a hard lead brake (< −3) and the gap closing within 2 s, the 1 s drop is 0.04 (0 % at ≥ 0.3) and the 2 s drop is 0.19.
+    - Ours moves first: in the same hard/closing case, 1 s drop median 0.68 (65 % at ≥ 0.3); control 3 %.
+    - Reading: stock's decisiveness does not come from reacting to lead braking. It waits for the gap and closing speed, then commits. Ours reacts to the lead's decel within the first second, which lines up with "ours earlier".
+  - **`compare --candidate trace.json`** (one route): scores a {"t", "cmd"} command trace against the stock reference in place of our logged command, for Bob's open-loop gate3+TTC variant.
+  - **End-of-stop profile, `stops` mode (replay).** A stop behind a lead: speed falls from ≥ 4 m/s to < 0.2, engaged throughout, lead within 30 m. Creeps after an earlier stop are excluded. Stock n 33, ours n 32.
+
+    | median | stock | ours |
+    |---|---|---|
+    | command at 4 m/s | −1.35 | −1.02 |
+    | command at 2 m/s | −1.12 | −0.67 |
+    | command at 1 m/s | −0.82 | −0.42 |
+    | 4 m/s → stop | 4.5 s | 9.1 s |
+    | time below 1 m/s | 1.3 s | 2.4 s |
+    | gap at stop | 4.8 m | 5.1 m |
+    | aEgo step at standstill | +1.90 | +2.09 |
+    | command reversals | 0 | 1 |
+
+    - Stock brakes about twice as firmly through the last 4 m/s and holds roughly −0.8 into the stop. Ours tapers to about −0.4 and creeps for twice as long.
+    - Both stop at about the same gap, and the standstill aEgo step is similar.
+    - Reading: stock's stop is short and firm; ours is a long, soft crawl with one change of mind.
+  - **Route 299 added (2026-09-29), stock ACC with ICBM off:** `11c8fa231c0499ed|00000299--cfcac519b7`, 38.6 min usable with a lead. Stock stops n 45 now; the stock stop profile barely moved (command at 2 m/s −1.16, 4 m/s → stop 4.6 s).
+    - The dash BRAKE warning Peter saw at bookmarks 1 and 3 is ACC_CONTROL 0x1DF `AEB_PREPARE` on bus 1, set at 11:49.9 and 19:56.7 and nowhere else. `AEB_STATUS`, `AEB_BRAKING`, `stockFcw` and `stockAeb` never set. Bob found other rare bits (0x1FA, 0x374, 0x1DF 11/13/19) toggling at the same two moments; not yet decoded.
+    - Bookmark 1: stock hit its −3.0 limit within 0.5 s of the warning and was back to −0.43 by +2.5 s. Bob's shadow planner on the same moment reached −2.4 at +0.75 s and was still −1.06 at +3 s.
+  - **Release time and the `ours lingers` tag (Bob's suggestion, replay):** seconds from an episode's peak until the command is back above half of it. `ours lingers` when ours takes more than 1.0 s longer than the stock reference.
+    - Over the 6 alpha routes, among 70 real brakes with stock precedent (stock peak < −1.5): ours lingers in 29. Median release ours 2.1 s vs stock 0.6 s.
+    - Reading: stock is sharp in and sharp out. Along with the soft stop, the long tail after the peak is the main shape difference on real brakes.
+  - **Dash BRAKE warning column (2026-09-30, Bob's decode; replay):** 0x374 STALK_STATUS byte 4 (`DASHBOARD_ALERT`) == 185 on the ACC bus, about 1.1 s per warning. Cached as `alert`; caches from before it read as unknown, not "never warned" (rebuilt cache: `/tmp/sar2`).
+    - Across the 17 stock routes it fires 6 times: 25e 726.3, 266 1690.3, 270 267.6 and 275.4, 299 710.1 and 1196.9.
+    - `compare` reports `stock_alert_share`, the share of stock neighbours within 1 s of a warning, and tags `stock would warn` at ≥ 0.2. It also reports `dash_alert` for the route's own dash. That is n/a under openpilot long, not "never warned": our init silences the radar (disable_ecu), so the car's own FCW/AEB is off on every alpha route (Bob, route 298 seg 14 log). A missing warning there says nothing about ours being calmer.
+    - 18 of 200 alpha episodes are `stock would warn`. Six are also `ours lingers`, and 4 are `ours later` (2 of them also `ours softer`): in the moments where stock would have warned, ours sometimes comes in later and trails off.
+    - Limit: the precedent is only 6 warnings, so a share of 0.8 means neighbours drawn from one or two events, not a rate.
+  - **`law` mode: stock's brake law by regime (2026-09-30, Peter via Bob's Bosch-A relay, ideas 2 and 3; replay, /tmp/sar2).** Each brake onset (command < −1 with a lead) is sorted into one of three regimes:
+    - `threat`: a dash BRAKE warning within 1 s. Stock only; the dash is silenced under openpilot long.
+    - `set speed`: set speed at or below ego speed at the onset, meaning ICBM or a set-speed cut rather than the lead.
+    - `following`: everything else.
+    - It reports the situation at the onset: time gap, closing speed, and TTC three ways (plain, lead-accel-extrapolated with the 1 s slope, and with aLeadK; ego at constant speed, and the lead stops at 0). It also reports peak, time to peak, half-release time, and the release measured from the moment the gap stops closing. A grid gives the share of following-regime rows that are braking, by time gap × TTC(alead), for stock and ours.
+    - **Stock following** (n 69): brakes at median closing −1.3 m/s, 1.8 s gap and TTC(alead) 5.7 s, with the lead at −1.0. Peak −1.5, reached in 1.0 s.
+    - **Ours** (n 121): brakes at closing −3.7 m/s, 2.5 s gap and TTC(alead) 4.4 s, with the lead at −2.2. Peak −2.0, reached in 0.7 s.
+    - The grid holds the situation fixed. At TTC 4–6 s with a 1.2–3 s gap, stock is braking in 42–45 % of rows and ours in 26–33 %. At TTC 2–3 s, it is 87–98 % vs 80–82 %. (At gaps above 3 s ours brakes more: 32 % vs 22 %.)
+    - **Reading:** ours starts later in the 2–6 s TTC band, then brakes harder. Stock starts earlier at a lower closing speed and brakes gently.
+    - **Release, on each side's own real brakes (peak < −1.5):** about the same, 1.7 s stock (n 34) vs 1.7 s ours (n 77). Stock lets go 0.25 s after the gap stops closing (p25..p75 −0.1..0.6); ours 0.0 s (−0.8..0.3).
+    - So the `ours lingers` gap above (2.1 vs 0.6 s) comes from matched situations and the kNN precedent. It does not reproduce as a difference in release law between the two sides' own brakes. Treat `ours lingers` as situation-specific (bm1-like), not a general tail.
+    - **Threat** (n 3 of 6 warnings; the other 3 were stock disengaged or never went below −1):
+      - 25e 12:05: a cut-in at 22 m/s, closing −11. TTC plain 7.1, alead 4.3.
+      - 270 4:27: gap 0.51 s, not closing, TTC 12.
+      - 299 11:49.8 (bm1): plain TTC never, TTC(alead) 3.4.
+      - These fit Bob's reading of the Bosch-A doc: lead accel and time gap are inputs, and plain TTC alone explains none of them. Three events cannot fit the 4.75/4.375/4.0 thresholds; that is Bob's corpus scan.
+    - **Limits:** one car. The `threat` regime is 3 events. `set speed` (n 74) is mostly ICBM stock routes. Ours is 6 alpha routes. The lead-accel TTC treats a lead that is speeding up as steady.
+  - **Warning thresholds and AEB ramp (Bob's corpus scan, 2026-09-30; log evidence; `/tmp/rv/boscha/alerts_corpus.txt`, not committed):**
+    - The scan finds the same 6 stock BRAKE warnings and no others. 266 1690.1 is with ACC off.
+    - Chime (0x1FA byte 5 = 41/42) and AEB_PREPARE fire 0.17–0.21 s before dash 185. The tool's ±1 s window already covers that lead time.
+    - Dash 187 (24 transitions, including alpha routes and standstill) is not a forward-collision warning. The tool keys on 185 only.
+    - AEB_STATUS and AEB_BRAKING never assert on any route. The stock AEB brake ramp (idea 4) cannot be measured from these drives.
+    - The doc's TTC ladder (4.75 / 4.375 / 4.0) does not fit:
+      - 3 warnings fire at a 0.5–0.73 s gap with little or no closing (270 267.4, 299 709.9, 299 1196.7); 270 275.1 is at 1.04 s.
+      - 35 stretches at TTC < 4 s have no warning; stock was already braking in them.
+    - `stock would warn` needs no change. It already comes from stock neighbours matched on speed, gap, closing speed and lead accel, not from a TTC threshold. Same 6-event limit as above.
+
+## 194. 297 48:12 harder-than-needed brake: a newborn track's birth rail, plus a short RAIL_FAST add-on (2026-09-30). Replay (car-matched 07b66420, params 2026-09-30T16:44:42Z) + log; no gate change.
+- A newborn track 4 (born at 95 m) sat on the U11 birth rail (−13.5) from 48:11.97 to 48:13.33, while the true closing was about −10 by settled range and NC. This is the known class in D-068 (294 7:06); a railed birth U11 is only a bound (D-063).
+- `RANGE_VREL_RAIL_FAST` armed on the 0.5 s-old track, with rail_count 3 and corr 2.74. It fitted the track's range-convergence tail (rsig 11→9; bank range −16.3 m/s, then −8.5 over the next 0.5 s), which added about 2.7 m/s of fake closing for 0.25 s (lead1 −16.2). The rsig 59/18 birth rows never reached radard.
+- The ego peak of −4.4 came at 48:13.1, after the assist ended, so the rail value drove most of the brake.
+- The counter-case is 298 4:10 (newborn tracks 33→35): the rail was a correct bound there, with true closing about −21.6 by range and NC.
+- Open, owner's call: should RAIL_FAST require a minimum track age or a settled rsig?
+- Tooling note: old `/tmp/rv/298/scan_*.pkl` clocks zeroed on the first carState, which is a per-route offset (297 +7.0 s, 298 +4.1 s vs initData route time). Do not trust times from those scans.
+
+## 195. Short Plan Read-Ahead (`PlannerShortActionTime`) ON vs OFF on 2a6/2a4 jab windows: no effect; and the longitudinal replay plant under-reads transient brakes (owner request, 2026-09-30). Replay only.
+- **Setup:** Bob's closed-loop crawler (`r6.py`), with the planner from 87505f426 (the build 2a6 ran). Each drive's own initData params. Bob's fitted table plant (`PLANT_NOGRADE=1`). Only `_short_action_t_active` is toggled.
+- **Windows (11):** 5 owner bookmarks on 000002a6--f5f92c6f78 (158, 245, 326, 537, 904 s) and 6 jab spots on 000002a4--4736f8e372 (961, 1019, 1105, 1144, 1386, 1510 s). 2a4 ran 44918d843, before the toggle existed.
+- **Validation:** open loop on logged state reproduces the logged `actuators.accel` with a median |err| of 0.007–0.04 (one-tick shift). At 2a6 904 s (15:10) it gives −2.65 vs −2.68 logged.
+- **Result:** ON vs OFF is the same within about 0.1 in every window.
+  - Means over the 11 windows, ON vs OFF: min cmd −1.89 vs −1.87; cmd jerk RMS 1.69 vs 1.68; min gap 23.6 vs 23.7 m.
+  - Open loop, ON == OFF exactly at the jab onsets.
+  - The only visible difference is 2a4 1510 s: −1.99 vs −1.84.
+  - Raising the plant lag to 0.4 s gives the same picture.
+  - **The toggle did not cause or sharpen the 2a6 jabs.** They follow real lead slowdowns. At 904 s, the radar check and the model-path check agree it was a real brake tap.
+- **🟠 Plant limit — applies to every closed-loop longitudinal replay:** on transient brakes the real aEgo lags the command by about 0.5 s, then overshoots it by about 0.8–0.9 m/s². The fitted plant (LAG 0.1, TAU_BRAKE 0.2) settles on the command instead.
+
+  | 2a6 window | cmd | real aEgo | plant aEgo |
+  |---|---|---|---|
+  | 904 s | −2.68 | −3.60 | −2.18 |
+  | 537 s | −3.15 | −3.88 | −3.00 |
+  | 326 s | −2.06 | −2.63 | −1.96 |
+
+  - LAG 0.4 still does not reproduce the overshoot (904 s plant −2.67).
+  - **So closed-loop replays under-read how harsh a jab feels.** Compare candidates on the command, not on the simulated aEgo peak.
+  - A plant with a brake overshoot term is open.
 
 ## 136h. `GasOverrideBoost` (new, default off): a second, separate gas-press boost alongside the lead-departure assist, closer to upstream PR 39015. Unit tests only; not replayed, not driven.
 - **Why:** item 136's census found PR 39015 not worth porting *as a replacement* for the lead-departure assist (136b): its trigger does not check the sign of the e2e target, so on our census routes 12 of 16 matching gas presses were the model braking harder than the MPC for a reason off-radar, not a departing lead. The owner asked to get closer to the original PR anyway. Scoped via two rounds of clarification: adopt all three of the PR's behavioral differences (gas-press trigger, e2e braking softened rather than floored, no lead required), but **add this alongside** the existing, already-verified lead-departure assist rather than replace it — the lead-departure assist's own trigger and e2e-braking floor are unchanged.
