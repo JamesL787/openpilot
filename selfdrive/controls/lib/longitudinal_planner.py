@@ -235,6 +235,23 @@ LEAD_GEOMETRY_MAX_REQUIRED_ACCEL = 12.0
 
 CLOSE_LEAD_BRAKE_CAP_RAMP_MIN = 0.2
 CLOSE_LEAD_BRAKE_CAP_RAMP_FULL = 0.5
+# Experimental Mode close-lead cap: how fast it may go deeper than chill's floor (D-073).
+# In chill the cap is built against accel_limits_turns[0] (about -1.0, deepening only as a_desired
+# follows), in Experimental Mode against the vehicle minimum (-3.5), so one aLeadK step turned into a
+# one-frame brake step of up to 3 m/s^2 while the MPC/e2e blend asked for -0.04..-0.97. That set all
+# 14 jabs on 000002a6 / 000002a4 (Exp on in every window; replay trace, car planner 87505f426).
+# Building the Exp cap against chill's floor outright removed the jabs but, closed loop with the
+# fitted plant, cut 283 27:40's closest gap 20.6 -> 10.3 m (TTC 7.8 -> 3.6 s) and 2a6 15:08's
+# 15.1 -> 11.1 m. Letting the floor follow the cap below chill's at 1.5 m/s^3 cut the biggest 0.5 s
+# brake step 3.64 -> 1.88 (283 18:52), 3.02 -> 1.72 (2a4 17:02), 1.75 -> 1.19 (2a6 15:08) and kept
+# most closest gaps within 1 m; worst 283 27:40 20.6 -> 16.6 m, TTC 5.8 s (chill 9.3 m / 3.2 s),
+# 2a6 9:00 11.1 -> 10.3 m. Only the aLeadK share is rate limited: what the closing speed alone
+# demands (the same cap with aLeadK not counted) applies at once, so a stopped car close ahead still
+# gets the full brake on the first frame, and 280 12:51 (closing 13.5 m/s) and 2a6 9:08 (5 m gap)
+# replay as before. Replay only: the plant misses the real brakes' ~0.8 m/s^2 overshoot (STATUS 195).
+# The fast-closing path is not rate limited.
+EXP_CLOSE_LEAD_FLOOR_RATE = 1.5   # m/s^3, how fast the Exp cap floor may deepen below chill's
+EXP_CLOSE_LEAD_FLOOR_RELAX = 2.0  # m/s^3, how fast it returns once the cap stops asking
 
 # Off-axis radar leads (STATUS 74e): at bearing |yRel|/dRel above this the lead is on a curve relative
 # to the ego x axis, where Bosch-A radial range-rate is not the lead's longitudinal speed and aLeadK
@@ -1130,6 +1147,7 @@ class LongitudinalPlanner:
     self.mpc = LongitudinalMpc(dt=dt)
     self.fcw = False
     self.dt = dt
+    self.exp_close_lead_floor = 0.0
     self.model_allow_throttle = True
     self.model_allow_throttle_transition_t = 0.0
     self.allow_throttle = True
@@ -1333,11 +1351,11 @@ class LongitudinalPlanner:
       stop_term = v_ego ** 2 / (2.0 * (d + v_lead ** 2 / (2.0 * lead_brake)))
     return float(min(max(match_term, stop_term), LEAD_GEOMETRY_MAX_REQUIRED_ACCEL))
 
-  def get_close_lead_brake_cap(self, lead, v_ego, accel_min):
+  def get_close_lead_brake_cap(self, lead, v_ego, accel_min, count_lead_brake=True):
     if lead is None or not lead.status:
       return None
 
-    lead_brake = max(0.0, -float(lead.aLeadK))
+    lead_brake = max(0.0, -float(lead.aLeadK)) if count_lead_brake else 0.0
     reaction_t = max(self.longitudinal_actuator_delay, self.dt)
     closing_speed = max(0.0, v_ego - lead.vLead)
     projected_closing_speed = closing_speed + lead_brake * reaction_t
@@ -3271,6 +3289,8 @@ class LongitudinalPlanner:
         lead.status and bool(getattr(lead, "radar", False)) and int(getattr(lead, "radarTrackId", -1)) == self.fast_closing_lead_track
         for lead in (self.lead_one, self.lead_two)):
       self.fast_closing_lead_track = None
+    exp_close_lead_cap = None
+    exp_close_lead_floor = min(self.exp_close_lead_floor, accel_limits_turns[0])
     if lead_control_active:
       for lead, lead_source in ((self.lead_one, 'lead0'), (self.lead_two, 'lead1')):
         rav4_early_lead_cap = get_toyota_rav4_tss2_early_lead_cap(
@@ -3281,6 +3301,12 @@ class LongitudinalPlanner:
         fast_closing = self.fast_closing_lead_passes_floor(lead, lead_source, v_ego, sm['modelV2'])
         cap = self.get_close_lead_brake_cap(lead, v_ego, fast_closing_accel_min(vision_cap_accel_min) if fast_closing
                                            else output_accel_min)
+        if cap is not None and experimental_mlsim and not fast_closing:
+          # D-073: the part of the Exp cap that comes from the lead's aLeadK may only go deeper than chill's
+          # floor at EXP_CLOSE_LEAD_FLOOR_RATE; what the closing speed alone demands applies at once.
+          exp_close_lead_cap = cap if exp_close_lead_cap is None else min(exp_close_lead_cap, cap)
+          closing_cap = self.get_close_lead_brake_cap(lead, v_ego, output_accel_min, count_lead_brake=False)
+          cap = max(cap, exp_close_lead_floor if closing_cap is None else min(exp_close_lead_floor, closing_cap))
         if cap is not None:
           close_lead_caps.append(cap)
           self.close_lead_brake_cap_value = min(self.close_lead_brake_cap_value, cap)
@@ -3300,6 +3326,10 @@ class LongitudinalPlanner:
           close_lead_caps.append(low_speed_stop_cap)
           vision_brake_cap_active = True
         vision_low_speed_stop_active |= low_speed_stop_active
+    if exp_close_lead_cap is not None and exp_close_lead_cap < exp_close_lead_floor:
+      self.exp_close_lead_floor = max(output_accel_min, exp_close_lead_floor - EXP_CLOSE_LEAD_FLOOR_RATE * self.dt)
+    else:
+      self.exp_close_lead_floor = min(0.0, self.exp_close_lead_floor + EXP_CLOSE_LEAD_FLOOR_RELAX * self.dt)
     if fast_closing_cap is not None:
       # The floor opens to the fast-closing cap's own value only (FAST_CLOSING_LEAD_*).
       output_accel_min = min(output_accel_min, fast_closing_cap)

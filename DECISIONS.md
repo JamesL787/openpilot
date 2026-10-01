@@ -1598,3 +1598,43 @@ Synced 2026-09-30 from `stopshadow-radar` 7aaf780be2 to `ns-bosch-radar-testing`
 Peter's request, with `RANGE_VREL_RAIL_NC_VETO`, `BOSCH_A_NC_RAIL_VREL` (D-069) both OFF. Code only; no behaviour change
 until the switch is turned on. FAR_RAIL_VISION_BOUND (3fc070837) applies at >= 80 m and the veto below 80 m; both only
 raise vRel, so they compose as floors (static). Bob's A/B above did not include FAR_RAIL_VISION_BOUND.
+
+## D-073 — ACCEPTED (default ON): Experimental Mode close-lead cap goes deeper than chill's floor at 1.5 m/s³, closing-speed demand at once
+Recorded 2026-10-01, owner-approved ("Yeah let's tune this limit … ideally I want it to work as well as chill"; "Yeah go
+ahead" on the rate-limited version). Replay (open loop + closed loop with the fitted plant, car planner 87505f426,
+params_car) and static unit tests only; not driven.
+
+Problem: all 14 brake jabs Steve passed on (000002a6, 000002a4; Experimental Mode on in every window) were set by
+`get_close_lead_brake_cap`. The MPC/e2e blend asked for -0.04..-0.97 while the cap applied -1.35..-3.07 in one frame. The
+cap is built against `output_accel_min`, which in Experimental Mode is the vehicle minimum (-3.5) and in chill is
+`accel_limits_turns[0]` (about -1.0, deepening only as a_desired follows). One aLeadK step therefore became a one-frame brake
+step of up to 3 m/s² in Experimental Mode and a step to -1.0 in chill.
+
+Rejected: building the Experimental Mode cap against chill's floor outright (V1). Closed loop it removed the jabs but cut
+283 27:40's closest gap 20.6 → 10.3 m (TTC 7.8 → 3.6 s) and 2a6 15:08's 15.1 → 11.1 m; chill itself does as badly there
+(9.3 m, 8.5 m). The 57-route open-loop fleet showed 48 Experimental Mode episodes where V1 sat at -1.0..-1.5 under a lead
+braking at 2-5.5 m/s².
+
+Rule (`EXP_CLOSE_LEAD_FLOOR_RATE` 1.5, `EXP_CLOSE_LEAD_FLOOR_RELAX` 2.0): in Experimental Mode, and not on the fast-closing
+path, the close-lead cap is held at or above a floor that starts at chill's floor (`accel_limits_turns[0]`), goes deeper at
+1.5 m/s³ while the cap asks for more, and relaxes at 2.0 m/s³ once it stops. The floor never applies below what the closing
+speed alone demands (the same cap with aLeadK not counted, `count_lead_brake=False`), so a stopped car 20 m ahead at
+20 m/s still gets ≤ -3.0 on the first frame. Chill and the fast-closing cap are unchanged. Nothing is deleted or coasted;
+radar inputs are untouched (D-041/D-042).
+
+Closed loop (fitted plant; min accel / biggest 0.5 s drop / closest gap m / min TTC s), today → D-073:
+| moment | today | D-073 | chill |
+|---|---|---|---|
+| 283 18:52 | -3.50 / 3.64 / 37.2 / 8.0 | -1.97 / 1.88 / 37.2 / 7.9 | -1.00 / 1.69 / 32.3 / 7.0 |
+| 2a4 17:02 | -3.03 / 3.02 / 43.1 / 10.6 | -1.75 / 1.72 / 36.8 / 10.2 | -1.00 / 1.02 / 33.5 / 9.6 |
+| 2a6 15:08 | -2.21 / 1.75 / 19.4 / 6.3 | -2.05 / 1.19 / 18.6 / 6.0 | -1.34 / 0.60 / 17.0 / 5.8 |
+| 2a6 2:42 | -2.51 / 1.84 / 32.5 / 14.4 | -2.31 / 0.98 / 32.4 / 14.4 | -1.00 / 1.28 / 31.3 / 13.1 |
+| 283 27:40 | -2.79 / 1.20 / 20.6 / 7.8 | -2.43 / 0.99 / 16.6 / 5.8 | -2.15 / 0.59 / 9.3 / 3.2 |
+| 2a6 9:00 | -2.77 / 1.25 / 11.1 / 4.8 | -2.65 / 0.83 / 10.3 / 4.5 | -2.27 / 0.70 / 7.9 / 3.7 |
+| 2a6 9:08 | -3.15 / 1.97 / 5.0 / 2.2 | -2.53 / 1.97 / 5.0 / 2.2 | -1.34 / 1.49 / 4.8 / 2.3 |
+| 280 12:51 | -2.57 / 1.64 / 22.6 / 3.5 | -2.57 / 1.64 / 22.5 / 3.5 | -1.88 / 0.63 / 15.5 / 3.0 |
+The other 9 jab and real-brake windows on 2a6/2a4 stay within 0.5 m of today's closest gap.
+
+Limits: the plant misses the real brakes' ~0.8 m/s² overshoot (STATUS 195), so replay under-reads jab harshness, and the
+2a6 2:42 jab only softens -2.51 → -2.31 here. The STATUS 148 stock-ACC comparison cases (25b 1338.8, 25e 318.1, 25f 483.1,
+262 379.4, 263 374.3) were logged with Experimental Mode off, so this path does not run there (static). Status stays ACCEPTED-unvalidated until drives in Experimental Mode with it are reviewed.

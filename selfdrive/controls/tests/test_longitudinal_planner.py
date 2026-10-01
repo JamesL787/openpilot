@@ -4920,3 +4920,75 @@ def test_exp_mode_reentry_during_fade_returns_to_exp_target_at_once():
   ref.update(exp, make_toggles())
   assert on.exp_mode_blend_weight == 1.0
   assert float(on.output_a_target) <= float(ref.output_a_target) + 0.05
+
+
+def _exp_close_lead_case(experimental_mode=True):
+  # 2a6 15:08 shape: radar lead 30 m ahead, 5 m/s slower, braking at 3 m/s^2. Raw cap about -2.6.
+  v_ego = 18.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=30.0, v_lead=13.0, a_lead=-3.0, radar=True, model_prob=1.0)
+  lead.vRel = 13.0 - v_ego
+  sm = make_sm(v_ego, -0.3, -1.0, experimental_mode=experimental_mode, tracking_lead=True, lead_one=lead)
+  return planner, lead, sm, v_ego
+
+
+def test_exp_close_lead_cap_deepens_past_chill_floor_at_bounded_rate():
+  # D-073: in Experimental Mode the close-lead cap no longer steps straight to the vehicle minimum; it starts at
+  # chill's floor and may only go deeper at EXP_CLOSE_LEAD_FLOOR_RATE, and still reaches the full demand.
+  planner, lead, sm, v_ego = _exp_close_lead_case()
+  raw = planner.get_close_lead_brake_cap(lead, v_ego, -3.5)
+  assert raw < -2.5
+  step = longitudinal_planner_module.EXP_CLOSE_LEAD_FLOOR_RATE * planner.dt
+  caps, floors = [], []
+  for _ in range(60):
+    planner.update(sm, make_toggles())
+    caps.append(planner.close_lead_brake_cap_value)
+    floors.append(planner.exp_close_lead_floor)
+  assert planner.mode == "blended"
+  assert caps[0] >= longitudinal_planner_module.A_CRUISE_MIN - 1e-6
+  assert floors[0] == pytest.approx(longitudinal_planner_module.A_CRUISE_MIN - step)
+  assert all(c1 >= c0 - 0.25 for c0, c1 in zip(caps, caps[1:], strict=False))
+  assert caps[-1] == pytest.approx(raw, abs=0.1)
+
+
+def test_exp_close_lead_floor_relaxes_when_the_cap_stops_asking():
+  planner, lead, sm, _ = _exp_close_lead_case()
+  for _ in range(20):
+    planner.update(sm, make_toggles())
+  deep = planner.exp_close_lead_floor
+  assert deep < -1.5
+  sm["radarState"].leadOne = make_lead(status=False)
+  planner.update(sm, make_toggles())
+  assert planner.exp_close_lead_floor == pytest.approx(deep + longitudinal_planner_module.EXP_CLOSE_LEAD_FLOOR_RELAX * planner.dt)
+  for _ in range(40):
+    planner.update(sm, make_toggles())
+  assert planner.exp_close_lead_floor == 0.0
+
+
+def test_exp_close_lead_floor_leaves_chill_alone():
+  planner, lead, sm, _ = _exp_close_lead_case(experimental_mode=False)
+  for _ in range(20):
+    planner.update(sm, make_toggles())
+    assert planner.exp_close_lead_floor == 0.0
+  assert planner.mode == "acc"
+
+
+def test_exp_close_lead_floor_does_not_slow_fast_closing_cap(monkeypatch):
+  planner, lead, sm, v_ego = _exp_close_lead_case()
+  monkeypatch.setattr(planner, "fast_closing_lead_passes_floor", lambda *a, **k: True)
+  planner.update(sm, make_toggles())
+  assert planner.close_lead_brake_cap_value < -1.5
+  assert planner.exp_close_lead_floor == 0.0
+
+
+def test_exp_close_lead_floor_does_not_delay_closing_speed_demand():
+  # Stopped car 20 m ahead at 20 m/s: the closing speed alone demands far past chill's floor, so the cap applies at
+  # once (see test_cruise_accel_cap_preserves_close_lead_braking_after_set_speed_drop); only the aLeadK share is rate limited.
+  v_ego = 20.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=20.0, v_lead=0.0, a_lead=-1.0, radar=True, model_prob=0.99)
+  sm = make_sm(v_ego, -0.05, -1.0, experimental_mode=True, tracking_lead=True, lead_one=lead)
+  planner.update(sm, make_toggles())
+  assert planner.close_lead_brake_cap_value <= -3.0
