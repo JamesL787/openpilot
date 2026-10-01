@@ -236,13 +236,15 @@ def test_only_the_modified_eps_clarity_gets_this_controller():
   assert not honda_eps.use_honda_eps_controller(_params(b'39990-TBA,A030\x00\x00', CAR.HONDA_CIVIC_BOSCH))
 
 
-@pytest.mark.parametrize("v, delay", [(0.0, 0.35), (3.5, 0.35), (7.0, 0.35), (12.0, 0.35), (20.0, 0.35), (30.0, 0.40), (40.0, 0.40)])
+@pytest.mark.parametrize("v, delay", [(0.0, 0.15), (3.5, 0.15), (7.0, 0.08), (12.0, 0.10), (20.0, 0.20), (30.0, 0.30), (40.0, 0.30)])
 def test_lateral_delay_follows_the_measured_execution_delay(v, delay):
   assert honda_eps.clarity_lateral_delay(v) == pytest.approx(delay)
 
 
-def test_lateral_delay_never_falls_with_speed():
-  delays = [honda_eps.clarity_lateral_delay(v) for v in np.linspace(0.0, 40.0, 81)]
+def test_lateral_delay_dips_in_town_and_rises_from_there():
+  # measured: the crawl is slower than town (small targets), and from town up the delay rises with speed
+  assert honda_eps.clarity_lateral_delay(3.5) > honda_eps.clarity_lateral_delay(7.0)
+  delays = [honda_eps.clarity_lateral_delay(v) for v in np.linspace(7.0, 40.0, 67)]
   assert all(b >= a for a, b in zip(delays, delays[1:], strict=False))
 
 
