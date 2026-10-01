@@ -2963,8 +2963,8 @@
       {
         "key": "GasOverrideBoost",
         "label": "Gas Override Boost (TEST)",
-        "description": "Experimental Mode only. When you press the gas pedal above ~10 mph, nudges the car's requested acceleration up toward the MPC's target, a little more with each press, capped low. Unlike the lead-departure assist, this does not require a lead ahead and does not back off while the model is braking — it is more permissive on purpose and has not been road tested. Leave this off unless you know what you're verifying.",
-        "picker_description": "TEST, default off. Gas-press acceleration boost alongside the lead-departure assist, modeled on upstream PR 39015. Unreplayed.",
+        "description": "Experimental Mode only. Port of upstream PR 39015. While you hold the gas above ~10 mph and the model is braking harder than the MPC, the model's requested acceleration is raised by up to 0.2 m/s^2 (0.05 per press), and the boost holds for the drive. Not limited to a lead ahead and not capped at the MPC target. Unreplayed and not road tested; leave this off unless you are verifying it.",
+        "picker_description": "TEST, default off. Port of upstream PR 39015 (gas override boost). Unreplayed.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",
