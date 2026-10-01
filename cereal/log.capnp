@@ -817,6 +817,9 @@ struct RadarState @0x9a185389d6fdd05f {
     # channel exists for stays auditable in a log. measuredRadar is unchanged.
     vRelRangeDerived @16 :Float32;
     measuredRadar @17 :Bool;
+    # True on each radar update where the NC veto (D-071, RANGE_VREL_RAIL_NC_VETO in radard.py) WOULD zero a RAIL_FAST
+    # correction, whether the switch is on or off. Shadow marker for finding candidate fires in logs; it changes nothing.
+    ncVetoShadow @18 :Bool;
 
     aLeadDEPRECATED @5 :Float32;
   }
