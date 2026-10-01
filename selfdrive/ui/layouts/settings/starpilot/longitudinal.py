@@ -583,6 +583,16 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_value=lambda: f"{self._params.get_float('VEgoStopping'):.2f}m/s",
                  on_click=lambda: self._show_slider("VEgoStopping", 0.01, 1.0, step=0.01, unit="m/s", value_type="float"),
                  visible=self._show_stop_tuning_values),
+      SettingRow("GasOverrideBoost", "toggle", tr_noop("Accel Boost"),
+                 subtitle=tr_noop("Experimental Mode only. Raises the model's requested acceleration "
+                                  "when it is more cautious than the MPC. Pressing the gas above "
+                                  "~10 mph while the model is braking harder than the MPC adds up to "
+                                  "0.2 m/s^2 (0.05 per press, held for the drive; port of upstream "
+                                  "PR 39015). A lead pulling away beyond the follow distance also "
+                                  "lifts the model's braking part of the way toward the MPC."),
+                 get_state=lambda: self._params.get_bool("GasOverrideBoost"),
+                 set_state=lambda v: self._params.put_bool("GasOverrideBoost", v),
+                 visible=adv),
     ]
 
     # ── 3. Speed Limit Controller (SLC) Rows ──
@@ -602,18 +612,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                                   "way. Restart required to take effect."),
                  get_state=lambda: self._params.get_bool("BoschARadar"),
                  set_state=lambda v: self._params.put_bool("BoschARadar", v)),
-      # TEST, default off. Experimental Mode only. STATUS 136h: a second, separate gas-press
-      # boost that runs alongside the always-on lead-departure assist, modeled on upstream PR
-      # 39015 (selfdrive/controls/lib/accel_boost.py). Unreplayed.
-      SettingRow("GasOverrideBoost", "toggle", tr_noop("Gas Override Boost (TEST)"),
-                 subtitle=tr_noop("Experimental Mode only. Port of upstream PR 39015. While you hold the gas "
-                                  "above ~10 mph and the model is braking harder than the MPC, the "
-                                  "model's requested acceleration is raised by up to 0.2 m/s^2 "
-                                  "(0.05 per press), and the boost holds for the drive. Not limited "
-                                  "to a lead ahead and not capped at the MPC target. Unreplayed and "
-                                  "not road tested; leave this off unless you are verifying it."),
-                 get_state=lambda: self._params.get_bool("GasOverrideBoost"),
-                 set_state=lambda v: self._params.put_bool("GasOverrideBoost", v)),
     ]
 
     self._slc_rows = [

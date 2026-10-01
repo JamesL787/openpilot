@@ -2962,9 +2962,9 @@
       },
       {
         "key": "GasOverrideBoost",
-        "label": "Gas Override Boost (TEST)",
-        "description": "Experimental Mode only. Port of upstream PR 39015. While you hold the gas above ~10 mph and the model is braking harder than the MPC, the model's requested acceleration is raised by up to 0.2 m/s^2 (0.05 per press), and the boost holds for the drive. Not limited to a lead ahead and not capped at the MPC target. Unreplayed and not road tested; leave this off unless you are verifying it.",
-        "picker_description": "TEST, default off. Port of upstream PR 39015 (gas override boost). Unreplayed.",
+        "label": "Accel Boost",
+        "description": "Experimental Mode only. Raises the model's requested acceleration when it is more cautious than the MPC. Pressing the gas above ~10 mph while the model is braking harder than the MPC adds up to 0.2 m/s^2 (0.05 per press, held for the drive; port of upstream PR 39015). A lead pulling away beyond the follow distance also lifts the model's braking part of the way toward the MPC.",
+        "picker_description": "Gas-press accel boost (upstream PR 39015) plus the lead-departure lift. Default on. Unreplayed.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",
