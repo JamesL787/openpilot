@@ -781,6 +781,7 @@ class CarController(CarControllerBase):
       "increase_override_tolerance": self.param_store.get_bool("NrdrIncreaseOverrideTolerance", default=False),
       "min_steer_speed": float(np.clip(self.param_store.get_int("NrdrMinSteerSpeed", default=1), 0, 45)) * CV.MPH_TO_MS,
       "same_direction_assist": self.param_store.get_bool("NrdrSameDirectionAssist", default=False),
+      "vfn_override": self.param_store.get_bool("NrdrLatVfnOverride", default=False),
     }
 
   def _update_steering_torque(self, CC, CS, live):
@@ -801,8 +802,16 @@ class CarController(CarControllerBase):
       # Clarity's behaviour, now shared by every modified-EPS Honda: the command path uses raw
       # steeringPressed and only debounces when NrdrIncreaseOverrideTolerance is explicitly on.
       # Civic Bosch used to force the filter on here regardless; that exception is gone.
-      if live["increase_override_tolerance"]:
+      # NrdrLatVfnOverride: vfn-yaw-trim's override policy, written for LatControlClarityEps. Every press goes
+      # through the same 0.28 s modified-EPS filter that controller uses for its own pressed state, with no
+      # debounce, hold or same-direction assist: a raw threshold crossing chatters around the driver-torque
+      # boundary, and fading the actuator while the controller sees a different override state reads as safety
+      # limiting and freezes its integrator. carstate drops the center boost and the 2x tolerance with it.
+      if live["vfn_override"] or live["increase_override_tolerance"]:
         steering_pressed = self._filtered_steering_pressed(CS, torque_cmd)
+        if live["vfn_override"]:
+          self.same_dir_assist.reset()
+          self.same_dir_fading = False
       else:
         raw_pressed = bool(CS.out.steeringPressed)
         sensor_torque = float(getattr(CS.out, "steeringTorque", 0.0))

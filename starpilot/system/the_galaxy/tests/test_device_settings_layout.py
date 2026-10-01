@@ -650,3 +650,19 @@ def test_every_galaxy_toggle_key_exists_in_the_committed_device_params_binary():
     "keys have a Galaxy row but are absent from the committed device params binary, so the " +
     f"row renders and the toggle 403s: {sorted(missing)}"
   )
+
+
+def test_nrdr_lateral_settings_sit_in_the_collapsible_nrdr_pid_controller_group():
+  # Peter, 2026-10-01: Lateral Tuning had grown too crowded; every NRDR lateral setting moves under one
+  # "NRDR PID Controller" group that stays collapsed until Manage is pressed. One flat group: a nested
+  # group's grandchildren would stay visible when this one collapses.
+  params = [p for section in _params_by_section(_layout()).values() for p in section.values()]
+  by_key = {p["key"]: p for p in params}
+  group = by_key["NrdrPidController"]
+  assert group["ui_type"] == "group" and group["is_parent_toggle"] and "parent_key" not in group
+  children = {p["key"] for p in params if p.get("parent_key") == "NrdrPidController"}
+  assert {"NrdrLatEpsFirmwareFF", "NrdrLatVfnOverride", "LatPScaleStandard", "NrdrSameDirectionAssist",
+          "HondaTorqueLowPassFilter", "NrdrLearnSteerRatio"} <= children
+  nrdr_prefixes = ("Nrdr", "Honda", "LatPScale", "LatIScale", "LatFScale")
+  assert not [p["key"] for p in params if p.get("parent_key") == "LateralTune" and p["key"].startswith(nrdr_prefixes)]
+  assert all(by_key[k].get("ui_type") != "group" for k in children)

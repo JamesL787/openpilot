@@ -236,6 +236,11 @@ class NRDRTuningLayout(_SettingsPage):
              "On: steer with James's modified-EPS controller, a feedforward that inverts the EPS firmware's own "
              "control law plus a PID on fixed per-band trims. Off: steer with the NRDR PID, set up under NRDR PID "
              "Control. Takes effect on the next drive. Off, James's feedforward is only logged."),
+      toggle("NrdrLatVfnOverride", "VFN Steering Override",
+             "Driver override from vfn-yaw-trim, written for James's EPS Firmware Feedforward controller: every "
+             "press goes through the same 0.28 s filter that controller uses, with no debounce, release hold or "
+             "same-direction assist, and one override threshold at every wheel angle (no center boost, no 2x "
+             "tolerance). Modified-EPS Civic Bosch/Clarity only. Off: the NRDR override settings apply."),
     ]
 
     pid_turn_rows = [

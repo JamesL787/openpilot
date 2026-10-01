@@ -530,6 +530,7 @@ class TestHondaSteeringCommandFidelity:
     "override_fade_up_s": 1.5,
     "override_torque_scale": 0.0,
     "increase_override_tolerance": False,
+    "vfn_override": False,
     "steer_delta_limiter_enabled": False,
     "steer_delta_up": 3.0,
     "steer_delta_down": 3.0,
@@ -789,3 +790,27 @@ class TestHondaSteeringCommandFidelity:
     self._drive(controller, [0.0] * 200)
     delivered = self._drive(controller, [1.0], live={"steer_delta_limiter_enabled": True})
     assert abs(1.0 - delivered[0]) > 1e-2
+
+  # NrdrLatVfnOverride: vfn-yaw-trim's override policy, the 0.28 s modified-EPS filter on every press.
+  LIVE_VFN = {"vfn_override": True}
+
+  def test_vfn_override_same_direction_press_confirms_after_the_filter_window(self):
+    # 0.8 command with same-sign 2600 sensor; same-direction assist on but ignored under this policy
+    controller = self._ready()
+    out = self._press(controller, [(0.8, 2600.0)] * 60, live=self.LIVE_VFN)
+    assert out[20] == pytest.approx(0.8)  # well past the 6-frame debounce, still steering
+    assert max(abs(x) for x in out[35:]) == 0.0  # filter confirmed, fade down 0: cut
+    assert not controller.same_dir_fading and not controller.same_dir_assist.exempt
+
+  def test_vfn_override_opposing_press_cuts_at_once(self):
+    controller = self._ready()
+    out = self._press(controller, [(0.8, -2100.0)] * 3, live=self.LIVE_VFN)
+    assert out[0] == 0.0
+
+  def test_vfn_override_releases_without_the_hold(self):
+    controller = self._ready()
+    self._press(controller, [(0.8, -2500.0)] * 10, live=self.LIVE_VFN)
+    # sensor drops to 0.8 x threshold: the debounce path would hold here, this policy releases
+    out = self._press(controller, [(0.8, 1600.0)] * 80, live=self.LIVE_VFN)
+    assert out[-1] == pytest.approx(0.8)
+    assert not controller.steering_pressed_robust_prev
