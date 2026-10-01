@@ -3232,10 +3232,11 @@ class LongitudinalPlanner:
           getattr(sm['starpilotPlan'], 'forcingStop', False) or
           getattr(sm['starpilotPlan'], 'redLight', False)
         )
-        output_a_target = self.update_exp_lead_departure(
-          output_a_target, output_a_target_e2e, output_a_target_mpc, scene_v_ego,
-          sm['starpilotPlan'].tFollow, hold_experimental,
-        )
+        if bool(getattr(starpilot_toggles, "gas_override_boost", True)):
+          output_a_target = self.update_exp_lead_departure(
+            output_a_target, output_a_target_e2e, output_a_target_mpc, scene_v_ego,
+            sm['starpilotPlan'].tFollow, hold_experimental,
+          )
     else:
       output_a_target, output_should_stop = get_accel_from_plan(
         self.v_desired_trajectory, self.a_desired_trajectory,

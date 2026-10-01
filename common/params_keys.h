@@ -384,7 +384,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // TEST, default OFF. Experimental Mode only. STATUS 136h: gas-press boost alongside the
     // (always-on) lead-departure assist, closer to upstream PR 39015. Unreplayed. Read in
     // longitudinal_planner.py.
-    {"GasOverrideBoost", {PERSISTENT, BOOL, "0", "0", 3}},
+    {"GasOverrideBoost", {PERSISTENT, BOOL, "1", "1", 3}},
     {"RemoteStartBootsComma", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"TeslaWakeOnCAN", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"RemapCancelToDistance", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
