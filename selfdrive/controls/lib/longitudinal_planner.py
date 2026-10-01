@@ -3091,8 +3091,10 @@ class LongitudinalPlanner:
       output_a_target_e2e = sm['modelV2'].action.desiredAcceleration
       if bool(getattr(starpilot_toggles, "gas_override_boost", False)):
         # Port of commaai/openpilot PR 39015: boost the e2e target ahead of arbitration.
-        # Upstream also compares against a_cruise; the cruise cap is applied downstream here.
-        model_limited = experimental_mode and self.accel_boost.apply(output_a_target_e2e) < output_a_target_mpc
+        # Upstream compares against min(mpc, a_cruise). a_cruise here is the accel that reaches v_cruise
+        # within the actuator delay, the same formula as the downstream lead cruise cap.
+        a_cruise = max(0.0, (v_cruise - scene_v_ego + 0.01) / max(action_t, self.dt))
+        model_limited = experimental_mode and self.accel_boost.apply(output_a_target_e2e) < min(output_a_target_mpc, a_cruise)
         self.accel_boost.update(bool(sm['selfdriveState'].enabled), bool(sm['carState'].gasPressed),
                                 scene_v_ego, model_limited)
         output_a_target_e2e = self.accel_boost.apply(output_a_target_e2e)
