@@ -489,21 +489,9 @@
       {
         "key": "NrdrLatVfnOverride",
         "label": "VFN Steering Override",
-        "description": "Driver override from vfn-yaw-trim, written for the EPS Firmware Feedforward controller: every press goes through the same 0.28 s filter that controller uses, with no debounce, release hold or same-direction assist, and one override threshold at every wheel angle (no center boost, no 2x tolerance). Modified-EPS Civic Bosch/Clarity only. Off: the override settings below apply.",
+        "description": "Driver override from vfn-yaw-trim, written for the EPS Firmware Feedforward controller: every press goes through the same 0.28 s filter that controller uses, with no debounce, release hold or same-direction assist, and no 2x tolerance. Applies with either steering controller. Modified-EPS Civic Bosch/Clarity only. Off: the override settings below apply.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "NrdrPidController",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "HondaCenterBoostThreshold",
-        "label": "Honda Center Boost Threshold",
-        "description": "Angle band near center where the center override threshold applies.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 0.0,
-        "max": 10.0,
-        "step": 0.1,
         "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
@@ -529,18 +517,6 @@
         "key": "NrdrDriverOverrideThreshold",
         "label": "Driver Override Threshold",
         "description": "Raw torque threshold for driver steering. 1200 is stock Honda scale.",
-        "data_type": "int",
-        "ui_type": "numeric",
-        "min": 100.0,
-        "max": 5000.0,
-        "step": 100.0,
-        "parent_key": "NrdrPidController",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "NrdrOverrideThresholdCenterBoost",
-        "label": "Center Override Threshold",
-        "description": "Override threshold used inside the center boost angle band.",
         "data_type": "int",
         "ui_type": "numeric",
         "min": 100.0,
