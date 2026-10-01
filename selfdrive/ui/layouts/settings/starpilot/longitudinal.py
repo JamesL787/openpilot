@@ -612,15 +612,14 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  set_state=lambda v: self._params.put_bool("BoschARadar", v)),
       # TEST, default off. Experimental Mode only. STATUS 136h: a second, separate gas-press
       # boost that runs alongside the always-on lead-departure assist, modeled on upstream PR
-      # 39015. Unreplayed -- see longitudinal_planner.py GAS_OVERRIDE_BOOST_*.
+      # 39015 (selfdrive/controls/lib/accel_boost.py). Unreplayed.
       SettingRow("GasOverrideBoost", "toggle", tr_noop("Gas Override Boost (TEST)"),
-                 subtitle=tr_noop("Experimental Mode only. When you press the gas pedal above "
-                                  "~10 mph, nudges the car's requested acceleration up toward "
-                                  "the MPC's target, a little more with each press, capped low. "
-                                  "Unlike the lead-departure assist, this does not require a "
-                                  "lead ahead and does not back off while the model is braking "
-                                  "-- it is more permissive on purpose and has not been road "
-                                  "tested. Leave this off unless you know what you're verifying."),
+                 subtitle=tr_noop("Experimental Mode only. Port of upstream PR 39015. While you hold the gas "
+                                  "above ~10 mph and the model is braking harder than the MPC, the "
+                                  "model's requested acceleration is raised by up to 0.2 m/s^2 "
+                                  "(0.05 per press), and the boost holds for the drive. Not limited "
+                                  "to a lead ahead and not capped at the MPC target. Unreplayed and "
+                                  "not road tested; leave this off unless you are verifying it."),
                  get_state=lambda: self._params.get_bool("GasOverrideBoost"),
                  set_state=lambda v: self._params.put_bool("GasOverrideBoost", v)),
     ]
