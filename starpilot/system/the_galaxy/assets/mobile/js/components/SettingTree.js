@@ -1,5 +1,5 @@
 import { PERSONALITY_PROFILES_ENABLED, PersonalityProfiles } from "./PersonalityProfiles.js"
-import { GalaxyToggleCard } from "./GalaxyToggleCard.js"
+import { GalaxyToggleCard } from "./GalaxyToggleCard.js?v=starpilot-auto-uploads-1"
 import { hasChildParams, isGroupParam, isParamEnabledForChildren } from "../params.js"
 
 export const SettingTree = {

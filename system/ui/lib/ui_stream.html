@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<!--
+  StarPilot Live UI viewer.
+
+  Adapted from peterclampton/Comma4-UI-Streamer (MIT), pinned at
+  4cd44f05083df45eee18c39af0d895329b07758a, reworked for native StarPilot
+  lifecycle, independent units, frame freshness and bounded reconnects.
+
+  The image already contains the driving HUD. The optional telemetry panel is
+  deliberately rendered outside the image so it can never obscure alerts.
+
+  Remote control is opt-in per page load: input on the image is only forwarded
+  after pressing Control, and the comma refuses it while driving.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>StarPilot Live UI</title>
+<style>
+  :root{--bg:#0b0d10;--panel:#15181d;--line:#262b33;--text:#e8eaed;--dim:#9aa0a6;--good:#4caf50;--warn:#f5a623;--bad:#f44336;--accent:#4fc3f7}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  #app{display:flex;flex-direction:column;height:100%;height:100dvh;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  header{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  header .title{font-weight:600;letter-spacing:.3px}
+  .pill{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;padding:3px 9px;border-radius:999px;background:var(--panel);color:var(--dim);border:1px solid var(--line)}
+  .pill.ready{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent)}
+  .pill.paused{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
+  .pill.error{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,transparent)}
+  header .spacer{flex:1}
+  button{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  main{position:relative;flex:1 1 auto;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);background:#000;min-height:0;min-width:0}
+  main.with-telemetry{grid-template-columns:clamp(96px,17vw,170px) minmax(0,1fr) clamp(96px,17vw,170px);gap:8px;padding:8px}
+  #stage{position:relative;width:100%;height:100%;min-width:0;min-height:0;display:flex;align-items:center;justify-content:center}
+  #cam{width:100%;height:100%;object-fit:contain;display:block;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  .controlling #cam{touch-action:none;cursor:crosshair;outline:2px solid var(--warn);outline-offset:-2px}
+  #touch{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  button[aria-pressed="true"]{border-color:var(--warn);color:var(--warn)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  #cover{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:24px;background:rgba(0,0,0,.82);color:var(--dim)}
+  #cover.show{display:flex}
+  #cover .box{max-width:520px}
+  #cover .box strong{display:block;color:var(--text);font-size:16px;margin-bottom:8px}
+  #cover .hint{margin-top:10px;font-size:12px;line-height:1.5}
+  .telemetry{display:none;min-width:0;min-height:0;overflow-y:auto;gap:6px;grid-auto-rows:minmax(48px,1fr);align-content:start}
+  .with-telemetry .telemetry{display:grid}
+  .cell{display:flex;flex-direction:column;justify-content:center;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 9px;min-width:0}
+  .cell .k{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+  .cell .v{font-size:clamp(13px,1.8vw,20px);font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px;overflow-wrap:anywhere}
+  .cell .v .u{font-size:.62em;font-weight:500;color:var(--dim);margin-left:2px}
+  .cell .v.good{color:var(--good)}
+  .cell .v.good::before{content:"";display:inline-block;width:.45em;height:.45em;border-radius:50%;background:currentColor;box-shadow:0 0 6px currentColor;margin-right:.35em;vertical-align:.12em}
+  .cell .v.warn{color:var(--warn)}
+  .cell .v.bad{color:var(--bad)}
+  .cell .v.dim{color:var(--dim);font-weight:500}
+  .meter{height:3px;border-radius:2px;background:var(--line);margin-top:5px;overflow:hidden}
+  .meter i{display:block;height:100%;border-radius:inherit;background:var(--accent);transition:width .4s ease}
+  .meter.warn i{background:var(--warn)}
+  .meter.bad i{background:var(--bad)}
+  .expanded footer{display:none}
+  @media (orientation:portrait){
+    /* Portrait: a slim device bar above the image, driving tiles below it. The
+       auto margins centre the group without clipping it when it overflows. */
+    main.with-telemetry{display:flex;flex-direction:column;gap:10px;padding:10px;overflow-y:auto}
+    .with-telemetry #stage{flex:0 0 auto;height:auto;aspect-ratio:var(--stream-aspect,2);border-radius:12px;overflow:hidden}
+    .with-telemetry #telemetry-device{display:flex;flex:0 0 auto;margin-top:auto;padding:8px 2px;overflow:visible;border-radius:14px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02))}
+    #telemetry-device .cell{flex:1 1 0;align-items:center;text-align:center;background:none;border:0;border-radius:0;padding:1px 6px}
+    #telemetry-device .cell+.cell{border-left:1px solid var(--line)}
+    #telemetry-device .cell .k{font-size:9px}
+    #telemetry-device .cell .v{font-size:15px}
+    #telemetry-device .meter{width:100%;max-width:44px}
+    .with-telemetry #telemetry-driving{flex:0 0 auto;margin-bottom:auto;overflow:visible;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:auto;gap:8px}
+    #telemetry-driving .cell{padding:10px;border-radius:12px;background:linear-gradient(180deg,#1a1e24,#13161a)}
+    #telemetry-driving .cell .v{font-size:21px}
+    .with-telemetry .telemetry .cell .v{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
+    #telemetry-driving .cell .v.good,#telemetry-driving .cell .v.dim{font-size:clamp(12px,3.4vw,14px);white-space:normal;line-height:1.25}
+    header{gap:6px;padding:6px 8px}
+    #meta{display:none!important}
+  }
+  footer{flex:0 0 auto;font-size:11px;color:var(--dim);padding:5px 12px;border-top:1px solid var(--line)}
+  @media (max-width:600px){header .title{display:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="title">StarPilot Live UI</span>
+    <span id="state" class="pill">connecting</span>
+    <span id="meta" class="pill" style="display:none"></span>
+    <span class="spacer"></span>
+    <button id="control-toggle" type="button" aria-pressed="false" style="display:none" title="Tap, hold or drag on the image to control the comma">Control</button>
+    <button id="telemetry-toggle" type="button" aria-pressed="false">Telemetry</button>
+    <button id="retry" type="button" style="display:none">Retry</button>
+    <button id="fs" type="button" title="Fullscreen" aria-label="Fullscreen" aria-pressed="false">&#x26F6;</button>
+  </header>
+  <main id="workspace">
+    <aside id="telemetry-device" class="telemetry" aria-label="Device telemetry"></aside>
+    <div id="stage" role="img" aria-label="Live comma UI">
+      <img id="cam" alt="" role="presentation">
+      <canvas id="touch" aria-hidden="true"></canvas>
+      <div id="cover"><div class="box">
+        <strong id="cover-title">Connecting…</strong>
+        <div id="cover-body">Waiting for the first frame from your comma.</div>
+        <div class="hint">The live UI is available on the same local network (LAN) as your comma.</div>
+      </div></div>
+    </div>
+    <aside id="telemetry-driving" class="telemetry" aria-label="Driving telemetry"></aside>
+  </main>
+  <footer id="footer">Mirror of the on-device UI. Alerts are shown inside the image. Local network only.</footer>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  var STALE_MS = 2000;
+  var STATUS_MS = 1000;
+  var TELEMETRY_MS = 500;
+  var STATUS_DEADLINE_MS = 2500;
+  var BACKOFF = [250, 500, 1000, 2000, 5000];
+  // A single dropped connection or slow /status on busy Wi-Fi is routine. Keep
+  // the last frame up and reconnect quietly; only this many failures in a row
+  // is reported as unreachable.
+  var ERROR_AFTER_FAILURES = 3;
+  // Polls in a row where the streamer reports no active stream while we think
+  // ours is open: the connection died without an error event (frozen image).
+  var ORPHAN_POLLS = 2;
+  // How long to keep a connection open against a paused streamer. Holding it is
+  // the image demand that makes the comma resume rendering with the panel still
+  // off, so a viewer arriving while the screen is asleep needs this to get its
+  // first frame. Bounded: once the offroad hold cap has expired, rendering is
+  // not coming back and waiting would just spin.
+  var PAUSED_GRACE_MS = 5000;
+  // The streamer stops itself once nobody is watching, so reloading this page
+  // cannot bring it back on its own -- only a start request through Galaxy can.
+  // Embedded, the wrapper issues that automatically when we report an error.
+  var UNREACHABLE_BODY = "Connect this phone or computer to the same local network (LAN) as your comma, then try again. The streamer also stops itself when no one is watching: open Live UI in Galaxy to start it again.";
+
+  var el = {
+    cam: document.getElementById("cam"),
+    state: document.getElementById("state"),
+    meta: document.getElementById("meta"),
+    cover: document.getElementById("cover"),
+    coverTitle: document.getElementById("cover-title"),
+    coverBody: document.getElementById("cover-body"),
+    workspace: document.getElementById("workspace"),
+    deviceTelemetry: document.getElementById("telemetry-device"),
+    drivingTelemetry: document.getElementById("telemetry-driving"),
+    telemetryToggle: document.getElementById("telemetry-toggle"),
+    controlToggle: document.getElementById("control-toggle"),
+    stage: document.getElementById("stage"),
+    touch: document.getElementById("touch"),
+    footer: document.getElementById("footer"),
+    retry: document.getElementById("retry"),
+    fs: document.getElementById("fs")
+  };
+
+  var streamActive = false;
+  var streamFailures = 0;
+  var statusFailures = 0;
+  var orphanPolls = 0;
+  var pausedSince = 0;
+  var lastSeq = -1;
+  var lastFrameAt = 0;
+  var shownWidth = 0;
+  var shownHeight = 0;
+  var streamState = "connecting";
+  var telemetryOn = false;
+  var telemetryFrame = null;
+  var timers = { status: null, telemetry: null, reconnect: null };
+  var inflight = { status: null, telemetry: null };
+  var lastChildPost = 0;
+
+  function isEmbedded() {
+    return window.parent !== window;
+  }
+
+  // Target the Galaxy origin explicitly instead of "*". The wrapper appends
+  // ?parentOrigin=<origin>; document.referrer is a fallback. The payload is
+  // non-sensitive state, but a targeted origin is still the correct default.
+  function resolveParentOrigin() {
+    try {
+      var explicit = new URLSearchParams(window.location.search).get("parentOrigin");
+      if (explicit) return new URL(explicit).origin;
+    } catch (e) { /* ignore */ }
+    try {
+      if (document.referrer) return new URL(document.referrer).origin;
+    } catch (e) { /* ignore */ }
+    return "*";
+  }
+
+  var PARENT_ORIGIN = resolveParentOrigin();
+
+  function postToParent(type, extra) {
+    if (!isEmbedded()) return;
+    var msg = { source: "starpilot-ui-stream", type: type, state: streamState };
+    if (extra) { for (var k in extra) { if (Object.prototype.hasOwnProperty.call(extra, k)) msg[k] = extra[k]; } }
+    try { window.parent.postMessage(msg, PARENT_ORIGIN); } catch (e) { /* ignore */ }
+  }
+
+  function fetchWithDeadline(url, ms) {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, ms);
+    return fetch(url, { cache: "no-store", signal: ctrl.signal }).finally(function () { clearTimeout(timer); });
+  }
+
+  function setState(state, detail) {
+    streamState = state;
+    el.state.className = "pill " + (state === "ready" ? "ready" : state === "paused" ? "paused" : state === "error" ? "error" : "");
+    el.state.textContent = state === "ready" ? "live" : state;
+    if (detail) { el.meta.style.display = ""; el.meta.textContent = detail; }
+    else { el.meta.style.display = "none"; }
+    postToParent("status", { frameSequence: lastSeq, frameAgeMs: lastFrameAt ? Date.now() - lastFrameAt : null });
+  }
+
+  function showCover(title, body) {
+    el.coverTitle.textContent = title;
+    el.coverBody.textContent = body;
+    el.cover.classList.add("show");
+  }
+
+  function hideCover() { el.cover.classList.remove("show"); }
+
+  // ------------------------------------------------------------------ player
+  //
+  // Where the browser allows it, the viewer reads the MJPEG stream itself
+  // instead of handing it to an <img>. Wi-Fi delivers frames in bunches and an
+  // <img> shows each one the moment it lands, so a steady stream looks uneven.
+  // Here frames are decoded off the main thread and shown on the display
+  // refresh with the spacing the comma captured them at, behind a playout
+  // delay sized to the link's recent jitter: about zero on a clean link, never
+  // more than PLAYOUT_MAX_MS on a bad one. Browsers without the pieces keep the
+  // <img> path, and ?player=img forces it for comparison.
+
+  var PLAYOUT_WINDOW = 90;       // transit samples kept, ~3 s at 30 fps
+  var PLAYOUT_PERCENTILE = 0.9;  // jitter absorbed; rarer spikes show late instead of stalling playback
+  var PLAYOUT_MAX_MS = 100;      // remote control feels any delay, so cap it
+  var PLAYOUT_DECAY_MS = 0.5;    // per frame: the delay grows at once and shrinks gently
+  var PLAYOUT_MAX_QUEUE = 8;     // beyond this, jump to the newest frame
+  var MAX_DECODES = 2;
+  var MAX_PART_HEADER = 1024;
+  var MAX_PART_BYTES = 8 * 1024 * 1024;
+
+  function playerSupported() {
+    try {
+      if (new URLSearchParams(window.location.search).get("player") === "img") return false;
+      return typeof window.createImageBitmap === "function" && typeof window.ReadableStream === "function" &&
+        typeof window.AbortController === "function" && typeof window.requestAnimationFrame === "function" &&
+        "body" in Response.prototype;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Splits the multipart body into parts. The comma always sends
+  // Content-Length, so nothing ever scans inside a JPEG for the boundary.
+  function PartParser() {
+    this.buf = new Uint8Array(256 * 1024);
+    this.start = 0;
+    this.end = 0;
+    this.headers = null;
+    this.length = 0;
+  }
+
+  PartParser.prototype.push = function (chunk) {
+    var used = this.end - this.start;
+    if (this.end + chunk.length > this.buf.length) {
+      if (used + chunk.length > this.buf.length) {
+        var grown = new Uint8Array(Math.max(this.buf.length * 2, used + chunk.length));
+        grown.set(this.buf.subarray(this.start, this.end));
+        this.buf = grown;
+      } else {
+        this.buf.copyWithin(0, this.start, this.end);
+      }
+      this.start = 0;
+      this.end = used;
+    }
+    this.buf.set(chunk, this.end);
+    this.end += chunk.length;
+  };
+
+  // The next complete part as { headers, body }, or null until more arrives.
+  PartParser.prototype.next = function () {
+    var buf = this.buf;
+    if (!this.headers) {
+      var limit = Math.min(this.end, this.start + MAX_PART_HEADER);
+      var at = -1;
+      for (var i = this.start; i + 3 < limit; i++) {
+        if (buf[i] === 13 && buf[i + 1] === 10 && buf[i + 2] === 13 && buf[i + 3] === 10) { at = i; break; }
+      }
+      if (at < 0) {
+        if (limit - this.start >= MAX_PART_HEADER) throw new Error("malformed stream part");
+        return null;
+      }
+      var headers = {};
+      String.fromCharCode.apply(null, buf.subarray(this.start, at)).split("\r\n").forEach(function (line) {
+        var colon = line.indexOf(":");
+        if (colon > 0) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+      });
+      var length = parseInt(headers["content-length"], 10);
+      if (!(length > 0 && length <= MAX_PART_BYTES)) throw new Error("stream part without a usable length");
+      this.headers = headers;
+      this.length = length;
+      this.start = at + 4;
+    }
+    if (this.end - this.start < this.length) return null;
+    var part = { headers: this.headers, body: new Blob([buf.subarray(this.start, this.start + this.length)], { type: "image/jpeg" }) };
+    this.start += this.length;
+    this.headers = null;
+    if (this.start === this.end) this.start = this.end = 0;
+    return part;
+  };
+
+  // Returns null when the canvas cannot be drawn to; the <img> path stays.
+  function createPlayer(canvas, callbacks) {
+    var ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) return null;
+    var generation = 0;
+    var controller = null;
+    var queue = [];      // decoded frames waiting for their turn, oldest first
+    var decoding = 0;
+    var waiting = null;  // the newest part, held while the decoder is busy
+    var transits = [];
+    var base = 0;
+    var delay = 0;
+    var raf = 0;
+    var lastTick = 0;
+    var refresh = 1000 / 60;  // measured display refresh interval
+    var phase = 0;            // how far before its due time the last frame was shown
+    var lastShownSeq = -1;
+    var stats = { presented: 0, skipped: 0, lastAt: 0, intervals: [] };
+
+    async function read(gen, signal) {
+      // /frames is /stream's multipart framing under a plain type: WebKit
+      // consumes multipart/x-mixed-replace itself and fetch cannot read it.
+      var response = await fetch("/frames?t=" + Date.now(), { cache: "no-store", signal: signal });
+      if (!response.ok || !response.body) throw new Error("stream unavailable");
+      var reader = response.body.getReader();
+      var parser = new PartParser();
+      for (;;) {
+        var result = await reader.read();
+        if (gen !== generation) return;
+        if (result.done) throw new Error("stream ended");
+        parser.push(result.value);
+        for (var part = parser.next(); part; part = parser.next()) receive(gen, part);
+      }
+    }
+
+    function receive(gen, part) {
+      var item = {
+        gen: gen,
+        body: part.body,
+        seq: parseInt(part.headers["x-frame-seq"], 10),
+        capture: parseFloat(part.headers["x-capture-ms"])
+      };
+      if (decoding < MAX_DECODES) {
+        decode(item);
+      } else {
+        // The phone is decoding slower than frames arrive: keep only the newest.
+        if (waiting) stats.skipped += 1;
+        waiting = item;
+      }
+    }
+
+    function decode(item) {
+      decoding += 1;
+      createImageBitmap(item.body).then(function (bitmap) {
+        if (item.gen === generation) enqueue(item, bitmap, performance.now());
+        else bitmap.close();
+      }, function () {
+        // A frame that fails to decode is skipped; the next one replaces it.
+      }).then(function () {
+        decoding -= 1;
+        if (waiting && decoding < MAX_DECODES) {
+          var next = waiting;
+          waiting = null;
+          decode(next);
+        }
+      });
+    }
+
+    function enqueue(item, bitmap, arrival) {
+      if (item.seq <= lastShownSeq) {
+        bitmap.close();
+        stats.skipped += 1;
+        return;
+      }
+      // Without a capture time (an older comma) frames play as they arrive.
+      var capture = isFinite(item.capture) ? item.capture : arrival;
+      // Transit includes the unknown offset between the comma's clock and this
+      // one; only its variation matters. The fastest recent frame sets the
+      // baseline and the delay covers most of the spread above it.
+      transits.push(arrival - capture);
+      if (transits.length > PLAYOUT_WINDOW) transits.shift();
+      base = Math.min.apply(null, transits);
+      var spread = transits.map(function (t) { return t - base; }).sort(function (a, b) { return a - b; });
+      var target = Math.min(PLAYOUT_MAX_MS, spread[Math.floor((spread.length - 1) * PLAYOUT_PERCENTILE)]);
+      delay = target >= delay ? target : Math.max(target, delay - PLAYOUT_DECAY_MS);
+      var i = queue.length;
+      while (i > 0 && queue[i - 1].capture > capture) i -= 1;
+      queue.splice(i, 0, { bitmap: bitmap, seq: item.seq, capture: capture });
+    }
+
+    // Runs every display refresh while streaming, so the refresh interval is
+    // always measured; with nothing queued it returns at once.
+    function tick(now) {
+      raf = requestAnimationFrame(tick);
+      if (lastTick) {
+        var interval = now - lastTick;
+        if (interval > 2 && interval < 50) refresh += (interval - refresh) * 0.05;
+      }
+      lastTick = now;
+      if (!queue.length) return;
+      // Phase lock: a frame is shown on the refresh nearest its due time, but
+      // "nearest" is judged around where the previous frame landed. When due
+      // times sit on a refresh boundary, a fixed cut-off would flip frames
+      // between neighbouring refreshes on every millisecond of jitter and
+      // alternate 1- and 3-refresh gaps. Clamped, so a frame is never shown
+      // more than one refresh early or late.
+      var lead = Math.min(refresh, Math.max(0, phase + refresh / 2));
+      var dueCapture = now + lead - base - delay;
+      // Show the newest frame whose turn has come; older ones are superseded.
+      var pick = -1;
+      for (var i = 0; i < queue.length && queue[i].capture <= dueCapture; i++) pick = i;
+      if (queue.length > PLAYOUT_MAX_QUEUE) pick = queue.length - 1;
+      if (pick >= 0) {
+        for (var j = 0; j < pick; j++) queue[j].bitmap.close();
+        stats.skipped += pick;
+        phase = queue[pick].capture + base + delay - now;
+        present(queue[pick], now);
+        queue.splice(0, pick + 1);
+      }
+    }
+
+    function present(frame, now) {
+      var bitmap = frame.bitmap;
+      var width = bitmap.width, height = bitmap.height;
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      lastShownSeq = frame.seq;
+      if (stats.lastAt) {
+        stats.intervals.push(now - stats.lastAt);
+        if (stats.intervals.length > 120) stats.intervals.shift();
+      }
+      stats.lastAt = now;
+      stats.presented += 1;
+      callbacks.shown(width, height);
+    }
+
+    // Drops the connection and anything queued. clear also blanks the canvas;
+    // a restart keeps the last frame up while the new connection opens.
+    function stop(clear) {
+      generation += 1;
+      if (controller) {
+        controller.abort();
+        controller = null;
+      }
+      queue.forEach(function (frame) { frame.bitmap.close(); });
+      queue = [];
+      waiting = null;
+      if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+      stats.lastAt = 0;
+      if (clear) canvas.width = canvas.height = 0;
+    }
+
+    function start() {
+      stop(false);
+      var gen = generation;
+      controller = new AbortController();
+      transits = [];
+      delay = 0;
+      lastShownSeq = -1;
+      lastTick = 0;
+      phase = 0;
+      raf = requestAnimationFrame(tick);
+      read(gen, controller.signal).catch(function () {
+        if (gen !== generation) return;
+        cancelAnimationFrame(raf);
+        raf = 0;
+        callbacks.failed();
+      });
+    }
+
+    function describe() {
+      if (stats.intervals.length < 10) return "";
+      var sorted = stats.intervals.slice().sort(function (a, b) { return a - b; });
+      var median = sorted[Math.floor(sorted.length / 2)];
+      return Math.round(1000 / median) + " fps · " + Math.round(delay) + " ms buffer";
+    }
+
+    // Read-only numbers for devtools and the browser tests.
+    window.uiStreamStats = function () {
+      return { presented: stats.presented, skipped: stats.skipped, delayMs: delay, intervals: stats.intervals.slice() };
+    };
+
+    return { start: start, stop: stop, describe: describe };
+  }
+
+  var player = null;
+  if (playerSupported()) {
+    var canvas = document.createElement("canvas");
+    canvas.id = "cam";
+    canvas.setAttribute("role", "presentation");
+    canvas.width = canvas.height = 0;
+    player = createPlayer(canvas, { shown: frameShown, failed: streamFailed });
+    if (player) {
+      el.cam.replaceWith(canvas);
+      el.cam = canvas;
+    }
+  }
+
+  function beginStream() {
+    if (streamActive || document.hidden) return;
+    streamActive = true;
+    if (player) player.start();
+    else el.cam.src = "/stream?t=" + Date.now();
+  }
+
+  // Swap to a fresh connection without clearing the image, so the last frame
+  // stays on screen instead of flashing to black while the new stream connects.
+  function restartStream() {
+    streamActive = false;
+    orphanPolls = 0;
+    beginStream();
+  }
+
+  function endStream() {
+    streamActive = false;
+    if (player) player.stop(true);
+    else el.cam.removeAttribute("src");
+    el.cam.removeAttribute("data-live");
+    shownWidth = shownHeight = 0;
+    lastSeq = -1;
+    lastFrameAt = 0;
+  }
+
+  // True while a paused streamer is still worth holding a connection against.
+  function pausedWaiting() {
+    return pausedSince !== 0 && Date.now() - pausedSince < PAUSED_GRACE_MS;
+  }
+
+  function scheduleReconnect() {
+    if (timers.reconnect || document.hidden) return;
+    var delay = BACKOFF[Math.min(streamFailures, BACKOFF.length - 1)];
+    streamFailures += 1;
+    timers.reconnect = setTimeout(function () {
+      timers.reconnect = null;
+      if (document.hidden) return;
+      // Do not reconnect into a pause that is not going to lift: that would
+      // hold image demand on a parked car indefinitely.
+      if (streamState === "paused" && !pausedWaiting()) return;
+      restartStream();
+    }, delay);
+  }
+
+  // Runs for every frame shown, so it only touches the page when something
+  // changed: steady playback must not restyle the document 30 times a second.
+  function frameShown(width, height) {
+    lastFrameAt = Date.now();
+    streamFailures = 0;
+    pausedSince = 0;
+    if (width !== shownWidth || height !== shownHeight) {
+      shownWidth = width;
+      shownHeight = height;
+      document.documentElement.style.setProperty("--stream-aspect", width / height);
+    }
+    if (!el.cam.hasAttribute("data-live")) el.cam.setAttribute("data-live", "");
+    if (el.cover.classList.contains("show")) hideCover();
+    if (streamState !== "ready" && streamState !== "paused") setState("ready");
+  }
+
+  function streamFailed() {
+    streamActive = false;
+    if (streamState === "paused") {
+      // A paused streamer answers 503 until rendering resumes. That is expected,
+      // not a connection failure, so keep the screen-asleep cover in place.
+      scheduleReconnect();
+      return;
+    }
+    if (streamFailures + 1 >= ERROR_AFTER_FAILURES) {
+      setState("error", "stream error");
+      showCover("Can’t reach the live UI", "The stream connection was lost. Retrying…");
+      el.retry.style.display = "";
+    } else if (streamState !== "error") {
+      setState("connecting", "reconnecting");
+    }
+    scheduleReconnect();
+  }
+
+  if (!player) {
+    // Browsers fire load per frame for multipart streams, but that is not
+    // guaranteed. We treat load as a hint and rely on /status for freshness.
+    el.cam.addEventListener("load", function () {
+      if (el.cam.naturalWidth > 0) frameShown(el.cam.naturalWidth, el.cam.naturalHeight);
+    });
+    el.cam.addEventListener("error", streamFailed);
+  }
+
+  function pollStatus() {
+    if (document.hidden || inflight.status) return;
+    inflight.status = fetchWithDeadline("/status", STATUS_DEADLINE_MS).then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
+      if (!s) { throw new Error("status unavailable"); }
+      statusFailures = 0;
+      // The streamer counts our connection; if it has none, ours is dead even
+      // though the browser never fired error. Reconnect instead of freezing.
+      if (streamActive && s.activeStreams === 0 && s.state !== "paused") {
+        orphanPolls += 1;
+        if (orphanPolls >= ORPHAN_POLLS) restartStream();
+      } else {
+        orphanPolls = 0;
+      }
+      updateControlAvailability(s.control);
+      lastSeq = typeof s.frameSequence === "number" ? s.frameSequence : lastSeq;
+      var age = typeof s.frameAgeMs === "number" ? s.frameAgeMs : null;
+      if (s.state === "paused") {
+        if (!pausedSince) pausedSince = Date.now();
+        var waking = Date.now() - pausedSince < PAUSED_GRACE_MS;
+        if (waking) {
+          // Keep asking: the connection itself is what resumes rendering.
+          if (!streamActive) beginStream();
+          setState("paused", "waking");
+          showCover("Screen asleep", "The comma display is off. Waiting for it to resume streaming with the panel still dark…");
+        } else {
+          endStream();
+          setState("paused", "screen asleep");
+          showCover("Screen asleep", "The comma display is off and streaming did not resume. Touch the comma screen to wake it, then this will reconnect.");
+        }
+        el.retry.style.display = "";
+      } else if (s.state === "error" || s.captureFailed) {
+        endStream();
+        setState("error", "capture failed");
+        showCover("Stream unavailable", s.captureError || "The comma could not capture its display. Check the streamer configuration on the device.");
+      } else if (s.state === "ready" && age !== null && age <= STALE_MS) {
+        if (!streamActive) beginStream();
+        hideCover();
+        el.retry.style.display = "none";
+        var size = s.outputWidth ? s.outputWidth + "×" + s.outputHeight : "";
+        setState("ready", [size, player ? player.describe() : ""].filter(Boolean).join(" · "));
+      } else {
+        if (!streamActive) beginStream();
+        showCover("Waiting for frames…", "Connected to the streamer, but no recent frame has arrived yet.");
+        setState("connecting", "");
+      }
+    }).catch(function () {
+      // /status shares the link with the MJPEG stream, so one slow poll on busy
+      // Wi-Fi says nothing about reachability. Leave a working stream alone.
+      statusFailures += 1;
+      if (statusFailures < ERROR_AFTER_FAILURES) return;
+      setState("error", "disconnected");
+      showCover("Can’t connect to your comma", UNREACHABLE_BODY);
+      el.retry.style.display = "";
+      endStream();
+      scheduleReconnect();
+    }).finally(function () { inflight.status = null; });
+  }
+
+  function fmt(value, digits, unit) {
+    if (value === null || value === undefined || (typeof value === "number" && !isFinite(value))) return "--";
+    var v = (typeof value === "number") ? value.toFixed(digits) : String(value);
+    return unit ? v + '<span class="u">' + unit + '</span>' : v;
+  }
+
+  function level(value, warn, bad) {
+    if (typeof value !== "number" || !isFinite(value)) return "";
+    return value >= bad ? "bad" : value >= warn ? "warn" : "";
+  }
+
+  // meter, when given, is a 0-100 fill drawn as a thin bar under the value.
+  function cell(key, value, cls, meter) {
+    var bar = "";
+    if (typeof meter === "number" && isFinite(meter)) {
+      bar = '<div class="meter ' + (cls || "") + '"><i style="width:' + Math.max(0, Math.min(100, meter)).toFixed(0) + '%"></i></div>';
+    }
+    return '<div class="cell"><div class="k">' + key + '</div><div class="v ' + (cls || "") + '">' + value + '</div>' + bar + '</div>';
+  }
+
+  function renderTelemetry() {
+    var d = telemetryFrame;
+    if (!d || d.schemaVersion === undefined) {
+      el.deviceTelemetry.innerHTML = cell("Device", "unavailable", "dim");
+      el.drivingTelemetry.innerHTML = cell("Driving", "unavailable", "dim");
+      return;
+    }
+    var metric = d.isMetric === true;
+    var speedUnit = metric ? "km/h" : "mph";
+    var distUnit = metric ? "m" : "ft";
+    var tempUnit = metric ? "°C" : "°F";
+
+    var speed = d.vEgo === null || d.vEgo === undefined ? null : (metric ? d.vEgo * 3.6 : d.vEgo * 2.236936);
+    var setSpeed = d.setSpeed === null || d.setSpeed === undefined ? null : d.setSpeed;
+    var lead = d.leadDist === null || d.leadDist === undefined ? null : (metric ? d.leadDist : d.leadDist * 3.28084);
+    var temp = d.cpuTempC === null || d.cpuTempC === undefined ? null : (metric ? d.cpuTempC : d.cpuTempC * 9 / 5 + 32);
+
+    // "softDisabling" -> "soft disabling" so the status can wrap in a narrow tile.
+    var engage = d.driveState ? String(d.driveState).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase() : (d.engaged ? "enabled" : "disabled");
+    var engageCls = (d.engaged === true) ? "good" : "dim";
+    var cells = "";
+    cells += cell("Speed", fmt(speed, 0, speedUnit));
+    cells += cell("Set", setSpeed === null ? "--" : fmt(setSpeed, 0, speedUnit), setSpeed === null ? "dim" : "");
+    cells += cell("Lead", lead === null ? "--" : fmt(lead, 0, distUnit), lead === null ? "dim" : "");
+    cells += cell("Engaged", engage, engageCls);
+    cells += cell("Brake", fmt(d.brake, 0, "%"), "");
+    var pedals = [];
+    if (d.gasPressed) pedals.push("gas");
+    if (d.brakePressed) pedals.push("brake");
+    cells += cell("Pedals", pedals.length ? pedals.join("+") : "--", pedals.length ? "" : "dim");
+    el.drivingTelemetry.innerHTML = cells;
+    cells = "";
+    cells += cell("CPU", fmt(d.cpuUsagePercent, 0, "%"), level(d.cpuUsagePercent, 80, 95), d.cpuUsagePercent);
+    cells += cell("Mem", fmt(d.memoryUsagePercent, 0, "%"), level(d.memoryUsagePercent, 80, 92), d.memoryUsagePercent);
+    // Temperature bar spans 30-100 °C regardless of the display unit.
+    var tempFill = typeof d.cpuTempC === "number" ? (d.cpuTempC - 30) / 70 * 100 : null;
+    cells += cell("Temp", fmt(temp, 0, tempUnit), level(d.cpuTempC, 75, 85), tempFill);
+    cells += cell("Model", fmt(d.modelExecMs, 1, "ms"));
+    cells += cell("Drops", fmt(d.frameDropPerc, 1, "%"), level(d.frameDropPerc, 1, 5));
+    el.deviceTelemetry.innerHTML = cells;
+  }
+
+  function pollTelemetry() {
+    if (document.hidden || !telemetryOn || inflight.telemetry) return;
+    inflight.telemetry = fetchWithDeadline("/telemetry", 1500).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      telemetryFrame = d;
+      renderTelemetry();
+    }).catch(function () {
+      telemetryFrame = null;
+      renderTelemetry();
+    }).finally(function () { inflight.telemetry = null; });
+  }
+
+  function startTimers() {
+    stopTimers();
+    if (document.hidden) return;
+    timers.status = setInterval(pollStatus, STATUS_MS);
+    timers.telemetry = setInterval(pollTelemetry, TELEMETRY_MS);
+    pollStatus();
+    if (telemetryOn) pollTelemetry();
+  }
+
+  function stopTimers() {
+    if (timers.status) { clearInterval(timers.status); timers.status = null; }
+    if (timers.telemetry) { clearInterval(timers.telemetry); timers.telemetry = null; }
+    if (timers.reconnect) { clearTimeout(timers.reconnect); timers.reconnect = null; }
+  }
+
+  el.telemetryToggle.addEventListener("click", function () {
+    telemetryOn = !telemetryOn;
+    el.telemetryToggle.setAttribute("aria-pressed", telemetryOn ? "true" : "false");
+    el.workspace.classList.toggle("with-telemetry", telemetryOn);
+    renderTelemetry();
+    if (telemetryOn) pollTelemetry();
+  });
+
+  // ------------------------------------------------------------ remote control
+  //
+  // Pointer input is forwarded live, normalized to the image content (0..1).
+  // Every gesture has an id: the comma lets one gesture own the pointer at a
+  // time and cancels (never releases) a gesture whose viewer goes quiet, so a
+  // lost connection cannot turn a press into a click. While a finger is down we
+  // send a keepalive whenever the link is idle, well inside the comma's 400 ms.
+
+  var CONTROL_KEEPALIVE_MS = 100;
+  var CONTROL_MAX_BATCH = 32;
+  var DEFAULT_FOOTER = el.footer.textContent;
+  var CONTROL_FOOTER = "Remote control on: taps and drags on the image go to the comma as you make them.";
+  var controlOn = false;
+  var controlAllowed = false;
+  var controlReason = "";
+  var gesture = null;  // { id, pointerId, point, keepalive }
+  var outbox = [];     // { id, event }
+  var controlInflight = false;
+  var touchCtx = el.touch.getContext("2d");
+
+  function updateControlAvailability(control) {
+    var available = !!(control && control.available);
+    el.controlToggle.style.display = available ? "" : "none";
+    controlAllowed = available && control.allowed === true;
+    controlReason = control && control.reason ? control.reason : "";
+    el.controlToggle.disabled = !controlAllowed;
+    el.controlToggle.title = controlAllowed ? "Tap, hold or drag on the image to control the comma" : (controlReason || "Remote control unavailable");
+    if (!controlAllowed && controlOn) setControl(false);
+  }
+
+  function setControl(on, message) {
+    if (!on) cancelGesture();
+    controlOn = on;
+    el.controlToggle.setAttribute("aria-pressed", on ? "true" : "false");
+    el.stage.classList.toggle("controlling", on);
+    el.footer.textContent = message || (on ? CONTROL_FOOTER : DEFAULT_FOOTER);
+  }
+
+  function gestureId() {
+    var bytes = new Uint8Array(8);
+    (window.crypto || window.msCrypto).getRandomValues(bytes);
+    return Array.prototype.map.call(bytes, function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+  }
+
+  function imagePoint(event) {
+    var nw = shownWidth, nh = shownHeight;
+    var r = el.cam.getBoundingClientRect();
+    if (!nw || !nh || !r.width || !r.height) return null;
+    // object-fit: contain letterboxes the frame inside the element box.
+    var scale = Math.min(r.width / nw, r.height / nh);
+    var w = nw * scale, h = nh * scale;
+    var x = (event.clientX - (r.left + (r.width - w) / 2)) / w;
+    var y = (event.clientY - (r.top + (r.height - h) / 2)) / h;
+    return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)), inside: x >= 0 && x <= 1 && y >= 0 && y <= 1 };
+  }
+
+  // A dot under the finger, drawn locally so it tracks with no stream latency.
+  // Null clears it.
+  function drawTouch(event) {
+    var box = el.stage.getBoundingClientRect();
+    var dpr = window.devicePixelRatio || 1;
+    if (el.touch.width !== Math.round(box.width * dpr) || el.touch.height !== Math.round(box.height * dpr)) {
+      el.touch.width = Math.round(box.width * dpr);
+      el.touch.height = Math.round(box.height * dpr);
+    }
+    touchCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    touchCtx.clearRect(0, 0, box.width, box.height);
+    if (!event) return;
+    touchCtx.fillStyle = "rgba(245,166,35,.9)";
+    touchCtx.beginPath();
+    touchCtx.arc(event.clientX - box.left, event.clientY - box.top, 10, 0, 2 * Math.PI);
+    touchCtx.fill();
+  }
+
+  function queueControl(id, type, point) {
+    var event = { type: type, x: point.x, y: point.y };
+    var last = outbox[outbox.length - 1];
+    // Coalesce drags and keepalives: only the latest position matters.
+    if (type === "move" && last && last.id === id && last.event.type === "move") last.event = event;
+    else outbox.push({ id: id, event: event });
+    flushControl();
+  }
+
+  function flushControl() {
+    if (controlInflight || !outbox.length) return;
+    var id = outbox[0].id;
+    var batch = [];
+    while (outbox.length && outbox[0].id === id && batch.length < CONTROL_MAX_BATCH) batch.push(outbox.shift().event);
+    controlInflight = true;
+    fetch("/input", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json", "X-UI-Stream-Control": "1" },
+      body: JSON.stringify({ gesture: id, events: batch })
+    }).then(function (r) {
+      if (r.ok) return;
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        var message = body.error || ("Remote control failed (" + r.status + ")");
+        // The comma ended or refused this gesture: stop feeding it.
+        outbox = outbox.filter(function (item) { return item.id !== id; });
+        if (gesture && gesture.id === id) endGesture();
+        if (r.status === 403) { outbox = []; controlAllowed = false; setControl(false, message); }
+        else el.footer.textContent = message;
+      });
+    }).catch(function () {
+      // A lost request is fine: if the comma stops hearing us it cancels the
+      // gesture itself rather than completing it.
+      el.footer.textContent = "Lost contact with the comma; a held press there will be cancelled.";
+    }).finally(function () {
+      controlInflight = false;
+      flushControl();
+    });
+  }
+
+  function endGesture() {
+    if (!gesture) return;
+    var pointer = gesture.pointerId;
+    clearInterval(gesture.keepalive);
+    gesture = null;  // first: releasing capture fires lostpointercapture
+    try { el.cam.releasePointerCapture(pointer); } catch (e) { /* ignore */ }
+    drawTouch(null);
+  }
+
+  // Anything but a clean lift cancels: the comma forgets the press, no click.
+  function cancelGesture() {
+    if (!gesture) return;
+    queueControl(gesture.id, "cancel", gesture.point);
+    endGesture();
+  }
+
+  el.cam.draggable = false;
+  el.cam.addEventListener("dragstart", function (event) { event.preventDefault(); });
+  el.cam.addEventListener("contextmenu", function (event) { if (controlOn) event.preventDefault(); });
+
+  el.cam.addEventListener("pointerdown", function (event) {
+    if (!controlOn || !controlAllowed || gesture) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    var point = imagePoint(event);
+    if (!point || !point.inside) return;
+    event.preventDefault();
+    var id = gestureId();
+    gesture = { id: id, pointerId: event.pointerId, point: point, keepalive: null };
+    try { el.cam.setPointerCapture(event.pointerId); } catch (e) { /* ignore */ }
+    queueControl(id, "down", point);
+    gesture.keepalive = setInterval(function () {
+      if (gesture && gesture.id === id && !controlInflight && !outbox.length) queueControl(id, "move", gesture.point);
+    }, CONTROL_KEEPALIVE_MS);
+    drawTouch(event);
+  });
+
+  el.cam.addEventListener("pointermove", function (event) {
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    var point = imagePoint(event);
+    if (!point) return;
+    event.preventDefault();
+    gesture.point = point;
+    queueControl(gesture.id, "move", point);
+    drawTouch(event);
+  });
+
+  el.cam.addEventListener("pointerup", function (event) {
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    var point = imagePoint(event) || gesture.point;
+    queueControl(gesture.id, "up", point);
+    endGesture();
+  });
+
+  function pointerLost(event) {
+    if (gesture && event.pointerId === gesture.pointerId) cancelGesture();
+  }
+  el.cam.addEventListener("pointercancel", pointerLost);
+  el.cam.addEventListener("lostpointercapture", pointerLost);
+
+  el.controlToggle.addEventListener("click", function () {
+    if (!controlAllowed && !controlOn) return;
+    setControl(!controlOn);
+  });
+
+  el.retry.addEventListener("click", function () {
+    streamFailures = 0;
+    statusFailures = 0;
+    pausedSince = 0;
+    endStream();
+    if (!document.hidden) { beginStream(); pollStatus(); }
+  });
+
+  var expanded = false;
+
+  function setExpanded(value) {
+    expanded = value;
+    document.documentElement.classList.toggle("expanded", value);
+    updateFullscreenButton();
+  }
+
+  function updateFullscreenButton() {
+    var active = expanded || !!(document.fullscreenElement || document.webkitFullscreenElement);
+    el.fs.textContent = active ? "Exit" : "\u26F6";
+    el.fs.title = active ? "Exit expanded view" : "Fullscreen";
+    el.fs.setAttribute("aria-label", el.fs.title);
+    el.fs.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+
+  function expandPage() {
+    // The iframe cannot cover Galaxy itself. Ask the validated parent to put
+    // the existing iframe in its top-layer dialog; this preserves the stream.
+    if (isEmbedded()) postToParent("fullscreen", { expanded: true });
+    else setExpanded(true);
+  }
+
+  window.addEventListener("message", function (event) {
+    if (event.source !== window.parent || event.origin !== PARENT_ORIGIN) return;
+    if (event.data && event.data.source === "starpilot-ui-stream-wrapper" && event.data.type === "fullscreen") {
+      setExpanded(event.data.expanded === true);
+    }
+  });
+
+  el.fs.addEventListener("click", async function () {
+    var root = document.documentElement;
+    if (expanded) {
+      if (isEmbedded()) postToParent("fullscreen", { expanded: false });
+      else setExpanded(false);
+      return;
+    }
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      try {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+      } catch (e) { updateFullscreenButton(); }
+      return;
+    }
+    try {
+      // Call during the click activation, and handle rejected promises too.
+      if (root.requestFullscreen) await root.requestFullscreen();
+      else if (root.webkitRequestFullscreen) await root.webkitRequestFullscreen();
+      else expandPage();
+    } catch (e) { expandPage(); }
+  });
+  document.addEventListener("fullscreenchange", updateFullscreenButton);
+  document.addEventListener("webkitfullscreenchange", updateFullscreenButton);
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && expanded) {
+      if (isEmbedded()) postToParent("fullscreen", { expanded: false });
+      else setExpanded(false);
+    }
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      cancelGesture();
+      stopTimers();
+      endStream();
+      showCover("Paused", "Live UI is paused while this tab is in the background. Return to resume.");
+    } else {
+      hideCover();
+      pausedSince = 0;
+      statusFailures = 0;
+      setState("connecting");
+      beginStream();
+      startTimers();
+    }
+  });
+
+  window.addEventListener("beforeunload", function () {
+    cancelGesture();
+    stopTimers();
+    endStream();
+  });
+
+  // Announce readiness so the Galaxy wrapper can validate the handshake.
+  setState("connecting");
+  beginStream();
+  startTimers();
+  postToParent("ready", { generation: Date.now() });
+  setInterval(function () {
+    var now = Date.now();
+    if (now - lastChildPost >= 2000) { lastChildPost = now; postToParent("status"); }
+  }, 2000);
+})();
+</script>
+</body>
+</html>

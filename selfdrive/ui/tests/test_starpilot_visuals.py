@@ -31,6 +31,24 @@ class FakeParams:
     return str(value or "").strip() in ("1", "true", "True")
 
 
+def test_default_visual_settings_share_cache_and_writes_invalidate(monkeypatch):
+  from openpilot.selfdrive.ui.lib.ui_param_cache import UIParamCache
+  from openpilot.selfdrive.ui.tests.test_ui_param_cache import FakeParams as CountingParams
+  params = CountingParams()
+  params.values.update(BorderWidth=100, HideLeadMarker=False, LeadInfo=True, LeadInfoMode=2)
+  cache = UIParamCache(params, ttl=10)
+  monkeypatch.setattr(MODULE, "shared_ui_params", lambda: cache)
+  for _ in range(3):
+    assert MODULE.get_border_width(30) == 30
+    assert MODULE.lead_indicator_enabled()
+    assert MODULE.lead_info_mode() == MODULE.LeadInfoMode.SPEED
+  assert len(params.calls) == 5
+  cache.put_float("BorderWidth", 150)
+  cache.put_bool("HideLeadMarker", True)
+  assert MODULE.get_border_width(30) == 45
+  assert not MODULE.lead_indicator_enabled()
+
+
 class TestStarPilotVisuals(unittest.TestCase):
   def test_border_roundness_contains_camera_corner(self):
     rect = SimpleNamespace(width=2160, height=1080)

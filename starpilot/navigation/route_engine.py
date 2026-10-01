@@ -392,23 +392,32 @@ class NavigationRoute:
 class MapboxRouteEngine:
   DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic"
 
-  def __init__(self, session: Any = requests):
+  def __init__(self, session: Any = requests, usage: Any = None):
     self._session = session
+    self._usage = usage  # MapboxUsage, counting each directions request
 
   def fetch_route(self, token: str, start: Coordinate, destination: dict[str, Any], bearing: float | None = None) -> NavigationRoute | None:
-    if not token:
-      return None
-
-    end = Coordinate(float(destination["latitude"]), float(destination["longitude"]))
     route_id = str(destination.get("routeId") or "main")
     requested_route_index = int(route_id[4:]) if route_id.startswith("alt-") and route_id[4:].isdigit() else 0
+    routes = self.fetch_routes(token, start, destination, bearing, alternatives=requested_route_index > 0)
+    if not routes:
+      return None
+    return routes[requested_route_index] if requested_route_index < len(routes) else routes[0]
+
+  def fetch_routes(self, token: str, start: Coordinate, destination: dict[str, Any], bearing: float | None = None,
+                   alternatives: bool = True) -> list[NavigationRoute]:
+    """The main route first, then Mapbox's alternatives (routeId "alt-1", "alt-2", ...)."""
+    if not token:
+      return []
+
+    end = Coordinate(float(destination["latitude"]), float(destination["longitude"]))
     params: dict[str, str] = {
       "access_token": token,
       "geometries": "geojson",
       "steps": "true",
       "overview": "full",
       "annotations": "maxspeed",
-      "alternatives": "true" if requested_route_index > 0 else "false",
+      "alternatives": "true" if alternatives else "false",
       "banner_instructions": "true",
     }
     if bearing is not None:
@@ -417,15 +426,26 @@ class MapboxRouteEngine:
     url = f"{self.DIRECTIONS_URL}/{start.longitude},{start.latitude};{end.longitude},{end.latitude}"
     try:
       response = self._session.get(url, params=params, timeout=5)
+      if self._usage is not None:
+        self._usage.add("directions")
       data = response.json() if response.status_code == 200 else {}
-    except requests.RequestException:
-      return None
+    except (requests.RequestException, ValueError):
+      return []
 
-    routes = data.get("routes") or []
-    route = routes[requested_route_index] if requested_route_index < len(routes) else (routes[0] if routes else None)
-    legs = route.get("legs") if route else None
+    if data.get("code") != "Ok":
+      return []
+    routes = []
+    for route in data.get("routes") or []:
+      parsed = self._parse_route(route)
+      if parsed is not None:
+        routes.append(parsed)
+    return routes
+
+  @staticmethod
+  def _parse_route(route: dict[str, Any]) -> NavigationRoute | None:
+    legs = route.get("legs")
     leg = legs[0] if legs else None
-    if data.get("code") != "Ok" or route is None or leg is None:
+    if leg is None:
       return None
 
     route_data = {

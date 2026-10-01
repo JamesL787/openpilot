@@ -6,6 +6,9 @@ from openpilot.selfdrive.ui.onroad.starpilot.aethergauge import AetherGauge, _fa
 from openpilot.selfdrive.ui.onroad.starpilot.widget_style import CONTROL_WIDTH
 
 class AetherGaugeWidget(LayoutWidget):
+  HEIGHT = 260.0       # the road visual and the text cradle under it
+  ROAD_BOTTOM = 145.0  # from the top; leaves 115px for the text cradle underneath
+
   def __init__(self, hud_renderer):
     super().__init__("aethergauge", priority=3)
     self.hud_renderer = hud_renderer
@@ -20,7 +23,7 @@ class AetherGaugeWidget(LayoutWidget):
 
   def get_size(self) -> tuple[float, float]:
     # Match the left control width; height covers the road visual and text cradle.
-    return float(CONTROL_WIDTH), 260.0
+    return float(CONTROL_WIDTH), self.HEIGHT
 
   def _render(self, rect: rl.Rectangle) -> None:
     target = 1.0 if self._aethergauge.has_active_source() else 0.0
@@ -29,8 +32,7 @@ class AetherGaugeWidget(LayoutWidget):
       return
 
     cx = rect.x + rect.width / 2
-    # Set the road bottom to rect.y + 145, leaving 115px for the text cradle underneath
-    bottom = rect.y + 145.0
+    bottom = rect.y + self.ROAD_BOTTOM
     self._aethergauge.render(
       rect, self._font_bold, self._font_medium,
       current_speed=self.hud_renderer.speed,

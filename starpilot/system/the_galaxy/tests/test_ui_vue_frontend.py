@@ -502,7 +502,7 @@ def test_ui_all_remaining_classic_tools_native_no_embed():
   assert "GalaxyEmbed" not in tuning and "LateralTuningPanel" in tuning
   assert _read("js/components/MapsPanel.js") and _read("js/components/NavigationKeysPanel.js")
   destination = _read("js/components/NavigationDestinationPanel.js")
-  assert '"./views/Navigation.js?v=nav-destination-6"' in _read("js/app.js")
+  assert '"./views/Navigation.js?v=area-picker-1"' in _read("js/app.js")
   assert '"../components/NavigationDestinationPanel.js?v=nav-destination-6"' in _read("js/views/Navigation.js")
   assert "mapboxSuggest" in destination and "mapboxRetrieve" in destination
   assert "mapboxGeocode" in destination and "mapboxDirections" in destination
@@ -749,6 +749,42 @@ def _node_exe():
 
 
 @pytest.mark.skipif(_node_exe() is None, reason="no node.js runtime available")
+def test_ui_js_modules_parse(tmp_path):
+  # app.js imports every view eagerly, so one unparseable module takes down all
+  # of Galaxy -- e.g. a stray backtick inside a Vue template literal. Parse each
+  # module on its own so the failure names the file.
+  node = _node_exe()
+  sources = sorted(path for path in UI_ROOT.glob("js/**/*.js"))
+  assert sources, "no Galaxy JS modules found"
+
+  script = tmp_path / "parse.cjs"
+  script.write_text(
+    r"""
+const fs = require('node:fs');
+const vm = require('node:vm');
+const failures = [];
+for (const file of process.argv.slice(2)) {
+  try {
+    new vm.SourceTextModule(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    failures.push(file + ': ' + e.name + ': ' + e.message);
+  }
+}
+if (failures.length) {
+  console.error(failures.join('\n'));
+  process.exit(1);
+}
+""",
+    encoding="utf-8",
+  )
+  result = subprocess.run(
+    [node, "--experimental-vm-modules", str(script), *[str(path) for path in sources]],
+    capture_output=True, text=True,
+  )
+  assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(_node_exe() is None, reason="no node.js runtime available")
 def test_ui_ported_param_logic_runs_and_passes(tmp_path):
   node = _node_exe()
   params_src = _read("js/params.js")
@@ -904,3 +940,127 @@ def test_ui_slider_does_not_trap_scroll_or_take_stray_touches():
   assert "touchGateClosed()" in commit and "restoreSlider()" in commit
   end = card[card.index("    onSliderPointerEnd(e) {"):card.index("    async resetToDefault(")]
   assert end.index("restoreSlider()") < end.index("flushSlider(")
+
+
+def test_ui_live_stream_page_native_route_and_local_only_wrapper():
+  app = _read("js/app.js")
+  store = _read("js/store.js")
+  shell = _read("js/components/AppShell.js")
+  view = _read("js/views/UiStream.js")
+
+  # Dedicated native route, navigation entry and NATIVE_ROOTS membership so the
+  # sidebar link resolves to the Vue view rather than the classic embed.
+  assert "UiStream" in app and '"/ui-stream": UiStream' in app
+  assert "/ui-stream" in store
+  assert '/ui-stream' in shell and "Live UI" in shell and "bi-display" in shell
+
+  # Must not reuse GalaxyEmbed's same-origin DOM/style injection.
+  assert "GalaxyEmbed" not in view
+
+  # Validated postMessage handshake: source tag, origin and iframe window check.
+  assert 'MESSAGE_SOURCE = "starpilot-ui-stream"' in view
+  assert "event.source !== frame.contentWindow" in view
+  assert "event.origin !== this.viewerOrigin" in view
+  assert "READY_TIMEOUT_MS = 5000" in view
+  # Ignore app.js's unvalidated "galaxy-embed" navigation messages.
+  assert "data.source !== MESSAGE_SOURCE" in view
+  # Pass our exact origin so the viewer can target it instead of "*".
+  assert "parentOrigin" in view and "window.location.origin" in view
+  # State chip is coloured per state (no dead constant switch).
+  assert "stateStyle" in view and "stateClass" not in view
+  # A specific known cause replaces the generic LAN notice.
+  assert 'v-if="!detail"' in view
+  # The missing sandbox is deliberate and documented (opaque origin would break it).
+  assert 'no "sandbox" attribute' in view and "allow-same-origin" in view
+  # The template is a JS template literal: a backtick inside it ends the string
+  # and breaks module parsing for every Galaxy page (see the module-parse test).
+  template = view.split("template: `", 1)[1].rsplit("`", 1)[0]
+  assert "`" not in template
+
+  # Viewer port comes from device status metadata, never hardcoded.
+  assert "api.getDeviceStatus" in view
+  assert "status?.streamPort" in view
+  # Opening the page is the whole interaction, and the iframe waits for real
+  # readiness because the viewer page itself is served by the streamer.
+  assert "api.startUiStream(opts)" in view
+  assert 'status.streamState === "running"' in view
+  assert "streamSequence" in view and "baseSequence" in view
+  assert "showFrame" in view and "starting" in view
+  assert '"Starting…"' in view
+  assert "'8091'" not in view and '"8091"' not in view
+  # A start that failed is reported as such, not acknowledged like a success.
+  assert 'status.streamState === "error"' in view and "streamDetail" in view
+  # The streamer self-stops without viewers, so returning to a backgrounded tab
+  # re-requests it instead of stranding the user on Retry.
+  assert "visibilitychange" in view and "verifyReady" in view
+  assert "MAX_AUTO_RESTARTS" in view and "VERIFY_COOLDOWN_MS" in view
+
+  # Remote/HTTPS users get a top-level local link, not a tunnelled stream.
+  assert "isFirestarOrigin" in view
+  assert "Open Galaxy Locally" in view
+  assert "is not carried through Galaxy remote access" in view
+  assert "Screen asleep" in view
+  assert "window.removeEventListener(\"message\", this.onMessage)" in view
+
+  galaxy = GALAXY_PY.read_text(encoding="utf-8")
+  assert '"streamPort": utilities.get_ui_stream_port(),' in galaxy
+  # Start-on-navigate: the page posts a request, the UI publishes readiness.
+  assert '@app.route("/api/ui_stream/start", methods=["POST"])' in galaxy
+  assert 'params_memory.put_bool("UiStreamRequested", True)' in galaxy
+  assert '"streamRequested": bool(params_memory.get_bool("UiStreamRequested")),' in galaxy
+  # Readiness comes from UiStreamState, the only proof the listener is bound.
+  assert 'params_memory.get("UiStreamState", encoding="utf-8")' in galaxy
+  assert '"streamState": stream_state,' in galaxy
+  assert '"streamDetail": stream_detail,' in galaxy
+  assert '"streamSequence": stream_sequence,' in galaxy
+
+  param_keys = (REPO_ROOT / "common/params_keys.h").read_text(encoding="utf-8")
+  assert '{"UiStreamState", {CLEAR_ON_MANAGER_START | DONT_LOG, STRING}}' in param_keys
+
+  ui_main = (REPO_ROOT / "selfdrive/ui/ui.py").read_text(encoding="utf-8")
+  assert 'ui_state.params_memory.put("UiStreamState"' in ui_main
+
+  utilities = (REPO_ROOT / "starpilot/system/the_galaxy/utilities.py").read_text(encoding="utf-8")
+  assert "def get_ui_stream_port():" in utilities
+  # The streamer starts on demand, so STREAM=0 is the only kill switch.
+  assert 'os.getenv("STREAM") == "0"' in utilities
+  # Empty STREAM_PORT must mean unset, matching the streamer's _env_int.
+  assert 'os.getenv("STREAM_PORT") or "8091"' in utilities
+
+
+@pytest.mark.skipif(_node_exe() is None, reason="no node.js runtime available")
+def test_live_ui_requests_and_startup_have_deadlines(tmp_path):
+  script = tmp_path / "stream_deadlines.cjs"
+  script.write_text(r'''
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+(async () => {
+  const source = fs.readFileSync(process.argv[2], 'utf8').replace(/^import .*$/gm, '');
+  let signal;
+  const context = vm.createContext({
+    setTimeout, clearTimeout, AbortController, Date,
+    api: { getDeviceStatus: (opts) => { signal = opts.signal; return new Promise(() => {}); } },
+  });
+  const module = new vm.SourceTextModule(source + '\nexport { timedRequest };', { context });
+  await module.link(() => { throw new Error('unexpected import'); });
+  await module.evaluate();
+  const { timedRequest, UiStream } = module.namespace;
+  await assert.rejects(timedRequest((opts) => {
+    signal = opts.signal;
+    return new Promise(() => {});
+  }, 15), /timed out/);
+  assert.equal(signal.aborted, true);
+  assert.equal(await timedRequest(() => Promise.resolve('ok'), 15), 'ok');
+  const state = { starting: true, baseSequence: 0 };
+  const start = Date.now();
+  await UiStream.methods.waitForReady.call(state, start + 350);
+  assert.equal(state.starting, false);
+  assert.equal(state.state, 'error');
+  assert.equal(signal.aborted, true);
+  assert.ok(Date.now() - start < 1000, 'startup exceeded its deadline');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+''', encoding="utf-8")
+  result = subprocess.run([_node_exe(), "--experimental-vm-modules", str(script),
+                           str(UI_ROOT / "js/views/UiStream.js")], capture_output=True, text=True, timeout=10)
+  assert result.returncode == 0, result.stdout + result.stderr

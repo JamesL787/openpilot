@@ -2228,6 +2228,72 @@ button.gx-chip:hover {
   }
 }
 
+.gx-offline-row {
+  cursor: pointer;
+}
+
+.gx-offline-row .gx-offline-row__status--danger {
+  color: var(--error);
+}
+
+.gx-offline-row .gx-offline-row__progress {
+  background: var(--glass-border, rgba(127, 127, 127, .2));
+  border-radius: 2px;
+  display: block;
+  height: 4px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.gx-offline-row .gx-offline-row__progress > span {
+  background: var(--primary);
+  display: block;
+  height: 100%;
+  transition: width .3s;
+}
+
+@media (max-width: 767px) {
+  .gx-offline-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name name"
+      "details actions"
+      "status status"
+      "progress progress";
+    row-gap: var(--sp-1);
+  }
+
+  .gx-offline-row .gx-row__info {
+    display: contents;
+  }
+
+  .gx-offline-row .gx-row__label {
+    grid-area: name;
+  }
+
+  .gx-offline-row .gx-offline-row__details {
+    grid-area: details;
+    margin-top: 0;
+  }
+
+  .gx-offline-row .gx-offline-row__status {
+    grid-area: status;
+    margin-top: 0;
+  }
+
+  .gx-offline-row .gx-offline-row__progress {
+    grid-area: progress;
+    margin-top: 0;
+  }
+
+  .gx-offline-row .gx-row__actions {
+    align-self: center;
+    grid-area: actions;
+    justify-content: flex-end;
+  }
+}
+
 .gx-view, .gx-embed {
   display: flex;
   flex: 1;
@@ -2499,3 +2565,22 @@ button.gx-chip:hover {
   color: var(--secondary);
   text-shadow: 0 0 10px var(--secondary-glow);
 }
+
+/* Starpilot Auto: the same plain sections and controls as the car display. */
+.gx-car-display { padding: var(--sp-3); display: grid; gap: 12px; min-width: 0; }
+.gx-car-display .gx-row { gap: 16px; flex-wrap: wrap; }
+.gx-car-display .gx-row__info { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.gx-car-display .gx-switch { flex: 0 0 auto; }
+.gx-car-display__tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.gx-car-display__heading { margin-top: 12px; }
+.gx-car-display__metric { flex: 1 1 200px; min-width: 0 !important; max-width: 100%; }
+.gx-car-display .gx-switch:focus-within { outline: 2px solid var(--primary); outline-offset: 4px; border-radius: 30px; }
+.gx-starpilot-auto-connection__car { flex: 1 1 220px; width: min(100%, 360px); }
+.gx-starpilot-auto-connection details > summary { cursor: pointer; }
+.gx-car-diag__session + .gx-car-diag__session { border-top: 1px solid var(--outline-variant); }
+.gx-car-diag__transport { margin-left: 6px; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: var(--surface-container-high, var(--primary-container)); color: var(--text-muted); }
+.gx-car-diag__outcome { overflow-wrap: anywhere; }
+.gx-car-diag__outcome--ok { color: var(--success, #3fb950); }
+.gx-car-diag__outcome--error { color: var(--error, #f85149); }
+.gx-car-diag__report { display: grid; gap: 8px; justify-items: start; padding: 0 var(--sp-3) var(--sp-3); min-width: 0; }
+.gx-car-diag__report pre { margin: 0; width: 100%; max-height: 360px; overflow: auto; padding: 12px; border-radius: 12px; border: 1px solid var(--outline-variant); background: var(--surface-container, rgba(255,255,255,.03)); font-size: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }

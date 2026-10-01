@@ -62,6 +62,14 @@ DEBUG = False
 _dbus_call_idx = 0
 
 
+# Profile id owned by starpilot/system/starpilot_auto/network.py.
+PROJECTION_CONNECTION_ID = "starpilot-auto"
+
+
+def _is_projection_connection(settings: dict) -> bool:
+  return settings.get('connection', {}).get('id', ('s', ''))[1] == PROJECTION_CONNECTION_ID
+
+
 def normalize_ssid(ssid: str) -> str:
   return ssid.replace("’", "'")  # for iPhone hotspots
 
@@ -236,6 +244,7 @@ class WifiManager:
 
     # State
     self._connections: dict[str, str] = {}  # ssid -> connection path, updated via NM signals
+    self._projection_connections: set[str] = set()  # starpilot_autod-owned volatile profiles; never saved or listed
     self._wifi_state: WifiState = WifiState()
     self._user_epoch: int = 0
     self._ipv4_address: str = ""
@@ -611,8 +620,9 @@ class WifiManager:
       if tethering_ssid is not None and wifi_state.ssid == tethering_ssid:
         self._ensure_tethering_nat()
 
-      # Persist volatile connections (created by AddAndActivateConnection2) to disk
-      if conn_path is not None:
+      # Persist volatile connections (created by AddAndActivateConnection2) to disk.
+      # Starpilot Auto's projection profile is owned by starpilot_autod and must stay volatile.
+      if conn_path is not None and conn_path not in getattr(self, '_projection_connections', ()):
         conn_addr = DBusAddress(conn_path, bus_name=NM, interface=NM_CONNECTION_IFACE)
         save_reply = self._conn_monitor.send_and_get_reply(new_method_call(conn_addr, 'Save'))
         if save_reply.header.message_type == MessageType.error:
@@ -667,7 +677,9 @@ class WifiManager:
         cloudlog.warning(f'Failed to get connection settings for {conn_path}')
         continue
 
-      if "802-11-wireless" in settings:
+      if _is_projection_connection(settings):
+        self._projection_connections.add(conn_path)
+      elif "802-11-wireless" in settings:
         ssid = settings['802-11-wireless']['ssid'][1].decode("utf-8", "replace")
         if ssid != "":
           conns[ssid] = conn_path
@@ -676,12 +688,15 @@ class WifiManager:
   def _new_connection(self, conn_path: str):
     settings = self._get_connection_settings(conn_path)
 
-    if "802-11-wireless" in settings:
+    if _is_projection_connection(settings):
+      self._projection_connections.add(conn_path)
+    elif "802-11-wireless" in settings:
       ssid = settings['802-11-wireless']['ssid'][1].decode("utf-8", "replace")
       if ssid != "":
         self._connections[ssid] = conn_path
 
   def _connection_removed(self, conn_path: str):
+    self._projection_connections.discard(conn_path)
     self._connections = {ssid: path for ssid, path in self._connections.items() if path != conn_path}
 
   def _get_active_connections(self, router: DBusConnection | DBusRouter | None = None):

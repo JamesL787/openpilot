@@ -36,8 +36,8 @@ class HomeLayout(Widget):
     super().__init__()
     self.params = ui_state.ui_params
 
-    self.update_alert = UpdateAlert()
-    self.offroad_alert = OffroadAlert()
+    self.update_alert = self._create_update_alert()
+    self.offroad_alert = self._create_offroad_alert()
 
     self._layout_widgets = {HomeLayoutState.UPDATE: self.update_alert, HomeLayoutState.ALERTS: self.offroad_alert}
 
@@ -59,12 +59,30 @@ class HomeLayout(Widget):
     self.update_notif_rect = rl.Rectangle(0, 0, 200, HEADER_HEIGHT - 10)
     self.alert_notif_rect = rl.Rectangle(0, 0, 220, HEADER_HEIGHT - 10)
 
-    self._drive_stats = DriveStatsDashboard(self.params)
-    self._setup_widget = SetupWidget()
-    self._home_info_card = self._child(HomeInfoCard(params=self.params, drive_stats=self._drive_stats))
+    self._drive_stats = self._create_drive_stats()
+    self._setup_widget = self._create_setup_widget()
+    self._home_info_card = self._child(self._create_home_info_card())
 
-    self._exp_mode_button = ExperimentalModeButton()
+    self._exp_mode_button = self._create_exp_mode_button()
     self._setup_callbacks()
+
+  def _create_update_alert(self):
+    return UpdateAlert()
+
+  def _create_offroad_alert(self):
+    return OffroadAlert()
+
+  def _create_drive_stats(self):
+    return DriveStatsDashboard(self.params)
+
+  def _create_setup_widget(self):
+    return SetupWidget()
+
+  def _create_exp_mode_button(self):
+    return ExperimentalModeButton()
+
+  def _create_home_info_card(self):
+    return HomeInfoCard(params=self.params, drive_stats=self._drive_stats)
 
   def show_event(self):
     self._exp_mode_button.show_event()

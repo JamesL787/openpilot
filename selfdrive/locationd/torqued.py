@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import time
 import numpy as np
 from collections import deque, defaultdict
 
@@ -10,7 +11,7 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process, DT_MDL
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.swaglog import cloudlog
-from openpilot.selfdrive.locationd.helpers import PointBuckets, ParameterEstimator, PoseCalibrator, Pose
+from openpilot.selfdrive.locationd.helpers import InputCheckLogger, PointBuckets, ParameterEstimator, PoseCalibrator, Pose
 
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 
@@ -262,8 +263,13 @@ def main(demo=False):
 
   estimator.starpilot_toggles = starpilot_toggles
 
+  input_check_logger = InputCheckLogger("torquedInputsInvalid")
+  last_update, max_loop_gap = time.monotonic(), 0.
+
   while True:
     sm.update()
+    now = time.monotonic()
+    max_loop_gap, last_update = max(max_loop_gap, now - last_update), now
     if sm.all_checks():
       for which in sm.updated.keys():
         if sm.updated[which]:
@@ -272,6 +278,9 @@ def main(demo=False):
 
     # 4Hz driven by livePose
     if sm.frame % 5 == 0:
+      # a late loop (this process starved) vs a late input (the publisher starved)
+      input_check_logger.update(sm, now, context={'max_loop_gap_ms': round(max_loop_gap * 1000, 1)})
+      max_loop_gap = 0.
       pm.send('liveTorqueParameters', estimator.get_msg(valid=sm.all_checks(), with_points=DEBUG))
 
     # Cache points every 60 seconds while onroad

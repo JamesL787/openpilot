@@ -1,8 +1,11 @@
 import pyray as rl
 
+from openpilot.selfdrive.ui.mici.layouts.settings.starpilot_auto import TITLE as STARPILOT_AUTO, StarpilotAutoLayoutMici, show_text
+from openpilot.selfdrive.ui.mici.layouts.settings.starpilot_auto_state import status_value
 from openpilot.selfdrive.ui.mici.layouts.settings.network.wifi_ui import ForgetButton, LoadingAnimation
 from openpilot.selfdrive.ui.mici.widgets.button import BigButton, LABEL_COLOR
 from openpilot.selfdrive.ui.mici.widgets.dialog import BigConfirmationDialog, BigDialog, BigInputDialog, BigMultiOptionDialog
+from openpilot.system.ui.lib.starpilot_auto_manager import StarpilotAutoManager
 from openpilot.system.ui.lib.application import FontWeight, MousePos, gui_app
 from openpilot.system.ui.lib.bluetooth_manager import BluetoothManager
 from openpilot.system.ui.widgets.scroller import NavScroller
@@ -149,14 +152,19 @@ class BluetoothLayoutMici(NavScroller):
     self._scan_btn = BigButton("scan for devices", "scan", self._dialog_icon, scroll=True)
     self._scan_btn.set_click_callback(lambda: self._manager.set_scanning(True))
     self._scanning_btn = BluetoothScanningButton()
+    self._starpilot_auto = None
+    self._starpilot_auto_btn = BigButton(STARPILOT_AUTO, "off")  # no icon: the title fits one line, leaving two for the status
+    self._starpilot_auto_btn.set_click_callback(self._open_starpilot_auto)
+    self._starpilot_auto_page: StarpilotAutoLayoutMici | None = None
     self._device_buttons = {}
     self._scan_on_ready = False
-    self._scroller.add_widgets([self._power_btn, self._scan_btn, self._scanning_btn])
+    self._scroller.add_widgets([self._power_btn, self._starpilot_auto_btn, self._scan_btn, self._scanning_btn])
     self._rebuild()
 
   def show_event(self):
     super().show_event()
     self._manager.set_active(True)
+    self._sync_starpilot_auto()
     self._scan_on_ready = True
     gui_app.add_nav_stack_tick(self._tick)
 
@@ -164,6 +172,9 @@ class BluetoothLayoutMici(NavScroller):
     if self._manager.status.discovering and self._manager.status.offroad:
       self._manager.set_scanning(False)
     self._manager.set_active(False)
+    if self._starpilot_auto is not None:
+      self._starpilot_auto.stop()
+      self._starpilot_auto = None
     gui_app.remove_nav_stack_tick(self._tick)
     super().hide_event()
 
@@ -172,12 +183,23 @@ class BluetoothLayoutMici(NavScroller):
     self._scan_on_ready = enabled
     self._manager.set_power(enabled)
 
+  def _sync_starpilot_auto(self):
+    enabled = gui_app.starpilot_auto_enabled and self._manager.status.enabled
+    if enabled and self._starpilot_auto is None:
+      self._starpilot_auto = StarpilotAutoManager()
+      self._starpilot_auto.set_active(True)
+    elif not enabled and self._starpilot_auto is not None:
+      self._starpilot_auto.stop()
+      self._starpilot_auto = None
+
   def _rebuild(self):
     status = self._manager.status
     self._power_btn.set_value("on" if status.enabled else "off")
     self._power_btn.set_enabled(status.available and status.offroad)
     self._scan_btn.set_enabled(status.enabled and status.offroad)
     items = [self._power_btn]
+    if status.enabled and gui_app.starpilot_auto_enabled:
+      items.append(self._starpilot_auto_btn)
     for device in status.devices:
       button = self._device_buttons.get(device.address)
       if button is None:
@@ -229,6 +251,15 @@ class BluetoothLayoutMici(NavScroller):
     dialog_holder["dialog"] = dialog
     gui_app.push_widget(dialog)
 
+  # ------------------------------------------------------------ Starpilot Auto
+
+  def _open_starpilot_auto(self):
+    if self._starpilot_auto is None or not gui_app.starpilot_auto_enabled:
+      return
+    if self._starpilot_auto_page is None:
+      self._starpilot_auto_page = StarpilotAutoLayoutMici(lambda: self._starpilot_auto, self._manager, self._dialog_icon)
+    gui_app.push_widget(self._starpilot_auto_page)
+
   def _handle_prompt(self):
     prompt = self._manager.status.prompt
     if prompt is None or prompt.get("id") == self._last_prompt_id:
@@ -255,8 +286,10 @@ class BluetoothLayoutMici(NavScroller):
       ))
 
   def _tick(self):
+    self._sync_starpilot_auto()
     status = self._manager.status
     signature = (
+      gui_app.starpilot_auto_enabled,
       status.available,
       status.enabled,
       status.powered,
@@ -277,4 +310,11 @@ class BluetoothLayoutMici(NavScroller):
     if error:
       self._scan_on_ready = False
       gui_app.push_widget(BigDialog("Bluetooth", error))
+    if self._starpilot_auto is not None:
+      starpilot_auto_value = status_value(self._starpilot_auto.status)
+      if starpilot_auto_value != self._starpilot_auto_btn.get_value():
+        self._starpilot_auto_btn.set_value(starpilot_auto_value)
+      starpilot_auto_error = self._starpilot_auto.consume_error()
+      if starpilot_auto_error:
+        show_text(STARPILOT_AUTO, starpilot_auto_error, self._dialog_icon)
     self._handle_prompt()

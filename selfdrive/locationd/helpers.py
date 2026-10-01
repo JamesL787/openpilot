@@ -3,6 +3,7 @@ from typing import Any
 from functools import cache
 
 from cereal import log
+from openpilot.common.swaglog import cloudlog
 from openpilot.common.transformations.orientation import rot_from_euler, euler_from_rot
 
 
@@ -181,3 +182,53 @@ class PoseCalibrator:
     device_from_calib = rot_from_euler(calib_rpy)
     self.calib_from_device = device_from_calib.T
     self.calib_valid = live_calib.calStatus == log.LiveCalibrationData.Status.calibrated
+
+
+class InputCheckLogger:
+  """Logs which SubMaster inputs failed their checks, once per distinct failure.
+
+  Each failing service carries its receive age and measured frequencies, so a
+  log shows whether it was late (alive), irregular (freq_ok) or flagged invalid.
+  """
+
+  def __init__(self, event: str, checks: tuple[str, ...] = ('invalid', 'not_alive', 'not_freq_ok')):
+    self.event = event
+    self.checks = checks
+    self.logged: tuple = ()
+    self.failed_since = 0.0
+
+  @staticmethod
+  def _hz(average_dt: float) -> float | None:
+    return round(1.0 / average_dt, 1) if average_dt > 0 else None
+
+  def update(self, sm, cur_time: float, extra: dict | None = None, context: dict | None = None) -> None:
+    """``extra`` adds failure reasons; ``context`` is logged with a failure but never counts as one."""
+    if not all(sm.seen.values()):
+      return  # still starting up; a service that never arrives is selfdrived's commIssue
+    extra = extra or {}
+    failures = {
+      'invalid': sorted(s for s, valid in sm.valid.items() if not valid and s not in sm.ignore_valid),
+      'not_alive': sorted(s for s, alive in sm.alive.items() if not alive and s not in sm.ignore_alive),
+      'not_freq_ok': sorted(s for s, freq_ok in sm.freq_ok.items() if not freq_ok and sm._check_avg_freq(s)),
+    }
+    failures = {**{k: v for k, v in failures.items() if k in self.checks}, **extra}
+    key = tuple((k, tuple(v)) for k, v in failures.items() if v)
+    if key == self.logged:
+      return
+    if not key:
+      cloudlog.event(f"{self.event}Recovered", failed_s=round(cur_time - self.failed_since, 3))
+    else:
+      if not self.logged:
+        self.failed_since = cur_time
+      details = {}
+      for s in sorted({s for k in self.checks for s in failures[k]}):
+        tracker = sm.freq_tracker[s]
+        details[s] = {
+          'age_ms': round((cur_time - sm.recv_time[s]) * 1000, 1),
+          'avg_hz': self._hz(tracker.avg_dt.get_average()),
+          'recent_hz': self._hz(tracker.recent_avg_dt.get_average()),
+          'min_hz': round(tracker.min_freq, 1),
+          'max_hz': round(tracker.max_freq, 1),
+        }
+      cloudlog.event(self.event, error=True, details=details, **(context or {}), **{k: v for k, v in failures.items() if v})
+    self.logged = key

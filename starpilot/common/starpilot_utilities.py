@@ -35,6 +35,17 @@ def capture_exception(exception):
     pass
 
 
+def lower_thread_priority() -> None:
+  # New threads inherit their creator's scheduling policy, and starpilot_process runs SCHED_FIFO for its
+  # planner loop. Background work (downloads, stats, toggle refreshes, web requests) must not preempt
+  # plannerd, radard, the UI or the little-core daemons, so drop the calling thread to normal priority.
+  if hasattr(os, "sched_setscheduler"):
+    try:
+      os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
+    except OSError:
+      pass
+
+
 class ThreadManager:
   def __init__(self):
     self.thread_lock = threading.Lock()
@@ -56,6 +67,7 @@ class ThreadManager:
         return
 
       def wrapped_target(*t_args):
+        lower_thread_priority()
         try:
           target(*t_args)
         except Exception as exception:

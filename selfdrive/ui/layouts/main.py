@@ -7,7 +7,8 @@ from openpilot.system.ui.lib.application import gui_app
 from openpilot.selfdrive.ui.layouts.sidebar import Sidebar, SIDEBAR_WIDTH
 from openpilot.selfdrive.ui.onroad.starpilot.developer_sidebar import DeveloperSidebar
 from openpilot.selfdrive.ui.layouts.home import HomeLayout
-from openpilot.selfdrive.ui.layouts.settings.settings import SettingsLayout, PanelType
+from openpilot.selfdrive.ui.layouts.settings.settings import SettingsLayout
+from openpilot.selfdrive.ui.layouts.settings.types import PanelType
 from openpilot.selfdrive.ui.onroad.starpilot.starpilot_onroad_view import StarPilotOnroadView
 from openpilot.selfdrive.ui.ui_state import device, ui_state
 from openpilot.system.ui.widgets import Widget
@@ -26,12 +27,12 @@ class MainLayout(Widget):
 
     self._pm = messaging.PubMaster(['bookmarkButton'])
 
-    self._sidebar = Sidebar()
-    self._dev_sidebar = DeveloperSidebar()
+    self._sidebar = self._create_sidebar()
+    self._dev_sidebar = self._create_developer_sidebar()
     self._current_mode = MainState.HOME
     self._prev_onroad = False
 
-    self._layouts = {MainState.HOME: HomeLayout(), MainState.SETTINGS: SettingsLayout(), MainState.ONROAD: StarPilotOnroadView()}
+    self._layouts = self._create_layouts()
 
     self._sidebar_rect = rl.Rectangle(0, 0, 0, 0)
     self._dev_sidebar_rect = rl.Rectangle(0, 0, 0, 0)
@@ -51,6 +52,15 @@ class MainLayout(Widget):
     # at the normal rate, but avoid spending GPU/CPU budget redrawing idle UI.
     # MainLayout is only used by BIG UI, so MICI retains its existing scheduler.
     gui_app.configure_adaptive_rendering(gui_app.big_ui())
+
+  def _create_sidebar(self):
+    return Sidebar()
+
+  def _create_developer_sidebar(self):
+    return DeveloperSidebar()
+
+  def _create_layouts(self):
+    return {MainState.HOME: HomeLayout(), MainState.SETTINGS: SettingsLayout(), MainState.ONROAD: StarPilotOnroadView()}
 
   @staticmethod
   def _critical_full_alert_active() -> bool:

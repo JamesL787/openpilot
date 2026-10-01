@@ -1,6 +1,4 @@
 import pyray as rl
-from dataclasses import dataclass
-from enum import IntEnum
 from collections.abc import Callable
 from openpilot.selfdrive.ui.layouts.settings.developer import DeveloperLayout
 from openpilot.selfdrive.ui.layouts.settings.device import DeviceLayout
@@ -8,6 +6,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.nrdr_tuning import NRDRTu
 from openpilot.selfdrive.ui.layouts.settings.starpilot.main_panel import StarPilotLayout
 from openpilot.selfdrive.ui.layouts.settings.software import SoftwareLayout
 from openpilot.selfdrive.ui.layouts.settings.toggles import TogglesLayout
+from openpilot.selfdrive.ui.layouts.settings.types import PanelInfo, PanelType
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
 from openpilot.system.ui.lib.bluetooth_manager import BluetoothManager
 from openpilot.system.ui.lib.multilang import tr, tr_noop
@@ -37,24 +36,6 @@ CLOSE_BTN_PRESSED = rl.Color(59, 59, 59, 255)
 TEXT_NORMAL = rl.Color(128, 128, 128, 255)
 TEXT_SELECTED = rl.WHITE
 DARK_CORE_COLOR = rl.Color(12, 10, 18, 190)
-
-
-class PanelType(IntEnum):
-  STARPILOT = 0
-  NRDR = 1
-  DEVICE = 2
-  NETWORK = 3
-  BLUETOOTH = 4
-  TOGGLES = 5
-  SOFTWARE = 6
-  DEVELOPER = 7
-
-
-@dataclass
-class PanelInfo:
-  name: str
-  instance: Widget
-  button_rect: rl.Rectangle = rl.Rectangle(0, 0, 0, 0)
 
 
 class SettingsLayout(Widget):

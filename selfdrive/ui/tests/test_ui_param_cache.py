@@ -231,6 +231,25 @@ def test_blocking_reads_remain_synchronous(async_cache):
   assert not cache._pending
 
 
+def test_max_stale_reads_long_unread_keys_synchronously():
+  params = ControlledParams()
+  now = [0.0]
+  cache = UIParamCache(params, ttl=0.1, clock=lambda: now[0], max_stale=1.0)
+  cache.start()
+  try:
+    assert cache.get_int("count") == 1
+    params.values["count"] = 2
+    now[0] = 0.5
+    assert cache.get_int("count") == 1  # recent enough: served while refreshing
+    cache._refresh_queue.join()
+    params.values["count"] = 3
+    now[0] = 60.0
+    assert cache.get_int("count") == 3  # an hour-old value is never shown
+    assert params.reader_threads[-1] is threading.current_thread()
+  finally:
+    cache.stop()
+
+
 def test_background_cache_does_not_refresh_unused_settings(async_cache):
   params, cache, now = async_cache
   assert cache.get_bool("enabled") is False

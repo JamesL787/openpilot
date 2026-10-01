@@ -12,6 +12,7 @@ const NAV = {
     { name: "Bluetooth", link: "/bluetooth", icon: "bi-bluetooth" },
     { name: "Cameras & Monitoring", link: "/cameras", icon: "bi-camera-video" },
     { name: "Galaxy", link: "/galaxy", icon: "bi-globe2" },
+    { name: "Live UI", link: "/ui-stream", icon: "bi-display" },
     { name: "Logs & Diagnostics", link: "/logs", icon: "bi-exclamation-triangle" },
     { name: "Model Manager", link: "/manage_models", icon: "bi-cpu" },
     { name: "Navigation & Maps", link: "/navigation", icon: "bi-map" },

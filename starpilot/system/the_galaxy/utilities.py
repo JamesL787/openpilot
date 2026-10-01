@@ -216,6 +216,26 @@ def get_current_lan_ip():
   return None
 
 
+def get_ui_stream_port():
+  """Port the UI streamer will listen on, or None when it is killed by STREAM=0.
+
+  This mirrors the UI streamer's own validation range without importing the
+  encoder or starting a listener. The streamer starts on demand, so a port here
+  means "available if requested", never "currently listening".
+  """
+  if os.getenv("STREAM") == "0":
+    return None
+  # Treat empty exactly like the streamer's _env_int: empty means unset.
+  raw = os.getenv("STREAM_PORT") or "8091"
+  try:
+    port = int(raw)
+  except (TypeError, ValueError):
+    return None
+  if not (1024 <= port <= 65535):
+    return None
+  return port
+
+
 def _clean_network_name(value):
   text = "".join(character for character in str(value or "").strip().strip("\x00") if character.isprintable())
   return text[:128]

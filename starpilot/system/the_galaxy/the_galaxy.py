@@ -173,10 +173,30 @@ from openpilot.starpilot.common.testing_grounds import (
   TESTING_GROUNDS_STATE_PATH as SHARED_TESTING_GROUNDS_STATE_PATH,
 )
 from openpilot.starpilot.navigation.destination_store import normalize_destination_payload, routing_configured, update_recent_destinations
+from openpilot.starpilot.navigation.offline_maps import (
+  AREA_MAX_RADIUS_KM,
+  AREA_MIN_RADIUS_KM,
+  AREA_ZOOM_CHOICES,
+  OFFLINE_MAX_BYTES,
+  AVERAGE_TILE_BYTES as OFFLINE_TILE_BYTES,
+  OfflineMaps,
+  MAP_THEMES as OFFLINE_MAP_THEMES,
+  area_zoom_for_radius,
+  clean_route_points,
+  estimate_area as estimate_offline_area,
+  route_tiles as offline_route_tiles,
+)
 from openpilot.starpilot.system.the_galaxy.factory_reset import remove_path as _run_factory_reset_delete
 from openpilot.starpilot.system.the_galaxy import flm_workspace, utilities
 from openpilot.starpilot.system.the_galaxy import drive_plots
 from openpilot.starpilot.system.the_galaxy.update_recovery import inspect_interrupted_update, public_recovery_status, recover_interrupted_update
+from openpilot.starpilot.system.starpilot_auto import apk_identity
+from openpilot.starpilot.system.starpilot_auto import car_screen as starpilot_auto_car_screen_module
+from openpilot.starpilot.system.starpilot_auto import compat_report as starpilot_auto_compat_report
+from openpilot.starpilot.system.starpilot_auto import connection_help as starpilot_auto_connection_help
+from openpilot.starpilot.system.starpilot_auto import identity as starpilot_auto_identity
+from openpilot.starpilot.system.starpilot_auto.protocol import StarpilotAutoClient
+from openpilot.starpilot.system.diagnostics import bundle as diagnostics_bundle
 from openpilot.starpilot.system.bluetooth import BluetoothClient
 from openpilot.starpilot.system.wheel_controls import (
   CONTROLLER_ACTION_OPTIONS,
@@ -208,6 +228,9 @@ VASM_CONFIGURATION_KEYS = {"VASMEnabled", "VASMConfidenceThreshold", "VASMSmooth
 PIP_PREVIEW_CONFIGURATION_KEYS = {"PIPPreviewEnabled", "PIPPreviewMask", "PIPPreviewShowOnBlinker", "PIPPreviewShowOnBSM", "PIPPreviewInvert"}
 MODEL_SMOOTHING_KEYS = {"LatSmoothSeconds", "LongSmoothSeconds"}
 GALAXY_DEVELOPER_ONLY_KEYS = {"TurnSteeringLimitMuteSpeed"}
+# The existing upload settings that stop uploads while driving; uploads resume once parked.
+# DeviceManagement gates NoUploads, and AlwaysAllowUploads overrides both.
+STARPILOT_AUTO_UPLOAD_SETTINGS = starpilot_auto_identity.UPLOAD_SETTINGS
 PULSE_GLIDE_BUTTON_KEYS = {
   "CancelButtonControl", "DistanceButtonControl",
   "LongCancelButtonControl", "LongDistanceButtonControl",
@@ -5275,6 +5298,7 @@ class GalaxySlugMiddleware:
 def setup(app):
   from openpilot.starpilot.assets.model_sizes import ModelSizes
   model_sizes = ModelSizes()
+  diagnostics_job = diagnostics_bundle.DiagnosticsJob()
   if not isinstance(app.wsgi_app, GalaxySlugMiddleware):
     app.wsgi_app = GalaxySlugMiddleware(app.wsgi_app)
 
@@ -5294,6 +5318,7 @@ def setup(app):
       "/assets/components/home/home.js",
       "/assets/components/home/home.css",
       "/assets/mobile/js/params.js",
+      "/assets/mobile/js/api.js",
       "/assets/mobile/js/components/ScreenBrightnessControl.js",
       "/assets/components/tools/device_settings.js",
       "/assets/components/tools/device_settings.css",
@@ -5317,7 +5342,7 @@ def setup(app):
       response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
       response.headers["Pragma"] = "no-cache"
       response.headers["Expires"] = "0"
-    if request.path == "/api/bluetooth/status" or request.path.startswith("/api/bluetooth/"):
+    if request.path.startswith(("/api/bluetooth/", "/api/starpilot_auto/", "/api/diagnostics/")):
       response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
       response.headers["Pragma"] = "no-cache"
       response.headers["Expires"] = "0"
@@ -5436,6 +5461,393 @@ def setup(app):
       return jsonify({"message": "Bluetooth operation started.", **result}), 200
     except Exception as error:
       return jsonify({"error": str(error)}), 503
+
+  apk_identity.identity_store.migrate_legacy()
+  starpilot_auto_import = apk_identity.ImportJob()
+  starpilot_auto_recommendation = apk_identity.RecommendationCheck()
+
+  @app.before_request
+  def require_starpilot_auto_enabled():
+    # Offline map tiles are shared with native navigation and remain available.
+    protected = (
+      request.path.startswith(("/api/starpilot_auto/connection", "/api/starpilot_auto/identity")) or
+      request.path == "/api/starpilot_auto/car_screen"
+    )
+    if protected and not params.get_bool("StarpilotAutoEnabled"):
+      return jsonify({"error": "Enable Starpilot Auto under Toggles → Starpilot Auto first."}), 403
+
+  STARPILOT_AUTO_SERVICE_OFF = "Starpilot Auto service is not running. Turn on Bluetooth and try again."
+
+  def _starpilot_auto_connection_payload(client):
+    status = client.status()
+    devices = []
+    devices_error = ""
+    if status.get("connection") != "wired":
+      try:
+        devices = client.devices()
+      except Exception as error:
+        # A Bluetooth inventory failure should not hide projection status or
+        # prevent wired controls from remaining useful.
+        devices_error = str(error)
+    return {
+      "status": status,
+      "devices": devices,
+      "devices_error": devices_error,
+      "offroad": params.get_bool("IsOffroad"),
+      "setup_help": starpilot_auto_connection_help.setup_instructions(status),
+      "recovery_hint": starpilot_auto_connection_help.recovery_hint(status) if status.get("error") else "",
+    }
+
+  @app.route("/api/starpilot_auto/connection", methods=["GET"])
+  def starpilot_auto_connection():
+    # The page polls this: a short status timeout keeps a stalled daemon from holding a request
+    # thread for long (the Bluetooth car list keeps its own, longer timeout).
+    client = StarpilotAutoClient(timeout=4.0)
+    if not client.available:
+      return jsonify({"error": STARPILOT_AUTO_SERVICE_OFF}), 503
+    try:
+      return jsonify(_starpilot_auto_connection_payload(client)), 200
+    except Exception as error:
+      return jsonify({"error": str(error)}), 503
+
+  @app.route("/api/starpilot_auto/connection/<operation>", methods=["POST"])
+  def starpilot_auto_connection_operation(operation):
+    allowed = {"start", "stop", "set_auto_connect", "select_receiver", "set_view", "set_connection", "prepare_pairing"}
+    if operation not in allowed:
+      return jsonify({"error": "Unknown Starpilot Auto operation."}), 404
+    if operation == "prepare_pairing" and not params.get_bool("IsOffroad"):
+      return jsonify({"error": "Pair the car while parked (offroad)."}), 409
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+      return jsonify({"error": "Send the Starpilot Auto setting as JSON."}), 400
+    if operation == "set_auto_connect" and not isinstance(data.get("enabled"), bool):
+      return jsonify({"error": "Auto Connect must be on or off."}), 400
+    if operation == "set_connection" and data.get("connection") not in ("wireless", "wired"):
+      return jsonify({"error": "Link Type must be Wireless or USB."}), 400
+    if operation == "set_view" and data.get("view") not in ("car", "mirror"):
+      return jsonify({"error": "Display must be Car Layout or Mirror."}), 400
+    if operation == "select_receiver" and not str(data.get("address", "")).strip():
+      return jsonify({"error": "Choose a Car first."}), 400
+
+    try:
+      client = StarpilotAutoClient(timeout=12.0)
+      if not client.available:
+        return jsonify({"error": STARPILOT_AUTO_SERVICE_OFF}), 503
+      if operation == "start":
+        client.start()
+      elif operation == "stop":
+        client.stop()
+      elif operation == "set_auto_connect":
+        client.set_auto_connect(data["enabled"])
+      elif operation == "select_receiver":
+        client.select_receiver(str(data["address"]).strip(), str(data.get("name", "")).strip())
+      elif operation == "set_view":
+        client.set_view(data["view"])
+      elif operation == "set_connection":
+        client.set_connection(data["connection"])
+      elif operation == "prepare_pairing":
+        client.prepare_pairing()
+      return jsonify(_starpilot_auto_connection_payload(client)), 200
+    except Exception as error:
+      return jsonify({"error": str(error)}), 409
+
+  def _starpilot_auto_identity_payload(check_updates=False):
+    identity = apk_identity.identity_status()
+    return {
+      **identity,
+      "recommendation": starpilot_auto_recommendation.status(identity.get("package_version", ""),
+                                                          check=check_updates and params.get_bool("StarpilotAutoEnabled")),
+      "job": starpilot_auto_import.status(),
+      "knownGoodVersion": apk_identity.KNOWN_GOOD_VERSION,
+      "maxUploadMb": apk_identity.MAX_FILE_BYTES // (1024 * 1024),
+    }
+
+  @app.route("/api/starpilot_auto/identity", methods=["GET"])
+  def starpilot_auto_identity():
+    return jsonify(_starpilot_auto_identity_payload(check_updates=request.args.get("check_updates") == "1")), 200
+
+  @app.route("/api/starpilot_auto/identity/upload", methods=["POST"])
+  def starpilot_auto_identity_upload():
+    if starpilot_auto_import.busy():
+      return jsonify({"error": "An import is already running."}), 409
+    if (request.content_length or 0) > apk_identity.MAX_FILE_BYTES + 1024 * 1024:
+      return jsonify({"error": "That file is too large to be the Starpilot Auto app."}), 413
+    upload = request.files.get("apk")
+    if upload is None or not upload.filename:
+      return jsonify({"error": "Choose the Starpilot Auto APK or XAPK file."}), 400
+    path = None
+    try:
+      path = starpilot_auto_import.reserve_upload_path()
+      upload.save(str(path))
+      starpilot_auto_import.start(path=path, enabled=lambda: params.get_bool("StarpilotAutoEnabled"))
+    except apk_identity.IdentityImportError as error:
+      path.unlink(missing_ok=True)  # rejected: never left behind, never shared with the running import
+      return jsonify({"error": str(error)}), 409
+    except OSError as error:
+      if path is not None:
+        path.unlink(missing_ok=True)
+      return jsonify({"error": f"Could not save the upload: {error}"}), 500
+    return jsonify(_starpilot_auto_identity_payload()), 202
+
+  @app.route("/api/starpilot_auto/identity/download", methods=["POST"])
+  def starpilot_auto_identity_download():
+    url = str((request.get_json(silent=True) or {}).get("url", "")).strip()
+    if not url.lower().startswith(("https://", "http://")):
+      return jsonify({"error": "Enter an http(s) link to the Starpilot Auto APK or XAPK."}), 400
+    try:
+      starpilot_auto_import.start(url=url, enabled=lambda: params.get_bool("StarpilotAutoEnabled"))
+    except apk_identity.IdentityImportError as error:
+      return jsonify({"error": str(error)}), 409
+    return jsonify(_starpilot_auto_identity_payload()), 202
+
+  @app.route("/api/starpilot_auto/identity/recommended", methods=["POST"])
+  def starpilot_auto_identity_recommended():
+    if not params.get_bool("StarpilotAutoEnabled"):
+      return jsonify({"error": "Enable Starpilot Auto before installing its identity."}), 409
+    try:
+      starpilot_auto_import.start(recommended=True, enabled=lambda: params.get_bool("StarpilotAutoEnabled"))
+    except apk_identity.IdentityImportError as error:
+      return jsonify({"error": str(error)}), 409
+    return jsonify(_starpilot_auto_identity_payload()), 202
+
+  @app.route("/api/starpilot_auto/identity", methods=["DELETE"])
+  def starpilot_auto_identity_remove():
+    if starpilot_auto_import.busy():
+      return jsonify({"error": "An import is running."}), 409
+    apk_identity.remove_identity()
+    return jsonify(_starpilot_auto_identity_payload()), 200
+
+  # How the Starpilot Auto car view lays out the drive. car_ui re-reads the file within a
+  # second, so changes apply live while the car is connected, or next time otherwise.
+  @app.route("/api/starpilot_auto/car_screen", methods=["GET"])
+  def starpilot_auto_car_screen():
+    metrics = [{"value": value, "label": details[1]} for value, details in starpilot_auto_car_screen_module.STATUS_METRICS.items()]
+    return jsonify({"settings": starpilot_auto_car_screen_module.load(), "defaults": starpilot_auto_car_screen_module.DEFAULTS, "status_metrics": metrics}), 200
+
+  @app.route("/api/starpilot_auto/car_screen", methods=["POST"])
+  def starpilot_auto_car_screen_save():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+      return jsonify({"error": "Send the car screen settings as JSON."}), 400
+    merged = {**starpilot_auto_car_screen_module.load(), **payload}
+    if starpilot_auto_car_screen_module.normalize(merged) != {key: merged[key] for key in starpilot_auto_car_screen_module.DEFAULTS}:
+      return jsonify({"error": "Unknown car screen setting."}), 400
+    try:
+      saved = starpilot_auto_car_screen_module.update(payload)
+    except ValueError as error:
+      return jsonify({"error": str(error)}), 400
+    except OSError as error:
+      return jsonify({"error": f"Could not save: {error}"}), 500
+    return jsonify({"settings": saved}), 200
+
+  # Starpilot Auto session logs as compatibility reports, one log, or everything zipped for a bug report.
+  # Read-only; available even with Starpilot Auto off, so a failed car can still be reported.
+  @app.route("/api/starpilot_auto/diagnostics", methods=["GET"])
+  def starpilot_auto_diagnostics():
+    sessions = []
+    for path in starpilot_auto_compat_report.session_logs():
+      try:
+        stat = path.stat()
+      except OSError:
+        continue
+      report = starpilot_auto_compat_report.summarize(starpilot_auto_compat_report.load_events(path))
+      sessions.append({"name": path.name, "bytes": stat.st_size, "started": report["started"], "transport": report["transport"],
+                       "outcome": report["outcome"], "furthest_stage": report["furthest_stage"], "car": report["car"]})
+    return jsonify({"sessions": sessions}), 200
+
+  @app.route("/api/starpilot_auto/diagnostics/bundle", methods=["GET"])
+  def starpilot_auto_diagnostics_bundle():
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    return send_file(io.BytesIO(starpilot_auto_compat_report.bundle()), as_attachment=True, mimetype="application/zip",
+                     download_name=f"starpilot-auto-{stamp}.zip")
+
+  # "Send report": one zip of Starpilot Auto/pairing logs, Bluetooth pairing prompts and recent drive
+  # reports, sent to the developer's Discord or downloaded. Built off the request thread; poll status.
+  @app.route("/api/diagnostics/status", methods=["GET"])
+  def diagnostics_status():
+    return jsonify({**diagnostics_job.status(), "offroad": not params.get_bool("IsOnroad"),
+                    "drives_available": len(diagnostics_bundle.recent_routes())}), 200
+
+  @app.route("/api/diagnostics/start", methods=["POST"])
+  def diagnostics_start():
+    body = request.get_json(silent=True) or {}
+    action = str(body.get("action", ""))
+    try:
+      drives = max(0, min(int(body.get("drives", 1)), diagnostics_bundle.MAX_DRIVES))
+    except (TypeError, ValueError):
+      return jsonify({"error": "drives must be a number"}), 400
+    if drives and params.get_bool("IsOnroad"):
+      return jsonify({"error": "Drive summaries take a few minutes of CPU. Turn the car off first, or send without drives."}), 409
+    try:
+      diagnostics_job.start(action, str(body.get("note", ""))[:1000], drives)
+    except ValueError as error:
+      return jsonify({"error": str(error)}), 400
+    except RuntimeError as error:
+      return jsonify({"error": str(error)}), 409
+    return jsonify(diagnostics_job.status()), 202
+
+  @app.route("/api/diagnostics/download", methods=["GET"])
+  def diagnostics_download():
+    result = diagnostics_job.result()
+    if result is None:
+      return jsonify({"error": "No diagnostics are ready. Prepare them first."}), 404
+    name, data = result
+    return send_file(io.BytesIO(data), as_attachment=True, mimetype="application/zip", download_name=name)
+
+  @app.route("/api/starpilot_auto/diagnostics/<name>", methods=["GET"])
+  def starpilot_auto_diagnostics_session(name):
+    path = starpilot_auto_compat_report.session_path(name)
+    if path is None:
+      return jsonify({"error": "No such Starpilot Auto session log."}), 404
+    if request.args.get("format") == "log":
+      return send_file(str(path), as_attachment=True, mimetype="application/x-ndjson", download_name=path.name)
+    report = starpilot_auto_compat_report.summarize(starpilot_auto_compat_report.load_events(path))
+    return jsonify({"name": path.name, "report": report, "text": starpilot_auto_compat_report.render_text(report, path.name)}), 200
+
+  # Offline map tiles for the Starpilot Auto navigation map; navtilesd does the downloading.
+  OFFLINE_AREA_DETAIL = {16: "Street detail", 15: "City detail", 14: "Road detail", 13: "Regional"}
+
+  def _offline_position():
+    position = _get_navigation_last_position() or {}
+    try:
+      return {"latitude": float(position["latitude"]), "longitude": float(position["longitude"])}
+    except (KeyError, TypeError, ValueError):
+      return None
+
+  def _offline_point(payload):
+    try:
+      latitude, longitude = float(payload.get("latitude")), float(payload.get("longitude"))
+    except (TypeError, ValueError):
+      return None
+    if not (math.isfinite(latitude) and math.isfinite(longitude) and -85.0 <= latitude <= 85.0 and -180.0 <= longitude <= 180.0):
+      return None
+    return latitude, longitude
+
+  def _offline_room(offline_maps, size):
+    return offline_maps.summary()["offline_bytes"] + size <= OFFLINE_MAX_BYTES
+
+  def _offline_radius(payload):
+    try:
+      radius = float(payload.get("radius_km"))
+      zoom = area_zoom_for_radius(radius)
+      if payload.get("max_zoom") is not None:
+        zoom = int(payload["max_zoom"])
+        if zoom not in AREA_ZOOM_CHOICES:
+          return None
+      return radius, zoom
+    except (TypeError, ValueError):
+      return None
+
+  @app.route("/api/starpilot_auto/offline", methods=["GET"])
+  def starpilot_auto_offline():
+    return jsonify({
+      **OfflineMaps().summary(),
+      "position": _offline_position(),
+      "mapboxPublic": params.get("MapboxPublicKey", encoding="utf8") or "",
+      "isMetric": params.get_bool("IsMetric"),
+      "areaRadius": {"min_km": AREA_MIN_RADIUS_KM, "max_km": AREA_MAX_RADIUS_KM, "default_km": 10.0},
+      "areaZooms": list(AREA_ZOOM_CHOICES),
+    }), 200
+
+  @app.route("/api/starpilot_auto/offline/settings", methods=["POST"])
+  def starpilot_auto_offline_settings():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not ({"save_viewed_cache", "map_theme"} & payload.keys()):
+      return jsonify({"error": "Choose whether maps should be saved as you drive, or the map colors."}), 400
+    if "save_viewed_cache" in payload and not isinstance(payload["save_viewed_cache"], bool):
+      return jsonify({"error": "Choose whether maps should be saved as you drive."}), 400
+    if "map_theme" in payload and (payload["map_theme"] not in OFFLINE_MAP_THEMES or
+                                   not isinstance(payload.get("discard_dropped", False), bool)):
+      return jsonify({"error": "Choose light, dark, or light and dark maps."}), 400
+    offline_maps = OfflineMaps()
+    if "save_viewed_cache" in payload:
+      offline_maps.set_save_viewed_cache(payload["save_viewed_cache"])
+    if "map_theme" in payload:
+      offline_maps.set_map_theme(payload["map_theme"], discard_dropped=payload.get("discard_dropped", False))
+    return jsonify({"save_viewed_cache": offline_maps.save_viewed_cache(), "map_theme": offline_maps.map_theme()}), 200
+
+  @app.route("/api/starpilot_auto/offline/coverage", methods=["GET"])
+  def starpilot_auto_offline_coverage():
+    try:
+      zoom = int(request.args.get("zoom", ""))
+      bounds = [float(request.args[key]) for key in ("west", "south", "east", "north")]
+      return jsonify(OfflineMaps().coverage(zoom, *bounds)), 200
+    except (KeyError, TypeError, ValueError):
+      return jsonify({"error": "Choose a valid coverage zoom and map bounds."}), 400
+
+  @app.route("/api/starpilot_auto/offline/estimate", methods=["POST"])
+  def starpilot_auto_offline_estimate():
+    payload = request.get_json(silent=True) or {}
+    offline_maps = OfflineMaps()
+    if "points" in payload:
+      points = clean_route_points(payload.get("points"))
+      if points is None:
+        return jsonify({"error": "That route could not be read."}), 400
+      tiles = len(offline_route_tiles(points))
+      size = tiles * OFFLINE_TILE_BYTES
+      return jsonify({"tiles": tiles, "bytes": size, "fits": _offline_room(offline_maps, size)}), 200
+    point = _offline_point(payload)
+    radius = _offline_radius(payload)
+    if point is None or radius is None:
+      return jsonify({"error": "Choose a place and a valid radius first."}), 400
+    tiles, size = estimate_offline_area(point[0], point[1], *radius)
+    return jsonify({"area": {"radius_km": radius[0], "max_zoom": radius[1], "detail": OFFLINE_AREA_DETAIL.get(radius[1], ""),
+                             "tiles": tiles, "bytes": size, "fits": _offline_room(offline_maps, size)}}), 200
+
+  @app.route("/api/starpilot_auto/offline/areas", methods=["POST"])
+  def starpilot_auto_offline_add_area():
+    payload = request.get_json(silent=True) or {}
+    point = _offline_point(payload)
+    radius = _offline_radius(payload)
+    if point is None or radius is None:
+      return jsonify({"error": "Choose a place and a valid radius."}), 400
+    offline_maps = OfflineMaps()
+    _, size = estimate_offline_area(point[0], point[1], *radius)
+    if not _offline_room(offline_maps, size):
+      return jsonify({"error": "Not enough offline storage left. Delete an area or route first."}), 409
+    name = str(payload.get("name") or "").strip()[:80] or f"{point[0]:.3f}, {point[1]:.3f}"
+    area = offline_maps.add_area(name, point[0], point[1], *radius)
+    return jsonify({"id": area.id}), 201
+
+  @app.route("/api/starpilot_auto/offline/routes", methods=["POST"])
+  def starpilot_auto_offline_add_route():
+    payload = request.get_json(silent=True) or {}
+    points = clean_route_points(payload.get("points"))
+    if points is None:
+      return jsonify({"error": "That route could not be read."}), 400
+    offline_maps = OfflineMaps()
+    if not _offline_room(offline_maps, len(offline_route_tiles(points)) * OFFLINE_TILE_BYTES):
+      return jsonify({"error": "Not enough offline storage left. Delete an area or route first."}), 409
+    try:
+      distance, duration = float(payload.get("distance_m") or 0.0), float(payload.get("duration_s") or 0.0)
+    except (TypeError, ValueError):
+      distance = duration = 0.0
+    name = str(payload.get("name") or "").strip()[:80] or "Saved route"
+    origin = str(payload.get("origin_name") or "").strip()[:80]
+    route = offline_maps.add_route(name, points, distance, duration, origin)
+    return jsonify({"id": route.id}), 201
+
+  @app.route("/api/starpilot_auto/offline/<item_id>/<action>", methods=["POST"])
+  def starpilot_auto_offline_action(item_id, action):
+    offline_maps = OfflineMaps()
+    if offline_maps.get(item_id) is None:
+      return jsonify({"error": "That offline map no longer exists."}), 404
+    if action == "update":
+      offline_maps.request_update(item_id)
+    elif action == "download_now":
+      offline_maps.allow_metered(item_id)
+    else:
+      return jsonify({"error": "Unknown action."}), 400
+    return jsonify({"ok": True}), 200
+
+  @app.route("/api/starpilot_auto/offline/<item_id>", methods=["DELETE"])
+  def starpilot_auto_offline_delete(item_id):
+    offline_maps = OfflineMaps()
+    if offline_maps.get(item_id) is None:
+      return jsonify({"error": "That offline map no longer exists."}), 404
+    offline_maps.delete_area(item_id)
+    return jsonify({"ok": True}), 200
 
   @app.route("/api/wheel-controls/status", methods=["GET"])
   def wheel_controls_status():
@@ -6324,6 +6736,21 @@ def setup(app):
         return jsonify({
           "message": f"Parameter '{key}' updated successfully. The driving stack will restart shortly.",
           "updated": {key: enabled},
+        }), 200
+
+      if key == "StarpilotAutoEnabled":
+        enabled = str_val.strip() in ("1", "true", "True")
+        updated = {"StarpilotAutoEnabled": enabled}
+        if enabled:
+          # Uploading while projecting competes with Starpilot Auto for CPU and bandwidth; keep uploads to while parked.
+          updated.update(STARPILOT_AUTO_UPLOAD_SETTINGS)
+          for upload_key, upload_value in STARPILOT_AUTO_UPLOAD_SETTINGS.items():
+            params.put_bool(upload_key, upload_value)
+        params.put_bool("StarpilotAutoEnabled", enabled)
+        update_starpilot_toggles()
+        return jsonify({
+          "message": "Starpilot Auto enabled. Uploads now wait until the car is parked." if enabled else "Starpilot Auto disabled.",
+          "updated": updated,
         }), 200
 
       if key == "ForceOffroad":
@@ -8289,13 +8716,66 @@ def setup(app):
     with _STATS_RESPONSE_LOCK:
       return _get_stats_locked()
 
+  def _ui_stream_state():
+    """Readiness the UI process published, as (state, detail, sequence).
+
+    `state` is None when the UI has published nothing yet. This is the only
+    proof the listener is actually bound — the configured port and the consumed
+    request flag are not.
+    """
+    try:
+      raw = params_memory.get("UiStreamState", encoding="utf-8")
+      payload = json.loads(raw) if raw else None
+    except Exception:
+      payload = None
+    if not isinstance(payload, dict):
+      return None, "", 0
+    state = payload.get("state")
+    detail = payload.get("detail") or ""
+    try:
+      sequence = int(payload.get("sequence") or 0)
+    except (TypeError, ValueError):
+      sequence = 0
+    return (state if isinstance(state, str) else None), str(detail), sequence
+
   @app.route("/api/device/status", methods=["GET"])
   def device_status():
+    stream_state, stream_detail, stream_sequence = _ui_stream_state()
     return jsonify({
       "status": "Driving" if params.get_bool("IsOnroad") else "Parked",
       "online": True,
       "lanIp": utilities.get_current_lan_ip(),
       "networkName": utilities.get_current_network_name(),
+      "streamPort": utilities.get_ui_stream_port(),
+      "streamRequested": bool(params_memory.get_bool("UiStreamRequested")),
+      "streamState": stream_state,
+      "streamDetail": stream_detail,
+      "streamSequence": stream_sequence,
+    }), 200
+
+  @app.route("/api/ui_stream/start", methods=["POST"])
+  def start_ui_stream():
+    """Ask the UI process to start its streamer.
+
+    Same handshake as FlashPanda: set the memory param. Unlike the panda flash
+    this must not block the request — the page is waiting on it — so it returns
+    immediately and the client polls. The page then waits for UiStreamState to
+    report a bound listener, not for the request flag to be consumed, so the
+    response carries the state observed now as the client's baseline.
+    """
+    port = utilities.get_ui_stream_port()
+    if port is None:
+      return jsonify({"error": "UI streaming is disabled on this device (STREAM=0)."}), 409
+    stream_state, _, stream_sequence = _ui_stream_state()
+    try:
+      params_memory.put_bool("UiStreamRequested", True)
+    except Exception as exception:
+      return jsonify({"error": f"Could not request the UI stream: {exception}"}), 500
+    return jsonify({
+      "requested": True,
+      "streamPort": port,
+      "streamState": stream_state,
+      "streamSequence": stream_sequence,
     }), 200
 
   @app.route("/api/stats/ignore_drive", methods=["POST"])

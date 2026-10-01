@@ -154,6 +154,15 @@ class Widget(abc.ABC):
       if not self._multi_touch and mouse_event.slot != 0:
         continue
 
+      if mouse_event.cancelled:
+        # Withdrawn touch: forget the press without any click or release.
+        was_tracking = self.__tracking_is_pressed[mouse_event.slot]
+        self.__is_pressed[mouse_event.slot] = False
+        self.__tracking_is_pressed[mouse_event.slot] = False
+        if was_tracking:
+          self._handle_mouse_cancel()
+        continue
+
       event_touch_valid = touch_valid and (self._touch_event_valid_callback is None or self._touch_event_valid_callback(mouse_event))
       mouse_in_rect = rl.check_collision_point_rec(mouse_event.pos, hit_rect)
       # Ignores touches/presses that start outside our rect
@@ -210,6 +219,10 @@ class Widget(abc.ABC):
       self._click_release_time = rl.get_time() + self._click_delay
     if self._click_callback:
       self._click_callback()
+
+  def _handle_mouse_cancel(self) -> None:
+    """Optionally reset gesture state when a touch this widget was tracking is
+    withdrawn. Must not act: a cancel is never a click, swipe or confirm."""
 
   def _handle_mouse_event(self, mouse_event: MouseEvent) -> None:
     """Optionally handle mouse events. This is called before rendering."""

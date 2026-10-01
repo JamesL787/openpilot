@@ -96,10 +96,11 @@ def _params_client(monkeypatch, values, device_type):
     the_galaxy,
     "_get_param_type_info",
     lambda: (
-      {"AlphaLongitudinalEnabled", "ForceOffroad"},
+      {"AlphaLongitudinalEnabled", "ForceOffroad", "StarpilotAutoEnabled"},
       {
         "AlphaLongitudinalEnabled": bool,
         "ForceOffroad": bool,
+        "StarpilotAutoEnabled": bool,
       },
     ),
   )
@@ -746,6 +747,33 @@ def test_force_offroad_toggle_requires_live_park(monkeypatch):
   assert response.get_json()["updated"] == {"ForceOffroad": True, "ForceOnroad": False}
   assert fake_params.values["ForceOffroad"] is True
   assert fake_params.values["ForceOnroad"] is False
+
+
+def test_enabling_starpilot_auto_blocks_uploads_while_driving(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "StarpilotAutoEnabled": False, "DeviceManagement": False, "NoUploads": False,
+    "DisableOnroadUploads": False, "AlwaysAllowUploads": True,
+  }, "tici")
+
+  response = client.put("/api/params", json={"key": "StarpilotAutoEnabled", "value": True})
+
+  assert response.status_code == 200
+  expected = {"StarpilotAutoEnabled": True, "DeviceManagement": True, "NoUploads": True,
+              "DisableOnroadUploads": True, "AlwaysAllowUploads": False}
+  assert response.get_json()["updated"] == expected
+  assert {key: fake_params.values[key] for key in expected} == expected
+
+
+def test_disabling_starpilot_auto_leaves_upload_settings_alone(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "StarpilotAutoEnabled": True, "NoUploads": True, "DisableOnroadUploads": True,
+  }, "tici")
+
+  response = client.put("/api/params", json={"key": "StarpilotAutoEnabled", "value": False})
+
+  assert response.status_code == 200
+  assert response.get_json()["updated"] == {"StarpilotAutoEnabled": False}
+  assert fake_params.writes == [("StarpilotAutoEnabled", False)]
 
 
 def test_force_offroad_toggle_rejects_when_not_parked(monkeypatch):

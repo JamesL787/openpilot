@@ -1,14 +1,14 @@
 import { createApp, h } from "vue"
 import { AppShell } from "./components/AppShell.js"
 import { Home } from "./views/Home.js"
-import { Settings } from "./views/Settings.js"
+import { Settings } from "./views/Settings.js?v=starpilot-auto-uploads-1"
 import { Tools } from "./views/Tools.js"
 import { Recordings } from "./views/Recordings.js"
-import { Logs } from "./views/Logs.js"
+import { Logs } from "./views/Logs.js?v=send-diagnostics-3"
 import { Tuning } from "./views/Tuning.js"
-import { Navigation } from "./views/Navigation.js?v=nav-destination-6"
-import { Vehicle } from "./views/Vehicle.js"
-import { Bluetooth } from "./views/Bluetooth.js"
+import { Navigation } from "./views/Navigation.js?v=area-picker-1"
+import { Vehicle } from "./views/Vehicle.js?v=starpilot-auto-master-1"
+import { Bluetooth } from "./views/Bluetooth.js?v=starpilot-auto-identity-2"
 import { SystemTools } from "./views/SystemTools.js"
 import { ToolEmbed } from "./views/ToolEmbed.js"
 import { Doors } from "./views/Doors.js"
@@ -20,6 +20,7 @@ import { TestingGround } from "./views/TestingGround.js"
 import { ThemeMaker } from "./views/ThemeMaker.js"
 import { ModelLaboratory } from "./views/ModelLaboratory.js"
 import { Cameras } from "./views/Cameras.js"
+import { UiStream } from "./views/UiStream.js"
 import { store, initRouter, navigate } from "./store.js"
 import { showSnackbar } from "./api.js"
 import { installDomTranslator } from "./i18n.js"
@@ -58,9 +59,11 @@ const VIEWS = {
   "/theme_maker": ThemeMaker,
   "/model_laboratory": ModelLaboratory,
   "/cameras": Cameras,
+  "/ui-stream": UiStream,
 }
 
 function resolveView(path) {
+  if (path === "/navigation/auto") { navigate("/settings/vehicle"); return Settings }
   if (path === "/embed" || path.startsWith("/embed/")) return ToolEmbed
   for (const [root, view] of Object.entries(VIEWS)) {
     if (path === root || (root !== "/" && path.startsWith(root + "/"))) return view

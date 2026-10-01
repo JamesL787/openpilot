@@ -1,9 +1,13 @@
+from types import SimpleNamespace
+
+from openpilot.selfdrive.ui.onroad.starpilot import pip_sidecam
 from openpilot.selfdrive.ui.onroad.starpilot.pip_sidecam import (
   IMAGE_TO_VEHICLE_SIDE,
   PIP_FRAGMENT_SHADER,
   PIP_CURVED_FRAGMENT_SHADER,
   PipSideCamera,
 )
+from openpilot.selfdrive.ui.ui_state import ui_state
 
 
 def test_pip_maps_raw_driver_image_sides_to_vehicle_sides():
@@ -22,6 +26,30 @@ def test_pip_maps_raw_driver_image_sides_to_vehicle_sides():
 
   assert (left_vehicle_crop.x, left_vehicle_crop.y) == (850, 150)
   assert (right_vehicle_crop.x, right_vehicle_crop.y) == (50, 150)
+
+
+def test_visibility_hook_gates_bsm_preview_only(monkeypatch):
+  class FakeSM(dict):
+    valid = {"carState": True}
+
+  camera = PipSideCamera.__new__(PipSideCamera)
+  camera._closed = True
+  camera._mask = {"center_left": [100, 200], "center_right": [900, 200], "crop_size": 100}
+  camera._enabled = True
+  camera._show_on_blinker = False
+  camera._show_on_bsm = True
+  camera._params_memory = object()
+  camera._refresh_config = lambda: None
+  monkeypatch.setattr(ui_state, "started", True)
+  monkeypatch.setattr(ui_state, "sm", FakeSM(carState=SimpleNamespace(
+    leftBlinker=False, rightBlinker=False, leftBlindspot=True, rightBlindspot=False,
+  )))
+  monkeypatch.setattr(pip_sidecam, "get_fresh_vasm_state", lambda _memory: (False, False))
+  monkeypatch.setattr(camera, "_blind_spot_monitors_visible", lambda: False)
+  assert camera.active_sides() == []
+
+  monkeypatch.setattr(camera, "_blind_spot_monitors_visible", lambda: True)
+  assert camera.active_sides() == ["left"]
 
 
 def test_pip_driver_camera_shader_mirrors_the_crop():

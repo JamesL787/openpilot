@@ -24,8 +24,18 @@ function initFor({ method = "GET", data, form, headers, cache, signal } = {}) {
   return init
 }
 
-function request(url, opts) {
-  return fetch(url, initFor(opts)).then(parse)
+async function request(url, opts) {
+  if (!opts?.timeout) return fetch(url, initFor(opts)).then(parse)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), opts.timeout)
+  try {
+    return await fetch(url, initFor({ ...opts, signal: controller.signal })).then(parse)
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("The comma took too long to respond. Check the connection and try again.")
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function requestOk(url, opts) {
@@ -80,7 +90,8 @@ export const api = {
   saveFavoritesSlots(slots) { return request("/api/favorites/slots", { method: "PUT", data: { slots } }) },
   activateFavoriteAction(key, value) { return request("/api/favorites/action", { method: "POST", data: { key, ...(value == null ? {} : { value }) } }) },
 
-  getDeviceStatus() { return requestOk("/api/device/status") },
+  getDeviceStatus(opts) { return requestOk("/api/device/status", opts) },
+  startUiStream(opts) { return request("/api/ui_stream/start", { ...opts, method: "POST" }) },
   getStats() { return requestOk("/api/stats") },
   setDriveStats(action, routeNames) { return request(`/api/stats/${action}_drive`, { method: "POST", data: { routeNames } }) },
 
@@ -174,6 +185,28 @@ export const api = {
 
   getBluetoothStatus() { return request("/api/bluetooth/status") },
   bluetoothOp(operation, body = {}) { return request(`/api/bluetooth/${operation}`, { method: "POST", data: body }) },
+  getStarpilotAutoConnection() { return request("/api/starpilot_auto/connection", { cache: "no-store", timeout: 20000 }) },
+  starpilotAutoConnectionOp(operation, body = {}) { return request(`/api/starpilot_auto/connection/${operation}`, { method: "POST", data: body, timeout: 25000 }) },
+  getStarpilotAutoIdentity(checkUpdates = false) {
+    return request("/api/starpilot_auto/identity" + (checkUpdates === true ? "?check_updates=1" : ""), { cache: "no-store" })
+  },
+  downloadStarpilotAutoApk(url) { return request("/api/starpilot_auto/identity/download", { method: "POST", data: { url } }) },
+  installRecommendedStarpilotAutoIdentity() { return request("/api/starpilot_auto/identity/recommended", { method: "POST" }) },
+  removeStarpilotAutoIdentity() { return request("/api/starpilot_auto/identity", { method: "DELETE" }) },
+  getCarScreen() { return request("/api/starpilot_auto/car_screen", { cache: "no-store", timeout: 10000 }) },
+  setCarScreen(body) { return request("/api/starpilot_auto/car_screen", { method: "POST", data: body, timeout: 10000 }) },
+  getDiagnosticsStatus() { return request("/api/diagnostics/status", { cache: "no-store", timeout: 15000 }) },
+  startDiagnostics(body) { return request("/api/diagnostics/start", { method: "POST", data: body, timeout: 15000 }) },
+  getStarpilotAutoDiagnostics() { return request("/api/starpilot_auto/diagnostics", { cache: "no-store", timeout: 15000 }) },
+  getStarpilotAutoDiagnosticsReport(name) { return request(`/api/starpilot_auto/diagnostics/${encodeURIComponent(name)}`, { cache: "no-store", timeout: 15000 }) },
+  getAutoOffline() { return request("/api/starpilot_auto/offline", { cache: "no-store", timeout: 15000 }) },
+  getAutoOfflineCoverage(bounds) { return request(`/api/starpilot_auto/offline/coverage?${new URLSearchParams(bounds)}`, { cache: "no-store", timeout: 15000 }) },
+  setAutoOfflineSettings(body) { return request("/api/starpilot_auto/offline/settings", { method: "POST", data: body }) },
+  estimateAutoOffline(body) { return request("/api/starpilot_auto/offline/estimate", { method: "POST", data: body, timeout: 30000 }) },
+  addAutoOfflineArea(body) { return request("/api/starpilot_auto/offline/areas", { method: "POST", data: body }) },
+  addAutoOfflineRoute(body) { return request("/api/starpilot_auto/offline/routes", { method: "POST", data: body }) },
+  autoOfflineAction(id, action) { return request(`/api/starpilot_auto/offline/${encodeURIComponent(id)}/${action}`, { method: "POST" }) },
+  deleteAutoOffline(id) { return request(`/api/starpilot_auto/offline/${encodeURIComponent(id)}`, { method: "DELETE" }) },
 
   carFeaturesCheck(tool = "") {
     const query = tool ? `?tool=${encodeURIComponent(tool)}` : ""
@@ -204,6 +237,10 @@ export const api = {
   mapboxGeocode(query, accessToken, context = {}) {
     const params = new URLSearchParams({ access_token: accessToken, q: query, ...context })
     return request(`https://api.mapbox.com/search/geocode/v6/forward?${params.toString()}`, { cache: "no-store" })
+  },
+  mapboxReverseCity(latitude, longitude, accessToken) {
+    const params = new URLSearchParams({ longitude: String(longitude), latitude: String(latitude), types: "place", limit: "1", access_token: accessToken })
+    return request(`https://api.mapbox.com/search/geocode/v6/reverse?${params.toString()}`, { cache: "no-store" })
   },
   mapboxDirections(from, to, accessToken) {
     const origin = `${from.longitude},${from.latitude}`

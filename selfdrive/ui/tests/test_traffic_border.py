@@ -32,6 +32,7 @@ def _setup(monkeypatch, *, car_state, signal=True, blindspot=True, v_asm_enabled
   )
   monkeypatch.setattr(ui_state, "starpilot_toggles", {"v_asm_enabled": v_asm_enabled})
   monkeypatch.setattr(ui_state, "params_memory", object())
+  monkeypatch.setattr(ui_state, "live_params", object(), raising=False)
   monkeypatch.setattr(starpilot_border, "get_fresh_vasm_state", lambda _memory: v_asm)
   monkeypatch.setattr(starpilot_border.rl, "get_time", lambda: time)
 
@@ -95,6 +96,14 @@ def test_traffic_border_v_asm_blindspot_is_red(monkeypatch):
 
   left, right = starpilot_border.get_traffic_border_colors()
   assert _rgba(left) == _rgba(TRAFFIC_COLOR)
+  assert _rgba(right) == TRANSPARENT
+
+
+def test_visibility_policy_can_hide_blindspot_without_hiding_turn_signal(monkeypatch):
+  _setup(monkeypatch, car_state=_car_state(left_blinker=True, left_blindspot=True), time=0.1)
+  left, right = starpilot_border.get_traffic_border_colors(blind_spot_visible=False)
+
+  assert _rgba(left) == _rgba(CEM_OVERRIDE_COLOR)
   assert _rgba(right) == TRANSPARENT
 
 

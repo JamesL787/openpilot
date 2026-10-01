@@ -44,7 +44,7 @@ def _draw_text_with_outline(text: str, x: float, y: float, font, font_size: int)
   rl.draw_text_ex(font, text, pos, font_size, 0, rl.WHITE)
 
 
-def render_adjacent_lanes(renderer) -> None:
+def render_adjacent_lanes(renderer, *, blind_spot_visible: bool = True) -> None:
   """Draw left and right adjacent lane paths.
 
   Consolidates adjacent width path rendering and blind spot warning overlays.
@@ -53,7 +53,8 @@ def render_adjacent_lanes(renderer) -> None:
   """
   sm = ui_state.sm
   adjacent_enabled = renderer._params.get_bool("AdjacentPath")
-  blind_spot_enabled = renderer._params.get_bool("BlindSpotPath")
+  blind_spot_enabled = (renderer._params.get_bool("BlindSpotPath") and
+                        blind_spot_visible)
 
   if not (adjacent_enabled or blind_spot_enabled):
     return
@@ -70,7 +71,7 @@ def render_adjacent_lanes(renderer) -> None:
     blindspot_left = bool(car_state.leftBlindspot)
     blindspot_right = bool(car_state.rightBlindspot)
     if ui_state.starpilot_toggles.get("v_asm_enabled", False):
-      vasm_left, vasm_right = get_fresh_vasm_state(ui_state.params_memory)
+      vasm_left, vasm_right = get_fresh_vasm_state(ui_state.live_params)
       blindspot_left = blindspot_left or vasm_left
       blindspot_right = blindspot_right or vasm_right
 

@@ -129,6 +129,10 @@ def bluetooth_enabled(started: bool, params: Params, CP: car.CarParams, starpilo
   return params.get_bool("BluetoothEnabled")
 
 
+def starpilot_auto_enabled(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
+  return params.get_bool("StarpilotAutoEnabled") and params.get_bool("BluetoothEnabled")
+
+
 def soundd_run(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return driverview(started, params, CP, starpilot_toggles) or params.get_bool("BluetoothAudioTestActive")
 
@@ -212,6 +216,7 @@ procs = [
 # StarPilot variables
 procs += [
   PythonProcess("bluetooth_managerd", "starpilot.system.bluetooth.daemon", bluetooth_enabled, enabled=TICI),
+  PythonProcess("starpilot_autod", "starpilot.system.starpilot_auto.daemon", starpilot_auto_enabled, enabled=TICI),
   PythonProcess("wheel_controlsd", "starpilot.system.wheel_controls.wheel_controlsd", wheel_controls_enabled, enabled=TICI, nice=19),
   PythonProcess("the_galaxy", "starpilot.system.the_galaxy.the_galaxy", always_run, nice=10),
   PythonProcess("galaxy", "starpilot.system.galaxy.galaxy", always_run, nice=10),
@@ -228,6 +233,7 @@ procs += [
   PythonProcess("starpilot_process", "starpilot.starpilot_process", always_run),
   PythonProcess("mapd", "starpilot.navigation.mapd_wrapper", run_mapd, nice=19),
   PythonProcess("navigationd", "starpilot.navigation.navigationd", run_navigationd, nice=19),
+  PythonProcess("navtilesd", "starpilot.navigation.navtilesd", always_run, nice=19),
   PythonProcess("speed_limit_filler", "starpilot.system.speed_limit_filler", run_speed_limit_filler, nice=19),
   PythonProcess("speed_limit_vision", "starpilot.system.speed_limit_vision", run_speed_limit_vision, nice=19),
   PythonProcess("adj_spot_monitor_vision", "starpilot.system.adj_spot_monitor_vision", run_v_asm, nice=19),

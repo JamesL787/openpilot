@@ -62,6 +62,7 @@ def test_nav_desires_keep_left_when_route_requests_it():
   )
 
   assert helper.desire == log.Desire.keepLeft
+  assert helper.nav_desire == log.Desire.keepLeft, "published so the map can show the route is steering the model"
 
 
 def test_nav_desires_turn_right_below_lane_change_speed():

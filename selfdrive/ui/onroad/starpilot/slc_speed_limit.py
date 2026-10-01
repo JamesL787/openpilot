@@ -46,6 +46,8 @@ FONT_SOURCE = 40  # Set Speed MAX label size.
 FONT_SPEED = 90  # Set Speed value size.
 FONT_OFFSET = 29  # Compact offset text.
 OFFSET_CHIP_SEGMENTS = 8  # Capsule curve segments.
+OFFSET_CHIP_HEIGHT = 36.0
+OFFSET_CHIP_BOTTOM = 10  # Gap under the chip, inside the card.
 FONT_EU_LARGE = 70
 FONT_EU_SMALL = 60
 FONT_EU_OFFSET = 40
@@ -113,7 +115,7 @@ def _get_slc_state():
 
   dashboard_sl = sm["starpilotCarState"].dashboardSpeedLimit if sm.valid.get("starpilotCarState", False) else 0.0
   vision_enabled = params.get_bool("VisionSpeedLimitDetection")
-  vision_sl = ui_state.params_memory.get_float("VisionSpeedLimit") if vision_enabled else 0.0
+  vision_sl = ui_state.live_params.get_float("VisionSpeedLimit") if vision_enabled else 0.0
   primary_priority = params.get("SLCPriority1", encoding="utf-8") or "Map Data"
   secondary_priority = params.get("SLCPriority2", encoding="utf-8") or "None"
   mapbox_enabled = params.get_bool("SLCMapboxFiller") and bool(
@@ -219,10 +221,10 @@ def _draw_offset_chip(rect: rl.Rectangle, offset_str: str, color: rl.Color) -> N
   font = _get_semi_bold()
   text_size = measure_text_cached(font, offset_str, FONT_OFFSET)
   chip_w = max(64.0, text_size.x + 24.0)
-  chip_h = 36.0
+  chip_h = OFFSET_CHIP_HEIGHT
   chip_rect = rl.Rectangle(
     rect.x + (rect.width - chip_w) / 2,
-    rect.y + rect.height - chip_h - 10,
+    rect.y + rect.height - chip_h - OFFSET_CHIP_BOTTOM,
     chip_w,
     chip_h,
   )

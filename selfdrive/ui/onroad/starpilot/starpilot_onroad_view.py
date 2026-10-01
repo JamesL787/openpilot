@@ -47,12 +47,8 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._max_fps = 0.0
     self._avg_fps = 0.0
 
-    self._pip_sidecam = self._child(PipSideCamera())
-    self._favorite_radial_menu = FavoriteRadialMenu(
-      ui_state.ui_params,
-      ui_state.params_memory,
-      self._favorite_slot_options,
-    )
+    self._pip_sidecam = self._child(self._create_pip_sidecam())
+    self._favorite_radial_menu = self._create_favorite_menu()
     self._favorite_input_consumed = False
 
     self.layout_manager = WidgetLayoutManager(self._content_rect)
@@ -63,15 +59,15 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._hud_renderer.draw_exp_button = False
 
     # Initialize layout widgets
-    self._set_speed_widget = SetSpeedWidget(self._hud_renderer)
-    self._speed_limit_widget = SpeedLimitWidget()
-    self._aethergauge_widget = AetherGaugeWidget(self._hud_renderer)
+    self._set_speed_widget = self._create_set_speed_widget()
+    self._speed_limit_widget = self._create_speed_limit_widget()
+    self._aethergauge_widget = self._create_aethergauge_widget()
     self._steering_wheel_widget = SteeringWheelWidget(self._hud_renderer._exp_button)
     self._pedals_widget = PedalIconsWidget()
     self._personality_button_widget = PersonalityButtonWidget()
-    self._driver_monitor_widget = DriverMonitorWidget(self.driver_state_renderer)
+    self._driver_monitor_widget = self._create_driver_monitor_widget()
     self._model_source_widget = ModelSourceWidget()
-    self._stopped_timer_widget = StoppedTimerWidget(self.is_in_reverse)
+    self._stopped_timer_widget = self._create_stopped_timer_widget()
 
     # Register to layout zones
     self.layout_manager.register_widget("left", self._set_speed_widget)
@@ -93,6 +89,30 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._child(self._driver_monitor_widget)
     self._child(self._model_source_widget)
     self._child(self._stopped_timer_widget)
+
+  def _create_pip_sidecam(self):
+    return PipSideCamera()
+
+  def _create_favorite_menu(self):
+    return FavoriteRadialMenu(ui_state.ui_params, ui_state.params_memory, self._favorite_slot_options)
+
+  def _create_set_speed_widget(self):
+    return SetSpeedWidget(self._hud_renderer)
+
+  def _create_speed_limit_widget(self):
+    return SpeedLimitWidget()
+
+  def _create_stopped_timer_widget(self):
+    return StoppedTimerWidget(self.is_in_reverse)
+
+  def _create_aethergauge_widget(self):
+    return AetherGaugeWidget(self._hud_renderer)
+
+  def _create_driver_monitor_widget(self):
+    return DriverMonitorWidget(self.driver_state_renderer)
+
+  def _blind_spot_monitors_visible(self) -> bool:
+    return True
 
   def _update_state(self) -> None:
     rivian_lateral_mode.update()
@@ -163,7 +183,7 @@ class StarPilotOnroadView(AugmentedRoadView):
                                 rect.width - 2 * border_width, rect.height - 2 * border_width)
     border_color = get_pulse_glide_border_color(ui_state.sm, get_screen_edge_color(ui_state))
     rl.draw_rectangle_rounded_lines_ex(border_rect, 0.12, 10, border_width, border_color)
-    render_background_effects(rect, border_width)
+    render_background_effects(rect, border_width, blind_spot_visible=self._blind_spot_monitors_visible())
     render_overlay(border_rect, border_width)
 
   def _render_slc(self):
@@ -211,7 +231,7 @@ class StarPilotOnroadView(AugmentedRoadView):
         render_path_edges(mr)
 
       # Render adjacent lanes (incorporates both adjacent path and blind spot warnings)
-      render_adjacent_lanes(mr)
+      render_adjacent_lanes(mr, blind_spot_visible=self._blind_spot_monitors_visible())
 
       # Render stopping point atop the path
       render_stopping_point(mr, self._font_bold)

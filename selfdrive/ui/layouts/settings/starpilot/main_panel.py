@@ -303,6 +303,9 @@ class StarPilotLayout(Widget):
     if action:
       self._breadcrumbs.handle_click(action)
 
+  def _handle_mouse_cancel(self):
+    self._breadcrumbs.cancel_interaction()
+
   def _handle_mouse_event(self, mouse_event):
     self._breadcrumbs.update_interaction(mouse_event.pos)
 

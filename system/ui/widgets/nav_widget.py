@@ -119,6 +119,12 @@ class NavWidget(Widget, abc.ABC):
             self._drag_start_pos is None and not self._dragging_down and
             not self._playing_dismiss_animation and self._shown_callback is None)
 
+  def _handle_mouse_cancel(self) -> None:
+    # Slide back up as if released short of the threshold; never dismiss.
+    self._y_pos_filter.update_alpha(0.1)
+    self._drag_start_pos = None
+    self._dragging_down = False
+
   def _handle_mouse_event(self, mouse_event: MouseEvent) -> None:
     super()._handle_mouse_event(mouse_event)
 

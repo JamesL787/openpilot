@@ -1594,6 +1594,8 @@ def main(demo=False):
       modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
       modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
       starpilot_modelv2_send.starpilotModelV2.turnDirection = DH.turn_direction
+      starpilot_modelv2_send.starpilotModelV2.desire = int(DH.desire)
+      starpilot_modelv2_send.starpilotModelV2.navDesire = int(DH.nav_desire)
       drivingdata_send.drivingModelData.meta.laneChangeState = DH.lane_change_state
       drivingdata_send.drivingModelData.meta.laneChangeDirection = DH.lane_change_direction
 

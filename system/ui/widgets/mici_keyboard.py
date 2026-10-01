@@ -242,6 +242,12 @@ class MiciKeyboard(Widget):
   def text(self) -> str:
     return self._text
 
+  def _handle_mouse_cancel(self) -> None:
+    # Drop the highlighted key without typing it.
+    self._dragging_on_keyboard = False
+    self._closest_key = (None, float('inf'))
+    self._selected_key_t = None
+
   def _handle_mouse_event(self, mouse_event: MouseEvent) -> None:
     keyboard_pos_y = self._rect.y + self._rect.height - self._txt_bg.height
     if mouse_event.left_pressed:

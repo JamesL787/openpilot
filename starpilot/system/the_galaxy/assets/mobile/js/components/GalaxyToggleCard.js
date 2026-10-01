@@ -6,9 +6,29 @@ import {
 } from "../params.js"
 import { ScreenBrightnessControl } from "./ScreenBrightnessControl.js"
 import { FavoritesEditor } from "./FavoritesEditor.js"
+import { GalaxyConfirm } from "./GalaxyModal.js"
 import { t } from "../i18n.js"
 
 const PANDA_FIRMWARE_TOGGLE_KEYS = new Set(["IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma", "TeslaWakeOnCAN"])
+
+const STARPILOT_AUTO_ONROAD_UPLOAD_WARNING = "Starpilot Auto is on. Uploading while driving competes with the car screen for CPU and data, which can cause stutter, dropped connections or errors on the car screen."
+
+// Starpilot Auto blocks uploads while driving through the existing upload settings; warn before either side changes that.
+export function starpilotAutoUploadConfirmation(key, nextValue, values) {
+  if (key === "StarpilotAutoEnabled") {
+    const blocked = values.DeviceManagement !== false && values.NoUploads && values.DisableOnroadUploads && !values.AlwaysAllowUploads
+    if (!nextValue || blocked) return null
+    return {
+      title: "Uploads will wait until parked",
+      message: "Uploading while driving competes with the car screen for CPU and data. Turning on Starpilot Auto also turns on Disable Uploads and Disable Onroad Uploads in Device Settings, so drives upload only while the car is parked.",
+      confirmLabel: "Turn on",
+    }
+  }
+  if (!values.StarpilotAutoEnabled) return null
+  const reopens = (key === "NoUploads" && !nextValue) || (key === "AlwaysAllowUploads" && nextValue) || (key === "DeviceManagement" && !nextValue)
+  if (!reopens) return null
+  return { title: "Allow uploads while driving?", message: STARPILOT_AUTO_ONROAD_UPLOAD_WARNING, confirmLabel: "Allow uploads", danger: true }
+}
 
 const FINE_SCRUB_HOLD_MS = 300
 const FINE_SCRUB_FACTOR = 5
@@ -91,6 +111,11 @@ export const GalaxyToggleCard = {
       const firmwareToggle = PANDA_FIRMWARE_TOGGLE_KEYS.has(this.param.key)
       if (firmwareToggle && this.values.IsOnroad) return
       if (firmwareToggle && !window.confirm(`${this.param.label} requires a Panda firmware update and device reboot.\n\n${nextValue ? "Enable" : "Disable"} ${this.param.label} and flash the Panda now?`)) {
+        this.rollback(this.value)
+        return
+      }
+      const uploadConfirmation = starpilotAutoUploadConfirmation(this.param.key, nextValue, this.values || {})
+      if (uploadConfirmation && !(await GalaxyConfirm(uploadConfirmation))) {
         this.rollback(this.value)
         return
       }

@@ -97,6 +97,7 @@ def toggles_state(monkeypatch):
   })
   state.ui_params = SimpleNamespace(get_bool=lambda key: False)
   state.params_memory = SimpleNamespace(get_bool=lambda key: False, get_int=lambda key, default=0: default)
+  state.live_params = state.params_memory
   state.usbgpu = False
   state.starpilot_toggles = {"standby_mode": False}
   state._last_starpilot_toggles = ""

@@ -79,6 +79,14 @@ class SliderBase(Widget, abc.ABC):
     if self._confirm_callback:
       self._confirm_callback()
 
+  def _handle_mouse_cancel(self):
+    # Snap home at once, never animate: every release reaches this widget, and
+    # the confirm check reads the circle position, so any tap during an ease-back
+    # would confirm the withdrawn drag.
+    self._is_dragging_circle = False
+    self._scroll_x_circle = 0.0
+    self._scroll_x_circle_filter.x = 0.0
+
   def _handle_mouse_event(self, mouse_event):
     super()._handle_mouse_event(mouse_event)
 

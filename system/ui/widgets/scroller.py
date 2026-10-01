@@ -76,7 +76,9 @@ class _MiciScrollPanel(GuiScrollPanel2):
       # in this batch. Children consume these events after the panel updates.
       self._event_touch_valid[event] = not (was_dragging or self._state == ScrollState.MANUAL_SCROLL)
       self._previous_mouse_event = event
-      if event.left_released:
+      if event.cancelled:
+        self._touch_active = False
+      elif event.left_released:
         self._touch_active = False
         if self._state == ScrollState.MANUAL_SCROLL:
           # A release can itself cross the drag threshold. Finish that drag now.

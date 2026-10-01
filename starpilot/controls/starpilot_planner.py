@@ -31,6 +31,8 @@ from openpilot.starpilot.controls.lib.starpilot_vcruise import StarPilotVCruise
 from openpilot.starpilot.controls.lib.weather_checker import WeatherChecker
 
 RADARLESS_TRACK_HOLD_TIME = 0.45
+GPS_MEMORY_REFRESH_SECONDS = 0.25
+GPS_NEW_FIX_REFRESH_SECONDS = 0.1  # a new fix is published at once; its timestamp starts the map's dead reckoning
 FORCE_STOP_JERK_SCALE = 0.20  # accel-change cost multiplier for the whole stop approach,
                               # envelope included (125 -> 25). Lower = reaches the braking
                               # target sooner; it does not make the target deeper. Response
@@ -85,6 +87,7 @@ class StarPilotPlanner:
     self.tracking_lead = False
     self._last_gps_memory_state = ""
     self._last_gps_memory_write = 0.0
+    self._last_gps_fix: tuple[float, float, float] | None = None
     self._prev_gps_bearing = 0
 
     # Blinker-based lateral resume delay state
@@ -142,11 +145,14 @@ class StarPilotPlanner:
     if self.gps_valid:
       gps_memory_state = json.dumps(_sanitize_json_value(self.gps_position), allow_nan=False)
       now_mono = self.gps_position["updatedAtMonotonic"]
-      should_refresh_memory = gps_memory_state != self._last_gps_memory_state and (now_mono - self._last_gps_memory_write) >= 0.25
+      fix = (self.gps_position["latitude"], self.gps_position["longitude"], bearing)
+      interval = GPS_NEW_FIX_REFRESH_SECONDS if fix != self._last_gps_fix else GPS_MEMORY_REFRESH_SECONDS
+      should_refresh_memory = gps_memory_state != self._last_gps_memory_state and (now_mono - self._last_gps_memory_write) >= interval
       if should_refresh_memory:
         self.params_memory.put_nonblocking("LastGPSPosition", gps_memory_state)
         self._last_gps_memory_state = gps_memory_state
         self._last_gps_memory_write = now_mono
+        self._last_gps_fix = fix
 
     if getattr(starpilot_toggles, "compass", False) and abs(bearing - self._prev_gps_bearing) > 0.5:
       self._prev_gps_bearing = bearing

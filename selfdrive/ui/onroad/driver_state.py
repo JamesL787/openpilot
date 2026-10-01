@@ -19,7 +19,7 @@ AWARENESS_UNFULL_PERCENT = 95
 
 
 class DriverStateRenderer(Widget):
-  def __init__(self):
+  def __init__(self, dmoji_size: int = DMOJI_SIZE):
     super().__init__()
     self.position_x: float = 0.0
     self.position_y: float = 0.0
@@ -36,9 +36,10 @@ class DriverStateRenderer(Widget):
     self._yaw_filter = FirstOrderFilter(0.0, 0.05, 1 / gui_app.target_fps, initialized=False)
     self._rotation_filter = FirstOrderFilter(0.0, 0.1, 1 / gui_app.target_fps, initialized=False)
 
-    self._dm_background = gui_app.texture("icons_mici/onroad/driver_monitoring/dm_background.png", DMOJI_SIZE, DMOJI_SIZE)
-    self._dm_person = gui_app.texture("icons_mici/onroad/driver_monitoring/dm_person.png", CONE_SIZE, CONE_SIZE)
-    self._dm_cone = gui_app.texture("icons_mici/onroad/driver_monitoring/dm_cone.png", CONE_SIZE, CONE_SIZE)
+    cone_size = round(CONE_SIZE * dmoji_size / DMOJI_SIZE)
+    self._dm_background = gui_app.texture("icons_mici/onroad/driver_monitoring/dm_background.png", dmoji_size, dmoji_size)
+    self._dm_person = gui_app.texture("icons_mici/onroad/driver_monitoring/dm_person.png", cone_size, cone_size)
+    self._dm_cone = gui_app.texture("icons_mici/onroad/driver_monitoring/dm_cone.png", cone_size, cone_size)
 
   def _render(self, rect):
     bg = self._dm_background

@@ -266,7 +266,7 @@ class HudRenderer(Widget):
       self._show_speed_limit = ui_state.ui_params.get_bool("ShowSpeedLimits")
       if self._show_speed_limit:
         dashboard_speed_limit = sm["starpilotCarState"].dashboardSpeedLimit if sm.valid.get("starpilotCarState", False) else 0.0
-        vision_speed_limit = ui_state.params_memory.get_float("VisionSpeedLimit") if ui_state.ui_params.get_bool("VisionSpeedLimitDetection") else 0.0
+        vision_speed_limit = ui_state.live_params.get_float("VisionSpeedLimit") if ui_state.ui_params.get_bool("VisionSpeedLimitDetection") else 0.0
         self._show_speed_limit_offset = ui_state.ui_params.get_bool("ShowSLCOffset")
         primary_priority = ui_state.ui_params.get("SLCPriority1", encoding='utf-8') or "Map Data"
         secondary_priority = ui_state.ui_params.get("SLCPriority2", encoding='utf-8') or "None"

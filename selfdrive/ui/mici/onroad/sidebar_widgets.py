@@ -203,7 +203,7 @@ class MiciSidebarWidgets(Widget):
 
   def _cem_reason(self) -> tuple[str, rl.Color]:
     if self._demo:
-      status = ui_state.params_memory.get_int("CEStatus", default=CEStatus["OFF"])
+      status = ui_state.live_params.get_int("CEStatus", default=CEStatus["OFF"])
       status_reason = self._ce_status_reason(status)
       if status_reason is not None:
         return status_reason
@@ -228,7 +228,7 @@ class MiciSidebarWidgets(Widget):
         return "chill", WHITE
       return "chill", WHITE
 
-    status = ui_state.params_memory.get_int("CEStatus", default=CEStatus["OFF"]) if conditional_experimental else CEStatus["OFF"]
+    status = ui_state.live_params.get_int("CEStatus", default=CEStatus["OFF"]) if conditional_experimental else CEStatus["OFF"]
     status_reason = self._ce_status_reason(status)
     if status_reason is not None:
       return status_reason

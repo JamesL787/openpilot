@@ -7,6 +7,7 @@ from pathlib import Path
 from openpilot.starpilot.navigation.mapd_wrapper import (
   WAIT_FOR_GPS_EXIT_CODE,
   CorruptTileMonitor,
+  MapdActivityLog,
   is_null_island_tile,
   quarantine_offline_tile,
   run_mapd_once,
@@ -199,3 +200,27 @@ def test_terminate_child_tolerates_wedged_process():
 
   assert proc.terminated
   assert proc.killed
+
+
+def test_activity_log_records_tile_changes_loads_and_warnings(tmp_path):
+  events = []
+  log = MapdActivityLog(log=lambda name, **values: events.append((name, values)), summary_s=60.0, max_lines=2)
+  suburb = tmp_path / "36.250000_-115.500000_36.500000_-115.250000"
+  city = tmp_path / "36.000000_-115.250000_36.250000_-115.000000"
+  city.write_bytes(b"x" * 1234)
+
+  log.observe(_loading_line(suburb.as_posix()), now=0.0)
+  log.observe(_loading_line(suburb.as_posix()), now=1.0)  # same tile again: counted, not re-logged
+  log.observe(_loading_line(city.as_posix()), now=2.0)
+  assert events == [("mapd_tile_loaded", {"tile": suburb.name, "size_bytes": None}),
+                    ("mapd_tile_loaded", {"tile": city.name, "size_bytes": 1234})]
+
+  for i in range(4):
+    log.observe(json.dumps({"level": "warn", "msg": f"slow {i}"}), now=3.0 + i)
+  log.observe(json.dumps({"level": "info", "msg": "chatty"}), now=8.0)
+  log.observe("not json", now=9.0)
+  assert [values["msg"] for name, values in events if name == "mapd_log"] == ["slow 0", "slow 1"]
+
+  log.observe(_loading_line(city.as_posix()), now=61.0)
+  assert events[-1] == ("mapd_activity", {"tile": city.name, "tile_loads": 3, "window_s": 61.0, "dropped_lines": 2})
+  assert log.loads == 1 and log.forwarded == 0

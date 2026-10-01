@@ -173,6 +173,14 @@ class GuiScrollPanel2:
 
     mouse_pos = self._get_mouse_pos(mouse_event)
 
+    if mouse_event.cancelled:
+      # Stop with no fling. Out of bounds, AUTO_SCROLL eases back in.
+      self._state = ScrollState.AUTO_SCROLL if out_of_bounds else ScrollState.STEADY
+      self._velocity = 0.0
+      self._velocity_buffer.clear()
+      self._initial_click_event = None
+      return
+
     if not self.enabled:
       # Reset state if not enabled
       self._state = ScrollState.STEADY

@@ -623,6 +623,43 @@ class TestManager:
     assert params.get("ClusterOffset") == "1.02"
     assert params_cache.get("ClusterOffset") is None
 
+  def test_migrate_mapd_settings_version_rewrites_empty_default(self, tmp_path, monkeypatch):
+    monkeypatch.setattr(manager, "STARPILOT_MAPD_SETTINGS_VERSION_MIGRATION_FLAG", tmp_path / "starpilot_mapd_settings_version_v1")
+
+    params = FileBackedFakeParams(tmp_path / "params", {"MapdSettings": "{}"})
+    params_cache = FileBackedFakeParams(tmp_path / "cache", {"MapdSettings": "{}"})
+
+    manager.migrate_mapd_settings_version(params, params_cache)
+
+    assert json.loads(params.get("MapdSettings")) == {"settings_version": 2}
+    assert json.loads(params_cache.get("MapdSettings")) == {"settings_version": 2}
+
+  def test_migrate_mapd_settings_version_preserves_saved_settings(self, tmp_path, monkeypatch):
+    monkeypatch.setattr(manager, "STARPILOT_MAPD_SETTINGS_VERSION_MIGRATION_FLAG", tmp_path / "starpilot_mapd_settings_version_v1")
+
+    saved = '{"settings_version":1,"speed_limit_offset":5}'
+    params = FileBackedFakeParams(tmp_path / "params", {"MapdSettings": saved})
+    params_cache = FileBackedFakeParams(tmp_path / "cache", {})
+
+    manager.migrate_mapd_settings_version(params, params_cache)
+
+    assert params.get("MapdSettings") == saved
+    assert params_cache.get("MapdSettings") is None
+
+  def test_migrate_mapd_settings_version_runs_once(self, tmp_path, monkeypatch):
+    flag = tmp_path / "starpilot_mapd_settings_version_v1"
+    monkeypatch.setattr(manager, "STARPILOT_MAPD_SETTINGS_VERSION_MIGRATION_FLAG", flag)
+
+    params = FileBackedFakeParams(tmp_path / "params", {"MapdSettings": "{}"})
+    params_cache = FileBackedFakeParams(tmp_path / "cache", {})
+    manager.migrate_mapd_settings_version(params, params_cache)
+    assert flag.exists()
+
+    params.put("MapdSettings", "{}")
+    manager.migrate_mapd_settings_version(params, params_cache)
+
+    assert params.get("MapdSettings") == "{}"
+
   def test_migrate_traffic_mode_smooth_defaults_resets_legacy_default_only(self, tmp_path, monkeypatch):
     monkeypatch.setattr(manager, "STARPILOT_TRAFFIC_SMOOTH_MIGRATION_FLAG", tmp_path / "starpilot_traffic_smooth_v1")
 

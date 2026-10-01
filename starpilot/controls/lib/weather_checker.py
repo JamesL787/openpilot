@@ -8,7 +8,7 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from openpilot.starpilot.common.starpilot_utilities import calculate_distance_to_point
+from openpilot.starpilot.common.starpilot_utilities import calculate_distance_to_point, lower_thread_priority
 
 CACHE_DISTANCE = 25
 CHECK_INTERVAL = 15 * 60
@@ -128,7 +128,7 @@ class WeatherChecker:
 
     self.check_interval = CHECK_INTERVAL
 
-    self.executor = ThreadPoolExecutor(max_workers=1)
+    self.executor = ThreadPoolExecutor(max_workers=1, initializer=lower_thread_priority)
 
   def update_offsets(self, starpilot_toggles):
     suffix = WEATHER_CATEGORIES["CLEAR"]["suffix"]

@@ -6,6 +6,7 @@ from enum import IntEnum
 import pyray as rl
 
 from openpilot.common.params import Params
+from openpilot.selfdrive.ui.lib.ui_param_cache import shared_ui_params
 
 
 _BORDER_ROUNDNESS = 0.12
@@ -34,7 +35,7 @@ def blend_colors(a: rl.Color, b: rl.Color, f: float) -> rl.Color:
 
 
 def get_border_width(base_width: int, params: Params | None = None) -> int:
-  active_params = params if params is not None else Params()
+  active_params = params if params is not None else shared_ui_params()
 
   scale = active_params.get_float("BorderWidth", return_default=True, default=100.0)
   if not math.isfinite(scale):
@@ -45,7 +46,7 @@ def get_border_width(base_width: int, params: Params | None = None) -> int:
 
 
 def lead_indicator_enabled(params: Params | None = None, *, hide_by_default: bool = False) -> bool:
-  active_params = params if params is not None else Params()
+  active_params = params if params is not None else shared_ui_params()
 
   if active_params.get("HideLeadMarker") is None:
     return not hide_by_default
@@ -53,7 +54,7 @@ def lead_indicator_enabled(params: Params | None = None, *, hide_by_default: boo
 
 
 def lead_info_mode(params: Params | None = None) -> LeadInfoMode:
-  active_params = params if params is not None else Params()
+  active_params = params if params is not None else shared_ui_params()
   if not active_params.get_bool("LeadInfo"):
     return LeadInfoMode.OFF
 

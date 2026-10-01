@@ -1,4 +1,5 @@
 import io
+import json
 import threading
 import time
 
@@ -6,7 +7,7 @@ import numpy as np
 import pytest
 
 from openpilot.starpilot.system.bluetooth.audio import BluetoothAudioSink
-from openpilot.starpilot.system.bluetooth.bluez import PairingAgent
+from openpilot.starpilot.system.bluetooth.bluez import PairingAgent, PairingLog
 from openpilot.starpilot.system.bluetooth.daemon import BluetoothController
 from openpilot.starpilot.system.bluetooth.protocol import (A2DP_SINK_UUID, HID_UUID, BluetoothClient, BluetoothDevice, BluetoothStatus,
                                                            device_capabilities, show_pairing_device)
@@ -38,9 +39,13 @@ class FakeParams:
 class FakeAgent:
   def __init__(self):
     self.responses = []
+    self.head_units: set[str] = set()
 
   def set_auto_accept_incoming(self, _enabled):
     pass
+
+  def set_auto_accept_head_units(self, paths):
+    self.head_units = set(paths)
 
   def respond(self, prompt_id, accepted, value):
     self.responses.append((prompt_id, accepted, value))
@@ -252,6 +257,31 @@ def test_pairing_agent_accept_reject_and_timeout():
   worker.join(timeout=1.0)
   assert result == [(True, "")]
   assert agent.request("pin", "/device", timeout=0.01) == (False, "")
+
+
+def test_pairing_agent_accepts_known_head_unit_onroad():
+  agent = PairingAgent()
+  agent.set_auto_accept_head_units({"/car"})
+  assert agent.request("confirmation", "/car", "123456") == (True, "")
+  assert agent.request("authorization", "/car") == (True, "")
+  assert agent.request("pin", "/car", timeout=0.01) == (False, ""), "a PIN still needs the user"
+  assert agent.request("confirmation", "/stranger", "123456", timeout=0.01) == (False, "")
+  agent.set_auto_accept_head_units(set())
+  assert agent.request("confirmation", "/car", "123456", timeout=0.01) == (False, "")
+
+
+def test_status_auto_accepts_only_paired_trusted_starpilot_auto_head_units():
+  params = FakeParams(IsOffroad=False, BluetoothEnabled=True)
+  bluez = FakeBlueZ()
+  car = dict(bluez.device, path="/car", address="C4:B7:57:6E:AC:E2", name="Honda CIVIC", audio=False,
+             uuids=["0000111e-0000-1000-8000-00805f9b34fb", "4de17a00-52cb-11e6-bdf4-0800200c9a66"])
+  untrusted_car = dict(car, path="/other-car", address="C4:B7:57:6E:AC:E3", trusted=False)
+  bluez.status = lambda: {"powered": True, "discovering": False, "devices": [dict(bluez.device), car, untrusted_car], "prompt": None}
+  controller = BluetoothController(params, lambda: bluez, FakeRadio())
+
+  controller.status()
+
+  assert bluez.agent.head_units == {"/car"}
 
 
 def test_disabled_status_does_not_start_radio_or_bluez():
@@ -579,3 +609,54 @@ def test_audio_address_decodes_device_params_bytes():
   params = FakeParams(BluetoothEnabled=True, BluetoothAudioAddress=b"00:11:22:33:44:55")
   sink = BluetoothAudioSink(params, start_thread=False)
   assert sink.desired_address() == "00:11:22:33:44:55"
+
+
+def test_pairing_a_car_head_unit_does_not_take_over_alert_audio():
+  params = FakeParams(IsOffroad=True, BluetoothEnabled=True)
+  client = FakeBlueZ()
+  client.device["uuids"] = ["4de17a00-52cb-11e6-bdf4-0800200c9a66", "0000110b-0000-1000-8000-00805f9b34fb"]
+  controller = BluetoothController(params, lambda: client, FakeRadio(), FakeParams(), sleep=lambda _delay: None)
+
+  controller._pair_worker(client.device["address"])
+  assert params.get("BluetoothAudioAddress") is None
+
+  client.device["uuids"] = ["0000110b-0000-1000-8000-00805f9b34fb"]
+  controller._pair_worker(client.device["address"], select_audio=False)
+  assert params.get("BluetoothAudioAddress") is None
+
+  controller._pair_worker(client.device["address"])
+  assert params.get("BluetoothAudioAddress") == client.device["address"]
+
+
+def test_pairing_log_records_how_each_prompt_ended(tmp_path):
+  path = tmp_path / "diagnostics" / "bluetooth_pairing.jsonl"
+  agent = PairingAgent(PairingLog(path))
+  car = "/org/bluez/hci0/dev_C4_B7_57_6E_AC_E2"
+  agent.set_auto_accept_head_units({car})
+  agent.request("confirmation", car, "123456")
+  agent.set_auto_accept_head_units(set())
+  agent.request("confirmation", car, "123456", timeout=0.01)
+  agent.set_auto_accept_incoming(True)
+  agent.request("authorization", "/org/bluez/hci0/dev_00_11_22_33_44_55")
+
+  entries = [json.loads(line) for line in path.read_text().splitlines()]
+  assert [(e["kind"], e["device"], e["outcome"], e.get("reason")) for e in entries] == [
+    ("confirmation", "C4:B7:57:6E:AC:E2", "auto_accepted", "starpilot_auto_head_unit"),
+    ("confirmation", "C4:B7:57:6E:AC:E2", "timed_out", None),
+    ("authorization", "00:11:22:33:44:55", "auto_accepted", "offroad"),
+  ]
+
+
+def test_pairing_log_stays_bounded_and_never_raises(tmp_path):
+  path = tmp_path / "pairing.jsonl"
+  log = PairingLog(path, max_bytes=400)
+  for i in range(40):
+    log.record("confirmation", f"/dev_{i:02d}", "rejected")
+  lines = path.read_text().splitlines()
+  assert path.stat().st_size < 600 and all(json.loads(line)["outcome"] == "rejected" for line in lines)
+  assert json.loads(lines[-1])["device"] == "39"
+
+  blocked = tmp_path / "file"
+  blocked.write_text("")
+  PairingLog(blocked / "sub" / "log.jsonl").record("pin", "/dev_x", "timed_out")  # parent is a file: swallowed
+  PairingLog(None).record("pin", "/dev_x", "timed_out")

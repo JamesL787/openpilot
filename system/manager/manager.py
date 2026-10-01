@@ -70,6 +70,8 @@ STARPILOT_PC_ROOT_MIGRATION_FLAG = Path("/data") / "starpilot_pc_root_v1"
 STARPILOT_PARAMS_CACHE_MIGRATION_FLAG = Path("/data") / "starpilot_params_cache_v1"
 STARPILOT_DEFAULT_MODEL_MIGRATION_FLAG = Path("/data") / "starpilot_default_model_rdf_v4"
 STARPILOT_CE_MODEL_STOP_TIME_MIGRATION_FLAG = Path("/data") / "starpilot_ce_model_stop_time_v2"
+STARPILOT_MAPD_SETTINGS_VERSION_MIGRATION_FLAG = Path("/data") / "starpilot_mapd_settings_version_v1"
+MAPD_SETTINGS_DEFAULT = {"settings_version": 2}
 STARPILOT_LEGACY_CACHE_MARKER_KEYS = ("RemapCancelToDistance",)
 NRDR_HONDA_TUNING_DEFAULTS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_tuning_defaults_v6"
 NRDR_HONDA_OVERRIDE_SEMANTICS_MIGRATION_FLAG = Path("/data") / "nrdr_honda_override_semantics_v1"
@@ -388,6 +390,14 @@ def cleanup_removed_starpilot_params(params: Params, params_cache: Params) -> No
 
   if removed_keys:
     cloudlog.warning(f"Removed deprecated StarPilot params: {removed_keys}")
+
+
+def migrate_legacy_starpilot_auto_enabled(params: Params) -> None:
+  try:
+    from openpilot.starpilot.system.starpilot_auto.identity import migrate_enabled_flag
+    migrate_enabled_flag(params)
+  except Exception:
+    cloudlog.exception("Failed to migrate AndroidAutoEnabled to StarpilotAutoEnabled")
 
 
 def migrate_starpilot_param_renames(params: Params, params_cache: Params) -> None:
@@ -1086,6 +1096,34 @@ def _parse_legacy_time(raw_text: str):
   return None
 
 
+def migrate_mapd_settings_version(params: Params, params_cache: Params) -> None:
+  # mapd v2.1+ runs settings migrations when settings_version is missing and panics on the
+  # old unversioned "{}" default. Rewrite that empty default only; mapd-saved settings
+  # already carry their version.
+  if STARPILOT_MAPD_SETTINGS_VERSION_MIGRATION_FLAG.exists():
+    return
+
+  for params_obj in (params, params_cache):
+    raw_value = _read_raw_param_bytes(params_obj, "MapdSettings")
+    if not raw_value:
+      continue
+
+    try:
+      parsed_value = json.loads(raw_value.decode("utf-8", errors="strict"))
+    except Exception:
+      continue
+
+    if parsed_value == {}:
+      params_obj.put("MapdSettings", MAPD_SETTINGS_DEFAULT)
+      cloudlog.warning("Applied one-time MapdSettings migration from {} to a versioned default")
+
+  try:
+    STARPILOT_MAPD_SETTINGS_VERSION_MIGRATION_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    STARPILOT_MAPD_SETTINGS_VERSION_MIGRATION_FLAG.write_text(f"{datetime.datetime.now(datetime.UTC).isoformat()}\n")
+  except Exception:
+    cloudlog.exception(f"Failed to write migration flag: {STARPILOT_MAPD_SETTINGS_VERSION_MIGRATION_FLAG}")
+
+
 def migrate_param_type_canonicalization(params: Params) -> None:
   if STARPILOT_PARAM_CANONICALIZATION_MIGRATION_FLAG.exists():
     return
@@ -1243,6 +1281,7 @@ def manager_init() -> None:
   # Legacy FrogPilot params are unknown to the renamed schema and would be
   # deleted by clear_all() if we do not migrate them first.
   migrate_starpilot_param_renames(params, params_cache)
+  migrate_legacy_starpilot_auto_enabled(params)
   last_timing = _log_boot_timing("manager_init", "param_renames", manager_init_start, last_timing)
 
   # Must stay ahead of the clear_all() calls below: they delete keys the schema does not know,
@@ -1280,6 +1319,7 @@ def manager_init() -> None:
   migrate_cluster_offset_default(params, params_cache)
   migrate_traffic_mode_smooth_defaults(params, params_cache)
   migrate_traffic_follow_default(params, params_cache)
+  migrate_mapd_settings_version(params, params_cache)
   migrate_nrdr_honda_tuning_defaults(params, params_cache)
   migrate_nrdr_honda_override_semantics(params, params_cache)
   migrate_nrdr_konik_default(params, params_cache)

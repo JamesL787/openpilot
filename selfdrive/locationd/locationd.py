@@ -12,7 +12,7 @@ from openpilot.common.transformations.orientation import rot_from_euler
 from openpilot.common.realtime import config_realtime_process
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
-from openpilot.selfdrive.locationd.helpers import rotate_std
+from openpilot.selfdrive.locationd.helpers import InputCheckLogger, rotate_std
 from openpilot.selfdrive.locationd.models.pose_kf import PoseKalman, States
 from openpilot.selfdrive.locationd.models.constants import ObservationKind, GENERATED_DIR
 
@@ -286,6 +286,7 @@ def main():
   input_invalid_limit = {s: round(INPUT_INVALID_LIMIT * (SERVICE_LIST[s].frequency / 20.)) for s in critcal_services}
   input_invalid_threshold = {s: input_invalid_limit[s] - 0.5 for s in critcal_services}
   input_invalid_decay = {s: calculate_invalid_input_decay(input_invalid_limit[s], INPUT_INVALID_RECOVERY, SERVICE_LIST[s].frequency) for s in critcal_services}
+  input_check_logger = InputCheckLogger("locationdInputsInvalid", checks=('invalid',))  # inputsOK uses all_valid() only
 
   initial_pose_data = params.get("LocationFilterInitialState")
   if initial_pose_data is not None:
@@ -332,6 +333,8 @@ def main():
     if sm.updated["cameraOdometry"]:
       critical_service_inputs_valid = all(observation_input_invalid[s] < input_invalid_threshold[s] for s in critcal_services)
       inputs_valid = sm.all_valid() and critical_service_inputs_valid
+      rejected = [s for s in critcal_services if observation_input_invalid[s] >= input_invalid_threshold[s]]
+      input_check_logger.update(sm, time.monotonic(), {'rejected': rejected})
       sensors_valid = sensor_all_checks(acc_msgs, gyro_msgs, sensor_valid, sensor_recv_time, sensor_alive, SIMULATION)
 
       msg = estimator.get_msg(sensors_valid, inputs_valid, filter_initialized)

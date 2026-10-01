@@ -1,0 +1,74 @@
+diff --git a/maps/offline.go b/maps/offline.go
+index 2909af7..eac82b6 100644
+--- a/maps/offline.go
++++ b/maps/offline.go
+@@ -34,6 +34,7 @@ func ReadOffline(data []uint8) Offline {
+ 		}
+ 		o := Offline{offline: offlineMaps, waysRaw: ways, Loaded: true}
+ 		o.Ways.Init(o._wayAt, ways.Len())
++		o.buildEndpointIndex()
+ 		return o
+ 	}
+ 	return Offline{Loaded: false}
+@@ -47,6 +48,7 @@ type Offline struct {
+ 	Ways       u.CurryList[Way]
+ 	waysRaw    offline.Way_List
+ 	overlap    u.Curry[float64]
++	endpoints  map[m.Position][]int // way indices by first/last node, in tile order
+ }
+ 
+ func (o *Offline) _box() m.Box {
+@@ -80,3 +82,31 @@ func (o *Offline) Overlap() float64 {
+ func (o *Offline) _wayAt(index int) Way {
+ 	return NewWay(o.waysRaw.At(index))
+ }
++
++// buildEndpointIndex maps each way's first and last node to the ways that start or end there,
++// in tile order, so MatchingWays does not scan every way in the tile for each next-way lookup.
++// Positions compare exactly, as Position.Equals does.
++func (o *Offline) buildEndpointIndex() {
++	o.endpoints = make(map[m.Position][]int)
++	for i := range o.Ways.Len() {
++		way := o.Ways.At(i)
++		if way.Nodes.Len() < 2 {
++			continue
++		}
++		first := way.Nodes.At(0)
++		last := way.Nodes.At(way.Nodes.Len() - 1)
++		o.endpoints[first] = append(o.endpoints[first], i)
++		if !last.Equals(first) {
++			o.endpoints[last] = append(o.endpoints[last], i)
++		}
++	}
++}
++
++// WaysWithEndpoint returns the indices of ways that start or end at pos, in tile order.
++// ok is false when the tile has no index.
++func (o *Offline) WaysWithEndpoint(pos m.Position) (indices []int, ok bool) {
++	if o.endpoints == nil {
++		return nil, false
++	}
++	return o.endpoints[pos], true
++}
+diff --git a/maps/way.go b/maps/way.go
+index d920c99..20bb58e 100644
+--- a/maps/way.go
++++ b/maps/way.go
+@@ -447,7 +447,16 @@ func (w *Way) GetStartEnd(isForward bool) (m.Position, m.Position) {
+ func (w *Way) MatchingWays(offlineMaps *Offline, matchNode m.Position) ([]Way, error) {
+ 	matchingWays := []Way{}
+ 
+-	for i := range offlineMaps.Ways.Len() {
++	candidates, indexed := offlineMaps.WaysWithEndpoint(matchNode)
++	count := len(candidates)
++	if !indexed {
++		count = offlineMaps.Ways.Len()
++	}
++	for c := range count {
++		i := c
++		if indexed {
++			i = candidates[c]
++		}
+ 		way := offlineMaps.Ways.At(i)
+ 		if way.Nodes.Len() == 0 {
+ 			continue

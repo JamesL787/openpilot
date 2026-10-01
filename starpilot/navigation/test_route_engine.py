@@ -1,6 +1,6 @@
 from cereal import log
 
-from openpilot.starpilot.navigation.route_engine import Coordinate, NavigationRoute
+from openpilot.starpilot.navigation.route_engine import Coordinate, MapboxRouteEngine, NavigationRoute
 
 
 def make_route() -> NavigationRoute:
@@ -170,3 +170,60 @@ def test_lane_payload_uses_capnp_enum_names():
     log.NavInstruction.Direction.slightLeft,
   ]
   assert msg.navInstruction.lanes[0].activeDirection == log.NavInstruction.Direction.slightLeft
+
+
+def mapbox_route(duration: float, end_longitude: float) -> dict:
+  return {
+    "distance": 1000.0,
+    "duration": duration,
+    "geometry": {"coordinates": [[0.0, 0.0], [end_longitude, 0.0]]},
+    "legs": [{
+      "steps": [
+        {"maneuver": {"type": "depart", "instruction": "Head east", "location": [0.0, 0.0]}, "distance": 1000.0, "duration": duration},
+        {"maneuver": {"type": "arrive", "instruction": "Arrive", "location": [end_longitude, 0.0]}, "distance": 0.0, "duration": 0.0},
+      ],
+    }],
+  }
+
+
+class DirectionsSession:
+  def __init__(self, payload, status_code=200):
+    self.payload = payload
+    self.status_code = status_code
+    self.params = None
+
+  def get(self, url, params=None, timeout=None):
+    self.params = params
+    session = self
+
+    class Response:
+      status_code = session.status_code
+
+      def json(self):
+        return session.payload
+
+    return Response()
+
+
+def test_fetch_routes_returns_main_route_then_alternatives():
+  session = DirectionsSession({"code": "Ok", "routes": [mapbox_route(600.0, 0.01), mapbox_route(720.0, 0.011)]})
+  routes = MapboxRouteEngine(session).fetch_routes("token", Coordinate(0.0, 0.0), {"latitude": 0.0, "longitude": 0.01})
+  assert [route.total_duration for route in routes] == [600.0, 720.0]
+  assert session.params["alternatives"] == "true"
+
+
+def test_fetch_route_picks_the_requested_alternative():
+  session = DirectionsSession({"code": "Ok", "routes": [mapbox_route(600.0, 0.01), mapbox_route(720.0, 0.011)]})
+  engine = MapboxRouteEngine(session)
+  destination = {"latitude": 0.0, "longitude": 0.01, "routeId": "alt-1"}
+  assert engine.fetch_route("token", Coordinate(0.0, 0.0), destination).total_duration == 720.0
+  destination["routeId"] = "main"
+  assert engine.fetch_route("token", Coordinate(0.0, 0.0), destination).total_duration == 600.0
+  assert session.params["alternatives"] == "false"
+
+
+def test_fetch_routes_handles_errors():
+  destination = {"latitude": 0.0, "longitude": 0.01}
+  assert MapboxRouteEngine(DirectionsSession({"code": "NoRoute", "routes": []})).fetch_routes("token", Coordinate(0.0, 0.0), destination) == []
+  assert MapboxRouteEngine(DirectionsSession({}, status_code=401)).fetch_routes("token", Coordinate(0.0, 0.0), destination) == []
+  assert MapboxRouteEngine(DirectionsSession({})).fetch_routes("", Coordinate(0.0, 0.0), destination) == []

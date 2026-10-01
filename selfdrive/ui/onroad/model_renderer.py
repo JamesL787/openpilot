@@ -109,9 +109,11 @@ class ModelRenderer(Widget):
       self._longitudinal_control = cp.openpilotLongitudinalControl
 
   def set_transform(self, transform: np.ndarray):
-    self._car_space_transform = transform.astype(np.float32)
-    self._transform_dirty = True
-    self._radar_transform_generation += 1
+    transform = np.asarray(transform, dtype=np.float32)
+    if not np.array_equal(transform, self._car_space_transform):
+      self._car_space_transform = transform.copy()
+      self._transform_dirty = True
+      self._radar_transform_generation += 1
 
   def _render(self, rect: rl.Rectangle):
     sm = ui_state.sm
@@ -294,35 +296,34 @@ class ModelRenderer(Widget):
       return
 
     max_len = min(len(self._path.projected_points) // 2, len(self._acceleration_x))
-    segment_colors = []
-    gradient_stops = []
+    rect_y, rect_h = self._rect.y, self._rect.height
+    track_ys = self._path.projected_points[:max_len, 1]
 
+    # Pick points exactly as before: skip ones outside the rect, otherwise take
+    # every other point (unless the next is the last).
+    selected = []
     i = 0
+    ys = track_ys.tolist()
     while i < max_len:
       # Some points (screen space) are out of frame (rect space)
-      track_y = self._path.projected_points[i][1]
-      if track_y < self._rect.y or track_y > (self._rect.y + self._rect.height):
+      if ys[i] < rect_y or ys[i] > (rect_y + rect_h):
         i += 1
         continue
-
-      # Calculate color based on acceleration (0 is bottom, 1 is top)
-      lin_grad_point = 1 - (track_y - self._rect.y) / self._rect.height
-
-      # speed up: 120, slow down: 0
-      path_hue = np.clip(60 + self._acceleration_x[i] * 35, 0, 120)
-
-      saturation = min(abs(self._acceleration_x[i] * 1.5), 1)
-      lightness = np.interp(saturation, [0.0, 1.0], [0.95, 0.62])
-      alpha = np.interp(lin_grad_point, [0.75 / 2.0, 0.75], [0.4, 0.0])
-
-      # Use HSL to RGB conversion
-      color = self._hsla_to_color(path_hue / 360.0, saturation, lightness, alpha)
-
-      gradient_stops.append(lin_grad_point)
-      segment_colors.append(color)
-
-      # Skip a point, unless next is last
+      selected.append(i)
       i += 1 + (1 if (i + 2) < max_len else 0)
+
+    # Colours for all selected points at once (per-point np.clip/np.interp dominated this)
+    idx = np.array(selected, dtype=np.intp)
+    lin_grad_points = 1 - (track_ys[idx] - rect_y) / rect_h  # 0 is bottom, 1 is top
+    accel = self._acceleration_x[idx]
+    path_hues = np.clip(60 + accel * 35, 0, 120)  # speed up: 120, slow down: 0
+    saturations = np.minimum(np.abs(accel * 1.5), 1)
+    lightnesses = np.interp(saturations, [0.0, 1.0], [0.95, 0.62])
+    alphas = np.interp(lin_grad_points, [0.75 / 2.0, 0.75], [0.4, 0.0])
+    gradient_stops = lin_grad_points.tolist()
+    # numpy scalars, not Python floats: colorsys then rounds in float32 as the per-point loop did
+    segment_colors = [self._hsla_to_color(h, s, l, a) for h, s, l, a in
+                      zip(path_hues / 360.0, saturations, lightnesses, alphas, strict=True)]
 
     # Store the gradient in the path object
     self._exp_gradient = Gradient(
@@ -852,8 +853,16 @@ class ModelRenderer(Widget):
       p0 = line[max_idx]
       p1 = line[max_idx + 1]
       x0, x1 = p0[0], p1[0]
-      interp_y = np.interp(max_distance, [x0, x1], [p0[1], p1[1]])
-      interp_z = np.interp(max_distance, [x0, x1], [p0[2], p1[2]])
+      # Two scalar endpoints: avoid constructing four temporary arrays and
+      # dispatching through numpy.interp for every lane/path edge.
+      t = (float(max_distance) - float(x0)) / (float(x1) - float(x0)) if x1 > x0 else None
+      if t is None:
+        interp_y = np.interp(max_distance, [x0, x1], [p0[1], p1[1]])
+        interp_z = np.interp(max_distance, [x0, x1], [p0[2], p1[2]])
+      else:
+        t = 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
+        interp_y = float(p0[1]) + t * (float(p1[1]) - float(p0[1]))
+        interp_z = float(p0[2]) + t * (float(p1[2]) - float(p0[2]))
       interp_point = np.array([max_distance, interp_y, interp_z], dtype=points.dtype)
       points = np.concatenate((points, interp_point[None, :]), axis=0)
 
@@ -1013,7 +1022,8 @@ class ModelRenderer(Widget):
       return False, default
     try:
       fval = float(value)
-      return (not np.isclose(fval, default)), fval
+      # np.isclose's formula (rtol=1e-05, atol=1e-08) without its array overhead; NaN counts as changed
+      return (not abs(fval - default) <= 1e-08 + 1e-05 * abs(default)), fval
     except (TypeError, ValueError):
       return False, default
 

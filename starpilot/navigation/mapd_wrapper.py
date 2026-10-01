@@ -19,6 +19,8 @@ FAILURE_THRESHOLD = 3
 MISSING_COVERAGE_EXIT_CODE = 3
 WAIT_FOR_GPS_EXIT_CODE = 4
 ROAD_STATE_POLL_S = 1.0
+ACTIVITY_SUMMARY_S = 60.0
+MAX_FORWARDED_LINES_PER_SUMMARY = 10
 
 
 def _cloudlog():
@@ -86,6 +88,62 @@ class CorruptTileMonitor:
     return None
 
 
+class MapdActivityLog:
+  """Records in the drive log what mapd is doing; its own output is otherwise discarded.
+
+  Logs each change of offline tile (a dense city tile makes every mapd loop slower), a
+  per-minute count of tile loads (a tile re-read every loop), and mapd's warnings and
+  errors, rate-limited.
+  """
+
+  def __init__(self, log=None, summary_s: float = ACTIVITY_SUMMARY_S, max_lines: int = MAX_FORWARDED_LINES_PER_SUMMARY):
+    self._log = log
+    self.summary_s = summary_s
+    self.max_lines = max_lines
+    self.tile: str | None = None
+    self.window_start: float | None = None
+    self.loads = 0
+    self.forwarded = 0
+    self.dropped = 0
+
+  def _event(self, name: str, **values) -> None:
+    (self._log or _cloudlog().event)(name, **values)
+
+  def observe(self, line: str, now: float | None = None) -> None:
+    now = time.monotonic() if now is None else now
+    if self.window_start is None:
+      self.window_start = now
+    elif now - self.window_start >= self.summary_s:
+      self._event("mapd_activity", tile=Path(self.tile).name if self.tile else None, tile_loads=self.loads,
+                  window_s=round(now - self.window_start, 1), dropped_lines=self.dropped)
+      self.window_start, self.loads, self.forwarded, self.dropped = now, 0, 0, 0
+
+    filename = extract_bounds_filename(line)
+    if filename is not None:
+      self.loads += 1
+      if filename != self.tile:
+        self.tile = filename
+        try:
+          size = Path(filename).stat().st_size
+        except OSError:
+          size = None
+        self._event("mapd_tile_loaded", tile=Path(filename).name, size_bytes=size)
+      return
+
+    try:
+      payload = json.loads(line)
+    except json.JSONDecodeError:
+      return
+    if not isinstance(payload, dict) or str(payload.get("level", "")).lower() not in ("warn", "warning", "error", "fatal", "panic"):
+      return
+    if self.forwarded >= self.max_lines:
+      self.dropped += 1
+      return
+    self.forwarded += 1
+    self._event("mapd_log", level=str(payload["level"]).lower(), msg=str(payload.get("msg", ""))[:200],
+                error=str(payload.get("error", ""))[:200] or None)
+
+
 def quarantine_offline_tile(filename: str) -> Path | None:
   tile_path = Path(filename)
   try:
@@ -149,9 +207,14 @@ def run_mapd_once() -> int:
   signal.signal(signal.SIGINT, _handle_signal)
 
   monitor = CorruptTileMonitor()
+  activity = MapdActivityLog()
 
   for line in proc.stdout:
     print(line, end="")
+    try:
+      activity.observe(line)
+    except Exception:
+      pass  # diagnostics must never stop mapd
     bad_tile = monitor.observe(line)
 
     # mapd reports an unmarshal failure even when no offline tile is installed.

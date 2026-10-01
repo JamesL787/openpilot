@@ -82,7 +82,8 @@ def renderer(request, monkeypatch):
   params = FakeParams({"ShowSpeedLimits": True, "ShowSLCOffset": True, "VisionSpeedLimitDetection": True,
                        "SLCPriority1": "Vision", "SLCPriority2": "Map Data"})
   ui = SimpleNamespace(sm=sm, started_frame=10, is_metric=False, ui_params=params,
-                       params_memory=SimpleNamespace(get_float=lambda _: plan.slcSpeedLimit))
+                       params_memory=SimpleNamespace(get_float=lambda _: plan.slcSpeedLimit),
+                       live_params=SimpleNamespace(get_float=lambda _: plan.slcSpeedLimit))
   pulse = SpeedLimitPulse()
   clock = [0.0]
   monkeypatch.setattr(rl, "get_time", lambda: clock[0])

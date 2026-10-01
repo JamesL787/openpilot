@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import time
 import numpy as np
 import capnp
 from collections import deque
@@ -11,7 +12,7 @@ from cereal.services import SERVICE_LIST
 from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process
 from openpilot.common.swaglog import cloudlog
-from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose, fft_next_good_size, parabolic_peak_interp
+from openpilot.selfdrive.locationd.helpers import InputCheckLogger, PoseCalibrator, Pose, fft_next_good_size, parabolic_peak_interp
 
 from openpilot.starpilot.common.lateral_delay import full_lateral_delay
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
@@ -405,8 +406,13 @@ def main():
 
   lag_learner.starpilot_toggles = get_starpilot_toggles()
 
+  input_check_logger = InputCheckLogger("lagdInputsInvalid")
+  last_update, max_loop_gap = time.monotonic(), 0.
+
   while True:
     sm.update()
+    now = time.monotonic()
+    max_loop_gap, last_update = max(max_loop_gap, now - last_update), now
     if sm.all_checks():
       for which in sorted(sm.updated.keys(), key=lambda x: sm.logMonoTime[x]):
         if sm.updated[which]:
@@ -416,6 +422,9 @@ def main():
 
     # 4Hz driven by livePose
     if sm.frame % 5 == 0:
+      # a late loop (this process starved) vs a late input (the publisher starved)
+      input_check_logger.update(sm, now, context={'max_loop_gap_ms': round(max_loop_gap * 1000, 1)})
+      max_loop_gap = 0.
       lag_learner.update_estimate()
       lag_msg = lag_learner.get_msg(sm.all_checks(), DEBUG)
       lag_msg_dat = lag_msg.to_bytes()

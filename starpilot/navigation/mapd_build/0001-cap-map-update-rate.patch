@@ -1,0 +1,37 @@
+diff --git a/main.go b/main.go
+index bf13a63..87d7555 100644
+--- a/main.go
++++ b/main.go
+@@ -14,6 +14,11 @@ import (
+ 
+ const mapLoadRetryDelay = time.Second
+ 
++// mapUpdateInterval caps how often a GPS fix triggers the way search (10 Hz). 3 Hz made the
++// outputs visibly jittery; 0002's endpoint index makes each search cheap enough for 10 Hz.
++// carState keeps advancing DistanceSinceLastPosition between updates.
++const mapUpdateInterval = time.Second / 10
++
+ func main() {
+ 	ms.Settings.Default()                // set defaults so settings not already in param are defaulted
+ 	settingsLoaded := ms.Settings.Load() // try loading settings before cli
+@@ -27,6 +32,7 @@ func main() {
+ 	state := State{}
+ 	state.Init()
+ 	var lastMapLoadAttempt time.Time
++	var lastMapUpdate time.Time
+ 
+ 	extendedState := ExtendedState{
+ 		Pub:   cereal.NewPublisher("mapdExtendedOut", cereal.MapdExtendedOutCreator),
+@@ -112,8 +118,12 @@ func main() {
+ 			ms.Settings.SetPersonality(selfdriveData.Personality())
+ 		}
+ 
++		if time.Since(lastMapUpdate) < mapUpdateInterval {
++			continue
++		}
+ 		location, gpsSuccess := gps.Read()
+ 		if gpsSuccess {
++			lastMapUpdate = time.Now()
+ 			state.DistanceSinceLastPosition = 0
+ 			state.Position = m.PosFromLocation(location)
+ 			pos := m.PosFromLocation(location)

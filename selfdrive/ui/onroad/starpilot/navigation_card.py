@@ -301,11 +301,14 @@ class NavigationCardRenderer(Widget):
       line_y = y + index * (font_size + line_gap)
       rl.draw_text_ex(self._font_bold, line, rl.Vector2(x, line_y), font_size, 0, rl.WHITE)
 
+  def _card_x(self, rect: rl.Rectangle, width: float) -> int:
+    """Left edge of the tici/tizi card or chip: right-aligned, 40px margin."""
+    return int(rect.x + rect.width - width - 40)
+
   def _render_default(self, rect: rl.Rectangle) -> None:  # tici/tizi expanded card
-    right_margin = 40
     card_width = 560
     card_height = 195
-    container_x = int(rect.x + rect.width - card_width - right_margin)
+    container_x = self._card_x(rect, card_width)
     container_y = int(rect.y + rect.height - card_height - 440)
 
     icon_size = 100
@@ -393,7 +396,7 @@ class NavigationCardRenderer(Widget):
 
   def _render_collapsed_default(self, rect: rl.Rectangle) -> None:  # tici/tizi collapsed chip
     chip_size = 94
-    chip_x = int(rect.x + rect.width - chip_size - 40)  # right-aligned, 40px margin
+    chip_x = self._card_x(rect, chip_size)
     chip_y = int(rect.y + 340)  # above expanded card
     chip_rect = rl.Rectangle(chip_x, chip_y, chip_size, chip_size)
     self._interactive_rect = chip_rect

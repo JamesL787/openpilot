@@ -60,6 +60,7 @@ class DesireHelper:
     self.keep_pulse_timer = 0.0
     self.prev_one_blinker = False
     self.desire = log.Desire.none
+    self.nav_desire = log.Desire.none
 
     self.lane_change_completed = False
 
@@ -349,5 +350,6 @@ class DesireHelper:
       self.lane_change_wait_timer = 0.0
 
     nav_desire = self._navigation_desire(carstate, lateral_active, starpilotPlan, starpilot_toggles)
+    self.nav_desire = nav_desire
     if nav_desire != log.Desire.none and self.lane_change_state == LaneChangeState.off:
       self.desire = nav_desire

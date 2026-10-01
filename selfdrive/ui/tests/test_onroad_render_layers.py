@@ -56,11 +56,11 @@ def _load_starpilot_onroad_view(monkeypatch):
     "openpilot.selfdrive.ui.onroad.starpilot.starpilot_border",
     render_behind=lambda *_args: None,
     render_overlay=lambda *_args: None,
-    render_background_effects=lambda *_args: None,
+    render_background_effects=lambda *_args, **_kwargs: None,
   )
   stub_module(
     "openpilot.selfdrive.ui.onroad.starpilot.path",
-    render_adjacent_lanes=lambda *_args: None,
+    render_adjacent_lanes=lambda *_args, **_kwargs: None,
     render_path_edges=lambda *_args: None,
   )
   stub_module("openpilot.selfdrive.ui.ui_state", ui_state=SimpleNamespace())
@@ -197,7 +197,7 @@ def test_starpilot_road_overlays_use_the_parent_scissor(monkeypatch):
   view._get_border_width = lambda: 0
 
   monkeypatch.setattr(starpilot_onroad_view, "render_path_edges", lambda *_args: events.append("path_edges"))
-  monkeypatch.setattr(starpilot_onroad_view, "render_adjacent_lanes", lambda *_args: events.append("adjacent_lanes"))
+  monkeypatch.setattr(starpilot_onroad_view, "render_adjacent_lanes", lambda *_args, **_kwargs: events.append("adjacent_lanes"))
   monkeypatch.setattr(starpilot_onroad_view, "render_stopping_point", lambda *_args: events.append("stopping_point"))
 
   def fail_scissor(*_args):

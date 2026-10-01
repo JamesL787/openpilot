@@ -1,6 +1,6 @@
 import { api } from "../api.js"
 import { isSettingVisible, resolveVehicleUnitParam, slugifySectionName, applyParamChange } from "../params.js"
-import { SettingTree } from "./SettingTree.js"
+import { SettingTree } from "./SettingTree.js?v=starpilot-auto-uploads-1"
 import { GalaxySection } from "./GalaxySection.js"
 
 export const ParamSections = {

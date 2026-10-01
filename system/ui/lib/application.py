@@ -34,6 +34,7 @@ UI_IDLE_FPS = int(os.getenv("UI_IDLE_FPS", "0"))
 UI_INTERACTION_FPS_DURATION = 1.25
 MAX_TOUCH_SLOTS = 2
 TOUCH_HISTORY_TIMEOUT = 3.0  # Seconds before touch points fade out
+REMOTE_PHYSICAL_QUIET = 0.5  # untouched panel time before a remote press is accepted
 
 BIG_UI = os.getenv("BIG", "0") == "1"
 MACOS = platform.system() == "Darwin"
@@ -193,6 +194,19 @@ class MouseEvent(NamedTuple):
   left_released: bool
   left_down: bool
   t: float
+  # The touch was withdrawn (remote control lost its viewer, or a physical
+  # touch took over). It is deliberately neither a press nor a release, so code
+  # that does not know about cancel can never read it as a click or a swipe; it
+  # just sees the finger go up. Aware code resets its gesture state.
+  cancelled: bool = False
+
+
+class _RemoteWithdrawn(NamedTuple):
+  """Stand-in for a streamer ``cancel`` when there is no streamer to ask."""
+  kind: str = "cancel"
+
+
+_REMOTE_WITHDRAWN = _RemoteWithdrawn()
 
 
 class FrameTiming(NamedTuple):
@@ -484,13 +498,29 @@ class MouseState:
 
     # Only add changes
     prev = self._prev_mouse_event[ev.slot]
-    if prev is None or ev[:-1] != prev[:-1]:
+    if prev is None or ev[:5] != prev[:5]:
       with self._lock:
         self._events.append(ev)
       self._prev_mouse_event[ev.slot] = ev
 
 
 class GuiApplication:
+  # Starpilot Auto capture state; class defaults keep partially constructed apps (tests) safe.
+  _starpilot_auto_frame_producer = None
+  _starpilot_auto_texture = None
+  _starpilot_auto_failed = False
+  _starpilot_auto_enabled = False
+  _starpilot_auto_owns_render_texture = False
+
+  @property
+  def starpilot_auto_enabled(self) -> bool:
+    return self._starpilot_auto_enabled
+
+  def set_starpilot_auto_enabled(self, enabled: bool) -> None:
+    if enabled != self._starpilot_auto_enabled:
+      self._starpilot_auto_enabled = enabled
+      self._starpilot_auto_failed = False
+
   def __init__(self, width: int | None = None, height: int | None = None):
     self._set_log_callback()
 
@@ -520,6 +550,25 @@ class GuiApplication:
     self._ffmpeg_queue: queue.Queue | None = None
     self._ffmpeg_thread: threading.Thread | None = None
     self._ffmpeg_stop_event: threading.Event | None = None
+    self._ui_stream = None
+    self._ui_stream_pending = False
+    self._ui_stream_owns_texture = False
+    self._ui_stream_texture: rl.RenderTexture | None = None
+    self._ui_stream_scale_failed = False
+    self._ui_stream_error = ""
+    self._ui_stream_control_allowed = False
+    self._ui_stream_control_reason = "not enabled by this app"
+    # Starpilot Auto projection (starpilot_autod) pulls frames through shared memory.
+    self._starpilot_auto_frame_producer = None
+    self._starpilot_auto_texture: rl.RenderTexture | None = None
+    self._starpilot_auto_buffer: bytearray | None = None
+    self._starpilot_auto_failed = False
+    # Live remote touch and its arbitration against the physical screen.
+    self._remote_down = False
+    self._remote_pos = MousePos(0, 0)
+    self._physical_slots_down: set[int] = set()
+    self._last_physical_event_t = -math.inf
+    self._stream_paused = False
     self._progress_hook: Callable[[str], None] | None = None
     self._textures: dict[str, rl.Texture] = {}
     self._cached_render_textures: dict[str, rl.RenderTexture] = {}
@@ -639,12 +688,19 @@ class GuiApplication:
       self._render_texture_width = max(1, int(round(self._scaled_width * self._pixel_scale_x)))
       self._render_texture_height = max(1, int(round(self._scaled_height * self._pixel_scale_y)))
 
+      # The streamer starts on demand (a browser opening Live UI posts
+      # UiStreamRequested), so it does not take part in this decision. Where the
+      # texture below is not allocated, the streamer allocates it at request time
+      # on the render thread.
+      streaming = False
+
       # Keep big-UI burn-in movement in final-frame composition. Translating the live EGL
       # camera/widget pass can corrupt the camera presentation instead of shifting the UI.
       needs_render_texture = ((self._scale != 1.0 and not PC) or BURN_IN_MODE or RECORD or
                               MICI_FORCE_RENDER_TEXTURE or
                               (BURN_IN_PREVENTION and DEVICE_TYPE != "mici") or
-                              WHITE_LUMINANCE_CAP < 1.0)
+                              WHITE_LUMINANCE_CAP < 1.0 or
+                              streaming)
       if PC and self._scale != 1.0:
         rl.set_mouse_scale(1 / self._scale, 1 / self._scale)
       if PC:
@@ -653,9 +709,21 @@ class GuiApplication:
         if MICI_FORCE_RENDER_TEXTURE:
           cloudlog.warning("Forcing render texture path for mici UI")
         self._render_texture = rl.load_render_texture(self._render_texture_width, self._render_texture_height)
-        rl.set_texture_filter(self._render_texture.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+        texture = getattr(self._render_texture, "texture", None)
+        if texture is None or getattr(texture, "id", 0) == 0:
+          cloudlog.error("Render texture allocation failed")
+          self._render_texture = None
+          if streaming:
+            cloudlog.error("UI streamer disabled: render texture unavailable")
+            self.stop_ui_stream()
+            streaming = False
+        else:
+          rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
 
-      if RECORD:
+      if RECORD and self._render_texture is None:
+        cloudlog.error("RECORD disabled: render texture unavailable")
+
+      if RECORD and self._render_texture is not None:
         output_fps = fps * RECORD_SPEED
         ffmpeg_args = [
           'ffmpeg',
@@ -865,59 +933,89 @@ class GuiApplication:
     return texture_obj
 
   def cached_render_texture(self, cache_key: str, width: int, height: int,
-                            render: Callable[[], None]) -> object | None:
+                            render: Callable[[], None], supersample: int = 1) -> object | None:
     """Return a cached texture, scheduling cache misses between frames.
 
     Raylib render-texture modes are not nestable. Widgets call this while the
     main framebuffer (often another render texture) is active, so cache misses
     must be populated after the frame has been presented.
+
+    Render textures have no MSAA, so vector content drawn into them is aliased.
+    A power-of-two ``supersample`` renders at that multiple (``render`` still
+    draws in ``width`` x ``height`` coordinates) and box-filters back down.
     """
     cached = self._cached_render_textures.get(cache_key)
     if cached is not None:
       return cached.texture
 
     self._pending_render_textures.setdefault(
-      cache_key, (max(1, int(width)), max(1, int(height)), render)
+      cache_key, (max(1, int(width)), max(1, int(height)), render, max(1, int(supersample)))
     )
     return None
+
+  @staticmethod
+  def _render_into_texture(target: rl.RenderTexture, draw: Callable[[], None],
+                           src_factor: int, zoom: float = 1.0) -> None:
+    began_texture_mode = False
+    began_blend_mode = False
+    began_mode_2d = False
+    try:
+      rl.begin_texture_mode(target)
+      began_texture_mode = True
+      rl.clear_background(rl.Color(0, 0, 0, 0))
+      # Alpha is kept straight while RGB is premultiplied (src_factor
+      # RL_SRC_ALPHA) or copied as-is (RL_ONE, for already-premultiplied input).
+      # The result is composited with BLEND_ALPHA_PREMULTIPLY without squaring
+      # translucent vector alpha.
+      rl.rl_set_blend_factors_separate(
+        src_factor, rl.RL_ONE_MINUS_SRC_ALPHA,
+        rl.RL_ONE, rl.RL_ONE_MINUS_SRC_ALPHA,
+        rl.RL_FUNC_ADD, rl.RL_FUNC_ADD,
+      )
+      rl.begin_blend_mode(rl.BlendMode.BLEND_CUSTOM_SEPARATE)
+      began_blend_mode = True
+      if zoom != 1.0:
+        rl.begin_mode_2d(rl.Camera2D(rl.Vector2(0, 0), rl.Vector2(0, 0), 0.0, zoom))
+        began_mode_2d = True
+      draw()
+    finally:
+      if began_mode_2d:
+        rl.end_mode_2d()
+      if began_blend_mode:
+        rl.end_blend_mode()
+      if began_texture_mode:
+        rl.end_texture_mode()
+    rl.set_texture_filter(target.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+    rl.set_texture_wrap(target.texture, rl.TextureWrap.TEXTURE_WRAP_CLAMP)
 
   def _populate_render_texture_cache(self) -> None:
     pending = self._pending_render_textures
     self._pending_render_textures = {}
-    for cache_key, (width, height, render) in pending.items():
+    for cache_key, (width, height, render, supersample) in pending.items():
       if cache_key in self._cached_render_textures:
         continue
 
-      cached = rl.load_render_texture(max(1, int(width)), max(1, int(height)))
-      began_texture_mode = False
-      began_blend_mode = False
+      scale = 1
+      while scale * 2 <= supersample:
+        scale *= 2
+      cached = rl.load_render_texture(width * scale, height * scale)
       try:
-        rl.begin_texture_mode(cached)
-        began_texture_mode = True
-        rl.clear_background(rl.Color(0, 0, 0, 0))
-        # Preserve straight alpha while RGB is accumulated premultiplied. The
-        # resulting texture can then be composited with BLEND_ALPHA_PREMULTIPLY
-        # without squaring translucent vector alpha.
-        rl.rl_set_blend_factors_separate(
-          rl.RL_SRC_ALPHA, rl.RL_ONE_MINUS_SRC_ALPHA,
-          rl.RL_ONE, rl.RL_ONE_MINUS_SRC_ALPHA,
-          rl.RL_FUNC_ADD, rl.RL_FUNC_ADD,
-        )
-        rl.begin_blend_mode(rl.BlendMode.BLEND_CUSTOM_SEPARATE)
-        began_blend_mode = True
-        render()
+        self._render_into_texture(cached, render, rl.RL_SRC_ALPHA, float(scale))
+        # Halve repeatedly: a bilinear tap centred between four texels at an
+        # exact 2:1 ratio is a 2x2 box filter, so the chain is a scale x scale box.
+        while scale > 1:
+          scale //= 2
+          source = cached
+          cached = rl.load_render_texture(width * scale, height * scale)
+          try:
+            self._render_into_texture(cached, lambda src=source, w=width * scale, h=height * scale: rl.draw_texture_pro(
+              src.texture, rl.Rectangle(0, 0, src.texture.width, -src.texture.height),
+              rl.Rectangle(0, 0, w, h), rl.Vector2(0, 0), 0.0, rl.WHITE), rl.RL_ONE)
+          finally:
+            rl.unload_render_texture(source)
       except Exception:
-        if began_blend_mode:
-          rl.end_blend_mode()
-        if began_texture_mode:
-          rl.end_texture_mode()
         rl.unload_render_texture(cached)
         raise
-      else:
-        rl.end_blend_mode()
-        rl.end_texture_mode()
-      rl.set_texture_filter(cached.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
-      rl.set_texture_wrap(cached.texture, rl.TextureWrap.TEXTURE_WRAP_CLAMP)
       self._cached_render_textures[cache_key] = cached
 
   def _load_image_from_path(self, image_path: str, width: int | None = None, height: int | None = None,
@@ -972,6 +1070,502 @@ class GuiApplication:
     rl.unload_image(image)
     return texture
 
+  # ---------------------------------------------------------------- ui streamer
+
+  def request_ui_stream(self) -> None:
+    """Ask for the streamer to start. Safe from the UI loop; touches no GL.
+
+    The actual bind, texture allocation and thread start happen on the render
+    thread in :meth:`_start_pending_ui_stream`, because allocating a render
+    texture is a GL operation.
+    """
+    if self._ui_stream is None:
+      self._ui_stream_pending = True
+      self._ui_stream_error = ""
+
+  def ui_stream_running(self) -> bool:
+    return self._ui_stream is not None
+
+  def ui_stream_state(self) -> tuple[str, str, int]:
+    """``(state, detail, port)`` for publication to Galaxy.
+
+    Galaxy waits on this, not on the consumed request flag: the flag only
+    proves the request was seen, while the viewer page is served by the
+    listener and must not be loaded before it is bound. ``running`` means
+    bound and serving (a paused stream included -- the viewer reports that
+    itself); ``error`` carries the reason the last start attempt failed.
+    """
+    stream = self._ui_stream
+    if stream is not None:
+      try:
+        return "running", "", stream.port
+      except Exception:  # pragma: no cover - server socket already gone
+        return "running", "", 0
+    if self._ui_stream_pending:
+      return "starting", "", 0
+    if self._ui_stream_error:
+      return "error", self._ui_stream_error, 0
+    return "off", "", 0
+
+  def set_ui_stream_control(self, allowed: bool, reason: str = "") -> None:
+    """Policy for remote touch input from the streamer, set by the app.
+
+    Off until the app opts in, so only a UI that decides when remote taps are
+    safe (``selfdrive.ui`` refuses them while driving) can ever receive them.
+    """
+    self._ui_stream_control_allowed = allowed
+    self._ui_stream_control_reason = reason
+
+  def _arbitrate_input(self, physical: list[MouseEvent], now: float) -> list[MouseEvent]:
+    """This frame's events: physical touches plus live remote control.
+
+    Render thread only. Remote input shares slot 0 with the touchscreen, so
+    exactly one source owns it at a time, and the physical screen wins:
+
+    * a remote press is refused while a finger is down or the panel was
+      touched within ``REMOTE_PHYSICAL_QUIET``;
+    * a finger landing during a remote gesture withdraws it with a ``cancelled``
+      event first, so the physical gesture starts clean.
+
+    A remote gesture only ever ends in a real release when its viewer lifted.
+    Every other ending -- preemption, a stalled or vanished viewer, control
+    refused (onroad), the streamer stopping -- is a cancel, which widgets
+    treat as the finger going away without a click.
+    """
+    touching = False
+    for event in physical:
+      if event.left_down:
+        self._physical_slots_down.add(event.slot)
+      else:
+        self._physical_slots_down.discard(event.slot)
+      # Desktop hover (no button) is not a touch.
+      touching |= event.left_down or event.left_released
+    if touching:
+      self._last_physical_event_t = now
+    physical_busy = bool(self._physical_slots_down) or now - self._last_physical_event_t < REMOTE_PHYSICAL_QUIET
+
+    events: list[MouseEvent] = []
+    if self._remote_down and (touching or self._physical_slots_down):
+      events.append(self._remote_event(now, cancelled=True))
+      self._preempt_remote("someone touched the comma screen")
+      return events + physical
+
+    for remote in self._drain_remote(now):
+      if remote.kind == "down":
+        if physical_busy:
+          self._preempt_remote("the comma screen is in use")
+          break
+        self._remote_down = True
+        self._remote_pos = MousePos(remote.x * self._width, remote.y * self._height)
+        events.append(self._remote_event(now, pressed=True))
+      elif not self._remote_down:
+        continue  # the press never reached the UI; nothing to move, release or cancel
+      elif remote.kind == "move":
+        self._remote_pos = MousePos(remote.x * self._width, remote.y * self._height)
+        events.append(self._remote_event(now))
+      elif remote.kind == "up":
+        self._remote_pos = MousePos(remote.x * self._width, remote.y * self._height)
+        events.append(self._remote_event(now, released=True))
+      else:
+        events.append(self._remote_event(now, cancelled=True))
+    return physical + events
+
+  def _remote_event(self, now: float, pressed: bool = False, released: bool = False, cancelled: bool = False) -> MouseEvent:
+    """A slot-0 event at the remote pointer. Coordinates arrive normalized to
+    the captured image, which is the whole logical canvas."""
+    down = not (released or cancelled)
+    if not down:
+      self._remote_down = False
+    return MouseEvent(self._remote_pos, 0, pressed, released, down, now, cancelled)
+
+  def _drain_remote(self, now: float) -> list:
+    stream = self._ui_stream
+    if stream is None:
+      # The streamer stopped under a held remote press: withdraw it.
+      return [_REMOTE_WITHDRAWN] if self._remote_down else []
+    try:
+      stream.set_control_allowed(self._ui_stream_control_allowed, self._ui_stream_control_reason)
+      return stream.drain_control(now)
+    except Exception as exc:
+      cloudlog.error(f"UI streamer input failed: {exc}")
+      return [_REMOTE_WITHDRAWN] if self._remote_down else []
+
+  def _preempt_remote(self, reason: str) -> None:
+    self._remote_down = False
+    stream = self._ui_stream
+    if stream is not None:
+      try:
+        stream.preempt_control(reason)
+      except Exception as exc:
+        cloudlog.error(f"UI streamer input failed: {exc}")
+
+  def ui_stream_wants_frames(self) -> bool:
+    """True while a browser is actually pulling images.
+
+    The screen power policy uses this to keep rendering without waking the
+    display: a watcher needs frames, not a lit panel. Telemetry-only interest
+    deliberately does not count, since it needs no rendering.
+    """
+    stream = self._ui_stream
+    return (stream is not None and stream.image_demand_active()) or self.starpilot_auto_wants_frames()
+
+  def starpilot_auto_wants_frames(self) -> bool:
+    """True while starpilot_autod is projecting and asking for frames."""
+    producer = self._starpilot_auto_producer()
+    try:
+      return producer is not None and producer.demand_active()
+    except Exception:
+      return False
+
+  def _starpilot_auto_producer(self):
+    if not self._starpilot_auto_enabled:
+      return None
+    if self._starpilot_auto_frame_producer is None and not self._starpilot_auto_failed:
+      try:
+        from openpilot.starpilot.system.starpilot_auto.frame_source import FrameProducer
+        self._starpilot_auto_frame_producer = FrameProducer()
+      except Exception as exc:
+        self._starpilot_auto_failed = True
+        cloudlog.error(f"Starpilot Auto frame source unavailable: {exc}")
+    return self._starpilot_auto_frame_producer
+
+  def _ensure_starpilot_auto_texture(self) -> None:
+    """Allocate the main render texture before drawing when projection needs frames.
+
+    Render thread only, between frames, exactly like a Live UI start. Reclaim
+    projection-only resources when the master switch is disabled.
+    """
+    if not self._starpilot_auto_enabled:
+      if self._starpilot_auto_frame_producer is not None:
+        self._starpilot_auto_frame_producer.close()
+        self._starpilot_auto_frame_producer = None
+      self._release_starpilot_auto_texture()
+      # Only reclaim a main texture allocated for projection. Live UI can take
+      # ownership while connected; its capture and rendering must keep working.
+      if self._starpilot_auto_owns_render_texture and self._ui_stream is None and not self._ui_stream_pending:
+        self._unload_render_texture(self._render_texture)
+        self._render_texture = None
+        self._starpilot_auto_owns_render_texture = False
+      return
+    if self._render_texture is not None or not self.starpilot_auto_wants_frames():
+      return
+    render_texture = rl.load_render_texture(self._render_texture_width, self._render_texture_height)
+    texture = getattr(render_texture, "texture", None)
+    if texture is None or getattr(texture, "id", 0) == 0:
+      self._unload_render_texture(render_texture)
+      self._starpilot_auto_failed = True
+      self._starpilot_auto_frame_producer = None
+      cloudlog.error("Starpilot Auto capture disabled: render texture allocation failed")
+      return
+    rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+    self._render_texture = render_texture
+    self._starpilot_auto_owns_render_texture = True
+
+  def _capture_starpilot_auto_frame(self) -> None:
+    """Scale the finished frame into the negotiated video geometry and publish it.
+
+    The GPU letterboxes the UI into the requested content rectangle, so the
+    readback is already the encoder's size, top-down and undistorted. Any
+    failure disables projection capture only; the native UI keeps rendering.
+    """
+    if not self._starpilot_auto_enabled:
+      return
+    producer = self._starpilot_auto_frame_producer
+    if producer is None or self._render_texture is None:
+      return
+    try:
+      now_ns = time.monotonic_ns()
+      request = producer.pending_request(now_ns / 1e9)
+      if request is None or not producer.due(request, now_ns):
+        return
+      target = self._starpilot_auto_texture
+      if target is None or target.texture.width != request.width or target.texture.height != request.height:
+        self._release_starpilot_auto_texture()
+        target = rl.load_render_texture(request.width, request.height)
+        if getattr(getattr(target, "texture", None), "id", 0) == 0:
+          raise RuntimeError(f"{request.width}x{request.height} projection texture unavailable")
+        rl.set_texture_filter(target.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+        self._starpilot_auto_texture = target
+      rl.begin_texture_mode(target)
+      rl.clear_background(rl.BLACK)
+      x, y, w, h = request.content(self._render_texture_width, self._render_texture_height)
+      rl.draw_texture_pro(self._render_texture.texture,
+                          rl.Rectangle(0, 0, float(self._render_texture_width), float(self._render_texture_height)),
+                          rl.Rectangle(float(x), float(y), float(w), float(h)), rl.Vector2(0, 0), 0.0, rl.WHITE)
+      rl.end_texture_mode()
+      image = rl.load_image_from_texture(target.texture)
+      try:
+        if image.format != rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 or \
+           (image.width, image.height) != (request.width, request.height):
+          raise RuntimeError(f"unexpected projection readback {image.width}x{image.height} format {image.format}")
+        size = request.width * request.height * 4
+        producer.publish(request, rl.ffi.buffer(image.data, size), now_ns)
+      finally:
+        rl.unload_image(image)
+    except Exception as exc:
+      self._starpilot_auto_failed = True
+      self._starpilot_auto_frame_producer = None
+      self._release_starpilot_auto_texture()
+      cloudlog.error(f"Starpilot Auto capture disabled: {exc}")
+
+  def _release_starpilot_auto_texture(self) -> None:
+    texture, self._starpilot_auto_texture = self._starpilot_auto_texture, None
+    if texture is not None and rl.is_window_ready():
+      self._unload_render_texture(texture)
+
+  def _start_pending_ui_stream(self) -> None:
+    """Honour a pending start request. Render thread only.
+
+    Allocates the main render texture if this device does not already draw
+    through one. Every failure -- configuration, GL, bind or thread start --
+    is contained here: it disables streaming, records a reason for Galaxy and
+    leaves the ordinary UI exactly as it was. Nothing from this path may reach
+    the render loop.
+    """
+    if not self._ui_stream_pending:
+      return
+    self._ui_stream_pending = False
+    if self._ui_stream is not None:
+      return
+
+    try:
+      self._start_ui_stream()
+    except Exception as exc:
+      # A GL, allocation or thread-start failure must not terminate rendering.
+      self._fail_ui_stream(f"startup failed: {exc}")
+
+  def _fail_ui_stream(self, reason: str) -> None:
+    """Record why streaming is unavailable and log it once."""
+    self._ui_stream_error = reason
+    cloudlog.error(f"UI streamer unavailable: {reason}")
+
+  def _start_ui_stream(self) -> None:
+    """Bind, allocate and serve. Only called by :meth:`_start_pending_ui_stream`."""
+    try:
+      from openpilot.system.ui.lib import ui_stream as ui_stream_module
+    except Exception as exc:
+      self._fail_ui_stream(f"import failed: {exc}")
+      return
+
+    # Resolve configuration before touching GL or binding, so STREAM=0 costs
+    # nothing and an invalid configuration cannot leave a half-built streamer.
+    try:
+      default_fps = ui_stream_module.DEFAULT_FPS if self.big_ui() else ui_stream_module.COMPACT_UI_FPS
+      config = ui_stream_module.parse_config(os.environ, default_fps)
+    except ui_stream_module.StreamConfigError as exc:
+      self._fail_ui_stream(str(exc))
+      return
+    if config is None:
+      self._ui_stream_error = ""  # STREAM=0 is a deliberate kill switch, not a failure
+      return
+
+    # Opening Live UI opts into the texture path on every device, including
+    # MICI. This runs between frames on the render thread, before drawing into
+    # the new target. Keep it until window close to avoid repeated composition
+    # switches when viewers disconnect and return.
+    allocated_texture = False
+    render_texture = None
+    if self._render_texture is None:
+      render_texture = rl.load_render_texture(self._render_texture_width, self._render_texture_height)
+      texture = getattr(render_texture, "texture", None)
+      if texture is None or getattr(texture, "id", 0) == 0:
+        self._unload_render_texture(render_texture)
+        self._fail_ui_stream("render texture allocation failed")
+        return
+      try:
+        rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+      except Exception as exc:
+        self._unload_render_texture(render_texture)
+        self._fail_ui_stream(f"render texture filtering failed: {exc}")
+        return
+      allocated_texture = True
+
+    try:
+      stream = ui_stream_module.UiStream(config)
+    except OSError as exc:
+      if allocated_texture:
+        self._unload_render_texture(render_texture)
+      self._fail_ui_stream(f"cannot bind {config.bind}:{config.port}: {exc}")
+      return
+
+    # Publish the streamer before serve(): a thread-start failure then rolls
+    # back through stop_ui_stream(), which closes the listener it already owns.
+    if allocated_texture:
+      self._render_texture = render_texture
+    self._ui_stream = stream
+    self._ui_stream_owns_texture = allocated_texture
+    self._stream_paused = False
+    try:
+      stream.serve()
+    except Exception as exc:
+      self.stop_ui_stream()
+      self._fail_ui_stream(f"cannot start streamer threads: {exc}")
+      return
+    self._ui_stream_error = ""
+    cloudlog.warning(f"UI streamer started on {config} (texture allocated: {allocated_texture})")
+
+  @staticmethod
+  def _unload_render_texture(render_texture) -> None:
+    """Best-effort rollback of a texture allocated for streaming only."""
+    if render_texture is None:
+      return
+    try:
+      rl.unload_render_texture(render_texture)
+    except Exception as exc:  # pragma: no cover - defensive
+      cloudlog.error(f"UI streamer: render texture rollback failed: {exc}")
+
+  def _read_stream_texture(self, buffer: bytearray) -> bool:
+    """Render-thread readback of the main UI texture into owned storage."""
+    return self._read_texture_into(self._render_texture.texture, buffer)
+
+  def _read_scaled_stream_texture(self, buffer: bytearray) -> bool:
+    """Downscale the UI into the stream texture on the GPU, then read it back.
+
+    Reading back only the encoded size moves a fraction of the bytes across
+    the GPU->CPU readback (which blocks the render thread) and leaves the
+    worker nothing to resize. Drawing with a positive source height also
+    lands the rows top-down, so the worker skips its vertical flip.
+    """
+    target = self._ui_stream_texture
+    width, height = target.texture.width, target.texture.height
+    rl.begin_texture_mode(target)
+    rl.clear_background(rl.BLACK)
+    rl.draw_texture_pro(self._render_texture.texture,
+                        rl.Rectangle(0, 0, float(self._render_texture_width), float(self._render_texture_height)),
+                        rl.Rectangle(0, 0, float(width), float(height)), rl.Vector2(0, 0), 0.0, rl.WHITE)
+    rl.end_texture_mode()
+    return self._read_texture_into(target.texture, buffer)
+
+  def _ensure_stream_texture(self, width: int, height: int) -> bool:
+    """Keep a ``width`` x ``height`` render texture for GPU downscaling.
+
+    Returns ``False`` when it cannot be allocated; the caller then falls back
+    to a full-size readback with a CPU resize, which is slower but correct.
+    """
+    current = self._ui_stream_texture
+    if current is not None and current.texture.width == width and current.texture.height == height:
+      return True
+    self._release_stream_texture()
+    render_texture = rl.load_render_texture(width, height)
+    texture = getattr(render_texture, "texture", None)
+    if texture is None or getattr(texture, "id", 0) == 0:
+      self._unload_render_texture(render_texture)
+      cloudlog.error(f"UI streamer: {width}x{height} scaling texture unavailable, using CPU resize")
+      return False
+    self._ui_stream_texture = render_texture
+    return True
+
+  def _release_stream_texture(self) -> None:
+    render_texture = self._ui_stream_texture
+    self._ui_stream_texture = None
+    if render_texture is not None and rl.is_window_ready():
+      self._unload_render_texture(render_texture)
+
+  def _read_texture_into(self, source: rl.Texture, buffer: bytearray) -> bool:
+    image = None
+    try:
+      image = rl.load_image_from_texture(source)
+      if image is None or image.data == rl.ffi.NULL or image.width <= 0 or image.height <= 0:
+        return False
+      if image.format != rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8:
+        self._ui_stream.fail_capture(f"unsupported texture format: {image.format}")
+        return False
+      nbytes = image.width * image.height * 4
+      if nbytes != len(buffer):
+        # Dimensions disagree with _render_texture_width/_height. Retrying every
+        # pacing interval would fail forever, so disable once and log.
+        self._ui_stream.fail_capture(
+          f"readback size mismatch: {image.width}x{image.height} needs {nbytes} bytes, buffer is {len(buffer)}")
+        return False
+      buffer[:nbytes] = rl.ffi.buffer(image.data, nbytes)
+      return True
+    finally:
+      if image is not None:
+        rl.unload_image(image)
+
+  def _capture_stream_frame(self) -> None:
+    """Idle-shutdown check plus one paced capture. Render thread only."""
+    self._service_ui_stream(capture=True)
+
+  def _service_ui_stream(self, capture: bool) -> None:
+    """Run the streamer's per-frame housekeeping.
+
+    Called on every render-loop iteration, including the ones skipped because
+    the screen is off: idle shutdown must not wait for the display to wake, or
+    a request that never got a viewer would keep its listener and worker alive
+    indefinitely. ``capture=False`` is that skipped-frame case -- there is no
+    new frame to read back.
+    """
+    stream = self._ui_stream
+    if stream is None:
+      return
+    self._mark_progress("gui_app.before_stream_capture")
+    try:
+      # Nobody has wanted this for a while: give the sockets, threads and
+      # buffers back until the next request.
+      if stream.self_stop_due():
+        cloudlog.warning("UI streamer stopping: idle with no viewers")
+        self.stop_ui_stream()
+      elif capture and self._render_texture is not None:
+        self._capture_into(stream)
+    except Exception as exc:
+      cloudlog.error(f"UI streamer disabled after capture error: {exc}")
+      self.stop_ui_stream()
+    self._mark_progress("gui_app.after_stream_capture")
+
+  def _capture_into(self, stream) -> None:
+    source = (self._render_texture_width, self._render_texture_height)
+    width, height = stream.output_size(*source)
+    if (width, height) != source and self._ui_stream_texture is None and not self._ui_stream_scale_failed:
+      self._ui_stream_scale_failed = not self._ensure_stream_texture(width, height)
+    if (width, height) != source and self._ui_stream_texture is not None:
+      stream.maybe_capture(time.monotonic(), width, height, self._read_scaled_stream_texture,
+                           bottom_up=False, source_size=source)
+    else:
+      stream.maybe_capture(time.monotonic(), *source, self._read_stream_texture)
+
+  def _record_frame(self) -> None:
+    """Hand one rendered frame to the ffmpeg writer thread.
+
+    No-ops when recording was disabled because the render texture could not be
+    allocated, so a texture failure never crashes the render loop.
+    """
+    if self._render_texture is None or self._ffmpeg_queue is None:
+      return
+    image = rl.load_image_from_texture(self._render_texture.texture)
+    data_size = image.width * image.height * 4
+    data = bytes(rl.ffi.buffer(image.data, data_size))
+    self._ffmpeg_queue.put(data)  # Async write via background thread
+    rl.unload_image(image)
+
+  def stop_ui_stream(self) -> None:
+    """Idempotent streamer shutdown. Safe even if the window is already gone.
+
+    A render texture allocated for streaming is deliberately retained until the
+    window closes (§4): tearing it down would be a second live composition
+    switch, and close() unloads it anyway.
+    """
+    stream = self._ui_stream
+    self._ui_stream = None
+    self._ui_stream_pending = False
+    self._stream_paused = False
+    if stream is not None:
+      # A held remote press is withdrawn by the next frame's arbitration.
+      stream.stop()
+    # Unlike the main texture this one is only read, never composited, so
+    # freeing it costs nothing visible; it is small and cheap to re-create.
+    self._release_stream_texture()
+    self._ui_stream_scale_failed = False
+
+  def stream_telemetry_due(self, now: float) -> bool:
+    stream = self._ui_stream
+    return stream is not None and stream.telemetry_due(now)
+
+  def publish_stream_telemetry(self, payload: bytes) -> None:
+    stream = self._ui_stream
+    if stream is not None:
+      stream.set_telemetry(payload)
+
   def close_ffmpeg(self):
     if self._ffmpeg_thread is not None:
       # Signal thread to stop, send sentinel, then wait for it to drain
@@ -989,6 +1583,9 @@ class GuiApplication:
         self._ffmpeg_proc.wait()
 
   def close(self):
+    # Stop the streamer first so cleanup runs even if the window is already gone.
+    self.stop_ui_stream()
+
     if not rl.is_window_ready():
       return
 
@@ -1004,6 +1601,8 @@ class GuiApplication:
     for font in self._fonts.values():
       rl.unload_font(font)
     self._fonts = {}
+
+    self._release_starpilot_auto_texture()
 
     if self._render_texture is not None:
       rl.unload_render_texture(self._render_texture)
@@ -1049,7 +1648,7 @@ class GuiApplication:
           self._mouse._handle_mouse_event()
 
         # Store all mouse events for the current frame
-        self._mouse_events = self._mouse.get_events()
+        self._mouse_events = self._arbitrate_input(self._mouse.get_events(), time.monotonic())
         if len(self._mouse_events) > 0:
           self._last_mouse_event = self._mouse_events[-1]
           self.request_high_fps()
@@ -1057,11 +1656,35 @@ class GuiApplication:
         # Skip rendering when screen is off
         if not self._should_render:
           self._mark_progress("gui_app.skip_render")
+          # Bind a requested streamer even now. The screen policy only resumes
+          # rendering once a viewer is pulling images, and a viewer can only
+          # connect to a bound listener, so deferring the start until the
+          # display wakes would deadlock the two against each other.
+          if self._ui_stream_pending:
+            self._mark_progress("gui_app.before_stream_start")
+            self._start_pending_ui_stream()
+            self._mark_progress("gui_app.after_stream_start")
+          if self._ui_stream is not None and not self._stream_paused:
+            self._stream_paused = True
+            self._ui_stream.pause()
+          self._service_ui_stream(capture=False)
           if PC:
             rl.poll_input_events()
           time.sleep(1 / self._target_fps)
           yield False
           continue
+
+        if self._ui_stream is not None and self._stream_paused:
+          self._stream_paused = False
+          self._ui_stream.resume()
+
+        # Honour a pending start before the frame is drawn, so a texture
+        # allocated now receives this frame and the first capture is valid.
+        if self._ui_stream_pending:
+          self._mark_progress("gui_app.before_stream_start")
+          self._start_pending_ui_stream()
+          self._mark_progress("gui_app.after_stream_start")
+        self._ensure_starpilot_auto_texture()
 
         if self._render_texture:
           self._mark_progress("gui_app.before_begin_texture_mode")
@@ -1157,11 +1780,12 @@ class GuiApplication:
         self._populate_render_texture_cache()
 
         if RECORD:
-          image = rl.load_image_from_texture(self._render_texture.texture)
-          data_size = image.width * image.height * 4
-          data = bytes(rl.ffi.buffer(image.data, data_size))
-          self._ffmpeg_queue.put(data)  # Async write via background thread
-          rl.unload_image(image)
+          self._record_frame()
+
+        self._capture_stream_frame()
+        self._mark_progress("gui_app.before_starpilot_auto_capture")
+        self._capture_starpilot_auto_frame()
+        self._mark_progress("gui_app.after_starpilot_auto_capture")
 
         self.frame_timing = FrameTiming(
           (time.monotonic() - frame_start) * 1000,

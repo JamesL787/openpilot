@@ -280,8 +280,8 @@ class SystemSettingsManagerView(PanelManagerView):
         "subtitle": "",
         "get_state": lambda: self._controller._params.get_bool("DisableOnroadUploads"),
         "set_state": lambda v: self._controller._params.put_bool("DisableOnroadUploads", v),
-        "is_enabled": lambda: not self._controller._params.get_bool("NoUploads"),
-        "disabled_label": tr("Turn off Disable Uploads first"),
+        "is_enabled": lambda: self._controller._params.get_bool("NoUploads"),
+        "disabled_label": tr("Turn on Disable Uploads first"),
       },
       {
         "title": tr("Upload rlogs"),
@@ -300,8 +300,9 @@ class SystemSettingsManagerView(PanelManagerView):
         "subtitle": "",
         "get_state": lambda: self._controller._params.get_bool("HigherBitrate"),
         "set_state": self._controller._on_higher_bitrate_toggle,
-        "is_enabled": lambda: not self._controller._params.get_bool("DisableOnroadUploads") and not self._controller._params.get_bool("NoUploads"),
-        "disabled_label": tr("Uploads must stay enabled"),
+        # Recording only switches to high bitrate when nothing uploads at all (see use_higher_bitrate).
+        "is_enabled": lambda: self._controller._params.get_bool("NoUploads") and not self._controller._params.get_bool("DisableOnroadUploads"),
+        "disabled_label": tr("Needs all uploads disabled"),
       },
     ]
 
@@ -948,7 +949,10 @@ class StarPilotSystemLayout(_SettingsPage):
     if action_id == "ScreenManagement":
       self._params.put_bool("ScreenManagement", not self._params.get_bool("ScreenManagement"))
     elif action_id == "DeviceManagement":
-      self._params.put_bool("DeviceManagement", not self._params.get_bool("DeviceManagement"))
+      if self._params.get_bool("DeviceManagement"):
+        self._confirm_onroad_uploads(lambda: self._params.put_bool("DeviceManagement", False))
+      else:
+        self._params.put_bool("DeviceManagement", True)
     elif action_id == "Storage":
       self._on_delete_driving_data()
     elif action_id == "ErrorLogs":
@@ -1040,7 +1044,18 @@ class StarPilotSystemLayout(_SettingsPage):
         callback=lambda res: self._params.put_bool("NoUploads", True) if res == DialogResult.CONFIRM else None,
       ))
     else:
-      self._params.put_bool("NoUploads", False)
+      self._confirm_onroad_uploads(lambda: self._params.put_bool("NoUploads", False))
+
+  def _confirm_onroad_uploads(self, apply):
+    if not self._params.get_bool("StarpilotAutoEnabled"):
+      apply()
+      return
+    gui_app.push_widget(ConfirmDialog(
+      tr("Starpilot Auto is on. Uploading while driving competes with the car screen for CPU and data, which can cause "
+         "stutter, dropped connections or errors. Allow uploads while driving?"),
+      tr("Allow"),
+      callback=lambda res: apply() if res == DialogResult.CONFIRM else None,
+    ))
 
   def _on_no_logging_toggle(self, state):
     if state:

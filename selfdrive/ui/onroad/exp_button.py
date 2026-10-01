@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 import pyray as rl
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -17,6 +18,9 @@ BRAKE_WHEEL_COLOR = rl.Color(255, 0, 0, 255)
 ACCEL_WHEEL_COLOR = rl.Color(22, 127, 64, 255)
 BRAKE_ACCEL_THRESHOLD = 0.25
 COMMAND_ACCEL_THRESHOLD = 0.05
+# Stopped on the brake while disengaged, pedalPressed's noEntry chatters and engageable flips
+# many times a second; the button only follows it once it has held this long.
+ENGAGEABLE_SETTLE_SECONDS = 0.5
 
 
 def get_wheel_tint(brake_pressed: bool, mode_tint: rl.Color | None, pedal_feedback_enabled: bool,
@@ -38,11 +42,18 @@ def get_wheel_tint(brake_pressed: bool, mode_tint: rl.Color | None, pedal_feedba
 
 
 class ExpButton(Widget):
+  # A dark outline traced around the experimental icon on a colored background, so the orange
+  # atom doesn't blend into the orange circle: (offset px, alpha) per ring of silhouettes.
+  ICON_OUTLINE: tuple[tuple[float, int], ...] = ()
+  ICON_OUTLINE_DIRECTIONS = tuple((math.cos(math.radians(a)), math.sin(math.radians(a))) for a in range(0, 360, 30))
+
   def __init__(self, button_size: int, icon_size: int):
     super().__init__()
     self._params = ui_state.ui_params
     self._experimental_mode: bool = False
     self._engageable: bool = False
+    self._engageable_raw: bool | None = None  # the last engageable read; None before the first
+    self._engageable_since = 0.0
 
     # State hold mechanism
     self._hold_duration = 2.0  # seconds
@@ -77,7 +88,8 @@ class ExpButton(Widget):
   def _update_state(self) -> None:
     selfdrive_state = ui_state.sm["selfdriveState"]
     self._experimental_mode = selfdrive_state.experimentalMode
-    self._engageable = selfdrive_state.engageable or selfdrive_state.enabled or ui_state.always_on_lateral_active
+    engaged = selfdrive_state.enabled or ui_state.always_on_lateral_active
+    self._engageable = engaged or self._settled_engageable(selfdrive_state.engageable, time.monotonic())
 
     # Smooth steering angle for rotating wheel
     car_state = ui_state.sm["carState"]
@@ -100,13 +112,26 @@ class ExpButton(Widget):
     else:
       self._bg_color = self._bg_colors["disengaged"]
 
+  def _settled_engageable(self, engageable: bool, now: float) -> bool:
+    """engageable once it has stopped changing for ENGAGEABLE_SETTLE_SECONDS; until then, what was shown."""
+    if self._engageable_raw is None:
+      self._engageable_raw, self._engageable_since = engageable, now
+      return engageable
+    if engageable != self._engageable_raw:
+      self._engageable_raw = engageable
+      self._engageable_since = now
+    if now - self._engageable_since >= ENGAGEABLE_SETTLE_SECONDS:
+      return engageable
+    return self._engageable
+
   def _handle_mouse_release(self, _):
     super()._handle_mouse_release(_)
     if self._is_toggle_allowed():
       if self._params.get_bool("ConditionalExperimental"):
         current_status = ui_state.params_memory.get_int("CEStatus", default=CEStatus["OFF"])
         override_value = next_manual_ce_status(current_status, self._experimental_mode)
-        ui_state.params_memory.put_int("CEStatus", override_value)
+        # Through live_params so the cached CEStatus the UI draws from updates this frame.
+        ui_state.live_params.put_int("CEStatus", override_value)
         sync_manual_ce_state(self._params, override_value)
         self._held_mode = None
         self._hold_end_time = None
@@ -164,7 +189,13 @@ class ExpButton(Widget):
       origin = rl.Vector2(texture.width / 2, texture.height / 2)
       rl.draw_texture_pro(texture, source_rect, dest_rect, origin, -self._steer_angle_filter.x, color)
     else:
-      rl.draw_texture_ex(texture, rl.Vector2(center_x - texture.width / 2, center_y - texture.height / 2), 0.0, 1.0, color)
+      position = rl.Vector2(center_x - texture.width / 2, center_y - texture.height / 2)
+      if exp_mode and self._bg_color is not self._bg_colors["disengaged"]:
+        for offset, alpha in self.ICON_OUTLINE:
+          shadow = rl.Color(0, 0, 0, alpha)
+          for dx, dy in self.ICON_OUTLINE_DIRECTIONS:
+            rl.draw_texture_ex(texture, rl.Vector2(position.x + dx * offset, position.y + dy * offset), 0.0, 1.0, shadow)
+      rl.draw_texture_ex(texture, position, 0.0, 1.0, color)
 
   def _held_or_actual_mode(self):
     now = time.monotonic()

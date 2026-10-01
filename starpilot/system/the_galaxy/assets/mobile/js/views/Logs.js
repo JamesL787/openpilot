@@ -5,8 +5,11 @@ import { TroubleshootPanel } from "../components/TroubleshootPanel.js"
 import { GalaxyTabs } from "../components/GalaxyTabs.js"
 
 import { SystemMonitor } from "../components/SystemMonitor.js"
+import { SendDiagnosticsPanel } from "../components/SendDiagnosticsPanel.js?v=send-diagnostics-3"
+import { StarpilotAutoDiagnosticsPanel } from "../components/StarpilotAutoDiagnosticsPanel.js?v=starpilot-auto-diagnostics-2"
 
 const TABS = {
+  starpilotAuto: "Starpilot Auto",
   troubleshoot: "Troubleshoot",
   errors: "Error Logs",
   tmux: "Tmux Live Log",
@@ -23,7 +26,7 @@ function parseLogDate(filename) {
 
 export const Logs = {
   name: "Logs",
-  components: { TroubleshootPanel, GalaxyTabs, SystemMonitor },
+  components: { TroubleshootPanel, GalaxyTabs, SystemMonitor, SendDiagnosticsPanel, StarpilotAutoDiagnosticsPanel },
   data() {
     return {
       TABS,
@@ -39,7 +42,7 @@ export const Logs = {
     }
   },
   setup() {
-    return useTabRouting("/logs", { troubleshoot: "troubleshoot", errors: "errors", tmux: "tmux", monitor: "monitor", discord: "discord" })
+    return useTabRouting("/logs", { starpilotAuto: "starpilot-auto", troubleshoot: "troubleshoot", errors: "errors", tmux: "tmux", monitor: "monitor", discord: "discord" })
   },
   created() {
     this.stream = useLogStream({ endpoint: "/api/tmux_log/live", snapshotFn: () => api.tmuxSnapshot(), interval: 2000 })
@@ -222,6 +225,17 @@ export const Logs = {
               <button type="button" class="gx-btn gx-btn--danger" @click="deleteTmux(f)"><i class="bi bi-trash"></i></button>
             </div>
           </div>
+        </section>
+      </template>
+
+      <template v-else-if="tab === 'starpilotAuto'">
+        <SendDiagnosticsPanel />
+        <section class="gx-card" style="margin-top:12px;">
+          <div class="gx-section__header">
+            <i class="bi bi-car-front"></i>
+            <span class="gx-section__title">Connection history</span>
+          </div>
+          <div style="padding: var(--sp-4);"><StarpilotAutoDiagnosticsPanel /></div>
         </section>
       </template>
 

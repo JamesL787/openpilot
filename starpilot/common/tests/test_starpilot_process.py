@@ -165,3 +165,15 @@ def test_transition_onroad_stops_dashboard_analysis(monkeypatch, tmp_path):
 
   assert calls == ["stop"]
   assert not error_log.exists()
+
+
+def test_restore_planner_core_repins_after_power_save():
+  calls = []
+  assert starpilot_process.restore_planner_core(lambda pid: {0, 1, 2, 3, 6, 7}, calls.append)
+  assert calls == [[starpilot_process.PLANNER_CORE]]
+
+
+def test_restore_planner_core_leaves_pinned_process_alone():
+  calls = []
+  assert not starpilot_process.restore_planner_core(lambda pid: {starpilot_process.PLANNER_CORE}, calls.append)
+  assert calls == []

@@ -117,6 +117,7 @@ def load_exp_button(monkeypatch):
     switchback_mode_enabled=False,
     traffic_mode_enabled=False,
     params_memory=SimpleNamespace(),
+    live_params=SimpleNamespace(),
     has_longitudinal_control=False,
   )
   ui_state_module = ModuleType("openpilot.selfdrive.ui.ui_state")

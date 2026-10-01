@@ -70,3 +70,54 @@ def test_run_builds_one_payload_for_both_navigation_publishers():
   instruction_payload = navigationd._publish_nav_instruction.calls[0][3]
   state_payload = navigationd._publish_nav_state.calls[0][3]
   assert instruction_payload is state_payload
+
+
+class SentMessages:
+  def __init__(self):
+    self.sent = []
+
+  def send(self, service, msg):
+    self.sent.append((service, msg))
+
+
+def test_nav_route_is_republished_for_late_subscribers(monkeypatch):
+  from openpilot.starpilot.navigation import navigationd as navigationd_module
+  from openpilot.starpilot.navigation.route_engine import Coordinate
+
+  class Route:
+    geometry = [Coordinate(0.0, 0.0), Coordinate(0.0, 0.001)]
+
+  clock = [100.0]
+  monkeypatch.setattr(navigationd_module, "monotonic", lambda: clock[0])
+  navigationd = Navigationd.__new__(Navigationd)
+  navigationd.pm = SentMessages()
+  navigationd._snapshot_route = lambda: (Route(), None, 1)
+  navigationd._published_route_generation = -1
+  navigationd._published_route_at = 0.0
+
+  navigationd._publish_nav_route_if_needed()
+  navigationd._publish_nav_route_if_needed()
+  assert len(navigationd.pm.sent) == 1
+
+  clock[0] += navigationd_module.NAV_ROUTE_REPUBLISH_SECONDS
+  navigationd._publish_nav_route_if_needed()
+  assert len(navigationd.pm.sent) == 2
+  assert len(navigationd.pm.sent[-1][1].navRoute.coordinates) == 2
+
+
+def test_cleared_route_is_not_republished(monkeypatch):
+  from openpilot.starpilot.navigation import navigationd as navigationd_module
+
+  clock = [100.0]
+  monkeypatch.setattr(navigationd_module, "monotonic", lambda: clock[0])
+  navigationd = Navigationd.__new__(Navigationd)
+  navigationd.pm = SentMessages()
+  navigationd._snapshot_route = lambda: (None, None, 2)
+  navigationd._published_route_generation = -1
+  navigationd._published_route_at = 0.0
+
+  navigationd._publish_nav_route_if_needed()
+  clock[0] += 60.0
+  navigationd._publish_nav_route_if_needed()
+  assert len(navigationd.pm.sent) == 1
+  assert not navigationd.pm.sent[0][1].valid

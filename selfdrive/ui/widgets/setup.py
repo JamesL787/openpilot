@@ -69,6 +69,9 @@ class SetupWidget(Widget):
   def _render_logo(self, rect: rl.Rectangle):
     self._logo_widget.render(rect)
 
+  def _create_pairing_dialog(self):
+    return PairingDialog()
+
   def _show_pairing(self):
     if not system_time_valid():
       dlg = alert_dialog(tr("Please connect to Wi-Fi to complete initial pairing"))
@@ -76,7 +79,7 @@ class SetupWidget(Widget):
       return
 
     if not self._pairing_dialog:
-      self._pairing_dialog = PairingDialog()
+      self._pairing_dialog = self._create_pairing_dialog()
     gui_app.push_widget(self._pairing_dialog)
 
   def __del__(self):

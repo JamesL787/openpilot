@@ -174,23 +174,26 @@ def _render_csc_glow(border_rect: rl.Rectangle, border_width: float = UI_BORDER_
 _smoothed_steer = 0.0
 
 
-def get_traffic_border_colors() -> tuple[rl.Color, rl.Color] | None:
+def get_traffic_border_colors(*, blind_spot_visible: bool = True) -> tuple[rl.Color, rl.Color] | None:
   sm = ui_state.sm
   car_state = sm["carState"] if sm.valid.get("carState", False) else None
   if car_state is None:
     return None
   params = ui_state.ui_params
   show_signal = params.get_bool("SignalMetrics")
-  show_blindspot = params.get_bool("BlindSpotMetrics")
+  blind_spot_allowed = blind_spot_visible
+  show_blindspot = params.get_bool("BlindSpotMetrics") and blind_spot_allowed
   if not (show_signal or show_blindspot):
     return None
 
   left_blindspot = car_state.leftBlindspot
   right_blindspot = car_state.rightBlindspot
   if ui_state.starpilot_toggles.get("v_asm_enabled", False):
-    vasm_left, vasm_right = get_fresh_vasm_state(ui_state.params_memory)
+    vasm_left, vasm_right = get_fresh_vasm_state(ui_state.live_params)
     left_blindspot = left_blindspot or vasm_left
     right_blindspot = right_blindspot or vasm_right
+  if not blind_spot_allowed:
+    left_blindspot = right_blindspot = False
   left_blinker = car_state.leftBlinker
   right_blinker = car_state.rightBlinker
 
@@ -217,14 +220,14 @@ def get_traffic_border_colors() -> tuple[rl.Color, rl.Color] | None:
   return left_color, right_color
 
 
-def render_background_effects(rect: rl.Rectangle, border_width: float):
+def render_background_effects(rect: rl.Rectangle, border_width: float, *, blind_spot_visible: bool = True):
   global _smoothed_steer
   sm = ui_state.sm
   border_rect = rl.Rectangle(rect.x + border_width, rect.y + border_width,
                              rect.width - 2 * border_width, rect.height - 2 * border_width)
 
   # 1. Turn Signal and Blind Spot indicators
-  colors = get_traffic_border_colors()
+  colors = get_traffic_border_colors(blind_spot_visible=blind_spot_visible)
   if colors is not None:
     left_color, right_color = colors
     if left_color.a > 0:

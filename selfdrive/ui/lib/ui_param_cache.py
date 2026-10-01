@@ -4,6 +4,8 @@ Parameter reads are file-backed.  The raylib UIs ask for the same values from
 multiple widgets during a frame, so a short cache avoids repeated open/read/
 close cycles. Writes invalidate immediately; opt-in background refresh keeps
 expired reads off the render thread while retaining the latest cached value.
+``max_stale`` bounds how old that retained value may be: a key nobody read for
+longer is read synchronously instead of showing a value from long ago.
 """
 
 from __future__ import annotations
@@ -29,9 +31,10 @@ class _RefreshRequest(NamedTuple):
 
 class UIParamCache:
   def __init__(self, params: Params | Any | None = None, ttl: float = 0.1,
-               clock: Callable[[], float] = time.monotonic):
+               clock: Callable[[], float] = time.monotonic, max_stale: float | None = None):
     self._params = params if params is not None else Params()
     self._ttl = max(0.0, ttl)
+    self._max_stale = max_stale
     self._clock = clock
     self._cache: dict[tuple[Any, ...], tuple[float, Any]] = {}
     self._lock = threading.Lock()
@@ -123,7 +126,8 @@ class UIParamCache:
       return cached[1]
 
     blocking = kwargs.get("block", args[0] if args else False)
-    if cached is not None and self._worker is not None and self._ttl > 0 and not blocking:
+    too_stale = cached is not None and self._max_stale is not None and now - cached[0] >= self._max_stale
+    if cached is not None and self._worker is not None and self._ttl > 0 and not blocking and not too_stale:
       self._queue_refresh(cache_key, cached, args, kwargs)
       return cached[1]
 

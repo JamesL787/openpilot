@@ -76,6 +76,11 @@ class GuiScrollPanel:
       self._offset_filter_y.x = -max_scroll_distance
 
   def _handle_mouse_event(self, mouse_event: MouseEvent, bounds: rl.Rectangle, content: rl.Rectangle):
+    if mouse_event.cancelled:
+      # Stop where the content is, with no fling; IDLE eases back into bounds.
+      self._scroll_state = ScrollState.IDLE
+      self._velocity_filter_y.x = 0.0
+      return
     if self._scroll_state == ScrollState.IDLE:
       if rl.check_collision_point_rec(mouse_event.pos, bounds):
         if mouse_event.left_pressed:

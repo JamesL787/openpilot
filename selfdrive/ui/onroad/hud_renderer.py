@@ -76,11 +76,14 @@ class HudRenderer(Widget):
     self._font_medium: rl.Font = gui_app.font(FontWeight.MEDIUM)
 
     self._exp_button: ExpButton = ExpButton(UI_CONFIG.button_size, UI_CONFIG.wheel_icon_size)
-    self._navigation_card = NavigationCardRenderer()
+    self._navigation_card = self._create_navigation_card()
 
     self.draw_set_speed = True
     self.draw_current_speed = True
     self.draw_exp_button = True
+
+  def _create_navigation_card(self):
+    return NavigationCardRenderer()
 
   def _update_state(self) -> None:
     """Update HUD state based on car state and controls state."""

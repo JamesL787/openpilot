@@ -7,6 +7,7 @@ and the image input into the neural network is not corrected for roll.
 '''
 
 import os
+import time
 import capnp
 import numpy as np
 from typing import NoReturn
@@ -19,6 +20,7 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process
 from openpilot.common.transformations.orientation import rot_from_euler, euler_from_rot
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.locationd.helpers import InputCheckLogger
 
 MIN_SPEED_FILTER = 15 * CV.MPH_TO_MS
 MAX_VEL_ANGLE_STD = np.radians(0.25)
@@ -269,6 +271,7 @@ def main() -> NoReturn:
 
   calibrator = Calibrator(param_put=True)
   calibrator.not_car = CP.notCar
+  input_check_logger = InputCheckLogger("calibrationdInputsInvalid")
 
   while 1:
     timeout = 0 if sm.frame == -1 else 100
@@ -288,7 +291,9 @@ def main() -> NoReturn:
 
     # 4Hz driven by cameraOdometry
     if sm.frame % 5 == 0:
-      calibrator.send_data(pm, sm.all_checks())
+      all_checks = sm.all_checks()
+      input_check_logger.update(sm, time.monotonic())
+      calibrator.send_data(pm, all_checks)
 
 
 if __name__ == "__main__":

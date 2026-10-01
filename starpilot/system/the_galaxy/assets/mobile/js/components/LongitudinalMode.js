@@ -1,5 +1,5 @@
 import { LONGITUDINAL_MODE_KEY, LONGITUDINAL_MODES, validLongitudinalSnapshot } from "/assets/components/tools/longitudinal_mode.mjs"
-import { SettingTree } from "./SettingTree.js"
+import { SettingTree } from "./SettingTree.js?v=starpilot-auto-uploads-1"
 import { isSettingVisible } from "../params.js"
 
 export const LongitudinalMode = {

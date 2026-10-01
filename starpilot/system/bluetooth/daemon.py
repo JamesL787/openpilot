@@ -17,6 +17,7 @@ OFFROAD_COMMANDS = {"set_power", "start_scan", "stop_scan", "pair", "forget", "t
 SCAN_DURATION = 20.0
 AUDIO_TEST_START_DELAY = 3.0
 AUDIO_TEST_HOLD_TIME = 3.0
+STARPILOT_AUTO_WIRELESS_UUID = "4de17a00-52cb-11e6-bdf4-0800200c9a66"
 RECONNECT_INTERVAL_SECONDS = 15.0
 CONTROLLER_RECONNECT_INTERVAL_SECONDS = 5.0
 RECONNECT_MAX_BACKOFF_SECONDS = 300.0
@@ -116,6 +117,10 @@ class BluetoothController:
         result.update(self._client().status())
         result["available"] = True
         self._bluez.agent.set_auto_accept_incoming(result["offroad"])
+        self._bluez.agent.set_auto_accept_head_units({
+          device["path"] for device in result["devices"]
+          if device.get("path") and device["paired"] and device["trusted"] and STARPILOT_AUTO_WIRELESS_UUID in device.get("uuids", [])
+        })
         prompt = result.get("prompt")
         if prompt is not None and self._pairing_address:
           prompt["address"] = self._pairing_address
@@ -131,11 +136,14 @@ class BluetoothController:
     if command in OFFROAD_COMMANDS and not self._offroad():
       raise RuntimeError("Bluetooth settings can only be changed offroad")
 
-  def _pair_worker(self, address: str) -> None:
+  def _pair_worker(self, address: str, select_audio: bool = True) -> None:
     try:
       self._client().pair(address)
       status = self._client().device_for_address(address)
-      if status.get("audio") and not self.params.get("BluetoothAudioAddress", encoding="utf-8"):
+      # A car head unit (Starpilot Auto Wireless service) is paired for projection;
+      # never silently route comma alerts to the car's speakers.
+      head_unit = STARPILOT_AUTO_WIRELESS_UUID in status.get("uuids", [])
+      if select_audio and not head_unit and status.get("audio") and not self.params.get("BluetoothAudioAddress", encoding="utf-8"):
         self.params.put("BluetoothAudioAddress", address)
       self._pairing_error = ""
     except Exception as error:
@@ -215,7 +223,7 @@ class BluetoothController:
       self._manual_disconnect_until.pop(address.upper(), None)
       self._pairing_address = address
       self._pairing_error = ""
-      threading.Thread(target=self._pair_worker, args=(address,), daemon=True).start()
+      threading.Thread(target=self._pair_worker, args=(address, bool(request.get("select_audio", True))), daemon=True).start()
     elif command == "connect":
       normalized_address = address.upper()
       self._reconnect_backoff.pop(normalized_address, None)

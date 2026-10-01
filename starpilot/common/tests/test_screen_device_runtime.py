@@ -42,9 +42,19 @@ def make_device(*, device_type="tici", **settings):
   state = SimpleNamespace(started=True, ignition=True, status=status.DISENGAGED, light_sensor=-1, started_time=0, started_frame=0, starpilot_toggles={},
                           params_memory=Params({}), ui_params=Params({'ScreenManagement': True, 'ScreenBrightness': 101,
                                            'ScreenBrightnessOnroad': 101, 'StandbyMode': True, **settings}), sm=Messages())
-  app = SimpleNamespace(target_fps=20, big_ui=lambda: False, mouse_events=[], set_should_render=lambda value: None)
+  rendering = {'value': True}
+  app = SimpleNamespace(target_fps=20, big_ui=lambda: False, mouse_events=[],
+                        set_should_render=lambda value: rendering.__setitem__('value', value),
+                        ui_stream_wants_frames=lambda: False, starpilot_auto_enabled=False)
+  app.rendering = rendering
+  clock = {'now': 100}
+  app.clock = clock
   env = {**vars(screen), 'ui_state': state, 'gui_app': app, 'UIStatus': status, 'BACKLIGHT_OFFROAD': 65,
-         'np': np, 'time': SimpleNamespace(monotonic=lambda: 100), 'FirstOrderFilter': FirstOrderFilter,
+         'STREAM_OFFROAD_HOLD_MAX': 600.0, 'STARPILOT_AUTO_SLEEP_STALE_GRACE': 3.0, 'STARPILOT_AUTO_SLEEP_DEVICES': ('mici', 'tizi', 'tici'),
+         'STARPILOT_AUTO_SLEEP_WAKE_KEYS': frozenset({'StandbyWakeWarningAlert', 'StandbyWakeCriticalAlert'}),
+         'CarScreenSettings': lambda: SimpleNamespace(poll=lambda: {'sleep_device_screen': False}),
+         'FrameProducer': lambda path: None, 'CAR_FRAME_PATH': '',
+         'np': np, 'time': SimpleNamespace(monotonic=lambda: clock['now']), 'FirstOrderFilter': FirstOrderFilter,
          'Callable': Callable, 'HARDWARE': SimpleNamespace(set_display_power=lambda value: None, get_device_type=lambda: device_type),
          'cloudlog': SimpleNamespace(debug=lambda value: None), 'PC': False, 'TICI': True}
   source = Path(__file__).resolve().parents[3] / 'selfdrive/ui/ui_state.py'
@@ -260,3 +270,119 @@ def test_bluetooth_wake_during_ignition_only_standby():
   state.params_memory.values['StandbyButtonPressTime'] = 99_500_000_000
   device._update_wakefulness()
   assert (device._calculate_brightness() > 0) is True
+
+
+# ------------------------------------------------- streaming keeps frames alive
+
+
+def _sleep_the_display(device, state, app):
+  """Drive the device to display-off via the interactive timeout."""
+  state.started = state.ignition = device._ignition = False
+  app.mouse_events = []
+  device._interaction_time = app.clock['now'] - 1
+  device._update_wakefulness()
+
+
+def test_stream_viewer_keeps_rendering_while_display_sleeps():
+  device, state, app = make_device(StandbyMode=False)
+  app.ui_stream_wants_frames = lambda: True
+  _sleep_the_display(device, state, app)
+  # The panel is off -- no burn-in, no backlight power -- but frames keep coming
+  # so the stream does not stop.
+  assert device.awake is False
+  assert app.rendering['value'] is True
+
+
+def test_rendering_follows_display_without_a_viewer():
+  device, state, app = make_device(StandbyMode=False)
+  app.ui_stream_wants_frames = lambda: False
+  _sleep_the_display(device, state, app)
+  assert device.awake is False
+  assert app.rendering['value'] is False
+
+
+def test_offroad_stream_hold_is_capped():
+  device, state, app = make_device(StandbyMode=False)
+  app.ui_stream_wants_frames = lambda: True
+  _sleep_the_display(device, state, app)
+  assert app.rendering['value'] is True
+
+  # A tab left open on a parked car must not render forever.
+  app.clock['now'] += 601
+  device._interaction_time = app.clock['now'] - 1
+  device._update_wakefulness()
+  assert app.rendering['value'] is False
+
+
+def test_onroad_stream_hold_is_not_capped():
+  device, state, app = make_device(StandbyMode=True)
+  app.ui_stream_wants_frames = lambda: True
+  state.started = state.ignition = device._ignition = True
+  app.mouse_events = []
+  device._interaction_time = app.clock['now'] - 1
+  device._update_wakefulness()
+  assert app.rendering['value'] is True
+
+  app.clock['now'] += 10_000
+  device._interaction_time = app.clock['now'] - 1
+  device._update_wakefulness()
+  # Ignition is on, so there is no drain to bound.
+  assert app.rendering['value'] is True
+
+
+def test_offroad_cap_is_a_budget_a_reconnecting_viewer_cannot_refill():
+  # Viewers come and go: a stream reconnect, a snapshot, a tab returning from
+  # the background. A gap in demand must not hand out a fresh 10 minutes, or a
+  # forgotten tab would render a parked car forever.
+  device, state, app = make_device(StandbyMode=False)
+  app.ui_stream_wants_frames = lambda: True
+  _sleep_the_display(device, state, app)
+  assert app.rendering['value'] is True
+
+  app.clock['now'] += 590
+  device._interaction_time = app.clock['now'] - 1
+  device._update_wakefulness()
+  assert app.rendering['value'] is True
+
+  # Viewer drops (the streamer pauses), then reconnects a moment later.
+  app.ui_stream_wants_frames = lambda: False
+  device._interaction_time = app.clock['now'] - 1
+  device._update_wakefulness()
+  assert app.rendering['value'] is False
+  app.clock['now'] += 20
+  app.ui_stream_wants_frames = lambda: True
+  device._interaction_time = app.clock['now'] - 1
+  device._update_wakefulness()
+  assert app.rendering['value'] is True  # 590 s spent, still inside the budget
+
+  app.clock['now'] += 20
+  device._interaction_time = app.clock['now'] - 1
+  device._update_wakefulness()
+  assert app.rendering['value'] is False  # 610 s held in total
+
+
+def test_offroad_budget_is_not_spent_while_nobody_watches():
+  # The idle hour between viewers is not charged to the budget either.
+  device, state, app = make_device(StandbyMode=False)
+  app.ui_stream_wants_frames = lambda: False
+  _sleep_the_display(device, state, app)
+  assert app.rendering['value'] is False
+
+  app.clock['now'] += 3600
+  app.ui_stream_wants_frames = lambda: True
+  device._interaction_time = app.clock['now'] - 1
+  device._update_wakefulness()
+  assert app.rendering['value'] is True
+
+
+def test_waking_the_display_resets_the_stream_hold():
+  device, state, app = make_device(StandbyMode=False)
+  app.ui_stream_wants_frames = lambda: True
+  _sleep_the_display(device, state, app)
+  assert device._stream_hold_since != 0.0
+
+  app.mouse_events = [SimpleNamespace(left_down=True)]
+  device._update_wakefulness()
+  assert device.awake is True
+  assert app.rendering['value'] is True
+  assert device._stream_hold_since == 0.0

@@ -12,6 +12,7 @@ class WidgetLayoutManager:
       "right_center": [],
     }
     self.spacing = 15  # Spacing between widgets
+    self.right_anchor = float(WIDGET_ANCHOR_OFFSET)  # right column centre, from the content's right edge
 
   def register_widget(self, zone: str, widget: LayoutWidget):
     """Register a widget in a specific zone."""
@@ -65,7 +66,7 @@ class WidgetLayoutManager:
 
   def _layout_right(self):
     active_widgets = [w for w in self.zones["right"] if w.is_visible]
-    center_x = self.content_rect.x + self.content_rect.width - 146
+    center_x = self.content_rect.x + self.content_rect.width - self.right_anchor
     current_y = self.content_rect.y + 45
     for widget in active_widgets:
       w, h = widget.get_size()

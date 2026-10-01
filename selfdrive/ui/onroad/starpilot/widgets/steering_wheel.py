@@ -13,7 +13,8 @@ class SteeringWheelWidget(LayoutWidget):
     return bool(self._button.is_visible)
 
   def get_size(self) -> tuple[float, float]:
-    return 192.0, 192.0
+    size = float(self._button._rect.width)
+    return size, size
 
   def _render(self, rect: rl.Rectangle) -> None:
     self._button.render(rect)

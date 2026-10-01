@@ -21,6 +21,7 @@ export const Vehicle = {
     featureList() { return this.features },
   },
   methods: {
+    openOfflineMaps() { navigate("/navigation/maps") },
     statusOf(key) { return this.featureStatus[key] || "untested" },
     async openFeature(f) {
       if (this.busy) return
@@ -67,6 +68,10 @@ export const Vehicle = {
           <p style="color:var(--text-muted); margin:0;">These features verify vehicle compatibility when launched.</p>
         </div>
       </GalaxySection>
+
+      <p style="color:var(--text-muted); margin:0;">
+        Offline maps are under <a href="/navigation/maps" @click.prevent="openOfflineMaps">Navigation › Offline Maps</a>.
+      </p>
     </div>
   `,
 }

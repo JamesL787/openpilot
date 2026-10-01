@@ -978,7 +978,18 @@
         "precision": 1,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "visible_when_values": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -993,7 +1004,18 @@
         "precision": 2,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "visible_when_values": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1008,7 +1030,17 @@
         "precision": 1,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "visible_when_values": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1023,7 +1055,17 @@
         "precision": 2,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "visible_when_values": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1038,7 +1080,16 @@
         "precision": 1,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [5, 6, 7, 8, 9, 10, 11, 12],
+        "visible_when_values": [
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1053,7 +1104,16 @@
         "precision": 2,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [5, 6, 7, 8, 9, 10, 11, 12],
+        "visible_when_values": [
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1068,7 +1128,15 @@
         "precision": 1,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [6, 7, 8, 9, 10, 11, 12],
+        "visible_when_values": [
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1083,7 +1151,15 @@
         "precision": 2,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [6, 7, 8, 9, 10, 11, 12],
+        "visible_when_values": [
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1098,7 +1174,14 @@
         "precision": 1,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [7, 8, 9, 10, 11, 12],
+        "visible_when_values": [
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1113,7 +1196,14 @@
         "precision": 2,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [7, 8, 9, 10, 11, 12],
+        "visible_when_values": [
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1128,7 +1218,13 @@
         "precision": 1,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [8, 9, 10, 11, 12],
+        "visible_when_values": [
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1143,7 +1239,13 @@
         "precision": 2,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [8, 9, 10, 11, 12],
+        "visible_when_values": [
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1158,7 +1260,12 @@
         "precision": 1,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [9, 10, 11, 12],
+        "visible_when_values": [
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1173,7 +1280,12 @@
         "precision": 2,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [9, 10, 11, 12],
+        "visible_when_values": [
+          9,
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1188,7 +1300,11 @@
         "precision": 1,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [10, 11, 12],
+        "visible_when_values": [
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1203,7 +1319,11 @@
         "precision": 2,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [10, 11, 12],
+        "visible_when_values": [
+          10,
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1218,7 +1338,10 @@
         "precision": 1,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [11, 12],
+        "visible_when_values": [
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1233,7 +1356,10 @@
         "precision": 2,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [11, 12],
+        "visible_when_values": [
+          11,
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1248,7 +1374,9 @@
         "precision": 1,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [12],
+        "visible_when_values": [
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -1263,7 +1391,9 @@
         "precision": 2,
         "parent_key": "CustomAccelProfile",
         "visible_when_key": "CustomAccelProfilePointCount",
-        "visible_when_values": [12],
+        "visible_when_values": [
+          12
+        ],
         "settings_tier": "advanced"
       },
       {
@@ -3834,6 +3964,14 @@
     "icon": "bi-car-front",
     "params": [
       {
+        "key": "StarpilotAutoEnabled",
+        "label": "Starpilot Auto",
+        "description": "Enable Starpilot Auto on the car screen. Turn off to stop projection and hide its controls. Live UI remains available. Bluetooth must also be enabled to connect.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "settings_tier": "simple"
+      },
+      {
         "key": "CarMake",
         "label": "Car Make",
         "description": "Select your car make.",
@@ -5385,6 +5523,14 @@
           "StandbyMode"
         ],
         "settings_tier": "advanced"
+      },
+      {
+        "key": "StarpilotAutoShareDiagnostics",
+        "label": "Help other Starpilot alpha testers",
+        "description": "When a Starpilot Auto session fails, send the developer a short report so the problem can be fixed for everyone.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "settings_tier": "simple"
       }
     ]
   },
@@ -5563,7 +5709,9 @@
         "data_type": "bool",
         "ui_type": "toggle",
         "galaxy_only": true,
-        "vehicle_makes": ["Subaru"],
+        "vehicle_makes": [
+          "Subaru"
+        ],
         "parent_key": "GalaxyDeveloperMode",
         "settings_tier": "advanced"
       },

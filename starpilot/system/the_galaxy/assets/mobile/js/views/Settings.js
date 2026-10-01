@@ -6,12 +6,15 @@ import {
   applyParamChange, countAdvancedHiddenByDeveloperMode, GALAXY_DEVELOPER_MODE_KEY, isSettingVisible,
   resolveVehicleUnitParam, slugifySectionName,
 } from "../params.js"
-import { SettingTree } from "../components/SettingTree.js"
+import { SettingTree } from "../components/SettingTree.js?v=starpilot-auto-uploads-1"
 import { PERSONALITY_PROFILES_ENABLED, PersonalityProfiles } from "../components/PersonalityProfiles.js"
-import { GalaxyToggleCard } from "../components/GalaxyToggleCard.js"
+import { GalaxyToggleCard } from "../components/GalaxyToggleCard.js?v=starpilot-auto-uploads-1"
 import { GalaxySection } from "../components/GalaxySection.js"
 import { DevModeBanner } from "../components/DevModeBanner.js"
 import { LanguageSelector } from "../components/LanguageSelector.js"
+import { StarpilotAutoConnectionPanel } from "../components/StarpilotAutoConnectionPanel.js?v=starpilot-auto-connection-2"
+import { StarpilotAutoIdentityPanel } from "../components/StarpilotAutoIdentityPanel.js?v=starpilot-auto-manual-upload-1"
+import { StarpilotAutoCarScreenPanel } from "../components/StarpilotAutoCarScreenPanel.js?v=car-screen-7"
 import { languageState, setLanguage, t } from "../i18n.js"
 
 const LEGACY_PERSONALITY_KEYS = new Set([
@@ -24,9 +27,12 @@ const LEGACY_PERSONALITY_KEYS = new Set([
 
 const LANGUAGE_SECTION_SLUG = "language"
 
+
+const STARPILOT_AUTO_KEYS = ["StarpilotAutoEnabled", "StarpilotAutoShareDiagnostics"]
 export const Settings = {
   name: "Settings",
-  components: { SettingTree, PersonalityProfiles, GalaxyToggleCard, GalaxySection, DevModeBanner, LongitudinalMode, LanguageSelector },
+  components: { SettingTree, PersonalityProfiles, GalaxyToggleCard, GalaxySection, DevModeBanner, LongitudinalMode, LanguageSelector,
+    StarpilotAutoConnectionPanel, StarpilotAutoIdentityPanel, StarpilotAutoCarScreenPanel },
   data() {
     return {
       layout: [],
@@ -41,11 +47,14 @@ export const Settings = {
     devModeOn() { return !!this.values[GALAXY_DEVELOPER_MODE_KEY] },
     route() { return store.route },
     sections() {
-      return this.layout
+      // The Starpilot Auto page gathers its own toggles from wherever the layout declares them.
+      const starpilotAuto = this.layout.flatMap(s => s.params || []).filter(p => STARPILOT_AUTO_KEYS.includes(p.key))
+      return [...this.layout.filter(s => s.name !== "Starpilot Auto"),
+        { name: "Starpilot Auto", icon: "bi-android2", params: starpilotAuto }]
         .filter((s) => s.name !== "Model & Customization")
         .map((s) => ({
           ...s,
-          params: (s.params || []).filter((p) => !LEGACY_PERSONALITY_KEYS.has(p.key) && isSettingVisible(s, p, this.values)),
+          params: (s.params || []).filter((p) => !LEGACY_PERSONALITY_KEYS.has(p.key) && (!STARPILOT_AUTO_KEYS.includes(p.key) || s.name === "Starpilot Auto") && isSettingVisible(s, p, this.values)),
           slug: slugifySectionName(s.name),
         }))
         .filter((s) => s.params.length > 0)
@@ -77,7 +86,10 @@ export const Settings = {
     tr(key, fallback = key) { return t(key, fallback) },
     isModeParam(p) { return p.key === LONGITUDINAL_MODE_KEY || !!p.longitudinal_mode },
     modeSection(s) { return this.layout.find(section => section.name === s.name && section.params.some(p => p.key === LONGITUDINAL_MODE_KEY)) },
-    ordinaryParams(s) { return s.params.filter(p => !this.isModeParam(p)) },
+    ordinaryParams(s) {
+      return s.params.filter(p => !this.isModeParam(p) && !(s.name === "Starpilot Auto" && p.key === "StarpilotAutoEnabled"))
+    },
+    starpilotAutoParam(s, key = "StarpilotAutoEnabled") { return s.params.find(p => p.key === key) },
     async load() {
       try {
         const [layout, values, defaults] = await Promise.all([
@@ -193,15 +205,40 @@ export const Settings = {
 
           <LanguageSelector v-if="activeSectionSlug === 'language'" :device-value="currentLanguage" />
 
-          <div v-else class="gx-card">
-            <div class="gx-section__header">
-              <i class="bi" :class="activeSection.icon"></i>
-              <span class="gx-section__title">{{ tr(activeSection.name, activeSection.name) }}</span>
+          <div v-else style="display:grid; gap:12px;">
+            <div v-if="activeSection.name === 'Starpilot Auto' && values.StarpilotAutoEnabled" id="starpilot-auto-certificate-update"></div>
+            <div v-if="activeSection.name !== 'Starpilot Auto'" class="gx-card">
+              <div class="gx-section__header">
+                <i class="bi" :class="activeSection.icon"></i>
+                <span class="gx-section__title">{{ tr(activeSection.name, activeSection.name) }}</span>
+              </div>
+              <LongitudinalMode v-if="modeSection(activeSection)" :section="modeSection(activeSection)" :values="values" @change="onParamChange" />
+              <SettingTree :params="ordinaryParams(activeSection)" :parent-key="null" :values="values"
+                :expanded="expanded" :lock-reason="lockReason" @change="onParamChange" @manage="toggleManage" />
+              <div v-if="!activeSection.params.length" class="gx-empty">{{ tr("No settings in this section.") }}</div>
             </div>
-            <LongitudinalMode v-if="modeSection(activeSection)" :section="modeSection(activeSection)" :values="values" @change="onParamChange" />
-            <SettingTree :params="ordinaryParams(activeSection)" :parent-key="null" :values="values"
-              :expanded="expanded" :lock-reason="lockReason" @change="onParamChange" @manage="toggleManage" />
-            <div v-if="!activeSection.params.length" class="gx-empty">{{ tr("No settings in this section.") }}</div>
+            <GalaxySection v-if="activeSection.name === 'Starpilot Auto' && starpilotAutoParam(activeSection)" title="Starpilot Auto" icon="bi-android2">
+              <GalaxyToggleCard :param="starpilotAutoParam(activeSection)" :value="values.StarpilotAutoEnabled" :values="values"
+                :locked="lockReason(starpilotAutoParam(activeSection)) !== ''" @change="onParamChange" />
+            </GalaxySection>
+            <template v-if="activeSection.name === 'Starpilot Auto' && values.StarpilotAutoEnabled">
+              <GalaxySection title="Starpilot Auto Certificate" icon="bi-key">
+                <StarpilotAutoIdentityPanel update-notice-target="#starpilot-auto-certificate-update" />
+              </GalaxySection>
+              <GalaxySection title="Connection" icon="bi-link-45deg">
+                <StarpilotAutoConnectionPanel />
+              </GalaxySection>
+              <GalaxySection title="Layout" icon="bi-layout-split">
+                <StarpilotAutoCarScreenPanel section="layout" :is-metric="!!values.IsMetric" />
+              </GalaxySection>
+              <GalaxySection title="Status Widgets" icon="bi-speedometer2">
+                <StarpilotAutoCarScreenPanel section="widgets" :is-metric="!!values.IsMetric" />
+              </GalaxySection>
+              <div v-if="starpilotAutoParam(activeSection, 'StarpilotAutoShareDiagnostics')" class="gx-card">
+                <GalaxyToggleCard :param="starpilotAutoParam(activeSection, 'StarpilotAutoShareDiagnostics')" :value="values.StarpilotAutoShareDiagnostics"
+                  :values="values" :locked="lockReason(starpilotAutoParam(activeSection, 'StarpilotAutoShareDiagnostics')) !== ''" @change="onParamChange" />
+              </div>
+            </template>
           </div>
         </div>
       </template>

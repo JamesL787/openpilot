@@ -1,20 +1,25 @@
 import { NavigationDestinationPanel } from "../components/NavigationDestinationPanel.js?v=nav-destination-6"
-import { MapsPanel } from "../components/MapsPanel.js"
+import { MapsPanel } from "../components/MapsPanel.js?v=offline-download-4"
 import { NavigationKeysPanel } from "../components/NavigationKeysPanel.js"
 import { SpeedLimitsPanel } from "../components/SpeedLimitsPanel.js"
+import { StarpilotAutoOfflinePanel } from "../components/StarpilotAutoOfflinePanel.js?v=offline-layout-8"
+import { GalaxySection } from "../components/GalaxySection.js"
 import { GalaxyTabs } from "../components/GalaxyTabs.js"
 import { useTabRouting } from "../composables.js"
 
 const TABS = {
   nav: "Destination",
-  maps: "Maps",
+  maps: "Offline Maps",
   keys: "App Keys",
   speeds: "Speed Limits",
 }
 
 export const Navigation = {
   name: "Navigation",
-  components: { NavigationDestinationPanel, MapsPanel, NavigationKeysPanel, SpeedLimitsPanel, GalaxyTabs },
+  components: {
+    NavigationDestinationPanel, MapsPanel, NavigationKeysPanel, SpeedLimitsPanel, GalaxyTabs,
+    StarpilotAutoOfflinePanel, GalaxySection,
+  },
   data() { return { TABS } },
   setup() {
     return useTabRouting("/navigation", {
@@ -31,7 +36,20 @@ export const Navigation = {
     <div v-else class="gx-view">
       <h2 style="margin-top:0;">Navigation & Maps</h2>
       <GalaxyTabs :items="TABS" :active="tab" @select="selectTab" />
-      <template v-if="tab === 'maps'"><MapsPanel /></template>
+      <template v-if="tab === 'maps'">
+        <div style="display:grid; gap:12px;">
+          <GalaxySection title="Speed Limit &amp; Curve Data" icon="bi-speedometer2">
+            <div style="padding: var(--sp-3);">
+              <MapsPanel />
+            </div>
+          </GalaxySection>
+          <GalaxySection title="Offline Maps for Starpilot Auto" icon="bi-cloud-arrow-down">
+            <div style="padding: var(--sp-3);">
+              <StarpilotAutoOfflinePanel />
+            </div>
+          </GalaxySection>
+        </div>
+      </template>
       <template v-if="tab === 'keys'"><NavigationKeysPanel /></template>
       <template v-if="tab === 'speeds'"><SpeedLimitsPanel /></template>
     </div>

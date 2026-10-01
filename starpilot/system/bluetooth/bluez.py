@@ -1,7 +1,11 @@
+import datetime
+import json
+import os
 import threading
 import time
 import uuid
 
+from pathlib import Path
 from typing import Any
 
 from jeepney import DBusAddress, MatchRule, new_error, new_method_call, new_method_return
@@ -19,6 +23,9 @@ DEVICE_IFACE = "org.bluez.Device1"
 AGENT_MANAGER_IFACE = "org.bluez.AgentManager1"
 AGENT_IFACE = "org.bluez.Agent1"
 AGENT_PATH = "/link/firestar/starpilot/agent"
+# Every pairing prompt and how it ended, for the diagnostics bundle testers send in.
+PAIRING_LOG_PATH = Path(os.environ.get("STARPILOT_BLUETOOTH_PAIRING_LOG", "/data/diagnostics/bluetooth_pairing.jsonl"))
+PAIRING_LOG_MAX_BYTES = 128 * 1024
 
 
 def unwrap_variant(value: Any) -> Any:
@@ -31,14 +38,41 @@ def unwrap_variant(value: Any) -> Any:
   return value
 
 
+class PairingLog:
+  """Append-only JSON lines, trimmed to the newest half when full; never raises."""
+
+  def __init__(self, path: Path | None = PAIRING_LOG_PATH, max_bytes: int = PAIRING_LOG_MAX_BYTES):
+    self.path = path
+    self.max_bytes = max_bytes
+    self._lock = threading.Lock()
+
+  def record(self, kind: str, device_path: str, outcome: str, **extra) -> None:
+    if self.path is None:
+      return
+    entry = {"t": datetime.datetime.now(datetime.UTC).isoformat(timespec="milliseconds"), "kind": kind,
+             "device": device_path.rsplit("/", 1)[-1].removeprefix("dev_").replace("_", ":"), "outcome": outcome, **extra}
+    try:
+      with self._lock:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.exists() and self.path.stat().st_size > self.max_bytes:
+          tail = self.path.read_bytes()[-self.max_bytes // 2:]
+          self.path.write_bytes(tail[tail.find(b"\n") + 1:])
+        with self.path.open("a") as log:
+          log.write(json.dumps(entry) + "\n")
+    except OSError:
+      pass
+
+
 class PairingAgent:
-  def __init__(self):
+  def __init__(self, log: PairingLog | None = None):
+    self.log = log if log is not None else PairingLog()
     self._condition = threading.Condition()
     self._prompt: dict[str, Any] | None = None
     self._response: tuple[bool, str] | None = None
     self._generation = 0
     self._auto_accept_paths: set[str] = set()
     self._auto_accept_incoming = False
+    self._head_unit_paths: set[str] = set()
 
   @property
   def prompt(self) -> dict[str, Any] | None:
@@ -58,8 +92,15 @@ class PairingAgent:
       self._prompt = {"id": uuid.uuid4().hex, "kind": kind, "device_path": device_path, "value": value, "display_only": True}
 
   def request(self, kind: str, device_path: str, value: str = "", timeout: float = 60.0) -> tuple[bool, str]:
-    if self.auto_accept(kind, device_path):
+    reason = self._auto_accept_reason(kind, device_path)
+    if reason:
+      self.log.record(kind, device_path, "auto_accepted", reason=reason)
       return True, ""
+    response, outcome = self._prompt_user(kind, device_path, value, timeout)
+    self.log.record(kind, device_path, outcome)
+    return response
+
+  def _prompt_user(self, kind: str, device_path: str, value: str, timeout: float) -> tuple[tuple[bool, str], str]:
     prompt_id = uuid.uuid4().hex
     with self._condition:
       self._generation += 1
@@ -71,14 +112,14 @@ class PairingAgent:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
           self._prompt = None
-          return False, ""
+          return (False, ""), "timed_out"  # nobody answered: the prompt only shows in Bluetooth settings
         self._condition.wait(remaining)
       if self._generation != generation:
-        return False, ""
+        return (False, ""), "cancelled"
       response = self._response
       self._response = None
       self._prompt = None
-      return response
+      return response, "accepted" if response[0] else "rejected"
 
   def respond(self, prompt_id: str, accepted: bool, value: str = "") -> bool:
     with self._condition:
@@ -99,9 +140,23 @@ class PairingAgent:
     with self._condition:
       self._auto_accept_incoming = enabled
 
-  def auto_accept(self, kind: str, device_path: str) -> bool:
+  def set_auto_accept_head_units(self, device_paths: set[str]) -> None:
+    """Paired, trusted Starpilot Auto head units: the car re-confirms the bond onroad while nobody is in settings."""
     with self._condition:
-      return kind in {"confirmation", "authorization"} and (self._auto_accept_incoming or device_path in self._auto_accept_paths)
+      self._head_unit_paths = set(device_paths)
+
+  def auto_accept(self, kind: str, device_path: str) -> bool:
+    return bool(self._auto_accept_reason(kind, device_path))
+
+  def _auto_accept_reason(self, kind: str, device_path: str) -> str:
+    with self._condition:
+      if kind not in {"confirmation", "authorization"}:
+        return ""
+      if device_path in self._head_unit_paths:
+        return "starpilot_auto_head_unit"
+      if device_path in self._auto_accept_paths:
+        return "pairing_from_settings"
+      return "offroad" if self._auto_accept_incoming else ""
 
 class BlueZClient:
   def __init__(self):

@@ -1,0 +1,276 @@
+"""Private phone identity and configuration locations, and identity validation."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import ssl
+import stat
+import tempfile
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+DATA_DIR = Path(os.environ.get("STARPILOT_AUTO_DIR", "/data/starpilot_auto"))
+IDENTITY_DIR = DATA_DIR / "identity"
+CONFIG_PATH = DATA_DIR / "config.json"
+LOG_DIR = DATA_DIR / "logs"
+CERT_NAME, KEY_NAME, ROOT_NAME = "phone-cert.pem", "phone-key.pem", "root-cert.pem"
+EXPIRY_WARNING_DAYS = 14
+
+ENABLED_KEY = "StarpilotAutoEnabled"
+# Uploading while projecting competes with Starpilot Auto for CPU and bandwidth, so turning it on keeps uploads to while parked.
+UPLOAD_SETTINGS = {"DeviceManagement": True, "NoUploads": True, "DisableOnroadUploads": True, "AlwaysAllowUploads": False}
+UPLOAD_SETTINGS_MARKER = DATA_DIR / "upload_settings_applied"
+LEGACY_ENABLED_KEY = "AndroidAutoEnabled"
+LEGACY_DATA_DIR = Path("/data/android_auto")
+
+
+def _legacy_enabled_path(params) -> Path | None:
+  try:
+    return Path(params.get_param_path(LEGACY_ENABLED_KEY))
+  except Exception:
+    return None
+
+
+def _read_legacy_enabled(params) -> bool | None:
+  """The legacy key is no longer in the Params registry, so params.get() raises; read its file directly."""
+  path = _legacy_enabled_path(params)
+  if path is None:
+    return None
+  try:
+    return path.read_bytes().strip() == b"1"
+  except OSError:
+    return None
+
+
+def migrate_enabled_flag(params=None) -> None:
+  """Carry the pre-rename enabled setting over. Must run before the manager clears Params the registry no longer knows."""
+  if params is None:
+    try:
+      from openpilot.common.params import Params
+      params = Params()
+    except Exception:
+      return
+  try:
+    if params.get(ENABLED_KEY) is not None:
+      return
+    legacy = _read_legacy_enabled(params)
+    if legacy is None:
+      return
+    params.put_bool(ENABLED_KEY, legacy)  # BOOL params reject raw bytes
+    path = _legacy_enabled_path(params)
+    if path is not None:
+      path.unlink(missing_ok=True)
+  except Exception:
+    pass
+
+
+def apply_upload_settings_once(params=None, marker: Path | None = None) -> bool:
+  """Give a device that had Starpilot Auto on before the upload settings existed the same settings Galaxy applies when it is
+  turned on. Runs once per device, so a tester who later allows uploads again keeps that choice."""
+  marker = marker or UPLOAD_SETTINGS_MARKER
+  if marker.exists():
+    return False
+  if params is None:
+    try:
+      from openpilot.common.params import Params
+      params = Params()
+    except Exception:
+      return False
+  try:
+    applied = params.get_bool(ENABLED_KEY)
+    if applied:
+      for key, value in UPLOAD_SETTINGS.items():
+        params.put_bool(key, value)
+      try:
+        from openpilot.common.params import Params
+        Params(memory=True).put_bool("StarPilotTogglesUpdated", True)  # what update_starpilot_toggles() does, without its imports
+      except Exception:
+        pass
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("1\n")
+    return applied
+  except Exception:
+    return False
+
+
+def migrate_legacy(data_dir: Path | None = None, legacy_dir: Path | None = None, params=None) -> None:
+  """One-time migration of the pre-rename params key and data directory."""
+  migrate_enabled_flag(params)
+  if data_dir is None:
+    if os.environ.get("STARPILOT_AUTO_DIR") is not None:
+      return
+    data_dir = DATA_DIR
+  legacy_dir = legacy_dir or LEGACY_DATA_DIR
+  try:
+    if not legacy_dir.is_dir():
+      return
+    data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for child in sorted(legacy_dir.iterdir()):
+      target = data_dir / child.name
+      if not target.exists():
+        try:
+          os.replace(child, target)
+        except OSError:
+          continue
+    legacy_dir.rmdir()
+  except OSError:
+    pass
+
+
+@dataclass(frozen=True)
+class Identity:
+  cert: str
+  key: str
+  root: str | None
+  expires: str
+  days_left: int
+
+
+class IdentityError(RuntimeError):
+  pass
+
+
+def _not_after(cert_path: Path) -> datetime | None:
+  try:
+    from cryptography import x509
+    certificate = x509.load_pem_x509_certificate(cert_path.read_bytes())
+    if hasattr(certificate, "not_valid_after_utc"):
+      return certificate.not_valid_after_utc
+    return certificate.not_valid_after.replace(tzinfo=UTC)  # cryptography < 42, as on device
+  except ImportError:
+    pass
+  try:
+    decoded = ssl._ssl._test_decode_cert(str(cert_path))  # type: ignore[attr-defined]
+    return datetime.fromtimestamp(ssl.cert_time_to_seconds(decoded["notAfter"]), UTC)
+  except Exception:
+    return None
+
+
+def load_identity(directory: Path | None = None, now: datetime | None = None) -> Identity:
+  directory = directory or IDENTITY_DIR
+  cert, key, root = directory / CERT_NAME, directory / KEY_NAME, directory / ROOT_NAME
+  missing = [path.name for path in (cert, key) if not path.is_file()]
+  if missing:
+    raise IdentityError(f"Starpilot Auto identity missing ({', '.join(missing)} in {directory}); " +
+                        "add it in The Galaxy: Toggles → Starpilot Auto → Starpilot Auto Certificate")
+  if stat.S_IMODE(key.stat().st_mode) & 0o077:
+    raise IdentityError(f"{key} must not be readable by other users (chmod 600)")
+  try:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(cert), str(key))
+    if root.is_file():
+      context.load_verify_locations(cafile=str(root))
+  except (ssl.SSLError, OSError) as error:
+    raise IdentityError(f"Starpilot Auto identity is unusable: {error}") from error
+  expires = _not_after(cert)
+  now = now or datetime.now(UTC)
+  if expires is not None and expires <= now:
+    raise IdentityError(f"Starpilot Auto phone certificate expired on {expires.date()}; " +
+                        "renew it in The Galaxy: Toggles → Starpilot Auto → Starpilot Auto Certificate")
+  days_left = (expires - now).days if expires is not None else -1
+  return Identity(str(cert), str(key), str(root) if root.is_file() else None,
+                  expires.isoformat() if expires is not None else "unknown", days_left)
+
+
+CONFIG_VERSION = 2
+# Before config versions, every save wrote these defaults, which pinned projection
+# at 12 fps / 4000 kbps. Unversioned files holding exactly them get today's defaults.
+LEGACY_DEFAULTS = {"fps": 12, "bitrate_kbps": 4000}
+
+DEFAULT_CONFIG = {
+  "config_version": CONFIG_VERSION,
+  "receiver_address": "",      # Bluetooth address of the paired head unit
+  "receiver_name": "",
+  "rfcomm_channel": 0,         # 0 = discover through SDP (normal); set only to work around a broken SDP record
+  "verify_head_unit": True,    # verify the car's certificate against root-cert.pem when present
+  "connection": "wireless",    # "wireless": Bluetooth + the car's Wi-Fi; "wired": USB cable from the car to the comma's USB-C port
+  "usb_mode": "auto",          # wired: "auto" waits for the car's accessory handshake, then presents as an accessory itself;
+                               # "handshake" / "direct" force one way
+  "view": "car",               # "car": full StarPilot UI sized for the car; "mirror": copy of the comma screen
+  "encoder": "auto",           # "auto": hardware H.264 at 30 fps, else libx264; "hardware" / "software" to force
+  "fps": 0,                    # 0 = automatic (30 with hardware, 15 with software); otherwise a cap, 5-30
+  "bitrate_kbps": 6000,
+  "rate_control": "cbr",       # hardware encoder: "cbr" holds the bitrate (easier on the car's Wi-Fi); "vbr" as before
+  "gpu_nv12": True,            # car view: convert to the encoder's NV12 on the GPU (a third of the RGBA readback)
+  "async_readback": True,      # car view: read frames back without stalling the renderer on the GPU
+  "render_profile": True,      # car view: always-on sampling profile in logs/render_profile.txt (and .1.txt)
+  "render_profile_kb": 256,    # size cap per render_profile file
+  "wifi_interface": "wlan0",
+  "device_name": "StarPilot",
+  "version_status": 0,         # WifiVersionResponse status (0 = success) for receivers that negotiate a version
+  "phone_class": True,         # while pairing/connecting, present as a phone: HFP gateway + smartphone Class of Device
+  "auto_connect": True,        # start projection on its own when the chosen car is on (onroad, or it reaches the comma)
+  "rfcomm_cache": {},          # car address -> Starpilot Auto RFCOMM channel learned over SDP, to skip discovery next time
+}
+
+
+def session_log_order(path: Path) -> tuple[int, str]:
+  """Sort key for session logs, oldest first.
+
+  Files are numbered, because the clock can read a date from months ago until it syncs;
+  ordering by the timestamp in the name put the newest session first. Unnumbered files
+  are from before numbering, so they are the oldest.
+  """
+  match = re.fullmatch(r"session-(\d{6})-.*\.jsonl", path.name)
+  return (int(match[1]), path.name) if match else (-1, path.name)
+
+
+def load_config(path: Path | None = None) -> dict:
+  path = path or CONFIG_PATH
+  config = dict(DEFAULT_CONFIG)
+  try:
+    stored = json.loads(path.read_text())
+    if isinstance(stored, dict):
+      version = stored.get("config_version")
+      if not isinstance(version, int) or version < 2:
+        stored = {key: value for key, value in stored.items() if LEGACY_DEFAULTS.get(key, object()) != value}
+      config.update({key: value for key, value in stored.items() if key in DEFAULT_CONFIG and isinstance(value, type(DEFAULT_CONFIG[key]))})
+  except (OSError, ValueError):
+    pass
+  config["config_version"] = CONFIG_VERSION
+  config["fps"] = 0 if int(config["fps"]) <= 0 else max(5, min(30, int(config["fps"])))
+  if config["view"] not in ("car", "mirror"):
+    config["view"] = "car"
+  if config["connection"] not in ("wireless", "wired"):
+    config["connection"] = "wireless"
+  if config["usb_mode"] not in ("auto", "handshake", "direct"):
+    config["usb_mode"] = "auto"
+  config["bitrate_kbps"] = max(1000, min(12000, int(config["bitrate_kbps"])))
+  if config["rate_control"] not in ("cbr", "vbr"):
+    config["rate_control"] = "cbr"
+  config["render_profile_kb"] = max(16, min(4096, int(config["render_profile_kb"])))
+  config["rfcomm_cache"] = {str(address).upper(): channel for address, channel in config["rfcomm_cache"].items()
+                            if type(channel) is int and 1 <= channel <= 30}
+  return config
+
+
+def save_config(config: dict, path: Path | None = None) -> None:
+  path = path or CONFIG_PATH
+  path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+  data = json.dumps({key: config[key] for key in DEFAULT_CONFIG if key in config}, indent=2) + "\n"
+  fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".config-")
+  try:
+    with os.fdopen(fd, "w") as handle:
+      handle.write(data)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+  except BaseException:
+    try:
+      os.unlink(temporary)
+    except FileNotFoundError:
+      pass
+    raise
+
+
+def expiry_warning(identity: Identity) -> str:
+  if 0 <= identity.days_left <= EXPIRY_WARNING_DAYS:
+    return f"Starpilot Auto identity expires in {identity.days_left} days ({identity.expires[:10]}); renew it in The Galaxy"
+  return ""
+
+
+def timestamp() -> str:
+  return time.strftime("%Y%m%d-%H%M%S")

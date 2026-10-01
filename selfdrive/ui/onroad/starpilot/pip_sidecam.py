@@ -188,7 +188,7 @@ class PipSideCamera(Widget):
     self._shape = shape
 
     self._params = ui_state.params
-    self._params_memory = ui_state.params_memory
+    self._params_memory = ui_state.live_params
 
     self.client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_DRIVER, conflate=True)
     self._stream_type = VisionStreamType.VISION_STREAM_DRIVER
@@ -275,6 +275,9 @@ class PipSideCamera(Widget):
     except (TypeError, ValueError, json.JSONDecodeError):
       self._mask = {}
 
+  def _blind_spot_monitors_visible(self) -> bool:
+    return True
+
   def active_sides(self) -> list[str]:
     """Return vehicle-side keys whose preview bubble should show.
 
@@ -298,6 +301,8 @@ class PipSideCamera(Widget):
     right_blinker = bool(car_state.rightBlinker)
     left_bsm = bool(car_state.leftBlindspot) or vasm_left
     right_bsm = bool(car_state.rightBlindspot) or vasm_right
+    if not self._blind_spot_monitors_visible():
+      left_bsm = right_bsm = False
 
     sides = []
     for image_side, vehicle_side, blinker, blindspot in (

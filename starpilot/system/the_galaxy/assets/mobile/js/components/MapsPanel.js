@@ -310,50 +310,44 @@ export const MapsPanel = {
   template: `
     <div style="display:grid; gap:12px;">
       <GxNotice v-if="error" tone="danger" :text="error" style="margin:0;" />
-      <section class="gx-card">
-        <div class="gx-section__header">
-          <i class="bi bi-map"></i>
-          <span class="gx-section__title">Offline Maps</span>
+      <div style="display:grid; gap:6px;">
+        <p style="margin:0; color:var(--text-muted);">Road data openpilot uses for speed limits and curve control, by state or country. Separate from the visual map tiles.</p>
+        <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0;">
+          <span class="gx-row__label">Downloader</span>
+          <span class="gx-row__value">{{ downloaderLabel }}</span>
         </div>
-        <div style="padding: var(--sp-3); display:grid; gap:6px;">
-          <p style="margin:0; color:var(--text-muted);">Select regions, start downloads, and manage offline maps entirely from Galaxy.</p>
-          <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0;">
-            <span class="gx-row__label">Downloader</span>
-            <span class="gx-row__value">{{ downloaderLabel }}</span>
-          </div>
-          <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0;">
-            <span class="gx-row__label">Saved Regions</span>
-            <span class="gx-row__value">{{ loadingStatus ? 'Checking...' : status.selectedCount }}</span>
-          </div>
-          <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0;">
-            <span class="gx-row__label">Additional Storage</span>
-            <span class="gx-row__value">{{ estimateLabel }}</span>
-          </div>
-          <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0;">
-            <span class="gx-row__label">Last Updated</span>
-            <span class="gx-row__value">{{ status.lastUpdate || 'Never' }}</span>
-          </div>
-          <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0;">
-            <span class="gx-row__label">Storage Used</span>
-            <span class="gx-row__value">{{ storageLabel }}</span>
-          </div>
-          <GxNotice v-if="status.isOnroad" text="Map downloads and removal are blocked while driving." style="margin:8px 0;" />
-          <GxNotice v-if="selectionDirty" text="You have unsaved region changes. Downloading now will use the current selection." style="margin:8px 0;" />
-          <GxNotice v-if="scheduleDirty" text="You have an unsaved schedule change. Downloading now will also apply it." style="margin:8px 0;" />
-          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; align-items:center;">
-            <button type="button" class="gx-btn" :disabled="!canDownload && !canCancel" @click="status.downloading ? cancelDownload() : startDownload()">
-              <i class="bi" :class="status.downloading ? 'bi-x-circle' : 'bi-download'"></i>
-              {{ status.downloading ? (status.cancelling ? 'Cancelling...' : 'Cancel Download') : 'Download Maps' }}
-            </button>
-            <button type="button" class="gx-btn gx-btn--tonal" style="color:var(--error);" :disabled="!canRemove" @click="removeMaps">Remove Maps</button>
-            <button type="button" class="gx-btn gx-btn--tonal" :disabled="savingSelection || loadingCatalog || !selectionDirty" @click="saveSelection">
-              {{ savingSelection ? 'Saving...' : 'Save Selection' }}
-            </button>
-            <button type="button" class="gx-btn gx-btn--text" :disabled="!selectionDirty && !scheduleDirty" @click="resetDraft">Reset</button>
-            <button type="button" class="gx-btn gx-btn--text" :disabled="selectedDraft.length === 0" @click="clearAll">Clear All</button>
-          </div>
+        <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0;">
+          <span class="gx-row__label">Saved Regions</span>
+          <span class="gx-row__value">{{ loadingStatus ? 'Checking...' : status.selectedCount }}</span>
         </div>
-      </section>
+        <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0;">
+          <span class="gx-row__label">Additional Storage</span>
+          <span class="gx-row__value">{{ estimateLabel }}</span>
+        </div>
+        <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0;">
+          <span class="gx-row__label">Last Updated</span>
+          <span class="gx-row__value">{{ status.lastUpdate || 'Never' }}</span>
+        </div>
+        <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0;">
+          <span class="gx-row__label">Storage Used</span>
+          <span class="gx-row__value">{{ storageLabel }}</span>
+        </div>
+        <GxNotice v-if="status.isOnroad" text="Map downloads and removal are blocked while driving." style="margin:8px 0;" />
+        <GxNotice v-if="selectionDirty" text="You have unsaved region changes. Downloading now will use the current selection." style="margin:8px 0;" />
+        <GxNotice v-if="scheduleDirty" text="You have an unsaved schedule change. Downloading now will also apply it." style="margin:8px 0;" />
+        <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+          <button type="button" class="gx-btn" :disabled="!canDownload && !canCancel" @click="status.downloading ? cancelDownload() : startDownload()">
+            <i class="bi" :class="status.downloading ? 'bi-x-circle' : 'bi-download'"></i>
+            {{ status.downloading ? (status.cancelling ? 'Cancelling...' : 'Cancel Download') : 'Download Maps' }}
+          </button>
+          <button type="button" class="gx-btn gx-btn--tonal" style="color:var(--error);" :disabled="!canRemove" @click="removeMaps">Remove Maps</button>
+          <button type="button" class="gx-btn gx-btn--tonal" :disabled="savingSelection || loadingCatalog || !selectionDirty" @click="saveSelection">
+            {{ savingSelection ? 'Saving...' : 'Save Selection' }}
+          </button>
+          <button type="button" class="gx-btn gx-btn--text" :disabled="!selectionDirty && !scheduleDirty" @click="resetDraft">Reset</button>
+          <button type="button" class="gx-btn gx-btn--text" :disabled="selectedDraft.length === 0" @click="clearAll">Clear All</button>
+        </div>
+      </div>
 
       <section v-if="showProgress" class="gx-card">
         <div class="gx-section__header">
@@ -390,12 +384,12 @@ export const MapsPanel = {
           <i class="bi bi-sliders"></i>
           <span class="gx-section__title">Regions &amp; Schedule</span>
         </div>
-        <div style="padding: var(--sp-3); display:grid; gap:8px;">
-          <div class="gx-row" style="border-top:none; flex-wrap:wrap;">
+        <div style="padding: var(--sp-2) var(--sp-3); display:grid; gap:6px;">
+          <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0; flex-wrap:wrap;">
             <span class="gx-row__label">Search</span>
             <input class="gx-field" style="flex:1; min-width:180px;" type="search" v-model="search" placeholder="Filter by name or code" />
           </div>
-          <div class="gx-row" style="border-top:none; flex-wrap:wrap;">
+          <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0; flex-wrap:wrap;">
             <span class="gx-row__label">Auto Update</span>
             <GalaxySelect class="gx-field" style="flex:1; min-width:160px;" :value="scheduleDraft" @change="scheduleDraft = $event.target.value">
               <option v-for="opt in scheduleOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
@@ -404,7 +398,7 @@ export const MapsPanel = {
               {{ savingSchedule ? 'Applying...' : 'Apply' }}
             </button>
           </div>
-          <div class="gx-row" style="border-top:none; flex-wrap:wrap;">
+          <div class="gx-row" style="border-top:none; min-height:0; padding:4px 0; flex-wrap:wrap;">
             <span class="gx-row__label">Selected Regions</span>
             <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; flex:1;">
               <template v-if="selectedDraft.length">
