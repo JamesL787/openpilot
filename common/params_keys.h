@@ -380,9 +380,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // Tester rollout: parse the Bosch-A harness's own 16-slot radar object bank into real
     // leadOne/leadTwo tracks instead of treating the car as radarless. RX-only, no CAN authority taken.
     {"BoschARadar", {PERSISTENT, BOOL, "1", "1", 3}},
-    // TEST, default OFF. Experimental Mode only. STATUS 136h: gas-press boost alongside the
-    // (always-on) lead-departure assist, closer to upstream PR 39015. Unreplayed. Read in
-    // longitudinal_planner.py.
+    // Default ON. Experimental Mode only. STATUS 136h: "Accel Boost" gates both upstream PR 39015's
+    // gas-press boost and the lead-departure assist. Unreplayed. Read in longitudinal_planner.py.
     {"GasOverrideBoost", {PERSISTENT, BOOL, "1", "1", 3}},
     {"RemoteStartBootsComma", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"TeslaWakeOnCAN", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},

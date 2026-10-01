@@ -553,7 +553,7 @@ EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE = -0.15
 # then confirmed on four logged drives with the toggle on (136c-136f): logged aTarget matched the
 # replay within 0.02 on 95-97% of acting frames, no hard brake in the 5-8 s after an episode was
 # caused by it, and 0 frames lifted while a lead closed faster than 0.5 m/s or braked harder than
-# -1.0. Baked in unconditionally in 136g: still Experimental Mode only (get_exp_lead_departure_weight
+# -1.0. Baked in in 136g, now gated by the single Accel Boost toggle (GasOverrideBoost, default on, 136h): still Experimental Mode only (get_exp_lead_departure_weight
 # requires a lead at or beyond the follow distance, and update_exp_lead_departure only runs on the
 # tinygrad-model branch below), and every other gate is unchanged. When a lead is at or beyond the
 # follow distance and pulling away, lift the e2e target part of the way toward the MPC. Stateless
