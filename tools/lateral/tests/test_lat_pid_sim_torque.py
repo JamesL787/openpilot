@@ -175,7 +175,7 @@ def test_rate_damping_opposes_the_wheel_rate_below_30_mph_only():
 def test_clarity_eps_kind_builds_the_car_controller_and_joins_the_feedforward(vgr):
   from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps
   from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import CIVIC_BOSCH_C020
-  d = _route(0.02, vgr=vgr)   # a turn past FF_ANGLE_GATE_DEG, so the gate is fully open
+  d = _route(0.02, vgr=vgr)   # straight for 3 s, then a right turn
   d["params"]["NrdrLatUseFirmwareVgr"] = "1" if vgr else "0"
   ctl = sim.Controller(d["cp_bytes"], d["params"], kind="clarity_eps")
   assert isinstance(ctl.lac, LatControlHondaEps) and ctl.lac.core.ff.cal is CIVIC_BOSCH_C020
@@ -184,7 +184,8 @@ def test_clarity_eps_kind_builds_the_car_controller_and_joins_the_feedforward(vg
     ctl.step(d, k, ctl.raw_target() if k else 0.0, 0.0, False)
     weights.append(ctl.lac.core.ff_weight)
   ctl.close()
-  assert weights[299] == 0.0 and weights[-1] == 1.0   # straight: held out by the angle gate; in the turn: in
+  # no angle gate since 0e528b3ef: the feedforward fades in over 0.5 s from engagement, on the straight too
+  assert 0.0 < weights[24] < 1.0 and weights[49] == 1.0 and weights[299] == 1.0 and weights[-1] == 1.0
   assert ctl.last_log.active and ctl.lac.core.ff.output < 0.0   # right turn: a negative feedforward
   ang, des, out, deliv, raw = sim.simulate(d, PLANT, with_raw=True, kind="clarity_eps")
   assert raw[-1] < -5.0 and des[-1] == pytest.approx(raw[-1], abs=1e-6)
