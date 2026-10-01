@@ -806,7 +806,7 @@ class CarController(CarControllerBase):
       # through the same 0.28 s modified-EPS filter that controller uses for its own pressed state, with no
       # debounce, hold or same-direction assist: a raw threshold crossing chatters around the driver-torque
       # boundary, and fading the actuator while the controller sees a different override state reads as safety
-      # limiting and freezes its integrator. carstate drops the center boost and the 2x tolerance with it.
+      # limiting and freezes its integrator. carstate drops the 2x tolerance with it.
       if live["vfn_override"] or live["increase_override_tolerance"]:
         steering_pressed = self._filtered_steering_pressed(CS, torque_cmd)
         if live["vfn_override"]:

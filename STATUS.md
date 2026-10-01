@@ -9688,6 +9688,10 @@ removed these terms, which came from starpilot's first Honda PID:
 The Center Scale and Center Boost Min Speed sliders are gone from both settings UIs. Their param keys
 stay in params_keys.h, because the sim tools and the tune analyzer still list them. `HondaCenterBoostThreshold`
 stays: carstate uses it for the centre override threshold (`NrdrOverrideThresholdCenterBoost`), not the scale.
+*2026-10-01:* the centre override threshold is gone too, at the owner's request. carstate now uses
+`NrdrDriverOverrideThreshold` at every wheel angle; the Center Boost Angle and Center Override Threshold
+rows are gone from both UIs, and both keys stay in params_keys.h for the same reason (no device .so rebuild).
+On the owner's car both thresholds read 1800 (device params, read-only, 2026-10-01), so nothing changes there.
 `phase` is still computed, because the Civic testing-ground scale uses it.
 
 **On the owner's car today.** 28a/28b ran with `HondaCenterScale` 0.0, so the centre boost was already off.

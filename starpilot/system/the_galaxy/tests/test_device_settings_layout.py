@@ -666,3 +666,12 @@ def test_nrdr_lateral_settings_sit_in_the_collapsible_nrdr_pid_controller_group(
   nrdr_prefixes = ("Nrdr", "Honda", "LatPScale", "LatIScale", "LatFScale")
   assert not [p["key"] for p in params if p.get("parent_key") == "LateralTune" and p["key"].startswith(nrdr_prefixes)]
   assert all(by_key[k].get("ui_type") != "group" for k in children)
+
+
+def test_center_boost_is_gone_from_both_uis():
+  # Peter, 2026-10-01: "remove center boost". carstate uses one override threshold at every wheel angle; the two
+  # keys stay declared in params_keys.h only because the sim and lat_tune_analyzer key lists name them.
+  params = [p for section in _params_by_section(_layout()).values() for p in section.values()]
+  removed = {"HondaCenterBoostThreshold", "NrdrOverrideThresholdCenterBoost"}
+  assert not removed & {p["key"] for p in params}
+  assert not removed & _raylib_nrdr_setting_keys()
