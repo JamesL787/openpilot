@@ -29,6 +29,7 @@ from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_linear_to_physical
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.common.params import Params
+from openpilot.selfdrive.controls.lib.clarity_yaw_trim import YawCurvatureTrim
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   NRDR_ANGLE_RATE_LIMIT_DEG_S,
@@ -68,6 +69,7 @@ class LatControlClarityEps(LatControl):
                                         p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE)
     else:
       self.core = ClarityEpsLateralCore(*gains, dt)
+    self.yaw_trim = YawCurvatureTrim(dt)
     self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
     self.sr_curve_inverse = NRDR_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
     self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
@@ -87,6 +89,7 @@ class LatControlClarityEps(LatControl):
   def reset(self):
     super().reset()
     self.core.reset()
+    self.yaw_trim.reset()
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_prev = False
 
@@ -108,6 +111,11 @@ class LatControlClarityEps(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
+    # scale the request by the learned ratio of commanded to delivered curvature (clarity_yaw_trim); learns only
+    # while engaged, keeps what it learned across disengagements for the drive
+    if active:
+      self.yaw_trim.update(desired_curvature, CS.yawRate, CS.vEgo, CS.aEgo, bool(CS.steeringPressed))
+    desired_curvature *= self.yaw_trim.gain(CS.vEgo)
     angle_des_no_offset = self._desired_angle_no_offset(VM, CS.vEgo, params.roll, desired_curvature)
     if active:
       angle_des_no_offset = rate_limit_desired_angle(angle_des_no_offset, self.prev_rate_limited_angle,

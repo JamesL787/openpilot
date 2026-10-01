@@ -324,9 +324,9 @@ class TestHondaFingerprint:
     assert CP.flags & HondaFlags.HYBRID
 
   @pytest.mark.parametrize("car, frame, yaw_deg_s", [
-    (CAR.HONDA_CLARITY, "989f88b60c000c72", 25.5),       # 610 counts, zero 508: a right turn on a Clarity route
-    (CAR.HONDA_CLARITY, "645f4759f1000c62", -26.75),     # 401 counts: left turn, same route
-    (CAR.HONDA_CLARITY, "7f5f4801f0000c72", 0.25),       # 509 counts: straight
+    (CAR.HONDA_CLARITY, "989f88b60c000c72", 25.332),     # 610 counts, zero 508, 0.246, +0.24 clockwise: a Clarity right turn
+    (CAR.HONDA_CLARITY, "645f4759f1000c62", -26.322),    # 401 counts: left turn, same route
+    (CAR.HONDA_CLARITY, "7f5f4801f0000c72", 0.246),      # 509 counts: straight
     (CAR.HONDA_CIVIC_BOSCH, "8263880e02000c57", 1.952),  # 521 counts, zero 513, 0.244 deg/s: Peter's Civic
     (CAR.HONDA_CIVIC_BOSCH, "6d638735ea000c40", -18.544),  # 437 counts
     (CAR.HONDA_CIVIC_BOSCH, "806387ddfa000c48", 0.0),    # 513 counts
@@ -366,6 +366,17 @@ class TestHondaFingerprint:
     assert cal.zero == pytest.approx(509.5)
     assert cal.update(to_dbc(519.5), standstill=False) == pytest.approx(2.5)  # moving: learned zero kept
     assert cal.samples == 0
+
+  @pytest.mark.parametrize("counts, yaw_deg_s", [(-40, -9.84), (-4, -0.984), (0, 0.0), (3, 0.738), (4, 1.104), (5, 1.47), (40, 10.08)])
+  def test_clarity_clockwise_under_read_is_corrected(self, counts, yaw_deg_s):
+    # 0.246 deg/s per count; left turns and small rates read true; clockwise from +3..+5 counts under-reads by 0.24
+    cal = get_yaw_rate_calibration(CAR.HONDA_CLARITY)
+    assert cal.update((508.0 + counts - 512.0) * 0.25, standstill=False) == pytest.approx(yaw_deg_s)
+
+  @pytest.mark.parametrize("counts", [-40, -4, 4, 40])
+  def test_civic_reads_both_sides_alike(self, counts):
+    cal = get_yaw_rate_calibration(CAR.HONDA_CIVIC_BOSCH)
+    assert cal.update((513.0 + counts - 512.0) * 0.25, standstill=False) == pytest.approx(counts * 0.244)
 
   def test_yaw_rate_zero_rejects_a_faulted_sensor(self):
     cal = YawRateCalibration(0.25, 508.0)
