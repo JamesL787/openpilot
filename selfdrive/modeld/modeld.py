@@ -35,7 +35,7 @@ from openpilot.system import sentry
 from opendbc.car.car_helpers import get_demo_car_params
 from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
 from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan_tomb_raider, smooth_value
-from openpilot.selfdrive.controls.lib.latcontrol_clarity_eps import clarity_lateral_delay, use_clarity_eps_controller
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import clarity_lateral_delay, use_honda_eps_controller
 from openpilot.selfdrive.modeld.camera_offset import CameraOffset, DEFAULT_CAMERA_HEIGHT
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_pose_msg, PublishState, get_curvature_from_output
@@ -1402,7 +1402,7 @@ def main(demo=False):
     else:
       CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
   cloudlog.info("modeld got CarParams: %s", CP.brand)
-  scheduled_lat_delay = use_clarity_eps_controller(CP)
+  scheduled_lat_delay = use_honda_eps_controller(CP)
 
   lat_smooth_seconds = _model_smooth_seconds(params, "LatSmoothSeconds", LAT_SMOOTH_SECONDS)
   long_smooth_seconds = _model_smooth_seconds(params, "LongSmoothSeconds", LONG_SMOOTH_SECONDS)

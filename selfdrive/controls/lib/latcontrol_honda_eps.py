@@ -1,13 +1,14 @@
-"""nrdr: lateral controller for the Honda Clarity with a modified EPS. controlsd selects it instead of LatControlPID.
+"""nrdr: lateral controller for modified-EPS Hondas (the Clarity here). controlsd selects it instead of LatControlPID.
+Named LatControlHondaEps / latcontrol_honda_eps.py until it ran on more than the Clarity.
 
-The control law is nrdr_eps_firmware_ff.ClarityEpsLateralCore: vfn's angle PID on the residual plus a
+The control law is nrdr_eps_firmware_ff.HondaEpsLateralCore: vfn's angle PID on the residual plus a
 feedforward that inverts the EPS firmware's own P + D + KFF law, so the command is the one the firmware needs
 to move the wheel along the desired path rather than one it has to be dragged into by error.
 
 This shell does what LatControlPID does around its PID for a modified-EPS Honda, reusing the same helpers so
 each setting behaves identically: curvature -> wheel angle through the firmware VGR table (here with the
 ratio and slip factor identified against the car's yaw sensor, ClarityRackMap) or the road-measured ratio curve
-(NrdrLatUseFirmwareVgr), a slow curvature trim learned from that yaw sensor (YawCurvatureTrim), the angle-rate ceiling (NrdrLatAngleRateLimit), the shared
+(NrdrLatUseFirmwareVgr), the angle-rate ceiling (NrdrLatAngleRateLimit), the shared
 driver-override detector, and the speed-banded output low-pass (HondaTorqueOutputLowPassFilter /
 HondaTorqueOutputLpfTau*). Settings read elsewhere (carcontroller, carstate, controlsd) apply unchanged.
 
@@ -24,7 +25,6 @@ from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_linear_to_p
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
 from openpilot.common.params import Params
 from openpilot.selfdrive.controls.lib.clarity_rack_map import ClarityRackMap
-from openpilot.selfdrive.controls.lib.clarity_yaw_trim import YawCurvatureTrim
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   NRDR_ANGLE_RATE_LIMIT_DEG_S,
@@ -36,7 +36,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   rate_limit_desired_angle,
   solve_angle_from_ratio_curve,
 )
-from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import ClarityEpsLateralCore
+from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import HondaEpsLateralCore
 
 SETTINGS_REFRESH_FRAMES = 300
 
@@ -55,7 +55,7 @@ CLARITY_LAT_DELAY_BP = [3.5, 7.0, 12.0, 20.0, 30.0]  # m/s, centres of the measu
 CLARITY_LAT_DELAY_V = [0.12, 0.12, 0.15, 0.20, 0.30]  # s
 
 
-def use_clarity_eps_controller(CP) -> bool:
+def use_honda_eps_controller(CP) -> bool:
   return (CP.carFingerprint == HONDA.HONDA_CLARITY and bool(CP.flags & HondaFlags.EPS_MODIFIED)
           and CP.lateralTuning.which() == "pid")
 
@@ -66,22 +66,21 @@ def clarity_lateral_delay(v_ego: float) -> float:
 
 def get_clarity_rack_map(CP) -> ClarityRackMap | None:
   # identified on the TRW A020 firmware's A table only
-  if not (use_clarity_eps_controller(CP) and CP.flags & HondaFlags.VGR_CLARITY_TRW_A020):
+  if not (use_honda_eps_controller(CP) and CP.flags & HondaFlags.VGR_CLARITY_TRW_A020):
     return None
   return ClarityRackMap(CP.wheelbase, get_honda_vgr_inverse(HondaFlags.VGR_CLARITY_TRW_A020))
 
 
-class LatControlClarityEps(LatControl):
+class LatControlHondaEps(LatControl):
   def __init__(self, CP, CI, dt):
     super().__init__(CP, CI, dt)
     pid = CP.lateralTuning.pid
-    self.core = ClarityEpsLateralCore([float(x) for x in pid.kpBP], [float(x) for x in pid.kpV],
+    self.core = HondaEpsLateralCore([float(x) for x in pid.kpBP], [float(x) for x in pid.kpV],
                                       [float(x) for x in pid.kiBP], [float(x) for x in pid.kiV], dt)
     self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
     self.sr_curve_inverse = NRDR_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
     self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
     self.rack_map = get_clarity_rack_map(CP)
-    self.yaw_trim = YawCurvatureTrim(dt)
     self.params = Params()
     self.frame = -1
     self.prev_rate_limited_angle = 0.0
@@ -102,7 +101,6 @@ class LatControlClarityEps(LatControl):
   def reset(self):
     super().reset()
     self.core.reset()
-    self.yaw_trim.reset()
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_prev = False
 
@@ -126,9 +124,6 @@ class LatControlClarityEps(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    if active:
-      self.yaw_trim.update(desired_curvature, CS.yawRate, CS.vEgo, CS.aEgo, bool(CS.steeringPressed))
-    desired_curvature *= self.yaw_trim.gain(CS.vEgo)
     angle_des_no_offset = self._desired_angle_no_offset(VM, CS.vEgo, params.roll, desired_curvature)
     if active:
       angle_des_no_offset = rate_limit_desired_angle(angle_des_no_offset, self.prev_rate_limited_angle,

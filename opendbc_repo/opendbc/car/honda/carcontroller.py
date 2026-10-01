@@ -635,7 +635,7 @@ class CarController(CarControllerBase):
       torque_cmd *= self.override_ramp
 
       # The speed-banded torque-output LPF now runs in the lateral controller (LatControlPID, or
-      # LatControlClarityEps on the Clarity) after all modified-EPS shaping. It uses the
+      # LatControlHondaEps on the Clarity) after all modified-EPS shaping. It uses the
       # HondaTorqueOutputLowPassFilter toggle and
       # HondaTorqueOutputLpfTau{LowSpeed,Standard,Highway} taus, so actuators.torque already
       # contains the command that this controller will deliver to the rack.
