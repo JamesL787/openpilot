@@ -1,5 +1,6 @@
 """nrdr: lateral controller for the Honda Clarity and Civic Bosch with a modified EPS. controlsd selects it instead of
-LatControlPID when NrdrLatEpsFirmwareFF is on (read once, when controlsd starts).
+LatControlPID when NrdrLatEpsFirmwareFF is on (read once, when controlsd starts). Named LatControlClarityEps /
+latcontrol_clarity_eps.py until it ran on more than the Clarity.
 
 Upstream JamesL787/openpilot vfn-controller-shadow 8c3a3fd8 / fd815ef3, which selects it for the Clarity
 unconditionally. Here it is behind the toggle, and the Civic Bosch C020 runs it with its own firmware calibration
@@ -8,7 +9,7 @@ unconditionally. Here it is behind the toggle, and the Civic Bosch C020 runs it 
 branch, so the output LPF runs on upstream's values (OUTPUT_LPF_TAU) and HondaLpfTau* (this branch's target
 filter) is not used here.
 
-The control law is nrdr_eps_firmware_ff.ClarityEpsLateralCore: vfn's angle PID on the residual plus a
+The control law is nrdr_eps_firmware_ff.HondaEpsLateralCore: vfn's angle PID on the residual plus a
 feedforward that inverts the EPS firmware's own P + D + KFF law, so the command is the one the firmware needs
 to move the wheel along the desired path rather than one it has to be dragged into by error.
 
@@ -44,30 +45,55 @@ from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import (
   CIVIC_EPS_LOAD,
   CIVIC_I_SCALE,
   CIVIC_P_SCALE,
-  ClarityEpsFirmwareFeedforward,
-  ClarityEpsLateralCore,
+  HondaEpsFirmwareFeedforward,
+  HondaEpsLateralCore,
 )
 
 SETTINGS_REFRESH_FRAMES = 300
 
 
-def use_clarity_eps_controller(CP, params=None) -> bool:
+def use_honda_eps_controller(CP, params=None) -> bool:
   if not (CP.carFingerprint in (HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH) and bool(CP.flags & HondaFlags.EPS_MODIFIED)
           and CP.lateralTuning.which() == "pid"):
     return False
   return _get_param_bool(params if params is not None else Params(), "NrdrLatEpsFirmwareFF")
 
 
-class LatControlClarityEps(LatControl):
+# Lateral delay the model is told (liveDelay.lateralDelay's role in lat_action_t), scheduled on speed, per car.
+# This controller's real execution delay depends on speed, so one SteerDelay / lagd value is early in the city and
+# late on the highway. Each schedule is measured on its own car as the lag from the requested curvature to the
+# curvature the car turns (VSA yaw, 0x94). A car with no entry keeps liveDelay.
+# Clarity (vfn 8e839993): routes 354-36b; 3.5 m/s is the 2-5 m/s band. In vfn's closed-loop sim it cut the 5-9 m/s
+# lateral error from 0.082 to 0.049 m/s^2 and the city turn-in from 80-120 ms early to within ~40 ms.
+# Civic Bosch: not measured yet (needs drives on this controller), so it keeps liveDelay.
+EPS_LAT_DELAY_SCHEDULE = {
+  HONDA.HONDA_CLARITY: ([3.5, 7.0, 12.0, 20.0, 30.0], [0.12, 0.12, 0.15, 0.20, 0.30]),  # m/s, s
+}
+
+
+def eps_lateral_delay_schedule(CP, params=None):
+  """The speed schedule to tell the model instead of liveDelay, or None to keep liveDelay."""
+  if CP.carFingerprint not in EPS_LAT_DELAY_SCHEDULE or not use_honda_eps_controller(CP, params):
+    return None
+  return EPS_LAT_DELAY_SCHEDULE[CP.carFingerprint]
+
+
+def eps_lateral_delay(schedule, v_ego: float, live_delay: float) -> float:
+  if schedule is None:
+    return live_delay
+  return float(np.interp(v_ego, *schedule))
+
+
+class LatControlHondaEps(LatControl):
   def __init__(self, CP, CI, dt):
     super().__init__(CP, CI, dt)
     pid = CP.lateralTuning.pid
     gains = ([float(x) for x in pid.kpBP], [float(x) for x in pid.kpV], [float(x) for x in pid.kiBP], [float(x) for x in pid.kiV])
     if CP.carFingerprint == HONDA.HONDA_CIVIC_BOSCH:
-      self.core = ClarityEpsLateralCore(*gains, dt, ff=ClarityEpsFirmwareFeedforward(dt, cal=CIVIC_BOSCH_C020, load=CIVIC_EPS_LOAD),
+      self.core = HondaEpsLateralCore(*gains, dt, ff=HondaEpsFirmwareFeedforward(dt, cal=CIVIC_BOSCH_C020, load=CIVIC_EPS_LOAD),
                                         p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE)
     else:
-      self.core = ClarityEpsLateralCore(*gains, dt)
+      self.core = HondaEpsLateralCore(*gains, dt)
     self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
     self.sr_curve_inverse = NRDR_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
     self.vgr_inverse = get_honda_vgr_inverse(CP.flags)

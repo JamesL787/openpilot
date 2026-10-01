@@ -236,6 +236,11 @@ class NRDRTuningLayout(_SettingsPage):
              "On: steer with James's modified-EPS controller, a feedforward that inverts the EPS firmware's own "
              "control law plus a PID on fixed per-band trims. Off: steer with the NRDR PID, set up under NRDR PID "
              "Control. Takes effect on the next drive. Off, James's feedforward is only logged."),
+      toggle("NrdrLatVfnOverride", "VFN Steering Override",
+             "Driver override from vfn-yaw-trim, written for James's EPS Firmware Feedforward controller: every "
+             "press goes through the same 0.28 s filter that controller uses, with no debounce, release hold or "
+             "same-direction assist, and no 2x tolerance. Applies with either steering controller. "
+             "Modified-EPS Civic Bosch/Clarity only. Off: the NRDR override settings apply."),
     ]
 
     pid_turn_rows = [
@@ -273,29 +278,15 @@ class NRDRTuningLayout(_SettingsPage):
       toggle("NrdrLearnAngleOffset", "Learn Angle Offset", "Use paramsd's learned steering angle offset instead of zero."),
     ]
 
-    center_rows = [
-      value(
-        "HondaCenterBoostThreshold", "Center Boost Angle", "Angle band where the center override threshold applies.",
-        lambda: f"{p.get_float('HondaCenterBoostThreshold'):.1f} deg",
-        lambda: self._show_slider("HondaCenterBoostThreshold", 0.0, 10.0, step=0.1, unit=" deg", value_type="float", title="Center Boost Angle"),
-      ),
-    ]
-
-
     override_rows = [
       toggle("NrdrIncreaseOverrideTolerance", "Override Hysteresis", "Double the override tolerance after steering input leaves center."),
       toggle("NrdrSameDirectionAssist", "Keep Steering When Helping a Turn (Test)",
              "Pushing the wheel the same way openpilot is steering no longer cuts torque, below 25 mph, "
              "for up to 8 s. Pushing against it, or very hard, still takes over."),
       value(
-        "NrdrDriverOverrideThreshold", "Driver Override Threshold", "Raw torque-sensor threshold outside the center boost angle band.",
+        "NrdrDriverOverrideThreshold", "Driver Override Threshold", "Raw torque-sensor threshold at every wheel angle.",
         lambda: str(p.get_int("NrdrDriverOverrideThreshold")),
         lambda: self._show_slider("NrdrDriverOverrideThreshold", 0, 5000, title="Driver Override Threshold"),
-      ),
-      value(
-        "NrdrOverrideThresholdCenterBoost", "Center Override Threshold", "Raw torque threshold inside the center boost angle band.",
-        lambda: str(p.get_int("NrdrOverrideThresholdCenterBoost")),
-        lambda: self._show_slider("NrdrOverrideThresholdCenterBoost", 0, 5000, title="Center Override Threshold"),
       ),
       toggle("HondaDriverAssistDuringOverride", "Assist During Override", "Keep controller torque while the driver is applying steering torque."),
       value(
@@ -380,7 +371,6 @@ class NRDRTuningLayout(_SettingsPage):
       SettingSection(title=tr_noop("Tune Report"), rows=tune_report_rows),
       SettingSection(title=tr_noop("Steering Controller"), rows=controller_rows),
       SettingSection(title=tr_noop("Live Parameters / Auto Tuning"), rows=learning_rows),
-      SettingSection(title=tr_noop("Center Response"), rows=center_rows),
       SettingSection(title=tr_noop("Driver Override"), rows=override_rows),
       SettingSection(title=tr_noop("Filters / Limits"), rows=filter_rows),
     ]

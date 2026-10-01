@@ -324,9 +324,9 @@ class TestHondaFingerprint:
     assert CP.flags & HondaFlags.HYBRID
 
   @pytest.mark.parametrize("car, frame, yaw_deg_s", [
-    (CAR.HONDA_CLARITY, "989f88b60c000c72", 25.5),       # 610 counts, zero 508: a right turn on a Clarity route
-    (CAR.HONDA_CLARITY, "645f4759f1000c62", -26.75),     # 401 counts: left turn, same route
-    (CAR.HONDA_CLARITY, "7f5f4801f0000c72", 0.25),       # 509 counts: straight
+    (CAR.HONDA_CLARITY, "989f88b60c000c72", 25.332),     # 610 counts, zero 508, 0.246, +0.24 clockwise: a Clarity right turn
+    (CAR.HONDA_CLARITY, "645f4759f1000c62", -26.322),    # 401 counts: left turn, same route
+    (CAR.HONDA_CLARITY, "7f5f4801f0000c72", 0.246),      # 509 counts: straight
     (CAR.HONDA_CIVIC_BOSCH, "8263880e02000c57", 1.952),  # 521 counts, zero 513, 0.244 deg/s: Peter's Civic
     (CAR.HONDA_CIVIC_BOSCH, "6d638735ea000c40", -18.544),  # 437 counts
     (CAR.HONDA_CIVIC_BOSCH, "806387ddfa000c48", 0.0),    # 513 counts
@@ -366,6 +366,17 @@ class TestHondaFingerprint:
     assert cal.zero == pytest.approx(509.5)
     assert cal.update(to_dbc(519.5), standstill=False) == pytest.approx(2.5)  # moving: learned zero kept
     assert cal.samples == 0
+
+  @pytest.mark.parametrize("counts, yaw_deg_s", [(-40, -9.84), (-4, -0.984), (0, 0.0), (3, 0.738), (4, 1.104), (5, 1.47), (40, 10.08)])
+  def test_clarity_clockwise_under_read_is_corrected(self, counts, yaw_deg_s):
+    # 0.246 deg/s per count; left turns and small rates read true; clockwise from +3..+5 counts under-reads by 0.24
+    cal = get_yaw_rate_calibration(CAR.HONDA_CLARITY)
+    assert cal.update((508.0 + counts - 512.0) * 0.25, standstill=False) == pytest.approx(yaw_deg_s)
+
+  @pytest.mark.parametrize("counts", [-40, -4, 4, 40])
+  def test_civic_reads_both_sides_alike(self, counts):
+    cal = get_yaw_rate_calibration(CAR.HONDA_CIVIC_BOSCH)
+    assert cal.update((513.0 + counts - 512.0) * 0.25, standstill=False) == pytest.approx(counts * 0.244)
 
   def test_yaw_rate_zero_rejects_a_faulted_sensor(self):
     cal = YawRateCalibration(0.25, 508.0)
@@ -519,6 +530,7 @@ class TestHondaSteeringCommandFidelity:
     "override_fade_up_s": 1.5,
     "override_torque_scale": 0.0,
     "increase_override_tolerance": False,
+    "vfn_override": False,
     "steer_delta_limiter_enabled": False,
     "steer_delta_up": 3.0,
     "steer_delta_down": 3.0,
@@ -778,3 +790,27 @@ class TestHondaSteeringCommandFidelity:
     self._drive(controller, [0.0] * 200)
     delivered = self._drive(controller, [1.0], live={"steer_delta_limiter_enabled": True})
     assert abs(1.0 - delivered[0]) > 1e-2
+
+  # NrdrLatVfnOverride: vfn-yaw-trim's override policy, the 0.28 s modified-EPS filter on every press.
+  LIVE_VFN = {"vfn_override": True}
+
+  def test_vfn_override_same_direction_press_confirms_after_the_filter_window(self):
+    # 0.8 command with same-sign 2600 sensor; same-direction assist on but ignored under this policy
+    controller = self._ready()
+    out = self._press(controller, [(0.8, 2600.0)] * 60, live=self.LIVE_VFN)
+    assert out[20] == pytest.approx(0.8)  # well past the 6-frame debounce, still steering
+    assert max(abs(x) for x in out[35:]) == 0.0  # filter confirmed, fade down 0: cut
+    assert not controller.same_dir_fading and not controller.same_dir_assist.exempt
+
+  def test_vfn_override_opposing_press_cuts_at_once(self):
+    controller = self._ready()
+    out = self._press(controller, [(0.8, -2100.0)] * 3, live=self.LIVE_VFN)
+    assert out[0] == 0.0
+
+  def test_vfn_override_releases_without_the_hold(self):
+    controller = self._ready()
+    self._press(controller, [(0.8, -2500.0)] * 10, live=self.LIVE_VFN)
+    # sensor drops to 0.8 x threshold: the debounce path would hold here, this policy releases
+    out = self._press(controller, [(0.8, 1600.0)] * 80, live=self.LIVE_VFN)
+    assert out[-1] == pytest.approx(0.8)
+    assert not controller.steering_pressed_robust_prev

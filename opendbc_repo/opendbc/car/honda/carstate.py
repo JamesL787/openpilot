@@ -233,12 +233,13 @@ class CarState(CarStateBase):
     if custom_threshold > 0:
       steer_threshold = custom_threshold if stock_threshold == 1200 else stock_threshold * custom_threshold / 1200.0
 
-    center_boost_threshold = self.params.get_float("HondaCenterBoostThreshold", default=3.0)
-    center_custom_threshold = self.params.get_int("NrdrOverrideThresholdCenterBoost", default=1200)
-    if center_boost_threshold > 0.0 and center_custom_threshold > 0 and abs(ret.steeringAngleDeg) <= center_boost_threshold:
-      steer_threshold = center_custom_threshold if stock_threshold == 1200 else stock_threshold * center_custom_threshold / 1200.0
-
-    if self.params.get_bool("NrdrIncreaseOverrideTolerance") and self.CP.carFingerprint in (CAR.HONDA_CLARITY, CAR.HONDA_CIVIC, CAR.HONDA_CIVIC_BOSCH):
+    # One threshold at every wheel angle. The center boost (a separate HondaCenterBoostThreshold band with its own
+    # NrdrOverrideThresholdCenterBoost) is removed at Peter's request; the keys stay for the sim and analyzer lists.
+    # NrdrLatVfnOverride (vfn-yaw-trim's override policy, see carcontroller) also drops the 2x tolerance on the
+    # modified-EPS cars it was written for.
+    modified_eps = self.CP.carFingerprint in (CAR.HONDA_CLARITY, CAR.HONDA_CIVIC, CAR.HONDA_CIVIC_BOSCH)
+    vfn_override = modified_eps and self.params.get_bool("NrdrLatVfnOverride")
+    if not vfn_override and modified_eps and self.params.get_bool("NrdrIncreaseOverrideTolerance"):
       steer_threshold *= 2
 
     self.steer_threshold = steer_threshold  # read by the override release hysteresis in carcontroller

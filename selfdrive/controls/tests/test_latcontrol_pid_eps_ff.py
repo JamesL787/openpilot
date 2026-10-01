@@ -138,7 +138,7 @@ def test_james_controller_constants_do_not_move_the_pid_gate(monkeypatch):
 
 def test_the_pid_toggle_does_not_select_or_change_james_controller(monkeypatch):
   import math
-  from openpilot.selfdrive.controls.lib import latcontrol_clarity_eps as clarity_eps
+  from openpilot.selfdrive.controls.lib import latcontrol_honda_eps as clarity_eps
 
   class _V(_Params):
     def get_bool(self, key, *args, **kwargs):
@@ -146,12 +146,12 @@ def test_the_pid_toggle_does_not_select_or_change_james_controller(monkeypatch):
 
   CP = interfaces[HONDA.HONDA_CIVIC_BOSCH].get_non_essential_params(HONDA.HONDA_CIVIC_BOSCH)
   CP.flags |= int(HondaFlags.EPS_MODIFIED)
-  assert not clarity_eps.use_clarity_eps_controller(CP, _V({"NrdrLatPidFirmwareFF": "1"}))
-  assert clarity_eps.use_clarity_eps_controller(CP, _V({"NrdrLatEpsFirmwareFF": "1", "NrdrLatPidFirmwareFF": "1"}))
+  assert not clarity_eps.use_honda_eps_controller(CP, _V({"NrdrLatPidFirmwareFF": "1"}))
+  assert clarity_eps.use_honda_eps_controller(CP, _V({"NrdrLatEpsFirmwareFF": "1", "NrdrLatPidFirmwareFF": "1"}))
 
   def drive(values):
     monkeypatch.setattr(clarity_eps, "Params", lambda: _V(values))
-    lac = clarity_eps.LatControlClarityEps(CP.as_reader(), None, DT_CTRL)
+    lac = clarity_eps.LatControlHondaEps(CP.as_reader(), None, DT_CTRL)
     VM = VehicleModel(CP)
     params = log.LiveParametersData.new_message()
     params.steerRatio, params.stiffnessFactor = 16.0, 1.0

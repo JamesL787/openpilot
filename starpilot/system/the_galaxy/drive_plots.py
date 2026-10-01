@@ -46,7 +46,7 @@ COLUMNS = [
   # cut and fade).
   "steer_tq", "steer_tq_eps", "steer_rate", "blinker", "tq_req", "tq_out",
   # Controller: pidState.output / angleError / active; starpilotLateralState eps FF (active, weight, feedforward at
-  # full weight). pidState.p is the P before LatControlClarityEps's per-band scale.
+  # full weight). pidState.p is the P before LatControlHondaEps's per-band scale.
   "lat_out", "ang_err", "pid_active", "ff_active", "ff_w", "ff",
   # Lane from modelV2.laneLines[1]/[2].y[0]: car offset from the lane centre (m, + = car left of centre), lane width,
   # the lower of the two laneLineProbs and each one (left, right: which side drops out); modelV2.meta.laneChangeState
@@ -97,7 +97,7 @@ BOOL_COLUMNS = {"enabled", "lat_active", "long_active", "steer_pressed", "gas_pr
 LEAD_SOURCES = {0: None, 1: "radar", 2: "camera"}
 
 # Lateral controllers the advice can name (see the_galaxy._lateral_controller_info).
-CONTROLLER_CLARITY_EPS = "clarity_eps"   # James's controller (LatControlClarityEps): fixed P/I, no Lat*Scale sliders
+CONTROLLER_CLARITY_EPS = "clarity_eps"   # James's controller (LatControlHondaEps): fixed P/I, no Lat*Scale sliders
 CONTROLLER_NRDR_PID = "nrdr_pid"         # LatControlPID on a modified-EPS Honda: LatP/I/FScale LowSpeed/Standard/Highway
 
 LONG_STATES = {"off": 0, "pid": 1, "stopping": 2, "starting": 3}
@@ -868,7 +868,7 @@ def build_row(sm):
       lat_p, lat_i, lat_f = _f(st.p), _f(st.i), _f(st.f)
       lat_d = _f(getattr(st, "d", 0.0)) if which == "torqueState" else 0.0
     if which in ("pidState", "angleState"):
-      # Both Honda controllers (LatControlPID, LatControlClarityEps) log pidState with the target wheel angle,
+      # Both Honda controllers (LatControlPID, LatControlHondaEps) log pidState with the target wheel angle,
       # offset included, in the same frame as carState.steeringAngleDeg.
       ang_des = _f(st.steeringAngleDesiredDeg)
       ang_ok = 1

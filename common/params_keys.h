@@ -604,6 +604,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrMinSteerSpeed", {PERSISTENT, INT, "1", "1", 2}},
     {"NrdrOverrideThresholdCenterBoost", {PERSISTENT, INT, "1200", "1200", 2}},
     {"NrdrSameDirectionAssist", {PERSISTENT, BOOL, "0", "0", 2}},
+    {"NrdrLatVfnOverride", {PERSISTENT, BOOL, "0", "0", 2}},
     {"NavigationUI", {PERSISTENT, BOOL, "1", "0", 1, SETTINGS_SIMPLE}},
     {"NNFF", {PERSISTENT, BOOL, "0", "0", 2}},
     {"NNFFLite", {PERSISTENT, BOOL, "0", "0", 2}},

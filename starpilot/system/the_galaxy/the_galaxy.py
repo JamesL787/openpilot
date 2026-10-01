@@ -1997,7 +1997,7 @@ _CLARITY_EPS_CARS = (HONDA_CAR.HONDA_CLARITY, HONDA_CAR.HONDA_CIVIC_BOSCH)
 _lateral_controller_cache = {"key": None, "value": None}
 
 def _lateral_controller_info():
-  """Which steering controller controlsd runs, mirroring use_clarity_eps_controller():
+  """Which steering controller controlsd runs, mirroring use_honda_eps_controller():
   "clarity_eps" (James's controller, fixed gains), "nrdr_pid" (the PID the speed-band sliders tune),
   or the plain lateralTuning type. None when the car is unknown."""
   cp_bytes = _safe_params_get_live_raw("CarParamsPersistent")

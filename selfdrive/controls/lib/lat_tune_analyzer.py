@@ -78,7 +78,7 @@ TUNING_KEYS = (
   # the factor was learned against changes. The paramsd-learned ratio is deliberately not here:
   # it drifts continuously, and resetting on it would mean never learning.
   "NrdrLatUseFirmwareVgr",
-  # Swaps the whole lateral controller (LatControlClarityEps) the learned factors were fitted against.
+  # Swaps the whole lateral controller (LatControlHondaEps) the learned factors were fitted against.
   "NrdrLatEpsFirmwareFF",
   # Swaps the feedforward the learned factors were fitted against, in turns.
   "NrdrLatPidFirmwareFF",

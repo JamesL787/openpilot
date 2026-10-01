@@ -479,15 +479,20 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "HondaCenterBoostThreshold",
-        "label": "Honda Center Boost Threshold",
-        "description": "Angle band near center where the center override threshold applies.",
-        "data_type": "float",
-        "ui_type": "numeric",
-        "min": 0.0,
-        "max": 10.0,
-        "step": 0.1,
-        "parent_key": "LateralTune",
+        "key": "NrdrPidController",
+        "label": "NRDR PID Controller",
+        "description": "Peter's modified-EPS Civic Bosch/Clarity steering: the controller choice, override, PID trims, smoothing and learners. Manage to show them.",
+        "ui_type": "group",
+        "is_parent_toggle": true,
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NrdrLatVfnOverride",
+        "label": "VFN Steering Override",
+        "description": "Driver override from vfn-yaw-trim, written for the EPS Firmware Feedforward controller: every press goes through the same 0.28 s filter that controller uses, with no debounce, release hold or same-direction assist, and no 2x tolerance. Applies with either steering controller. Modified-EPS Civic Bosch/Clarity only. Off: the override settings below apply.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -496,7 +501,7 @@
         "description": "Filters short same-direction driver torque spikes.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -505,7 +510,7 @@
         "description": "Pushing the wheel the same way openpilot is steering no longer cuts steering torque, below 25 mph, for up to 8 s. Pushing against it, or very hard, still takes over.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -517,19 +522,7 @@
         "min": 100.0,
         "max": 5000.0,
         "step": 100.0,
-        "parent_key": "LateralTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "NrdrOverrideThresholdCenterBoost",
-        "label": "Center Override Threshold",
-        "description": "Override threshold used inside the center boost angle band.",
-        "data_type": "int",
-        "ui_type": "numeric",
-        "min": 100.0,
-        "max": 5000.0,
-        "step": 100.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -538,7 +531,7 @@
         "description": "Drop LKAS torque while the driver is steering.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -550,7 +543,7 @@
         "min": 0.0,
         "max": 10.0,
         "step": 0.1,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -562,7 +555,7 @@
         "min": 0.0,
         "max": 10.0,
         "step": 0.1,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -574,7 +567,7 @@
         "min": 0.0,
         "max": 100.0,
         "step": 1.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -586,7 +579,7 @@
         "min": 0.0,
         "max": 2000.0,
         "step": 10.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -595,7 +588,7 @@
         "description": "Convert curvature with the EPS firmware's position table on top of the learned steer ratio instead of the road-measured effective-ratio curve.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -604,7 +597,7 @@
         "description": "Modified-EPS Civic Bosch/Clarity: steer with James's controller, a feedforward that inverts the EPS firmware's own control law plus a PID on fixed per-band trims. The Lat P/I/F sliders and the other lateral shaping do not apply while it is on. Takes effect on the next drive. Off: the feedforward is only logged.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -616,7 +609,7 @@
         "min": 0.0,
         "max": 500.0,
         "step": 5.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -628,7 +621,7 @@
         "min": 0.0,
         "max": 500.0,
         "step": 5.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -640,7 +633,7 @@
         "min": 0.0,
         "max": 500.0,
         "step": 5.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -652,7 +645,7 @@
         "min": 0.0,
         "max": 500.0,
         "step": 5.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -664,7 +657,7 @@
         "min": 0.0,
         "max": 500.0,
         "step": 5.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -676,7 +669,7 @@
         "min": 0.0,
         "max": 500.0,
         "step": 5.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -688,7 +681,7 @@
         "min": 0.0,
         "max": 500.0,
         "step": 5.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -700,7 +693,7 @@
         "min": 0.0,
         "max": 500.0,
         "step": 5.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -712,7 +705,7 @@
         "min": 0.0,
         "max": 500.0,
         "step": 5.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -721,7 +714,7 @@
         "description": "Modified-EPS Civic Bosch/Clarity, NRDR PID: keep the PID and the Lat P/I/F trims, and add James's EPS firmware feedforward in turns only (none within 10 deg of centre, full from 30 deg). It fades in once the wheel is within 10 deg of the path, or 0.5 s after you let go while the wheel is short of the turn, and drops out on a driver press. No effect while EPS Firmware Feedforward is on. (NRDR PID only; not used by James's controller.)",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -730,7 +723,7 @@
         "description": "Smooths the desired steering angle with speed-banded tau values. (NRDR PID only; not used by James's controller.)",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -742,7 +735,7 @@
         "min": 0.0,
         "max": 5.0,
         "step": 0.01,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -754,7 +747,7 @@
         "min": 0.0,
         "max": 5.0,
         "step": 0.01,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -766,7 +759,7 @@
         "min": 0.0,
         "max": 5.0,
         "step": 0.01,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -775,7 +768,7 @@
         "description": "Ramp the model's 20 Hz steering action across the model frame instead of holding it to remove target stair-stepping.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -784,7 +777,7 @@
         "description": "Legacy rate limiter for requested steering torque.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -796,7 +789,7 @@
         "min": 0.0,
         "max": 100.0,
         "step": 0.1,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -808,7 +801,7 @@
         "min": 0.0,
         "max": 100.0,
         "step": 0.1,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -820,7 +813,7 @@
         "min": 0.0,
         "max": 45.0,
         "step": 1.0,
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -829,7 +822,7 @@
         "description": "Use paramsd's learned steering ratio instead of the static car value.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -838,7 +831,7 @@
         "description": "Use paramsd's learned tire stiffness instead of 1.0.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       },
       {
@@ -847,7 +840,7 @@
         "description": "Use paramsd's learned steering-angle offset instead of zero.",
         "data_type": "bool",
         "ui_type": "toggle",
-        "parent_key": "LateralTune",
+        "parent_key": "NrdrPidController",
         "settings_tier": "advanced"
       }
     ]
