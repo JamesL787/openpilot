@@ -10032,7 +10032,7 @@ Replay of the fixed code (base = the old law, same 10 routes):
   - **So closed-loop replays under-read how harsh a jab feels.** Compare candidates on the command, not on the simulated aEgo peak.
   - A plant with a brake overshoot term is open.
 
-## 136h. `GasOverrideBoost` ("Accel Boost", default ON, one toggle for the whole boost): a line-for-line port of upstream PR 39015's `AccelBoost`, replacing the earlier in-house approximation. Unit tests only; not replayed, not driven.
+## 136h. `GasOverrideBoost` ("Accel Boost", default ON, one toggle for the whole boost): a line-for-line port of upstream PR 39015's `AccelBoost`, replacing the earlier in-house approximation. Unit tests and open-loop replay; not driven.
 - **One toggle (owner, 2026-10-01, "stay faithful to how upstream has it"):** `GasOverrideBoost`, labeled "Accel Boost", now sits in Advanced Longitudinal Tuning (it was in the Bosch A radar section) and gates the whole boost: the upstream gas-press `AccelBoost` and the lead-departure assist (136g, which had been unconditional). **Default ON by owner choice**, so the unreplayed upstream gas boost is on for anyone who has not set the param; the params default is now "1" (artifact rebuilt, 855 keys, default read back True). Turning it off restores stock Experimental Mode arbitration. In the planner a missing toggle keeps the lead-departure assist on and the gas boost off (only test fixtures omit it); the gating itself has no dedicated test.
 - **Change (2026-10-01, owner: "make it identical to upstream"):** `selfdrive/controls/lib/accel_boost.py` is PR 39015's file verbatim (`ACCEL_BOOST_MAX` 0.2, `RATE` 0.025/s, `PER_OVERRIDE` 0.05, `MIN_SPEED` 10 mph, 0.1/s decay below min speed, `apply` = `accel + interp(accel, [-1.0, -0.5, 5.0], [0, value, value], right=0)`). The first version of this toggle (rising-edge press counter, lift capped at the MPC target, `hold_experimental` suppression) is removed.
 - **Wiring, as upstream:** in `longitudinal_planner.py` (tinygrad branch) the boost is applied to `output_a_target_e2e` right after it is read, before the e2e/MPC blend, the speed handoff and the lead-departure assist, so everything downstream sees the boosted e2e target. `model_limited = experimentalMode and apply(e2e) < mpc`; `update(enabled, gasPressed, v_ego, model_limited)`. Toggle off: the state is held at zero.
@@ -10041,7 +10041,24 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **Risk, unchanged from item 136:** the trigger does not check why e2e is low, and on the census routes 12 of 16 matching presses were the model braking harder than the MPC for an off-radar reason. The boost is at most 0.2 m/s^2, and below -1.0 m/s^2 it is zero by construction of `apply`.
 - **Tests:** `test_accel_boost.py` (per-override cap, accumulation to max, hold after release, no boost without model_limited or gas, decay below min speed, clear when disabled, `apply` shape); the old `GasOverrideBoost` tests in `test_exp_lead_departure.py` are removed. `test_longitudinal_planner.py` and `test_exp_lead_departure.py` still pass (615 with the new file).
 - **Audit follow-ups (static):** both features read one `accel_boost_on` flag in the planner, default True when the attribute is missing (`starpilot_variables.py` always sets it, so the default only matters for fixtures); `carState.gasPressed` is read with a False default. Toggling off mid-drive now zeroes `exp_lead_departure_weight` and `exp_lead_departure_lift`, not just the boost. Upstream's boost minimum-speed test uses `carState.vEgo`, the same as `scene_v_ego` here. Tests added for the toggle gating in both directions, the mid-drive flip and the missing-attribute default.
-- **🔴 Not replayed, not driven.** Replay over the item 136 census corpus before any road trial.
+- **Open-loop replay (2026-10-01, pr10 1fce5af1a planner, not driven).**
+  - Setup: 11 routes with engaged Experimental Mode gas presses above 10 mph (26b 26c 27c 280 283 293 294 296 297 2a4 2a6, 60 presses), plus 268 as a control. Three variants: ON (as shipped), DEP (boost forced off, departure assist on), OFF (toggle off).
+  - Control: 268 has no Exp presses; 1 frame differs, by 0.002.
+  - Boost alone (ON − DEP, 26c 280 283 293 2a6): max lift 0.10–0.22.
+    - With the lead under 30 m: 0 / 12 / 0 / 503 / 98 frames, max 0.104.
+    - While closing (vRel < −1): up to 1242 frames, max 0.218.
+    - Softens a target already below −0.3 in 66–678 frames, max 0.20.
+  - Departure lift alone (DEP − OFF): up to 0.50 (283), 0.42 (293), 0.41 (280), 0.39 (2a6). It shows only with the lead pulling away, and ON tracks the logged command there.
+  - 293 10:24 (lead closing at 13.5 m/s at 63 m): ON −2.00 vs DEP −2.18. The boost changes e2e and, through the MPC's start state, whether the fast-closing latch fires: ON latches and is clamped at `FAST_CLOSING_LEAD_MAX_BRAKE`; DEP takes the D-073 path and is not. This is the only latch flip on the five routes (117 frames, 1 episode); traced by the Boost merge session.
+  - Toggle off: the five boost/departure toggle tests pass (static), including switching off mid-drive. On the device after the 1fce5af1 update, `GasOverrideBoost` reads True and `all_keys` is 857 (read-only check).
+- **Follow-up, not adopted: the fast-closing −2.0 clamp vs the D-073 Exp cap.**
+  - In Experimental Mode a latched fast-closing lead can get a shallower cap (−2.0) than the same lead unlatched (D-073 path, up to −3.5).
+  - Candidate tried: in Exp, cap = min(fast-closing cap, D-073 cap). Replay only:
+    - Fleet open loop, 22 routes (run by Job): Exp frames below −2.0 go 1603 → 1650, below −3.0 410 → 456. 19 deeper episodes, five of them reaching −3.50.
+    - Closed loop, 10 `ev_need` + 293 10:24 events (bpos plant): unchanged on every event.
+    - 293 2:40.9: a re-deepening at the end of a −3.5 stop (−3.08 → −3.35 → −2.35).
+  - That is the harder-braking pattern STATUS 150 capped on purpose, with no gap benefit in closed loop. The −2.0 clamp stays.
+- Not driven.
 - Params key `GasOverrideBoost` and the UI row are unchanged apart from the description text.
 
 
