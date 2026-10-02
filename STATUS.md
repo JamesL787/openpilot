@@ -25,7 +25,7 @@ here. Where the two touch — the CR-V lateral profile, the steering-ratio curve
   Camera firmware in the same family uses 1/72, and steady-state replay gives about 71 counts per m/s.
   UNRESOLVED: moving leads give k = 55–66 and reject 71. ON lowers every published closing speed by 11.1 % (rail
   ±12.0 m/s), which is the D-041 danger direction. `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 is pending Peter's OK.
-  The larch64 params artifacts still need a rebuild before the key exists on the device.
+  On ns-bosch-radar-testing-pr10-smooth the larch64 params artifacts are rebuilt with the key (2026-10-02).
 - **Off-axis lead follow-ups: items 74f/74g.** The 237 942.6 false brake (a real on-road phantom
   brake to aEgo −2.7) is removed in replay by 74g. Two real closings now brake later (25b 665.2 +1.5 s,
   245 40.7 +0.9 s). Needs a road drive on curves with the fix.
