@@ -40,7 +40,7 @@ STABLE_SESSION_SECONDS = 30.0
 PEER_STOP_RETRY_SECONDS = 10.0
 FRAME_MAX_AGE = 0.5          # never send a UI frame older than this
 SOFTWARE_FPS = 15            # libx264 cadence; the hardware encoder runs at 30
-PREWARM_SECONDS = 12.0    # render from stream start so a real frame exists when the car grants focus (it takes the screen back after 3 s of a still card)
+PREWARM_SECONDS = 20.0    # the car view needs ~11 s from launch to its first frame, so it renders from stream start, before the car grants focus
 UNAVAILABLE_AFTER = 1.0      # focused but no fresh UI frame for this long -> "unavailable" card; the Honda gives the screen back after 3 s without video
 SDP_SETTLE = (1.5, 2.2, 3.0)
 TCP_ATTEMPTS = 6
@@ -962,13 +962,15 @@ class Supervisor:
             sent_times.append(sent_at)
             last_fresh = sent_at
             wait_for_frame = False
-        elif now - last_fresh > UNAVAILABLE_AFTER and now - last_unavailable > 1.0:
+        elif now - last_fresh > UNAVAILABLE_AFTER and now - last_unavailable > (interval if source.waiting_for_first_frame else 1.0):
           # The UI stopped producing frames (e.g. the offroad render budget ran
           # out). Say so on the car instead of freezing on an old image.
           text = "Starting StarPilot" if source.waiting_for_first_frame else "StarPilot display unavailable"
           if text not in unavailable:
             unavailable[text] = self._unavailable_frame(source.request, text)
-          encoded = self._encode(encoder, encoder.encode_rgba, unavailable[text], True, recoveries)
+          # Until the first real frame the card streams at the full frame rate, as a phone's video would
+          keyframe = session.needs_keyframe or not source.waiting_for_first_frame
+          encoded = self._encode(encoder, encoder.encode_rgba, unavailable[text], keyframe, recoveries)
           if encoded is not None:
             session.send_frame(encoded[0], time.monotonic_ns() // 1000, keyframe=encoded[1])
           last_unavailable = now
