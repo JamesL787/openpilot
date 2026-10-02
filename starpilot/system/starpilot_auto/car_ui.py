@@ -37,15 +37,10 @@ from openpilot.starpilot.system.starpilot_auto.gpu_nv12 import compose_rgba
 from openpilot.starpilot.system.starpilot_auto.placement import RendererPlacement
 from openpilot.starpilot.system.starpilot_auto.touch import DEFAULT_TOUCH_SOCKET, TouchEvent, TouchReceiver
 
-# The comma's landscape UI is designed 1080 rows high. The car view lays out on a shorter
-# canvas so an 800x480 head unit shrinks it 0.67x instead of 0.44x: text, lines and the
-# driving view's widgets come out larger and crisper. The pane sizes below scale with it.
-DESIGN_HEIGHT = 1080
-LOGICAL_HEIGHT = 720
-UI_SCALE = LOGICAL_HEIGHT / DESIGN_HEIGHT
-MIN_LOGICAL_WIDTH = round(1600 * UI_SCALE)
+LOGICAL_HEIGHT = 1080  # the landscape UI's design height
+MIN_LOGICAL_WIDTH = 1600
 STARTUP_DEMAND_WAIT = 15.0
-NAV_SPLIT_MIN_WIDTH = round(1700 * UI_SCALE)  # logical width; narrower car screens keep the full driving view
+NAV_SPLIT_MIN_WIDTH = 1700  # logical width; narrower car screens keep the full driving view
 NAV_SPLIT_FRACTION = 0.42
 MAP_BORDER = 32  # physical pixels for motion between cached map redraws
 HOME_ONROAD_TIMEOUT = 45.0  # back to the drive after this long untouched on the home screen
@@ -283,7 +278,7 @@ def car_layout(settings: dict, started: bool, on_home: bool, width: int, height:
     return full, None
   if view == "map":
     return None, full
-  map_w = round(min(1100 * UI_SCALE, max(700 * UI_SCALE, width * NAV_SPLIT_FRACTION)))
+  map_w = round(min(1100, max(700, width * NAV_SPLIT_FRACTION)))
   if settings.get("map_side") == "left":
     return rl.Rectangle(map_w, 0, width - map_w, height), rl.Rectangle(0, 0, map_w, height)
   return rl.Rectangle(0, 0, width - map_w, height), rl.Rectangle(width - map_w, 0, map_w, height)
