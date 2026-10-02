@@ -1,9 +1,9 @@
 """Honda VSA yaw rate (0x94 KINEMATICS YAW_RATE) with each car's zero learned at standstill.
 
-The DBC decodes against the nominal zero, 512 counts, but every unit sits a few counts off it (2018 Clarity 508,
-2019 Civic Bosch 513) and holds that offset exactly at every stop. With the wheels stopped the true yaw rate is
-zero, so the average reading there is the zero. The scale is not learnable that way and is measured per model
-against GPS heading, using only stretches that start and end driving straight (there the ~0.4 s lag of the 1 Hz
+The DBC decodes against the nominal zero, 512 counts, but a unit can sit a few counts off it (2019 Civic Bosch 513; the
+2018 Clarity sat at 508 until its VSA yaw bias was recalibrated, 512.00 since) and holds that offset exactly at every
+stop. With the wheels stopped the true yaw rate is zero, so the average reading there is the zero. The scale is not
+learnable that way and is measured per model against GPS heading, using only stretches that start and end driving straight (there the ~0.4 s lag of the 1 Hz
 GPS bearing and the car's sideslip cancel; fits over arbitrary windows are biased by both).
 
 The Clarity's sensor also under-reads clockwise (right) turns by ~0.24 deg/s from about 1 deg/s up, while left
@@ -25,7 +25,11 @@ DBC_ZERO = 512.0   # counts
 # (deg/s per count, standstill zero in counts until this drive's own standstill replaces it, clockwise
 # under-read in deg/s)
 YAW_RATE_CALIBRATION = {
-  CAR.HONDA_CLARITY: (0.246, 508.0, 0.24),      # see above; 508.00 at every stop on 19 routes
+  # Clarity zero: 508.00 at every stop on 19 routes, then 512.00 (+/- 0.02) at every stop after the VSA yaw-bias
+  # recalibration on 2026-10-02 (routes 38a, 38b; scale vs rear-wheel-speed yaw unchanged). The learned zero replaces
+  # this after the first stop either way; seeding the current value keeps the first minute of a drive right.
+  # The clockwise under-read was measured at zero 508, where +3..+5 counts sits on the 512 midpoint; re-check it.
+  CAR.HONDA_CLARITY: (0.246, 512.0, 0.24),
   CAR.HONDA_CIVIC_BOSCH: (0.244, 513.0, 0.0),   # GPS 0.2446 / 0.2412 on two routes; 513 at every stop; not checked
 }
 RIGHT_LOSS_BP = (3.0, 5.0)  # counts from zero over which the clockwise under-read comes in
