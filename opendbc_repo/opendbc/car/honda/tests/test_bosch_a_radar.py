@@ -2274,3 +2274,9 @@ def test_newborn_vrel_is_the_range_fit_bounded_at_stationary():
   assert _bosch_a_newborn_vrel(closing[:2], 19.8) is None  # too short to fit
   noisy = [(i * dt, 100.0 + (3.0 if i % 2 else -3.0)) for i in range(6)]
   assert _bosch_a_newborn_vrel(noisy, 19.8) is None  # over BOSCH_A_REANCHOR_MAX_RMS_M
+
+
+def test_newborn_history_is_not_seeded_by_default():
+  # BOSCH_A_NEWBORN_SEED_HISTORY off: 00000284 22:36.7 track 17's seeded burst held a -10.47 coast for 1.3 s.
+  from opendbc.car.honda import radar_interface
+  assert radar_interface.BOSCH_A_NEWBORN_SEED_HISTORY is False

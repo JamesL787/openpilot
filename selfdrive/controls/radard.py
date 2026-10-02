@@ -389,7 +389,7 @@ YOUNG_TRACK_VISION_RANGE_MARGIN_M = 5.0
 # whose OWN range proves the closing (young_range_genuinely_closing: YOUNG_TRACK_MIN_SAMPLES fresh sweeps over
 # YOUNG_TRACK_MIN_SPAN_S fit within YOUNG_TRACK_MAX_RESIDUAL_M, slope <= NEWBORN_RANGE_CLOSING_MIN_RATE and <=
 # NEWBORN_RANGE_CLOSING_EGO_FRAC * -vEgo, and the published vRel within NEWBORN_RANGE_CLOSING_VREL_TOL of it), vel_sane
-# passes and FAR_RAIL_VISION_BOUND leaves the lead alone. Nothing else moves: no KF, measured-bit, distance or
+# passes and FAR_RAIL_VISION_BOUND leaves the lead alone. Nothing else moves here (the KF is NEWBORN_KF_FOLLOW_RANGE's): no measured-bit, distance or
 # lateral change, and YOUNG_TRACK_FLAT_RANGE_BOUND (flat ranges only) is untouched. Threshold choice: the two
 # phantoms this family produced had flat or noisy range -- 0000027a 8:33 track 15 at 62.6-63.6 m (|slope| < 6, the
 # YOUNG_TRACK_FLAT_MAX_RATE regime) and 00000284 22:35 track 17 going 79 -> 83 -> 80 m (residual 0.56-1.28 m, over
@@ -401,6 +401,20 @@ NEWBORN_RANGE_CLOSING_EXEMPT = True
 NEWBORN_RANGE_CLOSING_MIN_RATE = -8.0     # m/s; the range slope must be at or below this
 NEWBORN_RANGE_CLOSING_EGO_FRAC = 0.5      # ... and at or below -this * vEgo
 NEWBORN_RANGE_CLOSING_VREL_TOL = 3.0      # m/s; |slope - track.vRel| at most this
+
+# Newborn KF follows its own range (REPLAY ONLY, no DECISIONS entry yet). The Track KF starts at the first published
+# vLead and only updates on a measurement_update, which on Bosch-A needs pt.measured; a newborn published unmeasured
+# (BOSCH_A_NEWBORN_RANGE_PUBLISH) therefore froze vLeadK at its FIRST 4-sweep fit for as long as it stayed unmeasured.
+# Replay: 000002ae 17:24.9 track 39 froze at 11.7 m/s (fit -8.0) while its range said ~0; 00000284 22:36.8 track 17
+# froze at 15.1 m/s (first fit -13.0 over 14 sweeps) while its range then went flat at 80-83 m (fit -3.7 by 1357.7),
+# and the planner reached -1.0 m/s^2 where base never did. With this on, on every fresh unmeasured sweep of a Bosch-A
+# track that has never had a measured update (cnt == 0) and is under YOUNG_TRACK_MAX_AGE_S, the KF is re-seeded
+# to [vEgo + max(slope, -vEgo), 0], slope being the LSQ fit of ALL its fresh ranges since birth (young_range_hist,
+# at least NEWBORN_KF_FOLLOW_MIN_SAMPLES = the D-043 4-sweep minimum). The bound is the stationary one: nothing in
+# front closes faster than ego. The first measured update takes over from that state as it did from the old init.
+# vRel, the measured bit and the published point are unchanged. Replay evidence only; not road-validated.
+NEWBORN_KF_FOLLOW_RANGE = True
+NEWBORN_KF_FOLLOW_MIN_SAMPLES = 4
 
 # ONPATH_RADAR_ADOPT: a radar-only track that sits on the driving path for a second is published as
 # radarState.leadOnpath, beside an unchanged leadOne, so the planner can brake for it before the camera sees it. Above
@@ -743,7 +757,8 @@ class Track:
              measurement_update: bool | None = None, t_now: float = 0.0,
              range_assist: bool = False, vision_closing: float | None = None, vision_assist: bool = False,
              camera_sample: tuple[float, float | None] | None = None,
-             nc_vrel: float = 0.0, nc_valid: bool = False, nc_sigma: int = 127):
+             nc_vrel: float = 0.0, nc_valid: bool = False, nc_sigma: int = 127,
+             newborn_follow: bool = False):
     # relative values, copy
     self.dRel = d_rel   # LONG_DIST
     self.yRel = y_rel   # -LAT_DIST
@@ -768,8 +783,9 @@ class Track:
     if not self.t_first == self.t_first:
       self.t_first = float(t_now)
     self.t_last = float(t_now)
-    if float(t_now) - self.t_first <= YOUNG_TRACK_MAX_AGE_S and \
-       (not self.young_range_hist or float(t_now) > self.young_range_hist[-1][0]):
+    young_fresh = float(t_now) - self.t_first <= YOUNG_TRACK_MAX_AGE_S and \
+      (not self.young_range_hist or float(t_now) > self.young_range_hist[-1][0])
+    if young_fresh:
       self.young_range_hist.append((float(t_now), float(d_rel)))
 
     if measurement_update:
@@ -811,6 +827,12 @@ class Track:
 
     if measurement_update and self.cnt > 0:
       self.kf.update(self.vLead)
+    elif NEWBORN_KF_FOLLOW_RANGE and newborn_follow and young_fresh and not measurement_update and self.cnt == 0 and \
+         len(self.young_range_hist) >= NEWBORN_KF_FOLLOW_MIN_SAMPLES:
+      a = np.array(self.young_range_hist, dtype=np.float64)
+      slope = float(np.polyfit(a[:, 0] - a[-1, 0], a[:, 1], 1)[0])
+      v_ego_aligned = float(v_lead) - float(v_rel)
+      self.kf.set_x([[v_ego_aligned + max(slope, -v_ego_aligned)], [0.0]])
 
     self.vLeadK = float(self.kf.x[SPEED][0])
     self.aLeadK = float(self.kf.x[ACCEL][0])
@@ -1625,7 +1647,8 @@ class RadarD:
                               t_now=sm.logMonoTime['liveTracks'] * 1e-9,
                               range_assist=ids in lead_track_ids, vision_closing=vis_closing,
                               vision_assist=vision_assist, camera_sample=cam_sample,
-                              nc_vrel=rpt[4], nc_valid=rpt[5], nc_sigma=rpt[6])
+                              nc_vrel=rpt[4], nc_valid=rpt[5], nc_sigma=rpt[6],
+                              newborn_follow=self.honda_bosch_a_radar and radar_fresh and not rpt[3])
 
     # ONPATH_RADAR_ADOPT: path offset of every track on a fresh sweep (yRel + = left, model y + = right)
     if ONPATH_RADAR_ADOPT and self.honda_bosch_a_radar and radar_fresh:

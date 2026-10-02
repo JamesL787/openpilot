@@ -82,3 +82,38 @@ def test_vision_match_flat_track_still_rejected():
   lead = vision_lead(track.dRel, 16.0)
   assert not radard.track_matches_vision(track, lead, 19.8, dist_scale=0.25, dist_floor=5.0, vel_limit=10.0,
                                          y_std_scale=1.0, y_floor=1.0, honda_bosch_a=True)
+
+
+def _newborn(ranges, v_rel, v_ego=19.8, follow=True, t0=100.0):
+  track = radard.Track(39, v_rel + v_ego, radard.KalmanParams(DT))
+  for i, d in enumerate(ranges):
+    track.update(d, 0.0, v_rel, v_rel + v_ego, False, measurement_update=False, t_now=t0 + i * DT, newborn_follow=follow)
+  return track
+
+
+def test_newborn_kf_follows_own_range_to_stationary():
+  # NEWBORN_KF_FOLLOW_RANGE: published at -8 (a first 4-sweep fit) but the range closes at ~-21 m/s; the KF follows the
+  # range, bounded at stationary (vLeadK 0), with aLeadK 0 -- not frozen at vEgo - 8.
+  track = _newborn(linear(116.0, 90.0, 19), -8.0)
+  assert track.vLeadK == pytest.approx(0.0, abs=1e-9)
+  assert track.aLeadK == 0.0
+
+
+def test_newborn_kf_follows_a_flat_range_back_up():
+  # 00000284 track 17 style: a closing burst, then flat. The KF ends near the flat fit, not at the burst.
+  ranges = linear(88.7, 79.9, 10) + [79.1, 79.8, 80.9, 81.6, 82.2, 82.6, 83.0, 83.2, 83.1, 82.8, 81.9, 81.4, 80.8]
+  track = _newborn(ranges, -10.5, v_ego=24.0)
+  a = [(i * DT, d) for i, d in enumerate(ranges)]
+  import numpy as np
+  slope = np.polyfit([p[0] for p in a], [p[1] for p in a], 1)[0]
+  assert track.vLeadK == pytest.approx(24.0 + slope)
+
+
+def test_newborn_kf_untouched_without_flag_or_after_a_measurement():
+  frozen = _newborn(linear(116.0, 90.0, 19), -8.0, follow=False)
+  assert frozen.vLeadK == pytest.approx(11.8)
+  track = radard.Track(39, 11.8, radard.KalmanParams(DT))
+  track.update(116.0, 0.0, -8.0, 11.8, True, measurement_update=True, t_now=100.0)  # cnt -> 1
+  for i, d in enumerate(linear(115.0, 90.0, 18)):
+    track.update(d, 0.0, -8.0, 11.8, False, measurement_update=False, t_now=100.0 + (i + 1) * DT, newborn_follow=True)
+  assert track.vLeadK == pytest.approx(11.8)
