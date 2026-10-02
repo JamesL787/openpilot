@@ -2312,3 +2312,18 @@ def test_existence_probability_is_carried_on_the_point():
   # every other radar, and every log recorded before the field existed, reads the "not provided" default
   assert structs.RadarData.RadarPoint().existence == -1.0
   assert structs.RadarData.RadarPoint(dRel=5.0).existence < 0.0
+
+
+def test_newborn_vrel_is_the_range_fit_bounded_at_stationary():
+  """BOSCH_A_NEWBORN_RANGE_PUBLISH: the fit rate, bounded at -vEgo; no live U11, no rail floor."""
+  from opendbc.car.honda.radar_interface import _bosch_a_newborn_vrel
+  dt = 1.0 / BOSCH_A_FREQ_HZ
+  closing = [(i * dt, 116.0 - 20.0 * i * dt) for i in range(6)]
+  assert _bosch_a_newborn_vrel(closing, None) == pytest.approx(-20.0)
+  assert _bosch_a_newborn_vrel(closing, 25.0) == pytest.approx(-20.0)
+  # Faster than a stopped object can close: bounded at -vEgo (well past the U11 low rail).
+  assert _bosch_a_newborn_vrel(closing, 19.8) == pytest.approx(-19.8)
+  assert _bosch_a_newborn_vrel(closing, 12.0) == pytest.approx(-12.0)
+  assert _bosch_a_newborn_vrel(closing[:2], 19.8) is None  # too short to fit
+  noisy = [(i * dt, 100.0 + (3.0 if i % 2 else -3.0)) for i in range(6)]
+  assert _bosch_a_newborn_vrel(noisy, 19.8) is None  # over BOSCH_A_REANCHOR_MAX_RMS_M
