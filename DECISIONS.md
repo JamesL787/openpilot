@@ -1642,3 +1642,19 @@ The other 9 jab and real-brake windows on 2a6/2a4 stay within 0.5 m of today's c
 Limits: the plant misses the real brakes' ~0.8 m/s² overshoot (STATUS 195), so replay under-reads jab harshness, and the
 2a6 2:42 jab only softens -2.51 → -2.31 here. The STATUS 148 stock-ACC comparison cases (25b 1338.8, 25e 318.1, 25f 483.1,
 262 379.4, 263 374.3) were logged with Experimental Mode off, so this path does not run there (static). Status stays ACCEPTED-unvalidated until drives in Experimental Mode with it are reviewed.
+
+## D-075 — PROPOSED (toggle OFF): `BoschANewbornLeads` publishes newborn Bosch-A points early, leads only on proven range closing
+Recorded 2026-10-02, owner decision (Peter, in chat): build it as an opt-in toggle, default OFF, on main and pr10-smooth.
+**Replay and static evidence only; no road evidence.** With the toggle OFF, `BOSCH_A_NEWBORN_RANGE_PUBLISH`,
+`NEWBORN_RANGE_CLOSING_EXEMPT`, `NEWBORN_KF_FOLLOW_RANGE` and `NEWBORN_LEAD_NEEDS_CLOSING` are all False and the code
+is the code before this work (replay-identical on 2ae, 280, 294, 284).
+
+ON sets all four. A newborn point is published rather than held (D-041 direction: publish, do not delete), but it can
+only become the lead once its own range fit is closing, so a young track's speed reading alone cannot brake the car.
+No gate threshold or radar constant is changed. Both processes read the param once at startup and fail closed to OFF.
+
+Evidence: 15-drive replay (STATUS 198). Without the closing check the early publish made phantom brakes (280 ×2, 294,
+2ae seg26, 284); with it those are gone. One new early brake remains, 297 seg48 t 4572.62 (−2.00 for one frame, 0.75 s
+before base, real car). Open on main only: 280 t 798.6 loses a −2.87 brake with the toggle ON (STATUS 198).
+
+Why OFF: not driven; a newborn lead can still brake 0.75 s earlier than today (297 4572.62).
