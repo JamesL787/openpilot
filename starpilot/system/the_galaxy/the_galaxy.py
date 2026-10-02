@@ -2110,13 +2110,37 @@ def _drive_plots_lateral_delay():
 _drive_plots = None
 _drive_plots_init_lock = threading.Lock()
 
+def _drive_plots_paused_reason():
+  # With Android Auto's car screen running, carState already has msgq's 15 readers; one more from Plots
+  # evicts them all in a loop and openpilot cannot engage (commIssue). Decided by the toggle, not by the
+  # car screen starting, so Plots never holds a slot when the phone connects mid-drive.
+  if _safe_params_get_bool("StarpilotAutoEnabled"):
+    return "Plots is paused while Android Auto is on: carState has no subscriber slot left for it."
+  return ""
+
+def _live_car_state(wait_s=0.5):
+  """The latest carState through Plots' subscription, or None. Never opens a reader of its own: every
+  messaging.SubMaster takes another msgq slot, and a 16th carState reader blocks engagement."""
+  if not _safe_params_get_bool("IsOnroad"):
+    return None
+  plots = _get_drive_plots()
+  car_state = plots.live_message("carState")
+  if car_state is not None or plots.paused_reason():
+    return car_state
+  plots.touch()
+  deadline = time.monotonic() + wait_s
+  while car_state is None and time.monotonic() < deadline:
+    time.sleep(0.05)
+    car_state = plots.live_message("carState")
+  return car_state
+
 def _get_drive_plots():
   global _drive_plots
   with _drive_plots_init_lock:
     if _drive_plots is None:
       _drive_plots = drive_plots.DrivePlots(_get_galaxy_dir() / "drive_plots", is_onroad=lambda: params.get_bool("IsOnroad"),
                                             controller_fn=_lateral_controller_info, meta_fn=_drive_plots_meta,
-                                            route_fn=_drive_plots_route)
+                                            route_fn=_drive_plots_route, paused_fn=_drive_plots_paused_reason)
       threading.Thread(target=_drive_plots.recover_interrupted, daemon=True).start()
       _drive_plots.start_auto()
     return _drive_plots
@@ -4265,10 +4289,10 @@ def _build_vehicle_fault_status():
     unavailable_severity = "warn"
 
   try:
-    sm = messaging.SubMaster(["carState"], poll="carState")
-    sm.update(100)
-    has_live_car_state = sm.seen["carState"] and sm.alive["carState"] and sm.valid["carState"]
-    if not has_live_car_state:
+    car_state = _live_car_state()
+    if car_state is None:
+      if is_onroad and _drive_plots_paused_reason():
+        unavailable_summary = "Vehicle fault status is unavailable while Android Auto is on."
       return {
         "available": False,
         "summary": unavailable_summary,
@@ -4276,7 +4300,6 @@ def _build_vehicle_fault_status():
         "items": unavailable_items,
       }
 
-    car_state = sm["carState"]
     cruise_state = getattr(car_state, "cruiseState", None)
 
     cruise_faulted = bool(getattr(car_state, "accFaulted", False))
@@ -4359,14 +4382,13 @@ def _get_has_radar():
 
 def _get_vehicle_parked():
   try:
-    sm = messaging.SubMaster(["carState"], poll="carState")
-    sm.update(100)
-    if not sm.seen["carState"] or not sm.alive["carState"] or not sm.valid["carState"]:
+    car_state = _live_car_state()
+    if car_state is None:
       return False
 
     gear_shifter = getattr(getattr(car, "CarState", None), "GearShifter", None)
     park_value = getattr(gear_shifter, "park", None)
-    return park_value is not None and getattr(sm["carState"], "gearShifter", None) == park_value
+    return park_value is not None and getattr(car_state, "gearShifter", None) == park_value
   except Exception:
     return False
 

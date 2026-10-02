@@ -573,6 +573,85 @@ def test_live_analysis_carries_the_controller(tmp_path):
   assert plots.live()["liveAnalysis"]["controller"] == dp.CONTROLLER_NRDR_PID
 
 
+
+# ------------------------- msgq reader slots (Android Auto, 2026-10-02) -------------------------
+
+class _SlotSM:
+  """Stands in for SubMaster; counts how many were made, i.e. how many msgq slots Plots took."""
+  made = 0
+
+  def __init__(self, services):
+    type(self).made += 1
+    self.seen = dict.fromkeys(services, False)
+    self.valid = dict.fromkeys(services, False)
+    self.logMonoTime = dict.fromkeys(services, 0)
+    self.updated = dict.fromkeys(services, False)
+    self.data = {}
+
+  def update(self, timeout=0):
+    pass
+
+  def __getitem__(self, s):
+    return self.data[s]
+
+
+def test_paused_plots_never_subscribes_or_records(tmp_path):
+  _SlotSM.made = 0
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: True, submaster_factory=_SlotSM,
+                        paused_fn=lambda: "Android Auto is on")
+  plots._ensure_thread_locked = lambda: pytest.fail("a paused Plots must not start its subscriber")
+  plots.touch()
+  assert plots.start_recording({"car": "HONDA_TEST"}) is None
+  plots.auto_tick()
+  assert plots.rec is None and not plots._should_run() and _SlotSM.made == 0
+  assert plots.live()["lastError"] == "Android Auto is on"
+
+
+def test_pausing_mid_recording_stops_it(tmp_path):
+  paused = [""]
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: True, submaster_factory=lambda s: None, paused_fn=lambda: paused[0])
+  plots._ensure_thread_locked = lambda: None
+  plots.start_recording({"car": "HONDA_TEST"})
+  assert plots.rec is not None
+  paused[0] = "Android Auto is on"
+  plots.auto_tick()
+  assert plots.rec is None and not plots._should_run()
+
+
+def test_one_submaster_for_every_thread_start(tmp_path):
+  # msgq never frees a reader slot, so a fresh SubMaster per live view or per drive leaks one each time.
+  _SlotSM.made = 0
+  clock = [0.0]
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: False, submaster_factory=_SlotSM, clock=lambda: clock[0])
+  for _ in range(3):
+    clock[0] += 100.0                     # the previous viewer has long gone idle
+    plots.touch()
+    thread = plots.thread
+    clock[0] += 100.0                     # and this one leaves too
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+  assert _SlotSM.made == 1
+
+
+def test_live_message_shares_plots_subscription(tmp_path):
+  import threading
+  import time as _time
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: True)
+  sm = _SlotSM(dp.DrivePlots.SERVICES)
+  plots._sm = sm
+  assert plots.live_message("carState") is None              # thread not running
+  plots.thread = threading.Thread(target=lambda: None)
+  plots.thread.is_alive = lambda: True
+  assert plots.live_message("carState") is None              # nothing received yet
+  sm.seen["carState"] = sm.valid["carState"] = True
+  sm.data["carState"] = "cs"
+  sm.logMonoTime["carState"] = _time.monotonic_ns()
+  assert plots.live_message("carState") == "cs"
+  sm.logMonoTime["carState"] = _time.monotonic_ns() - int(5e9)
+  assert plots.live_message("carState") is None              # stale
+  assert plots.live_message("roadCameraState") is None       # not one of Plots' services
+
+
 # ------------------------- signals the lat / long agents asked for -------------------------
 
 def test_build_row_reads_agent_signals_and_nan_when_never_received():

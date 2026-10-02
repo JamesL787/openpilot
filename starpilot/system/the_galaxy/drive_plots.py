@@ -1086,8 +1086,13 @@ class DrivePlots:
               "starpilotRadarState"]
 
   def __init__(self, root, is_onroad, submaster_factory=None, clock=time.monotonic, controller_fn=None,
-               meta_fn=None, route_fn=None, publisher_factory=None):
+               meta_fn=None, route_fn=None, publisher_factory=None, paused_fn=None):
     self.root = Path(root)
+    # -> why Plots must not subscribe right now ("" when it may). msgq gives each topic 15 reader slots and a
+    # 16th evicts every reader on that topic, over and over: with Android Auto's car screen running, Plots
+    # was carState's 16th reader and calibrationd/torqued/lagd saw it at ~1 Hz (commIssue, 2026-10-02).
+    self.paused_fn = paused_fn
+    self._sm = None                      # one SubMaster for the life of the Galaxy: a new one takes a new slot
     self.meta_fn = meta_fn               # -> dict snapshot of car/tune for an automatic recording
     self.route_fn = route_fn             # -> loggerd's CurrentRoute, or None before it is set
     self._publisher_factory = publisher_factory
@@ -1111,15 +1116,45 @@ class DrivePlots:
     self._heavy = threading.Lock()      # one whole-session read at a time: taps on several moments queue, not stack
 
   # ---------------- lifecycle ----------------
+  def paused_reason(self):
+    if self.paused_fn is None:
+      return ""
+    try:
+      return self.paused_fn() or ""
+    except Exception:
+      return ""
+
+  def live_message(self, service, max_age_s=1.0):
+    """The latest `service` message from Plots' own subscription if it is fresh, else None.
+    Other Galaxy code reads carState here instead of opening a reader of its own."""
+    with self.lock:
+      sm, running = self._sm, self.thread is not None and self.thread.is_alive()
+    if sm is None or not running or service not in self.SERVICES:
+      return None
+    try:
+      if not sm.seen[service] or not sm.valid[service]:
+        return None
+      if (time.monotonic_ns() - sm.logMonoTime[service]) / 1e9 > max_age_s:
+        return None
+      return sm[service]
+    except Exception:
+      return None
+
   def _make_submaster(self):
+    if self._sm is not None:
+      return self._sm
     if self._submaster_factory is not None:
       return self._submaster_factory(self.SERVICES)
     from cereal import messaging
     return messaging.SubMaster(self.SERVICES, poll="longitudinalPlan")
 
   def touch(self):
+    paused = self.paused_reason()
     with self.lock:
       self.last_client = self.clock()
+      if paused:
+        self.last_error = paused
+        return
       self._ensure_thread_locked()
 
   def _ensure_thread_locked(self):
@@ -1129,12 +1164,16 @@ class DrivePlots:
     self.thread.start()
 
   def _should_run(self):
+    if self.paused_reason():
+      return False
     with self.lock:
       return self.rec is not None or (self.clock() - self.last_client) < CLIENT_IDLE_TIMEOUT_S
 
   def _run(self):
     try:
       sm = self._make_submaster()
+      with self.lock:
+        self._sm = sm
     except Exception as e:
       with self.lock:
         self.last_error = f"subscribe failed: {e}"
@@ -1206,6 +1245,11 @@ class DrivePlots:
     return self.root / session_id
 
   def start_recording(self, meta=None):
+    paused = self.paused_reason()
+    if paused:
+      with self.lock:
+        self.last_error = paused
+      return None
     with self.lock:
       if self.rec is not None:
         return self._rec_status_locked()
@@ -1376,8 +1420,15 @@ class DrivePlots:
     """One watcher step: start a recording when a drive starts, then keep the drive's rlog copy up to date."""
     onroad = bool(self.is_onroad())
     settings = self.settings()
+    paused = self.paused_reason()
     with self.lock:
       rec = self.rec
+    if paused:
+      with self.lock:
+        self.last_error = paused
+      if rec is not None:
+        self.stop_recording(reason=paused)
+      return
     if not onroad:
       self._skip_this_drive = False
     elif rec is None and settings["auto_record"] and not self._skip_this_drive:
