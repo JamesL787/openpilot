@@ -113,10 +113,6 @@ def run_once(duration: float, synthetic: bool) -> int:
 
 
 def main() -> int:
-  try:
-    os.nice(10)  # the car screen yields to driving processes at normal priority
-  except OSError:
-    pass
   parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
   parser.add_argument("--once", action="store_true", help="run one foreground session for diagnostics")
   parser.add_argument("--duration", type=float, default=900.0)
