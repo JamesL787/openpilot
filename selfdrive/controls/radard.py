@@ -42,7 +42,7 @@ RANGE_VREL_MAX_SPAN_S = 0.60
 # because U11 -- the Bosch-A native relative velocity -- is both late and rail-bounded, and both
 # failures understate closing:
 #
-#   * D-041, route 000001f9 at 29:52. U11 railed at -13.5 m/s on 88 of 88 active frames with
+#   * D-041, route 000001f9 at 29:52. U11 railed at -13.5 m/s (1/64) on 88 of 88 active frames with
 #     healthy u10 while the range closed smoothly at -19.4 m/s. D-041 publishes the rail as a
 #     BOUND and says recovering the true value past it "needs the range channel and is
 #     deliberately left to a separate, validated change". This is that change, still unvalidated.
@@ -59,7 +59,7 @@ RANGE_VREL_MAX_SPAN_S = 0.60
 #
 # 2026-09-16 REWORK. The first version was replayed open-loop, with the real Track, over every
 # liveTracks sweep of three routes: 00000232, 00000236 and 00000237. It did recover what it was
-# built for (236 12:51, a nearly stopped car behind a -13.5 rail), but it also corrected three
+# built for (236 12:51, a nearly stopped car behind a -13.5 (1/64) rail), but it also corrected three
 # times with no closing to recover, and its KF step did harm in a fourth case:
 #   * 232 3:02.8, a range WALK. Range 59.0 -> 56.1 -> 59.1 m over ~2.6 s while U11 read +2.1 ->
 #     +0.1 -> +1.1; the 5-sample fit followed the walk and armed at 4.3-4.6 m/s.
@@ -96,7 +96,7 @@ RANGE_VREL_ASSIST_MIN_DISAGREEMENT_MPS = 2.0
 RANGE_VREL_ASSIST_ARM_UPDATES = 5
 
 # Hard cap on the extra closing, m/s. Sized by the only two recorded events that need it:
-# 000001f9 29:52 wants 5.9 (rail -13.5 vs range -19.4) and 000001f3 19:27 wants 4.6 (U11 -2.08 vs
+# 000001f9 29:52 wants 5.9 (rail -13.5 vs range -19.4, 1/64) and 000001f3 19:27 wants 4.6 (U11 -2.08 vs
 # range -6.7). This is n = 2 and NOT a distribution -- it is a bound on the damage a bad fit can
 # do, not a fitted value. Lowering it below ~6.0 makes the feature unable to do the one thing
 # D-041 left for it.
@@ -167,7 +167,7 @@ RANGE_VREL_ASSIST_MAX_BACKWARD_LEAD_MPS = 5.0
 # U11's low saturation rail (radar_interface.py). ON the rail U11 is a bound, not a reading, so the
 # short disagreement there falling back under MIN_DISAGREEMENT says nothing about whether the
 # closing has ended. There ARMING and HOLDING use the long disagreement alone, while the correction
-# is still sized by the smaller of the two. Without the rule, 236 12:51 (U11 exactly -13.50 on every
+# is still sized by the smaller of the two. Without the rule, 236 12:51 (U11 exactly -13.50 (1/64) on every
 # sample while the range closed near -16) kept disarming on short-fit noise: 2.4 m/s*s, not 3.2.
 # Sizing by the long fit alone recovered more at 12:51 (4.9) but over-corrected the tail of both
 # replayed rail approaches as the closing rate shrank, leaving the published vRel up to 1.8 m/s
@@ -210,7 +210,7 @@ RANGE_VREL_RAIL_SIZE_MEAN = True
 #     (-20.3), 236 12:51/12:54 (the closest: 236 12:52.60-12:53.35 tid 40 at 64-78 m, median -10.9..-11.5 while truth was
 #     -15..-21; NC under-read closing there by 4-9 m/s, which is why the threshold sits 3.5 above the rail and single
 #     sweeps are not trusted; at 2.0 the veto removed 16 frames of that gain in replay).
-#   * Open-loop A/B (ncveto.txt): 297 48:12 lead vRel -16.54 -> -13.50 on 5 frames, planner up to 0.46 softer for 0.6 s,
+#   * Open-loop A/B (ncveto.txt): 297 48:12 lead vRel -16.54 -> -13.50 (1/64) on 5 frames, planner up to 0.46 softer for 0.6 s,
 #     planner minimum unchanged (-3.65 / -3.66: the rail itself still over-reads closing there). 0 changed frames on 271,
 #     236 x2, 237, 298 and 6 more railed-lead windows (245 x2, 26b x2, 289, 297 46:59); A/A 0.
 #   * A median, not one sweep: 236 12:52.85 had a single NC of -10.4 (3.1 above the rail) with truth -18.1.
@@ -241,7 +241,7 @@ RANGE_VREL_RAIL_NC_VETO_MAX_SIGMA_RAW = 64
 # The range assist above only runs on leadOne/leadTwo, so every other track publishes the raw U11
 # rail: vLead = vEgo - 12.0 even for a stopped object (-13.5 in the 1/64 logs below). 0000028f seg 6 ~30.5-34 s (UI Work, STATUS
 # 108): track 49 at yRel ~3.2, range 74.6 -> 7.9 m in 3.5 s (closing ~ vEgo 21 m/s, i.e. stationary),
-# U11 pinned at -13.5 throughout, was published as leadLeft at ~16 mph; track 43 (yRel ~9) the same.
+# U11 pinned at -13.5 (1/64) throughout, was published as leadLeft at ~16 mph; track 43 (yRel ~9) the same.
 # leadLeft/leadRight feed the UI and the conditional-chill adjacent-lead veto.
 # A Bosch-A track stops being ELIGIBLE as leadLeft/leadRight once, on the rail, the fresh short range
 # fit says at least RANGE_VREL_ASSIST_MIN_DISAGREEMENT_MPS more closing than the rail on
@@ -253,7 +253,7 @@ ADJACENT_RAIL_GATE_UPDATES = 3
 
 # --- Vision-corroborated range assist (2026-09-26, extends D-053, rides RANGE_VREL_ASSIST).
 # REPLAY evidence only (open- and closed-loop), nothing driven; default OFF. 0000026c--10bec2e200 4:08:
-# a lead braking on a curve at 80 -> 60 m. U11 lagged (-2.7 -> -13.5 over 1.3 s) while the range closed
+# a lead braking on a curve at 80 -> 60 m. U11 lagged (-2.7 -> -13.5 over 1.3 s, 1/64) while the range closed
 # at -7 .. -23, but the track sat at yRel 9.3 -> 6.3 m, so the |yRel| <= 1.5 lane proxy blocked D-053.
 # A path-relative replacement for that gate was rejected (STATUS 148): without the lateral gate the
 # curve range WALK at 70-95 m (26c 649.9, 237 942.8, 236 2211.4) armed the assist.
@@ -456,7 +456,7 @@ NEWBORN_LEAD_NEEDS_CLOSING = False
 # The track must also close (mean U11 <= -ONPATH_ADOPT_MIN_CLOSING_MPS) and its own ranges must agree: an LSQ over
 # the window with rms <= ONPATH_ADOPT_MAX_RANGE_RESIDUAL_M whose slope is within ONPATH_ADOPT_RATE_TOL_MPS of the mean
 # U11, except that a slope FASTER than U11 is accepted when U11 sits near the rail (D-041/D-063: a railed U11 is a
-# bound; 297 track 6 read -13.5 railed against a range slope of -13 .. -19).
+# bound; 297 track 6 read -13.5 (1/64) railed against a range slope of -13 .. -19).
 #
 # Why it is a separate field and not leadOne: stationary on-path returns also come from overhead structures and
 # roadside clutter on curves, and Bosch-A publishes no elevation. Over 50 routes (replay, 2026-09-29) the gate made
@@ -493,7 +493,7 @@ ONPATH_ADOPT_VISION_MARGIN_M = 5.0
 # ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE: a track is not NEWLY adopted as leadOnpath while the median of the radar's own
 # OBJECT_EXISTENCE_PROBABILITY (RadarPoint.existence = raw / 127, Bosch-A only) over its adoption window
 # (the measured on-path sweeps of the last ONPATH_ADOPT_MIN_SPAN_S) is below this. Route 00000298--c4d2a4acbc
-# 1018.35 (log): track 2 was born at 42 m, y +1.07, and closed at -16 m/s by range with U11 railed at -13.5 and a
+# 1018.35 (log): track 2 was born at 42 m, y +1.07, and closed at -16 m/s by range with U11 railed at -13.5 (1/64) and a
 # constant ~1.3 deg bearing, then vanished at 23 m 1.2 s later; the camera never saw it (the model lead was a car at
 # ~121-125 m). It passed every geometry gate at the edge (path median 0.76 of 0.8, range slope -15.96 against a band
 # edge of -16.00; the rail term only exempts) and drew a 0.2 s brake to -1.00 (the ONPATH_LEAD_MAX_BRAKE cap).
@@ -509,7 +509,7 @@ ONPATH_ADOPT_VISION_MARGIN_M = 5.0
 ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE = 0.2
 
 # Far birth-rail vision bound (route 00000298 Bookmark 3, ~1020.3-1021.4). Far leadOne track 60 was born at ~121 m
-# with U11 on the low rail (-13.5) and no range fit yet, while the camera saw a car at that range doing 16-18 m/s;
+# with U11 on the low rail (-13.5 at 1/64) and no range fit yet, while the camera saw a car at that range doing 16-18 m/s;
 # the planner held ~-0.85 for 1.2 s and the car reached aEgo -1.21. A railed U11 is only a bound (D-063). For a
 # Bosch-A radar lead (leadOne, leadTwo or leadOnpath) at dRel >= FAR_RAIL_MIN_D_REL_M whose published vRel is on the
 # rail, when the model lead in the same slot sat at the same range (|x - RADAR_TO_CAMERA - dRel| <=
@@ -1118,7 +1118,7 @@ class Track:
     self.range_assist_correction = correction
 
   def _update_rail_range_inconsistent(self) -> None:
-    """ADJACENT_RAIL_GATE latch. Rail-agnostic here; only Bosch-A callers act on it (a -13.5 vRel is a
+    """ADJACENT_RAIL_GATE latch. Rail-agnostic here; only Bosch-A callers act on it (a rail-valued vRel is a
     real reading on other radars)."""
     if self.vRel > BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_DIRECT_VREL_SCALE_MPS / 2:
       self.rail_range_count = 0

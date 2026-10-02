@@ -168,7 +168,7 @@ BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
 BOSCH_A_DIRECT_VREL_RAILS_RAW = (BOSCH_A_DIRECT_VREL_MIN_RAW, BOSCH_A_DIRECT_VREL_MAX_RAW)
 # D-063 (replay and static only; road evidence pending): the GATES must read a rail as the bound it
 # is, too. The publish path above already does; the range-innovation gate (D-054) and the re-anchor
-# test (D-057) did not -- they extrapolated the range at exactly -13.5 m/s. Route 0000025e at 12:03,
+# test (D-057) did not -- they extrapolated the range at exactly -13.5 m/s (1/64). Route 0000025e at 12:03,
 # stock ACC: track 59, the lead in lane from 102.8 m, U11 on the low rail on 51% of sweeps while
 # the range closed at -15.4 to -17 m/s. The 2-3.5 m/s shortfall accumulated against the anchor, the
 # range was rejected, the re-anchor refused because the fitted slope sat more than 3 m/s past the
@@ -217,7 +217,7 @@ BOSCH_A_RAIL_INTERVAL = True
 # ONLY, no road evidence). F2's
 # NORMALIZED_CLOSING (23|10, 1/64, -8; raw 512 = 0 = no reading) is a closing-only inverse-TTC channel the rail does not
 # clamp: over the stopshadow corpus (tools/longitudinal/stopshadow/summary.txt, followup.txt) -NC * dRel tracked the long-window
-# range rate past the -13.5 rail at 0.91-0.95 of truth (stopped fit k -1.03, c +1.07 m on parser dRel, c=0 inside the CI),
+# range rate past the -13.5 (1/64) rail at 0.91-0.95 of truth (stopped fit k -1.03, c +1.07 m on parser dRel, c=0 inside the CI),
 # with NORMALIZED_CLOSING_SIGMA_RAW (F2 46|7) < 32 as its confidence gate. Moving same-direction tracks fit only k -0.75 and
 # NC reads 0 on 13-39 % of closing rows, so it is NOT a general vRel: it only replaces a LOW-RAIL U11, in our lane, under
 # 50 m, and only when it agrees with the track's own accepted range slope (two-sided, the D-043 tolerance), which also
@@ -229,7 +229,7 @@ BOSCH_A_RAIL_INTERVAL = True
 # of a measured sweep, which coasts then start from under the existing _bosch_a_coast_vrel bounds.
 # D-069 REJECTED (replay, 8f3b15028 ncrail.txt, 22 routes): no measurable gain over radard's D-053 rail-fast assist (zero
 # lead selection, planner-min or FCW changes; identical time to correct closing on all 6 leadOne episodes), while it made
-# native vRel flicker (p95 sweep |dvRel| 5.6 vs 0.4, 76 steps > 3 m/s vs 0, mostly the full -13.5 <-> -20 step) and
+# native vRel flicker (p95 sweep |dvRel| 5.6 vs 0.4, 76 steps > 3 m/s vs 0, mostly the full -13.5 (1/64) <-> -20 step) and
 # over-closed > 3 m/s on 19.6 % of changed sweeps vs 7.1 % for the rail. Off by default; code kept for the record.
 BOSCH_A_NC_RAIL_VREL = False
 BOSCH_A_NC_CENTER_RAW = 512
@@ -359,7 +359,7 @@ BOSCH_A_VREL_MAX_SAMPLES = 8
 # D-057 (replay and static only; road evidence pending): re-anchor a range-rejected identity on a LASTING,
 # clean step. Replay of every range-rejection run on 00000232 / 236 / 237 / 239 / 23a (D-054 + D-055): the 13 runs of
 # >= 3 sweeps that RETURNED to the baseline all lasted <= 1.2 s and every one was degraded (existence 0
-# on 62-83% of sweeps, U11 railed at -13.5). The lead lockouts were not: 236 track 38 (27.4 s) and 237
+# on 62-83% of sweeps, U11 railed at -13.5 (1/64)). The lead lockouts were not: 236 track 38 (27.4 s) and 237
 # track 31 (20.4 s) had non-degraded tails whose range moved at the U11 rate. A run re-anchors only when
 # it has outlasted every returning excursion, its last WINDOW sweeps are all non-degraded with U11
 # present, and their range fits a line at the U11 rate (RMS <= MAX_RMS, slope within the D-043 rate
@@ -607,7 +607,7 @@ def _bosch_a_coast_vrel(track, rail_interval: bool, range_bound: bool = False, v
   """The vRel a coast publishes. Off (pre-D-063): the last trusted vRel, verbatim. With the rail interval on
   (D-063 addendum, STATUS 92): the same value bounded to within BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS of
   a FRESH fit over the ranges of the coast itself, when one exists. Replayed on 0000025e 6:43 (track 48): the
-  rail interval admitted a slot-merge range walk, the D-059 hold then coasted the -13.5 rail for 1.5 s while
+  rail interval admitted a slot-merge range walk, the D-059 hold then coasted the -13.5 (1/64) rail for 1.5 s while
   its own post-join fit read +0.8 m/s and said so (fresh_ok false on every sweep), and the planner asked for
   -3.45 m/s^2 against a lead the log and vision put at -1..-3 m/s. With the bound, replay of that window
   bottomed at -2.39 and never crossed -3.0. The hold's one-sided law (a vRel that over-closes the fresh
