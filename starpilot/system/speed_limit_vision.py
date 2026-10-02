@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 
 from collections import Counter, deque
@@ -252,8 +253,8 @@ DEBUG_BASE_DIR = Path("/data/media/0/vision_speed_limit_debug")
 DEBUG_RUNTIME_STATUS_PATH = DEBUG_BASE_DIR / "runtime_status.json"
 DEBUG_CAPTURE_DIRNAME = "captures"
 SNAPSHOT_JPEG_QUALITY = 85
-SPEED_LIMIT_VISION_AFFINITY_CORES = [0, 1, 2]
-SPEED_LIMIT_VISION_COEXISTENCE_AFFINITY_CORES = [0, 1]
+SPEED_LIMIT_VISION_AFFINITY_CORES = [6]
+SPEED_LIMIT_VISION_COEXISTENCE_AFFINITY_CORES = [6]
 COEXISTENCE_PARAM_REFRESH_SECONDS = 2.0
 COEXISTENCE_TRACK_DETECTOR_INTERVAL = 0.80
 COEXISTENCE_DETECTOR_CLASSIFIER_EXPANSIONS = (
@@ -2833,6 +2834,7 @@ def main():
   # Keep this best-effort helper off the critical control/model/camera cores.
   if not PC:
     set_core_affinity(SPEED_LIMIT_VISION_AFFINITY_CORES)
+    os.setpriority(os.PRIO_PROCESS, 0, 19)  # shares core 6 with camerad; camerad must always win
 
   # OpenCV may otherwise fan out across many worker threads and starve more
   # important daemons during detection bursts.

@@ -17,8 +17,8 @@ from openpilot.system.hardware import PC
 from openpilot.starpilot.common.cpu_throttle import device_cpu_throttle_factor
 from openpilot.starpilot.system.adj_spot_monitor_vision_inference import VASMInference, V_ASM_MODEL_PATH
 
-V_ASM_AFFINITY_CORES = [2]
-V_ASM_SOLO_AFFINITY_CORES = [0, 1, 2]
+V_ASM_AFFINITY_CORES = [6]
+V_ASM_SOLO_AFFINITY_CORES = [6]
 
 BASE_INTERVAL = 1.000
 FOLLOWUP_INTERVAL = 0.300
@@ -170,6 +170,7 @@ class VASMDaemon:
       self._prev_other_running = other_running
     if not self._affinity_set:
       set_core_affinity(V_ASM_AFFINITY_CORES if other_running else V_ASM_SOLO_AFFINITY_CORES)
+      os.setpriority(os.PRIO_PROCESS, 0, 19)  # shares core 6 with camerad; camerad must always win
       self._affinity_set = True
 
   def run(self):
