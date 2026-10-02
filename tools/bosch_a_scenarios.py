@@ -11,7 +11,7 @@ The scenarios are chosen to exercise the gates that DECISIONS.md says were expen
 wrong, so a change that quietly breaks one of them shows up as a visible difference:
 
   closing_lead     healthy U11, every gate passes -- the baseline
-  saturation_rail  stopped car approached above 13.5 m/s (D-041). U11 rails on every sweep.
+  saturation_rail  stopped car approached above 12.0 m/s (D-041). U11 rails on every sweep.
                    The point MUST still be published; discarding it deleted stopped cars on
                    route 000001f9 and the driver had to intervene.
   high_u10_decel   u10 above the validated 511 threshold during a real hard decel (D-042).
@@ -132,7 +132,7 @@ def scenario_closing_lead(n=60):
 
 
 def scenario_saturation_rail(n=60):
-  """D-041. Stopped car, ego at ~19.4 m/s. |vRel| far past the 13.5 m/s rail on every sweep.
+  """D-041. Stopped car, ego at ~19.4 m/s. |vRel| far past the 12.0 m/s rail on every sweep.
 
   The published vRel understates closing -- that is expected and acceptable. What must NOT
   happen is the point disappearing: on route 000001f9 discarding the rail coasted until the
@@ -146,7 +146,7 @@ def scenario_saturation_rail(n=60):
     raw = vrel_to_raw(vrel)
     return {"true_dRel": round(d, 3), "true_vRel": vrel, "u10": 86, "u11_raw": raw,
             "railed": raw in (BOSCH_A_DIRECT_VREL_MIN_RAW, BOSCH_A_DIRECT_VREL_MAX_RAW),
-            "note": "u11 on the low rail; |vRel| >= 13.5 m/s, exact value unrecoverable"}
+            "note": "u11 on the low rail; |vRel| >= 12.0 m/s, exact value unrecoverable"}
 
   def frames(i, t_nanos, spec):
     return sweep(SLOT, i % 16, 0x7, range_to_raw(spec["true_dRel"]), azimuth_to_raw(0.0),
@@ -230,7 +230,7 @@ def scenario_no_targets(n=40):
 
 SCENARIOS = {
   "closing_lead": (scenario_closing_lead, "Healthy lead closing at -8 m/s; every gate passes."),
-  "saturation_rail": (scenario_saturation_rail, "D-041 - stopped car past the 13.5 m/s rail. The point must survive."),
+  "saturation_rail": (scenario_saturation_rail, "D-041 - stopped car past the 12.0 m/s rail. The point must survive."),
   "high_u10_decel": (scenario_high_u10_decel, "D-042 - real ~8 m/s2 decel pushes u10 past 511."),
   "vrel_contradiction": (scenario_vrel_contradiction, "D-043 - U11 claims closing while the range opens."),
   "no_targets": (scenario_no_targets, "No-target sentinels - what every clean replay has actually held."),

@@ -1,7 +1,7 @@
 """ADJACENT_RAIL_GATE: a Bosch-A track whose U11 sits on the rail while its range closes faster is not a leadLeft/leadRight.
 
 Shape of 0000028f seg 6 track 49: a stationary roadside return at yRel ~3, closing at ~vEgo (21 m/s) while U11
-reads the -13.5 rail, published as a ~16 mph left-lane car.
+reads the low rail (-13.5 as logged at 1/64; -12.0 at 1/72), published as a ~16 mph left-lane car.
 """
 from types import SimpleNamespace
 

@@ -17,9 +17,6 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_DIRECT_VREL_MAX_RAW,
   BOSCH_A_DIRECT_VREL_MIN_RAW,
   BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW,
-  BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS,
-  BOSCH_A_DIRECT_VREL_SCALE_MPS,
-  BOSCH_A_DIRECT_VREL_SCALE72_MPS,
   BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS,
   BOSCH_A_FREQ_HZ,
   BOSCH_A_LIFE_SATURATED,
@@ -35,11 +32,9 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_TRIGGER_MSG,
   _bosch_a_aux_id,
   _bosch_a_direct_vrel,
-  _bosch_a_direct_vrel_interval,
   _bosch_a_main_base,
   _bosch_a_range_ratio,
   _bosch_a_range_ratio_vrel,
-  bosch_a_u11_scale_mps,
 )
 from opendbc.car.honda.values import CAR
 from openpilot.common.params import Params
@@ -380,16 +375,16 @@ class TestRangeAzimuth:
   def test_direct_vrel_rails_publish_the_bound(self):
     """raw 0 / 1728 are saturation rails, and a rail must still be published as a bound.
 
-    A stationary car approached above 13.5 m/s rails on EVERY sweep, so treating a rail as "no
+    A stationary car approached above 12.0 m/s rails on EVERY sweep, so treating a rail as "no
     measurement" made the coast permanent, outlive BOSCH_A_STALE_S and delete the radar point.
     Measured on route 000001f9 at 29:52: 88 of 88 active frames railed on two stopped cars, the
     radar lead was dropped, and the planner commanded 0.00 while closing at 76 m with a 6.6 s TTC.
-    Publishing -13.5 understates the closing rate but still brakes; deleting the object does not.
+    Publishing -12.0 understates the closing rate but still brakes; deleting the object does not.
     """
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW) == pytest.approx(-13.5)
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) == pytest.approx(13.5)
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW + 1) == pytest.approx(-13.484375)
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW - 1) == pytest.approx(13.484375)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW) == pytest.approx(-12.0)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) == pytest.approx(12.0)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW + 1) == pytest.approx(-12.0 + 1 / 72)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW - 1) == pytest.approx(12.0 - 1 / 72)
 
   def test_railed_stopped_car_keeps_its_radar_point(self):
     """The regression that motivated the above: a permanently railed object must not be deleted."""
@@ -399,7 +394,7 @@ class TestRangeAzimuth:
       rr = ri.update(sweep(0, i & 0xF, 0x7, raw, 1024, 1 + 2 * i, i * 70_000_000, with_aux=True,
                            direct_vrel_raw=BOSCH_A_DIRECT_VREL_MIN_RAW, direct_vrel_uncertainty_raw=90))
     assert len(rr.points) == 1
-    assert rr.points[0].vRel == pytest.approx(-13.5)
+    assert rr.points[0].vRel == pytest.approx(-12.0)
 
   def test_range_scale_matches_firmware_q16_conversion(self):
     """The range scale is firmware-derived, not capture-fitted.
@@ -675,54 +670,6 @@ def test_trackid_comes_from_can_and_is_not_synthetic():
 
 # --- 7. vRel derivative sign -------------------------------------------------------------------------
 
-class TestU11Scale72:
-  """D-074 BoschAU11Scale72: OFF is the 1/64 decode exactly; ON is (raw - 864) / 72, rails and sentinel unchanged."""
-  RAWS = (0, 1, 863, 864, 865, 1727, 1728)
-
-  def test_off_is_the_old_decode_exactly(self):
-    assert bosch_a_u11_scale_mps(False) is BOSCH_A_DIRECT_VREL_SCALE_MPS
-    for raw in self.RAWS:
-      old = (raw - 864) / 64.0
-      assert _bosch_a_direct_vrel(raw) == old
-      assert _bosch_a_direct_vrel(raw, scale=bosch_a_u11_scale_mps(False)) == old
-    assert _bosch_a_direct_vrel(0) == -13.5 and _bosch_a_direct_vrel(1728) == 13.5
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID, scale=bosch_a_u11_scale_mps(False)) is None
-
-  def test_on_divides_by_72(self):
-    scale = bosch_a_u11_scale_mps(True)
-    assert scale == BOSCH_A_DIRECT_VREL_SCALE72_MPS == 1.0 / 72.0
-    for raw in self.RAWS:
-      assert _bosch_a_direct_vrel(raw, scale=scale) == pytest.approx((raw - 864) / 72.0, abs=1e-12)
-    assert _bosch_a_direct_vrel(0, scale=scale) == pytest.approx(-12.0)
-    assert _bosch_a_direct_vrel(1728, scale=scale) == pytest.approx(12.0)
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID, scale=scale) is None
-    assert _bosch_a_direct_vrel(1729, scale=scale) is None
-    assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 1, scale) is None
-
-  def test_rail_interval_follows_the_scale(self):
-    scale = bosch_a_u11_scale_mps(True)
-    low = _bosch_a_direct_vrel(0, scale=scale)
-    high = _bosch_a_direct_vrel(1728, scale=scale)
-    assert _bosch_a_direct_vrel_interval(low, scale=scale) == pytest.approx((-BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS, -12.0))
-    assert _bosch_a_direct_vrel_interval(high, scale=scale) == pytest.approx((12.0, BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS))
-    # One count inside the 1/72 rail is exact, and a 1/72 rail read with the 1/64 rails would wrongly be exact.
-    inside = _bosch_a_direct_vrel(1, scale=scale)
-    assert _bosch_a_direct_vrel_interval(inside, scale=scale) == (inside, inside)
-    assert _bosch_a_direct_vrel_interval(low) == (low, low)
-    # OFF: unchanged.
-    assert _bosch_a_direct_vrel_interval(-13.5) == (-BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS, -13.5)
-
-  def test_interface_publishes_with_its_scale(self):
-    ri = make_radar_interface()
-    assert ri.u11_scale is BOSCH_A_DIRECT_VREL_SCALE_MPS  # this test's params store has no BoschAU11Scale72 set
-    ri.u11_scale = bosch_a_u11_scale_mps(True)
-    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
-                    direct_vrel_raw=800, direct_vrel_uncertainty_raw=80))
-    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
-                         direct_vrel_raw=800, direct_vrel_uncertainty_raw=80))
-    assert rr.points[0].vRel == pytest.approx((800 - 864) / 72.0)
-
-
 class TestVrel:
   def test_direct_aux_vrel_is_preferred_over_range_derivative(self):
     ri = make_radar_interface()
@@ -730,20 +677,20 @@ class TestVrel:
                     direct_vrel_raw=800, direct_vrel_uncertainty_raw=80))
     rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
                          direct_vrel_raw=800, direct_vrel_uncertainty_raw=80))
-    assert rr.points[0].vRel == pytest.approx((800 - 864) / 64.0)
+    assert rr.points[0].vRel == pytest.approx((800 - 864) / 72.0)
 
   def test_direct_aux_vrel_domain_and_sentinel(self):
     # The domain endpoints are saturation rails, published as bounds -- see
     # test_direct_vrel_rails_publish_the_bound.
-    assert _bosch_a_direct_vrel(0) == pytest.approx(-13.5)
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) == pytest.approx(13.5)
-    assert _bosch_a_direct_vrel(1) == pytest.approx(-13.484375)
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW - 1) == pytest.approx(13.484375)
+    assert _bosch_a_direct_vrel(0) == pytest.approx(-12.0)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW) == pytest.approx(12.0)
+    assert _bosch_a_direct_vrel(1) == pytest.approx(-12.0 + 1 / 72)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MAX_RAW - 1) == pytest.approx(12.0 - 1 / 72)
     assert _bosch_a_direct_vrel(1729) is None
     assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID) is None
     assert _bosch_a_direct_vrel(0x7FF) is None
     assert _bosch_a_direct_vrel(None) is None
-    assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW) == pytest.approx(-13.5)
+    assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW) == pytest.approx(-12.0)
     assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 1) is None
     assert _bosch_a_direct_vrel(864, 0x3FE) is None
     assert _bosch_a_direct_vrel(864, 0x3FF) is None
@@ -757,7 +704,7 @@ class TestVrel:
     assert len(ri._tracks[1].samples) == 1
 
   def test_fast_clean_range_rate_without_u11_or_ratio_withholds_rather_than_synthesizes(self):
-    # This range rate (~-46 m/s) is well outside native U11's representable domain ([-13.5, 13.5]
+    # This range rate (~-46 m/s) is well outside native U11's representable domain ([-12.0, 12.0]
     # m/s), so it can only ever have come from the raw one-sweep derivative -- which is exactly the
     # synthesized-measurement hazard this fix closes. With no aux at all (no U11, no ratio) and no
     # prior trusted velocity to coast, the point is correctly withheld rather than published at a
@@ -775,13 +722,13 @@ class TestVrel:
                     direct_vrel_raw=696, direct_vrel_uncertainty_raw=84))
     rr = ri.update(sweep(0, 1, 0x7, 1724, 1024, 3, 50_000_000, with_aux=True,
                    direct_vrel_raw=696, direct_vrel_uncertainty_raw=84))
-    assert rr.points[0].vRel == pytest.approx(-2.625)
+    assert rr.points[0].vRel == pytest.approx((696 - 864) / 72.0)
     # R146/S21 ID50's 19-count / 68.962 ms high-U10 step would have synthesized about -15.74 m/s.
     rr = ri.update(sweep(0, 2, 0x7, 1705, 1024, 5, 118_962_000, with_aux=True,
                    direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
     assert len(rr.points) == 1
     assert rr.points[0].dRel == pytest.approx(1705 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
-    assert rr.points[0].vRel == pytest.approx(-2.625)
+    assert rr.points[0].vRel == pytest.approx((696 - 864) / 72.0)
     assert not rr.points[0].measured
     assert len(ri._tracks[1].samples) == 2
 
@@ -795,9 +742,9 @@ class TestVrel:
               direct_vrel_raw=585, direct_vrel_uncertainty_raw=744))
     rr = ri.update(sweep(0, 3, 0x7, 980, 1024, 7, 150_000_000, with_aux=True,
                    direct_vrel_raw=760, direct_vrel_uncertainty_raw=84))
-    assert rr.points[0].vRel == pytest.approx((760 - 864) / 64.0)
+    assert rr.points[0].vRel == pytest.approx((760 - 864) / 72.0)
     assert rr.points[0].measured
-    assert ri._tracks[1].last_trusted_vrel == pytest.approx((760 - 864) / 64.0)
+    assert ri._tracks[1].last_trusted_vrel == pytest.approx((760 - 864) / 72.0)
 
   def test_high_u10_coast_cannot_cross_lifecycle_incarnation(self):
     ri = make_radar_interface()
@@ -828,7 +775,7 @@ class TestVrel:
     point = rr.points[0]
     # fresh geometry, held velocity, explicitly unmeasured
     assert point.dRel == pytest.approx(980 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
-    assert point.vRel == pytest.approx((800 - 864) / 64.0)
+    assert point.vRel == pytest.approx((800 - 864) / 72.0)
     assert not point.measured
 
   def test_coast_still_retires_when_the_radar_stops_reporting(self):
@@ -856,7 +803,7 @@ class TestVrel:
 
   @pytest.mark.parametrize(
     ('direct_raw', 'range_raw', 'rawca', 'expected'),
-    [(0, 974, 528, -13.5), (BOSCH_A_DIRECT_VREL_MAX_RAW, 1027, 472, 13.5)],
+    [(0, 974, 528, -12.0), (BOSCH_A_DIRECT_VREL_MAX_RAW, 1027, 472, 12.0)],
   )
   def test_range_ratio_does_not_extend_direct_vrel_rails(self, direct_raw, range_raw, rawca, expected):
     """At a rail the bound is published, and the ratio field must not be used to exceed it.
@@ -952,10 +899,10 @@ class TestVrel:
                       direct_vrel_raw=864 + 40, direct_vrel_uncertainty_raw=0))
     # Fifth sweep: range keeps opening, but U11 now claims hard closing. Contradiction ~11 m/s.
     rr = ri.update(sweep(0, 4, 0x7, 840, 1024, 9, 280_000_000, with_aux=True,
-                         direct_vrel_raw=864 - 11 * 64, direct_vrel_uncertainty_raw=0))
+                         direct_vrel_raw=864 - 11 * 72, direct_vrel_uncertainty_raw=0))
     assert len(rr.points) == 1
     # Coasted, not the contradictory value, and flagged unmeasured.
-    assert rr.points[0].vRel == pytest.approx(40 / 64.0)
+    assert rr.points[0].vRel == pytest.approx(40 / 72.0)
     assert not rr.points[0].measured
     # Geometry is still live -- only the velocity was in question.
     assert rr.points[0].dRel == pytest.approx(840 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
@@ -1033,7 +980,7 @@ class TestCoastAdvancesTheRangeGate:
       rr, d_rel = self._drive(ri, i, self.U11_LAGGING)
       assert len(rr.points) == 1, f"lead deleted at sweep {i}"
       assert rr.points[0].dRel == pytest.approx(d_rel)
-      assert rr.points[0].vRel == pytest.approx(400 / 64.0)
+      assert rr.points[0].vRel == pytest.approx(400 / 72.0)
       assert rr.points[0].measured is False
     # Coasted ranges moved only the gate's baseline. The velocity history is still accepted-only.
     assert list(ri._tracks[1].samples) == history
@@ -1098,7 +1045,7 @@ class TestCoastAdvancesTheRangeGate:
     for i, (ms, d, v, sigma, existence, u10) in enumerate(self.RECORDED_237_TRACK_12):
       raw = round((d - BOSCH_A_RANGE_OFFSET_M) / BOSCH_A_RANGE_SCALE_M)
       rr = ri.update(sweep(0, i & 0xF, 0x7, raw, 1024, 1 + 2 * i, ms * 1_000_000, with_aux=True,
-                           direct_vrel_raw=864 + round(v * 64), direct_vrel_uncertainty_raw=u10,
+                           direct_vrel_raw=864 + round(v * 72), direct_vrel_uncertainty_raw=u10,
                            range_sigma_raw=sigma, existence_raw=existence))
       if i in (4, 5):
         assert len(rr.points) == 1 and rr.points[0].measured is False
@@ -1194,7 +1141,7 @@ class TestLastingCleanStepReAnchors:
 
   def _drive(self, ri, i, raw, u11_mps, sigma=1, existence=126):
     return ri.update(sweep(0, i & 0xF, 0x7, round(raw), 1024, (1 + 2 * i) & 0xFFF, i * self.DT_NANOS, with_aux=True,
-                           direct_vrel_raw=864 + round(u11_mps * 64), direct_vrel_uncertainty_raw=0,
+                           direct_vrel_raw=864 + round(u11_mps * 72), direct_vrel_uncertainty_raw=0,
                            range_sigma_raw=sigma, existence_raw=existence))
 
   def _birth(self, ri):
@@ -1251,7 +1198,7 @@ class TestAJoinWaitsForAFreshRateFit:
 
   def _drive(self, ri, i, raw, u11_mps):
     return ri.update(sweep(0, i & 0xF, 0x7, round(raw), 1024, (1 + 2 * i) & 0xFFF, i * self.DT_NANOS, with_aux=True,
-                           direct_vrel_raw=864 + round(u11_mps * 64), direct_vrel_uncertainty_raw=0,
+                           direct_vrel_raw=864 + round(u11_mps * 72), direct_vrel_uncertainty_raw=0,
                            range_sigma_raw=1, existence_raw=126))
 
   def _birth(self, ri):
@@ -1310,7 +1257,11 @@ class TestRateCheckCoastReRoots:
 
   def _drive(self, ri, i, d, u11_mps, uncertainty=0, sigma=1):
     return ri.update(sweep(0, i & 0xF, 0x7, round(d / self.RANGE_M_PER_RAW), 1024, (1 + 2 * i) & 0xFFF,
-                           round(i * self.DT * 1e9), with_aux=True, direct_vrel_raw=864 + round(u11_mps * 64),
+                           round(i * self.DT * 1e9), with_aux=True,
+                           # Clamped to the rails as the radar does: past -12.0 m/s an unclamped raw would go negative
+                           # and the 11-bit packer would wrap it to a valid-looking positive U11.
+                           direct_vrel_raw=min(max(864 + round(u11_mps * 72), BOSCH_A_DIRECT_VREL_MIN_RAW),
+                                               BOSCH_A_DIRECT_VREL_MAX_RAW),
                            direct_vrel_uncertainty_raw=uncertainty, range_sigma_raw=sigma, existence_raw=126))
 
   def _run(self, ri, vrel, *, sigma=1, u11=None):
@@ -1741,11 +1692,11 @@ def test_bosch_a_gate_stays_closed_for_non_bosch_a_platforms(car):
 def test_rail_interval_gate_reads_rail_as_bound_only_when_asked():
   from opendbc.car.honda.radar_interface import (_bosch_a_range_innovation_rejected, _bosch_a_direct_vrel_interval,
                                                  BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS)
-  low_rail = _bosch_a_direct_vrel_interval(-13.5)[1]
+  low_rail = _bosch_a_direct_vrel_interval(-12.0)[1]
   assert _bosch_a_direct_vrel_interval(low_rail) == (-BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS, low_rail)
   assert _bosch_a_direct_vrel_interval(low_rail, exact=True) == (low_rail, low_rail)
   assert _bosch_a_direct_vrel_interval(-5.0) == (-5.0, -5.0)
-  # A lead closing at 20 m/s while U11 sits on the -13.5 rail: 100 m -> 80 m in 1 s. Exact gate rejects
+  # A lead closing at 20 m/s while U11 sits on the -12.0 rail: 100 m -> 80 m in 1 s. Exact gate rejects
   # (6.5 m short of the rail's prediction, past the 5 m hard max); the interval gate accepts (on the
   # rail-to-20 m/s band's edge, residual 0).
   assert _bosch_a_range_innovation_rejected((0.0, 100.0), 1.0, 80.0, low_rail, None, False, exact=True)
@@ -1766,11 +1717,11 @@ def test_rail_interval_and_coast_range_bound_built_in():
 class TestRailIntervalBoundsTheCoast:
   """D-063 addendum (STATUS 92). With BoschARailInterval on, a coast is bounded to within 3 m/s of a fresh
   fit over the coast's own ranges (rejoin_samples / inconsistent_run). Modelled on 0000025e 6:43 track 48:
-  the rail interval admitted a range walk, the D-059 hold then coasted the -13.5 rail for 1.5 s while its
+  the rail interval admitted a range walk, the D-059 hold then coasted the -13.5 rail (1/64 units) for 1.5 s while its
   own post-join fit read +0.8 m/s. Off, the coast is the pre-D-063 verbatim last trusted vRel."""
   DT_NANOS = 70_000_000
-  RAIL_RAW = 0  # U11 low rail: true closing >= 13.5 m/s
-  RAIL_MPS = -13.5
+  RAIL_RAW = 0  # U11 low rail: true closing >= 12.0 m/s
+  RAIL_MPS = -12.0
 
   def _drive(self, ri, i, d, u11_raw, uncertainty=0):
     return ri.update(sweep(0, i & 0xF, 0x7, round((d - BOSCH_A_RANGE_OFFSET_M) / BOSCH_A_RANGE_SCALE_M), 1024,
@@ -1778,7 +1729,7 @@ class TestRailIntervalBoundsTheCoast:
                            direct_vrel_uncertainty_raw=uncertainty, range_sigma_raw=1, existence_raw=126))
 
   def _railed_birth_then_walk(self, ri):
-    """6 sweeps closing at the rail rate (measured -13.5), then the range steps 8 m closer and holds still
+    """6 sweeps closing at the rail rate (measured -12.0), then the range steps 8 m closer and holds still
     with U11 still railed. The interval gate joins the settled range ~0.2 s later (rail_admitted), the exact
     gate only after ~0.6 s. Yields (sweep, result) over the 2 s that follow the step."""
     d = 60.0
@@ -1838,7 +1789,7 @@ class TestRailIntervalBoundsTheCoast:
 
   def test_a_coast_that_implies_a_reversing_lead_is_bounded_outside_a_rail_hold(self):
     """STATUS 179, route 00000287 2:39: a stale over-closing coast outside any rail hold that says the car ahead
-    is reversing. At 10 m/s the -13.5 coast means vLead -3.5. Before a fresh fit exists it is floored at
+    is reversing. At 10 m/s the -12.0 coast means vLead -2.0. Before a fresh fit exists it is floored at
     vLead = -margin; once the fit (0 m/s here) exists it is pulled to within 3 m/s of it. The first sweeps
     after the 8 m step are range-rejected: that path keeps the whole last point (geometry too) untouched and
     is out of scope here."""
@@ -1858,7 +1809,7 @@ class TestRailIntervalBoundsTheCoast:
 
   @pytest.mark.parametrize("v_ego", [None, 13.0, 20.0], ids=["unknown", "stationary", "slower_car"])
   def test_a_coast_that_does_not_imply_reversing_keeps_the_one_sided_bound(self, v_ego):
-    """-13.5 at 13 m/s is a stopped car (within the margin) and at 20 m/s a slower car: STATUS 129's protected
+    """-12.0 at 13 m/s is a stopped car (within the margin) and at 20 m/s a slower car: STATUS 129's protected
     over-closing coasts. Neither, nor an unknown ego speed, is softened."""
     ri = make_radar_interface()
     ri.rail_interval = False
@@ -1892,11 +1843,11 @@ class TestRailIntervalBoundsTheCoast:
     d = 87.0
     for i in range(12):
       d += 2.8 * dt
-      rr = self._drive(ri, i, d, 864 + round(2.8 * 64))
+      rr = self._drive(ri, i, d, 864 + round(2.8 * 72))
     assert rr.points[0].measured is True
     for i in range(12, 12 + 12):
       d += -5.0 * dt
-      rr = self._drive(ri, i, d, 864 + round(-5.0 * 64))
+      rr = self._drive(ri, i, d, 864 + round(-5.0 * 72))
       assert len(rr.points) == 1
       if rr.points[0].measured:
         return
@@ -1925,12 +1876,12 @@ class TestRailIntervalBoundsTheCoast:
     d = 87.0
     for i in range(12):
       d += 2.8 * dt
-      rr = self._drive(ri, i, d, 864 + round(2.8 * 64))
+      rr = self._drive(ri, i, d, 864 + round(2.8 * 72))
     assert rr.points[0].measured is True
     pulled_at = None
     for i in range(12, 12 + 12):
       d += -5.0 * dt
-      rr = self._drive(ri, i, d, 864 + round(-5.0 * 64))
+      rr = self._drive(ri, i, d, 864 + round(-5.0 * 72))
       assert len(rr.points) == 1
       p = rr.points[0]
       if p.measured:
@@ -1946,7 +1897,7 @@ class TestRailIntervalExactOnDegradedSweeps:
   the D-054 gate unless the range itself (a fit over the rejected run plus this sweep) moves at a railed speed.
   Modelled on 0000025e 402.912 s, track 48: a degraded sweep one sweep after its baseline, exact residual 2.32 m
   (over the degraded 2.0 m limit), interval residual 1.93 m, no rejected run to fit. The interval admitted it,
-  and the walk it started coasted a stale -13.5 rail on an opening range."""
+  and the walk it started coasted a stale -13.5 rail (1/64 units) on an opening range."""
   DT_NANOS = 70_000_000
   RAIL_RAW = 0
 
@@ -1961,11 +1912,11 @@ class TestRailIntervalExactOnDegradedSweeps:
     dt = self.DT_NANOS * 1e-9
     d = 60.0
     for i in range(6):
-      d += -13.5 * dt
+      d += -12.0 * dt
       rr = self._drive(ri, i, d, 1)
     assert rr.points[0].measured is True
     d_prev = rr.points[0].dRel
-    d_step = d_prev - 13.5 * dt - 2.3
+    d_step = d_prev - 12.0 * dt - 2.3
     rr = self._drive(ri, 6, d_step, range_sigma_raw)
     assert len(rr.points) == 1, "the point must be kept either way (D-041)"
     return rr.points[0], rr.points[0].dRel, d_step, d_prev
@@ -2012,7 +1963,7 @@ class TestRailIntervalDownSideOnlyInsideARailHold:
 
   def _drive(self, ri, i, d, u11_mps):
     return ri.update(sweep(0, i & 0xF, 0x7, round((d - BOSCH_A_RANGE_OFFSET_M) / BOSCH_A_RANGE_SCALE_M), 1024,
-                           (1 + 2 * i) & 0xFFF, i * self.DT_NANOS, with_aux=True, direct_vrel_raw=864 + round(u11_mps * 64),
+                           (1 + 2 * i) & 0xFFF, i * self.DT_NANOS, with_aux=True, direct_vrel_raw=864 + round(u11_mps * 72),
                            direct_vrel_uncertainty_raw=0, range_sigma_raw=1, existence_raw=126))
 
   def _coasts(self, ri):
@@ -2063,7 +2014,7 @@ class TestDegradedRailAdmissionNeedsRangeCorroboration:
 
   def _run(self, step_m, after_step_rate):
     """Measured at the rail rate, then a step of `step_m` closer, then degraded sweeps moving at `after_step_rate`.
-    Each geometry is chosen so the exact -13.5 prediction rejects every degraded sweep and the [-20, -13.5]
+    Each geometry is chosen so the exact -12.0 prediction rejects every degraded sweep and the [-20, -12.0]
     interval admits some of them; only the rejected run's own range rate separates the two."""
     ri = make_radar_interface()
     ri.rail_interval = True
@@ -2071,7 +2022,7 @@ class TestDegradedRailAdmissionNeedsRangeCorroboration:
     dt = self.DT_NANOS * 1e-9
     d = 100.0
     for i in range(6):
-      d += -13.5 * dt
+      d += -12.0 * dt
       rr = self._drive(ri, i, d, 1)
     assert rr.points[0].measured is True
     d -= step_m
@@ -2105,7 +2056,7 @@ class TestDegradedRailAdmissionNeedsRangeCorroboration:
 def test_rail_interval_still_admits_a_degraded_railed_lead_across_a_long_gap():
   """STATUS 129, the case D-063 exists for: 0000025e 12:03 track 59, degraded on every sweep, re-acquired against
   a baseline 2.16 s old (121.3 m) at 79.5 m while U11 sat on the rail. The exact prediction is 92.1 m; the interval
-  [-20, -13.5] m/s reaches 78.0 m."""
+  [-20, -12.0] m/s reaches 78.0 m."""
   from opendbc.car.honda.radar_interface import (_bosch_a_range_innovation_rejected, _bosch_a_direct_vrel,
                                                  BOSCH_A_DIRECT_VREL_MIN_RAW)
   low_rail = _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW)
@@ -2165,7 +2116,7 @@ class TestNcFields:
     assert pt.ncValid
     assert pt.ncVRel == pytest.approx(-10.0, abs=0.3)
     assert pt.ncSigma == 0
-    assert pt.vRel == pytest.approx(-13.5), "with BOSCH_A_NC_RAIL_VREL off, vRel stays the U11 rail"
+    assert pt.vRel == pytest.approx(-12.0), "with BOSCH_A_NC_RAIL_VREL off, vRel stays the U11 rail"
 
   def test_sigma_is_published_not_gated(self):
     # D-069's value limit (sigma < 32) is not applied to the published field; radard's consumer applies its own.
@@ -2182,7 +2133,7 @@ class TestNcFields:
     assert 50.0 < pt.dRel < 80.0 and pt.measured
     assert pt.ncValid and pt.ncSigma == 40
     assert pt.ncVRel == pytest.approx(-8.5, abs=0.3)
-    assert pt.vRel == pytest.approx(-13.5), "the NC fields never change vRel"
+    assert pt.vRel == pytest.approx(-12.0), "the NC fields never change vRel"
 
   def test_opening_nc_is_invalid(self):
     pt = self._drive(nc_vrel=+2.0)
@@ -2201,7 +2152,7 @@ class TestNcFields:
                            nc_raw=self._nc_raw(raw / 16.0 - 3.0, -2.0)))
     assert rr.points[0].measured and rr.points[0].ncValid, "the control sweep must carry a valid NC"
     rr = ri.update(sweep(0, 4, 0x7, 540, 1024, 9, 4 * self.DT_NS, with_aux=True,
-                         direct_vrel_raw=864 - 11 * 64, direct_vrel_uncertainty_raw=0,
+                         direct_vrel_raw=864 - 11 * 72, direct_vrel_uncertainty_raw=0,
                          nc_raw=self._nc_raw(540 / 16.0 - 3.0, -2.0)))
     assert len(rr.points) == 1
     assert not rr.points[0].measured
@@ -2227,7 +2178,7 @@ class TestNcFields:
 class TestNcAtRail:
   """A low-rail U11 in our lane under 50 m is replaced by NORMALIZED_CLOSING only when the range agrees, only ever
   toward MORE closing, and is held across short NC dropouts instead of flickering back to the rail."""
-  STEP_RAW = 20            # 1.25 m per 70 ms sweep: closing at 17.86 m/s, past the -13.5 rail
+  STEP_RAW = 20            # 1.25 m per 70 ms sweep: closing at 17.86 m/s, past the -12.0 rail
   DT_NS = 70_000_000
   TRUE_VREL = -STEP_RAW / 16.0 / 0.07
 
@@ -2263,25 +2214,25 @@ class TestNcAtRail:
     assert vrels[-1] < -15.0
 
   def test_no_nc_reading_keeps_the_rail(self):
-    assert self._drive()[-1] == pytest.approx(-13.5)
+    assert self._drive()[-1] == pytest.approx(-12.0)
 
   def test_low_confidence_nc_keeps_the_rail(self):
-    assert self._drive(nc=self._true_nc, nc_sigma_raw=32)[-1] == pytest.approx(-13.5)
+    assert self._drive(nc=self._true_nc, nc_sigma_raw=32)[-1] == pytest.approx(-12.0)
 
   def test_beyond_50_m_keeps_the_rail(self):
-    assert self._drive(start_raw=1100, nc=self._true_nc)[-1] == pytest.approx(-13.5)
+    assert self._drive(start_raw=1100, nc=self._true_nc)[-1] == pytest.approx(-12.0)
 
   def test_adjacent_lane_keeps_the_rail(self):
     # 0.10 rad left (1/2048 rad per raw) at ~35 m: yRel ~3.6 m, outside the in-lane bound
-    assert self._drive(angle_raw=1024 + 210, nc=self._true_nc)[-1] == pytest.approx(-13.5)
+    assert self._drive(angle_raw=1024 + 210, nc=self._true_nc)[-1] == pytest.approx(-12.0)
 
   def test_nc_disagreeing_with_range_keeps_the_rail(self):
     vrels = self._drive(nc=lambda i, d: self._nc_raw(d, -30.0))
-    assert vrels[-1] == pytest.approx(-13.5)
+    assert vrels[-1] == pytest.approx(-12.0)
 
   def test_nc_can_never_publish_less_closing_than_the_rail(self):
-    vrels = self._drive(nc=lambda i, d: self._nc_raw(d, -12.0))
-    assert all(v is None or v <= -13.5 + 1e-6 for v in vrels)
+    vrels = self._drive(nc=lambda i, d: self._nc_raw(d, -10.5))
+    assert all(v is None or v <= -12.0 + 1e-6 for v in vrels)
 
   def test_short_dropout_holds_the_nc_value(self):
     vrels = self._drive(n=12, nc=lambda i, d: None if i in (9, 10) else self._true_nc(i, d))
@@ -2289,12 +2240,12 @@ class TestNcAtRail:
 
   def test_long_dropout_returns_to_the_rail(self):
     vrels = self._drive(n=14, nc=lambda i, d: None if i >= 8 else self._true_nc(i, d))
-    assert vrels[-1] == pytest.approx(-13.5)
+    assert vrels[-1] == pytest.approx(-12.0)
 
   def test_switch_off_is_the_old_behaviour(self, monkeypatch):
     from opendbc.car.honda import radar_interface as HRI
     monkeypatch.setattr(HRI, 'BOSCH_A_NC_RAIL_VREL', False)
-    assert self._drive(nc=self._true_nc)[-1] == pytest.approx(-13.5)
+    assert self._drive(nc=self._true_nc)[-1] == pytest.approx(-12.0)
 
 
 def test_existence_probability_is_carried_on_the_point():

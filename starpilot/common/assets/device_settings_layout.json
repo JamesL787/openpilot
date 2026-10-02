@@ -3091,17 +3091,6 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "BoschAU11Scale72",
-        "label": "Radar Closing Speed 1/72 Scale",
-        "description": "TEST, default off. Bosch-A radar only. Reads the radar's closing-speed channel at 1/72 m/s per count instead of 1/64, as related Honda camera firmware does (Peter's own camera firmware is unread). With this on every closing speed the radar reports reads 11% lower, and the channel pins at 12.0 m/s instead of 13.5. Logs of steady approaches fit 1/72; logs of moving leads do not fit either value. Reading closing speed low is the risky direction, which is why it ships off. Never driven. Restart required to take effect.",
-        "picker_description": "Reads Bosch-A radar closing speed at 1/72 instead of 1/64 (11% lower). Default off. Never driven.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedLongitudinalTune",
-        "requires_offroad": true,
-        "settings_tier": "advanced"
-      },
-      {
         "key": "BoschANewbornLeads",
         "label": "Radar Newborn Leads",
         "description": "Bosch-A newborn radar points: publish young closing targets earlier, only as a lead once their own range proves closing. Replay-tested only; not road-validated. Restart required.",
