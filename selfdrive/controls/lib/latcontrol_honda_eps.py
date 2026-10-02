@@ -22,6 +22,7 @@ Not read here, on purpose: LatPScale*, LatIScale*, HondaLateralPidKp/KiScale (th
 feedforward was validated with) and LatFScale* (they scaled the kf * angle * v^2 feedforward this replaces).
 """
 import math
+from collections import deque
 
 import numpy as np
 
@@ -84,6 +85,43 @@ def eps_lateral_delay(schedule, v_ego: float, live_delay: float) -> float:
   return float(np.interp(v_ego, *schedule))
 
 
+# Command delay, per car: the curvature controlsd hands over is executed this much later.
+# Measured end to end (car curvature from the VSA yaw sensor vs the model's OWN plan, curvature at camera frame + T):
+# - Clarity (JamesL787 vfn-yaw-trim 0fb4a6dc, Cinque v3 d5): ran the plan 0.12-0.14 s early on 5-12 m/s turns
+#   (route 37e), tight entries + loose exits. Cinque aims its command ~0.28 s after the frame whatever delay it is
+#   told, so the told-delay schedule cannot fix it. With 0.12 s (route 380, rain): entries -0.25 -> -0.11 s,
+#   roundabouts -0.12 -> -0.08 s; the model gives back ~half of the step by aiming further ahead.
+# - Civic Bosch (public Konik routes 289/290/293 on this controller, 278/28b on LatControlPID, tsfdo v15):
+#   0.14-0.30 s early with BOTH controllers; tsfdo also ignores the told delay (liveDelay 0.30 vs 0.48 s: same
+#   timing). Early turn-in is what curve hugging looks like. 0.12 s is deliberately below the ~0.2 s measured, so
+#   it cannot overshoot into late; re-measure with tools/lateral/plan_timing.py before going higher.
+# Faded out at highway speed, where nothing was measured early.
+EPS_CMD_DELAY = {
+  HONDA.HONDA_CLARITY: ([10.0, 15.0], [0.12, 0.0]),       # m/s, s
+  HONDA.HONDA_CIVIC_BOSCH: ([10.0, 15.0], [0.12, 0.0]),
+}
+
+
+class CommandDelay:
+  """The value issued delay seconds ago, linearly interpolated between frames. Fed every frame, engaged or not,
+  so the history is already there at engagement; before it has enough history it returns the oldest value."""
+
+  def __init__(self, dt: float, max_delay: float):
+    self.dt = dt
+    self.buf: deque[float] = deque(maxlen=int(math.ceil(max_delay / dt)) + 2)
+
+  def update(self, value: float, delay: float) -> float:
+    self.buf.append(float(value))
+    if delay <= 0.0:
+      return float(value)
+    steps = delay / self.dt
+    i = int(steps)
+    frac = steps - i
+    n = len(self.buf)
+    newer = self.buf[max(n - 1 - i, 0)]
+    older = self.buf[max(n - 2 - i, 0)]
+    return newer + frac * (older - newer)
+
 class LatControlHondaEps(LatControl):
   def __init__(self, CP, CI, dt):
     super().__init__(CP, CI, dt)
@@ -97,6 +135,8 @@ class LatControlHondaEps(LatControl):
     self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
     self.sr_curve_inverse = NRDR_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
     self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
+    self.cmd_delay_schedule = EPS_CMD_DELAY.get(CP.carFingerprint, ([0.0], [0.0]))
+    self.cmd_delay = CommandDelay(dt, max(self.cmd_delay_schedule[1]))
     self.params = Params()
     self.frame = -1
     self.prev_rate_limited_angle = 0.0
@@ -134,6 +174,7 @@ class LatControlHondaEps(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
+    desired_curvature = self.cmd_delay.update(desired_curvature, float(np.interp(CS.vEgo, *self.cmd_delay_schedule)))
     angle_des_no_offset = self._desired_angle_no_offset(VM, CS.vEgo, params.roll, desired_curvature)
     if active:
       angle_des_no_offset = rate_limit_desired_angle(angle_des_no_offset, self.prev_rate_limited_angle,
