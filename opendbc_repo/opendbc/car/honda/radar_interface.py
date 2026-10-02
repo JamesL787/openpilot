@@ -130,8 +130,9 @@ BOSCH_A_DIRECT_VREL_MIN_RAW = 0
 BOSCH_A_DIRECT_VREL_MAX_RAW = 1728
 BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 # D-074 (ACCEPTED by the owner 2026-10-02; static and replay evidence only, no road A/B): U11 is 1/72 m/s per
-# count, the only scale. It was decoded at 1/64 until 2026-10-02, and every m/s figure in this file and in radard
-# that was measured before then (13.5 rails, -16.54, -19.4 ...) was logged at 1/64: multiply by 64/72 for 1/72.
+# count, the only scale. Routes before 2026-10-01 published 1/64, so every m/s figure in this file and in radard
+# measured on them (13.5 rails, -16.54, -19.4 ...) is in 1/64 units: multiply by 64/72 for 1/72. From 2026-10-01 the
+# units depend on BoschAU11Scale72 in that route's initData (ON = 1/72); do not infer them from the date.
 #   * static: Bosch-radar-partner camera firmware (36161-TLA-A070; same-family TGG-A080, TGH-A040,
 #     TFJ/TGG/TGL-G070) formats vRel as round((v + 12) / 0x3c638e45), and 0x3c638e45 is 1/72 as an f32.
 #     (v + 12) * 72 spans raw 0..1728, the observed rails, centre 864: the field is +-12.0 m/s by design.

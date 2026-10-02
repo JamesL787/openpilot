@@ -1738,8 +1738,9 @@ than ≥ 13.5 m/s. Understating closing is the D-041 danger direction; the owner
 `rail + 1.0` (`ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS`) = −11.0. Left at −12.5, a −12.0 rail would never count as railed for
 leadOnpath adoption, which would fail toward not adopting the lead. Approved by the owner 2026-10-02.
 
-Every m/s figure in the code comments and in this file that was measured before 2026-10-02 (13.5 rails, −16.54, −19.4,
-…) was logged at 1/64: multiply by 64/72 for 1/72. The m/s gate thresholds whose evidence was measured in 1/64 units
+Routes before 2026-10-01 published 1/64, so every m/s figure in the code comments and in this file measured on them
+(13.5 rails, −16.54, −19.4, …) is in 1/64 units: multiply by 64/72 for 1/72. From 2026-10-01 the units depend on
+`BoschAU11Scale72` in that route's initData (ON = 1/72), not on the date; 000002ad and 000002ae have it ON. The m/s gate thresholds whose evidence was measured in 1/64 units
 were deliberately left as they are (listed in STATUS item 199).
 
 **Addendum (2026-10-02, owner acceptance):**

@@ -174,7 +174,9 @@ RANGE_VREL_ASSIST_MAX_BACKWARD_LEAD_MPS = 5.0
 # (236 12:54) and 1.6 m/s (237 10:00) further from a centred 2 s range difference than the native
 # rail was.
 # D-074: derived from the radar_interface decode, so it is the 1/72 rail, -12.0 m/s. The -13.50 / -13.5 rail values
-# quoted in this file were logged under the old 1/64 decode (x 64/72 for today's units); thresholds were not re-tuned.
+# quoted in this file come from routes logged under the old 1/64 decode (x 64/72 for today's units); thresholds were
+# not re-tuned. Routes before 2026-10-01 published 1/64; from then on the units follow BoschAU11Scale72 in the route's
+# initData, not the date.
 BOSCH_A_U11_LOW_RAIL_MPS = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) * BOSCH_A_DIRECT_VREL_SCALE_MPS
 
 # --- Rail fast path (2026-09-26, STATUS 130; extends D-053, rides RANGE_VREL_ASSIST).
