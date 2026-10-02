@@ -29,7 +29,11 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-REALDATA = Path("/data/media/0/realdata")
+from openpilot.system.hardware.hw import Paths
+
+# Where loggerd writes drives on this device: realdata, or realdata_HD / realdata_konik when
+# /cache/use_HD or /cache/use_konik is set. A fixed realdata path found no drives on those.
+REALDATA = Path(Paths.log_root())
 DIAGNOSTICS_DIR = Path("/data/diagnostics")
 WEBHOOK_OVERRIDE_PATH = DIAGNOSTICS_DIR / "webhook_url"
 # base64 of the Discord webhook URL that receives tester diagnostics ("" = sending not set up).
