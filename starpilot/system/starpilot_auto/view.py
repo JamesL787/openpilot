@@ -71,6 +71,10 @@ class ViewSource:
     finally:
       if output is not subprocess.DEVNULL:
         output.close()
+    try:
+      os.setpriority(os.PRIO_PROCESS, self.process.pid, 19)  # driving processes at normal priority must never wait on the car screen
+    except OSError:
+      pass
     self.touch = TouchSender(self.touch_path)
     self.started_at = time.monotonic()
     self.log("car_view_started", pid=self.process.pid)
