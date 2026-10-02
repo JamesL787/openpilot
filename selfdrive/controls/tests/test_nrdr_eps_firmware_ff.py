@@ -470,6 +470,41 @@ def test_nrdr_settings_are_read(monkeypatch, candidate):
   assert lac.core.output_lpf_enabled and lac.core.output_lpf_tau == eps_ff.OUTPUT_LPF_TAU
 
 
+def test_command_delay_hands_over_the_value_issued_that_long_ago():
+  d = clarity_eps.CommandDelay(DT_CTRL, 0.2)
+  outs = [d.update(float(k), 0.12) for k in range(40)]
+  assert outs[30] == pytest.approx(18.0)
+  assert outs[0] == 0.0 and outs[5] == 0.0              # not enough history yet: the oldest value
+  half = clarity_eps.CommandDelay(DT_CTRL, 0.2)
+  assert [half.update(float(k), 0.125) for k in range(40)][30] == pytest.approx(17.5)
+  assert clarity_eps.CommandDelay(DT_CTRL, 0.2).update(3.0, 0.0) == 3.0
+
+
+TOWN_DELAY = {HONDA.HONDA_CLARITY: 0.12, HONDA.HONDA_CIVIC_BOSCH: 0.15}   # measured per car, see EPS_CMD_DELAY
+
+
+@pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH])
+def test_command_delay_is_for_town_speeds_only(candidate):
+  bp, v = clarity_eps.EPS_CMD_DELAY[candidate]
+  assert np.interp(8.0, bp, v) == pytest.approx(TOWN_DELAY[candidate]) and np.interp(15.0, bp, v) == 0.0 and np.interp(30.0, bp, v) == 0.0
+
+
+@pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH])
+@pytest.mark.parametrize("v, in_town", [(8.0, True), (20.0, False)])
+def test_target_follows_the_curvature_one_command_delay_late(monkeypatch, candidate, v, in_town):
+  late_frames = round(TOWN_DELAY[candidate] / DT_CTRL) if in_town else 0
+  lac, VM, _ = _controller(monkeypatch, candidate, {"NrdrLatUseFirmwareVgr": "1"})
+  CS = car.CarState.new_message()
+  CS.vEgo = v
+  params = log.LiveParametersData.new_message()
+  params.steerRatio, params.stiffnessFactor = 16.0, 1.0
+  targets = []
+  for k in range(100):
+    _, angle_des, _ = lac.update(True, CS, VM, params, False, 0.0 if k < 50 else 0.02, False, 0.2, None, None, SimpleNamespace())
+    targets.append(angle_des)
+  assert next(k for k, a in enumerate(targets) if abs(a) > 1e-6) == 50 + late_frames
+
+
 def _drive_eps(lac, VM, frames=400, v=9.0):
   CS = car.CarState.new_message()
   CS.vEgo = v
