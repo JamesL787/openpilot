@@ -295,6 +295,12 @@ BOSCH_A_COAST_REVERSING_MARGIN_MPS = 1.0
 # 15-18 m/s. Nothing is withheld that was published before (D-041/D-042); the first low-u10 sweep roots the range
 # gate on the run's last range, so it is gated like any other sweep. Replay evidence only.
 BOSCH_A_NEWBORN_RANGE_PUBLISH = True
+# Seeding the first trusted sweep's history from the newborn run (samples, range_anchor, last_trusted_vrel) is off.
+# Replay, 00000284 22:36.7 track 17: the newborn run was a 0.6 s range burst 88.7 -> 79.9 m (published fit -4.8 ->
+# -17.6 m/s); seeded into the history, the coast after four measured sweeps held last_trusted_vrel -10.47 for 1.3 s
+# while the range went 79.1 -> 83.2 -> 80.0 m, and the planner reached -1.0 m/s^2 (base: none below -0.88), where
+# the unseeded track's coast followed the range (-0.5 .. -5.0). Replay evidence only.
+BOSCH_A_NEWBORN_SEED_HISTORY = False
 # u10 is a genuine uncertainty on U11, but it is CONFOUNDED WITH DYNAMICS. Measured against an
 # event-local reference (quadratic fit to a centred window, derivative at the centre) over 16,834
 # frames: median |err| rises 0.26 -> 0.88 -> 1.44 -> 1.95 m/s across u10 bins 0-64 / 64-128 /
@@ -967,7 +973,11 @@ class RadarInterface(RadarInterfaceBase):
       newborn_vrel = None
       if BOSCH_A_NEWBORN_RANGE_PUBLISH and track.newborn_run and not high_u10_live_vrel and track_id in self.pts:
         newborn_vrel = track.newborn_vrel
-      if newborn_vrel is not None:
+      if newborn_vrel is not None and not BOSCH_A_NEWBORN_SEED_HISTORY:
+        # The first trusted sweep starts the track exactly as it would have without newborn publishing.
+        track.newborn_run.clear()
+        track.newborn_vrel = None
+      elif newborn_vrel is not None:
         # The published newborn run becomes the accepted history and its published vRel the velocity a coast may
         # hold, so this sweep is range-gated against it and a coast here keeps the point instead of dropping it.
         track.samples.extend(track.newborn_run[-BOSCH_A_VREL_MAX_SAMPLES:])
