@@ -142,6 +142,18 @@ def codec_config(access_unit: bytes) -> bytes:
   return b"".join(units)
 
 
+def wire_frame(access_unit: bytes, *, drop_config: bool) -> bytes:
+  """The picture NAL units as Android's encoder sends them: no AUD, and no SPS/PPS when the codec config went separately."""
+  starts = list(START_CODE.finditer(access_unit))
+  drop = {9, 7, 8} if drop_config else {9}
+  units = []
+  for index, match in enumerate(starts):
+    end = starts[index + 1].start() if index + 1 < len(starts) else len(access_unit)
+    if match.end() < end and access_unit[match.end()] & 31 not in drop:
+      units.append(b"\x00\x00\x00\x01" + access_unit[match.end():end])
+  return b"".join(units) or access_unit
+
+
 @dataclass(frozen=True)
 class VideoMode:
   channel: int
@@ -883,11 +895,13 @@ class ProjectionSession(Session):
     if self.needs_keyframe and not keyframe:
       raise ValueError("A fresh media epoch must start with SPS/PPS and an IDR frame")
     assert self.mode is not None
+    config = b""
     if self.needs_keyframe:
       config = codec_config(data)
       if config:
         self.send(self.mode.channel, AV_MEDIA_CODEC_CONFIG, config)
         self.config_ack_slack += 1
+    data = wire_frame(data, drop_config=bool(config))
     self.send(self.mode.channel, AV_MEDIA_WITH_TIMESTAMP, struct.pack(">Q", timestamp_us) + data)
     self.needs_keyframe = False
     self.pending.append(time.monotonic())

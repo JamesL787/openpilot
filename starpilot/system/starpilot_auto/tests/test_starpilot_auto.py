@@ -1,4 +1,5 @@
 import json
+from starpilot.system.starpilot_auto.session import START_CODE
 import socket
 import ssl
 import struct
@@ -595,6 +596,9 @@ def test_session_sends_codec_config_before_each_epoch(identity, ack_codec_config
   assert hu.error is None, hu.error
   sps_pps = b"\x00\x00\x00\x01\x67\x42\x00\x00\x00\x01\x68\xce"
   assert hu.codec_configs == [(1, sps_pps, 0), (2, sps_pps, 4)]  # one per epoch, before its keyframe
+  for _, frame in hu.frames:  # like a phone: no AUD, no repeated SPS/PPS in the picture data
+    assert b"\x09\xf0" not in frame[:6]
+    assert all(frame[m.end()] & 31 not in (7, 8, 9) for m in START_CODE.finditer(frame))
 
 
 def test_session_keeps_unsolicited_focus_grant(identity):
