@@ -660,3 +660,16 @@ def test_pairing_log_stays_bounded_and_never_raises(tmp_path):
   blocked.write_text("")
   PairingLog(blocked / "sub" / "log.jsonl").record("pin", "/dev_x", "timed_out")  # parent is a file: swallowed
   PairingLog(None).record("pin", "/dev_x", "timed_out")
+
+
+def test_forgetting_a_device_clears_it_as_the_starpilot_auto_car(monkeypatch):
+  from openpilot.starpilot.system.starpilot_auto import protocol as starpilot_auto_protocol
+  forgotten = []
+  done = threading.Event()
+  monkeypatch.setattr(starpilot_auto_protocol, "forget_car", lambda address: forgotten.append(address) or done.set() or True)
+  params = FakeParams(IsOffroad=True, BluetoothEnabled=True)
+  client = FakeBlueZ()
+  controller = BluetoothController(params, lambda: client, FakeRadio())
+  controller.handle({"command": "forget", "address": "C4:B7:57:6E:AC:E2"})
+  assert ("remove", "C4:B7:57:6E:AC:E2") in client.actions
+  assert done.wait(2.0) and forgotten == ["C4:B7:57:6E:AC:E2"]

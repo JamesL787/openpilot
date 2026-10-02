@@ -136,6 +136,22 @@ class BluetoothController:
     if command in OFFROAD_COMMANDS and not self._offroad():
       raise RuntimeError("Bluetooth settings can only be changed offroad")
 
+  def _forget_starpilot_auto_car(self, address: str) -> None:
+    """A deleted pairing also stops being Starpilot Auto's car, so it leaves the car pickers.
+
+    Runs in the background: clearing may first stop a running projection, and a failure here must not
+    undo or delay the forget itself.
+    """
+    def worker():
+      try:
+        from openpilot.starpilot.system.starpilot_auto.protocol import forget_car
+        if forget_car(address):
+          cloudlog.info(f"Starpilot Auto car cleared after forgetting {address}")
+      except Exception as error:
+        cloudlog.warning(f"Starpilot Auto car clear failed for {address}: {error}")
+
+    threading.Thread(target=worker, name="starpilot_auto_forget_car", daemon=True).start()
+
   def _pair_worker(self, address: str, select_audio: bool = True) -> None:
     try:
       self._client().pair(address)
@@ -253,6 +269,7 @@ class BluetoothController:
       self._policy_disconnect_retry_after.pop(address.upper(), None)
       if (self.params.get("BluetoothAudioAddress", encoding="utf-8") or "").upper() == address.upper():
         self.params.remove("BluetoothAudioAddress")
+      self._forget_starpilot_auto_car(address)
     elif command == "select_audio":
       if address:
         device = self._client().device_for_address(address)

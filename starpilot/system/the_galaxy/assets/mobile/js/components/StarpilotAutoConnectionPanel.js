@@ -99,8 +99,24 @@ export const StarpilotAutoConnectionPanel = {
       if (!chosen || address(chosen.address) === this.selectedCar) return
       return this.request("select_receiver", { address: chosen.address, name: chosen.name || chosen.address })
     },
+    async ensureBluetooth() {
+      let enabled = false  // an unreachable service is the same as off: powering on starts it
+      try {
+        enabled = !!(await api.getBluetoothStatus())?.enabled
+      } catch {}
+      if (enabled) return true
+      if (!window.confirm("Bluetooth is off. Pairing a car needs it.\n\nTurn Bluetooth on now?")) return false
+      try {
+        await api.bluetoothOp("power", { enabled: true })
+        return true
+      } catch (e) {
+        showSnackbar(e?.message || "Bluetooth could not be turned on.", "error")
+        return false
+      }
+    },
     async pairNewCar() {
       if (!this.offroad || this.busy) return
+      if (!await this.ensureBluetooth()) return
       if (!await this.request("prepare_pairing")) return
       try {
         await api.bluetoothOp("scan")
@@ -113,6 +129,11 @@ export const StarpilotAutoConnectionPanel = {
   },
   template: `
     <div class="gx-car-display gx-starpilot-auto-connection">
+      <div v-if="!wired" class="gx-row">
+        <div class="gx-row__info"><span class="gx-row__label">Pair a New Car</span><span class="gx-row__desc">{{ offroad ? 'Opens Bluetooth and makes the comma ready for the Car.' : 'Park and go offroad to pair a new Car.' }}</span></div>
+        <button type="button" class="gx-btn gx-btn--tonal" :disabled="!offroad || !!busy" @click="pairNewCar">Pair</button>
+      </div>
+
       <div class="gx-row">
         <div class="gx-row__info"><span class="gx-row__label">{{ running ? 'Disconnect' : 'Connect' }}</span><span class="gx-row__desc">{{ statusText }}</span></div>
         <button type="button" class="gx-btn" :class="running ? 'gx-btn--danger' : ''" :disabled="loading || !canConnect || !!busy" @click="toggleConnection">
@@ -150,10 +171,6 @@ export const StarpilotAutoConnectionPanel = {
         </div>
       </div>
 
-      <div v-if="!wired" class="gx-row">
-        <div class="gx-row__info"><span class="gx-row__label">Pair a New Car</span><span class="gx-row__desc">{{ offroad ? 'Opens Bluetooth and makes the comma ready for the Car.' : 'Park and go offroad to pair a new Car.' }}</span></div>
-        <button type="button" class="gx-btn gx-btn--tonal" :disabled="!offroad || !!busy" @click="pairNewCar">Pair</button>
-      </div>
 
       <details class="gx-row gx-row--stack">
         <summary><span class="gx-row__label">Setup Help</span></summary>

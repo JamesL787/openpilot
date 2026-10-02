@@ -39,7 +39,7 @@ def _offroad() -> bool:
 
 def handle(supervisor: Supervisor, request: dict[str, Any]) -> dict[str, Any]:
   command = str(request.get("command", ""))
-  if command not in {"status", "stop"}:
+  if command not in {"status", "stop", "forget_receiver"}:  # forgetting a car must work with Starpilot Auto off
     from openpilot.common.params import Params
     if not Params().get_bool("StarpilotAutoEnabled"):
       raise RuntimeError("Enable Starpilot Auto under Toggles → Starpilot Auto first")
@@ -55,6 +55,8 @@ def handle(supervisor: Supervisor, request: dict[str, Any]) -> dict[str, Any]:
     supervisor.set_auto_connect(bool(request.get("enabled", True)))
   elif command == "select_receiver":
     supervisor.select_receiver(str(request.get("address", "")), str(request.get("name", "")))
+  elif command == "forget_receiver":
+    return {"cleared": supervisor.forget_receiver(str(request.get("address", "")))}
   elif command == "set_view":
     supervisor.set_view(str(request.get("view", "")))
   elif command == "set_connection":

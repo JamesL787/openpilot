@@ -8,7 +8,7 @@ import socket
 from typing import Any
 
 STARPILOT_AUTO_SOCKET_PATH = "/tmp/starpilot-auto.sock"
-COMMAND_TIMEOUTS = {"stop": 12.0, "prepare_pairing": 20.0, "devices": 10.0, "select_receiver": 10.0}
+COMMAND_TIMEOUTS = {"stop": 12.0, "prepare_pairing": 20.0, "devices": 10.0, "select_receiver": 10.0, "forget_receiver": 15.0}
 
 
 class StarpilotAutoClient:
@@ -67,3 +67,26 @@ class StarpilotAutoClient:
 
   def devices(self) -> list[dict[str, Any]]:
     return list(self.call("devices").get("devices", []))
+
+
+def forget_car(address: str, client: StarpilotAutoClient | None = None) -> bool:
+  """Clear Starpilot Auto's chosen car after its pairing was deleted; True if it was the chosen car.
+
+  Goes through starpilot_autod when it runs, so its in-memory settings stay in step. Otherwise nothing
+  holds the settings, and the saved file is edited directly.
+  """
+  client = client or StarpilotAutoClient()
+  if client.available:
+    return bool(client.call("forget_receiver", address=address).get("cleared"))
+  from openpilot.starpilot.system.starpilot_auto import identity
+  address = address.strip().upper()
+  config = identity.load_config()
+  chosen = str(config.get("receiver_address", "")).upper() == address
+  cache = dict(config.get("rfcomm_cache") or {})
+  if cache.pop(address, None) is None and not chosen:
+    return False
+  config["rfcomm_cache"] = cache
+  if chosen:
+    config.update(receiver_address="", receiver_name="")
+  identity.save_config(config)
+  return chosen

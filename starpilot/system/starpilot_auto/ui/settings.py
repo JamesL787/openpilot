@@ -100,7 +100,7 @@ class CarSettingsLayout(Widget):
     self._add('wifi', 'Wi-Fi', 'Connections', NetworkUI(wifi))
     self._add('bluetooth', 'Bluetooth', 'Connections', BluetoothManagerUI(bluetooth))
     from openpilot.starpilot.system.starpilot_auto.ui.connection_settings import StarpilotAutoSettings
-    self._add('starpilot_auto', 'Starpilot Auto', 'Connections', StarpilotAutoSettings(lambda: self.open_page('bluetooth')))
+    self._add('starpilot_auto', 'Starpilot Auto', 'Connections', StarpilotAutoSettings(lambda: self.open_page('bluetooth'), bluetooth))
     self._add('vehicle', 'Vehicle Settings', 'Vehicle', panel(StarPilotPanelType.VEHICLE))
     self._add('device', 'Device', 'Device & System', DeviceLayout(), scope='Comma device')
     self._add('system', 'Preferences', 'Device & System', panel(StarPilotPanelType.SYSTEM), scope='Comma device')

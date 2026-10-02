@@ -9,8 +9,9 @@ from openpilot.starpilot.system.starpilot_auto.ui.settings_dialogs import Confir
 
 
 class StarpilotAutoSettings(AetherSettingsView):
-  def __init__(self, open_bluetooth):
+  def __init__(self, open_bluetooth, bluetooth=None):
     self._manager = None
+    self._bluetooth = bluetooth
     self._open_bluetooth = open_bluetooth
     self._choosing = False
     self._waiting_devices = False
@@ -21,6 +22,9 @@ class StarpilotAutoSettings(AetherSettingsView):
     def stopped():
       return ready() and not self.status.get('running')
     sections = [SettingSection('Connection', [
+      SettingRow('bluetooth', 'value', 'Bluetooth is off', 'Starpilot Auto needs Bluetooth to pair and connect. Tap to turn it on.',
+                 on_click=self._offer_bluetooth, enabled=lambda: not ui_state.started and self._bluetooth.status.available,
+                 disabled_label='Park and go offroad to turn on Bluetooth.', visible=self._bluetooth_off),
       SettingRow('status', 'value', 'Starpilot Auto', get_value=self._status_text),
       SettingRow('connect', 'value', 'Projection', get_value=lambda: 'Disconnect' if self.status.get('running') else 'Connect',
                  enabled=ready, on_click=self._connect),
@@ -53,6 +57,13 @@ class StarpilotAutoSettings(AetherSettingsView):
   @property
   def status(self):
     return self._manager.status if self._manager else {}
+
+  def _bluetooth_off(self):
+    return self._bluetooth is not None and not self._bluetooth.status.enabled
+
+  def _offer_bluetooth(self):
+    gui_app.push_widget(ConfirmDialog('Bluetooth is off. Turn it on so Starpilot Auto can pair and connect?', 'Turn On',
+      callback=lambda result: self._bluetooth.set_power(True) if result == DialogResult.CONFIRM else None))
 
   def _status_text(self):
     status = self.status
@@ -116,11 +127,15 @@ class StarpilotAutoSettings(AetherSettingsView):
     if self._manager is None:
       self._manager = StarpilotAutoManager()
     self._manager.set_active(True)
+    if self._bluetooth:
+      self._bluetooth.set_active(True)
 
   def hide_event(self):
     if self._manager:
       self._manager.stop()
       self._manager = None
+    if self._bluetooth:
+      self._bluetooth.set_active(False)
     self._pairing = self._waiting_devices = False
     self.back()
     super().hide_event()

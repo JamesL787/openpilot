@@ -103,7 +103,7 @@ test("errors appear below Connect and failed operations remain retryable", async
   assert.deepEqual(notifications.at(-1), ["Service stopped", "error"])
 })
 
-test("Connect remains the first row and retries when the service is unavailable", async () => {
+test("Pair a New Car sits above Connect, which retries when the service is unavailable", async () => {
   const state = instance()
   state.loading = false
   state.error = "Turn on Bluetooth"
@@ -115,6 +115,7 @@ test("Connect remains the first row and retries when the service is unavailable"
   assert.equal(state.status.receiver_name, "Family Car")
   assert.equal(state.error, "")
   assert.ok(panel.template.indexOf("{{ running ? 'Disconnect' : 'Connect' }}") < panel.template.indexOf("Auto Connect"))
+  assert.ok(panel.template.indexOf("Pair a New Car") < panel.template.indexOf("{{ running ? 'Disconnect' : 'Connect' }}"))
 })
 
 test("the panel and its Settings section compile and expose every comma control", () => {

@@ -254,6 +254,10 @@ class BluetoothLayoutMici(NavScroller):
   # ------------------------------------------------------------ Starpilot Auto
 
   def _open_starpilot_auto(self):
+    status = self._manager.status
+    if gui_app.starpilot_auto_enabled and not status.enabled and status.available and status.offroad:
+      gui_app.push_widget(BigConfirmationDialog("slide to turn\nbluetooth on", self._dialog_icon, self._toggle_power))
+      return
     if self._starpilot_auto is None or not gui_app.starpilot_auto_enabled:
       return
     if self._starpilot_auto_page is None:

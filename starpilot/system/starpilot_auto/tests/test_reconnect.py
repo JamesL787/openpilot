@@ -267,3 +267,43 @@ def test_car_ending_projection_still_gets_its_full_pause(sup, monkeypatch):
   starts, waits = _wireless_backoff_harness(sup, monkeypatch, PeerRequestedStop("Head unit ended projection"))
   sup._run(1)
   assert waits[0] == supervisor.PEER_STOP_RETRY_SECONDS
+
+
+
+def test_forget_receiver_clears_only_the_chosen_car(sup):
+  sup.config.update(receiver_address=CAR_ADDRESS, receiver_name="Honda CIVIC", rfcomm_cache={CAR_ADDRESS: 6, "AA:BB:CC:DD:EE:01": 3})
+  assert not sup.forget_receiver("AA:BB:CC:DD:EE:01")  # some other device: the chosen car stays
+  assert sup.config["receiver_address"] == CAR_ADDRESS
+  assert "AA:BB:CC:DD:EE:01" not in sup.config["rfcomm_cache"]  # but its saved channel goes
+  sup.config["rfcomm_cache"]["AA:BB:CC:DD:EE:01"] = 3
+  assert sup.forget_receiver(CAR_ADDRESS.lower())
+  assert sup.config["receiver_address"] == "" and sup.config["receiver_name"] == ""
+  assert sup.config["rfcomm_cache"] == {"AA:BB:CC:DD:EE:01": 3}
+  assert identity.load_config()["receiver_address"] == ""
+
+
+def test_forget_car_edits_saved_settings_when_the_service_is_not_running(tmp_path, monkeypatch):
+  from openpilot.starpilot.system.starpilot_auto import protocol
+  monkeypatch.setattr(identity, "CONFIG_PATH", tmp_path / "config.json")
+  config = identity.load_config()
+  config.update(receiver_address=CAR_ADDRESS, receiver_name="Honda CIVIC")
+  identity.save_config(config)
+  offline = protocol.StarpilotAutoClient(socket_path=str(tmp_path / "missing.sock"))
+  assert not protocol.forget_car("AA:BB:CC:DD:EE:01", offline)
+  assert protocol.forget_car(CAR_ADDRESS, offline)
+  assert identity.load_config()["receiver_address"] == ""
+
+
+def test_forget_car_goes_through_the_running_service(tmp_path):
+  from openpilot.starpilot.system.starpilot_auto import protocol
+  calls = []
+
+  class Running(protocol.StarpilotAutoClient):
+    available = True
+
+    def call(self, command, **payload):
+      calls.append((command, payload))
+      return {"ok": True, "cleared": True}
+
+  assert protocol.forget_car(CAR_ADDRESS, Running(socket_path=str(tmp_path / "s.sock")))
+  assert calls == [("forget_receiver", {"address": CAR_ADDRESS})]

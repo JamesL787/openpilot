@@ -129,11 +129,14 @@ class FakeHeadUnit:
     self.start_indications: list[int] = []
     self.device_name = ""
     self.shutdown_received = threading.Event()
+    self.hold_acks = threading.Event()  # set: receive video frames but stop acknowledging them
+    self.held_acks: list[int] = []  # video sessions of the frames received while acks were held
     self.streaming = threading.Event()
     self.stop = threading.Event()
     self.error: BaseException | None = None
     self.sock: socket.socket | None = None
-    self._send_lock = threading.Lock()
+    self._send_lock = threading.Lock()  # encrypt + send as one step, so records leave in sequence order
+    self._tls_lock = threading.Lock()  # the TLS object is shared by the sending and the receiving thread
     self.thread = threading.Thread(target=self._run, daemon=True)
     self.thread.start()
 
@@ -141,10 +144,11 @@ class FakeHeadUnit:
   def _send(self, channel: int, kind: int, body: bytes = b"", encrypted: bool = True, control: bool = False) -> None:
     data = struct.pack(">H", kind) + body
     flags = 3 | (8 if encrypted else 0) | (4 if control else 0)
-    if encrypted:
-      self.tls.write(data)
-      data = self.outgoing.read()
     with self._send_lock:
+      if encrypted:
+        with self._tls_lock:
+          self.tls.write(data)
+          data = self.outgoing.read()
       self.sock.sendall(struct.pack(">BBH", channel, flags, len(data)) + data)
 
   def _read_exact(self, size: int) -> bytes:
@@ -164,13 +168,14 @@ class FakeHeadUnit:
         self._read_exact(4)
       payload = self._read_exact(size)
       if flags & 8:
-        self.incoming.write(payload)
         plain = bytearray()
-        while True:
-          try:
-            plain.extend(self.tls.read(65536))
-          except ssl.SSLWantReadError:
-            break
+        with self._tls_lock:
+          self.incoming.write(payload)
+          while True:
+            try:
+              plain.extend(self.tls.read(65536))
+            except ssl.SSLWantReadError:
+              break
         payload = bytes(plain)
       assembled.extend(payload)
       if flags & 2:
@@ -282,8 +287,11 @@ class FakeHeadUnit:
         self.frames.append((session_id, data[8:]))
         unacked += 1
         self.streaming.set()
-        self._send(channel, 0x8004, field(1, session_id) + field(2, 1))
-        unacked -= 1
+        if self.hold_acks.is_set():
+          self.held_acks.append(session_id)
+        else:
+          self._send(channel, 0x8004, field(1, session_id) + field(2, 1))
+          unacked -= 1
       elif channel == 1 and kind == 0x8002:
         self._send(1, 0x8003, field(1, 0))
       elif channel == self.sensor_channel and kind == 0x8001:
@@ -295,6 +303,18 @@ class FakeHeadUnit:
   def send_touch(self, action: int, x: int, y: int, pointer: int = 0) -> None:
     location = field(1, x) + field(2, y) + field(3, pointer)
     self._send(1, 0x8001, field(1, 123) + field(3, field(1, location) + field(2, 0) + field(3, action)))
+
+  def release_acks(self) -> None:
+    """Acknowledge every frame received while acks were held, in order."""
+    self.hold_acks.clear()
+    while self.held_acks:
+      self._send(self.video_channel, 0x8004, field(1, self.held_acks.pop(0)) + field(2, 1))
+
+  def send_ping(self, value: int = 1) -> None:
+    self._send(0, 11, field(1, value))
+
+  def request_shutdown(self, reason: int = 1) -> None:
+    self._send(0, 15, field(1, reason))
 
   def set_focus(self, projected: bool) -> None:
     self._send(self.video_channel, 0x8008, field(1, 1 if projected else 2) + field(2, 1))
