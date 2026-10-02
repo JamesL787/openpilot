@@ -22,10 +22,11 @@ here. Where the two touch — the CR-V lateral profile, the steering-ratio curve
 
 **Open topics to revisit** (parked by decision, not closed):
 - **Newborn radar points toggle: D-075 (`BoschANewbornLeads`, default OFF).** Replay and static only, not driven. Publishes young closing radar points earlier and lets one lead only once its own range closes. Turn it on on pr10-smooth first.
-- **U11 scale 1/72: D-074 ACCEPTED (owner, 2026-10-02), the only scale; toggle removed.** Static and replay only, not
-  driven. Rails ±12.0 m/s; every closing speed published is 64/72 of the old 1/64 reading (−11.1 %), the D-041 danger
+- **U11 scale 1/72: D-074 ACCEPTED (owner, 2026-10-02), the default; `BoschAU11Scale72` OFF switches back to 1/64.**
+  Static and replay only, not driven. Rails ±12.0 m/s; every closing speed published is 64/72 of the old 1/64 reading (−11.1 %), the D-041 danger
   direction. `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 = −11.0 (approved). Open: a separate fit of the scale itself,
-  the m/s gate thresholds whose evidence was logged at 1/64 (item 199), and the first drive at 1/72.
+  the m/s gate thresholds whose evidence was logged at 1/64 (item 199), why Job's range check depends on distance (D-074,
+  UNRESOLVED), and the first drive at 1/72.
 - **Off-axis lead follow-ups: items 74f/74g.** The 237 942.6 false brake (a real on-road phantom
   brake to aEgo −2.7) is removed in replay by 74g. Two real closings now brake later (25b 665.2 +1.5 s,
   245 40.7 +0.9 s). Needs a road drive on curves with the fix.
@@ -10074,11 +10075,11 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **Tests:** 294 pass / 1 fail (base 270 pass / the same 1 fail). The one failure is a Galaxy test that needs `git show HEAD:` and passes inside a git checkout.
 - **Artifacts:** larch64 `common/params_pyx.so` and `libcommon.a` rebuilt with the key; the only key-table change is `BoschANewbornLeads`.
 
-## 199. Radar closing speed is read at 1/72 m/s per count, the only scale; the 1/72 test toggle is gone (D-074 ACCEPTED, owner, 2026-10-02). Replay and static unit tests only; not driven.
+## 199. Radar closing speed is read at 1/72 m/s per count by default; the 1/72 switch stays, default ON, as a way back to 1/64 (D-074 ACCEPTED, owner, 2026-10-02). Replay and static unit tests only; not driven.
 - **Problem:** the radar's closing-speed field was read at 1/64 m/s per count. Camera firmware of the same family writes it at 1/72, and three replay fits give about 71. At 1/64 every closing speed read 12.5 % high and the rails sat at ±13.5 instead of ±12.0.
-- **Change:** U11 is decoded as `(raw − 864) / 72` everywhere (`BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS = 72`), rails exactly ±12.0, half-count on-rail tolerance 0.5/72. `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 = −11.0. The `BoschAU11Scale72` toggle, its 1/64 path, its param key, Longitudinal UI row, Galaxy layout entry, feasibleparams line and test file are removed. `tools/bosch_a_scenarios.py` encodes at 1/72. No other constant changed. `BOSCH_A_NC_SCALE` (1/64) is the separate NORMALIZED_CLOSING channel and is unchanged.
+- **Change:** U11 is decoded as `(raw − 864) / 72` everywhere (`BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS = 72`), rails exactly ±12.0, half-count on-rail tolerance 0.5/72. `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 = −11.0. ~~The `BoschAU11Scale72` toggle, its 1/64 path, its param key, Longitudinal UI row, Galaxy layout entry, feasibleparams line and test file are removed.~~ Reversed the same day; see **Switch kept** below. `tools/bosch_a_scenarios.py` encodes at 1/72. No other constant changed. `BOSCH_A_NC_SCALE` (1/64) is the separate NORMALIZED_CLOSING channel and is unchanged.
 - **Tests:** 285 pass / 3 fail (base 292 / the same 3; the 7 fewer are the deleted toggle tests). The 3 are environment failures in the cp -al test tree (two newborn-toggle tests need a params library with the key, one Galaxy test needs `git show HEAD:`); the Galaxy layout tests pass in the git checkout (31). Longitudinal planner 614/614.
-- **Artifacts:** larch64 `common/libcommon.a` and `params_pyx.so` rebuilt without the key (control rebuild of the base byte-identical; key table 863 → 862, only `BoschAU11Scale72` removed).
+- **Artifacts:** larch64 `common/libcommon.a` and `params_pyx.so` rebuilt without the key (control rebuild of the base byte-identical; key table 863 → 862, only `BoschAU11Scale72` removed); superseded, see **Switch kept** below.
 - **Replay identity:** on 2ae, 280, 294, 284 this branch is identical (radar tracks, leads, aTarget, every frame) to the branch before with the toggle forced ON.
 - **Radar side is the same on main:** radar tracks, leadOne and leadOnpath are identical between this branch and main at 1/72 on all 4 routes (replay); the numbers below are main's, whose planner is the shared baseline.
 - **Replay, main 1/72 vs main 1/64 (open loop, own planner, routes 2ae, 280, 294, 284; same frame counts, rc 0):** frames
@@ -10110,4 +10111,18 @@ Replay of the fixed code (base = the old law, same 10 routes):
   64/72 shrink. The 284 t 2066.36 flip is `ONPATH_ADOPT_RATE_TOL_MPS` 2.5 deciding: the range slope must not exceed the
   window mean + 2.5, i.e. −4.010 + 2.5 = −1.510 at 1/64 (slope −1.413, rejected by 0.097) and −3.507 + 2.5 = −1.007 at
   1/72 (slope −1.255, adopted). RATE_TOL 2.5 is a 1/64-evidenced threshold that now governs 1/72 adoption, untuned.
-- **Still open:** a separate fit of the scale itself (the U10 census cannot fit it); the first drive at 1/72.
+- **Switch kept (owner, 2026-10-02, after Job's range check came back mixed; D-074 second addendum):** 1/72 is the
+  default and `BoschAU11Scale72` stays as a switch back to 1/64 (params key default "1", Longitudinal row "Radar
+  Closing Speed 1/72 Scale", Galaxy entry). OFF is the old 1/64 path exactly (rails ±13.5, half-count 1/128,
+  `ONPATH_ADOPT_RAIL_VREL_MPS` −12.5); ON is ±12.0, 1/144, −11.0. Read once at start (radar interface `__init__`,
+  radard `main()`); unset or unreadable params mean ON. Job's per-dRel-band slope is not flat (66.8 / 71.2 / 72.4 /
+  77.0 / 67.0 counts per m/s at 0–19 / 20–39 / 40–59 / 60–79 / 80–99 m; table in D-074); the cause is UNRESOLVED.
+  `ONPATH_ADOPT_MIN_CLOSING_MPS` 2.0 and `_RATE_TOL_MPS` 2.5 are evidenced only at 1/64.
+  - Tests (static): 299 pass / 1 fail on each branch; the 1 is the Galaxy `git show HEAD:` test, which passes in the
+    git checkout (31/31). Longitudinal planner 614/614 (pr10), 591/591 (main).
+  - Artifacts: larch64 `libcommon.a` / `params_pyx.so` rebuilt with the key. pr10: 863 keys, the same set as
+    98e6e5cc8. main: 856 → 857, only `BoschAU11Scale72` added. Default reads True; put/remove round-trip.
+  - Replay identity (2ae, 280, 294, 284; every frame of radar tracks, leads and aTarget): switch ON is identical to the
+    1/72-only build, and switch OFF is identical to the code before the change (1/64), on both branches.
+- **Still open:** a separate fit of the scale itself (the U10 census cannot fit it); why the range check depends on
+  distance (UNRESOLVED); the first drive at 1/72.

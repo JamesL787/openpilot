@@ -1708,11 +1708,12 @@ Limits: the plant misses the real brakes' ~0.8 m/s² overshoot (STATUS 195), so 
 2a6 2:42 jab only softens -2.51 → -2.31 here. The STATUS 148 stock-ACC comparison cases (25b 1338.8, 25e 318.1, 25f 483.1,
 262 379.4, 263 374.3) were logged with Experimental Mode off, so this path does not run there (static). Status stays ACCEPTED-unvalidated until drives in Experimental Mode with it are reviewed.
 
-## D-074 — ACCEPTED (owner, 2026-10-02): U11 vRel is decoded at 1/72 m/s per count, the only scale
+## D-074 — ACCEPTED (owner, 2026-10-02): U11 vRel is decoded at 1/72 m/s per count by default; `BoschAU11Scale72` OFF switches back to 1/64
 Recorded 2026-10-01 as a test toggle (`BoschAU11Scale72`, default OFF); accepted by the owner (Peter, in chat) on
-2026-10-02 as the only scale, toggle removed. **Static and replay evidence only; no road evidence.**
+2026-10-02 as the default; after Job's range check the owner kept the toggle, now default ON, as a switch back to 1/64
+(second addendum). **Static and replay evidence only; no road evidence.**
 
-U11 is `v = (raw − 864) / 72` everywhere the scale is used (`BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS = 72`; the decode
+With `BoschAU11Scale72` ON (the default), U11 is `v = (raw − 864) / 72` everywhere the scale is used (`BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS = 72`; the decode
 divides, as the inverse of the firmware formatter). The rails are exactly ±12.0 m/s (raw 0 and 1728), down from ±13.5
 at 1/64. The scale also sets the D-063 rail interval, the D-054 innovation gate, the D-057 re-anchor and the NC-at-rail
 test (radar_interface.py), and in radard.py `BOSCH_A_U11_LOW_RAIL_MPS` (−12.0), the half-count on-rail tolerance
@@ -1752,7 +1753,7 @@ were deliberately left as they are (listed in STATUS item 199).
   |x| ≥ 200: 58.3–70.3) the range-rate bracket is about 55–70, which contains 64 and **excludes 72**. It is not
   evidence against the 1/72 decode: the encoder is firmware-proven 1/72, and R18 (Jason, static) proved the range
   encode is raw/16 with no offset. It reads as a range-vs-U11 discrepancy, the range slope running 1.03–1.29× U11.
-  **Open:** Job's per-dRel-band range check is pending.
+  Job's per-dRel-band range check came back mixed; see the second addendum.
 - U10 v2 census (Job, replay only, 36 routes, `rs2_merged.json`, sha256
   `69ac57f8d45dd5794c3e65e551bdf92e7478fd3f7d2cce5a7bc190bc523eb868`, verified by Jason): per 7-sweep window, mean
   direct vRel minus the least-squares range slope, source 2, n = 878,077 windows. At 1/64 the bias is −0.130 m/s and
@@ -1761,11 +1762,50 @@ were deliberately left as they are (listed in STATUS item 199).
   decisive**. The census cannot fit the optimal scale (it has no raw² sums and no vRel-magnitude bins).
   Separate context, not part of this change: the residual sd rises monotonically with U10, 1.31 to 10.96 m/s, and is
   not U10/144.
-- The `BoschAU11Scale72` toggle, its 1/64 path and its tests are removed (params key, Longitudinal UI row, Galaxy
-  layout entry, feasibleparams line). The larch64 `common/params_pyx.so` / `libcommon.a` are rebuilt without the key.
+- ~~The `BoschAU11Scale72` toggle, its 1/64 path and its tests are removed.~~ Superseded the same day: the toggle is
+  kept, default ON (second addendum).
 - `tools/bosch_a_scenarios.py` now encodes at 1/72 (rail 12.0).
 - `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 = −11.0 approved (not −13.0).
 - Still open: a separate fit of the scale itself; no road A/B exists.
+
+**Second addendum (2026-10-02, owner decision after Job's range check): 1/72 is the default, the toggle stays.**
+- Job's per-dRel-band range check (replay only, `range2_merged.json`, sha256 fbbd08db…0e8332, verified by Jason,
+  pooled by Jason from the source 2, STATUS 7 bins), copied as Jason reported it:
+
+  A (counts per m/s by dRel band) is not flat:
+
+  | dRel band | 1/k | n |
+  |---|---|---|
+  | 0–19 m | 66.8 | 145k |
+  | 20–39 m | 71.2 | 108k |
+  | 40–59 m | 72.4 | 26k |
+  | 60–79 m | 77.0 | 9.8k |
+  | 80–99 m | 67.0 | 3.6k |
+  | ≥100 m | 110–230, noisy | |
+
+  B (the set the firmware calls stationary at 1/72; through-origin y/−vEgo; 1/64 would predict 1.125):
+  - 0–79 m: 0.93–1.02 (n ≈ 9.7k)
+  - 80–119 m: 1.13–1.18 (n ≈ 860)
+
+  C (all-rail windows, vEgo > 14) peaks at neither 1.00 nor 1.13. The mode is about 1.6–1.75 at 20–79 m, so it does
+  not discriminate.
+
+  **The cause of the band dependence is UNRESOLVED.**
+- Owner decision (Peter, 2026-10-02): push 1/72 as the default and keep `BoschAU11Scale72` (params key default "1",
+  Longitudinal row "Radar Closing Speed 1/72 Scale", Galaxy entry, feasibleparams line) as a switch back to 1/64 until
+  the long-range question is settled.
+- OFF is the old 1/64 path exactly: `(raw − 864) / 64`, rails ±13.5, half-count on-rail tolerance 1/128 m/s, and
+  `ONPATH_ADOPT_RAIL_VREL_MPS` −12.5 (the pre-change value: `BOSCH_A_U11_LOW_RAIL_MPS + ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS`
+  with the −13.5 rail, radard.py line 491 at 98e6e5cc8). ON gives ±12.0, 1/144 and −11.0. The rails and half-count are
+  derived from the scale, not hard-coded.
+- The switch is read once at start: in the radar interface's `__init__` and once in radard `main()`. A change while
+  driving does nothing until openpilot restarts. It is read with `get(return_default=True)`, so an unset key reads
+  ON, and unreadable params also mean ON.
+- `ONPATH_ADOPT_MIN_CLOSING_MPS` 2.0 and `ONPATH_ADOPT_RATE_TOL_MPS` 2.5 are evidenced only at 1/64 and govern 1/72
+  adoption untuned (STATUS 199).
+- Devices that ran this branch before 2026-10-02 had the old default ("0", OFF) written at boot. They stay at 1/64
+  until the switch is turned on; no migration was added. Routes 000002ad and 000002ae show it ON on Peter's car.
+- Still open: the cause of the band dependence, a separate fit of the scale itself, and the first drive at 1/72.
 
 ## D-075 — PROPOSED (toggle OFF): `BoschANewbornLeads` publishes newborn Bosch-A points early, leads only on proven range closing
 Recorded 2026-10-02, owner decision (Peter, in chat): build it as an opt-in toggle, default OFF, on main and pr10-smooth.
