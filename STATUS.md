@@ -22,11 +22,10 @@ here. Where the two touch — the CR-V lateral profile, the steering-ratio curve
 
 **Open topics to revisit** (parked by decision, not closed):
 - **Newborn radar points toggle: D-075 (`BoschANewbornLeads`, default OFF).** Replay and static only, not driven. Publishes young closing radar points earlier and lets one lead only once its own range closes. Turn it on on pr10-smooth first.
-- **U11 scale 1/72 toggle: D-074 (`BoschAU11Scale72`, TEST, default OFF).** Static and replay only, not driven.
-  Camera firmware in the same family uses 1/72, and steady-state replay gives about 71 counts per m/s.
-  UNRESOLVED: moving leads give k = 55–66 and reject 71. ON lowers every published closing speed by 11.1 % (rail
-  ±12.0 m/s), which is the D-041 danger direction. `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 is pending Peter's OK.
-  On ns-bosch-radar-testing-pr10-smooth the larch64 params artifacts are rebuilt with the key (2026-10-02).
+- **U11 scale 1/72: D-074 ACCEPTED (owner, 2026-10-02), the only scale; toggle removed.** Static and replay only, not
+  driven. Rails ±12.0 m/s; every closing speed published is 64/72 of the old 1/64 reading (−11.1 %), the D-041 danger
+  direction. `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 = −11.0 (approved). Open: a separate fit of the scale itself,
+  the m/s gate thresholds whose evidence was logged at 1/64 (item 199), and the first drive at 1/72.
 - **Off-axis lead follow-ups: items 74f/74g.** The 237 942.6 false brake (a real on-road phantom
   brake to aEgo −2.7) is removed in replay by 74g. Two real closings now brake later (25b 665.2 +1.5 s,
   245 40.7 +0.9 s). Needs a road drive on curves with the fix.
@@ -10074,3 +10073,39 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **ON, replay on 15 drives (pr10-smooth base):** the early false brakes seen without the closing check (280 ×2, 294, 2ae seg26, 284) are gone; the only new early-brake frames are 2ae seg17 track 39, the stopped car Peter wanted seen. New: 297 seg48 t 4572.62, a newborn lead for one frame gives −2.00 then a −1.33 dip, 0.75 s before base, behind a real car. 2ad t 3389.95 −0.39 is the model's own speed on that frame, not the radar.
 - **Tests:** 294 pass / 1 fail (base 270 pass / the same 1 fail). The one failure is a Galaxy test that needs `git show HEAD:` and passes inside a git checkout.
 - **Artifacts:** larch64 `common/params_pyx.so` and `libcommon.a` rebuilt with the key; the only key-table change is `BoschANewbornLeads`.
+
+## 199. Radar closing speed is read at 1/72 m/s per count, the only scale; the 1/72 test toggle is gone (D-074 ACCEPTED, owner, 2026-10-02). Replay and static unit tests only; not driven.
+- **Problem:** the radar's closing-speed field was read at 1/64 m/s per count. Camera firmware of the same family writes it at 1/72, and three replay fits give about 71. At 1/64 every closing speed read 12.5 % high and the rails sat at ±13.5 instead of ±12.0.
+- **Change:** U11 is decoded as `(raw − 864) / 72` everywhere (`BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS = 72`), rails exactly ±12.0, half-count on-rail tolerance 0.5/72. `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 = −11.0. The `BoschAU11Scale72` toggle, its 1/64 path, its param key, Longitudinal UI row, Galaxy layout entry, feasibleparams line and test file are removed. `tools/bosch_a_scenarios.py` encodes at 1/72. No other constant changed. `BOSCH_A_NC_SCALE` (1/64) is the separate NORMALIZED_CLOSING channel and is unchanged.
+- **Tests:** 285 pass / 3 fail (base 292 / the same 3; the 7 fewer are the deleted toggle tests). The 3 are environment failures in the cp -al test tree (two newborn-toggle tests need a params library with the key, one Galaxy test needs `git show HEAD:`); the Galaxy layout tests pass in the git checkout (31). Longitudinal planner 614/614.
+- **Artifacts:** larch64 `common/libcommon.a` and `params_pyx.so` rebuilt without the key (control rebuild of the base byte-identical; key table 863 → 862, only `BoschAU11Scale72` removed).
+- **Replay identity:** on 2ae, 280, 294, 284 this branch is identical (radar tracks, leads, aTarget, every frame) to the branch before with the toggle forced ON.
+- **Radar side is the same on main:** radar tracks, leadOne and leadOnpath are identical between this branch and main at 1/72 on all 4 routes (replay); the numbers below are main's, whose planner is the shared baseline.
+- **Replay, main 1/72 vs main 1/64 (open loop, own planner, routes 2ae, 280, 294, 284; same frame counts, rc 0):** frames
+  that differ 22748 / 31988 / 13253 / 16429, mostly aTarget under 0.01. Engaged episodes with |ΔaTarget| > 0.1: 22 / 60 /
+  23 / 14 = 119, of which 28 harder and 91 softer. Largest five:
+  - 280 t 798.65, −2.87 → −0.93 softer: base takes the one-frame wrong match on roadside track 58 (railed −13.5, 47 m;
+    item 198); at 1/72 there is no radar lead on that frame.
+  - 280 t 1909.40, +0.69 → −1.09 harder: at 1/72 track 13 (a real closing car, 50 → 33 m) becomes the lead about 0.8 s
+    earlier, at its −12.0 rail; base takes it at 1909.8 and later peaks −2.29 against −1.86.
+  - 280 t 894.55, −1.39 → +0.07 softer, no lead in either arm (planner state carried over).
+  - 280 t 1904.90, −0.71 → +0.59 softer, track 39 at 72 m, vRel −6.41 → −5.69 (64/72).
+  - 284 t 2004.56, −1.00 → +0.11 softer, track 62 at 42.6 m, vRel −2.88 → −2.56.
+  Softer dominates because every closing speed is 64/72 of the old one; that is the D-041 direction and it is the
+  owner-accepted cost.
+- **leadOnpath adoption (replay):** no adoption changes because of the rail clause. Rail-clause flips (−12.0 is
+  railed against −11.0 but −13.5 was railed against −12.5 too) happen only on tracks that are not adopted either way.
+  Adoption differs on 6 episodes: 280 t 799.45 (track 27, base adopts, vmean −2.04 → −1.81 crosses MIN_CLOSING 2.0) and
+  t 1910.10 (track 13, 1/72 adopts, rate check); 294 t 1657.52 (track 13, base adopts, MIN_CLOSING); 284 t 962.25 (track
+  54, base adopts, MIN_CLOSING; disengaged), t 1520.11 (track 39, 1/72 adopts; disengaged), t 2066.36 (track 48, 1/72
+  adopts; disengaged). Each is ≤ 0.5 s. The raw U11 is the same in both arms, so a raw rail (0 or 1728) cannot flip;
+  "on rail" changes in the track table come from different coast / interval / assist outcomes on the published value.
+- **Not re-tuned, evidence logged at 1/64 (flagged for the owner, numbers unchanged):** radar_interface
+  `BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS` 3.0, `BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS` 20.0,
+  `BOSCH_A_COAST_REVERSING_MARGIN_MPS` 1.0; radard `RANGE_VREL_ASSIST_MIN_DISAGREEMENT_MPS` 2.0 / `_MAX_CORRECTION_MPS` 8.0 /
+  `_MAX_BACKWARD_LEAD_MPS` 5.0, `RANGE_VREL_RAIL_NC_VETO_ABOVE_RAIL_MPS` 3.5, `VISION_ASSIST_MIN_CLOSING_MPS` 5.0 /
+  `_CLOSING_MARGIN_MPS` 3.0, `RANGE_VREL_CAM_XRATE_AGREE_MPS` 2.0 / `_MARGIN_MPS` 2.0, `NEWBORN_RANGE_CLOSING_VREL_TOL`
+  3.0, `ONPATH_ADOPT_MIN_CLOSING_MPS` 2.0 / `_RATE_TOL_MPS` 2.5, `FAR_RAIL_MARGIN_MPS` 3.0 / `_MAX_SPEED_STDEV_MPS` 2.0,
+  `FAR_RAIL_VREL_TOL_MPS` 0.05. Three replay adoption flips above are `ONPATH_ADOPT_MIN_CLOSING_MPS` meeting the
+  64/72 shrink.
+- **Still open:** a separate fit of the scale itself (the U10 census cannot fit it); the first drive at 1/72.

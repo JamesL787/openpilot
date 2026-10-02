@@ -1708,16 +1708,17 @@ Limits: the plant misses the real brakes' ~0.8 m/s² overshoot (STATUS 195), so 
 2a6 2:42 jab only softens -2.51 → -2.31 here. The STATUS 148 stock-ACC comparison cases (25b 1338.8, 25e 318.1, 25f 483.1,
 262 379.4, 263 374.3) were logged with Experimental Mode off, so this path does not run there (static). Status stays ACCEPTED-unvalidated until drives in Experimental Mode with it are reviewed.
 
-## D-074 — PROPOSED (toggle OFF): `BoschAU11Scale72` decodes U11 vRel at 1/72 m/s per count instead of 1/64
-Recorded 2026-10-01, owner decision (Peter, in chat): add the toggle, default OFF. **Static and replay evidence only; no
-road evidence.** With the toggle OFF every decode, rail and gate is the 1/64 code, byte for byte.
+## D-074 — ACCEPTED (owner, 2026-10-02): U11 vRel is decoded at 1/72 m/s per count, the only scale
+Recorded 2026-10-01 as a test toggle (`BoschAU11Scale72`, default OFF); accepted by the owner (Peter, in chat) on
+2026-10-02 as the only scale, toggle removed. **Static and replay evidence only; no road evidence.**
 
-With it ON, U11 is `(raw − 864) / 72` everywhere the scale is used. That covers the published vRel and the rails, which
-become ±12.0 m/s instead of ±13.5. It also covers the D-063 rail interval, the D-054 innovation gate, the D-057 re-anchor
-and the NC-at-rail test (radar_interface.py). In radard.py it covers `BOSCH_A_U11_LOW_RAIL_MPS`, the half-count on-rail
-tolerance, the FAR_RAIL bound and the NC veto (rail + 3.5). The centre (864), the raw rails (0, 1728), the 0x7FE
-sentinel, u10, range and azimuth are unchanged. No gate threshold is re-tuned. Both processes read the param once at
-startup and fail closed to OFF, so a `params_pyx.so` without the key also means OFF.
+U11 is `v = (raw − 864) / 72` everywhere the scale is used (`BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS = 72`; the decode
+divides, as the inverse of the firmware formatter). The rails are exactly ±12.0 m/s (raw 0 and 1728), down from ±13.5
+at 1/64. The scale also sets the D-063 rail interval, the D-054 innovation gate, the D-057 re-anchor and the NC-at-rail
+test (radar_interface.py), and in radard.py `BOSCH_A_U11_LOW_RAIL_MPS` (−12.0), the half-count on-rail tolerance
+(0.5/72 m/s), the FAR_RAIL bound and the NC veto (rail + 3.5). The centre (864), the raw rails (0, 1728), the 0x7FE
+sentinel, u10, range and azimuth are unchanged. No gate threshold is re-tuned. `BOSCH_A_NC_SCALE` (1/64) is the
+separate NORMALIZED_CLOSING channel and is unchanged.
 
 Evidence (firmware-analysis-kit, cited, not copied):
 - static: readable Bosch-radar-partner camera firmware (36161-TLA-A070; same-family TGG-A080, TGH-A040,
@@ -1727,21 +1728,37 @@ Evidence (firmware-analysis-kit, cited, not copied):
 - replay: steady-state slope is about 71 counts per m/s. Stationary objects vs GPS give 70.75 (`radar-re/u11_gps`).
   Lead-stop gives 71.55 [71.26, 72.40] and road-speed approaches give 70.90 [70.29, 71.40] (`radar-re/u11_leadstop`,
   `radar-re/u11_dynamics`). All three exclude 64.
-- **UNRESOLVED:** moving leads against the range rate give k = 55–66 and reject 71 (`radar-re/u11_moving`).
+- The one contrary result (moving leads against the range rate, k = 55–66, `radar-re/u11_moving`) is no longer
+  UNRESOLVED; see the addendum.
 
-Why OFF: ON publishes 64/72 of today's closing speed (−11.1 %), and a rail now means ≥ 12.0 rather than ≥ 13.5 m/s.
-Understating closing is the D-041 danger direction.
+What it does to the car: 1/72 publishes 64/72 of the old closing speed (−11.1 %), and a rail now means ≥ 12.0 rather
+than ≥ 13.5 m/s. Understating closing is the D-041 danger direction; the owner accepted this on the evidence above.
 
-**Pending Peter's OK:** `ONPATH_ADOPT_RAIL_VREL_MPS` was a fixed −12.5 ("treated as railed", 1.0 inside the −13.5 rail).
-It is now `rail + 1.0` (`ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS`). That is still exactly −12.5 when OFF and becomes −11.0 when
-ON. Left at −12.5, a −12.0 rail would never count as railed for leadOnpath adoption, which would fail toward not
-adopting the lead.
+`ONPATH_ADOPT_RAIL_VREL_MPS` was a fixed −12.5 ("treated as railed", 1.0 inside the −13.5 rail). It is now
+`rail + 1.0` (`ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS`) = −11.0. Left at −12.5, a −12.0 rail would never count as railed for
+leadOnpath adoption, which would fail toward not adopting the lead. Approved by the owner 2026-10-02.
 
-Rejected: changing the default scale. The moving-lead result contradicts 71, and there is no road evidence.
+Every m/s figure in the code comments and in this file that was measured before 2026-10-02 (13.5 rails, −16.54, −19.4,
+…) was logged at 1/64: multiply by 64/72 for 1/72. The m/s gate thresholds whose evidence was measured in 1/64 units
+were deliberately left as they are (listed in STATUS item 199).
 
-Not done: the larch64 `common/params_pyx.so` / `libcommon.a` rebuild (STATUS "Build and test environment", pattern
-`b9612b2a`). Until that is done the key is unknown on the device and the toggle cannot be switched on. The
-`tools/bosch_a_scenarios.py` replay tool still uses 1/64.
+**Addendum (2026-10-02, owner acceptance):**
+- Retrace R3/R4 of the moving-lead result: binned by range, the slope estimators give OLS 53–57, inverse 67–69,
+  TLS 60–62 and Deming 60–64 counts per m/s. It brackets about 55–69 and cannot separate 64 from 72, so it no longer
+  contradicts 71–72.
+- U10 v2 census (Job, replay only, 36 routes, `rs2_merged.json`, sha256
+  `69ac57f8d45dd5794c3e65e551bdf92e7478fd3f7d2cce5a7bc190bc523eb868`, verified by Jason): per 7-sweep window, mean
+  direct vRel minus the least-squares range slope, source 2, n = 878,077 windows. At 1/64 the bias is −0.130 m/s and
+  the RMS 2.854; at 1/72 the bias is −0.077 and the RMS 2.847. 1/72 has the lower RMS in every U10 band 0–255 and every
+  STATUS; the largest gap is STATUS 3, 1.776 vs 1.625. This is **consistent with, slightly favours 1/72, not
+  decisive**. The census cannot fit the optimal scale (it has no raw² sums and no vRel-magnitude bins).
+  Separate context, not part of this change: the residual sd rises monotonically with U10, 1.31 to 10.96 m/s, and is
+  not U10/144.
+- The `BoschAU11Scale72` toggle, its 1/64 path and its tests are removed (params key, Longitudinal UI row, Galaxy
+  layout entry, feasibleparams line). The larch64 `common/params_pyx.so` / `libcommon.a` are rebuilt without the key.
+- `tools/bosch_a_scenarios.py` now encodes at 1/72 (rail 12.0).
+- `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 = −11.0 approved (not −13.0).
+- Still open: a separate fit of the scale itself; no road A/B exists.
 
 ## D-075 — PROPOSED (toggle OFF): `BoschANewbornLeads` publishes newborn Bosch-A points early, leads only on proven range closing
 Recorded 2026-10-02, owner decision (Peter, in chat): build it as an opt-in toggle, default OFF, on main and pr10-smooth.
