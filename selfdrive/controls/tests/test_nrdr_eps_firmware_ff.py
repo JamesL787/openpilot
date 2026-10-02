@@ -296,6 +296,37 @@ def test_target_honours_the_angle_rate_limit(monkeypatch):
   assert max(steps) <= 100.0 * DT_CTRL + 1e-6
 
 
+def test_command_delay_hands_over_the_value_issued_that_long_ago():
+  d = honda_eps.CommandDelay(DT_CTRL, 0.2)
+  outs = [d.update(float(k), 0.12) for k in range(40)]
+  assert outs[30] == pytest.approx(18.0)
+  assert outs[0] == 0.0 and outs[5] == 0.0              # not enough history yet: the oldest value
+  half = honda_eps.CommandDelay(DT_CTRL, 0.2)
+  assert [half.update(float(k), 0.125) for k in range(40)][30] == pytest.approx(17.5)
+
+
+def test_command_delay_is_for_town_speeds_only():
+  def delay(v):
+    return float(np.interp(v, honda_eps.CMD_DELAY_BP, honda_eps.CMD_DELAY_V))
+  assert delay(0.0) == delay(8.0) == delay(10.0) == pytest.approx(0.12)
+  assert delay(15.0) == delay(30.0) == 0.0
+  assert honda_eps.CommandDelay(DT_CTRL, 0.2).update(3.0, 0.0) == 3.0
+
+
+@pytest.mark.parametrize("v, late_frames", [(8.0, 12), (20.0, 0)])
+def test_target_follows_the_curvature_one_command_delay_late(monkeypatch, v, late_frames):
+  lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1"})
+  CS = car.CarState.new_message()
+  CS.vEgo = v
+  params = log.LiveParametersData.new_message()
+  params.steerRatio, params.stiffnessFactor = 16.0, 1.0
+  targets = []
+  for k in range(100):
+    _, angle_des, _ = lac.update(True, CS, VM, params, False, 0.0 if k < 50 else 0.02, False, 0.2, None, None, SimpleNamespace())
+    targets.append(angle_des)
+  first = next(k for k, a in enumerate(targets) if abs(a) > 1e-6)
+  assert first == 50 + late_frames
+
 def _rack_map():
   rack_map = honda_eps.get_clarity_rack_map(_params(CLARITY_MODIFIED_FW))
   assert rack_map is not None
