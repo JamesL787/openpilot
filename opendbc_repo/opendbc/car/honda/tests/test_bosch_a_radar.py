@@ -1697,7 +1697,7 @@ def test_rail_interval_gate_reads_rail_as_bound_only_when_asked():
   assert _bosch_a_direct_vrel_interval(low_rail, exact=True) == (low_rail, low_rail)
   assert _bosch_a_direct_vrel_interval(-5.0) == (-5.0, -5.0)
   # A lead closing at 20 m/s while U11 sits on the -12.0 rail: 100 m -> 80 m in 1 s. Exact gate rejects
-  # (6.5 m short of the rail's prediction, past the 5 m hard max); the interval gate accepts (on the
+  # (8.0 m short of the rail's 88 m prediction, past the 5 m hard max); the interval gate accepts (on the
   # rail-to-20 m/s band's edge, residual 0).
   assert _bosch_a_range_innovation_rejected((0.0, 100.0), 1.0, 80.0, low_rail, None, False, exact=True)
   assert not _bosch_a_range_innovation_rejected((0.0, 100.0), 1.0, 80.0, low_rail, None, False, exact=False)
@@ -2055,8 +2055,8 @@ class TestDegradedRailAdmissionNeedsRangeCorroboration:
 
 def test_rail_interval_still_admits_a_degraded_railed_lead_across_a_long_gap():
   """STATUS 129, the case D-063 exists for: 0000025e 12:03 track 59, degraded on every sweep, re-acquired against
-  a baseline 2.16 s old (121.3 m) at 79.5 m while U11 sat on the rail. The exact prediction is 92.1 m; the interval
-  [-20, -12.0] m/s reaches 78.0 m."""
+  a baseline 2.16 s old (121.3 m) at 79.5 m while U11 sat on the rail. The exact prediction is 95.3 m (92.1 m at the
+  1/64 rail); the interval [-20, -12.0] m/s reaches 78.0 m."""
   from opendbc.car.honda.radar_interface import (_bosch_a_range_innovation_rejected, _bosch_a_direct_vrel,
                                                  BOSCH_A_DIRECT_VREL_MIN_RAW)
   low_rail = _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_MIN_RAW)

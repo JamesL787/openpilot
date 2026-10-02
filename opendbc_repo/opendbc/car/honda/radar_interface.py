@@ -139,9 +139,10 @@ BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 #     radar-re/u11_encode)
 #   * replay: stationary objects vs GPS 70.75 counts per m/s; lead-stop 71.55 [71.26, 72.40]; road-speed
 #     approaches 70.90 [70.29, 71.40]. All three exclude 64. (radar-re/u11_gps, u11_leadstop, u11_dynamics)
-#   * The one contrary result, moving leads against the range rate at 55-66 counts per m/s (radar-re/u11_moving),
-#     collapsed on re-run (1/72 retrace 2026-10-02, R3/R4): binned by range, OLS 53-57, inverse 67-69, TLS 60-62, Deming
-#     60-64, so it brackets ~55-69 and cannot separate 64 from 72.
+#   * OPEN: moving leads against the range rate (radar-re/u11_moving; 1/72 retrace 2026-10-02, R3/R4; Job's pooled fit,
+#     STATUS 7 src 2 U10<64, 55.7-70.0) bracket about 55-70 counts per m/s, which excludes 72. The encoder is
+#     firmware-proven 1/72 and the range encode is firmware-proven raw/16 with no offset (R18), so this reads as a
+#     range-vs-U11 discrepancy (the range slope runs faster than U11), not a decode error. Unresolved; see STATUS.
 # Centre 864, rails raw 0/1728, sentinel 0x7FE, u10, range and azimuth are unchanged. 1/72 publishes 64/72 of the
 # old closing speed (-11.1 %) and puts the rail at 12.0 instead of 13.5 m/s; no gate threshold was re-tuned.
 # The decode divides by the count rate, v = (raw - 864) / 72 exactly as the firmware formatter's inverse; multiplying by
