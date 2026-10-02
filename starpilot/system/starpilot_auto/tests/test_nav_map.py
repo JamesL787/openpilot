@@ -641,3 +641,39 @@ def test_route_download_shows_only_while_driving_a_route(view, monkeypatch):
   assert view._route_download()[2] == pytest.approx(0.6)
   view._preview_active = True
   assert view._route_download() is None, "not over a route preview"
+
+
+def test_offline_badge_sits_under_the_anchor_and_collapses(view, monkeypatch):
+  monkeypatch.setattr(nav_map.ui_state, "started", False)
+  view._sm = _FakeNavSM()
+  service = SimpleNamespace(offline=True)
+  view._tiles = SimpleNamespace(upload=lambda: 0, service=service, has_token=True, offline_status=dict)
+  clock = [100.0]
+  monkeypatch.setattr(nav_map.time, "monotonic", lambda: clock[0])
+
+  view._update_state()
+  assert ("Offline • cached map", nav_map.BADGE_WARN) in view._status_badges()[0], "no anchor: top-right as before"
+
+  view.offline_anchor = nav_map.rl.Rectangle(700, 700, 96, 96)
+  assert view._status_badges()[0] == ()
+  assert view._overlay_content(clock[0])[-1] is False, "the full badge first"
+  clock[0] += nav_map.OFFLINE_COLLAPSE_SECONDS - 0.1
+  view._update_state()
+  assert view._overlay_state[-1] is False
+  clock[0] += 0.2
+  view._update_state()
+  assert view._overlay_state[-1] is True, "the icon alone after ten seconds; the overlay redraws for it"
+
+  view.show_event()
+  view._update_state()
+  assert view._overlay_state[-1] is False, "showing the map again shows the words again"
+
+  assert view.offline_badge_lift(clock[0]) == 0.0, "no trip bar to clear"
+  view._nav, view._nav_received = {"primary": "Main St"}, clock[0]
+  assert view.offline_badge_lift(clock[0]) == nav_map.OFFLINE_BADGE_HEIGHT + nav_map.OFFLINE_BADGE_GAP
+
+  service.offline = False
+  view._poll_gps = lambda now: None
+  view._overlay_content = lambda now: (view._offline_since,)
+  view._update_state()
+  assert view._offline_since is None and view.offline_badge_lift(clock[0]) == 0.0

@@ -105,6 +105,9 @@ DESIRE_ROUTE = rl.Color(52, 199, 120, 255)
 DESIRE_DRIVER = rl.Color(64, 150, 255, 255)
 DESIRE_HINT = rl.Color(232, 170, 70, 255)
 BADGE_WARN = rl.Color(232, 170, 70, 255)
+OFFLINE_COLLAPSE_SECONDS = 10.0  # the offline badge's words, then just its icon
+OFFLINE_BADGE_HEIGHT = 56.0
+OFFLINE_BADGE_GAP = 12.0
 PROGRESS_TRACK = rl.Color(255, 255, 255, 36)
 PROGRESS_FILL = rl.Color(64, 150, 255, 255)
 
@@ -389,6 +392,22 @@ def _draw_polyline(sx: np.ndarray, sy: np.ndarray, start: int, end: int, styles:
       rl.draw_circle_v(point, thick / 2.0, color)
 
 
+def _draw_no_map_icon(x: float, y: float, color: rl.Color) -> None:
+  """A folded three-panel map centred at x, y, struck through."""
+  half_w, half_h, fold = 15.0, 13.0, 4.0
+  xs = [x - half_w + i * 2 * half_w / 3 for i in range(4)]
+  tops = [rl.Vector2(px, y - half_h + (fold if i % 2 == 0 else 0)) for i, px in enumerate(xs)]
+  bottoms = [rl.Vector2(px, y + half_h - (0 if i % 2 == 0 else fold)) for i, px in enumerate(xs)]
+  for i in range(3):
+    rl.draw_line_ex(tops[i], tops[i + 1], 3.0, color)
+    rl.draw_line_ex(bottoms[i], bottoms[i + 1], 3.0, color)
+  for top, bottom in zip(tops, bottoms, strict=True):
+    rl.draw_line_ex(top, bottom, 3.0, color)
+  start, end = rl.Vector2(x - 18, y - 18), rl.Vector2(x + 18, y + 18)
+  rl.draw_line_ex(start, end, 9.0, CARD_BG)  # a gap either side of the slash
+  rl.draw_line_ex(start, end, 3.5, color)
+
+
 def _triangle(a: rl.Vector2, b: rl.Vector2, c: rl.Vector2, color: rl.Color) -> None:
   """raylib culls clockwise triangles; order the vertices so any orientation draws."""
   if (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) > 0:
@@ -488,6 +507,10 @@ class NavMapView(Widget):
     self._last_draw = -math.inf
     self._next_draw = -math.inf
     self._overlay_state: tuple | None = None
+    # Set by a host that draws a button (the car map's compass): the offline badge sits
+    # beneath this rectangle, in overlay coordinates, instead of top-right.
+    self.offline_anchor: rl.Rectangle | None = None
+    self._offline_since: float | None = None
     self._tiles: TileTextures | None = None
     self._sm = None
     self._params_memory = Params(memory=True)
@@ -604,6 +627,16 @@ class NavMapView(Widget):
   def offline(self) -> bool:
     return self._tiles is not None and self._tiles.service.offline
 
+  def show_event(self):
+    super().show_event()
+    self._offline_since = None  # each showing gets its full offline badge again
+
+  def offline_badge_lift(self, now: float) -> float:
+    """How far the anchor must rise so the offline badge beneath it clears the trip bar."""
+    if self._offline_since is None or not self._show_guidance or self._preview_active or not self._nav_active(now):
+      return 0.0
+    return OFFLINE_BADGE_HEIGHT + OFFLINE_BADGE_GAP
+
   # ── state ─────────────────────────────────────────────────────────────────
 
   def _ensure_started(self) -> None:
@@ -675,6 +708,11 @@ class NavMapView(Widget):
 
     self._update_acquisition(now)
 
+    if not self._offline_badge_shown():
+      self._offline_since = None
+    elif self._offline_since is None:
+      self._offline_since = now
+
     overlay = self._overlay_content(now)
     if overlay != self._overlay_state:
       self._overlay_state = overlay
@@ -690,7 +728,7 @@ class NavMapView(Widget):
                   _format_distance(nav["distance"], ui_state.is_metric), self._trip_texts(nav))
     return (self._route_key, self._gps is not None and self._gps.fresh, self._center_message(), self._status_badges(),
             guidance, desire_line(ui_state.started, self._desire, self._nav_desire, nav), self._preview_active,
-            self._route_download())
+            self._route_download(), None if self._offline_since is None else self._offline_collapsed(now))
 
   def _acquiring(self) -> bool:
     """Onroad without a fresh fix. Offroad the GPS receiver is not running at all."""
@@ -1012,6 +1050,7 @@ class NavMapView(Widget):
     if center_message is not None:
       self._draw_center_message(rect, *center_message)
     self._draw_status(rect)
+    self._draw_offline_badge(now)
     if self._show_guidance and not self._preview_active:
       self._draw_guidance(rect, now)
       self._draw_route_download(rect, now)
@@ -1256,12 +1295,19 @@ class NavMapView(Widget):
       return "Waiting for GPS", "The map appears once the car has a location."
     return None
 
+  def _offline_badge_shown(self) -> bool:
+    """Offline with a Mapbox key; without one the missing key is the badge."""
+    return self._tiles is not None and self._tiles.has_token and self._tiles.service.offline
+
+  def _offline_collapsed(self, now: float) -> bool:
+    return self._offline_since is not None and now - self._offline_since >= OFFLINE_COLLAPSE_SECONDS
+
   def _status_badges(self) -> tuple[tuple[tuple[str, rl.Color], ...], float | None]:
     """(badges, progress of the last badge's bar or None) for the top-right corner."""
     badges = []
     if self._tiles is not None and not self._tiles.has_token:
       badges.append(("Add a Mapbox key in The Galaxy", BADGE_WARN))
-    elif self._tiles is not None and self._tiles.service.offline:
+    elif self.offline_anchor is None and self._offline_badge_shown():
       badges.append(("Offline • cached map", BADGE_WARN))
     progress = None
     if self._gps is not None and not self._gps.fresh and not self._preview_active:
@@ -1287,6 +1333,24 @@ class NavMapView(Widget):
       if bar:
         self._progress_bar(badge.x + 22, badge.y + 52, width - 44, 8, progress)
       y += badge.height + 12
+
+  def _draw_offline_badge(self, now: float) -> None:
+    """Under the anchor (the compass): the words at first, then a crossed-out map icon."""
+    anchor = self.offline_anchor
+    if anchor is None or self._offline_since is None:
+      return
+    y = anchor.y + anchor.height + OFFLINE_BADGE_GAP
+    if self._offline_collapsed(now):
+      center = rl.Vector2(anchor.x + anchor.width / 2, y + OFFLINE_BADGE_HEIGHT / 2)
+      rl.draw_circle_v(center, OFFLINE_BADGE_HEIGHT / 2, CARD_BG)
+      rl.draw_ring(center, OFFLINE_BADGE_HEIGHT / 2 - 2, OFFLINE_BADGE_HEIGHT / 2, 0, 360, 36, CARD_BORDER)
+      _draw_no_map_icon(center.x, center.y, BADGE_WARN)
+      return
+    label = "Offline • cached map"
+    width = self._text_width(label, 28) + 44
+    badge = rl.Rectangle(anchor.x + anchor.width - width, y, width, OFFLINE_BADGE_HEIGHT)
+    self._card(badge)
+    self._text(label, badge.x + 22, badge.y + 13, 28, BADGE_WARN)
 
   def _route_download(self) -> tuple[str, str, float] | None:
     """The route download card's content: a route is set and navtilesd is still saving its map."""
@@ -1343,7 +1407,8 @@ class NavMapView(Widget):
     y = rect.y + pad
     card_width = min(rect.width - 2 * pad, 760.0)
     status_width = 0.0
-    if self._tiles is not None and (self._tiles.service.offline or (self._gps is not None and not self._gps.fresh)):
+    top_right_offline = self.offline_anchor is None and self._tiles is not None and self._tiles.service.offline
+    if top_right_offline or (self._tiles is not None and self._gps is not None and not self._gps.fresh):
       status_width = 330.0
     card_width = min(card_width, rect.width - 2 * pad - status_width)
 

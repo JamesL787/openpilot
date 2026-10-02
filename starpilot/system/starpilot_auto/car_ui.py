@@ -308,11 +308,12 @@ def status_layout(settings: dict, main_rect, map_rect):
   return placed.get("main"), placed.get("map"), placed["status"]
 
 
-def compass_rect(map_rect):
-  """The map's orientation button: bottom-right of the map, clear of the centred trip bar."""
+def compass_rect(map_rect, lift: float = 0.0):
+  """The map's orientation button: bottom-right of the map, clear of the centred trip bar.
+  lift raises it further, for the offline badge drawn beneath it."""
   import pyray as rl
   return rl.Rectangle(map_rect.x + map_rect.width - COMPASS_MARGIN - COMPASS_SIZE,
-                      map_rect.y + map_rect.height - COMPASS_TRIP_BAR_CLEARANCE - COMPASS_SIZE,
+                      map_rect.y + map_rect.height - COMPASS_TRIP_BAR_CLEARANCE - COMPASS_SIZE - lift,
                       COMPASS_SIZE, COMPASS_SIZE)
 
 
@@ -356,6 +357,7 @@ class MapPane:
     self._geometry = None
     self._heading_up = False
     self.button_rect = None  # the compass button, in logical pixels, while the map is shown
+    self._compass_lift = 0.0
     self.redraws = 0
 
   def set_shown(self, shown: bool) -> None:
@@ -379,7 +381,6 @@ class MapPane:
     nav_map = self._ensure_map()
     nav_map.set_heading_up(heading_up)
     self._heading_up = heading_up
-    self.button_rect = compass_rect(rect)
     geometry = rect.width, rect.height, scale_x, scale_y
     if geometry != self._geometry:
       self._texture_valid = False
@@ -398,6 +399,9 @@ class MapPane:
       self._texture_valid = False
     nav_map.update()
     local = rl.Rectangle(0, 0, rect.width, rect.height)
+    self._compass_lift = nav_map.offline_badge_lift(now)
+    self.button_rect = compass_rect(rect, self._compass_lift)
+    nav_map.offline_anchor = compass_rect(local, self._compass_lift)
     self._anchor = nav_map._advance_camera(local, now)
     self._camera = Camera(**vars(nav_map._camera))
     self._tile_scale = nav_map._tile_scale()
@@ -478,7 +482,7 @@ class MapPane:
     rl.draw_texture_pro(self._overlay.texture, source, padded, origin, 0, rl.WHITE)
     rl.end_blend_mode()
     rl.rl_pop_matrix()
-    self._draw_compass(compass_rect(rect))
+    self._draw_compass(compass_rect(rect, self._compass_lift))
     rl.end_scissor_mode()
 
   def _draw_compass(self, button) -> None:
