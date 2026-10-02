@@ -193,6 +193,15 @@ def test_pairing_list_filters_anonymous_and_irrelevant_advertisements():
   assert show_pairing_device("00:11:22:33:44:55", "Known device", True, True, False, False, False, False)
 
 
+def test_pairing_scan_shows_named_classic_devices_like_wireless_android_auto_adapters():
+  # AAWireless-style adapter: named, classic Bluetooth (has a class of device), neither audio nor controller
+  assert show_pairing_device("00:11:22:33:44:55", "AAWireless-1234", False, False, False, False, False, False, True, 0x5A020C)
+  assert not show_pairing_device("00:11:22:33:44:55", "AAWireless-1234", False, False, False, False, False, False, False, 0x5A020C)
+  assert not show_pairing_device("00:11:22:33:44:55", "Nearby sensor", False, False, False, False, False, False, True, 0)
+  assert not show_pairing_device("00:11:22:33:44:55", "00:11:22:33:44:55", False, False, False, False, False, False, True, 0x5A020C)
+  assert not show_pairing_device("00:11:22:33:44:55", "AAWireless-1234", False, False, False, True, False, False, True, 0x5A020C)
+
+
 def test_desktop_fake_bluetooth_is_stateful_and_interactive(monkeypatch, tmp_path):
   monkeypatch.setenv("SP_ALLOW_DESKTOP_FAKE_BLUETOOTH", "1")
   monkeypatch.setenv("SIMULATION", "1")

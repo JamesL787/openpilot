@@ -305,7 +305,8 @@ class BlueZClient:
         "controller": controller,
       }
       if include_hidden or show_pairing_device(device["address"], device["name"], device["paired"], device["trusted"], device["connected"],
-                                               device["blocked"], audio, controller, include_discovering):
+                                               device["blocked"], audio, controller, include_discovering,
+                                               int(props.get("Class", 0))):
         devices.append(device)
     return sorted(devices, key=lambda device: (not device["connected"], not device["paired"], -(device["rssi"] or -127), device["name"].lower()))
 

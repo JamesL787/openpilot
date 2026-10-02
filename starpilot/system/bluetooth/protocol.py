@@ -95,12 +95,16 @@ def device_capabilities(uuids: list[str] | tuple[str, ...], bluetooth_class: int
 
 
 def show_pairing_device(address: str, name: str, paired: bool, trusted: bool, connected: bool, blocked: bool,
-                        audio: bool, controller: bool, discovering: bool = False) -> bool:
+                        audio: bool, controller: bool, discovering: bool = False, bluetooth_class: int = 0) -> bool:
   known = paired or trusted or connected
   normalized_address = "".join(character for character in address.upper() if character.isalnum())
   normalized_name = "".join(character for character in name.upper() if character.isalnum())
   named = bool(name) and name != "Unknown device" and normalized_name != normalized_address
-  return known or (named and not blocked and (audio or controller))
+  # While scanning, also show named classic Bluetooth devices: a wireless Android Auto adapter
+  # (AAWireless and similar) is neither audio nor a controller, so it would never appear to pair
+  # as Starpilot Auto's car. BLE beacons and sensors report no class, so they stay hidden.
+  receiver = discovering and int(bluetooth_class) != 0
+  return known or (named and not blocked and (audio or controller or receiver))
 
 
 class _DesktopFakeBluetooth:
