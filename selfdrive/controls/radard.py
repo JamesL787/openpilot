@@ -416,6 +416,20 @@ NEWBORN_RANGE_CLOSING_VREL_TOL = 3.0      # m/s; |slope - track.vRel| at most th
 NEWBORN_KF_FOLLOW_RANGE = True
 NEWBORN_KF_FOLLOW_MIN_SAMPLES = 4
 
+# Newborn lead needs a proven closing (REPLAY ONLY, no DECISIONS entry yet). Fleet replay of the layers above (15
+# drives, 13 usable) found newborns already lead on sweeps 1-4 (span <= 0.20 s), on their range-slope vRel, while
+# young_range_genuinely_closing was still False. Per-sweep dumps (trk_dump.py sha256 37b1bad3..ec70): 000002ae 26
+# track 2 at 70-74 m fit a CLEAN -8.4..-10.0 m/s (rms <= 0.21) but measured -4.4 then -2.1 (planner -0.86 vs base
+# -0.02); 00000294 3 track 48 was lead for its 3 dumped sweeps at -vEgo and gave -2.00 (no measured sweep followed in
+# the dump); 00000280 15 track 54's slope went -21 -> -10 at rms 0.54-1.06 (a real near-stopped car: this delays its
+# braking to the vision lead's, it does not remove a false brake). The wanted case, 000002ae 17 track 39,
+# only became lead at closing()==1 (sweep 7, span 0.40 s). So a Bosch-A track that has never had a measured update
+# fails track_matches_vision unless young_range_genuinely_closing holds, and so cannot be the vision match, the
+# preferred track or a takeover candidate. Which of those paths made these newborns lead was not traced; the fleet
+# re-run must show that none still reaches lead. Nothing is deleted: the point is still published and tracked, and
+# the lead falls back to vision as before the newborn publish. Replay evidence only; not road-validated.
+NEWBORN_LEAD_NEEDS_CLOSING = True
+
 # ONPATH_RADAR_ADOPT: a radar-only track that sits on the driving path for a second is published as
 # radarState.leadOnpath, beside an unchanged leadOne, so the planner can brake for it before the camera sees it. Above
 # V_EGO_STATIONARY, get_lead only consults radar when the model lead's probability clears lead_detection_probability,
@@ -1281,6 +1295,9 @@ def track_matches_vision(track: Track, lead: capnp._DynamicStructReader, v_ego: 
   # is left as-is deliberately: inert, but inert in the safe direction. Do not "fix" it without
   # first establishing which sensor is right on the frames it would start rejecting.
   vel_sane = (abs(track.vRel + v_ego - lead.v[0]) < vel_limit) or (v_ego + track.vRel > 3)
+  if honda_bosch_a and NEWBORN_LEAD_NEEDS_CLOSING and track.cnt == 0 and not track.measured and \
+     not young_range_genuinely_closing(track, v_ego):
+    return False  # NEWBORN_LEAD_NEEDS_CLOSING: a never-measured newborn is no lead until its range proves closing
   if not vel_sane and honda_bosch_a and young_range_genuinely_closing(track, v_ego):
     vel_sane = True  # NEWBORN_RANGE_CLOSING_EXEMPT: the track's own range proves the closing the camera disputes
   lat_sane = abs(track.yRel + lead.y[0]) < max(y_floor, y_std_scale * max(float(lead.yStd[0]), 0.2))
