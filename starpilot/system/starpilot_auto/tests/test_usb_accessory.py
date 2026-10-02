@@ -1,5 +1,7 @@
 import os
+import struct
 import subprocess
+import time
 import tty
 from pathlib import Path
 
@@ -123,15 +125,54 @@ def test_bridge_copies_both_ways_and_reports_disconnect():
     sock.settimeout(5)
     os.write(master, b"\x00\x03\x00\x06\x00\x01\x00\x01\x00\x04")  # the car's version request
     assert sock.recv(64) == b"\x00\x03\x00\x06\x00\x01\x00\x01\x00\x04"
-    sock.sendall(b"reply")
+    reply = b"\x00\x03\x00\x08\x00\x02\x00\x01\x00\x07\x00\x00"  # one whole version response frame
+    sock.sendall(reply)
     received = b""
-    while len(received) < 5:
+    while len(received) < len(reply):
       received += os.read(master, 64)
-    assert received == b"reply"
+    assert received == reply
     os.close(master)  # the car unplugs
     assert bridge.closed.wait(5)
     assert sock.recv(64) == b""
   finally:
+    bridge.close()
+
+
+def test_frame_size_reads_the_header():
+  assert usb.frame_size(b"\x00\x0b\x00") == 0
+  assert usb.frame_size(b"\x01\x0b\x00\x05") == 9  # whole frame: 4-byte header
+  assert usb.frame_size(b"\x01\x09\x3e\x80") == 0  # first fragment: waits for the 4-byte total length
+  assert usb.frame_size(b"\x01\x09\x3e\x80\x00\x00\x80\x00") == 8 + 16000
+  assert usb.frame_size(b"\x01\x08\x00\x10") == 20  # middle fragment
+  assert usb.frame_size(b"\x01\x0a\x00\x10") == 20  # last fragment
+
+
+def test_bridge_writes_each_frame_as_its_own_usb_transfer():
+  # Start indication, codec config and a fragmented first frame, sent back to back as on a focus grant: the
+  # 2019 Civic needs each one in its own transfer, never merged or split at an arbitrary byte.
+  start = b"\x01\x0b\x00\x06" + b"s" * 6
+  config = b"\x01\x0b\x00\x20" + b"c" * 32
+  first = b"\x01\x09\x3e\x80" + struct.pack(">I", 20000) + b"f" * 16000
+  last = b"\x01\x0a\x0f\xa0" + b"l" * 4000
+  master, slave = os.openpty()
+  tty.setraw(slave)
+  bridge = usb.AccessoryBridge(os.ttyname(slave))
+  os.close(slave)
+  transfers = []
+  bridge._write_transfer = transfers.append
+  try:
+    sock = bridge.socket
+    stream = start + config + first + last
+    sock.sendall(stream[:7])
+    time.sleep(0.05)
+    assert transfers == []  # half a header and half a frame are held back
+    sock.sendall(stream[7:])
+    deadline = time.monotonic() + 5
+    while len(transfers) < 4 and time.monotonic() < deadline:
+      time.sleep(0.01)
+    assert transfers == [start, config, first, last]
+  finally:
+    os.close(master)
     bridge.close()
 
 

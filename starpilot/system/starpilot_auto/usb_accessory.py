@@ -20,6 +20,8 @@ Either way the car then opens bulk endpoints carrying the same Starpilot Auto
 protocol as the Wi-Fi link. ``/dev/usb_accessory`` has no poll() and each
 read() consumes one whole USB transfer, so ``AccessoryBridge`` copies between
 it and a socket pair; the projection session uses the socket end unchanged.
+Toward the car each write is exactly one protocol frame, as a phone sends them:
+a head unit may parse a USB transfer as one frame and drop whatever follows.
 Gadget changes need root and go through ``sudo -n``, like
 ``/usr/comma/set_adb.sh``.
 """
@@ -30,6 +32,7 @@ import errno
 import fcntl
 import os
 import socket
+import struct
 import subprocess
 import threading
 import time
@@ -49,6 +52,7 @@ GOOGLE_VID = 0x18D1
 ACCESSORY_PID = 0x2D00                 # accessory only: nothing else for the car to open instead
 MAX_SPEED = "high-speed"               # head units are USB 2.0 hosts
 READ_SIZE = 16384  # f_accessory's bulk buffer; a read must cover a whole transfer
+FRAME_FIRST, FRAME_LAST = 1, 2  # frame header flags; a first-but-not-last frame adds a 4-byte total length
 MAX_EMPTY_READS = 64
 NETLINK_KOBJECT_UEVENT = 15
 UDC_SETTLE_SECONDS = 0.5  # allow the host to observe detach before descriptors/controller ownership change
@@ -348,6 +352,15 @@ class AccessoryGadget:
     return True
 
 
+def frame_size(data: bytes | bytearray) -> int:
+  """Length of the protocol frame at the start of ``data`` (header included), or 0 until the header is complete."""
+  if len(data) < 4:
+    return 0
+  _channel, flags, length = struct.unpack_from(">BBH", data)
+  header = 8 if flags & (FRAME_FIRST | FRAME_LAST) == FRAME_FIRST else 4
+  return header + length if len(data) >= header else 0
+
+
 class AccessoryBridge:
   """Expose /dev/usb_accessory as a connected socket for the projection session."""
 
@@ -407,20 +420,30 @@ class AccessoryBridge:
       self._finish("car disconnected" if error.errno in (errno.ENODEV, errno.EIO, errno.ESHUTDOWN) else str(error))
 
   def _socket_to_usb(self) -> None:
+    pending = bytearray()
     try:
       while not self.closed.is_set():
         data = self.bridge_sock.recv(READ_SIZE)
         if not data:
           break
-        view = memoryview(data)
-        while view and not self.closed.is_set():
-          written = os.write(self.fd, view)
-          if written <= 0:
-            raise OSError(errno.EIO, "USB write made no progress")
-          view = view[written:]
+        pending += data
+        while (size := frame_size(pending)) and len(pending) >= size:
+          # The 2019 Civic (2026-10-02) granted video focus, then acked nothing and reset USB ~3 s later. A socket
+          # read can merge the start indication, codec config and first frame into one USB transfer.
+          frame = bytes(pending[:size])
+          del pending[:size]
+          self._write_transfer(frame)
     except OSError as error:
       self._finish(str(error))
     self._finish(self.error or "session closed")
+
+  def _write_transfer(self, frame: bytes) -> None:
+    view = memoryview(frame)
+    while view and not self.closed.is_set():
+      written = os.write(self.fd, view)
+      if written <= 0:
+        raise OSError(errno.EIO, "USB write made no progress")
+      view = view[written:]
 
   def close(self) -> None:
     """Call after detaching the gadget: Linux close alone cannot wake accessory I/O."""
