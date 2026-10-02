@@ -843,6 +843,14 @@ class Supervisor:
         self._wait(1.0 + attempt * 0.5)
     raise RuntimeError(f"Car did not accept the projection connection: {last_error}")
 
+  def _adapter_address(self) -> str:
+    """The comma's Bluetooth address, which the car's Bluetooth service asks the phone for; empty if unknown."""
+    try:
+      return str(self._phone().adapter()[1].get("Address", "")).upper()
+    except Exception as error:
+      self.log("bluetooth_address_unavailable", error=str(error))
+      return ""
+
   def _project(self, result, lease, ident, connect=None) -> None:
     config = self.config
     sock = connect() if connect is not None else self._connect_tcp(result, lease)
@@ -851,7 +859,7 @@ class Supervisor:
     self._stage("authenticating")
     session.authenticate()
     self._stage("negotiating")
-    mode = session.start(config["device_name"], "comma.ai")
+    mode = session.start(config["device_name"], "comma.ai", self._adapter_address())
     self._set(mode=mode.as_dict(), error="")
     self.log("projection_ready", mode=mode.as_dict(), head_unit_subject=session.head_unit_subject)
 

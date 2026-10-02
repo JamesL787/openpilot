@@ -467,6 +467,34 @@ def test_session_subscribes_to_driving_status_before_asking_for_the_screen(ident
   finish(session, hu)
 
 
+def test_session_sends_its_bluetooth_address_before_asking_for_the_screen(identity):
+  from openpilot.starpilot.system.starpilot_auto.session import parse_bluetooth_service
+  from openpilot.starpilot.system.starpilot_auto.tests.fake_head_unit import CAR_BT_ADDRESS, discovery_response
+  events = []
+  hu = FakeHeadUnit(identity, discovery=discovery_response(sensor_channel=7, bluetooth_channel=8), sensor_channel=7,
+                    bluetooth_channel=8, focus_needs_driving_status=True, focus_needs_bluetooth=True)
+  sock = socket.create_connection(("127.0.0.1", hu.port), timeout=5)
+  session = ProjectionSession(sock, str(identity["phone_cert"]), str(identity["phone_key"]),
+                              lambda name, **values: events.append((name, values)), str(identity["root"]))
+  session.authenticate()
+  session.start("StarPilot", "comma.ai", "AA:BB:CC:DD:EE:FF")
+  pump_until(session, lambda: session.focused)
+  assert session.bluetooth_channel == 8 and 8 in hu.opened
+  assert hu.pairing_requests == [("AA:BB:CC:DD:EE:FF", 2)], "the comma's address, with the car's own pairing method"
+  opened = next(values for name, values in events if name == "bluetooth_opened")
+  assert opened["car_address"] == CAR_BT_ADDRESS and opened["methods"] == [2] and opened["response"] is not None
+  assert parse_bluetooth_service(field(1, "x") + field(2, 1) + field(2, b"\x03\x04"))["pairing_methods"] == [1, 3, 4]
+  finish(session, hu)
+
+
+def test_session_without_a_bluetooth_address_still_opens_the_channel(identity):
+  from openpilot.starpilot.system.starpilot_auto.tests.fake_head_unit import discovery_response
+  hu = FakeHeadUnit(identity, discovery=discovery_response(bluetooth_channel=8), bluetooth_channel=8)
+  session = run_until_streaming(hu, identity)
+  assert session.bluetooth_channel == 8 and hu.pairing_requests == []
+  finish(session, hu)
+
+
 def test_session_without_a_sensor_service_still_projects(identity):
   hu = FakeHeadUnit(identity)
   session = run_until_streaming(hu, identity)

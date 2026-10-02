@@ -4,8 +4,8 @@ StarPilot plays the *phone* role: the head unit sends the version request, then
 acts as the TLS client while this side is the TLS server presenting the phone
 identity. After authentication the session discovers services, opens the video
 channel (and, best effort, the input channel so touches are acknowledged and
-discarded, and the sensor channel for driving status and night mode, as a phone
-does) and streams H.264 access units with bounded acknowledgement flow.
+discarded, the sensor channel for driving status and night mode, and the Bluetooth
+channel with the comma's adapter address, as a phone does) and streams H.264 access units with bounded acknowledgement flow.
 
 Adapted from yummydirtx/openpilot ``tools/android_auto/{session,video,live_session}.py``
 (MIT), pinned at 672a16f6183567c0ada53654f8527d97e1a483fa, whose protocol facts
@@ -67,6 +67,10 @@ VIDEO_FOCUS_INDICATION = 0x8008
 SENSOR_START_REQUEST = 0x8001
 SENSOR_START_RESPONSE = 0x8002
 SENSOR_EVENT = 0x8003
+
+# Bluetooth channel message ids.
+BT_PAIRING_REQUEST = 0x8001
+BT_PAIRING_RESPONSE = 0x8002
 
 # Input channel message ids.
 INPUT_EVENT = 0x8001
@@ -473,6 +477,12 @@ class Session:
           item["sensors"] = [one(parse_fields(sensor), 1) for sensor in parse_fields(sensors).get(1, []) if isinstance(sensor, bytes)]
         except ValueError:
           item["sensors"] = []
+      bluetooth = one(fields, 6)
+      if isinstance(bluetooth, bytes):
+        try:
+          item["bluetooth"] = parse_bluetooth_service(bluetooth)
+        except (ValueError, IndexError):  # a truncated packed method list
+          item["bluetooth"] = {"car_address": "", "pairing_methods": []}
       channels.append(item)
     # Everything but the channel list: make, model, year, software and, on newer units, headunit_info.
     head_unit = redact_head_unit(describe_fields({number: values for number, values in response.items() if number != 1}))
@@ -501,6 +511,29 @@ class Session:
 SDR_VEHICLE_ID = 5          # ServiceDiscoveryResponse.vehicle_id
 HEAD_UNIT_INFO = 17         # ServiceDiscoveryResponse.headunit_info
 HEAD_UNIT_INFO_VEHICLE_ID = 4
+
+
+def parse_bluetooth_service(data: bytes) -> dict:
+  """BluetoothService: the car's adapter address and its pairing methods (packed or not)."""
+  fields = parse_fields(data)
+  methods: list[int] = []
+  for value in fields.get(2, []):
+    if isinstance(value, bytes):
+      packed = value
+      while packed:
+        number, size = 0, 0
+        while True:
+          byte = packed[size]
+          number |= (byte & 0x7F) << (7 * size)
+          size += 1
+          if not byte & 0x80:
+            break
+        methods.append(number)
+        packed = packed[size:]
+    else:
+      methods.append(value)
+  address = one(fields, 1, b"")
+  return {"car_address": address.decode(errors="replace") if isinstance(address, bytes) else "", "pairing_methods": methods}
 
 
 def redact_head_unit(described: dict) -> dict:
@@ -549,6 +582,7 @@ class ProjectionSession(Session):
     self.config_ack_slack = 0  # codec-config messages a head unit may acknowledge like frames
     self.input_channel: int | None = None
     self.sensor_channel: int | None = None
+    self.bluetooth_channel: int | None = None
     self.input_events = 0
     self.touch: TouchMapper | None = None
     self.touch_events: deque[TouchEvent] = deque(maxlen=128)
@@ -558,12 +592,13 @@ class ProjectionSession(Session):
 
   # ------------------------------------------------------------------- setup
 
-  def start(self, device_name: str, device_brand: str) -> VideoMode:
+  def start(self, device_name: str, device_brand: str, phone_address: str = "") -> VideoMode:
     self.channels = self.discover(device_name, device_brand)
     self.mode = choose_video_mode(self.channels)
     self.open_video()
     self.open_input()
     self.open_sensors()
+    self.open_bluetooth(phone_address)
     self.request_projection()
     return self.mode
 
@@ -646,6 +681,35 @@ class ProjectionSession(Session):
     except (TimeoutError, ValueError) as error:
       self.event("sensors_unavailable", error=str(error))
 
+  def open_bluetooth(self, phone_address: str) -> None:
+    """Tell the car which Bluetooth device this is, as a phone does; failures are not fatal.
+
+    A phone sends its adapter address so the car can match the projection to its hands-free
+    link. The 2019 Honda Civic lists this service with its own address; it may keep the screen
+    until the phone has identified itself.
+    """
+    channel = next((channel for channel in self.channels if "bluetooth" in channel), None)
+    if channel is None:
+      return  # the head unit has no Bluetooth service
+    service = channel["bluetooth"]
+    try:
+      self.send(channel["id"], MSG_CHANNEL_OPEN_REQUEST, field(1, 0) + field(2, channel["id"]), control=True)
+      opened = parse_fields(self.wait_for(channel["id"], MSG_CHANNEL_OPEN_RESPONSE, timeout=3.0))
+      if signed(one(opened, 1)) != 0:
+        raise ValueError("channel open rejected")
+      self.bluetooth_channel = channel["id"]
+      if not phone_address:
+        self.event("bluetooth_opened", channel=channel["id"], car_address=service["car_address"],
+                   methods=service["pairing_methods"], phone_address="", response=None)
+        return
+      method = service["pairing_methods"][0] if service["pairing_methods"] else 0
+      self.send(channel["id"], BT_PAIRING_REQUEST, field(1, phone_address) + field(2, method))
+      response = describe(self.wait_for(channel["id"], BT_PAIRING_RESPONSE, timeout=3.0))
+      self.event("bluetooth_opened", channel=channel["id"], car_address=service["car_address"],
+                 methods=service["pairing_methods"], phone_address=phone_address, method=method, response=response)
+    except (TimeoutError, ValueError) as error:
+      self.event("bluetooth_unavailable", error=str(error))
+
   def request_projection(self) -> None:
     """Ask for display focus; the Mazda donor needed this, DHU grants it unsolicited."""
     assert self.mode is not None
@@ -713,6 +777,9 @@ class ProjectionSession(Session):
     elif channel == self.sensor_channel:
       # Driving status and night mode updates; logged (rate-limited) for diagnosis, not acted on.
       self.ignored("sensor_event" if kind == SENSOR_EVENT else "sensor_ignored", channel, kind, data)
+    elif channel == self.bluetooth_channel:
+      # Pairing follow-ups (authentication data, a late response); the comma is already paired over BlueZ.
+      self.ignored("bluetooth_ignored", channel, kind, data)
     else:
       self.ignored("channel_ignored", channel, kind, data)
 

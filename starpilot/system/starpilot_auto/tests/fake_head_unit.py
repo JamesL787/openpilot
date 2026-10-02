@@ -63,14 +63,18 @@ def video_config(resolution: int, margin_w: int = 0, margin_h: int = 0) -> bytes
   return field(1, resolution) + field(2, 2) + field(3, margin_w) + field(4, margin_h) + field(5, 160)
 
 
+CAR_BT_ADDRESS = "F8:36:9B:0A:7D:C8"
+
+
 def discovery_response(video_channel: int = 3, input_channel: int = 1, *, resolutions: tuple[tuple[int, int, int], ...] = ((1, 0, 0), (2, 0, 240)),
                        cluster_channel: int | None = None, cluster_input_channel: int | None = None, headunit_info: bool = False,
-                       sensor_channel: int | None = None) -> bytes:
+                       sensor_channel: int | None = None, bluetooth_channel: int | None = None) -> bytes:
   """The car's services. ``resolutions`` are (resolution index, margin width, margin height) on the main display;
   ``cluster_channel`` adds an instrument-cluster video sink (display 1) listed first, and ``cluster_input_channel``
   that display's own input, listed before the main one; ``headunit_info`` adds the newer
   identity message (with a vehicle id that must never reach a log); ``sensor_channel`` adds the
-  sensor service a 2019 Honda Civic lists (location, speed, parking brake, gear, night, driving status, GPS)."""
+  sensor service a 2019 Honda Civic lists (location, speed, parking brake, gear, night, driving status, GPS), and
+  ``bluetooth_channel`` that car's Bluetooth service (its adapter address and a packed pairing-method list)."""
   av = field(1, 3) + b"".join(field(4, video_config(*resolution)) for resolution in resolutions)
   video = field(1, video_channel) + field(3, av)
   audio = field(1, 4) + field(3, field(1, 1))
@@ -84,6 +88,8 @@ def discovery_response(video_channel: int = 3, input_channel: int = 1, *, resolu
   if sensor_channel is not None:
     listed = b"".join(field(1, field(1, sensor)) for sensor in (1, 3, 7, 8, 10, 13, 21))
     sensors = field(1, field(1, sensor_channel) + field(2, listed + field(2, 256)))
+  if bluetooth_channel is not None:
+    sensors += field(1, field(1, bluetooth_channel) + field(6, field(1, CAR_BT_ADDRESS) + field(2, b"\x02")))
   info = b""
   if headunit_info:
     info = field(5, "VIN-SECRET") + field(17, field(1, "Hyundai") + field(2, "IONIQ 6") + field(3, "2023") + field(4, "VIN-SECRET")
@@ -98,7 +104,8 @@ class FakeHeadUnit:
                unsolicited_focus: bool = False, version: tuple[int, int] = (1, 7), ack_codec_config: bool | int = True,
                ciphers: str | None = None, ping_during_auth: bool = False, discovery_delay: float = 0.0,
                discovery: bytes | None = None, video_channel: int = 3, accepted_config: int = 1,
-               sensor_channel: int | None = None, focus_needs_driving_status: bool = False):
+               sensor_channel: int | None = None, focus_needs_driving_status: bool = False,
+               bluetooth_channel: int | None = None, focus_needs_bluetooth: bool = False):
     self.unsolicited_focus = unsolicited_focus
     self.ciphers = ciphers  # restrict the car's TLS offer, like an old head-unit stack
     self.ping_during_auth = ping_during_auth
@@ -111,6 +118,10 @@ class FakeHeadUnit:
     # Like the suspected Honda behaviour: answer focus requests with native focus until driving status is subscribed.
     self.focus_needs_driving_status = focus_needs_driving_status
     self.sensors_started: list[int] = []
+    self.bluetooth_channel = bluetooth_channel
+    # Answer focus requests with native focus until the phone has sent its Bluetooth address.
+    self.focus_needs_bluetooth = focus_needs_bluetooth
+    self.pairing_requests: list[tuple[str, int]] = []
     self.cipher = ""
     self.opened: list[int] = []
     self.ack_codec_config = ack_codec_config
@@ -270,7 +281,8 @@ class FakeHeadUnit:
           focused = True
           self._send(channel, 0x8008, field(1, 1) + field(2, 1))
       elif channel == self.video_channel and kind == 0x8007:
-        if self.focus_needs_driving_status and 13 not in self.sensors_started:
+        if (self.focus_needs_driving_status and 13 not in self.sensors_started) or \
+           (self.focus_needs_bluetooth and not self.pairing_requests):
           self._send(channel, 0x8008, field(1, 2) + field(2, 0))
         elif one(fields, 2) == 1 and not focused:
           focused = True
@@ -299,6 +311,9 @@ class FakeHeadUnit:
         self.sensors_started.append(sensor)
         self._send(channel, 0x8002, field(1, 0))
         self._send(channel, 0x8003, field(13 if sensor == 13 else 10, field(1, 0)))  # parked/unrestricted, or day
+      elif channel == self.bluetooth_channel and kind == 0x8001:
+        self.pairing_requests.append((one(fields, 1, b"").decode(), one(fields, 2)))
+        self._send(channel, 0x8002, field(1, 0) + field(2, 1))  # success, already paired
 
   def send_touch(self, action: int, x: int, y: int, pointer: int = 0) -> None:
     location = field(1, x) + field(2, y) + field(3, pointer)
