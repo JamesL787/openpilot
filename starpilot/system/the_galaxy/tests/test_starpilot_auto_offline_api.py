@@ -184,11 +184,7 @@ def test_map_colors_setting(monkeypatch, tmp_path):
   summary = client.get("/api/starpilot_auto/offline").get_json()
   assert summary["map_theme"] == "auto" and summary["usage"]["tiles"] == 0 and summary["usage"]["free_tiles"] == 200_000
   assert client.post("/api/starpilot_auto/offline/settings", json={"map_theme": "traffic"}).status_code == 400
-  assert client.post("/api/starpilot_auto/offline/settings", json={"map_theme": "light", "discard_dropped": "yes"}).status_code == 400
   assert client.post("/api/starpilot_auto/offline/settings", json={}).status_code == 400
   response = client.post("/api/starpilot_auto/offline/settings", json={"map_theme": "light"})
   assert response.status_code == 200 and response.get_json() == {"save_viewed_cache": False, "map_theme": "light"}
-  assert maps.map_theme() == "light" and maps.pending_discards() == [], "dropped maps are kept unless asked"
-  client.post("/api/starpilot_auto/offline/settings", json={"map_theme": "auto"})
-  client.post("/api/starpilot_auto/offline/settings", json={"map_theme": "light", "discard_dropped": True})
-  assert maps.pending_discards() == [DARK_STYLE]
+  assert maps.map_theme() == "light" and DARK_STYLE in maps.active_styles(), "the dark map stays downloaded"

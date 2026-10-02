@@ -108,6 +108,10 @@ BADGE_WARN = rl.Color(232, 170, 70, 255)
 OFFLINE_COLLAPSE_SECONDS = 10.0  # the offline badge's words, then just its icon
 OFFLINE_BADGE_HEIGHT = 56.0
 OFFLINE_BADGE_GAP = 12.0
+THEME_CYCLE = ("auto", "light", "dark")
+THEME_NAMES = {"auto": "Auto", "light": "Light", "dark": "Dark"}
+TOAST_SECONDS = 3.5
+TOAST_WIDTH = 480.0
 PROGRESS_TRACK = rl.Color(255, 255, 255, 36)
 PROGRESS_FILL = rl.Color(64, 150, 255, 255)
 
@@ -193,13 +197,16 @@ class TileTextures:
     self._token_lock = threading.Lock()
     self._textures: OrderedDict[TileKey, rl.Texture] = OrderedDict()
     self._wanted = 0
+    self._wanted_keys: tuple[TileKey, ...] = ()
+    self.theme = "auto"  # the map colors setting, read with the style
     self.offline_maps = OfflineMaps()
     self._save_viewed = False
     self._save_viewed_read = -math.inf
     self.service: TileService | None = None
     self.style = ""
     self._style_read = -math.inf
-    self._use_style(self.offline_maps.style)
+    self.theme = self.offline_maps.map_theme()
+    self._use_style(self.offline_maps.display_style(theme=self.theme))
     self._offline_status: dict = {}
     self._offline_status_read = -math.inf
 
@@ -225,7 +232,8 @@ class TileTextures:
     if now - self._style_read < OFFLINE_STATUS_SECONDS:
       return False
     self._style_read = now
-    style = self.offline_maps.style
+    self.theme = self.offline_maps.map_theme()
+    style = self._theme_style(self.theme)
     if style == self.style:
       return False
     self._use_style(style)
@@ -269,7 +277,50 @@ class TileTextures:
 
   def want(self, keys: Sequence[TileKey]) -> None:
     self._wanted = len(keys)
+    self._wanted_keys = tuple(keys)
     self.service.want(keys)
+
+  def style_problem(self, style: str) -> str | None:
+    """Why the map can't show ``style`` here, or None when it can. Online, Mapbox serves it;
+    offline, every tile in view (or an ancestor the map would stretch over it) must be on disk."""
+    if style == self.style:
+      return None
+    online = self.has_token and not self.service.offline and not self.offline_status().get("offline")
+    if online:
+      return None
+    if not self._wanted_keys:
+      return "The map hasn't loaded here yet."
+    caches = (TileCache(offline_root(), style, max_bytes=None), TileCache(default_cache_dir(), style))
+
+    def on_disk(key: TileKey | None) -> bool:
+      for _ in range(MAX_FALLBACK_LEVELS + 1):
+        if key is None:
+          return False
+        if any(cache.path(key).is_file() for cache in caches):
+          return True
+        key = key.parent()
+      return False
+
+    if all(on_disk(key) for key in self._wanted_keys):
+      return None
+    name = "Light" if style == LIGHT_STYLE else "Dark"
+    if not self.has_token:
+      return f"{name} map isn't saved here. Add a Mapbox key in The Galaxy to download it."
+    return f"{name} map isn't saved here, and the map is offline."
+
+  def _theme_style(self, theme: str) -> str:
+    """The style to show for ``theme``. Auto keeps both styles, so when the sun's pick
+    can't be shown here (offline, not saved) it shows the other rather than a blank map."""
+    style = self.offline_maps.display_style(theme=theme)
+    if theme == "auto" and self.style and style != self.style and self.style_problem(style) is not None:
+      return self.style
+    return style
+
+  def set_theme(self, theme: str) -> None:
+    """Save the map colors setting (as The Galaxy does) and show it now."""
+    self.offline_maps.set_map_theme(theme)
+    self._style_read = -math.inf
+    self._check_style()
 
   def upload(self) -> int:
     """Upload decoded tiles; nonzero when the map changed (new tiles, or a new style)."""
@@ -510,6 +561,9 @@ class NavMapView(Widget):
     # Set by a host that draws a button (the car map's compass): the offline badge sits
     # beneath this rectangle, in overlay coordinates, instead of top-right.
     self.offline_anchor: rl.Rectangle | None = None
+    self.status_inset = 0.0  # room a host's top-right button (the car map's sun/moon) keeps clear
+    self.toast_anchor: rl.Rectangle | None = None  # that button: its popup hangs below it
+    self._toast: tuple[str, float] | None = None  # (text, hide at)
     self._offline_since: float | None = None
     self._tiles: TileTextures | None = None
     self._sm = None
@@ -631,6 +685,43 @@ class NavMapView(Widget):
     super().show_event()
     self._offline_since = None  # each showing gets its full offline badge again
 
+  @property
+  def theme(self) -> str:
+    return self._tiles.theme if self._tiles is not None else "auto"
+
+  def cycle_theme(self, now: float | None = None) -> bool:
+    """The sun/moon button: map colors auto, light, dark, round again. Light or dark is skipped
+    when its map can't be shown here, and the popup says why."""
+    self._ensure_started()
+    now = time.monotonic() if now is None else now
+    current = self._tiles.theme
+    index = THEME_CYCLE.index(current) if current in THEME_CYCLE else -1
+    skipped = None
+    for step in (1, 2):
+      theme = THEME_CYCLE[(index + step) % len(THEME_CYCLE)]
+      # Auto has both maps: it shows whichever of them it can, so it is always allowed.
+      problem = None if theme == "auto" else self._tiles.style_problem(self._tiles.offline_maps.display_style(theme=theme))
+      if problem is None:
+        try:
+          self._tiles.set_theme(theme)
+        except OSError:
+          self._show_toast("Couldn't save the map colors.", now)
+          return False
+        if skipped is not None:
+          self._show_toast(f"{skipped} Showing {THEME_NAMES[theme]} instead.", now)
+        self._dirty = True
+        return True
+      skipped = skipped or problem
+    self._show_toast(skipped, now)
+    return False
+
+  def _show_toast(self, text: str, now: float) -> None:
+    self._toast = (text, now + TOAST_SECONDS)
+    self._dirty = True
+
+  def _toast_text(self, now: float) -> str | None:
+    return self._toast[0] if self._toast is not None and now < self._toast[1] else None
+
   def offline_badge_lift(self, now: float) -> float:
     """How far the anchor must rise so the offline badge beneath it clears the trip bar."""
     if self._offline_since is None or not self._show_guidance or self._preview_active or not self._nav_active(now):
@@ -728,7 +819,8 @@ class NavMapView(Widget):
                   _format_distance(nav["distance"], ui_state.is_metric), self._trip_texts(nav))
     return (self._route_key, self._gps is not None and self._gps.fresh, self._center_message(), self._status_badges(),
             guidance, desire_line(ui_state.started, self._desire, self._nav_desire, nav), self._preview_active,
-            self._route_download(), None if self._offline_since is None else self._offline_collapsed(now))
+            self._route_download(), None if self._offline_since is None else self._offline_collapsed(now),
+            self._toast_text(now))
 
   def _acquiring(self) -> bool:
     """Onroad without a fresh fix. Offroad the GPS receiver is not running at all."""
@@ -1051,6 +1143,7 @@ class NavMapView(Widget):
       self._draw_center_message(rect, *center_message)
     self._draw_status(rect)
     self._draw_offline_badge(now)
+    self._draw_toast(rect, now)
     if self._show_guidance and not self._preview_active:
       self._draw_guidance(rect, now)
       self._draw_route_download(rect, now)
@@ -1322,7 +1415,7 @@ class NavMapView(Widget):
 
   def _draw_status(self, rect: rl.Rectangle) -> None:
     badges, progress = self._status_badges()
-    x = rect.x + rect.width - 24
+    x = rect.x + rect.width - 24 - self.status_inset
     y = rect.y + 24
     for index, (label, color) in enumerate(badges):
       bar = progress is not None and index == len(badges) - 1
@@ -1351,6 +1444,20 @@ class NavMapView(Widget):
     badge = rl.Rectangle(anchor.x + anchor.width - width, y, width, OFFLINE_BADGE_HEIGHT)
     self._card(badge)
     self._text(label, badge.x + 22, badge.y + 13, 28, BADGE_WARN)
+
+  def _draw_toast(self, rect: rl.Rectangle, now: float) -> None:
+    """Below the sun/moon button, right-aligned with it, until it times out."""
+    text = self._toast_text(now)
+    anchor = self.toast_anchor
+    if text is None or anchor is None:
+      return
+    width = min(TOAST_WIDTH, anchor.x + anchor.width - rect.x - 24)
+    lines = self._wrap(text, 26, width - 48, max_lines=3)
+    width = min(width, max(self._text_width(line, 26) for line in lines) + 48)
+    card = rl.Rectangle(anchor.x + anchor.width - width, anchor.y + anchor.height + 12, width, 28 + 34 * len(lines))
+    self._card(card)
+    for index, line in enumerate(lines):
+      self._text(line, card.x + 24, card.y + 14 + 34 * index, 26, TEXT)
 
   def _route_download(self) -> tuple[str, str, float] | None:
     """The route download card's content: a route is set and navtilesd is still saving its map."""
@@ -1410,7 +1517,7 @@ class NavMapView(Widget):
     top_right_offline = self.offline_anchor is None and self._tiles is not None and self._tiles.service.offline
     if top_right_offline or (self._tiles is not None and self._gps is not None and not self._gps.fresh):
       status_width = 330.0
-    card_width = min(card_width, rect.width - 2 * pad - status_width)
+    card_width = min(card_width, rect.width - 2 * pad - status_width - self.status_inset)
 
     if nav is not None and nav["primary"]:
       has_next = bool(nav["next_type"] or nav["next_modifier"])

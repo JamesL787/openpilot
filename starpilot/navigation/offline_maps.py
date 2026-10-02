@@ -13,7 +13,7 @@ State is plain JSON files beside the tiles, each written atomically by one side:
   offline/areas/<id>.json      area definitions (UI writes, navtilesd deletes)
   offline/auto_saved/...       markers protecting tiles saved while driving
   offline/auto_saved_pending/  tiles waiting to be promoted from regular cache
-  offline/settings.json        save-as-you-drive and map colors, plus styles to delete (UI writes, map and navtilesd read)
+  offline/settings.json        save-as-you-drive and map colors (UI writes, map and navtilesd read)
   offline/usage.json           Mapbox requests this month (see mapbox_usage.py)
   offline/promote_viewed       one-shot request to pin tiles already in the regular cache
   offline/status.json          download progress (navtilesd writes)
@@ -55,7 +55,7 @@ MAX_DETAIL_POINTS = 150
 
 AREA_MIN_ZOOM = 8
 AVERAGE_TILE_BYTES = 30_000      # navigation-night 512 px tiles: ~17 KB suburban, ~42 KB downtown
-OFFLINE_MAX_BYTES = 2 * 1024 ** 3
+OFFLINE_MAX_BYTES = 3 * 1024 ** 3
 AREA_REFRESH_SECONDS = 90 * 24 * 3600
 PREVIEW_ROUTE_MAX_AGE = 30 * 60
 SERVICE_STALE_SECONDS = 30.0     # navtilesd rewrites its status every few seconds while it runs
@@ -69,10 +69,11 @@ AREA_MAX_RADIUS_KM = 150.0
 AREA_PRESETS = ((10.0, 16), (30.0, 15), (60.0, 14), (150.0, 13))
 AREA_ZOOM_CHOICES = (14, 15, 16)  # detail The Galaxy lets the user pick instead of the radius default
 
-# Map colors. "auto" keeps both styles and shows light between sunrise and sunset.
+# Map colors pick what the map shows; "auto" shows light between sunrise and sunset. Every choice
+# keeps both styles downloaded, so switching (in the car too) never waits on a download.
 MAP_THEMES = ("light", "dark", "auto")
 DEFAULT_MAP_THEME = "auto"
-THEME_STYLES = {"light": (LIGHT_STYLE,), "dark": (DARK_STYLE,), "auto": (LIGHT_STYLE, DARK_STYLE)}
+MAP_STYLES = (LIGHT_STYLE, DARK_STYLE)
 SUNSET_ELEVATION = -0.833  # degrees: the sun's upper edge on the horizon, refraction included
 FALLBACK_DAY_HOURS = (7, 19)  # local clock hours for light maps before the device has ever had a location
 
@@ -413,43 +414,27 @@ class OfflineMaps:
     return theme if theme in MAP_THEMES else DEFAULT_MAP_THEME
 
   def active_styles(self) -> tuple[str, ...]:
-    """Styles kept downloaded for saved areas."""
-    return THEME_STYLES[self.map_theme()]
+    """Styles kept downloaded for saved areas: both, whichever the map shows."""
+    return MAP_STYLES
 
-  def display_style(self, wall: float | None = None) -> str:
-    return theme_style(self.map_theme(), self._position() if self.map_theme() == "auto" else None,
-                       _now() if wall is None else wall)
+  def display_style(self, wall: float | None = None, theme: str | None = None) -> str:
+    """The style ``theme`` (the setting's, by default) shows now."""
+    theme = self.map_theme() if theme is None else theme
+    return theme_style(theme, self._position() if theme == "auto" else None, _now() if wall is None else wall)
 
   @property
   def style(self) -> str:
     """The style shown now; the one coverage and save-as-you-drive work in."""
     return self.display_style()
 
-  def dropped_styles(self, theme: str) -> list[str]:
-    """Styles in use now that ``theme`` would stop using: the ones to ask keep-or-delete about."""
-    return [style for style in self.active_styles() if style not in THEME_STYLES[theme]]
-
-  def set_map_theme(self, theme: str, discard_dropped: bool = False) -> None:
-    """Switch map colors. Dropped styles stay on disk (for switching back) unless discarded;
-    navtilesd deletes discarded ones and downloads saved areas in any new style on Wi-Fi."""
+  def set_map_theme(self, theme: str) -> None:
+    """Switch what the map shows. Both styles stay downloaded either way."""
     if theme not in MAP_THEMES:
       raise ValueError(f"Unknown map colors {theme!r}")
     settings = self._settings()
-    discard = [style for style in settings.get("discard_styles") or [] if style not in THEME_STYLES[theme]]
-    if discard_dropped:
-      discard += [style for style in self.dropped_styles(theme) if style not in discard]
     settings.pop("show_traffic", None)
-    _write_json(self.settings_path, {**settings, "map_theme": theme, "discard_styles": discard})
-
-  def pending_discards(self) -> list[str]:
-    styles = self._settings().get("discard_styles") or []
-    return [style for style in styles if isinstance(style, str) and style not in self.active_styles()]
-
-  def clear_discards(self, styles: Iterable[str]) -> None:
-    settings = self._settings()
-    done = set(styles)
-    settings["discard_styles"] = [style for style in settings.get("discard_styles") or [] if style not in done]
-    _write_json(self.settings_path, settings)
+    settings.pop("discard_styles", None)  # deletes queued by older builds: both styles are kept now
+    _write_json(self.settings_path, {**settings, "map_theme": theme})
 
   def style_roots(self, style: str) -> list[Path]:
     """Every directory holding tiles of ``style``: saved areas and the temporary cache."""

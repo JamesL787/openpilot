@@ -907,6 +907,20 @@ def test_status_column_has_seven_slots_and_upgrades_six(tmp_path):
     car_screen.update({"status_slots": six}, path)
 
 
+def test_map_theme_button_sits_top_right_and_taps_once(controls):
+  _, map_rect = car_ui.car_layout({"onroad_view": "split", "map_side": "right"}, True, False, 1920, 1080)
+  button = car_ui.theme_rect(map_rect)
+  compass = car_ui.compass_rect(map_rect)
+  assert button.x == compass.x and button.y < map_rect.y + 200 < compass.y
+  taps = []
+  controls.map_button, controls.theme_button = compass, button
+  controls.on_map_button = lambda: taps.append("compass")
+  controls.on_theme_button = lambda: taps.append("theme")
+  cx, cy = button.x + button.width / 2, button.y + button.height / 2
+  controls.route(tap(cx, cy), touch_input(), True, screen())
+  assert taps == ["theme"]
+
+
 def test_map_compass_button_toggles_orientation_onroad(controls):
   import pyray as rl
   _, map_rect = car_ui.car_layout({"onroad_view": "split", "map_side": "right"}, True, False, 1920, 1080)

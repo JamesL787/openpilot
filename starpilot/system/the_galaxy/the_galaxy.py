@@ -5779,14 +5779,13 @@ def setup(app):
       return jsonify({"error": "Choose whether maps should be saved as you drive, or the map colors."}), 400
     if "save_viewed_cache" in payload and not isinstance(payload["save_viewed_cache"], bool):
       return jsonify({"error": "Choose whether maps should be saved as you drive."}), 400
-    if "map_theme" in payload and (payload["map_theme"] not in OFFLINE_MAP_THEMES or
-                                   not isinstance(payload.get("discard_dropped", False), bool)):
+    if "map_theme" in payload and payload["map_theme"] not in OFFLINE_MAP_THEMES:
       return jsonify({"error": "Choose light, dark, or light and dark maps."}), 400
     offline_maps = OfflineMaps()
     if "save_viewed_cache" in payload:
       offline_maps.set_save_viewed_cache(payload["save_viewed_cache"])
     if "map_theme" in payload:
-      offline_maps.set_map_theme(payload["map_theme"], discard_dropped=payload.get("discard_dropped", False))
+      offline_maps.set_map_theme(payload["map_theme"])
     return jsonify({"save_viewed_cache": offline_maps.save_viewed_cache(), "map_theme": offline_maps.map_theme()}), 200
 
   @app.route("/api/starpilot_auto/offline/coverage", methods=["GET"])

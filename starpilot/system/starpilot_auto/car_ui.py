@@ -322,6 +322,13 @@ def compass_rect(map_rect, lift: float = 0.0):
                       COMPASS_SIZE, COMPASS_SIZE)
 
 
+def theme_rect(map_rect):
+  """The map colors button (auto, light, dark): top-right of the map, the compass's size."""
+  import pyray as rl
+  return rl.Rectangle(map_rect.x + map_rect.width - COMPASS_MARGIN - COMPASS_SIZE, map_rect.y + COMPASS_MARGIN,
+                      COMPASS_SIZE, COMPASS_SIZE)
+
+
 def next_orientation(orientation: str) -> str:
   return "north_up" if orientation == "heading_up" else "heading_up"
 
@@ -343,6 +350,42 @@ def _draw_compass_needle(x: float, y: float, bearing: float) -> None:
   rl.draw_circle_v(rl.Vector2(x, y), 4.0, rl.Color(10, 13, 20, 255))
 
 
+def _draw_sun_moon(x: float, y: float, theme: str) -> None:
+  """A sun (upper left) and a crescent moon (lower right) centred at x, y: the map colors
+  setting lights the sun (light), the moon (dark), or both (auto)."""
+  import math
+  import pyray as rl
+  bright, dim = rl.Color(240, 244, 250, 255), rl.Color(240, 244, 250, 90)
+  sun = dim if theme == "dark" else bright
+  moon = dim if theme == "light" else bright
+  sx, sy = x - 13, y - 12
+  rl.draw_circle_v(rl.Vector2(sx, sy), 8.0, sun)
+  for index in range(8):
+    angle = index * math.pi / 4
+    rl.draw_line_ex(rl.Vector2(sx + math.cos(angle) * 12, sy + math.sin(angle) * 12),
+                    rl.Vector2(sx + math.cos(angle) * 17, sy + math.sin(angle) * 17), 3.0, sun)
+  _draw_crescent(x + 13, y + 13, 13.0, (7.0, -6.0), 11.0, moon)
+
+
+def _draw_crescent(x: float, y: float, radius: float, offset: tuple[float, float], cut: float, color) -> None:
+  """A disc at x, y less a disc of radius ``cut`` at ``offset`` from it, filled as a triangle strip
+  between the outer arc and the cut's arc, so nothing is painted over the button behind it."""
+  import math
+  import pyray as rl
+  from openpilot.starpilot.system.starpilot_auto.ui.nav_map import _triangle
+  distance, base = math.hypot(*offset), math.atan2(offset[1], offset[0])
+  along = (radius ** 2 - cut ** 2 + distance ** 2) / (2 * distance)  # the chord through both crossings
+  outer_half, inner_half = math.acos(along / radius), math.acos((distance - along) / cut)
+  steps = 16
+  outer = [rl.Vector2(x + radius * math.cos(angle), y + radius * math.sin(angle))
+           for angle in (base + outer_half + (2 * math.pi - 2 * outer_half) * i / steps for i in range(steps + 1))]
+  inner = [rl.Vector2(x + offset[0] + cut * math.cos(angle), y + offset[1] + cut * math.sin(angle))
+           for angle in (base + math.pi - inner_half + 2 * inner_half * i / steps for i in range(steps + 1))]
+  for i in range(steps):
+    _triangle(outer[i], inner[i], outer[i + 1], color)
+    _triangle(inner[i], inner[i + 1], outer[i + 1], color)
+
+
 STALE_OVERLAY = object()  # never equal to a map's overlay content, so the overlay is drawn
 
 
@@ -362,6 +405,7 @@ class MapPane:
     self._geometry = None
     self._heading_up = False
     self.button_rect = None  # the compass button, in logical pixels, while the map is shown
+    self.theme_rect = None  # the map colors button, likewise
     self._compass_lift = 0.0
     self.redraws = 0
 
@@ -370,12 +414,13 @@ class MapPane:
       (self._map.show_event if shown else self._map.hide_event)()
     self._shown = shown
     if not shown:
-      self.button_rect = None
+      self.button_rect = self.theme_rect = None
 
   def _ensure_map(self):
     if self._map is None:
       from openpilot.starpilot.system.starpilot_auto.ui.nav_map import NavMapView
       self._map = NavMapView(show_guidance=True, clip=False, show_navigation_waiting=True)
+      self._map.status_inset = COMPASS_SIZE + 12  # status badges sit left of the map colors button
       self._map.show_event()
     return self._map
 
@@ -407,6 +452,8 @@ class MapPane:
     self._compass_lift = nav_map.offline_badge_lift(now)
     self.button_rect = compass_rect(rect, self._compass_lift)
     nav_map.offline_anchor = compass_rect(local, self._compass_lift)
+    self.theme_rect = theme_rect(rect)
+    nav_map.toast_anchor = theme_rect(local)
     self._anchor = nav_map._advance_camera(local, now)
     self._camera = Camera(**vars(nav_map._camera))
     self._tile_scale = nav_map._tile_scale()
@@ -488,6 +535,7 @@ class MapPane:
     rl.end_blend_mode()
     rl.rl_pop_matrix()
     self._draw_compass(compass_rect(rect, self._compass_lift))
+    self._draw_theme_button(theme_rect(rect))
     rl.end_scissor_mode()
 
   def _draw_compass(self, button) -> None:
@@ -512,6 +560,22 @@ class MapPane:
     rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, -texture.height),
                         rl.Rectangle(center.x, center.y, size, size), rl.Vector2(size / 2, size / 2), -bearing, rl.WHITE)
     rl.end_blend_mode()
+
+  def cycle_theme(self) -> bool:
+    """The map colors button: auto, light, dark; a popup on the map says when it can't."""
+    if self._map is None or not self._map.cycle_theme():
+      return False
+    self._texture_valid = False
+    return True
+
+  def _draw_theme_button(self, button) -> None:
+    import pyray as rl
+    from openpilot.starpilot.system.starpilot_auto.ui.nav_map import CARD_BG, CARD_BORDER
+    center = rl.Vector2(button.x + button.width / 2, button.y + button.height / 2)
+    radius = button.width / 2
+    rl.draw_circle_v(center, radius, CARD_BG)
+    rl.draw_ring(center, radius - 2, radius, 0, 360, 48, CARD_BORDER)
+    _draw_sun_moon(center.x, center.y, self._map.theme if self._map is not None else "auto")
 
   def _unload_texture(self) -> None:
     import pyray as rl
@@ -621,6 +685,8 @@ class OnroadControls:
     self.last_touch = clock()
     self.map_button = None  # the map's compass button while the map is on screen
     self.on_map_button = None
+    self.theme_button = None  # the map's map colors button while the map is on screen
+    self.on_theme_button = None
     self.bookmark_button = None  # the driving view's bookmark button while it is drawn
     self.on_bookmark = None
     self._state_read = -STATE_REFRESH
@@ -774,8 +840,9 @@ class OnroadControls:
     self.menu.corner = "right" if self.menu.on_home else "left"
 
   def _plain_button_at(self, x: float, y: float) -> str | None:
-    """The plain button under a touch: the map's compass or the status column's bookmark slot."""
-    for name, button in (("map_button", self.map_button), ("bookmark_button", self.bookmark_button)):
+    """The plain button under a touch: the map's compass or map colors button, or the status column's bookmark slot."""
+    for name, button in (("map_button", self.map_button), ("theme_button", self.theme_button),
+                         ("bookmark_button", self.bookmark_button)):
       if button is not None and button.x <= x <= button.x + button.width and button.y <= y <= button.y + button.height:
         return name
     return None
@@ -803,10 +870,11 @@ class OnroadControls:
         else:
           self.target = None
         self.last_touch = self._clock()
-      if self.target in ("map_button", "bookmark_button"):
+      if self.target in ("map_button", "theme_button", "bookmark_button"):
         # A plain button: it acts when the finger lifts on it, and takes no widget events.
         if touch.kind in ("up", "cancel"):
-          action = self.on_map_button if self.target == "map_button" else self.on_bookmark
+          action = {"map_button": self.on_map_button, "theme_button": self.on_theme_button,
+                    "bookmark_button": self.on_bookmark}[self.target]
           if touch.kind == "up" and self._plain_button_at(x, y) == self.target and action is not None:
             action()
           self.target = None
@@ -893,6 +961,7 @@ def run(frames_path: str, touch_path: str) -> int:
       print(json.dumps({"event": "map_orientation_save_failed", "error": str(error)[:200]}), flush=True)
 
   controls.on_map_button = toggle_map_orientation
+  controls.on_theme_button = map_pane.cycle_theme
   controls.on_bookmark = main_layout._dev_sidebar.bookmark.press
 
   content = rl.load_render_texture(visible_w, visible_h)
@@ -1008,6 +1077,7 @@ def run(frames_path: str, touch_path: str) -> int:
       controls.update(started, speed_ms, vehicle_parked(ui_state))
       # Last frame's map placement; the layout only changes with settings or a screen switch.
       controls.map_button = map_pane.button_rect if started and not controls.full_screen(started) else None
+      controls.theme_button = map_pane.theme_rect if started and not controls.full_screen(started) else None
       # Last frame's status-column bookmark slot, if the column drew one.
       controls.bookmark_button = main_layout._dev_sidebar.bookmark_rect if started and not controls.full_screen(started) else None
       main_layout._dev_sidebar.bookmark_rect = None  # set again only if the column draws the slot this frame

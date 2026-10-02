@@ -55,6 +55,8 @@ AREA_INTERVAL = 0.08           # Wi-Fi only
 UNMETERED = (log.DeviceState.NetworkType.wifi, log.DeviceState.NetworkType.ethernet)
 # The one state a saved area shows when it has several styles: the first found here wins.
 STATE_PRIORITY = ("downloading", "waiting_wifi", "storage_full", "no_space", "incomplete", "queued", "complete")
+# The style the map isn't showing is a spare copy: when it can't finish, the area still reads as saved.
+SPARE_FAILURES = ("storage_full", "no_space", "incomplete")
 
 
 def _queued() -> dict:
@@ -77,6 +79,19 @@ def combine_states(states: list[dict]) -> dict:
                     max(float(state.get("completed_at") or 0.0) for state in states),
     "metered_wifi": any(bool(state.get("metered_wifi")) for state in states),
   }
+
+
+def area_summary(styles: dict[str, dict], shown: str, kept: tuple[str, ...]) -> dict:
+  """An area's progress as the map colors user sees it: the shown style first. The other style
+  counts only while it is still on its way; once the shown one is saved, the area is saved."""
+  primary = styles.get(shown) or _queued()
+  counted = [primary]
+  if primary.get("state") != "complete":
+    counted += [state for style in kept if style != shown
+                if (state := styles.get(style) or _queued()).get("state") not in SPARE_FAILURES]
+  summary = combine_states(counted)
+  summary["bytes"] = sum(int((styles.get(style) or {}).get("bytes") or 0) for style in kept)
+  return summary
 
 
 def _wall() -> float:
@@ -165,7 +180,7 @@ class Navtilesd:
     self.area_styles = tuple(area_styles)
 
   def _update_style(self, wall: float) -> None:
-    """Follow the map colors setting (and, for automatic, the sun), and delete discarded styles."""
+    """Follow the map colors setting (and, for automatic, the sun), and delete retired styles."""
     area_styles, display = self.maps.active_styles(), self.maps.display_style(wall)
     if (area_styles, display) != (self.area_styles, self.style):
       cloudlog.info(f"navtilesd: map styles {self.area_styles} -> {area_styles}, showing {display}")
@@ -174,11 +189,11 @@ class Navtilesd:
       self._use_styles(area_styles, display)
     if self.started or not self.device_known:
       return  # deletions wait for offroad
-    for style in (*self.maps.pending_discards(), *LEGACY_STYLES):
+    for style in LEGACY_STYLES:
       if style in self._deleting or style in area_styles or style == display:
         continue
       roots = [root for root in self.maps.style_roots(style) if root.exists()]
-      if not roots and style in LEGACY_STYLES:
+      if not roots:
         continue
       self._deleting.add(style)
       for entry in self._area_status.values():
@@ -188,7 +203,6 @@ class Navtilesd:
   def _delete_style(self, style: str, roots: list) -> None:
     for root in roots:
       shutil.rmtree(root, ignore_errors=True)
-    self.maps.clear_discards([style])
     self._offline_bytes = None
     self._deleting.discard(style)
     cloudlog.info(f"navtilesd: deleted map style {style}")
@@ -210,7 +224,7 @@ class Navtilesd:
     summary = {}
     for area_id, entry in self._area_status.items():
       styles = entry.get("styles") or {}
-      summary[area_id] = {**combine_states([styles.get(style) or _queued() for style in self.area_styles]), "styles": styles}
+      summary[area_id] = {**area_summary(styles, self.style, self.area_styles), "styles": styles}
     return summary
 
   def _token(self) -> str:
@@ -413,7 +427,9 @@ class Navtilesd:
         elif current.allow_metered != self._active_area.allow_metered:
           self._active_area = current
       if self._active_area is None:
-        work = ((area, style) for area in live for style in self.area_styles)
+        # Every area in the shown style before any spare copy in the other.
+        styles = sorted(self.area_styles, key=lambda style: style != self.style)
+        work = ((area, style) for style in styles for area in live)
         for area, style in work:
           needed, refresh = self._needs_download(area, style, wall)
           if needed:

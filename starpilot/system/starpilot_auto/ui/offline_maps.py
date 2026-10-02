@@ -61,9 +61,6 @@ EMPTY_HEIGHT = 140.0
 REFRESH_SECONDS = 2.0
 
 THEME_LABELS = {"light": "Light", "dark": "Dark", "auto": "Light & dark (automatic)"}
-STYLE_NAMES = {LIGHT_STYLE: "light"}  # any other style is the dark one
-KEEP_QUESTION = "Keep the saved {} maps? Keeping them lets you switch back, or use light & dark, without downloading them again. " + \
-                "Deleting frees the space."
 
 SEGMENT_DISPLAY = 0
 SEGMENT_ROAD_DATA = 1
@@ -523,27 +520,15 @@ class StarPilotOfflineMapsLayout(_SettingsPage):
     current = self._offline.map_theme()
     dialog = None
 
-    def apply(theme: str, discard: bool) -> None:
-      try:
-        self._offline.set_map_theme(theme, discard_dropped=discard)
-      except (OSError, ValueError) as error:
-        self.message = tr("Couldn't change map colors: {}").format(error)
-      self.refresh()
-
     def on_pick(result: DialogResult) -> None:
       theme = next((key for key, label in labels.items() if label == dialog.selection), current)
       if result != DialogResult.CONFIRM or theme == current:
         return
-      dropped = self._offline.dropped_styles(theme)
-      if not dropped:
-        apply(theme, False)
-        return
-      names = " and ".join(tr(STYLE_NAMES.get(style, "dark")) for style in dropped)
-      # Cancel (or leaving the dialog) keeps them: nothing is deleted without a clear yes.
-      gui_app.push_widget(ConfirmDialog(
-        tr(KEEP_QUESTION).format(names),
-        tr("Delete"), cancel_text=tr("Keep"),
-        callback=lambda answer: apply(theme, answer == DialogResult.CONFIRM)))
+      try:
+        self._offline.set_map_theme(theme)
+      except (OSError, ValueError) as error:
+        self.message = tr("Couldn't change map colors: {}").format(error)
+      self.refresh()
 
     dialog = MultiOptionDialog(tr("Map colors"), list(labels.values()), labels[current], callback=on_pick)
     gui_app.push_widget(dialog)

@@ -656,17 +656,17 @@ def test_offline_badge_sits_under_the_anchor_and_collapses(view, monkeypatch):
 
   view.offline_anchor = nav_map.rl.Rectangle(700, 700, 96, 96)
   assert view._status_badges()[0] == ()
-  assert view._overlay_content(clock[0])[-1] is False, "the full badge first"
+  assert view._overlay_content(clock[0])[-2] is False, "the full badge first"
   clock[0] += nav_map.OFFLINE_COLLAPSE_SECONDS - 0.1
   view._update_state()
-  assert view._overlay_state[-1] is False
+  assert view._overlay_state[-2] is False
   clock[0] += 0.2
   view._update_state()
-  assert view._overlay_state[-1] is True, "the icon alone after ten seconds; the overlay redraws for it"
+  assert view._overlay_state[-2] is True, "the icon alone after ten seconds; the overlay redraws for it"
 
   view.show_event()
   view._update_state()
-  assert view._overlay_state[-1] is False, "showing the map again shows the words again"
+  assert view._overlay_state[-2] is False, "showing the map again shows the words again"
 
   assert view.offline_badge_lift(clock[0]) == 0.0, "no trip bar to clear"
   view._nav, view._nav_received = {"primary": "Main St"}, clock[0]
@@ -677,3 +677,86 @@ def test_offline_badge_sits_under_the_anchor_and_collapses(view, monkeypatch):
   view._overlay_content = lambda now: (view._offline_since,)
   view._update_state()
   assert view._offline_since is None and view.offline_badge_lift(clock[0]) == 0.0
+
+
+def test_style_problem_says_why_the_other_map_cant_show(monkeypatch, tmp_path):
+  from openpilot.starpilot.navigation.map_tiles import DARK_STYLE, LIGHT_STYLE, TileKey, style_dir_name
+  monkeypatch.setattr(nav_map, "default_cache_dir", lambda: tmp_path)
+  monkeypatch.setattr(nav_map, "offline_root", lambda: tmp_path / "offline")
+  tiles = nav_map.TileTextures.__new__(nav_map.TileTextures)
+  tiles.style, tiles._wanted_keys = LIGHT_STYLE, ()
+  tiles.service = SimpleNamespace(offline=False, want=lambda keys: None)
+  tiles._offline_status, tiles._offline_status_read = {}, math.inf
+  token = [True]
+  monkeypatch.setattr(nav_map.TileTextures, "has_token", property(lambda self: token[0]))
+
+  assert tiles.style_problem(DARK_STYLE) is None, "online: Mapbox serves either style"
+  assert tiles.style_problem(LIGHT_STYLE) is None, "already showing it"
+  tiles.service.offline = True
+  assert "hasn't loaded" in tiles.style_problem(DARK_STYLE)
+  tiles.want([TileKey(15, 10, 10), TileKey(15, 11, 10)])
+  assert tiles.style_problem(DARK_STYLE) == "Dark map isn't saved here, and the map is offline."
+  token[0] = False
+  assert "Mapbox key" in tiles.style_problem(DARK_STYLE)
+
+  def save(root, key):
+    path = root / style_dir_name(DARK_STYLE) / str(key.z) / str(key.x) / f"{key.y}.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"png")
+
+  save(tmp_path / "offline", TileKey(15, 10, 10))
+  assert tiles.style_problem(DARK_STYLE) is not None, "one tile in view is still missing"
+  save(tmp_path, TileKey(13, 2, 2))  # an ancestor of (15, 11, 10), in the temporary cache
+  assert tiles.style_problem(DARK_STYLE) is None
+
+
+def test_map_colors_button_cycles_the_setting_and_explains_a_skip(view):
+  from openpilot.starpilot.navigation.map_tiles import DARK_STYLE, LIGHT_STYLE
+  saved = []
+  missing = set()
+  tiles = SimpleNamespace(theme="light", style=LIGHT_STYLE)
+  tiles.offline_maps = SimpleNamespace(
+    display_style=lambda theme: {"auto": LIGHT_STYLE, "light": LIGHT_STYLE, "dark": DARK_STYLE}[theme])
+  tiles.style_problem = lambda style: (f"{'Light' if style == LIGHT_STYLE else 'Dark'} map isn't saved here."
+                                       if style in missing else None)
+
+  def set_theme(theme):
+    saved.append(theme)
+    tiles.theme = theme
+
+  tiles.set_theme = set_theme
+  view._tiles = tiles
+  assert view.cycle_theme(100.0) and saved == ["dark"]
+  assert view.cycle_theme(100.0) and saved == ["dark", "auto"]
+  assert view._toast_text(100.0) is None
+
+  tiles.theme = "light"
+  missing.add(DARK_STYLE)
+  assert view.cycle_theme(100.0) and saved[-1] == "auto", "dark can't show here: on to auto"
+  assert view._toast_text(100.0) == "Dark map isn't saved here. Showing Auto instead."
+  assert view._toast_text(100.0 + nav_map.TOAST_SECONDS) is None, "the popup goes away"
+
+  tiles.theme = "auto"
+  tiles.offline_maps.display_style = lambda theme: LIGHT_STYLE if theme == "light" else DARK_STYLE  # night
+  tiles.style = DARK_STYLE
+  missing.clear()
+  missing.add(LIGHT_STYLE)
+  assert view.cycle_theme(200.0) and saved[-1] == "dark", "dark is what's showing, so it is always allowed"
+
+  tiles.theme = "dark"
+  missing.add(DARK_STYLE)  # night, offline, nothing else saved: auto still allowed, it has both maps
+  assert view.cycle_theme(300.0) and saved[-1] == "auto"
+  assert view._toast_text(300.0) is None
+
+
+def test_auto_shows_the_map_it_has_when_the_suns_pick_is_missing(monkeypatch):
+  from openpilot.starpilot.navigation.map_tiles import DARK_STYLE, LIGHT_STYLE
+  tiles = nav_map.TileTextures.__new__(nav_map.TileTextures)
+  tiles.style = LIGHT_STYLE
+  tiles.offline_maps = SimpleNamespace(display_style=lambda theme: LIGHT_STYLE if theme == "light" else DARK_STYLE)
+  problems = {DARK_STYLE: "Dark map isn't saved here, and the map is offline."}
+  tiles.style_problem = problems.get
+  assert tiles._theme_style("auto") == LIGHT_STYLE, "sunset offline without the dark map: stay light"
+  assert tiles._theme_style("dark") == DARK_STYLE, "only auto falls back"
+  problems.clear()
+  assert tiles._theme_style("auto") == DARK_STYLE

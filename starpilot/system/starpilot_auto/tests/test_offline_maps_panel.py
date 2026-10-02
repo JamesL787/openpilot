@@ -195,15 +195,13 @@ def test_speed_limit_data_is_a_segment_of_the_same_page(tmp_path):
   assert road.events[-1] == "hide" and len(built) == 1
 
 
-def test_map_colors_ask_before_deleting_the_dropped_maps(page, monkeypatch):
-  from openpilot.starpilot.navigation.map_tiles import LIGHT_STYLE
+def test_map_colors_switch_without_asking_about_deletes(page, monkeypatch):
+  from openpilot.starpilot.navigation.map_tiles import DARK_STYLE, LIGHT_STYLE
   from openpilot.system.ui.widgets import DialogResult
   pushed = []
   monkeypatch.setattr(page_module.gui_app, "push_widget", pushed.append)
   monkeypatch.setattr(page_module, "MultiOptionDialog", lambda title, options, current, callback=None:
                       type("Picker", (), {"options": options, "selection": current, "callback": staticmethod(callback)})())
-  monkeypatch.setattr(page_module, "ConfirmDialog", lambda text, confirm, cancel_text=None, callback=None:
-                      type("Ask", (), {"text": text, "confirm": confirm, "cancel": cancel_text, "callback": staticmethod(callback)})())
 
   def choose(label, result=DialogResult.CONFIRM):
     page.activate("theme")
@@ -212,21 +210,12 @@ def test_map_colors_ask_before_deleting_the_dropped_maps(page, monkeypatch):
     picker.callback(result)
 
   choose("Light & dark (automatic)")
-  assert page._offline.map_theme() == "auto" and len(pushed) == 1, "adding a color asks nothing"
-  assert "sunset" in page.theme_text()
-
+  assert page._offline.map_theme() == "auto" and "sunset" in page.theme_text()
   choose("Light")
-  ask = pushed[-1]
-  assert "dark" in ask.text and (ask.confirm, ask.cancel) == ("Delete", "Keep")
-  assert page._offline.map_theme() == "auto", "nothing changes until answered"
-  ask.callback(DialogResult.CANCEL)
-  assert page._offline.map_theme() == "light" and page._offline.pending_discards() == [], "leaving the question keeps them"
-
-  choose("Dark")
-  pushed[-1].callback(DialogResult.CONFIRM)
-  assert page._offline.map_theme() == "dark" and page._offline.pending_discards() == [LIGHT_STYLE]
-  choose("Light", DialogResult.CANCEL)
-  assert page._offline.map_theme() == "dark", "cancelling the picker changes nothing"
+  assert page._offline.map_theme() == "light" and len(pushed) == 2, "only the picker: nothing to delete"
+  assert page._offline.active_styles() == (LIGHT_STYLE, DARK_STYLE)
+  choose("Dark", DialogResult.CANCEL)
+  assert page._offline.map_theme() == "light", "cancelling the picker changes nothing"
 
 
 def test_storage_card_shows_this_months_mapbox_usage(page):

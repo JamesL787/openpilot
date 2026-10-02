@@ -1,7 +1,6 @@
 import { api, showSnackbar } from "../api.js"
 import { usePolling } from "../composables.js"
 import { GxNotice } from "./GxNotice.js"
-import { GalaxyConfirm } from "./GalaxyModal.js"
 import {
   circlePolygon,
   coverageToGeoJson,
@@ -17,8 +16,7 @@ import {
 } from "./auto_offline_helpers.js?v=auto-offline-3"
 import { getMapboxSearchContext } from "../../../components/navigation/navigation_utilities.js?v=nav-route-selection-1"
 
-// Map colors: the tile styles each choice keeps downloaded. No choice has traffic.
-const MAP_THEME_COLORS = { light: ["light"], dark: ["dark"], auto: ["light", "dark"] }
+// Map colors: what the map shows. Both are always downloaded, and no choice has traffic.
 const MAP_THEME_OPTIONS = [
   { value: "dark", label: "Dark" },
   { value: "light", label: "Light" },
@@ -493,23 +491,11 @@ export const StarpilotAutoOfflinePanel = {
       if (!this.summary || this.cacheSettingBusy) return
       const theme = String(event?.target?.value || "")
       const previous = this.summary.map_theme || "auto"
-      if (!MAP_THEME_COLORS[theme] || theme === previous) return
-      const dropped = MAP_THEME_COLORS[previous].filter((color) => !MAP_THEME_COLORS[theme].includes(color))
-      let discardDropped = false
-      if (dropped.length) {
-        // Dismissing keeps them: nothing is deleted without a clear yes.
-        discardDropped = await GalaxyConfirm({
-          title: `Keep the saved ${dropped.join(" and ")} maps?`,
-          message: "Keeping them lets you switch back, or use light & dark, without downloading them again. They still count toward offline storage. Deleting frees the space.",
-          confirmLabel: "Delete",
-          cancelLabel: "Keep",
-          danger: true,
-        })
-      }
+      if (!MAP_THEME_OPTIONS.some((option) => option.value === theme) || theme === previous) return
       this.summary = { ...this.summary, map_theme: theme }
       this.cacheSettingBusy = true
       try {
-        const result = await api.setAutoOfflineSettings({ map_theme: theme, discard_dropped: discardDropped })
+        const result = await api.setAutoOfflineSettings({ map_theme: theme })
         this.summary = { ...this.summary, map_theme: result.map_theme }
       } catch (e) {
         this.summary = { ...this.summary, map_theme: previous }
@@ -640,7 +626,7 @@ export const StarpilotAutoOfflinePanel = {
         <div class="gx-row" style="border:none; padding:10px var(--sp-3); align-items:flex-start;">
           <div class="gx-row__info">
             <span class="gx-row__label">Save Maps as You Drive</span>
-            <span class="gx-row__desc">While the comma is connected, tiles opened by navigation and the car screen are saved into the same pinned offline storage as downloaded areas. They share the 2 GB limit and are not evicted by the temporary cache. Turning this off stops saving new tiles and keeps ones already saved.</span>
+            <span class="gx-row__desc">While the comma is connected, tiles opened by navigation and the car screen are saved into the same pinned offline storage as downloaded areas. They share the 3 GB limit and are not evicted by the temporary cache. Turning this off stops saving new tiles and keeps ones already saved.</span>
           </div>
           <label class="gx-switch" style="flex:none; margin-top:2px;">
             <input type="checkbox" aria-label="Save maps as you drive" :checked="!!summary?.save_viewed_cache" :disabled="!summary || cacheSettingBusy" @change="setSaveViewedCache" />
@@ -650,7 +636,7 @@ export const StarpilotAutoOfflinePanel = {
         <div class="gx-row" style="border:none; padding:10px var(--sp-3); align-items:flex-start;">
           <div class="gx-row__info">
             <span class="gx-row__label">Map Colors</span>
-            <span class="gx-row__desc">No traffic is shown: saved maps would show the traffic from the day they were downloaded. Light & dark switches at sunrise and sunset where the car is, and keeps both downloaded. A new color downloads your saved areas again on Wi-Fi.</span>
+            <span class="gx-row__desc">No traffic is shown: saved maps would show the traffic from the day they were downloaded. Light & dark switches at sunrise and sunset where the car is. Saved areas download in both colors, so switching here or on the car's map never needs a download.</span>
           </div>
           <GalaxySelect class="gx-field" style="flex:none; min-width:170px;" :value="summary?.map_theme || 'auto'" :disabled="!summary || cacheSettingBusy" @change="setMapTheme" aria-label="Map colors">
             <option v-for="option in mapThemeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>

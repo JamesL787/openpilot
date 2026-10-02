@@ -167,6 +167,16 @@ def run_until(daemon, predicate, timeout=10.0):
   return False
 
 
+def both_saved(daemon, area_id):
+  styles = daemon.maps.status().get("areas", {}).get(area_id, {}).get("styles") or {}
+  return all((styles.get(style) or {}).get("state") == "complete" for style in daemon.area_styles)
+
+
+def both_completed_at(daemon, area_id):
+  styles = daemon.maps.status()["areas"][area_id]["styles"]
+  return min(float(styles[style]["completed_at"]) for style in daemon.area_styles)
+
+
 @pytest.fixture
 def fast(monkeypatch):
   monkeypatch.setattr(navtilesd_module, "ROUTE_INTERVAL_OFFROAD", 0.0)
@@ -179,7 +189,7 @@ def make_daemon(tmp_path, params=None, sm=None, route_points=None):
   params = FakeParams(params or {"MapboxPublicKey": "pk", "MapboxSecretKey": "sk"})
   session = FakeSession()
   maps = OfflineMaps(tmp_path)
-  maps.set_map_theme("dark")  # one style, so tile counts are per area; the default keeps both
+  maps.set_map_theme("dark")  # areas still download in both styles: counts are 2 x the area's tiles
   daemon = navtilesd_module.Navtilesd(maps=maps, sm=sm or FakeSM(), params=params,
                                       route_engine=FakeRouteEngine(route_points or l_shaped_route(12, 0.002)), session=session)
   daemon.area_service.prefetch_interval = 0.0
@@ -210,10 +220,10 @@ def test_areas_wait_for_wifi_then_complete(tmp_path, fast):
   assert session.urls == [], "no area downloads on cellular"
 
   sm.device.networkType = WIFI
-  assert run_until(daemon, lambda: daemon.maps.status().get("areas", {}).get(area.id, {}).get("state") == "complete")
+  assert run_until(daemon, lambda: both_saved(daemon, area.id))
   state = daemon.maps.status()["areas"][area.id]
-  assert state["done"] == state["total"] == len(area.tiles())
-  assert state["bytes"] == len(PNG) * len(area.tiles())
+  assert state["state"] == "complete" and state["done"] == state["total"] == len(area.tiles()), "the shown style's tiles"
+  assert state["bytes"] == 2 * len(PNG) * len(area.tiles()), "both copies count toward storage"
   assert all(daemon.area_cache.contains(key) for key in area.tiles())
 
 
@@ -230,7 +240,7 @@ def test_metered_wifi_waits_until_download_now(tmp_path, fast):
   assert session.urls == []
 
   daemon.maps.allow_metered(area.id)
-  assert run_until(daemon, lambda: daemon.maps.status()["areas"][area.id]["state"] == "complete")
+  assert run_until(daemon, lambda: both_saved(daemon, area.id))
 
 
 def test_route_tiles_already_in_an_area_are_not_downloaded(tmp_path, fast):
@@ -296,22 +306,23 @@ def test_full_disk_is_reported_instead_of_retrying(tmp_path, fast):
 def test_update_skips_fresh_tiles_and_refreshes_stale_ones(tmp_path, fast):
   daemon, session = make_daemon(tmp_path)
   area = daemon.maps.add_area("Home", 36.1, -115.2, 1.0, 10)
-  assert run_until(daemon, lambda: daemon.maps.status().get("areas", {}).get(area.id, {}).get("state") == "complete")
+  assert run_until(daemon, lambda: both_saved(daemon, area.id))
   first_pass = len(session.urls)
-  completed_at = daemon.maps.status()["areas"][area.id]["completed_at"]
+  completed_at = both_completed_at(daemon, area.id)
 
   time.sleep(0.01)
   daemon.maps.request_update(area.id)
-  assert run_until(daemon, lambda: daemon.maps.status()["areas"][area.id]["completed_at"] > completed_at)
+  assert run_until(daemon, lambda: both_completed_at(daemon, area.id) > completed_at)
   assert len(session.urls) == first_pass, "tiles downloaded within 30 days are not fetched again"
 
   stale = time.time() - REFRESH_AGE_SECONDS - 60  # noqa: TID251 - file mtimes are wall-clock
-  for key in area.tiles():
-    os.utime(daemon.area_cache.path(key), (stale, stale))
-  completed_at = daemon.maps.status()["areas"][area.id]["completed_at"]
+  for cache in daemon.area_caches.values():
+    for key in area.tiles():
+      os.utime(cache.path(key), (stale, stale))
+  completed_at = both_completed_at(daemon, area.id)
   time.sleep(0.01)
   daemon.maps.request_update(area.id)
-  assert run_until(daemon, lambda: daemon.maps.status()["areas"][area.id]["completed_at"] > completed_at)
+  assert run_until(daemon, lambda: both_completed_at(daemon, area.id) > completed_at)
   assert len(session.urls) == 2 * first_pass, "stale tiles are refreshed"
 
 
@@ -342,7 +353,7 @@ def test_saved_route_downloads_its_route_tiles(tmp_path, fast):
   points = l_shaped_route(15, 0.002)
   route = daemon.maps.add_route("Trip", points, 5000.0, 600.0, "Home")
   assert route.kind == "route" and route.tiles() == route_tiles(points)
-  assert run_until(daemon, lambda: daemon.maps.status().get("areas", {}).get(route.id, {}).get("state") == "complete")
+  assert run_until(daemon, lambda: both_saved(daemon, route.id))
   assert all(daemon.area_cache.contains(key) for key in route_tiles(points))
 
   summary = daemon.maps.summary()
@@ -378,6 +389,7 @@ def test_map_colors_pick_styles_and_keep_other_settings(tmp_path):
   maps.set_save_viewed_cache(True)
   maps.set_map_theme("light")
   assert maps.style == LIGHT_STYLE and maps.save_viewed_cache() is True
+  assert maps.active_styles() == (LIGHT_STYLE, DARK_STYLE), "the setting picks what shows; both stay downloaded"
   maps.set_save_viewed_cache(False)
   assert maps.map_theme() == "light", "each setting keeps the other"
   assert maps.summary()["map_theme"] == "light"
@@ -385,17 +397,12 @@ def test_map_colors_pick_styles_and_keep_other_settings(tmp_path):
     maps.set_map_theme("traffic")
 
 
-def test_dropped_styles_are_kept_unless_discarded(tmp_path):
-  from openpilot.starpilot.navigation.map_tiles import DARK_STYLE, LIGHT_STYLE
+def test_old_queued_style_deletes_are_dropped(tmp_path):
   maps = OfflineMaps(tmp_path, position=lambda: None)
-  maps.set_map_theme("auto")
-  assert maps.dropped_styles("light") == [DARK_STYLE] and maps.dropped_styles("auto") == []
+  maps.settings_path.parent.mkdir(parents=True, exist_ok=True)
+  maps.settings_path.write_text(json.dumps({"map_theme": "dark", "discard_styles": ["mapbox/streets-v12"]}))
   maps.set_map_theme("light")
-  assert maps.pending_discards() == [], "kept by default"
-  maps.set_map_theme("dark", discard_dropped=True)
-  assert maps.pending_discards() == [LIGHT_STYLE]
-  maps.set_map_theme("light")
-  assert maps.pending_discards() == [], "choosing it again before it was deleted cancels the delete"
+  assert json.loads(maps.settings_path.read_text()) == {"map_theme": "light"}
 
 
 def test_automatic_colors_follow_the_sun():
@@ -413,42 +420,44 @@ def test_automatic_colors_follow_the_sun():
   assert theme_style("auto", las_vegas, 1790645520.0 + 600) == DARK_STYLE
 
 
-def test_light_and_dark_keeps_areas_in_both_styles(tmp_path, fast):
+def test_every_map_color_keeps_areas_in_both_styles(tmp_path, fast):
   from openpilot.starpilot.navigation.map_tiles import DARK_STYLE, LIGHT_STYLE
-  daemon, session = make_daemon(tmp_path, sm=FakeSM(network=WIFI))
+  daemon, session = make_daemon(tmp_path, sm=FakeSM(network=WIFI))  # showing dark
   area = daemon.maps.add_area("Home", 36.1, -115.2, 1.0, 10)
-  assert run_until(daemon, lambda: daemon.maps.status().get("areas", {}).get(area.id, {}).get("state") == "complete")
-  assert all(DARK_STYLE in url for url in session.urls)
-
-  daemon.maps.set_map_theme("auto")
-  session.urls.clear()
-  daemon.step()
+  assert run_until(daemon, lambda: both_saved(daemon, area.id))
   assert daemon.area_styles == (LIGHT_STYLE, DARK_STYLE)
-  assert daemon.maps.status()["areas"][area.id]["state"] != "complete", "the light copy still needs downloading"
-  assert run_until(daemon, lambda: daemon.maps.status().get("areas", {}).get(area.id, {}).get("state") == "complete")
-  assert session.urls and all(LIGHT_STYLE in url for url in session.urls), "the dark copy is kept, not fetched again"
   for style in (LIGHT_STYLE, DARK_STYLE):
     assert all(daemon.area_caches[style].contains(key) for key in area.tiles())
   state = daemon.maps.status()["areas"][area.id]
-  assert state["done"] == state["total"] == 2 * len(area.tiles())
+  assert state["done"] == state["total"] == len(area.tiles()) and state["bytes"] == 2 * len(PNG) * len(area.tiles())
+
+  for theme in ("light", "auto"):  # what the map shows changes; nothing is fetched again
+    daemon.maps.set_map_theme(theme)
+    session.urls.clear()
+    for _ in range(5):
+      daemon.step()
+      time.sleep(0.02)
+    assert daemon.maps.status()["areas"][area.id]["state"] == "complete"
+    assert not any("/tiles/512/" in url and f"/{key.z}/{key.x}/{key.y}" in url
+                   for url in session.urls for key in area.tiles()), theme
 
 
-def test_discarded_and_traffic_styles_are_deleted(tmp_path, fast):
+def test_traffic_styles_are_deleted_and_both_colors_kept(tmp_path, fast):
   from openpilot.starpilot.navigation.map_tiles import DARK_STYLE, LEGACY_STYLES, LIGHT_STYLE
   daemon, _ = make_daemon(tmp_path, sm=FakeSM(network=WIFI))
   legacy = daemon.maps.style_roots(LEGACY_STYLES[0])
   put(daemon.maps.root, 2, 1, 1, LEGACY_STYLES[0])
   put(daemon.maps.base, 2, 1, 1, LEGACY_STYLES[0])
   area = daemon.maps.add_area("Home", 36.1, -115.2, 1.0, 10)
-  assert run_until(daemon, lambda: daemon.maps.status().get("areas", {}).get(area.id, {}).get("state") == "complete")
+  assert run_until(daemon, lambda: both_saved(daemon, area.id))
   assert run_until(daemon, lambda: not legacy[0].exists() and not legacy[1].exists()), "tiles with old traffic baked in are removed"
 
-  daemon.maps.set_map_theme("light", discard_dropped=True)
-  dark = daemon.maps.style_roots(DARK_STYLE)[0]
-  assert dark.exists()
-  assert run_until(daemon, lambda: not dark.exists() and daemon.maps.pending_discards() == [])
-  assert run_until(daemon, lambda: daemon.maps.status().get("areas", {}).get(area.id, {}).get("state") == "complete")
-  assert all(daemon.area_caches[LIGHT_STYLE].contains(key) for key in area.tiles())
+  daemon.maps.set_map_theme("light")
+  for _ in range(5):
+    daemon.step()
+    time.sleep(0.02)
+  assert daemon.maps.style_roots(DARK_STYLE)[0].exists(), "showing light keeps the dark map for switching back"
+  assert all(daemon.area_caches[style].contains(key) for style in (LIGHT_STYLE, DARK_STYLE) for key in area.tiles())
 
 
 def test_mapbox_usage_counts_across_processes_by_month(tmp_path):
@@ -486,7 +495,7 @@ def test_mapbox_usage_waits_for_the_clock(tmp_path):
 def test_tile_downloads_count_as_usage(tmp_path, fast):
   daemon, session = make_daemon(tmp_path, sm=FakeSM(network=WIFI))
   area = daemon.maps.add_area("Home", 36.1, -115.2, 1.0, 10)
-  assert run_until(daemon, lambda: daemon.maps.status().get("areas", {}).get(area.id, {}).get("state") == "complete")
+  assert run_until(daemon, lambda: both_saved(daemon, area.id))
   assert daemon.usage.flush()
   assert daemon.maps.usage()["tiles"] == len(session.urls) > 0
 
@@ -497,16 +506,13 @@ def test_map_deletions_wait_for_offroad(tmp_path, fast):
   daemon, _ = make_daemon(tmp_path, sm=sm)
   legacy = daemon.maps.style_roots(LEGACY_STYLES[0])
   put(daemon.maps.root, 2, 1, 1, LEGACY_STYLES[0])
-  daemon.maps.set_map_theme("light", discard_dropped=False)
-  daemon.maps.set_map_theme("dark", discard_dropped=True)
   for _ in range(5):
     daemon.step()
     time.sleep(0.02)
   assert legacy[0].exists(), "nothing is deleted onroad"
-  assert daemon.maps.pending_discards() != [], "the delete is still queued"
 
   sm.device.started = False
-  assert run_until(daemon, lambda: not legacy[0].exists() and daemon.maps.pending_discards() == [])
+  assert run_until(daemon, lambda: not legacy[0].exists())
 
 
 def test_map_deletions_wait_until_the_device_state_is_known(tmp_path, fast):
@@ -518,3 +524,31 @@ def test_map_deletions_wait_until_the_device_state_is_known(tmp_path, fast):
   for _ in range(3):
     daemon.step()
   assert daemon.maps.style_roots(LEGACY_STYLES[0])[0].exists()
+
+
+def test_the_shown_style_decides_whether_an_area_is_saved():
+  from openpilot.starpilot.navigation.map_tiles import DARK_STYLE, LIGHT_STYLE
+  kept = (LIGHT_STYLE, DARK_STYLE)
+  saved = {"state": "complete", "done": 4, "total": 4, "bytes": 400, "completed_at": 10.0}
+  full = {"state": "storage_full", "done": 1, "total": 4, "bytes": 100, "completed_at": 20.0}
+  summary = navtilesd_module.area_summary({DARK_STYLE: saved, LIGHT_STYLE: full}, DARK_STYLE, kept)
+  assert summary["state"] == "complete" and summary["total"] == 4, "a spare copy that ran out of room doesn't flag the area"
+  assert summary["bytes"] == 500, "both copies count toward storage"
+  downloading = {**saved, "state": "downloading"}
+  summary = navtilesd_module.area_summary({DARK_STYLE: saved, LIGHT_STYLE: downloading}, DARK_STYLE, kept)
+  assert summary["state"] == "complete", "the spare copy fills in quietly"
+  summary = navtilesd_module.area_summary({DARK_STYLE: full, LIGHT_STYLE: saved}, DARK_STYLE, kept)
+  assert summary["state"] == "storage_full", "the shown style running out of room is reported"
+  summary = navtilesd_module.area_summary({DARK_STYLE: {**full, "state": "downloading"}, LIGHT_STYLE: full}, DARK_STYLE, kept)
+  assert summary["state"] == "downloading" and summary["total"] == 4, "progress is the shown style's alone"
+
+
+def test_the_shown_style_downloads_first(tmp_path, fast):
+  from openpilot.starpilot.navigation.map_tiles import DARK_STYLE
+  daemon, session = make_daemon(tmp_path, sm=FakeSM(network=WIFI))  # showing dark
+  first = daemon.maps.add_area("Home", 36.1, -115.2, 1.0, 10)
+  second = daemon.maps.add_area("Work", 36.3, -115.0, 1.0, 10)
+  assert run_until(daemon, lambda: both_saved(daemon, first.id) and both_saved(daemon, second.id))
+  dark = [index for index, url in enumerate(session.urls) if DARK_STYLE in url]
+  light = [index for index, url in enumerate(session.urls) if DARK_STYLE not in url]
+  assert dark and light and max(dark) < min(light), "both areas in the shown colors before any spare copy"
