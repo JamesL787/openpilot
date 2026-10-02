@@ -379,6 +379,29 @@ YOUNG_TRACK_VISION_MAX_CLOSING = 2.0
 YOUNG_TRACK_VISION_MIN_ACCEL = -1.0
 YOUNG_TRACK_VISION_RANGE_MARGIN_M = 5.0
 
+# Newborn range-closing exemption (REPLAY ONLY, no DECISIONS entry yet). Route 000002ae seg 17 rt 1044.6-1046.3:
+# a stopped car in lane (Bosch-A track 39) reported from 116 m with u10 > 511 (no trusted U11); its raw range fell
+# 116.1 -> 80.8 m over 26 sweeps (LSQ ~-23 m/s) at vEgo 19.8, and radar_interface now publishes it unmeasured at its
+# range-fit rate bounded at -vEgo (BOSCH_A_NEWBORN_RANGE_PUBLISH). Two vision-referenced checks then refused it
+# because the camera had that car at 15-18 m/s: the vel_sane test in track_matches_vision (vLead ~0 is neither
+# within 10 m/s of the camera nor above 3 m/s), and FAR_RAIL_VISION_BOUND, which lifts a far railed lead's vRel
+# toward the camera speed. Planner brake start stayed 1047.18 (driver braked 1047.6). For a young Bosch-A track
+# whose OWN range proves the closing (young_range_genuinely_closing: YOUNG_TRACK_MIN_SAMPLES fresh sweeps over
+# YOUNG_TRACK_MIN_SPAN_S fit within YOUNG_TRACK_MAX_RESIDUAL_M, slope <= NEWBORN_RANGE_CLOSING_MIN_RATE and <=
+# NEWBORN_RANGE_CLOSING_EGO_FRAC * -vEgo, and the published vRel within NEWBORN_RANGE_CLOSING_VREL_TOL of it), vel_sane
+# passes and FAR_RAIL_VISION_BOUND leaves the lead alone. Nothing else moves: no KF, measured-bit, distance or
+# lateral change, and YOUNG_TRACK_FLAT_RANGE_BOUND (flat ranges only) is untouched. Threshold choice: the two
+# phantoms this family produced had flat or noisy range -- 0000027a 8:33 track 15 at 62.6-63.6 m (|slope| < 6, the
+# YOUNG_TRACK_FLAT_MAX_RATE regime) and 00000284 22:35 track 17 going 79 -> 83 -> 80 m (residual 0.56-1.28 m, over
+# YOUNG_TRACK_MAX_RESIDUAL_M) -- so the exemption needs a clean fit and a closing rate past the flat regime by a
+# margin (-8 m/s) and at least half of ego speed (an object doing at most half our speed, which vision at 15-18 m/s
+# cannot be confused with at vEgo ~20). The vRel agreement (3.0, the D-043 rate-check tolerance) keeps a coasted
+# U11 that disagrees with its own range out. Replay evidence only; not road-validated.
+NEWBORN_RANGE_CLOSING_EXEMPT = True
+NEWBORN_RANGE_CLOSING_MIN_RATE = -8.0     # m/s; the range slope must be at or below this
+NEWBORN_RANGE_CLOSING_EGO_FRAC = 0.5      # ... and at or below -this * vEgo
+NEWBORN_RANGE_CLOSING_VREL_TOL = 3.0      # m/s; |slope - track.vRel| at most this
+
 # ONPATH_RADAR_ADOPT: a radar-only track that sits on the driving path for a second is published as
 # radarState.leadOnpath, beside an unchanged leadOne, so the planner can brake for it before the camera sees it. Above
 # V_EGO_STATIONARY, get_lead only consults radar when the model lead's probability clears lead_detection_probability,
@@ -533,6 +556,26 @@ def young_track_vision_contradicts(lead, vis, v_ego: float) -> bool:
           float(vis.a[0]) >= YOUNG_TRACK_VISION_MIN_ACCEL)
 
 
+def young_range_genuinely_closing(track, v_ego: float) -> bool:
+  """NEWBORN_RANGE_CLOSING_EXEMPT: True when this young track's own fresh-sweep range history since birth fits a clean
+  line that closes clearly (see the constant block) and its published vRel agrees with that line. Caller gates Bosch-A."""
+  if not NEWBORN_RANGE_CLOSING_EXEMPT or track is None:
+    return False
+  if not (track.t_last - track.t_first <= YOUNG_TRACK_MAX_AGE_S) or len(track.young_range_hist) < YOUNG_TRACK_MIN_SAMPLES:
+    return False
+  a = np.array(track.young_range_hist, dtype=np.float64)
+  ts = a[:, 0] - a[-1, 0]
+  if ts[-1] - ts[0] < YOUNG_TRACK_MIN_SPAN_S:
+    return False
+  slope, icpt = np.polyfit(ts, a[:, 1], 1)
+  rms = float(np.sqrt(((a[:, 1] - (icpt + slope * ts)) ** 2).mean()))
+  if rms > YOUNG_TRACK_MAX_RESIDUAL_M:
+    return False
+  if not (slope <= NEWBORN_RANGE_CLOSING_MIN_RATE and slope <= -NEWBORN_RANGE_CLOSING_EGO_FRAC * float(v_ego)):
+    return False
+  return abs(float(slope) - float(track.vRel)) <= NEWBORN_RANGE_CLOSING_VREL_TOL
+
+
 def far_rail_model_sample(vis) -> tuple[float, float, float] | None:
   """FAR_RAIL_VISION_BOUND history entry for one model lead: (prob, range at the radar, speed), or None."""
   if vis is None or not len(vis.x) or not len(vis.v):
@@ -678,6 +721,7 @@ class Track:
     # YOUNG_TRACK_FLAT_RANGE_BOUND: first update time and every fresh-sweep (t, dRel) of the track's first
     # YOUNG_TRACK_MAX_AGE_S. Coasted sweeps count: a Bosch-A coast holds vRel but publishes the live gated range.
     self.t_first = float('nan')
+    self.t_last = float('nan')  # NEWBORN_RANGE_CLOSING_EXEMPT: t_now of the latest update (the track's age)
     self.young_range_hist: list = []
 
     # ONPATH_RADAR_ADOPT: fresh measured sweeps (t, dRel, vRel, path offset, existence) of the current on-path run;
@@ -723,6 +767,7 @@ class Track:
     # Shadow estimator: real measurements only -- a duplicate payload would forge a zero-dt sample.
     if not self.t_first == self.t_first:
       self.t_first = float(t_now)
+    self.t_last = float(t_now)
     if float(t_now) - self.t_first <= YOUNG_TRACK_MAX_AGE_S and \
        (not self.young_range_hist or float(t_now) > self.young_range_hist[-1][0]):
       self.young_range_hist.append((float(t_now), float(d_rel)))
@@ -1201,7 +1246,7 @@ def honda_bosch_a_low_speed_radar_lead_sane(track: Track, v_ego: float) -> bool:
 
 def track_matches_vision(track: Track, lead: capnp._DynamicStructReader, v_ego: float, *,
                          dist_scale: float, dist_floor: float, vel_limit: float,
-                         y_std_scale: float, y_floor: float) -> bool:
+                         y_std_scale: float, y_floor: float, honda_bosch_a: bool = False) -> bool:
   offset_vision_dist = lead.x[0] - RADAR_TO_CAMERA
   dist_sane = abs(track.dRel - offset_vision_dist) < max(abs(offset_vision_dist) * dist_scale, dist_floor)
   # NOTE: the `or` makes this check inert for any lead above 3 m/s, i.e. essentially always at road
@@ -1214,13 +1259,15 @@ def track_matches_vision(track: Track, lead: capnp._DynamicStructReader, v_ego: 
   # is left as-is deliberately: inert, but inert in the safe direction. Do not "fix" it without
   # first establishing which sensor is right on the frames it would start rejecting.
   vel_sane = (abs(track.vRel + v_ego - lead.v[0]) < vel_limit) or (v_ego + track.vRel > 3)
+  if not vel_sane and honda_bosch_a and young_range_genuinely_closing(track, v_ego):
+    vel_sane = True  # NEWBORN_RANGE_CLOSING_EXEMPT: the track's own range proves the closing the camera disputes
   lat_sane = abs(track.yRel + lead.y[0]) < max(y_floor, y_std_scale * max(float(lead.yStd[0]), 0.2))
   return dist_sane and vel_sane and lat_sane
 
 
 def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, model_data: capnp._DynamicStructReader, tracks: dict[int, Track],
                           starpilot_toggles: SimpleNamespace, g90_radar_filter: bool = False,
-                          preferred_track_id: int = -1):
+                          preferred_track_id: int = -1, honda_bosch_a: bool = False):
   # No lane-change side filter here. StarPilot's HumanLaneChanges dropped every track on the far side
   # of 0 m (left change: yRel <= 0) during laneChangeStarting. It never changed WHICH car was followed
   # -- this function only pairs a radar track with the vision lead, which must also agree laterally --
@@ -1242,7 +1289,7 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, model_
   # stationary radar points can be false positives
   if track_matches_vision(track, lead, v_ego,
                           dist_scale=0.25, dist_floor=5.0,
-                          vel_limit=10.0, y_std_scale=1.0, y_floor=1.0):
+                          vel_limit=10.0, y_std_scale=1.0, y_floor=1.0, honda_bosch_a=honda_bosch_a):
     return track
 
   # Some vehicles intermittently drop a good radar match on large leads (semis are
@@ -1253,7 +1300,7 @@ def match_vision_to_track(v_ego: float, lead: capnp._DynamicStructReader, model_
   if preferred_track is not None and preferred_track.cnt >= 3:
     if track_matches_vision(preferred_track, lead, v_ego,
                             dist_scale=0.40, dist_floor=8.0,
-                            vel_limit=13.0, y_std_scale=2.0, y_floor=1.5):
+                            vel_limit=13.0, y_std_scale=2.0, y_floor=1.5, honda_bosch_a=honda_bosch_a):
       return preferred_track
   return None
 
@@ -1312,7 +1359,7 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
   # Determine leads, this is where the essential logic happens
   if len(tracks) > 0 and ready and filtered_lead_prob > lead_detection_probability:
     track = match_vision_to_track(v_ego, lead_msg, model_data, tracks, starpilot_toggles, g90_radar_filter,
-                                  preferred_track_id=preferred_track_id)
+                                  preferred_track_id=preferred_track_id, honda_bosch_a=honda_bosch_a_radar)
   else:
     track = None
 
@@ -1341,7 +1388,8 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
         preferred_matches_model = (not model_lead_available or
                                    track_matches_vision(preferred_track, lead_msg, v_ego,
                                                         dist_scale=0.25, dist_floor=5.0,
-                                                        vel_limit=10.0, y_std_scale=1.0, y_floor=1.0))
+                                                        vel_limit=10.0, y_std_scale=1.0, y_floor=1.0,
+                                                        honda_bosch_a=True))
         preferred_is_current = (not lead_dict.get('status', False) or
                                 lead_dict.get('radarTrackId', -1) == preferred_track_id or
                                 (lead_dict.get('status', False) and not lead_dict.get('radar', False)))
@@ -1364,7 +1412,7 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
       return (model_lead_available and
               track_matches_vision(candidate, lead_msg, v_ego,
                                    dist_scale=0.25, dist_floor=5.0,
-                                   vel_limit=10.0, y_std_scale=1.0, y_floor=1.0))
+                                   vel_limit=10.0, y_std_scale=1.0, y_floor=1.0, honda_bosch_a=True))
 
     low_speed_tracks = [c for c in low_speed_tracks if candidate_is_established(c)]
     if len(low_speed_tracks) > 0:
@@ -1659,6 +1707,9 @@ class RadarD:
           far_leads.append((self.radar_state.leadOnpath, 0))
         for lead, slot in far_leads:
           floor = far_rail_vrel_floor(lead, self.far_rail_hist[slot], self.v_ego)
+          if floor is not None and lead.status and lead.radar and \
+             young_range_genuinely_closing(self.tracks.get(int(lead.radarTrackId)), self.v_ego):
+            floor = None  # NEWBORN_RANGE_CLOSING_EXEMPT: the track's own range proves the closing
           if floor is not None and lead.vRel < floor:
             dv = floor - lead.vRel
             lead.vRel = floor
