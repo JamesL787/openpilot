@@ -480,15 +480,19 @@ def test_command_delay_hands_over_the_value_issued_that_long_ago():
   assert clarity_eps.CommandDelay(DT_CTRL, 0.2).update(3.0, 0.0) == 3.0
 
 
+TOWN_DELAY = {HONDA.HONDA_CLARITY: 0.12, HONDA.HONDA_CIVIC_BOSCH: 0.15}   # measured per car, see EPS_CMD_DELAY
+
+
 @pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH])
 def test_command_delay_is_for_town_speeds_only(candidate):
   bp, v = clarity_eps.EPS_CMD_DELAY[candidate]
-  assert np.interp(8.0, bp, v) == pytest.approx(0.12) and np.interp(15.0, bp, v) == 0.0 and np.interp(30.0, bp, v) == 0.0
+  assert np.interp(8.0, bp, v) == pytest.approx(TOWN_DELAY[candidate]) and np.interp(15.0, bp, v) == 0.0 and np.interp(30.0, bp, v) == 0.0
 
 
 @pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH])
-@pytest.mark.parametrize("v, late_frames", [(8.0, 12), (20.0, 0)])
-def test_target_follows_the_curvature_one_command_delay_late(monkeypatch, candidate, v, late_frames):
+@pytest.mark.parametrize("v, in_town", [(8.0, True), (20.0, False)])
+def test_target_follows_the_curvature_one_command_delay_late(monkeypatch, candidate, v, in_town):
+  late_frames = round(TOWN_DELAY[candidate] / DT_CTRL) if in_town else 0
   lac, VM, _ = _controller(monkeypatch, candidate, {"NrdrLatUseFirmwareVgr": "1"})
   CS = car.CarState.new_message()
   CS.vEgo = v

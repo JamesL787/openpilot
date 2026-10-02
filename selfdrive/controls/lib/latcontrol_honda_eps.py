@@ -93,12 +93,14 @@ def eps_lateral_delay(schedule, v_ego: float, live_delay: float) -> float:
 #   roundabouts -0.12 -> -0.08 s; the model gives back ~half of the step by aiming further ahead.
 # - Civic Bosch (public Konik routes 289/290/293 on this controller, 278/28b on LatControlPID, tsfdo v15):
 #   0.14-0.30 s early with BOTH controllers; tsfdo also ignores the told delay (liveDelay 0.30 vs 0.48 s: same
-#   timing). Early turn-in is what curve hugging looks like. 0.12 s is deliberately below the ~0.2 s measured, so
-#   it cannot overshoot into late; re-measure with tools/lateral/plan_timing.py before going higher.
+#   timing). Early turn-in is what curve hugging looks like. tools/lateral/plan_timing.py on the EPS-controller
+#   drives, hands-off turns at 5-12 m/s: 290 -0.09, 293 -0.15, 289 -0.22 s (pooled -0.14, median -0.15). The delay
+#   equals that: on time if tsfdo does not adapt, ~0.06 s early if it gives back half like Cinque did. Not late
+#   either way. Re-measure after a drive.
 # Faded out at highway speed, where nothing was measured early.
 EPS_CMD_DELAY = {
   HONDA.HONDA_CLARITY: ([10.0, 15.0], [0.12, 0.0]),       # m/s, s
-  HONDA.HONDA_CIVIC_BOSCH: ([10.0, 15.0], [0.12, 0.0]),
+  HONDA.HONDA_CIVIC_BOSCH: ([10.0, 15.0], [0.15, 0.0]),
 }
 
 
