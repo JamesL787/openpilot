@@ -16,6 +16,7 @@ Not read here, on purpose: LatPScale*, LatIScale*, HondaLateralPidKp/KiScale (th
 feedforward was validated with) and LatFScale* (they scaled the kf * angle * v^2 feedforward this replaces).
 """
 import math
+from collections import deque
 
 import numpy as np
 
@@ -60,6 +61,37 @@ CLARITY_LAT_DELAY_BP = [3.5, 7.0, 12.0, 20.0, 30.0]  # m/s, centres of the measu
 CLARITY_LAT_DELAY_V = [0.15, 0.08, 0.10, 0.20, 0.30]  # s
 
 
+# Command delay: the curvature controlsd hands over is executed this much later. Cinque v3 aims its command at
+# ~0.28 s after the camera frame whatever delay it is told (0.30 and 0.09 s give the same aim), but this
+# controller reaches a command ~0.07 s after controlsd issues it, so the car ran the model's own plan 0.12-0.14 s
+# early on turns at 5-12 m/s: tight entries, loose exits (route 37e, both roundabouts and the whole drive).
+# LatControlPID on the same model was on time (+0.01 s) only because it is ~0.09 s slower. This keeps the new
+# controller's tracking and moves its timing onto the model's plan. Faded out at highway speed, where nothing
+# was measured early and the controller already drove well.
+CMD_DELAY_BP = [10.0, 15.0]  # m/s
+CMD_DELAY_V = [0.12, 0.0]    # s
+
+
+class CommandDelay:
+  """The value issued delay seconds ago, linearly interpolated between frames. Fed every frame, engaged or not,
+  so the history is already there at engagement; before it has enough history it returns the oldest value."""
+
+  def __init__(self, dt: float, max_delay: float):
+    self.dt = dt
+    self.buf: deque[float] = deque(maxlen=int(math.ceil(max_delay / dt)) + 2)
+
+  def update(self, value: float, delay: float) -> float:
+    self.buf.append(float(value))
+    if delay <= 0.0:
+      return float(value)
+    steps = delay / self.dt
+    i = int(steps)
+    frac = steps - i
+    n = len(self.buf)
+    newer = self.buf[max(n - 1 - i, 0)]
+    older = self.buf[max(n - 2 - i, 0)]
+    return newer + frac * (older - newer)
+
 def use_honda_eps_controller(CP) -> bool:
   return (CP.carFingerprint == HONDA.HONDA_CLARITY and bool(CP.flags & HondaFlags.EPS_MODIFIED)
           and CP.lateralTuning.which() == "pid")
@@ -86,6 +118,7 @@ class LatControlHondaEps(LatControl):
     self.sr_curve_inverse = NRDR_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
     self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
     self.rack_map = get_clarity_rack_map(CP)
+    self.cmd_delay = CommandDelay(dt, max(CMD_DELAY_V))
     self.params = Params()
     self.frame = -1
     self.prev_rate_limited_angle = 0.0
@@ -129,6 +162,7 @@ class LatControlHondaEps(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
+    desired_curvature = self.cmd_delay.update(desired_curvature, float(np.interp(CS.vEgo, CMD_DELAY_BP, CMD_DELAY_V)))
     angle_des_no_offset = self._desired_angle_no_offset(VM, CS.vEgo, params.roll, desired_curvature)
     if active:
       angle_des_no_offset = rate_limit_desired_angle(angle_des_no_offset, self.prev_rate_limited_angle,
