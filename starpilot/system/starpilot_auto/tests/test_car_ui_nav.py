@@ -179,7 +179,7 @@ def test_driving_only_and_map_only():
 
 
 def test_narrow_screens_offroad_and_the_home_screen_get_the_full_layout():
-  assert layout({"onroad_view": "split"}, width=1600) == ((0, 0, 1600, 1080), None)
+  assert layout({"onroad_view": "split"}, width=car_ui.NAV_SPLIT_MIN_WIDTH - 1) == ((0, 0, car_ui.NAV_SPLIT_MIN_WIDTH - 1, 1080), None)
   assert layout({"onroad_view": "map"}, started=False) == ((0, 0, 1920, 1080), None)
   assert layout({"onroad_view": "map"}, on_home=True) == ((0, 0, 1920, 1080), None)
 

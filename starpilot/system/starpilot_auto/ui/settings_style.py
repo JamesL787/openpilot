@@ -3,8 +3,8 @@
 Text is measured before controls are placed. Narrow rows stack values below
 labels; scrolling, rather than smaller type, accommodates short displays.
 
-The car lays its UI out on a 1080-row canvas and scales that to the head unit
-(0.44x on an 800x480 screen), so sizes are written in design pixels and pass
+The car lays its UI out on a 720-row canvas (car_ui.LOGICAL_HEIGHT) and scales that to
+the head unit (0.67x on an 800x480 screen), so sizes are written in design pixels and pass
 through px(): at 1:1 they would be too small to read and soft on screen.
 """
 from contextlib import contextmanager

@@ -102,13 +102,14 @@ def test_car_touch_click_sequence():
 
 
 def test_logical_size_fills_car_viewport():
-  assert logical_size(FrameRequest(1280, 720, 0, 240, 33333)) == (2880, 1080, 1280 / 2880, 480 / 1080)
-  width, height, _, _ = logical_size(FrameRequest(800, 480, 0, 0, 33333))
-  assert (width, height) == (1800, 1080)
+  assert logical_size(FrameRequest(1280, 720, 0, 240, 33333)) == (1920, 720, 1280 / 1920, 480 / 720)
+  # An 800x480 head unit draws the UI at 0.67x, not 0.44x as on a 1080-row canvas.
+  assert logical_size(FrameRequest(800, 480, 0, 0, 33333)) == (1200, 720, 800 / 1200, 480 / 720)
   # Narrower screens keep the minimum width and grow taller rather than stretching sideways.
-  assert logical_size(FrameRequest(800, 600, 0, 0, 33333)) == (1600, 1200, 0.5, 0.5)
+  width, height, scale_x, scale_y = logical_size(FrameRequest(800, 600, 0, 0, 33333))
+  assert (width, height) == (1067, 800) and abs(scale_x - scale_y) < 1e-3
   width, height, scale_x, scale_y = logical_size(FrameRequest(1080, 1920, 0, 0, 33333))
-  assert width == 1600 and abs(scale_x - scale_y) < 1e-3
+  assert width == 1067 and abs(scale_x - scale_y) < 1e-3
 
 
 # --------------------------------------------------------------- view source
