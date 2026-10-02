@@ -2961,6 +2961,17 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "BoschANewbornLeads",
+        "label": "Radar Newborn Leads",
+        "description": "Bosch-A newborn radar points: publish young closing targets earlier, only as a lead once their own range proves closing. Replay-tested only; not road-validated. Restart required.",
+        "picker_description": "Bosch-A newborn radar points published earlier; lead only once range proves closing. Default off. Replay-tested only.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune",
+        "requires_offroad": true,
+        "settings_tier": "advanced"
+      },
+      {
         "key": "GasOverrideBoost",
         "label": "Accel Boost",
         "description": "Experimental Mode only. Raises the model's requested acceleration when it is more cautious than the MPC. Pressing the gas above ~10 mph while the model is braking harder than the MPC adds up to 0.2 m/s^2 (0.05 per press, held for the drive; port of upstream PR 39015). A lead pulling away beyond the follow distance also lifts the model's braking part of the way toward the MPC.",

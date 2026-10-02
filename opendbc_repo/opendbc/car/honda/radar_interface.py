@@ -259,7 +259,22 @@ BOSCH_A_COAST_REVERSING_MARGIN_MPS = 1.0
 # range-verified closing young track (radard NEWBORN_RANGE_CLOSING_EXEMPT), since the camera had this stopped car at
 # 15-18 m/s. Nothing is withheld that was published before (D-041/D-042); the first low-u10 sweep roots the range
 # gate on the run's last range, so it is gated like any other sweep. Replay evidence only.
-BOSCH_A_NEWBORN_RANGE_PUBLISH = True
+# Driven by the BoschANewbornLeads toggle (default off): RadarInterface reads it once at startup into
+# self.newborn_range_publish, together with radard's three NEWBORN_* switches. The code reads that attribute; this
+# constant is its source default (off), and setting it True forces the publish on without the param.
+BOSCH_A_NEWBORN_RANGE_PUBLISH = False
+BOSCH_A_NEWBORN_LEADS_PARAM = "BoschANewbornLeads"
+
+
+def bosch_a_newborn_leads_enabled() -> bool:
+  """BoschANewbornLeads, read once at startup the way interface.py reads BoschARadar. Any failure, including a
+  params_pyx.so that predates the key, means OFF: no newborn publish, and radard's newborn switches stay off."""
+  try:
+    from openpilot.common.params import Params
+    return bool(Params().get_bool(BOSCH_A_NEWBORN_LEADS_PARAM))
+  except Exception:
+    return False
+
 # Seeding the first trusted sweep's history from the newborn run (samples, range_anchor, last_trusted_vrel) is off.
 # Replay, 00000284 22:36.7 track 17: the newborn run was a 0.6 s range burst 88.7 -> 79.9 m (published fit -4.8 ->
 # -17.6 m/s); seeded into the history, the coast after four measured sweeps held last_trusted_vrel -10.47 for 1.3 s
@@ -643,6 +658,8 @@ class RadarInterface(RadarInterfaceBase):
       self._last_trigger_nanos = -1
       self.rail_interval = BOSCH_A_RAIL_INTERVAL
       self.coast_range_bound = BOSCH_A_COAST_RANGE_BOUND
+      # BOSCH_A_NEWBORN_RANGE_PUBLISH, driven by BoschANewbornLeads (default off). Read once; a restart is needed.
+      self.newborn_range_publish = BOSCH_A_NEWBORN_RANGE_PUBLISH or bosch_a_newborn_leads_enabled()
     else:
       # Nidec
       self.rcp = _create_nidec_can_parser(CP.carFingerprint)
@@ -931,7 +948,7 @@ class RadarInterface(RadarInterfaceBase):
         track.newborn_run.clear()
         track.newborn_vrel = None
       newborn_vrel = None
-      if BOSCH_A_NEWBORN_RANGE_PUBLISH and track.newborn_run and not high_u10_live_vrel and track_id in self.pts:
+      if self.newborn_range_publish and track.newborn_run and not high_u10_live_vrel and track_id in self.pts:
         newborn_vrel = track.newborn_vrel
       if newborn_vrel is not None and not BOSCH_A_NEWBORN_SEED_HISTORY:
         # The first trusted sweep starts the track exactly as it would have without newborn publishing.
@@ -1138,7 +1155,7 @@ class RadarInterface(RadarInterfaceBase):
           point.measured = False
           point.ncValid = False
           point.existence = observation['existence_raw'] / 127.0
-        elif (BOSCH_A_NEWBORN_RANGE_PUBLISH and high_u10_live_vrel and range_anchor is None and
+        elif (self.newborn_range_publish and high_u10_live_vrel and range_anchor is None and
               track.last_trusted_vrel is None):
           # A newborn high-u10 identity: keep its ranges outside the accepted history and publish the
           # geometry once they fit a line (BOSCH_A_NEWBORN_RANGE_PUBLISH).

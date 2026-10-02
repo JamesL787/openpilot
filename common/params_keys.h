@@ -380,6 +380,10 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // Tester rollout: parse the Bosch-A harness's own 16-slot radar object bank into real
     // leadOne/leadTwo tracks instead of treating the car as radarless. RX-only, no CAN authority taken.
     {"BoschARadar", {PERSISTENT, BOOL, "1", "1", 3}},
+    // TEST, default OFF. Bosch-A only. Newborn radar points: publish young high-u10 closing targets on their range
+    // fit (radar_interface BOSCH_A_NEWBORN_RANGE_PUBLISH) plus radard's NEWBORN_* switches. Replay evidence only.
+    // Read once at startup in honda/radar_interface.py and radard.py.
+    {"BoschANewbornLeads", {PERSISTENT, BOOL, "0", "0", 3}},
     // Default ON. Experimental Mode only. STATUS 136h: "Accel Boost" gates both upstream PR 39015's
     // gas-press boost and the lead-departure assist. Unreplayed. Read in longitudinal_planner.py.
     {"GasOverrideBoost", {PERSISTENT, BOOL, "1", "1", 3}},

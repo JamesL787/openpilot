@@ -9,6 +9,14 @@ from openpilot.selfdrive.controls import radard
 DT = radard.HONDA_BOSCH_A_RADAR_TS
 
 
+@pytest.fixture(autouse=True)
+def newborn_leads_on():
+  # These switches ship off behind BoschANewbornLeads; every test here is about their ON behaviour.
+  radard.set_bosch_a_newborn_leads(True)
+  yield
+  radard.set_bosch_a_newborn_leads(False)
+
+
 def make_track(ranges, v_rel, v_ego=19.8, t0=100.0):
   track = radard.Track(39, v_rel + v_ego, radard.KalmanParams(DT))
   for i, d in enumerate(ranges):
