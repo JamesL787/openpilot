@@ -313,8 +313,10 @@ def test_stream_waits_only_when_needed_and_preserves_flow_control(monkeypatch, s
   clock = [100.0]
   monkeypatch.setattr(supervisor.time, "monotonic", lambda: clock[0])
   monkeypatch.setattr(supervisor.time, "sleep", lambda _: pytest.fail("stream must wait on input, not sleep"))
-  if scenario == "unfocused":
+  if scenario != "prewarm":
     monkeypatch.setattr(supervisor, "PREWARM_SECONDS", 0.0)
+  else:
+    monkeypatch.setattr(supervisor, "PREWARM_SECONDS", 20.0)
   stop = threading.Event()
   waits, sent, demands, touches = [], [], [], []
   pending_input = [40 if scenario == "input_burst" else 0]

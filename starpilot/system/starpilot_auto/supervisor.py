@@ -39,8 +39,9 @@ BACKOFF_SECONDS = (2.0, 4.0, 8.0, 15.0, 30.0)
 STABLE_SESSION_SECONDS = 30.0
 PEER_STOP_RETRY_SECONDS = 10.0
 FRAME_MAX_AGE = 0.5          # never send a UI frame older than this
-SOFTWARE_FPS = 15            # libx264 cadence; the hardware encoder runs at 30
-PREWARM_SECONDS = 20.0    # the car view needs ~11 s from launch to its first frame, so it renders from stream start, before the car grants focus
+SOFTWARE_FPS = 12            # libx264 cadence; the hardware encoder is also held to AUTO_FPS
+AUTO_FPS = 12                # automatic frame-rate ceiling; the car view does not need more and the comma is CPU-bound
+PREWARM_SECONDS = 0.0     # the car view needs ~11 s to its first frame; it no longer renders before focus, to spare driving processes
 UNAVAILABLE_AFTER = 1.0      # focused but no fresh UI frame for this long -> "unavailable" card; the Honda gives the screen back after 3 s without video
 SDP_SETTLE = (1.5, 2.2, 3.0)
 TCP_ATTEMPTS = 6
@@ -877,7 +878,7 @@ class Supervisor:
     encoder, fps = create_encoder(mode.width, mode.height, preference=config["encoder"], bitrate_kbps=config["bitrate_kbps"],
                                   margin_height=mode.margin_height, software_fps=software_fps, log=self.log,
                                   rate_control=config["rate_control"])
-    fps = min(fps, mode.fps, config["fps"] or fps)
+    fps = min(fps, mode.fps, config["fps"] or AUTO_FPS)
     interval = 1.0 / fps
     flags = (FLAG_NV12 if config["gpu_nv12"] and getattr(encoder, "supports_nv12", False) else 0) | \
             (FLAG_ASYNC_READBACK if config["async_readback"] else 0)

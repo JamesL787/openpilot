@@ -306,7 +306,7 @@ def test_supervisor_car_view_end_to_end_with_touch(identity, tmp_path, sock_dir,
       assert time.monotonic() < deadline, sup.status()
       time.sleep(0.05)
     status = sup.status()
-    assert status["view"] == "car" and status["encoder"] == "libx264" and status["target_fps"] == 15
+    assert status["view"] == "car" and status["encoder"] == "libx264" and status["target_fps"] == 12
     hu.send_touch(ACTION_PRESS, 640, 360)
     hu.send_touch(ACTION_RELEASE, 640, 360)
     while not record.exists() or len(record.read_text().splitlines()) < 2:
