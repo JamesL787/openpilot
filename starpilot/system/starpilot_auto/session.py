@@ -2,9 +2,10 @@
 
 StarPilot plays the *phone* role: the head unit sends the version request, then
 acts as the TLS client while this side is the TLS server presenting the phone
-identity. After authentication the session discovers services, opens only the
-video channel (and, best effort, the input channel so touches are acknowledged
-and discarded) and streams H.264 access units with bounded acknowledgement flow.
+identity. After authentication the session discovers services, opens the video
+channel (and, best effort, the input channel so touches are acknowledged and
+discarded, and the sensor channel for driving status and night mode, as a phone
+does) and streams H.264 access units with bounded acknowledgement flow.
 
 Adapted from yummydirtx/openpilot ``tools/android_auto/{session,video,live_session}.py``
 (MIT), pinned at 672a16f6183567c0ada53654f8527d97e1a483fa, whose protocol facts
@@ -62,6 +63,11 @@ AV_MEDIA_ACK = 0x8004
 VIDEO_FOCUS_REQUEST = 0x8007
 VIDEO_FOCUS_INDICATION = 0x8008
 
+# Sensor channel message ids.
+SENSOR_START_REQUEST = 0x8001
+SENSOR_START_RESPONSE = 0x8002
+SENSOR_EVENT = 0x8003
+
 # Input channel message ids.
 INPUT_EVENT = 0x8001
 INPUT_BINDING_REQUEST = 0x8002
@@ -74,6 +80,12 @@ FOCUS_NATIVE = 2
 FOCUS_PROJECTED_NO_INPUT = 4
 FOCUS_REASON_USER_SELECTION = 4
 SHUTDOWN_REASON_USER_SELECTION = 1
+SENSOR_NIGHT_MODE = 10
+SENSOR_DRIVING_STATUS = 13
+# A phone subscribes to the car's driving status and night mode before projecting. Some head units
+# keep the screen until it has: a 2019 Honda Civic (39101-TBA-A510) answered every focus request
+# with native focus while only video and input were open.
+PHONE_SENSORS = (SENSOR_DRIVING_STATUS, SENSOR_NIGHT_MODE)
 
 RESOLUTIONS = {1: (800, 480), 2: (1280, 720), 3: (1920, 1080)}
 # Named in errors and reports only: 1440p, 4K and portrait screens also offer 800x480, which is mandatory.
@@ -455,6 +467,12 @@ class Session:
           item["input_config"] = parse_input_config(one(fields, 4))
         except ValueError:
           item["input_config"] = InputConfig()
+      sensors = one(fields, 2)
+      if isinstance(sensors, bytes):
+        try:
+          item["sensors"] = [one(parse_fields(sensor), 1) for sensor in parse_fields(sensors).get(1, []) if isinstance(sensor, bytes)]
+        except ValueError:
+          item["sensors"] = []
       channels.append(item)
     # Everything but the channel list: make, model, year, software and, on newer units, headunit_info.
     head_unit = redact_head_unit(describe_fields({number: values for number, values in response.items() if number != 1}))
@@ -526,6 +544,7 @@ class ProjectionSession(Session):
     self.max_ack_seconds = 0.0
     self.config_ack_slack = 0  # codec-config messages a head unit may acknowledge like frames
     self.input_channel: int | None = None
+    self.sensor_channel: int | None = None
     self.input_events = 0
     self.touch: TouchMapper | None = None
     self.touch_events: deque[TouchEvent] = deque(maxlen=128)
@@ -540,6 +559,7 @@ class ProjectionSession(Session):
     self.mode = choose_video_mode(self.channels)
     self.open_video()
     self.open_input()
+    self.open_sensors()
     self.request_projection()
     return self.mode
 
@@ -601,6 +621,26 @@ class ProjectionSession(Session):
                  display_matched=(channel.get("display_id") or 0) == (video.get("display_id") or 0))
     except (TimeoutError, ValueError) as error:
       self.event("input_unavailable", error=str(error))
+
+  def open_sensors(self) -> None:
+    """Subscribe to driving status and night mode like a phone; failures are not fatal."""
+    channel = next((channel for channel in self.channels if "sensors" in channel), None)
+    if channel is None:
+      return  # the head unit has no sensor service
+    wanted = [sensor for sensor in PHONE_SENSORS if sensor in channel["sensors"]]
+    try:
+      self.send(channel["id"], MSG_CHANNEL_OPEN_REQUEST, field(1, 0) + field(2, channel["id"]), control=True)
+      opened = parse_fields(self.wait_for(channel["id"], MSG_CHANNEL_OPEN_RESPONSE, timeout=3.0))
+      if signed(one(opened, 1)) != 0:
+        raise ValueError("channel open rejected")
+      self.sensor_channel = channel["id"]
+      statuses = {}
+      for sensor in wanted:
+        self.send(channel["id"], SENSOR_START_REQUEST, field(1, sensor) + field(2, 0))
+        statuses[sensor] = signed(one(parse_fields(self.wait_for(channel["id"], SENSOR_START_RESPONSE, timeout=3.0)), 1))
+      self.event("sensors_opened", channel=channel["id"], offered=channel["sensors"], started=statuses)
+    except (TimeoutError, ValueError) as error:
+      self.event("sensors_unavailable", error=str(error))
 
   def request_projection(self) -> None:
     """Ask for display focus; the Mazda donor needed this, DHU grants it unsolicited."""
@@ -666,6 +706,9 @@ class ProjectionSession(Session):
         self.event("input_bound", status=signed(one(fields, 1, 0)))
       else:
         self.ignored("input_ignored", channel, kind, data)
+    elif channel == self.sensor_channel:
+      # Driving status and night mode updates; logged (rate-limited) for diagnosis, not acted on.
+      self.ignored("sensor_event" if kind == SENSOR_EVENT else "sensor_ignored", channel, kind, data)
     else:
       self.ignored("channel_ignored", channel, kind, data)
 

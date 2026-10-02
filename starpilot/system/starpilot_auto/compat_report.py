@@ -36,7 +36,7 @@ SDR_FIELDS = {"2": "car_make", "3": "car_model", "4": "car_year", "7": "head_uni
 HEAD_UNIT_INFO_FIELDS = {"1": "car_make", "2": "car_model", "3": "car_year", "5": "head_unit_make", "6": "head_unit_model",
                          "7": "head_unit_software_build", "8": "head_unit_software_version"}
 IGNORED_EVENTS = ("control_ignored", "channel_ignored", "video_ignored", "input_ignored", "unexpected_while_waiting",
-                  "handshake_ignored", "bootstrap_ignored")
+                  "handshake_ignored", "bootstrap_ignored", "sensor_ignored")
 
 
 def load_events(path: Path) -> list[dict]:

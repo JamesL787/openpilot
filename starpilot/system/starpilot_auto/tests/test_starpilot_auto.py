@@ -451,6 +451,26 @@ def test_session_projects_to_the_main_display_not_the_cluster(identity):
 
 
 
+def test_session_subscribes_to_driving_status_before_asking_for_the_screen(identity):
+  from openpilot.starpilot.system.starpilot_auto.tests.fake_head_unit import discovery_response
+  events = []
+  hu = FakeHeadUnit(identity, discovery=discovery_response(sensor_channel=7), sensor_channel=7, focus_needs_driving_status=True)
+  session = run_until_streaming(hu, identity, lambda name, **values: events.append((name, values)))
+  assert session.sensor_channel == 7 and 7 in hu.opened
+  assert hu.sensors_started == [13, 10], "driving status, then night mode, and nothing the phone does not use"
+  opened = next(values for name, values in events if name == "sensors_opened")
+  assert opened["started"] == {13: 0, 10: 0} and opened["offered"] == [1, 3, 7, 8, 10, 13, 21]
+  pump_until(session, lambda: any(name == "sensor_event" for name, _ in events))
+  finish(session, hu)
+
+
+def test_session_without_a_sensor_service_still_projects(identity):
+  hu = FakeHeadUnit(identity)
+  session = run_until_streaming(hu, identity)
+  assert session.sensor_channel is None and hu.sensors_started == []
+  finish(session, hu)
+
+
 def test_session_takes_touch_from_the_projected_display(identity):
   from openpilot.starpilot.system.starpilot_auto.tests.fake_head_unit import discovery_response
   hu = FakeHeadUnit(identity, discovery=discovery_response(cluster_channel=5, cluster_input_channel=6))
