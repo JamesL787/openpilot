@@ -1737,6 +1737,9 @@ than ≥ 13.5 m/s. Understating closing is the D-041 danger direction; the owner
 `ONPATH_ADOPT_RAIL_VREL_MPS` was a fixed −12.5 ("treated as railed", 1.0 inside the −13.5 rail). It is now
 `rail + 1.0` (`ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS`) = −11.0. Left at −12.5, a −12.0 rail would never count as railed for
 leadOnpath adoption, which would fail toward not adopting the lead. Approved by the owner 2026-10-02.
+`ONPATH_ADOPT_MIN_CLOSING_MPS` 2.0 and `ONPATH_ADOPT_RATE_TOL_MPS` 2.5 were evidenced in 1/64 units and now govern 1/72
+adoption, untuned (STATUS 199). In replay MIN_CLOSING decides three adoption flips, and RATE_TOL decides 284 t 2066.36
+(base rejected by 0.097 m/s: slope −1.413 vs −4.010 + 2.5; 1/72 adopts: −1.255 vs −3.507 + 2.5).
 
 Routes before 2026-10-01 published 1/64, so every m/s figure in the code comments and in this file measured on them
 (13.5 rails, −16.54, −19.4, …) is in 1/64 units: multiply by 64/72 for 1/72. From 2026-10-01 the units depend on

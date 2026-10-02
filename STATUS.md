@@ -10096,7 +10096,7 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **leadOnpath adoption (replay):** no adoption changes because of the rail clause. Rail-clause flips (−12.0 is
   railed against −11.0 but −13.5 was railed against −12.5 too) happen only on tracks that are not adopted either way.
   Adoption differs on 6 episodes: 280 t 799.45 (track 27, base adopts, vmean −2.04 → −1.81 crosses MIN_CLOSING 2.0) and
-  t 1910.10 (track 13, 1/72 adopts, rate check); 294 t 1657.52 (track 13, base adopts, MIN_CLOSING); 284 t 962.25 (track
+  t 1910.10 (track 13, 1/72 adopts; base window was young after a 0.33 s coast reset its history); 294 t 1657.52 (track 13, base adopts, MIN_CLOSING); 284 t 962.25 (track
   54, base adopts, MIN_CLOSING; disengaged), t 1520.11 (track 39, 1/72 adopts; disengaged), t 2066.36 (track 48, 1/72
   adopts; disengaged). Each is ≤ 0.5 s. The raw U11 is the same in both arms, so a raw rail (0 or 1728) cannot flip;
   "on rail" changes in the track table come from different coast / interval / assist outcomes on the published value.
@@ -10107,5 +10107,7 @@ Replay of the fixed code (base = the old law, same 10 routes):
   `_CLOSING_MARGIN_MPS` 3.0, `RANGE_VREL_CAM_XRATE_AGREE_MPS` 2.0 / `_MARGIN_MPS` 2.0, `NEWBORN_RANGE_CLOSING_VREL_TOL`
   3.0, `ONPATH_ADOPT_MIN_CLOSING_MPS` 2.0 / `_RATE_TOL_MPS` 2.5, `FAR_RAIL_MARGIN_MPS` 3.0 / `_MAX_SPEED_STDEV_MPS` 2.0,
   `FAR_RAIL_VREL_TOL_MPS` 0.05. Three replay adoption flips above are `ONPATH_ADOPT_MIN_CLOSING_MPS` meeting the
-  64/72 shrink.
+  64/72 shrink. The 284 t 2066.36 flip is `ONPATH_ADOPT_RATE_TOL_MPS` 2.5 deciding: the range slope must not exceed the
+  window mean + 2.5, i.e. −4.010 + 2.5 = −1.510 at 1/64 (slope −1.413, rejected by 0.097) and −3.507 + 2.5 = −1.007 at
+  1/72 (slope −1.255, adopted). RATE_TOL 2.5 is a 1/64-evidenced threshold that now governs 1/72 adoption, untuned.
 - **Still open:** a separate fit of the scale itself (the U10 census cannot fit it); the first drive at 1/72.
