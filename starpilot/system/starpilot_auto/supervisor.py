@@ -40,6 +40,7 @@ STABLE_SESSION_SECONDS = 30.0
 PEER_STOP_RETRY_SECONDS = 10.0
 FRAME_MAX_AGE = 0.5          # never send a UI frame older than this
 SOFTWARE_FPS = 15            # libx264 cadence; the hardware encoder runs at 30
+PREWARM_SECONDS = 12.0    # render from stream start so a real frame exists when the car grants focus (it takes the screen back after 3 s of a still card)
 UNAVAILABLE_AFTER = 1.0      # focused but no fresh UI frame for this long -> "unavailable" card; the Honda gives the screen back after 3 s without video
 SDP_SETTLE = (1.5, 2.2, 3.0)
 TCP_ATTEMPTS = 6
@@ -934,7 +935,7 @@ class Supervisor:
       session.check_progress()
       now = time.monotonic()
       wait_for_frame = True
-      if session.focused:
+      if session.focused or now - started < PREWARM_SECONDS:
         source.demand(1.0)
       else:
         source.release_demand()

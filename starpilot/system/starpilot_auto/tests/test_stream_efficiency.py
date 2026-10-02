@@ -307,18 +307,20 @@ def test_render_sampler_thread_samples_the_render_thread(tmp_path):
   assert "test_render_sampler_thread_samples_the_render_thread" in text
 
 
-@pytest.mark.parametrize("scenario", ["ready", "idle", "blocked", "unfocused", "input_burst"])
+@pytest.mark.parametrize("scenario", ["ready", "idle", "blocked", "unfocused", "prewarm", "input_burst"])
 @pytest.mark.parametrize("source_view", ["car", "mirror", "synthetic"])
 def test_stream_waits_only_when_needed_and_preserves_flow_control(monkeypatch, scenario, source_view):
   clock = [100.0]
   monkeypatch.setattr(supervisor.time, "monotonic", lambda: clock[0])
   monkeypatch.setattr(supervisor.time, "sleep", lambda _: pytest.fail("stream must wait on input, not sleep"))
+  if scenario == "unfocused":
+    monkeypatch.setattr(supervisor, "PREWARM_SECONDS", 0.0)
   stop = threading.Event()
   waits, sent, demands, touches = [], [], [], []
   pending_input = [40 if scenario == "input_burst" else 0]
 
   class Session:
-    focused = scenario != "unfocused"
+    focused = scenario not in ("unfocused", "prewarm")
     needs_keyframe = True
     touch_events = []
     blocked = scenario == "blocked"
@@ -402,6 +404,9 @@ def test_stream_waits_only_when_needed_and_preserves_flow_control(monkeypatch, s
     assert waits[:2] == [0.05, 0.05]
     assert demands[0] is (scenario == "blocked")
     assert demands[-1]
+  elif scenario == "prewarm":
+    assert waits[:2] == [0.05, 0.05]
+    assert demands[0], "the renderer must start before the car grants focus so a real frame is ready"
   elif scenario == "input_burst":
     assert len(touches) == 40
     assert len(waits) == 41  # video still progresses after each bounded batch
