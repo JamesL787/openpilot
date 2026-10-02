@@ -84,6 +84,36 @@ def test_vision_match_flat_track_still_rejected():
                                          y_std_scale=1.0, y_floor=1.0, honda_bosch_a=True)
 
 
+KW = dict(dist_scale=0.25, dist_floor=5.0, vel_limit=10.0, y_std_scale=1.0, y_floor=1.0)
+
+
+def test_newborn_lead_needs_closing():
+  # 000002ae 26 track 2: clean -9 m/s fit at 70-74 m, vEgo 22.1 (slope above -0.5 * vEgo), camera agrees on speed.
+  track = make_track(linear(73.9, 69.3, 10), -9.0, v_ego=22.1)
+  assert track.cnt == 0 and not radard.young_range_genuinely_closing(track, 22.1)
+  lead = vision_lead(track.dRel, 13.1)
+  assert not radard.track_matches_vision(track, lead, 22.1, honda_bosch_a=True, **KW)
+  assert radard.track_matches_vision(track, lead, 22.1, honda_bosch_a=False, **KW)
+  radard.NEWBORN_LEAD_NEEDS_CLOSING = False
+  try:
+    assert radard.track_matches_vision(track, lead, 22.1, honda_bosch_a=True, **KW)
+  finally:
+    radard.NEWBORN_LEAD_NEEDS_CLOSING = True
+
+
+def test_three_sweep_newborn_is_not_lead():
+  # 00000294 3 track 48: 3 sweeps at -vEgo is too young to prove anything, so it is not a lead.
+  track = make_track(linear(91.9, 89.4, 3), -17.0, v_ego=17.0)
+  assert not radard.track_matches_vision(track, vision_lead(track.dRel, 0.0), 17.0, honda_bosch_a=True, **KW)
+
+
+def test_newborn_lead_gate_ignores_measured_tracks():
+  track = make_track(linear(73.9, 69.3, 10), -9.0, v_ego=22.1)
+  track.update(69.0, 0.0, -9.0, 13.1, True, measurement_update=True, t_now=200.0)
+  assert track.cnt > 0
+  assert radard.track_matches_vision(track, vision_lead(track.dRel, 13.1), 22.1, honda_bosch_a=True, **KW)
+
+
 def _newborn(ranges, v_rel, v_ego=19.8, follow=True, t0=100.0):
   track = radard.Track(39, v_rel + v_ego, radard.KalmanParams(DT))
   for i, d in enumerate(ranges):
