@@ -15,7 +15,8 @@ from openpilot.common.simple_kalman import KF1D
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 from opendbc.car.honda.radar_interface import (BOSCH_A_DIRECT_VREL_CENTER_RAW, BOSCH_A_DIRECT_VREL_MIN_RAW,
                                                BOSCH_A_DIRECT_VREL_SCALE_MPS, BOSCH_A_FREQ_HZ,
-                                               bosch_a_newborn_leads_enabled)
+                                               bosch_a_newborn_leads_enabled, bosch_a_u11_scale72_enabled,
+                                               bosch_a_u11_scale_mps)
 from opendbc.car.honda.values import HONDA_BOSCH_A
 
 
@@ -173,11 +174,13 @@ RANGE_VREL_ASSIST_MAX_BACKWARD_LEAD_MPS = 5.0
 # replayed rail approaches as the closing rate shrank, leaving the published vRel up to 1.8 m/s
 # (236 12:54) and 1.6 m/s (237 10:00) further from a centred 2 s range difference than the native
 # rail was.
-# D-074: derived from the radar_interface decode, so it is the 1/72 rail, -12.0 m/s. The -13.50 / -13.5 rail values
-# quoted in this file come from routes logged under the old 1/64 decode (x 64/72 for today's units); thresholds were
-# not re-tuned. Routes before 2026-10-01 published 1/64; from then on the units follow BoschAU11Scale72 in the route's
-# initData, not the date.
-BOSCH_A_U11_LOW_RAIL_MPS = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) * BOSCH_A_DIRECT_VREL_SCALE_MPS
+# D-074: the U11 scale radard assumes must match the one radar_interface decoded with. These two module values are
+# the 1/72 ones (-12.0 m/s rail) unless main() finds BoschAU11Scale72 stored OFF and calls set_bosch_a_u11_scale72(False),
+# which restores the 1/64 ones (-13.5). The -13.50 / -13.5 rail values quoted in this file come from routes logged
+# under the old 1/64 decode (x 64/72 for 1/72 units); thresholds were not re-tuned. Routes before 2026-10-01 published
+# 1/64; from then on the units follow BoschAU11Scale72 in the route's initData, not the date.
+BOSCH_A_U11_SCALE_MPS = BOSCH_A_DIRECT_VREL_SCALE_MPS
+BOSCH_A_U11_LOW_RAIL_MPS = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) * BOSCH_A_U11_SCALE_MPS
 
 # --- Rail fast path (2026-09-26, STATUS 130; extends D-053, rides RANGE_VREL_ASSIST).
 # REPLAY evidence only, open loop. 00000271 9:26 (BM0): a near-stopped car published at 118.8 m
@@ -486,7 +489,8 @@ ONPATH_ADOPT_MAX_RANGE_RESIDUAL_M = 1.0
 ONPATH_ADOPT_RATE_TOL_MPS = 2.5
 # Mean U11 at or below ONPATH_ADOPT_RAIL_VREL_MPS is treated as railed: 1.0 m/s inside the low rail. It was a fixed
 # -12.5 against the 1/64 rail of -13.5; D-074 (owner, 2026-10-02) keeps the 1.0 margin and ties the value to the rail,
-# -11.0 at 1/72. A fixed -12.5 would sit outside the -12.0 rail and silently stop treating any railed track as railed.
+# -11.0 at 1/72 (-12.5 again with BoschAU11Scale72 OFF). A fixed -12.5 would sit outside the -12.0 rail and silently
+# stop treating any railed track as railed.
 ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS = 1.0
 ONPATH_ADOPT_RAIL_VREL_MPS = BOSCH_A_U11_LOW_RAIL_MPS + ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS
 ONPATH_ADOPT_MAX_D_REL_M = 120.0
@@ -547,6 +551,16 @@ HONDA_BOSCH_A_LOW_SPEED_MIN_COUNT = 3
 HONDA_BOSCH_A_CHALLENGER_STALE_CYCLES = 2
 HONDA_BOSCH_A_GROSS_DISTANCE_STALE_CYCLES = 3
 HONDA_BOSCH_A_GROSS_DISTANCE_M = 25.0
+
+
+def set_bosch_a_u11_scale72(enabled: bool) -> None:
+  """D-074: point radard's U11-scale-derived values at the scale radar_interface decodes with. Called once in main().
+  ON is the module default (1/72); OFF restores the 1/64 values exactly. Only the rail, the half-count built from the
+  scale and the on-path rail threshold move."""
+  global BOSCH_A_U11_SCALE_MPS, BOSCH_A_U11_LOW_RAIL_MPS, ONPATH_ADOPT_RAIL_VREL_MPS
+  BOSCH_A_U11_SCALE_MPS = bosch_a_u11_scale_mps(enabled)
+  BOSCH_A_U11_LOW_RAIL_MPS = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) * BOSCH_A_U11_SCALE_MPS
+  ONPATH_ADOPT_RAIL_VREL_MPS = BOSCH_A_U11_LOW_RAIL_MPS + ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS
 
 
 def set_bosch_a_newborn_leads(enabled: bool) -> None:
@@ -1017,7 +1031,7 @@ class Track:
       return
 
     # Quantized U11 sits exactly on the rail value, so half a step of tolerance is exact.
-    on_rail = self.vRel <= BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_DIRECT_VREL_SCALE_MPS / 2
+    on_rail = self.vRel <= BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_U11_SCALE_MPS / 2
     rail_fast = RANGE_VREL_RAIL_FAST and on_rail
     # Clamped: a rail minimum above the deque length could never be reached.
     self._range_long_min_samples = (min(RANGE_VREL_RAIL_LONG_MIN_SAMPLES, RANGE_VREL_LONG_SAMPLES)
@@ -1122,7 +1136,7 @@ class Track:
   def _update_rail_range_inconsistent(self) -> None:
     """ADJACENT_RAIL_GATE latch. Rail-agnostic here; only Bosch-A callers act on it (a rail-valued vRel is a
     real reading on other radars)."""
-    if self.vRel > BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_DIRECT_VREL_SCALE_MPS / 2:
+    if self.vRel > BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_U11_SCALE_MPS / 2:
       self.rail_range_count = 0
       self.rail_range_inconsistent = False
       return
@@ -1836,6 +1850,9 @@ def main() -> None:
 
   g90_radar_filter = CP.brand == "hyundai" and CP.carFingerprint == "GENESIS_G90"
   honda_bosch_a_radar = is_bosch_a_radar_car(CP)
+  # D-074: same param, read once, as radar_interface reads it in card; a restart is needed after a change. Default ON
+  # (1/72); a non-Bosch-A car keeps the module defaults, which nothing outside Bosch-A reads.
+  set_bosch_a_u11_scale72(not honda_bosch_a_radar or bosch_a_u11_scale72_enabled())
   # BoschANewbornLeads: same param radar_interface reads once in card; a restart is needed after a change.
   set_bosch_a_newborn_leads(honda_bosch_a_radar and bosch_a_newborn_leads_enabled())
   RD = RadarD(radar_ts=radar_ts, delay=CP.radarDelay, g90_radar_filter=g90_radar_filter,

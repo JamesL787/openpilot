@@ -130,9 +130,10 @@ BOSCH_A_DIRECT_VREL_MIN_RAW = 0
 BOSCH_A_DIRECT_VREL_MAX_RAW = 1728
 BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 # D-074 (ACCEPTED by the owner 2026-10-02; static and replay evidence only, no road A/B): U11 is 1/72 m/s per
-# count, the only scale. Routes before 2026-10-01 published 1/64, so every m/s figure in this file and in radard
-# measured on them (13.5 rails, -16.54, -19.4 ...) is in 1/64 units: multiply by 64/72 for 1/72. From 2026-10-01 the
-# units depend on BoschAU11Scale72 in that route's initData (ON = 1/72); do not infer them from the date.
+# count by default; BoschAU11Scale72 OFF switches back to 1/64 (see BOSCH_A_U11_SCALE72_PARAM below). Routes before
+# 2026-10-01 published 1/64, so every m/s figure in this file and in radard measured on them (13.5 rails, -16.54,
+# -19.4 ...) is in 1/64 units: multiply by 64/72 for 1/72. From 2026-10-01 the units depend on
+# BoschAU11Scale72 in that route's initData (ON = 1/72); do not infer them from the date.
 #   * static: Bosch-radar-partner camera firmware (36161-TLA-A070; same-family TGG-A080, TGH-A040,
 #     TFJ/TGG/TGL-G070) formats vRel as round((v + 12) / 0x3c638e45), and 0x3c638e45 is 1/72 as an f32.
 #     (v + 12) * 72 spans raw 0..1728, the observed rails, centre 864: the field is +-12.0 m/s by design.
@@ -150,6 +151,35 @@ BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 # a rounded 1/72 differs from it by one double ulp on 598 of the 1729 raws (none after the float32 publish).
 BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS = 72
 BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
+# D-074 switch back (owner, 2026-10-02, after Job's range check came back dependent on range band; see DECISIONS):
+# BoschAU11Scale72 stays as a toggle, default ON = 1/72. OFF decodes at the old 1/64 everywhere the scale is used --
+# the published vRel, the rails (+-13.5), the D-063 rail interval, the NC-at-rail test and radard's rail constants
+# (radard reads the same param) -- byte for byte as before D-074. Read once at startup; a restart is needed, so the
+# units never change inside one track history.
+BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS_1_64 = 64
+BOSCH_A_U11_SCALE72_PARAM = "BoschAU11Scale72"
+
+
+def bosch_a_u11_counts_per_mps(scale72: bool) -> int:
+  """D-074: the U11 counts per m/s the toggle selects: 72 when ON, 64 when OFF."""
+  return BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS if scale72 else BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS_1_64
+
+
+def bosch_a_u11_scale_mps(scale72: bool) -> float:
+  """D-074: the U11 m/s per count the toggle selects. ON returns BOSCH_A_DIRECT_VREL_SCALE_MPS itself."""
+  return BOSCH_A_DIRECT_VREL_SCALE_MPS if scale72 else 1.0 / BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS_1_64
+
+
+def bosch_a_u11_scale72_enabled() -> bool:
+  """BoschAU11Scale72, read once at startup. Default ON: only a stored OFF selects 1/64. An unset key reads its
+  default ("1"), and any failure, including a params_pyx.so that predates the key, means 1/72."""
+  try:
+    from openpilot.common.params import Params
+    return Params().get(BOSCH_A_U11_SCALE72_PARAM, return_default=True) is not False
+  except Exception:
+    return True
+
+
 # The domain endpoints are SATURATION RAILS: at raw 0 or 1728 the true |vRel| is >= 12.0 m/s (13.5 in the 1/64
 # units the evidence below was logged in) and the exact value is not recoverable from this field. A rail is therefore a BOUND, not an unknown,
 # and it must still be published.
@@ -452,12 +482,14 @@ def _bosch_a_newborn_vrel(run: list, v_ego: float | None) -> float | None:
 
 
 def _bosch_a_direct_vrel(raw_value: int | float | None,
-                         uncertainty_raw: int | float | None = None) -> float | None:
+                         uncertainty_raw: int | float | None = None,
+                         counts_per_mps: int = BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS) -> float | None:
   """Decode the capture-validated AUX relative-velocity candidate.
 
   None means that AUX was absent/invalid and the caller should use the existing fallback policy. The [0, 1728]
   active domain is deliberately enforced here because raw values above the observed 1728 rail (+12.0 m/s) have
-  not appeared on active objects; 0x7FE is the observed inactive sentinel.
+  not appeared on active objects; 0x7FE is the observed inactive sentinel. `counts_per_mps` is 72, or 64 with
+  BoschAU11Scale72 OFF (D-074); the raw domain and sentinel are the same at both.
   """
   if raw_value is None:
     return None
@@ -470,7 +502,7 @@ def _bosch_a_direct_vrel(raw_value: int | float | None,
   # conservative threshold is evidence-backed tuning, not a recovered firmware validity rule.
   if uncertainty_raw is not None and int(uncertainty_raw) > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW:
     return None
-  return (raw - BOSCH_A_DIRECT_VREL_CENTER_RAW) / BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
+  return (raw - BOSCH_A_DIRECT_VREL_CENTER_RAW) / counts_per_mps
 
 
 def _bosch_a_range_ratio(raw_value: int | float | None) -> float | None:
@@ -490,10 +522,12 @@ def _bosch_a_range_ratio_vrel(raw_value: int | float | None, d_rel: float, dt: f
   return d_rel * (1.0 - ratio) / dt
 
 
-def _bosch_a_direct_vrel_interval(direct_vrel: float, exact: bool = False) -> tuple[float, float]:
-  """D-063: the vRel interval a decoded U11 vouches for. A rail is a one-sided bound, anything else exact."""
-  low_rail = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) / BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
-  high_rail = (BOSCH_A_DIRECT_VREL_MAX_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) / BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
+def _bosch_a_direct_vrel_interval(direct_vrel: float, exact: bool = False,
+                                  counts_per_mps: int = BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS) -> tuple[float, float]:
+  """D-063: the vRel interval a decoded U11 vouches for. A rail is a one-sided bound, anything else exact.
+  `counts_per_mps` must be the one the U11 was decoded with (D-074), so the rail test matches the decode."""
+  low_rail = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) / counts_per_mps
+  high_rail = (BOSCH_A_DIRECT_VREL_MAX_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) / counts_per_mps
   if exact:
     return direct_vrel, direct_vrel
   if direct_vrel <= low_rail:
@@ -528,7 +562,8 @@ def _bosch_a_distance_to_interval(value: float, interval: tuple[float, float]) -
 
 def _bosch_a_range_innovation_rejected(baseline: tuple[float, float], now_s: float, dRel: float,
                                        direct_vrel: float | None, ratio: float | None, degraded: bool,
-                                       exact: bool = False) -> bool:
+                                       exact: bool = False,
+                                       counts_per_mps: int = BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS) -> bool:
   """Does this range contradict one (time, range) baseline? See the D-054 comment at the call site."""
   previous_time, previous_range = baseline
   dt = now_s - previous_time
@@ -536,7 +571,7 @@ def _bosch_a_range_innovation_rejected(baseline: tuple[float, float], now_s: flo
     return True
   residuals_m = []
   if direct_vrel is not None:
-    low, high = _bosch_a_direct_vrel_interval(direct_vrel, exact)
+    low, high = _bosch_a_direct_vrel_interval(direct_vrel, exact, counts_per_mps)
     residuals_m.append(_bosch_a_distance_to_interval(dRel, (previous_range + low * dt, previous_range + high * dt)))
   if ratio is not None:
     residuals_m.append(abs(previous_range - dRel * ratio))
@@ -555,7 +590,8 @@ def _bosch_a_measurement_degraded(range_sigma_raw: int, existence_raw: int,
   return range_quality_bad or velocity_quality_bad
 
 
-def _bosch_a_lasting_clean_step(run: list, exact: bool = False) -> bool:
+def _bosch_a_lasting_clean_step(run: list, exact: bool = False,
+                                counts_per_mps: int = BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS) -> bool:
   """D-057: True when the trailing window of a range-rejected run is long, clean and moving at the U11 rate."""
   if len(run) < BOSCH_A_REANCHOR_WINDOW or run[-1][0] - run[0][0] < BOSCH_A_REANCHOR_MIN_SPAN_S:
     return False
@@ -574,7 +610,8 @@ def _bosch_a_lasting_clean_step(run: list, exact: bool = False) -> bool:
   rms = (sum((d - (d_mean + rate * (t - t_mean))) ** 2 for t, d in zip(ts, ds, strict=True)) / n) ** 0.5
   u11 = sorted(w[2] for w in window)[n // 2]
   return (rms <= BOSCH_A_REANCHOR_MAX_RMS_M and
-          _bosch_a_distance_to_interval(rate, _bosch_a_direct_vrel_interval(u11, exact)) <= BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS)
+          _bosch_a_distance_to_interval(rate, _bosch_a_direct_vrel_interval(u11, exact, counts_per_mps)) <=
+          BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS)
 
 
 def _bosch_a_fresh_range_rate(run: list) -> float | None:
@@ -678,6 +715,8 @@ class RadarInterface(RadarInterfaceBase):
       self._last_trigger_nanos = -1
       self.rail_interval = BOSCH_A_RAIL_INTERVAL
       self.coast_range_bound = BOSCH_A_COAST_RANGE_BOUND
+      # D-074: U11 counts per m/s, 72 unless BoschAU11Scale72 is stored OFF (then 64). Read once; a restart is needed.
+      self.u11_counts_per_mps = bosch_a_u11_counts_per_mps(bosch_a_u11_scale72_enabled())
       # BOSCH_A_NEWBORN_RANGE_PUBLISH, driven by BoschANewbornLeads (default off). Read once; a restart is needed.
       self.newborn_range_publish = BOSCH_A_NEWBORN_RANGE_PUBLISH or bosch_a_newborn_leads_enabled()
     else:
@@ -931,8 +970,8 @@ class RadarInterface(RadarInterfaceBase):
       now_s = now * 1e-9
       direct_vrel_raw = observation['direct_vrel_raw']
       direct_vrel_uncertainty_raw = observation['direct_vrel_uncertainty_raw']
-      direct_vrel = _bosch_a_direct_vrel(direct_vrel_raw, direct_vrel_uncertainty_raw)
-      live_direct_vrel = _bosch_a_direct_vrel(direct_vrel_raw)
+      direct_vrel = _bosch_a_direct_vrel(direct_vrel_raw, direct_vrel_uncertainty_raw, self.u11_counts_per_mps)
+      live_direct_vrel = _bosch_a_direct_vrel(direct_vrel_raw, counts_per_mps=self.u11_counts_per_mps)
       range_ratio_raw = observation['range_ratio_raw']
 
       # A live U11 rejected solely by the conservative U10 qualification threshold is neither an
@@ -1006,19 +1045,22 @@ class RadarInterface(RadarInterfaceBase):
           # rejected run plus this sweep moves at a railed speed (BOSCH_A_RAIL_INTERVAL_EXACT_WHEN_DEGRADED).
           run_rate = _bosch_a_fresh_range_rate(_bosch_a_trailing_fit_window(track.rejected_run + [(now_s, dRel)]))
           exact_gate = (run_rate is None or direct_vrel is None or
-                        _bosch_a_distance_to_interval(run_rate, _bosch_a_direct_vrel_interval(direct_vrel)) >
+                        _bosch_a_distance_to_interval(run_rate, _bosch_a_direct_vrel_interval(direct_vrel, counts_per_mps=self.u11_counts_per_mps)) >
                         BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS)
-        range_rejected = all(_bosch_a_range_innovation_rejected(baseline, now_s, dRel, direct_vrel, ratio, degraded, exact=exact_gate)
+        range_rejected = all(_bosch_a_range_innovation_rejected(baseline, now_s, dRel, direct_vrel, ratio, degraded, exact=exact_gate,
+                                                                counts_per_mps=self.u11_counts_per_mps)
                              for baseline in baselines)
         rail_admitted = not exact_gate and not range_rejected and all(
-          _bosch_a_range_innovation_rejected(baseline, now_s, dRel, direct_vrel, ratio, degraded, exact=True)
+          _bosch_a_range_innovation_rejected(baseline, now_s, dRel, direct_vrel, ratio, degraded, exact=True,
+                                             counts_per_mps=self.u11_counts_per_mps)
           for baseline in baselines)
 
       if range_rejected:
         track.inconsistent_run.clear()
         track.rejected_run.append((now_s, dRel, direct_vrel, degraded))
-        if _bosch_a_lasting_clean_step(track.rejected_run, exact=exact_gate):
-          rail_admitted = not exact_gate and not _bosch_a_lasting_clean_step(track.rejected_run, exact=True)
+        if _bosch_a_lasting_clean_step(track.rejected_run, exact=exact_gate, counts_per_mps=self.u11_counts_per_mps):
+          rail_admitted = not exact_gate and not _bosch_a_lasting_clean_step(track.rejected_run, exact=True,
+                                                                              counts_per_mps=self.u11_counts_per_mps)
           # D-057: the step has outlasted every returning excursion measured, cleanly and at the U11
           # rate. Re-root the accepted history and the anchor on it and gate this sweep as passed.
           recent = track.rejected_run[-BOSCH_A_VREL_RATE_CHECK_MIN_SAMPLES:]
@@ -1100,7 +1142,7 @@ class RadarInterface(RadarInterfaceBase):
       # and total error halved; 00000241 and 0000024f leads went the other way, by over-closing (STATUS 70).
       if vrel_inconsistent:
         track.inconsistent_run.append((now_s, dRel, direct_vrel, degraded))
-        if _bosch_a_lasting_clean_step(track.inconsistent_run):
+        if _bosch_a_lasting_clean_step(track.inconsistent_run, counts_per_mps=self.u11_counts_per_mps):
           recent = track.inconsistent_run[-BOSCH_A_VREL_RATE_CHECK_MIN_SAMPLES:]
           track.samples.clear()
           track.samples.extend((t, d) for t, d, _, _ in recent[:-1])
@@ -1316,7 +1358,7 @@ class RadarInterface(RadarInterfaceBase):
 
   def _bosch_a_nc_rail_vrel(self, track, observation, direct_vrel, vrel, d_rel, y_rel, now):
     """NC-at-rail (see BOSCH_A_NC_RAIL_VREL): a low-rail U11 in our lane replaced by NORMALIZED_CLOSING when the range agrees."""
-    low_rail = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) / BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
+    low_rail = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) / self.u11_counts_per_mps
     if direct_vrel is None or direct_vrel > low_rail + 1e-6 or abs(y_rel) > BOSCH_A_RAIL_INTERVAL_MAX_Y_M:
       track.nc_vrel = None
       track.nc_vrel_nanos = None
