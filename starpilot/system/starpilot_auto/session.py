@@ -32,6 +32,7 @@ MAX_MESSAGE = 2 * 1024 * 1024
 PHONE_MAX_VERSION = (6, 1)  # protocol version Starpilot Auto 17.6 reports to newer head units
 MAX_FRAGMENT_BYTES = 2 * MAX_MESSAGE
 FRAGMENT_SIZE = 16000
+TRACE_SECONDS, TRACE_MAX_EVENTS = 6.0, 80
 
 FLAG_FIRST = 1
 FLAG_LAST = 2
@@ -235,6 +236,8 @@ class Session:
     self.ignored_counts: dict[tuple[str, int, int], int] = {}
     self.bytes_sent = 0
     self.bytes_received = 0
+    self.trace_until = 0.0  # diagnostic window after a focus grant: log every message each way
+    self.trace_count = 0
 
   @staticmethod
   def _timeout(value: float) -> float:
@@ -246,6 +249,13 @@ class Session:
   def event(self, name: str, **values) -> None:
     if self._log is not None:
       self._log(name, **values)
+
+  def trace(self, direction: str, channel: int, kind: int, data: bytes) -> None:
+    """Diagnostic: every message in the TRACE_SECONDS after a focus grant (the Civic drops USB ~3 s into it)."""
+    if time.monotonic() < self.trace_until and self.trace_count < TRACE_MAX_EVENTS:
+      self.trace_count += 1
+      self.event("trace_" + direction, channel=channel, kind=kind, bytes=len(data), head=bytes(data[:24]).hex(),
+                 ms=round((self.trace_until - TRACE_SECONDS - time.monotonic()) * -1000))
 
   def ignored(self, name: str, channel: int, kind: int, data: bytes, **values) -> None:
     """Log a message this side does not act on, rate-limited per (event, channel, kind)."""
@@ -263,6 +273,7 @@ class Session:
     data = struct.pack(">H", kind) + body
     if len(data) > MAX_MESSAGE:
       raise ValueError("Message exceeds size limit")
+    self.trace("tx", channel, kind, body)
     deadline = time.monotonic() + self.send_timeout
     timed_peer = hasattr(self.peer, "gettimeout") and hasattr(self.peer, "settimeout")
     previous_timeout = self.peer.gettimeout() if timed_peer else None
@@ -744,6 +755,7 @@ class ProjectionSession(Session):
     except ValueError:
       fields = {}  # non-protobuf payload on a channel this sender never opened
     mode = self.mode
+    self.trace("rx", channel, kind, data)
     if channel == 0:
       if kind == MSG_PING_REQUEST:
         self.send(0, MSG_PING_RESPONSE, field(1, one(fields, 1, 0)))
@@ -804,6 +816,7 @@ class ProjectionSession(Session):
       self.media_started = True
       self.needs_keyframe = True
       self.focus_epoch += 1
+      self.trace_until, self.trace_count = time.monotonic() + TRACE_SECONDS, 0
       self.send(self.mode.channel, AV_START_INDICATION, field(1, self.session_id) + field(2, self.mode.config_index))
 
   def _handle_ack(self, sid, count: int) -> None:
