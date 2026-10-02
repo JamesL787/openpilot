@@ -26,6 +26,10 @@ REMOTE_SYNC_SCOPES = ("galaxy", LEGACY_GALAXY_PREFIX.lower())
 REMOTE_TOGGLE_CHECK_INTERVAL_ACTIVE = 10
 REMOTE_TOGGLE_CHECK_INTERVAL_IDLE = 60
 
+# D-074: the one-time BoschAU11Scale72 migration must not be undone (or re-armed) by a server copy taken before it
+# ran. Sync only: Galaxy editing, reset, backups and profiles still use the shared EXCLUDED_KEYS.
+DEVICE_SYNC_EXCLUDED_KEYS = EXCLUDED_KEYS | {"BoschAU11Scale72", "BoschAU11Scale72Migrated"}
+
 
 def _legacy_bool(params, key):
   try:
@@ -107,7 +111,7 @@ def check_toggles(started, params, sm=None, boot_run=False):
       return galaxy_active
 
     for key, value in toggles.items():
-      if key in EXCLUDED_KEYS:
+      if key in DEVICE_SYNC_EXCLUDED_KEYS:
         continue
       try:
         params.check_key(key)
@@ -195,7 +199,7 @@ def upload_toggles(params):
     toggles = {}
     for key in params.all_keys():
       key_str = key.decode("utf-8") if isinstance(key, bytes) else str(key)
-      if key_str in EXCLUDED_KEYS:
+      if key_str in DEVICE_SYNC_EXCLUDED_KEYS:
         continue
       if params.get_key_flag(key) & ParamKeyFlag.DONT_LOG:
         continue

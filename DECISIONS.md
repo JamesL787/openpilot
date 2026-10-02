@@ -1803,8 +1803,17 @@ were deliberately left as they are (listed in STATUS item 199).
   ON, and unreadable params also mean ON.
 - `ONPATH_ADOPT_MIN_CLOSING_MPS` 2.0 and `ONPATH_ADOPT_RATE_TOL_MPS` 2.5 are evidenced only at 1/64 and govern 1/72
   adoption untuned (STATUS 199).
-- Devices that ran this branch before 2026-10-02 had the old default ("0", OFF) written at boot. They stay at 1/64
-  until the switch is turned on; no migration was added. Routes 000002ad and 000002ae show it ON on Peter's car.
+- Devices that ran this branch before 2026-10-02 had the old default ("0", OFF) written at boot. Routes 000002ad and
+  000002ae show it ON on Peter's car.
+- Migration: approved by the owner (Peter, 2026-10-02). It is a one-shot migration under `BoschAU11Scale72Migrated`:
+  `migrate_bosch_a_u11_scale72` (starpilot_variables.py), called in manager `manager_init()` before the params-cache
+  sync and before any process starts, writes the switch ON and then sets the flag. A deliberate OFF made before the
+  migration, which only applied between Oct 1 and the update, is overwritten once; an OFF made after it stays.
+- Galaxy server sync (`device_syncd`) skips `BoschAU11Scale72` and `BoschAU11Scale72Migrated` both ways
+  (`DEVICE_SYNC_EXCLUDED_KEYS`), so a server copy taken before the migration cannot undo it. The shared `EXCLUDED_KEYS`
+  is unchanged, so the switch stays editable in Galaxy and in reset, backups and profiles.
+- A manual restore (device toggle backup, Galaxy restore, profile load) that brings back a stored "0" is the user's
+  choice and is left as is.
 - Still open: the cause of the band dependence, a separate fit of the scale itself, and the first drive at 1/72.
 
 ## D-075 — PROPOSED (toggle OFF): `BoschANewbornLeads` publishes newborn Bosch-A points early, leads only on proven range closing

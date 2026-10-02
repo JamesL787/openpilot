@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 from openpilot.starpilot.common import starpilot_variables as spv
@@ -400,3 +401,49 @@ def test_honda_pid_gain_scales_reach_the_toggles(monkeypatch, tmp_path):
   assert toggles.car_make == "honda"
   assert toggles.honda_lateral_pid_kp_scale == 0.65
   assert toggles.honda_lateral_pid_ki_scale == 3.07
+
+
+def test_bosch_a_u11_scale72_migration_turns_stored_off_on_once():
+  params = _FakeParams(bools={"BoschAU11Scale72": False})
+
+  assert spv.migrate_bosch_a_u11_scale72(params) is True
+  assert params.bools == {"BoschAU11Scale72": True, spv.BOSCH_A_U11_SCALE72_MIGRATION_KEY: True}
+
+  assert spv.migrate_bosch_a_u11_scale72(params) is False
+  assert params.bools == {"BoschAU11Scale72": True, spv.BOSCH_A_U11_SCALE72_MIGRATION_KEY: True}
+
+
+def test_bosch_a_u11_scale72_migration_keeps_a_later_user_off():
+  params = _FakeParams(bools={"BoschAU11Scale72": False, spv.BOSCH_A_U11_SCALE72_MIGRATION_KEY: True})
+
+  assert spv.migrate_bosch_a_u11_scale72(params) is False
+  assert params.bools == {"BoschAU11Scale72": False, spv.BOSCH_A_U11_SCALE72_MIGRATION_KEY: True}
+
+
+def test_bosch_a_u11_scale72_migration_writes_default_when_never_stored():
+  params = _FakeParams()
+
+  assert spv.migrate_bosch_a_u11_scale72(params) is True
+  assert params.bools == {"BoschAU11Scale72": True, spv.BOSCH_A_U11_SCALE72_MIGRATION_KEY: True}
+
+
+def test_bosch_a_u11_scale72_migration_writes_toggle_before_flag():
+  # A crash between the two writes must repeat the migration, not skip it.
+  order = []
+
+  class _Recording(_FakeParams):
+    def put_bool(self, key, value):
+      order.append(key)
+      super().put_bool(key, value)
+
+  spv.migrate_bosch_a_u11_scale72(_Recording(bools={"BoschAU11Scale72": False}))
+  assert order == ["BoschAU11Scale72", spv.BOSCH_A_U11_SCALE72_MIGRATION_KEY]
+
+
+def test_bosch_a_u11_scale72_migration_runs_in_manager_init_before_cache_sync_and_processes():
+  # card and radard read BoschAU11Scale72 once when they start; manager_thread() starts them after manager_init().
+  manager = (Path(__file__).resolve().parents[3] / "system/manager/manager.py").read_text(encoding="utf-8")
+  init = manager[manager.index("def manager_init() -> None:"):manager.index("def manager_cleanup() -> None:")]
+  assert init.index("migrate_bosch_a_u11_scale72(params)") < init.index("# set unset params to their default value")
+  main = manager[manager.index("def main() -> None:"):]
+  assert main.index("manager_init()") < main.index("manager_thread()")

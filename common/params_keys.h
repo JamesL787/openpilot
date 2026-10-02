@@ -390,6 +390,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // 1/64 (rails +-13.5). Static and replay evidence, limited road evidence. Read once at startup in
     // honda/radar_interface.py and radard.py.
     {"BoschAU11Scale72", {PERSISTENT, BOOL, "1", "1", 3}},
+    // One-shot flag for migrate_bosch_a_u11_scale72 (starpilot_variables.py). Not a UI setting.
+    {"BoschAU11Scale72Migrated", {PERSISTENT, BOOL, "0", "0"}},
     // TEST, default OFF. Bosch-A only. Newborn radar points: publish young high-u10 closing targets on their range
     // fit (radar_interface BOSCH_A_NEWBORN_RANGE_PUBLISH) plus radard's NEWBORN_* switches. Replay evidence only.
     // Read once at startup in honda/radar_interface.py and radard.py.

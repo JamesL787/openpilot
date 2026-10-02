@@ -211,6 +211,7 @@ CANCEL_BUTTON_MAPPINGS = (
 
 AOL_LKAS_MIGRATION_KEY = "AOLLKASMigratedToButtonControl"
 FORD_LKAS_MIGRATION_KEY = "FordLKASButtonControlMigrated"
+BOSCH_A_U11_SCALE72_MIGRATION_KEY = "BoschAU11Scale72Migrated"
 
 
 def sync_reboot_marker(marker_path: Path, enabled: bool, params: Params) -> bool:
@@ -457,6 +458,19 @@ def migrate_aol_lkas_to_button_control(params: Params | None = None) -> bool:
     params.put_int("LKASButtonControl", BUTTON_FUNCTIONS["AOL_TOGGLE"])
 
   params.put_bool(AOL_LKAS_MIGRATION_KEY, True)
+  return True
+
+
+def migrate_bosch_a_u11_scale72(params: Params | None = None) -> bool:
+  # D-074, Peter 2026-10-02: an older pr10 build stored BoschAU11Scale72 "0" (1/64), and params survive branch
+  # changes. Turn it on once per device; after that a user's OFF stays OFF. The toggle is written before the flag
+  # so a crash between the two repeats the migration instead of skipping it.
+  params = params or Params(return_defaults=True)
+  if params.get_bool(BOSCH_A_U11_SCALE72_MIGRATION_KEY):
+    return False
+
+  params.put_bool("BoschAU11Scale72", True)
+  params.put_bool(BOSCH_A_U11_SCALE72_MIGRATION_KEY, True)
   return True
 
 
