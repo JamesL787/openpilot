@@ -1742,3 +1742,19 @@ Rejected: changing the default scale. The moving-lead result contradicts 71, and
 Not done: the larch64 `common/params_pyx.so` / `libcommon.a` rebuild (STATUS "Build and test environment", pattern
 `b9612b2a`). Until that is done the key is unknown on the device and the toggle cannot be switched on. The
 `tools/bosch_a_scenarios.py` replay tool still uses 1/64.
+
+## D-075 — PROPOSED (toggle OFF): `BoschANewbornLeads` publishes newborn Bosch-A points early, leads only on proven range closing
+Recorded 2026-10-02, owner decision (Peter, in chat): build it as an opt-in toggle, default OFF, on main and pr10-smooth.
+**Replay and static evidence only; no road evidence.** With the toggle OFF, `BOSCH_A_NEWBORN_RANGE_PUBLISH`,
+`NEWBORN_RANGE_CLOSING_EXEMPT`, `NEWBORN_KF_FOLLOW_RANGE` and `NEWBORN_LEAD_NEEDS_CLOSING` are all False and the code
+is the code before this work (replay-identical on 2ae, 280, 294, 284).
+
+ON sets all four. A newborn point is published rather than held (D-041 direction: publish, do not delete), but it can
+only become the lead once its own range fit is closing, so a young track's speed reading alone cannot brake the car.
+No gate threshold or radar constant is changed. Both processes read the param once at startup and fail closed to OFF.
+
+Evidence: 15-drive replay (STATUS 198). Without the closing check the early publish made phantom brakes (280 ×2, 294,
+2ae seg26, 284); with it those are gone. One new early brake remains, 297 seg48 t 4572.62 (−2.00 for one frame, 0.75 s
+before base, real car).
+
+Why OFF: not driven; a newborn lead can still brake 0.75 s earlier than today (297 4572.62).

@@ -1,6 +1,6 @@
 # Status
 
-**As of: 2026-10-01**
+**As of: 2026-10-02**
 
 Update the date above whenever this file changes. If it is stale, trust `git log` over this
 file.
@@ -21,6 +21,7 @@ here. Where the two touch — the CR-V lateral profile, the steering-ratio curve
 `extract_drives.py` lineage — that is recorded below as a cross-reference only.
 
 **Open topics to revisit** (parked by decision, not closed):
+- **Newborn radar points toggle: D-075 (`BoschANewbornLeads`, default OFF).** Replay and static only, not driven. Publishes young closing radar points earlier and lets one lead only once its own range closes. Turn it on on pr10-smooth first.
 - **U11 scale 1/72 toggle: D-074 (`BoschAU11Scale72`, TEST, default OFF).** Static and replay only, not driven.
   Camera firmware in the same family uses 1/72, and steady-state replay gives about 71 counts per m/s.
   UNRESOLVED: moving leads give k = 55–66 and reject 71. ON lowers every published closing speed by 11.1 % (rail
@@ -10065,3 +10066,11 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **Change:** radard evaluates the veto's rule on every RAIL_FAST correction whether the switch is on or off, and publishes the result as `LeadData.ncVetoShadow @18` (cereal/log.capnp) on the followed leads. The switch alone decides whether the correction is zeroed. With the switch off, the published lead and everything downstream are unchanged, apart from the new field (static). Vision leads publish False, and adjacent-lane leads (custom LeadData) do not carry it. The marker only exists where the range assist runs (Bosch-A, RangeDerivedVrel on, lead track).
 - **Use:** a marked moment is a candidate, not a verdict. Judge right or wrong with `ncveto_truth.py` (stopshadow-radar). Job screens new drives this way.
 - **Tests:** `test_range_vrel_assist.py` 156 pass (153 + 3 new: the 297 shape marks with the switch off and its corrections are unchanged, the marker matches between switch on and off, the 236 gain shape and an off-rail track never mark, the schema field round-trips). `test_longitudinal_planner.py` 586 pass (numpy 2.5.3 DeprecationWarnings ignored, environment). `test_bosch_a_radar.py` passes.
+
+## 198. Newborn radar points behind a toggle: `BoschANewbornLeads` (D-075, owner-approved build, default OFF, 2026-10-02). Replay and static unit tests only; not driven.
+- **Problem:** a car that cuts in or appears closing is a "newborn" radar track. Today its point is held back until its speed reading settles, so the radar sees it late; publishing it early instead caused phantom brakes in replay, because a young track's speed reading can claim closing when its range is not closing.
+- **Change (OFF by default):** one Advanced Longitudinal Tuning toggle switches on four behaviours together. radar_interface publishes young closing points earlier (`BOSCH_A_NEWBORN_RANGE_PUBLISH`). radard exempts them from the stationary bound while their range is closing (`NEWBORN_RANGE_CLOSING_EXEMPT`), lets the lead filter follow their own range fit (`NEWBORN_KF_FOLLOW_RANGE`), and only lets one become the lead once its own range proves closing (`NEWBORN_LEAD_NEEDS_CLOSING`, Jason's jb4). Both processes read the param once at startup and fail closed to OFF; restart required.
+- **OFF = before:** replay on 2ae, 280, 294, 284 is identical to the branch without the work (static + replay).
+- **ON, replay on 15 drives (pr10-smooth base):** the early false brakes seen without the closing check (280 ×2, 294, 2ae seg26, 284) are gone; the only new early-brake frames are 2ae seg17 track 39, the stopped car Peter wanted seen. New: 297 seg48 t 4572.62, a newborn lead for one frame gives −2.00 then a −1.33 dip, 0.75 s before base, behind a real car. 2ad t 3389.95 −0.39 is the model's own speed on that frame, not the radar.
+- **Tests:** 294 pass / 1 fail (base 270 pass / the same 1 fail). The one failure is a Galaxy test that needs `git show HEAD:` and passes inside a git checkout.
+- **Artifacts:** larch64 `common/params_pyx.so` and `libcommon.a` rebuilt with the key; the only key-table change is `BoschANewbornLeads`.
