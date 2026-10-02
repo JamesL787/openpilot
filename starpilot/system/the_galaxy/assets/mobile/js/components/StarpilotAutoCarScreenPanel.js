@@ -196,15 +196,18 @@ export const StarpilotAutoCarScreenPanel = {
           </template>
         </template>
         <template v-else>
-          <div class="gx-row__label">Status Column</div>
-          <p class="gx-row__desc">Choose the seven stats in the status column. A slot can also show the StarPilot logo or stay blank.</p>
-          <div v-for="layout in statusPositions" :key="layout.view" class="gx-row">
+          <label class="gx-row">
+            <div class="gx-row__info"><span class="gx-row__label">Show Status Column</span><span class="gx-row__desc">Choose the seven stats in the status column. A slot can also show the StarPilot logo or stay blank.</span></div>
+            <span class="gx-switch"><input type="checkbox" :checked="settings.show_status_column !== false" :disabled="saving" @change="update({ show_status_column: $event.target.checked })" />
+              <span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></span>
+          </label>
+          <div v-for="layout in statusPositions" v-show="settings.show_status_column !== false" :key="layout.view" class="gx-row">
             <div class="gx-row__info"><span class="gx-row__label">{{ layout.label }} Position</span><span v-if="layout.positions.includes('center')" class="gx-row__desc">Between puts it between the driving view and the map.</span></div>
             <div class="gx-car-display__tabs"><button v-for="position in layout.positions" :key="position" type="button" class="gx-btn"
               :class="settings['status_position_' + layout.view] === position ? '' : 'gx-btn--tonal'" :aria-pressed="settings['status_position_' + layout.view] === position" :disabled="saving"
               @click="update({ ['status_position_' + layout.view]: position })">{{ positionLabels[position] }}</button></div>
           </div>
-          <label v-for="(metric, index) in settings.status_slots" :key="index" class="gx-row">
+          <label v-for="(metric, index) in settings.status_slots" v-show="settings.show_status_column !== false" :key="index" class="gx-row">
             <span class="gx-row__label">Slot {{ index + 1 }}</span>
             <GalaxySelect class="gx-field gx-car-display__metric" :value="metric" :disabled="saving"
               :aria-label="'Status slot ' + (index + 1)" @change="updateStatusSlot(index, $event)">

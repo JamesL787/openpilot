@@ -49,15 +49,18 @@ class CarDisplaySettings(AetherSettingsView):
       for key, label in car_screen.SLEEP_WAKE_EVENTS.items()
     ], visible=lambda: self.current['sleep_device_screen'])]
     if metrics:
+      shown = lambda: self.current['show_status_column']
       sections = [SettingSection('Status Column', [
-        SettingRow(f'slot_{i}', 'value', f'Slot {i + 1}',
+        self.toggle('show_status_column', 'Show Status Column', 'Turn off to hide the status column on the car display.'),
+        *[SettingRow(f'slot_{i}', 'value', f'Slot {i + 1}', visible=shown,
                    get_value=lambda i=i: car_screen.STATUS_METRICS[self.current['status_slots'][i]][1],
-                   on_click=lambda i=i: self._slot_picker(i)) for i in range(car_screen.STATUS_SLOT_COUNT)
+                   on_click=lambda i=i: self._slot_picker(i)) for i in range(car_screen.STATUS_SLOT_COUNT)]
       ]), SettingSection('Status Column Position', [
         self.choice(f'status_position_{view}', STATUS_POSITION_TITLES[view], [(p, POSITIONS[p]) for p in positions],
-                    'Between puts it between the driving view and the map.' if 'center' in positions else '')
+                    'Between puts it between the driving view and the map.' if 'center' in positions else '',
+                    visible=shown)
         for view, positions in car_screen.STATUS_POSITIONS.items()
-      ])]
+      ], visible=shown)]
     super().__init__(self, sections, header_title='Status Widgets' if metrics else 'Car Display',
                      header_subtitle='Car display only · Changes also appear in Galaxy.')
     self._root_sections = sections

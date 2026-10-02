@@ -1007,7 +1007,7 @@ def run(frames_path: str, touch_path: str) -> int:
       main_layout._dev_sidebar.metric_override = [STATUS_METRICS[slot][0] for slot in settings["status_slots"]]
       main_rect, map_rect = car_layout(settings, started, controls.full_screen(started), logical_w, logical_h)
       status_rect = None
-      if started and not controls.full_screen(started) and any(slot != "blank" for slot in settings["status_slots"]):
+      if started and not controls.full_screen(started) and settings["show_status_column"] and any(slot != "blank" for slot in settings["status_slots"]):
         main_rect, map_rect, status_rect = status_layout(settings, main_rect, map_rect)
       ui_state.car_show_current_speed = settings["show_current_speed"]
       ui_state.car_directions_left = settings["directions_side"] == "left"

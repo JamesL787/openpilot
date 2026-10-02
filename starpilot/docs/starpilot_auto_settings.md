@@ -24,6 +24,8 @@ same labels and settings as the car UI. Controls that do not apply to the
 selected layout are hidden. Layout also holds Show Current Speed and the comma
 display's sleep and wake choices; Status Widgets also places the status column
 per layout (left or right, or between the driving view and the map when split).
+Show Status Column turns the column off entirely and hides its slot and position
+settings; your choices are kept for when it is turned back on.
 
 Car-only display preferences live in the existing `car_screen.json`, separate
 from comma display preferences. Both interfaces merge partial updates under a

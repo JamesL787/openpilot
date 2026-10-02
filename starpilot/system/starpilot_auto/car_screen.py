@@ -100,6 +100,7 @@ DEFAULTS = {
   "sleep_device_screen_set": False,
   "sleep_wake_events": ["StandbyWakeWarningAlert"],
   "show_current_speed": True,
+  "show_status_column": True,
   "status_slots": ["steer_delay", "friction", "cpu", "gpu", "temperature", "memory", "starpilot_logo"],
   "status_position_split": "right",
   "status_position_driving": "right",
@@ -144,6 +145,8 @@ def normalize(raw: object) -> dict:
       settings["sleep_wake_events"] = list(wake_events)
     if isinstance(raw.get("show_current_speed"), bool):
       settings["show_current_speed"] = raw["show_current_speed"]
+    if isinstance(raw.get("show_status_column"), bool):
+      settings["show_status_column"] = raw["show_status_column"]
     for view, positions in STATUS_POSITIONS.items():
       if raw.get(f"status_position_{view}") in positions:
         settings[f"status_position_{view}"] = raw[f"status_position_{view}"]

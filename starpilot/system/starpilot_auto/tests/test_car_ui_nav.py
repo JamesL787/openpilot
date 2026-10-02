@@ -24,6 +24,18 @@ def test_settings_default_validate_and_round_trip(tmp_path):
   assert car_screen.load(path) == car_screen.DEFAULTS
 
 
+def test_status_column_toggle_defaults_on_and_persists(tmp_path):
+  path = tmp_path / "car_screen.json"
+  assert car_screen.DEFAULTS["show_status_column"] is True
+  assert car_screen.load(path)["show_status_column"] is True
+  saved = car_screen.save({"show_status_column": False}, path)
+  assert saved["show_status_column"] is False
+  assert car_screen.load(path)["show_status_column"] is False
+  # Hiding the column keeps the chosen slots and positions for when it is turned back on.
+  assert saved["status_slots"] == car_screen.DEFAULTS["status_slots"]
+  assert car_screen.normalize({"show_status_column": "no"})["show_status_column"] is True
+
+
 def test_default_status_slots_are_not_shared_between_settings(tmp_path):
   first = car_screen.load(tmp_path / "missing.json")
   first["status_slots"][0] = "cpu"
