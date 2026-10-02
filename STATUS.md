@@ -1,6 +1,6 @@
 # Status
 
-**As of: 2026-09-28**
+**As of: 2026-10-01**
 
 Update the date above whenever this file changes. If it is stale, trust `git log` over this
 file.
@@ -21,6 +21,11 @@ here. Where the two touch — the CR-V lateral profile, the steering-ratio curve
 `extract_drives.py` lineage — that is recorded below as a cross-reference only.
 
 **Open topics to revisit** (parked by decision, not closed):
+- **U11 scale 1/72 toggle: D-074 (`BoschAU11Scale72`, TEST, default OFF).** Static and replay only, not driven.
+  Camera firmware in the same family uses 1/72, and steady-state replay gives about 71 counts per m/s.
+  UNRESOLVED: moving leads give k = 55–66 and reject 71. ON lowers every published closing speed by 11.1 % (rail
+  ±12.0 m/s), which is the D-041 danger direction. `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 is pending Peter's OK.
+  The larch64 params artifacts still need a rebuild before the key exists on the device.
 - **Off-axis lead follow-ups: items 74f/74g.** The 237 942.6 false brake (a real on-road phantom
   brake to aEgo −2.7) is removed in replay by 74g. Two real closings now brake later (25b 665.2 +1.5 s,
   245 40.7 +0.9 s). Needs a road drive on curves with the fix.

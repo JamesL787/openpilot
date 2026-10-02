@@ -17,6 +17,9 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_DIRECT_VREL_MAX_RAW,
   BOSCH_A_DIRECT_VREL_MIN_RAW,
   BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW,
+  BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS,
+  BOSCH_A_DIRECT_VREL_SCALE_MPS,
+  BOSCH_A_DIRECT_VREL_SCALE72_MPS,
   BOSCH_A_FALLBACK_RANGE_RATE_MAX_MPS,
   BOSCH_A_FREQ_HZ,
   BOSCH_A_LIFE_SATURATED,
@@ -32,9 +35,11 @@ from opendbc.car.honda.radar_interface import (
   BOSCH_A_TRIGGER_MSG,
   _bosch_a_aux_id,
   _bosch_a_direct_vrel,
+  _bosch_a_direct_vrel_interval,
   _bosch_a_main_base,
   _bosch_a_range_ratio,
   _bosch_a_range_ratio_vrel,
+  bosch_a_u11_scale_mps,
 )
 from opendbc.car.honda.values import CAR
 from openpilot.common.params import Params
@@ -669,6 +674,54 @@ def test_trackid_comes_from_can_and_is_not_synthetic():
 
 
 # --- 7. vRel derivative sign -------------------------------------------------------------------------
+
+class TestU11Scale72:
+  """D-074 BoschAU11Scale72: OFF is the 1/64 decode exactly; ON is (raw - 864) / 72, rails and sentinel unchanged."""
+  RAWS = (0, 1, 863, 864, 865, 1727, 1728)
+
+  def test_off_is_the_old_decode_exactly(self):
+    assert bosch_a_u11_scale_mps(False) is BOSCH_A_DIRECT_VREL_SCALE_MPS
+    for raw in self.RAWS:
+      old = (raw - 864) / 64.0
+      assert _bosch_a_direct_vrel(raw) == old
+      assert _bosch_a_direct_vrel(raw, scale=bosch_a_u11_scale_mps(False)) == old
+    assert _bosch_a_direct_vrel(0) == -13.5 and _bosch_a_direct_vrel(1728) == 13.5
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID, scale=bosch_a_u11_scale_mps(False)) is None
+
+  def test_on_divides_by_72(self):
+    scale = bosch_a_u11_scale_mps(True)
+    assert scale == BOSCH_A_DIRECT_VREL_SCALE72_MPS == 1.0 / 72.0
+    for raw in self.RAWS:
+      assert _bosch_a_direct_vrel(raw, scale=scale) == pytest.approx((raw - 864) / 72.0, abs=1e-12)
+    assert _bosch_a_direct_vrel(0, scale=scale) == pytest.approx(-12.0)
+    assert _bosch_a_direct_vrel(1728, scale=scale) == pytest.approx(12.0)
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID, scale=scale) is None
+    assert _bosch_a_direct_vrel(1729, scale=scale) is None
+    assert _bosch_a_direct_vrel(0, BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 1, scale) is None
+
+  def test_rail_interval_follows_the_scale(self):
+    scale = bosch_a_u11_scale_mps(True)
+    low = _bosch_a_direct_vrel(0, scale=scale)
+    high = _bosch_a_direct_vrel(1728, scale=scale)
+    assert _bosch_a_direct_vrel_interval(low, scale=scale) == pytest.approx((-BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS, -12.0))
+    assert _bosch_a_direct_vrel_interval(high, scale=scale) == pytest.approx((12.0, BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS))
+    # One count inside the 1/72 rail is exact, and a 1/72 rail read with the 1/64 rails would wrongly be exact.
+    inside = _bosch_a_direct_vrel(1, scale=scale)
+    assert _bosch_a_direct_vrel_interval(inside, scale=scale) == (inside, inside)
+    assert _bosch_a_direct_vrel_interval(low) == (low, low)
+    # OFF: unchanged.
+    assert _bosch_a_direct_vrel_interval(-13.5) == (-BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS, -13.5)
+
+  def test_interface_publishes_with_its_scale(self):
+    ri = make_radar_interface()
+    assert ri.u11_scale is BOSCH_A_DIRECT_VREL_SCALE_MPS  # this test's params store has no BoschAU11Scale72 set
+    ri.u11_scale = bosch_a_u11_scale_mps(True)
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=800, direct_vrel_uncertainty_raw=80))
+    rr = ri.update(sweep(0, 1, 0x7, 1010, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=800, direct_vrel_uncertainty_raw=80))
+    assert rr.points[0].vRel == pytest.approx((800 - 864) / 72.0)
+
 
 class TestVrel:
   def test_direct_aux_vrel_is_preferred_over_range_derivative(self):

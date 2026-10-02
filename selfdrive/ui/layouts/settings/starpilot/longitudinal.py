@@ -620,6 +620,15 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                                   "way. Restart required to take effect."),
                  get_state=lambda: self._params.get_bool("BoschARadar"),
                  set_state=lambda v: self._params.put_bool("BoschARadar", v)),
+      SettingRow("BoschAU11Scale72", "toggle", tr_noop("Radar Closing Speed 1/72 Scale"),
+                 subtitle=tr_noop("TEST, default off. Bosch-A radar only. Reads the radar's closing-speed channel at 1/72 m/s per count"
+                                  " instead of 1/64, as related Honda camera firmware does (Peter's own camera firmware is unread). "
+                                  "With this on every closing speed the radar reports reads 11% lower, and the channel pins at 12.0 m/s"
+                                  " instead of 13.5. Logs of steady approaches fit 1/72; logs of moving leads do not fit either value. "
+                                  "Reading closing speed low is the risky direction, which is why it ships off. Never driven. Restart "
+                                  "required to take effect."),
+                 get_state=lambda: self._params.get_bool("BoschAU11Scale72"),
+                 set_state=lambda v: self._params.put_bool("BoschAU11Scale72", v)),
     ]
 
     self._slc_rows = [

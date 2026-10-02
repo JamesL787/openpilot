@@ -386,6 +386,10 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // Default ON. Experimental Mode only. STATUS 136h: "Accel Boost" gates both upstream PR 39015's
     // gas-press boost and the lead-departure assist. Unreplayed. Read in longitudinal_planner.py.
     {"GasOverrideBoost", {PERSISTENT, BOOL, "1", "1", 3}},
+    // TEST, default OFF. Bosch-A only. D-074: decode the U11 track vRel at 1/72 m/s per count instead of 1/64
+    // (rails +-12.0 instead of +-13.5). Static and replay evidence only. Read once at startup in
+    // honda/radar_interface.py and radard.py.
+    {"BoschAU11Scale72", {PERSISTENT, BOOL, "0", "0", 3}},
     {"RemoteStartBootsComma", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"TeslaWakeOnCAN", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"RemapCancelToDistance", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},

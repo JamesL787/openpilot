@@ -1707,3 +1707,38 @@ The other 9 jab and real-brake windows on 2a6/2a4 stay within 0.5 m of today's c
 Limits: the plant misses the real brakes' ~0.8 m/s² overshoot (STATUS 195), so replay under-reads jab harshness, and the
 2a6 2:42 jab only softens -2.51 → -2.31 here. The STATUS 148 stock-ACC comparison cases (25b 1338.8, 25e 318.1, 25f 483.1,
 262 379.4, 263 374.3) were logged with Experimental Mode off, so this path does not run there (static). Status stays ACCEPTED-unvalidated until drives in Experimental Mode with it are reviewed.
+
+## D-074 — PROPOSED (toggle OFF): `BoschAU11Scale72` decodes U11 vRel at 1/72 m/s per count instead of 1/64
+Recorded 2026-10-01, owner decision (Peter, in chat): add the toggle, default OFF. **Static and replay evidence only; no
+road evidence.** With the toggle OFF every decode, rail and gate is the 1/64 code, byte for byte.
+
+With it ON, U11 is `(raw − 864) / 72` everywhere the scale is used. That covers the published vRel and the rails, which
+become ±12.0 m/s instead of ±13.5. It also covers the D-063 rail interval, the D-054 innovation gate, the D-057 re-anchor
+and the NC-at-rail test (radar_interface.py). In radard.py it covers `BOSCH_A_U11_LOW_RAIL_MPS`, the half-count on-rail
+tolerance, the FAR_RAIL bound and the NC veto (rail + 3.5). The centre (864), the raw rails (0, 1728), the 0x7FE
+sentinel, u10, range and azimuth are unchanged. No gate threshold is re-tuned. Both processes read the param once at
+startup and fail closed to OFF, so a `params_pyx.so` without the key also means OFF.
+
+Evidence (firmware-analysis-kit, cited, not copied):
+- static: readable Bosch-radar-partner camera firmware (36161-TLA-A070; same-family TGG-A080, TGH-A040,
+  TFJ/TGG/TGL-G070) formats vRel as `round((v + 12) / 0x3c638e45)`, where `0x3c638e45` is 1/72 as an f32
+  (`camera-re/bosch_a_inventory`, `radar-re/u11_encode`). Peter's camera, 36161-TBA-A130, is not available as an image,
+  so this is unproven for his car.
+- replay: steady-state slope is about 71 counts per m/s. Stationary objects vs GPS give 70.75 (`radar-re/u11_gps`).
+  Lead-stop gives 71.55 [71.26, 72.40] and road-speed approaches give 70.90 [70.29, 71.40] (`radar-re/u11_leadstop`,
+  `radar-re/u11_dynamics`). All three exclude 64.
+- **UNRESOLVED:** moving leads against the range rate give k = 55–66 and reject 71 (`radar-re/u11_moving`).
+
+Why OFF: ON publishes 64/72 of today's closing speed (−11.1 %), and a rail now means ≥ 12.0 rather than ≥ 13.5 m/s.
+Understating closing is the D-041 danger direction.
+
+**Pending Peter's OK:** `ONPATH_ADOPT_RAIL_VREL_MPS` was a fixed −12.5 ("treated as railed", 1.0 inside the −13.5 rail).
+It is now `rail + 1.0` (`ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS`). That is still exactly −12.5 when OFF and becomes −11.0 when
+ON. Left at −12.5, a −12.0 rail would never count as railed for leadOnpath adoption, which would fail toward not
+adopting the lead.
+
+Rejected: changing the default scale. The moving-lead result contradicts 71, and there is no road evidence.
+
+Not done: the larch64 `common/params_pyx.so` / `libcommon.a` rebuild (STATUS "Build and test environment", pattern
+`b9612b2a`). Until that is done the key is unknown on the device and the toggle cannot be switched on. The
+`tools/bosch_a_scenarios.py` replay tool still uses 1/64.
