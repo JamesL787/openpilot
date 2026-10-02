@@ -243,6 +243,19 @@ BOSCH_A_COAST_RANGE_BOUND = True
 # vEgo of None (not yet known) turns this off. Replay evidence only (STATUS 179); rides the same switches as the
 # coast bound (BOSCH_A_RAIL_INTERVAL or BOSCH_A_COAST_RANGE_BOUND).
 BOSCH_A_COAST_REVERSING_MARGIN_MPS = 1.0
+# Newborn range publish (REPLAY ONLY, no DECISIONS entry yet). A new identity whose U11 arrives with u10 above
+# BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW has no trusted vRel to coast, so the coast branch withheld it and kept
+# none of its ranges until u10 dropped. Route 000002ae seg 17 (Peter's bookmark, 1/72 on): track 39, a stopped
+# car in lane, sat in that state for its first 17 sweeps from 116 m and reached liveTracks 1.28 s later at 89.7 m;
+# its withheld ranges closed at -19.8 m/s, the rate the radar itself reported once u10 dropped. With this on, the
+# withheld ranges are kept in `newborn_run` and, once their trailing D-043 window (4 sweeps over 0.25 s) fits a
+# line within BOSCH_A_REANCHOR_MAX_RMS_M, the geometry is published unmeasured with the live U11 held within the
+# D-043 tolerance of that fit on both sides (the rail-hold coast bound) and never past the low rail. Replay of
+# track 39, the two rejected forms: the fit itself read ~-20 m/s (vLead ~0) while the camera had the car at
+# 16-20 m/s, so radard's stationary-point vision check refused the match and leadOne never changed; the live U11
+# alone lagged at -3.8 .. -8 m/s from 114 m to 106 m, the camera's own wrong speed. Nothing is withheld that was published before (D-041/D-042); the first low-u10 sweep
+# roots the range gate on the run's last range, so it is gated like any other sweep.
+BOSCH_A_NEWBORN_RANGE_PUBLISH = True
 # u10 is a genuine uncertainty on U11, but it is CONFOUNDED WITH DYNAMICS. Measured against an
 # event-local reference (quadratic fit to a centred window, derivative at the centre) over 16,834
 # frames: median |err| rises 0.26 -> 0.88 -> 1.44 -> 1.95 m/s across u10 bins 0-64 / 64-128 /
@@ -368,6 +381,34 @@ class _BoschATrackState:
   nc_vrel_nanos: int | None = None
   last_trusted_vrel: float | None = None
   last_trusted_vrel_nanos: int | None = None
+  # BOSCH_A_NEWBORN_RANGE_PUBLISH: (time, range) of high-u10 sweeps before the first accepted sample.
+  newborn_run: list = field(default_factory=list)
+  newborn_vrel: float | None = None  # the vRel the newborn point was last published with
+
+
+def _bosch_a_newborn_vrel(run: list, v_ego: float | None, live_u11: float | None, scale: float) -> float | None:
+  """BOSCH_A_NEWBORN_RANGE_PUBLISH: the vRel to publish for a newborn high-u10 run, or None while the run is too short
+  or its ranges do not fit a line within BOSCH_A_REANCHOR_MAX_RMS_M. The live U11 held to within
+  BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS of the fit on both sides (the rail-hold coast bound,
+  _bosch_a_coast_vrel), never past the low rail (no U11 reads past it), and floored at the reversing margin."""
+  window = _bosch_a_trailing_fit_window(run)
+  rate = _bosch_a_fresh_range_rate(window)
+  if rate is None:
+    return None
+  ts = [w[0] for w in window]
+  ds = [w[1] for w in window]
+  n = len(window)
+  t_mean = sum(ts) / n
+  d_mean = sum(ds) / n
+  rms = (sum((d - (d_mean + rate * (t - t_mean))) ** 2 for t, d in zip(ts, ds, strict=True)) / n) ** 0.5
+  if rms > BOSCH_A_REANCHOR_MAX_RMS_M:
+    return None
+  vrel = rate if live_u11 is None else live_u11
+  vrel = min(max(vrel, rate - BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS), rate + BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS)
+  vrel = max(vrel, (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) * scale)
+  if v_ego is not None:
+    vrel = max(vrel, -(v_ego + BOSCH_A_COAST_REVERSING_MARGIN_MPS))
+  return vrel
 
 
 def _bosch_a_direct_vrel(raw_value: int | float | None,
@@ -823,6 +864,8 @@ class RadarInterface(RadarInterfaceBase):
         track.nc_vrel_nanos = None
         track.last_trusted_vrel = None
         track.last_trusted_vrel_nanos = None
+        track.newborn_run.clear()
+        track.newborn_vrel = None
         self.pts.pop(track_id, None)
 
       v0 = self.rcp.vl[BOSCH_A_MAIN_IDS[slot][0]]
@@ -879,6 +922,21 @@ class RadarInterface(RadarInterfaceBase):
       #   the baseline, and the real ranges (25.3 m closing to 17 m) were rejected against it for 53 s
       #   while the accepted sample still tracked them.
       # The recorded range resets this gate exists for contradict both baselines.
+      if track.newborn_run and (track.samples or track.range_anchor is not None):
+        track.newborn_run.clear()
+        track.newborn_vrel = None
+      newborn_vrel = None
+      if BOSCH_A_NEWBORN_RANGE_PUBLISH and track.newborn_run and not high_u10_live_vrel and track_id in self.pts:
+        newborn_vrel = track.newborn_vrel
+      if newborn_vrel is not None:
+        # The published newborn run becomes the accepted history and its published vRel the velocity a coast may
+        # hold, so this sweep is range-gated against it and a coast here keeps the point instead of dropping it.
+        track.samples.extend(track.newborn_run[-BOSCH_A_VREL_MAX_SAMPLES:])
+        track.range_anchor = track.newborn_run[-1]
+        track.last_trusted_vrel = newborn_vrel
+        track.last_trusted_vrel_nanos = now
+        track.newborn_run.clear()
+        track.newborn_vrel = None
       previous_sample = track.samples[-1] if track.samples else None
       range_anchor = track.range_anchor
       ratio_vrel = None
@@ -1071,6 +1129,27 @@ class RadarInterface(RadarInterfaceBase):
           point.measured = False
           point.ncValid = False
           point.existence = observation['existence_raw'] / 127.0
+        elif (BOSCH_A_NEWBORN_RANGE_PUBLISH and high_u10_live_vrel and range_anchor is None and
+              track.last_trusted_vrel is None):
+          # A newborn high-u10 identity: keep its ranges outside the accepted history and publish the
+          # geometry once they fit a line (BOSCH_A_NEWBORN_RANGE_PUBLISH).
+          track.newborn_run.append((now_s, dRel))
+          del track.newborn_run[:-BOSCH_A_REANCHOR_WINDOW]
+          newborn_vrel = track.newborn_vrel = _bosch_a_newborn_vrel(track.newborn_run, self.v_ego, live_direct_vrel, self.u11_scale)
+          if newborn_vrel is None:
+            self.pts.pop(track_id, None)
+          else:
+            if point is None:
+              point = self.pts[track_id] = structs.RadarData.RadarPoint()
+              point.trackId = track_id
+              point.aRel = float('nan')
+              point.yvRel = float('nan')
+            point.dRel = dRel
+            point.yRel = yRel
+            point.vRel = newborn_vrel
+            point.measured = False
+            point.ncValid = False
+            point.existence = observation['existence_raw'] / 127.0
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to
           # coast and no way to publish a defensible vRel.
