@@ -581,7 +581,7 @@ class ProjectionSession(Session):
   # its screen back without video.
   ACK_TIMEOUT = 2.5
   ACK_DRAIN_SECONDS = 0.1  # before calling an ACK late, read what already arrived, for at most this long
-  MAX_WINDOW = 2
+  MAX_WINDOW = 30
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
