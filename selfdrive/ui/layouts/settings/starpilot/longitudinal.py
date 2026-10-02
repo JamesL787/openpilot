@@ -629,6 +629,11 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                                   "required to take effect."),
                  get_state=lambda: self._params.get_bool("BoschAU11Scale72"),
                  set_state=lambda v: self._params.put_bool("BoschAU11Scale72", v)),
+      SettingRow("BoschANewbornLeads", "toggle", tr_noop("Radar Newborn Leads"),
+                 subtitle=tr_noop("Bosch-A newborn radar points: publish young closing targets earlier, only as a lead once their "
+                                  "own range proves closing. Replay-tested only; not road-validated. Restart required."),
+                 get_state=lambda: self._params.get_bool("BoschANewbornLeads"),
+                 set_state=lambda v: self._params.put_bool("BoschANewbornLeads", v)),
     ]
 
     self._slc_rows = [

@@ -15,7 +15,8 @@ from openpilot.common.simple_kalman import KF1D
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 from opendbc.car.honda.radar_interface import (BOSCH_A_DIRECT_VREL_CENTER_RAW, BOSCH_A_DIRECT_VREL_MIN_RAW,
                                                BOSCH_A_DIRECT_VREL_SCALE_MPS, BOSCH_A_FREQ_HZ,
-                                               bosch_a_u11_scale72_enabled, bosch_a_u11_scale_mps)
+                                               bosch_a_newborn_leads_enabled, bosch_a_u11_scale72_enabled,
+                                               bosch_a_u11_scale_mps)
 from opendbc.car.honda.values import HONDA_BOSCH_A
 
 
@@ -401,7 +402,8 @@ YOUNG_TRACK_VISION_RANGE_MARGIN_M = 5.0
 # margin (-8 m/s) and at least half of ego speed (an object doing at most half our speed, which vision at 15-18 m/s
 # cannot be confused with at vEgo ~20). The vRel agreement (3.0, the D-043 rate-check tolerance) keeps a coasted
 # U11 that disagrees with its own range out. Replay evidence only; not road-validated.
-NEWBORN_RANGE_CLOSING_EXEMPT = True
+# Driven by BoschANewbornLeads (default off) through set_bosch_a_newborn_leads() in main().
+NEWBORN_RANGE_CLOSING_EXEMPT = False
 NEWBORN_RANGE_CLOSING_MIN_RATE = -8.0     # m/s; the range slope must be at or below this
 NEWBORN_RANGE_CLOSING_EGO_FRAC = 0.5      # ... and at or below -this * vEgo
 NEWBORN_RANGE_CLOSING_VREL_TOL = 3.0      # m/s; |slope - track.vRel| at most this
@@ -417,7 +419,8 @@ NEWBORN_RANGE_CLOSING_VREL_TOL = 3.0      # m/s; |slope - track.vRel| at most th
 # at least NEWBORN_KF_FOLLOW_MIN_SAMPLES = the D-043 4-sweep minimum). The bound is the stationary one: nothing in
 # front closes faster than ego. The first measured update takes over from that state as it did from the old init.
 # vRel, the measured bit and the published point are unchanged. Replay evidence only; not road-validated.
-NEWBORN_KF_FOLLOW_RANGE = True
+# Driven by BoschANewbornLeads (default off) through set_bosch_a_newborn_leads() in main().
+NEWBORN_KF_FOLLOW_RANGE = False
 NEWBORN_KF_FOLLOW_MIN_SAMPLES = 4
 
 # Newborn lead needs a proven closing (REPLAY ONLY, no DECISIONS entry yet). Fleet replay of the layers above (15
@@ -432,7 +435,8 @@ NEWBORN_KF_FOLLOW_MIN_SAMPLES = 4
 # preferred track or a takeover candidate. Which of those paths made these newborns lead was not traced; the fleet
 # re-run must show that none still reaches lead. Nothing is deleted: the point is still published and tracked, and
 # the lead falls back to vision as before the newborn publish. Replay evidence only; not road-validated.
-NEWBORN_LEAD_NEEDS_CLOSING = True
+# Driven by BoschANewbornLeads (default off) through set_bosch_a_newborn_leads() in main().
+NEWBORN_LEAD_NEEDS_CLOSING = False
 
 # ONPATH_RADAR_ADOPT: a radar-only track that sits on the driving path for a second is published as
 # radarState.leadOnpath, beside an unchanged leadOne, so the planner can brake for it before the camera sees it. Above
@@ -552,6 +556,15 @@ def set_bosch_a_u11_scale72(enabled: bool) -> None:
   BOSCH_A_U11_SCALE_MPS = bosch_a_u11_scale_mps(enabled)
   BOSCH_A_U11_LOW_RAIL_MPS = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) * BOSCH_A_U11_SCALE_MPS
   ONPATH_ADOPT_RAIL_VREL_MPS = BOSCH_A_U11_LOW_RAIL_MPS + ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS
+
+
+def set_bosch_a_newborn_leads(enabled: bool) -> None:
+  """BoschANewbornLeads: radard's half of the newborn work (NEWBORN_RANGE_CLOSING_EXEMPT, NEWBORN_KF_FOLLOW_RANGE,
+  NEWBORN_LEAD_NEEDS_CLOSING), switched together with radar_interface's newborn publish. Called once in main()."""
+  global NEWBORN_RANGE_CLOSING_EXEMPT, NEWBORN_KF_FOLLOW_RANGE, NEWBORN_LEAD_NEEDS_CLOSING
+  NEWBORN_RANGE_CLOSING_EXEMPT = bool(enabled)
+  NEWBORN_KF_FOLLOW_RANGE = bool(enabled)
+  NEWBORN_LEAD_NEEDS_CLOSING = bool(enabled)
 
 
 def is_bosch_a_radar_car(CP) -> bool:
@@ -1834,6 +1847,8 @@ def main() -> None:
   honda_bosch_a_radar = is_bosch_a_radar_car(CP)
   # D-074: same param, read once, as radar_interface reads it in card; a restart is needed after a change.
   set_bosch_a_u11_scale72(honda_bosch_a_radar and bosch_a_u11_scale72_enabled())
+  # BoschANewbornLeads: same param radar_interface reads once in card; a restart is needed after a change.
+  set_bosch_a_newborn_leads(honda_bosch_a_radar and bosch_a_newborn_leads_enabled())
   RD = RadarD(radar_ts=radar_ts, delay=CP.radarDelay, g90_radar_filter=g90_radar_filter,
               honda_bosch_a_radar=honda_bosch_a_radar)
 

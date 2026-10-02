@@ -390,6 +390,10 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // (rails +-12.0 instead of +-13.5). Static and replay evidence only. Read once at startup in
     // honda/radar_interface.py and radard.py.
     {"BoschAU11Scale72", {PERSISTENT, BOOL, "0", "0", 3}},
+    // TEST, default OFF. Bosch-A only. Newborn radar points: publish young high-u10 closing targets on their range
+    // fit (radar_interface BOSCH_A_NEWBORN_RANGE_PUBLISH) plus radard's NEWBORN_* switches. Replay evidence only.
+    // Read once at startup in honda/radar_interface.py and radard.py.
+    {"BoschANewbornLeads", {PERSISTENT, BOOL, "0", "0", 3}},
     {"RemoteStartBootsComma", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"TeslaWakeOnCAN", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"RemapCancelToDistance", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},

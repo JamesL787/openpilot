@@ -3102,6 +3102,17 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "BoschANewbornLeads",
+        "label": "Radar Newborn Leads",
+        "description": "Bosch-A newborn radar points: publish young closing targets earlier, only as a lead once their own range proves closing. Replay-tested only; not road-validated. Restart required.",
+        "picker_description": "Bosch-A newborn radar points published earlier; lead only once range proves closing. Default off. Replay-tested only.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune",
+        "requires_offroad": true,
+        "settings_tier": "advanced"
+      },
+      {
         "key": "PlannerShortActionTime",
         "label": "Short Plan Read-Ahead (Test)",
         "description": "Test. Takes the gas/brake command from 0.30 s ahead on the plan instead of about 0.55 s, for a smoother command with fewer light brake taps. In replay, braking starts 0.1-0.3 s later and following sits slightly closer. On by default; applies within a second.",
