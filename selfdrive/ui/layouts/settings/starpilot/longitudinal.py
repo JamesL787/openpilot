@@ -624,8 +624,9 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  subtitle=tr_noop("Default on. Bosch-A radar only. Reads the radar's closing-speed channel at 1/72 m/s per count, as related Honda "
                                   "camera firmware does, so the channel pins at 12.0 m/s. Turn it off to go back to the old 1/64 reading, which "
                                   "reads every closing speed 12.5% higher and pins at 13.5 m/s. Stopped objects and steady approaches in logs fit "
-                                  "1/72; moving leads and objects past 80 m do not settle it. Replay-tested with limited road evidence. Restart "
-                                  "required to take effect."),
+                                  "1/72; moving leads do not settle it, and one range check departs from 1/72 at 0-19 m, 60-79 m and past 80 m. "
+                                  "Closing speed is not road-validated: replay-tested with limited road evidence. Restart required to "
+                                  "take effect."),
                  get_state=lambda: self._params.get_bool("BoschAU11Scale72"),
                  set_state=lambda v: self._params.put_bool("BoschAU11Scale72", v)),
       SettingRow("BoschANewbornLeads", "toggle", tr_noop("Radar Newborn Leads"),

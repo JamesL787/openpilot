@@ -1890,9 +1890,9 @@ class TestRailIntervalBoundsTheCoast:
     assert coasts[0][1] == pytest.approx(floor, abs=0.05)
     assert coasts[-1][1] == pytest.approx(-BOSCH_A_VREL_RATE_CHECK_MAX_DISAGREEMENT_MPS, abs=0.2)
 
-  @pytest.mark.parametrize("v_ego", [None, 13.0, 20.0], ids=["unknown", "stationary", "slower_car"])
+  @pytest.mark.parametrize("v_ego", [None, 12.0, 20.0], ids=["unknown", "stationary", "slower_car"])
   def test_a_coast_that_does_not_imply_reversing_keeps_the_one_sided_bound(self, v_ego):
-    """-12.0 at 13 m/s is a stopped car (within the margin) and at 20 m/s a slower car: STATUS 129's protected
+    """-12.0 at 12 m/s is a stopped car and at 20 m/s a slower car: STATUS 129's protected
     over-closing coasts. Neither, nor an unknown ego speed, is softened."""
     ri = make_radar_interface()
     ri.rail_interval = False
@@ -2138,7 +2138,7 @@ class TestDegradedRailAdmissionNeedsRangeCorroboration:
 
 def test_rail_interval_still_admits_a_degraded_railed_lead_across_a_long_gap():
   """STATUS 129, the case D-063 exists for: 0000025e 12:03 track 59, degraded on every sweep, re-acquired against
-  a baseline 2.16 s old (121.3 m) at 79.5 m while U11 sat on the rail. The exact prediction is 95.3 m (92.1 m at the
+  a baseline 2.16 s old (121.3 m) at 79.5 m while U11 sat on the rail. The exact prediction is 95.4 m (92.1 m at the
   1/64 rail); the interval [-20, -12.0] m/s reaches 78.0 m."""
   from opendbc.car.honda.radar_interface import (_bosch_a_range_innovation_rejected, _bosch_a_direct_vrel,
                                                  BOSCH_A_DIRECT_VREL_MIN_RAW)

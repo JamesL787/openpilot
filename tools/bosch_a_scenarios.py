@@ -81,7 +81,10 @@ def azimuth_to_raw(rad: float) -> int:
 
 
 def vrel_to_raw(vrel_mps: float) -> int:
-  """Encode a relative velocity, clamping to the saturation rails rather than wrapping."""
+  """Encode a relative velocity, clamping to the saturation rails rather than wrapping.
+
+  Encodes at the 1/72 default (BOSCH_A_DIRECT_VREL_SCALE_MPS) only; it does not support BoschAU11Scale72 OFF, where a
+  1/64 decode would read every speed 72/64 too fast."""
   raw = int(round(vrel_mps / BOSCH_A_DIRECT_VREL_SCALE_MPS)) + BOSCH_A_DIRECT_VREL_CENTER_RAW
   return max(BOSCH_A_DIRECT_VREL_MIN_RAW, min(BOSCH_A_DIRECT_VREL_MAX_RAW, raw))
 

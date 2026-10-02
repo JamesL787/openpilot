@@ -502,7 +502,7 @@ ONPATH_ADOPT_VISION_MARGIN_M = 5.0
 # 1018.35 (log): track 2 was born at 42 m, y +1.07, and closed at -16 m/s by range with U11 railed at -13.5 (1/64) and a
 # constant ~1.3 deg bearing, then vanished at 23 m 1.2 s later; the camera never saw it (the model lead was a car at
 # ~121-125 m). It passed every geometry gate at the edge (path median 0.76 of 0.8, range slope -15.96 against a band
-# edge of -16.00; the rail term only exempts) and drew a 0.2 s brake to -1.00 (the ONPATH_LEAD_MAX_BRAKE cap).
+# edge of -16.00 at 1/64, which is -14.5 at 1/72; the rail term only exempts) and drew a 0.2 s brake to -1.00 (the ONPATH_LEAD_MAX_BRAKE cap).
 # Its existence went 59 -> 0 over the window, median 0.055; every real adoption checked had a median of 0.54-0.99
 # (297 track 6 0.976, track 45 0.992; 263 track 25 0.535 lowest), and single sweeps at 0 do occur on real cars
 # (270 track 63, 280 track 7), hence the median and not a minimum. Over the 130 adoptions of the 598b524ba study a

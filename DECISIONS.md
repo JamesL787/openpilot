@@ -1752,7 +1752,7 @@ were deliberately left as they are (listed in STATUS item 199).
   TLS 60–62 and Deming 60–64 counts per m/s. With Job's pooled fit (STATUS 7, source 2, U10 < 64: 55.7–70.0;
   |x| ≥ 200: 58.3–70.3) the range-rate bracket is about 55–70, which contains 64 and **excludes 72**. It is not
   evidence against the 1/72 decode: the encoder is firmware-proven 1/72, and R18 (Jason, static) proved the range
-  encode is raw/16 with no offset. It reads as a range-vs-U11 discrepancy, the range slope running 1.03–1.29× U11.
+  scale is raw/16 (the constant −3.0 m offset does not change a slope). It reads as a range-vs-U11 discrepancy, the range slope running 1.03–1.29× U11.
   Job's per-dRel-band range check came back mixed; see the second addendum.
 - U10 v2 census (Job, replay only, 36 routes, `rs2_merged.json`, sha256
   `69ac57f8d45dd5794c3e65e551bdf92e7478fd3f7d2cce5a7bc190bc523eb868`, verified by Jason): per 7-sweep window, mean
@@ -1762,7 +1762,7 @@ were deliberately left as they are (listed in STATUS item 199).
   decisive**. The census cannot fit the optimal scale (it has no raw² sums and no vRel-magnitude bins).
   Separate context, not part of this change: the residual sd rises monotonically with U10, 1.31 to 10.96 m/s, and is
   not U10/144.
-- ~~The `BoschAU11Scale72` toggle, its 1/64 path and its tests are removed.~~ Superseded the same day: the toggle is
+- ~~The `BoschAU11Scale72` toggle, its 1/64 path and its tests are removed.~~ (superseded by the second addendum) Superseded the same day: the toggle is
   kept, default ON (second addendum).
 - `tools/bosch_a_scenarios.py` now encodes at 1/72 (rail 12.0).
 - `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 = −11.0 approved (not −13.0).

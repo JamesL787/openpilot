@@ -639,7 +639,7 @@ def test_bosch_onpath_lead_is_held_while_it_stays_on_the_path():
 
 
 # 00000298--c4d2a4acbc 1018.35: track 2, born at 42 m, U11 railed at -13.5 (1/64 log units), ranges closing at -15.96 m/s (band edge
-# -16.00), path median 0.76 m (limit 0.8); OBJECT_EXISTENCE_PROBABILITY fell 59 -> 0 over the window (median 0.055).
+# -16.00 at 1/64, -14.5 at 1/72), path median 0.76 m (limit 0.8); OBJECT_EXISTENCE_PROBABILITY fell 59 -> 0 over the window (median 0.055).
 BLIP_GEOMETRY = {"d0": 42.1, "v_rel": radard.BOSCH_A_U11_LOW_RAIL_MPS, "range_rate": -15.96, "offsets": (0.76, 0.7, 0.9, 0.5, 0.8, 1.1, 0.6)}
 BLIP_EXISTENCE = tuple(r / 127.0 for r in (59, 50, 40, 30, 20, 12, 7, 5, 3, 1, 0, 0, 0, 0, 0, 0))
 
