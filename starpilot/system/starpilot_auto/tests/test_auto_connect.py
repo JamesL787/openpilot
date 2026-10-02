@@ -193,6 +193,19 @@ def test_supervisor_auto_starts_wired_on_ignition_without_bluetooth(identity, tm
   assert starts == ["onroad", "onroad"]
 
 
+def test_supervisor_wired_keeps_hands_free_gateway_for_chosen_car(identity, tmp_path, monkeypatch):
+  onroad = {"value": True}
+  sup, starts, alive = auto_supervisor(identity, tmp_path, monkeypatch, onroad)
+  sup.set_connection("wired")
+  sup.config["receiver_address"] = "F8:36:9B:0A:7D:C8"  # the car paired over Bluetooth
+  bluez = sup._phone()
+  sup.maintain(0)
+  assert starts == ["onroad"] and bluez.released == 0 and bluez.hfp_registrations == 1, \
+    "a USB car still gets the phone's hands-free gateway"
+  sup._release_phone()
+  assert bluez.released == 0, "the standby gateway survives the end of a session"
+
+
 def test_supervisor_wired_auto_connect_off_and_user_stop(identity, tmp_path, monkeypatch):
   onroad = {"value": True}
   sup, starts, alive = auto_supervisor(identity, tmp_path, monkeypatch, onroad)

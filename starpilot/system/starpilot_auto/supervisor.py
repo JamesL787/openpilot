@@ -377,8 +377,10 @@ class Supervisor:
     address = config["receiver_address"]
     wired = config["connection"] == "wired"
     enabled = config["auto_connect"] and (wired or bool(address))
-    if (not enabled or wired) and self._bluez is not None and not self._session_alive() and not self._pairing_active():
-      self._release_phone()  # drop a standby gateway: auto-connect is off, or wired needs no Bluetooth
+    standby = bool(address) and config.get("phone_class", True)
+    if (not enabled or (wired and not standby)) and self._bluez is not None and not self._session_alive() \
+       and not self._pairing_active():
+      self._release_phone()  # drop a standby gateway: auto-connect is off, or a USB car with no chosen Bluetooth car
     if not enabled:
       return
     running = self._session_alive()
@@ -386,6 +388,13 @@ class Supervisor:
       # The drive is the only sign of the car: the session then waits for its USB handshake,
       # whether the car was on before the comma booted or is switched on after.
       ready, car_link = True, False
+      if standby:
+        # A phone always offers its car a hands-free gateway, wired or not. The 2019 Civic, wired with none
+        # (2026-10-02), refused Bluetooth audio once USB started, never gave the projection focus, and reset USB.
+        try:
+          self._phone().register_hfp()
+        except Exception:
+          pass  # Bluetooth still starting (or restarting)
     else:
       try:
         bluez = self._phone()
@@ -480,8 +489,7 @@ class Supervisor:
     if bluez is None:
       return
     config = self.config
-    standby = config["auto_connect"] and config["connection"] == "wireless" and bool(config["receiver_address"]) \
-              and config.get("phone_class", True)
+    standby = config["auto_connect"] and bool(config["receiver_address"]) and config.get("phone_class", True)
     if standby or self._pairing_active():
       bluez.restore_class()
     else:
