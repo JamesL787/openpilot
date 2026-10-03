@@ -1846,3 +1846,26 @@ radard's main() calls `set_bosch_a_newborn_leads(honda_bosch_a_radar)`, so non-B
 `BoschANewbornLeads` row and reader are removed; the key stays in `params_keys.h` only to match the committed aarch64
 `params_pyx.so`. The same change builds in Accel Boost (`GasOverrideBoost` removed) and, on pr10-smooth, D-072's
 short read-ahead (`PlannerShortActionTime` removed). Replay and static evidence only; not road-validated.
+
+## D-076 — PROPOSED (toggle OFF): `BoschARangeOffsetFallback` uses the firmware fallback range offset −335/128 instead of −3.0
+Recorded 2026-10-03, owner decision (Peter, in chat): add a toggle so he can drive the firmware fallback offset and
+compare it with −3.0. **Static evidence only; no road evidence.** With the toggle OFF, dRel is
+`raw/16 + BOSCH_A_RANGE_OFFSET_M` (−3.0), byte for byte.
+
+With it ON, the offset is −335/128 = −2.6171875 m, so every published dRel is 0.3828125 m (6.125 range counts) longer.
+Nothing else changes: the scale (1/16), vRel, U11, the azimuth, and every gate threshold stay as they are. Range
+differences cancel the offset, so range rates do too. radar_interface.py reads the param once at startup and fails
+closed to OFF, so a `params_pyx.so` without the key also means OFF. Restart required.
+
+Evidence (static, the comment block above `BOSCH_A_RANGE_OFFSET_M`): firmware range is `raw/16 − n/128`. n is a per-unit
+calibration value (config word + runtime addend), and 335 is only the fallback for a zero config word. −3.0 is n = 384,
+a decoder choice. **Neither value is measured for this car.** Peter's prior is that his unit matches the fallback.
+**UNRESOLVED:** (a) the true n, which the planned laser range check measures as the constant gap `raw/16 − (L + d)`;
+(b) whether the 335 fallback came from the 36802-TBA-A150 image the car runs; (c) whether the runtime addend ever
+changes.
+
+Why OFF: a longer dRel is the less conservative direction (a later stop, a slightly longer time to collision).
+
+Not done: the larch64 `common/params_pyx.so` / `libcommon.a` rebuild, without which the key is unknown on the device
+and the toggle stays OFF. `tools/bosch_a_scenarios.py`, `bosch_a_dropout_census.py` and `bosch_a_sweep_trace.py`
+(offline) still use −3.0.

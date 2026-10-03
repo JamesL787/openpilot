@@ -3101,6 +3101,17 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "BoschARangeOffsetFallback",
+        "label": "Radar Range Offset -2.617 m",
+        "description": "TEST, default off. Bosch-A radar only. Uses the radar firmware's fallback range offset (-2.617 m) instead of -3.0, so every radar distance reads 0.38 m longer. Closing speeds are unchanged. Neither value is measured on this car; longer distances are the less cautious direction, which is why it ships off. Never driven. Restart required to take effect.",
+        "picker_description": "Bosch-A radar distances use the firmware fallback offset (0.38 m longer). Default off. Never driven.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune",
+        "requires_offroad": true,
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NrdrHondaEcuMatchedLong",
         "label": "Nidec ECU-Matched Long",
         "description": "Honda Nidec only, and not with a gas pedal interceptor — has no effect on Bosch cars or interceptor-equipped cars. Shape Honda gas and brake commands closer to the stock Nidec ECU.",

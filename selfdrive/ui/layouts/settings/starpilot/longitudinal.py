@@ -607,6 +607,12 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                                   "way. Restart required to take effect."),
                  get_state=lambda: self._params.get_bool("BoschARadar"),
                  set_state=lambda v: self._params.put_bool("BoschARadar", v)),
+      SettingRow("BoschARangeOffsetFallback", "toggle", tr_noop("Radar Range Offset -2.617 m"),
+                 subtitle=tr_noop("TEST, default off. Bosch-A radar only. Uses the radar firmware's fallback range offset (-2.617 m) instead of -3.0, so "
+                                  "every radar distance reads 0.38 m longer. Closing speeds are unchanged. Neither value is measured on this car; longer "
+                                  "distances are the less cautious direction, which is why it ships off. Never driven. Restart required to take effect."),
+                 get_state=lambda: self._params.get_bool("BoschARangeOffsetFallback"),
+                 set_state=lambda v: self._params.put_bool("BoschARangeOffsetFallback", v)),
     ]
 
     self._slc_rows = [

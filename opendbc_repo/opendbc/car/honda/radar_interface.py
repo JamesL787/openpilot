@@ -76,6 +76,28 @@ BOSCH_A_RANGE_SCALE_M = 1.0 / 16.0
 # sits inside the plausible calibration range and the choice barely moves the residual. Do not
 # re-fit this against vision: read it from the radar's own configuration instead.
 BOSCH_A_RANGE_OFFSET_M = -3.0
+# D-076, BoschARangeOffsetFallback (TEST, default OFF; owner decision 2026-10-03). ON uses the firmware's own fallback
+# offset, -335/128 = -2.6171875 m, instead of -3.0: every published dRel reads 0.3828125 m (6.125 range counts) LONGER.
+# Range differences, vRel and U11 are unchanged. Neither value is measured for this car: -3.0 is n = 384 (decoder
+# choice), -2.617 is n = 335 (used only when the config word reads zero). Longer dRel is the less conservative
+# direction, which is why it ships OFF. Static only; no road evidence. The laser range check settles the true n.
+BOSCH_A_RANGE_OFFSET_FALLBACK_M = -335.0 / 128.0
+BOSCH_A_RANGE_OFFSET_FALLBACK_PARAM = "BoschARangeOffsetFallback"
+
+
+def bosch_a_range_offset_m(fallback: bool) -> float:
+  """D-076: the range offset the toggle selects. OFF returns BOSCH_A_RANGE_OFFSET_M itself."""
+  return BOSCH_A_RANGE_OFFSET_FALLBACK_M if fallback else BOSCH_A_RANGE_OFFSET_M
+
+
+def bosch_a_range_offset_fallback_enabled() -> bool:
+  """BoschARangeOffsetFallback, read once at startup the way interface.py reads BoschARadar. Any failure, including
+  a params_pyx.so that predates the key, means OFF: -3.0."""
+  try:
+    from openpilot.common.params import Params
+    return bool(Params().get_bool(BOSCH_A_RANGE_OFFSET_FALLBACK_PARAM))
+  except Exception:
+    return False
 
 # Azimuth: f0 raw_angle (11-bit, B4:B5 high 3 bits), offset-binary about 1024.
 #
@@ -681,6 +703,8 @@ class RadarInterface(RadarInterfaceBase):
       # D-074: U11 counts per m/s (72). An attribute so replays of 1/64-era logs can set it.
       self.u11_counts_per_mps = BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
       self.newborn_range_publish = BOSCH_A_NEWBORN_RANGE_PUBLISH
+      # D-076: range offset, -3.0 unless BoschARangeOffsetFallback is on. Read once; a restart is needed.
+      self.range_offset_m = bosch_a_range_offset_m(bosch_a_range_offset_fallback_enabled())
     else:
       # Nidec
       self.rcp = _create_nidec_can_parser(CP.carFingerprint)
@@ -914,7 +938,7 @@ class RadarInterface(RadarInterfaceBase):
       v0 = self.rcp.vl[BOSCH_A_MAIN_IDS[slot][0]]
       range_raw = int(v0['RANGE_RAW'])
       angle_raw = int(v0['AZIMUTH_RAW'])
-      dRel = BOSCH_A_RANGE_SCALE_M * range_raw + BOSCH_A_RANGE_OFFSET_M
+      dRel = BOSCH_A_RANGE_SCALE_M * range_raw + self.range_offset_m
       azimuth_rad = BOSCH_A_AZIMUTH_SCALE_RAD * (angle_raw - BOSCH_A_AZIMUTH_CENTER)
       # The firmware's internal geometry path uses tan(angle) for a forward-axis distance.  The
       # Bosch object range is consumed as that forward-axis quantity here, so use the same projection

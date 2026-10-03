@@ -37,7 +37,9 @@ from opendbc.car.honda.radar_interface import (
   _bosch_a_main_base,
   _bosch_a_range_ratio,
   _bosch_a_range_ratio_vrel,
+  bosch_a_range_offset_m,
 )
+import opendbc.car.honda.radar_interface as radar_interface_module
 from opendbc.car.honda.values import CAR
 from openpilot.common.params import Params
 
@@ -702,6 +704,46 @@ class TestU11Scale72:
     assert _bosch_a_direct_vrel_interval(high) == (high, BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS)
     inside = _bosch_a_direct_vrel(1)
     assert _bosch_a_direct_vrel_interval(inside) == (inside, inside)
+
+
+class TestRangeOffsetFallback:
+  """D-076 BoschARangeOffsetFallback: OFF is -3.0 exactly; ON is the firmware fallback -335/128, nothing else moves."""
+
+  @staticmethod
+  def _dRel(ri, raw_range=1000):
+    ri.update(sweep(0, 0, 0x7, raw_range, 1024, 1, 0))
+    rr = ri.update(sweep(0, 1, 0x7, raw_range, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
+    return rr.points[0]
+
+  def test_selector(self):
+    assert bosch_a_range_offset_m(False) is BOSCH_A_RANGE_OFFSET_M
+    assert bosch_a_range_offset_m(True) == -2.6171875
+    assert bosch_a_range_offset_m(True) - bosch_a_range_offset_m(False) == 0.3828125
+
+  def test_default_off_without_the_key(self):
+    ri = make_radar_interface()  # this test's params store has no BoschARangeOffsetFallback set
+    assert ri.range_offset_m is BOSCH_A_RANGE_OFFSET_M
+    assert self._dRel(ri).dRel == pytest.approx(1000 / 16 - 3.0)
+
+  def test_on_shifts_dRel_only(self, monkeypatch):
+    off = self._dRel(make_radar_interface())
+    monkeypatch.setattr(radar_interface_module, "bosch_a_range_offset_fallback_enabled", lambda: True)
+    ri = make_radar_interface()
+    assert ri.range_offset_m == -2.6171875
+    on = self._dRel(ri)
+    assert on.dRel == pytest.approx(1000 / 16 - 2.6171875)
+    assert on.dRel - off.dRel == pytest.approx(0.3828125)
+    assert (on.vRel, on.yRel / on.dRel) == pytest.approx((off.vRel, off.yRel / off.dRel))
+
+  def test_reader_fails_closed(self, monkeypatch):
+    import openpilot.common.params as params_module
+
+    class Broken:
+      def get_bool(self, key):
+        raise RuntimeError("unknown key")
+    monkeypatch.setattr(params_module, "Params", Broken)
+    assert radar_interface_module.bosch_a_range_offset_fallback_enabled() is False
 
 
 class TestVrel:

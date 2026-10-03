@@ -21,6 +21,7 @@ here. Where the two touch — the CR-V lateral profile, the steering-ratio curve
 `extract_drives.py` lineage — that is recorded below as a cross-reference only.
 
 **Open topics to revisit** (parked by decision, not closed):
+- **Range offset −2.617 m toggle: D-076 (`BoschARangeOffsetFallback`, TEST, default OFF).** Static only, not driven. ON uses the radar firmware's fallback offset (−335/128) instead of −3.0, so every dRel reads 0.383 m longer; vRel and U11 are unchanged. Neither offset is measured for this car; the laser range check settles it. The larch64 params artifacts need a rebuild before the key exists on the device.
 - **Newborn radar points: D-075, built in ON since 2026-10-03 (the `BoschANewbornLeads` toggle is removed).** Replay and static only, limited road evidence from Peter's drives with the toggle on. Publishes young closing radar points earlier and lets one lead only once its own range closes.
 - **U11 scale 1/72: D-074 ACCEPTED (owner, 2026-10-02), built in; the 1/64 switch back was removed 2026-10-03.**
   Static and replay only, not driven. Rails ±12.0 m/s; every closing speed published is 64/72 of the old 1/64 reading (−11.1 %), the D-041 danger
