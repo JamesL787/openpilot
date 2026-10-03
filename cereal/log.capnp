@@ -784,6 +784,10 @@ struct RadarState @0x9a185389d6fdd05f {
 
   leadOne @3 :LeadData;
   leadTwo @4 :LeadData;
+  # Bosch-A only (ONPATH_RADAR_ADOPT in selfdrive/controls/radard.py): a radar-only track that has sat on the
+  # driving path for a second while the model does not see it. leadOne is unchanged; the planner may let this
+  # lead add braking beyond leadOne's, down to ONPATH_LEAD_MAX_BRAKE, until vision or radard's own leadOne takes it.
+  leadOnpath @14 :LeadData;
 
   struct LeadData {
     dRel @0 :Float32;
@@ -801,11 +805,21 @@ struct RadarState @0x9a185389d6fdd05f {
     modelProb @13 :Float32;
     radar @14 :Bool;
     radarTrackId @15 :Int32 = -1;
-    # Telemetry only, nothing consumes these. vRelRangeDerived is a range-LSQ velocity published
-    # beside the radar's own vRel so the two can be compared on real drives; measuredRadar exposes
-    # whether the last radar update was a real measurement or a coast.
+    # vRelRangeDerived is a range-LSQ velocity published beside the radar's own vRel so the two
+    # can be compared on real drives; measuredRadar exposes whether the last radar update was a
+    # real measurement or a coast.
+    #
+    # Was telemetry-only (D-044). Since D-053 the range rate ALSO feeds control on Bosch-A cars
+    # when the RangeDerivedVrel toggle is on, one-sided and bounded -- see RANGE_VREL_ASSIST_*
+    # in selfdrive/controls/radard.py. When that assist is active, radarState's vRel and vLead
+    # carry the correction; the NATIVE U11 vRel for the same track is still recoverable from
+    # liveTracks by matching rr.points[].trackId against radarTrackId, so the comparison this
+    # channel exists for stays auditable in a log. measuredRadar is unchanged.
     vRelRangeDerived @16 :Float32;
     measuredRadar @17 :Bool;
+    # True on each radar update where the NC veto (D-071, RANGE_VREL_RAIL_NC_VETO in radard.py) WOULD zero a RAIL_FAST
+    # correction, whether the switch is on or off. Shadow marker for finding candidate fires in logs; it changes nothing.
+    ncVetoShadow @18 :Bool;
 
     aLeadDEPRECATED @5 :Float32;
   }
@@ -1347,6 +1361,8 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   # distance, given the lead's own braking. Published so commanded-vs-required can be read straight
   # out of a route instead of reconstructed offline.
   leadGeometryRequiredAccel @45 :Float32;
+  # Gas override boost (port of commaai/openpilot#39015). Upstream uses @40, taken here by leadTrajectoryX0.
+  accelBoost @46 :Float32;
 
   enum LongitudinalPlanSource {
     cruise @0;

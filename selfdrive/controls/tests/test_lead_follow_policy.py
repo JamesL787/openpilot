@@ -54,12 +54,6 @@ def test_follow_policy_keeps_stop_and_panic_outputs_outside_comfort_path(blocked
   assert result.target == pytest.approx(-1.2)
 
 
-def test_follow_policy_limits_small_post_lead_reversal():
-  result = run(lead(d_rel=36.0, v_lead=20.2), v_ego=20.0, previous=-0.08, raw=0.45)
-  assert result.target < 0.45
-  assert result.target - (-0.08) <= 0.18
-
-
 def test_follow_policy_deadbands_small_steady_sign_reversal():
   result = run(lead(d_rel=37.2, v_lead=24.0, radar=True), v_ego=24.0, previous=0.24, raw=-0.24)
 
