@@ -25,6 +25,18 @@ NEGATIVE_TARGET_CREEP_GUARD_DECEL = 0.40
 MODE_TRANSITION_MAX_DECEL = 4.0
 TESLA_PEDAL_RELEASE_GUARD_TIME = 0.15
 TESLA_PEDAL_RELEASE_GUARD_MAX_DECEL = 0.35
+# Brake build-up when control resumes (Peter, 2026-10-03, route 000002cc 3:32 and 5:20, log evidence only). The
+# planner keeps a decel target while the driver holds the gas above a lower set/limit speed; on release the command
+# stepped 0 -> -1.3 in one frame, and the Civic's late-then-overshooting brakes turned that into a lurch. For
+# RESUME_BRAKE_RAMP_TIME after off -> pid, the brake command may deepen by at most RESUME_BRAKE_RAMP_RATE per second.
+# Never applied when stopping, for targets at or below RESUME_BRAKE_RAMP_BYPASS_DECEL, or with a lead closer than
+# RESUME_BRAKE_RAMP_BYPASS_DREL: a real brake demand is not delayed. Releasing brake is never limited.
+# Toggle ResumeBrakeRamp (Advanced Longitudinal Tuning), default OFF: open-loop replay only, and Peter braked in every
+# replayed case the ramp would have softened -- whether that was "too sudden" or "not enough" is still open.
+RESUME_BRAKE_RAMP_TIME = 1.5
+RESUME_BRAKE_RAMP_RATE = 1.5  # m/s^3; 2b7 command jerk p95 while braking was 1.27
+RESUME_BRAKE_RAMP_BYPASS_DECEL = -2.0
+RESUME_BRAKE_RAMP_BYPASS_DREL = 30.0
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
@@ -189,6 +201,7 @@ class LongControl:
     self.stop_release_counter = 0
     self.pedal_override_active = False
     self.pedal_override_release_frames = 0
+    self.resume_brake_ramp_frames = 0
     self.vehicle_tuning = LongControlVehicleTuning(CP)
     self.frame = 0
     self._drel_window: list[float] = []
@@ -381,6 +394,7 @@ class LongControl:
       )
 
     previous_long_control_state = self.long_control_state
+    resume_brake_ramp = bool(getattr(starpilot_toggles, "resume_brake_ramp", False))
     # Takes the Honda-overridden vEgoStarting from _get_runtime_long_tuning, not the raw
     # StarPilot toggle -- passing starpilot_toggles here would bypass HondaVEgoStarting.
     allow_stopping_release = self._stop_release_ready(CS, a_target, should_stop, has_lead, long_tuning.vEgoStarting)
@@ -463,6 +477,10 @@ class LongControl:
       leaving_experimental = self.transitioning and self.prev_mode == 'blended' and self.current_mode == 'acc'
       if leaving_experimental:
         freeze_integrator = True
+      # The resume brake ramp holds output above the target on purpose; don't let the integrator wind up behind it.
+      if resume_brake_ramp and a_target < 0.0 and \
+         (self.resume_brake_ramp_frames > 0 or previous_long_control_state == LongCtrlState.off):
+        freeze_integrator = True
       raw_output_accel = self.pid.update(error, speed=CS.vEgo, feedforward=feedforward,
                                          freeze_integrator=freeze_integrator)
       if self.is_honda:
@@ -516,8 +534,28 @@ class LongControl:
       if not should_stop and -TESLA_PEDAL_RELEASE_GUARD_MAX_DECEL < output_accel < 0.0:
         output_accel = 0.0
 
+    if resume_brake_ramp:
+      output_accel = self._ramp_resume_brake(output_accel, previous_long_control_state, a_target, should_stop, drel_filtered)
+    else:
+      self.resume_brake_ramp_frames = 0
+
     self.last_output_accel = clip(output_accel, accel_limits[0], accel_limits[1])
     return self.last_output_accel
+
+  def _ramp_resume_brake(self, output_accel, previous_long_control_state, a_target, should_stop, drel_filtered):
+    if self.long_control_state != LongCtrlState.pid:
+      self.resume_brake_ramp_frames = 0
+      return output_accel
+    if previous_long_control_state == LongCtrlState.off:
+      self.resume_brake_ramp_frames = int(round(RESUME_BRAKE_RAMP_TIME / DT_CTRL))
+    if self.resume_brake_ramp_frames <= 0:
+      return output_accel
+    self.resume_brake_ramp_frames -= 1
+    if should_stop or a_target <= RESUME_BRAKE_RAMP_BYPASS_DECEL or drel_filtered < RESUME_BRAKE_RAMP_BYPASS_DREL:
+      self.resume_brake_ramp_frames = 0
+      return output_accel
+    floor = min(self.last_output_accel, 0.0) - RESUME_BRAKE_RAMP_RATE * DT_CTRL
+    return max(output_accel, floor)
 
   def reset_old_long(self, v_pid):
     """Reset PID controller and change setpoint"""

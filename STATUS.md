@@ -10126,3 +10126,16 @@ Replay of the fixed code (base = the old law, same 10 routes):
     1/72-only build, and switch OFF is identical to the code before the change (1/64), on both branches.
 - **Still open:** a separate fit of the scale itself (the U10 census cannot fit it); why the range check depends on
   distance (UNRESOLVED); the first drive at 1/72.
+
+## 200. Resume brake ramp behind a toggle: `ResumeBrakeRamp` (Advanced Longitudinal Tuning, owner-requested, default OFF, 2026-10-03). Open-loop replay and static unit tests only; not driven.
+- **Problem (log evidence, 11c8fa231c0499ed/000002cc 3:32):** when op-long takes back over after a gas override, the
+  brake command steps straight to the planner's target, 0 → −1.3 in about 0.15 s, and the Civic's brakes lurch.
+- **Change:** with the toggle on, for 1.5 s after off → pid the brake command may deepen by at most 1.5 m/s³
+  (`RESUME_BRAKE_RAMP_*` in `longcontrol.py`). It is skipped when stopping, for targets at or below −2.0, or with a lead
+  closer than 30 m, and releasing brake is never limited. The PID integrator is frozen while it holds. Toggle off,
+  missing, or the parent toggle off: byte-for-byte the old output (unit test).
+- **Why default OFF:** in the open-loop replay Peter pressed the brake in every case the ramp would have softened. It
+  is not yet known whether at 2cc 5:20 (right turn) and 2b7 ~18:31 he braked because it was too sudden (ramp helps)
+  or not enough (ramp makes it worse). If the answer is "not enough", narrow it to big steps from 0 with nothing close.
+- **Params artifacts:** `ResumeBrakeRamp` (BOOL, default 0) added; `params_pyx.so`/`libcommon.a` rebuilt in a separate
+  commit.

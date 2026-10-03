@@ -878,6 +878,8 @@ class StarPilotVariables:
     toggle.stoppingDecelRate = self.get_value("StoppingDecelRate", cast=float, condition=advanced_longitudinal_tuning, default=toggle.stoppingDecelRate, min=0.001, max=1)
     toggle.vEgoStarting = self.get_value("VEgoStarting", cast=float, condition=advanced_longitudinal_tuning, default=toggle.vEgoStarting, min=0.01, max=1)
     toggle.vEgoStopping = self.get_value("VEgoStopping", cast=float, condition=advanced_longitudinal_tuning, default=toggle.vEgoStopping, min=0.01, max=1)
+    # Resume brake ramp after a gas override (longcontrol RESUME_BRAKE_RAMP_*). Off unless the parent and this are on.
+    toggle.resume_brake_ramp = self.get_value("ResumeBrakeRamp", condition=advanced_longitudinal_tuning)
 
     toggle.alert_volume_controller = self.get_value("AlertVolumeControl")
     toggle.below_steer_speed_volume = self.get_value("BelowSteerSpeedVolume", cast=float, condition=toggle.alert_volume_controller)

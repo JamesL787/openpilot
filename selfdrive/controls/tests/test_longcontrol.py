@@ -1584,3 +1584,61 @@ def test_leaving_experimental_does_not_reset_mode_transition_timer():
     lc.update_mpc_mode(False)
 
   assert not lc.transitioning
+
+
+def _resume_after_gas(monkeypatch, a_target, should_stop=False, drel=None, frames=1, ramp=True, toggle=True):
+  if not ramp:
+    monkeypatch.setattr(longcontrol, "RESUME_BRAKE_RAMP_TIME", 0.0)
+  toggles = make_toggles()
+  toggles.resume_brake_ramp = toggle
+  lc = LongControl(make_honda_bosch_cp())
+  CS = car.CarState.new_message(vEgo=16.0, aEgo=0.0, brakePressed=False, gasPressed=True)
+  CS.cruiseState.standstill = False
+  lc.update(False, CS, a_target, False, (-3.5, 2.0), toggles, drel=drel)
+  assert lc.long_control_state == LongCtrlState.off
+  CS.gasPressed = False
+  return [lc.update(True, CS, a_target, should_stop, (-3.5, 2.0), toggles, drel=drel) for _ in range(frames)]
+
+
+def test_resume_brake_ramp_builds_brake_gradually_after_gas_release(monkeypatch):
+  outs = _resume_after_gas(monkeypatch, -1.3, frames=int(2.0 / DT_CTRL))
+  step = longcontrol.RESUME_BRAKE_RAMP_RATE * DT_CTRL
+  assert outs[0] >= -step - 1e-6
+  for i in range(1, len(outs)):
+    assert outs[i] >= outs[i - 1] - step - 1e-6
+  ref = _resume_after_gas(monkeypatch, -1.3, frames=int(2.0 / DT_CTRL), ramp=False)
+  assert ref[0] < -1.0
+  assert outs[-1] == pytest.approx(ref[-1], abs=0.05)
+
+
+@pytest.mark.parametrize(("a_target", "should_stop", "drel"), (
+  (-2.5, False, None),   # hard brake demand
+  (-1.3, True, None),    # stopping
+  (-1.3, False, 20.0),   # lead close
+))
+def test_resume_brake_ramp_never_delays_urgent_braking(monkeypatch, a_target, should_stop, drel):
+  ramped = _resume_after_gas(monkeypatch, a_target, should_stop, drel, frames=3)
+  ref = _resume_after_gas(monkeypatch, a_target, should_stop, drel, frames=3, ramp=False)
+  assert ramped == pytest.approx(ref)
+
+
+def test_resume_brake_ramp_does_not_limit_releasing_or_accelerating(monkeypatch):
+  ramped = _resume_after_gas(monkeypatch, 0.8, frames=5)
+  ref = _resume_after_gas(monkeypatch, 0.8, frames=5, ramp=False)
+  assert ramped == pytest.approx(ref)
+
+
+def test_resume_brake_ramp_toggle_off_is_unchanged(monkeypatch):
+  off = _resume_after_gas(monkeypatch, -1.3, frames=int(2.0 / DT_CTRL), toggle=False)
+  ref = _resume_after_gas(monkeypatch, -1.3, frames=int(2.0 / DT_CTRL), ramp=False)
+  assert off == pytest.approx(ref, abs=1e-9)
+  assert off[0] < -1.0
+
+
+def test_resume_brake_ramp_is_off_when_toggles_lack_it():
+  lc = LongControl(make_honda_bosch_cp())
+  CS = car.CarState.new_message(vEgo=16.0, aEgo=0.0, brakePressed=False, gasPressed=True)
+  CS.cruiseState.standstill = False
+  lc.update(False, CS, -1.3, False, (-3.5, 2.0), make_toggles())
+  CS.gasPressed = False
+  assert lc.update(True, CS, -1.3, False, (-3.5, 2.0), make_toggles()) < -1.0

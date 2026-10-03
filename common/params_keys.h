@@ -846,6 +846,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"TrafficJerkSpeed", {PERSISTENT, FLOAT, "100.0", "100.0", 3}},
     {"TrafficJerkSpeedDecrease", {PERSISTENT, FLOAT, "100.0", "100.0", 3}},
     {"TruckTuning", {PERSISTENT, BOOL, "0", "0", 3}},
+    {"ResumeBrakeRamp", {PERSISTENT, BOOL, "0", "0", 3}},
     {"TuningLevel", {PERSISTENT, INT, "0", "0", 0}},
     {"TuningLevelConfirmed", {PERSISTENT, BOOL, "0", "0", 0}},
     {"TurnDesires", {PERSISTENT, BOOL, "0", "0", 2}},

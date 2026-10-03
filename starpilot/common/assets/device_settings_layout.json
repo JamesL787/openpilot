@@ -880,6 +880,16 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "ResumeBrakeRamp",
+        "label": "Resume Brake Ramp",
+        "description": "After a gas override, build braking up gradually (at most 1.5 m/s^3 for 1.5 s) instead of stepping straight to the planner target. Skipped when stopping, at -2.0 m/s^2 or harder, or with a lead closer than 30 m. Releasing brake is never limited.",
+        "picker_description": "Builds braking up gradually after you let off the gas.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "TrailerLoad",
         "label": "Trailer Load",
         "description": "Add trailer weight to vehicle mass for tow-aware gas, brake, and conservative lateral assist. Enter the loaded trailer weight in pounds.",
