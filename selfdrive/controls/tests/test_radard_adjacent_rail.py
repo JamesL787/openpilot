@@ -47,6 +47,7 @@ def test_gate_is_bosch_a_only():
 
 def test_gate_can_be_disabled(monkeypatch):
   monkeypatch.setattr(radard, "ADJACENT_RAIL_GATE", False)
+  monkeypatch.setattr(radard, "ADJACENT_RAIL_CONFIRM", True)  # the gate switch turns off both
   track = new_track()
   drive(track, 12, v_rel=RAIL, closing=V_EGO)
   assert radard.get_adjacent_lead({49: track}, False, lanes(), left=True, honda_bosch_a=True)['status']
@@ -93,3 +94,49 @@ def test_closer_railed_point_does_not_hide_a_real_adjacent_car():
   drive(car, 12, v_rel=-1.0, closing=1.0, d0=40.0)
   lead = radard.get_adjacent_lead({49: stationary, 44: car}, False, lanes(), left=True, honda_bosch_a=True)
   assert lead['status'] and lead['radarTrackId'] == 44
+
+
+# ADJACENT_RAIL_CONFIRM: shape of 000002cb segs 8-12 (Job replay): oncoming cars on the left, U11 on the rail,
+# range closing ~ -39, holds a median 0.3 s -- shorter than the latch needs.
+def test_short_railed_hold_before_any_fit_is_not_an_adjacent_lead():
+  track = new_track()
+  drive(track, 4, v_rel=RAIL, closing=39.0)
+  assert not track.vRelRangeFresh and not track.rail_range_inconsistent
+  assert track.rail_unconfirmed()
+  assert not radard.get_adjacent_lead({49: track}, False, lanes(), left=True, honda_bosch_a=True)['status']
+
+
+def test_railed_oncoming_car_is_dropped_before_the_latch():
+  track = new_track()
+  drive(track, radard.RANGE_VREL_SAMPLES, v_rel=RAIL, closing=39.0)
+  assert track.vRelRangeFresh and not track.rail_range_inconsistent
+  assert not radard.get_adjacent_lead({49: track}, False, lanes(), left=True, honda_bosch_a=True)['status']
+
+
+def test_confirm_can_be_disabled(monkeypatch):
+  monkeypatch.setattr(radard, "ADJACENT_RAIL_CONFIRM", False)
+  track = new_track()
+  drive(track, 4, v_rel=RAIL, closing=39.0)
+  assert radard.get_adjacent_lead({49: track}, False, lanes(), left=True, honda_bosch_a=True)['status']
+
+
+def test_confirm_is_bosch_a_only():
+  track = new_track()
+  drive(track, 4, v_rel=RAIL, closing=39.0)
+  assert radard.get_adjacent_lead({49: track}, False, lanes(), left=True, honda_bosch_a=False)['status']
+
+
+def test_slow_object_whose_fit_agrees_with_the_rail_is_kept():
+  # L31 at 2cb: vEgo 16.8, range closing -11.4 while U11 reads the rail -- a slow object, not oncoming
+  track = radard.Track(31, 16.8 + RAIL, radard.KalmanParams(radard.HONDA_BOSCH_A_RADAR_TS))
+  for i in range(12):
+    track.update(60.0 - 11.4 * i * DT, 2.6, RAIL, 16.8 + RAIL, True, True, t_now=i * DT)
+  assert not track.rail_unconfirmed()
+  assert radard.get_adjacent_lead({31: track}, False, lanes(), left=True, honda_bosch_a=True)['status']
+
+
+def test_off_rail_track_without_a_fit_is_unaffected():
+  track = new_track()
+  drive(track, 2, v_rel=-3.0, closing=3.0)
+  assert not track.rail_unconfirmed()
+  assert radard.get_adjacent_lead({49: track}, False, lanes(), left=True, honda_bosch_a=True)['status']

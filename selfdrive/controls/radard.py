@@ -251,6 +251,15 @@ RANGE_VREL_RAIL_NC_VETO_MAX_SIGMA_RAW = 64
 # the adjacent-lead label changes. Set ADJACENT_RAIL_GATE to False to restore the old behaviour.
 ADJACENT_RAIL_GATE = True
 ADJACENT_RAIL_GATE_UPDATES = 3
+# ADJACENT_RAIL_CONFIRM (2026-10-03, owner-approved, ships ON). REPLAY evidence only (Job, 000002cb segs 8-12):
+# the latch above needs ADJACENT_RAIL_GATE_UPDATES fresh fits, but 109 railed leadLeft holds there lasted a median
+# 0.3 s (max 3.0 s), long enough to draw an oncoming car as a speed-labelled side lead. Their vLead = vEgo + rail was
+# positive (median 10.7), so the vLead < 1 check passed them; 78 of the 82 with a fit closed at -15 or faster.
+# So a Bosch-A track on the rail is eligible as leadLeft/leadRight only while a fresh short range fit agrees with the
+# rail (vRel - vRelRange < RANGE_VREL_ASSIST_MIN_DISAGREEMENT_MPS). No fit yet -> not eligible; cost: a real railed
+# side car stays unlabelled for a few sweeps (27 of the 109 had no fit). As with the gate, the point is still
+# published and still eligible as leadOne/leadTwo (D-041/D-042). False restores the latch-only behaviour.
+ADJACENT_RAIL_CONFIRM = True
 
 # --- Vision-corroborated range assist (2026-09-26, extends D-053, rides RANGE_VREL_ASSIST).
 # REPLAY evidence only (open- and closed-loop), nothing driven; default OFF. 0000026c--10bec2e200 4:08:
@@ -1133,6 +1142,14 @@ class Track:
     else:
       self.rail_range_count = 0
 
+  def rail_unconfirmed(self) -> bool:
+    """ADJACENT_RAIL_CONFIRM: U11 on the rail and no fresh range fit agreeing with it. Bosch-A callers only."""
+    if self.vRel > BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_U11_SCALE_MPS / 2:
+      return False
+    agrees = (self.vRelRangeFresh and math.isfinite(self.vRelRange) and
+              self.vRel - self.vRelRange < RANGE_VREL_ASSIST_MIN_DISAGREEMENT_MPS)
+    return not agrees
+
   def nc_veto_median(self, t_now: float) -> float | None:
     """RANGE_VREL_RAIL_NC_VETO: median of the recent wide-limit NC vRels, or None with too few fresh samples."""
     vals = [v for t, v in self.nc_veto_hist if float(t_now) - t <= RANGE_VREL_RAIL_NC_VETO_WINDOW_S]
@@ -1497,7 +1514,8 @@ def get_adjacent_lead(tracks: dict[int, Track], standstill: bool, model_data: ca
 
   rail_gate = ADJACENT_RAIL_GATE and honda_bosch_a
   adjacent_tracks = [c for c in tracks.values()
-                     if c.potential_adjacent_lead(left, standstill, model_data) and not (rail_gate and c.rail_range_inconsistent)]
+                     if c.potential_adjacent_lead(left, standstill, model_data) and
+                     not (rail_gate and (c.rail_range_inconsistent or (ADJACENT_RAIL_CONFIRM and c.rail_unconfirmed())))]
   if len(adjacent_tracks) > 0:
     closest_track = min(adjacent_tracks, key=lambda c: c.dRel)
     lead_dict = closest_track.get_RadarState()
