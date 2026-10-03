@@ -138,6 +138,7 @@ class StarPilotOnroadView(AugmentedRoadView):
       super()._render(rect)
 
       if not ui_state.started:
+        self._unified_speed_widget.collapse_sources()
         self._favorite_radial_menu.collapse()
         return
 
@@ -147,6 +148,8 @@ class StarPilotOnroadView(AugmentedRoadView):
         self._render_speed_card()
         self._render_overlays()
         self._render_road_name()
+      else:
+        self._unified_speed_widget.collapse_sources()
 
       self._pip_sidecam.render(self._content_rect)
 
@@ -180,6 +183,7 @@ class StarPilotOnroadView(AugmentedRoadView):
 
   def _render_speed_card(self):
     if self._full_alert_showing():
+      self._unified_speed_widget.collapse_sources()
       return
     if self._unified_speed_widget.is_visible:
       self._unified_speed_widget.render(self._unified_speed_widget.rect)
@@ -240,7 +244,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     # Check if click maps to any of the layout widgets
     for zone in self.layout_manager.zones.values():
       for widget in zone:
-        if widget.is_visible and widget.blocks_pointer and rl.check_collision_point_rec(mouse_pos, widget.rect):
+        if widget.is_visible and widget.blocks_pointer and widget.contains_pointer(mouse_pos):
           return
     super()._handle_mouse_press(mouse_pos)
 

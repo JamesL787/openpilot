@@ -6,12 +6,10 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_measure import measure_text_cached
-from openpilot.selfdrive.ui.onroad.starpilot.widget_style import (
-  CONTROL_BORDER, CONTROL_ROUNDNESS, CONTROL_SEGMENTS,
-)
+from openpilot.selfdrive.ui.onroad.starpilot.widget_style import UNIFIED_ACCENT
 from openpilot.selfdrive.ui.onroad.starpilot.source_bubble_layout import (
   enabled_source_titles, fit_source_label, source_abbreviated_value_text,
-  source_content_metrics, source_value_text, visible_source_rows,
+  source_value_text, visible_source_rows,
 )
 from openpilot.selfdrive.ui.lib.starpilot_state import starpilot_state
 from openpilot.selfdrive.ui.lib.speed_limit_pulse import SpeedLimitPulse
@@ -165,24 +163,16 @@ def _get_semi_bold():
   return _font_semi_bold
 
 
-# ── Sources Bubble (expandable overlay) ────────────────────────────────
+# ── Source contents ───────────────────────────────────────────────────
 
-# Fixed outer footprint; the content scale adapts to the visible row count.
-_SOURCE_PANEL_WIDTH = 248
-_SOURCE_PANEL_GAP = 20
-_SOURCE_PANEL_PAD_X = 9
-_SOURCE_PANEL_PAD_Y = 2
+_SOURCE_PANEL_PAD_X = 16
+_SOURCE_PANEL_PAD_Y = 12
 _SOURCE_PANEL_BG = rl.Color(0, 0, 0, 175)
-_SOURCE_PANEL_BORDER = rl.Color(196, 205, 208, 80)
-_SOURCE_DIVIDER = rl.Color(196, 205, 208, 100)
-_SOURCE_ACTIVE_BAR = rl.Color(CONTROL_BORDER.r, CONTROL_BORDER.g, CONTROL_BORDER.b, 230)
-_SOURCE_ICON_MUTED = rl.Color(160, 170, 175, 200)
-_SOURCE_LABEL_MUTED = rl.Color(166, 166, 166, 255)
-_SOURCE_ACTIVE_BAR_WIDTH = 6.0
-_SOURCE_ACTIVE_BAR_HEIGHT = 36.0
-_SOURCE_ACTIVE_BAR_X = 2.0
-_SOURCE_ACTIVE_BAR_ROW_INSET = 3.0
-_SOURCE_MIN_LABEL_VALUE_GAP = 6.0
+_SOURCE_DIVIDER = rl.Color(UNIFIED_ACCENT.r, UNIFIED_ACCENT.g, UNIFIED_ACCENT.b, 90)
+_SOURCE_LABEL_MUTED = rl.Color(170, 179, 174, 255)
+_SOURCE_LABEL_SIZE = 26
+_SOURCE_VALUE_SIZE = 28
+_SOURCE_MIN_LABEL_VALUE_GAP = 12
 
 _SOURCE_COMPACT_LABELS = {
   "Dashboard": "Dash",
@@ -315,8 +305,8 @@ def _draw_sources_bubble_empty_state(panel_rect: rl.Rectangle) -> None:
     curr_y += round(sz.y + line_gap)
 
 
-def _draw_sources_bubble(state: dict, sign_rect: rl.Rectangle):
-  """Draw the expanded source list attached to the SLC card."""
+def _draw_source_contents(state: dict, panel_rect: rl.Rectangle) -> None:
+  """Draw raw source readings; the accepted source is white and bold."""
   font_semi = _get_semi_bold()
   font_bold = _get_bold()
   active_source = state['speed_limit_source']
@@ -324,29 +314,7 @@ def _draw_sources_bubble(state: dict, sign_rect: rl.Rectangle):
   active_only = state.get('slc_active_sources_only', False)
   abbreviated = state.get('slc_abbreviated_sources', False)
 
-  panel_rect = rl.Rectangle(
-    sign_rect.x + sign_rect.width + _SOURCE_PANEL_GAP,
-    sign_rect.y,
-    _SOURCE_PANEL_WIDTH,
-    sign_rect.height,
-  )
-  rl.draw_rectangle_rounded(panel_rect, CONTROL_ROUNDNESS, CONTROL_SEGMENTS, _SOURCE_PANEL_BG)
-  rl.draw_rectangle_rounded_lines_ex(
-    panel_rect, CONTROL_ROUNDNESS, CONTROL_SEGMENTS, 1, _SOURCE_PANEL_BORDER,
-  )
-
-  rows = [
-    (
-      panel_label,
-      _SOURCE_COMPACT_LABELS[panel_label],
-      icon_key,
-      value,
-      is_active,
-    )
-    for panel_label, icon_key, value, is_active in visible_source_rows(
-      SOURCE_DEFS, state, active_source, enabled_sources, active_only,
-    )
-  ]
+  rows = visible_source_rows(SOURCE_DEFS, state, active_source, enabled_sources, active_only)
 
   if not rows:
     _draw_sources_bubble_empty_state(panel_rect)
@@ -355,81 +323,54 @@ def _draw_sources_bubble(state: dict, sign_rect: rl.Rectangle):
   row_h = (panel_rect.height - 2 * _SOURCE_PANEL_PAD_Y) / len(rows)
   content_left = panel_rect.x + _SOURCE_PANEL_PAD_X
   content_right = panel_rect.x + panel_rect.width - _SOURCE_PANEL_PAD_X
-  font_size, icon_size, icon_gap = source_content_metrics(len(rows))
-  label_left = (
-    content_left + _SOURCE_ACTIVE_BAR_WIDTH + _SOURCE_MIN_LABEL_VALUE_GAP
-    if abbreviated else content_left + icon_size + icon_gap
-  )
-
-  for index, (panel_label, compact_label, icon_key, value, is_active) in enumerate(rows):
+  for index, (panel_label, _icon_key, value, is_active) in enumerate(rows):
+    font = font_bold if is_active else font_semi
+    compact_label = tr(_SOURCE_COMPACT_LABELS[panel_label])
     row_y = panel_rect.y + _SOURCE_PANEL_PAD_Y + index * row_h
-    if index:
-      divider_y = round(row_y)
+    if panel_label == "Next" and index:
       rl.draw_line_ex(
-        rl.Vector2(content_left, divider_y),
-        rl.Vector2(content_right, divider_y),
+        rl.Vector2(content_left, row_y),
+        rl.Vector2(content_right, row_y),
         1,
         _SOURCE_DIVIDER,
       )
-
-    if is_active:
-      active_bar_height = min(
-        _SOURCE_ACTIVE_BAR_HEIGHT,
-        max(10.0, row_h - 2 * _SOURCE_ACTIVE_BAR_ROW_INSET),
-      )
-      active_bar_rect = rl.Rectangle(
-        panel_rect.x + _SOURCE_ACTIVE_BAR_X,
-        round(row_y + (row_h - active_bar_height) / 2),
-        _SOURCE_ACTIVE_BAR_WIDTH,
-        active_bar_height,
-      )
-      rl.draw_rectangle_rounded(active_bar_rect, 0.5, 4, _SOURCE_ACTIVE_BAR)
 
     value_text = source_value_text(value)
     text_color = _WHITE if is_active else _SOURCE_LABEL_MUTED
 
     if abbreviated:
-      text_font = font_bold if is_active else font_semi
       label_text = fit_source_label(
-        f"{tr(compact_label)}-{source_abbreviated_value_text(value)}",
+        f"{compact_label}-{source_abbreviated_value_text(value)}",
         "",
-        content_right - label_left,
-        lambda text, font=text_font: measure_text_cached(font, text, font_size).x,
+        content_right - content_left,
+        lambda text, font=font: measure_text_cached(font, text, _SOURCE_LABEL_SIZE).x,
       )
-      label_size = measure_text_cached(text_font, label_text, font_size)
+      label_size = measure_text_cached(font, label_text, _SOURCE_LABEL_SIZE)
       text_y = round(row_y + (row_h - label_size.y) / 2)
       rl.draw_text_ex(
-        text_font,
+        font,
         label_text,
-        rl.Vector2(label_left, text_y),
-        font_size,
+        rl.Vector2(content_left, text_y),
+        _SOURCE_LABEL_SIZE,
         0,
         text_color,
       )
       continue
 
-    compact_label = tr(compact_label)
     full_label = tr(panel_label)
-    value_size = measure_text_cached(font_bold, value_text, font_size)
+    value_size = measure_text_cached(font, value_text, _SOURCE_VALUE_SIZE)
     max_label_width = max(
       0.0,
-      content_right - label_left - _SOURCE_MIN_LABEL_VALUE_GAP - value_size.x,
+      content_right - content_left - _SOURCE_MIN_LABEL_VALUE_GAP - value_size.x,
     )
     label_text = fit_source_label(
       full_label,
       compact_label,
       max_label_width,
-      lambda text: measure_text_cached(font_semi, text, font_size).x,
+      lambda text, font=font: measure_text_cached(font, text, _SOURCE_LABEL_SIZE).x,
     )
-    label_size = measure_text_cached(font_semi, label_text, font_size)
-    text_height = max(label_size.y, value_size.y)
-    text_y = round(row_y + (row_h - text_height) / 2)
-    icon_y = round(row_y + (row_h - icon_size) / 2)
-
-    icon_color = _WHITE if is_active else _SOURCE_ICON_MUTED
-    _draw_source_icon(icon_key, content_left, icon_y, icon_size, icon_color)
-
-    label_pos = rl.Vector2(label_left, text_y)
-    value_pos = rl.Vector2(round(content_right - value_size.x), text_y)
-    rl.draw_text_ex(font_semi, label_text, label_pos, font_size, 0, text_color)
-    rl.draw_text_ex(font_bold, value_text, value_pos, font_size, 0, text_color)
+    label_size = measure_text_cached(font, label_text, _SOURCE_LABEL_SIZE)
+    label_pos = rl.Vector2(content_left, round(row_y + (row_h - label_size.y) / 2))
+    value_pos = rl.Vector2(round(content_right - value_size.x), round(row_y + (row_h - value_size.y) / 2))
+    rl.draw_text_ex(font, label_text, label_pos, _SOURCE_LABEL_SIZE, 0, text_color)
+    rl.draw_text_ex(font, value_text, value_pos, _SOURCE_VALUE_SIZE, 0, text_color)
