@@ -2971,8 +2971,8 @@
       {
         "key": "ShowSLCOffset",
         "label": "Show Speed Limit Offset",
-        "description": "Show the current offset from the posted limit on the driving screen.",
-        "picker_description": "Shows the current offset from the posted limit.",
+        "description": "Show the current offset on the compact driving display. The unified Max Set / Speed Limit card always shows nonzero offsets.",
+        "picker_description": "Shows the offset on the compact display; the unified card always shows nonzero offsets.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "SpeedLimitController",
@@ -3667,8 +3667,8 @@
       {
         "key": "UseVienna",
         "label": "Use Vienna-Style Speed Signs",
-        "description": "Show Vienna-style (EU) speed-limit signs instead of MUTCD (US).",
-        "picker_description": "Uses Vienna-style speed-limit signs.",
+        "description": "Use Vienna-style (EU) speed-limit signs on the compact driving display. The unified Max Set / Speed Limit card uses its own layout.",
+        "picker_description": "Uses Vienna-style signs on the compact display.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "NavigationUI",

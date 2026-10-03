@@ -4,7 +4,7 @@ from opendbc.car.chrysler.values import pacifica_hybrid_aol_requires_set_press
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR, HyundaiFlags
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.common.params import Params
-from openpilot.selfdrive.car.cruise import CRUISE_LONG_PRESS, ButtonType
+from openpilot.selfdrive.car.cruise import CRUISE_LONG_PRESS, ButtonType, is_speed_limit_confirmation_pending
 from openpilot.selfdrive.selfdrived.events import ET
 
 from openpilot.starpilot.common.experimental_state import (
@@ -48,6 +48,8 @@ class StarPilotCard:
     self.params_memory = Params(memory=True)
 
     self.accel_pressed = False
+    self.confirmation_button_suppressed = set()
+    self.pressed_accel_buttons = set()
     self.always_on_lateral_allowed = False
     hyundai_flags = getattr(self.CP, "flags", 0)
     kia_forte_non_scc = (
@@ -240,6 +242,23 @@ class StarPilotCard:
       ]
 
     button_event_types = [self._button_type_raw(be) for be in carState.buttonEvents]
+    accel_button_types = (int(ButtonType.accelCruise), int(ButtonType.resumeCruise))
+    confirmation_pending = is_speed_limit_confirmation_pending(sm["starpilotPlan"])
+    if confirmation_pending:
+      self.confirmation_button_suppressed.update(self.pressed_accel_buttons)
+    suppressed_releases = set()
+    for be, be_type in zip(carState.buttonEvents, button_event_types, strict=False):
+      if be_type not in accel_button_types:
+        continue
+      if be.pressed:
+        self.pressed_accel_buttons.add(be_type)
+        if confirmation_pending:
+          self.confirmation_button_suppressed.add(be_type)
+      else:
+        self.pressed_accel_buttons.discard(be_type)
+        if be_type in self.confirmation_button_suppressed:
+          self.confirmation_button_suppressed.remove(be_type)
+          suppressed_releases.add(be_type)
     button_aol_supported = self.always_on_lateral_supported and (
       self.CP.brand == "hyundai" or starpilot_toggles.lkas_allowed_for_aol
     )
@@ -344,8 +363,11 @@ class StarPilotCard:
     self.always_on_lateral_enabled &= not (carState.brakePressed and carState.vEgo < starpilot_toggles.always_on_lateral_pause_speed) or carState.standstill
     self.always_on_lateral_enabled &= not self.error_log.is_file()
 
-    if sm.updated["starpilotPlan"] or any(be_type in (ButtonType.accelCruise, ButtonType.resumeCruise) for be_type in button_event_types):
-      self.accel_pressed = any(be_type in (ButtonType.accelCruise, ButtonType.resumeCruise) for be_type in button_event_types)
+    if sm.updated["starpilotPlan"] or any(be_type in accel_button_types for be_type in button_event_types):
+      self.accel_pressed = any(
+        be_type in accel_button_types and (be.pressed or be_type not in suppressed_releases)
+        for be, be_type in zip(carState.buttonEvents, button_event_types, strict=False)
+      )
 
     if sm.updated["starpilotPlan"] or any(be_type == ButtonType.decelCruise for be_type in button_event_types):
       self.decel_pressed = any(be_type == ButtonType.decelCruise for be_type in button_event_types)

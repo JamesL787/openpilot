@@ -8,7 +8,7 @@ from openpilot.selfdrive.ui.onroad.starpilot.torque_bar import TorqueBar
 from openpilot.selfdrive.ui.onroad.starpilot.rivian_lateral_mode import rivian_lateral_mode
 from openpilot.selfdrive.ui.onroad.starpilot.widget_layout_manager import WidgetLayoutManager
 from openpilot.selfdrive.ui.onroad.starpilot.widgets import (
-  SetSpeedWidget, SpeedLimitWidget, PedalIconsWidget,
+  UnifiedSpeedWidget, PedalIconsWidget,
   AetherGaugeWidget, PersonalityButtonWidget, DriverMonitorWidget,
   SteeringWheelWidget, StoppedTimerWidget, ModelSourceWidget
 )
@@ -25,7 +25,6 @@ from openpilot.starpilot.common.favorite_slots import (
   build_favorite_slot_options,
   filter_favorite_slot_options,
   favorite_key_is_valid,
-  is_bool_param,
 )
 
 from openpilot.system.ui.lib.application import MousePos, gui_app, FontWeight
@@ -59,8 +58,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._hud_renderer.draw_exp_button = False
 
     # Initialize layout widgets
-    self._set_speed_widget = self._create_set_speed_widget()
-    self._speed_limit_widget = self._create_speed_limit_widget()
+    self._unified_speed_widget = UnifiedSpeedWidget(self._hud_renderer)
     self._aethergauge_widget = self._create_aethergauge_widget()
     self._steering_wheel_widget = SteeringWheelWidget(self._hud_renderer._exp_button)
     self._pedals_widget = PedalIconsWidget()
@@ -70,8 +68,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     self._stopped_timer_widget = self._create_stopped_timer_widget()
 
     # Register to layout zones
-    self.layout_manager.register_widget("left", self._set_speed_widget)
-    self.layout_manager.register_widget("left", self._speed_limit_widget)
+    self.layout_manager.register_widget("left", self._unified_speed_widget)
     self.layout_manager.register_widget("left", self._aethergauge_widget)
     self.layout_manager.register_widget("right", self._steering_wheel_widget)
     self.layout_manager.register_widget("right", self._pedals_widget)
@@ -80,8 +77,7 @@ class StarPilotOnroadView(AugmentedRoadView):
     self.layout_manager.register_widget("bottom", self._driver_monitor_widget)
 
     # Register as child widgets for click propagation
-    self._child(self._set_speed_widget)
-    self._child(self._speed_limit_widget)
+    self._child(self._unified_speed_widget)
     self._child(self._aethergauge_widget)
     self._child(self._steering_wheel_widget)
     self._child(self._pedals_widget)
@@ -96,11 +92,7 @@ class StarPilotOnroadView(AugmentedRoadView):
   def _create_favorite_menu(self):
     return FavoriteRadialMenu(ui_state.ui_params, ui_state.params_memory, self._favorite_slot_options)
 
-  def _create_set_speed_widget(self):
-    return SetSpeedWidget(self._hud_renderer)
 
-  def _create_speed_limit_widget(self):
-    return SpeedLimitWidget()
 
   def _create_stopped_timer_widget(self):
     return StoppedTimerWidget(self.is_in_reverse)
@@ -152,7 +144,7 @@ class StarPilotOnroadView(AugmentedRoadView):
       if self._draw_hud_controls:
         dm = self.driver_state_renderer
         self.layout_manager.update_layout(self._content_rect, is_rhd=dm.is_rhd if dm else False)
-        self._render_slc()
+        self._render_speed_card()
         self._render_overlays()
         self._render_road_name()
 
@@ -186,13 +178,11 @@ class StarPilotOnroadView(AugmentedRoadView):
     render_background_effects(rect, border_width, blind_spot_visible=self._blind_spot_monitors_visible())
     render_overlay(border_rect, border_width)
 
-  def _render_slc(self):
+  def _render_speed_card(self):
     if self._full_alert_showing():
       return
-    if self._speed_limit_widget.is_visible:
-      self._speed_limit_widget.render(self._speed_limit_widget.rect)
-    if self._set_speed_widget.is_visible:
-      self._set_speed_widget.render(self._set_speed_widget.rect)
+    if self._unified_speed_widget.is_visible:
+      self._unified_speed_widget.render(self._unified_speed_widget.rect)
 
   def _render_overlays(self):
     alert_showing, _ = self.alert_renderer.will_render()
@@ -205,7 +195,7 @@ class StarPilotOnroadView(AugmentedRoadView):
 
     self._render_developer_metrics()
 
-    self.layout_manager.render_widgets(exclude={"speed_limit", "set_speed"})
+    self.layout_manager.render_widgets(exclude={"unified_speed"})
 
     self._render_torque_bar()
     self._render_bottom_row_widgets()

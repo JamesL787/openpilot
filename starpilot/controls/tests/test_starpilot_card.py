@@ -59,7 +59,7 @@ def make_sm():
     "carControl": SimpleNamespace(longActive=False),
     "selfdriveState": SimpleNamespace(active=False, alertType=[], experimentalMode=False),
     "starpilotSelfdriveState": SimpleNamespace(alertType=[]),
-    "starpilotPlan": SimpleNamespace(lateralCheck=True),
+    "starpilotPlan": SimpleNamespace(lateralCheck=True, speedLimitChanged=False, unconfirmedSlcSpeedLimit=0.0),
     "liveCalibration": SimpleNamespace(calPerc=100),
   }, updated={"starpilotPlan": False})
 
@@ -277,6 +277,37 @@ def make_car_state(available=False, enabled=False, button_events=None, brake_pre
 
 def make_wrapped_button_event(button_type, pressed):
   return SimpleNamespace(type=SimpleNamespace(raw=int(button_type)), pressed=pressed)
+
+
+@pytest.mark.parametrize("pending_before_press", [False, True])
+def test_slc_confirmation_release_does_not_republish_accel(monkeypatch, tmp_path, pending_before_press):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+  card = spc.StarPilotCard(SimpleNamespace(brand="gm"), SimpleNamespace(alternativeExperience=0))
+  sm = make_sm()
+  toggles = make_toggles(speed_limit_controller=True)
+  starpilot_car_state = SimpleNamespace(distancePressed=False)
+  button_type = spc.ButtonType.accelCruise
+
+  if pending_before_press:
+    sm["starpilotPlan"].speedLimitChanged = True
+    sm["starpilotPlan"].unconfirmedSlcSpeedLimit = 20.0
+  pressed = make_car_state(button_events=[make_wrapped_button_event(button_type, True)])
+  assert card.update(pressed, starpilot_car_state, sm, toggles).accelPressed
+
+  if not pending_before_press:
+    sm["starpilotPlan"].speedLimitChanged = True
+    sm["starpilotPlan"].unconfirmedSlcSpeedLimit = 20.0
+    card.update(make_car_state(), starpilot_car_state, sm, toggles)
+
+  sm["starpilotPlan"].speedLimitChanged = False
+  sm["starpilotPlan"].unconfirmedSlcSpeedLimit = 0.0
+  released = make_car_state(button_events=[make_wrapped_button_event(button_type, False)])
+  assert not card.update(released, starpilot_car_state, sm, toggles).accelPressed
+  assert not card.confirmation_button_suppressed
+
+  assert card.update(pressed, starpilot_car_state, sm, toggles).accelPressed
+  assert card.update(released, starpilot_car_state, sm, toggles).accelPressed
 
 
 @pytest.mark.parametrize(

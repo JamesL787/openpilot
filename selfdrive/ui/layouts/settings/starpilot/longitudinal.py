@@ -675,7 +675,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  set_state=lambda s: self._params.put_bool("SLCMapboxFiller", s),
                  visible=self._mapbox_available),
       SettingRow("ShowSLCOffset", "toggle", tr_noop("Show SLC Offset"),
-                 subtitle="",
+                 subtitle=tr_noop("Compact display only; the unified card always shows nonzero offsets."),
                  get_state=lambda: self._params.get_bool("ShowSLCOffset"),
                  set_state=lambda s: self._params.put_bool("ShowSLCOffset", s)),
       SettingRow("SpeedLimitSources", "toggle", tr_noop("Show Sources"),
