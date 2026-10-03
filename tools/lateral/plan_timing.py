@@ -39,7 +39,7 @@ YAW_DECODE = {
 
 
 def seg_number(path):
-  m = re.search(r'(?:rlog_|--)(\d+)(?:\.zst|\.bz2|/rlog)', path)
+  m = re.search(r'(?:rlog_|--|/)(\d+)(?:\.zst|\.bz2|/rlog)', path)
   return int(m.group(1)) if m else 0
 
 
