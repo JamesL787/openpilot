@@ -21,7 +21,7 @@ here. Where the two touch — the CR-V lateral profile, the steering-ratio curve
 `extract_drives.py` lineage — that is recorded below as a cross-reference only.
 
 **Open topics to revisit** (parked by decision, not closed):
-- **Newborn radar points toggle: D-075 (`BoschANewbornLeads`, default OFF).** Replay and static only, not driven. Publishes young closing radar points earlier and lets one lead only once its own range closes. Turn it on on pr10-smooth first.
+- **Newborn radar points: D-075, built in ON since 2026-10-03 (the `BoschANewbornLeads` toggle is removed).** Replay and static only, limited road evidence from Peter's drives with the toggle on. Publishes young closing radar points earlier and lets one lead only once its own range closes.
 - **U11 scale 1/72: D-074 ACCEPTED (owner, 2026-10-02), built in; the 1/64 switch back was removed 2026-10-03.**
   Static and replay only, not driven. Rails ±12.0 m/s; every closing speed published is 64/72 of the old 1/64 reading (−11.1 %), the D-041 danger
   direction. `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 = −11.0 (approved). Open: a separate fit of the scale itself,

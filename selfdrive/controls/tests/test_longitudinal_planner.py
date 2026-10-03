@@ -724,12 +724,11 @@ def make_sm(v_ego: float, desired_accel: float, min_accel: float, *, experimenta
 
 @pytest.fixture(autouse=True)
 def _short_action_time_off_unless_tested(request, monkeypatch):
-  # PlannerShortActionTime ships ON (D-072 trial). The tests below were written against the
+  # The short action time is built in ON (D-072). The tests below were written against the
   # actuator-delay read-off and check other features, so they pin it off; the *action_t* tests
-  # drive the toggle themselves.
+  # drive PLANNER_ACTION_T_OVERRIDE themselves.
   if "action_t" not in request.node.name:
-    monkeypatch.setattr(longitudinal_planner_module.LongitudinalPlanner, "_short_action_t_active",
-                        lambda self: longitudinal_planner_module.PLANNER_ACTION_T_OVERRIDE)
+    monkeypatch.setattr(longitudinal_planner_module.LongitudinalPlanner, "_short_action_t_active", lambda self: False)
 
 
 def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False):
@@ -4998,24 +4997,9 @@ def test_coast_ceiling_slew_moves_at_most_j_dt_from_the_output():
   assert planner.slew_coast_ceiling(-0.42, 0.3, reset=True) == pytest.approx(-0.42)            # reset passes through
 
 
-class _FakeShortActionParams:
-  value = False
-  fail = False
-
-  def get_bool(self, key):
-    if self.fail:
-      raise RuntimeError("UnknownKeyName")
-    return self.value if key == "PlannerShortActionTime" else False
-
-
-def _spy_plan_read(monkeypatch, planner_toggles, *, override: bool, live_delay=None, toggle=False, toggle_fail=False):
-  """Run one planner tick and record the time each output read-off function was called with.
-  toggle pins the PlannerShortActionTime param (it ships on), so the off cases really are off."""
-  import openpilot.common.params as params_module
+def _spy_plan_read(monkeypatch, planner_toggles, *, override: bool, live_delay=None):
+  """Run one planner tick and record the time each output read-off function was called with."""
   monkeypatch.setattr(longitudinal_planner_module, "PLANNER_ACTION_T_OVERRIDE", override)
-  monkeypatch.setattr(_FakeShortActionParams, "value", toggle)
-  monkeypatch.setattr(_FakeShortActionParams, "fail", toggle_fail)
-  monkeypatch.setattr(params_module, "Params", _FakeShortActionParams)
   calls = {}
   real_plan = longitudinal_planner_module.get_accel_from_plan
   real_classic = longitudinal_planner_module.get_accel_from_plan_classic
@@ -5100,41 +5084,13 @@ def test_planner_action_t_switch_leaves_car_params_delay_alone(monkeypatch):
     assert planner.longitudinal_actuator_delay == pytest.approx(0.5)
 
 
-def test_planner_action_t_default_is_off():
-  # Byte-identical to the pre-switch planner unless someone turns it on (D-072 PROPOSED).
-  assert longitudinal_planner_module.PLANNER_ACTION_T_OVERRIDE is False
-  assert longitudinal_planner_module.get_planner_action_t(0.5) == 0.5 + DT_MDL
-
-
-@pytest.mark.parametrize("toggles_fn", [make_toggles, _plain_toggles])
-@pytest.mark.parametrize("value", [False, True])
-def test_planner_short_action_time_toggle_moves_the_read_off(monkeypatch, toggles_fn, value):
-  # The Advanced Longitudinal Tuning toggle drives the switch with the constant left off.
-  _, planner, calls = _spy_plan_read(monkeypatch, toggles_fn(), override=False, toggle=value)
-  expected = 0.30 if value else planner.longitudinal_actuator_delay + DT_MDL
-  assert calls["action_t"] == [pytest.approx(expected)]
-  assert planner.longitudinal_actuator_delay == pytest.approx(0.5)
-
-
-def test_planner_short_action_time_toggle_classic_path(monkeypatch):
-  _, planner, calls = _spy_plan_read(monkeypatch, _classic_toggles(), override=False, toggle=True)
-  assert calls["classic_delay"][0] + DT_MDL == pytest.approx(0.30)
-
-
-def test_planner_short_action_time_params_error_reads_as_off(monkeypatch):
-  # An old params library without the key raises; the planner must stay on the actuator delay.
-  _, planner, calls = _spy_plan_read(monkeypatch, make_toggles(), override=False, toggle=True, toggle_fail=True)
-  assert calls["action_t"] == [planner.longitudinal_actuator_delay + DT_MDL]
-
-
-def test_planner_short_action_time_ships_on_and_editable(tmp_path):
-  # Peter asked for the trial toggle on by default (D-072 update): manager writes the default on first
-  # boot, and the driver can still switch it off.
-  from openpilot.common.params import Params
-  params = Params(str(tmp_path))
-  assert params.get_default_value("PlannerShortActionTime") is True
-  params.put_bool("PlannerShortActionTime", False)
-  assert params.get_bool("PlannerShortActionTime") is False
+def test_planner_action_t_default_is_on():
+  # D-072: built in on (it shipped as PlannerShortActionTime, default on); no param is read.
+  assert longitudinal_planner_module.PLANNER_ACTION_T_OVERRIDE is True
+  assert longitudinal_planner_module.get_planner_action_t(0.5) == pytest.approx(0.30)
+  assert longitudinal_planner_module.get_planner_action_t(0.5, enabled=False) == 0.5 + DT_MDL
+  import inspect
+  assert '"PlannerShortActionTime"' not in inspect.getsource(longitudinal_planner_module)
 
 
 def _exp_close_lead_case(experimental_mode=True):

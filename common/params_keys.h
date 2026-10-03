@@ -379,12 +379,14 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LongPidTuneScale", {PERSISTENT, INT, "100", "100", 2}},
     {"LongPitch", {PERSISTENT, BOOL, "1", "0", 2, SETTINGS_SIMPLE}},
     {"NrdrHondaEcuMatchedLong", {PERSISTENT, BOOL, "0", "0", 2}},
+    // PlannerShortActionTime: unused since 2026-10-03 (built in on); kept to match the committed aarch64 params_pyx.so.
     {"PlannerShortActionTime", {PERSISTENT, BOOL, "1", "0", 3}},
     // Tester rollout: parse the Bosch-A harness's own 16-slot radar object bank into real
     // leadOne/leadTwo tracks instead of treating the car as radarless. RX-only, no CAN authority taken.
     {"BoschARadar", {PERSISTENT, BOOL, "1", "1", 3}},
     // Default ON. Experimental Mode only. STATUS 136h: "Accel Boost" gates both upstream PR 39015's
     // gas-press boost and the lead-departure assist. Unreplayed. Read in longitudinal_planner.py.
+    // GasOverrideBoost: unused since 2026-10-03 (built in on); kept to match the committed aarch64 params_pyx.so.
     {"GasOverrideBoost", {PERSISTENT, BOOL, "1", "1", 3}},
     // Default ON. Bosch-A only. D-074: decode the U11 track vRel at 1/72 m/s per count (rails +-12.0); OFF goes back to
     // 1/64 (rails +-13.5). Static and replay evidence, limited road evidence. Read once at startup in
@@ -396,6 +398,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // TEST, default OFF. Bosch-A only. Newborn radar points: publish young high-u10 closing targets on their range
     // fit (radar_interface BOSCH_A_NEWBORN_RANGE_PUBLISH) plus radard's NEWBORN_* switches. Replay evidence only.
     // Read once at startup in honda/radar_interface.py and radard.py.
+    // BoschANewbornLeads: unused since 2026-10-03 (built in on); kept to match the committed aarch64 params_pyx.so.
     {"BoschANewbornLeads", {PERSISTENT, BOOL, "0", "0", 3}},
     {"RemoteStartBootsComma", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},
     {"TeslaWakeOnCAN", {PERSISTENT, BOOL, "0", "0", 0, SETTINGS_SIMPLE}},

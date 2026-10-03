@@ -454,15 +454,13 @@ SLOW_RADAR_LEAD_GATE_STANDOFF = 10.0
 # and its peak up to 0.09 m/s^2 softer. D-072 has the table.
 # Only the read-off point moves. CP.longitudinalActuatorDelay, the carcontroller's learner that also
 # reads it, self.longitudinal_actuator_delay (every reaction_t gate below), the model-launch read,
-# the cruise and lane-change caps all keep the actuator delay. The PlannerShortActionTime param
-# (Advanced Longitudinal Tuning, default ON since Peter asked for it on, re-read about once a second)
-# turns it on in the car; a params error reads as off;
-# PLANNER_ACTION_T_OVERRIDE = True forces it on for replays. Off is action_t = actuator delay + DT_MDL
-# exactly, as before. Closed-loop replay with the fitted plant (car-matched to 07b66420): the command is
-# smoother (jerk x0.64-0.93, taps 19 -> 14) but the car's accel changes only ~3 %, brake onsets are
-# 0.1-0.3 s later and 0000029d's closest gap drops 6.0 -> 5.6 m. Replay evidence only; not
-# road-validated. Peter asked for the toggle to try it on the road (2026-09-30).
-PLANNER_ACTION_T_OVERRIDE = False
+# the cruise and lane-change caps all keep the actuator delay. Built in ON (it shipped as the
+# PlannerShortActionTime toggle, default on at Peter's request); replays set PLANNER_ACTION_T_OVERRIDE
+# = False for the old read-off. Off is action_t = actuator delay + DT_MDL exactly, as before.
+# Closed-loop replay with the fitted plant (car-matched to 07b66420): the command is smoother (jerk
+# x0.64-0.93, taps 19 -> 14) but the car's accel changes only ~3 %, brake onsets are 0.1-0.3 s later
+# and 0000029d's closest gap drops 6.0 -> 5.6 m. Replay evidence only; not road-validated. Peter asked for it on the road (2026-09-30).
+PLANNER_ACTION_T_OVERRIDE = True
 PLANNER_ACTION_T_S = 0.30
 
 
@@ -615,7 +613,8 @@ EXPERIMENTAL_HANDOFF_KEEP_E2E_BRAKE = -0.15
 # then confirmed on four logged drives with the toggle on (136c-136f): logged aTarget matched the
 # replay within 0.02 on 95-97% of acting frames, no hard brake in the 5-8 s after an episode was
 # caused by it, and 0 frames lifted while a lead closed faster than 0.5 m/s or braked harder than
-# -1.0. Baked in in 136g, now gated by the single Accel Boost toggle (GasOverrideBoost, default on, 136h): still Experimental Mode only (get_exp_lead_departure_weight
+# -1.0. Baked in in 136g; Accel Boost built in on (136h; the GasOverrideBoost toggle
+# was removed 2026-10-03, replays set toggles.gas_override_boost False): still Experimental Mode only (get_exp_lead_departure_weight
 # requires a lead at or beyond the follow distance, and update_exp_lead_departure only runs on the
 # tinygrad-model branch below), and every other gate is unchanged. When a lead is at or beyond the
 # follow distance and pulling away, lift the e2e target part of the way toward the MPC. Stateless
@@ -1173,21 +1172,8 @@ def bound_off_axis_leads(sm, hold=None):
 
 class LongitudinalPlanner:
   def _short_action_t_active(self) -> bool:
-    """D-072 trial: PLANNER_ACTION_T_OVERRIDE (replays) or the PlannerShortActionTime toggle.
-    Re-read about once a second; a params error (key missing from an old params
-    library) reads as off."""
-    if PLANNER_ACTION_T_OVERRIDE:
-      return True
-    self._short_action_t_frame += 1
-    if self._short_action_t_params is None or self._short_action_t_frame % 100 == 0:
-      try:
-        from openpilot.common.params import Params
-        if self._short_action_t_params is None:
-          self._short_action_t_params = Params()
-        self._short_action_t_enabled = self._short_action_t_params.get_bool("PlannerShortActionTime")
-      except Exception:
-        self._short_action_t_enabled = False
-    return self._short_action_t_enabled
+    """D-072: built in on through PLANNER_ACTION_T_OVERRIDE."""
+    return PLANNER_ACTION_T_OVERRIDE
 
   def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL, onpath_shadow=False):
     self.CP = CP
@@ -1217,9 +1203,6 @@ class LongitudinalPlanner:
     self.nap_adaptive_accel = False
     self._preap_params = None
     self._preap_param_frame = 0
-    self._short_action_t_enabled = False
-    self._short_action_t_frame = 0
-    self._short_action_t_params = None
 
     self.generation = None
 

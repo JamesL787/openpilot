@@ -2321,8 +2321,9 @@ def test_newborn_history_is_not_seeded_by_default():
 
 
 class TestNewbornLeadsToggle:
-  """BoschANewbornLeads (default off) drives BOSCH_A_NEWBORN_RANGE_PUBLISH through RadarInterface.newborn_range_publish.
-  OFF: a high-u10 newborn is withheld exactly as before the newborn publish. ON: it is published on its range fit."""
+  """BOSCH_A_NEWBORN_RANGE_PUBLISH is built in on (the BoschANewbornLeads toggle is removed) and copied into
+  RadarInterface.newborn_range_publish. ON: a high-u10 newborn is published on its range fit. OFF (replays/tests):
+  withheld exactly as before the newborn publish."""
 
   @staticmethod
   def _drive_newborn(ri, sweeps=10):
@@ -2338,13 +2339,14 @@ class TestNewbornLeadsToggle:
         published.append(list(rr.points))
     return published
 
-  def test_source_default_is_off(self):
+  def test_source_default_is_on(self):
     from opendbc.car.honda import radar_interface
-    assert radar_interface.BOSCH_A_NEWBORN_RANGE_PUBLISH is False
-    assert radar_interface.BOSCH_A_NEWBORN_LEADS_PARAM == "BoschANewbornLeads"
+    assert radar_interface.BOSCH_A_NEWBORN_RANGE_PUBLISH is True
+    assert not hasattr(radar_interface, "bosch_a_newborn_leads_enabled")
 
-  def test_off_never_publishes_a_newborn(self):
-    Params().remove("BoschANewbornLeads")
+  def test_off_never_publishes_a_newborn(self, monkeypatch):
+    from opendbc.car.honda import radar_interface
+    monkeypatch.setattr(radar_interface, "BOSCH_A_NEWBORN_RANGE_PUBLISH", False)
     ri = make_radar_interface()
     assert ri.newborn_range_publish is False
     published = self._drive_newborn(ri)
@@ -2352,26 +2354,10 @@ class TestNewbornLeadsToggle:
     assert all(len(points) == 0 for points in published)
 
   def test_on_publishes_the_newborn_on_its_range_fit(self):
-    params = Params()
-    params.put_bool("BoschANewbornLeads", True)
-    try:
-      ri = make_radar_interface()
-    finally:
-      params.remove("BoschANewbornLeads")
+    ri = make_radar_interface()
     assert ri.newborn_range_publish is True
     published = self._drive_newborn(ri)
     assert any(len(points) for points in published)
     first = next(points for points in published if points)
     assert first[0].measured is False
     assert first[0].vRel == pytest.approx(-19.8, abs=0.5)  # the range fit (-20), bounded at -vEgo
-
-  def test_reader_fails_closed_when_params_raises(self, monkeypatch):
-    import openpilot.common.params as params_module
-    from opendbc.car.honda.radar_interface import bosch_a_newborn_leads_enabled
-
-    class Broken:
-      def __init__(self, *args, **kwargs):
-        raise RuntimeError("no params")
-
-    monkeypatch.setattr(params_module, "Params", Broken)
-    assert bosch_a_newborn_leads_enabled() is False

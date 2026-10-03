@@ -3091,36 +3091,6 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "BoschANewbornLeads",
-        "label": "Radar Newborn Leads",
-        "description": "Bosch-A newborn radar points: publish young closing targets earlier, only as a lead once their own range proves closing. Replay-tested only; not road-validated. Restart required.",
-        "picker_description": "Bosch-A newborn radar points published earlier; lead only once range proves closing. Default off. Replay-tested only.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedLongitudinalTune",
-        "requires_offroad": true,
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "PlannerShortActionTime",
-        "label": "Short Plan Read-Ahead (Test)",
-        "description": "Test. Takes the gas/brake command from 0.30 s ahead on the plan instead of about 0.55 s, for a smoother command with fewer light brake taps. In replay, braking starts 0.1-0.3 s later and following sits slightly closer. On by default; applies within a second.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedLongitudinalTune",
-        "settings_tier": "advanced"
-      },
-      {
-        "key": "GasOverrideBoost",
-        "label": "Accel Boost",
-        "description": "Experimental Mode only. Raises the model's requested acceleration when it is more cautious than the MPC. Pressing the gas above ~10 mph while the model is braking harder than the MPC adds up to 0.2 m/s^2 (0.05 per press, held for the drive; port of upstream PR 39015). A lead pulling away beyond the follow distance also lifts the model's braking part of the way toward the MPC.",
-        "picker_description": "Gas-press accel boost (upstream PR 39015) plus the lead-departure lift. Default on. Unreplayed.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "parent_key": "AdvancedLongitudinalTune",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "NrdrHondaEcuMatchedLong",
         "label": "Nidec ECU-Matched Long",
         "description": "Honda Nidec only, and not with a gas pedal interceptor — has no effect on Bosch cars or interceptor-equipped cars. Shape Honda gas and brake commands closer to the stock Nidec ECU.",

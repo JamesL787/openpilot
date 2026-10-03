@@ -929,10 +929,6 @@ class StarPilotVariables:
     toggle.longitudinal_mode_values = mode_values
     toggle.experimental_mode = toggle.experimental_mode_available and not toggle.safe_mode and mode_values["ExperimentalMode"]
     toggle.conditional_experimental_mode = toggle.openpilot_longitudinal and not toggle.safe_mode and mode_values["ConditionalExperimental"]
-    # TEST, default off. STATUS 136h: gas-press boost alongside the (always-on) lead-departure
-    # assist, closer to upstream PR 39015. Unreplayed; more permissive than the lead-departure
-    # assist on e2e braking by design. See longitudinal_planner.py GAS_OVERRIDE_BOOST_*.
-    toggle.gas_override_boost = self.get_value("GasOverrideBoost", condition=toggle.openpilot_longitudinal)
     toggle.conditional_chill_mode = toggle.openpilot_longitudinal and not toggle.safe_mode and not toggle.conditional_experimental_mode and mode_values["ConditionalChill"]
     toggle.conditional_curves = self.get_value("CECurves", condition=toggle.conditional_experimental_mode)
     toggle.conditional_curves_lead = self.get_value("CECurvesLead", condition=toggle.conditional_curves)

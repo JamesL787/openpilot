@@ -1839,3 +1839,10 @@ Evidence: 15-drive replay (STATUS 198). Without the closing check the early publ
 before base, real car).
 
 Why OFF: not driven; a newborn lead can still brake 0.75 s earlier than today (297 4572.62).
+
+**Addendum (owner, Peter, 2026-10-03): built in on, toggle removed.** Peter drives with Radar Newborn Leads ON and
+asked for the toggle to go. `BOSCH_A_NEWBORN_RANGE_PUBLISH` and radard's three NEWBORN_* switches now default True;
+radard's main() calls `set_bosch_a_newborn_leads(honda_bosch_a_radar)`, so non-Bosch-A radars keep them off. The
+`BoschANewbornLeads` row and reader are removed; the key stays in `params_keys.h` only to match the committed aarch64
+`params_pyx.so`. The same change builds in Accel Boost (`GasOverrideBoost` removed) and, on pr10-smooth, D-072's
+short read-ahead (`PlannerShortActionTime` removed). Replay and static evidence only; not road-validated.

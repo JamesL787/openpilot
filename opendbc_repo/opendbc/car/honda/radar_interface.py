@@ -284,21 +284,10 @@ BOSCH_A_COAST_REVERSING_MARGIN_MPS = 1.0
 # range-verified closing young track (radard NEWBORN_RANGE_CLOSING_EXEMPT), since the camera had this stopped car at
 # 15-18 m/s. Nothing is withheld that was published before (D-041/D-042); the first low-u10 sweep roots the range
 # gate on the run's last range, so it is gated like any other sweep. Replay evidence only.
-# Driven by the BoschANewbornLeads toggle (default off): RadarInterface reads it once at startup into
-# self.newborn_range_publish, together with radard's three NEWBORN_* switches. The code reads that attribute; this
-# constant is its source default (off), and setting it True forces the publish on without the param.
-BOSCH_A_NEWBORN_RANGE_PUBLISH = False
-BOSCH_A_NEWBORN_LEADS_PARAM = "BoschANewbornLeads"
-
-
-def bosch_a_newborn_leads_enabled() -> bool:
-  """BoschANewbornLeads, read once at startup the way interface.py reads BoschARadar. Any failure, including a
-  params_pyx.so that predates the key, means OFF: no newborn publish, and radard's newborn switches stay off."""
-  try:
-    from openpilot.common.params import Params
-    return bool(Params().get_bool(BOSCH_A_NEWBORN_LEADS_PARAM))
-  except Exception:
-    return False
+# Built in on (owner, 2026-10-03; it shipped as the BoschANewbornLeads toggle, which is removed), together with
+# radard's three NEWBORN_* switches. RadarInterface copies it into self.newborn_range_publish; replays and tests
+# set either one False for the code before the newborn publish.
+BOSCH_A_NEWBORN_RANGE_PUBLISH = True
 
 # Seeding the first trusted sweep's history from the newborn run (samples, range_anchor, last_trusted_vrel) is off.
 # Replay, 00000284 22:36.7 track 17: the newborn run was a 0.6 s range burst 88.7 -> 79.9 m (published fit -4.8 ->
@@ -691,8 +680,7 @@ class RadarInterface(RadarInterfaceBase):
       self.coast_range_bound = BOSCH_A_COAST_RANGE_BOUND
       # D-074: U11 counts per m/s (72). An attribute so replays of 1/64-era logs can set it.
       self.u11_counts_per_mps = BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
-      # BOSCH_A_NEWBORN_RANGE_PUBLISH, driven by BoschANewbornLeads (default off). Read once; a restart is needed.
-      self.newborn_range_publish = BOSCH_A_NEWBORN_RANGE_PUBLISH or bosch_a_newborn_leads_enabled()
+      self.newborn_range_publish = BOSCH_A_NEWBORN_RANGE_PUBLISH
     else:
       # Nidec
       self.rcp = _create_nidec_can_parser(CP.carFingerprint)
