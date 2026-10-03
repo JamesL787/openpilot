@@ -37,8 +37,6 @@ from opendbc.car.honda.radar_interface import (
   _bosch_a_main_base,
   _bosch_a_range_ratio,
   _bosch_a_range_ratio_vrel,
-  bosch_a_u11_counts_per_mps,
-  bosch_a_u11_scale72_enabled,
 )
 from opendbc.car.honda.values import CAR
 from openpilot.common.params import Params
@@ -675,8 +673,7 @@ def test_trackid_comes_from_can_and_is_not_synthetic():
 # --- 7. vRel derivative sign -------------------------------------------------------------------------
 
 class TestU11Scale72:
-  """D-074 BoschAU11Scale72, default ON: 1/72 unless the param is stored OFF, which is the 1/64 decode exactly."""
-  PARAM = "BoschAU11Scale72"
+  """D-074: U11 is 1/72 m/s per count, built in. There is no 1/64 path and no param."""
 
   @staticmethod
   def _publish(ri, raw=800, sweeps=2, start=0):
@@ -686,71 +683,25 @@ class TestU11Scale72:
                            direct_vrel_raw=raw, direct_vrel_uncertainty_raw=80))
     return rr
 
-  def _make(self, stored):
-    params = Params()
-    if stored is None:
-      params.remove(self.PARAM)
-    else:
-      params.put_bool(self.PARAM, stored)
-    try:
-      return make_radar_interface()
-    finally:
-      params.remove(self.PARAM)
-
-  def test_absent_param_is_1_72(self):
-    ri = self._make(None)
+  def test_decode_is_1_72(self):
+    ri = make_radar_interface()
     assert ri.u11_counts_per_mps == 72
     assert self._publish(ri).points[0].vRel == pytest.approx((800 - 864) / 72.0)
 
-  def test_unreadable_param_is_1_72(self, monkeypatch):
-    import openpilot.common.params as params_module
-
-    class Broken:
-      def get(self, *args, **kwargs):
-        raise RuntimeError("params_pyx.so predates the key")
-    monkeypatch.setattr(params_module, "Params", Broken)
-    assert bosch_a_u11_scale72_enabled() is True
-    monkeypatch.setattr(params_module, "Params", lambda: 1 / 0)
-    assert bosch_a_u11_scale72_enabled() is True
-
-  def test_stored_on_is_1_72(self):
-    assert self._make(True).u11_counts_per_mps == 72
-
-  def test_off_is_the_old_1_64_decode_exactly(self):
-    ri = self._make(False)
-    assert ri.u11_counts_per_mps == bosch_a_u11_counts_per_mps(False) == 64
+  def test_full_raw_domain_and_rails(self):
     for raw in range(BOSCH_A_DIRECT_VREL_MIN_RAW, BOSCH_A_DIRECT_VREL_MAX_RAW + 1):
-      assert _bosch_a_direct_vrel(raw, counts_per_mps=64) == (raw - 864) * (1.0 / 64.0)
-    assert _bosch_a_direct_vrel(0, counts_per_mps=64) == -13.5
-    assert _bosch_a_direct_vrel(1728, counts_per_mps=64) == 13.5
-    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID, counts_per_mps=64) is None
-    assert _bosch_a_direct_vrel(1729, counts_per_mps=64) is None
-    assert self._publish(ri).points[0].vRel == pytest.approx(-1.0)
+      assert _bosch_a_direct_vrel(raw) == (raw - 864) / 72.0
+    assert _bosch_a_direct_vrel(0) == -12.0
+    assert _bosch_a_direct_vrel(1728) == 12.0
+    assert _bosch_a_direct_vrel(BOSCH_A_DIRECT_VREL_INVALID) is None
+    assert _bosch_a_direct_vrel(1729) is None
 
-  def test_rails_follow_the_scale(self):
-    for counts, rail in ((72, 12.0), (64, 13.5)):
-      low = _bosch_a_direct_vrel(0, counts_per_mps=counts)
-      high = _bosch_a_direct_vrel(1728, counts_per_mps=counts)
-      assert (low, high) == (-rail, rail)
-      assert _bosch_a_direct_vrel_interval(low, counts_per_mps=counts) == (-BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS, low)
-      assert _bosch_a_direct_vrel_interval(high, counts_per_mps=counts) == (high, BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS)
-      inside = _bosch_a_direct_vrel(1, counts_per_mps=counts)
-      assert _bosch_a_direct_vrel_interval(inside, counts_per_mps=counts) == (inside, inside)
-    # A 1/72 rail read against the 1/64 rails is a plain reading, so the gate must use the decode's own scale.
-    assert _bosch_a_direct_vrel_interval(-12.0, counts_per_mps=64) == (-12.0, -12.0)
-
-  def test_scale_is_read_once_and_a_mid_drive_flip_changes_nothing(self):
-    params = Params()
-    params.put_bool(self.PARAM, True)
-    try:
-      ri = make_radar_interface()
-      self._publish(ri, sweeps=2)
-      params.put_bool(self.PARAM, False)
-      rr = self._publish(ri, sweeps=2, start=2)
-    finally:
-      params.remove(self.PARAM)
-    assert ri.u11_counts_per_mps == 72
-    assert rr.points[0].vRel == pytest.approx((800 - 864) / 72.0)
+  def test_rail_interval_uses_the_1_72_rails(self):
+    low, high = _bosch_a_direct_vrel(0), _bosch_a_direct_vrel(1728)
+    assert _bosch_a_direct_vrel_interval(low) == (-BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS, low)
+    assert _bosch_a_direct_vrel_interval(high) == (high, BOSCH_A_DIRECT_VREL_RAIL_BOUND_MPS)
+    inside = _bosch_a_direct_vrel(1)
+    assert _bosch_a_direct_vrel_interval(inside) == (inside, inside)
 
 
 class TestVrel:

@@ -28,7 +28,6 @@ import pytest
 
 from openpilot.selfdrive.controls import radard
 from openpilot.selfdrive.controls.radard import (
-  BOSCH_A_U11_LOW_RAIL_MPS,
   RANGE_VREL_ASSIST_ARM_UPDATES,
   RANGE_VREL_ASSIST_MAX_ABS_Y_REL_M,
   RANGE_VREL_ASSIST_MAX_CORRECTION_MPS,
@@ -40,9 +39,18 @@ from openpilot.selfdrive.controls.radard import (
 DT = radard.HONDA_BOSCH_A_RADAR_TS   # ~0.0697 s, the physical Bosch-A sweep period
 DT_MDL = 0.05                        # radard's own loop rate: 20 Hz, the model rate
 V_EGO = 20.0
-RAIL = BOSCH_A_U11_LOW_RAIL_MPS      # exactly -13.5: raw 0 against center 864 at 1/64 m/s
-Q = radard.BOSCH_A_DIRECT_VREL_SCALE_MPS
+# D-074: the recorded series below were logged under the old 1/64 U11 decode (rail -13.5). The car decodes at 1/72
+# now; these tests pin radard's U11-scale values back to 1/64 so the recorded numbers keep their meaning.
+Q = 1.0 / 64.0
+RAIL = (radard.BOSCH_A_DIRECT_VREL_MIN_RAW - radard.BOSCH_A_DIRECT_VREL_CENTER_RAW) * Q   # exactly -13.5
 SETTLE = RANGE_VREL_LONG_SAMPLES + RANGE_VREL_ASSIST_ARM_UPDATES - 1
+
+
+@pytest.fixture(autouse=True)
+def _u11_scale_1_64(monkeypatch):
+  monkeypatch.setattr(radard, "BOSCH_A_U11_SCALE_MPS", Q)
+  monkeypatch.setattr(radard, "BOSCH_A_U11_LOW_RAIL_MPS", RAIL)
+  monkeypatch.setattr(radard, "ONPATH_ADOPT_RAIL_VREL_MPS", RAIL + radard.ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS)
 
 
 def new_track(track_id: int = 1, v_lead: float = V_EGO) -> radard.Track:

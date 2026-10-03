@@ -4,7 +4,6 @@ Dynamically Derived Feasible Param Candidates (The Golden List)
 SetSpeedOnGasRelease
 FarLeadCoastCap
 BoschARailInterval
-BoschAU11Scale72
 BoschANewbornLeads
 Total globally registered C++ keys:  609
 Total explicit UI string references: 502

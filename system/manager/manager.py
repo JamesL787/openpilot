@@ -44,7 +44,6 @@ from openpilot.starpilot.common.starpilot_variables import (
   LEGACY_STARPILOT_PARAM_RENAMES,
   LEGACY_STARPILOT_STATS_KEY_RENAMES,
   get_starpilot_toggles,
-  migrate_bosch_a_u11_scale72,
 )
 
 _MANAGER_IMPORT_DONE = time.monotonic()
@@ -1327,13 +1326,6 @@ def manager_init() -> None:
   migrate_nrdr_dm_defaults(params, params_cache)
   migrate_nrdr_lat_tune_2026_09_24(params, params_cache)
   migrate_nrdr_clarity_eps_default(params, params_cache)
-  # Before the params_cache sync below (so the cache takes the new value) and before manager_thread() starts card
-  # and radard, which read BoschAU11Scale72 once at startup.
-  try:
-    if migrate_bosch_a_u11_scale72(params):
-      cloudlog.warning("Applied one-time BoschAU11Scale72 migration: radar closing speed at 1/72")
-  except Exception:
-    cloudlog.exception("Failed to apply BoschAU11Scale72 migration")
   last_timing = _log_boot_timing("manager_init", "starpilot_migrations", manager_init_start, last_timing)
 
   # set unset params to their default value

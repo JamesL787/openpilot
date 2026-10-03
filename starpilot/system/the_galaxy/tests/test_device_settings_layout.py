@@ -652,28 +652,6 @@ def test_every_galaxy_toggle_key_exists_in_the_committed_device_params_binary():
   )
 
 
-def test_bosch_a_u11_scale72_migration_flag_is_in_the_committed_binary_and_not_a_ui_row():
-  # manager_init writes BoschAU11Scale72Migrated on every device; a key missing from the compiled registry raises there.
-  blob = subprocess.run(
-    ["git", "show", "HEAD:common/params_pyx.so"],
-    cwd=REPO_ROOT, capture_output=True, check=True,
-  ).stdout
-  key = "BoschAU11Scale72Migrated"
-  assert key.encode() in set(re.findall(rb"[\x20-\x7e]{4,}", blob))
-  assert f'{{"{key}", {{PERSISTENT, BOOL, "0", "0"}}}},' in PARAM_KEYS_PATH.read_text(encoding="utf-8")
-  assert key not in {k for params in _params_by_section(_layout()).values() for k in params}
-
-
-def test_bosch_a_u11_scale72_stays_editable_in_galaxy(monkeypatch):
-  # D-074: only device_syncd skips the toggle; the shared EXCLUDED_KEYS would also 403 the Galaxy row.
-  from openpilot.starpilot.system.the_galaxy import the_galaxy
-  monkeypatch.setattr(the_galaxy, "_cached_allowed_keys", None)
-  monkeypatch.setattr(the_galaxy, "_cached_param_types", None)
-  allowed, types = the_galaxy._get_param_type_info()
-  assert "BoschAU11Scale72" in allowed
-  assert types["BoschAU11Scale72"] is bool
-
-
 def test_nrdr_lateral_settings_sit_in_the_collapsible_nrdr_pid_controller_group():
   # Peter, 2026-10-01: Lateral Tuning had grown too crowded; every NRDR lateral setting moves under one
   # "NRDR PID Controller" group that stays collapsed until Manage is pressed. One flat group: a nested

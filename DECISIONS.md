@@ -1816,6 +1816,14 @@ were deliberately left as they are (listed in STATUS item 199).
   choice and is left as is.
 - Still open: the cause of the band dependence, a separate fit of the scale itself, and the first drive at 1/72.
 
+**Third addendum (owner, Peter, 2026-10-03): the switch back is removed.** 1/72 is built in on main and pr10-smooth.
+`BoschAU11Scale72`, its Longitudinal/Galaxy row, the one-time migration (`migrate_bosch_a_u11_scale72`) and the
+device_syncd exclusion are gone; radar_interface decodes at `BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS` (72) and radard's
+rail values are fixed at -12.0 / -11.0. `RadarInterface.u11_counts_per_mps` stays an attribute so replays of 1/64-era
+logs can set it. The two param keys stay in `params_keys.h` only because the committed aarch64 `params_pyx.so` was not
+rebuilt; nothing reads them. Units on routes logged 2026-10-01..10-03 still follow `BoschAU11Scale72` in that route's
+initData; from this change on they are always 1/72. Static tests only; not road-validated.
+
 ## D-075 — PROPOSED (toggle OFF): `BoschANewbornLeads` publishes newborn Bosch-A points early, leads only on proven range closing
 Recorded 2026-10-02, owner decision (Peter, in chat): build it as an opt-in toggle, default OFF, on main and pr10-smooth.
 **Replay and static evidence only; no road evidence.** With the toggle OFF, `BOSCH_A_NEWBORN_RANGE_PUBLISH`,

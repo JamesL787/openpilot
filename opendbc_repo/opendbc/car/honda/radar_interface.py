@@ -130,10 +130,9 @@ BOSCH_A_DIRECT_VREL_MIN_RAW = 0
 BOSCH_A_DIRECT_VREL_MAX_RAW = 1728
 BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 # D-074 (ACCEPTED by the owner 2026-10-02; static and replay evidence only, no road A/B): U11 is 1/72 m/s per
-# count by default; BoschAU11Scale72 OFF switches back to 1/64 (see BOSCH_A_U11_SCALE72_PARAM below). Routes before
-# 2026-10-01 published 1/64, so every m/s figure in this file and in radard measured on them (13.5 rails, -16.54,
-# -19.4 ...) is in 1/64 units: multiply by 64/72 for 1/72. From 2026-10-01 the units depend on
-# BoschAU11Scale72 in that route's initData (ON = 1/72); do not infer them from the date.
+# count, built in; the old 1/64 decode is removed. Routes logged before 2026-10-01 published 1/64, so every m/s figure
+# in this file and in radard measured on them (13.5 rails, -16.54, -19.4 ...) is in 1/64 units: multiply by 64/72
+# for 1/72.
 #   * static: Bosch-radar-partner camera firmware (36161-TLA-A070; same-family TGG-A080, TGH-A040,
 #     TFJ/TGG/TGL-G070) formats vRel as round((v + 12) / 0x3c638e45), and 0x3c638e45 is 1/72 as an f32.
 #     (v + 12) * 72 spans raw 0..1728, the observed rails, centre 864: the field is +-12.0 m/s by design.
@@ -154,33 +153,6 @@ BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 # a rounded 1/72 differs from it by one double ulp on 598 of the 1729 raws (none after the float32 publish).
 BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS = 72
 BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
-# D-074 switch back (owner, 2026-10-02, after Job's range check came back dependent on range band; see DECISIONS):
-# BoschAU11Scale72 stays as a toggle, default ON = 1/72. OFF decodes at the old 1/64 everywhere the scale is used --
-# the published vRel, the rails (+-13.5), the D-063 rail interval, the NC-at-rail test and radard's rail constants
-# (radard reads the same param) -- byte for byte as before D-074. Read once at startup; a restart is needed, so the
-# units never change inside one track history.
-BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS_1_64 = 64
-BOSCH_A_U11_SCALE72_PARAM = "BoschAU11Scale72"
-
-
-def bosch_a_u11_counts_per_mps(scale72: bool) -> int:
-  """D-074: the U11 counts per m/s the toggle selects: 72 when ON, 64 when OFF."""
-  return BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS if scale72 else BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS_1_64
-
-
-def bosch_a_u11_scale_mps(scale72: bool) -> float:
-  """D-074: the U11 m/s per count the toggle selects. ON returns BOSCH_A_DIRECT_VREL_SCALE_MPS itself."""
-  return BOSCH_A_DIRECT_VREL_SCALE_MPS if scale72 else 1.0 / BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS_1_64
-
-
-def bosch_a_u11_scale72_enabled() -> bool:
-  """BoschAU11Scale72, read once at startup. Default ON: only a stored OFF selects 1/64. An unset key reads its
-  default ("1"), and any failure, including a params_pyx.so that predates the key, means 1/72."""
-  try:
-    from openpilot.common.params import Params
-    return Params().get(BOSCH_A_U11_SCALE72_PARAM, return_default=True) is not False
-  except Exception:
-    return True
 
 
 # The domain endpoints are SATURATION RAILS: at raw 0 or 1728 the true |vRel| is >= 12.0 m/s (13.5 in the 1/64
@@ -491,8 +463,7 @@ def _bosch_a_direct_vrel(raw_value: int | float | None,
 
   None means that AUX was absent/invalid and the caller should use the existing fallback policy. The [0, 1728]
   active domain is deliberately enforced here because raw values above the observed 1728 rail (+12.0 m/s) have
-  not appeared on active objects; 0x7FE is the observed inactive sentinel. `counts_per_mps` is 72, or 64 with
-  BoschAU11Scale72 OFF (D-074); the raw domain and sentinel are the same at both.
+  not appeared on active objects; 0x7FE is the observed inactive sentinel. `counts_per_mps` is 72 (D-074).
   """
   if raw_value is None:
     return None
@@ -718,8 +689,8 @@ class RadarInterface(RadarInterfaceBase):
       self._last_trigger_nanos = -1
       self.rail_interval = BOSCH_A_RAIL_INTERVAL
       self.coast_range_bound = BOSCH_A_COAST_RANGE_BOUND
-      # D-074: U11 counts per m/s, 72 unless BoschAU11Scale72 is stored OFF (then 64). Read once; a restart is needed.
-      self.u11_counts_per_mps = bosch_a_u11_counts_per_mps(bosch_a_u11_scale72_enabled())
+      # D-074: U11 counts per m/s (72). An attribute so replays of 1/64-era logs can set it.
+      self.u11_counts_per_mps = BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
       # BOSCH_A_NEWBORN_RANGE_PUBLISH, driven by BoschANewbornLeads (default off). Read once; a restart is needed.
       self.newborn_range_publish = BOSCH_A_NEWBORN_RANGE_PUBLISH or bosch_a_newborn_leads_enabled()
     else:
