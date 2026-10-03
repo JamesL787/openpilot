@@ -10139,3 +10139,23 @@ Replay of the fixed code (base = the old law, same 10 routes):
   or not enough (ramp makes it worse). If the answer is "not enough", narrow it to big steps from 0 with nothing close.
 - **Params artifacts:** `ResumeBrakeRamp` (BOOL, default 0) added; `params_pyx.so`/`libcommon.a` rebuilt in a separate
   commit.
+
+## 201. Oncoming cars no longer flash up as side leads: `ADJACENT_RAIL_CONFIRM` (owner-approved, ships ON, 2026-10-03). Replay and static unit tests only; not driven.
+- **Problem (Steve, UI Work; Job replay of 11c8fa231c0499ed/000002cb segs 8-12):** oncoming-lane cars with U11 on the
+  −12 rail got labelled leadLeft markers. vLead = vEgo + rail was positive, so the vLead < 1 check passed them, and
+  ADJACENT_RAIL_GATE needs 3 fresh fits before it latches, while the holds lasted a median 0.3 s.
+- **Change:** on Bosch-A, a railed track is eligible as leadLeft/leadRight only while a fresh short range fit agrees
+  with the rail (vRel − vRelRange < 2.0). No fit means it is not eligible. leadOne/leadTwo and the published points
+  are untouched (D-041/D-042). `ADJACENT_RAIL_CONFIRM = False` restores the latch-only behaviour.
+- **Replay (Job, base fa0a2bc9f, CONFIRM False → True, built-in defaults, 5542 frames):**
+  - Rail holds of at least 3 samples: L 112 → 4, R 0 → 0. Rail samples: L 904 → 66, R 14 → 1. All holds: 175 → 70.
+  - The 4 rail holds still labelled have a range fit that agrees with the rail (L50, L32, L31, L30).
+  - leadOne/leadTwo (status, dRel, yRel, vRel, vLead, radarTrackId) are identical in all 5542 frames.
+  - Non-rail holds that changed:
+    - L47 got longer (35 → 37 samples).
+    - R56 split (30 → 10 + 7): it lost its own railed samples.
+    - L45 and L61 are new 4-sample holds, which a closer railed point had been hiding.
+  - Probes: L31 (a slow object) is labelled from 776.34 s instead of 775.99, once its fit exists, for 45 frames. L30
+    is labelled from 779.84 s instead of 779.59.
+- **Cost:** a real side car on the rail stays unlabelled until it has a fresh fit, about 0.3 s here.
+- **Still open:** the first drive with it on.
