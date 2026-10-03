@@ -153,6 +153,8 @@ BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 # a rounded 1/72 differs from it by one double ulp on 598 of the 1729 raws (none after the float32 publish).
 BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS = 72
 BOSCH_A_DIRECT_VREL_SCALE_MPS = 1.0 / BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
+
+
 # The domain endpoints are SATURATION RAILS: at raw 0 or 1728 the true |vRel| is >= 12.0 m/s (13.5 in the 1/64
 # units the evidence below was logged in) and the exact value is not recoverable from this field. A rail is therefore a BOUND, not an unknown,
 # and it must still be published.
@@ -282,9 +284,10 @@ BOSCH_A_COAST_REVERSING_MARGIN_MPS = 1.0
 # range-verified closing young track (radard NEWBORN_RANGE_CLOSING_EXEMPT), since the camera had this stopped car at
 # 15-18 m/s. Nothing is withheld that was published before (D-041/D-042); the first low-u10 sweep roots the range
 # gate on the run's last range, so it is gated like any other sweep. Replay evidence only.
-# Built in OFF: RadarInterface copies it into self.newborn_range_publish, and radard's three NEWBORN_* switches
-# (set_bosch_a_newborn_leads) default off with it. Replays and tests flip both together.
-BOSCH_A_NEWBORN_RANGE_PUBLISH = False
+# Built in on (owner, 2026-10-03; it shipped as the BoschANewbornLeads toggle, which is removed), together with
+# radard's three NEWBORN_* switches. RadarInterface copies it into self.newborn_range_publish; replays and tests
+# set either one False for the code before the newborn publish.
+BOSCH_A_NEWBORN_RANGE_PUBLISH = True
 
 # Seeding the first trusted sweep's history from the newborn run (samples, range_anchor, last_trusted_vrel) is off.
 # Replay, 00000284 22:36.7 track 17: the newborn run was a 0.6 s range burst 88.7 -> 79.9 m (published fit -4.8 ->

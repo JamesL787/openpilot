@@ -2321,8 +2321,10 @@ def test_newborn_history_is_not_seeded_by_default():
 
 
 class TestNewbornLeadsToggle:
-  """BOSCH_A_NEWBORN_RANGE_PUBLISH is built in off and copied into RadarInterface.newborn_range_publish.
-  OFF: a high-u10 newborn is withheld exactly as before the newborn publish. ON (replays/tests): published on its range fit."""
+  """BOSCH_A_NEWBORN_RANGE_PUBLISH is built in on (the BoschANewbornLeads toggle is removed) and copied into
+  RadarInterface.newborn_range_publish. ON: a high-u10 newborn is published on its range fit. OFF (replays/tests):
+  withheld exactly as before the newborn publish."""
+
   @staticmethod
   def _drive_newborn(ri, sweeps=10):
     # A stopped car from 116 m closing at 20 m/s, every sweep with U11 above BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW.
@@ -2337,21 +2339,21 @@ class TestNewbornLeadsToggle:
         published.append(list(rr.points))
     return published
 
-  def test_source_default_is_off(self):
+  def test_source_default_is_on(self):
     from opendbc.car.honda import radar_interface
-    assert radar_interface.BOSCH_A_NEWBORN_RANGE_PUBLISH is False
+    assert radar_interface.BOSCH_A_NEWBORN_RANGE_PUBLISH is True
     assert not hasattr(radar_interface, "bosch_a_newborn_leads_enabled")
 
-  def test_off_never_publishes_a_newborn(self):
+  def test_off_never_publishes_a_newborn(self, monkeypatch):
+    from opendbc.car.honda import radar_interface
+    monkeypatch.setattr(radar_interface, "BOSCH_A_NEWBORN_RANGE_PUBLISH", False)
     ri = make_radar_interface()
     assert ri.newborn_range_publish is False
     published = self._drive_newborn(ri)
     assert len(published) == 10
     assert all(len(points) == 0 for points in published)
 
-  def test_on_publishes_the_newborn_on_its_range_fit(self, monkeypatch):
-    from opendbc.car.honda import radar_interface
-    monkeypatch.setattr(radar_interface, "BOSCH_A_NEWBORN_RANGE_PUBLISH", True)
+  def test_on_publishes_the_newborn_on_its_range_fit(self):
     ri = make_radar_interface()
     assert ri.newborn_range_publish is True
     published = self._drive_newborn(ri)

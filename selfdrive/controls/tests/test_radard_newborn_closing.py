@@ -11,10 +11,10 @@ DT = radard.HONDA_BOSCH_A_RADAR_TS
 
 @pytest.fixture(autouse=True)
 def newborn_leads_on():
-  # These switches are built in off; every test here is about their ON behaviour.
+  # Built in on; set explicitly so a test elsewhere that turned them off cannot leak in.
   radard.set_bosch_a_newborn_leads(True)
   yield
-  radard.set_bosch_a_newborn_leads(False)
+  radard.set_bosch_a_newborn_leads(True)
 
 
 def make_track(ranges, v_rel, v_ego=19.8, t0=100.0):
