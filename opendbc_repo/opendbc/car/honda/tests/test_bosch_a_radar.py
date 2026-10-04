@@ -2299,6 +2299,20 @@ def test_existence_probability_is_carried_on_the_point():
   assert structs.RadarData.RadarPoint(dRel=5.0).existence < 0.0
 
 
+def test_existence_sentinel_publishes_not_provided():
+  """OBJECT_EXISTENCE_PROBABILITY_RAW 0x7F is the firmware init/sentinel (valid range 0..126), not certainty: the point
+  is still published, with existence -1 ("not provided") rather than 127/127 = 1.0."""
+  ri = make_radar_interface()
+  rr = None
+  for i, (rng, ex) in enumerate([(1000, 59), (990, 0x7F), (980, 126), (970, 0x7F)]):
+    rr = ri.update(sweep(0, i, 0x7, rng, 1024, 1 + 2 * i, i * 50_000_000, with_aux=True,
+                         direct_vrel_raw=760, direct_vrel_uncertainty_raw=84, existence_raw=ex))
+    if i >= 1:
+      assert len(rr.points) == 1
+      expected = -1.0 if ex == 0x7F else ex / 127.0
+      assert rr.points[0].existence == pytest.approx(expected)
+
+
 def test_newborn_vrel_is_the_range_fit_bounded_at_stationary():
   """BOSCH_A_NEWBORN_RANGE_PUBLISH: the fit rate, bounded at -vEgo; no live U11, no rail floor."""
   from opendbc.car.honda.radar_interface import _bosch_a_newborn_vrel

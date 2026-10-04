@@ -55,26 +55,24 @@ BOSCH_A_SWEEP_END_MSG = BOSCH_A_AUX_IDS[BOSCH_A_NUM_SLOTS - 1]  # 0x297
 # previous round 15 ran the filter ~4.5% fast.
 BOSCH_A_FREQ_HZ = 14.35
 
-# Range: f0 raw_range (12-bit, B2:B3 high nibble) -> meters. Firmware q16 = 8*raw_range.
+# Range: f0 raw_range (12-bit, B2:B3 high nibble) -> meters, raw_range / 16.
 #
-# The scale is firmware-exact, not fitted. AC004 converts the internal value with
-# (q16 - n) / 128, and q16 = sat16(round(8 * raw_range)), so
+# The scale is firmware-exact, not fitted. The sender (the Bosch-radar-partner camera image, 36161-TLA-A070) formats
+# range as round(r / 0.0625), clamped to [0, 255.875], with 0xFFF as the sentinel and NO offset (review on
+# JamesL787/openpilot#17). Full scale is 4095/16 = 255.9 m. The previous 0.05712 was 16 * 0.00357, and that 0.00357
+# was solved from a single tape point with the offset assumed, so it read progressively short with distance (~9% low,
+# -9 m at 60 m against vision).
 #
-#     range_m = (8 * raw_range - n) / 128 = raw_range / 16 - n / 128
-#
-# Corroboration that 1/16 is the designed mapping rather than a coincidence: 8 * 4095 = 32760
-# fits int16 with 7 counts to spare, so the *8 exists to make the 12-bit field fill the internal
-# word; full scale is 4095/16 = 255.9 m; and /128 (Q7) is this firmware's unit for physical
-# quantities throughout. The previous 0.05712 was 16 * 0.00357, and that 0.00357 was solved from
-# a single tape point with the offset assumed, so it read progressively short with distance
-# (~9% low, -9 m at 60 m against vision).
+# Correction: this block used to derive the scale from AC004, (q16 - n) / 128 with q16 = 8 * raw_range. AC004 runs in
+# the radar, on the receiving side, and its F (0x6CE0E) is tanf: AC004 = tan(az) * (q16 - n) / 128 is a LATERAL
+# coordinate. -n/128 is a reference shift applied there, not part of decoding the wire value.
 BOSCH_A_RANGE_SCALE_M = 1.0 / 16.0
 
-# Offset. The firmware term is -n/128, where n is assembled from a configuration word plus a
-# runtime addend and is therefore a PER-UNIT CALIBRATION VALUE, not a constant; 335 (-2.617 m) is
-# only the fallback the firmware uses when the config word reads zero. -3.0 is retained because it
-# sits inside the plausible calibration range and the choice barely moves the residual. Do not
-# re-fit this against vision: read it from the radar's own configuration instead.
+# Offset. The wire value carries no offset (see the scale block above), so -3.0 is NOT a firmware-decoded term; it is
+# an empirical mounting/reference constant that sits inside the plausible range and barely moves the residual. The
+# -n/128 shift (n from a configuration word plus a runtime addend; 335 = -2.617 m is the firmware fallback when the
+# config word reads zero) belongs to the radar's lateral AC004 computation, not to this decode. Unchanged by review;
+# do not re-fit this against vision.
 BOSCH_A_RANGE_OFFSET_M = -3.0
 
 # Azimuth: f0 raw_angle (11-bit, B4:B5 high 3 bits), offset-binary about 1024.
@@ -130,9 +128,11 @@ BOSCH_A_DIRECT_VREL_MIN_RAW = 0
 BOSCH_A_DIRECT_VREL_MAX_RAW = 1728
 BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 # D-074 (ACCEPTED by the owner 2026-10-02; static and replay evidence only, no road A/B): U11 is 1/72 m/s per
-# count, built in; the old 1/64 decode is removed. Routes logged before 2026-10-01 published 1/64, so every m/s figure
-# in this file and in radard measured on them (13.5 rails, -16.54, -19.4 ...) is in 1/64 units: multiply by 64/72
-# for 1/72.
+# count, built in; the old 1/64 decode is removed. Routes logged before 2026-10-01 published 1/64. Only m/s figures
+# DECODED FROM U11 on those routes (the 13.5 rail, U11 vRel readings) are in 1/64 units and scale by 64/72 for 1/72.
+# Figures from range or from other channels do not: -19.4 (range closing, 000001f9) and -16.54 (assisted vRel) stand
+# as logged. radard's ONPATH_ADOPT block already converts this way (-16.00 at 1/64 -> -14.5 at 1/72 for the U11 band
+# edge only).
 #   * static: Bosch-radar-partner camera firmware (36161-TLA-A070; same-family TGG-A080, TGH-A040,
 #     TFJ/TGG/TGL-G070) formats vRel as round((v + 12) / 0x3c638e45), and 0x3c638e45 is 1/72 as an f32.
 #     (v + 12) * 72 spans raw 0..1728, the observed rails, centre 864: the field is +-12.0 m/s by design.
@@ -546,9 +546,24 @@ def _bosch_a_range_innovation_rejected(baseline: tuple[float, float], now_s: flo
           (degraded and innovation_m > BOSCH_A_RANGE_INNOVATION_MAX_M))
 
 
+# OBJECT_EXISTENCE_PROBABILITY_RAW is 7 bits. Firmware encodes round((p - 1/64) * 128) with p clamped to [1/64, 1], so
+# the valid range is 0..126; 127 (0x7F) is the init/sentinel value. Review on JamesL787/openpilot#17: 127 occurred 0
+# times in 626,100 active sweeps and on 100% of empty slots. Publishing it as 127/127 = 1.0 would read as maximum
+# confidence in radard's ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE median, so it is published as -1 ("not provided"), which
+# that gate ignores. Valid values keep raw / 127: ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE (0.2) was set on that scale.
+BOSCH_A_EXISTENCE_NOT_PROVIDED_RAW = 0x7F
+
+
+def _bosch_a_existence(existence_raw: int) -> float:
+  """RadarPoint.existence for one sweep: raw / 127, or -1 ("not provided") for the 0x7F sentinel."""
+  if existence_raw == BOSCH_A_EXISTENCE_NOT_PROVIDED_RAW:
+    return -1.0
+  return existence_raw / 127.0
+
+
 def _bosch_a_measurement_degraded(range_sigma_raw: int, existence_raw: int,
                                   direct_vrel_uncertainty_raw: int | None) -> bool:
-  range_quality_bad = range_sigma_raw >= BOSCH_A_RANGE_SIGMA_DEGRADED_RAW or existence_raw in (0, 0x7F)
+  range_quality_bad = range_sigma_raw >= BOSCH_A_RANGE_SIGMA_DEGRADED_RAW or existence_raw in (0, BOSCH_A_EXISTENCE_NOT_PROVIDED_RAW)
   velocity_quality_bad = (direct_vrel_uncertainty_raw is not None and
                           direct_vrel_uncertainty_raw > BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW)
   return range_quality_bad or velocity_quality_bad
@@ -1179,7 +1194,7 @@ class RadarInterface(RadarInterfaceBase):
           point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
           point.measured = False
           point.ncValid = False
-          point.existence = observation['existence_raw'] / 127.0
+          point.existence = _bosch_a_existence(observation['existence_raw'])
         elif (self.newborn_range_publish and high_u10_live_vrel and range_anchor is None and
               track.last_trusted_vrel is None):
           # A newborn high-u10 identity: keep its ranges outside the accepted history and publish the
@@ -1200,7 +1215,7 @@ class RadarInterface(RadarInterfaceBase):
             point.vRel = newborn_vrel
             point.measured = False
             point.ncValid = False
-            point.existence = observation['existence_raw'] / 127.0
+            point.existence = _bosch_a_existence(observation['existence_raw'])
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to
           # coast and no way to publish a defensible vRel.
@@ -1248,7 +1263,7 @@ class RadarInterface(RadarInterfaceBase):
           point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
           point.measured = False
           point.ncValid = False
-          point.existence = observation['existence_raw'] / 127.0
+          point.existence = _bosch_a_existence(observation['existence_raw'])
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to
           # coast and no way to publish a defensible vRel.
@@ -1303,7 +1318,7 @@ class RadarInterface(RadarInterfaceBase):
         pt.ncVRel, pt.ncValid, pt.ncSigma = _bosch_a_nc_published(observation['nc_raw'], observation['nc_sigma_raw'], dRel)
         # The radar's own OBJECT_EXISTENCE_PROBABILITY for this sweep, carried for radard's onpath adoption gate
         # (ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE). Informational only here: it gates no point in this file.
-        self.pts[track_id].existence = observation['existence_raw'] / 127.0
+        self.pts[track_id].existence = _bosch_a_existence(observation['existence_raw'])
       else:
         self.pts.pop(track_id, None)
 
