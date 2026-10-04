@@ -698,3 +698,66 @@ def test_bosch_onpath_existence_unset_keeps_the_old_behaviour():
 def test_bosch_onpath_adoption_is_not_used_below_the_low_speed_override_speed():
   track = make_onpath_track(6, d0=45.0, v_rel=-3.0)
   assert onpath_lead({6: track}, v_ego=3.0) is None
+
+
+# BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT: aLeadTau steps only on fresh Bosch-A sweeps (~14.35 Hz) but is
+# built with DT_MDL, so its wall-clock decay is ~40 % slower than written. These pin the default-off
+# behaviour and show the flag restores the 20 Hz wall-clock rates. Unit tests only, no replay.
+def _a_lead_tau_after(track, seconds, decay):
+  steps = int(round(seconds * radard.BOSCH_A_FREQ_HZ)) if track.aLeadTau.dt != radard.DT_MDL else int(round(seconds / radard.DT_MDL))
+  for _ in range(steps):
+    if decay:
+      track.aLeadTau.update(0.0)
+    else:
+      track.aLeadTau.x = min(max(track.aLeadTau.x, 1e-2) * track.aLeadTauGrowth, radard._LEAD_ACCEL_TAU)
+  return track.aLeadTau.x
+
+
+def test_bosch_a_lead_accel_tau_timebase_default_off_is_unchanged(monkeypatch):
+  monkeypatch.setattr(radard, "BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT", False)
+  radar_d = radard.RadarD(honda_bosch_a_radar=True)
+  assert radar_d.a_lead_tau_dt == radard.DT_MDL
+  track = radard.Track(1, 10.0, radar_d.kalman_params, radar_d.a_lead_tau_dt)
+  assert track.aLeadTau.dt == radard.DT_MDL
+  assert track.aLeadTauGrowth == pytest.approx(1.1)
+
+
+def test_bosch_a_lead_accel_tau_timebase_flag_is_bosch_a_only(monkeypatch):
+  monkeypatch.setattr(radard, "BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT", True)
+  assert radard.RadarD(honda_bosch_a_radar=True).a_lead_tau_dt == pytest.approx(radard.HONDA_BOSCH_A_RADAR_TS)
+  assert radard.RadarD(radar_ts=0.1).a_lead_tau_dt == radard.DT_MDL
+
+
+def test_bosch_a_lead_accel_tau_timebase_matches_20hz_wall_clock_rates():
+  kp = radard.KalmanParams(radard.HONDA_BOSCH_A_RADAR_TS)
+  ref = radard.Track(1, 10.0, kp)  # what the code intends: one step per 50 ms
+  ref_decay = _a_lead_tau_after(ref, 1.0, decay=True)
+
+  # today on Bosch-A: DT_MDL filter stepped at 14.35 Hz decays too slowly
+  legacy = radard.Track(1, 10.0, kp)
+  for _ in range(int(round(radard.BOSCH_A_FREQ_HZ))):
+    legacy.aLeadTau.update(0.0)
+  legacy_decay = legacy.aLeadTau.x
+  assert legacy_decay > ref_decay * 1.5
+
+  fixed = radard.Track(1, 10.0, kp, radard.HONDA_BOSCH_A_RADAR_TS)
+  assert _a_lead_tau_after(fixed, 1.0, decay=True) == pytest.approx(ref_decay, rel=0.1)
+
+  ref.aLeadTau.x = 0.05
+  fixed.aLeadTau.x = 0.05
+  assert _a_lead_tau_after(fixed, 0.5, decay=False) == pytest.approx(_a_lead_tau_after(ref, 0.5, decay=False), rel=0.05)
+
+
+def test_bosch_a_lead_accel_tau_timebase_does_not_change_published_points(monkeypatch):
+  toggles = make_toggles()
+  monkeypatch.setattr(radard, "get_starpilot_toggles", lambda *_args: toggles)
+  published = []
+  for flag in (False, True):
+    monkeypatch.setattr(radard, "BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT", flag)
+    radar_d = radard.RadarD(honda_bosch_a_radar=True)
+    for frame in range(1, 6):
+      radar_d.update(FakeSubMaster(live_tracks_frame=frame), make_radar_data(measured=True, v_rel=-1.0 * frame))
+    published.append([(i, t.dRel, t.vRel, t.measured, t.vLeadK, t.aLeadK) for i, t in sorted(radar_d.tracks.items())])
+  # same points, same KF state; only aLeadTau differs
+  assert published[0] == published[1]
+  assert [p[0] for p in published[0]] == [1]

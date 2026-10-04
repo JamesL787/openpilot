@@ -21,6 +21,17 @@ from opendbc.car.honda.values import HONDA_BOSCH_A
 # Default lead acceleration decay set to 50% at 1s
 _LEAD_ACCEL_TAU = 0.6
 
+# Track.aLeadTau is a FirstOrderFilter(rc=0.45) built with dt=DT_MDL, but it only steps on a
+# measurement_update. On Bosch-A that is a fresh liveTracks sweep (~14.35 Hz, radar_interface
+# BOSCH_A_FREQ_HZ), not every 20 Hz model cycle, so each step decays by 0.9 and the wall-clock time
+# constant is ~0.66 s instead of the ~0.47 s it has at 20 Hz; the x1.1 recovery is ~30 % slower in
+# wall time too. Static arithmetic only (docs/honda_bosch_acc_brake_internals.md §10.2, §11.3).
+# True steps the filter with HONDA_BOSCH_A_RADAR_TS and scales the recovery to the same wall-clock
+# rate. Bosch-A only; other radars keep DT_MDL. It changes aLeadTau (what long_mpc assumes about
+# how long a lead keeps its accel) and nothing about which points publish. Default off: not
+# replayed, not driven. Re-decide _LEAD_ACCEL_TAU (0.6 here vs upstream 1.5) only after this.
+BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT = False
+
 # Shadow range-derived vRel, computed for whichever radar lead is selected -- not only Bosch-A.
 # Timestamps come from the message clock so replay is faithful; wall-clock time made every
 # accelerated replay of this field meaningless. The fit is plain LSQ with no outlier rejection, so
@@ -722,10 +733,12 @@ def camera_xrate_verdict(samples) -> tuple[str, float | None]:
 
 
 class Track:
-  def __init__(self, identifier: int, v_lead: float, kalman_params: KalmanParams):
+  def __init__(self, identifier: int, v_lead: float, kalman_params: KalmanParams, a_lead_tau_dt: float = DT_MDL):
     self.identifier = identifier
     self.cnt = 0
-    self.aLeadTau = FirstOrderFilter(_LEAD_ACCEL_TAU, 0.45, DT_MDL)
+    self.aLeadTau = FirstOrderFilter(_LEAD_ACCEL_TAU, 0.45, a_lead_tau_dt)
+    # 1.1 per DT_MDL step, held at the same wall-clock rate when the filter steps at another dt
+    self.aLeadTauGrowth = 1.1 ** (a_lead_tau_dt / DT_MDL)
     self.K_A = kalman_params.A
     self.K_C = kalman_params.C
     self.K_K = kalman_params.K
@@ -884,7 +897,7 @@ class Track:
     if measurement_update:
       # Learn if constant acceleration
       if abs(self.aLeadK) < 0.5:
-        self.aLeadTau.x = min(max(self.aLeadTau.x, 1e-2) * 1.1, _LEAD_ACCEL_TAU)
+        self.aLeadTau.x = min(max(self.aLeadTau.x, 1e-2) * self.aLeadTauGrowth, _LEAD_ACCEL_TAU)
       else:
         self.aLeadTau.update(0.0)
 
@@ -1566,6 +1579,7 @@ class RadarD:
     # filters, however, consume modelV2 leads every model cycle and must retain model-loop timing.
     kf_dt = HONDA_BOSCH_A_RADAR_TS if self.honda_bosch_a_radar else radar_ts
     self.kalman_params = KalmanParams(kf_dt)
+    self.a_lead_tau_dt = HONDA_BOSCH_A_RADAR_TS if (self.honda_bosch_a_radar and BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT) else DT_MDL
     self.g90_radar_filter = g90_radar_filter
     lead_prob_dt = DT_MDL if self.honda_bosch_a_radar else radar_ts
     self.lead_prob_filters = [FirstOrderFilter(0.0, 0.2, lead_prob_dt) for _ in range(2)]
@@ -1687,7 +1701,7 @@ class RadarD:
 
       # create the track if it doesn't exist or it's a new track
       if ids not in self.tracks:
-        self.tracks[ids] = Track(ids, v_lead, self.kalman_params)
+        self.tracks[ids] = Track(ids, v_lead, self.kalman_params, self.a_lead_tau_dt)
       measured = rpt[3] if not self.honda_bosch_a_radar else bool(rpt[3] and radar_fresh)
       # Non-Bosch sources retain the historical per-model-cycle update semantics. Only Civic Bosch
       # suppresses duplicate measurement updates when liveTracks has not advanced.

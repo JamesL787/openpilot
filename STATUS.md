@@ -10160,3 +10160,20 @@ Replay of the fixed code (base = the old law, same 10 routes):
     is labelled from 779.84 s instead of 779.59.
 - **Cost:** a real side car on the rail stays unlabelled until it has a fresh fit, about 0.3 s here.
 - **Still open:** the first drive with it on.
+
+## 202. Bosch-A `aLeadTau` timebase flag (default OFF) and an offline VSA-accel report tool (2026-10-04). Static unit tests only; not replayed, not driven.
+- **Finding (static, docs/honda_bosch_acc_brake_internals.md §10.2):** `Track.aLeadTau` is built with `DT_MDL` but steps
+  only on a measurement_update, which on Bosch-A is a fresh liveTracks sweep (~14.35 Hz). Its wall-clock time
+  constant is ~0.66 s, not the ~0.47 s it has at 20 Hz, and its ×1.1 recovery runs ~30 % slower in wall time.
+  The revision-2 report also said `v_ego_hist` was ~0.14 s old; that was wrong: it is appended at the 20 Hz radard
+  loop, so the 0.1 s `radarDelay` is the effective delay (still unmeasured for this radar).
+- **Change:** `BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT` in `radard.py`, default False. True steps the filter with
+  `HONDA_BOSCH_A_RADAR_TS` and scales the recovery to the same wall-clock rate. Bosch-A only. It does not change
+  which points publish, the KF state, or dRel/vRel (unit test).
+- **Tool:** `tools/longitudinal/bosch_vsa_accel_report.py` decodes 0x094 LONG_ACCEL (VSA accelerometer, input b of
+  0xd0c58) from rlogs and re-bins item 71's command vs delivered against `aEgo`, `aVsa`, `aVsa − g·sin(pitch)` and a
+  firmware-style min(a, b). It also logs a −5 m/s³ stock-equivalent onset slew (logging only, item 72) and the
+  U11 − d(dRel)/dt residual regressed on `aEgo`/`aVsa`. Unit-tested on synthetic data; no route has been run yet.
+- **Still open:** run the tool on the item 71 routes (P0 of the report) before any over-delivery compensation;
+  replay the flag on the D-053 routes and compare predicted vs actual lead speed at 1-3 s before turning it on or
+  re-deciding `_LEAD_ACCEL_TAU`.

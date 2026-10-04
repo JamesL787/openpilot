@@ -1091,16 +1091,18 @@ evidence already recorded in `STATUS.md`. Nothing in this section has been road-
 - The per-track KF steps at `BOSCH_A_FREQ_HZ` 14.35 (`radar_interface.py:56` → `radard.py:554, 1567`). It is a
   2-state constant-accel filter on `vLead = vRel + v_ego_hist[0]` (`radard.py:1686`).
 - Honda sets `radarDelay = 0.1` (`honda/interface.py:461`). radard sizes `v_ego_hist` as
-  `round(delay / DT_MDL) + 1` = 3 entries (`radard.py:1579`) but appends once per radard update when a new
-  carState has arrived (`radard.py:1656-1659`), which on Bosch-A is ≈ 14.35 Hz. So `v_ego_hist[0]` is about
-  2 × 70 ms ≈ 0.14 s old, not 0.1 s, and the 0.1 s itself was never measured for the Bosch-A radar's
-  sweep latency. Any mismatch between that delay and the true one leaks ego acceleration into `vLead`
+  `round(delay / DT_MDL) + 1` = 3 entries (`radard.py:1579`) and appends once per radard update when a new
+  carState has arrived (`radard.py:1656-1659`). radard runs on the modelV2 poll (20 Hz, `main()`), and carState
+  is 100 Hz, so the append rate is 20 Hz and `v_ego_hist[0]` is 2 × 50 ms = 0.1 s old, as configured
+  (static reading; corrected in revision 3 — revision 2 said ≈ 0.14 s, wrongly assuming the append ran at the
+  14.35 Hz radar rate). The 0.1 s itself was never measured for the Bosch-A radar's sweep latency. Any mismatch between that delay and the true one leaks ego acceleration into `vLead`
   and from there into `aLeadK`.
 - `aLeadK = kf.x[ACCEL]` (`radard.py:882`). radard never reads `aEgo`, so `aLeadK` is effectively
   d/dt(vRel + vEgo) and inherits wheel-speed derivative noise.
 - `aLeadTau` is `FirstOrderFilter(_LEAD_ACCEL_TAU=0.6, 0.45, DT_MDL)` (`radard.py:22, 728, 883-889`) but is
-  stepped only on 14.35 Hz measurement updates. Its effective time constant is therefore ≈ 0.63 s, not
-  0.45 s, and its ×1.1 recovery runs at a different wall-clock rate than written.
+  stepped only on 14.35 Hz measurement updates. Each step multiplies by 0.45/0.5 = 0.9, so the wall-clock time
+  constant is −1/(14.35·ln 0.9) ≈ 0.66 s instead of the ≈ 0.47 s it would have at 20 Hz, and its ×1.1 recovery
+  runs 30 % slower in wall-clock time than written (static arithmetic).
 - Lead selection: vision prob > 0.35 then `match_vision_to_track` (`radard.py:1345, 1428`), vision
   fallback with `aLeadTau` 0.3 (`1402-1413`), Bosch-A low-speed override (`1455-1470`). The gates are
   publish-time bounds; the D-053 range-derived vRel assist explicitly never feeds `aLeadK` (`radard.py:76`).
@@ -1141,7 +1143,7 @@ off, and log in shadow first.*
    does not, part of the "over-delivery" is measurement, not plant.
 2. **Time-align the ego reference used to build `vLead`.** Measure the Bosch-A sweep latency (e.g. by
    regressing `vRel` against ego speed during hard ego braking behind a steady lead), then size
-   `v_ego_hist` in radar steps (`radar_ts`), not `DT_MDL` steps, so the configured delay is the real one. U11 already lags closing onset by 0.88-1.28 s
+   `radarDelay` to it. The history timebase itself is already correct (20 Hz appends, `DT_MDL` sizing; §10.2). U11 already lags closing onset by 0.88-1.28 s
    (`radard.py:737-740`, D-043/D-044), and the D-053 routes show `aLeadK` dips of −3.8/−7.2/−6.0
    (`radard.py:68-70`). Compare in shadow on those routes. This changes only the estimate, never
    whether a point is published.
@@ -1196,7 +1198,7 @@ replay or road evidence.*
 | `_LEAD_ACCEL_TAU` | 1.5 | 0.6 (`radard.py:22`) |
 | radard KF step | DT_MDL | 1/14.35 s; `aLeadTau` still DT_MDL (§10.2) |
 | vRel | raw radar `vRel` | U11 + one-sided range-derived assist (D-041/043/044/053/074) |
-| `radarDelay` (Honda) | 0.1 (ego history in DT_MDL steps) | 0.1, but history stepped at 14.35 Hz → ≈ 0.14 s effective (§10.2) |
+| `radarDelay` (Honda) | 0.1 (ego history in DT_MDL steps) | 0.1; history appended at 20 Hz, so 0.1 s effective — but unmeasured for Bosch-A (§10.2) |
 | Bosch command | clip; gas from −0.2 | clip; gas from 0.0; pitch, wind, learned gas factor, braking hysteresis. No brake-side rate limit, no over-delivery compensation |
 
 ### 12.3 Proposals for smoother braking that use the Bosch-A radar fully
@@ -1225,7 +1227,7 @@ MPC assume a braking lead keeps braking; on lead-brake-then-release events that 
 by a release, which is felt as jerk. Risk: a longer tau anticipates a genuinely hard-braking lead less.
 
 **P3 — Time-aligned ego reference for `vLead`** (§11.2). Removes ego-accel leakage from `aLeadK`,
-which today is d/dt(vRel + vEgo) with an unmeasured, ≈ 0.14 s effective delay.
+which today is d/dt(vRel + vEgo) with a 0.1 s delay that was never measured for this radar.
 
 **P4 — Over-delivery compensation, comfort band only — after P0.** If P0 confirms the ≈ 27 %
 over-brake against `aEgoVsa` too, add `cmd = desired + k(desired)` only for about −1.0 to −3.0 m/s²,
@@ -1308,6 +1310,14 @@ File/line references are to HEAD `6fd6eed`.
   it is per-unit (EOL) or a constant.
 
 ## Revision log
+
+Revision 3 — 2026-10-04 (static):
+
+- **a.** §10.2/§11.2/§12: `v_ego_hist` is appended at the 20 Hz radard loop (modelV2 poll), so the effective ego
+  delay is the configured 0.1 s, not ≈ 0.14 s. P3 is now "measure the sweep latency", not "fix the timebase".
+- **b.** The `aLeadTau` claim stands: it is stepped with `DT_MDL` only on fresh Bosch-A sweeps (≈ 14.35 Hz).
+  A default-off radard flag, `BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT`, now steps it with the radar period (unit tests only).
+- **c.** Offline tool `tools/longitudinal/bosch_vsa_accel_report.py` added for P0 and §11 items 1/4.
 
 Revision 2 — 2026-10-04 (all static; firmware-trace items carried from the 2026-10-03 cross-check, not re-run):
 
