@@ -550,7 +550,8 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  visible=adv),
       SettingRow("BrakeOnsetLimit", "toggle", tr_noop("Smooth Brake Onset"),
                  subtitle=tr_noop("Builds braking up gradually while the lead is still far away. Off when the lead is close, "
-                                  "closing fast, or braking hard, and when stopping. Releasing brake is not changed. Replay only, not driven."),
+                                  "braking hard, or closing within 4 s, and when stopping. Also ignores a brief false braking reading on a "
+                                  "newly seen car. Releasing brake is not changed. Replay only, not driven."),
                  get_state=lambda: self._params.get_bool("BrakeOnsetLimit"),
                  set_state=lambda s: self._params.put_bool("BrakeOnsetLimit", s),
                  visible=adv),

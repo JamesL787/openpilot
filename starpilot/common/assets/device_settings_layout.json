@@ -892,7 +892,7 @@
       {
         "key": "BrakeOnsetLimit",
         "label": "Smooth Brake Onset",
-        "description": "While every lead is still far away (more than 3 s to contact, more than 10 m and 1.5 s of travel, none braking harder than -1.0 m/s^2), braking deepens gradually: at most 1.5 m/s^3 at 6 s to contact, up to 6 m/s^3 near 3 s, and off below 3 s. Off when stopping, at a red light or forced stop, and in the emergency path. Throttle cuts and releasing brake are not changed. Replay only, not driven.",
+        "description": "While every lead is still far away (more than 3 s to contact, more than 10 m and 1.5 s of travel, none braking harder than -1.0 m/s^2), braking deepens gradually: at most 1.5 m/s^3 at 6 s to contact, up to 6 m/s^3 near 3 s, and off below 3 s. In the emergency path it still applies when the lead is more than 4 s away and the car is not already braking. A newly seen radar car's reported braking is capped at -1.0 m/s^2 for its first 2 s unless its range history confirms more. Off when stopping, at a red light or forced stop. Throttle cuts and releasing brake are not changed. Replay only, not driven.",
         "picker_description": "Builds braking up gradually while the lead is still far away.",
         "data_type": "bool",
         "ui_type": "toggle",

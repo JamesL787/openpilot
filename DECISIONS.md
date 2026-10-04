@@ -1893,3 +1893,49 @@ Proposal, in order of risk (owner picks; each would ship behind a default-OFF sw
 
 Open before any code: the range fit is the camera's too, so (2) must first be checked against an independent
 reference (STATUS 205); the settle anchor is selection-biased; about half the tracks have no anchor.
+
+**Replay result (STATUS 206):** the range fit on a 0.25–0.5 s old track reads 20–52 m/s of closing at ego ≈ 22 m/s
+(faster than a stopped object), so option 2's moving test always fails and the full rail is published. The early range
+fit is as unreliable as the early U11, so it cannot be the moving test. Option 1 fired only on off-path tracks
+(|y| 12–22 m). Neither option is worth enabling as written. A moving test needs a reference that exists in the first
+0.5 s (candidate: an agreeing model lead at the same range with vLead ≥ 5 m/s); not built.
+
+**2026-10-04 revision (STATUS 207).** Option 2's moving test is now an agreeing model lead (prob >= 0.5, same range within max(5 m, 15%),
+lateral within 2 m, vLead >= 5 m/s, model closing >= 4 m/s short of the rail), not the range fit. Replayed on 7 routes, it fired
+once (268 5:56, correct direction, 0.53 less brake); the 4 m/s margin was added after one wrong firing (2d5 9:44, the model overstated a
+4 m/s lead at 100 m). Still OFF; not enough evidence to enable.
+
+## D-078 — PROPOSED (switch `BrakeOnsetLimit`, default OFF; STATUS 209): limit the rate of brake onset only when the lead is far in time
+
+**Decision.** The planner may rate-limit how fast its brake command grows (6 m/s^3 at TTC 3 s down to 1.5 m/s^3 at TTC >= 6 s)
+only when every one of these holds: an active lead, gap >= max(10 m, 1.5 s x v), lead not braking (aLeadK >= -1.0), min TTC > 3 s,
+and none of reset / standstill / stopping / vision low-speed stop / panic bypass / forced stop / red light. The ramp starts from
+min(previous, 0), so throttle cuts are never slowed.
+
+**Why these gates.** Round 1 replay (gap 1.0 s, lead-decel -1.5) softened a real closing at 236 13:15.7 (17 m, aK -1.1) and
+slowed a throttle cut at 236 37:25. Round 2 removed both. Per D-041/D-042 in spirit: when it is unclear whether braking is
+needed, do not hold it back — the limiter stands down rather than guess.
+
+**Evidence.** Replay only, 7 routes: sharp onsets 217 -> 192, peak braking unchanged, largest estimated gap cost 1.27 m at a 56 m
+lead. Not driven. Enabling by default needs road evidence. The Galaxy save needs the aarch64 params library rebuilt.
+
+## D-079 — REJECTED (code reverted 2026-10-04 at owner request; STATUS 211): pull-in lead acceleration prior
+
+For a radar lead younger than 1.5 s in its slot, slower by >= 3 m/s, TTC > 3 s, the MPC plans it speeding up (+1.5 m/s², +3 m/s cap). Replay: on the 2d5 bookmark it moves the peak from -3.65 to -3.62 (even at +5 m/s² / +10 m/s only -3.54, a shorter hold), and on 7 routes 46 of 67 firings were cars that did not speed up (worst open-loop gap cost 5.4 m). Kept off and not wired to Galaxy. Revisit only with a signal that tells a pulling-in car from a revealed slow car (e.g. lateral motion at birth); lead age alone is not that signal.
+
+## D-080 — PROPOSED (part of switch `BrakeOnsetLimit`, default OFF; STATUS 213): bound a newborn radar lead's aLeadK
+
+For its first 2.0 s as a lead (a gap of 0.5 s or a range step of 4 m makes it newborn again), a radar lead's aLeadK is held
+at no lower than -1.0 m/s², or lower only as far as a quadratic fit of its own range history (>= 0.8 s) confirms. The lead
+is never dropped and dRel/vRel are untouched (D-041/D-042: bound, do not delete). Replay: on 2df 3:09 (bookmark; track born at
+85 m with aLeadK -2.39, flipping to +2.41 half a second later) the one-step -1.00 becomes an ease to about -0.3. On 2e1/2e2 it
+changes 14 frames by at most 0.007. Not driven.
+
+## D-081 — PROPOSED (part of switch `BrakeOnsetLimit`, default OFF; STATUS 213): keep the onset limit under a panic bypass when far and not yet braking
+
+D-078 stood down entirely on a panic bypass. On 2df 24:45 (bookmark; a car turning in from the right, born at 55 m closing
+12 m/s, TTC ~4.6 s, then accelerating) that let the target fall +0.57 -> -1.66 in one 50 ms step; source was the normal
+lead MPC, no guard tripped, and the depth (-2.73) was what a slow lead would need. Now, under a panic bypass, the limit still
+applies while the worst TTC is above 4.0 s, but only if the published target was above -0.5 m/s² when the bypass began
+(latched). Round 1 without the latch softened a real stop for stopped traffic (2df 25:54, already braking -1.2, -3.5 ~0.3 s
+later); the latch removes that. Peak braking is never reduced, only how fast it arrives. Replay only, not driven.

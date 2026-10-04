@@ -10424,3 +10424,35 @@ Device build `3b5cacf04` (`ns-bosch-radar-testing-pr10-smooth`). Toggle state fr
 **2e2 bookmark (283.2 s):** real slow car in lane (track #18, y 0.4, born ~280 s at 125 m); ego 24.7 m/s. Range shrinks 125 -> 62 m over 8 s, about -10 to -12 m/s, while #18's Doppler vRel reads only -6. The published lead vRel (~-11) agrees with the range rate, so the lead was really ~13 m/s. Track #21 (y -2.6 to -3.6, closing ~-12) is an adjacent-lane car that never merged; the lead's range follows #18 throughout. As the lead estimate swung from -2.5 to -11 m/s within a second of birth, aLeadK read -3.0 / -2.5: the planner treated a steady slow car as one braking hard. Result: -1.0 step (bypass), -1.9, release to -0.84, re-brake to a -2.1 hold, speed matched at 61 m when the desired gap at 13.6 m/s is ~26 m, then a crawl to 42 m. Needed average decel from first sight was ~0.75 m/s². Over-early and double-pumped, not a missed threat.
 
 **Reading.** On this evidence the new toggles cannot make the drive feel different: two do nothing (BirthRailRamps did not fire on these drives; OverBrakeComp is always on), Smooth Brake Onset is skipped by `panic_bypass` and the aLeadK exemption exactly when an onset is harsh, and RangeKF adds 0.2-0.4 of braking in real slowdowns. Candidate levers (not implemented, owner to choose): (1) let Smooth Brake Onset apply under `panic_bypass` when TTC is long (e.g. > 6 s) and the gap is far above the desired follow distance; (2) cap or slew a newborn lead's aLeadK by track age so a converging velocity estimate is not read as lead braking (bound it, do not drop the point: D-041/D-042); (3) consider leaving RangeKF off until it has its own evidence. Route data is cited by ID only.
+
+## 213. D-080 newborn-lead aLeadK bound and D-081 onset-under-panic-bypass, both folded into `BrakeOnsetLimit` (no new toggle) (2026-10-04, owner: "merge it with smooth brake onset ... I would prefer to limit the amount of toggles needed"; "I made two bookmarks on that route today. The second bookmark is in segment 24"; "Sure let's try that"). Static tests and closed-loop replay only (open-loop on ego); not driven.
+
+**Bookmarks on 2df** (`11c8fa231c0499ed/000002df--4d01718597`, driven with every new toggle off). Bookmark and replay share the
+initData clock: 189.1 s, 1488.1 s, 2520.8 s (the last while disengaged, nothing happening).
+- **24:48 (segment 24).** Track 6 born at 55.5 m, vRel -12.0 (range history agrees; vision said -3 to -5), a car turning in
+  that then accelerated about 2 m/s². Planner +0.57 -> -1.66 in one frame, peak -2.73 at 1486.6, driver disengaged at 1489.5.
+  Source `lead0` throughout, `guard_trip` false: the normal follow MPC, not a StarPilot guard. With the lead held at 7.4 m/s
+  the needed steady decel was about -1.9, so the depth was right and the step was the problem. The onset limit stood aside
+  because of the panic bypass.
+- **3:09.** Track 46 born at 85 m, vRel -6.3, aLeadK -2.39 (then +2.41 half a second later); planner -1.00 in one step.
+
+**D-080** (newborn aLeadK bound, see DECISIONS). Replay: 2df 3:09 -1.00 step -> ease, min -0.36; inert on the 24:48 event, 2e2
+(0 frames) and 2e1 (14 frames, max 0.007).
+
+**D-081** (onset limit under panic bypass, TTC > 4 s, only when not already braking past -0.5). Replay round 2 vs D-080-only:
+
+| window | peak | brake integral | min jerk (m/s³) |
+|---|---|---|---|
+| 2df 24:45-24:49 (bookmark) | -2.73 -> -2.73 | -6.99 -> -6.62 | -39.8 -> -10.2 |
+| 2df 25:53-25:56 (stopped traffic) | -3.55 -> -3.55 | -8.11 -> -8.11 | unchanged |
+| 2df 23:54-24:00 (mature lead slowing) | unchanged | unchanged | unchanged |
+| 2e1 340-346 / 366-370 / 405-412 (real stops) | unchanged | unchanged | unchanged |
+| 2d5 11:54-12:02 (bookmark) | -3.64 -> -3.64 | -7.94 -> -7.86 | -36.5 -> -36.5 |
+
+Other onsets softened by more than 0.3: 2df 115, 241, 1477, 2094 and 2d5 773 (leads 40-78 m, onsets around -0.8 to -1.1
+arriving over about 0.5 s). Round 1 without the latch also softened 2df 25:54 (-3.5 ~0.3 s later); that is why the latch exists.
+
+**Not fixed: 2d5 11:58.** The radar briefly says vRel -20 and aLeadK -4 at about 50 m (TTC under 3 s), so every gate stands
+down by design. That needs a look at the track itself, not the planner.
+
+Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy save still needs the aarch64 params library.
