@@ -368,7 +368,7 @@ COAST_CEILING_JERK = 2.5  # m/s^3
 # with no lead, on a stop/red-light/forced-stop, a panic bypass, reset or standstill. Output only: self.a_desired
 # still feeds the MPC x0 (cutting that feedback diverged the replay, see BRAKE_RELEASE_DWELL above).
 # Costs: up to |a| / J seconds later to reach a far-lead brake; the on-path bound in update() still applies after.
-BRAKE_ONSET_LIMIT = False
+BRAKE_ONSET_LIMIT = False  # True forces it on; otherwise the BrakeOnsetLimit toggle (Advanced Longitudinal Tuning)
 BRAKE_ONSET_TTC_OFF_S = 3.0  # at or below: no limit
 BRAKE_ONSET_TTC_BP = [3.0, 6.0]  # s
 BRAKE_ONSET_JERK_V = [6.0, 1.5]  # m/s^3 allowed fall rate at those TTCs
@@ -4059,7 +4059,8 @@ class LongitudinalPlanner:
       self.a_desired = min(self.a_desired, accord_stop_go_target)
       output_a_target = accord_stop_go_target
 
-    if BRAKE_ONSET_LIMIT and not reset_state and not bool(sm['carState'].standstill) and not (
+    brake_onset_enabled = BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "brake_onset_limit", False))
+    if brake_onset_enabled and not reset_state and not bool(sm['carState'].standstill) and not (
         output_should_stop or vision_low_speed_stop_active or panic_bypass or
         getattr(sm['starpilotPlan'], 'forcingStop', False) or getattr(sm['starpilotPlan'], 'redLight', False)):
       output_a_target = brake_onset_limited_target(

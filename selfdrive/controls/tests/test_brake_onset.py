@@ -49,3 +49,28 @@ def test_ramp_reaches_the_target_within_abs_a_over_j():
   for _ in range(int(1.5 / (j * dt)) + 1):
     a = lp.brake_onset_limited_target(a, -1.5, dt, j)
   assert a == pytest.approx(-1.5)
+
+
+def test_toggle_sits_under_advanced_longitudinal_tuning_in_galaxy_and_device_ui():
+  import json
+  from pathlib import Path
+  root = Path(__file__).resolve().parents[3]
+  layout = json.loads((root / "starpilot/common/assets/device_settings_layout.json").read_text())
+  found = []
+
+  def walk(node):
+    if isinstance(node, dict):
+      if node.get("key") == "BrakeOnsetLimit":
+        found.append(node)
+      for v in node.values():
+        walk(v)
+    elif isinstance(node, list):
+      for v in node:
+        walk(v)
+  walk(layout)
+  assert len(found) == 1
+  assert found[0]["parent_key"] == "AdvancedLongitudinalTune" and found[0]["ui_type"] == "toggle"
+  ui = (root / "selfdrive/ui/layouts/settings/starpilot/longitudinal.py").read_text()
+  assert 'SettingRow("BrakeOnsetLimit", "toggle"' in ui
+  assert '{"BrakeOnsetLimit", {PERSISTENT, BOOL, "0", "0", 3}}' in (root / "common/params_keys.h").read_text()
+  assert 'toggle.brake_onset_limit = False' in (root / "starpilot/common/starpilot_variables.py").read_text()
