@@ -8,7 +8,6 @@ import pytest
 
 from cereal import log
 from openpilot.common.constants import CV
-from openpilot.common.realtime import DT_MDL
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
 from opendbc.car.gm.values import CAR as GM_CAR, GMFlags
@@ -19,9 +18,7 @@ from opendbc.car.toyota.values import CAR as TOYOTA_CAR
 import openpilot.selfdrive.controls.lib.longitudinal_planner as longitudinal_planner_module
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
-from openpilot.selfdrive.controls.lib.longitudinal_planner import (
-  LongitudinalPlanner, get_coast_accel, get_far_lead_coast_cap, get_vehicle_min_accel, should_publish_planner_fcw,
-)
+from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner, get_coast_accel, get_vehicle_min_accel, should_publish_planner_fcw
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import (
   LongitudinalMpc,
   build_model_lead_trajectory,
@@ -617,19 +614,11 @@ def test_model_lead_trajectory_uses_raw_current_anchor_and_future_deltas():
   assert trajectory[-1, 1] < trajectory[0, 1]
 
 
-@pytest.mark.parametrize("prob", [0.0, 0.35])
+@pytest.mark.parametrize("prob", [0.0, 0.5])
 def test_model_lead_trajectory_falls_back_for_low_confidence(prob):
-  # FrogPilot's gate: model lead prob must exceed LeadDetectionThreshold (default 0.35).
   lead = make_lead(status=True, d_rel=42.0, v_lead=18.0, model_prob=prob)
   _, model_lead = make_model_lead(prob=prob)
   assert build_model_lead_trajectory(model_lead, lead, 20.0) is None
-
-
-def test_model_lead_trajectory_follows_lead_detection_threshold():
-  lead = make_lead(status=True, d_rel=42.0, v_lead=18.0, model_prob=0.5)
-  _, model_lead = make_model_lead(prob=0.5)
-  assert build_model_lead_trajectory(model_lead, lead, 20.0) is not None
-  assert build_model_lead_trajectory(model_lead, lead, 20.0, lead_detection_probability=0.6) is None
 
 
 def test_model_lead_trajectory_falls_back_without_raw_lead_or_valid_shape():
@@ -642,15 +631,8 @@ def test_model_lead_trajectory_falls_back_without_raw_lead_or_valid_shape():
   assert build_model_lead_trajectory(short_model_lead, raw_lead, 20.0) is None
 
 
-def test_model_lead_trajectory_used_for_braking_lead_with_long_ttc():
-  # STATUS 62/63: a braking lead alone no longer forces the raw aLeadK extrapolation.
-  raw_lead = make_lead(status=True, d_rel=42.0, v_lead=18.0, a_lead=-4.0, model_prob=0.99)
-  _, model_lead = make_model_lead()
-  assert build_model_lead_trajectory(model_lead, raw_lead, 20.0) is not None
-
-
 @pytest.mark.parametrize("d_rel,v_lead,a_lead", [
-  (9.0, 15.0, 0.0),
+  (42.0, 18.0, -0.6),
   (8.0, 0.0, 0.0),
 ])
 def test_model_lead_trajectory_falls_back_for_urgent_raw_lead(d_rel, v_lead, a_lead):
@@ -720,15 +702,6 @@ def make_sm(v_ego: float, desired_accel: float, min_accel: float, *, experimenta
       approachStopLength=0.0,
     ),
   }
-
-
-@pytest.fixture(autouse=True)
-def _short_action_time_off_unless_tested(request, monkeypatch):
-  # The short action time is built in ON (D-072). The tests below were written against the
-  # actuator-delay read-off and check other features, so they pin it off; the *action_t* tests
-  # drive PLANNER_ACTION_T_OVERRIDE themselves.
-  if "action_t" not in request.node.name:
-    monkeypatch.setattr(longitudinal_planner_module.LongitudinalPlanner, "_short_action_t_active", lambda self: False)
 
 
 def make_toggles(model_version: str = "v11", radar_takeoffs: bool = False):
@@ -820,84 +793,6 @@ def test_acc_mode_uses_close_raw_lead_when_tracking_lead_is_debounced(model_vers
   assert planner.output_a_target == pytest.approx(
     planner.get_close_lead_brake_cap(sm["radarState"].leadOne, v_ego, sm["starpilotPlan"].minAcceleration)
   )
-
-
-def _close_cap_geometry(planner, lead, v_ego):
-  # Mirrors get_close_lead_brake_cap's gap arithmetic so the tests can state the bound it must respect.
-  lead_brake = max(0.0, -float(lead.aLeadK))
-  reaction_t = max(planner.longitudinal_actuator_delay, planner.dt)
-  closing = max(0.0, v_ego - lead.vLead)
-  projected = closing + lead_brake * reaction_t
-  gap = max(float(lead.dRel) - float(np.clip(2.0 + 0.2 * v_ego, 2.0, 6.0)) - projected * reaction_t, 0.5)
-  match = closing ** 2 / (2.0 * gap)
-  stop = v_ego ** 2 / (2.0 * (gap + lead.vLead ** 2 / (2.0 * lead_brake))) if lead_brake > 0.0 else float("inf")
-  return match, stop, lead_brake
-
-
-def test_close_lead_brake_cap_ignores_stopped_lead_braking():
-  # 00000278 / 0000027a: a stopped lead with a spurious aLeadK drove the exp-mode cap to -3.5. A lead at
-  # vLead 0 has no speed left to shed, so its aLeadK must not change the cap at all.
-  v_ego = 12.0
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=v_ego)
-  braking = make_lead(status=True, d_rel=40.0, v_lead=0.0, a_lead=-4.0, radar=True)
-  still = make_lead(status=True, d_rel=40.0, v_lead=0.0, a_lead=0.0, radar=True)
-  cap_braking = planner.get_close_lead_brake_cap(braking, v_ego, -3.5)
-  cap_still = planner.get_close_lead_brake_cap(still, v_ego, -3.5)
-  assert cap_still is not None
-  match, stop, _ = _close_cap_geometry(planner, braking, v_ego)
-  assert stop == pytest.approx(match)
-  # Only the reaction-time delay buffer still sees aLeadK (a few cm of gap); the 0.7*aLeadK term is gone.
-  assert cap_braking == pytest.approx(-match)
-  assert cap_braking == pytest.approx(cap_still, abs=0.02)
-
-
-@pytest.mark.parametrize("d_rel,v_lead,a_lead", [(30.0, 2.0, -3.0), (45.0, 4.0, -2.5), (35.0, 1.0, -5.0)])
-def test_close_lead_brake_cap_slow_lead_is_bounded_by_stop_geometry(d_rel, v_lead, a_lead):
-  # A slow braking lead: the cap is milder than match + 0.7*aLeadK but never milder than stopping behind
-  # the lead's own stopping point, and never milder than the match term.
-  v_ego = 12.0
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=v_ego)
-  lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=a_lead, radar=True)
-  cap = planner.get_close_lead_brake_cap(lead, v_ego, -3.5)
-  match, stop, lead_brake = _close_cap_geometry(planner, lead, v_ego)
-  old_demand = match + 0.7 * lead_brake
-  assert stop < old_demand
-  assert cap is not None
-  assert max(match, stop) < 3.5
-  assert cap <= -max(match, stop) + 1e-6
-  assert cap > max(-3.5, -old_demand)
-
-
-def test_close_lead_brake_cap_keeps_lead_brake_term_at_comfort_floor():
-  # 0000024f E / 00000258 63:50 (STATUS 146, closed-loop replay): against the -1.0 comfort floor the
-  # 0.7*aLeadK term is what buys the standstill gap, so the stop-geometry bound is not applied there.
-  v_ego = 5.0
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=v_ego)
-  lead = make_lead(status=True, d_rel=22.0, v_lead=2.7, a_lead=-1.0, radar=True)
-  match, stop, lead_brake = _close_cap_geometry(planner, lead, v_ego)
-  demand = match + 0.7 * lead_brake
-  assert max(match, stop) < demand < 1.0
-  ramp = float(np.clip((demand - longitudinal_planner_module.CLOSE_LEAD_BRAKE_CAP_RAMP_MIN) /
-                       (longitudinal_planner_module.CLOSE_LEAD_BRAKE_CAP_RAMP_FULL -
-                        longitudinal_planner_module.CLOSE_LEAD_BRAKE_CAP_RAMP_MIN), 0.0, 1.0))
-  assert planner.get_close_lead_brake_cap(lead, v_ego, longitudinal_planner_module.A_CRUISE_MIN) == pytest.approx(-demand * ramp)
-  assert planner.get_close_lead_brake_cap(lead, v_ego, -3.5) > -demand * ramp
-
-
-def test_close_lead_brake_cap_keeps_full_demand_for_fast_braking_lead():
-  # A highway lead braking hard: its stopping distance is long, so the stop term exceeds the demand and
-  # the cap is the unbounded match + 0.7*aLeadK exactly.
-  v_ego = 25.0
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=v_ego)
-  lead = make_lead(status=True, d_rel=40.0, v_lead=20.0, a_lead=-3.0, radar=True)
-  cap = planner.get_close_lead_brake_cap(lead, v_ego, -3.5)
-  match, stop, lead_brake = _close_cap_geometry(planner, lead, v_ego)
-  demand = match + 0.7 * lead_brake
-  assert stop > demand
-  ramp = float(np.clip((demand - longitudinal_planner_module.CLOSE_LEAD_BRAKE_CAP_RAMP_MIN) /
-                       (longitudinal_planner_module.CLOSE_LEAD_BRAKE_CAP_RAMP_FULL -
-                        longitudinal_planner_module.CLOSE_LEAD_BRAKE_CAP_RAMP_MIN), 0.0, 1.0))
-  assert cap == pytest.approx(max(-3.5, -demand * ramp))
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
@@ -1198,6 +1093,62 @@ def test_publish_planner_fcw_keeps_real_current_close_closing_alert():
   assert should_publish_planner_fcw(3, car_state, radar_state)
 
 
+def test_vision_lead_approach_cap_brakes_before_hard_cap():
+  v_ego = 21.535
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=38.9, v_lead=18.04, a_lead=-0.026, radar=False, model_prob=0.984)
+
+  hard_cap = planner.get_close_lead_brake_cap(lead, v_ego, -1.0)
+  approach_cap = planner.get_vision_lead_approach_cap(lead, v_ego, -1.0, 1.45)
+
+  # The hard cap is deliberately marginal here: 38.9 m at 9.2 s TTC is barely inside the
+  # close-lead horizon, and required_decel lands just above the ramp's lower edge, so it
+  # contributes almost nothing. The point of the test is that the vision approach cap is the
+  # operative limiter, which it still is.
+  assert hard_cap is not None
+  assert -0.05 < hard_cap < 0.0
+  assert approach_cap is not None
+  assert approach_cap < hard_cap
+  assert approach_cap > -1.2
+
+
+def test_vision_lead_approach_cap_brakes_harder_when_inside_tight_gap():
+  v_ego = 26.18
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=39.72, v_lead=22.46, a_lead=-0.15, radar=False, model_prob=0.97)
+
+  approach_cap = planner.get_vision_lead_approach_cap(lead, v_ego, -1.0, 1.49)
+
+  assert approach_cap is not None
+  assert approach_cap < -0.5
+
+
+def test_vision_lead_approach_cap_brakes_harder_for_braking_tracked_lead_inside_tight_gap():
+  v_ego = 19.50
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=19.7, v_lead=16.25, a_lead=-0.83, radar=False, model_prob=0.98)
+
+  hard_cap = planner.get_close_lead_brake_cap(lead, v_ego, -3.0)
+  approach_cap = planner.get_vision_lead_approach_cap(lead, v_ego, -3.0, 1.45)
+
+  assert hard_cap == pytest.approx(-0.978, abs=0.03)
+  assert approach_cap is not None
+  assert approach_cap < -1.35
+  assert approach_cap < hard_cap
+
+
+def test_vision_lead_approach_cap_ignores_opening_lead_with_large_gap():
+  v_ego = 19.37
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=66.168, v_lead=20.751, a_lead=0.261, radar=False, model_prob=0.975)
+
+  assert planner.get_vision_lead_approach_cap(lead, v_ego, -1.0, 1.45) is None
+
+
 def test_vision_untracked_slow_lead_cap_triggers_only_for_meaningful_closing_case():
   route_v_ego = 23.23
   far_v_ego = 29.0
@@ -1463,6 +1414,83 @@ def test_dynamic_t_follow_releases_toward_base_after_lead_opens(model_version):
 
 
 @pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
+def test_acc_mode_vision_lead_approach_cap_smooths_before_close_brake(model_version):
+  approach_v_ego = 21.535
+  close_v_ego = 21.435
+
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner_approach = LongitudinalPlanner(CP, init_v=approach_v_ego)
+  planner_close = LongitudinalPlanner(CP, init_v=close_v_ego)
+
+  sm_approach = make_sm(
+    approach_v_ego,
+    desired_accel=0.2,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=38.9, v_lead=18.04, a_lead=-0.026, radar=False, model_prob=0.984),
+  )
+  sm_close = make_sm(
+    close_v_ego,
+    desired_accel=0.2,
+    min_accel=-0.5,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=27.18, v_lead=15.76, a_lead=-0.824, radar=False, model_prob=0.988),
+  )
+  sm_approach["starpilotPlan"].vCruise = approach_v_ego + 8.0
+  sm_close["starpilotPlan"].vCruise = close_v_ego + 8.0
+
+  approach_outputs = []
+  for _ in range(6):
+    planner_approach.update(sm_approach, make_toggles(model_version))
+    approach_outputs.append(planner_approach.output_a_target)
+
+  planner_close.update(sm_close, make_toggles(model_version))
+
+  assert planner_approach.mode == "acc"
+  assert planner_close.mode == "acc"
+  assert min(approach_outputs[:2]) > -0.55
+  assert approach_outputs[-1] < -1.3
+  assert planner_close.output_a_target < approach_outputs[0] - 0.8
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
+def test_tracked_vision_far_mild_closure_does_not_bypass_persistence(model_version):
+  v_ego = 37.45
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=42.8, v_lead=35.31, a_lead=0.18, radar=False, model_prob=0.98)
+
+  approach_cap = planner.get_vision_lead_approach_cap(lead, v_ego, -1.0, 1.45)
+
+  assert approach_cap is not None
+  assert approach_cap > -1.0
+  assert not planner.tracked_vision_lead_approach_needs_immediate_brake(lead, v_ego, approach_cap)
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
+def test_acc_mode_tracked_vision_close_or_braking_lead_bypasses_persistence(model_version):
+  v_ego = 19.50
+
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  sm = make_sm(
+    v_ego,
+    desired_accel=0.2,
+    min_accel=-1.0,
+    experimental_mode=False,
+    tracking_lead=True,
+    lead_one=make_lead(status=True, d_rel=19.7, v_lead=16.25, a_lead=-0.83, radar=False, model_prob=0.98),
+  )
+  sm["starpilotPlan"].vCruise = v_ego + 6.0
+
+  planner.update(sm, make_toggles(model_version))
+
+  assert planner.output_a_target < -1.3
+
+
+@pytest.mark.parametrize("model_version", ["v11", "v12", "v13", "v14", "v15"])
 def test_acc_mode_pretracking_vision_slow_lead_blocks_positive_catchup(model_version):
   v_ego = 23.23
 
@@ -1487,8 +1515,7 @@ def test_acc_mode_pretracking_vision_slow_lead_blocks_positive_catchup(model_ver
   sm_no_lead["starpilotPlan"].vCruise = v_ego + 6.0
   sm_with_lead["starpilotPlan"].vCruise = v_ego + 6.0
 
-  # 10 frames: the brake release limit holds the shared -0.5 start ~2 frames longer on both planners
-  for _ in range(10):
+  for _ in range(6):
     planner_no_lead.update(sm_no_lead, make_toggles(model_version))
     planner_with_lead.update(sm_with_lead, make_toggles(model_version))
 
@@ -1610,9 +1637,7 @@ def test_acc_mode_pretracking_vision_far_slower_lead_starts_braking_before_track
 
   no_lead_outputs = []
   lead_outputs = []
-  # 12 frames, compared from frame 8: both planners first release a start-up brake from init, and the
-  # BRAKE_RELEASE_DWELL hold makes that release 2 frames later, so frames 5-7 no longer isolate the lead.
-  for _ in range(12):
+  for _ in range(8):
     planner_no_lead.update(sm_no_lead, make_toggles(model_version))
     planner_with_lead.update(sm_with_lead, make_toggles(model_version))
     no_lead_outputs.append(planner_no_lead.output_a_target)
@@ -1621,8 +1646,8 @@ def test_acc_mode_pretracking_vision_far_slower_lead_starts_braking_before_track
   assert planner_with_lead.mode == "acc"
   assert not planner_with_lead.raw_close_lead_needs_control(sm_with_lead["radarState"].leadOne, v_ego)
   assert all(lead_output <= no_lead_output + 1e-6
-             for lead_output, no_lead_output in zip(lead_outputs[8:], no_lead_outputs[8:]))
-  assert min(lead_outputs[8:]) < min(no_lead_outputs[8:]) - 0.08
+             for lead_output, no_lead_output in zip(lead_outputs[5:], no_lead_outputs[5:]))
+  assert min(lead_outputs[5:]) < min(no_lead_outputs[5:]) - 0.08
   assert lead_outputs[-1] < no_lead_outputs[-1] - 0.15
 
 
@@ -3682,18 +3707,13 @@ def test_no_throttle_cap_stays_at_coast_limit_until_throttle_returns():
   sm["carControl"].orientationNED = [0.0, 0.1, 0.0]
   toggles = make_toggles()
 
-  # COAST_CEILING_SLEW eases the ceiling down at COAST_CEILING_JERK, so allow it time to reach the coast limit.
-  outputs = []
-  for _ in range(20):
+  for _ in range(5):
     planner.update(sm, toggles)
-    outputs.append(planner.output_a_target)
 
   accel_coast = max(get_vehicle_min_accel(CP, v_ego), get_coast_accel(sm["carControl"].orientationNED[1]))
 
   assert not planner.allow_throttle
   assert planner.output_a_target == pytest.approx(accel_coast, abs=1e-3)
-  step = longitudinal_planner_module.COAST_CEILING_JERK * planner.dt
-  assert all(b >= a - step - 1e-6 for a, b in zip(outputs[1:], outputs[2:], strict=False))
 
 
 def test_experimental_release_state_arms_only_on_falling_edge():
@@ -3845,6 +3865,52 @@ def test_planner_arms_experimental_release_accel_only_on_mode_exit():
   planner.update(sm, make_toggles())
 
   assert release_states == [False, True]
+
+
+def test_inside_gap_closing_lead_cap_blocks_route_accel_burst():
+  v_ego = 17.1
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=26.3, v_lead=16.5, a_lead=0.0, radar=True, model_prob=1.0)
+
+  cap = planner.get_inside_gap_closing_lead_accel_cap(lead, v_ego, -1.0, 1.25)
+
+  assert cap is not None
+  assert cap == pytest.approx(0.0)
+
+
+def test_inside_gap_closing_lead_cap_strengthens_with_route_closure():
+  v_ego = 19.8
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=23.3, v_lead=17.3, a_lead=0.0, radar=True, model_prob=1.0)
+
+  cap = planner.get_inside_gap_closing_lead_accel_cap(lead, v_ego, -1.0, 1.25)
+
+  assert cap is not None
+  assert -0.7 <= cap <= -0.5
+
+
+@pytest.mark.parametrize("lead", [
+  make_lead(status=True, d_rel=36.0, v_lead=16.5, radar=True, model_prob=1.0),
+  make_lead(status=True, d_rel=26.3, v_lead=17.8, radar=True, model_prob=1.0),
+  make_lead(status=True, d_rel=26.3, v_lead=16.5, radar=False, model_prob=0.8),
+  make_lead(status=True, d_rel=26.3, v_lead=16.5, radar=True, model_prob=1.0, y_rel=2.0),
+])
+def test_inside_gap_closing_lead_cap_ignores_normal_or_ambiguous_follow(lead):
+  v_ego = 17.1
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+
+  assert planner.get_inside_gap_closing_lead_accel_cap(lead, v_ego, -1.0, 1.25) is None
+
+
+def test_inside_gap_closing_lead_cap_does_not_touch_standstill_departure():
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=0.0)
+  lead = make_lead(status=True, d_rel=5.0, v_lead=1.0, a_lead=0.5, radar=True, model_prob=1.0)
+
+  assert planner.get_inside_gap_closing_lead_accel_cap(lead, 0.0, -1.0, 1.25) is None
 
 
 def test_rolling_departure_settle_latch_stays_active_through_headway_hysteresis():
@@ -4212,1030 +4278,3 @@ def test_near_duplicate_lead_source_hysteresis_skips_distinct_leads():
 
   assert lead_0_bias == 0.0
   assert lead_1_bias == 0.0
-
-
-# STATUS 74e: off-axis radar leads get aLeadK bounded once, at planner input.
-def _off_axis_sm(*, y_rel, vision_a, a_lead=-7.8, v_ego=18.6, d_rel=52.2, v_rel=-1.5, vision_prob=0.72):
-  sm = make_sm(v_ego, 0.0, -3.5, experimental_mode=False, tracking_lead=True,
-               lead_one=make_lead(status=True, d_rel=d_rel, v_lead=v_ego + v_rel, a_lead=a_lead,
-                                  radar=True, model_prob=vision_prob, y_rel=y_rel))
-  model = sm["modelV2"]
-  model.init('leadsV3', 3)
-  model.leadsV3[0].prob = vision_prob
-  model.leadsV3[0].x = [d_rel] * 6
-  model.leadsV3[0].v = [v_ego + v_rel] * 6
-  model.leadsV3[0].a = [vision_a] * 6
-  return sm
-
-
-def _run_off_axis_planner(sm, frames=15):
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
-  CP.longitudinalActuatorDelay = 0.5
-  planner = LongitudinalPlanner(CP, init_v=float(sm["carState"].vEgo))
-  out = []
-  for _ in range(frames):
-    planner.update(sm, make_toggles())
-    out.append(planner.output_a_target)
-  return min(out)
-
-
-def test_off_axis_lead_bound_matches_route_25b_1129_geometry():
-  # 0000025b 11:29: in-lane lead on a curve, bearing 0.22, aLeadK -7.8, vision a -0.08 at p 0.72.
-  sm = _off_axis_sm(y_rel=-11.7, vision_a=-0.08)
-  bounded = longitudinal_planner_module.bound_off_axis_leads(sm)
-  assert bounded is not sm
-  assert bounded['radarState'].leadOne.aLeadK == pytest.approx(-longitudinal_planner_module.OFF_AXIS_LEAD_MAX_BRAKE)
-  assert bounded['radarState'].leadOne.dRel == pytest.approx(52.2)
-  assert bounded['radarState'].leadOne.yRel == pytest.approx(-11.7)
-  assert sm['radarState'].leadOne.aLeadK == pytest.approx(-7.8)  # radarState itself is untouched (D-041)
-  assert _run_off_axis_planner(sm) > -2.5
-
-
-def test_off_axis_lead_bound_covers_route_237_942_geometry():
-  # 00000237 15:42.5: in-lane lead at 89 m on a curve, bearing 0.119 (below the old 0.12 threshold),
-  # aLeadK -6.0 while vision saw a +0.06 at p 0.65. Live alpha commanded -2.0 and reached aEgo -2.7.
-  sm = _off_axis_sm(y_rel=10.6, vision_a=0.06, a_lead=-6.0, v_ego=18.1, d_rel=89.2, v_rel=-1.3, vision_prob=0.65)
-  bounded = longitudinal_planner_module.bound_off_axis_leads(sm)
-  assert bounded is not sm
-  assert bounded['radarState'].leadOne.aLeadK == pytest.approx(-longitudinal_planner_module.OFF_AXIS_LEAD_MAX_BRAKE)
-
-
-def test_off_axis_lead_bound_covers_route_25f_1358_geometry():
-  # 0000025f 13:58.4: in-lane lead at 49 m on a curve, bearing 0.078 (below the old 0.10 threshold),
-  # aLeadK -3.4 while vision saw a +0.01 at p 0.998. Replay alpha reached -3.45; stock cmd -0.49.
-  sm = _off_axis_sm(y_rel=-3.8, vision_a=0.01, a_lead=-3.4, v_ego=20.0, d_rel=48.9, v_rel=-2.9, vision_prob=0.998)
-  bounded = longitudinal_planner_module.bound_off_axis_leads(sm)
-  assert bounded is not sm
-  assert bounded['radarState'].leadOne.aLeadK == pytest.approx(-longitudinal_planner_module.OFF_AXIS_LEAD_MAX_BRAKE)
-
-
-def test_off_axis_lead_bound_threshold_edge():
-  # Bearing just under OFF_AXIS_LEAD_MIN_BEARING is left alone; a vision-corroborated brake above it is kept.
-  below = _off_axis_sm(y_rel=-3.4, vision_a=0.01, a_lead=-3.4, v_ego=20.0, d_rel=48.9, v_rel=-2.9, vision_prob=0.998)
-  assert longitudinal_planner_module.bound_off_axis_leads(below) is below
-  corroborated = _off_axis_sm(y_rel=-3.8, vision_a=-3.0, a_lead=-3.4, v_ego=20.0, d_rel=48.9, v_rel=-2.9, vision_prob=0.998)
-  bounded = longitudinal_planner_module.bound_off_axis_leads(corroborated)
-  assert bounded['radarState'].leadOne.aLeadK == pytest.approx(-3.0)
-
-
-def test_off_axis_lead_bound_leaves_straight_lead_unchanged():
-  sm = _off_axis_sm(y_rel=0.0, vision_a=-0.08)
-  assert longitudinal_planner_module.bound_off_axis_leads(sm) is sm
-  assert _run_off_axis_planner(sm) < -3.0
-
-
-def test_off_axis_lead_keeps_vision_corroborated_brake():
-  sm = _off_axis_sm(y_rel=-11.7, vision_a=-4.0)
-  bounded = longitudinal_planner_module.bound_off_axis_leads(sm)
-  assert bounded['radarState'].leadOne.aLeadK == pytest.approx(-4.0)
-  # Unbounded aLeadK -7.8 at 17.1 m/s stops that lead in 18.7 m; stopping ego behind it inside the
-  # close-lead cap's usable gap needs 2.77 m/s^2 (the cap's lead-brake term is bounded by that stop
-  # geometry, STATUS 146). The bounded 25b case above stays milder than -2.5.
-  assert _run_off_axis_planner(_off_axis_sm(y_rel=-11.7, vision_a=-6.0)) < -2.75
-
-
-def test_off_axis_lead_ignores_low_confidence_vision():
-  sm = _off_axis_sm(y_rel=-11.7, vision_a=-6.0, vision_prob=0.3)
-  bounded = longitudinal_planner_module.bound_off_axis_leads(sm)
-  assert bounded['radarState'].leadOne.aLeadK == pytest.approx(-longitudinal_planner_module.OFF_AXIS_LEAD_MAX_BRAKE)
-
-
-def test_off_axis_lead_bound_leaves_centered_genuine_stop_unchanged():
-  # 000001e8 9:00-like genuine stop: centered lead, TTC 5.5 s, aLeadK most of the demand.
-  sm = _off_axis_sm(y_rel=0.3, vision_a=-0.5, a_lead=-3.6, v_ego=22.0, d_rel=38.0, v_rel=-6.9)
-  assert longitudinal_planner_module.bound_off_axis_leads(sm) is sm
-
-
-def test_off_axis_lead_bound_ignores_vision_only_and_mild_leads():
-  vision_only = _off_axis_sm(y_rel=-11.7, vision_a=-0.08)
-  vision_only['radarState'].leadOne.radar = False
-  assert longitudinal_planner_module.bound_off_axis_leads(vision_only) is vision_only
-  mild = _off_axis_sm(y_rel=-11.7, vision_a=-0.08, a_lead=-1.2)
-  assert longitudinal_planner_module.bound_off_axis_leads(mild) is mild
-
-
-def test_off_axis_lead_bound_is_limited_to_bosch_a_hondas():
-  assert longitudinal_planner_module.uses_off_axis_lead_bound(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH))
-  assert not longitudinal_planner_module.uses_off_axis_lead_bound(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC))
-  assert not longitudinal_planner_module.uses_off_axis_lead_bound(
-    ToyotaCarInterface.get_non_essential_params(TOYOTA_CAR.TOYOTA_PRIUS))
-
-
-def test_off_axis_lead_bound_is_not_applied_off_bosch_a(monkeypatch):
-  def fail(sm):
-    raise AssertionError("off-axis bound applied to a non-Bosch-A car")
-  monkeypatch.setattr(longitudinal_planner_module, "bound_off_axis_leads", fail)
-  planner = LongitudinalPlanner(ToyotaCarInterface.get_non_essential_params(TOYOTA_CAR.TOYOTA_PRIUS), init_v=18.6)
-  planner.update(_off_axis_sm(y_rel=-11.7, vision_a=-0.08), make_toggles())
-
-
-# Far-lead coast cap (Dom 79c61f479a), built in (was FarLeadCoastCap).
-def test_far_lead_coast_cap_delays_nonurgent_deceleration():
-  lead = make_lead(status=True, d_rel=128.0, v_lead=16.7, a_lead=0.2, radar=True)
-
-  assert get_far_lead_coast_cap(lead, 26.6, 115.0, -0.43) == pytest.approx(-0.20)
-  assert get_far_lead_coast_cap(lead, 26.6, 115.0, 0.10) == pytest.approx(0.10)
-
-
-@pytest.mark.parametrize("d_rel,v_lead,a_lead,desired_gap", [
-  (50.0, 20.0, 0.2, 45.0),  # only a small gap remains
-  (128.0, 8.0, 0.2, 115.0),  # urgent closing time
-  (128.0, 16.7, -0.5, 115.0),  # the lead is braking materially
-])
-def test_far_lead_coast_cap_preserves_urgent_or_close_deceleration(d_rel, v_lead, a_lead, desired_gap):
-  lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=a_lead, radar=True)
-
-  assert get_far_lead_coast_cap(lead, 26.6, desired_gap, -0.43) == pytest.approx(-0.43)
-
-
-def test_far_lead_coast_cap_has_no_toggle():
-  from openpilot.common.basedir import BASEDIR
-  with open(f"{BASEDIR}/common/params_keys.h") as f:
-    assert '"FarLeadCoastCap"' not in f.read()
-
-
-def test_off_axis_lead_hold_covers_route_267_1513_curve_exit():
-  # 00000267 15:13.3: bearing 0.084 (bounded) then 0.070 with aLeadK -9.4 and vision a ~0.0 at p 0.95.
-  hold = longitudinal_planner_module.OffAxisLeadHold()
-  off = _off_axis_sm(y_rel=5.2, vision_a=0.13, a_lead=-6.7, v_ego=14.0, d_rel=62.0, v_rel=-4.9, vision_prob=0.96)
-  assert longitudinal_planner_module.bound_off_axis_leads(off, hold)['radarState'].leadOne.aLeadK == pytest.approx(-1.5)
-  centred = _off_axis_sm(y_rel=4.1, vision_a=0.10, a_lead=-9.4, v_ego=14.0, d_rel=58.8, v_rel=-7.1, vision_prob=0.92)
-  assert longitudinal_planner_module.bound_off_axis_leads(centred) is centred  # 0.070 < 0.075 without the hold
-  assert longitudinal_planner_module.bound_off_axis_leads(centred, hold)['radarState'].leadOne.aLeadK == pytest.approx(-1.5)
-
-
-def test_off_axis_lead_hold_expires():
-  hold = longitudinal_planner_module.OffAxisLeadHold()
-  off = _off_axis_sm(y_rel=5.2, vision_a=0.0, a_lead=-6.7, v_ego=14.0, d_rel=62.0, v_rel=-4.9)
-  centred = _off_axis_sm(y_rel=0.3, vision_a=0.0, a_lead=-6.7, v_ego=14.0, d_rel=58.0, v_rel=-4.9)
-  longitudinal_planner_module.bound_off_axis_leads(off, hold)
-  for _ in range(longitudinal_planner_module.OFF_AXIS_LEAD_HOLD_FRAMES):
-    assert longitudinal_planner_module.bound_off_axis_leads(centred, hold) is not centred
-  assert longitudinal_planner_module.bound_off_axis_leads(centred, hold) is centred
-
-
-def test_off_axis_lead_hold_never_off_axis_is_untouched():
-  hold = longitudinal_planner_module.OffAxisLeadHold()
-  sm = _off_axis_sm(y_rel=0.3, vision_a=-0.5, a_lead=-3.6, v_ego=22.0, d_rel=38.0, v_rel=-6.9)
-  for _ in range(5):
-    assert longitudinal_planner_module.bound_off_axis_leads(sm, hold) is sm
-
-
-def _closing_lead(v_rel=-5.0, a_lead=0.0):
-  lead = make_lead(status=True, d_rel=45.0, v_lead=17.0, a_lead=a_lead, radar=True, model_prob=1.0)
-  lead.vRel = v_rel
-  return lead
-
-
-@pytest.mark.parametrize("enabled", [True, False])
-def test_mpc_lead_brake_passes_comfort_floor_after_persisting(enabled, monkeypatch):
-  # STATUS 119, 25e 318.1: the MPC's lead brake passes the -1.0 comfort floor once it has
-  # persisted, at the mildest of the persisted ticks.
-  monkeypatch.setattr(longitudinal_planner_module, "MPC_LEAD_BRAKE_PASSES_COMFORT_FLOOR", enabled)
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC))
-  planner.lead_one = _closing_lead()
-  planner.mpc.source = 'lead0'
-  floors = [planner.get_mpc_lead_brake_accel_min(-1.0, demand) for demand in (-1.4, -1.6, -1.8, -2.0)]
-  assert floors[:2] == [-1.0, -1.0]
-  assert floors[2:] == ([-1.4, -1.6] if enabled else [-1.0, -1.0])
-
-
-@pytest.mark.parametrize("case", ["source_switch_spike", "not_closing", "cruise_source"])
-def test_mpc_lead_brake_keeps_comfort_floor_for_spikes(case):
-  # STATUS 119, 25f 634.9 / 0237 796.0: a one- or two-tick MPC spike on a source switch, or a
-  # demand for a lead that is neither closing nor braking, stays behind the comfort floor.
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC))
-  planner.lead_one = _closing_lead(v_rel=-0.17) if case == "not_closing" else _closing_lead()
-  sources = {"source_switch_spike": ['lead0', 'lead0', 'cruise', 'lead0', 'lead0', 'cruise'],
-             "not_closing": ['lead0'] * 6, "cruise_source": ['cruise'] * 6}[case]
-  for source in sources:
-    planner.mpc.source = source
-    assert planner.get_mpc_lead_brake_accel_min(-0.5, -2.0) == -0.5
-
-
-def _merge_sm(lead_v_ego=22.0):
-  meta = SimpleNamespace(laneChangeState=log.LaneChangeState.laneChangeStarting,
-                         laneChangeDirection=log.LaneChangeDirection.left)
-  car_state = SimpleNamespace(standstill=False, brakePressed=False, leftBlindspot=False, rightBlindspot=False)
-  return {'modelV2': SimpleNamespace(meta=meta), 'carState': car_state}
-
-
-@pytest.mark.parametrize("mpc_demand, expected_floor", [(None, True), (-1.0, True), (-1.6, False)])
-def test_lane_change_merge_floor_releases_on_hard_mpc_lead_brake(mpc_demand, expected_floor):
-  # STATUS 119, 25b 1338.6: the -0.4 merge floor held for 1.3 s while the MPC asked -1.5..-4.2
-  # at TTC 5.9 s. A hard MPC lead demand inside LC_MERGE_TTC_ACCEL now releases it.
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC))
-  planner.lead_one = make_lead(status=True, d_rel=45.2, v_lead=14.4, radar=True, model_prob=1.0)
-  toggles = SimpleNamespace(lane_change_close_gap=True, minimum_lane_change_speed=0.0)
-  floor = planner.get_lane_change_merge_accel_floor(_merge_sm(), toggles, 22.0, 30.0, 0.3, blocked=False,
-                                                    mpc_demand=mpc_demand)
-  assert (floor is not None) == expected_floor
-
-
-@pytest.mark.parametrize("a_lead, released", [(0.0, False), (-0.8, False), (-1.3, True)])
-def test_lane_change_merge_floor_releases_on_braking_lead(a_lead, released):
-  # Route 00000293 10:48: the floor held -0.4 at TTC 6-8 s while the lead braked -1.2..-3.5.
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC))
-  planner.lead_one = make_lead(status=True, d_rel=39.0, v_lead=18.0, a_lead=a_lead, radar=True, model_prob=1.0)
-  toggles = SimpleNamespace(lane_change_close_gap=True, minimum_lane_change_speed=0.0)
-  floor = planner.get_lane_change_merge_accel_floor(_merge_sm(), toggles, 19.0, 30.0, 0.3, blocked=False)
-  assert (floor is None) == released
-
-
-@pytest.mark.parametrize("v_lead, pushes", [(21.0, True), (15.0, False)])
-def test_lane_change_merge_push_withheld_when_closing_fast(v_lead, pushes):
-  # Route 00000293 29:12: +0.55 pushed toward a car 49 m ahead closing at 6.4 m/s (TTC 7.6 s).
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC))
-  planner.allow_throttle = True
-  planner.lead_one = make_lead(status=True, d_rel=49.0, v_lead=v_lead, radar=True, model_prob=1.0)
-  toggles = SimpleNamespace(lane_change_close_gap=True, minimum_lane_change_speed=0.0)
-  floor = planner.get_lane_change_merge_accel_floor(_merge_sm(), toggles, 21.4, 30.0, 0.3, blocked=False)
-  assert floor is not None
-  assert (floor > 0.0) == pushes
-
-
-def _stopped_radar_lead(*, a_lead: float, d_rel: float = 22.9, v_lead: float = -0.3, model_prob: float = 0.97,
-                        y_rel: float = 0.4, radar: bool = True, track_id: int = 27):
-  lead = make_lead(status=True, d_rel=d_rel, v_lead=v_lead, a_lead=a_lead, radar=radar, model_prob=model_prob, y_rel=y_rel)
-  lead.radarTrackId = track_id
-  return lead
-
-
-def _stopped_lead_sm(v_ego, lead):
-  sm = make_sm(v_ego, desired_accel=0.4, min_accel=-1.0, experimental_mode=False, tracking_lead=False, lead_one=lead)
-  sm["starpilotPlan"].vCruise = v_ego + 10.0
-  return sm
-
-
-def test_stopped_radar_lead_hold_keeps_controlling_lead_when_raw_and_tracking_drop():
-  # Route 0000026c--10bec2e200 replay 270.3: the lead that held the -1.0 close-lead cap settles (aLeadK -1.5 -> +0.3),
-  # TTC passes 7 s, tracking_lead is off; without the hold the MPC loses the lead and plans +1.24 toward it.
-  v_ego = 2.6
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-  held = LongitudinalPlanner(CP, init_v=v_ego)
-  fresh = LongitudinalPlanner(CP, init_v=v_ego)
-  braking_lead = _stopped_radar_lead(a_lead=-1.5)
-  settled_lead = _stopped_radar_lead(a_lead=0.3)
-  assert LongitudinalPlanner.raw_close_lead_needs_control(braking_lead, v_ego)
-  assert not LongitudinalPlanner.raw_close_lead_needs_control(settled_lead, v_ego)
-
-  for _ in range(5):
-    held.update(_stopped_lead_sm(v_ego, braking_lead), make_toggles())
-  assert not held.stopped_radar_lead_hold_active  # armed only; the ordinary gates are in control
-
-  held_out, fresh_out = [], []
-  for _ in range(20):
-    held.update(_stopped_lead_sm(v_ego, settled_lead), make_toggles())
-    fresh.update(_stopped_lead_sm(v_ego, settled_lead), make_toggles())
-    held_out.append(held.output_a_target)
-    fresh_out.append(fresh.output_a_target)
-
-  assert held.stopped_radar_lead_hold_active
-  assert not fresh.stopped_radar_lead_hold_active  # never admits a lead that was not already controlling
-  assert max(held_out) <= 0.0
-  assert max(fresh_out) > 0.3  # the pre-change behaviour: acceleration toward the stopped car
-
-
-@pytest.mark.parametrize("kwargs", [
-  {"model_prob": 0.3},     # no vision corroboration (D-048)
-  {"radar": False},        # vision-only lead
-  {"y_rel": 2.0},          # out of lane
-  {"v_lead": 4.0},         # not a slow lead
-  {"track_id": 31},        # a different radar object took lead one
-])
-def test_stopped_radar_lead_hold_releases_without_the_same_corroborated_slow_in_lane_lead(kwargs):
-  v_ego = 2.6
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-  planner = LongitudinalPlanner(CP, init_v=v_ego)
-  planner.update(_stopped_lead_sm(v_ego, _stopped_radar_lead(a_lead=-1.5)), make_toggles())
-  planner.update(_stopped_lead_sm(v_ego, _stopped_radar_lead(a_lead=0.3, **kwargs)), make_toggles())
-  assert not planner.stopped_radar_lead_hold_active
-
-
-def test_stopped_radar_lead_hold_releases_when_lead_pulls_away_and_does_not_rearm():
-  v_ego = 2.6
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-  planner = LongitudinalPlanner(CP, init_v=v_ego)
-  planner.update(_stopped_lead_sm(v_ego, _stopped_radar_lead(a_lead=-1.5)), make_toggles())
-  planner.update(_stopped_lead_sm(v_ego, _stopped_radar_lead(a_lead=0.3)), make_toggles())
-  assert planner.stopped_radar_lead_hold_active
-  # Lead departing: ego no longer closing (v_ego - vLead < -0.5).
-  planner.update(_stopped_lead_sm(v_ego, _stopped_radar_lead(a_lead=0.3, v_lead=3.2)), make_toggles())
-  assert not planner.stopped_radar_lead_hold_active
-  # The same slow lead again, but nothing re-armed the hold while it was not controlling.
-  planner.update(_stopped_lead_sm(v_ego, _stopped_radar_lead(a_lead=0.3)), make_toggles())
-  assert not planner.stopped_radar_lead_hold_active
-
-
-def test_stopped_radar_lead_hold_is_limited_to_low_ego_speed():
-  # Replay at 8.6-11.5 m/s approaching stopped queues 47-72 m ahead: the hold added new <= -1.5 brakes.
-  v_ego = 8.0
-  assert not LongitudinalPlanner.stopped_radar_lead_hold_qualifies(_stopped_radar_lead(a_lead=0.3, d_rel=60.0), v_ego)
-  assert LongitudinalPlanner.stopped_radar_lead_hold_qualifies(_stopped_radar_lead(a_lead=0.3, d_rel=60.0), 4.0)
-
-
-# REASSOC_LEAD_BOUND (route 00000278 ~6:23, BM1): a radar track slides from 66 m onto a steady vision lead at ~49 m.
-def _reassoc_frame(d_rel, v_rel, a_lead, *, vis_x=49.0, vis_vrel=-1.0, vis_a=0.0, vis_prob=0.99, v_ego=21.8, tid=21):
-  lead = make_lead(status=True, d_rel=d_rel, v_lead=v_ego + v_rel, a_lead=a_lead, radar=True, model_prob=vis_prob)
-  lead.vRel = v_rel
-  lead.radarTrackId = tid
-  sm = make_sm(v_ego, 0.0, -3.5, experimental_mode=False, tracking_lead=True, lead_one=lead)
-  model = sm["modelV2"]
-  model.init('leadsV3', 3)
-  model.leadsV3[0].prob = vis_prob
-  model.leadsV3[0].x = [vis_x] * 6
-  model.leadsV3[0].v = [v_ego + vis_vrel] * 6
-  model.leadsV3[0].a = [vis_a] * 6
-  return sm
-
-
-def _run_reassoc(slide, **vis):
-  hold = longitudinal_planner_module.ReassociationHold()
-  out = []
-  for d, v_rel, a_lead in slide:
-    out.append(longitudinal_planner_module.bound_reassociated_leads(_reassoc_frame(d, v_rel, a_lead, **vis), hold))
-  return out
-
-
-ROUTE_278_TRACK_21 = [(66.0, -0.4, 0.0)] * 5 + [(66.0 - 1.0 * i, -6.6, -2.0) for i in range(1, 11)] + \
-                     [(51.6, -13.2, -5.5)] * 5
-
-
-def test_reassociation_bound_covers_route_278_track_21():
-  out = _run_reassoc(ROUTE_278_TRACK_21)
-  last = out[-1]['radarState'].leadOne
-  assert last.vRel >= -1.0 - longitudinal_planner_module.REASSOC_LEAD_VREL_MARGIN - 1e-6
-  assert last.aLeadK == pytest.approx(-longitudinal_planner_module.REASSOC_LEAD_MIN_BRAKE)
-  assert last.vLead - last.vRel == pytest.approx(21.8)   # vLead moves with vRel
-  assert last.dRel == pytest.approx(51.6)                # range untouched
-
-
-def test_reassociation_bound_keeps_vision_corroborated_closing():
-  # Vision itself brakes hard: the slide is a real approach, nothing is bounded.
-  out = _run_reassoc(ROUTE_278_TRACK_21, vis_a=-3.0)
-  assert all(o['radarState'].leadOne.vRel == pytest.approx(-13.2) for o in out[-5:])
-  out = _run_reassoc(ROUTE_278_TRACK_21, vis_vrel=-6.0)
-  assert out[-1]['radarState'].leadOne.aLeadK == pytest.approx(-5.5)
-
-
-def test_reassociation_bound_needs_a_slide_onto_confident_vision():
-  # Track that was always at the vision range: no re-association, no bound.
-  steady = [(51.6, -0.5, 0.0)] * 10 + [(51.6, -13.2, -5.5)] * 5
-  assert _run_reassoc(steady)[-1]['radarState'].leadOne.vRel == pytest.approx(-13.2)
-  # Low-confidence vision, or vision far beyond the radar range, cannot arm it.
-  assert _run_reassoc(ROUTE_278_TRACK_21, vis_prob=0.5)[-1]['radarState'].leadOne.vRel == pytest.approx(-13.2)
-  assert _run_reassoc(ROUTE_278_TRACK_21, vis_x=70.0)[-1]['radarState'].leadOne.vRel == pytest.approx(-13.2)
-
-
-def test_reassociation_bound_expires():
-  slide = ROUTE_278_TRACK_21 + [(51.6, -13.2, -5.5)] * (longitudinal_planner_module.REASSOC_LEAD_HOLD_FRAMES + 5)
-  assert _run_reassoc(slide)[-1]['radarState'].leadOne.vRel == pytest.approx(-13.2)
-
-
-# SLOW_RADAR_LEAD_STOP_GATE (route 00000278 ~4:33, BM0): a 2.5 m/s radar lead 93 m ahead at 16 m/s.
-def test_slow_radar_lead_stop_gate(monkeypatch):
-  lead = make_lead(status=True, d_rel=93.0, v_lead=2.5, radar=True, model_prob=0.95)
-  monkeypatch.setattr(longitudinal_planner_module, "SLOW_RADAR_LEAD_STOP_GATE", False)
-  assert not LongitudinalPlanner.raw_close_lead_needs_control(lead, 16.0)
-  monkeypatch.setattr(longitudinal_planner_module, "SLOW_RADAR_LEAD_STOP_GATE", True)
-  assert LongitudinalPlanner.raw_close_lead_needs_control(lead, 16.0)
-  unsure = make_lead(status=True, d_rel=93.0, v_lead=2.5, radar=True, model_prob=0.5)
-  assert not LongitudinalPlanner.raw_close_lead_needs_control(unsure, 16.0)
-  moving = make_lead(status=True, d_rel=93.0, v_lead=8.0, radar=True, model_prob=0.95)
-  assert not LongitudinalPlanner.raw_close_lead_needs_control(moving, 16.0)
-  far = make_lead(status=True, d_rel=125.0, v_lead=2.5, radar=True, model_prob=0.95)
-  assert not LongitudinalPlanner.raw_close_lead_needs_control(far, 16.0)
-
-
-
-
-def _fast_closing_setup(*, d_rel=104.7, v_rel=-20.0, v_ego=20.0, radar=True, track=24, source='lead0',
-                        vis_prob=0.78, vis_x=102.7, vis_v=4.5):
-  # 271 BM0 at -3.19 s (STATUS 150): radar track 24 at 104.7 m closing 20 m/s, model lead at
-  # 102.7 m doing 4.5 m/s with prob 0.78, MPC braking for lead0.
-  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC))
-  lead = make_lead(status=True, d_rel=d_rel, v_lead=max(v_ego + v_rel, 0.0), radar=radar, model_prob=vis_prob)
-  lead.vRel = v_rel
-  lead.radarTrackId = track if radar else -1
-  planner.lead_one = lead
-  planner.mpc.source = source
-  model, vis = make_model_lead(prob=vis_prob, x=[vis_x], v=[vis_v])
-  return planner, lead, model
-
-
-@pytest.mark.parametrize("enabled", [True, False])
-def test_fast_closing_lead_passes_comfort_floor(enabled, monkeypatch):
-  monkeypatch.setattr(longitudinal_planner_module, "FAST_CLOSING_LEAD_PASSES_COMFORT_FLOOR", enabled)
-  planner, lead, model = _fast_closing_setup()
-  assert planner.fast_closing_lead_passes_floor(lead, 'lead0', 20.0, model) is enabled
-  # The close-lead cap then builds against the vehicle minimum instead of the -1.0 comfort floor.
-  cap = planner.get_close_lead_brake_cap(lead, 20.0, -3.5)
-  assert cap is not None and cap < -2.0
-
-
-@pytest.mark.parametrize("case, kwargs", [
-  # STATUS 119 phantom spikes: 25f 634.9 a vision lead at 89 m closing 0.2 m/s; 0237 796.0 likewise not fast-closing.
-  ("vision_lead_spike", dict(d_rel=89.0, v_rel=-0.2, radar=False, vis_x=89.0, vis_v=19.8)),
-  ("slow_closing", dict(d_rel=25.0, v_rel=-5.0, vis_x=25.0, vis_v=15.0)),
-  ("long_ttc", dict(d_rel=150.0, v_rel=-20.0, vis_x=150.0, vis_v=0.0)),
-  # 276 13:46.6: U11 rail -13.5 published on a flat range; vision sees the lead at ego speed.
-  ("rail_phantom_vision_not_closing", dict(d_rel=56.0, v_rel=-13.5, vis_x=56.0, vis_v=19.5)),
-  ("vision_other_object", dict(vis_x=60.0)),
-  ("vision_low_prob", dict(vis_prob=0.3)),
-  ("mpc_not_braking_for_it", dict(source='cruise')),
-])
-def test_fast_closing_lead_holds_comfort_floor(case, kwargs, monkeypatch):
-  monkeypatch.setattr(longitudinal_planner_module, "FAST_CLOSING_LEAD_PASSES_COMFORT_FLOOR", True)
-  planner, lead, model = _fast_closing_setup(**kwargs)
-  assert not planner.fast_closing_lead_passes_floor(lead, 'lead0', 20.0, model)
-  assert planner.fast_closing_lead_track is None
-
-
-def test_fast_closing_lead_latch_holds_while_closing_and_releases(monkeypatch):
-  monkeypatch.setattr(longitudinal_planner_module, "FAST_CLOSING_LEAD_PASSES_COMFORT_FLOOR", True)
-  planner, lead, model = _fast_closing_setup()
-  assert planner.fast_closing_lead_passes_floor(lead, 'lead0', 20.0, model)
-  # Same track, closing speed below the entry value but above the hold value, MPC source switched: still passes.
-  lead.vRel = -6.0
-  planner.mpc.source = 'cruise'
-  assert planner.fast_closing_lead_passes_floor(lead, 'lead0', 20.0, model)
-  # 0237 1201.6: closing under the hold value releases the latch, and it does not re-arm on a slow lead.
-  lead.vRel = -4.7
-  assert not planner.fast_closing_lead_passes_floor(lead, 'lead0', 20.0, model)
-  assert planner.fast_closing_lead_track is None
-  lead.vRel = -4.0
-  assert not planner.fast_closing_lead_passes_floor(lead, 'lead0', 20.0, model)
-  # A different track needs the full entry test.
-  planner2, lead2, model2 = _fast_closing_setup()
-  assert planner2.fast_closing_lead_passes_floor(lead2, 'lead0', 20.0, model2)
-  lead2.radarTrackId = 25
-  lead2.vRel = -6.0
-  assert not planner2.fast_closing_lead_passes_floor(lead2, 'lead0', 20.0, model2)
-
-
-def test_fast_closing_pass_is_capped_at_max_brake(monkeypatch):
-  # STATUS 150: the pass opens the comfort floor only to -FAST_CLOSING_LEAD_MAX_BRAKE, not the vehicle minimum.
-  monkeypatch.setattr(longitudinal_planner_module, "FAST_CLOSING_LEAD_MAX_BRAKE", 2.0)
-  assert longitudinal_planner_module.fast_closing_accel_min(-3.5) == -2.0
-  assert longitudinal_planner_module.fast_closing_accel_min(-1.2) == -1.2
-  planner, lead, _ = _fast_closing_setup()
-  cap = planner.get_close_lead_brake_cap(lead, 20.0, longitudinal_planner_module.fast_closing_accel_min(-3.5))
-  assert cap is not None and -2.0 - 1e-6 <= cap < -1.0
-  monkeypatch.setattr(longitudinal_planner_module, "FAST_CLOSING_LEAD_MAX_BRAKE", 0.0)
-  assert longitudinal_planner_module.fast_closing_accel_min(-3.5) == -3.5
-
-
-def _far_lead_cap_case(model_a=None, model_prob=0.9):
-  # Route 0000028f 11:29.5 shape: lead 60 m ahead, closing ~5 m/s, radar aLeadK reads no braking.
-  lead = SimpleNamespace(status=True, dRel=60.0, vLead=20.0, aLeadK=0.2)
-  model = None
-  if model_a is not None:
-    model = SimpleNamespace(leadsV3=[SimpleNamespace(prob=model_prob, a=[model_a])])
-  return longitudinal_planner_module.get_far_lead_coast_cap(lead, 25.0, 30.0, -1.3, model)
-
-
-def test_far_lead_coast_cap_holds_when_camera_sees_no_brake():
-  assert _far_lead_cap_case() == pytest.approx(-longitudinal_planner_module.FAR_LEAD_COAST_MAX_DECEL)
-  assert _far_lead_cap_case(model_a=-0.1) == pytest.approx(-longitudinal_planner_module.FAR_LEAD_COAST_MAX_DECEL)
-
-
-def test_far_lead_coast_cap_stands_down_when_camera_sees_lead_braking():
-  assert _far_lead_cap_case(model_a=-1.4) == pytest.approx(-1.3)
-
-
-def test_far_lead_coast_cap_ignores_low_confidence_camera_brake():
-  assert _far_lead_cap_case(model_a=-1.4, model_prob=0.3) == pytest.approx(-longitudinal_planner_module.FAR_LEAD_COAST_MAX_DECEL)
-
-
-
-def _onpath_sm(v_ego, *, lead_one=None, onpath=None):
-  sm = make_sm(v_ego, 0.0, -3.5, experimental_mode=False, tracking_lead=lead_one is not None, lead_one=lead_one)
-  sm["radarState"].leadOnpath = onpath if onpath is not None else make_lead(status=False)
-  return sm
-
-
-def _run(sm, *, bound=True, car=CAR.HONDA_CIVIC_BOSCH, frames=20):
-  CP = CarInterface.get_non_essential_params(car)
-  CP.longitudinalActuatorDelay = 0.5
-  saved = longitudinal_planner_module.ONPATH_LEAD_BOUND
-  longitudinal_planner_module.ONPATH_LEAD_BOUND = bound
-  try:
-    planner = LongitudinalPlanner(CP, init_v=float(sm["carState"].vEgo))
-  finally:
-    longitudinal_planner_module.ONPATH_LEAD_BOUND = saved
-  out = []
-  for _ in range(frames):
-    planner.update(sm, make_toggles())
-    out.append(float(planner.output_a_target))
-  return out, planner
-
-
-def _stopped_car(d_rel=66.0):
-  # 00000297--f971b5896f 31:08.0: track 6, stopped car on the path at 66 m, ego 13.4 m/s, no model lead
-  return make_lead(status=True, d_rel=d_rel, v_lead=0.0, radar=True, model_prob=0.0)
-
-
-@pytest.mark.parametrize("own,with_onpath", [
-  (-0.3, -1.8), (-0.3, -0.6), (-0.3, 0.4), (0.8, -2.5), (-1.4, -3.0), (-2.7, -2.9), (-1.0, -1.0), (0.5, 1.5),
-])
-def test_onpath_bounded_target_is_one_sided(own, with_onpath):
-  cap = longitudinal_planner_module.ONPATH_LEAD_MAX_BRAKE
-  out = longitudinal_planner_module.onpath_bounded_target(own, with_onpath)
-  assert out <= own                                 # never less braking, never more acceleration
-  assert out >= min(own, -cap)                      # extra braking only down to the cap
-  assert out == pytest.approx(min(own, max(with_onpath, min(own, -cap))))
-
-
-def test_onpath_lead_brakes_only_down_to_the_cap():
-  cap = longitudinal_planner_module.ONPATH_LEAD_MAX_BRAKE
-  sm = _onpath_sm(13.4, onpath=_stopped_car())
-  bounded, planner = _run(sm)
-  assert planner.onpath_bound_active
-  assert min(bounded) == pytest.approx(-cap, abs=1e-6)
-  # the same object as leadOne gets full authority, and asks for more than the cap
-  full, _ = _run(_onpath_sm(13.4, lead_one=_stopped_car()))
-  assert min(full) < -cap - 0.3
-  # without the bound the on-path lead does nothing at all (HEAD)
-  head, _ = _run(sm, bound=False)
-  assert min(bounded) < min(head) - 0.2
-  assert all(b <= h + 1e-9 for b, h in zip(bounded, head, strict=True))
-
-
-def test_onpath_lead_bound_lifts_when_radard_stops_publishing_it():
-  # radard withdraws leadOnpath as soon as its own leadOne takes the track (vision match, or its radar path):
-  # the planner is then byte-for-byte HEAD
-  sm = _onpath_sm(13.4, lead_one=_stopped_car())
-  bounded, planner = _run(sm)
-  head, _ = _run(sm, bound=False)
-  assert not planner.onpath_bound_active
-  assert bounded == head
-
-
-def test_onpath_lead_never_softens_a_harder_leadone_brake():
-  near = make_lead(status=True, d_rel=18.0, v_lead=4.0, a_lead=-1.5, radar=False, model_prob=0.9)
-  sm = _onpath_sm(13.4, lead_one=near, onpath=_stopped_car(12.0))
-  bounded, _ = _run(sm)
-  head, _ = _run(_onpath_sm(13.4, lead_one=near), bound=False)
-  assert min(head) < -longitudinal_planner_module.ONPATH_LEAD_MAX_BRAKE
-  assert all(b <= h + 1e-9 for b, h in zip(bounded, head, strict=True))
-  assert all(b >= min(h, -longitudinal_planner_module.ONPATH_LEAD_MAX_BRAKE) - 1e-9 for b, h in zip(bounded, head, strict=True))
-
-
-def test_onpath_lead_never_adds_acceleration():
-  # an on-path lead far ahead and pulling away: the second planner would accelerate harder; the output stays HEAD's
-  far = make_lead(status=True, d_rel=120.0, v_lead=25.0, radar=True)
-  slow = make_lead(status=True, d_rel=30.0, v_lead=12.0, radar=False, model_prob=0.9)
-  bounded, _ = _run(_onpath_sm(13.4, lead_one=slow, onpath=far))
-  head, _ = _run(_onpath_sm(13.4, lead_one=slow), bound=False)
-  assert all(b <= h + 1e-9 for b, h in zip(bounded, head, strict=True))
-
-
-def test_onpath_lead_bound_is_bosch_a_only():
-  _, planner = _run(_onpath_sm(13.4, onpath=_stopped_car()), car=CAR.HONDA_CIVIC, frames=1)  # Nidec
-  assert planner.onpath_planner is None
-
-
-@pytest.mark.parametrize("prev,target", [
-  (-2.0, 0.5), (-2.0, -1.0), (-2.0, -2.9), (-0.1, 1.0), (0.0, 1.5), (0.4, -2.0), (-1.3, -0.3), (-0.5, -0.5),
-])
-def test_brake_release_limit_only_slows_a_brake_release(prev, target):
-  dt = 0.05
-  out = longitudinal_planner_module.brake_release_limited_target(prev, target, dt)
-  assert out <= target + 1e-12                       # never less braking than asked
-  if target <= prev or prev >= 0.0:
-    assert out == pytest.approx(target)              # onset and deeper braking pass through unchanged
-  else:
-    assert out == pytest.approx(min(target, prev + longitudinal_planner_module.BRAKE_RELEASE_JERK * dt))
-
-
-def _release_run(sm_brake, sm_release, *, limit, brake_frames=30, release_frames=40):
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
-  CP.longitudinalActuatorDelay = 0.5
-  saved = longitudinal_planner_module.BRAKE_RELEASE_LIMIT
-  longitudinal_planner_module.BRAKE_RELEASE_LIMIT = limit
-  try:
-    planner = LongitudinalPlanner(CP, init_v=float(sm_brake["carState"].vEgo))
-    out = []
-    for i in range(brake_frames + release_frames):
-      planner.update(sm_brake if i < brake_frames else sm_release, make_toggles())
-      out.append(float(planner.output_a_target))
-  finally:
-    longitudinal_planner_module.BRAKE_RELEASE_LIMIT = saved
-  return out, planner
-
-
-def test_brake_release_limit_brakes_as_early_and_releases_slower():
-  brake = make_sm(13.4, 0.0, -3.5, experimental_mode=False, tracking_lead=True,
-                  lead_one=make_lead(status=True, d_rel=20.0, v_lead=0.0, radar=True))
-  clear = make_sm(13.4, 0.0, -3.5, experimental_mode=False)
-  on, _ = _release_run(brake, clear, limit=True)
-  off, _ = _release_run(brake, clear, limit=False)
-  step = longitudinal_planner_module.BRAKE_RELEASE_JERK * 0.05
-  assert min(off) < -1.0
-  def first(xs):
-    return next(i for i, x in enumerate(xs) if x <= -0.5)
-  assert first(on) == first(off)                     # brake onset unchanged
-  assert all(a <= b + 1e-9 for a, b in zip(on, off, strict=True))   # never less braking
-  for a, b in zip(on, on[1:], strict=False):
-    if a < 0.0:
-      assert b - a <= step + 1e-6                    # rises at most J*dt while braking
-  assert sum(off) > sum(on)                          # the release is actually slowed
-
-
-def test_brake_release_limit_is_skipped_on_reset():
-  brake = make_sm(13.4, 0.0, -3.5, experimental_mode=False, tracking_lead=True,
-                  lead_one=make_lead(status=True, d_rel=20.0, v_lead=0.0, radar=True))
-  off_sm = make_sm(13.4, 0.0, -3.5, experimental_mode=False)
-  off_sm["controlsState"].longControlState = LongCtrlState.off
-  off_sm["selfdriveState"].enabled = False          # reset on either path (op-long or stock-long CP)
-  on, _ = _release_run(brake, off_sm, limit=True, release_frames=2)
-  ref, _ = _release_run(brake, off_sm, limit=False, release_frames=2)
-  assert on[-1] == pytest.approx(ref[-1])            # reset re-seeds from aEgo, no slewed hold
-
-
-def test_brake_release_limit_keeps_the_onpath_bound_one_sided():
-  cap = longitudinal_planner_module.ONPATH_LEAD_MAX_BRAKE
-  bounded, planner = _run(_onpath_sm(13.4, onpath=_stopped_car()), frames=40)
-  assert planner.onpath_bound_active
-  assert planner.onpath_planner.onpath_planner is None   # the shadow has no shadow of its own
-  assert min(bounded) == pytest.approx(-cap, abs=1e-6)  # the limiter never pushes the bounded target below the cap
-  head, _ = _run(_onpath_sm(13.4, onpath=_stopped_car()), bound=False, frames=40)
-  assert all(b <= h + 1e-9 for b, h in zip(bounded, head, strict=True))
-
-
-@pytest.mark.parametrize("w,exp_active", [(0.0, True), (0.3, True), (1.0, False), (0.02, False), (0.0, False)])
-def test_exp_mode_blend_weight_enters_at_once_and_fades_out(w, exp_active):
-  dt = 0.05
-  out = longitudinal_planner_module.exp_mode_blend_weight(w, exp_active, dt)
-  if exp_active:
-    assert out == 1.0                                # entering experimental mode is never slowed
-  else:
-    assert out == pytest.approx(max(0.0, w - dt / longitudinal_planner_module.EXP_MODE_EXIT_BLEND_TIME))
-
-
-@pytest.mark.parametrize("a_mpc,a_e2e,w", [(1.0, 0.0, 0.5), (0.2, 1.0, 0.7), (-1.0, -2.0, 0.0), (-1.0, -2.0, 1.0)])
-def test_exp_mode_blend_target_stays_between_mpc_and_exp_target(a_mpc, a_e2e, w):
-  out = longitudinal_planner_module.exp_mode_blend_target(a_mpc, a_e2e, w)
-  assert min(a_mpc, a_e2e) - 1e-12 <= out <= a_mpc + 1e-12
-  assert longitudinal_planner_module.exp_mode_blend_target(a_mpc, a_e2e, 0.0) == pytest.approx(a_mpc)
-  assert longitudinal_planner_module.exp_mode_blend_target(a_mpc, a_e2e, 1.0) == pytest.approx(min(a_mpc, a_e2e))
-
-
-def _exp_mode_run(sm_a, sm_b, *, blend, a_frames=40, b_frames=40):
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
-  CP.longitudinalActuatorDelay = 0.5
-  saved = longitudinal_planner_module.EXP_MODE_EXIT_BLEND
-  longitudinal_planner_module.EXP_MODE_EXIT_BLEND = blend
-  try:
-    planner = LongitudinalPlanner(CP, init_v=float(sm_a["carState"].vEgo))
-    out = []
-    for i in range(a_frames + b_frames):
-      planner.update(sm_a if i < a_frames else sm_b, make_toggles())
-      out.append(float(planner.output_a_target))
-  finally:
-    longitudinal_planner_module.EXP_MODE_EXIT_BLEND = saved
-  return out
-
-
-def test_exp_mode_release_fades_instead_of_stepping():
-  # 00000280--d02d9c2f8e 30:42.89: EXP (e2e ~0) -> ACC (mpc ~+1) stepped aTarget +0.01 -> +0.99 in one frame.
-  exp = make_sm(17.0, 0.0, -3.5, experimental_mode=True)
-  acc = make_sm(17.0, 0.0, -3.5, experimental_mode=False)
-  on = _exp_mode_run(exp, acc, blend=True)
-  off = _exp_mode_run(exp, acc, blend=False)
-  k = 40
-  assert on[:k] == pytest.approx(off[:k])            # nothing changes before the flip
-  jump_off = off[k] - off[k - 1]
-  assert jump_off > 0.3                              # the step this removes
-  assert on[k] - on[k - 1] < 0.5 * jump_off
-  assert all(a <= b + 0.02 for a, b in zip(on[k:], off[k:], strict=True))   # release is only held back
-  assert on[-1] == pytest.approx(off[-1], abs=0.05)  # converged once the fade is done
-
-
-@pytest.mark.parametrize("red_light,desired_accel", [(False, 0.0), (False, -0.2), (True, 0.0), (False, -1.5)])
-def test_exp_mode_entry_is_not_delayed(red_light, desired_accel):
-  acc = make_sm(17.0, desired_accel, -3.5, experimental_mode=False)
-  exp = make_sm(17.0, desired_accel, -3.5, experimental_mode=True)
-  exp["starpilotPlan"].redLight = red_light
-  on = _exp_mode_run(acc, exp, blend=True, b_frames=10)
-  off = _exp_mode_run(acc, exp, blend=False, b_frames=10)
-  assert on == pytest.approx(off)                    # same frame, same target as without the fade
-
-
-def test_exp_mode_reentry_during_fade_returns_to_exp_target_at_once():
-  exp = make_sm(17.0, 0.0, -3.5, experimental_mode=True)
-  acc = make_sm(17.0, 0.0, -3.5, experimental_mode=False)
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
-  CP.longitudinalActuatorDelay = 0.5
-  on = LongitudinalPlanner(CP, init_v=17.0)
-  ref = LongitudinalPlanner(CP, init_v=17.0)
-  for sm in [exp] * 40 + [acc] * 8:
-    on.update(sm, make_toggles())
-  for sm in [exp] * 48:
-    ref.update(sm, make_toggles())
-  on.update(exp, make_toggles())
-  ref.update(exp, make_toggles())
-  assert on.exp_mode_blend_weight == 1.0
-  assert float(on.output_a_target) <= float(ref.output_a_target) + 0.05
-
-
-def test_brake_release_dwell_only_holds_more_braking():
-  m = longitudinal_planner_module
-  hold = m.BRAKE_RELEASE_DWELL_TICKS
-  seq = [-0.88, -1.0] * 6 + [-0.5] * (hold + 2)              # the 25e 732.5 two-cycle dither, then a real release
-  prev, n, pub = 0.0, hold + 1, []
-  for t in seq:
-    prev, n = m.brake_release_dwell_target(prev, t, n)
-    pub.append(prev)
-  assert all(p <= t + 1e-12 for p, t in zip(pub, seq, strict=True))   # never less braking than asked
-  assert pub[1:12] == [pytest.approx(-1.0)] * 11                        # dither removed: held at the deeper value
-  assert pub[12:12 + hold] == [pytest.approx(-1.0)] * hold              # a release waits BRAKE_RELEASE_DWELL_TICKS
-  assert pub[12 + hold] == pytest.approx(-0.5)                          # then passes (the slew above limits its rate)
-  assert m.brake_release_dwell_target(-0.4, -2.0, 1) == (pytest.approx(-2.0), 0)   # deeper braking passes at once
-  assert m.brake_release_dwell_target(0.2, 0.8, 0)[0] == pytest.approx(0.8)         # throttle is never held
-
-def test_brake_release_dwell_brakes_as_early_and_is_skipped_on_reset():
-  brake = make_sm(13.4, 0.0, -3.5, experimental_mode=False, tracking_lead=True,
-                  lead_one=make_lead(status=True, d_rel=20.0, v_lead=0.0, radar=True))
-  clear = make_sm(13.4, 0.0, -3.5, experimental_mode=False)
-  saved = longitudinal_planner_module.BRAKE_RELEASE_DWELL
-  try:
-    longitudinal_planner_module.BRAKE_RELEASE_DWELL = True
-    on, _ = _release_run(brake, clear, limit=True)
-    longitudinal_planner_module.BRAKE_RELEASE_DWELL = False
-    off, _ = _release_run(brake, clear, limit=True)
-  finally:
-    longitudinal_planner_module.BRAKE_RELEASE_DWELL = saved
-  def first(xs):
-    return next(i for i, x in enumerate(xs) if x <= -0.5)
-  assert first(on) == first(off)                                         # brake onset unchanged
-  assert all(a <= b + 1e-9 for a, b in zip(on, off, strict=True))       # never less braking
-  off_sm = make_sm(13.4, 0.0, -3.5, experimental_mode=False)
-  off_sm["controlsState"].longControlState = LongCtrlState.off
-  off_sm["selfdriveState"].enabled = False
-  r_on, _ = _release_run(brake, off_sm, limit=True, release_frames=2)
-  longitudinal_planner_module.BRAKE_RELEASE_DWELL = False
-  try:
-    r_off, _ = _release_run(brake, off_sm, limit=True, release_frames=2)
-  finally:
-    longitudinal_planner_module.BRAKE_RELEASE_DWELL = saved
-  assert r_on[-1] == pytest.approx(r_off[-1])                            # reset re-seeds from aEgo, no hold
-
-
-def test_coast_ceiling_slew_moves_at_most_j_dt_from_the_output():
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC_BOSCH)
-  planner = LongitudinalPlanner(CP, init_v=5.4)
-  step = longitudinal_planner_module.COAST_CEILING_JERK * planner.dt
-  assert planner.slew_coast_ceiling(2.0, 0.46, reset=True) == pytest.approx(2.0)
-  out = [planner.slew_coast_ceiling(-0.42, 0.46, reset=False)]           # throttle gate closes (294 568.16)
-  assert out[0] == pytest.approx(0.46 - step)
-  for _ in range(20):
-    out.append(planner.slew_coast_ceiling(-0.42, out[-1], reset=False))
-  assert all(b >= a - step - 1e-9 for a, b in zip(out, out[1:], strict=False))
-  assert out[-1] == pytest.approx(-0.42)                                 # reaches the coast limit
-  assert planner.slew_coast_ceiling(2.0, -0.42, reset=False) == pytest.approx(-0.42 + step)   # rises at J too
-  assert planner.slew_coast_ceiling(-0.42, 0.3, reset=True) == pytest.approx(-0.42)            # reset passes through
-
-
-def _spy_plan_read(monkeypatch, planner_toggles, *, override: bool, live_delay=None):
-  """Run one planner tick and record the time each output read-off function was called with."""
-  monkeypatch.setattr(longitudinal_planner_module, "PLANNER_ACTION_T_OVERRIDE", override)
-  calls = {}
-  real_plan = longitudinal_planner_module.get_accel_from_plan
-  real_classic = longitudinal_planner_module.get_accel_from_plan_classic
-
-  def spy_plan(speeds, accels, action_t=DT_MDL, vEgoStopping=0.05):
-    calls.setdefault("action_t", []).append(action_t)
-    return real_plan(speeds, accels, action_t=action_t, vEgoStopping=vEgoStopping)
-
-  def spy_classic(CP, speeds, accels, vEgoStopping, actuator_delay=None):
-    calls.setdefault("classic_delay", []).append(actuator_delay)
-    return real_classic(CP, speeds, accels, vEgoStopping, actuator_delay=actuator_delay)
-
-  monkeypatch.setattr(longitudinal_planner_module, "get_accel_from_plan", spy_plan)
-  monkeypatch.setattr(longitudinal_planner_module, "get_accel_from_plan_classic", spy_classic)
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-  CP.longitudinalActuatorDelay = 0.5
-  if live_delay is not None:
-    planner_toggles.longitudinalActuatorDelay = live_delay
-  planner = LongitudinalPlanner(CP, init_v=20.0)
-  sm = make_sm(20.0, desired_accel=0.0, min_accel=-3.5, experimental_mode=False)
-  planner.update(sm, planner_toggles)
-  return CP, planner, calls
-
-
-def _classic_toggles():
-  toggles = make_toggles()
-  toggles.tinygrad_model = False
-  toggles.classic_model = True
-  return toggles
-
-
-def _plain_toggles():
-  toggles = make_toggles()
-  toggles.tinygrad_model = False
-  return toggles
-
-
-@pytest.mark.parametrize("toggles_fn", [make_toggles, _plain_toggles])
-def test_planner_action_t_off_reads_the_plan_at_actuator_delay(monkeypatch, toggles_fn):
-  # D-072 switch off: exactly the pre-switch read-off point, actuator delay + DT_MDL (0.55 s here).
-  CP, planner, calls = _spy_plan_read(monkeypatch, toggles_fn(), override=False)
-  assert calls["action_t"] == [CP.longitudinalActuatorDelay + DT_MDL]
-  assert calls["action_t"][0] == planner.longitudinal_actuator_delay + DT_MDL
-
-
-def test_planner_action_t_off_follows_the_live_delay_toggle(monkeypatch):
-  _, planner, calls = _spy_plan_read(monkeypatch, make_toggles(), override=False, live_delay=0.15)
-  assert planner.longitudinal_actuator_delay == pytest.approx(0.15)
-  assert calls["action_t"] == [planner.longitudinal_actuator_delay + DT_MDL]
-
-
-def test_planner_action_t_off_classic_path_passes_the_actuator_delay(monkeypatch):
-  _, planner, calls = _spy_plan_read(monkeypatch, _classic_toggles(), override=False)
-  assert calls["classic_delay"] == [planner.longitudinal_actuator_delay]
-
-
-@pytest.mark.parametrize("toggles_fn", [make_toggles, _plain_toggles])
-@pytest.mark.parametrize("live_delay", [None, 0.15, 0.8])
-def test_planner_action_t_on_reads_the_plan_at_0_30(monkeypatch, toggles_fn, live_delay):
-  CP, planner, calls = _spy_plan_read(monkeypatch, toggles_fn(), override=True, live_delay=live_delay)
-  assert longitudinal_planner_module.PLANNER_ACTION_T_S == 0.30
-  assert calls["action_t"] == [pytest.approx(0.30)]
-  # The actuator delay itself is untouched: CP (which the carcontroller also reads) and the
-  # planner's own copy that every reaction_t gate uses.
-  assert CP.longitudinalActuatorDelay == pytest.approx(0.5)
-  expected_delay = 0.5 if live_delay is None else live_delay
-  assert planner.longitudinal_actuator_delay == pytest.approx(expected_delay)
-
-
-def test_planner_action_t_on_classic_path_reads_at_0_30(monkeypatch):
-  CP, planner, calls = _spy_plan_read(monkeypatch, _classic_toggles(), override=True)
-  assert calls["classic_delay"][0] + DT_MDL == pytest.approx(0.30)
-  assert CP.longitudinalActuatorDelay == pytest.approx(0.5)
-  assert planner.longitudinal_actuator_delay == pytest.approx(0.5)
-
-
-def test_planner_action_t_switch_leaves_car_params_delay_alone(monkeypatch):
-  for override in (False, True):
-    CP, planner, _ = _spy_plan_read(monkeypatch, make_toggles(), override=override)
-    assert CP.longitudinalActuatorDelay == pytest.approx(0.5)
-    assert planner.CP.longitudinalActuatorDelay == pytest.approx(0.5)
-    assert planner.longitudinal_actuator_delay == pytest.approx(0.5)
-
-
-def test_planner_action_t_default_is_on():
-  # D-072: built in on (it shipped as PlannerShortActionTime, default on); no param is read.
-  assert longitudinal_planner_module.PLANNER_ACTION_T_OVERRIDE is True
-  assert longitudinal_planner_module.get_planner_action_t(0.5) == pytest.approx(0.30)
-  assert longitudinal_planner_module.get_planner_action_t(0.5, enabled=False) == 0.5 + DT_MDL
-  import inspect
-  assert '"PlannerShortActionTime"' not in inspect.getsource(longitudinal_planner_module)
-
-
-def _exp_close_lead_case(experimental_mode=True):
-  # 2a6 15:08 shape: radar lead 30 m ahead, 5 m/s slower, braking at 3 m/s^2. Raw cap about -2.6.
-  v_ego = 18.0
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-  planner = LongitudinalPlanner(CP, init_v=v_ego)
-  lead = make_lead(status=True, d_rel=30.0, v_lead=13.0, a_lead=-3.0, radar=True, model_prob=1.0)
-  lead.vRel = 13.0 - v_ego
-  sm = make_sm(v_ego, -0.3, -1.0, experimental_mode=experimental_mode, tracking_lead=True, lead_one=lead)
-  return planner, lead, sm, v_ego
-
-
-def test_exp_close_lead_cap_deepens_past_chill_floor_at_bounded_rate():
-  # D-073: in Experimental Mode the close-lead cap no longer steps straight to the vehicle minimum; it starts at
-  # chill's floor and may only go deeper at EXP_CLOSE_LEAD_FLOOR_RATE, and still reaches the full demand.
-  planner, lead, sm, v_ego = _exp_close_lead_case()
-  raw = planner.get_close_lead_brake_cap(lead, v_ego, -3.5)
-  assert raw < -2.5
-  step = longitudinal_planner_module.EXP_CLOSE_LEAD_FLOOR_RATE * planner.dt
-  caps, floors = [], []
-  for _ in range(60):
-    planner.update(sm, make_toggles())
-    caps.append(planner.close_lead_brake_cap_value)
-    floors.append(planner.exp_close_lead_floor)
-  assert planner.mode == "blended"
-  assert caps[0] >= longitudinal_planner_module.A_CRUISE_MIN - 1e-6
-  assert floors[0] == pytest.approx(longitudinal_planner_module.A_CRUISE_MIN - step)
-  assert all(c1 >= c0 - 0.25 for c0, c1 in zip(caps, caps[1:], strict=False))
-  assert caps[-1] == pytest.approx(raw, abs=0.1)
-
-
-def test_exp_close_lead_floor_relaxes_when_the_cap_stops_asking():
-  planner, lead, sm, _ = _exp_close_lead_case()
-  for _ in range(20):
-    planner.update(sm, make_toggles())
-  deep = planner.exp_close_lead_floor
-  assert deep < -1.5
-  sm["radarState"].leadOne = make_lead(status=False)
-  planner.update(sm, make_toggles())
-  assert planner.exp_close_lead_floor == pytest.approx(deep + longitudinal_planner_module.EXP_CLOSE_LEAD_FLOOR_RELAX * planner.dt)
-  for _ in range(40):
-    planner.update(sm, make_toggles())
-  assert planner.exp_close_lead_floor == 0.0
-
-
-def test_exp_close_lead_floor_leaves_chill_alone():
-  planner, lead, sm, _ = _exp_close_lead_case(experimental_mode=False)
-  for _ in range(20):
-    planner.update(sm, make_toggles())
-    assert planner.exp_close_lead_floor == 0.0
-  assert planner.mode == "acc"
-
-
-def test_exp_close_lead_floor_does_not_slow_fast_closing_cap(monkeypatch):
-  planner, lead, sm, v_ego = _exp_close_lead_case()
-  monkeypatch.setattr(planner, "fast_closing_lead_passes_floor", lambda *a, **k: True)
-  planner.update(sm, make_toggles())
-  assert planner.close_lead_brake_cap_value < -1.5
-  assert planner.exp_close_lead_floor == 0.0
-
-
-def test_exp_close_lead_floor_does_not_delay_closing_speed_demand():
-  # Stopped car 20 m ahead at 20 m/s: the closing speed alone demands far past chill's floor, so the cap applies at
-  # once (see test_cruise_accel_cap_preserves_close_lead_braking_after_set_speed_drop); only the aLeadK share is rate limited.
-  v_ego = 20.0
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-  planner = LongitudinalPlanner(CP, init_v=v_ego)
-  lead = make_lead(status=True, d_rel=20.0, v_lead=0.0, a_lead=-1.0, radar=True, model_prob=0.99)
-  sm = make_sm(v_ego, -0.05, -1.0, experimental_mode=True, tracking_lead=True, lead_one=lead)
-  planner.update(sm, make_toggles())
-  assert planner.close_lead_brake_cap_value <= -3.0
-
-
-def _boost_toggles(on):
-  toggles = make_toggles()
-  toggles.gas_override_boost = on
-  return toggles
-
-
-def _boost_planner_run(on, *, lead_one=None, presses=3):
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-  planner = LongitudinalPlanner(CP, init_v=17.0)
-  sm = make_sm(17.0, -0.3, -3.5, experimental_mode=True, lead_one=lead_one)
-  sm["carState"].gasPressed = False
-  toggles = _boost_toggles(on)
-  for _ in range(20):
-    planner.update(sm, toggles)
-  for _ in range(presses):  # each press is a rising edge
-    sm["carState"].gasPressed = True
-    planner.update(sm, toggles)
-    sm["carState"].gasPressed = False
-    planner.update(sm, toggles)
-  return planner
-
-
-def test_accel_boost_toggle_on_builds_boost_and_off_publishes_none():
-  on = _boost_planner_run(True)
-  off = _boost_planner_run(False)
-  assert on.accel_boost.value > 0.0
-  assert off.accel_boost.value == 0.0
-  assert on.output_a_target > off.output_a_target
-
-
-def test_accel_boost_toggle_off_clears_a_built_boost():
-  planner = _boost_planner_run(True)
-  assert planner.accel_boost.value > 0.0
-  sm = make_sm(17.0, -0.3, -3.5, experimental_mode=True)
-  sm["carState"].gasPressed = False
-  planner.update(sm, _boost_toggles(False))
-  assert planner.accel_boost.value == 0.0
-
-
-def test_accel_boost_toggle_gates_the_lead_departure_assist():
-  lead = make_lead(status=True, d_rel=70.0, v_lead=19.0, a_lead=0.1, radar=True, model_prob=1.0)
-  lead.vRel = 2.0
-  on = _boost_planner_run(True, lead_one=lead, presses=0)
-  off = _boost_planner_run(False, lead_one=lead, presses=0)
-  assert on.exp_lead_departure_weight > 0.0
-  assert off.exp_lead_departure_weight == 0.0
-  assert off.exp_lead_departure_lift == 0.0
-
-
-def test_accel_boost_toggle_off_mid_drive_zeroes_the_lead_departure_state():
-  lead = make_lead(status=True, d_rel=70.0, v_lead=19.0, a_lead=0.1, radar=True, model_prob=1.0)
-  lead.vRel = 2.0
-  planner = _boost_planner_run(True, lead_one=lead, presses=0)
-  assert planner.exp_lead_departure_weight > 0.0
-  sm = make_sm(17.0, -0.3, -3.5, experimental_mode=True, lead_one=lead)
-  sm["carState"].gasPressed = False
-  planner.update(sm, _boost_toggles(False))
-  assert planner.exp_lead_departure_weight == 0.0
-  assert planner.exp_lead_departure_lift == 0.0
-
-
-def test_accel_boost_defaults_on_when_the_toggle_attribute_is_missing():
-  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
-  planner = LongitudinalPlanner(CP, init_v=17.0)
-  sm = make_sm(17.0, -0.3, -3.5, experimental_mode=True)
-  toggles = make_toggles()  # no gas_override_boost attribute
-  for _ in range(20):
-    planner.update(sm, toggles)
-  for _ in range(2):
-    sm["carState"].gasPressed = True
-    planner.update(sm, toggles)
-    sm["carState"].gasPressed = False
-    planner.update(sm, toggles)
-  assert planner.accel_boost.value > 0.0

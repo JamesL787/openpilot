@@ -1361,8 +1361,6 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   # distance, given the lead's own braking. Published so commanded-vs-required can be read straight
   # out of a route instead of reconstructed offline.
   leadGeometryRequiredAccel @45 :Float32;
-  # Gas override boost (port of commaai/openpilot#39015). Upstream uses @40, taken here by leadTrajectoryX0.
-  accelBoost @46 :Float32;
 
   enum LongitudinalPlanSource {
     cruise @0;

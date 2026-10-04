@@ -21,24 +21,6 @@ from openpilot.starpilot.common.accel_profile import (
 )
 from openpilot.starpilot.controls.lib.starpilot_vcruise import get_active_slc_control_target
 
-# HumanAcceleration, ported from FrogPilot-Testing 728f65472 (frogpilot_acceleration.py) and always
-# on since STATUS 118 (no toggle). Only the max-accel (throttle) side; braking and min_accel are
-# untouched. FrogPilot's other half, the longcontrol starting state launching from a_target instead
-# of startAccel, is in longcontrol.py.
-HUMAN_ACCEL_CITY_SPEED_LIMIT = 25.  # m/s, FrogPilot CITY_SPEED_LIMIT
-
-
-def get_max_accel_low_speeds(max_accel, v_cruise):
-  """Scale max accel by the set speed: 1/4 at 0, 1/2 at 12.5 m/s, full from 25 m/s."""
-  return float(np.interp(v_cruise, [0., HUMAN_ACCEL_CITY_SPEED_LIMIT / 2, HUMAN_ACCEL_CITY_SPEED_LIMIT],
-                         [max_accel / 4, max_accel / 2, max_accel]))
-
-
-def get_max_accel_ramp_off(max_accel, v_cruise, v_ego):
-  """Ease off as v_ego nears the set speed: 0 at it, 0.5 at 1 m/s below, full at 5 m/s below."""
-  return float(np.interp(v_cruise - v_ego, [0., 1., 5.], [0., 0.5, max_accel]))
-
-
 def cubic_interp(x, xp, fp):
      """Cubic interpolation using NumPy's native operations for speed."""
      # Boundary conditions
@@ -313,11 +295,6 @@ class StarPilotAcceleration:
         self.max_accel = get_max_allowed_accel(v_ego, ev_tuning, truck_tuning)
       else:
         self.max_accel = get_max_accel_standard(v_ego, ev_tuning, truck_tuning)
-
-    # HumanAcceleration, always on (STATUS 118).
-    v_cruise = self.starpilot_planner.v_cruise
-    self.max_accel = get_max_accel_low_speeds(self.max_accel, v_cruise)
-    self.max_accel = min(get_max_accel_ramp_off(self.max_accel, v_cruise, v_ego), self.max_accel)
 
     if self.starpilot_planner.starpilot_weather.weather_id != 0:
       self.max_accel -= self.max_accel * self.starpilot_planner.starpilot_weather.reduce_acceleration
