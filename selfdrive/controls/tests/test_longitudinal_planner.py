@@ -1621,7 +1621,7 @@ def test_acc_mode_pretracking_vision_far_slower_lead_starts_braking_before_track
   assert planner_with_lead.mode == "acc"
   assert not planner_with_lead.raw_close_lead_needs_control(sm_with_lead["radarState"].leadOne, v_ego)
   assert all(lead_output <= no_lead_output + 1e-6
-             for lead_output, no_lead_output in zip(lead_outputs[8:], no_lead_outputs[8:]))
+             for lead_output, no_lead_output in zip(lead_outputs[8:], no_lead_outputs[8:], strict=True))
   assert min(lead_outputs[8:]) < min(no_lead_outputs[8:]) - 0.08
   assert lead_outputs[-1] < no_lead_outputs[-1] - 0.15
 

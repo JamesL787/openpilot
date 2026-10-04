@@ -292,7 +292,7 @@ class AetherListMetrics:
   row_radius: float = 0.12
   action_width: int = 235
   header_button_height: int = 84
-  header_button_gap: int = 14  # noqa: used implicitly by driving_model
+  header_button_gap: int = 14  # unused, but used implicitly by driving_model
   fade_height: int = 24
   content_right_gutter: int = 0
   toggle_width: int = 113

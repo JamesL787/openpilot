@@ -9,6 +9,8 @@ import time
 from collections import defaultdict, deque
 from pathlib import Path
 
+from openpilot.common.params import Params
+
 MAPD_DIR = Path(__file__).resolve().parent
 MAPD_BIN = MAPD_DIR / "mapd"
 OFFLINE_ROOT = Path("/data/media/0/osm/offline")

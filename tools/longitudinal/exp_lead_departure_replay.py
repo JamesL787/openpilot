@@ -17,6 +17,7 @@ import argparse
 import os
 import sys
 from collections import defaultdict
+from types import SimpleNamespace
 
 import numpy as np
 

@@ -347,6 +347,8 @@ def starpilot_thread():
   if safe_mode_active:
     apply_safe_mode(params, params_raw, params_memory)
 
+  starpilot_planner = None
+
   while True:
     sm.update()
 

@@ -1,5 +1,4 @@
 import pytest
-import numpy as np
 from parameterized import parameterized
 from types import SimpleNamespace
 

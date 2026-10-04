@@ -34,8 +34,18 @@ def make_modes():
 def branch(planner, mode):
   path = ROOT/'starpilot/controls/starpilot_planner.py'
   node = next(n for n in ast.walk(ast.parse(path.read_text())) if isinstance(n, ast.If) and ast.unparse(n.test).startswith('conditional_tracking_active and'))
-  exec(compile(ast.Module(body=[node],type_ignores=[]), str(path), 'exec'),
-       {'self': planner, 'conditional_tracking_active': True, 'starpilot_toggles': NS(conditional_experimental_mode=mode=='cem', conditional_chill_mode=mode=='ccm'), 'v_ego':20, 'v_cruise':30, 'sm':{}, 'PLANNER_TIME':10})
+  exec(
+    compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'),
+    {
+      'self': planner,
+      'conditional_tracking_active': True,
+      'starpilot_toggles': NS(conditional_experimental_mode=mode == 'cem', conditional_chill_mode=mode == 'ccm'),
+      'v_ego': 20,
+      'v_cruise': 30,
+      'sm': {},
+      'PLANNER_TIME': 10
+    }
+  )
 
 @pytest.mark.parametrize('absence', [.1, 100])
 @pytest.mark.parametrize('other', ['fixed', 'cem'])

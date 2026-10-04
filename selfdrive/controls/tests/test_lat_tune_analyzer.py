@@ -283,8 +283,8 @@ class TestTrialAndBandParams:
     for term, keys in (("p", lat.P_KEYS), ("i", lat.I_KEYS), ("f", lat.F_KEYS)):
       for n, key in enumerate(keys):
         want = lat.BAND_DEFAULTS[term][n]
-        h = re.search(r'\{"%s", \{PERSISTENT, INT, "(\d+)"' % key, header)
-        c = re.search(r'"%s", ([\d.]+), ' % key, ctrl)
+        h = re.search(fr'\{{"{key}", \{{PERSISTENT, INT, "(\d+)"', header)
+        c = re.search(fr'"{key}", ([\d.]+), ', ctrl)
         assert h and int(h.group(1)) == want, key
         assert c and round(float(c.group(1)) * 100) == want, key
 

@@ -3098,20 +3098,7 @@ class LongitudinalPlanner:
     else:
       d_rel_dot = (lead_dist - self.prev_lead_dist) / max(self.dt, 1e-3)
     self.prev_lead_dist = lead_dist
-
-    # Remember time of last non-trivial model brake risk
-    if 'raw_brake_max' in locals() and raw_brake_max is not None and raw_brake_max > 0.02:
-      self.last_big_brake_t = now_t
-
-    # Stable lead heuristic (short window, cheap to compute)
-    recently_braked = (now_t - self.last_big_brake_t) < 0.7
-    self.stable_lead = (
-      lead_one_active and
-      abs(v_rel) < 0.5 and
-      abs(d_rel_dot) < 0.5 and
-      not recently_braked
-    )
-
+    
     # Calculate scene uncertainty from model desire prediction entropy and disengage predictions
     uncertainty = 0.0
     if hasattr(sm['modelV2'], 'meta'):
@@ -3149,14 +3136,27 @@ class LongitudinalPlanner:
           lam = 0.6  # decay rate per second (tunable: 0.5–0.9 typical)
           weights = np.exp(-lam * t)
           disengage_risk = float(np.max(probs * weights))
-
       # Combined uncertainty metric (range roughly 0..2), with dual-track filtering
       raw_uncertainty = desire_entropy + disengage_risk
-      # Update filters
-      self.uncert_slow.update(raw_uncertainty)
-      self.uncert_fast.update(raw_uncertainty)
-      # Use a more permissive track for accel decisions
-      uncertainty = self.uncert_slow.x
+
+    # Remember time of last non-trivial model brake risk
+    if locals().get('raw_brake_max', -1) > 0.02:
+      self.last_big_brake_t = now_t
+
+    # Stable lead heuristic (short window, cheap to compute)
+    recently_braked = (now_t - self.last_big_brake_t) < 0.7
+    self.stable_lead = (
+      lead_one_active and
+      abs(v_rel) < 0.5 and
+      abs(d_rel_dot) < 0.5 and
+      not recently_braked
+    )
+
+    # Update filters
+    self.uncert_slow.update(raw_uncertainty)
+    self.uncert_fast.update(raw_uncertainty)
+    # Use a more permissive track for accel decisions
+    uncertainty = self.uncert_slow.x
     uncertainty_accel = min(self.uncert_slow.x, self.uncert_fast.x)
 
     # --- Slope-based panic bypass ---

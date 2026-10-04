@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -114,7 +114,7 @@ def make_pending_limit(current_limit, desired_limit, confirmation_toggle):
   controller.previous_target = mph(current_limit)
   controller.last_valid_limit = mph(current_limit)
 
-  now = datetime.now(timezone.utc)
+  now = datetime.now(UTC)
   update_dashboard_limit(controller, now, current_limit, desired_limit)
   assert controller.unconfirmed_speed_limit == pytest.approx(mph(desired_limit))
   return controller, now
@@ -136,7 +136,7 @@ def test_low_vision_limit_filter_blocks_configured_boundary(limit_mph):
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(limit_mph))
     sm = make_sm(gas_pressed=False, v_cruise_kph=25 * CV.MPH_TO_KPH)
 
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(25), mph(20), sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(25), mph(20), sm)
 
     assert controller.vision_limit == pytest.approx(mph(limit_mph))
     assert controller.target == 0
@@ -156,7 +156,7 @@ def test_low_vision_limit_filter_allows_limit_above_threshold():
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(30))
     sm = make_sm(gas_pressed=False, v_cruise_kph=30 * CV.MPH_TO_KPH)
 
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(30), mph(25), sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(30), mph(25), sm)
 
     assert controller.target == pytest.approx(mph(30))
     assert controller.source == "Vision"
@@ -175,7 +175,7 @@ def test_low_vision_limit_filter_is_action_only_for_display():
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(15))
     sm = make_sm(gas_pressed=False, v_cruise_kph=20 * CV.MPH_TO_KPH)
 
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(20), mph(15), sm, display_only=True)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(20), mph(15), sm, display_only=True)
 
     assert controller.target == pytest.approx(mph(15))
     assert controller.source == "Vision"
@@ -195,7 +195,7 @@ def test_low_vision_limit_filter_does_not_filter_dashboard_source():
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(15))
     sm = make_sm(gas_pressed=False, v_cruise_kph=20 * CV.MPH_TO_KPH)
 
-    controller.update_limits(mph(15), datetime.now(timezone.utc), False, mph(20), mph(15), sm)
+    controller.update_limits(mph(15), datetime.now(UTC), False, mph(20), mph(15), sm)
 
     assert controller.target == pytest.approx(mph(15))
     assert controller.source == "Dashboard"
@@ -217,7 +217,7 @@ def test_low_vision_limit_filter_does_not_restore_filtered_vision_fallback():
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(15))
     sm = make_sm(gas_pressed=False, v_cruise_kph=20 * CV.MPH_TO_KPH)
 
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(20), mph(15), sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(20), mph(15), sm)
 
     assert controller.target == 0
     assert controller.source == "None"
@@ -236,11 +236,11 @@ def test_large_vision_delta_requires_three_detector_frames():
     controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 2)
     sm = make_sm(gas_pressed=False, v_cruise_kph=75 * CV.MPH_TO_KPH)
 
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(75), mph(70), sm)
     assert controller.target == 0
 
     controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 3)
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(75), mph(70), sm)
     assert controller.target == pytest.approx(mph(15))
     assert controller.source == "Vision"
   finally:
@@ -256,7 +256,7 @@ def test_normal_vision_delta_keeps_fast_path():
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(50))
     sm = make_sm(gas_pressed=False, v_cruise_kph=75 * CV.MPH_TO_KPH)
 
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(75), mph(70), sm)
     assert controller.target == pytest.approx(mph(50))
     assert controller.source == "Vision"
   finally:
@@ -272,7 +272,7 @@ def test_inactive_valid_cruise_still_applies_large_delta_guard():
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(20))
     sm = make_sm(gas_pressed=False, long_active=False, v_cruise_kph=60 * CV.MPH_TO_KPH)
 
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(60), mph(25), sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(60), mph(25), sm)
     assert controller.target == 0
     assert controller.source == "None"
   finally:
@@ -288,7 +288,7 @@ def test_unset_active_cruise_uses_vehicle_speed():
     controller.starpilot_planner.params_memory.put_float("VisionSpeedLimit", mph(55))
     sm = make_sm(gas_pressed=False)
 
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(90), mph(50), sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(90), mph(50), sm)
     assert controller.target == pytest.approx(mph(55))
     assert controller.source == "Vision"
   finally:
@@ -306,12 +306,12 @@ def test_unset_cruise_applies_vehicle_speed_large_delta_guard():
     controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 2)
     sm = make_sm(gas_pressed=False)
 
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(90), mph(75), sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(90), mph(75), sm)
     assert controller.target == 0
     assert controller.source == "None"
 
     controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 3)
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(90), mph(75), sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(90), mph(75), sm)
     assert controller.target == pytest.approx(mph(15))
     assert controller.source == "Vision"
   finally:
@@ -348,12 +348,12 @@ def test_display_only_applies_large_delta_guard():
     controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 1)
     sm = make_sm(gas_pressed=False, v_cruise_kph=75 * CV.MPH_TO_KPH)
 
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm, display_only=True)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(75), mph(70), sm, display_only=True)
     assert controller.target == 0
     assert controller.source == "None"
 
     controller.starpilot_planner.params_memory.put_int("VisionSpeedLimitSupportCount", 3)
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(75), mph(70), sm, display_only=True)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(75), mph(70), sm, display_only=True)
     assert controller.target == pytest.approx(mph(15))
     assert controller.source == "Vision"
   finally:
@@ -380,14 +380,14 @@ def test_set_speed_override_survives_source_changes_and_fallback_until_driver_cl
     # Dashboard 45 -> Map Data 45 is not a new speed zone.
     map_sm = make_sm(gas_pressed=False)
     map_sm["mapdOut"].speedLimit = mph(45)
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(55), mph(50), map_sm)
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(55), mph(50), map_sm)
     controller.update_override(mph(55), 0.0, mph(50), 0.0, map_sm)
     assert controller.source == "Map Data"
     assert controller.overridden_speed == pytest.approx(mph(55))
     assert controller.override_slc
 
     # A temporary fallback, and even a complete source dropout, do not clear the override.
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(55), mph(50), make_sm(gas_pressed=False))
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(55), mph(50), make_sm(gas_pressed=False))
     controller.update_override(mph(55), 0.0, mph(50), 0.0, make_sm(gas_pressed=False))
     assert controller.source == "None"
     assert controller.target == pytest.approx(mph(55))
@@ -395,13 +395,13 @@ def test_set_speed_override_survives_source_changes_and_fallback_until_driver_cl
     assert controller.override_slc
 
     controller.starpilot_toggles.slc_fallback_set_speed = False
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(55), mph(50), make_sm(gas_pressed=False))
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(55), mph(50), make_sm(gas_pressed=False))
     controller.update_override(mph(55), 0.0, mph(50), 0.0, make_sm(gas_pressed=False))
     assert controller.target == 0
     assert controller.overridden_speed == pytest.approx(mph(55))
     assert controller.override_slc
 
-    controller.update_limits(mph(45), datetime.now(timezone.utc), False, mph(55), mph(50), make_sm(gas_pressed=False))
+    controller.update_limits(mph(45), datetime.now(UTC), False, mph(55), mph(50), make_sm(gas_pressed=False))
     controller.update_override(mph(55), 0.0, mph(50), 0.0, make_sm(gas_pressed=False))
     assert controller.source == "Dashboard"
     assert controller.overridden_speed == pytest.approx(mph(55))
@@ -409,7 +409,7 @@ def test_set_speed_override_survives_source_changes_and_fallback_until_driver_cl
 
     # Set-speed fallback does not clear passively, but a fresh - to the retained target does.
     controller.starpilot_toggles.slc_fallback_set_speed = True
-    controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(55), mph(50), make_sm(gas_pressed=False))
+    controller.update_limits(0.0, datetime.now(UTC), False, mph(55), mph(50), make_sm(gas_pressed=False))
     controller.update_override(mph(55), 0.0, mph(50), 0.0, make_sm(gas_pressed=False))
     controller.update_override(mph(45), 0.0, mph(50), 0.0, make_sm(gas_pressed=False))
     assert not controller.override_slc
@@ -430,7 +430,7 @@ def test_unconfirmed_lower_limit_keeps_existing_override():
     startup_controller.target = 0
 
     sm = make_sm(gas_pressed=False)
-    startup_controller.update_limits(mph(45), datetime.now(timezone.utc), False, mph(75), mph(65), sm)
+    startup_controller.update_limits(mph(45), datetime.now(UTC), False, mph(75), mph(65), sm)
 
     assert startup_controller.target == pytest.approx(mph(45))
     assert startup_controller.source == "Dashboard"
@@ -448,7 +448,7 @@ def test_unconfirmed_lower_limit_keeps_existing_override():
     fallback_confirm_controller.previous_target = mph(35)
 
     sm = make_sm(gas_pressed=False)
-    fallback_confirm_controller.update_limits(0.0, datetime.now(timezone.utc), False, mph(60), mph(35), sm)
+    fallback_confirm_controller.update_limits(0.0, datetime.now(UTC), False, mph(60), mph(35), sm)
 
     assert fallback_confirm_controller.target == pytest.approx(mph(60))
     assert fallback_confirm_controller.source == "None"
@@ -475,7 +475,7 @@ def test_unconfirmed_lower_limit_keeps_existing_override():
     controller.overridden_speed = mph(65)
 
     sm = make_sm(gas_pressed=True)
-    controller.update_limits(mph(45), datetime.now(timezone.utc), False, mph(75), mph(65), sm)
+    controller.update_limits(mph(45), datetime.now(UTC), False, mph(75), mph(65), sm)
     controller.update_override(mph(75), 0.0, mph(65), 0.0, sm)
 
     assert controller.target == pytest.approx(mph(55))
@@ -583,7 +583,7 @@ def test_set_speed_override_handles_higher_limit_changes():
     assert controller.overridden_speed == pytest.approx(mph(55))
 
     # A higher limit below the selected override preserves it.
-    controller.update_limits(mph(45), datetime.now(timezone.utc), False, mph(55), mph(50), make_sm(gas_pressed=False))
+    controller.update_limits(mph(45), datetime.now(UTC), False, mph(55), mph(50), make_sm(gas_pressed=False))
     controller.update_override(mph(55), 0.0, mph(50), 0.0, make_sm(gas_pressed=False))
 
     assert controller.target == pytest.approx(mph(45))
@@ -592,7 +592,7 @@ def test_set_speed_override_handles_higher_limit_changes():
     assert controller.override_slc
 
     # A higher effective target that reaches the override clears it without re-arming.
-    controller.update_limits(mph(55), datetime.now(timezone.utc), False, mph(55), mph(50), make_sm(gas_pressed=False))
+    controller.update_limits(mph(55), datetime.now(UTC), False, mph(55), mph(50), make_sm(gas_pressed=False))
     controller.update_override(mph(55), 0.0, mph(50), 0.0, make_sm(gas_pressed=False))
     assert controller.target == pytest.approx(mph(55))
     assert controller.overridden_speed == 0
@@ -688,7 +688,7 @@ def test_set_speed_override_clears_on_new_speed_zone():
     assert controller.override_slc
 
     # A 1 mph lower zone takes the same-limit fast path but still clears the override.
-    controller.update_limits(mph(44), datetime.now(timezone.utc), False, mph(60), mph(58), make_sm(gas_pressed=False))
+    controller.update_limits(mph(44), datetime.now(UTC), False, mph(60), mph(58), make_sm(gas_pressed=False))
     controller.update_override(mph(60), 0.0, mph(58), 0.0, make_sm(gas_pressed=False))
     assert controller.target == pytest.approx(mph(44))
     # Set speed unchanged at 60 -> no rising edge -> override stays cleared (car slows to 44).
@@ -715,14 +715,14 @@ def test_confirmation_accel_press_does_not_arm_set_speed_override():
     controller.last_valid_limit = mph(45)
 
     controller.update_override(mph(45), 0.0, mph(45), 0.0, make_sm(gas_pressed=False))
-    controller.update_limits(mph(50), datetime.now(timezone.utc), False, mph(45), mph(45), make_sm(gas_pressed=False))
+    controller.update_limits(mph(50), datetime.now(UTC), False, mph(45), mph(45), make_sm(gas_pressed=False))
     assert controller.source == "None"
     assert controller.unconfirmed_speed_limit == pytest.approx(mph(50))
 
     # The button arrives before the corresponding cruise-speed update. This + accepts the
     # pending 50 mph limit, but its delayed 55 mph set-speed update must not arm an override.
     confirm_sm = make_sm(gas_pressed=False, accel_pressed=True, v_cruise_kph=45 * CV.MPH_TO_KPH)
-    controller.update_limits(mph(50), datetime.now(timezone.utc), False, mph(45), mph(45), confirm_sm)
+    controller.update_limits(mph(50), datetime.now(UTC), False, mph(45), mph(45), confirm_sm)
     controller.update_override(mph(45), 0.0, mph(45), 0.0, confirm_sm)
     assert controller.source == "Dashboard"
     assert controller.target == pytest.approx(mph(50))
@@ -730,14 +730,14 @@ def test_confirmation_accel_press_does_not_arm_set_speed_override():
     assert controller.overridden_speed == 0
 
     delayed_speed_sm = make_sm(gas_pressed=False, v_cruise_kph=55 * CV.MPH_TO_KPH)
-    controller.update_limits(mph(50), datetime.now(timezone.utc), False, mph(55), mph(45), delayed_speed_sm)
+    controller.update_limits(mph(50), datetime.now(UTC), False, mph(55), mph(45), delayed_speed_sm)
     controller.update_override(mph(55), 0.0, mph(45), 0.0, delayed_speed_sm)
     assert not controller.override_slc
     assert controller.overridden_speed == 0
 
     # A second fresh + is allowed to establish the override.
     second_press_sm = make_sm(gas_pressed=False, accel_pressed=True, v_cruise_kph=60 * CV.MPH_TO_KPH)
-    controller.update_limits(mph(50), datetime.now(timezone.utc), False, mph(60), mph(45), second_press_sm)
+    controller.update_limits(mph(50), datetime.now(UTC), False, mph(60), mph(45), second_press_sm)
     controller.update_override(mph(60), 0.0, mph(45), 0.0, second_press_sm)
     assert controller.override_slc
     assert controller.overridden_speed == pytest.approx(mph(60))
@@ -808,7 +808,7 @@ def test_directional_limit_changes_follow_confirmation_mode(
     controller.previous_target = mph(current_limit)
     controller.last_valid_limit = mph(current_limit)
 
-    update_dashboard_limit(controller, datetime.now(timezone.utc), current_limit, desired_limit)
+    update_dashboard_limit(controller, datetime.now(UTC), current_limit, desired_limit)
 
     if confirmation_enabled:
       assert controller.source == "None"
@@ -878,7 +878,7 @@ def test_disabling_confirmation_clears_pending_confirmation_immediately(
     controller.previous_source = "Dashboard"
     controller.previous_target = mph(current_limit)
     controller.last_valid_limit = mph(current_limit)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     update_dashboard_limit(controller, now, current_limit, desired_limit)
     assert controller.unconfirmed_speed_limit == pytest.approx(mph(desired_limit))
@@ -977,7 +977,7 @@ def test_adopt_speed_limit_clears_complete_override_state():
     controller._slc_adopt_counter = 3
     controller.starpilot_planner.params_memory.values["SLCAdoptSpeedLimit"] = True
 
-    controller.update_limits(mph(45), datetime.now(timezone.utc), False, mph(55), mph(50), make_sm(gas_pressed=False))
+    controller.update_limits(mph(45), datetime.now(UTC), False, mph(55), mph(50), make_sm(gas_pressed=False))
 
     assert controller.overridden_speed == 0
     assert not controller.override_slc
@@ -1090,7 +1090,7 @@ def test_icbm_accel_press_confirms_pending_limit(redneck_cruise, expected_target
     controller.previous_target = mph(55)
 
     sm = make_sm(gas_pressed=False, long_active=False, accel_pressed=True)
-    controller.update_limits(mph(45), datetime.now(timezone.utc), False, mph(75), mph(55), sm)
+    controller.update_limits(mph(45), datetime.now(UTC), False, mph(75), mph(55), sm)
 
     assert controller.target == pytest.approx(mph(expected_target))
   finally:
@@ -1105,7 +1105,7 @@ def test_denied_lower_limit_is_not_adopted_on_following_frames():
     controller.previous_source = "Dashboard"
     controller.previous_target = mph(50)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     controller.update_limits(mph(35), now, False, mph(75), mph(50), make_sm(gas_pressed=False, decel_pressed=True))
     for _ in range(5):
       controller.update_limits(mph(35), now, False, mph(75), mph(50), make_sm(gas_pressed=False))
