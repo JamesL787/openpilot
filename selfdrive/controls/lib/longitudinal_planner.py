@@ -365,7 +365,7 @@ COAST_CEILING_JERK = 2.5  # m/s^3
 # planner's onset, not a bad radar number. While every active lead is far in time (worst-case TTC = dRel / closing)
 # and in distance, and none is braking hard, a deepening brake may fall at most BRAKE_ONSET_JERK * dt per step. The
 # jerk allowance grows as TTC shrinks and the limit is off below BRAKE_ONSET_TTC_OFF_S, inside BRAKE_ONSET_MIN_GAP,
-# with no lead, on a stop/red-light/forced-stop, a panic bypass, reset or standstill. Output only: self.a_desired
+# with no lead, on a stop/red-light/forced-stop, reset or standstill (panic bypass: see D-081). Output only: self.a_desired
 # still feeds the MPC x0 (cutting that feedback diverged the replay, see BRAKE_RELEASE_DWELL above).
 # Throttle cuts are not touched (the limit starts from min(prev, 0); COAST_CEILING_SLEW owns those). Replay round 1
 # (2026-10-04, 7 routes) limited throttle cuts too and softened 236 13:15.7 (lead 17 m at 10.6 m/s braking -1.1),
@@ -378,6 +378,12 @@ BRAKE_ONSET_JERK_V = [6.0, 1.5]  # m/s^3 allowed fall rate at those TTCs
 BRAKE_ONSET_MIN_GAP_M = 10.0
 BRAKE_ONSET_MIN_GAP_T = 1.5  # s of v_ego; the gap gate is max(MIN_GAP_M, MIN_GAP_T * v_ego)
 BRAKE_ONSET_LEAD_DECEL = -1.0  # m/s^2; a lead braking harder than this disables the limit
+# D-081 (proposed; closed-loop replay only, not driven). The panic bypass (closing fast inside the follow window plus
+# rising uncertainty) used to switch the limit off outright. On 2df 24:45 (track 6 born at 55 m closing 12 m/s, TTC
+# ~4.6 s, a car turning in that then accelerated) that sent the target +0.57 -> -1.70 in one 50 ms step. Under a
+# panic bypass the limit now still applies, but only while the worst TTC is above BRAKE_ONSET_PANIC_TTC_S; the gap and
+# lead-braking gates are unchanged.
+BRAKE_ONSET_PANIC_TTC_S = 4.0
 # Newborn lead aLeadK bound (D-080, proposed; replay only, not driven), part of the BrakeOnsetLimit toggle. STATUS 212:
 # on 2e2 (bookmark ~283 s) a radar lead first seen while its velocity estimate was still converging published aLeadK
 # -3 / -2.5 when ~0.75 m/s^2 was needed, and on 2e1 a jumping track reached -13.7; the planner braked early and twice,
@@ -432,7 +438,7 @@ def brake_release_limited_target(prev: float, target: float, dt: float) -> float
   return float(min(target, prev + BRAKE_RELEASE_JERK * dt))
 
 
-def brake_onset_jerk(leads, v_ego: float) -> float | None:
+def brake_onset_jerk(leads, v_ego: float, ttc_off: float = BRAKE_ONSET_TTC_OFF_S) -> float | None:
   """Allowed brake fall rate (m/s^3) when every active lead is far in time and distance, else None (no limit)."""
   ttc_min = float('inf')
   any_active = False
@@ -448,7 +454,7 @@ def brake_onset_jerk(leads, v_ego: float) -> float | None:
     closing = max(0.0, -float(lead.vRel))
     if closing > 1e-3:
       ttc_min = min(ttc_min, d_rel / closing)
-  if not any_active or ttc_min <= BRAKE_ONSET_TTC_OFF_S:
+  if not any_active or ttc_min <= ttc_off:
     return None
   return float(np.interp(ttc_min, BRAKE_ONSET_TTC_BP, BRAKE_ONSET_JERK_V))
 
@@ -4142,10 +4148,12 @@ class LongitudinalPlanner:
 
     brake_onset_enabled = BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "brake_onset_limit", False))
     if brake_onset_enabled and not reset_state and not bool(sm['carState'].standstill) and not (
-        output_should_stop or vision_low_speed_stop_active or panic_bypass or
+        output_should_stop or vision_low_speed_stop_active or
         getattr(sm['starpilotPlan'], 'forcingStop', False) or getattr(sm['starpilotPlan'], 'redLight', False)):
+      onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if panic_bypass else BRAKE_ONSET_TTC_OFF_S
       output_a_target = brake_onset_limited_target(
-        prev_output_a_target, output_a_target, self.dt, brake_onset_jerk((self.lead_one, self.lead_two), scene_v_ego))
+        prev_output_a_target, output_a_target, self.dt,
+        brake_onset_jerk((self.lead_one, self.lead_two), scene_v_ego, onset_ttc_off))
     if BRAKE_RELEASE_LIMIT and not reset_state and not bool(sm['carState'].standstill):
       # prev is the last published target (after the on-path bound in update(), which runs after this)
       output_a_target = brake_release_limited_target(prev_output_a_target, output_a_target, self.dt)

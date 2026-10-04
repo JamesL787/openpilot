@@ -155,3 +155,19 @@ def test_bound_is_applied_only_when_the_onset_toggle_is_on():
   src = inspect.getsource(lp.LongitudinalPlanner._update)
   gate = 'if BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "brake_onset_limit", False)):\n'
   assert gate + '      sm = bound_newborn_leads(sm, self.newborn_lead_hold)' in src
+
+
+# D-081: under a panic bypass the onset limit still applies, but only above BRAKE_ONSET_PANIC_TTC_S.
+def test_panic_bypass_keeps_the_limit_only_when_ttc_is_long():
+  # 2df 24:45 shape: 55 m, closing 12 m/s -> TTC 4.6 s
+  assert lp.brake_onset_jerk((_lead(55.0, -12.0),), 20.0, lp.BRAKE_ONSET_PANIC_TTC_S) is not None
+  # TTC 3.5 s: limited on the normal path, off under a panic bypass
+  assert lp.brake_onset_jerk((_lead(42.0, -12.0),), 20.0) is not None
+  assert lp.brake_onset_jerk((_lead(42.0, -12.0),), 20.0, lp.BRAKE_ONSET_PANIC_TTC_S) is None
+
+
+def test_panic_bypass_no_longer_switches_the_onset_limit_off_outright():
+  import inspect
+  src = inspect.getsource(lp.LongitudinalPlanner._update)
+  assert 'onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if panic_bypass else BRAKE_ONSET_TTC_OFF_S' in src
+  assert 'output_should_stop or vision_low_speed_stop_active or panic_bypass or' not in src
