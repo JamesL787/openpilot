@@ -388,6 +388,21 @@ BRAKE_ONSET_PANIC_TTC_S = 4.0
 # -1.2): -3.5 arrived ~0.3 s later. So the limit applies under a panic bypass only when the published target was above
 # BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE as the bypass began (latched for that bypass).
 BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE = -0.5  # m/s^2
+# Stock-like onset ramp (D-083, proposed; open-loop replay only, not driven), part of the BrakeOnsetLimit toggle.
+# STATUS 215: stock ACC on route 299 brings fast-closing brakes in at a worst step of -1.4..-3.4 m/s^3 even at TTC
+# 2.6-3.3 s (20:34: car 55 m ahead closing 12.5 m/s, command -0.3 -> -2.2 over ~2.5 s, then held), while ours, with
+# the limit off below TTC 3 s, stepped at -36..-40 m/s^3 on U11-rail onsets (2d5 11:58: -1.8 -> -3.6 in one 50 ms
+# frame after a single-frame vRel of -20 put TTC at 2.4 s). With BRAKE_ONSET_STOCK_RAMP the jerk schedule tops out at
+# BRAKE_ONSET_STOCK_JERK_V and the TTC switch-off moves down to BRAKE_ONSET_STOCK_TTC_FLOOR_S; in between, the limit
+# stands down instead when the ramp-aware need (closing^2 / 2(d - MIN_GAP_M - closing * ramp lag), plus the lead's
+# own decel) exceeds BRAKE_ONSET_STOCK_MAX_NEED on two consecutive frames, so a lone vRel spike cannot end the ramp
+# but a sustained need beyond what a gentle onset can still deliver does. Peak braking is never reduced: only the
+# deepening rate is capped, the gap, lead-braking and stop gates are unchanged, and a panic bypass that began already
+# braking still switches it off. Cost: a far-lead brake reaches its depth up to |a| / 3 s later (about 1 s for -3).
+BRAKE_ONSET_STOCK_RAMP = True
+BRAKE_ONSET_STOCK_JERK_V = [3.0, 1.5]  # m/s^3 at BRAKE_ONSET_TTC_BP; below the first TTC it stays 3.0
+BRAKE_ONSET_STOCK_TTC_FLOOR_S = 2.0  # at or below: no limit, undebounced
+BRAKE_ONSET_STOCK_MAX_NEED = 3.0  # m/s^2; planner floor is -3.5
 # Newborn lead aLeadK bound (D-080, proposed; replay only, not driven), part of the BrakeOnsetLimit toggle. STATUS 212:
 # on 2e2 (bookmark ~283 s) a radar lead first seen while its velocity estimate was still converging published aLeadK
 # -3 / -2.5 when ~0.75 m/s^2 was needed, and on 2e1 a jumping track reached -13.7; the planner braked early and twice,
@@ -442,7 +457,8 @@ def brake_release_limited_target(prev: float, target: float, dt: float) -> float
   return float(min(target, prev + BRAKE_RELEASE_JERK * dt))
 
 
-def brake_onset_jerk(leads, v_ego: float, ttc_off: float = BRAKE_ONSET_TTC_OFF_S) -> float | None:
+def brake_onset_jerk(leads, v_ego: float, ttc_off: float = BRAKE_ONSET_TTC_OFF_S,
+                     jerk_v=BRAKE_ONSET_JERK_V) -> float | None:
   """Allowed brake fall rate (m/s^3) when every active lead is far in time and distance, else None (no limit)."""
   ttc_min = float('inf')
   any_active = False
@@ -460,7 +476,42 @@ def brake_onset_jerk(leads, v_ego: float, ttc_off: float = BRAKE_ONSET_TTC_OFF_S
       ttc_min = min(ttc_min, d_rel / closing)
   if not any_active or ttc_min <= ttc_off:
     return None
-  return float(np.interp(ttc_min, BRAKE_ONSET_TTC_BP, BRAKE_ONSET_JERK_V))
+  return float(np.interp(ttc_min, BRAKE_ONSET_TTC_BP, jerk_v))
+
+
+def brake_onset_need(leads, prev: float, jerk: float) -> float:
+  """Worst constant decel (m/s^2, positive) that still stops BRAKE_ONSET_MIN_GAP_M behind each active lead after a
+  ramp from min(prev, 0) at jerk; inf when the ramp lag alone uses up the gap."""
+  need = 0.0
+  for lead in leads:
+    if lead is None or not bool(getattr(lead, 'status', False)):
+      continue
+    closing = max(0.0, -float(lead.vRel))
+    lead_decel = max(0.0, -float(getattr(lead, 'aLeadK', 0.0)))
+    room = float(lead.dRel) - BRAKE_ONSET_MIN_GAP_M
+    if closing <= 1e-3:
+      need = max(need, lead_decel)
+      continue
+    if room <= 0.0:
+      return float('inf')
+    flat = closing ** 2 / (2.0 * room)
+    lag = max(0.0, flat + min(prev, 0.0)) / (2.0 * max(jerk, 1e-3))
+    room -= closing * lag
+    if room <= 0.0:
+      return float('inf')
+    need = max(need, closing ** 2 / (2.0 * room) + lead_decel)
+  return float(need)
+
+
+def stock_onset_jerk(leads, v_ego: float, prev: float, hard_panic: bool, prev_over: bool) -> tuple[float | None, bool]:
+  """D-083 allowed fall rate and this frame's need-over flag: off at or below the TTC floor or under a hard panic
+  bypass, and off when the ramp-aware need is over BRAKE_ONSET_STOCK_MAX_NEED on this and the previous frame."""
+  jerk = brake_onset_jerk(leads, v_ego, float('inf') if hard_panic else BRAKE_ONSET_STOCK_TTC_FLOOR_S,
+                          BRAKE_ONSET_STOCK_JERK_V)
+  over = jerk is not None and brake_onset_need(leads, prev, jerk) > BRAKE_ONSET_STOCK_MAX_NEED
+  if over and prev_over:
+    jerk = None
+  return jerk, over
 
 
 def brake_onset_limited_target(prev: float, target: float, dt: float, jerk: float | None) -> float:
@@ -1388,6 +1439,7 @@ class LongitudinalPlanner:
     self.newborn_lead_hold = NewbornLeadHold()
     self._onset_panic_prev = False
     self._onset_panic_soft = False
+    self._onset_need_over = False
     self.longitudinal_actuator_delay = max(DT_MDL, float(CP.longitudinalActuatorDelay))
     self.close_lead_brake_cap_value = 0.0
     self.lead_geometry_required_accel = 0.0
@@ -4158,13 +4210,19 @@ class LongitudinalPlanner:
         getattr(sm['starpilotPlan'], 'forcingStop', False) or getattr(sm['starpilotPlan'], 'redLight', False)):
       if panic_bypass and not self._onset_panic_prev:
         self._onset_panic_soft = prev_output_a_target > BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE
-      if not panic_bypass:
-        onset_ttc_off = BRAKE_ONSET_TTC_OFF_S
+      onset_leads = (self.lead_one, self.lead_two)
+      if BRAKE_ONSET_STOCK_RAMP:
+        onset_jerk, self._onset_need_over = stock_onset_jerk(
+          onset_leads, scene_v_ego, prev_output_a_target, panic_bypass and not self._onset_panic_soft, self._onset_need_over)
       else:
-        onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if self._onset_panic_soft else float('inf')
-      output_a_target = brake_onset_limited_target(
-        prev_output_a_target, output_a_target, self.dt,
-        brake_onset_jerk((self.lead_one, self.lead_two), scene_v_ego, onset_ttc_off))
+        if not panic_bypass:
+          onset_ttc_off = BRAKE_ONSET_TTC_OFF_S
+        else:
+          onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if self._onset_panic_soft else float('inf')
+        onset_jerk = brake_onset_jerk(onset_leads, scene_v_ego, onset_ttc_off)
+      output_a_target = brake_onset_limited_target(prev_output_a_target, output_a_target, self.dt, onset_jerk)
+    else:
+      self._onset_need_over = False
     self._onset_panic_prev = panic_bypass
     if BRAKE_RELEASE_LIMIT and not reset_state and not bool(sm['carState'].standstill):
       # prev is the last published target (after the on-path bound in update(), which runs after this)

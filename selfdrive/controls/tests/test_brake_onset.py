@@ -172,3 +172,69 @@ def test_panic_bypass_no_longer_switches_the_onset_limit_off_outright():
   assert 'self._onset_panic_soft = prev_output_a_target > BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE' in src
   assert "onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if self._onset_panic_soft else float('inf')" in src
   assert 'output_should_stop or vision_low_speed_stop_active or panic_bypass or' not in src
+
+
+# D-083: stock-like onset ramp (part of the BrakeOnsetLimit toggle).
+def test_stock_ramp_is_on_inside_the_toggle_and_caps_jerk_at_stock_rates():
+  assert lp.BRAKE_ONSET_STOCK_RAMP is True
+  assert max(lp.BRAKE_ONSET_STOCK_JERK_V) <= 3.0
+  # 299 20:34 / 2d5 11:58 shape: 50 m, closing 12 m/s (TTC 4.2 s) gets a stock-rate ramp
+  j, over = lp.stock_onset_jerk((_lead(50.0, -12.0),), 22.0, -0.3, False, False)
+  assert j is not None and j <= 3.0 and not over
+
+
+def test_stock_ramp_continues_below_the_old_3s_switch_off_while_the_need_is_modest():
+  # 20 m closing 7 m/s at 12 m/s, already at -1.5: TTC 2.9 s, the old limit was off here; need ~2.8 m/s^2
+  leads = (_lead(20.0, -7.0),)
+  assert lp.brake_onset_jerk(leads, 12.0) is None
+  j, _ = lp.stock_onset_jerk(leads, 12.0, -1.5, False, False)
+  assert j == pytest.approx(lp.BRAKE_ONSET_STOCK_JERK_V[0])
+
+
+@pytest.mark.parametrize("leads,v_ego", [
+  ((_lead(30.0, -16.0),), 25.0),          # TTC 1.9 s: at the floor
+  ((_lead(30.0, -2.0),), 25.0),           # gap gate (1.5 s of v_ego)
+  ((_lead(80.0, -5.0, a=-1.5),), 25.0),   # lead braking
+])
+def test_stock_ramp_keeps_the_floor_and_the_old_gates(leads, v_ego):
+  assert lp.stock_onset_jerk(leads, v_ego, -0.5, False, False)[0] is None
+
+
+def test_hard_panic_bypass_still_switches_the_ramp_off():
+  assert lp.stock_onset_jerk((_lead(60.0, -8.0),), 20.0, -1.0, True, False)[0] is None
+  assert lp.stock_onset_jerk((_lead(60.0, -8.0),), 20.0, -1.0, False, False)[0] is not None
+
+
+def test_need_counts_the_ramp_lag_and_the_lead_decel():
+  flat = 12.0 ** 2 / (2 * (50.0 - lp.BRAKE_ONSET_MIN_GAP_M))
+  assert lp.brake_onset_need((_lead(50.0, -12.0),), -flat, 3.0) == pytest.approx(flat)   # already there: no lag
+  assert lp.brake_onset_need((_lead(50.0, -12.0),), 0.0, 3.0) > flat                     # ramp from 0 costs room
+  assert lp.brake_onset_need((_lead(50.0, -12.0, a=-0.8),), -flat, 3.0) == pytest.approx(flat + 0.8)
+  assert lp.brake_onset_need((_lead(12.0, -12.0),), 0.0, 3.0) == float('inf')
+
+
+def test_a_lone_spike_cannot_end_the_ramp_but_a_sustained_need_does():
+  calm, spike = (_lead(47.0, -12.0),), (_lead(47.0, -20.0),)   # 2d5 11:58: one frame read -20
+  j, over = lp.stock_onset_jerk(calm, 22.0, -1.1, False, False)
+  assert j is not None and not over
+  j, over = lp.stock_onset_jerk(spike, 22.0, -1.2, False, over)
+  assert j is not None and over        # first frame over the need: still ramping
+  j, over = lp.stock_onset_jerk(calm, 22.0, -1.3, False, over)
+  assert j is not None and not over    # spike gone: ramp continues
+  j, over = lp.stock_onset_jerk(spike, 22.0, -1.4, False, False)
+  j, over = lp.stock_onset_jerk(spike, 22.0, -1.5, False, over)
+  assert j is None                     # two frames over: limit stands down, full target passes
+
+
+def test_ramp_never_reduces_the_peak_only_its_arrival():
+  a, dt = 0.0, 0.05
+  for _ in range(200):
+    a = lp.brake_onset_limited_target(a, -3.5, dt, lp.BRAKE_ONSET_STOCK_JERK_V[0])
+  assert a == pytest.approx(-3.5)
+
+
+def test_planner_uses_the_stock_ramp_behind_its_switch():
+  import inspect
+  src = inspect.getsource(lp.LongitudinalPlanner._update)
+  assert 'if BRAKE_ONSET_STOCK_RAMP:' in src
+  assert 'stock_onset_jerk(' in src and 'panic_bypass and not self._onset_panic_soft' in src
