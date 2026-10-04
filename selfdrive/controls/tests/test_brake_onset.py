@@ -169,5 +169,6 @@ def test_panic_bypass_keeps_the_limit_only_when_ttc_is_long():
 def test_panic_bypass_no_longer_switches_the_onset_limit_off_outright():
   import inspect
   src = inspect.getsource(lp.LongitudinalPlanner._update)
-  assert 'onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if panic_bypass else BRAKE_ONSET_TTC_OFF_S' in src
+  assert 'self._onset_panic_soft = prev_output_a_target > BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE' in src
+  assert "onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if self._onset_panic_soft else float('inf')" in src
   assert 'output_should_stop or vision_low_speed_stop_active or panic_bypass or' not in src

@@ -384,6 +384,10 @@ BRAKE_ONSET_LEAD_DECEL = -1.0  # m/s^2; a lead braking harder than this disables
 # panic bypass the limit now still applies, but only while the worst TTC is above BRAKE_ONSET_PANIC_TTC_S; the gap and
 # lead-braking gates are unchanged.
 BRAKE_ONSET_PANIC_TTC_S = 4.0
+# Replay round 1 also softened 2df 25:54 (stopped traffic, radar and vision both closing 12-14 m/s, already braking
+# -1.2): -3.5 arrived ~0.3 s later. So the limit applies under a panic bypass only when the published target was above
+# BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE as the bypass began (latched for that bypass).
+BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE = -0.5  # m/s^2
 # Newborn lead aLeadK bound (D-080, proposed; replay only, not driven), part of the BrakeOnsetLimit toggle. STATUS 212:
 # on 2e2 (bookmark ~283 s) a radar lead first seen while its velocity estimate was still converging published aLeadK
 # -3 / -2.5 when ~0.75 m/s^2 was needed, and on 2e1 a jumping track reached -13.7; the planner braked early and twice,
@@ -1382,6 +1386,8 @@ class LongitudinalPlanner:
     self.off_axis_lead_hold = OffAxisLeadHold()
     self.reassociation_hold = ReassociationHold()
     self.newborn_lead_hold = NewbornLeadHold()
+    self._onset_panic_prev = False
+    self._onset_panic_soft = False
     self.longitudinal_actuator_delay = max(DT_MDL, float(CP.longitudinalActuatorDelay))
     self.close_lead_brake_cap_value = 0.0
     self.lead_geometry_required_accel = 0.0
@@ -4150,10 +4156,16 @@ class LongitudinalPlanner:
     if brake_onset_enabled and not reset_state and not bool(sm['carState'].standstill) and not (
         output_should_stop or vision_low_speed_stop_active or
         getattr(sm['starpilotPlan'], 'forcingStop', False) or getattr(sm['starpilotPlan'], 'redLight', False)):
-      onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if panic_bypass else BRAKE_ONSET_TTC_OFF_S
+      if panic_bypass and not self._onset_panic_prev:
+        self._onset_panic_soft = prev_output_a_target > BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE
+      if not panic_bypass:
+        onset_ttc_off = BRAKE_ONSET_TTC_OFF_S
+      else:
+        onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if self._onset_panic_soft else float('inf')
       output_a_target = brake_onset_limited_target(
         prev_output_a_target, output_a_target, self.dt,
         brake_onset_jerk((self.lead_one, self.lead_two), scene_v_ego, onset_ttc_off))
+    self._onset_panic_prev = panic_bypass
     if BRAKE_RELEASE_LIMIT and not reset_state and not bool(sm['carState'].standstill):
       # prev is the last published target (after the on-path bound in update(), which runs after this)
       output_a_target = brake_release_limited_target(prev_output_a_target, output_a_target, self.dt)
