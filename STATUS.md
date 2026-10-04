@@ -10271,3 +10271,156 @@ on 0x18DAB0F1, `carcontroller.py` tester-present), and the bank still arrives on
   published −20 within 3 s of birth. Caveats: the settle anchor is selection-biased toward leads that settle;
   about half the tracks have no anchor; above 12 m/s a stopped object and a spinning-up tracker both read −12, so
   U11 alone cannot tell them apart. A blanket ramp would delay genuine stopped-object braking.
+
+## 206. D-077 options 1 and 2 replayed, and the birth-rail spin-up checked at night and on stock ACC (2026-10-04, owner: "try 1 and 2 and do a comparison"; "you may have to look for true stock acc routes"). Closed-loop replay and logged-data analysis only; not driven.
+Code: `BIRTH_RAIL_RAMP_HIGH` / `BIRTH_RAIL_RAMP_LOW` in `selfdrive/controls/radard.py`, both False (a6c1beb29, merged in PR #20);
+7 static tests in `test_radard_bosch.py`.
+- **Replay** (`alpha_closed_loop_replay`, shipped b0.075 planner, routes 236, 268, 26b, 2d5, 2d6, 2d8, 2d9): with either switch on,
+  **0 frames** differ from the switches-off run on every route (more-brake 0, less-brake 0, jerk counts identical). The
+  000002d5 bookmark (t 718) is unchanged.
+- **Why option 2 never fires** (probe on 2d5 segments 11-12): of 28 low-rail-born tracks, 14 failed the moving test because the
+  first range fit (age 0.26-0.47 s) read 20-52 m/s of closing at ego about 22 m/s, faster than a stopped object; 11 had no fit by
+  0.5 s; 3 left the rail. The early range fit is as unreliable as the early U11, so it cannot tell moving from stopped.
+- **Why option 1 does nothing:** it was active on 18 frames in that window, all on tracks 12-22 m off-axis.
+- **Night check, alpha long** (sun elevation from GPS): day 236, 268, 26b, 2d5 vs night 2d7, 2d8, 2d9 (sun below -13 deg). New tracks per
+  minute 30 vs 29; born on -12 46% vs 44%; median excess at birth 11.3 vs 11.4 m/s, at 0.5 s 8.8 vs 8.2, at 1.0 s 6.8 vs 6.2, at 1.5 s
+  3.5 vs 4.9 (night n=35, different roads). Genuine closers stay railed in both.
+- **Stock ACC** (opLong False checked in carParams): day 25d, 25e, 25f, 260, 261, 262, 266, 267: excess 11.1 at birth, 8.4 at 0.5 s,
+  5.0 at 1.5 s, the same spin-up as alpha long. Night 264, 265 (22:37 PDT, sun -56 deg) are only 17 min with almost no traffic (model
+  lead seen 7-14% of the time vs 50% by day; 96 births, 2 anchored): **inconclusive**. 263 is dusk and excluded.
+- **Conclusion:** the spin-up is a property of how the bank reports new tracks, present on stock ACC and at night under alpha long.
+  Its cause (camera tracker, item 205, or radar-side) is unproven. The owner reports stock ACC brakes consistently day and night;
+  stock-ACC night drives with traffic would test that. Neither D-077 option should be enabled as written.
+- Next if pursued: a moving test that exists in the first 0.5 s (an agreeing model lead at the same range with vLead >= 5 m/s).
+
+## 207. D-077 option 2 revised: the moving test is an agreeing model lead, not the range fit (2026-10-04, owner: "revise option 2 like you said"). Closed-loop replay only; not driven. Switch stays OFF.
+Code: `BIRTH_RAIL_RAMP_LOW` path in `selfdrive/controls/radard.py` (`birth_rail_vision_agrees`, `BIRTH_RAIL_LOW_VISION_*`); the
+model lead (`leadsV3[0]` in radar coordinates) reaches `Track.update` as `vision_lead`. The low ramp runs only while ego >= 12 m/s and a
+model lead with prob >= 0.5 sits within max(5 m, 15%) of the track's range and 2 m of its lateral offset, moves at >= 5 m/s, and puts
+the closing at least 4 m/s short of the rail. Published closing = larger of the ramp and the model's. RAIL_FAST is withheld meanwhile, and
+the first failed update ends the ramp for good. The range-fit test and the pre-fit wait are gone. 14 static tests (`-k birth_rail`).
+- **Replay without the margin** (routes 236, 268, 26b, 2d5, 2d6, 2d8, 2d9): two changes.
+  - 268 5:56, cut-in at 42 m: range history closing ~6 m/s, rail -12. The ramp published -5.1 for one frame (then U11 left the rail).
+    Minimum output -1.58 vs -1.84, logged road command -1.42. Correct direction.
+  - 2d5 9:44-9:46, lead at ~100 m: range history says ~4 m/s (closing ~12.5), model said 5-7 m/s. The ramp published -10.4..-11.9,
+    less closing than the truth, and delayed one RAIL_FAST step (less brake up to 1.0 for 0.2 s). Wrong. This set the 4 m/s margin
+    (one case).
+- **Replay with the margin:** 2d5 (including the t 718 bookmark), 2d6, 2d8, 2d9, 236, 26b identical frame for frame. 268 5:56 kept
+  (less brake up to 0.53 over 1.8 s; a 0.05 more-brake blip at 5:58.8). Stopped-object stops 2d9 8:58, 26b 29:58, 236 34:57 unchanged.
+- **Probe 2d5 segments 11-12:** 63 low-rail births, 0 ramps (39 range mismatch, 12 lateral mismatch, 12 prob < 0.5; all 13-39 m off-axis).
+- **Reading:** one correct firing in ~116 engaged minutes. Too little evidence to enable it; most born-railed tracks are off-path.
+
+## 208. Where does braking act on a wrong closing speed? Attribution over 7 replayed routes (2026-10-04, owner chose "measure first" after item 207). Replay analysis only; not driven.
+Method: the shipped b0.075 replay frames of 236, 268, 26b, 2d5, 2d6, 2d8, 2d9 (~116 engaged min). For each engaged frame with a lead,
+the truth is the lead track's own range change over a centred 2 s window (same track id throughout, no gap > 0.3 s). The published
+leadOne vRel is compared to it.
+- **Harsh braking (output < -1.5, 2458 frames):** published closing within 3 m/s of the truth on **89%**; overstated by > 3 m/s on
+  3%; understated by > 3 m/s on 1%; vision-only lead 6%; no truth (track younger than 2 s) 2%. Braking < -0.5 (11691 frames): 88 / 3 /
+  1 / 6 / 2%. **In replay, radar error is a small share of harsh braking; mostly the planner responds hard to closing that is real.**
+- **The overstated episodes (~22) are mostly one shape: the closing is ending and the published vRel lags by about 1 s.** Truth 1 s
+  earlier is more closing than truth now, and the published value is closer to the earlier one, e.g. 2d5 9:49.5 (truth -6.3 to +0.1,
+  published -7.7), 26b 37:16 (-5.7 to -1.8, published -8.3), 2d8 21:20 (-3.9 to +3.8, published -11.7), 2d9 4:10 (-4.8 to -2.0,
+  published -10.4). This delays the brake release; it rarely sets the peak (output at those frames mostly -0.5 to -1.5).
+  Newborn-track and rail cases are a minority (3 on-rail episodes, 1 RAIL_FAST, a few lead switches), which is why D-077 had little
+  to act on.
+- **The 2d5 bookmark (11:58-11:59):** truth closing -14.9, then -14.6 easing to -6.1; published -20.0 (RAIL_FAST, 1 frame) then -11.1.
+  Output -3.64 / -3.50, logged road command -3.50. Over-read for a moment, but the hard braking itself matched a real fast closing.
+- 2d8 stands out (10.7% of its braking frames overstated, end-of-closing lags at 70-120 m).
+- **Reading:** to make braking smoother without missing real closing, the lever is mainly the planner's response (onset and release
+  shaping), with a narrower second target in the end-of-closing lag. Neither has been designed yet; both need owner direction.
+
+## 209. D-078 planner brake-onset shaping (`BrakeOnsetLimit`, default OFF), replayed on 7 routes; switch added under Advanced Longitudinal Tuning (2026-10-04, owner: "run option 2 as well, I wouldn't mind a smoother braking planner"; "put it under advanced longitudinal tuning"). Replay only (open-loop on ego); not driven.
+
+- **What it does.** When the lead is far off in time (min TTC > 3 s), not braking itself (aLeadK >= -1.0), and not close
+  (gap >= max(10 m, 1.5 s x v)), the planner's brake command may only get stronger at a limited rate: 6 m/s^3 at TTC 3 s,
+  easing to 1.5 m/s^3 at TTC 6 s and beyond. Brake side only: the ramp starts from min(previous, 0), so cutting throttle is never
+  slowed. Not applied at reset, standstill, stopping, the vision low-speed stop, panic bypass, forced stop or red light. Code:
+  `brake_onset_jerk` / `brake_onset_limited_target` in `selfdrive/controls/lib/longitudinal_planner.py`, applied before
+  `BRAKE_RELEASE_LIMIT`. Tests: `selfdrive/controls/tests/test_brake_onset.py` (12, static).
+- **Round 1** (gap gate 1.0 s, lead-decel gate -1.5, ramp from prev): peak braking unchanged on all 7 routes, sharp onsets
+  (< -6 m/s^3, engaged) 217 -> 128, but two faults: it slowed a throttle cut (236 37:25, +1.0 -> +0.03 when the plan wanted
+  much less), and it softened a real closing (236 13:15.7, lead 17 m at 10.6 m/s, aK -1.1, up to 1.28 m/s^2 less brake).
+  Both fixed in round 2 (brake side only; gates 1.5 s and -1.0).
+- **Round 2 (current code), sharp onsets per route, before -> after, and the largest estimated gap cost** (brake shortfall
+  double-integrated, `onset_cost.py`): 2d5 27->25 (0.64 m, lead 97 m); 2d6 30->27 (0.41 m); 2d8 32->26 (0.90 m, 66 m);
+  2d9 14->12 (0.47 m); 236 79->72 (1.27 m, lead 56 m at 30 m/s); 26b 24->21 (0.12 m); 268 11->9 (0.42 m). Total 217 -> 192.
+  Peak braking and frames below -1.5 m/s^2 unchanged on every route. Stop and bookmark windows (2d5 11:55-12:02, 2d9 8:55-9:02,
+  236 34:54-35:01, 26b 29:55-30:02): max difference 0.014 m/s^2.
+- **Why the effect is modest.** Of the 152 baseline sharp onsets left: 57 have the lead braking (aK < -1.0) and 21 a close lead,
+  which the gates leave alone on purpose; 10 have no lead (not this limiter's case); 64 pass the gates by lead state but are not
+  softened, not yet explained (likely the TTC 3-4 s band where the allowance is near 6 m/s^3, or a later bound in `update()`).
+- **Galaxy / device switch.** `BrakeOnsetLimit` is in `common/params_keys.h`, the device settings layout (parent
+  AdvancedLongitudinalTune, "Smooth Brake Onset"), the on-device UI row and `starpilot_variables` (read falls back to False if the
+  key is unknown). **The checked-in aarch64 `common/params_pyx.so` / `libcommon.a` are NOT rebuilt** (this container is x86_64).
+  Until they are rebuilt on an aarch64 host, the row shows but saving it is refused (Galaxy PUT 403 on an unknown key) and the
+  planner reads False. Rebuild in its own commit as for earlier switches.
+- **Reading.** Replay only: a small smoothing of far-lead brake onsets with sub-1.3 m estimated gap cost and no change in peak
+  braking. Not enough evidence to enable by default; it is an owner-opt-in switch, to be judged on road.
+
+## 210. The 2d5 bookmark (11:58) re-traced with the owner's account: a car pulling out from a side road, not a braking lead (2026-10-04, owner: "what if we remove the time to collision cap in human following"; "the lead pulled out from another road ... and started to speed up"). Closed-loop replay (simulated ego 11:40-12:05) and logged-data analysis only; not driven.
+
+- **Removing the HumanFollowing 2.0 s closing-TTC fallback (`MODEL_LEAD_TRAJECTORY_MAX_CLOSING_TTC` = 0): no change, frame for frame**
+  (peak -3.65, min gap 34.4 m). The radar TTC never went below 2.3 s, so the fallback never tripped; HumanFollowing was active throughout.
+- **What the radar saw.** Track 23 is born at 717.83 at 54.8 m (the previous lead was vision-only at about 70 m, 18 m/s). Its range rate
+  says the car's along-road speed was about 10-12 m/s for 1.3 s (718.0-719.3), y moving -0.9 to -0.2 m (finishing the turn in), then
+  about 19-20 m/s from 719.5. So the published vLead of about 10 was right for that 1.3 s; the car straightened up and sped up after.
+  This corrects item 208, which read the episode as a real fast closing the braking matched: the closing was real, but it was a car
+  pulling out that was about to speed up, not a braking lead.
+- **Two artefacts on the newborn track:**
+  1. **RAIL_FAST for 3 frames** (718.08-718.18, vRel -20, vLead 2.0). The brake steps -1.5 -> -3.58 inside those 0.15 s. Holding those frames
+     at 10 m/s in replay: the same peak (-3.56) and about the same time below -2.5 (1.6 s versus 1.7 s), but the onset takes about 0.45 s
+     instead of 0.15 s (sharpest -18.8 instead of -36.1 m/s^3), and the closest gap is 0.4 m larger.
+  2. **aLeadK -3.7 to -4.3 at birth.** The lead was speeding up, not braking. HumanFollowing ignores aLeadK, so the MPC is not affected, but
+     the D-078 onset gate (aK < -1.0) and other aLeadK gates read it. Disabling that gate alone changed nothing here (the rail frames
+     put TTC under 3 s at the same moment).
+- **Why the -3.5 hold is physics, given what the car knew.** A lead holding 10 m/s at 46 m from 22 m/s needs about -2.8 m/s^2 just to
+  stop closing with a 20 m gap left. The speed-up showed up in the radar only from 719.3. Avoiding the hold needs the planner to *expect*
+  a car pulling out to speed up, which is a design decision (owner direction needed), not a gate fix.
+
+## 211. D-079 pull-in lead acceleration prior: built, default OFF, replay says do not enable (2026-10-04, owner: "Yeah let's try 3"). Static tests and replay only; not driven.
+
+**What it is.** `long_mpc.py` `PULL_IN_PRIOR` (module flag, default False; no Galaxy toggle). For the first 1.5 s a radar track holds a lead slot (age per slot, keyed on `radarTrackId`), the MPC plans that lead speeding up at +1.5 m/s², at most +3 m/s, fading out over 1.0-1.5 s. Gates: radar lead, vLead >= 5, closing >= 3 m/s, TTC > 3 s, d >= max(10 m, 1 s x vEgo), and the model lead is not braking harder than -1.0 m/s² at prob > 0.5. Static: `selfdrive/controls/tests/test_pull_in_prior.py` (3 pass); the planner/lead/following suites (679) pass unchanged.
+
+**Bookmark 2d5 11:58, closed loop (`--sim-window 700,725`, variant b0.075):**
+
+| prior | plan peak | min gap | sharpest onset | frames < -2.5 |
+|---|---|---|---|---|
+| off | -3.65 | 34.4 m | -36.1 m/s³ | 34 |
+| on, 1.5 m/s² / +3 m/s (shipped constants) | -3.62 | 34.3 m | -33.0 | 31 |
+| on, 3 / +6 (sweep only) | -3.59 | 34.2 m | -29.8 | 27 |
+| on, 5 / +10 (sweep only, about what the car really did) | -3.54 | 34.1 m | -24.4 | 18 |
+
+The prior was active through the whole grab (the feared drop-out on the rail frames did not happen). It cannot move the peak: a lead appearing at 46-50 m that is 12 m/s slower needs about -3.5 even if it is assumed to gain 10 m/s within 2 s, because the gap still closes to roughly the desired follow distance. It only shortens the hold (34 -> 18 frames at an assumption as strong as what the car really did).
+
+**7 routes, open loop (2d5, 2d6, 2d8, 2d9, 236, 26b, 268):** 67 firings. 21 were followed by the lead speeding up >= 2 m/s within 2.5 s; 46 were not (the gates also catch ordinary new leads: cut-ins, revealed cars, lane changes). Open-loop gap cost of the wrong firings (extra closing from less braking, +2 s of residual): mostly < 2 m; worst 5.4 m (268 9:57.9, lead 26 m ahead, plan -1.83 -> -1.41), 3.8 m (268 7:24.6), 3.4 m (236 19:09.0). Outside firing windows the outputs match to <= 0.11 m/s² except one re-engagement on 236 (17:12.6, -0.49 more braking with the prior on, prior inactive there; unattributed state carry-over). 2d6 17:43 shows -4.22 -> -1.5, but that is after the driver braked and disengaged, so not a comparison.
+
+**Reading.** Wrong two times in three, and it cannot touch the bookmark's peak. Not recommended for enabling at any strength tested. The 11:58 brake is set by the geometry at first sight plus the 3 RAIL_FAST frames (STATUS 210); the lever there remains the onset rate (D-078) or the birth rail itself, not the lead's assumed intent. Code kept, default OFF, for reference (D-079).
+
+**Reverted (2026-10-04, owner: "go ahead and revert that then, keep the smooth brake onset for now").** The D-079 code (`PULL_IN_*` in `long_mpc.py`, `test_pull_in_prior.py`) is removed; it lives only in commit `dc63a03d9` for reference. D-078 `BrakeOnsetLimit` (Smooth Brake Onset, default OFF, Galaxy toggle under Advanced Longitudinal Tuning) is unchanged and stays.
+
+## 212. First drives with all new toggles on (2e1, 2e2) vs toggles off (2df): the toggles barely act; the harsh moments come from a bypass they never see (2026-10-04, owner: "I'm not sure it feels better per say"). Limited road evidence + replay; no code changed.
+
+Device build `3b5cacf04` (`ns-bosch-radar-testing-pr10-smooth`). Toggle state from initData params:
+
+| route | length | BirthRailRamps | OverBrakeComp | RangeKF | BrakeOnsetLimit |
+|---|---|---|---|---|---|
+| `000002df--4d01718597` | 49.7 min (26.4 engaged) | 0 | 0 | 0 | 0 |
+| `000002e1--32175f8baf` | 10.8 min (4.7 engaged) | 1 | 1 | 1 | 1 |
+| `000002e2--b2f232cf40` | 7.3 min, bookmark 283.2 s | 1 | 1 | 1 | 1 |
+
+**OverBrakeComp is a dead toggle on the device build.** `carcontroller.py` reads `BoschAOverBrakeComp` but applies `bosch_overbrake_compensation` unconditionally for `HONDA_CIVIC_BOSCH` (baked in by `923c67cdf`, owner 2026-10-04). It was active on all three drives, so toggling it does nothing.
+
+**Logged feel, 2e1 vs 2df (limited road evidence, 4.7 vs 26.4 engaged min, too small to call):** brake episodes 8.6 vs 7.2 per 10 min; cmd jerk < -4 for 0.086 vs 0.074 s/min; cmd jerk > +2 (release) for 0.29 vs 0.18 s/min; aEgo jerk < -3 for 0.20 vs 0.26 s/min; peak -3.5 on both.
+
+**Replay attribution (alpha_closed_loop_replay, per-toggle):**
+- 2e1: BirthRailRamps 0 frames changed; BrakeOnsetLimit 0 frames changed (also with the module flag forced and with the lead-decel exemption removed); RangeKF negligible (out < -1.5: 144 -> 143).
+- 2df: all-on vs all-off differ on 198 of 60154 frames. RangeKF accounts for 162, always as more braking: 1434.3 s -0.65 -> -1.00, 1435.0 s -1.00 -> -1.38, 1438.6 s -2.71 -> -2.91 (a real lead slowdown), 1064.9 s -1.68 -> -1.93. BrakeOnsetLimit softens 839.6 s (-1.21 -> -0.96) and 380.6 s (-0.44 -> -0.28). BirthRailRamps 0 frames. Differences at 2590-2598 s are a disengaged stretch (logged cmd 0), not a comparison.
+- 2e2: toggles off reproduces the bookmark brake to within 0.2 at every step (peak -2.14 both).
+
+**Why Smooth Brake Onset never touched the harsh moments.** In the 2e1 jab (341.8 s, -0.12 -> -1.0 in one step, -2.28 peak) and the 2e2 bookmark (280.6 s, -0.1 -> -1.0), a gate print at the limiter call shows `panic_bypass=True` with every other exemption False, so `brake_onset_limited_target` is not called at all. `brake_onset_jerk` would also have returned None (lead aLeadK < `BRAKE_ONSET_LEAD_DECEL`). The on-path bound was not active. The -1.0 first step followed by a 1.5 m/s³ ramp is the ordinary planner path under the bypass. `panic_bypass` = inside the close window (desired follow distance, which grows with closing speed, + 0.35 v) AND closing fast AND model uncertainty rising (`desire_entropy + disengage_risk`), so at 55 mph with an 11 m/s closing speed it fires at 110 m.
+
+**2e1 341.8 s jab:** raw track #46 goes unmeasured for 1.1 s (vRel held, d 50 -> 56), is re-measured at 57 m with +2.9 then -5.4 m/s; range 47 -> 57.8 -> 47.5 in 3 s, lateral 0.3 -> 1.4. That is not a physical lead. aLeadK fed to the planner reaches -3.9 to -13.7. Radar track artifact, not caused by any toggle. 367 s (-1.30) is the same track. 407 s is a genuine lead slowdown (to ~2.6 m/s) with a smooth -0.4 -> -3.5 ramp over 3.3 s.
+
+**2e2 bookmark (283.2 s):** real slow car in lane (track #18, y 0.4, born ~280 s at 125 m); ego 24.7 m/s. Range shrinks 125 -> 62 m over 8 s, about -10 to -12 m/s, while #18's Doppler vRel reads only -6. The published lead vRel (~-11) agrees with the range rate, so the lead was really ~13 m/s. Track #21 (y -2.6 to -3.6, closing ~-12) is an adjacent-lane car that never merged; the lead's range follows #18 throughout. As the lead estimate swung from -2.5 to -11 m/s within a second of birth, aLeadK read -3.0 / -2.5: the planner treated a steady slow car as one braking hard. Result: -1.0 step (bypass), -1.9, release to -0.84, re-brake to a -2.1 hold, speed matched at 61 m when the desired gap at 13.6 m/s is ~26 m, then a crawl to 42 m. Needed average decel from first sight was ~0.75 m/s². Over-early and double-pumped, not a missed threat.
+
+**Reading.** On this evidence the new toggles cannot make the drive feel different: two do nothing (BirthRailRamps did not fire on these drives; OverBrakeComp is always on), Smooth Brake Onset is skipped by `panic_bypass` and the aLeadK exemption exactly when an onset is harsh, and RangeKF adds 0.2-0.4 of braking in real slowdowns. Candidate levers (not implemented, owner to choose): (1) let Smooth Brake Onset apply under `panic_bypass` when TTC is long (e.g. > 6 s) and the gap is far above the desired follow distance; (2) cap or slew a newborn lead's aLeadK by track age so a converging velocity estimate is not read as lead braking (bound it, do not drop the point: D-041/D-042); (3) consider leaving RangeKF off until it has its own evidence. Route data is cited by ID only.
