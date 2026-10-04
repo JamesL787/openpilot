@@ -446,6 +446,18 @@ def birth_rail_ramp_fraction(age: float) -> float:
 #     beyond the more-closing range fit, and stays under MAX_CORRECTION and the vLead >= 0 bound.
 # Set RANGE_VREL_RAIL_FAST to False to restore the pre-130 rail behaviour exactly.
 RANGE_VREL_RAIL_FAST = True
+# --- Off-rail arming (2026-10-04, STATUS 214, amends D-053). OFF (owner, 2026-10-04).
+# REPLAY evidence only, open loop on logged ego; not driven. Off the U11 rail, U11 is a reading,
+# not a bound, and the assist's disagreement there is mostly a range walk on a far lead. A/B with
+# the whole assist off (ONSET=0, RKF=1): 2e2 4:44 (lead 107 m, U11 -6.6, range fit -9..-20)
+# 5 re-brake pulses, jerk -15.8 -> 0 pulses, jerk -2.8, peak -2.14 -> -2.01, onset 2.2 s later;
+# 2e1 6:07 -1.51 -> -0.13; 236 18:56 jerk -20.8 -> -0.1; 236 29:07 -26.3 -> -0.7; 2d5 13:05.
+# On the rail (2d5 9:46, 11:58, 236 9:22, 12:54) peaks matched within 0.08 and the assist braked
+# 0-0.8 s earlier, which is the D-041 case it exists for, so the rail path is kept.
+# False: the assist ARMS only while U11 is on the rail. A correction armed there keeps its
+# hysteresis and decays to zero after U11 leaves the rail, so release is not a step.
+# True restores the D-053 off-rail arming (and with it the vision-assist and camera x-rate paths).
+RANGE_VREL_ASSIST_OFF_RAIL = False
 RANGE_VREL_RAIL_LONG_MIN_SAMPLES = 8
 RANGE_VREL_RAIL_LONG_MIN_SPAN_S = 0.45
 RANGE_VREL_RAIL_ARM_UPDATES = 3
@@ -1311,6 +1323,10 @@ class Track:
 
     # Quantized U11 sits exactly on the rail value, so half a step of tolerance is exact.
     on_rail = self.vRel <= BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_U11_SCALE_MPS / 2
+    if not (on_rail or RANGE_VREL_ASSIST_OFF_RAIL or self.range_assist_active):
+      # Off-rail arming disabled (STATUS 214): only a rail-armed correction may continue off the rail.
+      self._clear_range_assist()
+      return
     rail_fast = RANGE_VREL_RAIL_FAST and on_rail
     # Clamped: a rail minimum above the deque length could never be reached.
     self._range_long_min_samples = (min(RANGE_VREL_RAIL_LONG_MIN_SAMPLES, RANGE_VREL_LONG_SAMPLES)

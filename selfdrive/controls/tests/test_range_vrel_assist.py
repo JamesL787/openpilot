@@ -51,6 +51,9 @@ def _u11_scale_1_64(monkeypatch):
   monkeypatch.setattr(radard, "BOSCH_A_U11_SCALE_MPS", Q)
   monkeypatch.setattr(radard, "BOSCH_A_U11_LOW_RAIL_MPS", RAIL)
   monkeypatch.setattr(radard, "ONPATH_ADOPT_RAIL_VREL_MPS", RAIL + radard.ONPATH_ADOPT_RAIL_VREL_MARGIN_MPS)
+  # STATUS 214: off-rail arming is OFF on the car. Most tests here pin the D-053 off-rail mechanics, which stay in
+  # the code for rollback, so they run with it on; TestOffRailArmingOff covers the shipped default.
+  monkeypatch.setattr(radard, "RANGE_VREL_ASSIST_OFF_RAIL", True)
 
 
 def new_track(track_id: int = 1, v_lead: float = V_EGO) -> radard.Track:
@@ -1654,3 +1657,47 @@ def test_far_rail_bound_floor_follows_camera_speed_less_margin():
   # The floor is the camera closing plus FAR_RAIL_MARGIN_MPS; it only ever raises a railed vRel, never lowers it.
   floor = radard.far_rail_vrel_floor(_far_lead(), _far_hist(v=30.0), 21.5)
   assert floor == pytest.approx(30.0 - 21.5 - radard.FAR_RAIL_MARGIN_MPS)
+
+
+# ---------------------------------------------------------------------------------------------
+# STATUS 214: off-rail arming off (replay evidence only; 2e2 4:44 re-brake pulses)
+# ---------------------------------------------------------------------------------------------
+
+class TestOffRailArmingOff:
+  def test_shipped_default_is_off(self):
+    # The autouse fixture patches the module, so read the shipped value from the source.
+    import inspect
+    assert "\nRANGE_VREL_ASSIST_OFF_RAIL = False\n" in inspect.getsource(radard)
+
+  def test_off_rail_disagreement_does_not_arm(self, monkeypatch):
+    # 2e2 4:44 shape: U11 -6.6 off the rail, range closing ~4 m/s faster. Control: D-053 arms on it.
+    kwargs = dict(d0=107.0, range_rate=-10.6, v_rel=-6.6)
+    on = new_track()
+    settle(on, **kwargs)
+    assert on.range_assist_correction > 0.0, "precondition: the D-053 off-rail rule must arm on this"
+    monkeypatch.setattr(radard, "RANGE_VREL_ASSIST_OFF_RAIL", False)
+    off = new_track()
+    assert peak(off, SETTLE + 20, **kwargs) == 0.0
+    assert off.get_RadarState()["vRel"] == pytest.approx(-6.6), "the U11 reading is still published (D-041/D-042)"
+
+  def test_rail_still_arms(self, monkeypatch):
+    monkeypatch.setattr(radard, "RANGE_VREL_ASSIST_OFF_RAIL", False)
+    out = rail_series(new_track(v_lead=30.0 + RAIL), 20, lambda i, t: 90.0 - 20.5 * t)
+    assert any(c > 0.0 for _, _, c in out), "D-041: on the rail the assist is the only closing evidence"
+
+  def test_rail_armed_correction_decays_after_leaving_the_rail(self, monkeypatch):
+    # A correction armed on the rail must not step to zero the sweep U11 lifts off it.
+    monkeypatch.setattr(radard, "RANGE_VREL_ASSIST_OFF_RAIL", False)
+    track = new_track(v_lead=30.0 + RAIL)
+    d_of = lambda t: 90.0 - 20.5 * t   # noqa: E731
+    out = rail_series(track, 20, lambda i, t: d_of(t))
+    assert out[-1][2] > 0.0
+    v_rel = RAIL + 1.0
+    t = 20 * DT
+    track.update(d_of(t), 0.0, v_rel, 30.0 + v_rel, True, True, t_now=t, range_assist=True)
+    assert track.range_assist_correction > 0.0
+    # Control: a fresh track seeing the same off-rail sweep never arms.
+    fresh = new_track(v_lead=30.0 + v_rel)
+    for i in range(21):
+      fresh.update(d_of(i * DT), 0.0, v_rel, 30.0 + v_rel, True, True, t_now=i * DT, range_assist=True)
+    assert fresh.range_assist_correction == 0.0

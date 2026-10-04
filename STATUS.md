@@ -1,6 +1,6 @@
 # Status
 
-**As of: 2026-10-02**
+**As of: 2026-10-04**
 
 Update the date above whenever this file changes. If it is stale, trust `git log` over this
 file.
@@ -10490,9 +10490,3 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
 - **Stock ACC context:** stock brakes on the radar's own vRel, with no range correction (`docs/honda_bosch_acc_brake_internals.md` §12.2).
 - **Tests:** `selfdrive/controls/tests/test_range_vrel_assist.py`, 161 pass (static). Four are new (`TestOffRailArmingOff`); the existing D-053 tests run with the switch on.
 
-- **Stock ACC on 299** (`11c8fa231c0499ed|00000299--cfcac519b7`, ICBM off; `stock_acc_reference.py build`, scratchpad cache). There are 8 moving brakes where vRel at onset was below -3.5. Here "jerk" is the per-50 ms step of the stock ACCEL_COMMAND.
-  - Command peaks were -1.0 to -2.7. Delivered aEgo bottomed at -1.2 to -3.1.
-  - Minimum jerk was only -1.4 to -3.4 m/s³, with at most 1 re-brake pulse per event. Firm braking was held for up to 10.9 s below -1.
-  - 20:34 is the railed case. The lead changed at 1229.6 s to a car 55 m ahead closing at -12.5 (U11 on the rail). Stock eased to -0.30 for about 1.5 s, then ramped -0.3 → -2.2 over about 2.5 s (worst step -2.5 m/s³). It held -2.2, then tapered to the stop with no pulse.
-  - Stock is "firm" because it holds the brake long after a gradual onset, not because the onset is sharp.
-  - Our rail cases still step at -36 to -40 m/s³ (-17 to -19 with the assist off). That is the planner's TTC-driven onset, not the assist. `BrakeOnsetLimit` (D-078/D-081) stands down below TTC 4 s, so it never shapes those onsets. That is the next lever, not done here.
