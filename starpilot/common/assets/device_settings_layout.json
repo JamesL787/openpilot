@@ -458,8 +458,8 @@
         "description": "Minimum vehicle-detection confidence (0.80-1.00, default 0.94). Higher values reduce false positives but may miss detections.",
         "data_type": "float",
         "ui_type": "numeric",
-        "min": 0.80,
-        "max": 1.00,
+        "min": 0.8,
+        "max": 1.0,
         "step": 0.01,
         "precision": 2,
         "parent_key": "VASMEnabled",
@@ -940,7 +940,7 @@
       {
         "key": "CustomAccelProfilePoint1Accel",
         "label": "Point 1 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 1.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 1.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -966,7 +966,7 @@
       {
         "key": "CustomAccelProfilePoint2Accel",
         "label": "Point 2 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 2.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 2.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1005,7 +1005,7 @@
       {
         "key": "CustomAccelProfilePoint3Accel",
         "label": "Point 3 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 3.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 3.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1056,7 +1056,7 @@
       {
         "key": "CustomAccelProfilePoint4Accel",
         "label": "Point 4 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 4.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 4.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1105,7 +1105,7 @@
       {
         "key": "CustomAccelProfilePoint5Accel",
         "label": "Point 5 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 5.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 5.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1152,7 +1152,7 @@
       {
         "key": "CustomAccelProfilePoint6Accel",
         "label": "Point 6 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 6.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 6.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1197,7 +1197,7 @@
       {
         "key": "CustomAccelProfilePoint7Accel",
         "label": "Point 7 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 7.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 7.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1240,7 +1240,7 @@
       {
         "key": "CustomAccelProfilePoint8Accel",
         "label": "Point 8 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 8.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 8.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1281,7 +1281,7 @@
       {
         "key": "CustomAccelProfilePoint9Accel",
         "label": "Point 9 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 9.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 9.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1320,7 +1320,7 @@
       {
         "key": "CustomAccelProfilePoint10Accel",
         "label": "Point 10 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 10.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 10.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1357,7 +1357,7 @@
       {
         "key": "CustomAccelProfilePoint11Accel",
         "label": "Point 11 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 11.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 11.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1392,7 +1392,7 @@
       {
         "key": "CustomAccelProfilePoint12Accel",
         "label": "Point 12 Max Accel",
-        "description": "Maximum acceleration in m/s² at curve point 12.",
+        "description": "Maximum acceleration in m/s\u00b2 at curve point 12.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 0.0,
@@ -1679,7 +1679,7 @@
         "data_type": "float",
         "ui_type": "readout",
         "precision": 2,
-        "unit": " m/s²",
+        "unit": " m/s\u00b2",
         "parent_key": "CurveSpeedController",
         "settings_tier": "simple"
       },
@@ -1698,11 +1698,11 @@
       {
         "key": "ResetCurveData",
         "label": "Reset Curve Data",
-        "description": "Clear the Curve Speed Controller's collected driving data and set the manual lateral-acceleration target back to 2.0 m/s².",
+        "description": "Clear the Curve Speed Controller's collected driving data and set the manual lateral-acceleration target back to 2.0 m/s\u00b2.",
         "ui_type": "action",
         "action_label": "Reset",
         "action_endpoint": "/api/curve_speed_controller/reset",
-        "confirm_message": "Clear collected curve data and reset the manual target to 2.0 m/s²?",
+        "confirm_message": "Clear collected curve data and reset the manual target to 2.0 m/s\u00b2?",
         "parent_key": "CurveSpeedController",
         "settings_tier": "simple"
       },
@@ -1720,7 +1720,7 @@
       {
         "key": "CurveSpeedLateralAccel",
         "label": "Curve Lateral Accel",
-        "description": "Lateral acceleration allowed through curves, in m/s². Higher values corner faster; lower values slow down earlier and harder.",
+        "description": "Lateral acceleration allowed through curves, in m/s\u00b2. Higher values corner faster; lower values slow down earlier and harder.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 1.5,
@@ -2313,7 +2313,7 @@
       {
         "key": "CustomCruise",
         "label": "Cruise Interval",
-        "description": "How much the set speed increases or decreases for each + or – cruise control button press.",
+        "description": "How much the set speed increases or decreases for each + or \u2013 cruise control button press.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 1.0,
@@ -2332,7 +2332,7 @@
       {
         "key": "CustomCruiseLong",
         "label": "Cruise Interval (Hold)",
-        "description": "How much the set speed increases or decreases while holding the + or – cruise control buttons.",
+        "description": "How much the set speed increases or decreases while holding the + or \u2013 cruise control buttons.",
         "data_type": "float",
         "ui_type": "numeric",
         "min": 1.0,
@@ -2841,7 +2841,7 @@
       },
       {
         "key": "Offset1",
-        "label": "Speed Offset (0–24 mph)",
+        "label": "Speed Offset (0\u201324 mph)",
         "description": "How much to offset posted speed-limits between 0 and 24 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2858,7 +2858,7 @@
       },
       {
         "key": "Offset2",
-        "label": "Speed Offset (25–34 mph)",
+        "label": "Speed Offset (25\u201334 mph)",
         "description": "How much to offset posted speed-limits between 25 and 34 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2875,7 +2875,7 @@
       },
       {
         "key": "Offset3",
-        "label": "Speed Offset (35–44 mph)",
+        "label": "Speed Offset (35\u201344 mph)",
         "description": "How much to offset posted speed-limits between 35 and 44 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2892,7 +2892,7 @@
       },
       {
         "key": "Offset4",
-        "label": "Speed Offset (45–54 mph)",
+        "label": "Speed Offset (45\u201354 mph)",
         "description": "How much to offset posted speed-limits between 45 and 54 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2909,7 +2909,7 @@
       },
       {
         "key": "Offset5",
-        "label": "Speed Offset (55–64 mph)",
+        "label": "Speed Offset (55\u201364 mph)",
         "description": "How much to offset posted speed-limits between 55 and 64 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2926,7 +2926,7 @@
       },
       {
         "key": "Offset6",
-        "label": "Speed Offset (65–74 mph)",
+        "label": "Speed Offset (65\u201374 mph)",
         "description": "How much to offset posted speed-limits between 65 and 74 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -2943,7 +2943,7 @@
       },
       {
         "key": "Offset7",
-        "label": "Speed Offset (75–99 mph)",
+        "label": "Speed Offset (75\u201399 mph)",
         "description": "How much to offset posted speed-limits between 75 and 99 mph.",
         "data_type": "float",
         "ui_type": "numeric",
@@ -3093,7 +3093,7 @@
       {
         "key": "BoschARadar",
         "label": "Honda Bosch-A Radar",
-        "description": "RX-only — decodes the Bosch radar's lead tracks to sharpen openpilot's own lead detection (fused with vision). It never transmits on the radar bus, so switching this on or off has no effect on factory AEB/CMBS by itself. AEB/CMBS is governed separately, by whether openpilot has longitudinal control (Alpha Long). With Alpha Long, factory AEB/CMBS is already disabled regardless of this toggle — openpilot can still brake just as hard as AEB would in an emergency, but the warning won't reach the Honda dash. With Stock Long, factory AEB/CMBS stays fully intact either way. Restart required to take effect.",
+        "description": "RX-only \u2014 decodes the Bosch radar's lead tracks to sharpen openpilot's own lead detection (fused with vision). It never transmits on the radar bus, so switching this on or off has no effect on factory AEB/CMBS by itself. AEB/CMBS is governed separately, by whether openpilot has longitudinal control (Alpha Long). With Alpha Long, factory AEB/CMBS is already disabled regardless of this toggle \u2014 openpilot can still brake just as hard as AEB would in an emergency, but the warning won't reach the Honda dash. With Stock Long, factory AEB/CMBS stays fully intact either way. Restart required to take effect.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",
@@ -3112,12 +3112,37 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "BoschALeadTauRadarDt",
-        "label": "Radar Lead Accel Timing",
-        "description": "TEST, default off. Bosch-A radar only. The lead-acceleration decay filter steps once per radar sweep (about 14 Hz) instead of once per 20 Hz model cycle, so the longitudinal planner assumes a lead's acceleration fades about 0.2 s sooner. Which radar points publish does not change. Never replayed or driven. Restart required to take effect.",
-        "picker_description": "Lead acceleration decay runs at the radar sweep rate. Default off. Never driven.",
+        "key": "BoschARangeKF",
+        "label": "Range-Driven Lead Correction",
+        "description": "Range-KF correction is capped by camera closing agreement. Restart required.",
+        "picker_description": "Range-KF correction is capped by camera closing agreement.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "category": "longitudinal_tuning",
+        "parent_key": "AdvancedLongitudinalTune",
+        "requires_offroad": true,
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "BoschAOverBrakeComp",
+        "label": "Mid-Band Over-Brake Comp",
+        "description": "Mid-band over-brake compensation for Civic Bosch. Restart required.",
+        "picker_description": "Mid-band over-brake compensation for Civic Bosch.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "category": "longitudinal_tuning",
+        "parent_key": "AdvancedLongitudinalTune",
+        "requires_offroad": true,
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "BoschABirthRailRamps",
+        "label": "Birth-Rail Ramps",
+        "description": "D-077 birth-rail ramps. Restart required.",
+        "picker_description": "D-077 birth-rail ramps.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "category": "longitudinal_tuning",
         "parent_key": "AdvancedLongitudinalTune",
         "requires_offroad": true,
         "settings_tier": "advanced"
@@ -3125,7 +3150,7 @@
       {
         "key": "NrdrHondaEcuMatchedLong",
         "label": "Nidec ECU-Matched Long",
-        "description": "Honda Nidec only, and not with a gas pedal interceptor — has no effect on Bosch cars or interceptor-equipped cars. Shape Honda gas and brake commands closer to the stock Nidec ECU.",
+        "description": "Honda Nidec only, and not with a gas pedal interceptor \u2014 has no effect on Bosch cars or interceptor-equipped cars. Shape Honda gas and brake commands closer to the stock Nidec ECU.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",
@@ -3890,7 +3915,7 @@
       {
         "key": "WarningImmediateVolume",
         "label": "Warning Immediate Volume",
-        "description": "Set the volume for the loudest warnings that require urgent attention.\n\nExamples include: \"DISENGAGE IMMEDIATELY — Driver Distracted\", \"DISENGAGE IMMEDIATELY — Driver Unresponsive\".",
+        "description": "Set the volume for the loudest warnings that require urgent attention.\n\nExamples include: \"DISENGAGE IMMEDIATELY \u2014 Driver Distracted\", \"DISENGAGE IMMEDIATELY \u2014 Driver Unresponsive\".",
         "data_type": "int",
         "ui_type": "numeric",
         "min": 25.0,

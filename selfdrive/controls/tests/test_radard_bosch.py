@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from cereal import car
@@ -728,21 +729,10 @@ def test_bosch_a_lead_accel_tau_timebase_flag_is_bosch_a_only(monkeypatch):
   assert radard.RadarD(radar_ts=0.1).a_lead_tau_dt == radard.DT_MDL
 
 
-@pytest.mark.parametrize("value,raises,expected", [(True, False, True), (False, False, False), (None, True, False)])
-def test_bosch_a_lead_accel_tau_timebase_toggle(monkeypatch, value, raises, expected):
-  # BoschALeadTauRadarDt: read once at RadarD construction, fails closed (off) if the key is unknown.
-  monkeypatch.setattr(radard, "BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT", False)
-
-  class FakeParams:
-    def get_bool(self, key):
-      assert key == "BoschALeadTauRadarDt"
-      if raises:
-        raise KeyError(key)
-      return value
-
-  monkeypatch.setattr(radard, "Params", FakeParams)
-  bosch_a = radard.RadarD(honda_bosch_a_radar=True)
-  assert bosch_a.a_lead_tau_dt == (pytest.approx(radard.HONDA_BOSCH_A_RADAR_TS) if expected else radard.DT_MDL)
+def test_bosch_a_lead_accel_tau_timebase_on_by_default():
+  # baked in 2026-10-04 (STATUS 204): Bosch-A steps aLeadTau on the radar period, other radars keep DT_MDL.
+  assert radard.BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT
+  assert radard.RadarD(honda_bosch_a_radar=True).a_lead_tau_dt == pytest.approx(radard.HONDA_BOSCH_A_RADAR_TS)
   assert radard.RadarD(radar_ts=0.1).a_lead_tau_dt == radard.DT_MDL
 
 
@@ -779,3 +769,228 @@ def test_bosch_a_lead_accel_tau_timebase_does_not_change_published_points(monkey
   # same points, same KF state; only aLeadTau differs
   assert published[0] == published[1]
   assert [p[0] for p in published[0]] == [1]
+
+
+# P1 range-first lead filter (report §12.3; STATUS 204)
+def _run_range_kf(a_lead_after, t_brake=3.0, t_end=5.0, noise=0.0, walk=None, seed=0):
+  rng = np.random.default_rng(seed)
+  kf = radard.RangeLeadKF()
+  h = 1 / 14.35
+  t, d, vl, ve = 0.0, 50.0, 25.0, 25.0
+  while t < t_end:
+    vl = max(vl + (a_lead_after if t >= t_brake else 0.0) * h, 0.0)
+    d += (vl - ve) * h
+    t += h
+    z = d + rng.normal(0.0, noise) + (walk(t) if walk else 0.0)
+    kf.update(t, z, ve, 25.0)
+  return kf
+
+
+def test_range_kf_tracks_a_braking_lead():
+  kf = _run_range_kf(-3.0, noise=0.07)
+  assert kf.healthy
+  assert kf.a_lead < -2.0
+  assert kf.v_lead < 25.0 - 3.0
+
+
+def test_range_kf_gross_outlier_is_not_absorbed():
+  kf = _run_range_kf(0.0, t_end=3.0, walk=lambda t: 5.0 if abs(t - 2.5) < 0.04 else 0.0)
+  assert abs(kf.a_lead) < 0.5
+
+
+def test_range_kf_restarts_on_a_range_step():
+  # a persistent 3 m jump (re-association) restarts the filter, which then publishes nothing for a while
+  kf = _run_range_kf(0.0, t_end=3.0, walk=lambda t: 3.0 if t > 2.9 else 0.0)
+  assert not kf.healthy
+
+
+def _kf_lead(a_lead=-3.0, d_rel=30.0, y_rel=0.0, age=2.0):
+  track = SimpleNamespace(range_kf=_run_range_kf(a_lead, noise=0.0), t_first=0.0, t_last=age)
+  lead = dict(status=True, radar=True, dRel=d_rel, yRel=y_rel, vRel=0.0, vLead=25.0, vLeadK=25.0, aLeadK=0.0)
+  return lead, track
+
+
+def _vision(a, prob=0.9, v=19.0):
+  # default v: the _kf_lead KF's own speed (25 m/s, -3 m/s^2 for 2 s), i.e. the camera agrees on size
+  return SimpleNamespace(prob=prob, a=[a], v=[v])
+
+
+def _adjust(lead, track, v_ego, vis, n=20, t0=0.0):
+  out = lead
+  for k in range(n):
+    out = radard.range_lead_kf_adjust(lead, track, v_ego, vis, t0 + k * radard.DT_MDL)
+  return out
+
+
+def test_range_kf_adjust_adds_braking_only_when_camera_agrees():
+  lead, track = _kf_lead()
+  out = _adjust(lead, track, 25.0, _vision(-2.5))
+  assert out['aLeadK'] == pytest.approx(-radard.RANGE_LEAD_KF_MAX_ACCEL_ADD)
+  assert out['vLead'] < lead['vLead'] and out['vRel'] < lead['vRel'] and out['vLeadK'] < lead['vLeadK']
+  assert out['dRel'] == lead['dRel']
+  # camera not braking, unsure, or absent: native lead untouched
+  for vis in (_vision(0.0), _vision(-1.0, prob=0.3), None):
+    lead, track = _kf_lead()
+    assert _adjust(lead, track, 25.0, vis) == lead
+
+
+@pytest.mark.parametrize("kw,v_ego", [
+  (dict(d_rel=5.0), 25.0), (dict(y_rel=2.0), 25.0), (dict(age=0.5), 25.0), ({}, 3.0),
+])
+def test_range_kf_adjust_gates(kw, v_ego):
+  lead, track = _kf_lead(**kw)
+  assert _adjust(lead, track, v_ego, _vision(-1.0)) == lead
+
+
+def test_range_kf_adjust_bounded_by_camera_size():
+  # replay 0000026b 11:40: camera lead closing ~2 m/s and braking -0.4, range KF far harder
+  lead, track = _kf_lead()
+  out = _adjust(lead, track, 25.0, _vision(-0.4, v=24.0), n=40)
+  v_floor = 24.0 - radard.RANGE_LEAD_KF_VISION_V_MARGIN
+  assert out['vLead'] >= v_floor - radard.RANGE_LEAD_KF_VREL_DEADBAND - 1e-6
+  assert lead['vLead'] - out['vLead'] < 25.0 - track.range_kf.v_lead
+  # accel floor -1.4 is not 0.5 below native 0: decel added up to that floor only
+  assert out['aLeadK'] >= -0.4 - radard.RANGE_LEAD_KF_VISION_A_MARGIN - 1e-6
+  # the camera agrees on size: the full correction
+  lead, track = _kf_lead()
+  out = _adjust(lead, track, 25.0, _vision(-2.5, v=19.0), n=40)
+  assert out['vLead'] == pytest.approx(track.range_kf.v_lead + radard.RANGE_LEAD_KF_VREL_DEADBAND, abs=1e-6)
+
+
+def test_range_kf_adjust_skips_when_camera_sees_less_closing_than_radar():
+  # replay 0000026b 11:40: native radar closing 6.5 m/s, camera 2.1 m/s and braking -0.34
+  lead, track = _kf_lead()
+  lead.update(vRel=-6.5, vLead=21.3 - 6.5, vLeadK=21.3 - 6.5)
+  assert _adjust(lead, track, 21.3, _vision(-0.34, v=21.3 - 2.1), n=40) == lead
+  # camera closing at least the radar's (268 4:52: 6.1 vs 4.5): corrected
+  lead, track = _kf_lead()
+  lead.update(vRel=-4.5, vLead=25.0 - 4.5, vLeadK=25.0 - 4.5)
+  assert _adjust(lead, track, 25.0, _vision(-0.34, v=25.0 - 6.1), n=40)['vLead'] < lead['vLead']
+
+
+def test_range_kf_adjust_never_past_camera():
+  # replay 2d6 21:44: native radar closing 1.1, camera 0.2 and braking -0.66; KF far harder. Nothing past the camera.
+  lead, track = _kf_lead()
+  lead.update(vRel=-1.1, vLead=15.4 - 1.1, vLeadK=15.4 - 1.1, aLeadK=-0.55)
+  out = _adjust(lead, track, 15.4, _vision(-0.66, v=15.4 - 0.2), n=40)
+  assert out['vLead'] >= lead['vLead'] - 1e-6
+  assert out['aLeadK'] >= -0.66 - 1e-6
+
+
+def test_range_kf_adjust_skips_lead_drifting_out_of_lane():
+  lead, track = _kf_lead()
+  prev = 0.0
+  for k in range(30):
+    drifting = dict(lead, yRel=0.2 + 1.0 * k * radard.DT_MDL)  # 1 m/s outward, past 1.5 m (geometry gate) at k=26
+    out = radard.range_lead_kf_adjust(drifting, track, 25.0, _vision(-1.0), k * radard.DT_MDL)
+    cur = drifting['aLeadK'] - out['aLeadK']
+    if drifting['yRel'] > radard.RANGE_LEAD_KF_DRIFT_MIN_Y_M + 0.1:
+      assert cur <= prev  # nothing new once drifting; what built up before bleeds off
+    prev = cur
+  assert out == drifting
+  # same lead held in lane: corrected
+  lead, track = _kf_lead()
+  assert _adjust(dict(lead, yRel=0.8), track, 25.0, _vision(-1.0))['aLeadK'] < lead['aLeadK']
+
+
+def test_range_kf_adjust_never_removes_braking():
+  # range sees the lead accelerating while U11 says braking: nothing is relaxed
+  lead, track = _kf_lead(a_lead=+2.0)
+  lead.update(aLeadK=-2.0, vLead=10.0, vLeadK=10.0, vRel=-15.0)
+  out = _adjust(lead, track, 25.0, _vision(-1.0))
+  assert out['aLeadK'] == -2.0 and out['vLead'] == 10.0 and out['vRel'] == -15.0
+
+
+def test_range_kf_adjust_is_slew_limited():
+  # replay 00000268: gates chatter; one passing frame must not publish the full correction
+  lead, track = _kf_lead()
+  dt = radard.DT_MDL
+  out = _adjust(lead, track, 25.0, _vision(-1.0), n=1)
+  assert lead['aLeadK'] - out['aLeadK'] <= radard.RANGE_LEAD_KF_ADJ_A_RISE * dt + 1e-9
+  assert lead['vRel'] - out['vRel'] <= radard.RANGE_LEAD_KF_ADJ_V_RISE * dt + 1e-9
+  # built up, then the camera stops agreeing: the correction bleeds off at the fall rate, not at once
+  full = _adjust(lead, track, 25.0, _vision(-1.0), t0=dt)
+  prev = lead['aLeadK'] - full['aLeadK']
+  t = 21 * dt
+  for _ in range(40):
+    out = radard.range_lead_kf_adjust(lead, track, 25.0, _vision(0.0), t)
+    cur = lead['aLeadK'] - out['aLeadK']
+    fall = max(radard.RANGE_LEAD_KF_ADJ_A_FALL, prev / radard.RANGE_LEAD_KF_ADJ_FALL_TAU_S) * dt
+    assert 0.0 <= cur <= prev and prev - cur <= fall + 1e-9
+    prev, t = cur, t + dt
+  # the 8 m/s closing cap is gone within ~2.4 s, the 1.5 m/s^2 decel within ~1 s
+  assert out['aLeadK'] == lead['aLeadK']
+  for _ in range(10):
+    out = radard.range_lead_kf_adjust(lead, track, 25.0, _vision(0.0), t)
+    t += dt
+  assert out == lead
+
+
+def test_range_kf_adjust_drops_stale_correction():
+  lead, track = _kf_lead()
+  _adjust(lead, track, 25.0, _vision(-1.0))
+  # not leadOne for a while, then back with the camera not braking: nothing carried over
+  assert radard.range_lead_kf_adjust(lead, track, 25.0, _vision(0.0), 10.0) == lead
+
+
+# D-077 birth-rail ramp (both switches OFF by default; replay comparison only, not driven).
+def _born_track(u11, closing, v_ego=22.0, seconds=3.0, d0=60.0, u11_first=None):
+  """Feed a fresh track at 15 Hz; U11 `u11` (or `u11_first` for the first 0.6 s), range closing at `closing` m/s.
+  Returns [(age, published vRel)]."""
+  track = radard.Track(1, 0.0, radard.KalmanParams(radard.HONDA_BOSCH_A_RADAR_TS))
+  out = []
+  dt = 1.0 / 15.0
+  for i in range(int(seconds / dt)):
+    t = 100.0 + i * dt
+    v = u11_first if (u11_first is not None and i * dt < 0.6) else u11
+    track.update(d0 - closing * i * dt, 0.0, v, v + v_ego, True, measurement_update=True, t_now=t)
+    out.append((i * dt, track.get_RadarState()["vRel"]))
+  return out
+
+
+def _at(rows, age):
+  return min(rows, key=lambda r: abs(r[0] - age))[1]
+
+
+def test_birth_rail_ramp_off_by_default_publishes_the_rail():
+  assert not radard.BIRTH_RAIL_RAMP_LOW and not radard.BIRTH_RAIL_RAMP_HIGH
+  rows = _born_track(radard.BOSCH_A_U11_LOW_RAIL_MPS, 4.0)
+  assert all(v == radard.BOSCH_A_U11_LOW_RAIL_MPS for _, v in rows)
+
+
+def test_birth_rail_low_ramp_moving_lead_eases_in_then_reaches_the_rail(monkeypatch):
+  monkeypatch.setattr(radard, "bosch_a_birth_rail_ramp_low_enabled", lambda: True)
+  rows = _born_track(radard.BOSCH_A_U11_LOW_RAIL_MPS, 4.0)
+  # Range fit -4 m/s, ramp -12 * f(age): the published closing is the larger of the two, never past the rail.
+  assert -6.0 < _at(rows, 0.6) < -3.5
+  assert -10.5 < _at(rows, 1.5) < -8.0
+  assert _at(rows, 2.6) == radard.BOSCH_A_U11_LOW_RAIL_MPS
+  assert all(v >= radard.BOSCH_A_U11_LOW_RAIL_MPS for _, v in rows)
+  # Before the first range fit (~0.3 s) the full rail is published; afterwards the ramp only moves toward the rail.
+  assert _at(rows, 0.1) == radard.BOSCH_A_U11_LOW_RAIL_MPS
+  vs = [v for a, v in rows if a >= 0.4]
+  assert all(b <= a + 0.05 for a, b in zip(vs, vs[1:], strict=False))
+
+
+@pytest.mark.parametrize("closing,v_ego", [(22.0, 22.0), (19.0, 22.0), (4.0, 10.0)])
+def test_birth_rail_low_ramp_keeps_full_rail_for_possible_stopped_object_or_low_speed(monkeypatch, closing, v_ego):
+  monkeypatch.setattr(radard, "bosch_a_birth_rail_ramp_low_enabled", lambda: True)
+  rows = _born_track(radard.BOSCH_A_U11_LOW_RAIL_MPS, closing, v_ego=v_ego)
+  assert all(v <= radard.BOSCH_A_U11_LOW_RAIL_MPS for a, v in rows if a >= 0.4)
+
+
+def test_birth_rail_ramp_ignores_tracks_that_reach_the_rail_later(monkeypatch):
+  monkeypatch.setattr(radard, "bosch_a_birth_rail_ramp_low_enabled", lambda: True)
+  rows = _born_track(radard.BOSCH_A_U11_LOW_RAIL_MPS, 4.0, u11_first=-5.0)
+  assert all(v == radard.BOSCH_A_U11_LOW_RAIL_MPS for a, v in rows if a >= 0.6)
+
+
+def test_birth_rail_high_ramp_publishes_less_opening_only(monkeypatch):
+  monkeypatch.setattr(radard, "bosch_a_birth_rail_ramp_high_enabled", lambda: True)
+  high = -radard.BOSCH_A_U11_LOW_RAIL_MPS
+  rows = _born_track(high, -2.0)
+  assert _at(rows, 0.5) < 6.0
+  assert all(v <= high for _, v in rows)
+  assert _at(rows, 2.6) == high
+  # LOW stays off: a low-rail birth is untouched.
+  assert all(v == radard.BOSCH_A_U11_LOW_RAIL_MPS for _, v in _born_track(radard.BOSCH_A_U11_LOW_RAIL_MPS, 4.0))

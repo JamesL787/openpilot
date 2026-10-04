@@ -127,3 +127,14 @@ def test_report_end_to_end_on_synthetic_logs():
 def test_report_without_kinematics_says_so():
   empty = np.zeros((0, 3))
   assert 'no 0x094' in r.report({'kin': empty, 'kin_bus': None, 'cs': empty, 'cc': empty, 'rs': empty}, 0.35, 0.1)
+
+
+def test_rlog_files_expands_route_dir_in_segment_order(tmp_path):
+  route = tmp_path / 'route'
+  for seg in (10, 2, 0):
+    (route / str(seg)).mkdir(parents=True)
+    (route / str(seg) / 'rlog.zst').write_bytes(b'')
+  (route / 'notes').mkdir()
+  assert [f.parent.name for f in r.rlog_files([str(route)])] == ['0', '2', '10']
+  with pytest.raises(SystemExit):
+    r.rlog_files([str(route / 'notes')])

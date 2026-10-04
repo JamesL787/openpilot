@@ -4673,6 +4673,29 @@ def test_fast_closing_lead_latch_holds_while_closing_and_releases(monkeypatch):
   assert not planner2.fast_closing_lead_passes_floor(lead2, 'lead0', 20.0, model2)
 
 
+def test_fast_closing_entry_survives_source_flicker_across_vision_window(monkeypatch):
+  # STATUS 204, 26b 2233.84: the vision test passed while mpc.source read cruise, and failed again by the
+  # tick the source read lead0. Entry still happens within FAST_CLOSING_LEAD_VISION_MEMORY_TICKS on that track.
+  monkeypatch.setattr(longitudinal_planner_module, "FAST_CLOSING_LEAD_PASSES_COMFORT_FLOOR", True)
+  planner, lead, model = _fast_closing_setup(source='cruise')
+  assert not planner.fast_closing_lead_passes_floor(lead, 'lead0', 20.0, model)
+  _, mismatched = _fast_closing_setup(vis_x=60.0)[1:]
+  planner.fast_closing_tick += 1
+  planner.mpc.source = 'lead0'
+  assert planner.fast_closing_lead_passes_floor(lead, 'lead0', 20.0, mismatched)
+  # Past the memory, or on another track, the source alone is not entry.
+  late, late_lead, late_model = _fast_closing_setup(source='cruise')
+  assert not late.fast_closing_lead_passes_floor(late_lead, 'lead0', 20.0, late_model)
+  late.fast_closing_tick += longitudinal_planner_module.FAST_CLOSING_LEAD_VISION_MEMORY_TICKS + 1
+  late.mpc.source = 'lead0'
+  assert not late.fast_closing_lead_passes_floor(late_lead, 'lead0', 20.0, mismatched)
+  other, other_lead, other_model = _fast_closing_setup(source='cruise')
+  assert not other.fast_closing_lead_passes_floor(other_lead, 'lead0', 20.0, other_model)
+  other_lead.radarTrackId = 25
+  other.mpc.source = 'lead0'
+  assert not other.fast_closing_lead_passes_floor(other_lead, 'lead0', 20.0, mismatched)
+
+
 def test_fast_closing_pass_is_capped_at_max_brake(monkeypatch):
   # STATUS 150: the pass opens the comfort floor only to -FAST_CLOSING_LEAD_MAX_BRAKE, not the vehicle minimum.
   monkeypatch.setattr(longitudinal_planner_module, "FAST_CLOSING_LEAD_MAX_BRAKE", 2.0)
@@ -5239,3 +5262,54 @@ def test_accel_boost_defaults_on_when_the_toggle_attribute_is_missing():
     sm["carState"].gasPressed = False
     planner.update(sm, toggles)
   assert planner.accel_boost.value > 0.0
+
+
+# report §12.3 P5 / P6, baked in 2026-10-04 (STATUS 204)
+def test_far_radar_early_coast_caps_throttle_only():
+  get_cap = longitudinal_planner_module.get_far_radar_lead_early_coast_cap
+  lead = make_lead(status=True, d_rel=100.0, v_lead=17.0, radar=True)  # 8 m/s closing, TTC 12.5 s
+  cap = get_cap(lead, 25.0, 1.0)
+  assert 0.0 <= cap < 0.3
+  # never raises a braking target and never adds braking
+  assert get_cap(lead, 25.0, -0.8) == pytest.approx(-0.8)
+  assert get_cap(make_lead(status=True, d_rel=60.0, v_lead=5.0, radar=True), 25.0, 0.5) == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("lead_kwargs,v_ego", [
+  (dict(status=True, d_rel=100.0, v_lead=17.0, radar=False), 25.0),  # vision-only lead
+  (dict(status=True, d_rel=100.0, v_lead=17.0, radar=True, y_rel=2.5), 25.0),  # adjacent lane
+  (dict(status=True, d_rel=180.0, v_lead=17.0, radar=True), 25.0),  # beyond 150 m
+  (dict(status=True, d_rel=30.0, v_lead=17.0, radar=True), 25.0),  # near: the follow law owns it
+  (dict(status=True, d_rel=100.0, v_lead=24.5, radar=True), 25.0),  # not closing
+  (dict(status=True, d_rel=100.0, v_lead=5.0, radar=True), 8.0),  # low speed
+  (dict(status=False, d_rel=100.0, v_lead=17.0, radar=True), 25.0),
+])
+def test_far_radar_early_coast_stands_down(lead_kwargs, v_ego):
+  assert longitudinal_planner_module.get_far_radar_lead_early_coast_cap(make_lead(**lead_kwargs), v_ego, 1.0) == 1.0
+
+
+def test_soft_stop_floor_softens_only_with_room():
+  floor_fn = longitudinal_planner_module.get_soft_stop_floor
+  stop_d = longitudinal_planner_module.STOP_DISTANCE
+  lead = make_lead(status=True, d_rel=stop_d + 6.0, v_lead=0.0, radar=True)
+  assert floor_fn(lead, 1.5) == pytest.approx(-0.8)
+  # little room left: the floor follows the needed decel with margin, so it never under-brakes
+  tight = make_lead(status=True, d_rel=stop_d + 0.8, v_lead=0.0, radar=True)
+  assert floor_fn(tight, 2.0) == pytest.approx(-1.5 * 2.0 ** 2 / (2 * 0.8))
+  for v in np.linspace(0.5, 2.99, 50):
+    for d in np.linspace(stop_d + 0.5, stop_d + 15.0, 30):
+      f = floor_fn(make_lead(status=True, d_rel=float(d), v_lead=0.0, radar=True), float(v))
+      # stopping at |f| ends at or before 1/1.5 of the room left
+      assert v ** 2 / (2 * -f) <= (d - stop_d) / 1.5 + 1e-9
+
+
+@pytest.mark.parametrize("lead_kwargs,v_ego", [
+  (dict(status=True, d_rel=12.0, v_lead=0.0, radar=True), 0.3),  # stopping state / standstill guard own it
+  (dict(status=True, d_rel=12.0, v_lead=0.0, radar=True), 3.5),  # above the final part of the stop
+  (dict(status=True, d_rel=12.0, v_lead=2.0, radar=True), 1.5),  # lead moving
+  (dict(status=True, d_rel=12.0, v_lead=0.0, radar=False), 1.5),  # vision-only
+  (dict(status=True, d_rel=12.0, v_lead=0.0, radar=True, y_rel=2.0), 1.5),
+  (dict(status=True, d_rel=6.2, v_lead=0.0, radar=True), 1.5),  # no room left
+])
+def test_soft_stop_floor_stands_down(lead_kwargs, v_ego):
+  assert longitudinal_planner_module.get_soft_stop_floor(make_lead(**lead_kwargs), v_ego) is None

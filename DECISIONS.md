@@ -1869,3 +1869,27 @@ Why OFF: a longer dRel is the less conservative direction (a later stop, a sligh
 Not done: the larch64 `common/params_pyx.so` / `libcommon.a` rebuild, without which the key is unknown on the device
 and the toggle stays OFF. `tools/bosch_a_scenarios.py`, `bosch_a_dropout_census.py` and `bosch_a_sweep_trace.py`
 (offline) still use −3.0.
+
+## D-077 — PROPOSED (owner decision needed, no code): ramp the U11 rail bound on a track born railed, only where it cannot be a stopped object
+Recorded 2026-10-04 on `ccr-3629c6b5-1hvpcd` (PR #20). **Offline statistics only; nothing implemented, nothing driven.**
+This narrows D-041 (a rail is always published at full value from the first sweep), so it needs Peter's OK first.
+
+Why: the Bosch-A bank is the camera tracker (STATUS 205), and U11 is its low-pass velocity state. The 000002d5
+bookmark (t 718, −3.5 command, aEgo −4.7) was a cut-in born on the −12 rail; radard published −20 RAIL_FAST while
+true closing was about 3–5 m/s. `tools/bosch_a_birth_rail_report.py` (8 routes, odometry anchors) finds born-railed
+moving leads overstated in 128/130 anchored cases, decaying off the rail with excess 1/e ≈ 1.2 s, but born-railed
+stopped objects (ego < 12 m/s, where they can be anchored) genuine in 61/81. A blanket ramp would delay real
+stopped-object braking, which D-041 exists to prevent.
+
+Proposal, in order of risk (owner picks; each would ship behind a default-OFF switch with replay first):
+1. **+12 birth rail only** (opening; 91% spin-up). It publishes less opening than the rail, the more-closing
+   direction (D-042), so it never removes braking, but it can add braking or hold back acceleration.
+2. **−12 birth rail, ramp only when the track cannot be stopped:** the published bound starts at the track's own
+   range-fit closing (or the rail × (1 − e^(−age/1.2 s)), whichever closes more) and reaches the full rail by
+   ~2.5 s, *only* when the range fit shows the target moving (range closing clearly below vEgo) **and** ego speed
+   ≥ 12 m/s. If the range fit is invalid or says closing ≈ vEgo, publish the full rail as today.
+3. Do nothing; keep D-041 as is and accept rare born-railed cut-in brakes like 000002d5 (1 in 2914 born-railed
+   tracks reached −20 within 3 s in this corpus).
+
+Open before any code: the range fit is the camera's too, so (2) must first be checked against an independent
+reference (STATUS 205); the settle anchor is selection-biased; about half the tracks have no anchor.

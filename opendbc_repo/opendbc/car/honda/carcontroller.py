@@ -225,6 +225,23 @@ def bosch_gas_lookup_accel(gas_pedal_force: float, hill_brake: float, gasfactor:
   return (gas_pedal_force - hill_brake - min_gas) * gasfactor + min_gas + hill_brake + (hill_gain - 1.0) * (hill_brake - hill_level)
 
 
+# Civic Bosch over-brake compensation, mid band only (report §12.3 P4; STATUS 204). VSA report
+# (tools/longitudinal/bosch_vsa_accel_report.py), delivered - commanded aEgo at t+0.35 s, medians:
+#   route 0000026b: -1.0..-1.5 -0.06, -1.5..-2.0 -0.13, -2.0..-2.5 -0.26, -2.5..-3.0 -0.54
+#   route 00000268: -1.0..-1.5 -0.04, -1.5..-2.0 -0.06, -2.0..-2.5 +0.15, -2.5..-3.0 +0.13
+# The two routes disagree above -2.0, so the offset is small (+0.15 peak, about a quarter of the worst
+# median) and zero at both ends. It is never applied at or below -3.0 (saturated/emergency commands,
+# STATUS 71/72: never weaken those) nor while stopping. Owner, 2026-10-04: ship baked in.
+BOSCH_OVERBRAKE_COMP_BP = [-3.0, -2.5, -2.0, -1.0]
+BOSCH_OVERBRAKE_COMP_V = [0.0, 0.15, 0.10, 0.0]
+
+
+def bosch_overbrake_compensation(accel: float, stopping: bool) -> float:
+  if stopping or not (BOSCH_OVERBRAKE_COMP_BP[0] < accel < BOSCH_OVERBRAKE_COMP_BP[-1]):
+    return 0.0
+  return float(np.interp(accel, BOSCH_OVERBRAKE_COMP_BP, BOSCH_OVERBRAKE_COMP_V))
+
+
 def update_honda_bosch_braking(braking: bool, gas_pedal_force: float, stopping: bool, long_active: bool) -> bool:
   """Select Bosch brake mode from the same road-load-adjusted force used for gas."""
   if not long_active:
@@ -726,10 +743,12 @@ class CarController(CarControllerBase):
     if self.CP.carFingerprint in HONDA_BOSCH:
       self.bosch_gas_factor = self.param_store.get_float("HondaGasFactorParams", default=1.0)
       self.bosch_wind_factor = self.param_store.get_float("HondaWindFactorParams", default=1.0)
+      self.bosch_overbrake_comp_enabled = self.param_store.get_bool("BoschAOverBrakeComp")
     else:
       # NRDR keeps Nidec gas-interceptor gains static; Bosch live learning stays above.
       self.bosch_gas_factor = 1.0
       self.bosch_wind_factor = 1.0
+      self.bosch_overbrake_comp_enabled = False
     self.bosch_wind_factor_before_brake = self.bosch_wind_factor
     self.bosch_gas_factor_before_gasmax = self.bosch_gas_factor
     self.bosch_wind_factor_before_gasmax = self.bosch_wind_factor
@@ -1085,7 +1104,10 @@ class CarController(CarControllerBase):
           # nrdr-nightly Bosch gas path. The extra-brake PID is disabled there, so brake_addon is
           # a constant 0.0 and only feeds the learner's gating deadband.
           brake_addon = 0.0
-          self.accel = float(np.clip(accel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX))
+          brake_accel = accel
+          if self.CP.carFingerprint == CAR.HONDA_CIVIC_BOSCH:
+            brake_accel += bosch_overbrake_compensation(accel, actuators.longControlState == LongCtrlState.stopping)
+          self.accel = float(np.clip(brake_accel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX))
           gas_pedal_force = accel + wind_brake_mps2 * self._learner.windfactor + hill_brake
 
           if live["live_learning_gas"]:
