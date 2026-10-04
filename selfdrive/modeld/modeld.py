@@ -478,7 +478,8 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
                           is_v9: bool, is_v14: bool, is_v15: bool, starpilot_toggles,
                           lat_smooth_seconds=LAT_SMOOTH_SECONDS, long_smooth_seconds=LONG_SMOOTH_SECONDS,
                           is_v16: bool = False) -> log.ModelDataV2.Action:
-    if is_v14 or is_v15 or is_v16:
+    # the built-in small model is tagged v16 but has no action head; it falls through to the plan below
+    if (is_v14 or is_v15 or is_v16) and 'action' in model_output:
       desired_curv_unscaled, desired_accel = model_output['action'][0]
       if is_v15 or is_v16:
         desired_curvature = float(desired_curv_unscaled) / max(1.0, v_ego) ** 2
