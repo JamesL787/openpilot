@@ -613,13 +613,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                                   "distances are the less cautious direction, which is why it ships off. Never driven. Restart required to take effect."),
                  get_state=lambda: self._params.get_bool("BoschARangeOffsetFallback"),
                  set_state=lambda v: self._params.put_bool("BoschARangeOffsetFallback", v)),
-      SettingRow("BoschALeadTauRadarDt", "toggle", tr_noop("Radar Lead Accel Timing"),
-                 subtitle=tr_noop("TEST, default off. Bosch-A radar only. The lead-acceleration decay filter steps once per radar sweep "
-                                  "(about 14 Hz) instead of once per 20 Hz model cycle, so the longitudinal planner assumes a lead's "
-                                  "acceleration fades about 0.2 s sooner. Which radar points publish does not change. "
-                                  "Never replayed or driven. Restart required to take effect."),
-                 get_state=lambda: self._params.get_bool("BoschALeadTauRadarDt"),
-                 set_state=lambda v: self._params.put_bool("BoschALeadTauRadarDt", v)),
     ]
 
     self._slc_rows = [

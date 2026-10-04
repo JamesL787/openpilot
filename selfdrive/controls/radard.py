@@ -14,6 +14,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.common.simple_kalman import KF1D
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 from opendbc.car.honda.radar_interface import (BOSCH_A_DIRECT_VREL_CENTER_RAW, BOSCH_A_DIRECT_VREL_MIN_RAW,
+                                               BOSCH_A_DIRECT_VREL_MAX_RAW,
                                                BOSCH_A_DIRECT_VREL_SCALE_MPS, BOSCH_A_FREQ_HZ)
 from opendbc.car.honda.values import HONDA_BOSCH_A
 
@@ -28,22 +29,12 @@ _LEAD_ACCEL_TAU = 0.6
 # wall time too. Static arithmetic only (docs/honda_bosch_acc_brake_internals.md §10.2, §11.3).
 # True steps the filter with HONDA_BOSCH_A_RADAR_TS and scales the recovery to the same wall-clock
 # rate. Bosch-A only; other radars keep DT_MDL. It changes aLeadTau (what long_mpc assumes about
-# how long a lead keeps its accel) and nothing about which points publish. Default off: not
-# replayed, not driven. Re-decide _LEAD_ACCEL_TAU (0.6 here vs upstream 1.5) only after this.
-BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT = False
-# Owner toggle "BoschALeadTauRadarDt" (Advanced Longitudinal Tuning, default off) turns the same behaviour on from
-# the device without editing this constant. Read once at RadarD construction; any failure, including a
-# params_pyx.so that predates the key, means off.
-BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT_PARAM = "BoschALeadTauRadarDt"
-
-
-def bosch_a_lead_tau_radar_dt_enabled() -> bool:
-  if BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT:
-    return True
-  try:
-    return bool(Params().get_bool(BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT_PARAM))
-  except Exception:
-    return False
+# how long a lead keeps its accel) and nothing about which points publish. On by default since
+# 2026-10-04 (owner: ship baked in, no toggle). Replay on 0000026b/00000268: aTarget moves <= 0.17 m/s2,
+# no brake episode changes (STATUS 204). Re-decide _LEAD_ACCEL_TAU (0.6 vs upstream 1.5) separately.
+# The old "BoschALeadTauRadarDt" switch is retired; the params key stays only because the checked-in
+# aarch64 params library lists it.
+BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT = True
 
 
 # Shadow range-derived vRel, computed for whichever radar lead is selected -- not only Bosch-A.
@@ -101,6 +92,211 @@ RANGE_VREL_MAX_SPAN_S = 0.60
 # the correction is applied at publish time only, so aLeadK never sees it. Still replay-only:
 # nothing here has been driven. (Since then: on in the owner's Civic drives from 0000023e.)
 RANGE_VREL_ASSIST = True
+
+# Range-first lead filter (report §12.3 P1; STATUS 204; owner, 2026-10-04: ship baked in, no switch). A
+# constant-acceleration Kalman filter on the lead's position along the road, z = dRel + integrated ego
+# travel, run on every measured Bosch-A sweep. Range leads U11 by ~1 s at a closing onset (D-044:
+# 0.88-1.28 s vs 0.07-0.14 s), so this filter's speed and acceleration see a braking lead first.
+# It may only ADD closing and braking to the published lead (D-053's one-sided rule), and only when the
+# CAMERA independently sees its lead braking: the range channel cannot check itself (the t~=11 s false
+# brake and the 232 3:02.8 walk above were range errors that a range-only filter would follow).
+#   * Noise: route 00000268, 4087 lead sweeps, residual of a 15-sample quadratic fit: robust sigma 0.07 m,
+#     p99 0.35 m. R uses 0.10 m. Q (jerk spectral density 3.0) was set on a synthetic -3 m/s^2 lead
+#     brake at sigma 0.1: steady aLead sd 0.46, |a| max 1.06, -2 reached 0.67 s after onset.
+#   * A sample whose innovation exceeds max(0.75 m, 4 sigma) is not absorbed; three in a row (a range
+#     walk or a re-association) restart the filter, and it publishes nothing until MIN_UPDATES clean ones.
+#   * A new track publishes nothing for MIN_AGE_S (236 22:13.6, a new track settling at +10 m/s^2).
+#   * Geometry and ego speed reuse the D-053 gates (dRel >= 8, |yRel| <= 1.5, vEgo >= 5; 236 14:45).
+# Replay-only (STATUS 204). Nothing here has been driven.
+RANGE_LEAD_KF_R = 0.10 ** 2
+RANGE_LEAD_KF_Q = 3.0
+RANGE_LEAD_KF_GATE_M = 0.75
+RANGE_LEAD_KF_GATE_SIGMA = 4.0
+RANGE_LEAD_KF_RESET_REJECTS = 3
+RANGE_LEAD_KF_MIN_UPDATES = 10
+RANGE_LEAD_KF_MIN_AGE_S = 1.0
+RANGE_LEAD_KF_MAX_DT_S = 0.5
+RANGE_LEAD_KF_MIN_V_EGO = 5.0
+# The camera must see its lead braking at least this hard, at this probability.
+RANGE_LEAD_KF_VISION_MIN_PROB = 0.5
+RANGE_LEAD_KF_VISION_MAX_ACCEL = -0.3
+# Deadbands before anything is added, and caps on what is added.
+RANGE_LEAD_KF_VREL_DEADBAND = 0.5
+RANGE_LEAD_KF_MAX_VREL_ADD = 8.0  # the D-053 assist's physical bound (RANGE_VREL_ASSIST_MAX_CORRECTION_MPS)
+RANGE_LEAD_KF_ACCEL_DEADBAND = 0.5
+RANGE_LEAD_KF_MIN_ACCEL = -1.0
+RANGE_LEAD_KF_MAX_ACCEL_ADD = 1.5
+# Camera agreement on SIZE, not just sign (replay 0000026b 11:40, 2026-10-04). A lead drifting out of lane
+# under the range read 8.4 m/s closing and the KF's acceleration ~-1.7 while the camera's own lead closed at
+# 2.3 m/s braking at -0.37; the correction took the planner from -0.40 to -1.15 for ~1 s and the logged
+# road command stayed at -0.2..-0.4 (harsher than needed). The correction may now only pull the published
+# speed down to the camera's lead speed minus V_MARGIN, and the acceleration to the camera's minus A_MARGIN.
+# The margins keep the range lead over the camera at an onset (the camera lags too, so it may not cap the
+# KF at its own value) while bounding what a range-only error can add.
+# 2026-10-04 replay of the owner's 2d5/2d6/2d8/2d9 routes: with margins of 2.5 m/s and 1.0 m/s^2 the KF still
+# added braking the drive did not need, e.g. 2d6 21:44 (lead 34 m, native radar closing 1.1, camera 0.2, KF
+# pushed vRel to -2.2 and aLeadK to -1.66; planner -0.09 -> -1.15 in one step, road command -0.49) and 2d9 4:32
+# (-1.95 on the road vs -3.24). Every warranted correction above had the camera at or beyond the KF, so the
+# camera now caps the correction with no margin: the range lead may only go as far as the camera already sees.
+RANGE_LEAD_KF_VISION_V_MARGIN = 0.0  # m/s
+RANGE_LEAD_KF_VISION_A_MARGIN = 0.0  # m/s^2
+RANGE_LEAD_KF_VISION_DISAGREE_MPS = 2.5
+# The A margin alone did not stop 11:40: the camera's -0.37 still let the KF add ~1.2 m/s^2, enough to rail the
+# planner at A_CRUISE_MIN. What separates it from every warranted correction in the 0268/026b/0236 replays is
+# that the camera saw far LESS closing than the radar lead itself (2.1 vs 6.5 m/s: the radar and the camera
+# were not on the same object). In the warranted ones the camera's closing matched or exceeded the native
+# radar's (268 4:52 6.1 vs 4.5; 026b 29:58 5 vs 1; 236 37:31 1.7 vs 0.8). So when the camera's closing is
+# below the native radar's by more than DISAGREE_MPS, nothing is added.
+# Lateral drift (same episode: yRel 0.21 -> 0.80 m in 0.55 s, gone to 4.7 m 3 s later). A radial range rate on
+# a target leaving the lane is not this lane's closing; once |yRel| exceeds MIN_Y and it moves outward faster
+# than RATE (EMA, TAU), nothing new is added and what was applied bleeds off.
+RANGE_LEAD_KF_DRIFT_MIN_Y_M = 0.5
+RANGE_LEAD_KF_DRIFT_RATE_MPS = 0.5
+RANGE_LEAD_KF_DRIFT_TAU_S = 0.3
+
+
+class RangeLeadKF:
+  """[position, speed, acceleration] of a lead along the road from range plus ego odometry."""
+  def __init__(self):
+    self.reset()
+
+  def reset(self):
+    self.x = None
+    self.P = None
+    self.t = 0.0
+    self.ego_s = 0.0
+    self.accepted = 0
+    self.rejects = 0
+    self.adj_v = 0.0  # applied, slew-limited correction (see range_lead_kf_adjust)
+    self.adj_a = 0.0
+    self.adj_t = -1.0
+    self.y_rate = 0.0  # EMA of the published leadOne yRel rate, for the drift gate
+    self.y_prev = 0.0
+
+  @property
+  def healthy(self) -> bool:
+    return self.x is not None and self.accepted >= RANGE_LEAD_KF_MIN_UPDATES and self.rejects == 0
+
+  @property
+  def v_lead(self) -> float:
+    return float(self.x[1])
+
+  @property
+  def a_lead(self) -> float:
+    return float(self.x[2])
+
+  def _init(self, t: float, d_rel: float, v_lead: float):
+    self.t = t
+    self.ego_s = 0.0
+    self.x = np.array([d_rel, v_lead, 0.0])
+    self.P = np.diag([RANGE_LEAD_KF_R, 4.0, 9.0])
+    self.accepted = 0
+    self.rejects = 0
+
+  def update(self, t: float, d_rel: float, v_ego: float, v_lead: float):
+    if self.x is None:
+      self._init(t, d_rel, v_lead)
+      return
+    dt = t - self.t
+    if not (0.0 < dt <= RANGE_LEAD_KF_MAX_DT_S):
+      self._init(t, d_rel, v_lead)
+      return
+    self.t = t
+    self.ego_s += v_ego * dt
+    F = np.array([[1.0, dt, dt * dt / 2.0], [0.0, 1.0, dt], [0.0, 0.0, 1.0]])
+    Q = RANGE_LEAD_KF_Q * np.array([[dt ** 5 / 20.0, dt ** 4 / 8.0, dt ** 3 / 6.0],
+                                    [dt ** 4 / 8.0, dt ** 3 / 3.0, dt * dt / 2.0],
+                                    [dt ** 3 / 6.0, dt * dt / 2.0, dt]])
+    x = F @ self.x
+    P = F @ self.P @ F.T + Q
+    innov = d_rel + self.ego_s - x[0]
+    S = P[0, 0] + RANGE_LEAD_KF_R
+    if abs(innov) > max(RANGE_LEAD_KF_GATE_M, RANGE_LEAD_KF_GATE_SIGMA * math.sqrt(S)):
+      self.rejects += 1
+      if self.rejects >= RANGE_LEAD_KF_RESET_REJECTS:
+        self._init(t, d_rel, v_lead)
+      else:
+        self.x, self.P = x, P
+      return
+    K = P[:, 0] / S
+    self.x = x + K * innov
+    self.P = P - np.outer(K, P[0, :])
+    self.accepted += 1
+    self.rejects = 0
+
+
+# The gates above chatter frame to frame (camera a[0] around -0.3, one rejected range sample clears
+# `healthy`). Replay of 00000268 with the raw correction (2026-10-04) showed one-frame vRel spikes of
+# 2-3 m/s that dropped the planner output to -1.0 for a single frame and snapped it back. The applied
+# correction is therefore slew-limited per track. A 0.2 s build-up still stepped the output from -0.2
+# to A_CRUISE_MIN in 0.1 s (00000268 4:52), so it builds in ~0.5 s (2 m/s, 1.5 m/s^2), which keeps
+# ~0.5-0.8 s of the 0.88-1.28 s U11 lag. Once any gate fails it bleeds off at max(FALL, adj / FALL_TAU):
+# a 0.3 s fall released the output -1.0 -> -0.6 and re-braked 1.3 s later (00000268 4:52-4:54, a double
+# jab). Bound on how long extra braking outlives its gates: ~1 s for the 1.5 m/s^2 and 2 m/s typical
+# sizes, ~2.4 s for the 8 m/s cap. It is dropped at once if the track has not been leadOne for longer
+# than RANGE_LEAD_KF_ADJ_STALE_S.
+RANGE_LEAD_KF_ADJ_V_RISE = 4.0  # m/s per s
+RANGE_LEAD_KF_ADJ_V_FALL = 2.0  # m/s per s
+RANGE_LEAD_KF_ADJ_A_RISE = 3.0  # m/s^2 per s
+RANGE_LEAD_KF_ADJ_A_FALL = 1.5  # m/s^2 per s
+RANGE_LEAD_KF_ADJ_FALL_TAU_S = 1.0
+RANGE_LEAD_KF_ADJ_STALE_S = 0.25
+
+
+def _range_lead_kf_target(lead: dict, track, v_ego: float, vision_lead) -> tuple[float, float]:
+  """Raw (extra closing m/s, extra decel m/s^2) P1 wants this cycle; (0, 0) unless every gate holds."""
+  kf = track.range_kf
+  if not kf.healthy or track.t_last - track.t_first < RANGE_LEAD_KF_MIN_AGE_S:
+    return 0.0, 0.0
+  if (v_ego < RANGE_LEAD_KF_MIN_V_EGO or lead['dRel'] < RANGE_VREL_ASSIST_MIN_D_REL_M or
+      abs(lead['yRel']) > RANGE_VREL_ASSIST_MAX_ABS_Y_REL_M):
+    return 0.0, 0.0
+  if (vision_lead is None or float(vision_lead.prob) < RANGE_LEAD_KF_VISION_MIN_PROB or not len(vision_lead.a) or
+      not len(vision_lead.v) or float(vision_lead.a[0]) > RANGE_LEAD_KF_VISION_MAX_ACCEL):
+    return 0.0, 0.0
+  if (abs(lead['yRel']) > RANGE_LEAD_KF_DRIFT_MIN_Y_M and lead['yRel'] * kf.y_rate > 0.0 and
+      abs(kf.y_rate) > RANGE_LEAD_KF_DRIFT_RATE_MPS):
+    return 0.0, 0.0
+  if v_ego - float(vision_lead.v[0]) < -lead['vRel'] - RANGE_LEAD_KF_VISION_DISAGREE_MPS:
+    return 0.0, 0.0
+  v_range = max(kf.v_lead, float(vision_lead.v[0]) - RANGE_LEAD_KF_VISION_V_MARGIN)
+  add_v = float(np.clip(lead['vLead'] - v_range - RANGE_LEAD_KF_VREL_DEADBAND, 0.0, RANGE_LEAD_KF_MAX_VREL_ADD))
+  a_native = lead['aLeadK']
+  a_range = max(kf.a_lead, float(vision_lead.a[0]) - RANGE_LEAD_KF_VISION_A_MARGIN)
+  add_a = 0.0
+  if a_range <= RANGE_LEAD_KF_MIN_ACCEL and a_range < a_native - RANGE_LEAD_KF_ACCEL_DEADBAND:
+    add_a = min(a_native - a_range, RANGE_LEAD_KF_MAX_ACCEL_ADD)
+  return add_v, add_a
+
+
+def range_lead_kf_adjust(lead: dict, track, v_ego: float, vision_lead, t_now: float) -> dict:
+  """One-sided, slew-limited P1 correction of a published Bosch-A radar lead dict (adds closing/decel only)."""
+  if track is None or not lead.get('status', False) or not lead.get('radar', False):
+    return lead
+  kf = track.range_kf
+  dt = t_now - kf.adj_t
+  if kf.adj_t < 0.0 or dt < 0.0 or dt > RANGE_LEAD_KF_ADJ_STALE_S:
+    kf.adj_v = kf.adj_a = kf.y_rate = 0.0
+    kf.y_prev = lead['yRel']
+    dt = DT_MDL
+  elif dt > 0.0:
+    kf.y_rate += (dt / (RANGE_LEAD_KF_DRIFT_TAU_S + dt)) * ((lead['yRel'] - kf.y_prev) / dt - kf.y_rate)
+    kf.y_prev = lead['yRel']
+  target_v, target_a = _range_lead_kf_target(lead, track, v_ego, vision_lead)
+  kf.adj_t = t_now
+  fall_v = max(RANGE_LEAD_KF_ADJ_V_FALL, kf.adj_v / RANGE_LEAD_KF_ADJ_FALL_TAU_S) * dt
+  fall_a = max(RANGE_LEAD_KF_ADJ_A_FALL, kf.adj_a / RANGE_LEAD_KF_ADJ_FALL_TAU_S) * dt
+  kf.adj_v = float(np.clip(target_v, kf.adj_v - fall_v, kf.adj_v + RANGE_LEAD_KF_ADJ_V_RISE * dt))
+  kf.adj_a = float(np.clip(target_a, kf.adj_a - fall_a, kf.adj_a + RANGE_LEAD_KF_ADJ_A_RISE * dt))
+  if kf.adj_v <= 0.0 and kf.adj_a <= 0.0:
+    return lead
+  lead = dict(lead)
+  lead['vRel'] -= kf.adj_v
+  lead['vLead'] -= kf.adj_v
+  lead['vLeadK'] -= kf.adj_v
+  lead['aLeadK'] -= kf.adj_a
+  return lead
+
 
 # Minimum disagreement, m/s, before arming. D-043 deliberately does not chase "the milder
 # 0.6-2.5 m/s overshoots at deceleration onset"; this is the mirror of that, and 2.0 m/s is also
@@ -202,6 +398,37 @@ RANGE_VREL_ASSIST_MAX_BACKWARD_LEAD_MPS = 5.0
 # units); thresholds were not re-tuned.
 BOSCH_A_U11_SCALE_MPS = BOSCH_A_DIRECT_VREL_SCALE_MPS
 BOSCH_A_U11_LOW_RAIL_MPS = (BOSCH_A_DIRECT_VREL_MIN_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) * BOSCH_A_U11_SCALE_MPS
+BOSCH_A_U11_HIGH_RAIL_MPS = (BOSCH_A_DIRECT_VREL_MAX_RAW - BOSCH_A_DIRECT_VREL_CENTER_RAW) * BOSCH_A_U11_SCALE_MPS
+
+# D-077 (PROPOSED, both switches OFF; replay comparison only, not driven). The Bosch-A bank is the camera tracker
+# (STATUS 205) and U11 its low-pass velocity state. A track whose U11 is railed within BIRTH_RAIL_WINDOW_S of its
+# first update is "born railed"; while U11 stays on that rail the published vRel ramps toward the rail as
+# rail * (1 - e^(-age/TAU)), normalised to reach the full rail at BIRTH_RAIL_RAMP_MAX_AGE_S. Evidence
+# (tools/bosch_a_birth_rail_report.py, 8 routes, odometry anchors): born-railed moving leads overstated 128/130,
+# excess 1/e ~1.2 s; born-railed stopped objects (ego < 12) genuine 61/81.
+#   HIGH (option 1): +12 births publish LESS opening than the rail. More-closing direction (D-042), so it can only
+#     add braking or remove acceleration; 91% of +12 births were spin-up.
+#   LOW (option 2): -12 births publish LESS closing than the rail, which narrows D-041. Only while ego >= 12 m/s
+#     and the track's own range fit says the target moves at >= BIRTH_RAIL_LOW_MIN_LEAD_MPS; the published closing
+#     is the larger of the ramp and the range fit, never past the rail, and RAIL_FAST is withheld meanwhile. The
+#     full rail is published until the first range fit (~0.3 s), so the ramp can step to less closing then. The
+#     first update that fails a condition ends the ramp for good (full rail, as today).
+# aLeadK stays native (D-053 note). Bosch-A only: nothing turns these on outside replays and tests.
+BIRTH_RAIL_RAMP_HIGH = False
+BIRTH_RAIL_RAMP_LOW = False
+BIRTH_RAIL_WINDOW_S = 0.5
+BIRTH_RAIL_RAMP_TAU_S = 1.2
+BIRTH_RAIL_RAMP_MAX_AGE_S = 2.5
+BIRTH_RAIL_LOW_MIN_V_EGO_MPS = 12.0
+BIRTH_RAIL_LOW_MIN_LEAD_MPS = 5.0
+
+
+def birth_rail_ramp_fraction(age: float) -> float:
+  """D-077: share of the rail published at track age `age`; 0 at birth, 1 at BIRTH_RAIL_RAMP_MAX_AGE_S."""
+  if age >= BIRTH_RAIL_RAMP_MAX_AGE_S:
+    return 1.0
+  full = 1.0 - math.exp(-BIRTH_RAIL_RAMP_MAX_AGE_S / BIRTH_RAIL_RAMP_TAU_S)
+  return max(0.0, (1.0 - math.exp(-max(age, 0.0) / BIRTH_RAIL_RAMP_TAU_S)) / full)
 
 # --- Rail fast path (2026-09-26, STATUS 130; extends D-053, rides RANGE_VREL_ASSIST).
 # REPLAY evidence only, open loop. 00000271 9:26 (BM0): a near-stopped car published at 118.8 m
@@ -757,6 +984,7 @@ class Track:
     self.K_C = kalman_params.C
     self.K_K = kalman_params.K
     self.kf = KF1D([[v_lead], [0.0]], self.K_A, self.K_C, self.K_K)
+    self.range_kf = RangeLeadKF()  # P1; Bosch-A only, see RANGE_LEAD_KF_*
 
     self.leadTrackID = 0
 
@@ -808,6 +1036,12 @@ class Track:
     self.t_first = float('nan')
     self.t_last = float('nan')  # NEWBORN_RANGE_CLOSING_EXEMPT: t_now of the latest update (the track's age)
     self.young_range_hist: list = []
+    # D-077: -1 born on the low rail, +1 on the high rail, 0 not (yet); birth_rail_done ends the ramp for good.
+    # birth_rail_vrel is the vRel to publish while the ramp is active, else None.
+    self.birth_rail = 0
+    self.birth_rail_done = False
+    self.birth_rail_ramping = False  # LOW: the range fit confirmed a moving target
+    self.birth_rail_vrel: float | None = None
 
     # ONPATH_RADAR_ADOPT: fresh measured sweeps (t, dRel, vRel, path offset, existence) of the current on-path run;
     # existence is NaN when the radar does not provide it (ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE)
@@ -829,7 +1063,7 @@ class Track:
              range_assist: bool = False, vision_closing: float | None = None, vision_assist: bool = False,
              camera_sample: tuple[float, float | None] | None = None,
              nc_vrel: float = 0.0, nc_valid: bool = False, nc_sigma: int = 127,
-             newborn_follow: bool = False):
+             newborn_follow: bool = False, range_kf: bool = False):
     # relative values, copy
     self.dRel = d_rel   # LONG_DIST
     self.yRel = y_rel   # -LAT_DIST
@@ -876,6 +1110,9 @@ class Track:
             self.range_hist.clear()
             self.range_hist.append((float(t_now), float(d_rel)))
       self.range_hist_long.append((float(t_now), float(d_rel)))
+      if range_kf:
+        # v_lead - v_rel is the same delayed v_ego the native speed is aligned with
+        self.range_kf.update(float(t_now), float(d_rel), float(v_lead) - float(v_rel), float(v_lead))
       if (nc_valid and int(nc_sigma) < RANGE_VREL_RAIL_NC_VETO_MAX_SIGMA_RAW
           and 0.0 < d_rel < RANGE_VREL_RAIL_NC_VETO_MAX_D_REL_M):
         self.nc_veto_hist.append((float(t_now), float(nc_vrel)))
@@ -892,6 +1129,7 @@ class Track:
       while self.cam_hist and self.cam_hist[0][0] < t_cam - RANGE_VREL_CAM_XRATE_WINDOW_S:
         self.cam_hist.popleft()
     self._update_range_assist(range_assist, measurement_update, t_now, vision_closing, vision_assist)
+    self._update_birth_rail(t_now)
 
     if measurement_update:
       self._update_rail_range_inconsistent()
@@ -1155,6 +1393,48 @@ class Track:
         correction = min(correction, max(self.vRel + cam_closing + RANGE_VREL_CAM_XRATE_MARGIN_MPS, 0.0))
     self.range_assist_correction = correction
 
+  def _update_birth_rail(self, t_now: float) -> None:
+    """D-077: track the born-railed state and set birth_rail_vrel (None unless a ramp is active). Must run after
+    _update_range_assist; the LOW ramp withholds RAIL_FAST by zeroing range_assist_correction."""
+    self.birth_rail_vrel = None
+    if self.birth_rail_done or not (BIRTH_RAIL_RAMP_HIGH or BIRTH_RAIL_RAMP_LOW):
+      return
+    age = float(t_now) - self.t_first
+    on_low = self.vRel <= BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_U11_SCALE_MPS / 2
+    on_high = self.vRel >= BOSCH_A_U11_HIGH_RAIL_MPS - BOSCH_A_U11_SCALE_MPS / 2
+    if self.birth_rail == 0:
+      if age > BIRTH_RAIL_WINDOW_S:
+        self.birth_rail_done = True
+        return
+      self.birth_rail = -1 if on_low else (1 if on_high else 0)
+      if self.birth_rail == 0:
+        return
+    if age >= BIRTH_RAIL_RAMP_MAX_AGE_S or not (on_low if self.birth_rail < 0 else on_high):
+      self.birth_rail_done = True
+      return
+    frac = birth_rail_ramp_fraction(age)
+    if self.birth_rail > 0:
+      if not BIRTH_RAIL_RAMP_HIGH:
+        self.birth_rail_done = True
+        return
+      # Less opening than the rail: the more-closing direction, combined with any range assist below.
+      self.birth_rail_vrel = min(float(self.vRel) - float(self.range_assist_correction), BOSCH_A_U11_HIGH_RAIL_MPS * frac)
+      return
+    v_ego_aligned = self.vLead - self.vRel
+    fit = self.vRelRangeFresh and math.isfinite(self.vRelRange)
+    if not BIRTH_RAIL_RAMP_LOW or v_ego_aligned < BIRTH_RAIL_LOW_MIN_V_EGO_MPS:
+      self.birth_rail_done = True
+      return
+    if not fit and not self.birth_rail_ramping and age <= BIRTH_RAIL_WINDOW_S:
+      # No range fit yet (5 sweeps, ~0.3 s): publish the full rail and decide once the fit exists.
+      return
+    if not fit or v_ego_aligned + self.vRelRange < BIRTH_RAIL_LOW_MIN_LEAD_MPS:
+      self.birth_rail_done = True
+      return
+    self.birth_rail_ramping = True
+    self.birth_rail_vrel = max(BOSCH_A_U11_LOW_RAIL_MPS, min(BOSCH_A_U11_LOW_RAIL_MPS * frac, float(self.vRelRange)))
+    self.range_assist_correction = 0.0
+
   def _update_rail_range_inconsistent(self) -> None:
     """ADJACENT_RAIL_GATE latch. Rail-agnostic here; only Bosch-A callers act on it (a rail-valued vRel is a
     real reading on other radars)."""
@@ -1242,6 +1522,9 @@ class Track:
     # self.vRel and self.vLead themselves stay NATIVE -- the adjacent-lane detectors and the vision
     # association read those -- and so does self.vLeadK, so nothing applies the correction twice.
     correction = float(self.range_assist_correction)
+    if self.birth_rail_vrel is not None:
+      # D-077 ramp (switches off by default): the same shift on all three speeds, so the lead stays self-consistent.
+      correction = float(self.vRel) - float(self.birth_rail_vrel)
     state = {
       "dRel": float(self.dRel),
       "yRel": float(self.yRel),
@@ -1593,7 +1876,7 @@ class RadarD:
     # filters, however, consume modelV2 leads every model cycle and must retain model-loop timing.
     kf_dt = HONDA_BOSCH_A_RADAR_TS if self.honda_bosch_a_radar else radar_ts
     self.kalman_params = KalmanParams(kf_dt)
-    self.a_lead_tau_dt = HONDA_BOSCH_A_RADAR_TS if (self.honda_bosch_a_radar and bosch_a_lead_tau_radar_dt_enabled()) else DT_MDL
+    self.a_lead_tau_dt = HONDA_BOSCH_A_RADAR_TS if (self.honda_bosch_a_radar and BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT) else DT_MDL
     self.g90_radar_filter = g90_radar_filter
     lead_prob_dt = DT_MDL if self.honda_bosch_a_radar else radar_ts
     self.lead_prob_filters = [FirstOrderFilter(0.0, 0.2, lead_prob_dt) for _ in range(2)]
@@ -1732,7 +2015,8 @@ class RadarD:
                               range_assist=ids in lead_track_ids, vision_closing=vis_closing,
                               vision_assist=vision_assist, camera_sample=cam_sample,
                               nc_vrel=rpt[4], nc_valid=rpt[5], nc_sigma=rpt[6],
-                              newborn_follow=self.honda_bosch_a_radar and radar_fresh and not rpt[3])
+                              newborn_follow=self.honda_bosch_a_radar and radar_fresh and not rpt[3],
+                              range_kf=self.honda_bosch_a_radar)
 
     # ONPATH_RADAR_ADOPT: path offset of every track on a fresh sweep (yRel + = left, model y + = right)
     if ONPATH_RADAR_ADOPT and self.honda_bosch_a_radar and radar_fresh:
@@ -1774,11 +2058,15 @@ class RadarD:
 
         self._update_honda_bosch_a_preferred_staleness(i, leads_v3[i], self.lead_prob_filters[i].x)
 
-      self.radar_state.leadOne = get_lead(self.v_ego, self.ready, self.tracks, leads_v3[0], model_v_ego, sm['modelV2'],
-                                          sm['carState'].standstill, sm['starpilotPlan'], self.starpilot_toggles, low_speed_override=True,
-                                          g90_radar_filter=self.g90_radar_filter, lead_prob=self.lead_prob_filters[0].x,
-                                          preferred_track_id=self.prev_lead_track_ids[0],
-                                          honda_bosch_a_radar=self.honda_bosch_a_radar)
+      lead_one = get_lead(self.v_ego, self.ready, self.tracks, leads_v3[0], model_v_ego, sm['modelV2'],
+                          sm['carState'].standstill, sm['starpilotPlan'], self.starpilot_toggles, low_speed_override=True,
+                          g90_radar_filter=self.g90_radar_filter, lead_prob=self.lead_prob_filters[0].x,
+                          preferred_track_id=self.prev_lead_track_ids[0],
+                          honda_bosch_a_radar=self.honda_bosch_a_radar)
+      if self.honda_bosch_a_radar:
+        lead_one = range_lead_kf_adjust(lead_one, self.tracks.get(lead_one.get('radarTrackId', -1)), self.v_ego, leads_v3[0],
+                                       self.current_time)
+      self.radar_state.leadOne = lead_one
       self.radar_state.leadTwo = get_lead(self.v_ego, self.ready, self.tracks, leads_v3[1], model_v_ego, sm['modelV2'],
                                           sm['carState'].standstill, sm['starpilotPlan'], self.starpilot_toggles, low_speed_override=False,
                                           g90_radar_filter=self.g90_radar_filter, lead_prob=self.lead_prob_filters[1].x,

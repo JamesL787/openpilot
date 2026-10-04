@@ -10183,3 +10183,91 @@ Replay of the fixed code (base = the old law, same 10 routes):
   (the code constant still forces it on). Read once when radard starts, so a restart is needed; any read failure,
   including a params_pyx.so without the key, means OFF. Bosch-A only.
 - **Still open:** the item 202 replay on the D-053 routes before anyone turns it on for a drive.
+
+## 204. Bosch-A report §12.3 proposals baked in, no toggle (2026-10-04, owner: "ship them baked in, no toggle needed, make sure to run replays"). Open-loop replay on 7 routes and static unit tests only; not driven.
+Commits: f1263181b (P2), 923c67cdf (P1, P4, P5, P6), 27346000c (P1 slew limit), 5f8f1a81d (fast-closing pass entry).
+P-numbers below are the report's §12 numbers.
+- **P2 aLeadTau radar-period timing:** `BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT` is always on. The item 203 `BoschALeadTauRadarDt`
+  toggle and its UI row are removed (f1263181b). An earlier replay moved the planner output by ~0: the model-lead
+  trajectory takes over from `aLeadTau` in most frames. Re-deciding `_LEAD_ACCEL_TAU` is still open.
+- **P1 range-driven lead correction (`radard.py` `RangeLeadKF`, `range_lead_kf_adjust`):** a per-track KF on dRel only,
+  run beside U11. It may only make leadOne close faster or brake harder (D-042 one-sided), never softer, and only
+  when the track is ≥ 1 s old, dRel ≥ 8 m, |yRel| ≤ 1.5 m, v_ego ≥ 5 and the model lead (prob ≥ 0.5) is braking
+  (a ≤ −0.3). vRel correction ≤ 8 m/s, aLeadK correction ≤ 1.5 m/s². It builds at 4 m/s/s / 3 m/s²/s and bleeds at
+  max(2 m/s/s, adj / 1 s) / max(1.5 m/s²/s, adj / 1 s); a stale correction (> 0.25 s) is dropped. U11 stays the
+  primary source, so this is a range *correction*, not the full range-first filter the report describes.
+  The first version without the slew limit made one-frame −1.0 jabs on 0268 (gate chatter); the fall rate was then
+  lowered after a double jab at 0268 4:52-4:54.
+- **P4 over-brake compensation (`carcontroller.py` `bosch_overbrake_compensation`):** Civic Bosch only, not while
+  stopping. +0 at −1.0, +0.10 at −2.0, +0.15 at −2.5, +0 at −3.0 and below. VSA evidence is mixed (item 202 tool):
+  26b over-delivers −0.06…−0.54 in the −1…−3 bins, 0268 shows none. The replay does not run the carcontroller, so
+  this is static only: 571/9958 (0268), 719/25707 (26b), 1291/31812 (0236) engaged frames have a logged command in
+  the band, mean comp 0.043-0.046, max 0.150.
+- **P5 far radar lead early coast / P6 soft stop tail (`longitudinal_planner.py`):** output-only caps. P5 lowers a
+  positive target for a radar lead at 60-150 m with TTC > 8 s; P6 holds the last ~1 m/s of a stop at −0.5…−0.8,
+  `STANDSTILL_STOPPED_LEAD_GUARD` kept. Neither fired on 0268 or 26b; on 0236 24 frames each (P6 at most +0.03).
+  The "soft brake" half of P5 and the "go" half of P6 are not built.
+- **Fast-closing pass entry (`FAST_CLOSING_LEAD_VISION_MEMORY_TICKS = 5`):** found by the P1 replay. 26b 2233.84: the
+  vision test passed for five ticks only; mpc.source flickered lead0/cruise; P1 off read lead0 in the last one and
+  braked −1.9 for 2 s, P1 on read cruise and stayed at −1.1 on a lead closing 11 m/s at 52 m. Entry now accepts
+  vision and source up to 5 ticks apart on the same track. With the re-run radard it changes 0 frames on all three
+  routes with P1 off; with the logged radarState it changes three episodes on 0236 (9:20 −1.0 → −2.0 for 3 frames on
+  a lead closing 12 m/s at 53 m; 18:37 7 s after engagement, +2.0 → +0.4, not root-caused; 23:24 disengaged).
+  Not re-checked on the 28 routes that set the latch's other constants.
+- **P1 gates added 2026-10-04 (4c4e95bcc, 117810ddc):** the range correction is skipped when the lead drifts outward
+  (|yRel| ≥ 0.5 m and |dyRel/dt| ≥ 0.5 m/s, EMA τ 0.3 s) or when the model lead closes more than 2.5 m/s slower than
+  the native vRel (`RANGE_LEAD_KF_VISION_DISAGREE_MPS`). When it applies, it may not go past the model lead's speed
+  or accel (`RANGE_LEAD_KF_VISION_V_MARGIN` / `_A_MARGIN` = 0). A first version with 2.5 / 1.0 margins added unneeded
+  braking on 000002d6 21:44 (road −0.49, replay −1.45) and made jerk worse on all four 2026-10-04 routes.
+  **Caveat (item 205):** the bank is Honda's camera, so these gates compare one camera with another.
+- **Replay, on vs off** (`tools/longitudinal/alpha_closed_loop_replay.py`, dongle 11c8fa231c0499ed, HONDA_CIVIC_BOSCH,
+  open loop, re-run radard, shipped `b0.075` variant, PR head 17281d5c6; route data not committed). The earlier
+  numbers in this item came from the `nobound` variant, which is not shipped. "Off" keeps P2/P4 and neutralises
+  P1, P5 and P6. Frames changed > 0.05 while engaged, more / less brake:
+  - `00000268--4bc9811934`: 154 / 0 (min −0.25). 6:37 −1.14 → −1.39, road −1.64.
+  - `0000026b--92b1979afa`: 214 / 34. 29:58 brakes 3.8 s earlier (−0.34 → −0.90), road −3.09. 11:40 (the
+    out-of-lane drift case) no longer rails.
+  - `00000236--60bfb34cb1`: 112 / 179. 34:57 −2.11 → −0.94, road −1.83. The 10:08 −1.0 step at engagement does not
+    reproduce on a re-run: replay noise, not this PR.
+  - 2026-10-04 drives: `000002d5--1393dccb3d` 395 / 36 (min −0.68; 4:28 −0.32 → −1.00, road −2.12);
+    `000002d6--af194f9a91` 26 / 0, all one episode at 21:13 (−0.42 → −1.20, road −0.42), **unneeded, still open**;
+    `000002d8--959cb82bd3` 101 / 27; `000002d9--163dfb5b47` 195 / 34 (4:32 −1.88 → −2.36, road −1.95).
+  - Per-frame |ΔaTarget| > 0.3 while engaged, off → on: 14 → 14, 26 → 26, 108 → 108, 30 → 30, 36 → 37, 39 → 39,
+    16 → 16.
+  - **Owner bookmark, 000002d5 12:03.7 (brake 717.9-719.8 s), not fixed by this PR.** The leadOne track dropped and a
+    cut-in track (23) was promoted at 54.8 m, yRel −1.08, with U11 on the −12 rail; radard published −20 RAIL_FAST at
+    718.13 and aLeadK −4.3. Command −3.5, aEgo −4.7. The car then settled ~35 m behind at vRel ≈ 0 at ~17 m/s, so the
+    closing was ~5 m/s. A young-track camera agreement bound (06a249eb2) softened it in replay (min −3.64 → −2.95)
+    but also softened a warranted brake at 000002d9 8:58. It was removed (17281d5c6) after item 205; see item 205.
+- **Tests:** honda 392 pass; radard_bosch 62 pass after the gates; radard_bosch, lead_behavior,
+  lead_follow_policy, following_distance, turn_lead, longitudinal_planner 784 pass at 890fd0cfe. ruff: no new findings (9 pre-existing in the planner files).
+- **Still open:** a drive. P0 on more routes before trusting P4's numbers. The report's onset slew limiter, P7
+  (uncertainty only adds caution) and the upstream planner structure are not started.
+
+## 205. The Bosch-A "radar" object bank is Honda's camera tracker (owner report, 2026-10-04). Static firmware and logged-data analysis; nothing flashed, not driven.
+Report: `docs/research/bosch-a-bank-is-the-camera-2026-10-04.pdf`. The 0x280-0x2FF / 0x2C8-0x2CF / 0x290-0x297 bank is
+written by the windshield camera (36161) and sent to the radar on the private bus; the radar's own detections never
+reach CAN. Consistent with this tree: under openpilot longitudinal the radar is silenced (`interface.py` `disable_ecu`
+on 0x18DAB0F1, `carcontroller.py` tester-present), and the bank still arrives on every route.
+- **What stands:** the decodes (U11 1/72, range 1/16 m, azimuth 1/2048 rad, sentinels) and D-041/D-042.
+- **What changes:** every "radar vs vision" check is camera vs camera. The model lead's speed is the weakest channel
+  (it under-reads closing more than U11). Range-vs-U11 corrections (D-053, PR #17's range assist, item 204 P1) must
+  be validated against an independent reference (ego odometry against stopped targets, tape/laser ranges, the
+  radar's fused lead in RADAR_HUD / ACC_CONTROL), not against openpilot vision.
+- **Consequence on this branch:** the young-track camera agreement bound (06a249eb2, 0d8b1209a) is removed
+  (17281d5c6). In replay it softened warranted braking at 000002d9 8:58 (−1.07 → −0.21, road −1.0, range closing
+  8-11 m/s). With a range-fit veto, it no longer touched the 000002d5 bookmark.
+- **Open (owner agreed to pursue):** whether a track born on the U11 rail is the camera tracker spinning up rather
+  than a real closing. If so, the owner has to decide (DECISIONS) on a bound that ramps up over the tracker's spin-up
+  instead of publishing the full rail on the first sweep. Evidence: `tools/bosch_a_birth_rail_report.py`, which
+  uses ego odometry anchors only. Proposal: D-077 (PROPOSED, no code).
+- **Birth-rail result (offline statistics, 8 routes 236/268/26b/2d5/2d6/2d7/2d8/2d9; not road evidence):**
+  6693 tracks; 2914 born on the −12 rail (461 live ≥ 3 s); 329 born on the +12 rail. Of 434 born low-railed, ≥ 3 s,
+  ego ≥ 5 m/s, 211 could be anchored. Settle anchor (moving lead, constant speed assumed): **128/130 overstated**
+  (truth closing < 8 m/s; median rail-minus-truth 10.8 m/s). Stationary anchor (ego < 12 m/s only): **61/81
+  genuine**. Overstated tracks decay off the rail like a filter spinning up: median U11 −12.0 at birth, −9.4 at
+  0.5 s, −6.6 at 1.0 s, −4.7 at 1.5 s (excess 1/e ≈ 1.2 s); genuine ones stay railed. +12 births: 91% spin-up.
+  Only 16/2914 born-railed tracks became leadOne within 1 s, and only the 000002d5 bookmark (t 716.5, tid 23)
+  published −20 within 3 s of birth. Caveats: the settle anchor is selection-biased toward leads that settle;
+  about half the tracks have no anchor; above 12 m/s a stopped object and a spinning-up tracker both read −12, so
+  U11 alone cannot tell them apart. A blanket ramp would delay genuine stopped-object braking.

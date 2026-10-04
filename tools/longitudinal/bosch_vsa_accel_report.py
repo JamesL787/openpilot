@@ -156,12 +156,21 @@ def range_rate(t: np.ndarray, d: np.ndarray, track: np.ndarray, half_window: flo
 # ---------- log reading ----------
 
 def rlog_files(paths: list[str]) -> list[Path]:
+  def seg_rlog(d: Path) -> Path | None:
+    return next((d / n for n in ('rlog.zst', 'rlog.bz2', 'rlog') if (d / n).exists()), None)
+
   out = []
   for p in (Path(s).expanduser() for s in paths):
     if p.is_dir():
-      f = next((p / n for n in ('rlog.zst', 'rlog.bz2', 'rlog') if (p / n).exists()), None)
+      f = seg_rlog(p)
       if f is None:
-        raise SystemExit(f'{p}: no rlog')
+        # a route directory as tools/konik_fetch.py writes it: <route>/<segment>/rlog.zst, in segment order
+        segs = sorted((d for d in p.iterdir() if d.is_dir() and d.name.isdigit()), key=lambda d: int(d.name))
+        found = [r for r in (seg_rlog(d) for d in segs) if r is not None]
+        if not found:
+          raise SystemExit(f'{p}: no rlog')
+        out.extend(found)
+        continue
       out.append(f)
     else:
       out.append(p)

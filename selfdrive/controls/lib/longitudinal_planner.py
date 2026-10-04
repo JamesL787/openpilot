@@ -122,6 +122,14 @@ FAST_CLOSING_LEAD_MAX_TTC = 6.0
 FAST_CLOSING_LEAD_MIN_VISION_PROB = 0.5
 FAST_CLOSING_LEAD_MIN_VISION_CLOSING = 6.0
 FAST_CLOSING_LEAD_VISION_MATCH = 0.15
+# The vision test passed in one tick and mpc.source == this lead in another is still entry, if they
+# are at most FAST_CLOSING_LEAD_VISION_MEMORY_TICKS apart on the same radar track (closing speed and
+# TTC are tested in the entry tick itself). STATUS 204: 26b 2233.6-2233.8 the model lead matched dRel
+# within 15 % for five ticks only; mpc.source flickered lead0/cruise across them, and whether it read
+# lead0 in the last matching tick (2233.84) decided between -1.9 and -1.1 for 2 s on a lead closing
+# 11 m/s at 52 m. A 0.003 m/s^2 difference in MPC warm start three seconds earlier was enough to flip
+# it. The rail-phantom guard is unchanged: such a lead never passes the vision test at all.
+FAST_CLOSING_LEAD_VISION_MEMORY_TICKS = 5
 # The pass is built against max(vehicle minimum, -FAST_CLOSING_LEAD_MAX_BRAKE), not the vehicle minimum (STATUS 150).
 # Uncapped, the pass was held because the owner reported rough braking, and on the current tree it still deepened 22
 # approaches (frames < -3.0 1363 -> 1626 over 32 routes). Capped at -2.0 it brakes earlier and softer instead: fleet
@@ -771,6 +779,67 @@ def get_far_lead_coast_cap(lead, v_ego, desired_gap, output_a_target, model_msg=
   return max(float(output_a_target), -FAR_LEAD_COAST_MAX_DECEL)
 
 
+# Early coast for far radar leads (report §12.3 P5; STATUS 204). The Bosch-A radar holds a lead out
+# to ~150 m, well before the follow law reacts, so a closing far lead caps throttle instead of letting
+# the cruise target accelerate into a brake later. It only lowers a positive target; it never brakes and
+# never raises a braking target. The cap tapers with TTC so entering it is not a step. Owner, 2026-10-04.
+FAR_RADAR_EARLY_COAST_MIN_SPEED = 10.0
+FAR_RADAR_EARLY_COAST_MIN_DISTANCE = 45.0
+FAR_RADAR_EARLY_COAST_MAX_DISTANCE = 150.0
+FAR_RADAR_EARLY_COAST_MAX_LATERAL = 1.5
+FAR_RADAR_EARLY_COAST_MIN_CLOSING = 1.0
+FAR_RADAR_EARLY_COAST_TTC_BP = [10.0, 15.0, 20.0]
+FAR_RADAR_EARLY_COAST_CAP_V = [0.0, 0.3, 2.0]
+
+
+def get_far_radar_lead_early_coast_cap(lead, v_ego, output_a_target):
+  if lead is None or not bool(getattr(lead, "status", False)) or not bool(getattr(lead, "radar", False)):
+    return float(output_a_target)
+  v_ego = float(v_ego)
+  lead_distance = float(getattr(lead, "dRel", float("inf")))
+  closing_speed = v_ego - float(getattr(lead, "vLead", v_ego))
+  if (
+    v_ego <= FAR_RADAR_EARLY_COAST_MIN_SPEED or
+    closing_speed < FAR_RADAR_EARLY_COAST_MIN_CLOSING or
+    not (FAR_RADAR_EARLY_COAST_MIN_DISTANCE <= lead_distance <= FAR_RADAR_EARLY_COAST_MAX_DISTANCE) or
+    abs(float(getattr(lead, "yRel", 0.0))) > FAR_RADAR_EARLY_COAST_MAX_LATERAL
+  ):
+    return float(output_a_target)
+  cap = float(np.interp(lead_distance / closing_speed, FAR_RADAR_EARLY_COAST_TTC_BP, FAR_RADAR_EARLY_COAST_CAP_V))
+  return min(float(output_a_target), cap)
+
+
+# Soft final stop behind a stopped radar lead (report §12.3 P6; STATUS 204). Between 3.0 and vEgoStopping
+# (0.5 m/s) the braking target is limited to a speed-scaled floor (-0.6 at 0.5 m/s, -1.0 at 2.0 m/s, none
+# at 3.0 m/s) but never softer than STOP_SOFTEN_MARGIN x the decel that stops the car STOP_DISTANCE short of
+# the lead, so the car still stops before the obstacle point. Below vEgoStopping longcontrol's stopping state
+# and the standstill stopped-lead guard own the stop; this does not touch them. Owner, 2026-10-04.
+STOP_SOFTEN_MIN_SPEED = 0.5
+STOP_SOFTEN_SPEED_BP = [0.5, 1.5, 2.0, 3.0]
+STOP_SOFTEN_FLOOR_V = [0.6, 0.8, 1.0, 3.5]
+STOP_SOFTEN_MAX_LEAD_SPEED = 0.5
+STOP_SOFTEN_MAX_LATERAL = 1.5
+STOP_SOFTEN_MIN_REMAINING = 0.5
+STOP_SOFTEN_MARGIN = 1.5
+
+
+def get_soft_stop_floor(lead, v_ego):
+  """Lowest aTarget the final stop needs, or None when the soft stop does not apply."""
+  if lead is None or not bool(getattr(lead, "status", False)) or not bool(getattr(lead, "radar", False)):
+    return None
+  v_ego = float(v_ego)
+  if not (STOP_SOFTEN_MIN_SPEED <= v_ego < STOP_SOFTEN_SPEED_BP[-1]):
+    return None
+  if (float(getattr(lead, "vLead", 0.0)) > STOP_SOFTEN_MAX_LEAD_SPEED or
+      abs(float(getattr(lead, "yRel", 0.0))) > STOP_SOFTEN_MAX_LATERAL):
+    return None
+  remaining = float(getattr(lead, "dRel", 0.0)) - STOP_DISTANCE
+  if remaining < STOP_SOFTEN_MIN_REMAINING:
+    return None
+  needed = STOP_SOFTEN_MARGIN * v_ego ** 2 / (2.0 * remaining)
+  return -max(float(np.interp(v_ego, STOP_SOFTEN_SPEED_BP, STOP_SOFTEN_FLOOR_V)), needed)
+
+
 # Restored planner constants retained by CEM, stop, and departure paths.
 A_CRUISE_MIN = -1.0
 # A soft decel profile (ECO -0.5, traffic -0.35) is a cruise-decel preference. With a closing lead
@@ -1214,6 +1283,8 @@ class LongitudinalPlanner:
     self.brake_release_rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
     self.coast_ceiling = None
     self.fast_closing_lead_track = None
+    self.fast_closing_tick = 0
+    self.fast_closing_vision_seen = {}
     self.stopped_radar_lead_hold_track = None
     self.stopped_radar_lead_hold_active = False
     self.output_should_stop = False
@@ -2645,15 +2716,16 @@ class LongitudinalPlanner:
       return False
     closing = -float(lead.vRel)
     d_rel = float(lead.dRel)
-    if self.mpc.source != lead_source or closing < FAST_CLOSING_LEAD_MIN_CLOSING or d_rel > FAST_CLOSING_LEAD_MAX_TTC * closing:
+    if closing < FAST_CLOSING_LEAD_MIN_CLOSING or d_rel > FAST_CLOSING_LEAD_MAX_TTC * closing:
       return False
     leads = getattr(model_msg, "leadsV3", None) if model_msg is not None else None
-    if not leads or len(leads[0].x) == 0 or len(leads[0].v) == 0:
-      return False
-    vision = leads[0]
-    if (float(vision.prob) < FAST_CLOSING_LEAD_MIN_VISION_PROB or
-        abs(float(vision.x[0]) - d_rel) > FAST_CLOSING_LEAD_VISION_MATCH * d_rel or
-        v_ego - float(vision.v[0]) < FAST_CLOSING_LEAD_MIN_VISION_CLOSING):
+    vision = leads[0] if leads and len(leads[0].x) > 0 and len(leads[0].v) > 0 else None
+    if (vision is not None and float(vision.prob) >= FAST_CLOSING_LEAD_MIN_VISION_PROB and
+        abs(float(vision.x[0]) - d_rel) <= FAST_CLOSING_LEAD_VISION_MATCH * d_rel and
+        v_ego - float(vision.v[0]) >= FAST_CLOSING_LEAD_MIN_VISION_CLOSING):
+      self.fast_closing_vision_seen[track] = self.fast_closing_tick
+    seen = self.fast_closing_vision_seen.get(track)
+    if self.mpc.source != lead_source or seen is None or self.fast_closing_tick - seen > FAST_CLOSING_LEAD_VISION_MEMORY_TICKS:
       return False
     self.fast_closing_lead_track = track
     return True
@@ -3341,6 +3413,9 @@ class LongitudinalPlanner:
         lead.status and bool(getattr(lead, "radar", False)) and int(getattr(lead, "radarTrackId", -1)) == self.fast_closing_lead_track
         for lead in (self.lead_one, self.lead_two)):
       self.fast_closing_lead_track = None
+    self.fast_closing_tick += 1
+    self.fast_closing_vision_seen = {k: t for k, t in self.fast_closing_vision_seen.items()
+                                     if self.fast_closing_tick - t <= FAST_CLOSING_LEAD_VISION_MEMORY_TICKS}
     exp_close_lead_cap = None
     exp_close_lead_floor = min(self.exp_close_lead_floor, accel_limits_turns[0])
     if lead_control_active:
@@ -3867,6 +3942,13 @@ class LongitudinalPlanner:
     if far_lead_coast_allowed:
       output_a_target = get_far_lead_coast_cap(comfort_lead, scene_v_ego, desired_gap, output_a_target,
                                                sm['modelV2'])
+    output_a_target = get_far_radar_lead_early_coast_cap(comfort_lead, scene_v_ego, output_a_target)
+
+    soft_stop_floor = None if (panic_bypass or bool(getattr(sm['starpilotPlan'], 'forcingStop', False))) else \
+      get_soft_stop_floor(comfort_lead, scene_v_ego)
+    if soft_stop_floor is not None and output_a_target < soft_stop_floor:
+      # output only: raising self.a_desired would feed a softer x0 into the next MPC solve (see BRAKE_RELEASE_DWELL)
+      output_a_target = soft_stop_floor
 
     if radar_gap_settle_active:
       output_a_target = RADAR_STANDSTILL_GAP_SETTLE_ACCEL
