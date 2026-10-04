@@ -613,6 +613,18 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                                   "distances are the less cautious direction, which is why it ships off. Never driven. Restart required to take effect."),
                  get_state=lambda: self._params.get_bool("BoschARangeOffsetFallback"),
                  set_state=lambda v: self._params.put_bool("BoschARangeOffsetFallback", v)),
+      SettingRow("BoschARangeKF", "toggle", tr_noop("Range-Driven Lead Correction"),
+                 subtitle=tr_noop("Range-KF correction is capped by camera closing agreement. Restart required."), 
+                 get_state=lambda: self._params.get_bool("BoschARangeKF"),
+                 set_state=lambda v: self._params.put_bool("BoschARangeKF", v)),
+      SettingRow("BoschAOverBrakeComp", "toggle", tr_noop("Mid-Band Over-Brake Comp"),
+                 subtitle=tr_noop("Mid-band over-brake compensation for Civic Bosch. Restart required."), 
+                 get_state=lambda: self._params.get_bool("BoschAOverBrakeComp"),
+                 set_state=lambda v: self._params.put_bool("BoschAOverBrakeComp", v)),
+      SettingRow("BoschABirthRailRamps", "toggle", tr_noop("Birth-Rail Ramps"),
+                 subtitle=tr_noop("D-077 birth-rail ramps. Restart required."), 
+                 get_state=lambda: self._params.get_bool("BoschABirthRailRamps"),
+                 set_state=lambda v: self._params.put_bool("BoschABirthRailRamps", v)),
     ]
 
     self._slc_rows = [

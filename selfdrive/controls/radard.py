@@ -819,6 +819,25 @@ def set_bosch_a_newborn_leads(enabled: bool) -> None:
   NEWBORN_LEAD_NEEDS_CLOSING = bool(enabled)
 
 
+
+def bosch_a_birth_rail_ramp_high_enabled() -> bool:
+  try:
+    return bool(Params().get_bool("BoschABirthRailRamps"))
+  except Exception:
+    return False
+
+def bosch_a_birth_rail_ramp_low_enabled() -> bool:
+  try:
+    return bool(Params().get_bool("BoschABirthRailRamps"))
+  except Exception:
+    return False
+
+def bosch_a_range_kf_enabled() -> bool:
+  try:
+    return bool(Params().get_bool("BoschARangeKF"))
+  except Exception:
+    return False
+
 def is_bosch_a_radar_car(CP) -> bool:
   return CP.brand == "honda" and CP.carFingerprint in HONDA_BOSCH_A and not CP.radarUnavailable
 
@@ -1397,7 +1416,7 @@ class Track:
     """D-077: track the born-railed state and set birth_rail_vrel (None unless a ramp is active). Must run after
     _update_range_assist; the LOW ramp withholds RAIL_FAST by zeroing range_assist_correction."""
     self.birth_rail_vrel = None
-    if self.birth_rail_done or not (BIRTH_RAIL_RAMP_HIGH or BIRTH_RAIL_RAMP_LOW):
+    if self.birth_rail_done or not ((bosch_a_birth_rail_ramp_high_enabled() or bosch_a_birth_rail_ramp_low_enabled())):
       return
     age = float(t_now) - self.t_first
     on_low = self.vRel <= BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_U11_SCALE_MPS / 2
@@ -1414,7 +1433,7 @@ class Track:
       return
     frac = birth_rail_ramp_fraction(age)
     if self.birth_rail > 0:
-      if not BIRTH_RAIL_RAMP_HIGH:
+      if not bosch_a_birth_rail_ramp_high_enabled():
         self.birth_rail_done = True
         return
       # Less opening than the rail: the more-closing direction, combined with any range assist below.
@@ -1422,7 +1441,7 @@ class Track:
       return
     v_ego_aligned = self.vLead - self.vRel
     fit = self.vRelRangeFresh and math.isfinite(self.vRelRange)
-    if not BIRTH_RAIL_RAMP_LOW or v_ego_aligned < BIRTH_RAIL_LOW_MIN_V_EGO_MPS:
+    if not bosch_a_birth_rail_ramp_low_enabled() or v_ego_aligned < BIRTH_RAIL_LOW_MIN_V_EGO_MPS:
       self.birth_rail_done = True
       return
     if not fit and not self.birth_rail_ramping and age <= BIRTH_RAIL_WINDOW_S:
@@ -2016,7 +2035,7 @@ class RadarD:
                               vision_assist=vision_assist, camera_sample=cam_sample,
                               nc_vrel=rpt[4], nc_valid=rpt[5], nc_sigma=rpt[6],
                               newborn_follow=self.honda_bosch_a_radar and radar_fresh and not rpt[3],
-                              range_kf=self.honda_bosch_a_radar)
+                              range_kf=self.honda_bosch_a_radar and bosch_a_range_kf_enabled())
 
     # ONPATH_RADAR_ADOPT: path offset of every track on a fresh sweep (yRel + = left, model y + = right)
     if ONPATH_RADAR_ADOPT and self.honda_bosch_a_radar and radar_fresh:

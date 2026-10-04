@@ -743,10 +743,12 @@ class CarController(CarControllerBase):
     if self.CP.carFingerprint in HONDA_BOSCH:
       self.bosch_gas_factor = self.param_store.get_float("HondaGasFactorParams", default=1.0)
       self.bosch_wind_factor = self.param_store.get_float("HondaWindFactorParams", default=1.0)
+      self.bosch_overbrake_comp_enabled = self.param_store.get_bool("BoschAOverBrakeComp")
     else:
       # NRDR keeps Nidec gas-interceptor gains static; Bosch live learning stays above.
       self.bosch_gas_factor = 1.0
       self.bosch_wind_factor = 1.0
+      self.bosch_overbrake_comp_enabled = False
     self.bosch_wind_factor_before_brake = self.bosch_wind_factor
     self.bosch_gas_factor_before_gasmax = self.bosch_gas_factor
     self.bosch_wind_factor_before_gasmax = self.bosch_wind_factor
