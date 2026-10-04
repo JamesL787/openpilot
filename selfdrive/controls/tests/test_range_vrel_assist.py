@@ -41,6 +41,7 @@ DT_MDL = 0.05                        # radard's own loop rate: 20 Hz, the model 
 V_EGO = 20.0
 # D-074: the recorded series below were logged under the old 1/64 U11 decode (rail -13.5). The car decodes at 1/72
 # now; these tests pin radard's U11-scale values back to 1/64 so the recorded numbers keep their meaning.
+# The production 1/72 scale is covered by test_range_vrel_assist_u11_1_72.py (rail cases re-derived, D-071 veto untuned).
 Q = 1.0 / 64.0
 RAIL = (radard.BOSCH_A_DIRECT_VREL_MIN_RAW - radard.BOSCH_A_DIRECT_VREL_CENTER_RAW) * Q   # exactly -13.5
 SETTLE = RANGE_VREL_LONG_SAMPLES + RANGE_VREL_ASSIST_ARM_UPDATES - 1
