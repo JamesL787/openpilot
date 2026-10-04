@@ -437,10 +437,46 @@ def run_dbc() -> None:
   check(acc["ACCEL_COMMAND"][2].startswith("(0.01,0)"), "ACCEL_COMMAND scale 0.01 m/s^2 in the DBC")
 
 
+def run_xcheck() -> None:
+  """Claims of the 2026-10-03 cross-check (xcheck_openpilot_2026-10-03.md) that need no firmware image."""
+  print("\n== 4. cross-check 2026-10-03: KINEMATICS 0x094 as input b ==")
+  kin = dbc_signals(PT_DBC, "KINEMATICS")
+  msb, length, _ = kin["YAW_RATE"]
+  check((length, motorola_lsb(msb, length)) == (10, 14), f"0x278 = KINEMATICS.YAW_RATE {msb}|{length}: LSB 14, 10 bit")
+  msb, length, scale = kin["LONG_ACCEL"]
+  check(motorola_lsb(msb, length) == 32 and motorola_lsb(25, 10) == 32,
+        f"0x276 = KINEMATICS.LONG_ACCEL {msb}|{length} (LSB 32); firmware's 10-bit read has MSB 25, same LSB")
+  check(scale.startswith("(-0.049,0)") and abs(0.049 / (49 / 1024) - 1.024) < 1e-9,
+        "LONG_ACCEL factor -0.049 vs firmware 49/1024: 2.4 % apart, sign explains the firmware negation (0x9c308)")
+
+  def fw(raw10: int) -> float:  # 0x16661c float table, then negated
+    return -(raw10 * 0.0478515625 - 24.5)
+
+  def dbc(raw10: int) -> float:  # opendbc reads only the low 9 bits, two's complement
+    low9 = raw10 & 0x1FF
+    return (low9 - 512 if low9 & 0x100 else low9) * -0.049
+  check(all((fw(r) > 0) == (dbc(r) > 0) and abs(fw(r) - dbc(r)) <= abs(dbc(r)) * 0.025 + 1e-9
+            for r in range(256, 768)),
+        "10-bit offset-binary (firmware) and 9-bit two's complement (opendbc) agree for |accel| < 12.25 m/s^2")
+  used = set()
+  for m, n, _ in kin.values():
+    bit = m
+    for _ in range(n):
+      used.add(bit)
+      bit = bit + 15 if bit % 8 == 0 else bit - 1
+  check(52 not in used, "0x274 (1 bit, LSB 52 of 0x094): no opendbc signal there, so its meaning is unknown")
+  ids = Path(__file__).resolve().parents[1] / "opendbc_repo/opendbc/car/honda/radar_interface.py"
+  src = ids.read_text()
+  check("0x430, 0x43A" in src and "_bosch_a_main_base" in src and "0x094" not in src and "ACC_CONTROL" not in src,
+        "cross-check 4: 0x400/0x430-0x445 is the NIDEC parser (it calls it the Bosch-A bank); Bosch-A reads " +
+        "0x280-0x2FF + aux; neither reads 0x1DF or 0x094")
+
+
 if __name__ == "__main__":
   run_listings()
   run_arithmetic()
   run_dbc()
+  run_xcheck()
   print("\nNOTES")
   for n in NOTES:
     print("  " + n)
