@@ -2313,63 +2313,19 @@ def test_existence_sentinel_publishes_not_provided():
       assert rr.points[0].existence == pytest.approx(expected)
 
 
-def test_newborn_vrel_is_the_range_fit_bounded_at_stationary():
-  """BOSCH_A_NEWBORN_RANGE_PUBLISH: the fit rate, bounded at -vEgo; no live U11, no rail floor."""
-  from opendbc.car.honda.radar_interface import _bosch_a_newborn_vrel
-  dt = 1.0 / BOSCH_A_FREQ_HZ
-  closing = [(i * dt, 116.0 - 20.0 * i * dt) for i in range(6)]
-  assert _bosch_a_newborn_vrel(closing, None) == pytest.approx(-20.0)
-  assert _bosch_a_newborn_vrel(closing, 25.0) == pytest.approx(-20.0)
-  # Faster than a stopped object can close: bounded at -vEgo (well past the U11 low rail).
-  assert _bosch_a_newborn_vrel(closing, 19.8) == pytest.approx(-19.8)
-  assert _bosch_a_newborn_vrel(closing, 12.0) == pytest.approx(-12.0)
-  assert _bosch_a_newborn_vrel(closing[:2], 19.8) is None  # too short to fit
-  noisy = [(i * dt, 100.0 + (3.0 if i % 2 else -3.0)) for i in range(6)]
-  assert _bosch_a_newborn_vrel(noisy, 19.8) is None  # over BOSCH_A_REANCHOR_MAX_RMS_M
-
-
-def test_newborn_history_is_not_seeded_by_default():
-  # BOSCH_A_NEWBORN_SEED_HISTORY off: 00000284 22:36.7 track 17's seeded burst held a -10.47 coast for 1.3 s.
-  from opendbc.car.honda import radar_interface
-  assert radar_interface.BOSCH_A_NEWBORN_SEED_HISTORY is False
-
-
-class TestNewbornLeadsToggle:
-  """BOSCH_A_NEWBORN_RANGE_PUBLISH is built in off and copied into RadarInterface.newborn_range_publish.
-  OFF: a high-u10 newborn is withheld exactly as before the newborn publish. ON (replays/tests): published on its range fit."""
-  @staticmethod
-  def _drive_newborn(ri, sweeps=10):
-    # A stopped car from 116 m closing at 20 m/s, every sweep with U11 above BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW.
-    ri.v_ego = 19.8
-    dt_nanos = int(1e9 / BOSCH_A_FREQ_HZ)
-    published = []
-    for i in range(sweeps):
-      d = 116.0 - 20.0 * i / BOSCH_A_FREQ_HZ
-      rr = ri.update(sweep(0, i % 16, 0x7, int(round(d * 16)), 1024, 1 + 2 * i, i * dt_nanos, with_aux=True,
-                           direct_vrel_raw=600, direct_vrel_uncertainty_raw=BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 200))
-      if rr is not None:
-        published.append(list(rr.points))
-    return published
-
-  def test_source_default_is_off(self):
-    from opendbc.car.honda import radar_interface
-    assert radar_interface.BOSCH_A_NEWBORN_RANGE_PUBLISH is False
-    assert not hasattr(radar_interface, "bosch_a_newborn_leads_enabled")
-
-  def test_off_never_publishes_a_newborn(self):
-    ri = make_radar_interface()
-    assert ri.newborn_range_publish is False
-    published = self._drive_newborn(ri)
-    assert len(published) == 10
-    assert all(len(points) == 0 for points in published)
-
-  def test_on_publishes_the_newborn_on_its_range_fit(self, monkeypatch):
-    from opendbc.car.honda import radar_interface
-    monkeypatch.setattr(radar_interface, "BOSCH_A_NEWBORN_RANGE_PUBLISH", True)
-    ri = make_radar_interface()
-    assert ri.newborn_range_publish is True
-    published = self._drive_newborn(ri)
-    assert any(len(points) for points in published)
-    first = next(points for points in published if points)
-    assert first[0].measured is False
-    assert first[0].vRel == pytest.approx(-19.8, abs=0.5)  # the range fit (-20), bounded at -vEgo
+def test_a_new_identity_with_high_u10_is_withheld():
+  """A new identity whose U11 arrives with u10 above BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW has no trusted vRel to
+  coast, so it is not published until u10 drops. The early "newborn" publish that once existed was removed from
+  JamesL787/openpilot#17 review; this pins the behaviour that remains (static test only)."""
+  ri = make_radar_interface()
+  ri.v_ego = 19.8
+  dt_nanos = int(1e9 / BOSCH_A_FREQ_HZ)
+  published = []
+  for i in range(10):
+    d = 116.0 - 20.0 * i / BOSCH_A_FREQ_HZ   # a stopped car from 116 m, closing at 20 m/s
+    rr = ri.update(sweep(0, i % 16, 0x7, int(round(d * 16)), 1024, 1 + 2 * i, i * dt_nanos, with_aux=True,
+                         direct_vrel_raw=600, direct_vrel_uncertainty_raw=BOSCH_A_DIRECT_VREL_MAX_UNCERTAINTY_RAW + 200))
+    if rr is not None:
+      published.append(list(rr.points))
+  assert len(published) == 10
+  assert all(len(points) == 0 for points in published)
