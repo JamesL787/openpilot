@@ -378,6 +378,19 @@ BRAKE_ONSET_JERK_V = [6.0, 1.5]  # m/s^3 allowed fall rate at those TTCs
 BRAKE_ONSET_MIN_GAP_M = 10.0
 BRAKE_ONSET_MIN_GAP_T = 1.5  # s of v_ego; the gap gate is max(MIN_GAP_M, MIN_GAP_T * v_ego)
 BRAKE_ONSET_LEAD_DECEL = -1.0  # m/s^2; a lead braking harder than this disables the limit
+# Newborn lead aLeadK bound (D-080, proposed; replay only, not driven), part of the BrakeOnsetLimit toggle. STATUS 212:
+# on 2e2 (bookmark ~283 s) a radar lead first seen while its velocity estimate was still converging published aLeadK
+# -3 / -2.5 when ~0.75 m/s^2 was needed, and on 2e1 a jumping track reached -13.7; the planner braked early and twice,
+# and the onset limit stood aside because aLeadK < BRAKE_ONSET_LEAD_DECEL. For the first NEWBORN_LEAD_FRAMES a radar
+# track has been a lead (or after it drops out for NEWBORN_LEAD_GAP_FRAMES or its range jumps NEWBORN_LEAD_JUMP_M),
+# its aLeadK may go no lower than -NEWBORN_LEAD_MIN_BRAKE, or lower only as far as a quadratic fit to its own range
+# history (once NEWBORN_LEAD_FIT_FRAMES long) says it is slowing. Planner input only: dRel, vRel, TTC and radarState
+# are untouched and the point is never dropped (D-041/D-042); only the assumed lead decel is bounded.
+NEWBORN_LEAD_FRAMES = 40        # 2.0 s as a lead
+NEWBORN_LEAD_GAP_FRAMES = 10    # absent this long (0.5 s): newborn again
+NEWBORN_LEAD_JUMP_M = 4.0       # range step from the last sample: newborn again
+NEWBORN_LEAD_FIT_FRAMES = 16    # 0.8 s of range history before the fit may lower the floor
+NEWBORN_LEAD_MIN_BRAKE = 1.0    # aLeadK floor without range confirmation (= -BRAKE_ONSET_LEAD_DECEL)
 
 
 # Experimental-mode exit crossfade (log, open-loop and closed-loop replay evidence only; not driven).
@@ -1286,6 +1299,67 @@ def bound_off_axis_leads(sm, hold=None):
   return _BoundedSubMaster(sm, _BoundedRadarState(radar_state, leads[0], leads[1]))
 
 
+class NewbornLeadHold:
+  """D-080: per radar track, (frame, dRel, aEgo) since it became a lead; bounds aLeadK while it is newborn."""
+  def __init__(self):
+    self.frame = 0
+    self.hist: dict[int, list] = {}
+    self.bound_frames = 0
+
+  def _range_decel(self, h):
+    """Lead accel from a quadratic fit to the range history plus ego accel, or None if too short."""
+    if len(h) < NEWBORN_LEAD_FIT_FRAMES:
+      return None
+    t = np.array([f - h[-1][0] for f, _, _ in h], dtype=float) * DT_MDL
+    d = np.array([x for _, x, _ in h], dtype=float)
+    a_rel = 2.0 * float(np.polyfit(t, d, 2)[0])
+    return a_rel + float(np.mean([a for _, _, a in h]))
+
+  def bound(self, lead, a_ego):
+    """aLeadK for `lead`, or None when it is left as is. Call once per lead per frame, after tick()."""
+    if lead is None or not bool(getattr(lead, "status", False)) or not bool(getattr(lead, "radar", False)):
+      return None
+    tid = int(getattr(lead, "radarTrackId", -1))
+    d_rel = float(lead.dRel)
+    h = self.hist.get(tid)
+    if h is None or self.frame - h[-1][0] > NEWBORN_LEAD_GAP_FRAMES or abs(d_rel - h[-1][1]) > NEWBORN_LEAD_JUMP_M:
+      h = self.hist[tid] = [(self.frame, d_rel, float(a_ego))]
+    elif h[-1][0] != self.frame:  # leadOne and leadTwo on one track: record it once
+      h.append((self.frame, d_rel, float(a_ego)))
+    if self.frame - h[0][0] >= NEWBORN_LEAD_FRAMES:
+      return None
+    a_lead = float(lead.aLeadK)
+    a_range = self._range_decel(h)
+    a_floor = -NEWBORN_LEAD_MIN_BRAKE if a_range is None else min(-NEWBORN_LEAD_MIN_BRAKE, a_range)
+    if a_lead >= a_floor:
+      return None
+    self.bound_frames += 1
+    return a_floor
+
+  def tick(self):
+    self.frame += 1
+    if len(self.hist) > 64:
+      self.hist = {k: h for k, h in self.hist.items() if self.frame - h[-1][0] <= NEWBORN_LEAD_GAP_FRAMES}
+
+
+def bound_newborn_leads(sm, hold):
+  try:
+    radar_state = sm['radarState']
+    a_ego = float(sm['carState'].aEgo)
+  except (KeyError, AttributeError):
+    return sm
+  hold.tick()
+  leads = []
+  changed = False
+  for lead in (radar_state.leadOne, radar_state.leadTwo):
+    a_lead = hold.bound(lead, a_ego)
+    leads.append(lead if a_lead is None else _BoundedLead(lead, a_lead))
+    changed |= a_lead is not None
+  if not changed:
+    return sm
+  return _BoundedSubMaster(sm, _BoundedRadarState(radar_state, leads[0], leads[1]))
+
+
 class LongitudinalPlanner:
   def _short_action_t_active(self) -> bool:
     """D-072: built in on through PLANNER_ACTION_T_OVERRIDE."""
@@ -1301,6 +1375,7 @@ class LongitudinalPlanner:
     self.bound_off_axis_radar_leads = uses_off_axis_lead_bound(CP)
     self.off_axis_lead_hold = OffAxisLeadHold()
     self.reassociation_hold = ReassociationHold()
+    self.newborn_lead_hold = NewbornLeadHold()
     self.longitudinal_actuator_delay = max(DT_MDL, float(CP.longitudinalActuatorDelay))
     self.close_lead_brake_cap_value = 0.0
     self.lead_geometry_required_accel = 0.0
@@ -2838,6 +2913,8 @@ class LongitudinalPlanner:
       if REASSOC_LEAD_BOUND:
         sm = bound_reassociated_leads(sm, self.reassociation_hold)
       sm = bound_off_axis_leads(sm, self.off_axis_lead_hold)
+    if BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "brake_onset_limit", False)):
+      sm = bound_newborn_leads(sm, self.newborn_lead_hold)
     if self.is_preap:
       self._preap_param_frame += 1
       if self._preap_params is not None and (self._preap_param_frame % 20) == 0:
