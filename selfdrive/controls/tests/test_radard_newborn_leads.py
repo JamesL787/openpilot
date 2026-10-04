@@ -1,5 +1,4 @@
-"""Radard's three newborn switches are built in on (the BoschANewbornLeads toggle is removed) and follow
-set_bosch_a_newborn_leads() together."""
+"""radard's three newborn switches are built in off and follow set_bosch_a_newborn_leads() together."""
 import ast
 import inspect
 
@@ -11,16 +10,16 @@ SWITCHES = ("NEWBORN_RANGE_CLOSING_EXEMPT", "NEWBORN_KF_FOLLOW_RANGE", "NEWBORN_
 
 
 @pytest.fixture(autouse=True)
-def restore_on():
+def restore_off():
   yield
-  radard.set_bosch_a_newborn_leads(True)
+  radard.set_bosch_a_newborn_leads(False)
 
 
-def test_source_defaults_are_on():
+def test_source_defaults_are_off():
   tree = ast.parse(inspect.getsource(radard))
   defaults = {node.targets[0].id: node.value.value for node in tree.body
               if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in SWITCHES}
-  assert defaults == dict.fromkeys(SWITCHES, True)
+  assert defaults == dict.fromkeys(SWITCHES, False)
 
 
 def test_setter_flips_all_three():
