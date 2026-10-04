@@ -896,6 +896,7 @@
         "picker_description": "Builds braking up gradually while the lead is still far away.",
         "data_type": "bool",
         "ui_type": "toggle",
+        "category": "longitudinal_tuning",
         "parent_key": "AdvancedLongitudinalTune",
         "settings_tier": "advanced"
       },
