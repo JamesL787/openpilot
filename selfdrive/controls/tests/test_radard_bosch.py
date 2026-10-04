@@ -728,6 +728,24 @@ def test_bosch_a_lead_accel_tau_timebase_flag_is_bosch_a_only(monkeypatch):
   assert radard.RadarD(radar_ts=0.1).a_lead_tau_dt == radard.DT_MDL
 
 
+@pytest.mark.parametrize("value,raises,expected", [(True, False, True), (False, False, False), (None, True, False)])
+def test_bosch_a_lead_accel_tau_timebase_toggle(monkeypatch, value, raises, expected):
+  # BoschALeadTauRadarDt: read once at RadarD construction, fails closed (off) if the key is unknown.
+  monkeypatch.setattr(radard, "BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT", False)
+
+  class FakeParams:
+    def get_bool(self, key):
+      assert key == "BoschALeadTauRadarDt"
+      if raises:
+        raise KeyError(key)
+      return value
+
+  monkeypatch.setattr(radard, "Params", FakeParams)
+  bosch_a = radard.RadarD(honda_bosch_a_radar=True)
+  assert bosch_a.a_lead_tau_dt == (pytest.approx(radard.HONDA_BOSCH_A_RADAR_TS) if expected else radard.DT_MDL)
+  assert radard.RadarD(radar_ts=0.1).a_lead_tau_dt == radard.DT_MDL
+
+
 def test_bosch_a_lead_accel_tau_timebase_matches_20hz_wall_clock_rates():
   kp = radard.KalmanParams(radard.HONDA_BOSCH_A_RADAR_TS)
   ref = radard.Track(1, 10.0, kp)  # what the code intends: one step per 50 ms

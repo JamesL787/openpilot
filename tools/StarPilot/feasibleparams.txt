@@ -5,6 +5,7 @@ SetSpeedOnGasRelease
 FarLeadCoastCap
 BoschARailInterval
 BoschARangeOffsetFallback
+BoschALeadTauRadarDt
 Total globally registered C++ keys:  609
 Total explicit UI string references: 502
 Total Editable/Toggleable targets:   465

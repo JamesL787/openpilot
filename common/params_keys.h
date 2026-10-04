@@ -391,6 +391,10 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // TEST, default OFF. Bosch-A only. D-076: range offset -335/128 = -2.617 m (the firmware fallback) instead of -3.0;
     // every dRel reads 0.383 m longer. Static only. Read once at startup in honda/radar_interface.py.
     {"BoschARangeOffsetFallback", {PERSISTENT, BOOL, "0", "0", 3}},
+    // TEST, default OFF. Bosch-A only. Steps Track.aLeadTau at the radar sweep rate (~14.35 Hz) instead of the 20 Hz
+    // model rate, so its wall-clock time constant is ~0.47 s instead of ~0.66 s. Static only. Read once when radard
+    // starts (BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT in selfdrive/controls/radard.py).
+    {"BoschALeadTauRadarDt", {PERSISTENT, BOOL, "0", "0", 3}},
     // Default ON. Bosch-A only. D-074: decode the U11 track vRel at 1/72 m/s per count (rails +-12.0); OFF goes back to
     // 1/64 (rails +-13.5). Static and replay evidence, limited road evidence. Read once at startup in
     // honda/radar_interface.py and radard.py.

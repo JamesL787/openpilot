@@ -31,6 +31,20 @@ _LEAD_ACCEL_TAU = 0.6
 # how long a lead keeps its accel) and nothing about which points publish. Default off: not
 # replayed, not driven. Re-decide _LEAD_ACCEL_TAU (0.6 here vs upstream 1.5) only after this.
 BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT = False
+# Owner toggle "BoschALeadTauRadarDt" (Advanced Longitudinal Tuning, default off) turns the same behaviour on from
+# the device without editing this constant. Read once at RadarD construction; any failure, including a
+# params_pyx.so that predates the key, means off.
+BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT_PARAM = "BoschALeadTauRadarDt"
+
+
+def bosch_a_lead_tau_radar_dt_enabled() -> bool:
+  if BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT:
+    return True
+  try:
+    return bool(Params().get_bool(BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT_PARAM))
+  except Exception:
+    return False
+
 
 # Shadow range-derived vRel, computed for whichever radar lead is selected -- not only Bosch-A.
 # Timestamps come from the message clock so replay is faithful; wall-clock time made every
@@ -1579,7 +1593,7 @@ class RadarD:
     # filters, however, consume modelV2 leads every model cycle and must retain model-loop timing.
     kf_dt = HONDA_BOSCH_A_RADAR_TS if self.honda_bosch_a_radar else radar_ts
     self.kalman_params = KalmanParams(kf_dt)
-    self.a_lead_tau_dt = HONDA_BOSCH_A_RADAR_TS if (self.honda_bosch_a_radar and BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT) else DT_MDL
+    self.a_lead_tau_dt = HONDA_BOSCH_A_RADAR_TS if (self.honda_bosch_a_radar and bosch_a_lead_tau_radar_dt_enabled()) else DT_MDL
     self.g90_radar_filter = g90_radar_filter
     lead_prob_dt = DT_MDL if self.honda_bosch_a_radar else radar_ts
     self.lead_prob_filters = [FirstOrderFilter(0.0, 0.2, lead_prob_dt) for _ in range(2)]

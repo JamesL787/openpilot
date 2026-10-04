@@ -10177,3 +10177,9 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **Still open:** run the tool on the item 71 routes (P0 of the report) before any over-delivery compensation;
   replay the flag on the D-053 routes and compare predicted vs actual lead speed at 1-3 s before turning it on or
   re-deciding `_LEAD_ACCEL_TAU`.
+
+## 203. `BoschALeadTauRadarDt` toggle for item 202 (2026-10-04, owner request). Default OFF. Static unit tests only; not replayed, not driven.
+- Advanced Longitudinal Tuning, "Radar Lead Accel Timing". ON behaves exactly like `BOSCH_A_LEAD_ACCEL_TAU_RADAR_DT = True`
+  (the code constant still forces it on). Read once when radard starts, so a restart is needed; any read failure,
+  including a params_pyx.so without the key, means OFF. Bosch-A only.
+- **Still open:** the item 202 replay on the D-053 routes before anyone turns it on for a drive.
