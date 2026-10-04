@@ -367,14 +367,17 @@ COAST_CEILING_JERK = 2.5  # m/s^3
 # jerk allowance grows as TTC shrinks and the limit is off below BRAKE_ONSET_TTC_OFF_S, inside BRAKE_ONSET_MIN_GAP,
 # with no lead, on a stop/red-light/forced-stop, a panic bypass, reset or standstill. Output only: self.a_desired
 # still feeds the MPC x0 (cutting that feedback diverged the replay, see BRAKE_RELEASE_DWELL above).
+# Throttle cuts are not touched (the limit starts from min(prev, 0); COAST_CEILING_SLEW owns those). Replay round 1
+# (2026-10-04, 7 routes) limited throttle cuts too and softened 236 13:15.7 (lead 17 m at 10.6 m/s braking -1.1),
+# so the gap gate went 1.0 -> 1.5 s and the lead-decel gate -1.5 -> -1.0.
 # Costs: up to |a| / J seconds later to reach a far-lead brake; the on-path bound in update() still applies after.
 BRAKE_ONSET_LIMIT = False  # True forces it on; otherwise the BrakeOnsetLimit toggle (Advanced Longitudinal Tuning)
 BRAKE_ONSET_TTC_OFF_S = 3.0  # at or below: no limit
 BRAKE_ONSET_TTC_BP = [3.0, 6.0]  # s
 BRAKE_ONSET_JERK_V = [6.0, 1.5]  # m/s^3 allowed fall rate at those TTCs
 BRAKE_ONSET_MIN_GAP_M = 10.0
-BRAKE_ONSET_MIN_GAP_T = 1.0  # s of v_ego; the gap gate is max(MIN_GAP_M, MIN_GAP_T * v_ego)
-BRAKE_ONSET_LEAD_DECEL = -1.5  # m/s^2; a lead braking harder than this disables the limit
+BRAKE_ONSET_MIN_GAP_T = 1.5  # s of v_ego; the gap gate is max(MIN_GAP_M, MIN_GAP_T * v_ego)
+BRAKE_ONSET_LEAD_DECEL = -1.0  # m/s^2; a lead braking harder than this disables the limit
 
 
 # Experimental-mode exit crossfade (log, open-loop and closed-loop replay evidence only; not driven).
@@ -438,10 +441,11 @@ def brake_onset_jerk(leads, v_ego: float) -> float | None:
 
 
 def brake_onset_limited_target(prev: float, target: float, dt: float, jerk: float | None) -> float:
-  """A target below prev may fall at most jerk * dt per step; rises and jerk None pass through."""
-  if jerk is None or target >= prev:
+  """A brake below min(prev, 0) may deepen at most jerk * dt per step; throttle cuts, rises and jerk None pass through."""
+  start = min(prev, 0.0)
+  if jerk is None or target >= start:
     return float(target)
-  return float(max(target, prev - jerk * dt))
+  return float(max(target, start - jerk * dt))
 
 
 def brake_release_dwell_target(prev: float, target: float, rise_ticks: int) -> tuple[float, int]:

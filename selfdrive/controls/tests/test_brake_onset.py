@@ -26,9 +26,9 @@ def test_jerk_allowance_grows_as_ttc_shrinks():
 
 @pytest.mark.parametrize("leads,v_ego", [
   ((_lead(30.0, -10.0),), 20.0),               # TTC 3 s: urgent
-  ((_lead(15.0, -1.0),), 20.0),                # inside 1 s of gap
+  ((_lead(25.0, -1.0),), 20.0),                # inside 1.5 s of gap
   ((_lead(8.0, 0.0),), 3.0),                   # inside the 10 m floor
-  ((_lead(80.0, -2.0, a=-2.5),), 25.0),        # lead braking hard
+  ((_lead(80.0, -2.0, a=-1.2),), 25.0),        # lead braking
   ((None, _lead(5.0, 0.0, status=False)), 25.0),  # no active lead
   ((_lead(90.0, -2.0), _lead(30.0, -12.0)), 25.0),  # the worst lead decides
 ])
@@ -41,7 +41,8 @@ def test_limited_target_slows_only_a_falling_target():
   assert lp.brake_onset_limited_target(-0.2, -1.5, dt, 1.5) == pytest.approx(-0.2 - 1.5 * dt)
   assert lp.brake_onset_limited_target(-1.0, -0.5, dt, 1.5) == pytest.approx(-0.5)  # release untouched
   assert lp.brake_onset_limited_target(-0.2, -1.5, dt, None) == pytest.approx(-1.5)
-  assert lp.brake_onset_limited_target(0.5, 0.48, dt, 1.5) == pytest.approx(0.48)   # small fall inside the step
+  assert lp.brake_onset_limited_target(1.0, 0.03, dt, 1.5) == pytest.approx(0.03)   # throttle cut untouched
+  assert lp.brake_onset_limited_target(0.8, -1.0, dt, 1.5) == pytest.approx(-1.5 * dt)  # ramps from 0, not from +0.8
 
 
 def test_ramp_reaches_the_target_within_abs_a_over_j():
