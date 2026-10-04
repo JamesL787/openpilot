@@ -360,6 +360,21 @@ BRAKE_RELEASE_DWELL_TICKS = 2
 # gap rule); with BRAKE_RELEASE_DWELL it passed (16 windows: jerk RMS 0.975x, 27 fewer flips vs the shipped slew).
 COAST_CEILING_SLEW = True
 COAST_CEILING_JERK = 2.5  # m/s^3
+# Brake onset shaping (D-078, proposed; closed-loop replay only, not driven; default OFF). STATUS 208 found 89% of
+# harsh-brake frames on 7 owner routes had the radar closing speed within 3 m/s of the truth, so the harshness is the
+# planner's onset, not a bad radar number. While every active lead is far in time (worst-case TTC = dRel / closing)
+# and in distance, and none is braking hard, a deepening brake may fall at most BRAKE_ONSET_JERK * dt per step. The
+# jerk allowance grows as TTC shrinks and the limit is off below BRAKE_ONSET_TTC_OFF_S, inside BRAKE_ONSET_MIN_GAP,
+# with no lead, on a stop/red-light/forced-stop, a panic bypass, reset or standstill. Output only: self.a_desired
+# still feeds the MPC x0 (cutting that feedback diverged the replay, see BRAKE_RELEASE_DWELL above).
+# Costs: up to |a| / J seconds later to reach a far-lead brake; the on-path bound in update() still applies after.
+BRAKE_ONSET_LIMIT = False
+BRAKE_ONSET_TTC_OFF_S = 3.0  # at or below: no limit
+BRAKE_ONSET_TTC_BP = [3.0, 6.0]  # s
+BRAKE_ONSET_JERK_V = [6.0, 1.5]  # m/s^3 allowed fall rate at those TTCs
+BRAKE_ONSET_MIN_GAP_M = 10.0
+BRAKE_ONSET_MIN_GAP_T = 1.0  # s of v_ego; the gap gate is max(MIN_GAP_M, MIN_GAP_T * v_ego)
+BRAKE_ONSET_LEAD_DECEL = -1.5  # m/s^2; a lead braking harder than this disables the limit
 
 
 # Experimental-mode exit crossfade (log, open-loop and closed-loop replay evidence only; not driven).
@@ -399,6 +414,34 @@ def brake_release_limited_target(prev: float, target: float, dt: float) -> float
   if prev >= 0.0:
     return float(target)
   return float(min(target, prev + BRAKE_RELEASE_JERK * dt))
+
+
+def brake_onset_jerk(leads, v_ego: float) -> float | None:
+  """Allowed brake fall rate (m/s^3) when every active lead is far in time and distance, else None (no limit)."""
+  ttc_min = float('inf')
+  any_active = False
+  for lead in leads:
+    if lead is None or not bool(getattr(lead, 'status', False)):
+      continue
+    any_active = True
+    d_rel = float(lead.dRel)
+    if d_rel < max(BRAKE_ONSET_MIN_GAP_M, BRAKE_ONSET_MIN_GAP_T * max(v_ego, 0.0)):
+      return None
+    if float(getattr(lead, 'aLeadK', 0.0)) < BRAKE_ONSET_LEAD_DECEL:
+      return None
+    closing = max(0.0, -float(lead.vRel))
+    if closing > 1e-3:
+      ttc_min = min(ttc_min, d_rel / closing)
+  if not any_active or ttc_min <= BRAKE_ONSET_TTC_OFF_S:
+    return None
+  return float(np.interp(ttc_min, BRAKE_ONSET_TTC_BP, BRAKE_ONSET_JERK_V))
+
+
+def brake_onset_limited_target(prev: float, target: float, dt: float, jerk: float | None) -> float:
+  """A target below prev may fall at most jerk * dt per step; rises and jerk None pass through."""
+  if jerk is None or target >= prev:
+    return float(target)
+  return float(max(target, prev - jerk * dt))
 
 
 def brake_release_dwell_target(prev: float, target: float, rise_ticks: int) -> tuple[float, int]:
@@ -4016,6 +4059,11 @@ class LongitudinalPlanner:
       self.a_desired = min(self.a_desired, accord_stop_go_target)
       output_a_target = accord_stop_go_target
 
+    if BRAKE_ONSET_LIMIT and not reset_state and not bool(sm['carState'].standstill) and not (
+        output_should_stop or vision_low_speed_stop_active or panic_bypass or
+        getattr(sm['starpilotPlan'], 'forcingStop', False) or getattr(sm['starpilotPlan'], 'redLight', False)):
+      output_a_target = brake_onset_limited_target(
+        prev_output_a_target, output_a_target, self.dt, brake_onset_jerk((self.lead_one, self.lead_two), scene_v_ego))
     if BRAKE_RELEASE_LIMIT and not reset_state and not bool(sm['carState'].standstill):
       # prev is the last published target (after the on-path bound in update(), which runs after this)
       output_a_target = brake_release_limited_target(prev_output_a_target, output_a_target, self.dt)
