@@ -1998,3 +1998,14 @@ accepts a closer gap ("I can always adjust the following distance myself") and a
 The user explicitly requested to merge the `Dom` branch's massive Drawer UI (commits 12947fd616, cede5ddc9d) into `main` and `pr10-smooth`. Early attempts using naive `git checkout --theirs` on `starpilot_card.py` and `starpilot_vcruise.py` proved dangerous because those upstream files completely lack the custom experimental `BrakeOnsetLimit` / `StockBrakeFeel` variables, the `always_on_lateral` additions, and the specific `WHEEL_BUTTON_SOUND_PARAM` patches from earlier merges. Doing so broke the `pytest` test suite by producing `AttributeError` crashes.
 
 As a result, the commits were properly cherry-picked. The conflicts in `starpilot_card.py` and `starpilot_vcruise.py` were resolved by meticulously grafting the upstream Speed Limit Controller (SLC) updates into the Custom Honda Bosch layout. Specifically, the SLC's `update()` logic was successfully extracted and placed ahead of the custom CSC logic in `starpilot_vcruise.py`, and the Custom `always_on_lateral` logic in `starpilot_card.py` was retained. Tests passed locally (with the exception of three pre-existing broken tests from before the cherry-pick). This preserves the hardware safety logic while satisfying the user's UI request.
+
+## D-088: Fixed radard.py NameError and resolved test duplicates (2026-10-05)
+
+**Context:** Running the test suite after the UI overhaul revealed three pre-existing test failures, along with a `NameError: name 'birth_vision' is not defined` crash in `radard.py`.
+**Analysis:** 
+1. The test failures (`test_csc_res_press_defers_to_slc_confirmation`, etc.) in `test_starpilot_vcruise.py` were caused by a bad merge artifact where the file was accidentally duplicated, causing tests missing critical setup toggles to run.
+2. The `NameError` in `radard.py` was introduced in commit `1b97e72673` ("Remove the P1 range-driven lead correction (RangeLeadKF) from radard"), where `range_kf=...` was blindly replaced with `vision_lead=birth_vision`. However, `birth_vision` is not defined anywhere, and `Track.update()` does not even accept a `vision_lead` kwarg.
+**Decision:** 
+1. Cleaned up the duplicates in `test_starpilot_vcruise.py`. 
+2. Safely removed the invalid `vision_lead=birth_vision` argument from `radard.py` to restore functionality.
+**Agent:** Gemini 3.8 Flash
