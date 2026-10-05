@@ -1416,7 +1416,7 @@ class Track:
     """D-077: track the born-railed state and set birth_rail_vrel (None unless a ramp is active). Must run after
     _update_range_assist; the LOW ramp withholds RAIL_FAST by zeroing range_assist_correction."""
     self.birth_rail_vrel = None
-    if self.birth_rail_done or not ((bosch_a_birth_rail_ramp_high_enabled() or bosch_a_birth_rail_ramp_low_enabled())):
+    if self.birth_rail_done or not (bosch_a_birth_rail_ramp_high_enabled() or bosch_a_birth_rail_ramp_low_enabled()):
       return
     age = float(t_now) - self.t_first
     on_low = self.vRel <= BOSCH_A_U11_LOW_RAIL_MPS + BOSCH_A_U11_SCALE_MPS / 2
