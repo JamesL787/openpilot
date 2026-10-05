@@ -10671,3 +10671,9 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
   - A p50 depth table (`S50`) was also replayed. It closed the gap further (236 548 0.4 m, 2df 1545 0.3 m), so it was not used.
 - **Not verified.** The 1.0 m minimum gap is a simulated gap from replay. No drive has run this law. Road-check with a longer following distance first, then rerun `tools/longitudinal/vsa_felt_brake_report.py` on that drive.
 - **Tests.** `test_brake_onset.py` 21 pass after the onset code removal, including removal wiring, depth by TTC, rate, outside-law step limit, and newborn bound gate.
+
+## 221. P1 range-driven lead correction (`RangeLeadKF`, `range_lead_kf_adjust`) removed (2026-10-05). Owner: "Yeah I wouldn't mind removing Range KF correction. Seems it doesn't give us much benefit. Plus stock acc only uses normal Vrel values anyway". Static tests only; reverts to the pre-204 leadOne path.
+- **What changed.** `radard.py` no longer runs the per-track range KF or adds its one-sided closing/braking to leadOne. leadOne carries the native U11 vRel and aLeadK again, plus the D-053/D-082 range vRel assist, which is separate and unchanged. There was no toggle: STATUS 204 had built it in.
+- **Expected effect, from existing replay.** STATUS 212 (2df, all-on vs all-off): RangeKF changed 162 of 60154 frames, always as more braking, by 0.2-0.4 m/s^2 (1434.3 s -0.65 -> -1.00, 1435.0 s -1.00 -> -1.38, 1438.6 s -2.71 -> -2.91, 1064.9 s -1.68 -> -1.93). On 2e1 it was negligible. Without it those onsets start up to ~1 s later (range leads U11 by 0.88-1.28 s, D-044), which is the less conservative direction.
+- **Not verified.** No new replay was run for the removal; the numbers above are the earlier toggle comparison. Not driven.
+- **Tests.** The 12 range KF test functions are replaced by one removal test. Radar and longitudinal suite: 186 pass.
