@@ -360,61 +360,11 @@ BRAKE_RELEASE_DWELL_TICKS = 2
 # gap rule); with BRAKE_RELEASE_DWELL it passed (16 windows: jerk RMS 0.975x, 27 fewer flips vs the shipped slew).
 COAST_CEILING_SLEW = True
 COAST_CEILING_JERK = 2.5  # m/s^3
-# Brake onset shaping (D-078, proposed; closed-loop replay only, not driven; default OFF). STATUS 208 found 89% of
-# harsh-brake frames on 7 owner routes had the radar closing speed within 3 m/s of the truth, so the harshness is the
-# planner's onset, not a bad radar number. While every active lead is far in time (worst-case TTC = dRel / closing)
-# and in distance, and none is braking hard, a deepening brake may fall at most BRAKE_ONSET_JERK * dt per step. The
-# jerk allowance grows as TTC shrinks and the limit is off below BRAKE_ONSET_TTC_OFF_S, inside BRAKE_ONSET_MIN_GAP,
-# with no lead, on a stop/red-light/forced-stop, reset or standstill (panic bypass: see D-081). Output only: self.a_desired
-# still feeds the MPC x0 (cutting that feedback diverged the replay, see BRAKE_RELEASE_DWELL above).
-# Throttle cuts are not touched (the limit starts from min(prev, 0); COAST_CEILING_SLEW owns those). Replay round 1
-# (2026-10-04, 7 routes) limited throttle cuts too and softened 236 13:15.7 (lead 17 m at 10.6 m/s braking -1.1),
-# so the gap gate went 1.0 -> 1.5 s and the lead-decel gate -1.5 -> -1.0.
-# Costs: up to |a| / J seconds later to reach a far-lead brake; the on-path bound in update() still applies after.
-BRAKE_ONSET_LIMIT = False  # True forces it on. Its BrakeOnsetLimit toggle was removed at the owner's request (D-086).
-BRAKE_ONSET_TTC_OFF_S = 3.0  # at or below: no limit
-BRAKE_ONSET_TTC_BP = [3.0, 6.0]  # s
-BRAKE_ONSET_JERK_V = [6.0, 1.5]  # m/s^3 allowed fall rate at those TTCs
-BRAKE_ONSET_MIN_GAP_M = 10.0
-BRAKE_ONSET_MIN_GAP_T = 1.5  # s of v_ego; the gap gate is max(MIN_GAP_M, MIN_GAP_T * v_ego)
-BRAKE_ONSET_LEAD_DECEL = -1.0  # m/s^2; a lead braking harder than this disables the limit
-# D-081 (proposed; closed-loop replay only, not driven). The panic bypass (closing fast inside the follow window plus
-# rising uncertainty) used to switch the limit off outright. On 2df 24:45 (track 6 born at 55 m closing 12 m/s, TTC
-# ~4.6 s, a car turning in that then accelerated) that sent the target +0.57 -> -1.70 in one 50 ms step. Under a
-# panic bypass the limit now still applies, but only while the worst TTC is above BRAKE_ONSET_PANIC_TTC_S; the gap and
-# lead-braking gates are unchanged.
-BRAKE_ONSET_PANIC_TTC_S = 4.0
-# Replay round 1 also softened 2df 25:54 (stopped traffic, radar and vision both closing 12-14 m/s, already braking
-# -1.2): -3.5 arrived ~0.3 s later. So the limit applies under a panic bypass only when the published target was above
-# BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE as the bypass began (latched for that bypass).
-BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE = -0.5  # m/s^2
-# Stock-like onset ramp (D-083, proposed; open-loop replay only, not driven), part of the BrakeOnsetLimit toggle.
-# STATUS 215: stock ACC on route 299 brings fast-closing brakes in at a worst step of -1.4..-3.4 m/s^3 even at TTC
-# 2.6-3.3 s (20:34: car 55 m ahead closing 12.5 m/s, command -0.3 -> -2.2 over ~2.5 s, then held), while ours, with
-# the limit off below TTC 3 s, stepped at -36..-40 m/s^3 on U11-rail onsets (2d5 11:58: -1.8 -> -3.6 in one 50 ms
-# frame after a single-frame vRel of -20 put TTC at 2.4 s). With BRAKE_ONSET_STOCK_RAMP the jerk schedule tops out at
-# BRAKE_ONSET_STOCK_JERK_V and the TTC switch-off moves down to BRAKE_ONSET_STOCK_TTC_FLOOR_S; in between, the limit
-# stands down instead when the ramp-aware need (closing^2 / 2(d - MIN_GAP_M - closing * ramp lag), plus the lead's
-# own decel) exceeds BRAKE_ONSET_STOCK_MAX_NEED on two consecutive frames, so a lone vRel spike cannot end the ramp
-# but a sustained need beyond what a gentle onset can still deliver does. Peak braking is never reduced: only the
-# deepening rate is capped, the gap, lead-braking and stop gates are unchanged, and a panic bypass that began already
-# braking still switches it off. Cost: a far-lead brake reaches its depth up to |a| / 3 s later (about 1 s for -3).
-BRAKE_ONSET_STOCK_RAMP = True
-BRAKE_ONSET_STOCK_JERK_V = [3.0, 1.5]  # m/s^3 at BRAKE_ONSET_TTC_BP; below the first TTC it stays 3.0
-BRAKE_ONSET_STOCK_TTC_FLOOR_S = 2.0  # at or below: no limit, undebounced
-BRAKE_ONSET_STOCK_MAX_NEED = 3.0  # m/s^2; planner floor is -3.5
-# Panic bypass keeps the stock ramp (D-084, proposed; replay only, not driven). STATUS 218: on 2e5 7:58 a car merging
-# in from a construction-blocked lane was born at 61 m, vRel -9.5, TTC 6.4; the panic bypass fired with the previous
-# target at -0.53, just under BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE, so the latch called it a hard panic and switched the
-# ramp off (closed-loop sim worst jerk -8.2 m/s^3). With this switch the bypass no longer ends the D-083 ramp: it
-# stays on down to BRAKE_ONSET_STOCK_TTC_FLOOR_S and still stands down on a sustained BRAKE_ONSET_STOCK_MAX_NEED.
-# Closed-loop sim (min a / worst jerk / min gap): 2e5 -2.62/-8.2/37.8 -> -2.67/-2.0/36.9; 2df 25:54 stopped traffic
-# (the latch's own case) min gap 8.7 -> 7.1 m near standstill; 236 9:22 -2.80 -> -2.83, gap -0.1 m; 2df 24:46, 2d5
-# 11:58 and 236 12:54 unchanged (the need gate already ends the ramp there). Off restores the D-081 latch.
-BRAKE_ONSET_STOCK_PANIC_RAMP = True
+# Smooth Brake Onset (D-078/D-081/D-083/D-084, BrakeOnsetLimit) was removed on 2026-10-05 at the owner's request in
+# favour of StockBrakeFeel below (D-086, STATUS 220); its replay evidence stays in STATUS 208-219.
 # Stock brake feel (D-086, proposed; closed-loop sim replay only, not driven), the StockBrakeFeel toggle, off by
 # default. Owner: "copy exactly how stock does it ... we are overemphasizing the safety issues and sacrificing the smooth
-# feel". This replaces BrakeOnsetLimit's onset shaping (D-078/D-083/D-084) with stock Honda ACC's own law, fitted from
+# feel". It replaced Smooth Brake Onset's shaping (D-078/D-083/D-084, removed) with stock Honda ACC's own law, fitted from
 # ACC_CONTROL ACCEL_COMMAND on 12 stock-ACC routes (51k closing-lead frames at 10 Hz, stock_acc_reference.py corpus;
 # STATUS 220). Stock's depth follows time to contact and barely follows the kinematic need; its p25 command (the depth
 # stock is at or past only a quarter of the time) by TTC, made monotone, is STOCK_FEEL_DEPTH_V at STOCK_FEEL_DEPTH_BP:
@@ -443,7 +393,7 @@ STOCK_FEEL_JERK_OUTSIDE = 5.0  # m/s^3
 # Newborn lead aLeadK bound (D-080, proposed; replay only, not driven), now part of the StockBrakeFeel toggle (D-086). STATUS 212:
 # on 2e2 (bookmark ~283 s) a radar lead first seen while its velocity estimate was still converging published aLeadK
 # -3 / -2.5 when ~0.75 m/s^2 was needed, and on 2e1 a jumping track reached -13.7; the planner braked early and twice,
-# and the onset limit stood aside because aLeadK < BRAKE_ONSET_LEAD_DECEL. For the first NEWBORN_LEAD_FRAMES a radar
+# and the (since removed) onset limit stood aside because aLeadK < -1.0. For the first NEWBORN_LEAD_FRAMES a radar
 # track has been a lead (or after it drops out for NEWBORN_LEAD_GAP_FRAMES or its range jumps NEWBORN_LEAD_JUMP_M),
 # its aLeadK may go no lower than -NEWBORN_LEAD_MIN_BRAKE, or lower only as far as a quadratic fit to its own range
 # history (once NEWBORN_LEAD_FIT_FRAMES long) says it is slowing. Planner input only: dRel, vRel, TTC and radarState
@@ -452,7 +402,7 @@ NEWBORN_LEAD_FRAMES = 40        # 2.0 s as a lead
 NEWBORN_LEAD_GAP_FRAMES = 10    # absent this long (0.5 s): newborn again
 NEWBORN_LEAD_JUMP_M = 4.0       # range step from the last sample: newborn again
 NEWBORN_LEAD_FIT_FRAMES = 16    # 0.8 s of range history before the fit may lower the floor
-NEWBORN_LEAD_MIN_BRAKE = 1.0    # aLeadK floor without range confirmation (= -BRAKE_ONSET_LEAD_DECEL)
+NEWBORN_LEAD_MIN_BRAKE = 1.0    # aLeadK floor without range confirmation
 
 
 # Experimental-mode exit crossfade (log, open-loop and closed-loop replay evidence only; not driven).
@@ -504,64 +454,6 @@ def brake_onset_ttc(leads, min_closing: float = 1e-3) -> float:
     if closing > min_closing:
       ttc_min = min(ttc_min, float(lead.dRel) / closing)
   return ttc_min
-
-
-def brake_onset_jerk(leads, v_ego: float, ttc_off: float = BRAKE_ONSET_TTC_OFF_S,
-                     jerk_v=BRAKE_ONSET_JERK_V, ttc_bp=BRAKE_ONSET_TTC_BP) -> float | None:
-  """Allowed brake fall rate (m/s^3) when every active lead is far in time and distance, else None (no limit)."""
-  ttc_min = float('inf')
-  any_active = False
-  for lead in leads:
-    if lead is None or not bool(getattr(lead, 'status', False)):
-      continue
-    any_active = True
-    d_rel = float(lead.dRel)
-    if d_rel < max(BRAKE_ONSET_MIN_GAP_M, BRAKE_ONSET_MIN_GAP_T * max(v_ego, 0.0)):
-      return None
-    if float(getattr(lead, 'aLeadK', 0.0)) < BRAKE_ONSET_LEAD_DECEL:
-      return None
-    closing = max(0.0, -float(lead.vRel))
-    if closing > 1e-3:
-      ttc_min = min(ttc_min, d_rel / closing)
-  if not any_active or ttc_min <= ttc_off:
-    return None
-  return float(np.interp(ttc_min, ttc_bp, jerk_v))
-
-
-def brake_onset_need(leads, prev: float, jerk: float) -> float:
-  """Worst constant decel (m/s^2, positive) that still stops BRAKE_ONSET_MIN_GAP_M behind each active lead after a
-  ramp from min(prev, 0) at jerk; inf when the ramp lag alone uses up the gap."""
-  need = 0.0
-  for lead in leads:
-    if lead is None or not bool(getattr(lead, 'status', False)):
-      continue
-    closing = max(0.0, -float(lead.vRel))
-    lead_decel = max(0.0, -float(getattr(lead, 'aLeadK', 0.0)))
-    room = float(lead.dRel) - BRAKE_ONSET_MIN_GAP_M
-    if closing <= 1e-3:
-      need = max(need, lead_decel)
-      continue
-    if room <= 0.0:
-      return float('inf')
-    flat = closing ** 2 / (2.0 * room)
-    lag = max(0.0, flat + min(prev, 0.0)) / (2.0 * max(jerk, 1e-3))
-    room -= closing * lag
-    if room <= 0.0:
-      return float('inf')
-    need = max(need, closing ** 2 / (2.0 * room) + lead_decel)
-  return float(need)
-
-
-def stock_onset_jerk(leads, v_ego: float, prev: float, hard_panic: bool, prev_over: bool,
-                     jerk_v=BRAKE_ONSET_STOCK_JERK_V, ttc_bp=BRAKE_ONSET_TTC_BP) -> tuple[float | None, bool]:
-  """D-083 allowed fall rate and this frame's need-over flag: off at or below the TTC floor or under a hard panic
-  bypass, and off when the ramp-aware need is over BRAKE_ONSET_STOCK_MAX_NEED on this and the previous frame."""
-  jerk = brake_onset_jerk(leads, v_ego, float('inf') if hard_panic else BRAKE_ONSET_STOCK_TTC_FLOOR_S,
-                          jerk_v, ttc_bp)
-  over = jerk is not None and brake_onset_need(leads, prev, jerk) > BRAKE_ONSET_STOCK_MAX_NEED
-  if over and prev_over:
-    jerk = None
-  return jerk, over
 
 
 def stock_feel_target(leads, prev: float, target: float, dt: float) -> float:
@@ -1498,9 +1390,6 @@ class LongitudinalPlanner:
     self.off_axis_lead_hold = OffAxisLeadHold()
     self.reassociation_hold = ReassociationHold()
     self.newborn_lead_hold = NewbornLeadHold()
-    self._onset_panic_prev = False
-    self._onset_panic_soft = False
-    self._onset_need_over = False
     self.longitudinal_actuator_delay = max(DT_MDL, float(CP.longitudinalActuatorDelay))
     self.close_lead_brake_cap_value = 0.0
     self.lead_geometry_required_accel = 0.0
@@ -3038,7 +2927,7 @@ class LongitudinalPlanner:
       if REASSOC_LEAD_BOUND:
         sm = bound_reassociated_leads(sm, self.reassociation_hold)
       sm = bound_off_axis_leads(sm, self.off_axis_lead_hold)
-    if BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "stock_brake_feel", False)):
+    if bool(getattr(starpilot_toggles, "stock_brake_feel", False)):
       sm = bound_newborn_leads(sm, self.newborn_lead_hold)
     if self.is_preap:
       self._preap_param_frame += 1
@@ -4265,32 +4154,10 @@ class LongitudinalPlanner:
       self.a_desired = min(self.a_desired, accord_stop_go_target)
       output_a_target = accord_stop_go_target
 
-    stock_feel = bool(getattr(starpilot_toggles, "stock_brake_feel", False))
-    brake_onset_enabled = BRAKE_ONSET_LIMIT  # the BrakeOnsetLimit toggle was removed for StockBrakeFeel (D-086)
-    onset_gates = not reset_state and not bool(sm['carState'].standstill) and not (
-      output_should_stop or vision_low_speed_stop_active or
-      getattr(sm['starpilotPlan'], 'forcingStop', False) or getattr(sm['starpilotPlan'], 'redLight', False))
-    if stock_feel and onset_gates:
+    if bool(getattr(starpilot_toggles, "stock_brake_feel", False)) and not reset_state and not bool(sm['carState'].standstill) and not (
+        output_should_stop or vision_low_speed_stop_active or
+        getattr(sm['starpilotPlan'], 'forcingStop', False) or getattr(sm['starpilotPlan'], 'redLight', False)):
       output_a_target = stock_feel_target((self.lead_one, self.lead_two), prev_output_a_target, output_a_target, self.dt)
-      self._onset_need_over = False
-    elif brake_onset_enabled and onset_gates:
-      if panic_bypass and not self._onset_panic_prev:
-        self._onset_panic_soft = prev_output_a_target > BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE
-      onset_leads = (self.lead_one, self.lead_two)
-      if BRAKE_ONSET_STOCK_RAMP:
-        onset_jerk, self._onset_need_over = stock_onset_jerk(
-          onset_leads, scene_v_ego, prev_output_a_target,
-          panic_bypass and not self._onset_panic_soft and not BRAKE_ONSET_STOCK_PANIC_RAMP, self._onset_need_over)
-      else:
-        if not panic_bypass:
-          onset_ttc_off = BRAKE_ONSET_TTC_OFF_S
-        else:
-          onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if self._onset_panic_soft else float('inf')
-        onset_jerk = brake_onset_jerk(onset_leads, scene_v_ego, onset_ttc_off)
-      output_a_target = brake_onset_limited_target(prev_output_a_target, output_a_target, self.dt, onset_jerk)
-    else:
-      self._onset_need_over = False
-    self._onset_panic_prev = panic_bypass
     if BRAKE_RELEASE_LIMIT and not reset_state and not bool(sm['carState'].standstill):
       # prev is the last published target (after the on-path bound in update(), which runs after this)
       output_a_target = brake_release_limited_target(prev_output_a_target, output_a_target, self.dt)

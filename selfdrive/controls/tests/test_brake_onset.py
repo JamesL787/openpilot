@@ -9,33 +9,6 @@ def _lead(d, v_rel, a=0.0, status=True):
   return SimpleNamespace(status=status, dRel=d, vRel=v_rel, aLeadK=a)
 
 
-def test_switch_is_off_by_default():
-  assert lp.BRAKE_ONSET_LIMIT is False
-
-
-def test_far_slow_closing_gets_the_gentlest_jerk():
-  # 80 m, closing 5 m/s -> TTC 16 s
-  assert lp.brake_onset_jerk((_lead(80.0, -5.0), None), 25.0) == pytest.approx(lp.BRAKE_ONSET_JERK_V[-1])
-
-
-def test_jerk_allowance_grows_as_ttc_shrinks():
-  far = lp.brake_onset_jerk((_lead(60.0, -10.0),), 20.0)  # 6 s
-  mid = lp.brake_onset_jerk((_lead(45.0, -10.0),), 20.0)  # 4.5 s
-  assert far < mid < lp.BRAKE_ONSET_JERK_V[0]
-
-
-@pytest.mark.parametrize("leads,v_ego", [
-  ((_lead(30.0, -10.0),), 20.0),               # TTC 3 s: urgent
-  ((_lead(25.0, -1.0),), 20.0),                # inside 1.5 s of gap
-  ((_lead(8.0, 0.0),), 3.0),                   # inside the 10 m floor
-  ((_lead(80.0, -2.0, a=-1.2),), 25.0),        # lead braking
-  ((None, _lead(5.0, 0.0, status=False)), 25.0),  # no active lead
-  ((_lead(90.0, -2.0), _lead(30.0, -12.0)), 25.0),  # the worst lead decides
-])
-def test_limit_is_off_when_anything_is_urgent_or_unknown(leads, v_ego):
-  assert lp.brake_onset_jerk(leads, v_ego) is None
-
-
 def test_limited_target_slows_only_a_falling_target():
   dt = 0.05
   assert lp.brake_onset_limited_target(-0.2, -1.5, dt, 1.5) == pytest.approx(-0.2 - 1.5 * dt)
@@ -52,18 +25,18 @@ def test_ramp_reaches_the_target_within_abs_a_over_j():
   assert a == pytest.approx(-1.5)
 
 
-def test_brake_onset_toggle_is_removed_for_stock_brake_feel():
-  # D-086: the owner asked for one toggle, not two. The onset path stays behind the BRAKE_ONSET_LIMIT constant.
+def test_smooth_brake_onset_is_removed_for_stock_brake_feel():
+  # D-086: the owner asked for one toggle, not two, and then for the Smooth Brake Onset code to go too.
   from pathlib import Path
   root = Path(__file__).resolve().parents[3]
   for f in ("starpilot/common/assets/device_settings_layout.json", "selfdrive/ui/layouts/settings/starpilot/longitudinal.py",
             "common/params_keys.h", "starpilot/common/starpilot_variables.py"):
     assert "BrakeOnsetLimit" not in (root / f).read_text(), f
   src = (root / "selfdrive/controls/lib/longitudinal_planner.py").read_text()
-  assert '"brake_onset_limit"' not in src and lp.BRAKE_ONSET_LIMIT is False
+  assert '"brake_onset_limit"' not in src and not hasattr(lp, "BRAKE_ONSET_LIMIT") and not hasattr(lp, "stock_onset_jerk")
 
 
-# D-080: newborn radar lead aLeadK bound, part of the same toggle.
+# D-080: newborn radar lead aLeadK bound, part of the StockBrakeFeel toggle.
 def _rlead(tid, d, a, v_rel=-2.0, radar=True):
   return SimpleNamespace(status=True, radar=radar, radarTrackId=tid, dRel=d, vRel=v_rel, aLeadK=a)
 
@@ -139,103 +112,11 @@ def test_same_track_as_lead_one_and_two_is_recorded_once_per_frame():
 def test_bound_is_applied_only_when_stock_brake_feel_is_on():
   import inspect
   src = inspect.getsource(lp.LongitudinalPlanner._update)
-  gate = 'if BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "stock_brake_feel", False)):\n'
+  gate = 'if bool(getattr(starpilot_toggles, "stock_brake_feel", False)):\n'
   assert gate + '      sm = bound_newborn_leads(sm, self.newborn_lead_hold)' in src
 
 
-# D-081: under a panic bypass the onset limit still applies, but only above BRAKE_ONSET_PANIC_TTC_S.
-def test_panic_bypass_keeps_the_limit_only_when_ttc_is_long():
-  # 2df 24:45 shape: 55 m, closing 12 m/s -> TTC 4.6 s
-  assert lp.brake_onset_jerk((_lead(55.0, -12.0),), 20.0, lp.BRAKE_ONSET_PANIC_TTC_S) is not None
-  # TTC 3.5 s: limited on the normal path, off under a panic bypass
-  assert lp.brake_onset_jerk((_lead(42.0, -12.0),), 20.0) is not None
-  assert lp.brake_onset_jerk((_lead(42.0, -12.0),), 20.0, lp.BRAKE_ONSET_PANIC_TTC_S) is None
-
-
-def test_panic_bypass_no_longer_switches_the_onset_limit_off_outright():
-  import inspect
-  src = inspect.getsource(lp.LongitudinalPlanner._update)
-  assert 'self._onset_panic_soft = prev_output_a_target > BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE' in src
-  assert "onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if self._onset_panic_soft else float('inf')" in src
-  assert 'output_should_stop or vision_low_speed_stop_active or panic_bypass or' not in src
-
-
-# D-083: stock-like onset ramp (part of the BrakeOnsetLimit toggle).
-def test_stock_ramp_is_on_inside_the_toggle_and_caps_jerk_at_stock_rates():
-  assert lp.BRAKE_ONSET_STOCK_RAMP is True
-  assert max(lp.BRAKE_ONSET_STOCK_JERK_V) <= 3.0
-  # 299 20:34 / 2d5 11:58 shape: 50 m, closing 12 m/s (TTC 4.2 s) gets a stock-rate ramp
-  j, over = lp.stock_onset_jerk((_lead(50.0, -12.0),), 22.0, -0.3, False, False)
-  assert j is not None and j <= 3.0 and not over
-
-
-def test_stock_ramp_continues_below_the_old_3s_switch_off_while_the_need_is_modest():
-  # 20 m closing 7 m/s at 12 m/s, already at -1.5: TTC 2.9 s, the old limit was off here; need ~2.8 m/s^2
-  leads = (_lead(20.0, -7.0),)
-  assert lp.brake_onset_jerk(leads, 12.0) is None
-  j, _ = lp.stock_onset_jerk(leads, 12.0, -1.5, False, False)
-  assert j == pytest.approx(lp.BRAKE_ONSET_STOCK_JERK_V[0])
-
-
-@pytest.mark.parametrize("leads,v_ego", [
-  ((_lead(30.0, -16.0),), 25.0),          # TTC 1.9 s: at the floor
-  ((_lead(30.0, -2.0),), 25.0),           # gap gate (1.5 s of v_ego)
-  ((_lead(80.0, -5.0, a=-1.5),), 25.0),   # lead braking
-])
-def test_stock_ramp_keeps_the_floor_and_the_old_gates(leads, v_ego):
-  assert lp.stock_onset_jerk(leads, v_ego, -0.5, False, False)[0] is None
-
-
-def test_hard_panic_bypass_still_switches_the_ramp_off():
-  assert lp.stock_onset_jerk((_lead(60.0, -8.0),), 20.0, -1.0, True, False)[0] is None
-  assert lp.stock_onset_jerk((_lead(60.0, -8.0),), 20.0, -1.0, False, False)[0] is not None
-
-
-def test_need_counts_the_ramp_lag_and_the_lead_decel():
-  flat = 12.0 ** 2 / (2 * (50.0 - lp.BRAKE_ONSET_MIN_GAP_M))
-  assert lp.brake_onset_need((_lead(50.0, -12.0),), -flat, 3.0) == pytest.approx(flat)   # already there: no lag
-  assert lp.brake_onset_need((_lead(50.0, -12.0),), 0.0, 3.0) > flat                     # ramp from 0 costs room
-  assert lp.brake_onset_need((_lead(50.0, -12.0, a=-0.8),), -flat, 3.0) == pytest.approx(flat + 0.8)
-  assert lp.brake_onset_need((_lead(12.0, -12.0),), 0.0, 3.0) == float('inf')
-
-
-def test_a_lone_spike_cannot_end_the_ramp_but_a_sustained_need_does():
-  calm, spike = (_lead(47.0, -12.0),), (_lead(47.0, -20.0),)   # 2d5 11:58: one frame read -20
-  j, over = lp.stock_onset_jerk(calm, 22.0, -1.1, False, False)
-  assert j is not None and not over
-  j, over = lp.stock_onset_jerk(spike, 22.0, -1.2, False, over)
-  assert j is not None and over        # first frame over the need: still ramping
-  j, over = lp.stock_onset_jerk(calm, 22.0, -1.3, False, over)
-  assert j is not None and not over    # spike gone: ramp continues
-  j, over = lp.stock_onset_jerk(spike, 22.0, -1.4, False, False)
-  j, over = lp.stock_onset_jerk(spike, 22.0, -1.5, False, over)
-  assert j is None                     # two frames over: limit stands down, full target passes
-
-
-def test_ramp_never_reduces_the_peak_only_its_arrival():
-  a, dt = 0.0, 0.05
-  for _ in range(200):
-    a = lp.brake_onset_limited_target(a, -3.5, dt, lp.BRAKE_ONSET_STOCK_JERK_V[0])
-  assert a == pytest.approx(-3.5)
-
-
-def test_planner_uses_the_stock_ramp_behind_its_switch():
-  import inspect
-  src = inspect.getsource(lp.LongitudinalPlanner._update)
-  assert 'if BRAKE_ONSET_STOCK_RAMP:' in src
-  assert 'stock_onset_jerk(' in src and 'panic_bypass and not self._onset_panic_soft' in src
-  assert 'and not BRAKE_ONSET_STOCK_PANIC_RAMP' in src
-
-
-def test_panic_bypass_keeps_the_stock_ramp_down_to_the_ttc_floor():
-  # D-084 / 2e5 7:58: merge-in at 61 m, vRel -9.5 (TTC 6.4), bypass began at -0.53 (just past the D-081 latch)
-  assert lp.BRAKE_ONSET_STOCK_PANIC_RAMP and lp.BRAKE_ONSET_STOCK_TTC_FLOOR_S == 2.0
-  assert lp.stock_onset_jerk((_lead(61.0, -9.5),), 27.0, -0.53, False, False)[0] is not None
-  assert lp.stock_onset_jerk((_lead(30.0, -14.0),), 18.0, -0.53, False, False)[0] is not None   # TTC 2.1 s
-  assert lp.stock_onset_jerk((_lead(30.0, -16.0),), 18.0, -0.53, False, False)[0] is None       # TTC 1.9 s
-
-
-# D-086: StockBrakeFeel toggle, slow far ramp and -2.0 depth hold.
+# D-086: StockBrakeFeel toggle, stock Honda ACC depth and rate by TTC.
 def test_stock_feel_toggle_is_wired_and_off_by_default():
   import json
   from pathlib import Path

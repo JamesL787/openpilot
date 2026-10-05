@@ -10652,7 +10652,7 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
   - While a lead closes at ≥ 0.5 m/s and the worst TTC is over 2 s: the target goes no deeper than `STOCK_FEEL_DEPTH_V` (stock's p25, the firmer quartile) at that TTC, and deepens no faster than `STOCK_FEEL_JERK_V` (3 / 2 / 1 / 0.6 m/s³ at TTC 2 / 2.5 / 6 / 10 s). No gap, need, or lead-braking gates, like stock.
   - Under 2 s TTC or with no lead closing, the planner's depth is kept but deepens at most `STOCK_FEEL_JERK_OUTSIDE` = 5 m/s³. Releases are never limited. Stopping, standstill, red light and forced stop bypass it.
   - The D-080 newborn-lead aLeadK bound now runs under this toggle.
-  - **`BrakeOnsetLimit` (Smooth Brake Onset) toggle removed**: params key, device UI row, layout node, toggle variable. Its D-078/D-083/D-084 path stays in the code behind the `BRAKE_ONSET_LIMIT` constant (False) and its tests still run.
+  - **Smooth Brake Onset (`BrakeOnsetLimit`) removed**: params key, device UI row, layout node, toggle variable, and then (owner: "why don't you just remove the code for smooth brake onset as well?") its D-078/D-081/D-083/D-084 code and 22 tests. `brake_onset_ttc` and `brake_onset_limited_target` stay because StockBrakeFeel uses them.
 - **Closed-loop replay** (`alpha_closed_loop_replay.py --sim-window`, min a / worst jerk m/s³ / min gap m). Head = Smooth Brake Onset on. SF = first stock-law cut, which had no limit under the TTC floor. SJ = committed.
 
   | case | head (Smooth Brake Onset) | SF | SJ (committed) |
@@ -10670,4 +10670,4 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
   - **Worse:** less gap everywhere, which is the price the owner accepted. 236 548: 1.6 → 1.0 m. 236 762: 5.0 → 2.9 m. 2df 1545: 7.1 → 3.1 m. 2e5 and 2df 1545 worst jerk −2.9/−2.2 → −5.0 (the 5 m/s³ cap engaging under TTC 2 s).
   - A p50 depth table (`S50`) was also replayed. It closed the gap further (236 548 0.4 m, 2df 1545 0.3 m), so it was not used.
 - **Not verified.** The 1.0 m minimum gap is a simulated gap from replay. No drive has run this law. Road-check with a longer following distance first, then rerun `tools/longitudinal/vsa_felt_brake_report.py` on that drive.
-- **Tests.** `test_brake_onset.py` 43 pass, including toggle-removed wiring, depth by TTC, rate, outside-law step limit, and newborn bound gate.
+- **Tests.** `test_brake_onset.py` 21 pass after the onset code removal, including removal wiring, depth by TTC, rate, outside-law step limit, and newborn bound gate.

@@ -857,8 +857,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"TrafficJerkSpeedDecrease", {PERSISTENT, FLOAT, "100.0", "100.0", 3}},
     {"TruckTuning", {PERSISTENT, BOOL, "0", "0", 3}},
     {"ResumeBrakeRamp", {PERSISTENT, BOOL, "0", "0", 3}},
-    // Default OFF. D-078 brake onset shaping (BRAKE_ONSET_LIMIT in longitudinal_planner.py): while every lead is far in
-    // time and distance, braking deepens at most 1.5-6 m/s^3. Read live through starpilot_toggles. Replay only, not driven.
+    // Default OFF. D-086 stock Honda ACC brake law (STOCK_FEEL_* in longitudinal_planner.py): depth and deepening rate
+    // capped at stock's by TTC. Read live through starpilot_toggles. Replay only, not driven.
     {"StockBrakeFeel", {PERSISTENT, BOOL, "0", "0", 3}},
     {"TuningLevel", {PERSISTENT, INT, "0", "0", 0}},
     {"TuningLevelConfirmed", {PERSISTENT, BOOL, "0", "0", 0}},
