@@ -1845,8 +1845,8 @@ class RadarD:
                               range_assist=ids in lead_track_ids, vision_closing=vis_closing,
                               vision_assist=vision_assist, camera_sample=cam_sample,
                               nc_vrel=rpt[4], nc_valid=rpt[5], nc_sigma=rpt[6],
-                              newborn_follow=self.honda_bosch_a_radar and radar_fresh and not rpt[3],
-                              vision_lead=birth_vision)
+                              newborn_follow=self.honda_bosch_a_radar and radar_fresh and not rpt[3]
+                              )
 
     # ONPATH_RADAR_ADOPT: path offset of every track on a fresh sweep (yRel + = left, model y + = right)
     if ONPATH_RADAR_ADOPT and self.honda_bosch_a_radar and radar_fresh:

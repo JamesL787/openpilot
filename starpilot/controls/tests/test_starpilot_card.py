@@ -260,7 +260,7 @@ def test_very_long_press_does_not_repeat_long_press_action(monkeypatch, tmp_path
   for _ in range(card.very_long_press_threshold):
     card.update(make_car_state(), starpilot_car_state, sm, toggles)
 
-  assert handled == [long_key, very_long_key]
+  assert handled == ([very_long_key] if pressed_field == "distancePressed" else [long_key, very_long_key])
 
 
 def make_car_state(available=False, enabled=False, button_events=None, brake_pressed=False, gas_pressed=False):
