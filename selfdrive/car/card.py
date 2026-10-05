@@ -74,6 +74,21 @@ def set_gas_learner_fields(fpcs, car_controller) -> None:
       cloudlog.exception("card: gas learner logging failed")
 
 
+def set_vsa_accel_fields(fpcs, car_state) -> None:
+  """Copy the Honda VSA accelerometer (carstate.vsa_long_accel) into starpilotCarState. Log-only."""
+  a = getattr(car_state, 'vsa_long_accel', None)
+  if a is None:
+    return
+  try:
+    valid = bool(getattr(car_state, 'vsa_long_accel_valid', False)) and math.isfinite(a)
+    fpcs.aEgoVsa = float(a) if math.isfinite(a) else 0.0
+    fpcs.aEgoVsaValid = valid
+  except Exception:
+    if not getattr(set_vsa_accel_fields, "failed", False):
+      set_vsa_accel_fields.failed = True  # type: ignore[attr-defined]
+      cloudlog.exception("card: VSA accel logging failed")
+
+
 def obd_callback(params: Params) -> ObdCallback:
   def set_obd_multiplexing(obd_multiplexing: bool):
     if params.get_bool("ObdMultiplexingEnabled") != obd_multiplexing:
@@ -446,6 +461,7 @@ class Car:
     fpcs_send.valid = CS.canValid
     fpcs_send.starpilotCarState = FPCS
     set_gas_learner_fields(fpcs_send.starpilotCarState, getattr(self.CI, 'CC', None))
+    set_vsa_accel_fields(fpcs_send.starpilotCarState, getattr(self.CI, 'CS', None))
     self.pm.send('starpilotCarState', fpcs_send)
 
   def controls_update(self, CS: car.CarState, CC: car.CarControl):

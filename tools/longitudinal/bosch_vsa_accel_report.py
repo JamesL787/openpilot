@@ -27,7 +27,8 @@ stays out of the repo; cite it by route ID.
   tools/longitudinal/bosch_vsa_accel_report.py ~/routes/0000023e--abcdef1234/3 ~/routes/0000023e--abcdef1234/4
 
 Evidence level: the functions below are unit-tested on synthetic data only (tools/longitudinal/tests/
-test_bosch_vsa_accel_report.py). No route has been run through this tool yet.
+test_bosch_vsa_accel_report.py). First real route: 000002e2 (Civic Bosch, 2026-10-05, STATUS 215). Since
+STATUS 215 the live value is also logged as starpilotCarState.aEgoVsa / aEgoVsaValid.
 """
 from __future__ import annotations
 

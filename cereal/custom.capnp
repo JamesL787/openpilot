@@ -120,6 +120,12 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   gasLearnerWindFactorRaw @35 :Float32; # persisted as HondaWindFactorParams
   gasLearnerError @36 :Float32;         # m/s^2, last lag-aligned accel command - aEgo the learner used
   gasLearnerLearning @37 :Bool;         # this tick passed every gate and updated the raw factors
+
+  # Honda VSA longitudinal accelerometer (0x094 KINEMATICS LONG_ACCEL, -0.049 m/s^2 per count), log-only:
+  # nothing reads it for control. Gravity included (reads road grade at standstill), positive = accelerating.
+  # aEgoVsaValid is false on cars without it or after 0.1 s without a frame (aEgoVsa then holds the last value).
+  aEgoVsa @38 :Float32;
+  aEgoVsaValid @39 :Bool;
 }
 
 struct StarPilotDeviceState @0xda96579883444c35 {

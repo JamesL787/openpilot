@@ -4,6 +4,7 @@ from collections import defaultdict
 from cereal import custom
 from openpilot.common.params import Params
 from opendbc.can import CANDefine, CANParser
+from opendbc.can.dbc import DBC as ParsedDBC
 from opendbc.car import Bus, DT_CTRL, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda.hondacan import CanBus
@@ -19,6 +20,8 @@ ButtonType = structs.CarState.ButtonEvent.Type
 BUTTONS_DICT = {CruiseButtons.RES_ACCEL: ButtonType.accelCruise, CruiseButtons.DECEL_SET: ButtonType.decelCruise,
                 CruiseButtons.MAIN: ButtonType.mainCruise, CruiseButtons.CANCEL: ButtonType.cancel}
 SETTINGS_BUTTONS_DICT = {CruiseSettings.DISTANCE: ButtonType.gapAdjustCruise, CruiseSettings.LKAS: ButtonType.lkas}
+
+VSA_STALE_FRAMES = 10  # 0.1 s at 100 Hz without a 0x094 frame -> aEgoVsaValid false
 
 
 # Dashboard Speed Limit / Traffic Sign Recognition (TSR) for Speed Limit Controller (SLC)
@@ -51,6 +54,11 @@ class CarState(CarStateBase):
 
     self.brake_error_msg = "HYBRID_BRAKE_ERROR" if CP.flags & HondaFlags.HYBRID else "STANDSTILL"
     self.yaw_rate = get_yaw_rate_calibration(CP.carFingerprint)
+    # VSA longitudinal accelerometer (0x094 KINEMATICS LONG_ACCEL), log-only: card.py copies it into
+    # starpilotCarState.aEgoVsa. Nothing reads it for control. NaN until the first frame arrives.
+    self.vsa_long_accel = float("nan")
+    self.vsa_long_accel_valid = False
+    self.vsa_frames_since_seen = VSA_STALE_FRAMES
 
     # Written by card.py each frame; read by the carcontroller to spam cruise buttons
     self.redneck_send_button = 0
@@ -202,6 +210,7 @@ class CarState(CarStateBase):
     # clockwise-positive; yawRate is left-positive like steeringAngleDeg.
     if self.yaw_rate is not None:
       ret.yawRate = -self.yaw_rate.update(cp.vl["KINEMATICS"]["YAW_RATE"], ret.standstill) * CV.DEG_TO_RAD
+    self.update_vsa_long_accel(cp)
 
     ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_stalk(
       250, cp.vl["SCM_FEEDBACK"]["LEFT_BLINKER"], cp.vl["SCM_FEEDBACK"]["RIGHT_BLINKER"])
@@ -393,8 +402,25 @@ class CarState(CarStateBase):
 
     return ret, fp_ret
 
+  def update_vsa_long_accel(self, cp) -> None:
+    """Log-only VSA accelerometer. dict.__contains__ so a DBC without KINEMATICS is never lazily
+    subscribed (that would add a required message to the pt parser and could drop canValid)."""
+    if not dict.__contains__(cp.vl, "KINEMATICS"):
+      return
+    if cp.vl_all["KINEMATICS"]["LONG_ACCEL"]:
+      self.vsa_long_accel = float(cp.vl["KINEMATICS"]["LONG_ACCEL"])
+      self.vsa_frames_since_seen = 0
+    else:
+      self.vsa_frames_since_seen = min(self.vsa_frames_since_seen + 1, VSA_STALE_FRAMES)
+    self.vsa_long_accel_valid = self.vsa_frames_since_seen < VSA_STALE_FRAMES
+
   def get_can_parsers(self, CP):
     pt_messages = [("GAS_SENSOR", 0)] if CP.enableGasInterceptorDEPRECATED else []
+    # VSA accelerometer for the drive log, subscribed as optional (NaN freq: never part of canValid). The
+    # yaw-rate cars already read KINEMATICS through the lazy (alive-checked) path; leave theirs as it is.
+    if get_yaw_rate_calibration(CP.carFingerprint) is None and \
+       "KINEMATICS" in ParsedDBC(DBC[CP.carFingerprint][Bus.pt]).name_to_msg:
+      pt_messages += [("KINEMATICS", float("nan"))]
     if CP.carFingerprint == CAR.HONDA_ACCORD_11G:
       # Both deliberately go silent during the handover, so skip alive/timeout checks.
       pt_messages += [("ACC_CONTROL", float("nan")), ("STEERING_CONTROL", float("nan"))]
