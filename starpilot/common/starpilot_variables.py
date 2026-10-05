@@ -886,7 +886,7 @@ class StarPilotVariables:
       toggle.brake_onset_limit = self.get_value("BrakeOnsetLimit", condition=advanced_longitudinal_tuning)
     except Exception:
       toggle.brake_onset_limit = False
-    # Stock brake feel (longitudinal_planner STOCK_FEEL_*, D-086): slow far onset ramp and a -2.0 depth hold.
+    # Stock brake feel (longitudinal_planner STOCK_FEEL_*, D-086): stock Honda ACC's fitted depth and onset rate by TTC.
     try:
       toggle.stock_brake_feel = self.get_value("StockBrakeFeel", condition=advanced_longitudinal_tuning)
     except Exception:

@@ -903,8 +903,8 @@
       {
         "key": "StockBrakeFeel",
         "label": "Stock Brake Feel",
-        "description": "Stock-like braking for a far lead: braking builds slowly (0.5 m/s^3 at 10 s to contact, 1 m/s^3 at 6 s, 3 m/s^3 near 3 s) and holds at -2.0 m/s^2, stock ACC's usual depth, while the lead is more than 3 s away, not braking harder than -1.0 m/s^2, and -2.0 still stops 10 m behind it. Full braking returns when any of that stops being true. Turns on Smooth Brake Onset's ramp by itself. Closes the gap more than without it; raise the following distance if that is too close. Replay only, not driven.",
-        "picker_description": "Brakes like stock ACC for a far lead: slower build-up, shallower hold.",
+        "description": "Brakes for a closing car the way stock Honda ACC does, from stock's own commands on 12 drives: braking deepens slowly (0.6 m/s^3 at 10 s to contact, 1 m/s^3 at 6 s, 2-3 m/s^3 near 2 s) and goes no deeper than stock does at that time to contact (about -0.4 m/s^2 at 25 s, -1.1 at 11 s, -2.1 at 5 s, -2.4 at 3 s, -3.5 at 2 s). Under 2 s to contact, with no car closing, and when stopping, at a red light or forced stop, normal braking applies. Replaces Smooth Brake Onset while on. Closes the gap more than without it, including when the car ahead brakes hard; raise the following distance if that is too close. Replay only, not driven.",
+        "picker_description": "Brakes for a closing car the way stock ACC does.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",

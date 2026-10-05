@@ -276,39 +276,39 @@ def test_stock_feel_toggle_is_wired_and_off_by_default():
   assert 'getattr(starpilot_toggles, "stock_brake_feel", False)' in src
 
 
-def test_stock_feel_ramp_is_slower_far_and_unchanged_near():
-  far = (_lead(100.0, -8.0),)   # TTC 12.5 s
-  mid = (_lead(48.0, -8.0),)    # TTC 6 s
-  near = (_lead(24.0, -8.0),)   # TTC 3 s, 24 m > 1.5 s * 15
-  args = (lp.STOCK_FEEL_JERK_V, lp.STOCK_FEEL_TTC_BP)
-  assert lp.stock_onset_jerk(far, 15.0, -0.5, False, False, *args)[0] == pytest.approx(0.5)
-  assert lp.stock_onset_jerk(mid, 15.0, -0.5, False, False, *args)[0] == pytest.approx(1.0)
-  assert lp.stock_onset_jerk(near, 15.0, -0.5, False, False, *args)[0] == pytest.approx(3.0)
-  assert lp.stock_onset_jerk(far, 15.0, -0.5, False, False)[0] == pytest.approx(lp.BRAKE_ONSET_STOCK_JERK_V[-1])
+def test_stock_feel_depth_follows_stock_by_ttc():
+  # 100 m closing 8 m/s (TTC 12.5): planner -3.0 held at stock's ~-0.93; 30 m closing 10 m/s (TTC 3): ~-2.37
+  assert lp.stock_feel_target((_lead(100.0, -8.0),), -3.0, -3.0, 0.05) == pytest.approx(
+    float(lp.np.interp(12.5, lp.STOCK_FEEL_DEPTH_BP, lp.STOCK_FEEL_DEPTH_V)))
+  assert lp.stock_feel_target((_lead(30.0, -10.0),), -3.0, -3.0, 0.05) == pytest.approx(
+    float(lp.np.interp(3.0, lp.STOCK_FEEL_DEPTH_BP, lp.STOCK_FEEL_DEPTH_V)))
+  assert lp.stock_feel_target((_lead(100.0, -8.0),), -0.58, -0.6, 0.05) == pytest.approx(-0.6)  # shallower, slow: untouched
 
 
-def test_stock_feel_holds_at_stock_depth_while_far_and_need_is_small():
-  far = (_lead(100.0, -8.0),)   # need 64 / 180 plus ramp lag, well under 1.6
-  t, rel = lp.stock_feel_depth_target(far, -1.5, -3.0, 0.5, False)
-  assert t == lp.STOCK_FEEL_DEPTH and not rel
-  t, rel = lp.stock_feel_depth_target(far, -1.0, -1.8, 0.5, False)   # shallower than the hold: untouched
-  assert t == -1.8 and not rel
+def test_stock_feel_ignores_the_gap_and_lead_braking_gates_like_stock():
+  # 12 m at 20 m/s (inside 1.5 s of gap) closing 4 m/s, lead braking -3: TTC 3 s, still stock's depth
+  assert lp.stock_feel_target((_lead(12.0, -4.0, a=-3.0),), -3.5, -3.5, 0.05) > -2.5
 
 
-@pytest.mark.parametrize("leads,jerk", [
-  ((_lead(100.0, -8.0),), None),          # onset ramp off (any D-083 gate)
-  ((_lead(30.0, -11.0),), 3.0),           # TTC 2.7 s
-  ((_lead(60.0, -14.0),), 1.0),           # need over 1.6
+def test_stock_feel_deepens_at_stock_rate():
+  far = (_lead(150.0, -10.0),)   # TTC 15 s: depth ~-0.80, rate ~0.6 m/s^3
+  assert lp.stock_feel_target(far, -0.2, -0.8, 0.05) == pytest.approx(-0.2 - 0.6 * 0.05)
+  mid = (_lead(60.0, -10.0),)    # TTC 6 s: rate 1.0
+  assert lp.stock_feel_target(mid, -0.5, -2.0, 0.05) == pytest.approx(-0.55)
+  assert lp.stock_feel_target(mid, -1.5, -0.5, 0.05) == pytest.approx(-0.5)  # release untouched
+
+
+@pytest.mark.parametrize("leads", [
+  (_lead(30.0, -16.0),),          # TTC 1.9 s: under the floor, stock itself is at -3.8..-4
+  (_lead(30.0, 1.0),),            # opening
+  (_lead(30.0, -0.3),),           # closing under 0.5 m/s
+  (_lead(30.0, -10.0, status=False),),
 ])
-def test_stock_feel_releases_to_full_depth(leads, jerk):
-  t, rel = lp.stock_feel_depth_target(leads, -2.0, -3.4, jerk, False)
-  assert t == -3.4 and rel
+def test_stock_feel_leaves_the_planner_alone(leads):
+  assert lp.stock_feel_target(leads, 0.0, -3.5, 0.05) == -3.5
 
 
-def test_stock_feel_release_latches_until_the_brake_ends():
-  far = (_lead(100.0, -8.0),)
-  t, rel = lp.stock_feel_depth_target(far, -2.5, -3.0, 0.5, True)   # need small again: stays released, no pulse
-  assert t == -3.0 and rel
-  t, rel = lp.stock_feel_depth_target(far, -0.2, -0.1, 0.5, True)   # brake over: rearmed
-  assert not rel
-  assert lp.stock_feel_depth_target(far, -0.2, -3.0, 0.5, rel)[0] == lp.STOCK_FEEL_DEPTH
+def test_stock_feel_depth_table_is_monotone():
+  assert all(a < b for a, b in zip(lp.STOCK_FEEL_DEPTH_BP[:-1], lp.STOCK_FEEL_DEPTH_BP[1:], strict=True))
+  assert all(a <= b for a, b in zip(lp.STOCK_FEEL_DEPTH_V[:-1], lp.STOCK_FEEL_DEPTH_V[1:], strict=True))
+  assert lp.STOCK_FEEL_DEPTH_V[0] <= -3.5 and len(lp.STOCK_FEEL_DEPTH_BP) == len(lp.STOCK_FEEL_DEPTH_V)

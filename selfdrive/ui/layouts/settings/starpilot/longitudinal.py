@@ -556,8 +556,8 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  set_state=lambda s: self._params.put_bool("BrakeOnsetLimit", s),
                  visible=adv),
       SettingRow("StockBrakeFeel", "toggle", tr_noop("Stock Brake Feel"),
-                 subtitle=tr_noop("Builds braking slowly and holds it at stock ACC's -2.0 m/s^2 while the lead is far. Full braking returns "
-                                  "when the lead is within 3 s, braking, or -2.0 is not enough. Closes the gap more. Replay only, not driven."),
+                 subtitle=tr_noop("Brakes for a closing car like stock ACC: slower build-up, and no deeper than stock at the same "
+                                  "time to contact. Normal braking under 2 s to contact and when stopping. Closes the gap more. Replay only, not driven."),
                  get_state=lambda: self._params.get_bool("StockBrakeFeel"),
                  set_state=lambda s: self._params.put_bool("StockBrakeFeel", s),
                  visible=adv),
