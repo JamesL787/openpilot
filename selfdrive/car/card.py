@@ -22,6 +22,7 @@ from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.common.constants import CV
+from openpilot.selfdrive.car.gps_accel import G as GRAVITY, GpsAccelEstimator
 from openpilot.selfdrive.car.cruise import (
   VCruiseHelper, IMPERIAL_INCREMENT, V_CRUISE_MAX, V_CRUISE_MIN,
   is_speed_limit_confirmation_pending,
@@ -74,8 +75,10 @@ def set_gas_learner_fields(fpcs, car_controller) -> None:
       cloudlog.exception("card: gas learner logging failed")
 
 
-def set_vsa_accel_fields(fpcs, car_state) -> None:
-  """Copy the Honda VSA accelerometer (carstate.vsa_long_accel) into starpilotCarState. Log-only."""
+def set_vsa_accel_fields(fpcs, car_state, pitch: float = float('nan')) -> None:
+  """Copy the Honda VSA accelerometer (carstate.vsa_long_accel) into starpilotCarState, plus the same value with
+  g*sin(pitch) removed (pitch: carControl.orientationNED[1], the locationd pose). Log-only."""
+  fpcs.aEgoVsaPitchCorrected = float('nan')
   a = getattr(car_state, 'vsa_long_accel', None)
   if a is None:
     return
@@ -83,10 +86,20 @@ def set_vsa_accel_fields(fpcs, car_state) -> None:
     valid = bool(getattr(car_state, 'vsa_long_accel_valid', False)) and math.isfinite(a)
     fpcs.aEgoVsa = float(a) if math.isfinite(a) else 0.0
     fpcs.aEgoVsaValid = valid
+    if valid and math.isfinite(pitch):
+      fpcs.aEgoVsaPitchCorrected = float(a) - GRAVITY * math.sin(pitch)
   except Exception:
     if not getattr(set_vsa_accel_fields, "failed", False):
       set_vsa_accel_fields.failed = True  # type: ignore[attr-defined]
       cloudlog.exception("card: VSA accel logging failed")
+
+
+def set_gps_accel_fields(fpcs, est: GpsAccelEstimator, age: float) -> None:
+  """Copy the 10 Hz u-blox grade / acceleration estimate (selfdrive/car/gps_accel.py) into starpilotCarState."""
+  valid = est.valid(age)
+  fpcs.gpsAccelValid = valid
+  fpcs.aEgoGps = est.accel if valid else 0.0
+  fpcs.gpsGrade = est.grade if valid else 0.0
 
 
 def obd_callback(params: Params) -> ObdCallback:
@@ -287,6 +300,10 @@ class Car:
     if self.CP.brand == "honda" and self.redneck_cruise is not None:
       # ICBM increase block: the model's lead below radard's publish threshold (route 276 14:36.7).
       starpilot_services.append('modelV2')
+    # Honda: 10 Hz u-blox fix for the log-only grade / GPS acceleration next to aEgoVsa (gps_accel.py)
+    self.gps_accel = GpsAccelEstimator() if self.CP.brand == "honda" else None
+    if self.gps_accel is not None:
+      starpilot_services.append('gpsLocationExternal')
     self.sm = self.sm.extend(starpilot_services)
     self.pm = self.pm.extend(['starpilotCarState'])
 
@@ -461,8 +478,26 @@ class Car:
     fpcs_send.valid = CS.canValid
     fpcs_send.starpilotCarState = FPCS
     set_gas_learner_fields(fpcs_send.starpilotCarState, getattr(self.CI, 'CC', None))
-    set_vsa_accel_fields(fpcs_send.starpilotCarState, getattr(self.CI, 'CS', None))
+    self.update_accel_log_fields(fpcs_send.starpilotCarState)
     self.pm.send('starpilotCarState', fpcs_send)
+
+  def update_accel_log_fields(self, fpcs) -> None:
+    """Log-only acceleration references (STATUS 215/216): VSA accelerometer, pose-pitch corrected, and the 10 Hz
+    u-blox grade / acceleration. Never raises; a GPS failure disables only the GPS fields."""
+    pitch = float('nan')
+    if self.gps_accel is not None:
+      try:
+        if self.sm.updated['gpsLocationExternal']:
+          self.gps_accel.update(self.sm.logMonoTime['gpsLocationExternal'] * 1e-9, self.sm['gpsLocationExternal'])
+        age = (self.sm.frame - self.sm.recv_frame['gpsLocationExternal']) * DT_CTRL if self.sm.seen['gpsLocationExternal'] else -1.0
+        set_gps_accel_fields(fpcs, self.gps_accel, age)
+        orientation = list(self.sm['carControl'].orientationNED)
+        if len(orientation) == 3 and self.sm.valid['carControl']:
+          pitch = orientation[1]
+      except Exception:
+        cloudlog.exception("card: GPS accel logging failed, disabled")
+        self.gps_accel = None
+    set_vsa_accel_fields(fpcs, getattr(self.CI, 'CS', None), pitch)
 
   def controls_update(self, CS: car.CarState, CC: car.CarControl):
     """control update loop, driven by carControl"""

@@ -126,6 +126,17 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   # aEgoVsaValid is false on cars without it or after 0.1 s without a frame (aEgoVsa then holds the last value).
   aEgoVsa @38 :Float32;
   aEgoVsaValid @39 :Bool;
+  # aEgoVsa - g*sin(pitch), pitch from carControl.orientationNED (locationd pose): delivered acceleration with the
+  # grade removed. NaN when aEgoVsa is invalid or the pose is unavailable. STATUS 216.
+  aEgoVsaPitchCorrected @40 :Float32;
+  # From the 10 Hz u-blox fix (gpsLocationExternal, selfdrive/car/gps_accel.py), Honda only. aEgoGps: d|vNE|/dt
+  # low-passed, no wheel slip and no grade, but ~0.5 s behind aEgo (a slow reference for bias/scale, not timing).
+  # gpsGrade: atan2(-vD, |vNE|) low-passed, rad, positive uphill; noisy (vertical accuracy ~6 m): on flat 2e2 it
+  # did NOT improve the accelerometer correction, use aEgoVsaPitchCorrected for that. Both 0 when gpsAccelValid
+  # is false (no fix, speed < 3 m/s, speedAccuracy >= 1 m/s, warming up, or no fix for 0.3 s).
+  aEgoGps @41 :Float32;
+  gpsGrade @42 :Float32;
+  gpsAccelValid @43 :Bool;
 }
 
 struct StarPilotDeviceState @0xda96579883444c35 {

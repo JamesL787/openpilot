@@ -10519,3 +10519,29 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
   - Measure delivered decel (grade-corrected) against the command in the hard-brake bins, which 2e2 never reached.
   - Check the brake onset shape (D-078/D-083) against the real car rather than the wheel-speed KF.
   - Needs drives on a build carrying this commit. Until then the offline tool on rlogs gives the same signal.
+
+## 216. GPS (10 Hz u-blox) added to the live acceleration logging, plus a pose-pitch-corrected VSA value (2026-10-05, owner: "Also take advantage of the 10hz gps reading as well for part of this live logging effort"). Log-only, Honda only, no control change. Static tests + logged-data replay of 2e2 (segments 0-7); not driven.
+- **New `starpilotCarState` fields.**
+  - `aEgoVsaPitchCorrected @40`: `aEgoVsa − g·sin(pitch)`, with pitch taken from `carControl.orientationNED` (the locationd pose). It is NaN when the VSA reading is invalid or there is no pose.
+  - `aEgoGps @41`: the low-passed derivative of horizontal GPS speed (τ 0.3 s).
+  - `gpsGrade @42`: `atan2(−vD, |vNE|)`, low-passed (τ 1 s), in rad, positive uphill.
+  - `gpsAccelValid @43`: false with no fix, `speedAccuracy` ≥ 1 m/s, speed < 3 m/s, during warm-up (5 good fixes), after a gap > 0.3 s between fixes, or when no fix message has arrived for 0.3 s. `aEgoGps` and `gpsGrade` read 0 while it is false.
+- **Code.**
+  - `selfdrive/car/gps_accel.py` holds `GpsAccelEstimator`, with no dependencies.
+  - `selfdrive/car/card.py`:
+    - Subscribes to `gpsLocationExternal` on Honda only. Card publishes that topic itself on GM/Ford car-GPS cars, so they are left out.
+    - `Car.update_accel_log_fields()` never raises. A GPS failure logs once and disables only the GPS fields.
+- **What the 2e2 replay showed.** This route is flat: grade p5/p95 −0.034/+0.017 rad. Frames: 44773, with GPS valid on 97.4% of frames at vEgo > 3.
+  - **Grade source for the accelerometer.** |aVsa − aEgo| p50 is 0.146 uncorrected.
+    - With pose pitch it falls to **0.105** (lstsq coefficient +1.16, bias −0.04).
+    - With GPS vD grade it rises to 0.157–0.161, at every averaging window from 0.5 to 4 s and lag from 0 to 1 s. It correlates with pitch at only 0.42–0.50, coefficient about 0.5.
+    - With altitude-difference grade it is 0.17–0.21.
+    - The u-blox vertical accuracy is about 6.6 m, so vertical noise swamps the small grades of a flat road.
+  - **So `gpsGrade` is logged but should not be used to correct the accelerometer.** `aEgoVsaPitchCorrected` is the corrected value. `gpsGrade` may earn its place on a hilly route; that is unchecked.
+  - **`aEgoGps` against aEgo.**
+    - Median +0.019, |diff| p50 0.19, p90 0.54.
+    - It lags aEgo by **0.6 s** (correlation 0.84 at no lag, 0.88 at 0.6 s), and lags the corrected VSA by 0.5 s.
+    - The corrected VSA and aEgo line up at 0–0.05 s (correlation 0.945).
+    - Use `aEgoGps` as a slow reference for bias and scale, independent of wheel slip and grade, for example wheel-speed scale under hard ABS braking. It is not a timing reference.
+- **Tests (static).** 8 in `selfdrive/car/tests/test_gps_accel.py`: estimator decel/grade sign, warm-up/gap/bad-fix resets, stale and out-of-order fixes, card copy, pitch correction, and the card method end to end with a fake SubMaster (including the GPS-failure path). `test_vsa_accel_log` and `test_redneck_cruise` still pass (109 total with the three files).
+- **Open.** Look at a drive with commands below −2.5 on a build carrying 215+216. There, compare `aEgoVsaPitchCorrected` and `aEgoGps` with aEgo in the hard-brake bins, which 2e2 never reached.
