@@ -412,6 +412,26 @@ BRAKE_ONSET_STOCK_MAX_NEED = 3.0  # m/s^2; planner floor is -3.5
 # (the latch's own case) min gap 8.7 -> 7.1 m near standstill; 236 9:22 -2.80 -> -2.83, gap -0.1 m; 2df 24:46, 2d5
 # 11:58 and 236 12:54 unchanged (the need gate already ends the ramp there). Off restores the D-081 latch.
 BRAKE_ONSET_STOCK_PANIC_RAMP = True
+# Stock brake feel (D-086, proposed; closed-loop sim replay only, not driven), the StockBrakeFeel toggle, off by
+# default, and independent of BrakeOnsetLimit (it turns the D-083 onset ramp on by itself). The owner asked for stock
+# ACC's depth and slow far ramp and accepted the shorter gap. STATUS 219, VSA accelerometer on 15 stock-ACC routes:
+# stock deepened from -0.3 to -1.0 at a median 0.3-0.5 m/s^3 when the lead was 8 s or more away (n 36) and 0.5-1.4 at
+# 4-8 s (n 3), and its command, for a closing need of 0.3-3.0 m/s^2, bottomed at p10 -1.6..-2.0 (p2 -2.2..-2.9, min
+# about -3.0) where ours went to -3.5. Under this toggle the onset ramp uses STOCK_FEEL_JERK_V at STOCK_FEEL_TTC_BP in
+# place of BRAKE_ONSET_STOCK_JERK_V, and while the ramp is active (every D-083 gate: gap, lead braking, TTC floor 2 s,
+# sustained need) and the worst TTC is over STOCK_FEEL_DEPTH_TTC_S, braking is held at STOCK_FEEL_DEPTH. The hold is
+# only taken while the ramp-aware need is at most STOCK_FEEL_DEPTH_MAX_NEED, so the hold can still stop
+# BRAKE_ONSET_MIN_GAP_M behind the lead as the radar sees it now; once released (need, TTC or any onset gate) it stays
+# released until the brake comes back above STOCK_FEEL_REARM, so it cannot pulse, and the rest of the depth then
+# arrives at the ramp rate while the ramp is on, unlimited once it is off. Cost: on a far closing the brake reaches
+# its depth later and holds shallower, so the closest gap is shorter; a lead that brakes after the hold is taken is
+# caught by the lead-braking gate (aLeadK < -1.0) at the planner's full depth, not stock's.
+STOCK_FEEL_TTC_BP = [3.0, 6.0, 10.0]  # s
+STOCK_FEEL_JERK_V = [3.0, 1.0, 0.5]  # m/s^3
+STOCK_FEEL_DEPTH = -2.0  # m/s^2, stock command p10
+STOCK_FEEL_DEPTH_TTC_S = 3.0
+STOCK_FEEL_DEPTH_MAX_NEED = 1.6  # m/s^2, 80% of the hold
+STOCK_FEEL_REARM = -0.3  # m/s^2
 # Newborn lead aLeadK bound (D-080, proposed; replay only, not driven), part of the BrakeOnsetLimit toggle. STATUS 212:
 # on 2e2 (bookmark ~283 s) a radar lead first seen while its velocity estimate was still converging published aLeadK
 # -3 / -2.5 when ~0.75 m/s^2 was needed, and on 2e1 a jumping track reached -13.7; the planner braked early and twice,
@@ -466,8 +486,20 @@ def brake_release_limited_target(prev: float, target: float, dt: float) -> float
   return float(min(target, prev + BRAKE_RELEASE_JERK * dt))
 
 
+def brake_onset_ttc(leads) -> float:
+  """Worst time to contact (s) over the active closing leads; inf when none is closing."""
+  ttc_min = float('inf')
+  for lead in leads:
+    if lead is None or not bool(getattr(lead, 'status', False)):
+      continue
+    closing = max(0.0, -float(lead.vRel))
+    if closing > 1e-3:
+      ttc_min = min(ttc_min, float(lead.dRel) / closing)
+  return ttc_min
+
+
 def brake_onset_jerk(leads, v_ego: float, ttc_off: float = BRAKE_ONSET_TTC_OFF_S,
-                     jerk_v=BRAKE_ONSET_JERK_V) -> float | None:
+                     jerk_v=BRAKE_ONSET_JERK_V, ttc_bp=BRAKE_ONSET_TTC_BP) -> float | None:
   """Allowed brake fall rate (m/s^3) when every active lead is far in time and distance, else None (no limit)."""
   ttc_min = float('inf')
   any_active = False
@@ -485,7 +517,7 @@ def brake_onset_jerk(leads, v_ego: float, ttc_off: float = BRAKE_ONSET_TTC_OFF_S
       ttc_min = min(ttc_min, d_rel / closing)
   if not any_active or ttc_min <= ttc_off:
     return None
-  return float(np.interp(ttc_min, BRAKE_ONSET_TTC_BP, jerk_v))
+  return float(np.interp(ttc_min, ttc_bp, jerk_v))
 
 
 def brake_onset_need(leads, prev: float, jerk: float) -> float:
@@ -512,15 +544,30 @@ def brake_onset_need(leads, prev: float, jerk: float) -> float:
   return float(need)
 
 
-def stock_onset_jerk(leads, v_ego: float, prev: float, hard_panic: bool, prev_over: bool) -> tuple[float | None, bool]:
+def stock_onset_jerk(leads, v_ego: float, prev: float, hard_panic: bool, prev_over: bool,
+                     jerk_v=BRAKE_ONSET_STOCK_JERK_V, ttc_bp=BRAKE_ONSET_TTC_BP) -> tuple[float | None, bool]:
   """D-083 allowed fall rate and this frame's need-over flag: off at or below the TTC floor or under a hard panic
   bypass, and off when the ramp-aware need is over BRAKE_ONSET_STOCK_MAX_NEED on this and the previous frame."""
   jerk = brake_onset_jerk(leads, v_ego, float('inf') if hard_panic else BRAKE_ONSET_STOCK_TTC_FLOOR_S,
-                          BRAKE_ONSET_STOCK_JERK_V)
+                          jerk_v, ttc_bp)
   over = jerk is not None and brake_onset_need(leads, prev, jerk) > BRAKE_ONSET_STOCK_MAX_NEED
   if over and prev_over:
     jerk = None
   return jerk, over
+
+
+def stock_feel_depth_target(leads, prev: float, target: float, jerk: float | None, released: bool) -> tuple[float, bool]:
+  """D-086 depth hold: (target, released). Holds a brake at STOCK_FEEL_DEPTH while the onset ramp is on, the worst TTC
+  is over STOCK_FEEL_DEPTH_TTC_S and the ramp-aware need is within STOCK_FEEL_DEPTH_MAX_NEED; once released it stays
+  released until the brake is back above STOCK_FEEL_REARM."""
+  if released:
+    return float(target), min(prev, target) < STOCK_FEEL_REARM
+  if target >= STOCK_FEEL_DEPTH:
+    return float(target), False
+  if jerk is None or brake_onset_ttc(leads) <= STOCK_FEEL_DEPTH_TTC_S or \
+     brake_onset_need(leads, prev, jerk) > STOCK_FEEL_DEPTH_MAX_NEED:
+    return float(target), True
+  return float(STOCK_FEEL_DEPTH), False
 
 
 def brake_onset_limited_target(prev: float, target: float, dt: float, jerk: float | None) -> float:
@@ -1449,6 +1496,7 @@ class LongitudinalPlanner:
     self._onset_panic_prev = False
     self._onset_panic_soft = False
     self._onset_need_over = False
+    self._stock_feel_released = False
     self.longitudinal_actuator_delay = max(DT_MDL, float(CP.longitudinalActuatorDelay))
     self.close_lead_brake_cap_value = 0.0
     self.lead_geometry_required_accel = 0.0
@@ -4213,7 +4261,8 @@ class LongitudinalPlanner:
       self.a_desired = min(self.a_desired, accord_stop_go_target)
       output_a_target = accord_stop_go_target
 
-    brake_onset_enabled = BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "brake_onset_limit", False))
+    stock_feel = bool(getattr(starpilot_toggles, "stock_brake_feel", False))
+    brake_onset_enabled = BRAKE_ONSET_LIMIT or stock_feel or bool(getattr(starpilot_toggles, "brake_onset_limit", False))
     if brake_onset_enabled and not reset_state and not bool(sm['carState'].standstill) and not (
         output_should_stop or vision_low_speed_stop_active or
         getattr(sm['starpilotPlan'], 'forcingStop', False) or getattr(sm['starpilotPlan'], 'redLight', False)):
@@ -4223,16 +4272,21 @@ class LongitudinalPlanner:
       if BRAKE_ONSET_STOCK_RAMP:
         onset_jerk, self._onset_need_over = stock_onset_jerk(
           onset_leads, scene_v_ego, prev_output_a_target,
-          panic_bypass and not self._onset_panic_soft and not BRAKE_ONSET_STOCK_PANIC_RAMP, self._onset_need_over)
+          panic_bypass and not self._onset_panic_soft and not BRAKE_ONSET_STOCK_PANIC_RAMP, self._onset_need_over,
+          *((STOCK_FEEL_JERK_V, STOCK_FEEL_TTC_BP) if stock_feel else ()))
       else:
         if not panic_bypass:
           onset_ttc_off = BRAKE_ONSET_TTC_OFF_S
         else:
           onset_ttc_off = BRAKE_ONSET_PANIC_TTC_S if self._onset_panic_soft else float('inf')
         onset_jerk = brake_onset_jerk(onset_leads, scene_v_ego, onset_ttc_off)
+      if stock_feel:
+        output_a_target, self._stock_feel_released = stock_feel_depth_target(
+          onset_leads, prev_output_a_target, output_a_target, onset_jerk, self._stock_feel_released)
       output_a_target = brake_onset_limited_target(prev_output_a_target, output_a_target, self.dt, onset_jerk)
     else:
       self._onset_need_over = False
+      self._stock_feel_released = False
     self._onset_panic_prev = panic_bypass
     if BRAKE_RELEASE_LIMIT and not reset_state and not bool(sm['carState'].standstill):
       # prev is the last published target (after the on-path bound in update(), which runs after this)

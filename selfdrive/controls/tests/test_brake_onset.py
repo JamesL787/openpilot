@@ -247,3 +247,68 @@ def test_panic_bypass_keeps_the_stock_ramp_down_to_the_ttc_floor():
   assert lp.stock_onset_jerk((_lead(61.0, -9.5),), 27.0, -0.53, False, False)[0] is not None
   assert lp.stock_onset_jerk((_lead(30.0, -14.0),), 18.0, -0.53, False, False)[0] is not None   # TTC 2.1 s
   assert lp.stock_onset_jerk((_lead(30.0, -16.0),), 18.0, -0.53, False, False)[0] is None       # TTC 1.9 s
+
+
+# D-086: StockBrakeFeel toggle, slow far ramp and -2.0 depth hold.
+def test_stock_feel_toggle_is_wired_and_off_by_default():
+  import json
+  from pathlib import Path
+  root = Path(__file__).resolve().parents[3]
+  layout = json.loads((root / "starpilot/common/assets/device_settings_layout.json").read_text())
+  found = []
+
+  def walk(node):
+    if isinstance(node, dict):
+      if node.get("key") == "StockBrakeFeel":
+        found.append(node)
+      for v in node.values():
+        walk(v)
+    elif isinstance(node, list):
+      for v in node:
+        walk(v)
+  walk(layout)
+  assert len(found) == 1
+  assert found[0]["parent_key"] == "AdvancedLongitudinalTune" and found[0]["ui_type"] == "toggle"
+  assert 'SettingRow("StockBrakeFeel", "toggle"' in (root / "selfdrive/ui/layouts/settings/starpilot/longitudinal.py").read_text()
+  assert '{"StockBrakeFeel", {PERSISTENT, BOOL, "0", "0", 3}}' in (root / "common/params_keys.h").read_text()
+  assert 'toggle.stock_brake_feel = False' in (root / "starpilot/common/starpilot_variables.py").read_text()
+  src = Path(lp.__file__).read_text()
+  assert 'getattr(starpilot_toggles, "stock_brake_feel", False)' in src
+
+
+def test_stock_feel_ramp_is_slower_far_and_unchanged_near():
+  far = (_lead(100.0, -8.0),)   # TTC 12.5 s
+  mid = (_lead(48.0, -8.0),)    # TTC 6 s
+  near = (_lead(24.0, -8.0),)   # TTC 3 s, 24 m > 1.5 s * 15
+  args = (lp.STOCK_FEEL_JERK_V, lp.STOCK_FEEL_TTC_BP)
+  assert lp.stock_onset_jerk(far, 15.0, -0.5, False, False, *args)[0] == pytest.approx(0.5)
+  assert lp.stock_onset_jerk(mid, 15.0, -0.5, False, False, *args)[0] == pytest.approx(1.0)
+  assert lp.stock_onset_jerk(near, 15.0, -0.5, False, False, *args)[0] == pytest.approx(3.0)
+  assert lp.stock_onset_jerk(far, 15.0, -0.5, False, False)[0] == pytest.approx(lp.BRAKE_ONSET_STOCK_JERK_V[-1])
+
+
+def test_stock_feel_holds_at_stock_depth_while_far_and_need_is_small():
+  far = (_lead(100.0, -8.0),)   # need 64 / 180 plus ramp lag, well under 1.6
+  t, rel = lp.stock_feel_depth_target(far, -1.5, -3.0, 0.5, False)
+  assert t == lp.STOCK_FEEL_DEPTH and not rel
+  t, rel = lp.stock_feel_depth_target(far, -1.0, -1.8, 0.5, False)   # shallower than the hold: untouched
+  assert t == -1.8 and not rel
+
+
+@pytest.mark.parametrize("leads,jerk", [
+  ((_lead(100.0, -8.0),), None),          # onset ramp off (any D-083 gate)
+  ((_lead(30.0, -11.0),), 3.0),           # TTC 2.7 s
+  ((_lead(60.0, -14.0),), 1.0),           # need over 1.6
+])
+def test_stock_feel_releases_to_full_depth(leads, jerk):
+  t, rel = lp.stock_feel_depth_target(leads, -2.0, -3.4, jerk, False)
+  assert t == -3.4 and rel
+
+
+def test_stock_feel_release_latches_until_the_brake_ends():
+  far = (_lead(100.0, -8.0),)
+  t, rel = lp.stock_feel_depth_target(far, -2.5, -3.0, 0.5, True)   # need small again: stays released, no pulse
+  assert t == -3.0 and rel
+  t, rel = lp.stock_feel_depth_target(far, -0.2, -0.1, 0.5, True)   # brake over: rearmed
+  assert not rel
+  assert lp.stock_feel_depth_target(far, -0.2, -3.0, 0.5, rel)[0] == lp.STOCK_FEEL_DEPTH

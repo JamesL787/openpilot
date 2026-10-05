@@ -860,6 +860,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // Default OFF. D-078 brake onset shaping (BRAKE_ONSET_LIMIT in longitudinal_planner.py): while every lead is far in
     // time and distance, braking deepens at most 1.5-6 m/s^3. Read live through starpilot_toggles. Replay only, not driven.
     {"BrakeOnsetLimit", {PERSISTENT, BOOL, "0", "0", 3}},
+    {"StockBrakeFeel", {PERSISTENT, BOOL, "0", "0", 3}},
     {"TuningLevel", {PERSISTENT, INT, "0", "0", 0}},
     {"TuningLevelConfirmed", {PERSISTENT, BOOL, "0", "0", 0}},
     {"TurnDesires", {PERSISTENT, BOOL, "0", "0", 2}},

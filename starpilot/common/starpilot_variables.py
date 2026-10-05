@@ -886,6 +886,11 @@ class StarPilotVariables:
       toggle.brake_onset_limit = self.get_value("BrakeOnsetLimit", condition=advanced_longitudinal_tuning)
     except Exception:
       toggle.brake_onset_limit = False
+    # Stock brake feel (longitudinal_planner STOCK_FEEL_*, D-086): slow far onset ramp and a -2.0 depth hold.
+    try:
+      toggle.stock_brake_feel = self.get_value("StockBrakeFeel", condition=advanced_longitudinal_tuning)
+    except Exception:
+      toggle.stock_brake_feel = False
 
     toggle.alert_volume_controller = self.get_value("AlertVolumeControl")
     toggle.below_steer_speed_volume = self.get_value("BelowSteerSpeedVolume", cast=float, condition=toggle.alert_volume_controller)

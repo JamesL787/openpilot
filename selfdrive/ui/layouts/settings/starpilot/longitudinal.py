@@ -555,6 +555,12 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_state=lambda: self._params.get_bool("BrakeOnsetLimit"),
                  set_state=lambda s: self._params.put_bool("BrakeOnsetLimit", s),
                  visible=adv),
+      SettingRow("StockBrakeFeel", "toggle", tr_noop("Stock Brake Feel"),
+                 subtitle=tr_noop("Builds braking slowly and holds it at stock ACC's -2.0 m/s^2 while the lead is far. Full braking returns "
+                                  "when the lead is within 3 s, braking, or -2.0 is not enough. Closes the gap more. Replay only, not driven."),
+                 get_state=lambda: self._params.get_bool("StockBrakeFeel"),
+                 set_state=lambda s: self._params.put_bool("StockBrakeFeel", s),
+                 visible=adv),
       SettingRow("TrailerLoad", "value", tr_noop("Trailer Load"),
                  subtitle=tr_noop("Loaded trailer weight for tow-aware gas, brake, and conservative lateral assist."),
                  get_value=lambda: f"{self._params.get_int('TrailerLoad')} lb",
