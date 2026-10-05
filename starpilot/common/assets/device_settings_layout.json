@@ -890,20 +890,9 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "BrakeOnsetLimit",
-        "label": "Smooth Brake Onset",
-        "description": "While every lead is still far away (more than 3 s to contact, more than 10 m and 1.5 s of travel, none braking harder than -1.0 m/s^2), braking deepens gradually: at most 1.5 m/s^3 at 6 s to contact, up to 6 m/s^3 near 3 s, and off below 3 s. In the emergency path it still applies when the lead is more than 4 s away and the car is not already braking. A newly seen radar car's reported braking is capped at -1.0 m/s^2 for its first 2 s unless its range history confirms more. Off when stopping, at a red light or forced stop. Throttle cuts and releasing brake are not changed. Replay only, not driven.",
-        "picker_description": "Builds braking up gradually while the lead is still far away.",
-        "data_type": "bool",
-        "ui_type": "toggle",
-        "category": "longitudinal_tuning",
-        "parent_key": "AdvancedLongitudinalTune",
-        "settings_tier": "advanced"
-      },
-      {
         "key": "StockBrakeFeel",
         "label": "Stock Brake Feel",
-        "description": "Brakes for a closing car the way stock Honda ACC does, from stock's own commands on 12 drives: braking deepens slowly (0.6 m/s^3 at 10 s to contact, 1 m/s^3 at 6 s, 2-3 m/s^3 near 2 s) and goes no deeper than stock does at that time to contact (about -0.4 m/s^2 at 25 s, -1.1 at 11 s, -2.1 at 5 s, -2.4 at 3 s, -3.5 at 2 s). Under 2 s to contact, with no car closing, and when stopping, at a red light or forced stop, normal braking applies. Replaces Smooth Brake Onset while on. Closes the gap more than without it, including when the car ahead brakes hard; raise the following distance if that is too close. Replay only, not driven.",
+        "description": "Brakes for a closing car the way stock Honda ACC does, from stock's own commands on 12 drives: braking deepens slowly (0.6 m/s^3 at 10 s to contact, 1 m/s^3 at 6 s, 2-3 m/s^3 near 2 s) and goes no deeper than stock does at that time to contact (about -0.4 m/s^2 at 25 s, -1.1 at 11 s, -2.1 at 5 s, -2.4 at 3 s, -3.5 at 2 s). Under 2 s to contact and with no car closing, the normal braking depth applies but builds no faster than 5 m/s^3; when stopping, at a red light or forced stop, normal braking applies. Also ignores a brief false braking reading on a newly seen car. Replaced the Smooth Brake Onset toggle. Closes the gap more than without it, including when the car ahead brakes hard; raise the following distance if that is too close. Replay only, not driven.",
         "picker_description": "Brakes for a closing car the way stock ACC does.",
         "data_type": "bool",
         "ui_type": "toggle",

@@ -548,13 +548,6 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_state=lambda: self._params.get_bool("ResumeBrakeRamp"),
                  set_state=lambda s: self._params.put_bool("ResumeBrakeRamp", s),
                  visible=adv),
-      SettingRow("BrakeOnsetLimit", "toggle", tr_noop("Smooth Brake Onset"),
-                 subtitle=tr_noop("Builds braking up gradually while the lead is still far away. Off when the lead is close, "
-                                  "braking hard, or closing within 4 s, and when stopping. Also ignores a brief false braking reading on a "
-                                  "newly seen car. Releasing brake is not changed. Replay only, not driven."),
-                 get_state=lambda: self._params.get_bool("BrakeOnsetLimit"),
-                 set_state=lambda s: self._params.put_bool("BrakeOnsetLimit", s),
-                 visible=adv),
       SettingRow("StockBrakeFeel", "toggle", tr_noop("Stock Brake Feel"),
                  subtitle=tr_noop("Brakes for a closing car like stock ACC: slower build-up, and no deeper than stock at the same "
                                   "time to contact. Normal braking under 2 s to contact and when stopping. Closes the gap more. Replay only, not driven."),

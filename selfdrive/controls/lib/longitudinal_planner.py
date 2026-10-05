@@ -371,7 +371,7 @@ COAST_CEILING_JERK = 2.5  # m/s^3
 # (2026-10-04, 7 routes) limited throttle cuts too and softened 236 13:15.7 (lead 17 m at 10.6 m/s braking -1.1),
 # so the gap gate went 1.0 -> 1.5 s and the lead-decel gate -1.5 -> -1.0.
 # Costs: up to |a| / J seconds later to reach a far-lead brake; the on-path bound in update() still applies after.
-BRAKE_ONSET_LIMIT = False  # True forces it on; otherwise the BrakeOnsetLimit toggle (Advanced Longitudinal Tuning)
+BRAKE_ONSET_LIMIT = False  # True forces it on. Its BrakeOnsetLimit toggle was removed at the owner's request (D-086).
 BRAKE_ONSET_TTC_OFF_S = 3.0  # at or below: no limit
 BRAKE_ONSET_TTC_BP = [3.0, 6.0]  # s
 BRAKE_ONSET_JERK_V = [6.0, 1.5]  # m/s^3 allowed fall rate at those TTCs
@@ -435,7 +435,12 @@ STOCK_FEEL_JERK_BP = [2.0, 2.5, 6.0, 10.0]  # s
 STOCK_FEEL_JERK_V = [3.0, 2.0, 1.0, 0.6]  # m/s^3
 STOCK_FEEL_TTC_FLOOR_S = 2.0
 STOCK_FEEL_MIN_CLOSING = 0.5  # m/s
-# Newborn lead aLeadK bound (D-080, proposed; replay only, not driven), part of the BrakeOnsetLimit toggle. STATUS 212:
+# Outside the fitted law (TTC at or under the floor, or no lead closing) the planner's depth is kept but it still deepens
+# no faster than this. Replay (STATUS 220): with no limit there, the target stepped -0.6..-1.65 in one 50 ms frame when
+# a simulated gap crossed TTC 2 s or a lead began opening (e5 -11.9, dfa -33, dfb -15 m/s^3). Stock's own p98 rate is
+# 2-3.4 m/s^3 at every TTC; 5 reaches -3.5 from -1.85 in 0.33 s.
+STOCK_FEEL_JERK_OUTSIDE = 5.0  # m/s^3
+# Newborn lead aLeadK bound (D-080, proposed; replay only, not driven), now part of the StockBrakeFeel toggle (D-086). STATUS 212:
 # on 2e2 (bookmark ~283 s) a radar lead first seen while its velocity estimate was still converging published aLeadK
 # -3 / -2.5 when ~0.75 m/s^2 was needed, and on 2e1 a jumping track reached -13.7; the planner braked early and twice,
 # and the onset limit stood aside because aLeadK < BRAKE_ONSET_LEAD_DECEL. For the first NEWBORN_LEAD_FRAMES a radar
@@ -561,10 +566,11 @@ def stock_onset_jerk(leads, v_ego: float, prev: float, hard_panic: bool, prev_ov
 
 def stock_feel_target(leads, prev: float, target: float, dt: float) -> float:
   """D-086 stock Honda ACC brake law: while a lead is closing and the worst TTC is over STOCK_FEEL_TTC_FLOOR_S, the
-  target goes no deeper than stock's depth at that TTC and deepens no faster than stock's rate; otherwise unchanged."""
+  target goes no deeper than stock's depth at that TTC and deepens no faster than stock's rate; otherwise the planner's
+  depth is kept and deepens at most STOCK_FEEL_JERK_OUTSIDE."""
   ttc = brake_onset_ttc(leads, STOCK_FEEL_MIN_CLOSING)
   if not ttc > STOCK_FEEL_TTC_FLOOR_S or ttc == float('inf'):
-    return float(target)
+    return brake_onset_limited_target(prev, target, dt, STOCK_FEEL_JERK_OUTSIDE)
   target = max(target, float(np.interp(ttc, STOCK_FEEL_DEPTH_BP, STOCK_FEEL_DEPTH_V)))
   return brake_onset_limited_target(prev, target, dt, float(np.interp(ttc, STOCK_FEEL_JERK_BP, STOCK_FEEL_JERK_V)))
 
@@ -3032,7 +3038,7 @@ class LongitudinalPlanner:
       if REASSOC_LEAD_BOUND:
         sm = bound_reassociated_leads(sm, self.reassociation_hold)
       sm = bound_off_axis_leads(sm, self.off_axis_lead_hold)
-    if BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "brake_onset_limit", False)):
+    if BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "stock_brake_feel", False)):
       sm = bound_newborn_leads(sm, self.newborn_lead_hold)
     if self.is_preap:
       self._preap_param_frame += 1
@@ -4260,7 +4266,7 @@ class LongitudinalPlanner:
       output_a_target = accord_stop_go_target
 
     stock_feel = bool(getattr(starpilot_toggles, "stock_brake_feel", False))
-    brake_onset_enabled = BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "brake_onset_limit", False))
+    brake_onset_enabled = BRAKE_ONSET_LIMIT  # the BrakeOnsetLimit toggle was removed for StockBrakeFeel (D-086)
     onset_gates = not reset_state and not bool(sm['carState'].standstill) and not (
       output_should_stop or vision_low_speed_stop_active or
       getattr(sm['starpilotPlan'], 'forcingStop', False) or getattr(sm['starpilotPlan'], 'redLight', False))

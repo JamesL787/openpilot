@@ -10642,3 +10642,32 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
   - (2) Then rerun `tools/longitudinal/vsa_felt_brake_report.py` (the episode extractor used above, added here) on that drive, so the felt jerk and hold are measured, not inferred.
   - (3) If 2e5-type merges still feel too deep, the lever is the MPC follow-distance response to newborn cut-ins (STATUS 218), not the onset limiter or a depth cap.
 - **Code.** No control change. Added `tools/longitudinal/vsa_felt_brake_report.py` (offline). A parameterized TTC breakpoint list for the stock ramp was tried for the sim and reverted.
+
+## 220. StockBrakeFeel: stock Honda ACC's fitted brake law behind one toggle; Smooth Brake Onset toggle removed. D-086 (2026-10-05). Owner: "Please copy exactly how stock does it. I understand the safety related issues, but currently we are overemphasizing the safety issues and sacrificing the smooth feel of the drive." and "If this works out better, please remove the smooth brake onset, I dont want two toggles that basically do the same thing". Closed-loop replay only; not driven.
+
+- **Law, fitted from stock's own command** (0x1DF; the 12 stock routes of STATUS 219, about 51k rows where a lead is closing).
+  - Depth barely depends on kinematic need. It is set by TTC. Stock command p50 / p25 by TTC: 2–2.5 s −2.59/−3.21, 3–3.5 s −1.62/−1.94, 5–6 s −1.51/−2.11, 8–10 s −0.89/−1.28, 12–15 s −0.51/−0.88, 20+ s −0.10/−0.35. Under 2 s stock goes to −3.8..−4.0 (n 37, 2 routes).
+  - Deepening rate per frame: p50 0.4–0.6, p90 1.0–1.6, p98 2–3.4 m/s³ at every TTC. Release p50 0.4, p90 1.2.
+- **Code** (`longitudinal_planner.py`, `stock_feel_target`, toggle `StockBrakeFeel`, default off, Advanced Longitudinal Tuning).
+  - While a lead closes at ≥ 0.5 m/s and the worst TTC is over 2 s: the target goes no deeper than `STOCK_FEEL_DEPTH_V` (stock's p25, the firmer quartile) at that TTC, and deepens no faster than `STOCK_FEEL_JERK_V` (3 / 2 / 1 / 0.6 m/s³ at TTC 2 / 2.5 / 6 / 10 s). No gap, need, or lead-braking gates, like stock.
+  - Under 2 s TTC or with no lead closing, the planner's depth is kept but deepens at most `STOCK_FEEL_JERK_OUTSIDE` = 5 m/s³. Releases are never limited. Stopping, standstill, red light and forced stop bypass it.
+  - The D-080 newborn-lead aLeadK bound now runs under this toggle.
+  - **`BrakeOnsetLimit` (Smooth Brake Onset) toggle removed**: params key, device UI row, layout node, toggle variable. Its D-078/D-083/D-084 path stays in the code behind the `BRAKE_ONSET_LIMIT` constant (False) and its tests still run.
+- **Closed-loop replay** (`alpha_closed_loop_replay.py --sim-window`, min a / worst jerk m/s³ / min gap m). Head = Smooth Brake Onset on. SF = first stock-law cut, which had no limit under the TTC floor. SJ = committed.
+
+  | case | head (Smooth Brake Onset) | SF | SJ (committed) |
+  |---|---|---|---|
+  | 2e5 470–492 | −2.67 / −2.9 / 36.9 | −2.27 / −11.9 / 35.0 | −2.27 / −5.0 / 35.0 |
+  | 236 548–570 | −2.83 / −26.8 / 1.6 | −3.10 / −5.2 / 1.0 | −3.10 / −5.2 / 1.0 |
+  | 236 762–784 | −2.85 / −4.3 / 5.0 | −2.35 / −3.7 / 2.9 | −2.35 / −3.7 / 2.9 |
+  | 2d5 708–730 | −3.65 / −36.0 / 34.3 | −2.36 / −23.4 / 32.7 | −2.36 / −5.6 / 32.7 |
+  | 2df 1478–1500 | −3.50 / −25.0 / 14.4 | −3.50 / −33.0 / 11.5 | −3.50 / −33.0\* / 11.5 |
+  | 2df 1545–1568 | −3.53 / −2.2 / 7.1 | −3.50 / −15.0 / 3.1 | −3.50 / −5.0 / 3.1 |
+
+  \* 2df 1486.17: the logged drive disengages there (driver brake) and the replay output jumps to −3.5. It is a replay artifact, not the planner, and head has the same one.
+  - SF's steps (−0.6 to −1.65 in one frame) happened when the simulated gap crossed TTC 2 s or a lead began opening. The planner's target then passed through unlimited. A 5 m/s³ limit there removed them.
+  - **Better:** shallower peaks on 2e5, 236 762, 2d5 (−3.65 → −2.36). The worst step drops from −26.8/−36.0 to −5.2/−5.6 on 236 548 and 2d5. Excluding the disengage artifact, no frame steps faster than 5.6 m/s³.
+  - **Worse:** less gap everywhere, which is the price the owner accepted. 236 548: 1.6 → 1.0 m. 236 762: 5.0 → 2.9 m. 2df 1545: 7.1 → 3.1 m. 2e5 and 2df 1545 worst jerk −2.9/−2.2 → −5.0 (the 5 m/s³ cap engaging under TTC 2 s).
+  - A p50 depth table (`S50`) was also replayed. It closed the gap further (236 548 0.4 m, 2df 1545 0.3 m), so it was not used.
+- **Not verified.** The 1.0 m minimum gap is a simulated gap from replay. No drive has run this law. Road-check with a longer following distance first, then rerun `tools/longitudinal/vsa_felt_brake_report.py` on that drive.
+- **Tests.** `test_brake_onset.py` 43 pass, including toggle-removed wiring, depth by TTC, rate, outside-law step limit, and newborn bound gate.

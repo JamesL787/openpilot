@@ -880,13 +880,9 @@ class StarPilotVariables:
     toggle.vEgoStopping = self.get_value("VEgoStopping", cast=float, condition=advanced_longitudinal_tuning, default=toggle.vEgoStopping, min=0.01, max=1)
     # Resume brake ramp after a gas override (longcontrol RESUME_BRAKE_RAMP_*). Off unless the parent and this are on.
     toggle.resume_brake_ramp = self.get_value("ResumeBrakeRamp", condition=advanced_longitudinal_tuning)
-    # Brake onset shaping (longitudinal_planner BRAKE_ONSET_*, D-078). A params library built before the key existed
-    # raises on the read; that means off, never a failed toggle load.
-    try:
-      toggle.brake_onset_limit = self.get_value("BrakeOnsetLimit", condition=advanced_longitudinal_tuning)
-    except Exception:
-      toggle.brake_onset_limit = False
-    # Stock brake feel (longitudinal_planner STOCK_FEEL_*, D-086): stock Honda ACC's fitted depth and onset rate by TTC.
+    # Stock brake feel (longitudinal_planner STOCK_FEEL_*, D-086): stock Honda ACC's fitted depth and onset rate by TTC,
+    # plus the D-080 newborn-lead bound. Replaced the Smooth Brake Onset toggle. A params library built before the key
+    # existed raises on the read; that means off, never a failed toggle load.
     try:
       toggle.stock_brake_feel = self.get_value("StockBrakeFeel", condition=advanced_longitudinal_tuning)
     except Exception:

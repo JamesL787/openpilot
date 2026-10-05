@@ -52,29 +52,15 @@ def test_ramp_reaches_the_target_within_abs_a_over_j():
   assert a == pytest.approx(-1.5)
 
 
-def test_toggle_sits_under_advanced_longitudinal_tuning_in_galaxy_and_device_ui():
-  import json
+def test_brake_onset_toggle_is_removed_for_stock_brake_feel():
+  # D-086: the owner asked for one toggle, not two. The onset path stays behind the BRAKE_ONSET_LIMIT constant.
   from pathlib import Path
   root = Path(__file__).resolve().parents[3]
-  layout = json.loads((root / "starpilot/common/assets/device_settings_layout.json").read_text())
-  found = []
-
-  def walk(node):
-    if isinstance(node, dict):
-      if node.get("key") == "BrakeOnsetLimit":
-        found.append(node)
-      for v in node.values():
-        walk(v)
-    elif isinstance(node, list):
-      for v in node:
-        walk(v)
-  walk(layout)
-  assert len(found) == 1
-  assert found[0]["parent_key"] == "AdvancedLongitudinalTune" and found[0]["ui_type"] == "toggle"
-  ui = (root / "selfdrive/ui/layouts/settings/starpilot/longitudinal.py").read_text()
-  assert 'SettingRow("BrakeOnsetLimit", "toggle"' in ui
-  assert '{"BrakeOnsetLimit", {PERSISTENT, BOOL, "0", "0", 3}}' in (root / "common/params_keys.h").read_text()
-  assert 'toggle.brake_onset_limit = False' in (root / "starpilot/common/starpilot_variables.py").read_text()
+  for f in ("starpilot/common/assets/device_settings_layout.json", "selfdrive/ui/layouts/settings/starpilot/longitudinal.py",
+            "common/params_keys.h", "starpilot/common/starpilot_variables.py"):
+    assert "BrakeOnsetLimit" not in (root / f).read_text(), f
+  src = (root / "selfdrive/controls/lib/longitudinal_planner.py").read_text()
+  assert '"brake_onset_limit"' not in src and lp.BRAKE_ONSET_LIMIT is False
 
 
 # D-080: newborn radar lead aLeadK bound, part of the same toggle.
@@ -150,10 +136,10 @@ def test_same_track_as_lead_one_and_two_is_recorded_once_per_frame():
   assert len(hold.hist[4]) == 1
 
 
-def test_bound_is_applied_only_when_the_onset_toggle_is_on():
+def test_bound_is_applied_only_when_stock_brake_feel_is_on():
   import inspect
   src = inspect.getsource(lp.LongitudinalPlanner._update)
-  gate = 'if BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "brake_onset_limit", False)):\n'
+  gate = 'if BRAKE_ONSET_LIMIT or bool(getattr(starpilot_toggles, "stock_brake_feel", False)):\n'
   assert gate + '      sm = bound_newborn_leads(sm, self.newborn_lead_hold)' in src
 
 
@@ -304,8 +290,11 @@ def test_stock_feel_deepens_at_stock_rate():
   (_lead(30.0, -0.3),),           # closing under 0.5 m/s
   (_lead(30.0, -10.0, status=False),),
 ])
-def test_stock_feel_leaves_the_planner_alone(leads):
-  assert lp.stock_feel_target(leads, 0.0, -3.5, 0.05) == -3.5
+def test_stock_feel_keeps_planner_depth_but_limits_the_step(leads):
+  # Outside the fitted law the depth is the planner's; only the per-frame deepening is bounded (STATUS 220 replay steps).
+  assert lp.stock_feel_target(leads, -3.5, -3.5, 0.05) == -3.5
+  assert lp.stock_feel_target(leads, 0.0, -3.5, 0.05) == pytest.approx(-lp.STOCK_FEEL_JERK_OUTSIDE * 0.05)
+  assert lp.stock_feel_target(leads, -2.0, -1.0, 0.05) == -1.0
 
 
 def test_stock_feel_depth_table_is_monotone():

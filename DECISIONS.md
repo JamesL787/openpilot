@@ -1981,3 +1981,14 @@ GPS to about ±0.15 m/s². Two stock traits looked copyable:
   (`[3, 1.0, 0.6]` at TTC `[3, 6, 10]`) made 2e5 7:58 worse: worst jerk −2.9 → −7.8 m/s³, deeper, and 1.2 m less gap. The deferred
   brake trips the need gate and arrives as a step. `[3, 1.5, 0.8]` was inert on every case.
 D-083/D-084 stay as they are. The next stock-closeness step is road evidence from a build that runs them. Replay and offline only.
+
+## D-086 — StockBrakeFeel: copy stock Honda ACC's brake law (depth and rate by TTC) behind one toggle; remove BrakeOnsetLimit (STATUS 220)
+
+Owner's request; it overrides D-085's rejection, which declined to copy stock's shallower depth and slower ramp on safety grounds. The owner
+accepts a closer gap ("I can always adjust the following distance myself") and asked for one toggle, not two.
+- While a lead is closing and TTC > 2 s, the depth is capped at stock's p25 command for that TTC and the deepening rate at stock's (3 → 0.6 m/s³ from
+  TTC 2 → 10 s). Under 2 s, or with no closing lead, the planner's depth applies but deepens at most 5 m/s³. Releases are untouched.
+- Smooth Brake Onset (`BrakeOnsetLimit`) is removed from params and UI. Its code stays behind `BRAKE_ONSET_LIMIT` = False. The D-080 newborn-lead bound
+  moves under `StockBrakeFeel`.
+- Replay: smoother peaks and steps than Smooth Brake Onset on 4 of 6 cases. Simulated min gap down to 1.0 m (236 548) and 3.1 m (2df 1545). Replay
+  only, not driven. Do not tighten the depth table toward stock's p50 without road evidence: it reached 0.3 m in replay.
