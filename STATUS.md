@@ -10595,3 +10595,50 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
   - If the depth still feels excessive after a drive on this build, look next at the MPC follow-distance response to newborn cut-ins, not at the onset limit.
 - **Change.** `BRAKE_ONSET_STOCK_PANIC_RAMP = True` in `longitudinal_planner.py`. `False` restores the D-081 latch.
 - **Tests (static).** 34 pass in `test_brake_onset.py`, including a new 2e5-shaped test at the TTC floor. 179 pass across the radard/lead/follow suites. Ruff is clean on the changed lines; there are 8 pre-existing errors elsewhere in the planner.
+
+## 219. Stock vs ours from the VSA accelerometer and GPS: where we still differ and what not to copy. No code change, D-085 (2026-10-05). Owner: "analyze the available accelerometer and gps data and help get it to be closer to stock acc as much as possible". Offline analysis and closed-loop replay only; not driven.
+
+- **Data.** Felt braking is CAN 0x094 (`bosch_vsa_accel_report.py`) with g·sin(pitch) removed using `carControl.orientationNED`, plus the `gpsLocationExternal` speed derivative (about 10 Hz, `hasFix`, `speedAccuracy` < 1).
+  - Stock: 12 routes, `0000025d`–`00000267` and `00000299`, about 132 engaged min.
+  - Ours: older alpha routes, about 118 min; 2e4–2e7 (build 3b5cacf04), about 36 min.
+  - Command law: `stock_acc_reference.py` (stock = 0x1DF). The ICBM set-speed confound is split out as its own regime.
+  - None of our routes ran D-083 or D-084: the device build predates both.
+- **GPS cross-check.** VSA and GPS agree, so the felt numbers can be trusted to about ±0.15 m/s².
+  - 7 routes (263, 266, 299, 2df, 2e4, 2e5, 2e7). While moving, VSA − GPS median is −0.005 to −0.07, MAD 0.12–0.15 m/s².
+  - 111 brake episodes: peak difference median 0.06, MAD 0.14.
+  - 2e5 7:58 felt −3.58 (VSA) / −3.99 (GPS) against a −3.07 command. That matches the STATUS 218 residuals and confirms it was the command, not the brakes.
+- **Felt episodes (VSA < −0.8 for ≥ 0.5 s), medians.**
+  - Close onsets (TTC < 6 s): worst onset jerk is −2.07 m/s³ stock vs −4.39 (alpha) and −5.11 (2e4–2e7). Time to peak is 1.9 s vs 1.3 s. Time held below −1 is 4.0 s vs 2.6 s.
+  - Overall: peak −1.96 vs −1.54, held below −1 for 3.4 s vs 1.6 s. Onset p5 jerk (about −1.85) and release jerk (1.36 vs 1.46) are alike.
+  - Stock's style is a gradual onset, then a long, firm hold. Ours is a sharp, short dip.
+  - The close-onset jerk gap is what D-083/D-084 target: 1.5–3 m/s³ against stock's felt −2.07. It is unmeasured on the road because the device has not run them.
+- **Command law, following regime.**
+  - Stock starts braking at a 1.71 s gap and vRel −1.3. Ours starts at 2.56 s and vRel −4.9.
+  - Share of rows below −1 at gap > 3 s, stock vs ours: TTC 3–4 67/97 %, TTC 4–6 22/43 %, TTC 6–10 4/15 %.
+  - Ours brakes more, and earlier, on far closing leads.
+- **New-lead response** (radar lead born closing faster than 3 m/s at a gap above 1.2 s, while not braking; 31 stock, 19 ours). Command at +0.5/1/1.5/2/3/4 s:
+  - Stock 264 326 s (v 22, 70 m, vRel −11.8, TTC 6.0): −0.21/−0.52/−0.73/−0.95/−1.26/−2.16.
+  - Ours 2e5 7:58 (v 22, 61 m, vRel −9.5, TTC 6.4): −0.70/−1.49/−2.46/−3.07/−2.35.
+  - Stock 25d 105 s (TTC 6.8) −0.55/−1.37/−1.89/−2.22 is close to ours 2df 838 s (TTC 8.5) −0.50/−0.99/−1.57/−2.00.
+  - Stock onset rate from −0.3 to −1.0 at TTC ≥ 8 s: median 0.3–0.5 m/s³, p90 0.5–1.4 (n = 36). At TTC 4–8 s there are only n = 3 (0.52, 0.88, 1.40).
+- **Depth against kinematic need** (closing² / 2(d − 10)), rows where the onset gates pass:
+  - Need < 1 m/s²: stock tails match ours (p2 −2.92 vs −3.00 at need 0.6–1.0).
+  - Need > 1: stock commands only 0.3–0.5 × need (median −0.56 to −0.91, vs ours −1.35 to −1.92). It lets the gap close and relies on catching up later or on the lead pulling away.
+  - **Not copied.** Getting closer to stock here means braking less than physics asks while closing. That is the deleting-margin direction CLAUDE.md warns against.
+- **Slower far-onset ramp, closed-loop sim** (`alpha_closed_loop_replay.py --sim-window`; min a / worst jerk / min gap). Columns are HEAD (D-084), A = `[3, 1.5, 0.8]` at TTC `[3, 6, 10]`, and B = `[3, 1.0, 0.6]` at the same TTCs:
+
+  | case | HEAD | A | B |
+  |---|---|---|---|
+  | 2e5 7:58 | −2.67 / −2.9 / 36.9 | −2.68 / −2.9 / 36.8 | −2.72 / **−7.8** / 35.7 |
+  | 236 12:54 | −2.85 / −4.3 / 5.0 | −2.86 / −4.3 / 4.9 | −2.99 / −6.2 / 4.6 |
+  | 2df 25:54 | −3.53 / −2.2 / 7.1 | same | −3.51 / −5.6 / 6.3 |
+  | 236 9:22, 2d5 11:58, 2df 24:46 | unchanged | unchanged | ±0.2 m |
+
+  - B defers the brake, so the ramp-aware need grows and the need gate releases the remaining depth in a step. The result is a harsher, deeper brake with less gap.
+  - A is inert on every case: their onsets are all under TTC 8 s.
+  - Against a lead that keeps closing, a slower ramp moves the braking later and deeper. It does not make it gentler. Stock only gets away with that by accepting a smaller gap (previous bullet). **Neither variant is adopted.**
+- **What would bring us closest to stock now.**
+  - (1) Drive a build with D-083 + D-084 and `BrakeOnsetLimit` on. The close-onset jerk gap is the largest felt difference, and those changes target it.
+  - (2) Then rerun `tools/longitudinal/vsa_felt_brake_report.py` (the episode extractor used above, added here) on that drive, so the felt jerk and hold are measured, not inferred.
+  - (3) If 2e5-type merges still feel too deep, the lever is the MPC follow-distance response to newborn cut-ins (STATUS 218), not the onset limiter or a depth cap.
+- **Code.** No control change. Added `tools/longitudinal/vsa_felt_brake_report.py` (offline). A parameterized TTC breakpoint list for the stock ramp was tried for the sim and reverted.

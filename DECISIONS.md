@@ -1970,3 +1970,14 @@ off. With `BRAKE_ONSET_STOCK_PANIC_RAMP = True` the bypass leaves the D-083 ramp
 (3.0 m/s², 2 frames) still ends it on urgent steps. Closed-loop sim: 2e5 worst jerk −8.2 → −2.0 m/s³, gap −0.9 m. 2df 25:54 stopped
 traffic (the latch's own case) min gap 8.7 → 7.1 m near standstill. Peaks and the urgent cases are unchanged. The onset is reshaped;
 depth is not. `False` restores D-081. Replay only, not driven.
+
+## D-085 — REJECTED (STATUS 219): do not copy stock's slower far-onset ramp or its shallower depth at high need
+
+STATUS 219 compared 12 stock routes (~132 engaged min) with ~154 min of ours using the pitch-corrected VSA accelerometer, which agrees with
+GPS to about ±0.15 m/s². Two stock traits looked copyable:
+- Stock commands only 0.3–0.5 × the kinematic need when the need exceeds 1 m/s². That is less braking than physics asks while
+  closing, so it is rejected on safety grounds.
+- Stock ramps far onsets (TTC ≥ 8 s) at a median 0.3–0.5 m/s³. In the closed-loop sim, a slower D-083 schedule
+  (`[3, 1.0, 0.6]` at TTC `[3, 6, 10]`) made 2e5 7:58 worse: worst jerk −2.9 → −7.8 m/s³, deeper, and 1.2 m less gap. The deferred
+  brake trips the need gate and arrives as a step. `[3, 1.5, 0.8]` was inert on every case.
+D-083/D-084 stay as they are. The next stock-closeness step is road evidence from a build that runs them. Replay and offline only.
