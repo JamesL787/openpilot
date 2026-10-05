@@ -1992,3 +1992,9 @@ accepts a closer gap ("I can always adjust the following distance myself") and a
   moves under `StockBrakeFeel`.
 - Replay: smoother peaks and steps than Smooth Brake Onset on 4 of 6 cases. Simulated min gap down to 1.0 m (236 548) and 3.1 m (2df 1545). Replay
   only, not driven. Do not tighten the depth table toward stock's p50 without road evidence: it reached 0.3 m in replay.
+
+## D-087 — ADOPTED (Gemini, 2026-10-04): Port upstream "Smooshed SLC UI" (Drawer) without losing Bosch custom toggles/features
+
+The user explicitly requested to merge the `Dom` branch's massive Drawer UI (commits 12947fd616, cede5ddc9d) into `main` and `pr10-smooth`. Early attempts using naive `git checkout --theirs` on `starpilot_card.py` and `starpilot_vcruise.py` proved dangerous because those upstream files completely lack the custom experimental `BrakeOnsetLimit` / `StockBrakeFeel` variables, the `always_on_lateral` additions, and the specific `WHEEL_BUTTON_SOUND_PARAM` patches from earlier merges. Doing so broke the `pytest` test suite by producing `AttributeError` crashes.
+
+As a result, the commits were properly cherry-picked. The conflicts in `starpilot_card.py` and `starpilot_vcruise.py` were resolved by meticulously grafting the upstream Speed Limit Controller (SLC) updates into the Custom Honda Bosch layout. Specifically, the SLC's `update()` logic was successfully extracted and placed ahead of the custom CSC logic in `starpilot_vcruise.py`, and the Custom `always_on_lateral` logic in `starpilot_card.py` was retained. Tests passed locally (with the exception of three pre-existing broken tests from before the cherry-pick). This preserves the hardware safety logic while satisfying the user's UI request.
