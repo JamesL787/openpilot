@@ -1951,3 +1951,22 @@ range is the only evidence of the true closing, and the assist braked 0-0.8 s ea
 keeps its D-053 hysteresis and decays after U11 leaves the rail (no release step). Turning it off deletes nothing: the U11
 reading is still published (D-041/D-042). The vision-assist and camera x-rate paths are off-rail refinements and go quiet with
 it. `True` restores D-053 exactly. Replay only (open loop on logged ego), not driven.
+
+## D-083 — PROPOSED (part of switch `BrakeOnsetLimit`, default OFF; STATUS 217): stock-like onset jerk cap where the onset limit stands down
+
+When D-078/D-081 stand down on a fast-closing lead (worst TTC < 4 s), the onset jerk was unlimited, and our rail cases stepped
+−36..−40 m/s³. Stock (route 299, STATUS 214) ramps the same class of onset at −1.4..−3.4 m/s³ per step. D-083 caps the onset jerk
+by TTC (`BRAKE_ONSET_STOCK_JERK_V = [3.0, 1.5]`), but stands down when the braking need v_rel²/(2·gap) exceeds 3.0 m/s² or TTC is
+under 2.0 s (2-frame debounce). Peak braking is never reduced, only the rise. Switch `BRAKE_ONSET_STOCK_RAMP = True` in
+`longitudinal_planner.py`; `False` restores D-081 exactly. Replay result: nearly inert. One onset changes (236 9:22, jerk
+−32.3 → −29.3), no peak changes, and 2d5 11:58 is unchanged because its need is 5.4. The need gate is deliberately not loosened to
+catch the rail steps. Gap cost is unmeasurable in open-loop replay (doc §12.3, D-072). Replay only, not driven.
+
+## D-084 — PROPOSED (part of switch `BrakeOnsetLimit`, default OFF; STATUS 218): a panic bypass no longer ends the D-083 ramp
+
+Owner request after 2e5 7:58, a car merging in from a construction-blocked lane at 61 m, vRel −9.5, TTC 6.4. The panic bypass
+fired with the previous target at −0.53. The D-081 latch (−0.5) therefore treated it as a hard panic and switched the stock ramp
+off. With `BRAKE_ONSET_STOCK_PANIC_RAMP = True` the bypass leaves the D-083 ramp on down to the 2.0 s TTC floor. The ramp-aware need gate
+(3.0 m/s², 2 frames) still ends it on urgent steps. Closed-loop sim: 2e5 worst jerk −8.2 → −2.0 m/s³, gap −0.9 m. 2df 25:54 stopped
+traffic (the latch's own case) min gap 8.7 → 7.1 m near standstill. Peaks and the urgent cases are unchanged. The onset is reshaped;
+depth is not. `False` restores D-081. Replay only, not driven.

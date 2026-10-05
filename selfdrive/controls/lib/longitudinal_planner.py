@@ -403,6 +403,15 @@ BRAKE_ONSET_STOCK_RAMP = True
 BRAKE_ONSET_STOCK_JERK_V = [3.0, 1.5]  # m/s^3 at BRAKE_ONSET_TTC_BP; below the first TTC it stays 3.0
 BRAKE_ONSET_STOCK_TTC_FLOOR_S = 2.0  # at or below: no limit, undebounced
 BRAKE_ONSET_STOCK_MAX_NEED = 3.0  # m/s^2; planner floor is -3.5
+# Panic bypass keeps the stock ramp (D-084, proposed; replay only, not driven). STATUS 218: on 2e5 7:58 a car merging
+# in from a construction-blocked lane was born at 61 m, vRel -9.5, TTC 6.4; the panic bypass fired with the previous
+# target at -0.53, just under BRAKE_ONSET_PANIC_MAX_PRIOR_BRAKE, so the latch called it a hard panic and switched the
+# ramp off (closed-loop sim worst jerk -8.2 m/s^3). With this switch the bypass no longer ends the D-083 ramp: it
+# stays on down to BRAKE_ONSET_STOCK_TTC_FLOOR_S and still stands down on a sustained BRAKE_ONSET_STOCK_MAX_NEED.
+# Closed-loop sim (min a / worst jerk / min gap): 2e5 -2.62/-8.2/37.8 -> -2.67/-2.0/36.9; 2df 25:54 stopped traffic
+# (the latch's own case) min gap 8.7 -> 7.1 m near standstill; 236 9:22 -2.80 -> -2.83, gap -0.1 m; 2df 24:46, 2d5
+# 11:58 and 236 12:54 unchanged (the need gate already ends the ramp there). Off restores the D-081 latch.
+BRAKE_ONSET_STOCK_PANIC_RAMP = True
 # Newborn lead aLeadK bound (D-080, proposed; replay only, not driven), part of the BrakeOnsetLimit toggle. STATUS 212:
 # on 2e2 (bookmark ~283 s) a radar lead first seen while its velocity estimate was still converging published aLeadK
 # -3 / -2.5 when ~0.75 m/s^2 was needed, and on 2e1 a jumping track reached -13.7; the planner braked early and twice,
@@ -4213,7 +4222,8 @@ class LongitudinalPlanner:
       onset_leads = (self.lead_one, self.lead_two)
       if BRAKE_ONSET_STOCK_RAMP:
         onset_jerk, self._onset_need_over = stock_onset_jerk(
-          onset_leads, scene_v_ego, prev_output_a_target, panic_bypass and not self._onset_panic_soft, self._onset_need_over)
+          onset_leads, scene_v_ego, prev_output_a_target,
+          panic_bypass and not self._onset_panic_soft and not BRAKE_ONSET_STOCK_PANIC_RAMP, self._onset_need_over)
       else:
         if not panic_bypass:
           onset_ttc_off = BRAKE_ONSET_TTC_OFF_S

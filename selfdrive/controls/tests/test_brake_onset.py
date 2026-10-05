@@ -238,3 +238,12 @@ def test_planner_uses_the_stock_ramp_behind_its_switch():
   src = inspect.getsource(lp.LongitudinalPlanner._update)
   assert 'if BRAKE_ONSET_STOCK_RAMP:' in src
   assert 'stock_onset_jerk(' in src and 'panic_bypass and not self._onset_panic_soft' in src
+  assert 'and not BRAKE_ONSET_STOCK_PANIC_RAMP' in src
+
+
+def test_panic_bypass_keeps_the_stock_ramp_down_to_the_ttc_floor():
+  # D-084 / 2e5 7:58: merge-in at 61 m, vRel -9.5 (TTC 6.4), bypass began at -0.53 (just past the D-081 latch)
+  assert lp.BRAKE_ONSET_STOCK_PANIC_RAMP and lp.BRAKE_ONSET_STOCK_TTC_FLOOR_S == 2.0
+  assert lp.stock_onset_jerk((_lead(61.0, -9.5),), 27.0, -0.53, False, False)[0] is not None
+  assert lp.stock_onset_jerk((_lead(30.0, -14.0),), 18.0, -0.53, False, False)[0] is not None   # TTC 2.1 s
+  assert lp.stock_onset_jerk((_lead(30.0, -16.0),), 18.0, -0.53, False, False)[0] is None       # TTC 1.9 s
