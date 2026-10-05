@@ -1939,3 +1939,25 @@ lead MPC, no guard tripped, and the depth (-2.73) was what a slow lead would nee
 applies while the worst TTC is above 4.0 s, but only if the published target was above -0.5 m/s² when the bypass began
 (latched). Round 1 without the latch softened a real stop for stopped traffic (2df 25:54, already braking -1.2, -3.5 ~0.3 s
 later); the latch removes that. Peak braking is never reduced, only how fast it arrives. Replay only, not driven.
+
+## D-082 — ADOPTED (owner, 2026-10-04; STATUS 214; amends D-053): the range-derived vRel assist arms only on the U11 rail
+
+Owner: "If it doesn't improve brake smoothness I'd rather take it off" and "I don't mind if it starts a little later, as long
+as it's smoothened out and doesn't ... look like a brake check for the car behind me." Off the rail, U11 is a reading and the
+assist's disagreement there was mostly a range walk on a far lead: on 2e2 4:44 (lead at 107 m, U11 -6.6, vision -5..-7) the
+range fit swung -9..-20 and the planner pulsed the brake five times (jerk -15.8 m/s³). On the rail, U11 is a bound (D-041), the
+range is the only evidence of the true closing, and the assist braked 0-0.8 s earlier at the same peak. New switch
+`RANGE_VREL_ASSIST_OFF_RAIL = False` in `radard.py`: the assist arms only while U11 is on the rail; a correction armed there
+keeps its D-053 hysteresis and decays after U11 leaves the rail (no release step). Turning it off deletes nothing: the U11
+reading is still published (D-041/D-042). The vision-assist and camera x-rate paths are off-rail refinements and go quiet with
+it. `True` restores D-053 exactly. Replay only (open loop on logged ego), not driven.
+
+## D-083 — PROPOSED (part of switch `BrakeOnsetLimit`, default OFF; STATUS 217): stock-like onset jerk cap where the onset limit stands down
+
+When D-078/D-081 stand down on a fast-closing lead (worst TTC < 4 s), the onset jerk was unlimited, and our rail cases stepped
+−36..−40 m/s³. Stock (route 299, STATUS 214) ramps the same class of onset at −1.4..−3.4 m/s³ per step. D-083 caps the onset jerk
+by TTC (`BRAKE_ONSET_STOCK_JERK_V = [3.0, 1.5]`), but stands down when the braking need v_rel²/(2·gap) exceeds 3.0 m/s² or TTC is
+under 2.0 s (2-frame debounce). Peak braking is never reduced, only the rise. Switch `BRAKE_ONSET_STOCK_RAMP = True` in
+`longitudinal_planner.py`; `False` restores D-081 exactly. Replay result: nearly inert. One onset changes (236 9:22, jerk
+−32.3 → −29.3), no peak changes, and 2d5 11:58 is unchanged because its need is 5.4. The need gate is deliberately not loosened to
+catch the rail steps. Gap cost is unmeasurable in open-loop replay (doc §12.3, D-072). Replay only, not driven.

@@ -10456,3 +10456,104 @@ arriving over about 0.5 s). Round 1 without the latch also softened 2df 25:54 (-
 down by design. That needs a look at the track itself, not the planner.
 
 Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy save still needs the aarch64 params library.
+
+## 214. D-082: range-derived vRel assist (D-053) arms only on the U11 rail; the off-rail assist caused the 2e2 4:44 double brake (owner request, 2026-10-04). Replay only, not driven.
+
+- **Why:** on 2e2 4:44 the lead was at 107 m. U11 read -6.6 and vision -5..-7, while the range fit swung -9..-20. The assist published that range fit, and the planner pulsed the brake five times.
+- **Change:** new switch `RANGE_VREL_ASSIST_OFF_RAIL = False` (`radard.py`, after the rail fast path block).
+  - The assist now arms only while U11 sits on the rail.
+  - A correction armed on the rail decays after U11 leaves the rail, instead of stepping to zero.
+  - Nothing is deleted: the U11 reading or the rail bound is still published.
+  - `True` restores D-053 exactly.
+- **A/B replay** (`ONSET=0 RKF=1`, open loop on logged ego, so a later brake does not change the gap). Peak = minimum planner output. Pulses = release ≥0.4 then deepen ≥0.4.
+
+| event | U11 | full assist: peak / pulses / min jerk | rail-only (shipped) and assist off |
+|---|---|---|---|
+| 2e2 4:44 (lead 107 m) | off rail | -2.14 / 5 / -15.8 | -2.01 / 0 / -2.8, first < -1 2.2 s later |
+| 2e1 6:07 | off rail | -1.51 / 0 / -25.2 | -0.13 / 0 / -3.1 |
+| 236 18:56 | off rail | -1.00 / 0 / -20.8 | -0.26 / 0 / -0.1 |
+| 236 29:07 | off rail | -1.00 / 1 / -26.3 | -0.47 / 1 / -0.7 |
+| 236 30:06, 38:42; 2d5 7:09, 13:05 | off rail | -0.90 to -2.04 | -0.55 to -1.67, jerk equal or lower |
+
+  - On the rail, rail-only equals the full assist. Assist off would understate the closing there:
+
+| event | rail-only = full assist: peak, first < -1 | assist off |
+|---|---|---|
+| 2d5 9:46 | -2.00, 583.7 | -2.00, 583.7 |
+| 2d5 11:58 (real 17-24 m/s closing) | -3.64, 718.0 | -3.56, 718.0 |
+| 236 9:22 | -2.63, 556.8 | -2.65, 556.8 |
+| 236 12:54 | -3.22, 771.1 | -3.22, 771.9 |
+| 236 6:55 | -1.96, 414.5 | -1.91, 415.3 |
+
+  - The rail cases keep their sharper jerk (2d5 11:58 -36.6 vs -16.9 with the assist off; 236 12:54 -40.4 vs -18.9, 2 pulses vs 1). That is the price of seeing the true closing on the rail, the D-041 case.
+- **Not checked:** the closed loop. With the assist off the rail, the car brakes a little later on off-rail fast approaches, and on the road the gap then shrinks more. In these four routes the off-rail differences were at 30-115 m with peaks of -2.1 or softer.
+- **Stock ACC context:** stock brakes on the radar's own vRel, with no range correction (`docs/honda_bosch_acc_brake_internals.md` §12.2).
+- **Tests:** `selfdrive/controls/tests/test_range_vrel_assist.py`, 161 pass (static). Four are new (`TestOffRailArmingOff`); the existing D-053 tests run with the switch on.
+
+- **Stock ACC on 299** (`11c8fa231c0499ed|00000299--cfcac519b7`, ICBM off; `stock_acc_reference.py build`, scratchpad cache). There are 8 moving brakes where vRel at onset was below -3.5. Here "jerk" is the per-50 ms step of the stock ACCEL_COMMAND.
+  - Command peaks were -1.0 to -2.7. Delivered aEgo bottomed at -1.2 to -3.1.
+  - Minimum jerk was only -1.4 to -3.4 m/s³, with at most 1 re-brake pulse per event. Firm braking was held for up to 10.9 s below -1.
+  - 20:34 is the railed case. The lead changed at 1229.6 s to a car 55 m ahead closing at -12.5 (U11 on the rail). Stock eased to -0.30 for about 1.5 s, then ramped -0.3 → -2.2 over about 2.5 s (worst step -2.5 m/s³). It held -2.2, then tapered to the stop with no pulse.
+  - Stock is "firm" because it holds the brake long after a gradual onset, not because the onset is sharp.
+  - Our rail cases still step at -36 to -40 m/s³ (-17 to -19 with the assist off). That is the planner's TTC-driven onset, not the assist. `BrakeOnsetLimit` (D-078/D-081) stands down below TTC 4 s, so it never shapes those onsets. That is the next lever, not done here.
+
+## 215. Live VSA accelerometer logging: `starpilotCarState.aEgoVsa` / `aEgoVsaValid` (2026-10-05, owner: "go ahead and add in that live acceleormeter logging. I think that would help us understand more how to tune this properly"). Log-only, no control change. Static tests + CAN replay of 2e2; not driven.
+- **What it logs.** The Honda VSA longitudinal accelerometer, 0x094 KINEMATICS `LONG_ACCEL` (9-bit signed, −0.049 m/s² per count). Gravity is included, so it reads road grade at standstill. Positive = accelerating.
+  - `aEgoVsaValid` is false on cars without the message, and after 0.1 s (10 frames) with no frame. `aEgoVsa` then holds its last value.
+  - Nothing reads it for control.
+- **Code.**
+  - `opendbc_repo/opendbc/car/honda/carstate.py`: `update_vsa_long_accel()`. It checks with `dict.__contains__` so a DBC without KINEMATICS is never lazily subscribed.
+  - Cars without a yaw-rate calibration subscribe KINEMATICS as optional (NaN frequency, `ignore_alive`), so it never takes part in `canValid`. The yaw-rate cars (Clarity, Civic Bosch) already read it through the alive-checked lazy path, and that is left unchanged.
+  - `selfdrive/car/card.py`: `set_vsa_accel_fields()`, which fails silently once, like the gas-learner fields.
+  - `cereal/custom.capnp` `StarPilotCarState`: `aEgoVsa @38`, `aEgoVsaValid @39`. The fields are appended, so the schema stays backward-compatible.
+- **Evidence.**
+  - Static: `selfdrive/car/tests/test_vsa_accel_log.py`, 6 tests (copy, defaults, hold/stale, no lazy subscribe, optional on Accord, Civic Bosch unchanged). Honda opendbc suite 392 pass; `test_car_interfaces` Honda/Acura 44 pass.
+  - CAN replay: 2e2 segment 1 through the parser and the new method. HONDA_CIVIC_BOSCH, bus 1, 6000 frames, valid 100%, `canValid` true. Range −1.91..+1.72, median +0.098, which matches the offline report below.
+- **First real-route run of `tools/longitudinal/bosch_vsa_accel_report.py` (2e2, full route).**
+  - 0x094 is on bus 1 at 100 Hz (45242 frames). The DBC and firmware decodes agree (|diff| median 0.006, p99 0.051).
+  - aVsa − aEgo: median +0.095, or +0.001 with g·sin(pitch) removed.
+  - Command vs delivered at +0.35 s, longActive, bins −0.5 to −2.5: medians −0.05 to +0.12 for both aEgo and aVsa. There is no over-delivery, and no commands below −2.5 on this route.
+  - The firmware's −5 m/s³ slew differs from our command on 0.1% of active time (max −0.75).
+  - U11 residual slope −0.55 s, r² 0.06.
+- **What it is for.**
+  - Measure delivered decel (grade-corrected) against the command in the hard-brake bins, which 2e2 never reached.
+  - Check the brake onset shape (D-078/D-083) against the real car rather than the wheel-speed KF.
+  - Needs drives on a build carrying this commit. Until then the offline tool on rlogs gives the same signal.
+
+## 216. GPS (10 Hz u-blox) added to the live acceleration logging, plus a pose-pitch-corrected VSA value (2026-10-05, owner: "Also take advantage of the 10hz gps reading as well for part of this live logging effort"). Log-only, Honda only, no control change. Static tests + logged-data replay of 2e2 (segments 0-7); not driven.
+- **New `starpilotCarState` fields.**
+  - `aEgoVsaPitchCorrected @40`: `aEgoVsa − g·sin(pitch)`, with pitch taken from `carControl.orientationNED` (the locationd pose). It is NaN when the VSA reading is invalid or there is no pose.
+  - `aEgoGps @41`: the low-passed derivative of horizontal GPS speed (τ 0.3 s).
+  - `gpsGrade @42`: `atan2(−vD, |vNE|)`, low-passed (τ 1 s), in rad, positive uphill.
+  - `gpsAccelValid @43`: false with no fix, `speedAccuracy` ≥ 1 m/s, speed < 3 m/s, during warm-up (5 good fixes), after a gap > 0.3 s between fixes, or when no fix message has arrived for 0.3 s. `aEgoGps` and `gpsGrade` read 0 while it is false.
+- **Code.**
+  - `selfdrive/car/gps_accel.py` holds `GpsAccelEstimator`, with no dependencies.
+  - `selfdrive/car/card.py`:
+    - Subscribes to `gpsLocationExternal` on Honda only. Card publishes that topic itself on GM/Ford car-GPS cars, so they are left out.
+    - `Car.update_accel_log_fields()` never raises. A GPS failure logs once and disables only the GPS fields.
+- **What the 2e2 replay showed.** This route is flat: grade p5/p95 −0.034/+0.017 rad. Frames: 44773, with GPS valid on 97.4% of frames at vEgo > 3.
+  - **Grade source for the accelerometer.** |aVsa − aEgo| p50 is 0.146 uncorrected.
+    - With pose pitch it falls to **0.105** (lstsq coefficient +1.16, bias −0.04).
+    - With GPS vD grade it rises to 0.157–0.161, at every averaging window from 0.5 to 4 s and lag from 0 to 1 s. It correlates with pitch at only 0.42–0.50, coefficient about 0.5.
+    - With altitude-difference grade it is 0.17–0.21.
+    - The u-blox vertical accuracy is about 6.6 m, so vertical noise swamps the small grades of a flat road.
+  - **So `gpsGrade` is logged but should not be used to correct the accelerometer.** `aEgoVsaPitchCorrected` is the corrected value. `gpsGrade` may earn its place on a hilly route; that is unchecked.
+  - **`aEgoGps` against aEgo.**
+    - Median +0.019, |diff| p50 0.19, p90 0.54.
+    - It lags aEgo by **0.6 s** (correlation 0.84 at no lag, 0.88 at 0.6 s), and lags the corrected VSA by 0.5 s.
+    - The corrected VSA and aEgo line up at 0–0.05 s (correlation 0.945).
+    - Use `aEgoGps` as a slow reference for bias and scale, independent of wheel slip and grade, for example wheel-speed scale under hard ABS braking. It is not a timing reference.
+- **Tests (static).** 8 in `selfdrive/car/tests/test_gps_accel.py`: estimator decel/grade sign, warm-up/gap/bad-fix resets, stale and out-of-order fixes, card copy, pitch correction, and the card method end to end with a fake SubMaster (including the GPS-failure path). `test_vsa_accel_log` and `test_redneck_cruise` still pass (109 total with the three files).
+- **Open.** Look at a drive with commands below −2.5 on a build carrying 215+216. There, compare `aEgoVsaPitchCorrected` and `aEgoGps` with aEgo in the hard-brake bins, which 2e2 never reached.
+
+## 217. D-083 stock-like brake onset ramp: replay A/B (2026-10-05, owner: "Yeah let's make those onset ramps the way stock does"). Inside `BrakeOnsetLimit` (default OFF). Static tests + closed-loop replay only (open loop on ego); not driven.
+- **What it is.** Code landed in `6f1a05b37`; this item records the replay. Where the D-078/D-081 onset limit stands down on a fast-closing lead (worst TTC under 4 s), the onset jerk is no longer unlimited. It is capped by a schedule copied from stock route 299 (STATUS 214): `BRAKE_ONSET_STOCK_JERK_V = [3.0, 1.5]` m/s³ across TTC. The cap stands down completely (2-frame debounce) when the braking need, v_rel²/(2·gap), exceeds `BRAKE_ONSET_STOCK_MAX_NEED = 3.0` m/s², or TTC falls under `BRAKE_ONSET_STOCK_TTC_FLOOR = 2.0` s. Only the rise is shaped. Peak braking is never reduced. Switch: `BRAKE_ONSET_STOCK_RAMP` in `longitudinal_planner.py`.
+- **Replay A/B** (ramp on vs. D-081 alone, `BrakeOnsetLimit` on in both, same routes as STATUS 213/214):
+  - **236 9:22.9.** The only episode on 236 that differs. Minimum target −2.63 in both. Worst onset jerk −32.3 → −29.3 m/s³. Target crosses −1 at 556.8 s in both. Largest per-frame difference +1.47 m/s² at 560.6 s, in the release, not the onset.
+  - **2df 24:46.6.** Minimum −2.73 in both, 2 pulses in both, worst jerk −44.0 in both. Crosses −1 at 1485.5 vs. 1485.4 s. Largest difference +0.72 at 1485.6 s.
+  - **2e1, 2e2.** No episode differs.
+  - **2d5 11:58** (earlier run). Unchanged: −3.64, jerk −36.5. A single-frame-class vRel of −20 (3 frames) with the range falling ~22 m/s over 0.4 s put the need at 5.4 m/s² for two frames, so the ramp stood down as designed. It shaped only the first 0.25 s (−0.05 → −0.87).
+- **Reading.** In replay the ramp barely acts. It softens one onset by ~10% and changes no peak and no crossing time by more than one frame. The rail cases that motivated it (236 12:54, 2d5 11:58, 2d5 9:46) are steps that the need gate classifies as real emergencies. Loosening the gate to catch them means softening braking that a 5 m/s² need says is required. **Not done.** Tuning the debounce or the need limit to one route is the offline-statistics re-tune the contract warns about.
+- **Tension with the brake-command doc.** Doc §12.3 argues against any onset limit. Item 72 / D-072 measured the cost of one: minimum gap 6.0 → 5.6 m. Replay is open loop on ego and **cannot measure gap cost**: logged ego does not slow later when the target arrives later. Any gap cost of D-083 is unmeasured. It is bounded by the result above (crossing times move ≤ 0.1 s).
+- **Status.** D-083 stays PROPOSED inside the default-OFF `BrakeOnsetLimit`, no new toggle. It is harmless in replay and nearly inert. The live VSA/GPS logging (STATUS 215/216) is what can show whether real onsets feel like the stock ones. Look again after a drive with `BrakeOnsetLimit` on.
+- **Tests (static).** 10 in `selfdrive/controls/tests/test_brake_onset.py` (33 in the file pass).
