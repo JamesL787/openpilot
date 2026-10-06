@@ -3112,9 +3112,9 @@
       },
       {
         "key": "BoschARangeOffsetFallback",
-        "label": "Radar Range Offset -2.617 m",
-        "description": "TEST, default off. Bosch-A radar only. Uses the radar firmware's fallback range offset (-2.617 m) instead of -3.0, so every radar distance reads 0.38 m longer. Closing speeds are unchanged. Neither value is measured on this car; longer distances are the less cautious direction, which is why it ships off. Never driven. Restart required to take effect.",
-        "picker_description": "Bosch-A radar distances use the firmware fallback offset (0.38 m longer). Default off. Never driven.",
+        "label": "Dynamic Radar Range Offset",
+        "description": "Bosch-A radar only. Automatically ingests CAN 0x669 (1 Hz) chassis mounting calibration from the camera, dynamically setting the radar bumper offset (-1.72 m on Civic, -1.77 m on CR-V). When off, uses static fallback (-3.0 m). Restart required to take effect.",
+        "picker_description": "Automatically ingests CAN 0x669 camera chassis calibration for dynamic radar range offset.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLongitudinalTune",

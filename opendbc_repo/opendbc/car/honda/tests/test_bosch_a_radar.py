@@ -745,6 +745,51 @@ class TestRangeOffsetFallback:
     monkeypatch.setattr(params_module, "Params", Broken)
     assert radar_interface_module.bosch_a_range_offset_fallback_enabled() is False
 
+  def test_dynamic_offset_update_civic(self):
+    ri = make_radar_interface()
+    assert ri.base_n0 == 335
+    assert ri.range_offset_m == BOSCH_A_RANGE_OFFSET_M
+
+    # 0x669 with raw 615 -> addend -115 -> n = 220 -> offset = -1.71875 m
+    chassis_frame = CanData(0x669, bytes.fromhex('0002677a77d9000f'), BUS)
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=864, direct_vrel_uncertainty_raw=0,
+                    extra_slots=[chassis_frame]))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
+    assert ri.radar_addend == -115
+    assert ri.range_offset_m == -1.71875
+    assert rr.points[0].dRel == pytest.approx(1000 / 16.0 - 1.71875)
+
+  def test_dynamic_offset_update_crv(self):
+    crv_cp = CarInterface.get_non_essential_params(CAR.HONDA_CRV_5G)
+    ri = CarInterface.RadarInterface(crv_cp)
+    assert ri.base_n0 == 341
+    assert ri.range_offset_m == BOSCH_A_RANGE_OFFSET_M
+
+    # 0x669 with raw 615 -> addend -115 -> n = 226 -> offset = -1.765625 m
+    chassis_frame = CanData(0x669, bytes.fromhex('0002677a77d9000f'), BUS)
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=864, direct_vrel_uncertainty_raw=0,
+                    extra_slots=[chassis_frame]))
+    rr = ri.update(sweep(0, 1, 0x7, 1000, 1024, 3, 50_000_000, with_aux=True,
+                         direct_vrel_raw=864, direct_vrel_uncertainty_raw=0))
+    assert ri.radar_addend == -115
+    assert ri.range_offset_m == -1.765625
+    assert rr.points[0].dRel == pytest.approx(1000 / 16.0 - 1.765625)
+
+  def test_dynamic_offset_ignores_invalid_sentinel(self):
+    ri = make_radar_interface()
+    # 0x669 with raw 0xFFF (4095) sentinel
+    # layout: ((b1 & 0xF) << 8) | b2 = 0xFFF -> b1 |= 0xF, b2 = 0xFF
+    invalid_frame = CanData(0x669, bytes([0, 0x0F, 0xFF, 0, 0, 0, 0, 0]), BUS)
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=864, direct_vrel_uncertainty_raw=0,
+                    extra_slots=[invalid_frame]))
+    assert ri.radar_addend is None
+    assert ri.range_offset_m == BOSCH_A_RANGE_OFFSET_M
+
+
 
 class TestVrel:
   def test_direct_aux_vrel_is_preferred_over_range_derivative(self):

@@ -1091,6 +1091,11 @@ BO_ 663 BOSCH_A_S15_AUX: 8 RADAR
  SG_ CHECKSUM : 59|4@0+ (1,0) [0|15] "" XXX
  SG_ COUNTER : 61|2@0+ (1,0) [0|3] "" XXX
 
+BO_ 1641 RADAR_CHASSIS_OFFSET: 8 RADAR
+ SG_ RADAR_OFFSET_X_RAW : 11|12@0+ (1,0) [0|4095] "" XXX
+ SG_ RADAR_OFFSET_Y_RAW : 31|12@0+ (1,0) [0|4095] "" XXX
+ SG_ RADAR_OFFSET_Z_RAW : 35|12@0+ (1,0) [0|4095] "" XXX
+
 
 CM_ BO_ 640 "Slot 0 frame 0 (range/status/azimuth/frame-index). 0x280.";
 CM_ BO_ 641 "Slot 0 frame 1 (frame-index only, core contract). 0x281.";

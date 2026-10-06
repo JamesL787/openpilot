@@ -99,6 +99,31 @@ def bosch_a_range_offset_fallback_enabled() -> bool:
   except Exception:
     return False
 
+
+# Chassis mounting offset message broadcast from camera at 1 Hz on camera CAN (bus 2).
+# Firmware routine 0x13FBFA updates internal slots from COM signals 0x1da/0x1db/0x1dc.
+# Routine 0x11F3DC computes: addend = round((raw_x / 1024.0 - 1.5) * 128.0).
+# Net offset: n = n_0 + addend.
+# Base n_0 is 341 for CR-V (36802TLA cfg=5448 at 0x03047A) and 335 for Civic (36802TBA cfg=0) / fallback.
+BOSCH_A_CHASSIS_OFFSET_MSG = 0x669
+BOSCH_A_CHASSIS_OFFSET_FREQ_HZ = 1.0
+BOSCH_A_CHASSIS_OFFSET_RAW_INVALID = 0xFFF
+
+
+def bosch_a_addend_from_raw_x(raw_x: int) -> int:
+  """Convert 12-bit raw_x from CAN 0x669 (COM 0x1da) to signed Q7 addend counts per firmware 0x11F3DC."""
+  return int(round((raw_x / 1024.0 - 1.5) * 128.0))
+
+
+def bosch_a_base_n0(car_fingerprint: str) -> int:
+  """Base range offset count n_0 from firmware config word (0xDC004 / 0xD461C):
+  CR-V (TLA) has cfg = 5448 -> n_0 = 341 (2.664 m); Civic (TBA) and others default to 335 (2.617 m)."""
+  from opendbc.car.honda.values import CAR
+  if car_fingerprint in (CAR.HONDA_CRV_5G, CAR.HONDA_CRV_HYBRID):
+    return 341
+  return 335
+
+
 # Azimuth: f0 raw_angle (11-bit, B4:B5 high 3 bits), offset-binary about 1024.
 #
 # The f3 angular-edge pair independently closes the exact center-angle scale:
@@ -673,7 +698,9 @@ def _bosch_a_coast_vrel(track, rail_interval: bool, range_bound: bool = False, v
 
 
 def _create_bosch_a_can_parser(CP):
-  messages = [(addr, BOSCH_A_FREQ_HZ) for addr in BOSCH_A_ALL_IDS]
+  messages = [(addr, BOSCH_A_FREQ_HZ) for addr in BOSCH_A_ALL_IDS] + [
+    (BOSCH_A_CHASSIS_OFFSET_MSG, BOSCH_A_CHASSIS_OFFSET_FREQ_HZ),
+  ]
   # Bus.radar selects the Bosch-A DBC; the object/fusion feed itself is
   # physically on the camera-side ACC-CAN.
   return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, CanBus(CP).camera)
@@ -703,7 +730,10 @@ class RadarInterface(RadarInterfaceBase):
       # D-074: U11 counts per m/s (72). An attribute so replays of 1/64-era logs can set it.
       self.u11_counts_per_mps = BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
       self.newborn_range_publish = BOSCH_A_NEWBORN_RANGE_PUBLISH
-      # D-076: range offset, -3.0 unless BoschARangeOffsetFallback is on. Read once; a restart is needed.
+      self.base_n0 = bosch_a_base_n0(CP.carFingerprint)
+      self.radar_addend: int | None = None
+      # D-076: range offset, -3.0 unless BoschARangeOffsetFallback is on.
+      # If dynamic addend (0x669) is received on CAN, range_offset_m automatically updates to -(base_n0 + addend)/128.0.
       self.range_offset_m = bosch_a_range_offset_m(bosch_a_range_offset_fallback_enabled())
     else:
       # Nidec
@@ -770,6 +800,12 @@ class RadarInterface(RadarInterfaceBase):
     ret = structs.RadarData()
     if not self.rcp.can_valid:
       ret.errors.canError = True
+
+    if BOSCH_A_CHASSIS_OFFSET_MSG in updated_messages:
+      raw_x = int(self.rcp.vl[BOSCH_A_CHASSIS_OFFSET_MSG]["RADAR_OFFSET_X_RAW"])
+      if raw_x != BOSCH_A_CHASSIS_OFFSET_RAW_INVALID and raw_x > 0:
+        self.radar_addend = bosch_a_addend_from_raw_x(raw_x)
+        self.range_offset_m = -(self.base_n0 + self.radar_addend) / 128.0
 
     now = self.rcp._last_update_nanos
     self._last_trigger_nanos = now
