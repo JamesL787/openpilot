@@ -10674,9 +10674,12 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
 
 ## 225. CR-V 5G feedback scale and column load re-measured in the controller's units (2026-10-06). D-092.
 
-- `[CONFIRMED static firmware]` Route `00000006--82bb552a2c` ran image t9-67523237: decoding the retained
-  `39990-TLA-A040-t9-67523237-DO_NOT_FLASH.rwd` reads feedback normalization 1450 at `0x429A0` (tracker-1 1999,
-  clamps 7373/1774/9000). The current FF45 image (SHA-256 `d5dc04a8…`) reads 1650, tracker-1 3200.
+- `[CONFIRMED static firmware]` Calibrated image = the released Proper Torque Mod RWD
+  `39990-TLA-A040_Clarity_FF_tune_telemety_8cf8e537.rwd` (Drive, RWD SHA-256 `26f5390b…`), which decodes
+  byte-for-byte to full image `d5dc04a8…` (the same bytes as the `…_DO_NOT_FLASH_full.bin` build artifact):
+  normalization 1650, tracker-1 3200. Route `00000006--82bb552a2c` was recorded on the earlier test build
+  t9-67523237 (decoded from the retained `39990-TLA-A040-t9-67523237-DO_NOT_FLASH.rwd`: normalization 1450,
+  tracker-1 1999); it is used only for that drive's normalization, nothing from it ships.
 - `[CONFIRMED offline route]` Native extraction of that route (`drive-82bb552a2c-native-v5.json.zst`, SHA-256
   `8b94a3439b6f7fdeeea0f1bb32a9c0a8037637441c01b15af41fde0cb9fdedd7`), `tools/lateral/fit_crv_eps_load.py`:
   R6 = -121.6051 x steeringRateDeg at a 15 ms lag (R² 0.977, 15,966 samples) → -138.378 at norm 1650

@@ -27,9 +27,18 @@ controller calibration. It also supplies command clamp 1774, output scale 256,
 and FeedforwardV1 Kff 45. OpenPilot's normalized lateral output currently maps
 to 4096 E4 counts for the modified CR-V profile.
 
-Route `00000006--82bb552a2c` ran image `t9-67523237` (retained as
-`00-active/evidence/artifacts/39990-TLA-A040-t9-67523237-DO_NOT_FLASH.rwd` in the
-firmware repository), whose feedback normalization reads 1450 at `0x429A0`.
+The calibrated image is the released Proper Torque Mod build owners flash:
+`39990-TLA-A040_Clarity_FF_tune_telemety_8cf8e537.rwd` on the shared "Modded
+Honda RWDs" Drive (39990-TLA-A040 / Proper Torque Mod), RWD SHA-256
+`26f5390b654ace80b759bd20156d4c8ef834d97dc0e22889c2d247c052980afb`. It decodes
+to the full image SHA-256 `d5dc04a8…` (application `8cf8e537`, normalization
+1650), byte-identical to the `…_ff45_8cf8e537_DO_NOT_FLASH_full.bin` build
+artifact named above.
+
+Route `00000006--82bb552a2c` was recorded on an earlier test build, application
+`t9-67523237` (retained as `00-active/evidence/artifacts/39990-TLA-A040-t9-67523237-DO_NOT_FLASH.rwd`
+in the firmware repository), whose feedback normalization reads 1450 at `0x429A0`.
+It is used only for that drive's normalization; nothing from it ships.
 A least-squares fit of the EPS's own V5 `feedback_R6` on `steeringRateDeg`,
 hands off, gives `-121.6051` counts/(degree/s) at a 15 ms lag (tracker-1),
 R² 0.977 over 15,966 samples. Normalization is a pure scale on R6, so the FF45

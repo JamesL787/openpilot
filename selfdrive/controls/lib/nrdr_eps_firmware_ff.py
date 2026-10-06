@@ -208,16 +208,20 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
   r6_per_deg_s=-173.0,
 )
 
-# CR-V 5G 39990-TLA-A040 FF45 image. Exact tables/constants from
-# 39990-TLA-A040_tq30000_a9000_t9_ff45_8cf8e537_DO_NOT_FLASH_full.bin
-# (SHA-256 d5dc04a839af2c473e103f4f9d448bf600e26ea0531521a58da61e2267dc351e).
+# CR-V 5G 39990-TLA-A040 FF45 image: the released Proper Torque Mod build owners flash,
+# 39990-TLA-A040_Clarity_FF_tune_telemety_8cf8e537.rwd (shared "Modded Honda RWDs" Drive, 39990-TLA-A040 /
+# Proper Torque Mod; RWD SHA-256 26f5390b654ace80b759bd20156d4c8ef834d97dc0e22889c2d247c052980afb). It decodes to
+# the full image SHA-256 d5dc04a839af2c473e103f4f9d448bf600e26ea0531521a58da61e2267dc351e (application 8cf8e537),
+# byte-identical to the firmware repository's 39990-TLA-A040_tq30000_a9000_t9_ff45_8cf8e537_DO_NOT_FLASH_full.bin
+# build artifact. Exact tables/constants read from it.
 # The command map and P row are identical across all seven rows in this image.
 #
 # Feedback DC scale (STATUS 225 / D-092): least squares of the EPS's own V5 feedback_R6 on steeringRateDeg,
 # hands off, route 00000006--82bb552a2c (native extraction drive-82bb552a2c-native-v5.json.zst, SHA-256
 # 8b94a343...; tools/lateral/fit_crv_eps_load.py): -121.605 counts/(deg/s) at a 15 ms lag (tracker-1), R^2 0.977,
-# 15,966 samples. That drive ran image t9-67523237, whose feedback normalization reads 1450 at 0x429A0; the FF45
-# image reads 1650, and the normalization is a pure scale on R6, so -121.605 * 1650/1450 = -138.38.
+# 15,966 samples. That drive was recorded on an earlier test build, application t9-67523237 (normalization 1450 at
+# 0x429A0); it is used here only for that drive's normalization, nothing from it ships. The released PTM image
+# reads 1650, and the normalization is a pure scale on R6, so -121.605 * 1650/1450 = -138.38.
 # Superseded: -105.704 * 1650/1450 = -120.28 (D-091). -105.704 was a single R6/rate ratio; the ratio is biased low
 # by the tracker lag (the median ratio on the same drive is -114), so it under-modelled the firmware's own rate
 # damping by 13%. Cross-check from firmware alone: every Civic-family image including this one converts the motor

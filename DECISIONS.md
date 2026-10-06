@@ -2087,13 +2087,18 @@ unstable; the aligned fit remains canonical.
 
 ## D-092 — Re-measure the CR-V feedback scale and column load in the controller's units
 
+Firmware binding: the released Proper Torque Mod RWD `39990-TLA-A040_Clarity_FF_tune_telemety_8cf8e537.rwd`
+(RWD SHA-256 `26f5390b…`, decodes to full image `d5dc04a8…`, normalization 1650). The DO_NOT_FLASH build
+artifacts cited elsewhere are the same bytes (8cf8e537) or, for t9-67523237, only the build route 82bb was
+recorded on.
+
 **Decided 2026-10-06; offline route evidence, default toggle unchanged.** Supersedes D-091's two
 route-derived CR-V numbers; everything else in D-091 (firmware tables, Kff 45, no added command delay,
 neutral P/I multipliers, opt-in toggle) stands.
 
 - **Feedback scale** `CRV_5G_A040_FF45.r6_per_deg_s`: -120.284 → **-138.378** counts/(deg/s). Route
-  `00000006--82bb552a2c` (OpenPilot `49e6610d08373bb8512ccce38d2f75c61656325e`, EPS image t9-67523237,
-  normalization 1450 read from the image), least squares of V5 `feedback_R6` on `steeringRateDeg` hands off:
+  `00000006--82bb552a2c` (OpenPilot `49e6610d08373bb8512ccce38d2f75c61656325e`, recorded on test build
+  t9-67523237, normalization 1450 read from it), least squares of V5 `feedback_R6` on `steeringRateDeg` hands off:
   -121.6051 at a 15 ms lag, R² 0.977, scaled by 1650/1450. The D-091 value was a single ratio, biased low by
   the tracker lag (median ratio on the same drive -114). Independent static check: the shared
   motor-to-angle constant (3121) and the A-table centre divisor predict -136 to -142.
