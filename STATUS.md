@@ -1,6 +1,6 @@
 # Status
 
-**As of: 2026-10-05**
+**As of: 2026-10-06**
 
 Update the date above whenever this file changes. If it is stale, trust `git log` over this
 file.
@@ -10671,6 +10671,30 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
   - A p50 depth table (`S50`) was also replayed. It closed the gap further (236 548 0.4 m, 2df 1545 0.3 m), so it was not used.
 - **Not verified.** The 1.0 m minimum gap is a simulated gap from replay. No drive has run this law. Road-check with a longer following distance first, then rerun `tools/longitudinal/vsa_felt_brake_report.py` on that drive.
 - **Tests.** `test_brake_onset.py` 21 pass after the onset code removal, including removal wiring, depth by TTC, rate, outside-law step limit, and newborn bound gate.
+
+## 222. CR-V 5G `39990-TLA-A040` firmware Table A added (2026-10-06). D-089.
+
+- `[CONFIRMED static]` The checksum-valid stock image
+  `eps_tools/rwd/39990-TLA-A040-stock.rwd` (SHA-256
+  `f84968c6b2b1fbba8b0d538b80a1782213186f92f2fc706be8eece485cb717d1`) carries
+  the primary position A arrays at `0x11338/0x11374`. Its four-pointer block at
+  `0x1e14c` orders A before the separate rate B pair at `0x113b0/0x113ec`.
+- The exact 30 u16 X/Y words are identical in the owner's modified
+  `39990-TLA-A040_tq30000_a9000_44256c0b.rwd` (SHA-256
+  `ac6dce68bc3c36e7fa990170f7f56df678f9edd92617fd62cdf74a3e7274bc42`).
+  Controller/torque changes therefore did not alter the position map.
+- `steer_ratio.py` now maps only normalized `39990-TLA-A040` (including the comma
+  modified identifier) to the exact position inverse. A030/A110/A220 remain unmapped.
+  `NrdrLatUseFirmwareVgr` remains default OFF, so the default CR-V road-measured
+  six-point curve is unchanged.
+- Evidence from the separate Honda firmware repository was folded into
+  `docs/honda_crv_5g_vgr_firmware.md`; the external copy is redundant for this
+  change and was not deleted.
+- Focused validation: 14 tests pass (exact table/profile tests plus the modified-EPS
+  CR-V interface path), and Ruff passes on every changed Python file. The full Honda
+  test file reached 173 passes and one unrelated pre-existing failure: its local
+  `FakeParams` omits `get_bool`, which the existing `BoschAOverBrakeComp` setup calls.
+- Static/unit-test only. No live CR-V steering, timing, or closed-loop validation.
 
 ## 221. P1 range-driven lead correction (`RangeLeadKF`, `range_lead_kf_adjust`) removed (2026-10-05). Owner: "Yeah I wouldn't mind removing Range KF correction. Seems it doesn't give us much benefit. Plus stock acc only uses normal Vrel values anyway". Static tests only; reverts to the pre-204 leadOne path.
 - **What changed.** `radard.py` no longer runs the per-track range KF or adds its one-sided closing/braking to leadOne. leadOne carries the native U11 vRel and aLeadK again, plus the D-053/D-082 range vRel assist, which is separate and unchanged. There was no toggle: STATUS 204 had built it in.

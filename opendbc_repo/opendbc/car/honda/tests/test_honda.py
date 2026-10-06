@@ -228,6 +228,7 @@ class TestHondaFingerprint:
     crv_cp = CarInterface.get_params(CAR.HONDA_CRV_5G, gen_empty_fingerprint(), crv_fw, False, False, False, toggles)
     assert not crv_cp.dashcamOnly
     assert crv_cp.flags & HondaFlags.EPS_MODIFIED
+    assert crv_cp.flags & HondaFlags.VGR_CRV_TLA_A040
     assert list(crv_cp.lateralParams.torqueBP) == [0, 4096]
     assert list(crv_cp.lateralParams.torqueV) == [0, 4096]
     # shares the same four-point handoff-at-25mph tune as the modified Civic above

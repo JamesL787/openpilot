@@ -65,9 +65,9 @@ NRDR_CLARITY_SR_CURVE_V = [19.680, 19.680, 19.680, 19.680, 19.344, 19.344, 19.30
 NRDR_CIVIC_BOSCH_SR_CURVE_BP = [0., 32., 50., 75., 110., 155., 220., 300., 400.]  # |wheel angle|, deg
 NRDR_CIVIC_BOSCH_SR_CURVE_V = [14.960, 14.960, 14.910, 14.740, 14.210, 13.630, 13.120, 12.904, 12.774]
 
-# CR-V 5G road-measured curve, carried over unchanged from 4f3271d6af.  This rack is not
-# in HONDA_VGR_PROFILE_BY_FW, so it had been running a flat paramsd scalar with no taper
-# at all since the firmware-map work landed.
+# CR-V 5G road-measured curve, carried over unchanged from 4f3271d6af. A040 now also has
+# an exact firmware position map, but this measured effective-ratio curve remains the
+# default; NrdrLatUseFirmwareVgr must be explicitly enabled to select the firmware map.
 NRDR_CRV_5G_SR_CURVE_BP = [0., 50., 100., 150., 175., 200.]  # |wheel angle|, deg
 NRDR_CRV_5G_SR_CURVE_V = [18.10, 17.80, 16.30, 15.30, 14.90, 14.60]
 

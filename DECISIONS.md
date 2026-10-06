@@ -2009,3 +2009,24 @@ As a result, the commits were properly cherry-picked. The conflicts in `starpilo
 1. Cleaned up the duplicates in `test_starpilot_vcruise.py`. 
 2. Safely removed the invalid `vision_lead=birth_vision` argument from `radard.py` to restore functionality.
 **Agent:** Gemini 3.8 Flash
+
+## D-089 — Map CR-V 5G VGR only from exact `39990-TLA-A040` firmware Table A
+
+**Decided 2026-10-06; static firmware evidence only.** Add the exact 30-knot
+position table from the checksum-valid CR-V stock image to `steer_ratio.py` and
+select it only when the normalized EPS identifier is `39990-TLA-A040`. The
+modified comma identifier normalizes to the same image name and carries the same
+table words. `NrdrLatUseFirmwareVgr` remains default OFF, so this adds a deliberate
+A/B path without replacing the road-measured CR-V curve by default.
+
+The stock literal block at `0x1e14c` is
+`[Y_A=0x11338, X_A=0x11374, Y_B=0x113b0, X_B=0x113ec]`. A is the steering-position
+divisor and B is the separate rate path. Rejected: transplanting another Honda's
+table, using Table B as position, reducing the exact words to the earlier rounded
+gain curve, or applying A040 data to A030/A110/A220. The earlier Honda VGR defect
+fixed in `fbf4c5fa2` is the reason the A/B distinction is binding.
+
+Evidence and hashes are retained in `docs/honda_crv_5g_vgr_firmware.md`. Unit tests
+must prove exact A040/comma selection, rejection of other CR-V firmware versions,
+all-knot construction, and forward/inverse round trips. This does not establish
+live steering behavior or closed-loop safety.
