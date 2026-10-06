@@ -211,16 +211,25 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
 # CR-V 5G 39990-TLA-A040 FF45 image. Exact tables/constants from
 # 39990-TLA-A040_tq30000_a9000_t9_ff45_8cf8e537_DO_NOT_FLASH_full.bin
 # (SHA-256 d5dc04a839af2c473e103f4f9d448bf600e26ea0531521a58da61e2267dc351e).
-# The feedback DC scale was measured as -105.704 counts/(deg/s) on route 00000006--82bb552a2c
-# with norm 1450, then scaled by the firmware-exact 1650/1450 ratio. Tracker alpha affects phase,
-# not DC gain. The command map and P row are identical across all seven rows in this image.
+# The command map and P row are identical across all seven rows in this image.
+#
+# Feedback DC scale (STATUS 225 / D-092): least squares of the EPS's own V5 feedback_R6 on steeringRateDeg,
+# hands off, route 00000006--82bb552a2c (native extraction drive-82bb552a2c-native-v5.json.zst, SHA-256
+# 8b94a343...; tools/lateral/fit_crv_eps_load.py): -121.605 counts/(deg/s) at a 15 ms lag (tracker-1), R^2 0.977,
+# 15,966 samples. That drive ran image t9-67523237, whose feedback normalization reads 1450 at 0x429A0; the FF45
+# image reads 1650, and the normalization is a pure scale on R6, so -121.605 * 1650/1450 = -138.38.
+# Superseded: -105.704 * 1650/1450 = -120.28 (D-091). -105.704 was a single R6/rate ratio; the ratio is biased low
+# by the tracker lag (the median ratio on the same drive is -114), so it under-modelled the firmware's own rate
+# damping by 13%. Cross-check from firmware alone: every Civic-family image including this one converts the motor
+# angle to a linear steering angle with the same constant (u16 3121 at 0x19C00 here), so R6 scales with the A-table
+# centre divisor; the Clarity's measured scale times 16783/16384 predicts -136 to -142 at norm 1650.
 CRV_5G_A040_FF45 = EpsFirmwareCalibration(
   e4_per_output=4096.0,
   r5_key_bp=[0, 219, 443, 662, 887, 1108, 1330, 1552, 1663],
   r5_v=[0, 1926, 4938, 8455, 12036, 15926, 20138, 26955, 30000],
   envelope_bp=[0, 400],
   envelope_v=[1774, 1774],
-  r6_per_deg_s=-105.70439496 * 1650.0 / 1450.0,
+  r6_per_deg_s=-121.6051 * 1650.0 / 1450.0,
   kp_key_bp=[0, 104, 279, 510, 807, 1108, 1330, 1552, 1663],
   kp_v=[117, 148, 184, 220, 245, 257, 263, 265, 265],
   key_clamp=1774,
@@ -228,11 +237,17 @@ CRV_5G_A040_FF45 = EpsFirmwareCalibration(
   kff=45.0,
 )
 
-# Vehicle-load fit from 9,784 hands-off, active samples on route 00000006--82bb552a2c,
-# OpenPilot 49e6610d08373bb8512ccce38d2f75c61656325e. Target is the EPS output reconstructed
-# exactly from firmware telemetry. Alternating 60 s block holdouts: R^2 0.80 / 0.84.
-# No roll signal was retained in the compact replay, so its coefficient is deliberately zero.
-CRV_5G_EPS_LOAD = (-9.09927, -0.0225716, -5.24359, -259.312, -55.7274, 0.0)
+# Vehicle-load fit (STATUS 225 / D-092) from 40,193 hands-off, active V5 samples of route 00000006--82bb552a2c,
+# OpenPilot 49e6610d08373bb8512ccce38d2f75c61656325e, native extraction (SHA-256 8b94a343...). Target: the EPS
+# output from firmware telemetry. Fitted in this controller's own units: m/s, the offset-corrected angle
+# (liveParameters angleOffsetDeg removed, as column_load receives it) and liveParameters roll.
+# R^2 0.843; alternating 60 s block holdouts 0.857 / 0.820. tools/lateral/fit_crv_eps_load.py reproduces it.
+# Superseded (D-091): (-9.09927, -0.0225716, -5.24359, -259.312, -55.7274, 0.0), fitted on the 10 Hz compact drive,
+# whose speed field is mph (extract_drives.py writes vEgo * 2.23694): k1 was per mph^2, 5.0x too weak in m/s; the
+# raw angle folded the -0.69 deg median angle offset into the bias (-55.7 -> -19.9 once removed); roll was absent.
+# Evaluated as the controller uses it on this drive, the old set scores R^2 0.65 and 181 counts RMS above 25 m/s
+# (mean |output| 174) against 110 for this one.
+CRV_5G_EPS_LOAD = (-7.29446, -0.143159, -4.60337, -297.83, -19.899, -3.58048)
 CRV_5G_P_SCALE = (1.0, 1.0, 1.0)
 CRV_5G_I_SCALE = (1.0, 1.0, 1.0)
 

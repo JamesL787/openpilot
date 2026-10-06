@@ -27,35 +27,59 @@ controller calibration. It also supplies command clamp 1774, output scale 256,
 and FeedforwardV1 Kff 45. OpenPilot's normalized lateral output currently maps
 to 4096 E4 counts for the modified CR-V profile.
 
-Route `00000006--82bb552a2c`, recorded with feedback normalization 1450,
-measured `feedback_R6 / steeringRateDeg = -105.70439496`. The FF45 image uses
-normalization 1650, so its DC conversion is
-`-105.70439496 * 1650 / 1450 = -120.28431151` counts/(degree/s). Tracker alpha
-changes phase but not that DC gain.
+Route `00000006--82bb552a2c` ran image `t9-67523237` (retained as
+`00-active/evidence/artifacts/39990-TLA-A040-t9-67523237-DO_NOT_FLASH.rwd` in the
+firmware repository), whose feedback normalization reads 1450 at `0x429A0`.
+A least-squares fit of the EPS's own V5 `feedback_R6` on `steeringRateDeg`,
+hands off, gives `-121.6051` counts/(degree/s) at a 15 ms lag (tracker-1),
+R² 0.977 over 15,966 samples. Normalization is a pure scale on R6, so the FF45
+image (1650) gets `-121.6051 * 1650 / 1450 = -138.378`. Tracker alpha changes
+phase but not that DC gain.
+
+Superseded (D-091 → D-092): `-105.70439496 * 1650 / 1450 = -120.284`. That was a
+single R6/rate ratio, which the tracker lag biases low (the median ratio on the
+same drive is -114). Independent firmware cross-check: the motor-to-linear-angle
+constant (u16 3121 at `0x19C00`) is shared with every Civic-family image, so R6
+scales with the A-table centre divisor (16783 here vs the Clarity's 16384),
+predicting -136 to -142 at norm 1650.
 
 ## CR-V load fit
 
-Run:
+Run, on the native-rate extraction (schema `honda-crv-eps-autotune-v2`):
 
 ```bash
-python tools/lateral/fit_crv_eps_load.py /path/to/drive-82bb552a2c.json
+python tools/lateral/fit_crv_eps_load.py /path/to/drive-82bb552a2c-native-v5.json --drive-norm 1450
 ```
 
-The fit uses 9,784 samples with speed above 2 m/s, active command, no steering
-press, driver torque below 400, and the hands-off Q8 scale of 256. Its target is
-the firmware output reconstructed exactly by the retained V5 telemetry:
+Input SHA-256 (compressed, as retained in the firmware repository's
+`30-hardware/vehicle-evidence/replay-imports/`):
+`8b94a3439b6f7fdeeea0f1bb32a9c0a8037637441c01b15af41fde0cb9fdedd7`.
+
+The fit uses 40,193 V5 groups with speed above 2 m/s, lateral control active,
+active command, no steering press, driver torque below 400, and the hands-off Q8
+scale of 256. It is evaluated in the controller's own units: speed in m/s, the
+steering angle with liveParameters' angle offset removed (as `column_load`
+receives the desired angle), and liveParameters roll. Its target is the firmware
+output reported by the V5 telemetry:
 
 ```text
-load = -9.09927 * angle
-       -0.0225716 * angle * speed^2
-       -5.24359 * angle_rate
-       -259.312 * tanh(angle_rate / 5)
-       -55.7274
+load = -7.29446 * angle
+       -0.143159 * angle * speed^2
+       -4.60337 * angle_rate
+       -297.83 * tanh(angle_rate / 5)
+       -19.899
+       -3.58048 * roll * speed^2
 ```
 
-Alternating 60-second block holdouts produce R² 0.8017 and 0.8392. The compact
-drive did not retain roll, so the roll coefficient is deliberately zero rather
-than borrowed from another car.
+R² 0.843; alternating 60-second block holdouts 0.857 and 0.820.
+
+Superseded (D-091 → D-092): the fit of the 10 Hz compact drive,
+`(-9.09927, -0.0225716, -5.24359, -259.312, -55.7274, 0)`. The compact `speed`
+field is mph (`extract_drives.py` writes `vEgo * 2.23694`), so that k1 was per
+mph² and 5.0x too weak in the controller's m/s; the raw angle folded the -0.69°
+median angle offset into the bias; and roll was absent. Evaluated as the
+controller uses it on this drive, the old set scores R² 0.65, and above 25 m/s
+its error is 181 counts RMS against a mean |output| of 174 (110 for the new set).
 
 ## Runtime boundary
 

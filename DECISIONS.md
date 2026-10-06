@@ -2084,3 +2084,26 @@ and fitted slope 0.99929. Segment SHA-256 is
 from artifact-only to current-device firmware evidence; it does not validate the new OpenPilot
 closed loop. An unaligned replacement load fit was rejected because cross-segment holdouts were
 unstable; the aligned fit remains canonical.
+
+## D-092 — Re-measure the CR-V feedback scale and column load in the controller's units
+
+**Decided 2026-10-06; offline route evidence, default toggle unchanged.** Supersedes D-091's two
+route-derived CR-V numbers; everything else in D-091 (firmware tables, Kff 45, no added command delay,
+neutral P/I multipliers, opt-in toggle) stands.
+
+- **Feedback scale** `CRV_5G_A040_FF45.r6_per_deg_s`: -120.284 → **-138.378** counts/(deg/s). Route
+  `00000006--82bb552a2c` (OpenPilot `49e6610d08373bb8512ccce38d2f75c61656325e`, EPS image t9-67523237,
+  normalization 1450 read from the image), least squares of V5 `feedback_R6` on `steeringRateDeg` hands off:
+  -121.6051 at a 15 ms lag, R² 0.977, scaled by 1650/1450. The D-091 value was a single ratio, biased low by
+  the tracker lag (median ratio on the same drive -114). Independent static check: the shared
+  motor-to-angle constant (3121) and the A-table centre divisor predict -136 to -142.
+- **Column load** `CRV_5G_EPS_LOAD`: refitted on the native-rate extraction of the same route (input SHA-256
+  `8b94a343…`), 40,193 samples, in m/s, on the offset-corrected angle, with roll:
+  `(-7.29446, -0.143159, -4.60337, -297.83, -19.899, -3.58048)`, holdouts 0.857 / 0.820. The D-091 fit read the
+  compact drive's speed, which is mph, so its speed term was 5.0x too weak in m/s; its -55.7 bias was mostly the
+  -0.69° angle offset; and it had no roll.
+
+Rejected: keeping the compact-drive fit with a unit conversion only (the bias and roll defects remain), and the
+median R6/rate ratio (lag-biased). Not done: any road test of the changed controller; no claim about closed-loop
+behaviour follows from these offline fits.
+
