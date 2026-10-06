@@ -37,6 +37,7 @@ from opendbc.car.honda.radar_interface import (
   _bosch_a_main_base,
   _bosch_a_range_ratio,
   _bosch_a_range_ratio_vrel,
+  bosch_a_range_offset_fallback_m,
   bosch_a_range_offset_m,
 )
 import opendbc.car.honda.radar_interface as radar_interface_module
@@ -707,7 +708,8 @@ class TestU11Scale72:
 
 
 class TestRangeOffsetFallback:
-  """D-076 BoschARangeOffsetFallback: OFF is -3.0 exactly; ON is the firmware fallback -335/128, nothing else moves."""
+  """D-076 BoschARangeOffsetFallback: OFF uses factory fallback (-2.617 m on Civic, -2.664 m on CR-V).
+  ON enables dynamic ingestion of CAN 0x669 (-1.71875 m on Civic, -1.765625 m on CR-V)."""
 
   @staticmethod
   def _dRel(ri, raw_range=1000):
@@ -717,24 +719,22 @@ class TestRangeOffsetFallback:
     return rr.points[0]
 
   def test_selector(self):
-    assert bosch_a_range_offset_m(False) is BOSCH_A_RANGE_OFFSET_M
-    assert bosch_a_range_offset_m(True) == -2.6171875
-    assert bosch_a_range_offset_m(True) - bosch_a_range_offset_m(False) == 0.3828125
+    assert bosch_a_range_offset_fallback_m(CAR.HONDA_CIVIC_BOSCH) == -2.6171875
+    assert bosch_a_range_offset_fallback_m(CAR.HONDA_CRV_5G) == -2.6640625
+    assert bosch_a_range_offset_fallback_m(CAR.HONDA_CRV_HYBRID) == -2.6640625
+    assert bosch_a_range_offset_fallback_m() == -2.6171875
+    assert bosch_a_range_offset_m() == -2.6171875
 
-  def test_default_off_without_the_key(self):
+  def test_default_civic_factory_fallback(self):
     ri = make_radar_interface()  # this test's params store has no BoschARangeOffsetFallback set
-    assert ri.range_offset_m is BOSCH_A_RANGE_OFFSET_M
-    assert self._dRel(ri).dRel == pytest.approx(1000 / 16 - 3.0)
-
-  def test_on_shifts_dRel_only(self, monkeypatch):
-    off = self._dRel(make_radar_interface())
-    monkeypatch.setattr(radar_interface_module, "bosch_a_range_offset_fallback_enabled", lambda: True)
-    ri = make_radar_interface()
     assert ri.range_offset_m == -2.6171875
-    on = self._dRel(ri)
-    assert on.dRel == pytest.approx(1000 / 16 - 2.6171875)
-    assert on.dRel - off.dRel == pytest.approx(0.3828125)
-    assert (on.vRel, on.yRel / on.dRel) == pytest.approx((off.vRel, off.yRel / off.dRel))
+    assert self._dRel(ri).dRel == pytest.approx(1000 / 16.0 - 2.6171875)
+
+  def test_default_crv_factory_fallback(self):
+    crv_cp = CarInterface.get_non_essential_params(CAR.HONDA_CRV_5G)
+    ri = CarInterface.RadarInterface(crv_cp)
+    assert ri.range_offset_m == -2.6640625
+    assert self._dRel(ri).dRel == pytest.approx(1000 / 16.0 - 2.6640625)
 
   def test_reader_fails_closed(self, monkeypatch):
     import openpilot.common.params as params_module
@@ -745,10 +745,11 @@ class TestRangeOffsetFallback:
     monkeypatch.setattr(params_module, "Params", Broken)
     assert radar_interface_module.bosch_a_range_offset_fallback_enabled() is False
 
-  def test_dynamic_offset_update_civic(self):
+  def test_dynamic_offset_update_civic(self, monkeypatch):
+    monkeypatch.setattr(radar_interface_module, "bosch_a_range_offset_fallback_enabled", lambda: True)
     ri = make_radar_interface()
     assert ri.base_n0 == 335
-    assert ri.range_offset_m == BOSCH_A_RANGE_OFFSET_M
+    assert ri.range_offset_m == -2.6171875
 
     # 0x669 with raw 615 -> addend -115 -> n = 220 -> offset = -1.71875 m
     chassis_frame = CanData(0x669, bytes.fromhex('0002677a77d9000f'), BUS)
@@ -761,11 +762,12 @@ class TestRangeOffsetFallback:
     assert ri.range_offset_m == -1.71875
     assert rr.points[0].dRel == pytest.approx(1000 / 16.0 - 1.71875)
 
-  def test_dynamic_offset_update_crv(self):
+  def test_dynamic_offset_update_crv(self, monkeypatch):
+    monkeypatch.setattr(radar_interface_module, "bosch_a_range_offset_fallback_enabled", lambda: True)
     crv_cp = CarInterface.get_non_essential_params(CAR.HONDA_CRV_5G)
     ri = CarInterface.RadarInterface(crv_cp)
     assert ri.base_n0 == 341
-    assert ri.range_offset_m == BOSCH_A_RANGE_OFFSET_M
+    assert ri.range_offset_m == -2.6640625
 
     # 0x669 with raw 615 -> addend -115 -> n = 226 -> offset = -1.765625 m
     chassis_frame = CanData(0x669, bytes.fromhex('0002677a77d9000f'), BUS)
@@ -778,7 +780,20 @@ class TestRangeOffsetFallback:
     assert ri.range_offset_m == -1.765625
     assert rr.points[0].dRel == pytest.approx(1000 / 16.0 - 1.765625)
 
-  def test_dynamic_offset_ignores_invalid_sentinel(self):
+  def test_dynamic_offset_disabled_retains_fallback(self):
+    # toggle OFF (default)
+    ri = make_radar_interface()
+    assert ri.range_offset_m == -2.6171875
+
+    chassis_frame = CanData(0x669, bytes.fromhex('0002677a77d9000f'), BUS)
+    ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
+                    direct_vrel_raw=864, direct_vrel_uncertainty_raw=0,
+                    extra_slots=[chassis_frame]))
+    assert ri.radar_addend is None
+    assert ri.range_offset_m == -2.6171875
+
+  def test_dynamic_offset_ignores_invalid_sentinel(self, monkeypatch):
+    monkeypatch.setattr(radar_interface_module, "bosch_a_range_offset_fallback_enabled", lambda: True)
     ri = make_radar_interface()
     # 0x669 with raw 0xFFF (4095) sentinel
     # layout: ((b1 & 0xF) << 8) | b2 = 0xFFF -> b1 |= 0xF, b2 = 0xFF
@@ -787,7 +802,7 @@ class TestRangeOffsetFallback:
                     direct_vrel_raw=864, direct_vrel_uncertainty_raw=0,
                     extra_slots=[invalid_frame]))
     assert ri.radar_addend is None
-    assert ri.range_offset_m == BOSCH_A_RANGE_OFFSET_M
+    assert ri.range_offset_m == -2.6171875
 
 
 
@@ -2220,7 +2235,7 @@ class TestNcFields:
     rr = None
     for i in range(n):
       raw = start_raw - 20 * i   # 17.9 m/s, past the rail, so the D-043 check keeps the sweep measured
-      d_rel = raw / 16.0 - 3.0
+      d_rel = raw / 16.0 + ri.range_offset_m
       raw_nc = self._nc_raw(d_rel, nc_vrel) if nc_raw is None else nc_raw
       rr = ri.update(sweep(0, i & 0xF, 0x7, raw, 1024, 1 + 2 * i, i * self.DT_NS, with_aux=True,
                            direct_vrel_raw=BOSCH_A_DIRECT_VREL_MIN_RAW, direct_vrel_uncertainty_raw=90,

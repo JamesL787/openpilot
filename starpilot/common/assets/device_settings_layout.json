@@ -3113,7 +3113,7 @@
       {
         "key": "BoschARangeOffsetFallback",
         "label": "Dynamic Radar Range Offset",
-        "description": "Bosch-A radar only. Automatically ingests CAN 0x669 (1 Hz) chassis mounting calibration from the camera, dynamically setting the radar bumper offset (-1.72 m on Civic, -1.77 m on CR-V). When off, uses static fallback (-3.0 m). Restart required to take effect.",
+        "description": "Bosch-A radar only. Automatically ingests CAN 0x669 (1 Hz) chassis mounting calibration from the camera, dynamically setting the radar bumper offset (-1.72 m on Civic, -1.77 m on CR-V). When off, uses factory fallback (-2.617 m on Civic, -2.664 m on CR-V). Restart required to take effect.",
         "picker_description": "Automatically ingests CAN 0x669 camera chassis calibration for dynamic radar range offset.",
         "data_type": "bool",
         "ui_type": "toggle",

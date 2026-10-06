@@ -615,8 +615,8 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  set_state=lambda v: self._params.put_bool("BoschARadar", v)),
       SettingRow("BoschARangeOffsetFallback", "toggle", tr_noop("Dynamic Radar Range Offset"),
                  subtitle=tr_noop("Bosch-A radar only. Automatically ingests CAN 0x669 (1 Hz) chassis mounting calibration from the camera, "
-                                  "dynamically setting the radar bumper offset (-1.72 m on Civic, -1.77 m on CR-V). When off, uses static fallback "
-                                  "(-3.0 m). Restart required to take effect."),
+                                  "dynamically setting the radar bumper offset (-1.72 m on Civic, -1.77 m on CR-V). When off, uses factory fallback "
+                                  "(-2.617 m on Civic, -2.664 m on CR-V). Restart required to take effect."),
                  get_state=lambda: self._params.get_bool("BoschARangeOffsetFallback"),
                  set_state=lambda v: self._params.put_bool("BoschARangeOffsetFallback", v)),
       SettingRow("BoschARangeKF", "toggle", tr_noop("Range-Driven Lead Correction"),

@@ -72,27 +72,33 @@ BOSCH_A_RANGE_SCALE_M = 1.0 / 16.0
 
 # Offset. The firmware term is -n/128, where n is assembled from a configuration word plus a
 # runtime addend and is therefore a PER-UNIT CALIBRATION VALUE, not a constant; 335 (-2.617 m) is
-# only the fallback the firmware uses when the config word reads zero. -3.0 is retained because it
-# sits inside the plausible calibration range and the choice barely moves the residual. Do not
-# re-fit this against vision: read it from the radar's own configuration instead.
-BOSCH_A_RANGE_OFFSET_M = -3.0
-# D-076, BoschARangeOffsetFallback (TEST, default OFF; owner decision 2026-10-03). ON uses the firmware's own fallback
-# offset, -335/128 = -2.6171875 m, instead of -3.0: every published dRel reads 0.3828125 m (6.125 range counts) LONGER.
-# Range differences, vRel and U11 are unchanged. Neither value is measured for this car: -3.0 is n = 384 (decoder
-# choice), -2.617 is n = 335 (used only when the config word reads zero). Longer dRel is the less conservative
-# direction, which is why it ships OFF. Static only; no road evidence. The laser range check settles the true n.
-BOSCH_A_RANGE_OFFSET_FALLBACK_M = -335.0 / 128.0
+# the factory fallback for Civic (36802TBA), and 341 (-2.664 m) is the factory fallback for CR-V (36802TLA).
+BOSCH_A_RANGE_OFFSET_FALLBACK_CIVIC_M = -335.0 / 128.0  # -2.6171875 m
+BOSCH_A_RANGE_OFFSET_FALLBACK_CRV_M = -341.0 / 128.0    # -2.6640625 m
+BOSCH_A_RANGE_OFFSET_FALLBACK_M = BOSCH_A_RANGE_OFFSET_FALLBACK_CIVIC_M
+BOSCH_A_RANGE_OFFSET_M = BOSCH_A_RANGE_OFFSET_FALLBACK_CIVIC_M
 BOSCH_A_RANGE_OFFSET_FALLBACK_PARAM = "BoschARangeOffsetFallback"
 
 
-def bosch_a_range_offset_m(fallback: bool) -> float:
-  """D-076: the range offset the toggle selects. OFF returns BOSCH_A_RANGE_OFFSET_M itself."""
-  return BOSCH_A_RANGE_OFFSET_FALLBACK_M if fallback else BOSCH_A_RANGE_OFFSET_M
+def bosch_a_range_offset_fallback_m(car_fingerprint: str = "") -> float:
+  """Factory fallback range offset (-n_0 / 128.0):
+  - Civic (and others): -335 / 128.0 = -2.6171875 m
+  - CR-V:               -341 / 128.0 = -2.6640625 m
+  """
+  from opendbc.car.honda.values import CAR
+  if car_fingerprint in (CAR.HONDA_CRV_5G, CAR.HONDA_CRV_HYBRID):
+    return BOSCH_A_RANGE_OFFSET_FALLBACK_CRV_M
+  return BOSCH_A_RANGE_OFFSET_FALLBACK_CIVIC_M
+
+
+def bosch_a_range_offset_m(fallback: bool = True, car_fingerprint: str = "") -> float:
+  """Factory fallback range offset for the given vehicle."""
+  return bosch_a_range_offset_fallback_m(car_fingerprint)
 
 
 def bosch_a_range_offset_fallback_enabled() -> bool:
-  """BoschARangeOffsetFallback, read once at startup the way interface.py reads BoschARadar. Any failure, including
-  a params_pyx.so that predates the key, means OFF: -3.0."""
+  """BoschARangeOffsetFallback: True enables dynamic ingestion of CAN 0x669 (1 Hz) camera mounting calibration.
+  False stays locked to the factory fallback (-2.617 m on Civic, -2.664 m on CR-V)."""
   try:
     from openpilot.common.params import Params
     return bool(Params().get_bool(BOSCH_A_RANGE_OFFSET_FALLBACK_PARAM))
@@ -732,9 +738,10 @@ class RadarInterface(RadarInterfaceBase):
       self.newborn_range_publish = BOSCH_A_NEWBORN_RANGE_PUBLISH
       self.base_n0 = bosch_a_base_n0(CP.carFingerprint)
       self.radar_addend: int | None = None
-      # D-076: range offset, -3.0 unless BoschARangeOffsetFallback is on.
-      # If dynamic addend (0x669) is received on CAN, range_offset_m automatically updates to -(base_n0 + addend)/128.0.
-      self.range_offset_m = bosch_a_range_offset_m(bosch_a_range_offset_fallback_enabled())
+      self.dynamic_offset_enabled = bosch_a_range_offset_fallback_enabled()
+      # Range offset: factory fallback (-2.617 m on Civic, -2.664 m on CR-V).
+      # If dynamic offset toggle is enabled and CAN 0x669 is received, range_offset_m updates to -(base_n0 + addend)/128.0.
+      self.range_offset_m = bosch_a_range_offset_fallback_m(CP.carFingerprint)
     else:
       # Nidec
       self.rcp = _create_nidec_can_parser(CP.carFingerprint)
@@ -801,7 +808,7 @@ class RadarInterface(RadarInterfaceBase):
     if not self.rcp.can_valid:
       ret.errors.canError = True
 
-    if BOSCH_A_CHASSIS_OFFSET_MSG in updated_messages:
+    if self.dynamic_offset_enabled and BOSCH_A_CHASSIS_OFFSET_MSG in updated_messages:
       raw_x = int(self.rcp.vl[BOSCH_A_CHASSIS_OFFSET_MSG]["RADAR_OFFSET_X_RAW"])
       if raw_x != BOSCH_A_CHASSIS_OFFSET_RAW_INVALID and raw_x > 0:
         self.radar_addend = bosch_a_addend_from_raw_x(raw_x)
