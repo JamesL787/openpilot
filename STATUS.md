@@ -10503,7 +10503,7 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
   - Nothing reads it for control.
 - **Code.**
   - `opendbc_repo/opendbc/car/honda/carstate.py`: `update_vsa_long_accel()`. It checks with `dict.__contains__` so a DBC without KINEMATICS is never lazily subscribed.
-  - Cars without a yaw-rate calibration subscribe KINEMATICS as optional (NaN frequency, `ignore_alive`), so it never takes part in `canValid`. The yaw-rate cars (Clarity, Civic Bosch) already read it through the alive-checked lazy path, and that is left unchanged.
+  - Cars without a yaw-rate calibration subscribe KINEMATICS as optional (NaN frequency, `ignore_alive`), so it never takes part in `canValid`. The yaw-rate cars (Clarity, Civic Bosch, and now CR-V 5G per STATUS 223) read it through the alive-checked lazy path.
   - `selfdrive/car/card.py`: `set_vsa_accel_fields()`, which fails silently once, like the gas-learner fields.
   - `cereal/custom.capnp` `StarPilotCarState`: `aEgoVsa @38`, `aEgoVsaValid @39`. The fields are appended, so the schema stays backward-compatible.
 - **Evidence.**
@@ -10671,6 +10671,37 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
   - A p50 depth table (`S50`) was also replayed. It closed the gap further (236 548 0.4 m, 2df 1545 0.3 m), so it was not used.
 - **Not verified.** The 1.0 m minimum gap is a simulated gap from replay. No drive has run this law. Road-check with a longer following distance first, then rerun `tools/longitudinal/vsa_felt_brake_report.py` on that drive.
 - **Tests.** `test_brake_onset.py` 21 pass after the onset code removal, including removal wiring, depth by TTC, rate, outside-law step limit, and newborn bound gate.
+
+## 223. CR-V 5G VSA yaw calibration added; no CR-V command delay or specialized controller (2026-10-06). D-090.
+
+- `[CONFIRMED offline route]` Route `00000013--da43527a2c`, logged OpenPilot commit
+  `2f1f2aadef649c3c8c3ae1582ce26bb6cb259a50`, supplied 24 full rlog segments: 143,904
+  bus-1 VSA `0x094` frames, 143,715 `carState` samples, 28,278 valid `livePose` samples,
+  and 1,401 GPS fixes. At 44,082 stopped frames the raw yaw count was mean 509.531,
+  median 510, standard deviation 0.531.
+- A joint integration fit across 217 straight-to-straight GPS windows gave
+  0.24455268 deg/s/count plus 0.49019554 deg/s clockwise correction (1.34 degree RMS
+  heading residual). Production uses the evidence-resolution tuple `(0.245, 509.5, 0.49)`.
+  An independent `livePose` fit confirmed sign and linearity (correlation above 0.9996 in
+  both directions) but read lower, as it did on the Civic, so GPS remains canonical.
+- `HONDA_CRV_5G` now publishes calibrated `carState.yawRate` from the alive-checked
+  `KINEMATICS` path. Real route frames cover clockwise, counter-clockwise, and near-zero
+  values through the production CAN parser. The timing tool carries the same decode.
+- The same route's normal-PID plan timing was entry +0.06 s (306 frames), exit +0.09 s
+  (255), and all 5-12 m/s turns +0.08 s (1,302); positive means late. Copying the
+  Civic/Clarity town command delay would therefore worsen this evidence and is rejected.
+  The route does not validate `LatControlHondaEps`, so that controller remains disabled for
+  the CR-V pending the CR-V column-load model and closed-loop evidence required by its
+  software inversion. The owner's EPS firmware already contains the separately confirmed
+  FeedforwardV1 patch; this decision does not dispute or disable that firmware feedforward.
+- Detailed method and verification boundary are in
+  `docs/honda_crv_5g_yaw_calibration.md`. Route data remains external and uncommitted as
+  required. This is offline/static evidence only: no live radar, current-build steering,
+  firmware-VGR closed loop, or different EPS flash was exercised.
+- Validation: 12 focused yaw/parser tests pass; the full Honda suite is 411 pass and the
+  same unrelated pre-existing failure from STATUS 222 (`FakeParams` lacks `get_bool`). Ruff
+  passes on every changed Python file, `git diff --check` passes, and the timing tool was
+  rerun on all 24 segments using the new explicit CR-V decoder.
 
 ## 222. CR-V 5G `39990-TLA-A040` firmware Table A added (2026-10-06). D-089.
 

@@ -2030,3 +2030,25 @@ Evidence and hashes are retained in `docs/honda_crv_5g_vgr_firmware.md`. Unit te
 must prove exact A040/comma selection, rejection of other CR-V firmware versions,
 all-knot construction, and forward/inverse round trips. This does not establish
 live steering behavior or closed-loop safety.
+
+## D-090 — Adopt route-measured CR-V 5G VSA yaw calibration; reject copied command delay and unvalidated EPS controller
+
+**Decided 2026-10-06; offline route evidence only.** Enable `carState.yawRate` for
+`HONDA_CRV_5G` with `(scale, seeded zero, clockwise correction) = (0.245, 509.5, 0.49)`.
+The canonical measurement is route `00000013--da43527a2c`, recorded by commit
+`2f1f2aadef649c3c8c3ae1582ce26bb6cb259a50`: 24 full-rlog segments, 143,904 bus-1
+VSA `0x094` frames, and 217 straight-to-straight GPS integration windows. The joint fit
+was 0.24455268 deg/s/count plus 0.49019554 deg/s clockwise correction; 44,082 stopped
+frames measured a 509.531-count mean zero. The production tuple is rounded to the
+resolution justified by one route. Real recorded frames must remain regression inputs to
+the production parser, rather than testing a mirror of the decoder.
+
+Rejected: copying trung PR #17's Civic/Clarity town command delay to the CR-V. This CR-V
+route measured entry +0.06 s, exit +0.09 s, and all 5-12 m/s turns +0.08 s, where positive
+is already late; extra command delay moves the measured error in the wrong direction.
+Also rejected: enabling `LatControlHondaEps` for the CR-V merely because its firmware VGR
+table and FeedforwardV1 patch are known. The firmware feedforward is real and statically
+confirmed; the separate OpenPilot controller inverts the EPS law using a vehicle column-load
+model, and currently contains such models only for the measured Clarity/Civic paths. It still
+needs a CR-V load fit and closed-loop proof. Reconsider either rejection only with route- and
+commit-bound CR-V evidence. Nothing here is live closed-loop validation.

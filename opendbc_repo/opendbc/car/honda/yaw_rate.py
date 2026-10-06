@@ -1,7 +1,7 @@
 """Honda VSA yaw rate (0x94 KINEMATICS YAW_RATE) with each car's zero learned at standstill.
 
 The DBC decodes against the nominal zero, 512 counts, but every unit sits a few counts off it (2018 Clarity 508,
-2019 Civic Bosch 513) and holds that offset exactly at every stop. With the wheels stopped the true yaw rate is
+2019 Civic Bosch 513, 2017 CR-V 5G 509.5) and holds that offset at stops. With the wheels stopped the true yaw rate is
 zero, so the average reading there is the zero. The scale is not learnable that way and is measured per model
 against GPS heading, using only stretches that start and end driving straight (there the ~0.4 s lag of the 1 Hz
 GPS bearing and the car's sideslip cancel; fits over arbitrary windows are biased by both).
@@ -27,6 +27,11 @@ DBC_ZERO = 512.0   # counts
 YAW_RATE_CALIBRATION = {
   CAR.HONDA_CLARITY: (0.246, 508.0, 0.24),      # see above; 508.00 at every stop on 19 routes
   CAR.HONDA_CIVIC_BOSCH: (0.244, 513.0, 0.0),   # GPS 0.2446 / 0.2412 on two routes; 513 at every stop
+  # Route 00000013--da43527a2c, build 2f1f2aadef649c3c8c3ae1582ce26bb6cb259a50: 24 full-rlog
+  # segments, 143904 bus-1 0x94 frames, 217 straight-to-straight GPS windows. Joint integration fit:
+  # 0.24455 deg/s/count + 0.4902 deg/s clockwise correction; stopped mean 509.531 (44082 frames).
+  # Rounded to the sensor's useful resolution. See docs/honda_crv_5g_yaw_calibration.md.
+  CAR.HONDA_CRV_5G: (0.245, 509.5, 0.49),
 }
 # Civic Bosch against the comma gyro (livePose), Peter's routes 294-299 replayed from a blind 512 seed: correlation
 # 0.997-0.998, sign matches steeringAngleDeg in every turn, learned zeros 512.1-513.0. The gyro reads 0.2374-0.2380

@@ -30,11 +30,13 @@ from cereal import log
 T_IDX = 10.0 * (np.arange(33) / 32) ** 2
 T_FIT = (T_IDX >= 0.1) & (T_IDX <= 1.5)
 SHIFTS = np.arange(-0.4, 0.41, 0.01)
-VSA_LATENCY = 0.017  # s, measured on the Clarity against rear-wheel-speed yaw; assumed for the Civic
+VSA_LATENCY = 0.017  # s, measured on the Clarity against rear-wheel-speed yaw; assumed for Civic and CR-V
 # (bus, deg/s per count, extra deg/s once the count is 3-5 above zero clockwise)
 YAW_DECODE = {
   'HONDA_CLARITY': (0, 0.246, 0.24),
   'HONDA_CIVIC_BOSCH': (1, 0.244, 0.0),
+  # 00000013--da43527a2c: bus 1, GPS-integrated 0.24455/count + 0.4902 clockwise; production-rounded.
+  'HONDA_CRV_5G': (1, 0.245, 0.49),
 }
 
 
