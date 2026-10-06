@@ -2075,3 +2075,12 @@ copied command delay remains binding. Rejected: using Clarity/Civic load or feed
 double-scaling the CR-V gains, enabling an added delay, or claiming the offline fit validates
 the changed closed loop. Road validation is still required before any safety claim or default-on
 decision.
+
+**Current-device confirmation.** Route `00000037--2683763b26`, segment 56, logged by
+`c12c15fd2350972befede744a7e302d4737dd106`, directly confirms the owner's running EPS adds
+Kff 45: 2,900 complete V5 groups match `45 * reference_R5 / 1024` with 0.99865 correlation
+and fitted slope 0.99929. Segment SHA-256 is
+`2737eaa5e7eb98c0d0dc90b722f378bba29e41e5eb1ff00fde785892226b7fd5`. This upgrades Kff
+from artifact-only to current-device firmware evidence; it does not validate the new OpenPilot
+closed loop. An unaligned replacement load fit was rejected because cross-segment holdouts were
+unstable; the aligned fit remains canonical.

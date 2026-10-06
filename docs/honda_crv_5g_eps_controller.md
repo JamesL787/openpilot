@@ -68,3 +68,27 @@ late, so copying the Civic/Clarity delay would move in the wrong direction.
 
 This is static, unit, and offline telemetry evidence. It is not a road test of
 the controller, current FF45 firmware, firmware VGR, or the closed steering loop.
+
+## Current-device firmware confirmation
+
+After the implementation, the comma at `192.168.20.80` was inspected read-only.
+Route `00000037--2683763b26`, segment 56 (logged OpenPilot commit
+`c12c15fd2350972befede744a7e302d4737dd106`, rlog SHA-256
+`2737eaa5e7eb98c0d0dc90b722f378bba29e41e5eb1ff00fde785892226b7fd5`)
+contains 2,900 complete nonzero V5 telemetry groups. The measured term added
+between `pd_out` and the scaled pre-clamp output matches `45 * reference_R5 /
+1024`: correlation 0.99865, fitted slope 0.99929, intercept -0.725 count, RMS
+5.74 counts, and 95th-percentile absolute error below one count. This confirms
+that Kff 45 is running in the owner's EPS, not merely present in the retained
+firmware artifact.
+
+A same-timestamp exploratory load refit across nine segments was deliberately
+not adopted: per-segment holdout R² ranged from 0.33 to 0.91 because EPS output
+leads the resulting wheel motion and requires the extractor's alignment model.
+The aligned compact-drive fit above remains canonical until the current route is
+run through that complete alignment pipeline.
+
+The comma was still at source commit `87d17c83d97e6cbad9f2ecc7ed02613164e16ee9`
+when inspected, with `NrdrLatEpsFirmwareFF=True` and
+`NrdrLatUseFirmwareVgr=False`. The new controller commit was not installed or
+road-tested during this inspection.

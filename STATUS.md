@@ -10702,6 +10702,19 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
   collect here because the tracked `transformations.so`/`msgq` artifacts are aarch64 Linux,
   and STATUS's working rebuild recipe is x86_64 Linux. This has not been driven and does not
   establish live closed-loop safety, timing with FF45, or firmware-VGR behavior.
+- `[CONFIRMED current-device firmware]` Read-only SSH inspection of route
+  `00000037--2683763b26`, segment 56 (logged commit
+  `c12c15fd2350972befede744a7e302d4737dd106`; rlog SHA-256
+  `2737eaa5e7eb98c0d0dc90b722f378bba29e41e5eb1ff00fde785892226b7fd5`)
+  found 2,900 complete nonzero V5 groups. The measured added term matches
+  `45 * reference_R5 / 1024` with correlation 0.99865, fitted slope 0.99929,
+  intercept -0.725 count, RMS 5.74 counts, and p95 absolute error below one count.
+  Kff 45 is therefore running in the owner's EPS. A quick unaligned multi-segment
+  load refit was rejected because holdout R² varied 0.33-0.91; EPS-to-wheel timing
+  must go through the retained alignment pipeline before replacing the canonical fit.
+- The comma itself remained on `87d17c83d97e6cbad9f2ecc7ed02613164e16ee9` with
+  `NrdrLatEpsFirmwareFF=True` and `NrdrLatUseFirmwareVgr=False`. Commit 2ddab361b
+  was not installed, and no current-controller drive occurred during this inspection.
 
 ## 223. CR-V 5G VSA yaw calibration added; no copied CR-V command delay (2026-10-06). D-090/D-091.
 
