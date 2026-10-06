@@ -444,7 +444,7 @@ class Controls:
     elif self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
       self.LaC = LatControlCurvature(self.CP, self.CI, DT_CTRL)
     elif use_honda_eps_controller(self.CP, self.params):
-      # NrdrLatEpsFirmwareFF: upstream JamesL787 8c3a3fd8's controller (modified-EPS Clarity / Civic Bosch)
+      # NrdrLatEpsFirmwareFF: JamesL787 8c3a3fd8's controller (modified-EPS Clarity/Civic Bosch/CR-V A040 FF45)
       self.LaC = LatControlHondaEps(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'pid':
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)

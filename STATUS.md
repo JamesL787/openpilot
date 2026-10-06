@@ -10672,7 +10672,38 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
 - **Not verified.** The 1.0 m minimum gap is a simulated gap from replay. No drive has run this law. Road-check with a longer following distance first, then rerun `tools/longitudinal/vsa_felt_brake_report.py` on that drive.
 - **Tests.** `test_brake_onset.py` 21 pass after the onset code removal, including removal wiring, depth by TTC, rate, outside-law step limit, and newborn bound gate.
 
-## 223. CR-V 5G VSA yaw calibration added; no CR-V command delay or specialized controller (2026-10-06). D-090.
+## 224. CR-V 5G added to the existing Civic/Clarity firmware-inversion controller (2026-10-06). D-091.
+
+- `[CONFIRMED static firmware]` The exact FF45 image
+  `39990-TLA-A040_tq30000_a9000_t9_ff45_8cf8e537_DO_NOT_FLASH_full.bin`
+  (SHA-256 `d5dc04a839af2c473e103f4f9d448bf600e26ea0531521a58da61e2267dc351e`)
+  supplies the CR-V command map, P row, 1774 command clamp, Q8 scale 256, and Kff 45.
+  These are represented by `CRV_5G_A040_FF45`; no Civic or Clarity firmware table is reused.
+- `[CONFIRMED offline route]` Route `00000006--82bb552a2c`, logged OpenPilot commit
+  `49e6610d08373bb8512ccce38d2f75c61656325e`, measured feedback at
+  -105.7044 counts/(deg/s) with norm 1450. Scaling by the exact FF45 norm 1650 gives
+  -120.2843 counts/(deg/s). The retained compact drive is SHA-256
+  `36f740e698093609d6996b5b97eaa28dacb75ccb87028f170a7d4ad997caa24b`.
+- The CR-V load model is fitted to 9,784 hands-off, active telemetry samples. Alternating
+  60-second block holdouts give R² 0.8017/0.8392. The compact evidence did not retain roll,
+  so CR-V roll load is zero rather than borrowed from another vehicle. The reproducible fit
+  is `tools/lateral/fit_crv_eps_load.py`; details are in
+  `docs/honda_crv_5g_eps_controller.md`.
+- `NrdrLatEpsFirmwareFF` now selects the existing `LatControlHondaEps` for a modified
+  `HONDA_CRV_5G`. Joining, fading, residual PID, output filtering, override handling, and
+  telemetry are the same Civic/Clarity logic. Only the calibration, load fit, and neutral
+  P/I multipliers are CR-V-specific. The neutral multipliers avoid double-scaling the
+  speed-scheduled gains already in CR-V CarParams.
+- No command delay or model-delay schedule was added. STATUS 223 measured the normal-PID
+  CR-V approximately 0.08 s late; copying the Civic/Clarity delay would worsen that evidence.
+- Validation on this Apple-silicon host: the fit reproduces the recorded coefficients and
+  holdouts; direct firmware-model checks reproduce requested loads to floating-point precision;
+  Python compilation, Ruff, and `git diff --check` pass. The complete controller pytest cannot
+  collect here because the tracked `transformations.so`/`msgq` artifacts are aarch64 Linux,
+  and STATUS's working rebuild recipe is x86_64 Linux. This has not been driven and does not
+  establish live closed-loop safety, timing with FF45, or firmware-VGR behavior.
+
+## 223. CR-V 5G VSA yaw calibration added; no copied CR-V command delay (2026-10-06). D-090/D-091.
 
 - `[CONFIRMED offline route]` Route `00000013--da43527a2c`, logged OpenPilot commit
   `2f1f2aadef649c3c8c3ae1582ce26bb6cb259a50`, supplied 24 full rlog segments: 143,904
@@ -10690,10 +10721,9 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
 - The same route's normal-PID plan timing was entry +0.06 s (306 frames), exit +0.09 s
   (255), and all 5-12 m/s turns +0.08 s (1,302); positive means late. Copying the
   Civic/Clarity town command delay would therefore worsen this evidence and is rejected.
-  The route does not validate `LatControlHondaEps`, so that controller remains disabled for
-  the CR-V pending the CR-V column-load model and closed-loop evidence required by its
-  software inversion. The owner's EPS firmware already contains the separately confirmed
-  FeedforwardV1 patch; this decision does not dispute or disable that firmware feedforward.
+  The route does not validate `LatControlHondaEps`; STATUS 224 subsequently adds the CR-V
+  calibration and load fit behind the existing toggle, but it remains unvalidated on road.
+  The owner's EPS firmware FeedforwardV1 is separate and remains recognized unchanged.
 - Detailed method and verification boundary are in
   `docs/honda_crv_5g_yaw_calibration.md`. Route data remains external and uncommitted as
   required. This is offline/static evidence only: no live radar, current-build steering,

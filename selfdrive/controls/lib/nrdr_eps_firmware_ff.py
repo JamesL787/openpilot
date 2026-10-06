@@ -1,8 +1,8 @@
-"""nrdr: the modified-EPS lateral controller built on the EPS firmware's own control law (Clarity and Civic Bosch C020).
+"""nrdr: modified-EPS lateral controller built on the EPS firmware law (Clarity, Civic Bosch C020, CR-V A040 FF45).
 
 Ported from JamesL787/openpilot vfn-controller-shadow (shadow 52618f42, controller 8c3a3fd8, output LPF fd815ef3).
 The feedforward and HondaEpsLateralCore below are upstream's, line for line, with the firmware constants moved
-into a calibration and the fixed P/I trims into arguments, so the Civic Bosch C020 image can use its own. The
+into a calibration and the fixed P/I trims into arguments, so each traced firmware image can use its own. The
 feedforward is logged in shadow by LatControlPID; NrdrLatEpsFirmwareFF hands the car to LatControlHondaEps,
 which runs HondaEpsLateralCore exactly as upstream does on the Clarity (STATUS 164-166).
 
@@ -27,10 +27,10 @@ Evidence, routes 00000352 / 00000353 (vfn 35ddc44b, P-minus-5 firmware):
     25 mph, 0.86 above) and explains 46% of vfn's command over all engaged frames. The kf * angle * v^2
     feedforward it replaces explains 5% or less on either measure.
 
-Firmware constants are for ONE build: Clarity_Pminus5_P117to265_D737_KFF45_NoR6L2_Tracker3200_Norm1650
+The default firmware constants are for ONE build: Clarity_Pminus5_P117to265_D737_KFF45_NoR6L2_Tracker3200_Norm1650
 (rwd-xray-2026chatgpt/CLARITY_PMINUS5_TRACKER3200_NORM1650_20260728). The version string does not
 identify the build, so re-check these after any reflash. CIVIC_BOSCH_C020 below is the owner's image, see
-its own comment and STATUS 163.
+its own comment and STATUS 163. The CR-V A040 FF45 calibration and route fit are documented in STATUS 224/D-091.
 """
 import math
 
@@ -154,22 +154,26 @@ FF_CRAWL_SPEED_BP = [5.0, 8.0]   # m/s
 
 
 class EpsFirmwareCalibration:
-  """The per-image constants of the chain above. The law, KFF, SCALE_Q8 and the load model are shared."""
+  """Per-image constants for the shared firmware-inversion control law."""
 
-  def __init__(self, e4_per_output, r5_key_bp, r5_v, envelope_bp, envelope_v, r6_per_deg_s, r5_per_key=None):
+  def __init__(self, e4_per_output, r5_key_bp, r5_v, envelope_bp, envelope_v, r6_per_deg_s, r5_per_key=None,
+               kp_key_bp=KP_KEY_BP, kp_v=KP_V, key_clamp=KEY_CLAMP, scale_q8=SCALE_Q8, kff=KFF):
     self.e4_per_output = e4_per_output
     self.r5_key_bp = r5_key_bp
     self.r5_v = r5_v
     self.envelope_bp = envelope_bp
     self.envelope_v = envelope_v
     self.r6_per_deg_s = r6_per_deg_s
+    self.key_clamp = key_clamp
+    self.scale_q8 = scale_q8
+    self.kff = kff
     if r5_per_key is not None:
       # upstream's form: the Clarity map is linear (18.02-18.06 R5 per key), so the P row scales straight over
       self.kp_pieces = KP_PIECES
     else:
       # a non-linear map: Kp(key(|R5|)) is still piecewise linear in |R5|, on the union of both tables' knots
-      knots = sorted(set(r5_v) | {float(np.interp(k, r5_key_bp, r5_v)) for k in KP_KEY_BP if k <= r5_key_bp[-1]})
-      kps = [float(np.interp(np.interp(r, r5_v, r5_key_bp), KP_KEY_BP, KP_V)) for r in knots]
+      knots = sorted(set(r5_v) | {float(np.interp(k, r5_key_bp, r5_v)) for k in kp_key_bp if k <= r5_key_bp[-1]})
+      kps = [float(np.interp(np.interp(r, r5_v, r5_key_bp), kp_key_bp, kp_v)) for r in knots]
       self.kp_pieces = [(lo, hi, kp_lo, (kp_hi - kp_lo) / (hi - lo))
                         for lo, hi, kp_lo, kp_hi in zip(knots[:-1], knots[1:], kps[:-1], kps[1:], strict=True)]
       self.kp_pieces.append((knots[-1], math.inf, kps[-1], 0.0))
@@ -204,6 +208,34 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
   r6_per_deg_s=-173.0,
 )
 
+# CR-V 5G 39990-TLA-A040 FF45 image. Exact tables/constants from
+# 39990-TLA-A040_tq30000_a9000_t9_ff45_8cf8e537_DO_NOT_FLASH_full.bin
+# (SHA-256 d5dc04a839af2c473e103f4f9d448bf600e26ea0531521a58da61e2267dc351e).
+# The feedback DC scale was measured as -105.704 counts/(deg/s) on route 00000006--82bb552a2c
+# with norm 1450, then scaled by the firmware-exact 1650/1450 ratio. Tracker alpha affects phase,
+# not DC gain. The command map and P row are identical across all seven rows in this image.
+CRV_5G_A040_FF45 = EpsFirmwareCalibration(
+  e4_per_output=4096.0,
+  r5_key_bp=[0, 219, 443, 662, 887, 1108, 1330, 1552, 1663],
+  r5_v=[0, 1926, 4938, 8455, 12036, 15926, 20138, 26955, 30000],
+  envelope_bp=[0, 400],
+  envelope_v=[1774, 1774],
+  r6_per_deg_s=-105.70439496 * 1650.0 / 1450.0,
+  kp_key_bp=[0, 104, 279, 510, 807, 1108, 1330, 1552, 1663],
+  kp_v=[117, 148, 184, 220, 245, 257, 263, 265, 265],
+  key_clamp=1774,
+  scale_q8=256.0,
+  kff=45.0,
+)
+
+# Vehicle-load fit from 9,784 hands-off, active samples on route 00000006--82bb552a2c,
+# OpenPilot 49e6610d08373bb8512ccce38d2f75c61656325e. Target is the EPS output reconstructed
+# exactly from firmware telemetry. Alternating 60 s block holdouts: R^2 0.80 / 0.84.
+# No roll signal was retained in the compact replay, so its coefficient is deliberately zero.
+CRV_5G_EPS_LOAD = (-9.09927, -0.0225716, -5.24359, -259.312, -55.7274, 0.0)
+CRV_5G_P_SCALE = (1.0, 1.0, 1.0)
+CRV_5G_I_SCALE = (1.0, 1.0, 1.0)
+
 # Civic column load for the PID's firmware feedforward only (NrdrLatPidFirmwareFF). latcontrol_honda_eps uses
 # CIVIC_EPS_LOAD below. Same model and sign as LOAD_*, fitted on the owner's C020 PID drives 284, 285,
 # 286, 287, 289, 28a, 28b (engaged, no press or lane change for 1 s, |command| < 0.9). Target: the firmware
@@ -236,7 +268,7 @@ def command_key(e4: float) -> int:
 
 
 def key_ceiling(v_ego: float, cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
-  return min(float(np.interp(v_ego * 3.6 * 2.0, cal.envelope_bp, cal.envelope_v)), KEY_CLAMP)
+  return min(float(np.interp(v_ego * 3.6 * 2.0, cal.envelope_bp, cal.envelope_v)), cal.key_clamp)
 
 
 def r5_from_output(output: float, v_ego: float, cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
@@ -260,7 +292,7 @@ def firmware_kp(r5: float, cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
 def firmware_output(r5: float, steering_rate_deg_s: float, cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
   """Steady-state firmware output for a target and a rate (D term omitted): scale*(Kp*(R5-R6) + KFF*R5)/1024/256."""
   r6 = cal.r6_per_deg_s * steering_rate_deg_s
-  return SCALE_Q8 * (firmware_kp(r5, cal) * (r5 - r6) + KFF * r5) / 1024.0 / 256.0
+  return cal.scale_q8 * (firmware_kp(r5, cal) * (r5 - r6) + cal.kff * r5) / 1024.0 / 256.0
 
 
 def column_load(angle_deg: float, rate_deg_s: float, v_ego: float, roll: float,
@@ -278,14 +310,14 @@ def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, cal: Ep
   one root only exists when a fast unwind outruns a small target). A fixed-point iteration is not enough
   here: it is 1-4% off after three passes from rest and need not contract during a fast unwind.
   """
-  x = 1024.0 * load * 256.0 / SCALE_Q8
+  x = 1024.0 * load * 256.0 / cal.scale_q8
   r6 = cal.r6_per_deg_s * rate_deg_s
   roots = []
   for lo, hi, kp_lo, slope in cal.kp_pieces:
     for side in (1.0, -1.0):
       # on this piece Kp = a + b*R5, and R5*(Kp + KFF) - Kp*R6 = x
       a, b = kp_lo - slope * lo, slope * side
-      qa, qb, qc = b, a + KFF - b * r6, -(a * r6 + x)
+      qa, qb, qc = b, a + cal.kff - b * r6, -(a * r6 + x)
       if abs(qa) < 1e-12:
         candidates = [-qc / qb]
       else:

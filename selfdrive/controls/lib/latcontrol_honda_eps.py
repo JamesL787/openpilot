@@ -1,9 +1,9 @@
-"""nrdr: lateral controller for the Honda Clarity and Civic Bosch with a modified EPS. controlsd selects it instead of
+"""nrdr: lateral controller for traced modified-EPS Honda images. controlsd selects it instead of
 LatControlPID when NrdrLatEpsFirmwareFF is on (read once, when controlsd starts). Named LatControlClarityEps /
 latcontrol_clarity_eps.py until it ran on more than the Clarity.
 
 Upstream JamesL787/openpilot vfn-controller-shadow 8c3a3fd8 / fd815ef3, which selects it for the Clarity
-unconditionally. Here it is behind the toggle, and the Civic Bosch C020 runs it with its own firmware calibration
+unconditionally. Here it is behind the toggle; Civic Bosch C020 and CR-V A040 FF45 run their own firmware calibrations
 (nrdr_eps_firmware_ff.CIVIC_BOSCH_C020), its own column load (CIVIC_EPS_LOAD) and its own fixed P/I trims
 (CIVIC_P_SCALE / CIVIC_I_SCALE); everything else is upstream's. Upstream's HondaTorqueOutputLowPassFilter / HondaTorqueOutputLpfTau* keys do not exist on this
 branch, so the output LPF runs on upstream's values (OUTPUT_LPF_TAU) and HondaLpfTau* (this branch's target
@@ -46,6 +46,10 @@ from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import (
   CIVIC_EPS_LOAD,
   CIVIC_I_SCALE,
   CIVIC_P_SCALE,
+  CRV_5G_A040_FF45,
+  CRV_5G_EPS_LOAD,
+  CRV_5G_I_SCALE,
+  CRV_5G_P_SCALE,
   HondaEpsFirmwareFeedforward,
   HondaEpsLateralCore,
 )
@@ -54,7 +58,7 @@ SETTINGS_REFRESH_FRAMES = 300
 
 
 def use_honda_eps_controller(CP, params=None) -> bool:
-  if not (CP.carFingerprint in (HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH) and bool(CP.flags & HondaFlags.EPS_MODIFIED)
+  if not (CP.carFingerprint in (HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH, HONDA.HONDA_CRV_5G) and bool(CP.flags & HondaFlags.EPS_MODIFIED)
           and CP.lateralTuning.which() == "pid"):
     return False
   return _get_param_bool(params if params is not None else Params(), "NrdrLatEpsFirmwareFF")
@@ -132,6 +136,10 @@ class LatControlHondaEps(LatControl):
     if CP.carFingerprint == HONDA.HONDA_CIVIC_BOSCH:
       self.core = HondaEpsLateralCore(*gains, dt, ff=HondaEpsFirmwareFeedforward(dt, cal=CIVIC_BOSCH_C020, load=CIVIC_EPS_LOAD),
                                         p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE)
+    elif CP.carFingerprint == HONDA.HONDA_CRV_5G:
+      self.core = HondaEpsLateralCore(*gains, dt,
+                                      ff=HondaEpsFirmwareFeedforward(dt, cal=CRV_5G_A040_FF45, load=CRV_5G_EPS_LOAD),
+                                      p_scale=CRV_5G_P_SCALE, i_scale=CRV_5G_I_SCALE)
     else:
       self.core = HondaEpsLateralCore(*gains, dt)
     self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))

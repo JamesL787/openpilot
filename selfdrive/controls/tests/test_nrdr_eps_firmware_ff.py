@@ -19,6 +19,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID, _lat_
 # shadow tests are 52618f42's with the final field names, the core and controller tests fd815ef3's; the C020 tests
 # and the Civic variants are this branch's (STATUS 163-166).
 C020 = eps_ff.CIVIC_BOSCH_C020
+CRV_A040 = eps_ff.CRV_5G_A040_FF45
 
 
 # --- firmware model and feedforward (upstream, Clarity calibration) ------------------------------
@@ -130,6 +131,28 @@ def test_c020_target_stays_clear_of_the_rail():
   assert abs(ff.output) <= 1.0
 
 
+# --- CR-V 5G A040 FF45 calibration ---------------------------------------------------------------
+
+def test_crv_a040_ff45_exact_firmware_constants():
+  assert CRV_A040.e4_per_output == 4096.0
+  assert CRV_A040.r5_key_bp == [0, 219, 443, 662, 887, 1108, 1330, 1552, 1663]
+  assert CRV_A040.r5_v == [0, 1926, 4938, 8455, 12036, 15926, 20138, 26955, 30000]
+  assert CRV_A040.key_clamp == 1774 and CRV_A040.scale_q8 == 256.0 and CRV_A040.kff == 45.0
+  assert CRV_A040.r6_per_deg_s == pytest.approx(-120.28431, rel=1e-5)
+
+
+@pytest.mark.parametrize("output", [-0.93, -0.4, -0.05, 0.0, 0.02, 0.3, 0.93])
+def test_crv_a040_command_map_round_trips(output):
+  r5 = eps_ff.r5_from_output(output, 20.0, CRV_A040)
+  assert eps_ff.output_from_r5(r5, CRV_A040) == pytest.approx(output, abs=2e-3)
+
+
+@pytest.mark.parametrize("load,rate", [(500, 0), (-1500, 0), (800, 40), (-800, -40), (0, 0)])
+def test_crv_a040_inversion_reproduces_the_requested_load(load, rate):
+  r5 = eps_ff.r5_for_motion(load, rate, cal=CRV_A040)
+  assert eps_ff.firmware_output(r5, rate, CRV_A040) == pytest.approx(load, abs=1e-6)
+
+
 # --- shadow in LatControlPID (upstream 52618f42) ------------------------------------------------
 
 class _Params:
@@ -169,7 +192,8 @@ def _drive(lac, VM, params, frames=400):
   return outputs
 
 
-SHADOW_CARS = [(HONDA.HONDA_CLARITY, eps_ff.CLARITY_A020), (HONDA.HONDA_CIVIC_BOSCH, C020)]
+SHADOW_CARS = [(HONDA.HONDA_CLARITY, eps_ff.CLARITY_A020), (HONDA.HONDA_CIVIC_BOSCH, C020),
+               (HONDA.HONDA_CRV_5G, CRV_A040)]
 
 
 @pytest.mark.parametrize("candidate,cal", SHADOW_CARS)
@@ -184,7 +208,8 @@ def test_shadow_is_logged(monkeypatch, candidate, cal):
   assert msg.starpilotLateralState.epsFfR5 == pytest.approx(state.epsFfR5)
 
 
-@pytest.mark.parametrize("candidate,load", [(HONDA.HONDA_CLARITY, None), (HONDA.HONDA_CIVIC_BOSCH, eps_ff.CIVIC_PID_LOAD)])
+@pytest.mark.parametrize("candidate,load", [(HONDA.HONDA_CLARITY, None), (HONDA.HONDA_CIVIC_BOSCH, eps_ff.CIVIC_PID_LOAD),
+                                             (HONDA.HONDA_CRV_5G, eps_ff.CRV_5G_EPS_LOAD)])
 def test_pid_feedforward_uses_the_cars_own_load_fit(monkeypatch, candidate, load):
   lac, _, _ = _car(monkeypatch, candidate)
   assert lac.eps_shadow_ff.load_coef == load
@@ -229,7 +254,7 @@ def test_civic_load_fit_blends_in_without_a_step():
   assert np.max(np.abs(np.diff(loads))) < 5.0
 
 
-@pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH])
+@pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH, HONDA.HONDA_CRV_5G])
 def test_no_shadow_on_a_stock_eps(monkeypatch, candidate):
   lac, _, _ = _car(monkeypatch, candidate, modified=False)
   assert lac.eps_shadow_ff is None and not hasattr(lac, "starpilot_lateral_state")
@@ -427,7 +452,7 @@ def _controller(monkeypatch, candidate, values=None):
   return clarity_eps.LatControlHondaEps(CP.as_reader(), None, DT_CTRL), VehicleModel(CP), CP
 
 
-@pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH])
+@pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH, HONDA.HONDA_CRV_5G])
 def test_the_toggle_selects_this_controller_on_a_modified_eps(candidate):
   on, off = _ValueParams({"NrdrLatEpsFirmwareFF": "1"}), _ValueParams()
   assert clarity_eps.use_honda_eps_controller(_cp(candidate), on)
@@ -444,6 +469,7 @@ def test_the_clarity_tells_the_model_its_speed_scheduled_delay(v, delay):
 def test_cars_without_a_measured_schedule_keep_live_delay():
   on, off = _ValueParams({"NrdrLatEpsFirmwareFF": "1"}), _ValueParams()
   assert clarity_eps.eps_lateral_delay_schedule(_cp(HONDA.HONDA_CIVIC_BOSCH), on) is None      # not measured yet
+  assert clarity_eps.eps_lateral_delay_schedule(_cp(HONDA.HONDA_CRV_5G), on) is None            # measured late; no added delay
   assert clarity_eps.eps_lateral_delay_schedule(_cp(HONDA.HONDA_CLARITY), off) is None         # controller off
   assert clarity_eps.eps_lateral_delay_schedule(_cp(HONDA.HONDA_CLARITY, modified=False), on) is None
   assert clarity_eps.eps_lateral_delay(None, 12.0, 0.27) == 0.27
@@ -462,7 +488,14 @@ def test_the_civic_runs_its_own_calibration_and_trims(monkeypatch):
   assert clarity.core.p_scale == eps_ff.P_SCALE and clarity.core.i_scale == eps_ff.I_SCALE
 
 
-@pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH])
+def test_the_crv_runs_its_own_calibration_load_and_neutral_trims(monkeypatch):
+  crv, _, _ = _controller(monkeypatch, HONDA.HONDA_CRV_5G)
+  assert crv.core.ff.cal is CRV_A040 and crv.core.ff.load_coef is eps_ff.CRV_5G_EPS_LOAD
+  assert crv.core.p_scale == (1.0, 1.0, 1.0) and crv.core.i_scale == (1.0, 1.0, 1.0)
+  assert crv.cmd_delay_schedule == ([0.0], [0.0])
+
+
+@pytest.mark.parametrize("candidate", [HONDA.HONDA_CLARITY, HONDA.HONDA_CIVIC_BOSCH, HONDA.HONDA_CRV_5G])
 def test_nrdr_settings_are_read(monkeypatch, candidate):
   lac, _, _ = _controller(monkeypatch, candidate, {"NrdrLatUseFirmwareVgr": "1", "NrdrLatAngleRateLimit": "219"})
   assert lac.use_firmware_vgr

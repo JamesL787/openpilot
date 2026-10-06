@@ -2052,3 +2052,26 @@ confirmed; the separate OpenPilot controller inverts the EPS law using a vehicle
 model, and currently contains such models only for the measured Clarity/Civic paths. It still
 needs a CR-V load fit and closed-loop proof. Reconsider either rejection only with route- and
 commit-bound CR-V evidence. Nothing here is live closed-loop validation.
+
+## D-091 — Add CR-V 5G to `LatControlHondaEps` with its own FF45 calibration and telemetry load fit
+
+**Decided 2026-10-06; static/offline evidence, default toggle unchanged.** The owner explicitly
+wants the CR-V to follow the Civic/Clarity controller logic. `NrdrLatEpsFirmwareFF` therefore
+selects that same class for a modified `HONDA_CRV_5G`; joining, fading, residual PID, filtering,
+driver override, and logging are unchanged. Only per-car data differs.
+
+The firmware calibration is content-bound to FF45 full-image SHA-256
+`d5dc04a839af2c473e103f4f9d448bf600e26ea0531521a58da61e2267dc351e`: exact command and P
+tables, clamp 1774, Q8 scale 256, Kff 45, and norm 1650. Route
+`00000006--82bb552a2c`, logged by OpenPilot
+`49e6610d08373bb8512ccce38d2f75c61656325e`, measured the feedback conversion and supplies
+9,784 hands-off samples for the CR-V load fit; alternating 60-second holdouts give R²
+0.80-0.84. The missing roll channel is represented as zero, not filled with another car's
+coefficient. CR-V P/I multipliers are neutral because its CarParams already schedule the gains.
+
+This supersedes D-090 only as to leaving the controller unavailable: sufficient CR-V-specific
+static/offline inputs now exist to provide an opt-in implementation. D-090's rejection of a
+copied command delay remains binding. Rejected: using Clarity/Civic load or feedback constants,
+double-scaling the CR-V gains, enabling an added delay, or claiming the offline fit validates
+the changed closed loop. Road validation is still required before any safety claim or default-on
+decision.
