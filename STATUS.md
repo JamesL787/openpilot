@@ -10672,6 +10672,27 @@ Tests: `selfdrive/controls/tests/test_brake_onset.py` 23 pass (static). Galaxy s
 - **Not verified.** The 1.0 m minimum gap is a simulated gap from replay. No drive has run this law. Road-check with a longer following distance first, then rerun `tools/longitudinal/vsa_felt_brake_report.py` on that drive.
 - **Tests.** `test_brake_onset.py` 21 pass after the onset code removal, including removal wiring, depth by TTC, rate, outside-law step limit, and newborn bound gate.
 
+## 225. UI core starvation and Cap'n Proto button-event aliasing fix applied to `ns-bosch-updated` (2026-10-06).
+
+- `[CONFIRMED static]` Source commit `659d9e074ae19dd627abe2698e3cbfa594da89d7`
+  was cherry-picked as `a55552500c9e0a57f0dc8b66d1feea08dd2eef2a`. No conflict
+  resolution or behavioral adaptation was required.
+- Button-event list rewrites in `selfdrive/car/card.py` and
+  `starpilot/controls/starpilot_card.py` now convert Cap'n Proto readers to plain dicts
+  before assigning them back to the same message. This breaks the source-buffer alias that
+  could zero the list during assignment and turn steering-wheel events into
+  `unknown/pressed=False`. Non-Cap'n Proto test doubles retain the list-copy path.
+- The UI process is pinned to core 6 with `Priority.UI`, instead of core 5, where the source
+  change reports contention with `plannerd`/`radard`.
+- `[CONFIRMED static]` Ruff, Python compilation, and `git diff --check` pass on all three
+  changed files. A direct pycapnp regression check preserved an `accelCruise` pressed event
+  across the dict-copy reassignment. The full `test_starpilot_card.py` suite could not
+  collect on this Apple-silicon host because the checked-in `msgq/ipc_pyx.so` is aarch64
+  Linux; this is the known build-environment limitation above, not a test pass.
+- **Not verified on device:** UI responsiveness under live process load and physical
+  steering-wheel button behavior. This change does not alter radar parsing, lead selection,
+  longitudinal control, or the Honda EPS controller.
+
 ## 224. CR-V 5G added to the existing Civic/Clarity firmware-inversion controller (2026-10-06). D-091.
 
 - `[CONFIRMED static firmware]` The exact FF45 image
