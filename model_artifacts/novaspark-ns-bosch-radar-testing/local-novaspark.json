@@ -1,0 +1,11 @@
+{
+  "name": "NovaSpark",
+  "series": "Local",
+  "version": "v16",
+  "released": "2026-10-04",
+  "uses_external_gpu": false,
+  "openpilot_branch": "ns-bosch-radar-testing",
+  "tinygrad_commit": "f6fc4e3f2c3db5fae1e19cbfbc3ad9fc579a12ae",
+  "target": "QCOM::a630,IMAGE_PITCH_ALIGNMENT=64",
+  "artifact_sha256": "9b4a8d2c73e83ff2d4da16c057651d9fa30e23f2c2dbca0896754ab1b2d9f1c0"
+}

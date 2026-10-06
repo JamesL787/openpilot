@@ -2084,3 +2084,21 @@ and fitted slope 0.99929. Segment SHA-256 is
 from artifact-only to current-device firmware evidence; it does not validate the new OpenPilot
 closed loop. An unaligned replacement load fit was rejected because cross-segment holdouts were
 unstable; the aligned fit remains canonical.
+
+## D-092 — Retain NovaSpark by artifact hash; correct the stale supplied sidecar checksum
+
+**Decided 2026-10-06; package and device static validation only.** The supplied NovaSpark
+package's model artifact, its JSON `artifact_sha256`, and the generated repository checksum
+all agree on `9b4a8d2c73e83ff2d4da16c057651d9fa30e23f2c2dbca0896754ab1b2d9f1c0`.
+That artifact is canonical and is retained as three repository-safe chunks under
+`model_artifacts/novaspark-ns-bosch-radar-testing/`.
+
+The supplied `SHA256SUMS` claimed `abe5c5e...` for `local-novaspark.json`, but the actual
+supplied JSON hashes to `b6e77b8f335d8c444ea0d18c67d79a07b8df2fb1f0260b2cacd9893c6290bb62`,
+including after CR stripping. The repository checksum list records the actual file. Rejected:
+changing the supplied JSON to chase an unknown historical hash, or trusting the stale checksum
+over the content that names the correct artifact and exact tinygrad pin.
+
+Installation does not select the model automatically. Device-side artifact loading confirms
+the pickle envelope and QCOM target against the matching tinygrad runtime, but does not execute
+an inference or validate driving behavior.
