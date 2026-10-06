@@ -1,0 +1,13 @@
+Build and host validation
+
+- Docker-backed QCOM compile: 88/88 A630 kernels compiled and survived the
+  pickle round-trip. Each of the 88 binary payloads matched the packaged NS
+  build byte-for-byte.
+- Numerical replay: 27 pinned-tinygrad Metal policy calls across three input
+  fixtures and nine recurrent frames, plus warp outputs at 1344x760 and
+  1928x1208. All outputs were finite.
+
+The Docker compile verifies the QCOM build and serialization. It does not
+execute QCOM binaries because no A630 device is attached. Numerical replay used
+the available Metal path, not the packaged QCOM binaries. Device execution on
+the comma is still required; ONNX parity and driving behavior are unverified.

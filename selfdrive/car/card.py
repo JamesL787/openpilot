@@ -326,7 +326,11 @@ class Car:
       self._favorite_virtual_releases.append(button_type)
 
     if virtual_events:
-      CS.buttonEvents = list(CS.buttonEvents) + virtual_events
+      if hasattr(CS, "to_dict"):
+        CS.buttonEvents = [*(be.to_dict() if hasattr(be, "to_dict") else be for be in CS.buttonEvents),
+                           *(be.to_dict() if hasattr(be, "to_dict") else be for be in virtual_events)]
+      else:
+        CS.buttonEvents = list(CS.buttonEvents) + list(virtual_events)
 
   def state_update(self) -> tuple[car.CarState, structs.RadarDataT | None]:
     """carState update loop, driven by can"""

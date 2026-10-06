@@ -40,6 +40,13 @@ class StarPilotCard:
     button_type = getattr(button_event, "type", button_event)
     return int(getattr(button_type, "raw", button_type))
 
+  @staticmethod
+  def _set_button_events(car_state, events):
+    if hasattr(car_state, "to_dict"):
+      car_state.buttonEvents = [be.to_dict() if hasattr(be, "to_dict") else be for be in events]
+    else:
+      car_state.buttonEvents = list(events)
+
   def __init__(self, CP, FPCP):
     self.CP = CP
     self.always_on_lateral_supported = always_on_lateral_available(CP)
@@ -219,13 +226,16 @@ class StarPilotCard:
     )
     cancel_pressed = bool(getattr(starpilotCarState, "cancelPressed", False))
     if pulse_glide_cancel_override:
-      carState.buttonEvents = [
-        be for be in carState.buttonEvents
-        if not (
-          self._button_type_raw(be) == int(ButtonType.cancel) and
-          (be.pressed or self.cancel_pulse_glide_suppressed)
-        )
-      ]
+      self._set_button_events(
+        carState,
+        [
+          be for be in carState.buttonEvents
+          if not (
+            self._button_type_raw(be) == int(ButtonType.cancel) and
+            (be.pressed or self.cancel_pulse_glide_suppressed)
+          )
+        ],
+      )
 
     lkas_pressed = any(
       self._button_type_raw(be) == int(ButtonType.lkas) and be.pressed
@@ -236,10 +246,13 @@ class StarPilotCard:
       getattr(starpilot_toggles, "pulse_and_glide_via_lkas", False)
     )
     if pulse_glide_lkas_override:
-      carState.buttonEvents = [
-        be for be in carState.buttonEvents
-        if self._button_type_raw(be) != int(ButtonType.lkas)
-      ]
+      self._set_button_events(
+        carState,
+        [
+          be for be in carState.buttonEvents
+          if self._button_type_raw(be) != int(ButtonType.lkas)
+        ],
+      )
 
     button_event_types = [self._button_type_raw(be) for be in carState.buttonEvents]
     accel_button_types = (int(ButtonType.accelCruise), int(ButtonType.resumeCruise))
@@ -390,10 +403,13 @@ class StarPilotCard:
     )
     if getattr(self.CP, "carFingerprint", None) == HYUNDAI_CAR.HYUNDAI_ELANTRA_HEV_2024 and \
         distance_released and not has_distance_release:
-      carState.buttonEvents = [
-        *carState.buttonEvents,
-        structs.CarState.ButtonEvent(pressed=False, type=ButtonType.gapAdjustCruise),
-      ]
+      self._set_button_events(
+        carState,
+        [
+          *carState.buttonEvents,
+          structs.CarState.ButtonEvent(pressed=False, type=ButtonType.gapAdjustCruise),
+        ],
+      )
 
     self.distancePressed_previously = starpilotCarState.distancePressed
 
@@ -427,10 +443,13 @@ class StarPilotCard:
 
     if pulse_glide_cancel_consumed:
       self.cancel_pulse_glide_suppressed = True
-      carState.buttonEvents = [
-        be for be in carState.buttonEvents
-        if self._button_type_raw(be) != int(ButtonType.cancel)
-      ]
+      self._set_button_events(
+        carState,
+        [
+          be for be in carState.buttonEvents
+          if self._button_type_raw(be) != int(ButtonType.cancel)
+        ],
+      )
     elif not cancel_pressed and self.cancel_pulse_glide_suppressed:
       self.cancel_pulse_glide_suppressed = False
 

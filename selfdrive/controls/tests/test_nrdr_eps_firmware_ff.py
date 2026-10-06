@@ -138,13 +138,13 @@ def test_crv_a040_ff45_exact_firmware_constants():
   assert CRV_A040.r5_key_bp == [0, 219, 443, 662, 887, 1108, 1330, 1552, 1663]
   assert CRV_A040.r5_v == [0, 1926, 4938, 8455, 12036, 15926, 20138, 26955, 30000]
   assert CRV_A040.key_clamp == 1774 and CRV_A040.scale_q8 == 256.0 and CRV_A040.kff == 45.0
-  # least squares on route 82bb (norm 1450), scaled to the FF45 image's norm 1650 (STATUS 225 / D-092)
+  # least squares on route 82bb (norm 1450), scaled to the FF45 image's norm 1650 (STATUS 227 / D-093)
   assert CRV_A040.r6_per_deg_s == pytest.approx(-121.6051 * 1650.0 / 1450.0, rel=1e-6)
   assert CRV_A040.r6_per_deg_s == pytest.approx(-138.378, abs=0.01)
 
 
 def test_crv_load_is_in_the_controllers_units():
-  # D-092: fitted in m/s with the offset-corrected angle and roll. The D-091 set was fitted on the compact
+  # D-093: fitted in m/s with the offset-corrected angle and roll. The D-091 set was fitted on the compact
   # drive's mph speed, which made k1 5.0x too weak; this pins the m/s fit and keeps roll in the model.
   k0, k1, c, friction, bias, kroll = eps_ff.CRV_5G_EPS_LOAD
   assert (k0, k1, c, friction, bias, kroll) == pytest.approx((-7.29446, -0.143159, -4.60337, -297.83, -19.899, -3.58048))

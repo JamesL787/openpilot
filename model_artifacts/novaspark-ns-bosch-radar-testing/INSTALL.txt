@@ -1,0 +1,15 @@
+NovaSpark for ns-bosch-radar-testing
+
+Run these commands from this folder after unzipping. Replace COMMA with the
+comma's SSH address or configured alias. This package is for the matching
+ns-bosch-radar-testing tinygrad pin.
+
+  COMMA=comma@192.168.43.1  # replace with address or alias
+  ssh "$COMMA" 'mkdir -p /data/tmp /data/models'
+  scp local-novaspark_driving_tinygrad.pkl "$COMMA:/data/tmp/"
+  scp local-novaspark.json "$COMMA:/data/models/local-novaspark.json"
+  ssh "$COMMA" 'cd /data/openpilot && source ./launch_env.sh && python3 -c "from pathlib import Path; from scripts.model_compiler import install_local_artifact; install_local_artifact(Path(\"/data/tmp/local-novaspark_driving_tinygrad.pkl\"), \"local-novaspark\", \"v16\", external_gpu=False)" && sha256sum /data/models/local-novaspark_driving_tinygrad.pkl && rm /data/tmp/local-novaspark_driving_tinygrad.pkl'
+
+Compare sha256sum output to artifact_sha256 in local-novaspark.json. Refresh
+the model catalog while offroad, then choose NovaSpark in the model picker.
+Installation leaves the currently selected model unchanged.

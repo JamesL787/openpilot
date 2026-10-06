@@ -45,7 +45,7 @@ R² 0.977 over 15,966 samples. Normalization is a pure scale on R6, so the FF45
 image (1650) gets `-121.6051 * 1650 / 1450 = -138.378`. Tracker alpha changes
 phase but not that DC gain.
 
-Superseded (D-091 → D-092): `-105.70439496 * 1650 / 1450 = -120.284`. That was a
+Superseded (D-091 → D-093): `-105.70439496 * 1650 / 1450 = -120.284`. That was a
 single R6/rate ratio, which the tracker lag biases low (the median ratio on the
 same drive is -114). Independent firmware cross-check: the motor-to-linear-angle
 constant (u16 3121 at `0x19C00`) is shared with every Civic-family image, so R6
@@ -82,7 +82,7 @@ load = -7.29446 * angle
 
 R² 0.843; alternating 60-second block holdouts 0.857 and 0.820.
 
-Superseded (D-091 → D-092): the fit of the 10 Hz compact drive,
+Superseded (D-091 → D-093): the fit of the 10 Hz compact drive,
 `(-9.09927, -0.0225716, -5.24359, -259.312, -55.7274, 0)`. The compact `speed`
 field is mph (`extract_drives.py` writes `vEgo * 2.23694`), so that k1 was per
 mph² and 5.0x too weak in the controller's m/s; the raw angle folded the -0.69°

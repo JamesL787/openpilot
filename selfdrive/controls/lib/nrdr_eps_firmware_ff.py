@@ -216,7 +216,7 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
 # build artifact. Exact tables/constants read from it.
 # The command map and P row are identical across all seven rows in this image.
 #
-# Feedback DC scale (STATUS 225 / D-092): least squares of the EPS's own V5 feedback_R6 on steeringRateDeg,
+# Feedback DC scale (STATUS 227 / D-093): least squares of the EPS's own V5 feedback_R6 on steeringRateDeg,
 # hands off, route 00000006--82bb552a2c (native extraction drive-82bb552a2c-native-v5.json.zst, SHA-256
 # 8b94a343...; tools/lateral/fit_crv_eps_load.py): -121.605 counts/(deg/s) at a 15 ms lag (tracker-1), R^2 0.977,
 # 15,966 samples. That drive was recorded on an earlier test build, application t9-67523237 (normalization 1450 at
@@ -241,7 +241,7 @@ CRV_5G_A040_FF45 = EpsFirmwareCalibration(
   kff=45.0,
 )
 
-# Vehicle-load fit (STATUS 225 / D-092) from 40,193 hands-off, active V5 samples of route 00000006--82bb552a2c,
+# Vehicle-load fit (STATUS 227 / D-093) from 40,193 hands-off, active V5 samples of route 00000006--82bb552a2c,
 # OpenPilot 49e6610d08373bb8512ccce38d2f75c61656325e, native extraction (SHA-256 8b94a343...). Target: the EPS
 # output from firmware telemetry. Fitted in this controller's own units: m/s, the offset-corrected angle
 # (liveParameters angleOffsetDeg removed, as column_load receives it) and liveParameters roll.

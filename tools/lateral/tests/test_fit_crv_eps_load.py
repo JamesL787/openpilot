@@ -1,4 +1,4 @@
-"""fit_crv_eps_load: recovers a known R6 scale and column load from a synthetic native drive (D-092)."""
+"""fit_crv_eps_load: recovers a known R6 scale and column load from a synthetic native drive (D-093)."""
 import json
 
 import numpy as np
