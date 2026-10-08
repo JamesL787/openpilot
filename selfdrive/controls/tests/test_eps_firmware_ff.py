@@ -304,7 +304,7 @@ def test_target_honours_the_angle_rate_limit(monkeypatch):
 
 # (candidate, modified EPS fwVersion, profile) for every Clarity-profile image
 PROFILE_CARS = [
-  (CAR.HONDA_CLARITY, CLARITY_MODIFIED_FW, eps_ff.CLARITY_P123),
+  (CAR.HONDA_CLARITY, CLARITY_MODIFIED_FW, eps_ff.CLARITY_PMINUS5),
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', eps_ff.CIVIC_C020),
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00', eps_ff.CIVIC_C120),
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TGG,A120\x00\x00', eps_ff.CIVIC_TGG_A120),
@@ -314,7 +314,7 @@ PROFILE_CARS = [
   (CAR.HONDA_CRV_5G, b'39990-TLA,A040\x00\x00', eps_ff.CRV_TLA),
   (CAR.HONDA_CRV_5G, b'39990-TLA,A220\x00\x00', eps_ff.CRV_TLA_A220),
 ]
-ALL_PROFILES = [p for _, _, p in PROFILE_CARS] + [eps_ff.CLARITY_PMINUS5]
+ALL_PROFILES = [p for _, _, p in PROFILE_CARS]
 ON = {"HondaEpsFirmwareController": "1"}
 
 
@@ -327,10 +327,12 @@ def test_profile_matches_the_cars_torque_map_and_is_selected_only_when_enabled(c
     assert eps_fw_ctl.eps_firmware_profile(CP, _Params()) is None
 
 
-def test_clarity_build_is_chosen_by_the_setting():
+def test_clarity_always_steers_with_the_pminus5_build():
+  # P-minus-5 is the Clarity standard; there is no build setting any more
   CP = _params(CLARITY_MODIFIED_FW)
-  assert eps_fw_ctl.eps_firmware_profile(CP, _Params()) is eps_ff.CLARITY_P123
-  assert eps_fw_ctl.eps_firmware_profile(CP, _Params({"HondaEpsClarityPminus5": "1"})) is eps_ff.CLARITY_PMINUS5
+  assert eps_fw_ctl.eps_firmware_profile(CP, _Params()) is eps_ff.CLARITY_PMINUS5
+  assert eps_fw_ctl.eps_firmware_profile(CP, _Params({"HondaEpsClarityPminus5": "0"})) is eps_ff.CLARITY_PMINUS5
+  assert not hasattr(eps_ff, "CLARITY_P123")
 
 
 @pytest.mark.parametrize("candidate,fw", [
@@ -357,11 +359,6 @@ def test_clarity_pminus5_profile_is_the_validated_build():
   assert cal.r6_angle_bp is not None and cal.r6_angle_gain[0] == 1.0 and cal.r6_angle_gain[-1] > 1.15
   assert cal.load == eps_ff.CLARITY_LOAD and cal.e4_per_output == 3840.0
   assert (cal.p_scale, cal.i_scale) == ((1.25, 1.00, 1.25), (0.70, 0.95, 0.35))
-  # and the P123 build differs from it only in the P row
-  diff = [k for k in cal.__dataclass_fields__ if k not in ("name", "kp_pieces")
-          and getattr(cal, k) != getattr(eps_ff.CLARITY_P123, k)]
-  assert diff == ["kp_v"]
-  assert eps_ff.CLARITY_P123.kp_v == (123, 156, 194, 232, 258, 270, 277, 279, 279)
 
 
 def test_nidec_civics_carry_the_teg_measurements():

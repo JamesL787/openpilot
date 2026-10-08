@@ -226,26 +226,23 @@ CRV_R6_CENTRE = -124.97
 CRV_R6_GAIN = (1.0, 1.0233, 1.0273, 1.0431, 1.075, 1.1134, 1.1566, 1.199, 1.2195, 1.2305, 1.2252, 1.2367, 1.2354,
                1.2381, 1.2328, 1.2243, 1.2257, 1.2162, 1.191)
 
-# Clarity 39990-TRW-A020, the build its owners run: ClarityMax 07-22 PShapeSmoothComp P123..279 D737 KFF45 NoR6L2
-# Tracker3200 Norm1650 (bin sha256 84b14aaa). Measured: everything (routes 352/353 are the P-minus-5 child, which
-# differs only in the P row).
-CLARITY_P123 = EpsFirmwareProfile(
-  name="clarity_p123",
+# Clarity 39990-TRW-A020, the P-minus-5 build (07-28, bin sha256 92cde599; P117..265 D737 KFF45 NoR6L2 Tracker3200
+# Norm1650), the Clarity standard: what routes 352/353 and the whole replay validation ran on, and the parent of the
+# A280-flat build owners move to (which edits only the A280 cells, so every table here holds). The older ClarityMax
+# 07-22 P123..279 build differed only in the P row (123, 156, 194, 232, 258, 270, 277, 279, 279) and is not supported.
+CLARITY_PMINUS5 = EpsFirmwareProfile(
+  name="clarity_pminus5",
   e4_per_output=3840.0,
   # command map row 0 (0x13810 / 0x1388E); key = trunc(trunc(E4 * 56756 / 32768) / 4)
   r5_key_bp=(0, 111, 222, 333, 443, 665, 887, 1108, 1663), r5_v=CLARITY_R5, key_clamp=1663,
   # 1774 up to 100 km/h, so the 1663 key clamp binds first until ~107 km/h; 1330 from 130 km/h (0x13660 / 0x136DE)
   envelope_bp=(0, 50, 100, 150, 200, 260, 300, 350, 400), envelope_v=(1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330, 1330),
   # P row 0 (0x13B5E / 0x13BDC)
-  kp_key_bp=(0, 222, 443, 665, 887, 1108, 1330, 1552, 1774), kp_v=(123, 156, 194, 232, 258, 270, 277, 279, 279),
+  kp_key_bp=(0, 222, 443, 665, 887, 1108, 1330, 1552, 1774), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=R6_PER_CENTRE_DEG_S, r6_angle_bp=R6_ANGLE_BP, r6_angle_gain=R6_ANGLE_GAIN,
   load=CLARITY_LOAD, p_scale=CLARITY_P_SCALE, i_scale=CLARITY_I_SCALE,
   r5_per_key=18.04,
 )
-# The dev car's P-minus-5 child (07-28, bin sha256 92cde599): the P row 5% down, nothing else. What routes 352/353
-# and the whole replay validation ran on. Selected by HondaEpsClarityPminus5.
-CLARITY_PMINUS5 = EpsFirmwareProfile(**{**{k: getattr(CLARITY_P123, k) for k in CLARITY_P123.__dataclass_fields__
-                                           if k != "kp_pieces"}, "name": "clarity_pminus5", "kp_v": P_ROW_PMINUS5})
 
 # Civic Bosch 39990-TBA-C020, 08-05 ClarityPminus5 P117..265 D737 KFF45 Norm1650 Trk4500 TargetMapD Telem (bin
 # sha256 6ecd587c). Measured on the owner's telemetry (routes 284/287/289): E4 = -4096 * u, key clamp 1663 (0x137F2),
@@ -355,11 +352,10 @@ CRV_TLA_A220 = EpsFirmwareProfile(
   load=CRV_LOAD, p_scale=CLARITY_P_SCALE, i_scale=CLARITY_I_SCALE,
 )
 
-# normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). The Clarity's build is chosen in
-# select_eps_firmware_profile(). TGG-A020 is a separate application from the A120 (its RWD updates only A010/A020)
+# normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). TGG-A020 is a separate application from the A120 (its RWD updates only A010/A020)
 # and has no Clarity-profile build, so it is absent on purpose.
 EPS_FIRMWARE_PROFILES = {
-  "39990-TRW-A020": ("HONDA_CLARITY", CLARITY_P123),
+  "39990-TRW-A020": ("HONDA_CLARITY", CLARITY_PMINUS5),
   "39990-TBA-C020": ("HONDA_CIVIC_BOSCH", CIVIC_C020),
   "39990-TBA-C120": ("HONDA_CIVIC_BOSCH", CIVIC_C120),
   "39990-TGG-A120": ("HONDA_CIVIC_BOSCH", CIVIC_TGG_A120),
@@ -371,15 +367,12 @@ EPS_FIRMWARE_PROFILES = {
 }
 
 
-def select_eps_firmware_profile(fingerprint: str, eps_fw: str, clarity_pminus5: bool = False) -> EpsFirmwareProfile | None:
+def select_eps_firmware_profile(fingerprint: str, eps_fw: str) -> EpsFirmwareProfile | None:
   """The profile for this car's EPS image, or None when there is no Clarity-profile build for it (or it is on another car)."""
   entry = EPS_FIRMWARE_PROFILES.get(eps_fw)
   if entry is None or entry[0] != fingerprint:
     return None
-  profile = entry[1]
-  if profile is CLARITY_P123 and clarity_pminus5:
-    return CLARITY_PMINUS5
-  return profile
+  return entry[1]
 
 
 # --- the Clarity P-minus-5 build as module constants (the replay tooling and the tests read these) ---------------

@@ -10,8 +10,8 @@ Which cars get it: the Clarity always (it was developed and validated there). Th
 (Civic A030/TEG/C020/C120/TGG-A120, Insight, CR-V) only with HondaEpsFirmwareController on, because their
 live command row, R6 gain and column load are carried over from the C020/Clarity until a drive measures them.
 A car with no profile, or whose torque map is not the linear [0, E4 cap] the profile expects, keeps LatControlPID.
-The Clarity's build (the owners' P123 or the dev car's P-minus-5) is chosen by HondaEpsClarityPminus5.
-Both settings are read once, when controlsd starts.
+The Clarity steers with the P-minus-5 build's tables, the Clarity standard. The setting is read once, when
+controlsd starts.
 The Clarity alone also gets its measured model-delay schedule (clarity_lateral_delay), command delay and rack map:
 none of those were measured on the other cars.
 
@@ -136,8 +136,7 @@ def eps_firmware_profile(CP, params=None) -> EpsFirmwareProfile | None:
   if eps_fw is None:
     return None
   params = params if params is not None else Params()
-  profile = select_eps_firmware_profile(str(CP.carFingerprint), eps_fw,
-                                        clarity_pminus5=_get_param_bool(params, "HondaEpsClarityPminus5", False))
+  profile = select_eps_firmware_profile(str(CP.carFingerprint), eps_fw)
   if profile is None:
     return None
   # The inversion assumes 0xE4 = -output * e4_per_output, i.e. the car's linear modified-EPS torque map
