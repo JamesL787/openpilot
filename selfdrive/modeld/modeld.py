@@ -14,6 +14,7 @@ from openpilot.system.hardware import HARDWARE, TICI
 os.environ['GMMU'] = '0'
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
 from tinygrad.device import Buffer, Device
+from tinygrad.engine.realize import lower_and_compile
 from tinygrad.dtype import DType, dtypes
 from tinygrad.helpers import round_up
 from tinygrad.tensor import Tensor
@@ -169,7 +170,11 @@ def _input_view(buffer: Buffer, shape: tuple[int, ...], dtype: DType, offset: in
   return Tensor(UOp.from_buffer(view)).reshape(shape)
 
 
-def _upstream_precompiled_warp_path(cam_w: int, cam_h: int, external_gpu: bool) -> Path:
+def _upstream_precompiled_warp_path(cam_w: int, cam_h: int, external_gpu: bool, model_id: str = "") -> Path:
+  if model_id.startswith("local-"):
+    local_warp = MODELS_PATH / f"{model_id}_warp_{cam_w}x{cam_h}_tinygrad.pkl"
+    if local_warp.is_file():
+      return local_warp
   prefix = UPSTREAM_PRECOMPILED_BIG_WARP_PREFIX if external_gpu else UPSTREAM_PRECOMPILED_SMALL_WARP_PREFIX
   return Path(__file__).parent / "models" / f"{prefix}{cam_w}x{cam_h}_tinygrad.pkl"
 
@@ -541,13 +546,13 @@ def _is_oob_artifact_header(header: bytes) -> bool:
   return 2 <= opcode_size <= MAX_OOB_OPCODE_SIZE and header[8] == 0x80 and header[9] <= pickle.HIGHEST_PROTOCOL
 
 
-def _load_model_artifact(path: Path):
+def _load_model_artifact(path: Path, device: str | None = None):
   """Load legacy pickle artifacts and the streaming OOB format used by large GPU models."""
   with open_file_chunked(path) as artifact_file:
     oob_artifact = _is_oob_artifact_header(artifact_file.peek(10)[:10])
 
-  with open_file_chunked(path) as artifact_file:
-    return load_oob(artifact_file) if oob_artifact else pickle.load(artifact_file)
+  with (path.open("rb") if path.is_file() else open_file_chunked(path)) as artifact_file:
+    return load_oob(artifact_file, device=device) if oob_artifact else pickle.load(artifact_file)
 
 
 def _is_upstream_precompiled_artifact(artifact: dict) -> bool:
@@ -773,7 +778,7 @@ class ModelState:
       state = self.input_queues[name]
       self.model_outputs[next_name] = _input_view(state._buffer(), state.shape, state.dtype, 0)
 
-    warp_path = _upstream_precompiled_warp_path(cam_w, cam_h, self.uses_external_gpu)
+    warp_path = _upstream_precompiled_warp_path(cam_w, cam_h, self.uses_external_gpu, getattr(self, "model_id", ""))
     if not warp_path.is_file():
       raise FileNotFoundError(
         f"Missing required precompiled Chestnut warp {warp_path.name}; build it offroad before selecting this model"
@@ -789,6 +794,10 @@ class ModelState:
       raise ValueError(f"Invalid precompiled Chestnut warp {warp_path}: {e}") from e
     self.run_warp = warp_artifact["run"]
     self.run_model = artifact["run"]
+    # Upstream artifacts omit binaries for retargetable host kernels.
+    for run in (self.run_warp, self.run_model):
+      if (captured := getattr(run, "captured", None)) is not None:
+        captured._linear = lower_and_compile(captured._linear)
     self.warped_input_shape = tuple(self.input_specs["new_img"][0])
 
     self.road_key, self.wide_key = "img", "big_img"
@@ -864,7 +873,8 @@ class ModelState:
 
     self.model_id = BUILTIN_MODEL_KEY if loaded_builtin else model_id
     self.uses_external_gpu = external_gpu_active and (requires_external_gpu or force_external_gpu) and not loaded_builtin
-    artifact = _normalize_model_artifact(_load_model_artifact(model_path))
+    artifact_device = get_tg_input_devices(PROCESS_NAME, usbgpu=self.uses_external_gpu)["QUEUE_DEV"]
+    artifact = _normalize_model_artifact(_load_model_artifact(model_path, device=artifact_device))
     _require_artifact_camera_resolution(artifact, cam_w, cam_h)
     _validate_fused_artifact_device(artifact, self.uses_external_gpu)
 
