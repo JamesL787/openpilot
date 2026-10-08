@@ -1,4 +1,5 @@
 import { html, reactive } from "/assets/vendor/arrow-core.js";
+import { JetlinkModels } from "./jetlink_models.js";
 
 const state = reactive({
   loading: true,
@@ -647,6 +648,8 @@ export function ModelManager() {
         <span class="mm-chip">${() => getUserFavoriteModels(false).length} personal favorites</span>
         ${() => state.status.isOnroad ? html`<span class="mm-chip mm-chip-warning">Onroad: actions disabled</span>` : ""}
       </div>
+
+      ${JetlinkModels()}
 
       <div class="mm-filters">
         <label class="mm-filter-label" for="mm-active-small-model-select">Active Small</label>

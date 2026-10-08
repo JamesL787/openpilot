@@ -1272,6 +1272,31 @@ STARPILOT_EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.PERMANENT: EngagementAlert(AudibleAlert.disengage),
   },
 
+  # Jetlink: the large model on an attached Jetson/Mac. Events come from starpilot/controls/lib/jetlink_events.py
+  StarPilotEventName.jetlinkAvailable: {
+    ET.PERMANENT: NormalPermanentAlert("Jetlink Ready", "Disengage to switch to the large model", duration=3.),
+  },
+
+  StarPilotEventName.jetlinkSwitching: {
+    ET.NO_ENTRY: NoEntryAlert("Switching Models"),
+  },
+
+  StarPilotEventName.jetlinkReady: {
+    ET.WARNING: Alert(
+      "Large Model Active (Jetlink)",
+      "",
+      AlertStatus.normal, AlertSize.small,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
+  StarPilotEventName.jetlinkLinkLost: {
+    ET.WARNING: Alert(
+      "Jetlink Lost",
+      "Small model is driving",
+      AlertStatus.userPrompt, AlertSize.mid,
+      Priority.MID, VisualAlert.none, AudibleAlert.warningSoft, 5.),
+  },
+
   StarPilotEventName.pedalNotCalibrated: {
     ET.PERMANENT: NormalPermanentAlert("Pedal Not Calibrated", "Check Calibration"),
     ET.NO_ENTRY: NoEntryAlert("Pedal Not Calibrated: Check Calibration"),

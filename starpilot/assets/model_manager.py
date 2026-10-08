@@ -25,6 +25,7 @@ from openpilot.starpilot.common.model_versions import (
 from openpilot.starpilot.common.model_lab import load_model_lab_config
 from openpilot.starpilot.common.starpilot_utilities import delete_file
 from openpilot.starpilot.common.starpilot_variables import MODELS_PATH
+from openpilot.starpilot import jetlink_adapter
 from openpilot.common.file_chunker import file_chunked_exists, get_existing_chunks, get_manifest_path
 from openpilot.system.hardware.usb import chestnut_firmware_ready
 
@@ -906,6 +907,10 @@ class ModelManager:
   def update_models(self, boot_run=False):
     if self.downloading_model:
       return
+
+    # Jetlink's big models come from its own catalog (comma commits, which this manifest does not name); the Galaxy model
+    # manager lists them from it. Only fetched for someone who turned the link on, and it never raises
+    jetlink_adapter.refresh_catalog()
 
     resource_urls = get_resource_urls()
     if not resource_urls:

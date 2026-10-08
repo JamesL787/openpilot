@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from collections.abc import Callable
+import atexit
 import ctypes
 from functools import cached_property
 import json
@@ -15,12 +16,13 @@ import time
 import pickle
 import numpy as np
 import cereal.messaging as messaging
-from cereal import car, log
+from cereal import car, custom, log
 from pathlib import Path
 from setproctitle import setproctitle
 from cereal.messaging import PubMaster, SubMaster
 from cereal.services import SERVICE_LIST
 from msgq.visionipc import VisionIpcClient, VisionStreamType, VisionBuf
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
 from openpilot.common.filter_simple import FirstOrderFilter
@@ -78,6 +80,8 @@ from openpilot.starpilot.common.model_lab import (
   model_lab_manifest_eligible,
 )
 from openpilot.starpilot.common.model_versions import is_tinygrad_model_version
+from openpilot.starpilot import jetlink_adapter
+from openpilot.starpilot.jetlink_adapter import runner as jetlink_runner
 from openpilot.starpilot.common.starpilot_variables import (
   get_longitudinal_actuator_delay,
   get_starpilot_toggles,
@@ -704,6 +708,15 @@ class ModelState:
       None,
       ModelConstants.TEMPORAL_SKIP,
     )
+    self._buffers_pinned = False
+
+  def pin_buffers(self) -> None:
+    """Jetlink's reset captured this model's queues and arrays by identity (jetlink_adapter.runner.LocalRunner). From here
+    on they must stay the same objects, so the one method that allocates new ones refuses to run."""
+    self._buffers_pinned = True
+
+  def unpin_buffers(self) -> None:
+    self._buffers_pinned = False
 
   @property
   def QUEUE_DEV(self) -> str:
@@ -752,6 +765,8 @@ class ModelState:
     return parsed
 
   def _reset_state(self) -> None:
+    if getattr(self, "_buffers_pinned", False):
+      raise RuntimeError("_reset_state would replace the queues Jetlink's in-place reset is bound to")
     if self.onnx_history:
       self.input_queues, self.npy = make_stateful_input_queues(self.metadata["model"], self.QUEUE_DEV)
     elif self.model_type == "supercombo":
@@ -1117,7 +1132,8 @@ def _runner_frame_args(model: ModelState, buf_main, buf_extra,
     model.desire_key: vec_desire,
     "traffic_convention": traffic_convention,
   }
-  if "action_t" in model.numpy_inputs or (model.off_policy_enabled and "action_t" in model.off_policy_numpy_inputs):
+  if (getattr(model, "requires_action_t", False) or "action_t" in model.numpy_inputs or
+      (model.off_policy_enabled and "action_t" in model.off_policy_numpy_inputs)):
     inputs["action_t"] = np.array([lat_action_t, long_action_t], dtype=np.float32)
   if "prev_action" in model.numpy_inputs or (model.off_policy_enabled and "prev_action" in model.off_policy_numpy_inputs):
     inputs["prev_action"] = np.array([
@@ -1129,12 +1145,60 @@ def _runner_frame_args(model: ModelState, buf_main, buf_extra,
   return bufs, transforms, inputs
 
 
+class _NonBlockingParams:
+  """Params whose put() does not wait for the disk. A backend switch happens on the frame loop, where a write that can
+  take a second is a dropped camera frame."""
+
+  def __init__(self, params: Params):
+    self._params = params
+
+  def put(self, key, value) -> None:
+    self._params.put_nonblocking(key, value)
+
+  def __getattr__(self, name):
+    return getattr(self._params, name)
+
+
+def _jetlink_publish_runtime(params: Params, runner, state) -> None:
+  """Carry a backend switch into the runtime model params the planner and the UI read.
+
+  The persisted *selection* (Model / DrivingModel) is never pointed at the external model: it is not a model-manager key,
+  and a restart mid-drive must come back to the user's local choice. Only the version and the display name follow the
+  backend; handing back restores everything from the local model, as the Chestnut fallback does."""
+  proxy = _NonBlockingParams(params)
+  if state.backend == jetlink_runner.JETLINK and runner.profile is not None:
+    profile = runner.profile
+    proxy.put("ModelVersion", profile.generation)
+    proxy.put("DrivingModelVersion", profile.generation)
+    proxy.put("DrivingModelName", f"{profile.name} (Jetlink)")
+  else:
+    local = runner.local_model
+    set_runtime_model_params(proxy, local.model_id, local.policy_generation)
+  cloudlog.event("jetlink_backend", backend=state.backend, accelerator=state.accelerator, handovers=state.handovers,
+                 model_generation=runner.policy_generation, reason=state.reason)
+
+
+def _fill_jetlink_status(msg, state) -> None:
+  msg.backend = state.backend
+  msg.accelerator = state.accelerator
+  msg.settling = bool(state.settling)
+  msg.handovers = int(state.handovers)
+  msg.heldFrames = int(state.held_frames)
+  msg.outputAgeMs = float(state.output_age_ms)
+  msg.remoteModel = state.remote_model
+  msg.reason = state.reason
+
+
 def main(demo=False):
   cloudlog.warning("modeld init")
 
   sentry.set_tag("daemon", PROCESS_NAME)
   cloudlog.bind(daemon=PROCESS_NAME)
   setproctitle(PROCESS_NAME)
+  # Jetlink's GPU bring-up starts threads, and a thread started after config_realtime_process() inherits SCHED_FIFO 54
+  # and the single-core pin and preempts the frame loop: decide and prepare before going realtime. False (the usual case)
+  # unless the link is on, no Chestnut is fitted and a warp was built for this camera
+  jetlink_prepared = jetlink_adapter.prepare()
   config_realtime_process(7, 54)
 
   params = Params()
@@ -1287,6 +1351,22 @@ def main(demo=False):
     config=model_lab_config,
     error=model_lab_error or "",
   )
+  jetlink_model = None
+  if jetlink_prepared:
+    if usbgpu_present_now or external_gpu_requested or model_lab_requested or external_gpu_active:
+      # Chestnut and Model Laboratory own the accelerator slot; remote inference never joins the AMD / shared-warp path
+      cloudlog.warning("jetlink: a Chestnut path is active, not attaching")
+    else:
+      # the warp pickle is a second tinygrad artifact unpickled beside the loaded model. Pickled buffer UOps carry ids from
+      # the process that built them, so two artifacts can hash-cons onto the same buffers (the Model Laboratory loads its
+      # second model the same way for this reason): evict the realized buffer UOps so the warp gets its own
+      evicted = _isolate_next_model_artifact_load()
+      cloudlog.info(f"jetlink isolated {evicted} realized buffer UOps before loading the warp")
+      jetlink_model = jetlink_runner.attach(jetlink_adapter.attach, model, vipc_client_main.width,
+                                            vipc_client_main.height, cloudlog)
+      if jetlink_model is not None:
+        atexit.register(jetlink_model.close)
+        model = jetlink_model
   cloudlog.warning(f"models loaded in {time.monotonic() - start_time:.1f}s, modeld starting")
 
   # messaging
@@ -1294,7 +1374,8 @@ def main(demo=False):
   if external_gpu_requested:
     publish_services.append("chestnutState")
   pm = PubMaster(publish_services)
-  sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay", "starpilotPlan"])
+  sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay", "starpilotPlan",
+                  "starpilotCarState"])
 
   publish_state = PublishState()
   chestnut_state = ChestnutState(pm, external_gpu_active) if external_gpu_requested else None
@@ -1326,6 +1407,10 @@ def main(demo=False):
   prev_action = log.ModelDataV2.Action()
 
   DH = DesireHelper()
+
+  # whether always-on lateral can ever steer on this car: StarPilotCarParams carries the flag, written by card shortly
+  # after CarParams. Unknown counts as possible, so Jetlink waits rather than swapping under a lateral it can't see
+  aol_possible: bool | None = None
 
   starpilot_toggles = get_starpilot_toggles(sm)
   long_delay = get_longitudinal_actuator_delay(CP, starpilot_toggles) + long_smooth_seconds
@@ -1453,6 +1538,15 @@ def main(demo=False):
                                                        log.LaneChangeState.laneChangeFinishing)
     blinker_on = bool(sm["carState"].leftBlinker or sm["carState"].rightBlinker) or lane_change_in_progress
 
+    handovers_before = model.handovers if jetlink_model is not None else 0
+    if jetlink_model is not None:
+      if aol_possible is None and run_count % ModelConstants.MODEL_FREQ == 0:
+        aol_bytes = params.get("StarPilotCarParams")
+        if aol_bytes:
+          aol_possible = bool(messaging.log_from_bytes(aol_bytes, custom.StarPilotCarParams).alternativeExperience &
+                              ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL)
+      model.set_control(jetlink_adapter.in_control(sm, aol_possible is not False), frame_drop_ratio, blinker_on)
+
     mt1 = time.perf_counter()
     try:
       send_chestnut = (
@@ -1549,6 +1643,23 @@ def main(demo=False):
 
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
+
+    jetlink_state = None
+    if jetlink_model is not None:
+      jetlink_state = model.snapshot()
+      if model.handovers != handovers_before:
+        # The stall of a switch is not lag. The frames the camera dropped while it lasted reach the filter on the next few
+        # frames, and the large model hands back past a dropped-frame ratio just short of selfdrived's modeldLagging, so a
+        # swap whose own stall counted against it would hand itself back at once. Run the drop filter's warm-up again
+        # (run_count < 10 holds it at zero), as the Chestnut fallback does
+        run_count = 0
+        frame_dropped_filter.x = 0.
+        frame_drop_ratio = 0.
+      if jetlink_state.backend_changed:
+        # the rolling averages published with the model (disengage / hard-brake predictions) were accumulated from the
+        # other backend's head: they restart from zero, as at a modeld start. And the runtime model params follow
+        publish_state = PublishState()
+        _jetlink_publish_runtime(params, model, jetlink_state)
     if model_lab_active and model_lab_longitudinal is not None:
       model_lab_timings.append(model_execution_time * 1000)
       if run_count % (ModelConstants.MODEL_FREQ * 10) == 0:
@@ -1607,6 +1718,8 @@ def main(demo=False):
       modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
       modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
       starpilot_modelv2_send.starpilotModelV2.turnDirection = DH.turn_direction
+      if jetlink_state is not None:
+        _fill_jetlink_status(starpilot_modelv2_send.starpilotModelV2, jetlink_state)
       drivingdata_send.drivingModelData.meta.laneChangeState = DH.lane_change_state
       drivingdata_send.drivingModelData.meta.laneChangeDirection = DH.lane_change_direction
 

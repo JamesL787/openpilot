@@ -75,6 +75,7 @@ def test_driving_controls_contains_nested_navigation_folder_and_leaf_routes():
     "Navigation & Maps",
     "Gas / Brake",
     "Steering",
+    "Jetlink",
   ]
 
   navigation_maps = controls["children"][0]
@@ -86,6 +87,7 @@ def test_driving_controls_contains_nested_navigation_folder_and_leaf_routes():
 
   assert controls["children"][1]["panel"] == "LONGITUDINAL"
   assert controls["children"][2]["panel"] == "LATERAL"
+  assert controls["children"][3]["panel"] == "JETLINK"
 
 
 def test_driving_model_is_a_root_leaf_and_existing_panel_routes_are_preserved():

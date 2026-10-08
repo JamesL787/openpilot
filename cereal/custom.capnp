@@ -109,10 +109,47 @@ struct StarPilotDeviceState @0xda96579883444c35 {
 struct StarPilotModelDataV2 @0x80ae746ee2596b11 {
   turnDirection @0 :TurnDirection;
 
+  # Which runner produced this frame's model output, and the state of the optional
+  # external accelerator (Jetlink). Appended after turnDirection with defaults that
+  # read as "local, no accelerator" so logs written before these existed still decode.
+  backend @1 :Backend;
+  accelerator @2 :AcceleratorState;
+  # within the no-entry window around a backend switch, either way
+  settling @3 :Bool;
+  # backend switches since modeld started (promotions and demotions)
+  handovers @4 :UInt32;
+  # the output published this frame is a previous frame's, repeated because the
+  # accelerator's reply was late, and for how many frames in a row
+  heldFrames @5 :UInt32;
+  # age in milliseconds of the model output relative to the camera frame it is
+  # published against: 0 for a fresh inference, 50 ms per consecutive held frame
+  outputAgeMs @6 :Float32;
+  # the external model that is running or is ready to run; empty when none
+  remoteModel @7 :Text;
+  # why the external model is not driving, in a few words: the last handback, or the last join that was refused or failed;
+  # empty while it drives or has nothing to report
+  reason @8 :Text;
+
   enum TurnDirection {
     none @0;
     turnLeft @1;
     turnRight @2;
+  }
+
+  enum Backend {
+    local @0;
+    chestnut @1;
+    jetlink @2;
+  }
+
+  # Jetlink's join state: none is "no accelerator wanted or possible"
+  enum AcceleratorState {
+    none @0;
+    joining @1;
+    retrying @2;
+    ready @3;
+    running @4;
+    unavailable @5;
   }
 }
 
@@ -178,6 +215,10 @@ struct StarPilotOnroadEvent @0xe344718567f9ce71 {
     teslaCCDisengaged @38;
     teslaCCNotArmed @39;
     pedalNotCalibrated @40;
+    jetlinkAvailable @41;
+    jetlinkSwitching @42;
+    jetlinkReady @43;
+    jetlinkLinkLost @44;
   }
 }
 

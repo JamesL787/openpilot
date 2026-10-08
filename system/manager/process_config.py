@@ -9,7 +9,8 @@ from cereal import car
 from openpilot.common.params import Params
 from opendbc.car.gps import car_gps_available
 from openpilot.system.hardware import HARDWARE, PC, TICI
-from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
+from openpilot.starpilot import jetlink_adapter
+from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess, OptionalPythonProcess
 
 WEBCAM = os.getenv("USE_WEBCAM") is not None
 UI_WATCHDOG_MAX_DT = int(os.getenv("UI_WATCHDOG_MAX_DT", "10"))
@@ -213,6 +214,10 @@ procs += [
   PythonProcess("wheel_controlsd", "starpilot.system.wheel_controls.wheel_controlsd", wheel_controls_enabled, enabled=TICI, nice=19),
   PythonProcess("the_galaxy", "starpilot.system.the_galaxy.the_galaxy", always_run, nice=10),
   PythonProcess("galaxy", "starpilot.system.galaxy.galaxy", always_run, nice=10),
+  # Jetlink's USB gadget owner. always_run: it holds the gadget open for as long as the link is enabled, onroad included
+  # (a gadget whose owner exits leaves the bus, which is the unplug at every ignition edge). Never started beside a
+  # Chestnut (jetlink_adapter.should_run), and optional: its death costs the link, not the drive
+  OptionalPythonProcess(jetlink_adapter.OWNER, "starpilot.jetlink_adapter", and_(always_run, jetlink_adapter.should_run)),
 ]
 
 device_type = HARDWARE.get_device_type()

@@ -1,6 +1,7 @@
 import { api, showSnackbar } from "../api.js"
 import { usePolling } from "../composables.js"
 import { GalaxyConfirm } from "../components/GalaxyModal.js"
+import { JetlinkModelsCard } from "../components/JetlinkModelsCard.js"
 
 function text(value, fallback = "") {
   return value === null || value === undefined ? fallback : String(value)
@@ -13,6 +14,7 @@ function releasedTs(value) {
 
 export const ModelManager = {
   name: "ModelManager",
+  components: { JetlinkModelsCard },
   data() {
     return {
       loading: true,
@@ -282,6 +284,8 @@ export const ModelManager = {
             </div>
           </div>
         </section>
+
+        <JetlinkModelsCard :is-onroad="status.isOnroad" />
 
         <template v-if="!sorted.length">
           <div class="gx-card"><div class="gx-empty">No models available.</div></div>

@@ -656,6 +656,52 @@ class PythonProcess(ManagerProcess):
     self.shutting_down = False
 
 
+class OptionalPythonProcess(PythonProcess):
+  """A PythonProcess for an optional feature's daemon: one whose death costs the feature and never the drive, and whose
+  restart must not become a fork storm.
+
+  ensure_running() reaps a crashed process and starts it again on the next loop, with no pause. That is right for the
+  daemons the car needs, and wrong for one that can die at once, for a reason a restart does not change (an import error,
+  a second owner stepping aside for a live one). So a process that dies within QUICK_DEATH of its start is not started
+  again until a wait that doubles from BACKOFF to BACKOFF_MAX has passed; one that ran longer is started again at once.
+
+  Nothing else changes: it is stopped when should_run() is false and restarted on a watchdog like any PythonProcess. While
+  it is down managerState reports it as not running and not expected, so selfdrived additionally lists it as optional
+  (selfdrived.OPTIONAL_PROCESSES) for the instant between its death and the reap."""
+  QUICK_DEATH = 10.0
+  BACKOFF = 10.0
+  BACKOFF_MAX = 300.0
+
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.started_at = 0.0
+    self.backoff = 0.0
+    self.next_start = 0.0
+
+  def now(self) -> float:
+    return time.monotonic()
+
+  def stop(self, retry: bool = True, block: bool = True, sig: signal.Signals = None) -> int | None:
+    # a process that exited by itself, as opposed to one we are stopping
+    if self.proc is not None and self.proc.exitcode is not None and not self.shutting_down:
+      now = self.now()
+      if now - self.started_at < self.QUICK_DEATH:
+        self.backoff = min(self.BACKOFF_MAX, 2 * self.backoff or self.BACKOFF)
+        self.next_start = now + self.backoff
+        cloudlog.warning(f"{self.name} died {now - self.started_at:.1f} s after it started, starting it again in {self.backoff:.0f} s")
+      else:
+        self.backoff = 0.0
+    return super().stop(retry=retry, block=block, sig=sig)
+
+  def start(self) -> None:
+    before = self.proc
+    if before is None and self.now() < self.next_start:
+      return
+    super().start()
+    if self.proc is not None and self.proc is not before:
+      self.started_at = self.now()
+
+
 class DaemonProcess(ManagerProcess):
   """Python process that has to stay running across manager restart.
   This is used for athena so you don't lose SSH access when restarting manager."""

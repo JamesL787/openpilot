@@ -1,0 +1,13 @@
+{
+ "tinygrad_commit": "f6fc4e3f2c3db5fae1e19cbfbc3ad9fc579a12ae",
+ "jetlink_version": "0.8.5",
+ "camera": [
+  1928,
+  1208
+ ],
+ "model": [
+  512,
+  256
+ ],
+ "api": 2
+}

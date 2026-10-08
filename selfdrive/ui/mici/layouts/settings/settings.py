@@ -9,6 +9,7 @@ from openpilot.selfdrive.ui.mici.layouts.settings.device import DeviceLayoutMici
 from openpilot.selfdrive.ui.mici.layouts.settings.developer import DeveloperLayoutMici
 from openpilot.selfdrive.ui.mici.layouts.settings.software import SoftwareLayoutMici
 from openpilot.selfdrive.ui.mici.layouts.settings.driving_model import DrivingModelBigButton
+from openpilot.selfdrive.ui.mici.layouts.settings import jetlink as jetlink_settings
 from openpilot.selfdrive.ui.mici.layouts.settings.galaxy import GalaxyBigButton
 from openpilot.selfdrive.ui.mici.layouts.settings.visuals import VisualsLayoutMici
 from openpilot.system.ui.lib.application import gui_app, FontWeight
@@ -95,6 +96,7 @@ class SettingsLayout(NavScroller):
     self._force_drive_state_btn = ForceDriveStateBigButton()
     self._driving_model_btn = DrivingModelBigButton()
     galaxy_btn = GalaxyBigButton()
+    self._jetlink_btn = jetlink_settings.JetlinkBigToggle() if jetlink_settings.available() else None
 
     self._scroller.add_widgets([
       toggles_btn,
@@ -105,6 +107,7 @@ class SettingsLayout(NavScroller):
       device_btn,
       software_btn,
       self._driving_model_btn,
+      *([self._jetlink_btn] if self._jetlink_btn is not None else []),
       visuals_btn,
       galaxy_btn,
       PairBigButton(),
@@ -118,3 +121,5 @@ class SettingsLayout(NavScroller):
     super().show_event()
     self._force_drive_state_btn.refresh()
     self._driving_model_btn.refresh()
+    if self._jetlink_btn is not None:
+      self._jetlink_btn.refresh()

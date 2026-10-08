@@ -39,6 +39,7 @@ from openpilot.system.hardware.chestnut.status import ChestnutStatus
 from openpilot.system.version import terms_version, training_version
 from openpilot.system.athena.registration import UNREGISTERED_DONGLE_ID
 
+from openpilot.starpilot import jetlink_adapter
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 
 ThermalStatus = log.DeviceState.ThermalStatus
@@ -446,6 +447,11 @@ def hardware_thread(end_event, hw_queue) -> None:
         set_offroad_alert_if_changed,
       )
 
+    # a Jetlink the user turned on that cannot run is otherwise silently absent: the small model drives and nothing says
+    # why. Files only, so asking twice a second is cheap; None with the link off or beside a Chestnut
+    jetlink_error = jetlink_adapter.reason()
+    set_offroad_alert_if_changed("Offroad_JetlinkUnavailable", jetlink_error is not None, extra_text=jetlink_error)
+
     # this subset is only used for offroad
     temp_sources = [
       msg.deviceState.memoryTempC,
@@ -484,6 +490,8 @@ def hardware_thread(end_event, hw_queue) -> None:
     startup_conditions["up_to_date"] = True
     startup_conditions["no_excessive_actuation"] = params.get("Offroad_ExcessiveActuation") is None
     startup_conditions["not_uninstalling"] = not params.get_bool("DoUninstall")
+    # manager is waiting for an attached accelerator to power off with the comma (jetlink_adapter): no drive may start under it
+    startup_conditions["not_powering_off"] = not params.get_bool("JetlinkPoweringOff")
     startup_conditions["accepted_terms"] = params.get("HasAcceptedTerms") == terms_version
 
     # with 2% left, we killall, otherwise the phone will take a long time to boot

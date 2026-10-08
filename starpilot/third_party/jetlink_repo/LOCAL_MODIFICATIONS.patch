@@ -1,0 +1,58 @@
+--- a/jetlink/openpilot/joining.py	2026-10-07 18:32:53
++++ b/jetlink/openpilot/joining.py	2026-10-07 18:32:53
+@@ -168,6 +168,10 @@
+     self._handovers = 0
+     # set on a frame the large model fell behind on; the next frame demotes
+     self._lagging = False
++    # fork additions (VENDORED.md), read by the fork's runner for its status line: why the last demotion happened, and
++    # the last build that failed
++    self.last_demotion = ''
++    self.last_failure = ''
+     # modeld's share of dropped camera frames, for the frame about to run
+     self._frame_drop_ratio = 0.0
+     # frames the small model has run since start
+@@ -357,6 +361,14 @@
+       self._handovers += 1
+       self._log.warning("jetlink: large model %s, the small model drives from the next", big.behind)
+     return result
++
++  def demote_invalid(self) -> None:
++    """Fork addition (VENDORED.md): the caller found the large model's output unusable (non-finite, implausible), which
++    the server's own check did not catch. Hand back to the small model exactly as a lost link does: from a reset history,
++    backed off, with the link said goodbye to. Frame thread only, like every demote. A no-op on the small model."""
++    if self._active is not self._small:
++      self._lagging = False
++      self._demote(LOST)
+ 
+   def _maybe_swap(self) -> None:
+     """Build the large model state from a join that has landed and swap it in,
+@@ -378,8 +390,9 @@
+       big = self._build(client, spec)
+       big.lat_delay = self._small.lat_delay
+       self._log.warning("jetlink: built the large model state in %.0f ms", (time.monotonic() - t0) * 1000)
+-    except Exception:
++    except Exception as e:
+       self._log.exception("jetlink: could not bring up the large model, staying small")
++      self.last_failure = f"{type(e).__name__}: {e}"
+       with self._lock:
+         self._retired = (client, NOT_UP)
+       self._back_off()
+@@ -395,6 +408,7 @@
+     the link, moments later. Counted as a lost link or a hand-back for lag,
+     and backed off."""
+     big, self._big = self._big, None
++    self.last_demotion = why
+     if why == BEHIND:
+       self._lags += 1
+     else:
+@@ -661,6 +675,10 @@
+     ready.update(warp=warp, geometry=geometry)
+ 
+   def build(client, spec):
++    # fork hook (VENDORED.md): the adapter may refuse a model it has not validated, which keeps the small model driving
++    validate = getattr(op, 'validate_spec', None)
++    if validate is not None:
++      validate(spec)
+     img_h, img_w = spec.model_hw
+     warp = ready.get('warp') if ready.get('geometry') == (img_w * 2, img_h * 2) else None
+     if warp is None:

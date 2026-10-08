@@ -120,6 +120,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"Offroad_ChestnutUncompiled", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
     {"Offroad_ChestnutUpdateFailed", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
     {"Offroad_ChestnutUsbSlow", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
+    {"Offroad_JetlinkUnavailable", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ConnectivityNeeded", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ConnectivityNeededPrompt", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ExcessiveActuation", {PERSISTENT, JSON}},
@@ -177,6 +178,28 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"UsbGpuCompiled", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
     {"UsbGpuLoading", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
     {"UsbGpuPresent", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
+
+    // Jetlink: the large model on an attached Jetson/Mac over USB (starpilot/jetlink_adapter).
+    // These are deliberately separate from the native-GPU UsbGpu* keys above, which describe
+    // Chestnut hardware only. JetlinkLink is an index into starpilot.jetlink_adapter.MODES
+    // (0 off, 1 usb, 2 ios) and is the only user setting; the rest is link state.
+    {"JetlinkLink", {PERSISTENT, INT, "0", "0"}},
+    // the built model's spec and whether its engine is built; must survive a reboot or every
+    // ignition cycle would rebuild a multi-minute engine
+    {"JetlinkSpec", {PERSISTENT, JSON}},
+    // catalog ref -> {oid, size} of the model ONNX, resolved once and kept
+    {"JetlinkModelPointers", {PERSISTENT, JSON}},
+    // an iPhone on a direct cable is asked to charge from the comma (iOS mode only)
+    {"JetlinkChargePhone", {PERSISTENT, BOOL, "0", "0"}},
+    // {stage, frac, msg, drops}: provisioning and join progress
+    {"JetlinkProgress", {CLEAR_ON_MANAGER_START, JSON}},
+    // the big model Jetlink runs, {ref, displayName}: Jetlink's own pick (not ActiveBigModel, which is a Chestnut model key).
+    // Unset runs Jetlink's pinned default. Only models in starpilot/jetlink_adapter/profiles.py may be picked.
+    {"JetlinkBigModel", {PERSISTENT, JSON}},
+    // the catalog the pick is made from: Jetlink's merge of sunnypilot's big-model catalogs, refreshed with the model manager
+    {"JetlinkCatalog", {PERSISTENT, JSON}},
+    // manager is waiting (<= 25 s) for the host to take its power-off request: hardwared starts no drive meanwhile
+    {"JetlinkPoweringOff", {CLEAR_ON_MANAGER_START, BOOL}},
     {"Version", {PERSISTENT, STRING}},
 
     // StarPilot variables

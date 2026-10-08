@@ -11,6 +11,7 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType
 
 
 from opendbc.car.chrysler.values import pacifica_hybrid_aol_stock_acc_mode
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from opendbc.car.gm.values import GMFlags
 from opendbc.car.honda.values import HondaFlags
 from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR
@@ -37,6 +38,7 @@ from openpilot.starpilot.common.starpilot_utilities import contains_event_type
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles
 from openpilot.starpilot.common.lateral_only_experimental import experimental_mode_available
 from openpilot.starpilot.common.vision_bsm import get_fresh_vasm_state
+from openpilot.starpilot.controls.lib.jetlink_events import JetlinkEvents, OPTIONAL_PROCESSES
 from openpilot.starpilot.system.wheel_controls import (
   CONTROLLER_ACTION_COUNTERS,
   CONTROLLER_ACTION_DISENGAGE,
@@ -215,6 +217,9 @@ class SelfdriveD:
     if REPLAY:
       # no vipc in replay will make them ignored anyways
       ignore += ['roadCameraState', 'wideRoadCameraState']
+    # starpilotModelV2 is read for Jetlink's status only and is published with modelV2: its staleness is handled where it is
+    # read (JetlinkEvents), not as a communication issue
+    ignore += ['starpilotModelV2']
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'liveCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'livePose', 'liveDelay',
                                    'managerState', 'liveParameters', 'radarState', 'liveTorqueParameters',
@@ -293,13 +298,15 @@ class SelfdriveD:
     elif self.CP.passive:
       self.events.add(EventName.dashcamMode, static=True)
 
-    self.sm = self.sm.extend(['starpilotCarState', 'starpilotPlan'])
+    self.sm = self.sm.extend(['starpilotCarState', 'starpilotPlan', 'starpilotModelV2'])
     self.pm = self.pm.extend(['starpilotOnroadEvents', 'starpilotSelfdriveState'])
 
     self.starpilot_toggles = get_starpilot_toggles()
 
     self.starpilot_AM = AlertManager()
     self.starpilot_events = Events(starpilot=True)
+    self.jetlink_events = JetlinkEvents()
+    self.jetlink_pose_suppressed = False
 
     self.cancel_pressed_previously = False
     self.distance_pressed_previously = False
@@ -367,6 +374,18 @@ class SelfdriveD:
     self._controller_openpilot_counters[action] = counter
     return counter > previous
 
+  def add_pose_event(self, event_name) -> None:
+    """posenetInvalid / locationdTemporaryError, except within the second of a Jetlink backend switch. The switch costs
+    modeld a frame or two, a dropped camera frame is an invalid pose from the model, and the next tick would soft-disable a
+    car whose driver is steering (a handback while engaged is allowed). Only these two events and only that second: after
+    it, or for any other event, a real fault still shows. The suppression is logged, once per window, so it is visible."""
+    if self.jetlink_events.settling:
+      if not self.jetlink_pose_suppressed:
+        cloudlog.event("jetlink_settling_suppressed", event=str(event_name))
+        self.jetlink_pose_suppressed = True
+      return
+    self.events.add(event_name)
+
   def update_events(self, CS):
     """Compute onroadEvents from carState"""
 
@@ -413,6 +432,14 @@ class SelfdriveD:
       self.big_model_active = True
     if not self.enabled and not model_unavailable:
       self.big_model_active = False
+
+    # Jetlink: the same notion of "in control" modeld swaps by, so the offer and the handback warning follow its gate
+    fpcs = self.sm['starpilotCarState']
+    aol_possible = bool(self.FPCP.alternativeExperience & ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL)
+    self.jetlink_events.update(self.sm, self.enabled or fpcs.alwaysOnLateralEnabled or (aol_possible and fpcs.alwaysOnLateralAllowed),
+                               self.starpilot_events)
+    if not self.jetlink_events.settling:
+      self.jetlink_pose_suppressed = False
 
     if self.sm.recv_frame['lateralManeuverPlan'] > 0:
       self.starpilot_events.add(StarPilotEventName.lateralManeuver)
@@ -666,7 +693,9 @@ class SelfdriveD:
     if self.big_model_active and big_failed:
       self.events.add(EventName.bigModelFailed)
 
-    not_running = {p.name for p in self.sm['managerState'].processes if not p.running and p.shouldBeRunning}
+    # an optional daemon (jetlinkd) dying costs its feature, never the drive: the local model keeps publishing
+    not_running = {p.name for p in self.sm['managerState'].processes
+                   if not p.running and p.shouldBeRunning and p.name not in OPTIONAL_PROCESSES}
     if self.sm.recv_frame['managerState'] and len(not_running):
       if not_running != self.not_running_prev:
         cloudlog.event("process_not_running", not_running=not_running, error=True)
@@ -727,9 +756,9 @@ class SelfdriveD:
 
     if not self.CP.notCar and not big_model_settling:
       if not self.sm['livePose'].posenetOK:
-        self.events.add(EventName.posenetInvalid)
+        self.add_pose_event(EventName.posenetInvalid)
       if not self.sm['livePose'].inputsOK:
-        self.events.add(EventName.locationdTemporaryError)
+        self.add_pose_event(EventName.locationdTemporaryError)
       if not self.sm['liveParameters'].valid and cal_status == log.LiveCalibrationData.Status.calibrated and not TESTING_CLOSET and (not SIMULATION or REPLAY):
         self.events.add(EventName.paramsdTemporaryError)
 

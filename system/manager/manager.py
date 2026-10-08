@@ -30,6 +30,7 @@ from openpilot.common.params import Params, ParamKeyFlag, ParamKeyType
 from openpilot.common.text_window import TextWindow
 from openpilot.system.hardware import HARDWARE
 from openpilot.system.manager.helpers import unblock_stdout, write_onroad_params, save_bootlog
+from openpilot.system.manager.accelerator_shutdown import AcceleratorShutdown
 from openpilot.system.manager.process import ensure_running
 from openpilot.system.manager.process_config import managed_processes
 from openpilot.system.athena.registration import register, UNREGISTERED_DONGLE_ID
@@ -1288,6 +1289,7 @@ def manager_thread() -> None:
   started_prev = False
   ignition_prev = False
   warned_onroad_reboot = False
+  accelerator_shutdown = AcceleratorShutdown()
   offroad_nav_destination = None
   offroad_nav_started_at = None
 
@@ -1358,6 +1360,7 @@ def manager_thread() -> None:
 
     # Exit main loop when uninstall/shutdown/reboot is needed
     shutdown = False
+    shutdown_param = None
     for param in ("DoUninstall", "DoShutdown", "DoReboot", "DoUserReboot"):
       if should_defer_reboot(param, started, ignition):
         if params.get_bool(param):
@@ -1367,11 +1370,15 @@ def manager_thread() -> None:
         continue
       if params.get_bool(param):
         shutdown = True
+        # a power-off beside an uninstall or reboot request is that request: main() acts on them in that order
+        shutdown_param = param if shutdown_param in (None, "DoShutdown") else shutdown_param
         warned_onroad_reboot = False
         params.put("LastManagerExitReason", f"{param} {datetime.datetime.now()}")
         cloudlog.warning(f"Shutting down manager - {param} set")
 
-    if shutdown:
+    # A power-off first asks an attached accelerator to go down too, and keeps this loop (and jetlinkd) running, for at
+    # most AcceleratorShutdown.TIMEOUT, while the request is taken. Reboots and uninstalls leave it alone
+    if shutdown and (shutdown_param != "DoShutdown" or accelerator_shutdown.ready(f"{shutdown_param} set")):
       break
 
     # StarPilot variables

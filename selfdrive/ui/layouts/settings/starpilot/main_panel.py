@@ -16,6 +16,7 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.navigation import StarPil
 from openpilot.selfdrive.ui.layouts.settings.starpilot.system_settings import StarPilotSystemLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.appearance import StarPilotAppearanceLayout
 from openpilot.selfdrive.ui.layouts.settings.starpilot.vehicle import StarPilotVehicleSettingsLayout
+from openpilot.selfdrive.ui.layouts.settings.starpilot.jetlink import build_jetlink_panel
 
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import TileGrid, HubTile, SPACING, BreadcrumbController, AETHER_LIST_METRICS, AetherListColors, draw_hud_background
 
@@ -45,6 +46,7 @@ class StarPilotLayout(Widget):
         },
         {"title": "Gas / Brake", "panel": "LONGITUDINAL", "icon": "road"},
         {"title": "Steering", "panel": "LATERAL", "icon": "steering"},
+        {"title": "Jetlink", "panel": "JETLINK", "icon": "aicar", "desc": "Large model on a Jetson or Mac"},
       ],
     },
     {
@@ -74,6 +76,7 @@ class StarPilotLayout(Widget):
     "NAVIGATION": StarPilotPanelType.NAVIGATION,
     "VISUALS": StarPilotPanelType.VISUALS,
     "VEHICLE": StarPilotPanelType.VEHICLE,
+    "JETLINK": StarPilotPanelType.JETLINK,
   }
 
   def __init__(self):
@@ -105,6 +108,7 @@ class StarPilotLayout(Widget):
       StarPilotPanelType.NAVIGATION: StarPilotPanelInfo(tr_noop("Navigation"), StarPilotNavigationLayout()),
       StarPilotPanelType.VISUALS: StarPilotPanelInfo(tr_noop("Appearance"), StarPilotAppearanceLayout()),
       StarPilotPanelType.VEHICLE: StarPilotPanelInfo(tr_noop("Vehicle Settings"), StarPilotVehicleSettingsLayout()),
+      StarPilotPanelType.JETLINK: StarPilotPanelInfo(tr_noop("Jetlink"), build_jetlink_panel()),
     }
 
     self._setup_sub_panels(
