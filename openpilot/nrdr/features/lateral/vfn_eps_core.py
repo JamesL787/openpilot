@@ -196,6 +196,8 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
   envelope_bp=[0, 50, 100, 150, 200, 240, 300, 321, 400],
   envelope_v=[1774, 1774, 1774, 1774, 1774, 1552, 1219, 1108, 1108],
   r6_per_deg_s=-173.0,
+  # P row axis read from the C020 image itself; the Clarity's differs by 1-2 counts, which this port had borrowed.
+  kp_key_bp=[0, 223, 441, 665, 883, 1108, 1330, 1552, 1774],
 )
 CLARITY_EPS_LOAD = (LOAD_K0, LOAD_K1, LOAD_C, LOAD_FRICTION, LOAD_BIAS, LOAD_KROLL)
 # Source fit on Civic C020 firmware-controller route 294 (not its separate PID shadow fit).

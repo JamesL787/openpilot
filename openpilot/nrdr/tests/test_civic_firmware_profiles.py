@@ -81,10 +81,11 @@ def test_c020_tables_load_trims_and_clarity_angle_feedback_are_separate():
   assert core.CIVIC_I_SCALE == (.75, .95, 1.)
   assert core.firmware_r6(10., 0., cal) == core.firmware_r6(10., 200., cal) == -1730.
   assert core.firmware_r6(10., 200.) != core.firmware_r6(10., 0.)
-  # The nonlinear P pieces reproduce the source's interpolation over key.
+  # The nonlinear P pieces reproduce the interpolation over key on the C020's own P axis.
+  assert cal.kp_key_bp == (0, 223, 441, 665, 883, 1108, 1330, 1552, 1774) and cal.kp_v == tuple(core.KP_V)
   for target in np.linspace(0., 35000., 350):
     key = np.interp(target, cal.r5_v, cal.r5_key_bp)
-    assert core.firmware_kp(target, cal) == pytest.approx(np.interp(key, core.KP_KEY_BP, core.KP_V))
+    assert core.firmware_kp(target, cal) == pytest.approx(np.interp(key, cal.kp_key_bp, cal.kp_v))
 
 
 @pytest.mark.parametrize("speed", [1., 3., 5., 12., 20., 30., 40.])
