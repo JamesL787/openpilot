@@ -3,7 +3,8 @@
 Civic C020 calibration/load/P-I trims adapted from JamesL787/openpilot
 59eb99e3183eb68963394daee8e52e51eb034f38. Clarity retains the newer angle-dependent
 R6 conversion below; the Civic source's older constant Clarity R6 is NOT ported.
-TEG-A010 may use the C020 calibration only as an explicitly provisional fallback.
+The other images' calibrations (Civic TEG-A010 / C120 / TGG-A120, Insight TXM-A040, CR-V TLA-A040) are ported from
+JamesL787/openpilot eps-fw-multicar 7e0e0319e9; each states what it measured and what it carries over.
 
 The Clarity's LKAS path is not a torque command. The firmware turns our 0xE4 value into a target R5,
 compares it with R6 -- a filtered steering RATE, taken before its angle table (see R6_PER_CENTRE_DEG_S) --
@@ -32,6 +33,7 @@ Firmware constants are for ONE build: Clarity_Pminus5_P117to265_D737_KFF45_NoR6L
 identify the build, so re-check these after any reflash.
 """
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -202,6 +204,117 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
 CLARITY_EPS_LOAD = (LOAD_K0, LOAD_K1, LOAD_C, LOAD_FRICTION, LOAD_BIAS, LOAD_KROLL)
 # Source fit on Civic C020 firmware-controller route 294 (not its separate PID shadow fit).
 CIVIC_EPS_LOAD = (-5.574, -0.1831, -4.540, -326.5, -83.6, -3.185)
+# Nidec Civic column (TEG-A010 owner's 08-12 telemetry drive, route 00000001: 18 min of city driving up to 15 m/s,
+# hands off), fitted from the same P + KFF rebuild as the C020's. It needs ~1.6x the C020's output for the same
+# motion even at |driver torque| < 60, so it is the column and not resting hands. Held out a minute at a time
+# R^2 0.74 against 0.61 for CIVIC_EPS_LOAD and 0.68 for the Clarity's. k1 is fitted below 15 m/s only; the
+# highway is an extrapolation. Bias and roll could not be told apart on this drive, so they stay the C020's.
+TEG_EPS_LOAD = (-9.205, -0.3252, -9.039, -550.7, -83.6, -3.185)
+# CR-V 5G column (TLA-A040), fitted on the owner's route 00000006--82bb552a2c (native V5 telemetry, 40,193 hands-off
+# active groups) in this model's units: m/s, angle with the liveParameters offset removed, liveParameters roll.
+# R^2 0.843, alternating 60 s holdouts 0.857 / 0.820. Close to the Clarity's in every term but the speed term
+# (-0.143 vs -0.219).
+CRV_EPS_LOAD = (-7.29446, -0.143159, -4.60337, -297.83, -19.899, -3.58048)
+
+# --- other images --------------------------------------------------------------------------------------------
+# Tables below were read from the image each car's owners run; what a calibration measured and what it only carries
+# over from a cousin is stated on it. Carried-over values (R6, load) are not a claim that the car behaves alike.
+# Every one of these cars is "provisional" in controller_selection: none has steered with this controller on the road.
+FLAT_ENVELOPE_BP = [0, 50, 100, 150, 200, 250, 300, 350, 400]
+FLAT_ENVELOPE_V = [1774] * 9
+# TargetMap-D command map values shared by the Civic and CR-V images (the key axis is per image).
+TARGET_MAP_D_R5 = [0, 1926, 4938, 8455, 12036, 15926, 20138, 26955, 30000]
+C020_P_KEYS = (0, 223, 441, 665, 883, 1108, 1330, 1552, 1774)
+C120_P_KEYS = (3, 173, 441, 665, 887, 1104, 1317, 1610, 1774)
+# Nidec Civic TEG-A010, 08-26 Tracker1-3200 (bin sha256 60f42ecc). Carries the C020's command axes, P axis and
+# envelope byte for byte, so it takes the C020's row 1; E4 = -3840 * u (the HONDA_CIVIC torque map, not the C020's
+# 4096). R6 -161 and the load are the owner's, measured on the 08-12 telemetry build (E4 -> R5 -> P + KFF law exact
+# there). The live row is VARIANT-DEPENDENT and the car's variant cannot be read from openpilot: rows 0 and 1 agree
+# within 8%, but TEGA1 selects row 2 (R5 1.28-1.30x row 1 at mid command) and TEGA2 row 3 (0.48-0.70x at low command).
+CIVIC_TEG_A010 = EpsFirmwareCalibration(
+  e4_per_output=3840.0,
+  r5_key_bp=CIVIC_BOSCH_C020.r5_key_bp,
+  r5_v=CIVIC_BOSCH_C020.r5_v,
+  envelope_bp=CIVIC_BOSCH_C020.envelope_bp,
+  envelope_v=CIVIC_BOSCH_C020.envelope_v,
+  r6_per_deg_s=-161.0,
+  kp_key_bp=C020_P_KEYS,
+)
+# Civic Bosch 39990-TBA-C120, 08-11 C020Profile Trk4250 (bin sha256 3d88d5ea). Its variants select rows 0-4, all
+# within 5% of each other in R5, so the row does not matter; row 1 (= row 2) is taken, as the C020's. Flat envelope.
+# E4 = -4096 * u: this tree's opendbc sends the HONDA_CIVIC_BOSCH 4096 map for every image, so the E4 above ~3840 is
+# held by the image's 1663 key clamp. Not measured: R6, load (the C020's).
+CIVIC_BOSCH_C120 = EpsFirmwareCalibration(
+  e4_per_output=4096.0,
+  r5_key_bp=[0, 103, 263, 459, 660, 861, 1111, 1549, 1774],
+  r5_v=TARGET_MAP_D_R5,
+  envelope_bp=FLAT_ENVELOPE_BP,
+  envelope_v=FLAT_ENVELOPE_V,
+  r6_per_deg_s=CIVIC_BOSCH_C020.r6_per_deg_s,
+  kp_key_bp=C120_P_KEYS,
+)
+# Civic hatch 39990-TGG-A120, 08-07 C020Pminus5 Trk4250 KFF45 (bin sha256 7c60b3fa). Only row 0 carries car-specific
+# axes; row 0 is live (both variant records, TGGA5 and TGGA6, select it). Flat envelope. Not measured: R6, load.
+CIVIC_TGG_A120 = EpsFirmwareCalibration(
+  e4_per_output=4096.0,
+  r5_key_bp=[0, 103, 263, 459, 660, 862, 1111, 1549, 1774],
+  r5_v=TARGET_MAP_D_R5,
+  envelope_bp=FLAT_ENVELOPE_BP,
+  envelope_v=FLAT_ENVELOPE_V,
+  r6_per_deg_s=CIVIC_BOSCH_C020.r6_per_deg_s,
+  kp_key_bp=C120_P_KEYS,
+)
+# Insight 39990-TXM-A040, 08-08 C020Surface Trk1-4000 Trk2-3869 (bin sha256 1f1cfe6b). Rows 0-1 keep the Clarity-style
+# axis ending at the 1663 clamp; row 0 is live (all three variant records select it, and rows 0 and 1 are identical).
+# The envelope was not located; flat is assumed (the 1663 clamp binds). Civic platform, so R6 and the load are carried
+# over from the C020. E4 = -4096 * u, this tree's opendbc Insight map; the 1663 key clamp holds E4 above ~3840.
+# Not measured: envelope, R6, load.
+INSIGHT_TXM_A040 = EpsFirmwareCalibration(
+  e4_per_output=4096.0,
+  r5_key_bp=[0, 111, 222, 333, 443, 665, 887, 1108, 1663],
+  r5_v=TARGET_MAP_D_R5,
+  envelope_bp=FLAT_ENVELOPE_BP,
+  envelope_v=FLAT_ENVELOPE_V,
+  r6_per_deg_s=CIVIC_BOSCH_C020.r6_per_deg_s,
+  kp_key_bp=(0, 222, 333, 665, 887, 1104, 1317, 1441, 1663),
+)
+# CR-V 5G 39990-TLA-A040, the owner's 08-24 Clarity_FF_tune_telemetry build (decoded full image sha256 d5dc04a8):
+# TargetMap-D, P117..265, D737, KFF45, Norm1650, Trk3200, clamps 7373/1774/9000 on the CR-V's stock axes. Key clamp
+# 1774. Row 0 is taken: every variant record selects it except TLBA2 (row 1, identical). R6 measured: least squares
+# of the image's own V5 feedback_R6 on steeringRateDeg, hands off, route 82bb (-121.6 at a 15 ms lag, R^2 0.977) on
+# a build whose norm reads 1450, x 1650/1450 for this image. The column load is CRV_EPS_LOAD, measured on the same drive.
+CRV_TLA_A040 = EpsFirmwareCalibration(
+  e4_per_output=4096.0,
+  r5_key_bp=[0, 219, 443, 662, 887, 1108, 1330, 1552, 1663],
+  r5_v=TARGET_MAP_D_R5,
+  envelope_bp=FLAT_ENVELOPE_BP,
+  envelope_v=FLAT_ENVELOPE_V,
+  r6_per_deg_s=-121.6051 * 1650.0 / 1450.0,
+  kp_key_bp=(0, 104, 279, 510, 807, 1108, 1330, 1552, 1663),
+  key_clamp=1774,
+)
+
+
+@dataclass(frozen=True)
+class FirmwareCarTune:
+  """Everything the firmware controller needs per calibration: tables, column load and the fixed P/I trims."""
+  calibration: EpsFirmwareCalibration
+  load: tuple
+  p_scale: tuple
+  i_scale: tuple
+
+
+# Keyed by FirmwareControllerProfile.calibration. The Clarity's trims are the module defaults; the Civic family
+# shares the C020's; the CR-V runs the Clarity's (its CarParams carry the Clarity's untrimmed base gains).
+FIRMWARE_CAR_TUNES = {
+  "clarity_trw_a020": FirmwareCarTune(CLARITY_TRW_A020, CLARITY_EPS_LOAD, P_SCALE, I_SCALE),
+  "civic_bosch_c020": FirmwareCarTune(CIVIC_BOSCH_C020, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
+  "civic_bosch_c120": FirmwareCarTune(CIVIC_BOSCH_C120, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
+  "civic_tgg_a120": FirmwareCarTune(CIVIC_TGG_A120, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
+  "civic_teg_a010": FirmwareCarTune(CIVIC_TEG_A010, TEG_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
+  "insight_txm_a040": FirmwareCarTune(INSIGHT_TXM_A040, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
+  "crv_tla_a040": FirmwareCarTune(CRV_TLA_A040, CRV_EPS_LOAD, P_SCALE, I_SCALE),
+}
 
 
 def command_key(e4: float) -> int:

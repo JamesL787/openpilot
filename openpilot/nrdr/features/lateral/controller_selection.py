@@ -1,8 +1,9 @@
 """Drive-latched firmware control, with exact EPS-family admission.
 
 Firmware version strings identify the family, not the contents of a modified image.
-The owner must still confirm the flashed build. TEG-A010 is an explicit, unvalidated
-owner-requested C020 calibration fallback, never a generic Honda fallback.
+The owner must still confirm the flashed build. Every image has its own calibration, and
+a car with no entry gets no firmware controller: there is no generic Honda fallback.
+Entries marked provisional have not steered with this controller on the road.
 """
 from dataclasses import dataclass
 
@@ -21,13 +22,25 @@ class FirmwareControllerProfile:
 
 CLARITY_PROFILE = FirmwareControllerProfile("Clarity TRW-A020", "clarity_trw_a020", prediction_schedule=True)
 CIVIC_PROFILE = FirmwareControllerProfile("Civic Bosch C020", "civic_bosch_c020")
-TEG_PLACEHOLDER_PROFILE = FirmwareControllerProfile(
-  "Civic TEG-A010 / Bosch C020 placeholder (not road-validated)", "civic_bosch_c020", provisional=True,
-)
+# R6 and column load measured on the owner's drive, never steered with this controller.
+TEG_PROFILE = FirmwareControllerProfile("Civic TEG-A010", "civic_teg_a010", provisional=True)
+# The A030 shares the TEG-A010's calibration and fingerprint; no A030 has been measured.
+CIVIC_A030_PROFILE = FirmwareControllerProfile("Civic TBA-A030 (TEG calibration)", "civic_teg_a010", provisional=True)
+# R6 and column load measured on the owner's drive, never steered with this controller.
+CRV_PROFILE = FirmwareControllerProfile("CR-V TLA-A040", "crv_tla_a040", provisional=True)
+# Tables read from the image; R6 and column load carried over from the C020.
+CIVIC_C120_PROFILE = FirmwareControllerProfile("Civic Bosch C120", "civic_bosch_c120", provisional=True)
+CIVIC_TGG_PROFILE = FirmwareControllerProfile("Civic hatch TGG-A120", "civic_tgg_a120", provisional=True)
+INSIGHT_PROFILE = FirmwareControllerProfile("Insight TXM-A040", "insight_txm_a040", provisional=True)
 _PROFILES = {
   ("HONDA_CLARITY", "39990-TRW-A020"): CLARITY_PROFILE,
   ("HONDA_CIVIC_BOSCH", "39990-TBA-C020"): CIVIC_PROFILE,
-  ("HONDA_CIVIC", "39990-TEG-A010"): TEG_PLACEHOLDER_PROFILE,
+  ("HONDA_CIVIC_BOSCH", "39990-TBA-C120"): CIVIC_C120_PROFILE,
+  ("HONDA_CIVIC_BOSCH", "39990-TGG-A120"): CIVIC_TGG_PROFILE,
+  ("HONDA_CIVIC", "39990-TEG-A010"): TEG_PROFILE,
+  ("HONDA_CIVIC", "39990-TBA-A030"): CIVIC_A030_PROFILE,
+  ("HONDA_CRV_5G", "39990-TLA-A040"): CRV_PROFILE,
+  ("HONDA_INSIGHT", "39990-TXM-A040"): INSIGHT_PROFILE,
 }
 
 

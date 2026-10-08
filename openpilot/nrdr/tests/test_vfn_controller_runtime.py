@@ -48,24 +48,34 @@ def test_wrong_platform_or_eps_cannot_select_vfn(changes):
     controller(**changes)
 
 
-SUPPORTED_CIVICS = [
+# Every admitted car but the Clarity: each runs its own calibration, load and trims, and the Civic command delay.
+NON_CLARITY_CARS = [
   {"fingerprint": "HONDA_CIVIC_BOSCH", "firmware": b"39990-TBA-C020"},
+  {"fingerprint": "HONDA_CIVIC_BOSCH", "firmware": b"39990-TBA-C120"},
+  {"fingerprint": "HONDA_CIVIC_BOSCH", "firmware": b"39990-TGG-A120"},
   {"fingerprint": "HONDA_CIVIC", "firmware": b"39990-TEG-A010"},
+  {"fingerprint": "HONDA_CIVIC", "firmware": b"39990-TBA-A030"},
+  {"fingerprint": "HONDA_CRV_5G", "firmware": b"39990-TLA-A040"},
+  {"fingerprint": "HONDA_INSIGHT", "firmware": b"39990-TXM-A040"},
 ]
 
 
-@pytest.mark.parametrize("changes", SUPPORTED_CIVICS)
-def test_civic_wrapper_uses_complete_c020_tune_without_mutating_carparams(changes):
-  from openpilot.nrdr.features.lateral.vfn_eps_core import CIVIC_BOSCH_C020, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE
+@pytest.mark.parametrize("changes", NON_CLARITY_CARS)
+def test_non_clarity_wrapper_uses_its_own_complete_tune_without_mutating_carparams(changes):
+  from openpilot.nrdr.features.lateral.vfn_eps_core import CIVIC_BOSCH_C020, FIRMWARE_CAR_TUNES
   cp, sp = car(**changes)
   before = repr(cp)
   control = LatControlFirmware(cp, sp, None, .01)
   assert repr(cp) == before
-  assert control.core.ff.cal is CIVIC_BOSCH_C020
-  assert control.core.ff.load_coefficients == CIVIC_EPS_LOAD
-  assert control.core.p_scale == CIVIC_P_SCALE and control.core.i_scale == CIVIC_I_SCALE
+  tune = FIRMWARE_CAR_TUNES[control.firmware_profile.calibration]
+  assert control.core.ff.cal is tune.calibration
+  assert control.core.ff.load_coefficients == tune.load
+  assert control.core.p_scale == tune.p_scale and control.core.i_scale == tune.i_scale
   assert control.delay_schedule is None
-  assert control.firmware_profile.provisional == (changes["fingerprint"] == "HONDA_CIVIC")
+  # only the C020, the one image this controller has steered on the road, is not provisional
+  is_c020 = changes["firmware"] == b"39990-TBA-C020"
+  assert control.firmware_profile.provisional == (not is_c020)
+  assert (control.core.ff.cal is CIVIC_BOSCH_C020) == is_c020
   # User PIF/yaw settings cannot leak into either firmware profile.
   control.set_live_tuning_snapshot(ParamSnapshot(1, {"NrdrDeviceYawCorrection": True, "LatFScaleHighway": 500,
                                                    "NrdrLatRateDampingHighway": 300}))
@@ -78,9 +88,9 @@ def test_civic_wrapper_uses_complete_c020_tune_without_mutating_carparams(change
         assert logged.f == 0. and logged.epsFfWeight == 0.
 
 
-@pytest.mark.parametrize("changes", SUPPORTED_CIVICS)
+@pytest.mark.parametrize("changes", NON_CLARITY_CARS)
 @pytest.mark.parametrize("speed,delay", [(5., .175), (12.5, .10), (20., .025)])
-def test_civic_wrapper_uses_its_command_delay_and_preserves_shared_steer_ratio(changes, speed, delay):
+def test_non_clarity_wrapper_uses_the_civic_command_delay_and_preserves_shared_steer_ratio(changes, speed, delay):
   control = controller(**changes)
   cp, _ = car(**changes)
   selection = resolve_steer_ratio_selection(cp, {"NrdrSteerRatioMode": 3})

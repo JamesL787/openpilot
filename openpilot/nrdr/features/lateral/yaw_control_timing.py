@@ -51,8 +51,9 @@ def _command_delay_setting(settings, key, default: float) -> float:
 
 
 def command_delay(settings, speed: float, *, calibration: str = "clarity_trw_a020") -> float:
-  if calibration == "civic_bosch_c020":
-    # Do not let persisted Clarity command-delay settings silently retune Civic.
+  if calibration != "clarity_trw_a020":
+    # Every image but the Clarity's takes the Civic's fixed delay (the only other one measured: C020). It is not
+    # measured on the other cars. Do not let persisted Clarity command-delay settings silently retune them.
     return float(np.interp(speed, COMMAND_DELAY_BP, (CIVIC_COMMAND_DELAY_LOW, DEFAULT_COMMAND_DELAY_HIGH)))
   low = _command_delay_setting(settings, NrdrParamKey.NRDR_YAW_COMMAND_DELAY_LOW, DEFAULT_COMMAND_DELAY_LOW)
   high = _command_delay_setting(settings, NrdrParamKey.NRDR_YAW_COMMAND_DELAY_HIGH, DEFAULT_COMMAND_DELAY_HIGH)
