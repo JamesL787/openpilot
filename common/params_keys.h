@@ -472,6 +472,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HigherBitrate", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"HolidayThemes", {PERSISTENT, BOOL, "1", "0", 0, SETTINGS_SIMPLE}},
     {"HondaDriverAssistDuringOverride", {PERSISTENT, BOOL, "0", "0", 2}},
+    {"HondaEpsClarityPminus5", {PERSISTENT, BOOL, "0", "0", 2}},      // Clarity runs the P-minus-5 EPS build (P117..265) rather than the owners' P123..279 (read when controlsd starts)
+    {"HondaEpsFirmwareController", {PERSISTENT, BOOL, "0", "0", 2}},  // steer the non-Clarity Clarity-profile EPS cars with LatControlEpsFirmware (read when controlsd starts)
     {"HondaTorqueOutputLpfTauHighway", {PERSISTENT, FLOAT, "0.1", "0.1", 2}},
     {"HondaTorqueOutputLpfTauLowSpeed", {PERSISTENT, FLOAT, "0.1", "0.1", 2}},
     {"HondaTorqueOutputLpfTauStandard", {PERSISTENT, FLOAT, "0.1", "0.1", 2}},
