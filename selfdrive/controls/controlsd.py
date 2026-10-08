@@ -26,8 +26,8 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
-from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, clarity_lateral_delay, get_clarity_rack_map, \
-  use_honda_eps_controller
+from openpilot.selfdrive.controls.lib.latcontrol_eps_firmware import LatControlEpsFirmware, clarity_lateral_delay, \
+  eps_firmware_profile, get_clarity_rack_map, uses_clarity_schedule
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
@@ -443,17 +443,17 @@ class Controls:
       self.LaC = LatControlAngle(self.CP, self.CI, DT_CTRL)
     elif self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
       self.LaC = LatControlCurvature(self.CP, self.CI, DT_CTRL)
-    elif use_honda_eps_controller(self.CP):
-      self.LaC = LatControlHondaEps(self.CP, self.CI, DT_CTRL)
+    elif (eps_profile := eps_firmware_profile(self.CP)) is not None:
+      self.LaC = LatControlEpsFirmware(self.CP, self.CI, DT_CTRL, eps_profile)
     elif self.CP.lateralTuning.which() == 'pid':
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
 
-    self.honda_eps_controller = use_honda_eps_controller(self.CP)
-    self.clarity_rack_map = get_clarity_rack_map(self.CP)
+    self.clarity_schedule = isinstance(self.LaC, LatControlEpsFirmware) and uses_clarity_schedule(self.CP)
+    self.clarity_rack_map = get_clarity_rack_map(self.CP) if self.clarity_schedule else None
     # see TURN_SHAPING_TAU
-    self.turn_shaping = self.honda_eps_controller
+    self.turn_shaping = isinstance(self.LaC, LatControlEpsFirmware)
 
     self.sm = self.sm.extend(['liveDelay', 'starpilotCarState', 'starpilotPlan'])
 
@@ -857,7 +857,7 @@ class Controls:
     # Measured on route 00000276 under 15 mph: each model frame steps the desired wheel angle by
     # 2.0 deg at p50 and 6.9 deg at p90, half of those steps are smaller than the angle-rate clip
     # and so pass it untouched. Target smoothing is deliberately not used here; modified-EPS
-    # torque is filtered once, after output shaping, in LatControlPID (LatControlHondaEps on the Clarity).
+    # torque is filtered once, after output shaping, in LatControlPID (LatControlEpsFirmware on the cars that run it).
     #
     # Ramp toward each new action across the model frame instead. Starting the ramp from the value
     # currently being commanded keeps the target continuous by construction -- there is no step
@@ -932,7 +932,7 @@ class Controls:
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
                                                                jerk_factor)
     lat_smooth_seconds = get_control_lateral_smooth_seconds(self.CP.brand, CS.vEgo, self.CP.lateralSmoothSeconds)
-    lateral_delay = clarity_lateral_delay(CS.vEgo) if self.honda_eps_controller else self.sm["liveDelay"].lateralDelay
+    lateral_delay = clarity_lateral_delay(CS.vEgo) if self.clarity_schedule else self.sm["liveDelay"].lateralDelay
     lat_delay = lateral_delay + lat_smooth_seconds
 
     actuators.curvature = self.desired_curvature

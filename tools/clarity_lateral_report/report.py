@@ -45,7 +45,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 
 def shipped_delay_schedule():
-  src = open(os.path.join(REPO, 'selfdrive/controls/lib/latcontrol_honda_eps.py')).read()
+  src = open(os.path.join(REPO, 'selfdrive/controls/lib/latcontrol_eps_firmware.py')).read()
   found = [re.search(rf'^{name} = (\[.*?\])', src, re.M) for name in ('CLARITY_LAT_DELAY_BP', 'CLARITY_LAT_DELAY_V')]
   return [ast.literal_eval(m.group(1)) if m else None for m in found]
 

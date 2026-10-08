@@ -255,6 +255,12 @@ class NRDRTuningLayout(_SettingsPage):
     ]
 
     filter_rows = [
+      toggle("HondaEpsFirmwareController", "EPS Firmware Controller",
+             "Civic, Insight and CR-V with a Clarity-profile EPS build: steer with the controller that inverts the EPS "
+             "firmware's own control law (always on for the Clarity). Takes effect the next time you start the car."),
+      toggle("HondaEpsClarityPminus5", "Clarity P-minus-5 EPS Build",
+             "Clarity only: the EPS runs the P-minus-5 build (P117 to 265) instead of the usual P123 to 279. "
+             "Takes effect the next time you start the car."),
       toggle("NrdrLatUseFirmwareVgr", "Use Firmware VGR Table",
              "Convert curvature with the EPS firmware's A (position) table on top of the learned steer "
              "ratio, instead of the road-measured effective-ratio curve. Changes centre gain and taper."),

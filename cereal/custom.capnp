@@ -310,8 +310,8 @@ struct StarPilotLateralState @0xc2243c65e0340384 {
   lowSpeedFactor @6 :Float32;
   unwindDetected @7 :Bool;
 
-  # nrdr: Clarity modified-EPS controller (selfdrive/controls/lib/latcontrol_clarity_eps.py). The feedforward
-  # inverts the EPS firmware law; see selfdrive/controls/lib/nrdr_eps_firmware_ff.py.
+  # Modified-EPS firmware controller (selfdrive/controls/lib/latcontrol_eps_firmware.py). The feedforward
+  # inverts the EPS firmware law; see selfdrive/controls/lib/eps_firmware_ff.py.
   epsFfActive @8 :Bool;
   epsFfFeedforward @9 :Float32;   # lateral output ([-1, 1]) of the feedforward at full weight
   epsFfR5 @10 :Float32;           # EPS firmware target counts it asks for
