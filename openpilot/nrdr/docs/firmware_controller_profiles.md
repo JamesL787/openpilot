@@ -64,8 +64,9 @@ and the controller models that with the clamp. Capping those cars' transport at
 3840, as the source branch's opendbc does for the C120 and Insight, is an opendbc
 change and not part of this port.
 
-The TEG's earlier C020 placeholder is replaced by its own calibration: R6 -161 per
-deg/s and a column that needs ~1.6x the C020's output for the same motion
+The TEG's earlier C020 placeholder is replaced by its own calibration: R6 from its
+own A table (the owner's -161 against 0x14A is that curve's angle average) and a
+column that needs ~1.6x the C020's output for the same motion
 (`TEG_EPS_LOAD`, fitted on 18 min of city driving up to 15 m/s; the highway is an
 extrapolation). The TEG's live command row is variant-dependent and which variant
 the car is cannot be read by openpilot: rows 0 and 1 agree within 8%, but TEGA1 selects row

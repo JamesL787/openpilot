@@ -267,16 +267,17 @@ C020_P_KEYS = (0, 223, 441, 665, 883, 1108, 1330, 1552, 1774)
 C120_P_KEYS = (3, 173, 441, 665, 887, 1104, 1317, 1610, 1774)
 # Nidec Civic TEG-A010, 08-26 Tracker1-3200 (bin sha256 60f42ecc). Carries the C020's command axes, P axis and
 # envelope byte for byte, so it takes the C020's row 1; E4 = -3840 * u (the HONDA_CIVIC torque map, not the C020's
-# 4096). R6 -161 and the load are the owner's, measured on the 08-12 telemetry build (E4 -> R5 -> P + KFF law exact
-# there). The live row is VARIANT-DEPENDENT and the car's variant cannot be read from openpilot: rows 0 and 1 agree
-# within 8%, but TEGA1 selects row 2 (R5 1.28-1.30x row 1 at mid command) and TEGA2 row 3 (0.48-0.70x at low command).
+# 4096). The load is the owner's, measured on the 08-12 telemetry build (E4 -> R5 -> P + KFF law exact
+# there); R6 comes from its A table (shared with the C120 / A030). The live row is VARIANT-DEPENDENT and the car's
+# variant cannot be read from openpilot: rows 0 and 1 agree within 8%, but TEGA1 selects row 2 (R5 1.28-1.30x row 1
+# at mid command) and TEGA2 row 3 (0.48-0.70x at low command).
 CIVIC_TEG_A010 = EpsFirmwareCalibration(
   e4_per_output=3840.0,
   r5_key_bp=CIVIC_BOSCH_C020.r5_key_bp,
   r5_v=CIVIC_BOSCH_C020.r5_v,
   envelope_bp=CIVIC_BOSCH_C020.envelope_bp,
   envelope_v=CIVIC_BOSCH_C020.envelope_v,
-  r6_per_deg_s=-161.0,
+  r6_per_deg_s=C120_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=C120_R6_GAIN,
   kp_key_bp=C020_P_KEYS,
 )
 # Civic Bosch 39990-TBA-C120, 08-11 C020Profile Trk4250 (bin sha256 3d88d5ea). Its variants select rows 0-4, all

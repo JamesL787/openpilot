@@ -80,14 +80,17 @@ def test_clarity_is_unchanged_by_the_per_image_fields():
 def test_teg_carries_its_own_measurements_and_the_nidec_transport():
   cal = core.CIVIC_TEG_A010
   assert cal.e4_per_output == 3840.0 and core.CIVIC_BOSCH_C020.e4_per_output == 4096.0
-  assert cal.r6_per_deg_s == -161.0
+  # R6 from its own A table (C120 / A030 / TEG); the owner's -161 against 0x14A sits inside that curve
+  assert cal.r6_per_deg_s == core.C120_R6_CENTRE and cal.r6_angle_gain == core.C120_R6_GAIN
+  assert core.firmware_r6(1., 0., cal) > -161. > core.firmware_r6(1., 180., cal)
   assert FIRMWARE_CAR_TUNES["civic_teg_a010"].load == core.TEG_EPS_LOAD == (-9.205, -0.3252, -9.039, -550.7, -83.6, -3.185)
   # it shares the C020's command axes, P axis and envelope; the load and R6 are what differ
   assert cal.r5_key_bp == core.CIVIC_BOSCH_C020.r5_key_bp and cal.kp_key_bp == tuple(core.C020_P_KEYS)
   assert cal.envelope_v == core.CIVIC_BOSCH_C020.envelope_v
-  # the column needs ~1.6x the C020's output for the same motion
+  # the column needs ~1.6x the C020's output for the same motion (measured against the route-294 C020 load)
+  route_294_c020 = (-5.574, -.1831, -4.540, -326.5, -83.6, -3.185)
   assert core.column_load(30., 20., 8., 0., coefficients=core.TEG_EPS_LOAD) == pytest.approx(
-    1.6 * core.column_load(30., 20., 8., 0., coefficients=core.CIVIC_EPS_LOAD), rel=.25)
+    1.6 * core.column_load(30., 20., 8., 0., coefficients=route_294_c020), rel=.25)
 
 
 def test_crv_carries_its_own_clamp_axes_r6_and_load():
