@@ -51,6 +51,9 @@ from openpilot.selfdrive.modeld.compile_modeld import (
   make_fused_supercombo_input_queues,
   make_split_input_queues,
   make_supercombo_input_queues,
+  make_stateful_input_queues,
+  stateful_host_shapes,
+  stateful_image_shapes,
   nv12_copy_size,
   tinygrad_commit,
 )
@@ -614,8 +617,19 @@ class ModelState:
       self.run_policy = artifact["run_policy"]
       self.warp_enqueue = artifact[(cam_w, cam_h)]
       self.can_prepare_only = self.image_history_pipeline == IMAGE_HISTORY_IN_WARP
+    # StarPilot's stateful artifacts (Cinque v3, resfit) keep image/desire/feature history inside the graph as
+    # state_pairs instead of in img_q/feat_q, so they need their own queues
+    self.onnx_history = self.model_type == "supercombo" and bool(self.metadata.get("model", {}).get("state_pairs"))
 
-    if self.model_type == "supercombo":
+    if self.onnx_history:
+      if self.fused or self.image_history_pipeline != IMAGE_HISTORY_IN_POLICY:
+        raise ValueError("ONNX-managed image history requires a non-fused policy-history artifact")
+      model_metadata = self.metadata["model"]
+      input_shapes = stateful_image_shapes(model_metadata)
+      self.output_slices = model_metadata["output_slices"]
+      self.policy_input_shapes = stateful_host_shapes(model_metadata)
+      self.input_queues, self.npy = make_stateful_input_queues(model_metadata, self.QUEUE_DEV)
+    elif self.model_type == "supercombo":
       input_shapes = self.metadata["model"]["input_shapes"]
       self.output_slices = self.metadata["model"]["output_slices"]
       self.policy_input_shapes = input_shapes
@@ -738,7 +752,9 @@ class ModelState:
     return parsed
 
   def _reset_state(self) -> None:
-    if self.model_type == "supercombo":
+    if self.onnx_history:
+      self.input_queues, self.npy = make_stateful_input_queues(self.metadata["model"], self.QUEUE_DEV)
+    elif self.model_type == "supercombo":
       if self.fused:
         self.input_queues, self.npy, self.frame_views = make_fused_supercombo_input_queues(
           self.policy_input_shapes,
