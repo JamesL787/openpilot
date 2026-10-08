@@ -82,15 +82,21 @@ R6_ANGLE_GAIN = _VGR_SLOPE / _VGR_SLOPE[0]
 # off it only moves on a fast column-torque RATE (A280) or above ~400 counts of torque (helper A).
 SCALE_Q8 = 256.0       # helper A * B / 256 while the request is held
 
-# Column load model, firmware output counts (A030 sign convention), fitted on route 00000352:
+# Column load model, firmware output counts (A030 sign convention):
 #   load = k0*th + k1*th*v^2 + c*thd + fr*tanh(thd/w) + bias + kroll*roll*v^2
-# th/thd: steering-wheel deg, deg/s; v: m/s; roll: rad. R^2 0.82 in-route, 0.72 on the held-out route.
-LOAD_K0 = -7.00387
-LOAD_K1 = -0.21857
-LOAD_C = -6.8317
-LOAD_FRICTION = -314.07279
-LOAD_BIAS = 20.46793
-LOAD_KROLL = -7.20003
+# th/thd: steering-wheel deg, deg/s (thd the derivative of the published angle, as the feedforward uses it); v: m/s;
+# roll: rad. Fitted on the dev car's routes 35c-38c (EPS outage 381-389 excluded; 203 min engaged, not pressed, from
+# 2 m/s, |driver torque| < 200, 13 min of turns past 30 deg) against the firmware's own A030 output (0x6A2 w3); a
+# driver-torque regressor (1.5 per count) absorbs helper A's yield to resting hands and is dropped. Held out on
+# alternating 20 s blocks against A030: hands-off R^2 0.83 / 0.84, turns 0.94 / 0.95, against 0.81 / 0.83 and
+# 0.94 / 0.94 for the route-352 fit (-7.004, -0.2186, -6.832, -314.1, 20.5, -7.20). Rebuilding the target from E4
+# alone (angle-dependent R6, scale 256), as the Insight and C020 loads are, gives the same load (0.83 / 0.84, 0.95).
+LOAD_K0 = -5.914
+LOAD_K1 = -0.2135
+LOAD_C = -6.0094
+LOAD_FRICTION = -149.378
+LOAD_BIAS = 46.843
+LOAD_KROLL = -7.2513
 # The fit's friction width is 2 deg/s; 5 deg/s keeps the Coulomb term from flipping on desired-rate
 # noise near straight driving (command roughness 0.0029 -> 0.0020 in replay, tracking nearly unchanged).
 # Keyed on the DESIRED rate, even 5 deg/s turns the model's small path wiggles into a friction square wave
