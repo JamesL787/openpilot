@@ -141,12 +141,15 @@ TEG_LOAD = ColumnLoadModel(k0=-9.205, k1=-0.3252, c=-9.039, friction=-550.7, bia
 # 60 s holdouts 0.857 / 0.820. Close to the Clarity's in every term but the speed term (-0.143 vs -0.219).
 CRV_LOAD = ColumnLoadModel(k0=-7.29446, k1=-0.143159, c=-4.60337, friction=-297.83, bias=-19.899, kroll=-3.58048)
 # Insight column (HONDA_INSIGHT, 39990-TXM,A040), fitted on the owner's konik route f133facb1b9b7420|0000001e--2987344626
-# (2026-10-08, 15.8 mi, 11.5 min hands-off engaged: 2.7 at 3-10 m/s, 3.4 at 10-20, 5.5 above). No telemetry in that build,
-# so the target is the firmware law rebuilt from the sent E4 through row 0 and the car's [0, 3840] map, with R6 assumed at
-# the Civic's -172 (R6 is not separable from the viscous term without telemetry: on the C020 the same free fit returns
-# -285 against a measured -172). The viscous term near zero is that trade; the feedforward inverts with the same R6.
-# Held out on alternating 20 s blocks R^2 0.38 / 0.46, against -0.29 / -0.08 for CIVIC_LOAD (0.54 vs -0.02 turning).
-INSIGHT_LOAD = ColumnLoadModel(k0=-4.3971, k1=-0.0873, c=0.2826, friction=-228.741, bias=-66.432, kroll=-0.8457)
+# (2026-10-08, 15.8 mi). No telemetry in that build, so the target is the firmware law rebuilt from the sent E4 through
+# row 0 and the car's [0, 3840] map, with R6 assumed at the Civic's -172 (R6 is not separable from the viscous term
+# without telemetry: on the C020 the same free fit returns -285 against a measured -172; the feedforward inverts with
+# the same R6). 16.7 min engaged, not pressed, from 2 m/s, |driver torque| < 200, so the owner's turns are in (5 min past
+# 30 deg, mostly 1-5 m/s with ~150 counts of resting-hand torque); a driver-torque regressor (2.35 per count) absorbs
+# the hands and is dropped here, the controller assuming hands off. Held out on alternating 20 s blocks: hands-off R^2
+# 0.42 / 0.43 and turns past 30 deg 0.76 / 0.80, against -0.29 / -0.08 and 0.63 for CIVIC_LOAD. A hands-off-only fit
+# gives the same column (k0 -4.40, k1 -0.087) but a viscous term of the wrong sign (+0.28).
+INSIGHT_LOAD = ColumnLoadModel(k0=-4.6068, k1=-0.08999, c=-0.3906, friction=-205.498, bias=-72.007, kroll=-1.0328)
 
 # R6 comes from the column rate BEFORE the firmware's angle tables, the domain 0x18F STEER_ANGLE_RATE reports
 # (R6 = -31.6 per 0x18F count, flat to 2% at every angle on route 369). The feedforward's rate is the derivative
