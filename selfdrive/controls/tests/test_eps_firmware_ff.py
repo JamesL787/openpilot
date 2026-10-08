@@ -537,3 +537,12 @@ def test_rack_map_asks_less_wheel_than_the_paramsd_ratio_in_tight_turns(monkeypa
     old = vgr_linear_to_physical(math.degrees(VM.get_steer_from_curvature(-curvature, 7.0, 0.0)), lac.vgr_inverse)
     new = lac.rack_map.angle_from_curvature(curvature, 7.0, 0.0)
     assert 0.93 < new / old < 0.97
+
+
+def test_insight_carries_its_own_measured_load_on_row_0():
+  cal = eps_ff.INSIGHT_TXM
+  assert cal.load is eps_ff.INSIGHT_LOAD and cal.load != eps_ff.CIVIC_LOAD
+  assert cal.r5_key_bp == (0, 111, 222, 333, 443, 665, 887, 1108, 1663)  # row 0, every Insight build and variant
+  assert cal.e4_per_output == 3840.0 and cal.r6_per_deg_s == eps_ff.CIVIC_R6_PER_DEG_S
+  # the fitted column is lighter than the C020's at speed, which the carried-over load over-asked
+  assert abs(eps_ff.column_load(10., 0., 25., 0., load=eps_ff.INSIGHT_LOAD)) < abs(eps_ff.column_load(10., 0., 25., 0., load=eps_ff.CIVIC_LOAD))
