@@ -115,6 +115,7 @@ image's A table. Per published deg/s, R6(angle) = -122 x (A-table centre divisor
 Against telemetry (0.1 s angle derivative): Clarity within 0.6% at centre and 2.7% at every angle; C020 within 0.4% at
 centre but 5-10% high past 60 deg, so the C020 and the TGG-A120 (same A table) use the C020's measured curve. The
 C120, Insight and CR-V use the A-table model. The single constants used before (-173 C020, -138.4 CR-V) were angle
-averages against the 0x14A rate, about 12% too strong at centre and 8-18% too weak in big turns. Column loads that
-were rebuilt from E4 rather than telemetry (Insight) or refitted (C020) use the same domain as the feedforward: the
-rate is the derivative of the published angle, which the 0x14A rate reads about 5% below on the Civic.
+averages against the 0x14A rate, about 12% too strong at centre and 8-18% too weak in big turns. The column loads
+were all measured with the Clarity's recipe (firmware output on every engaged, unpressed frame with the scale word at
+or above 240, so resting-hand turns count; 2 deg/s friction knee; inertia term fitted, not deployed); the Insight,
+whose build has no telemetry, from the firmware law rebuilt from its sent E4 with a driver-torque cut for the gate.

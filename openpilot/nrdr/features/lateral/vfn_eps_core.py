@@ -82,21 +82,18 @@ R6_ANGLE_GAIN = _VGR_SLOPE / _VGR_SLOPE[0]
 # off it only moves on a fast column-torque RATE (A280) or above ~400 counts of torque (helper A).
 SCALE_Q8 = 256.0       # helper A * B / 256 while the request is held
 
-# Column load model, firmware output counts (A030 sign convention):
+# Column load model, firmware output counts (A030 sign convention), fitted on route 00000352:
 #   load = k0*th + k1*th*v^2 + c*thd + fr*tanh(thd/w) + bias + kroll*roll*v^2
-# th/thd: steering-wheel deg, deg/s (thd the derivative of the published angle, as the feedforward uses it); v: m/s;
-# roll: rad. Fitted on the dev car's routes 35c-38c (EPS outage 381-389 excluded; 203 min engaged, not pressed, from
-# 2 m/s, |driver torque| < 200, 13 min of turns past 30 deg) against the firmware's own A030 output (0x6A2 w3); a
-# driver-torque regressor (1.5 per count) absorbs helper A's yield to resting hands and is dropped. Held out on
-# alternating 20 s blocks against A030: hands-off R^2 0.83 / 0.84, turns 0.94 / 0.95, against 0.81 / 0.83 and
-# 0.94 / 0.94 for the route-352 fit (-7.004, -0.2186, -6.832, -314.1, 20.5, -7.20). Rebuilding the target from E4
-# alone (angle-dependent R6, scale 256), as the Insight and C020 loads are, gives the same load (0.83 / 0.84, 0.95).
-LOAD_K0 = -5.914
-LOAD_K1 = -0.2135
-LOAD_C = -6.0094
-LOAD_FRICTION = -149.378
-LOAD_BIAS = 46.843
-LOAD_KROLL = -7.2513
+# th/thd: steering-wheel deg, deg/s; v: m/s; roll: rad. R^2 0.82 in-route, 0.72 on the held-out route. Recipe: the
+# firmware's A030 output on every engaged, unpressed frame with the scale word >= 240 (resting-hand turns included),
+# a 2 deg/s friction knee, an inertia term (not deployed), best motion lag. Re-run per route on 35c-38c it gives
+# friction -272..-344 (median -311), k0 median -6.2, so this is representative.
+LOAD_K0 = -7.00387
+LOAD_K1 = -0.21857
+LOAD_C = -6.8317
+LOAD_FRICTION = -314.07279
+LOAD_BIAS = 20.46793
+LOAD_KROLL = -7.20003
 # The fit's friction width is 2 deg/s; 5 deg/s keeps the Coulomb term from flipping on desired-rate
 # noise near straight driving (command roughness 0.0029 -> 0.0020 in replay, tracking nearly unchanged).
 # Keyed on the DESIRED rate, even 5 deg/s turns the model's small path wiggles into a friction square wave
@@ -236,25 +233,20 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
   kp_key_bp=[0, 223, 441, 665, 883, 1108, 1330, 1552, 1774],
 )
 CLARITY_EPS_LOAD = (LOAD_K0, LOAD_K1, LOAD_C, LOAD_FRICTION, LOAD_BIAS, LOAD_KROLL)
-# 10th-gen Civic column (C020), fitted on all 14 of the owner's routes (221 min engaged, not pressed, from 2 m/s,
-# |driver torque| < 200, a driver-torque regressor absorbing resting hands and dropped here), in the feedforward's own
-# domain: the rate is the 0.1 s derivative of the published angle (0x14A reads ~5% below it on this car) and the
-# target is the firmware law with the C020's measured angle-dependent R6. Held out on alternating 20 s blocks:
-# hands-off R^2 0.75 / 0.76, turns past 30 deg 0.86 / 0.81, against 0.25 / 0.33 and 0.84 / 0.81 for the previous
-# route-294 fit (-5.574, -0.1831, -4.540, -326.5, -83.6, -3.185), whose hands-off miss was mostly its bias.
-CIVIC_EPS_LOAD = (-5.9171, -0.14312, -7.622, -208.266, 22.399, -0.2563)
+# Source fit on Civic C020 firmware-controller route 294 (not its separate PID shadow fit).
+CIVIC_EPS_LOAD = (-5.574, -0.1831, -4.540, -326.5, -83.6, -3.185)
 # CR-V 5G column (TLA-A040), fitted on the owner's route 00000006--82bb552a2c (native V5 telemetry, 40,193 hands-off
 # active groups) in this model's units: m/s, angle with the liveParameters offset removed, liveParameters roll.
 # R^2 0.843, alternating 60 s holdouts 0.857 / 0.820. Close to the Clarity's in every term but the speed term
 # (-0.143 vs -0.219).
 CRV_EPS_LOAD = (-7.29446, -0.143159, -4.60337, -297.83, -19.899, -3.58048)
-# Insight column (TXM-A040), fitted on the owner's konik route f133facb1b9b7420|0000001e--2987344626 (15.8 mi). That build
-# has no telemetry, so the target is the firmware law rebuilt from the sent E4 through row 0 and the car's own [0, 3840]
-# map, with the Insight's R6 from its A table, in the feedforward's domain (rate = 0.1 s derivative of the published
-# angle). 16.7 min engaged, not pressed, from 2 m/s, |driver torque| < 200, so the owner's turns are in (5 min past 30
-# deg); a driver-torque regressor (2.0 per count) absorbs resting hands and is not kept. Held out on alternating 20 s
-# blocks: hands-off R^2 0.51 / 0.50, turns past 30 deg 0.84 / 0.88; the C020 load it used to carry: -0.29 / -0.08.
-INSIGHT_EPS_LOAD = (-4.7594, -0.09457, -2.9683, -288.491, -51.925, -1.0634)
+# Insight column (TXM-A040), measured with the Clarity's recipe on the owner's konik route
+# f133facb1b9b7420|0000001e--2987344626 (15.8 mi, 26.9 min engaged and unpressed). That build has no telemetry, so the
+# target is the firmware law rebuilt from the sent E4 through row 0 and the car's own [0, 3840] map with R6 from its A
+# table (on the Clarity that rebuild matches the A030 output at corr 0.987 hands off), and the scale-word gate is a
+# |driver torque| < 300 cut (on the Clarity the scale word stays >= 240 up to ~500 counts; 200 and 500 give nearly the
+# same fit). 2 deg/s friction knee, inertia term not deployed, best motion lag 40 ms; R^2 0.76.
+INSIGHT_EPS_LOAD = (-4.876, -0.1376, -4.452, -397.2, 65.41, -4.29)
 
 # --- other images --------------------------------------------------------------------------------------------
 # Tables below were read from the image each car's owners run; what a calibration measured and what it only carries
