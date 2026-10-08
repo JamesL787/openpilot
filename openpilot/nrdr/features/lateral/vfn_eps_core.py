@@ -209,12 +209,14 @@ CIVIC_EPS_LOAD = (-5.574, -0.1831, -4.540, -326.5, -83.6, -3.185)
 # R^2 0.843, alternating 60 s holdouts 0.857 / 0.820. Close to the Clarity's in every term but the speed term
 # (-0.143 vs -0.219).
 CRV_EPS_LOAD = (-7.29446, -0.143159, -4.60337, -297.83, -19.899, -3.58048)
-# Insight column (TXM-A040), fitted on the owner's konik route f133facb1b9b7420|0000001e--2987344626 (15.8 mi, 11.5 min
-# hands-off engaged, 3-30 m/s). That build has no telemetry, so the target is the firmware law rebuilt from the sent E4
-# through row 0 and the car's own [0, 3840] map, with R6 assumed at the C020's; without telemetry R6 and the viscous
-# term are not separable (the viscous term near zero is that trade, and the feedforward inverts with the same R6).
-# Held out on alternating 20 s blocks R^2 0.38 / 0.46, against -0.29 / -0.08 for CIVIC_EPS_LOAD.
-INSIGHT_EPS_LOAD = (-4.3971, -0.0873, 0.2826, -228.741, -66.432, -0.8457)
+# Insight column (TXM-A040), fitted on the owner's konik route f133facb1b9b7420|0000001e--2987344626 (15.8 mi). That build
+# has no telemetry, so the target is the firmware law rebuilt from the sent E4 through row 0 and the car's own [0, 3840]
+# map, with R6 assumed at the C020's; without telemetry R6 and the viscous term are not separable, and the feedforward
+# inverts with the same R6. 16.7 min engaged, not pressed, from 2 m/s, |driver torque| < 200, so the owner's turns are
+# in (5 min past 30 deg, mostly 1-5 m/s with ~150 counts of resting-hand torque); a driver-torque regressor (2.35 per
+# count) absorbs the hands and is not kept. Held out on alternating 20 s blocks: hands-off R^2 0.42 / 0.43, turns past
+# 30 deg 0.76 / 0.80, against -0.29 / -0.08 and 0.63 for CIVIC_EPS_LOAD.
+INSIGHT_EPS_LOAD = (-4.6068, -0.08999, -0.3906, -205.498, -72.007, -1.0328)
 
 # --- other images --------------------------------------------------------------------------------------------
 # Tables below were read from the image each car's owners run; what a calibration measured and what it only carries
