@@ -100,7 +100,7 @@ class ModelsLayout(Widget):
 
     self.delay_control = option_item_sp(tr("Adjust Software Delay"), "LagdToggleDelay", 5, 100,
                                          tr("Additional software delay when live learning is off. Clarity Firmware Controller " +
-                                           "uses its measured speed schedule instead; Civic uses this setting normally."),
+                                           "uses its measured speed schedule instead; other vehicles use this setting normally."),
                                         1, None, True, "", style.BUTTON_ACTION_WIDTH, None, True, lambda v: f"{v / 100:.2f}s")
 
     self.lagd_toggle = toggle_item_sp(tr("Live Learning Steer Delay"), "", param="LagdToggle")
