@@ -19,7 +19,7 @@ class FirmwareControllerProfile:
   provisional: bool = False
 
 
-CLARITY_PROFILE = FirmwareControllerProfile("Clarity A020", "clarity_a020", prediction_schedule=True)
+CLARITY_PROFILE = FirmwareControllerProfile("Clarity TRW-A020", "clarity_trw_a020", prediction_schedule=True)
 CIVIC_PROFILE = FirmwareControllerProfile("Civic Bosch C020", "civic_bosch_c020")
 TEG_PLACEHOLDER_PROFILE = FirmwareControllerProfile(
   "Civic TEG-A010 / Bosch C020 placeholder (not road-validated)", "civic_bosch_c020", provisional=True,

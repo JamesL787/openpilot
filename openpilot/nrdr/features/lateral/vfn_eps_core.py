@@ -172,7 +172,7 @@ class EpsFirmwareCalibration:
     self.kp_r5_v = tuple(p[2] for p in self.kp_pieces)
 
 
-CLARITY_A020 = EpsFirmwareCalibration(
+CLARITY_TRW_A020 = EpsFirmwareCalibration(
   E4_PER_OUTPUT, R5_KEY_BP, R5_V, ENVELOPE_BP, ENVELOPE_V, R6_PER_CENTRE_DEG_S,
   r5_per_key=R5_PER_KEY, r6_angle_bp=R6_ANGLE_BP, r6_angle_gain=R6_ANGLE_GAIN,
 )
@@ -196,38 +196,38 @@ def command_key(e4: float) -> int:
   return int(math.trunc(math.trunc(e4 * 56756 / 32768) / 4))
 
 
-def key_ceiling(v_ego: float, cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
+def key_ceiling(v_ego: float, cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
   return min(float(np.interp(v_ego * 3.6 * 2.0, cal.envelope_bp, cal.envelope_v)), KEY_CLAMP)
 
 
-def r5_from_output(output: float, v_ego: float, cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
+def r5_from_output(output: float, v_ego: float, cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
   """What the firmware makes of a lateral output: forward model of 0xE4 -> key -> R5."""
   key = command_key(-output * cal.e4_per_output)
   mag = float(np.interp(min(abs(key), key_ceiling(v_ego, cal)), cal.r5_key_bp, cal.r5_v))
   return math.copysign(mag, key) if key else 0.0
 
 
-def output_from_r5(r5: float, cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
+def output_from_r5(r5: float, cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
   """Inverse of r5_from_output (up to integer truncation)."""
   key = float(np.interp(min(abs(r5), cal.r5_v[-1]), cal.r5_v, cal.r5_key_bp))
   e4 = key * 4.0 * 32768.0 / 56756.0
   return -math.copysign(e4, r5) / cal.e4_per_output
 
 
-def firmware_kp(r5: float, cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
+def firmware_kp(r5: float, cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
   if cal.r5_per_key is not None:
     return float(np.interp(abs(r5) / cal.r5_per_key, KP_KEY_BP, KP_V))
   return float(np.interp(abs(r5), cal.kp_r5_bp, cal.kp_r5_v))
 
 
-def firmware_r6(steering_rate_deg_s: float, angle_deg: float, cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
+def firmware_r6(steering_rate_deg_s: float, angle_deg: float, cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
   """The firmware's rate feedback for a published steering rate at a published angle."""
   gain = 1.0 if cal.r6_angle_bp is None else float(np.interp(abs(angle_deg), cal.r6_angle_bp, cal.r6_angle_gain))
   return cal.r6_per_deg_s * gain * steering_rate_deg_s
 
 
 def firmware_output(r5: float, steering_rate_deg_s: float, angle_deg: float = 0.0,
-                    cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
+                    cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
   """Steady-state firmware output for a target and a rate (D term omitted): scale*(Kp*(R5-R6) + KFF*R5)/1024/256."""
   r6 = firmware_r6(steering_rate_deg_s, angle_deg, cal)
   return SCALE_Q8 * (firmware_kp(r5, cal) * (r5 - r6) + KFF * r5) / 1024.0 / 256.0
@@ -241,7 +241,7 @@ def column_load(angle_deg: float, rate_deg_s: float, v_ego: float, roll: float,
 
 
 def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, angle_deg: float = 0.0,
-                  cal: EpsFirmwareCalibration = CLARITY_A020) -> float:
+                  cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
   """Solve the firmware law for the target that yields `load` while the wheel moves at `rate_deg_s` through `angle_deg`.
 
   load = scale * (Kp*(R5 - R6) + KFF*R5) / 1024 / 256, with Kp piecewise linear in |R5|. On each piece
@@ -272,7 +272,7 @@ def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, angle_d
 class HondaEpsFirmwareFeedforward:
   def __init__(self, dt: float, rate_tau: float = DESIRED_RATE_TAU, lead_s: float = LEAD_S,
                output_tau: float = FF_OUTPUT_TAU, friction_width: float | None = None,
-               *, cal: EpsFirmwareCalibration = CLARITY_A020, load=CLARITY_EPS_LOAD):
+               *, cal: EpsFirmwareCalibration = CLARITY_TRW_A020, load=CLARITY_EPS_LOAD):
     self.dt = dt
     self.alpha = dt / (rate_tau + dt)
     self.output_alpha = dt / (output_tau + dt)

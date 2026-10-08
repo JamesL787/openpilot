@@ -6,7 +6,7 @@ changing it requires offroad confirmation. PIF's Device Yaw Correction is separa
 
 | Detected vehicle / EPS family | Calibration | Prediction delay |
 | --- | --- | --- |
-| HONDA_CLARITY / 39990-TRW-A020, modified EPS | Existing Clarity A020 | Measured speed schedule |
+| HONDA_CLARITY / 39990-TRW-A020, modified EPS | Existing Clarity TRW-A020 | Measured speed schedule |
 | HONDA_CIVIC_BOSCH / 39990-TBA-C020, modified EPS | Civic C020 TargetMapD / Tracker4500 / Norm1650 / P117to265 / D737 / KFF45 | Normal live/manual path |
 | HONDA_CIVIC / 39990-TEG-A010, modified EPS | **Provisional C020 placeholder, not road-validated for TEG** | Normal live/manual path |
 

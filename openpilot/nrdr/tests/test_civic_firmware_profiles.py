@@ -74,7 +74,7 @@ def test_c020_nonlinear_inverse_satisfies_its_firmware_law(load, rate, guess):
 def test_c020_tables_load_trims_and_clarity_angle_feedback_are_separate():
   cal = core.CIVIC_BOSCH_C020
   assert cal.e4_per_output == 4096.
-  assert core.CLARITY_A020.e4_per_output == 3840.
+  assert core.CLARITY_TRW_A020.e4_per_output == 3840.
   assert cal.r5_key_bp == (0, 115, 254, 449, 654, 862, 1111, 1549, 1774)
   assert core.CIVIC_EPS_LOAD == (-5.574, -.1831, -4.540, -326.5, -83.6, -3.185)
   assert core.CIVIC_P_SCALE == (1.15, 1.25, 1.15)

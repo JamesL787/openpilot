@@ -50,7 +50,7 @@ def _command_delay_setting(settings, key, default: float) -> float:
   return min(max(value, 0.0), MAX_COMMAND_DELAY) if math.isfinite(value) else default
 
 
-def command_delay(settings, speed: float, *, calibration: str = "clarity_a020") -> float:
+def command_delay(settings, speed: float, *, calibration: str = "clarity_trw_a020") -> float:
   if calibration == "civic_bosch_c020":
     # Do not let persisted Clarity command-delay settings silently retune Civic.
     return float(np.interp(speed, COMMAND_DELAY_BP, (CIVIC_COMMAND_DELAY_LOW, DEFAULT_COMMAND_DELAY_HIGH)))
