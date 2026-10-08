@@ -81,7 +81,9 @@ def test_crv_carries_its_own_clamp_axes_r6_and_load():
   cal = core.CRV_TLA_A040
   assert cal.key_clamp == 1774 and cal.e4_per_output == 4096.0
   assert cal.r5_key_bp == (0, 219, 443, 662, 887, 1108, 1330, 1552, 1663)
-  assert cal.r6_per_deg_s == pytest.approx(-121.6051 * 1650 / 1450)
+  assert cal.r6_per_deg_s == core.CRV_R6_CENTRE and cal.r6_angle_gain == core.CRV_R6_GAIN
+  # the owner's single V5 fit (-138.4 against 0x14A) sits inside the curve the A table gives
+  assert core.firmware_r6(1., 0., cal) > -138.4 > core.firmware_r6(1., 180., cal)
   assert FIRMWARE_CAR_TUNES["crv_tla_a040"].load == core.CRV_EPS_LOAD
   assert FIRMWARE_CAR_TUNES["crv_tla_a040"].p_scale == core.P_SCALE  # the Clarity's trims, not the Civic's
   # its clamp, not the Clarity's 1663, is what bounds the key
@@ -91,7 +93,7 @@ def test_crv_carries_its_own_clamp_axes_r6_and_load():
 @pytest.mark.parametrize("name", ["civic_bosch_c120", "civic_tgg_a120"])
 def test_provisional_images_read_their_own_tables_but_carry_the_c020_r6_and_load(name):
   tune = FIRMWARE_CAR_TUNES[name]
-  assert tune.calibration.r6_per_deg_s == core.CIVIC_BOSCH_C020.r6_per_deg_s
+  assert tune.calibration.r6_angle_gain is not None  # own A table (C120) or the C020's measured curve (TGG)
   assert tune.load == core.CIVIC_EPS_LOAD and tune.p_scale == core.CIVIC_P_SCALE
   assert tune.calibration.envelope_v == tuple(core.FLAT_ENVELOPE_V)
 
@@ -130,11 +132,34 @@ def test_key_clamp_is_the_e4_the_firmware_stops_listening_at(name):
   assert (cal.key_clamp == 1774) == (name == "crv_tla_a040")
 
 
-def test_insight_carries_its_own_measured_load_and_the_c020_r6():
+def test_insight_carries_its_own_measured_load_and_r6_from_its_a_table():
   tune = FIRMWARE_CAR_TUNES["insight_txm_a040"]
   assert tune.load == core.INSIGHT_EPS_LOAD != core.CIVIC_EPS_LOAD
-  assert tune.calibration.r6_per_deg_s == core.CIVIC_BOSCH_C020.r6_per_deg_s
+  assert tune.calibration.r6_per_deg_s == core.INSIGHT_R6_CENTRE and tune.calibration.r6_angle_gain == core.INSIGHT_R6_GAIN
   assert tune.calibration.r5_key_bp == (0, 111, 222, 333, 443, 665, 887, 1108, 1663)  # row 0 on every Insight image
   # lighter than the C020's column at speed, which the carried-over load over-asked
   assert abs(core.column_load(10., 0., 25., 0., coefficients=core.INSIGHT_EPS_LOAD)) < \
     abs(core.column_load(10., 0., 25., 0., coefficients=core.CIVIC_EPS_LOAD))
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_every_image_has_angle_dependent_r6(name):
+  # R6 is the pre-table column rate; per published deg/s it grows with the A table's slope on every image
+  cal = FIRMWARE_CAR_TUNES[name].calibration
+  assert cal.r6_angle_bp is not None and cal.r6_angle_gain[0] == 1.0
+  assert core.firmware_r6(1., 180., cal) < core.firmware_r6(1., 0., cal) < 0.
+  assert core.firmware_r6(1., -180., cal) == core.firmware_r6(1., 180., cal)
+
+
+@pytest.mark.parametrize("band, measured", [(7.5, -153.2), (22.5, -152.2), (45., -155.), (80., -162.2), (125., -167.4),
+                                            (175., -168.9), (250., -168.9)])
+def test_c020_r6_is_its_measured_curve(band, measured):
+  # 0.1 s derivative of the published angle against 0x6A2 R6, routes 64/154/287/289/294
+  assert core.firmware_r6(1., band, core.CIVIC_BOSCH_C020) == pytest.approx(measured, rel=.01)
+
+
+def test_a_table_r6_centres_scale_from_the_clarity_by_the_centre_divisor():
+  # -122 x divisor / 16384; the C020's measured centre (-153.2) lands within 0.4% of its -153.7
+  assert core.R6_PER_CENTRE_DEG_S * 20647 / 16384 == pytest.approx(core.C020_R6_CENTRE, rel=.005)
+  for centre, divisor in ((core.C120_R6_CENTRE, 20972), (core.INSIGHT_R6_CENTRE, 17613), (core.CRV_R6_CENTRE, 16783)):
+    assert centre == pytest.approx(core.R6_PER_CENTRE_DEG_S * divisor / 16384, abs=.01)

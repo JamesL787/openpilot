@@ -44,10 +44,10 @@ are model-dependent calibrations, not a guarantee for every driving model.
 
 ## Calibration and unchanged behavior
 
-C020 has its own nonlinear command map, speed envelope, rate scale (-173), column
+C020 has its own nonlinear command map, speed envelope, measured angle-dependent R6, column
 load fit, fixed P trims (115 / 125 / 115%) and I trims (75 / 95 / 100%). Its firmware
 law inversion includes both the command-map and P-map knots. Clarity keeps its
-newer angle-dependent R6 conversion and all existing core numerical behavior.
+angle-dependent R6 conversion and all existing core numerical behavior.
 
 Each image carries its own command map, P-row axis, key clamp, speed envelope,
 R6, column load and fixed P/I trims (`FIRMWARE_CAR_TUNES`), so no image is
@@ -105,3 +105,16 @@ Host checks validate numerical parity, profile admission, shared schedule wiring
 lane-change bypass and generated Sunnylink definitions. They do not replace native
 C4 tests, recorded-drive replay or progressive road validation. Do not promote
 this patch to release branches or call the TEG placeholder validated on this basis.
+
+## Rate feedback (R6)
+
+R6 per published deg/s is angle-dependent on every image. The firmware's R6 is the pre-table column rate (flat
+against the 0x18F rate on both cars with telemetry), scaled by NORM (1650 on every PTM build) and the motor-to-angle
+constant (3121 in every image), while the feedforward differentiates the published angle, which comes out of each
+image's A table. Per published deg/s, R6(angle) = -122 x (A-table centre divisor / 16384) x (A-table slope ratio).
+Against telemetry (0.1 s angle derivative): Clarity within 0.6% at centre and 2.7% at every angle; C020 within 0.4% at
+centre but 5-10% high past 60 deg, so the C020 and the TGG-A120 (same A table) use the C020's measured curve. The
+C120, Insight and CR-V use the A-table model. The single constants used before (-173 C020, -138.4 CR-V) were angle
+averages against the 0x14A rate, about 12% too strong at centre and 8-18% too weak in big turns. Column loads that
+were rebuilt from E4 rather than telemetry (Insight) or refitted (C020) use the same domain as the feedforward: the
+rate is the derivative of the published angle, which the 0x14A rate reads about 5% below on the Civic.

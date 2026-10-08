@@ -81,10 +81,11 @@ def test_c020_tables_load_trims_and_clarity_angle_feedback_are_separate():
   assert cal.e4_per_output == 4096.
   assert core.CLARITY_TRW_A020.e4_per_output == 3840.
   assert cal.r5_key_bp == (0, 115, 254, 449, 654, 862, 1111, 1549, 1774)
-  assert core.CIVIC_EPS_LOAD == (-5.574, -.1831, -4.540, -326.5, -83.6, -3.185)
+  assert core.CIVIC_EPS_LOAD == (-5.9171, -0.14312, -7.622, -208.266, 22.399, -0.2563)
   assert core.CIVIC_P_SCALE == (1.15, 1.25, 1.15)
   assert core.CIVIC_I_SCALE == (.75, .95, 1.)
-  assert core.firmware_r6(10., 0., cal) == core.firmware_r6(10., 200., cal) == -1730.
+  # R6 grows with angle (the C020's measured curve), as the Clarity's does from its own A table
+  assert core.firmware_r6(10., 0., cal) == pytest.approx(-1532.) and core.firmware_r6(10., 200., cal) == pytest.approx(-1689., rel=.002)
   assert core.firmware_r6(10., 200.) != core.firmware_r6(10., 0.)
   # The nonlinear P pieces reproduce the interpolation over key on the C020's own P axis.
   assert cal.kp_key_bp == (0, 223, 441, 665, 883, 1108, 1330, 1552, 1774) and cal.kp_v == tuple(core.KP_V)
