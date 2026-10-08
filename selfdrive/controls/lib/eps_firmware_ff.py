@@ -118,8 +118,15 @@ class EpsFirmwareProfile:
 # 0xFFF87B7C that the command map, P and D tables read. Checked against both measured cars: every Clarity record
 # says 0 (row 0 live), and on the C020 only TBCA9/TBHC8 say 1 (row 1 live on the owner's car). Per image below.
 
-# Clarity column load, fitted on route 00000352. R^2 0.82 in-route, 0.72 on the held-out route.
-CLARITY_LOAD = ColumnLoadModel(k0=-7.00387, k1=-0.21857, c=-6.8317, friction=-314.07279, bias=20.46793, kroll=-7.20003)
+# Clarity column load, fitted on the dev car's routes 35c-38c (EPS outage 381-389 excluded; 203 min engaged, not
+# pressed, from 2 m/s, |driver torque| < 200, 13 min of turns past 30 deg) against the firmware's own A030 output
+# (0x6A2 w3) as the target, in the feedforward's domain (rate = 0.1 s derivative of the published angle; a
+# driver-torque regressor, 1.5 per count, absorbs helper A's yield to resting hands and is dropped here). Held out on
+# alternating 20 s blocks against A030: hands-off R^2 0.83 / 0.84 and turns 0.94 / 0.95, against 0.81 / 0.83 and
+# 0.94 / 0.94 for the route-352 fit (k0 -7.004, k1 -0.2186, c -6.832, friction -314.1, bias 20.5, kroll -7.20).
+# Rebuilding the target from E4 alone (angle-dependent R6, scale 256), as the Insight and C020 loads are, gives the
+# same load: 0.83 / 0.84 and 0.95 / 0.95 against A030.
+CLARITY_LOAD = ColumnLoadModel(k0=-5.914, k1=-0.2135, c=-6.0094, friction=-149.378, bias=46.843, kroll=-7.2513)
 
 # 10th-gen Civic column (C020), fitted on all 14 of the owner's routes (221 min engaged, not pressed, from 2 m/s,
 # |driver torque| < 200, a driver-torque regressor absorbing resting hands and dropped here). Fitted in the
