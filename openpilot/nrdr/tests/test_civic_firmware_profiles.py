@@ -9,7 +9,7 @@ import pytest
 from opendbc.sunnypilot.car.honda.values_ext import HondaFlagsSP
 from openpilot.nrdr.features.lateral.controller_selection import (
   CIVIC_C120_PROFILE, CIVIC_PROFILE, CIVIC_TGG_PROFILE, CLARITY_PROFILE, CRV_PROFILE, INSIGHT_PROFILE,
-  TEG_PLACEHOLDER_PROFILE, firmware_controller_profile,
+  TEG_PROFILE, firmware_controller_profile,
   firmware_controller_selected,
 )
 from openpilot.nrdr.features.lateral import vfn_eps_core as core
@@ -29,7 +29,7 @@ def car(fingerprint, firmware, *, modified=True, tuning="pid", brand="honda"):
   ("HONDA_CIVIC_BOSCH", b"39990-TBA,C020", CIVIC_PROFILE),
   ("HONDA_CIVIC_BOSCH", b"39990-TBA,C120", CIVIC_C120_PROFILE),
   ("HONDA_CIVIC_BOSCH", b"39990-TGG-A120\0", CIVIC_TGG_PROFILE),
-  ("HONDA_CIVIC", b"39990-TEG,A010\0", TEG_PLACEHOLDER_PROFILE),
+  ("HONDA_CIVIC", b"39990-TEG,A010\0", TEG_PROFILE),
   ("HONDA_CRV_5G", b"39990-TLA-A040", CRV_PROFILE),
   ("HONDA_INSIGHT", b"39990-TXM-A040", INSIGHT_PROFILE),
 ])
@@ -39,12 +39,11 @@ def test_exact_profiles_and_selected_controller(fingerprint, firmware, profile):
   for value in (1, "1", b"1"):
     assert firmware_controller_selected({"NrdrLateralController": value}, cp, sp)
   assert not firmware_controller_selected({"NrdrLateralController": 0}, cp, sp)
-  assert profile.provisional == (profile not in (CLARITY_PROFILE, CIVIC_PROFILE, CRV_PROFILE, INSIGHT_PROFILE))
+  assert profile.provisional == (profile not in (CLARITY_PROFILE, CIVIC_PROFILE, CRV_PROFILE, INSIGHT_PROFILE, TEG_PROFILE))
 
 
 @pytest.mark.parametrize("fingerprint,firmware", [
-  ("HONDA_CIVIC", b"39990-TBA-A030"), ("HONDA_CIVIC", b"39990-TBA-C020"), ("HONDA_CIVIC_BOSCH", b"39990-TEG-A010"),
-  ("HONDA_CIVIC_BOSCH", b"39990-TBA-A030"),
+  ("HONDA_CIVIC", b"39990-TBA-A030"), ("HONDA_CIVIC", b"39990-TBA-C020"), ("HONDA_CIVIC_BOSCH", b"39990-TEG-A010"), ("HONDA_CIVIC_BOSCH", b"39990-TBA-A030"),
   ("HONDA_CIVIC", b"39990-TBA-C120"), ("HONDA_CIVIC", b"39990-TGG-A120"), ("HONDA_CIVIC_2022", b"39990-TEG-A010"),
   ("HONDA_CIVIC_BOSCH_DIESEL", b"39990-TBA-C020"), ("HONDA_CRV_5G", b"39990-TLA-A220"), ("HONDA_CRV", b"39990-TLA-A040"),
   ("HONDA_CLARITY", b"39990-TRW-A010"), ("LEXUS_ES_TSS2", b"39990-TEG-A010"),
@@ -109,7 +108,7 @@ def test_c020_feedforward_respects_source_caps_and_lane_change_bypass(speed):
   assert control.ff_weight == 0. and control.pid.f == 0.
 
 
-@pytest.mark.parametrize("profile", [CIVIC_PROFILE, CIVIC_C120_PROFILE, CIVIC_TGG_PROFILE, TEG_PLACEHOLDER_PROFILE,
+@pytest.mark.parametrize("profile", [CIVIC_PROFILE, CIVIC_C120_PROFILE, CIVIC_TGG_PROFILE, TEG_PROFILE,
                                      CRV_PROFILE, INSIGHT_PROFILE])
 def test_non_clarity_keeps_shared_prediction_delay_but_not_saved_clarity_command_delay(profile):
   assert prediction_delay_schedule(profile) is None

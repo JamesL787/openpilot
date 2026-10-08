@@ -3,7 +3,7 @@
 Civic C020 calibration/load/P-I trims adapted from JamesL787/openpilot
 59eb99e3183eb68963394daee8e52e51eb034f38. Clarity retains the newer angle-dependent
 R6 conversion below; the Civic source's older constant Clarity R6 is NOT ported.
-The other images' calibrations (Civic C120 / TGG-A120, Insight TXM-A040, CR-V TLA-A040) are ported from
+The other images' calibrations (Civic TEG-A010 / C120 / TGG-A120, Insight TXM-A040, CR-V TLA-A040) are ported from
 JamesL787/openpilot eps-fw-multicar 7e0e0319e9; each states what it measured and what it carries over.
 
 The Clarity's LKAS path is not a torque command. The firmware turns our 0xE4 value into a target R5,
@@ -235,6 +235,12 @@ CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
 CLARITY_EPS_LOAD = (LOAD_K0, LOAD_K1, LOAD_C, LOAD_FRICTION, LOAD_BIAS, LOAD_KROLL)
 # Source fit on Civic C020 firmware-controller route 294 (not its separate PID shadow fit).
 CIVIC_EPS_LOAD = (-5.574, -0.1831, -4.540, -326.5, -83.6, -3.185)
+# Nidec Civic column (TEG-A010 owner's 08-12 telemetry drive, route 00000001: 18 min of city driving up to 15 m/s,
+# hands off), fitted from the firmware's own P + KFF output rebuilt out of its telemetry. It needs ~1.6x the C020's
+# output for the same motion even at |driver torque| < 60, so it is the column and not resting hands. Held out a
+# minute at a time R^2 0.74 against 0.61 for CIVIC_EPS_LOAD and 0.68 for the Clarity's. k1 is fitted below 15 m/s
+# only; the highway is an extrapolation. Bias and roll could not be told apart on this drive, so they are the C020's.
+TEG_EPS_LOAD = (-9.205, -0.3252, -9.039, -550.7, -83.6, -3.185)
 # CR-V 5G column (TLA-A040), fitted on the owner's route 00000006--82bb552a2c (native V5 telemetry, 40,193 hands-off
 # active groups) in this model's units: m/s, angle with the liveParameters offset removed, liveParameters roll.
 # R^2 0.843, alternating 60 s holdouts 0.857 / 0.820. Close to the Clarity's in every term but the speed term
@@ -259,6 +265,20 @@ FLAT_ENVELOPE_V = [1774] * 9
 TARGET_MAP_D_R5 = [0, 1926, 4938, 8455, 12036, 15926, 20138, 26955, 30000]
 C020_P_KEYS = (0, 223, 441, 665, 883, 1108, 1330, 1552, 1774)
 C120_P_KEYS = (3, 173, 441, 665, 887, 1104, 1317, 1610, 1774)
+# Nidec Civic TEG-A010, 08-26 Tracker1-3200 (bin sha256 60f42ecc). Carries the C020's command axes, P axis and
+# envelope byte for byte, so it takes the C020's row 1; E4 = -3840 * u (the HONDA_CIVIC torque map, not the C020's
+# 4096). R6 -161 and the load are the owner's, measured on the 08-12 telemetry build (E4 -> R5 -> P + KFF law exact
+# there). The live row is VARIANT-DEPENDENT and the car's variant cannot be read from openpilot: rows 0 and 1 agree
+# within 8%, but TEGA1 selects row 2 (R5 1.28-1.30x row 1 at mid command) and TEGA2 row 3 (0.48-0.70x at low command).
+CIVIC_TEG_A010 = EpsFirmwareCalibration(
+  e4_per_output=3840.0,
+  r5_key_bp=CIVIC_BOSCH_C020.r5_key_bp,
+  r5_v=CIVIC_BOSCH_C020.r5_v,
+  envelope_bp=CIVIC_BOSCH_C020.envelope_bp,
+  envelope_v=CIVIC_BOSCH_C020.envelope_v,
+  r6_per_deg_s=-161.0,
+  kp_key_bp=C020_P_KEYS,
+)
 # Civic Bosch 39990-TBA-C120, 08-11 C020Profile Trk4250 (bin sha256 3d88d5ea). Its variants select rows 0-4, all
 # within 5% of each other in R5, so the row does not matter; row 1 (= row 2) is taken, as the C020's. Flat envelope.
 # E4 = -4096 * u: this tree's opendbc sends the HONDA_CIVIC_BOSCH 4096 map for every image, but the image's command
@@ -335,6 +355,7 @@ FIRMWARE_CAR_TUNES = {
   "civic_bosch_c020": FirmwareCarTune(CIVIC_BOSCH_C020, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
   "civic_bosch_c120": FirmwareCarTune(CIVIC_BOSCH_C120, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
   "civic_tgg_a120": FirmwareCarTune(CIVIC_TGG_A120, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
+  "civic_teg_a010": FirmwareCarTune(CIVIC_TEG_A010, TEG_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
   "insight_txm_a040": FirmwareCarTune(INSIGHT_TXM_A040, INSIGHT_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
   "crv_tla_a040": FirmwareCarTune(CRV_TLA_A040, CRV_EPS_LOAD, P_SCALE, I_SCALE),
 }

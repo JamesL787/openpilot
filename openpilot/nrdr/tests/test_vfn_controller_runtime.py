@@ -73,9 +73,9 @@ def test_non_clarity_wrapper_uses_its_own_complete_tune_without_mutating_carpara
   assert control.delay_schedule is None
   # only images whose load was measured from their own rlogs (C020, CR-V, Insight) are not provisional
   is_c020 = changes["firmware"] == b"39990-TBA-C020"
-  assert control.firmware_profile.provisional == (changes["firmware"] not in (b"39990-TBA-C020", b"39990-TLA-A040", b"39990-TXM-A040"))
-  # the C020's tables go to the C020 and, as an explicit placeholder, to the TEG-A010
-  assert (control.core.ff.cal is CIVIC_BOSCH_C020) == (is_c020 or changes["firmware"] == b"39990-TEG-A010")
+  assert control.firmware_profile.provisional == (
+    changes["firmware"] not in (b"39990-TBA-C020", b"39990-TLA-A040", b"39990-TXM-A040", b"39990-TEG-A010"))
+  assert (control.core.ff.cal is CIVIC_BOSCH_C020) == is_c020
   # User PIF/yaw settings cannot leak into either firmware profile.
   control.set_live_tuning_snapshot(ParamSnapshot(1, {"NrdrDeviceYawCorrection": True, "LatFScaleHighway": 500,
                                                    "NrdrLatRateDampingHighway": 300}))

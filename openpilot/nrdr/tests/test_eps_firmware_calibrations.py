@@ -77,6 +77,19 @@ def test_clarity_is_unchanged_by_the_per_image_fields():
   assert FIRMWARE_CAR_TUNES["clarity_trw_a020"].p_scale == core.P_SCALE
 
 
+def test_teg_carries_its_own_measurements_and_the_nidec_transport():
+  cal = core.CIVIC_TEG_A010
+  assert cal.e4_per_output == 3840.0 and core.CIVIC_BOSCH_C020.e4_per_output == 4096.0
+  assert cal.r6_per_deg_s == -161.0
+  assert FIRMWARE_CAR_TUNES["civic_teg_a010"].load == core.TEG_EPS_LOAD == (-9.205, -0.3252, -9.039, -550.7, -83.6, -3.185)
+  # it shares the C020's command axes, P axis and envelope; the load and R6 are what differ
+  assert cal.r5_key_bp == core.CIVIC_BOSCH_C020.r5_key_bp and cal.kp_key_bp == tuple(core.C020_P_KEYS)
+  assert cal.envelope_v == core.CIVIC_BOSCH_C020.envelope_v
+  # the column needs ~1.6x the C020's output for the same motion
+  assert core.column_load(30., 20., 8., 0., coefficients=core.TEG_EPS_LOAD) == pytest.approx(
+    1.6 * core.column_load(30., 20., 8., 0., coefficients=core.CIVIC_EPS_LOAD), rel=.25)
+
+
 def test_crv_carries_its_own_clamp_axes_r6_and_load():
   cal = core.CRV_TLA_A040
   assert cal.key_clamp == 1774 and cal.e4_per_output == 4096.0
@@ -112,14 +125,12 @@ def test_each_calibrations_transport_is_what_opendbc_sends_for_its_car():
   import ast
   from pathlib import Path
 
-  from openpilot.nrdr.features.lateral.controller_selection import _PROFILES, TEG_PLACEHOLDER_PROFILE
+  from openpilot.nrdr.features.lateral.controller_selection import _PROFILES
   path = Path(__file__).resolve().parents[3] / "opendbc_repo/opendbc/sunnypilot/car/honda/interface_ext.py"
   assignment, = [node for node in ast.parse(path.read_text()).body if isinstance(node, ast.Assign)
                  and any(isinstance(target, ast.Name) and target.id == "_EXTENDED_TORQUE_LIMITS" for target in node.targets)]
   limits = {key.attr: value.value for key, value in zip(assignment.value.keys, assignment.value.values, strict=True)}
   for (fingerprint, _), profile in _PROFILES.items():
-    if profile is TEG_PLACEHOLDER_PROFILE:
-      continue  # the C020 placeholder predates this check (4096 map on the 3840 Nidec transport)
     assert FIRMWARE_CAR_TUNES[profile.calibration].calibration.e4_per_output == limits[fingerprint], (fingerprint, profile.name)
 
 

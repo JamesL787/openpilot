@@ -8,7 +8,7 @@ changing it requires offroad confirmation. PIF's Device Yaw Correction is separa
 | --- | --- | --- | --- |
 | HONDA_CLARITY / 39990-TRW-A020, modified EPS | Clarity TRW-A020 (P-minus-5 build) | Measured, road-validated | Measured speed schedule |
 | HONDA_CIVIC_BOSCH / 39990-TBA-C020, modified EPS | Civic C020 TargetMapD / Tracker4500 / Norm1650 / P117to265 / D737 / KFF45 | Measured, road-validated | Normal live/manual path |
-| HONDA_CIVIC / 39990-TEG-A010, modified EPS | Civic C020 calibration (placeholder) | **Provisional C020 placeholder, not road-validated for TEG** | Normal live/manual path |
+| HONDA_CIVIC / 39990-TEG-A010, modified EPS | Civic TEG-A010 | Tables from the image; R6 and load measured from the owner's city-drive rlogs. The live command row is unknown (see below) | Normal live/manual path |
 | HONDA_CRV_5G / 39990-TLA-A040, modified EPS | CR-V TLA-A040 | Tables, R6 and load measured on the owner's telemetry rlogs | Normal live/manual path |
 | HONDA_CIVIC_BOSCH / 39990-TBA-C120, modified EPS | Civic Bosch C120 | Tables from the image; R6 and load carried over from the C020. **Provisional** | Normal live/manual path |
 | HONDA_CIVIC_BOSCH / 39990-TGG-A120, modified EPS | Civic hatch TGG-A120 | Tables from the image; R6 and load carried over from the C020. **Provisional** | Normal live/manual path |
@@ -54,8 +54,9 @@ R6, column load and fixed P/I trims (`FIRMWARE_CAR_TUNES`), so no image is
 evaluated with another's tables. The Civic family runs the C020's trims
 (115 / 125 / 115% P, 75 / 95 / 100% I); the CR-V runs the Clarity's. Transport
 differs by fingerprint and follows this tree's opendbc (`_EXTENDED_TORQUE_LIMITS`),
-which a test checks: the Clarity sends through the 3840-count transport; Civic
-Bosch (C020, C120, TGG-A120), Insight and CR-V through 4096. The command clamp word read from each image is 1663, which is E4 3840, on
+which a test checks: the Nidec Civic (TEG) and Clarity send through the
+3840-count transport; Civic Bosch (C020, C120, TGG-A120), Insight and CR-V through
+4096. The command clamp word read from each image is 1663, which is E4 3840, on
 every image but the CR-V's (1774, E4 4096): the firmware ignores E4 above that. So
 on the Civic Bosch images (C020, C120, TGG-A120) and the Insight, which this tree's
 opendbc sends 4096, a command above 0.9375 of full scale saturates in the firmware
@@ -63,13 +64,12 @@ and the controller models that with the clamp. Capping those cars' transport at
 3840, as the source branch's opendbc does for the C120 and Insight, is an opendbc
 change and not part of this port.
 
-The TEG exception deliberately uses the complete C020 controller calibration,
-not a hybrid of Clarity load/P-I trims. Its real vehicle geometry and CAN range
-are still retained: TEG sends through its existing 3840-count transport, whereas
-the fitted C020 model assumes 4096. Its plant/normalization is consequently only a
-placeholder; there is no claim that commands or resulting motion are equivalent.
-Unknown physical firmware behavior cannot be inferred from this substitution.
-
+The TEG's earlier C020 placeholder is replaced by its own calibration: R6 -161 per
+deg/s and a column that needs ~1.6x the C020's output for the same motion
+(`TEG_EPS_LOAD`, fitted on 18 min of city driving up to 15 m/s; the highway is an
+extrapolation). The TEG's live command row is variant-dependent and which variant
+the car is cannot be read by openpilot: rows 0 and 1 agree within 8%, but TEGA1 selects row
+2 (R5 1.28-1.30x row 1 at mid command) and TEGA2 row 3 (0.48-0.70x at low command).
 The C020 now uses its own P-row axis (0, 223, 441, ...) read from its image, where
 this port had borrowed the Clarity's (0, 222, 443, ...); the C020 R5 target moves by
 0.025% at the median and 0.56% at the 99th percentile.
