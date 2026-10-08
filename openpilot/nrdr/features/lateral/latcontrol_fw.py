@@ -1,13 +1,13 @@
-"""Firmware Controller: VFN Clarity A020 and James's Civic C020 EPS calibrations.
+"""Firmware Controller: per-image EPS calibrations (Clarity TRW-A020 and the Civic, Insight and CR-V images).
 
 Uses the source controller's fixed gains, firmware-inversion feedforward, command
 delay and output filter. Geometry is supplied by the shared steer-ratio selection,
 just as for PIF; choosing this controller must not replace the user's ratio choice.
 Optimized lane changes remain an explicit owner-requested adaptation. The command
-delay ends (NrdrYawCommandDelayLow/High) remain Clarity-specific. Civic uses the
-source Civic schedule plus the existing SunnyPilot port compensation. TEG-A010 is
-an explicit owner-requested provisional C020 fallback; its CAN range stays 3840,
-not C020's 4096. No physical equivalence or road validation is implied.
+delay ends (NrdrYawCommandDelayLow/High) remain Clarity-specific. Every other image
+uses the source Civic schedule plus the existing SunnyPilot port compensation. Images
+marked provisional in controller_selection have not steered with this controller;
+no physical equivalence or road validation is implied.
 """
 import numpy as np
 
@@ -15,9 +15,7 @@ from openpilot.cereal import log
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.nrdr.features.lateral.controller_selection import firmware_controller_profile
-from openpilot.nrdr.features.lateral.vfn_eps_core import (
-  CIVIC_BOSCH_C020, CIVIC_EPS_LOAD, CIVIC_I_SCALE, CIVIC_P_SCALE, HondaEpsFirmwareFeedforward, HondaEpsLateralCore,
-)
+from openpilot.nrdr.features.lateral.vfn_eps_core import FIRMWARE_CAR_TUNES, HondaEpsFirmwareFeedforward, HondaEpsLateralCore
 from openpilot.nrdr.features.lateral.yaw_control_timing import CommandDelay, command_delay, prediction_delay_schedule
 from openpilot.nrdr.features.lateral.latcontrol_pid import _eps_modified_steering_pressed
 from openpilot.nrdr.features.lateral.lane_change_tuning import optimized_lane_change_active
@@ -37,14 +35,12 @@ class LatControlFirmware(LatControl):
       raise ValueError("Firmware control requires a supported modified EPS family with PID CarParams")
     super().__init__(CP, CP_SP, CI, dt)
     self.delay_schedule = prediction_delay_schedule(self.firmware_profile)
-    if self.firmware_profile.calibration == "civic_bosch_c020":
-      # Source Bosch base gains as well as its fixed trims, including on the
-      # owner-requested TEG fallback. Never retune CP or increase CAN/safety limits.
-      self.core = HondaEpsLateralCore(GAIN_BP, KP, GAIN_BP, KI, dt,
-        ff=HondaEpsFirmwareFeedforward(dt, cal=CIVIC_BOSCH_C020, load=CIVIC_EPS_LOAD),
-        p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE)
-    else:
-      self.core = HondaEpsLateralCore(GAIN_BP, KP, GAIN_BP, KI, dt)
+    # Each calibration brings its own tables, column load and fixed P/I trims; the base gains are the source's.
+    # Never retune CP or increase CAN/safety limits.
+    tune = FIRMWARE_CAR_TUNES[self.firmware_profile.calibration]
+    self.core = HondaEpsLateralCore(GAIN_BP, KP, GAIN_BP, KI, dt,
+      ff=HondaEpsFirmwareFeedforward(dt, cal=tune.calibration, load=tune.load),
+      p_scale=tune.p_scale, i_scale=tune.i_scale)
     cloudlog.info("Firmware Controller profile=%s calibration=%s provisional=%s prediction_schedule=%s",
                   self.firmware_profile.name, self.firmware_profile.calibration,
                   self.firmware_profile.provisional, self.delay_schedule)
