@@ -140,6 +140,13 @@ TEG_LOAD = ColumnLoadModel(k0=-9.205, k1=-0.3252, c=-9.039, friction=-550.7, bia
 # this model's own units: m/s, angle with the liveParameters offset removed, liveParameters roll. R^2 0.843, alternating
 # 60 s holdouts 0.857 / 0.820. Close to the Clarity's in every term but the speed term (-0.143 vs -0.219).
 CRV_LOAD = ColumnLoadModel(k0=-7.29446, k1=-0.143159, c=-4.60337, friction=-297.83, bias=-19.899, kroll=-3.58048)
+# Insight column (HONDA_INSIGHT, 39990-TXM,A040), fitted on the owner's konik route f133facb1b9b7420|0000001e--2987344626
+# (2026-10-08, 15.8 mi, 11.5 min hands-off engaged: 2.7 at 3-10 m/s, 3.4 at 10-20, 5.5 above). No telemetry in that build,
+# so the target is the firmware law rebuilt from the sent E4 through row 0 and the car's [0, 3840] map, with R6 assumed at
+# the Civic's -172 (R6 is not separable from the viscous term without telemetry: on the C020 the same free fit returns
+# -285 against a measured -172). The viscous term near zero is that trade; the feedforward inverts with the same R6.
+# Held out on alternating 20 s blocks R^2 0.38 / 0.46, against -0.29 / -0.08 for CIVIC_LOAD (0.54 vs -0.02 turning).
+INSIGHT_LOAD = ColumnLoadModel(k0=-4.3971, k1=-0.0873, c=0.2826, friction=-228.741, bias=-66.432, kroll=-0.8457)
 
 # R6 comes from the column rate BEFORE the firmware's angle tables, the domain 0x18F STEER_ANGLE_RATE reports
 # (R6 = -31.6 per 0x18F count, flat to 2% at every angle on route 369). The feedforward's rate is the derivative
@@ -256,14 +263,16 @@ CIVIC_TGG_A120 = EpsFirmwareProfile(
 # Insight 39990-TXM-A040, 08-08 C020Surface Trk1-4000 Trk2-3869 (bin sha256 1f1cfe6b). Rows 0-1 keep the Clarity-
 # style axis ending at the 1663 clamp and rows 2-5 are 2x it at low command. Row 0 is live: all three variant records
 # (TXMA0/1/2, at 0xECF7, laid out among the part-number strings) select row 0, and rows 0 and 1 are identical anyway.
-# The envelope was not located; flat is assumed (the 1663 clamp binds). Civic platform, so the Civic R6 and load are
-# carried over. Not measured: envelope, R6, load.
+# Every Insight image we have (08-01 through 08-08) carries the same row-0 axis and variant records (TXMA0/1 enabled
+# -> row 0, TXMA2 disabled -> row 0), so the row holds whichever build the car runs. The envelope was not located;
+# flat is assumed (the 1663 clamp binds). Load measured (INSIGHT_LOAD); R6 is the Civic's, assumed. Not measured:
+# envelope, R6.
 INSIGHT_TXM = EpsFirmwareProfile(
   name="insight_txm_a040", e4_per_output=3840.0,
   r5_key_bp=(0, 111, 222, 333, 443, 665, 887, 1108, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1663,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=(0, 222, 333, 665, 887, 1104, 1317, 1441, 1663), kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=CIVIC_R6_PER_DEG_S, load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
+  r6_per_deg_s=CIVIC_R6_PER_DEG_S, load=INSIGHT_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
 )
 # CR-V 5G 39990-TLA-A040, the owner's 08-24 Clarity_FF_tune_telemety_8cf8e537 (decoded full image sha256 d5dc04a8):
 # TargetMap-D, P117..265, D737, KFF45, Norm1650, Trk3200, clamps 7373/1774/9000 on the CR-V's stock axes. Key clamp
