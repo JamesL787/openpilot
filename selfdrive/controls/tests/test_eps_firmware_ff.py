@@ -365,9 +365,9 @@ def test_clarity_pminus5_profile_is_the_validated_build():
 
 
 def test_nidec_civics_carry_the_teg_measurements():
-  # R6 and the column load measured on the TEG-A010 telemetry drive; the tables stay the C020's
+  # the column load measured on the TEG-A010 telemetry drive and R6 from their own A table; tables stay the C020's
   for cal in (eps_ff.CIVIC_A030, eps_ff.CIVIC_TEG_A010):
-    assert cal.r6_per_deg_s == eps_ff.TEG_R6_PER_DEG_S and cal.load == eps_ff.TEG_LOAD
+    assert cal.r6_per_deg_s == eps_ff.C120_R6_CENTRE and cal.r6_angle_gain == eps_ff.C120_R6_GAIN and cal.load == eps_ff.TEG_LOAD
     assert (cal.r5_key_bp, cal.kp_key_bp, cal.e4_per_output) == (eps_ff.CIVIC_C020.r5_key_bp, eps_ff.CIVIC_C020.kp_key_bp, 3840.0)
   # the Nidec column asks for more than the C020's at every speed it was measured over
   for v in (3.0, 8.0, 15.0):
@@ -426,7 +426,9 @@ def test_every_profile_car_steers_with_its_own_profile(monkeypatch, candidate, f
 
 def test_crv_carries_its_own_measured_r6_and_load():
   # route 00000006--82bb552a2c: R6 least squares at norm 1450 scaled to the image's 1650; load fitted in m/s with roll
-  assert eps_ff.CRV_TLA.r6_per_deg_s == pytest.approx(-138.378, abs=0.01)
+  assert eps_ff.CRV_TLA.r6_per_deg_s == eps_ff.CRV_R6_CENTRE and eps_ff.CRV_TLA.r6_angle_gain == eps_ff.CRV_R6_GAIN
+  # the owner's single V5 fit (-138.4 against 0x14A) sits inside the curve the A table gives
+  assert eps_ff.firmware_r6(1.0, 0.0, eps_ff.CRV_TLA) > -138.4 > eps_ff.firmware_r6(1.0, 180.0, eps_ff.CRV_TLA)
   assert eps_ff.CRV_TLA.load is eps_ff.CRV_LOAD
   assert -0.25 < eps_ff.CRV_LOAD.k1 < -0.10 and eps_ff.CRV_LOAD.kroll < 0.0
 
@@ -447,7 +449,7 @@ def test_crv_a220_reads_its_own_command_axis_and_predicts_r6_from_the_a040():
   assert a220.key_ceiling(120 / 3.6) == 1774 and a220.key_ceiling(160 / 3.6) == 1330
   assert a040.key_ceiling(160 / 3.6) == 1774
   # R6 is predicted from the A040 (shared 3121 / A-centre 16783 / NORM 1650), not measured; load is the CR-V's
-  assert a220.r6_per_deg_s == a040.r6_per_deg_s == pytest.approx(-138.378, abs=0.01)
+  assert a220.r6_per_deg_s == a040.r6_per_deg_s == eps_ff.CRV_R6_CENTRE and a220.r6_angle_gain == a040.r6_angle_gain
   assert a220.load is eps_ff.CRV_LOAD and a220.e4_per_output == 4096.0
   assert (a220.p_scale, a220.i_scale) == (eps_ff.CLARITY_P_SCALE, eps_ff.CLARITY_I_SCALE)
 
@@ -543,6 +545,30 @@ def test_insight_carries_its_own_measured_load_on_row_0():
   cal = eps_ff.INSIGHT_TXM
   assert cal.load is eps_ff.INSIGHT_LOAD and cal.load != eps_ff.CIVIC_LOAD
   assert cal.r5_key_bp == (0, 111, 222, 333, 443, 665, 887, 1108, 1663)  # row 0, every Insight build and variant
-  assert cal.e4_per_output == 3840.0 and cal.r6_per_deg_s == eps_ff.CIVIC_R6_PER_DEG_S
+  assert cal.e4_per_output == 3840.0 and cal.r6_per_deg_s == eps_ff.INSIGHT_R6_CENTRE and cal.r6_angle_gain == eps_ff.INSIGHT_R6_GAIN
   # the fitted column is lighter than the C020's at speed, which the carried-over load over-asked
   assert abs(eps_ff.column_load(10., 0., 25., 0., load=eps_ff.INSIGHT_LOAD)) < abs(eps_ff.column_load(10., 0., 25., 0., load=eps_ff.CIVIC_LOAD))
+
+
+@pytest.mark.parametrize("cal", [c for c in ALL_PROFILES if not c.name.startswith("clarity")], ids=lambda c: c.name)
+def test_every_image_has_angle_dependent_r6(cal):
+  # R6 is the pre-table column rate; per published deg/s it grows with the A table's slope on every image
+  assert cal.r6_angle_bp is not None and cal.r6_angle_gain[0] == 1.0
+  assert eps_ff.firmware_r6(1.0, 180.0, cal) < eps_ff.firmware_r6(1.0, 0.0, cal) < 0.0
+  assert eps_ff.firmware_r6(1.0, -180.0, cal) == eps_ff.firmware_r6(1.0, 180.0, cal)
+
+
+@pytest.mark.parametrize("band, measured", [(7.5, -153.2), (22.5, -152.2), (45.0, -155.0), (80.0, -162.2),
+                                            (125.0, -167.4), (175.0, -168.9), (250.0, -168.9)])
+def test_c020_r6_is_its_measured_curve(band, measured):
+  # 0.1 s derivative of the published angle against 0x6A2 R6, routes 64/154/287/289/294
+  assert eps_ff.firmware_r6(1.0, band, eps_ff.CIVIC_C020) == pytest.approx(measured, rel=0.01)
+
+
+def test_a_table_r6_model_matches_the_clarity_and_the_c020_centre():
+  # the A-table model, centre scaled by the divisor ratio, against telemetry: Clarity -121.5 at 0-15 deg,
+  # C020 -153.2 at 0-15 deg (20647 / 16384 x -122 = -153.7)
+  assert eps_ff.R6_PER_CENTRE_DEG_S * 20647 / 16384 == pytest.approx(eps_ff.C020_R6_CENTRE, rel=0.01)
+  assert eps_ff.C120_R6_CENTRE == pytest.approx(-122.0 * 20972 / 16384, abs=0.01)
+  assert eps_ff.INSIGHT_R6_CENTRE == pytest.approx(-122.0 * 17613 / 16384, abs=0.01)
+  assert eps_ff.CRV_R6_CENTRE == pytest.approx(-122.0 * 16783 / 16384, abs=0.01)

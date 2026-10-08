@@ -121,12 +121,14 @@ class EpsFirmwareProfile:
 # Clarity column load, fitted on route 00000352. R^2 0.82 in-route, 0.72 on the held-out route.
 CLARITY_LOAD = ColumnLoadModel(k0=-7.00387, k1=-0.21857, c=-6.8317, friction=-314.07279, bias=20.46793, kroll=-7.20003)
 
-# 10th-gen Civic column, fitted jointly on the C020 owner's routes 00000287 + 00000289 + 00000294 (hands off, from the
-# firmware's own P + KFF output rebuilt out of its 0x6A1 error telemetry, so in pre-scale counts: scale_q8 256).
-# Held out one route at a time, R^2 0.64 / 0.74 / 0.79 against 0.61 / 0.70 / 0.76 for the Clarity model, which
-# over-asks this column (actual / model 0.77-0.98 at 4-22 m/s, 0.5-0.8 at 2-4 m/s). Bias and roll are the Civic's
-# own now that three drives identify them.
-CIVIC_LOAD = ColumnLoadModel(k0=-5.574, k1=-0.1831, c=-4.540, friction=-326.5, bias=-83.6, kroll=-3.185)
+# 10th-gen Civic column (C020), fitted on all 14 of the owner's routes (221 min engaged, not pressed, from 2 m/s,
+# |driver torque| < 200, a driver-torque regressor absorbing resting hands and dropped here). Fitted in the
+# feedforward's own domain: the rate is the 0.1 s derivative of the published angle (0x14A reads ~5% below it on this
+# car), and the target is the firmware law with the C020's measured angle-dependent R6 (C020_R6_*). Held out on
+# alternating 20 s blocks: hands-off R^2 0.75 / 0.76 and turns past 30 deg 0.86 / 0.81, against 0.25 / 0.33 and
+# 0.84 / 0.81 for the previous fit (k0 -5.574, k1 -0.1831, c -4.540, friction -326.5, bias -83.6, kroll -3.185), whose
+# hands-off miss was mostly its bias.
+CIVIC_LOAD = ColumnLoadModel(k0=-5.9171, k1=-0.14312, c=-7.622, friction=-208.266, bias=22.399, kroll=-0.2563)
 
 # Nidec Civic column (HONDA_CIVIC), fitted on the TEG-A010 owner's 08-12 telemetry drive (route 00000001, 18 min of
 # city driving up to 15 m/s, hands off), from the same P + KFF rebuild as CIVIC_LOAD. It needs ~1.6x the C020's output
@@ -142,14 +144,12 @@ TEG_LOAD = ColumnLoadModel(k0=-9.205, k1=-0.3252, c=-9.039, friction=-550.7, bia
 CRV_LOAD = ColumnLoadModel(k0=-7.29446, k1=-0.143159, c=-4.60337, friction=-297.83, bias=-19.899, kroll=-3.58048)
 # Insight column (HONDA_INSIGHT, 39990-TXM,A040), fitted on the owner's konik route f133facb1b9b7420|0000001e--2987344626
 # (2026-10-08, 15.8 mi). No telemetry in that build, so the target is the firmware law rebuilt from the sent E4 through
-# row 0 and the car's [0, 3840] map, with R6 assumed at the Civic's -172 (R6 is not separable from the viscous term
-# without telemetry: on the C020 the same free fit returns -285 against a measured -172; the feedforward inverts with
-# the same R6). 16.7 min engaged, not pressed, from 2 m/s, |driver torque| < 200, so the owner's turns are in (5 min past
-# 30 deg, mostly 1-5 m/s with ~150 counts of resting-hand torque); a driver-torque regressor (2.35 per count) absorbs
-# the hands and is dropped here, the controller assuming hands off. Held out on alternating 20 s blocks: hands-off R^2
-# 0.42 / 0.43 and turns past 30 deg 0.76 / 0.80, against -0.29 / -0.08 and 0.63 for CIVIC_LOAD. A hands-off-only fit
-# gives the same column (k0 -4.40, k1 -0.087) but a viscous term of the wrong sign (+0.28).
-INSIGHT_LOAD = ColumnLoadModel(k0=-4.6068, k1=-0.08999, c=-0.3906, friction=-205.498, bias=-72.007, kroll=-1.0328)
+# row 0 and the car's [0, 3840] map, with the Insight's R6 computed from its A table (INSIGHT_R6_*). Same domain as
+# the feedforward: the rate is the 0.1 s derivative of the published angle. 16.7 min engaged, not pressed, from 2 m/s,
+# |driver torque| < 200, so the owner's turns are in (5 min past 30 deg); a driver-torque regressor (2.0 per count)
+# absorbs resting hands and is dropped here. Held out on alternating 20 s blocks: hands-off R^2 0.51 / 0.50 and turns
+# past 30 deg 0.84 / 0.88; against the C020 load it used to carry, -0.29 / -0.08 hands-off.
+INSIGHT_LOAD = ColumnLoadModel(k0=-4.7594, k1=-0.09457, c=-2.9683, friction=-288.491, bias=-51.925, kroll=-1.0634)
 
 # R6 comes from the column rate BEFORE the firmware's angle tables, the domain 0x18F STEER_ANGLE_RATE reports
 # (R6 = -31.6 per 0x18F count, flat to 2% at every angle on route 369). The feedforward's rate is the derivative
@@ -189,12 +189,35 @@ CIVIC_ENVELOPE = ((0, 50, 100, 150, 200, 240, 300, 321, 400), (1774, 1774, 1774,
 C020_ROW1_KEYS = (0, 115, 254, 449, 654, 862, 1111, 1549, 1774)
 C020_P_KEYS = (0, 223, 441, 665, 883, 1108, 1330, 1552, 1774)
 C120_P_KEYS = (3, 173, 441, 665, 887, 1104, 1317, 1610, 1774)
-# 10th-gen Civic R6: least squares on the C020's hands-off telemetry, -171.8 / -171.9 / -172.1 per deg/s on routes
-# 287 / 289 / 294 (corr 0.99, no lag; NORM 1650 on both cars, so the ~1.29x over the Clarity is motor gearing).
-# The Bosch cars without a drive of their own carry it over.
-CIVIC_R6_PER_DEG_S = -172.0
-# The TEG-A010 on the same fit: -161 per deg/s hands off (corr 0.99, 10 ms lag; median ratio -160..-166 at every rate).
-TEG_R6_PER_DEG_S = -161.0
+# R6 per published deg/s is angle-dependent on every image, not just the Clarity: R6 is the firmware's PRE-table
+# column rate (flat against the 0x18F rate: 30.8 -> 28.6 counts per 0x18F count on the C020, 31.0 -> 30.6 on the
+# Clarity), scaled by NORM (1650 on every build) and the motor-to-angle constant (3121 in every image), while the
+# published angle the feedforward differentiates comes out of each image's A table. So per published deg/s,
+#   R6(angle) = -122 * (A-table centre divisor / 16384) * (A-table slope at angle / slope at centre),
+# -122 being the Clarity's centre value. Checked against telemetry on both cars that have it (0.1 s derivative of the
+# published angle, so the noise does not shrink the slope): Clarity within 0.6% at centre and 2.7% at every angle;
+# C020 within 0.4% at centre but 5-10% high past 60 deg (R6 per 0x18F count falls ~7% there on that car), so the C020
+# and the TGG-A120, which shares its A table, take the C020's measured curve. The single constants used before
+# (-172 C020, -161 TEG, -138.4 CR-V) were angle averages fitted against 0x14A: ~12% too strong at centre, 8-18% too
+# weak in big turns. The slopes are +/-10 deg chords of each image's A table (honda_vgr in nrdr-development).
+R6_GAIN_BP = (0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 180, 210, 240, 270, 300, 360, 420, 480)  # |angle|, deg
+# C020 measured (routes 64/154/287/289/294, hands on or off: R6 is kinematic), per published deg/s
+C020_R6_CENTRE = -153.2
+C020_R6_BP = (0.0, 22.5, 45.0, 80.0, 125.0, 175.0, 250.0)
+C020_R6_GAIN = (1.0, 0.99347, 1.01175, 1.05875, 1.09269, 1.10248, 1.10248)
+# C120 / A030 / TEG-A010 A table (centre divisor 20972), computed
+C120_R6_CENTRE = -156.16
+C120_R6_GAIN = (1.0, 0.9838, 0.9927, 1.0254, 1.0699, 1.097, 1.1244, 1.1465, 1.1099, 1.1222, 1.1905, 1.257, 1.1758,
+                1.1618, 1.1702, 1.1787, 1.196, 1.2137, 1.2317)
+# Insight TXM-A040 A table (centre divisor 17613), computed
+INSIGHT_R6_CENTRE = -131.15
+INSIGHT_R6_GAIN = (1.0, 1.0247, 1.0326, 1.052, 1.0852, 1.1305, 1.1692, 1.207, 1.2242, 1.2239, 1.2156, 1.2234, 1.2254,
+                   1.2249, 1.2273, 1.2253, 1.2279, 1.2436, 1.1917)
+# CR-V TLA-A040 / A220 A table (centre divisor 16783, byte-identical in both images), computed. The owner's V5 fit
+# (-121.6 at norm 1450 -> -138.4) is the angle average against 0x14A; the centre this gives is -125.
+CRV_R6_CENTRE = -124.97
+CRV_R6_GAIN = (1.0, 1.0233, 1.0273, 1.0431, 1.075, 1.1134, 1.1566, 1.199, 1.2195, 1.2305, 1.2252, 1.2367, 1.2354,
+               1.2381, 1.2328, 1.2243, 1.2257, 1.2162, 1.191)
 
 # Clarity 39990-TRW-A020, the build its owners run: ClarityMax 07-22 PShapeSmoothComp P123..279 D737 KFF45 NoR6L2
 # Tracker3200 Norm1650 (bin sha256 84b14aaa). Measured: everything (routes 352/353 are the P-minus-5 child, which
@@ -226,7 +249,8 @@ CIVIC_C020 = EpsFirmwareProfile(
   r5_key_bp=C020_ROW1_KEYS, r5_v=TARGET_MAP_D_R5, key_clamp=1663,
   envelope_bp=CIVIC_ENVELOPE[0], envelope_v=CIVIC_ENVELOPE[1],
   kp_key_bp=C020_P_KEYS, kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=CIVIC_R6_PER_DEG_S, load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
+  r6_per_deg_s=C020_R6_CENTRE, r6_angle_bp=C020_R6_BP, r6_angle_gain=C020_R6_GAIN,
+  load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
 )
 # Civic 39990-TBA-A030 (Nidec), 09-12 TEGLatestCalMatch Trk3200 (bin sha256 1de38bcb) and TEG-A010, 08-26
 # Tracker1-3200 (bin sha256 60f42ecc): both carry the C020's command axes, P axis and envelope byte for byte, so
@@ -240,7 +264,8 @@ CIVIC_C020 = EpsFirmwareProfile(
 # helper-A values in rows 0-5 (row 6 is ruled out). Settling it needs a telemetry build that reports the row selector.
 CIVIC_A030 = EpsFirmwareProfile(**{**{k: getattr(CIVIC_C020, k) for k in CIVIC_C020.__dataclass_fields__
                                       if k != "kp_pieces"}, "name": "civic_a030", "e4_per_output": 3840.0,
-                                   "r6_per_deg_s": TEG_R6_PER_DEG_S, "load": TEG_LOAD})
+                                   "r6_per_deg_s": C120_R6_CENTRE, "r6_angle_bp": R6_GAIN_BP,
+                                   "r6_angle_gain": C120_R6_GAIN, "load": TEG_LOAD})
 CIVIC_TEG_A010 = EpsFirmwareProfile(**{**{k: getattr(CIVIC_A030, k) for k in CIVIC_A030.__dataclass_fields__
                                           if k != "kp_pieces"}, "name": "civic_teg_a010"})
 # Civic Bosch 39990-TBA-C120, 08-11 C020Profile Trk4250 (bin sha256 3d88d5ea). Its variants select rows 0-4, all
@@ -251,7 +276,7 @@ CIVIC_C120 = EpsFirmwareProfile(
   r5_key_bp=(0, 103, 263, 459, 660, 861, 1111, 1549, 1774), r5_v=TARGET_MAP_D_R5, key_clamp=1663,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=C120_P_KEYS, kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=CIVIC_R6_PER_DEG_S, load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
+  r6_per_deg_s=C120_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=C120_R6_GAIN, load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
 )
 # Civic hatch 39990-TGG-A120, 08-07 C020Pminus5 Trk4250 KFF45 (bin sha256 7c60b3fa). Only row 0 carries car-specific
 # axes (rows 1-5 are the generic [0,222,333,...] row, 2x the key at low command). Row 0 is live: both of the image's
@@ -261,21 +286,21 @@ CIVIC_TGG_A120 = EpsFirmwareProfile(
   r5_key_bp=(0, 103, 263, 459, 660, 862, 1111, 1549, 1774), r5_v=TARGET_MAP_D_R5, key_clamp=1663,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=C120_P_KEYS, kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=CIVIC_R6_PER_DEG_S, load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
+  r6_per_deg_s=C020_R6_CENTRE, r6_angle_bp=C020_R6_BP, r6_angle_gain=C020_R6_GAIN, load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
 )
 # Insight 39990-TXM-A040, 08-08 C020Surface Trk1-4000 Trk2-3869 (bin sha256 1f1cfe6b). Rows 0-1 keep the Clarity-
 # style axis ending at the 1663 clamp and rows 2-5 are 2x it at low command. Row 0 is live: all three variant records
 # (TXMA0/1/2, at 0xECF7, laid out among the part-number strings) select row 0, and rows 0 and 1 are identical anyway.
 # Every Insight image we have (08-01 through 08-08) carries the same row-0 axis and variant records (TXMA0/1 enabled
 # -> row 0, TXMA2 disabled -> row 0), so the row holds whichever build the car runs. The envelope was not located;
-# flat is assumed (the 1663 clamp binds). Load measured (INSIGHT_LOAD); R6 is the Civic's, assumed. Not measured:
-# envelope, R6.
+# flat is assumed (the 1663 clamp binds). Load measured (INSIGHT_LOAD); R6 computed from its A table. Not measured:
+# envelope.
 INSIGHT_TXM = EpsFirmwareProfile(
   name="insight_txm_a040", e4_per_output=3840.0,
   r5_key_bp=(0, 111, 222, 333, 443, 665, 887, 1108, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1663,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=(0, 222, 333, 665, 887, 1104, 1317, 1441, 1663), kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=CIVIC_R6_PER_DEG_S, load=INSIGHT_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
+  r6_per_deg_s=INSIGHT_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=INSIGHT_R6_GAIN, load=INSIGHT_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
 )
 # CR-V 5G 39990-TLA-A040, the owner's 08-24 Clarity_FF_tune_telemety_8cf8e537 (decoded full image sha256 d5dc04a8):
 # TargetMap-D, P117..265, D737, KFF45, Norm1650, Trk3200, clamps 7373/1774/9000 on the CR-V's stock axes. Key clamp
@@ -291,7 +316,7 @@ CRV_TLA = EpsFirmwareProfile(
   r5_key_bp=(0, 219, 443, 662, 887, 1108, 1330, 1552, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1774,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=(0, 104, 279, 510, 807, 1108, 1330, 1552, 1663), kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=-121.6051 * 1650.0 / 1450.0, load=CRV_LOAD, p_scale=CLARITY_P_SCALE, i_scale=CLARITY_I_SCALE,
+  r6_per_deg_s=CRV_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_R6_GAIN, load=CRV_LOAD, p_scale=CLARITY_P_SCALE, i_scale=CLARITY_I_SCALE,
 )
 # CR-V 5G 39990-TLA-A220 (2020+), the 10-06 A280Flat PTM build (full image sha256 5f706dd6, RWD 8f175250) on stock
 # df85f988: TargetMap-D, P117..265, D737, KFF45, Norm1650, Trk3200, clamps 7373/1774/9000, speed clamp 0. The
@@ -319,7 +344,8 @@ CRV_TLA_A220 = EpsFirmwareProfile(
   r5_key_bp=(0, 161, 222, 322, 409, 534, 696, 998, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1774,
   envelope_bp=(0, 50, 100, 150, 200, 250, 300, 350, 400), envelope_v=(1774, 1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330),
   kp_key_bp=CRV_TLA.kp_key_bp, kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=CRV_TLA.r6_per_deg_s, load=CRV_LOAD, p_scale=CLARITY_P_SCALE, i_scale=CLARITY_I_SCALE,
+  r6_per_deg_s=CRV_TLA.r6_per_deg_s, r6_angle_bp=CRV_TLA.r6_angle_bp, r6_angle_gain=CRV_TLA.r6_angle_gain,
+  load=CRV_LOAD, p_scale=CLARITY_P_SCALE, i_scale=CLARITY_I_SCALE,
 )
 
 # normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). The Clarity's build is chosen in
