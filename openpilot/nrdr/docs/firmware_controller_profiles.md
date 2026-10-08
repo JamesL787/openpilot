@@ -56,9 +56,13 @@ evaluated with another's tables. The Civic family runs the C020's trims
 differs by fingerprint and follows this tree's opendbc (`_EXTENDED_TORQUE_LIMITS`),
 which a test checks: the Nidec Civic (TEG, A030) and Clarity send through the
 3840-count transport; Civic Bosch (C020, C120, TGG-A120), Insight and CR-V through
-4096. On the C120 and Insight images the 1663 key clamp, not the transport, holds
-E4 above ~3840 (their multicar profiles assumed a 3840 map). The CR-V key clamp is
-1774, the others' 1663.
+4096. The command clamp word read from each image is 1663, which is E4 3840, on
+every image but the CR-V's (1774, E4 4096): the firmware ignores E4 above that. So
+on the Civic Bosch images (C020, C120, TGG-A120) and the Insight, which this tree's
+opendbc sends 4096, a command above 0.9375 of full scale saturates in the firmware
+and the controller models that with the clamp. Capping those cars' transport at
+3840, as the source branch's opendbc does for the C120 and Insight, is an opendbc
+change and not part of this port.
 
 The TEG's earlier C020 placeholder is replaced by its own calibration: R6 -161 per
 deg/s and a column that needs ~1.6x the C020's output for the same motion

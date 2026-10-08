@@ -242,8 +242,9 @@ CIVIC_TEG_A010 = EpsFirmwareCalibration(
 )
 # Civic Bosch 39990-TBA-C120, 08-11 C020Profile Trk4250 (bin sha256 3d88d5ea). Its variants select rows 0-4, all
 # within 5% of each other in R5, so the row does not matter; row 1 (= row 2) is taken, as the C020's. Flat envelope.
-# E4 = -4096 * u: this tree's opendbc sends the HONDA_CIVIC_BOSCH 4096 map for every image, so the E4 above ~3840 is
-# held by the image's 1663 key clamp. Not measured: R6, load (the C020's).
+# E4 = -4096 * u: this tree's opendbc sends the HONDA_CIVIC_BOSCH 4096 map for every image, but the image's command
+# clamp word (read at 0x137F2) is 1663, which is E4 3840: the firmware ignores E4 above that, so u > 0.9375 buys nothing.
+# Not measured: R6, load (the C020's).
 CIVIC_BOSCH_C120 = EpsFirmwareCalibration(
   e4_per_output=4096.0,
   r5_key_bp=[0, 103, 263, 459, 660, 861, 1111, 1549, 1774],
@@ -267,8 +268,8 @@ CIVIC_TGG_A120 = EpsFirmwareCalibration(
 # Insight 39990-TXM-A040, 08-08 C020Surface Trk1-4000 Trk2-3869 (bin sha256 1f1cfe6b). Rows 0-1 keep the Clarity-style
 # axis ending at the 1663 clamp; row 0 is live (all three variant records select it, and rows 0 and 1 are identical).
 # The envelope was not located; flat is assumed (the 1663 clamp binds). Civic platform, so R6 and the load are carried
-# over from the C020. E4 = -4096 * u, this tree's opendbc Insight map; the 1663 key clamp holds E4 above ~3840.
-# Not measured: envelope, R6, load.
+# over from the C020. E4 = -4096 * u, this tree's opendbc Insight map, but the image's command clamp word (0x11B3A) is
+# 1663 = E4 3840: the firmware ignores E4 above that, so u > 0.9375 buys nothing. Not measured: envelope, R6, load.
 INSIGHT_TXM_A040 = EpsFirmwareCalibration(
   e4_per_output=4096.0,
   r5_key_bp=[0, 111, 222, 333, 443, 665, 887, 1108, 1663],

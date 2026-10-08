@@ -129,3 +129,13 @@ def test_each_calibrations_transport_is_what_opendbc_sends_for_its_car():
   limits = {key.attr: value.value for key, value in zip(assignment.value.keys, assignment.value.values, strict=True)}
   for (fingerprint, _), profile in _PROFILES.items():
     assert FIRMWARE_CAR_TUNES[profile.calibration].calibration.e4_per_output == limits[fingerprint], (fingerprint, profile.name)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_key_clamp_is_the_e4_the_firmware_stops_listening_at(name):
+  # Read from the images: the command clamp word is 1663 (E4 3841 is the first to reach it) on every image but the
+  # CR-V's, 1774 (E4 4097). Transport above that saturates in the firmware, which the key clamp models.
+  cal = FIRMWARE_CAR_TUNES[name].calibration
+  first_e4 = next(e4 for e4 in range(5000) if core.command_key(e4) >= cal.key_clamp)
+  assert (cal.key_clamp, first_e4) in ((1663, 3841), (1774, 4097))
+  assert (cal.key_clamp == 1774) == (name == "crv_tla_a040")
