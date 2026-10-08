@@ -31,7 +31,8 @@ CRV_PROFILE = FirmwareControllerProfile("CR-V TLA-A040", "crv_tla_a040")
 # Tables read from the image; R6 and column load carried over from the C020.
 CIVIC_C120_PROFILE = FirmwareControllerProfile("Civic Bosch C120", "civic_bosch_c120", provisional=True)
 CIVIC_TGG_PROFILE = FirmwareControllerProfile("Civic hatch TGG-A120", "civic_tgg_a120", provisional=True)
-INSIGHT_PROFILE = FirmwareControllerProfile("Insight TXM-A040", "insight_txm_a040", provisional=True)
+# Column load measured from the owner's rlogs (no telemetry build, so R6 stays the C020's).
+INSIGHT_PROFILE = FirmwareControllerProfile("Insight TXM-A040", "insight_txm_a040")
 _PROFILES = {
   ("HONDA_CLARITY", "39990-TRW-A020"): CLARITY_PROFILE,
   ("HONDA_CIVIC_BOSCH", "39990-TBA-C020"): CIVIC_PROFILE,

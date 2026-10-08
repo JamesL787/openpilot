@@ -88,7 +88,7 @@ def test_crv_carries_its_own_clamp_axes_r6_and_load():
   assert core.key_ceiling(5., cal) == 1774. and core.key_ceiling(5., core.CLARITY_TRW_A020) == 1663.
 
 
-@pytest.mark.parametrize("name", ["civic_bosch_c120", "civic_tgg_a120", "insight_txm_a040"])
+@pytest.mark.parametrize("name", ["civic_bosch_c120", "civic_tgg_a120"])
 def test_provisional_images_read_their_own_tables_but_carry_the_c020_r6_and_load(name):
   tune = FIRMWARE_CAR_TUNES[name]
   assert tune.calibration.r6_per_deg_s == core.CIVIC_BOSCH_C020.r6_per_deg_s
@@ -128,3 +128,13 @@ def test_key_clamp_is_the_e4_the_firmware_stops_listening_at(name):
   first_e4 = next(e4 for e4 in range(5000) if core.command_key(e4) >= cal.key_clamp)
   assert (cal.key_clamp, first_e4) in ((1663, 3841), (1774, 4097))
   assert (cal.key_clamp == 1774) == (name == "crv_tla_a040")
+
+
+def test_insight_carries_its_own_measured_load_and_the_c020_r6():
+  tune = FIRMWARE_CAR_TUNES["insight_txm_a040"]
+  assert tune.load == core.INSIGHT_EPS_LOAD != core.CIVIC_EPS_LOAD
+  assert tune.calibration.r6_per_deg_s == core.CIVIC_BOSCH_C020.r6_per_deg_s
+  assert tune.calibration.r5_key_bp == (0, 111, 222, 333, 443, 665, 887, 1108, 1663)  # row 0 on every Insight image
+  # lighter than the C020's column at speed, which the carried-over load over-asked
+  assert abs(core.column_load(10., 0., 25., 0., coefficients=core.INSIGHT_EPS_LOAD)) < \
+    abs(core.column_load(10., 0., 25., 0., coefficients=core.CIVIC_EPS_LOAD))

@@ -158,7 +158,7 @@ class TestOpaquePerBrandFlags(OpenpilotTestCase):
       ("HONDA_CIVIC_BOSCH", b"39990-TBA-C120", True, False, True),
       ("HONDA_CIVIC_BOSCH", b"39990-TGG-A120", True, False, True),
       ("HONDA_CRV_5G", b"39990-TLA-A040", True, False, False),
-      ("HONDA_INSIGHT", b"39990-TXM-A040", True, False, True),
+      ("HONDA_INSIGHT", b"39990-TXM-A040", True, False, False),
       ("HONDA_CRV_5G", b"39990-TLA-A220", False, False, False),  # no calibration for it yet
     ):
       params.put("CarPlatformBundle", {"brand": "honda", "platform": fingerprint}, block=True)

@@ -39,7 +39,7 @@ def test_exact_profiles_and_selected_controller(fingerprint, firmware, profile):
   for value in (1, "1", b"1"):
     assert firmware_controller_selected({"NrdrLateralController": value}, cp, sp)
   assert not firmware_controller_selected({"NrdrLateralController": 0}, cp, sp)
-  assert profile.provisional == (profile not in (CLARITY_PROFILE, CIVIC_PROFILE, CRV_PROFILE))
+  assert profile.provisional == (profile not in (CLARITY_PROFILE, CIVIC_PROFILE, CRV_PROFILE, INSIGHT_PROFILE))
 
 
 @pytest.mark.parametrize("fingerprint,firmware", [

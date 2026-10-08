@@ -12,7 +12,7 @@ changing it requires offroad confirmation. PIF's Device Yaw Correction is separa
 | HONDA_CRV_5G / 39990-TLA-A040, modified EPS | CR-V TLA-A040 | Tables, R6 and load measured on the owner's telemetry rlogs | Normal live/manual path |
 | HONDA_CIVIC_BOSCH / 39990-TBA-C120, modified EPS | Civic Bosch C120 | Tables from the image; R6 and load carried over from the C020. **Provisional** | Normal live/manual path |
 | HONDA_CIVIC_BOSCH / 39990-TGG-A120, modified EPS | Civic hatch TGG-A120 | Tables from the image; R6 and load carried over from the C020. **Provisional** | Normal live/manual path |
-| HONDA_INSIGHT / 39990-TXM-A040, modified EPS | Insight TXM-A040 | Tables from the image; R6 and load carried over from the C020. **Provisional** | Normal live/manual path |
+| HONDA_INSIGHT / 39990-TXM-A040, modified EPS | Insight TXM-A040 | Tables from the image (row 0 on every Insight build); load measured from the owner's rlogs; R6 the C020's (no telemetry build) | Normal live/manual path |
 
 PID CarParams and a matching firmware steer-ratio profile are also required. A
 vehicle or firmware version not listed gets no firmware controller: there is no

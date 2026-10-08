@@ -209,6 +209,12 @@ CIVIC_EPS_LOAD = (-5.574, -0.1831, -4.540, -326.5, -83.6, -3.185)
 # R^2 0.843, alternating 60 s holdouts 0.857 / 0.820. Close to the Clarity's in every term but the speed term
 # (-0.143 vs -0.219).
 CRV_EPS_LOAD = (-7.29446, -0.143159, -4.60337, -297.83, -19.899, -3.58048)
+# Insight column (TXM-A040), fitted on the owner's konik route f133facb1b9b7420|0000001e--2987344626 (15.8 mi, 11.5 min
+# hands-off engaged, 3-30 m/s). That build has no telemetry, so the target is the firmware law rebuilt from the sent E4
+# through row 0 and the car's own [0, 3840] map, with R6 assumed at the C020's; without telemetry R6 and the viscous
+# term are not separable (the viscous term near zero is that trade, and the feedforward inverts with the same R6).
+# Held out on alternating 20 s blocks R^2 0.38 / 0.46, against -0.29 / -0.08 for CIVIC_EPS_LOAD.
+INSIGHT_EPS_LOAD = (-4.3971, -0.0873, 0.2826, -228.741, -66.432, -0.8457)
 
 # --- other images --------------------------------------------------------------------------------------------
 # Tables below were read from the image each car's owners run; what a calibration measured and what it only carries
@@ -248,8 +254,9 @@ CIVIC_TGG_A120 = EpsFirmwareCalibration(
 )
 # Insight 39990-TXM-A040, 08-08 C020Surface Trk1-4000 Trk2-3869 (bin sha256 1f1cfe6b). Rows 0-1 keep the Clarity-style
 # axis ending at the 1663 clamp; row 0 is live (all three variant records select it, and rows 0 and 1 are identical).
-# The envelope was not located; flat is assumed (the 1663 clamp binds). Civic platform, so R6 and the load are carried
-# over from the C020. E4 = -4096 * u, this tree's opendbc Insight map, but the image's command clamp word (0x11B3A) is
+# Every Insight image we have (08-01 through 08-08) carries the same row-0 axis and variant records, so row 0 holds
+# whichever build the car runs. The envelope was not located; flat is assumed (the 1663 clamp binds). The load is the
+# car's own (INSIGHT_EPS_LOAD); R6 is the C020's, assumed. E4 = -4096 * u, this tree's opendbc Insight map, but the image's command clamp word (0x11B3A) is
 # 1663 = E4 3840: the firmware ignores E4 above that, so u > 0.9375 buys nothing. Not measured: envelope, R6, load.
 INSIGHT_TXM_A040 = EpsFirmwareCalibration(
   e4_per_output=4096.0,
@@ -293,7 +300,7 @@ FIRMWARE_CAR_TUNES = {
   "civic_bosch_c020": FirmwareCarTune(CIVIC_BOSCH_C020, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
   "civic_bosch_c120": FirmwareCarTune(CIVIC_BOSCH_C120, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
   "civic_tgg_a120": FirmwareCarTune(CIVIC_TGG_A120, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
-  "insight_txm_a040": FirmwareCarTune(INSIGHT_TXM_A040, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
+  "insight_txm_a040": FirmwareCarTune(INSIGHT_TXM_A040, INSIGHT_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
   "crv_tla_a040": FirmwareCarTune(CRV_TLA_A040, CRV_EPS_LOAD, P_SCALE, I_SCALE),
 }
 
