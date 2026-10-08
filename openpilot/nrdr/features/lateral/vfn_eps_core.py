@@ -148,23 +148,33 @@ FF_CRAWL_SPEED_BP = [5.0, 8.0]   # m/s
 
 
 class EpsFirmwareCalibration:
-  """Per-image command map, envelope and rate feedback; no shared mutable state."""
+  """Per-image command map, P row, envelope and rate feedback; no shared mutable state.
+
+  The P row (kp_key_bp/kp_v), key clamp, scale word and KFF default to the Clarity image's values; an image
+  that differs passes its own.
+  """
 
   def __init__(self, e4_per_output, r5_key_bp, r5_v, envelope_bp, envelope_v, r6_per_deg_s,
-               *, r5_per_key=None, r6_angle_bp=None, r6_angle_gain=None):
+               *, r5_per_key=None, r6_angle_bp=None, r6_angle_gain=None,
+               kp_key_bp=KP_KEY_BP, kp_v=KP_V, key_clamp=KEY_CLAMP, scale_q8=SCALE_Q8, kff=KFF):
     self.e4_per_output = e4_per_output
     self.r5_key_bp, self.r5_v = tuple(r5_key_bp), tuple(r5_v)
     self.envelope_bp, self.envelope_v = tuple(envelope_bp), tuple(envelope_v)
     self.r6_per_deg_s = r6_per_deg_s
     self.r6_angle_bp, self.r6_angle_gain = r6_angle_bp, r6_angle_gain
     self.r5_per_key = r5_per_key
+    self.kp_key_bp, self.kp_v = tuple(kp_key_bp), tuple(kp_v)
+    self.key_clamp, self.scale_q8, self.kff = key_clamp, scale_q8, kff
     if r5_per_key is not None:
-      self.kp_pieces = tuple(KP_PIECES)
+      # the P row as pieces over |R5| through a constant R5-per-key, flat past the last breakpoint
+      pieces = [(lo * r5_per_key, hi * r5_per_key, kp_lo, (kp_hi - kp_lo) / ((hi - lo) * r5_per_key))
+                for lo, hi, kp_lo, kp_hi in zip(kp_key_bp[:-1], kp_key_bp[1:], kp_v[:-1], kp_v[1:], strict=True)]
+      self.kp_pieces = (*pieces, (kp_key_bp[-1] * r5_per_key, math.inf, kp_v[-1], 0.0))
     else:
       # Kp(key(R5)) has knots at BOTH maps' breakpoints. Keeping only the P
       # breakpoints would make the quadratic inverse wrong on C020's nonlinear map.
-      knots = sorted(set(r5_v) | {float(np.interp(k, r5_key_bp, r5_v)) for k in KP_KEY_BP if k <= r5_key_bp[-1]})
-      kps = [float(np.interp(np.interp(r, r5_v, r5_key_bp), KP_KEY_BP, KP_V)) for r in knots]
+      knots = sorted(set(r5_v) | {float(np.interp(k, r5_key_bp, r5_v)) for k in kp_key_bp if k <= r5_key_bp[-1]})
+      kps = [float(np.interp(np.interp(r, r5_v, r5_key_bp), kp_key_bp, kp_v)) for r in knots]
       pieces = [(lo, hi, kp_lo, (kp_hi - kp_lo) / (hi - lo))
                 for lo, hi, kp_lo, kp_hi in zip(knots[:-1], knots[1:], kps[:-1], kps[1:], strict=True)]
       self.kp_pieces = (*pieces, (knots[-1], math.inf, kps[-1], 0.0))
@@ -197,7 +207,7 @@ def command_key(e4: float) -> int:
 
 
 def key_ceiling(v_ego: float, cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
-  return min(float(np.interp(v_ego * 3.6 * 2.0, cal.envelope_bp, cal.envelope_v)), KEY_CLAMP)
+  return min(float(np.interp(v_ego * 3.6 * 2.0, cal.envelope_bp, cal.envelope_v)), cal.key_clamp)
 
 
 def r5_from_output(output: float, v_ego: float, cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
@@ -216,7 +226,7 @@ def output_from_r5(r5: float, cal: EpsFirmwareCalibration = CLARITY_TRW_A020) ->
 
 def firmware_kp(r5: float, cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
   if cal.r5_per_key is not None:
-    return float(np.interp(abs(r5) / cal.r5_per_key, KP_KEY_BP, KP_V))
+    return float(np.interp(abs(r5) / cal.r5_per_key, cal.kp_key_bp, cal.kp_v))
   return float(np.interp(abs(r5), cal.kp_r5_bp, cal.kp_r5_v))
 
 
@@ -230,7 +240,7 @@ def firmware_output(r5: float, steering_rate_deg_s: float, angle_deg: float = 0.
                     cal: EpsFirmwareCalibration = CLARITY_TRW_A020) -> float:
   """Steady-state firmware output for a target and a rate (D term omitted): scale*(Kp*(R5-R6) + KFF*R5)/1024/256."""
   r6 = firmware_r6(steering_rate_deg_s, angle_deg, cal)
-  return SCALE_Q8 * (firmware_kp(r5, cal) * (r5 - r6) + KFF * r5) / 1024.0 / 256.0
+  return cal.scale_q8 * (firmware_kp(r5, cal) * (r5 - r6) + cal.kff * r5) / 1024.0 / 256.0
 
 
 def column_load(angle_deg: float, rate_deg_s: float, v_ego: float, roll: float,
@@ -249,14 +259,14 @@ def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, angle_d
   one root only exists when a fast unwind outruns a small target). A fixed-point iteration is not enough
   here: it is 1-4% off after three passes from rest and need not contract during a fast unwind.
   """
-  x = 1024.0 * load * 256.0 / SCALE_Q8
+  x = 1024.0 * load * 256.0 / cal.scale_q8
   r6 = firmware_r6(rate_deg_s, angle_deg, cal)
   roots = []
   for lo, hi, kp_lo, slope in cal.kp_pieces:
     for side in (1.0, -1.0):
       # on this piece Kp = a + b*R5, and R5*(Kp + KFF) - Kp*R6 = x
       a, b = kp_lo - slope * lo, slope * side
-      qa, qb, qc = b, a + KFF - b * r6, -(a * r6 + x)
+      qa, qb, qc = b, a + cal.kff - b * r6, -(a * r6 + x)
       if abs(qa) < 1e-12:
         candidates = [-qc / qb]
       else:
