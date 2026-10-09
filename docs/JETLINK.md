@@ -239,3 +239,13 @@ at 20 Hz, the production attach, promotion and a same-frame handback. Still owed
    longitudinal target and action continuity across a handover (`route_report` flags steps above the drive's own p99).
 5. The `v16` action-head reading in closed loop. Open loop on recorded frames it is confirmed (corr 0.9993).
 6. Ignition cycling with the host on the ignition rail, provisioning from nothing (model download, engine build) and the 25 s shutdown bound.
+
+
+## Models the link will accept
+
+Cinque Terre V3 is the only model read from its ONNX and replayed against a car's log. Five more of Jetlink's catalog (Sad, BMRLNAP v4,
+BMRLNAP v6, Cinque Terre, Cinque Terre V2) are pinned in `profiles.py` by the hash and size in their LFS pointers and assume V3's layout
+and v16 action head, because their ONNX is within 0.4 MB of V3's and this fork's manifest tags the same models v16. That assumption is
+not verified: nobody has run them. `require_profile` still compares the server's reported inputs, outputs and every head slice with V3's
+exactly, so a model that differs in layout is refused at the join and the small model keeps driving; what it cannot catch is a different
+action-head behavior. The larger catalog models (about 1.76 GB, an older architecture) and the previews have no profile and stay unpickable.

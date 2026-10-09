@@ -14,6 +14,7 @@ from openpilot.starpilot.jetlink_adapter import profiles
 GOOD = profiles.CINQUE_TERRE_V3.ref
 OTHER = "a" * 40
 FUTURE = "b" * 40
+VALIDATED = {p.ref: p for p in profiles.PROFILES.values()}
 REPO = Path(__file__).resolve().parents[3]
 
 
@@ -54,22 +55,24 @@ class TestTheRows:
     put_catalog(store, bundle(OTHER, "Older", 1), bundle(GOOD, "Cinque Terre V3 Model", 5), bundle(FUTURE, "Newest", 9),
                 bundle("c" * 40, "Wrong selector", 99, selector=999), bundle(GOOD, "Duplicate", 2), {"ref": "short"})
     rows = ja.models()
-    assert [r["name"] for r in rows] == ["Newest", "Cinque Terre V3 Model", "Older"]
-    assert {r["ref"]: r["supported"] for r in rows} == {FUTURE: False, GOOD: True, OTHER: False}
+    # the validated models the catalog did not list are added at index 0, after everything it did
+    added = [f"{p.name} Model" for ref, p in VALIDATED.items() if ref != GOOD]
+    assert [r["name"] for r in rows] == ["Newest", "Cinque Terre V3 Model", "Older", *added]
+    assert {r["ref"]: r["supported"] for r in rows} == {FUTURE: False, OTHER: False, **dict.fromkeys(VALIDATED, True)}
     assert not any(r["selected"] for r in rows)
 
   def test_the_pick_is_marked(self, store):
     put_catalog(store, bundle(GOOD, "Cinque Terre V3 Model", 5))
     store.put(ja.KEYS.big_model, {"ref": GOOD, "displayName": "x"})
-    assert [r["selected"] for r in ja.models()] == [True]
+    assert {r["ref"] for r in ja.models() if r["selected"]} == {GOOD}
 
   def test_a_missing_catalog_still_offers_the_validated_models_so_an_offline_comma_can_join(self, store):
     rows = ja.models()
-    assert [(r["ref"], r["supported"]) for r in rows] == [(GOOD, True)]
+    assert {(r["ref"], r["supported"]) for r in rows} == {(ref, True) for ref in VALIDATED}
 
   def test_a_fetched_catalog_that_no_longer_lists_the_pinned_model_does_not_lose_it(self, store):
     put_catalog(store, bundle(FUTURE, "Newest", 9))
-    assert {r["ref"] for r in ja.models()} == {FUTURE, GOOD}
+    assert {r["ref"] for r in ja.models()} == {FUTURE, *VALIDATED}
 
   def test_jetlinks_default_is_the_pinned_validated_model_whatever_else_the_catalog_lists(self, store):
     from jetlink.openpilot.models import Models

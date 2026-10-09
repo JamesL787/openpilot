@@ -71,3 +71,24 @@ def test_the_profile_matches_the_real_onnx():
   real = spec_from_onnx(str(CACHED_ONNX), frame_skip=P.frame_skip, sha256=P.sha256, nbytes=CACHED_ONNX.stat().st_size)
   assert real.nbytes == P.nbytes
   assert profiles.require_profile(real) is P
+
+
+FAMILY = [p for p in profiles.PROFILES.values() if p is not P]
+
+
+def test_the_catalog_family_is_pinned_by_its_own_hash_and_size_and_none_collide():
+  assert len(FAMILY) == 5
+  assert len(profiles.PROFILES) == 6 and len({p.ref for p in profiles.PROFILES.values()}) == 6
+  assert all(len(p.sha256) == 64 and len(p.ref) == 40 and p.nbytes != P.nbytes for p in FAMILY)
+
+
+@pytest.mark.parametrize("profile", FAMILY, ids=lambda p: p.name)
+def test_a_family_model_is_accepted_only_with_cinque_terre_v3s_exact_layout(profile):
+  ok = spec(sha256=profile.sha256, nbytes=profile.nbytes)
+  assert profiles.require_profile(ok) is profile and profile.is_v16
+  # the layout is assumed, not read from the ONNX: a server reporting anything else must be refused
+  moved = {**{k: slice(*v) for k, v in P.output_slices.items()}, "action": slice(2062, 2067)}
+  with pytest.raises(profiles.UnsupportedModel):
+    profiles.require_profile(spec(sha256=profile.sha256, nbytes=profile.nbytes, output_slices=moved))
+  with pytest.raises(profiles.UnsupportedModel):
+    profiles.require_profile(spec(sha256=profile.sha256, nbytes=profile.nbytes + 1))

@@ -8,7 +8,7 @@ model is pinned here by the SHA-256 of its ONNX, with the generation, the exact 
 it was validated with. Anything else is refused (``require_profile``), the small model keeps driving, and the refusal is
 logged and shown.
 
-Phase 1 supports one model: Jetlink's pinned default, Cinque Terre V3. Its numbers below were read from the ONNX
+Cinque Terre V3 is Jetlink's pinned default and the one model that was read from its ONNX and replayed. Its numbers below were read from the ONNX
 (``/Library/Caches/jetlink/models/404a18cfd86d2963.onnx``, 766354845 bytes) and the LFS pointer at the pinned comma commit,
 not copied from documentation. Adding a model means adding an entry here *after* running it through the local parser and
 action path (tests/test_profiles.py shows how) and a replay; ``generation`` is a claim about the action head and has to be
@@ -18,7 +18,7 @@ Standard library only: the owner and the UI import the package this lives in.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 class UnsupportedModel(RuntimeError):
@@ -111,7 +111,28 @@ CINQUE_TERRE_V3 = RemoteProfile(
   },
 )
 
-PROFILES: dict[str, RemoteProfile] = {p.sha256: p for p in (CINQUE_TERRE_V3,)}
+# The 766 MB family of Jetlink's catalog: models whose ONNX is within 0.4 MB of Cinque Terre V3's. Their identity (ref, SHA-256,
+# size) is read from the LFS pointer at each catalog commit. Their layout and generation are ASSUMED to be V3's: nobody has
+# read these ONNX files or replayed them. require_profile still compares the server's reported inputs, outputs and every head
+# slice with V3's exactly, so a model that really differs is refused at the join and the small model keeps driving; what
+# that cannot check is the action head's behavior (generation v16 comes from this fork's manifest tagging for the same models).
+# Move one up to a fully validated entry by running host_bench.py and route_feed.py against it.
+def _v3_family(name, ref, sha256, nbytes):
+  return replace(CINQUE_TERRE_V3, name=name, ref=ref, sha256=sha256, nbytes=nbytes)
+
+
+SAD = _v3_family('Sad', '30de303d5ffb63957f8acbdb256fd4c7d360455a',
+                 '3913109713cc782bdb001550a519f1fc6b36dbc7ade1cf6126622f044ff6adfb', 766082665)
+BMRLNAP_V4 = _v3_family('BMRLNAP v4', 'f877d7a0ccc3cce943c76e285214c020cd65c899',
+                        'a086d5249fc308bb73993d1e64630c669d4c7df5bde85f42ad61902543648525', 765953504)
+BMRLNAP_V6 = _v3_family('BMRLNAP v6', '9d683c06518c0358fb402f38468a7030700c38ac',
+                        'f3669cb7c8a9a8a13fcd6a8575958dd09a9ec76d9c9072ccdc76fad7cfa3a28d', 765955335)
+CINQUE_TERRE = _v3_family('Cinque Terre', '68b5f8e48602f4f88041efd7de6c99e97fda454e',
+                          'e8d821733be15ebe9e27498bc27ad8bbbd741980ece37d77f377294010b8ff28', 765950064)
+CINQUE_TERRE_V2 = _v3_family('Cinque Terre V2', '37bfa1413edcdc2e8844984b83727c33f81d8f46',
+                             '09d080f36965bb2a0790500452bd328aa03c484d0222aa79d1ad9f021a522aec', 766040736)
+
+PROFILES: dict[str, RemoteProfile] = {p.sha256: p for p in (CINQUE_TERRE_V3, CINQUE_TERRE_V2, CINQUE_TERRE, BMRLNAP_V6, BMRLNAP_V4, SAD)}
 
 
 def _tuples(d) -> dict[str, tuple[int, ...]]:
