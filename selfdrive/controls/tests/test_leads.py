@@ -84,6 +84,23 @@ class TestLeads:
 
     assert track is None
 
+  @pytest.mark.parametrize("direction, y_rel", [
+    (1, -0.33),  # 293 10:49.7, left change: the new lane's car (track 61) as we arrive
+    (2, 1.16),   # 293 29:15.3, right change on a curve: track 12
+  ])
+  def test_match_vision_to_track_keeps_new_lane_car_during_human_lane_change(self, direction, y_rel):
+    # The HumanLaneChanges side filter used to drop these tracks, leaving a vision-only lead.
+    v_ego = 17.0
+    track = self.make_track(d_rel=40.0, y_rel=y_rel, v_rel=-3.0, cnt=20)
+    lead = self.make_lead(x=40.0 + 1.5, y=-y_rel, v=14.0)
+    model = self.make_model_data()
+    model.meta.laneChangeState = log.LaneChangeState.laneChangeStarting
+    model.meta.laneChangeDirection = direction
+
+    matched = match_vision_to_track(v_ego, lead, model, {61: track}, SimpleNamespace(human_lane_changes=True))
+
+    assert matched is track
+
   def test_bosch_a_radard_path_is_gated_to_verified_honda_radar(self):
     assert is_bosch_a_radar_car(SimpleNamespace(brand="honda", carFingerprint=HONDA.HONDA_CIVIC_BOSCH, radarUnavailable=False))
     assert not is_bosch_a_radar_car(SimpleNamespace(brand="toyota", carFingerprint=HONDA.HONDA_CIVIC_BOSCH, radarUnavailable=False))
