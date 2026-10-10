@@ -21,7 +21,10 @@ owed is listed at the end.
 
 ## Using it
 
-1. Settings → Driving Controls → **Jetlink** (comma 3X/tizi), or the **jetlink (usb)** toggle in the comma 4's settings list.
+1. Settings → Driving Controls → **Jetlink** (comma 3X/tizi), or the **jetlink** button in the comma 4's settings list. Tap to
+   cycle **Off / USB / iOS**, as Zoompilot does: USB for a Jetson, Linux PC or Mac, iOS for an iPhone or iPad with the Jetlink app
+   open. Turning the link on turns ADB off and greys its toggle out (ADB's gadget would hold the only USB device controller).
+   The status line says what the USB-C port sees while it waits (nothing, or a device that has not connected).
    The toggle changes only while parked.
 2. Plug the host in. While parked, `jetlinkd` presents the USB gadget and a provisioning run uploads the model and builds its
    engine on the host (minutes the first time; the record survives reboots). The panel's *Status* line shows progress.
@@ -96,7 +99,7 @@ modeld ──> JetlinkRunner ──> JoiningModelState ──> LocalRunner ─�
 | `system/manager/process.py` `OptionalPythonProcess`, `accelerator_shutdown.py` | Restart backoff for `jetlinkd`; bounded host shutdown |
 | `selfdrive/modeld/modeld.py` | `prepare()` before realtime, `attach` after the local model loads, per-frame `set_control` / `snapshot`, handover resets |
 
-Params: `JetlinkLink` (INT: 0 off, 1 usb; 2 iOS is stored by Jetlink but refused here), `JetlinkSpec`, `JetlinkModelPointers`,
+Params: `JetlinkLink` (INT: 0 off, 1 usb, 2 ios), `JetlinkSpec`, `JetlinkModelPointers`,
 `JetlinkChargePhone`, `JetlinkBigModel`, `JetlinkCatalog`, `JetlinkProgress`, `JetlinkPoweringOff` (manager is waiting for the host to
 power off: hardwared starts no drive meanwhile), `Offroad_JetlinkUnavailable`. The native-GPU `UsbGpu*` params are not reused. The
 aarch64 `common/params_pyx.so`, `common/libcommon.a` and `cereal/libcereal.a` are rebuilt for these keys and the schema (laptop Docker
@@ -221,7 +224,8 @@ and Bosch-radar behaviour across a handover.
 * **Control races.** Promotion reads engagement at the start of a frame; an engage arriving in the same frame as the swap is
   possible. The settling no-entry second and the 20-frame proving period (a single held frame hands back) bound it.
 * **Held-frame age is not consumed by radar fusion**; it is published and logged only.
-* iOS and dual-remote Model Laboratory are not built. The Galaxy picker was checked through Flask's test client and a syntax check of the
+* iOS (an iPhone or iPad on the cable, `JetlinkLink` = 2, the third Jetlink setting) uses Jetlink's vendored transport unchanged and
+  has not been bench-tested on this fork. Dual-remote Model Laboratory is not built. The Galaxy picker was checked through Flask's test client and a syntax check of the
   JS, not in a browser.
 
 ## Qualification still owed

@@ -48,16 +48,29 @@ def test_the_reason_a_join_is_not_up_is_shown_with_its_state():
 
 
 def test_parked_states():
-  assert summary.describe(status(present=False)) == "Waiting for the host"
+  assert summary.describe(status(present=False, port=None)) == "Waiting for the host"
+  assert summary.describe(status(present=False, port="empty")) == "Waiting for the host (nothing on the USB port)"
+  assert summary.describe(status(present=False)) == "Waiting for the host (a device is on the USB port)"
+  assert summary.describe(status(present=False, progress={"msg": "downloaded, builds when the jetson is on"})) == \
+    "Downloaded, builds when the jetson is on (a device is on the USB port)"
   assert summary.describe(status(progress={"msg": "building the engine"})) == "Building the engine"
   assert summary.describe(status(ready=False)) == "Host connected, model not built yet"
   assert summary.describe(status()) == "Ready"
 
 
-def test_the_setting_label_never_presents_ios_as_available():
+def test_the_port_line():
+  assert summary.port_line(None) == ""
+  assert summary.port_line(status(transport="iOS over USB (192.168.60.2)")) == "Jetlink connected: iOS over USB (192.168.60.2)"
+  assert summary.port_line(status(present=False, port="empty")) == "Nothing on the USB port"
+  assert summary.port_line(status(present=False)) == "A device is on the USB port, not connected"
+  assert summary.port_line(status(present=False, port=None)) == ""
+
+
+def test_the_setting_label_names_each_mode():
   from openpilot.starpilot import jetlink_adapter as ja
   assert summary.setting_label("usb", ja.SUPPORTED_MODES) == "USB"
-  assert "unsupported" in summary.setting_label("ios", ja.SUPPORTED_MODES)
+  assert summary.setting_label("ios", ja.SUPPORTED_MODES) == "iOS"
+  assert "unsupported" in summary.setting_label("ios", ("off", "usb"))
 
 
 class TestTheTiles:
@@ -68,22 +81,31 @@ class TestTheTiles:
     leaf = next(c for c in controls["children"] if c["title"] == "Jetlink")
     assert leaf["panel"] == "JETLINK" and StarPilotLayout.PANEL_TYPE_MAP["JETLINK"] == StarPilotPanelType.JETLINK
 
-  def test_the_toggle_writes_the_link_setting_only_while_parked(self, monkeypatch):
+  def test_the_link_cycles_off_usb_ios_only_while_parked(self, monkeypatch):
     from openpilot.selfdrive.ui.layouts.settings.starpilot import jetlink as panel
     from openpilot.starpilot import jetlink_adapter as ja
-    written = []
+    written, stored = [], ["off"]
 
     class FakeParams:
       def put_int(self, key, value):
         written.append((key, value))
+        stored[0] = ja.MODES[value]
     monkeypatch.setattr(panel, "Params", FakeParams)
+    monkeypatch.setattr(panel.jetlink_adapter, "stored_mode", lambda: stored[0])
     monkeypatch.setattr(panel.ui_state, "started", True, raising=False)
-    panel._set_enabled(True)
+    panel._next_mode()
     assert written == []                                   # driving: refused
     monkeypatch.setattr(panel.ui_state, "started", False, raising=False)
-    panel._set_enabled(True)
-    panel._set_enabled(False)
-    assert written == [(ja.KEYS.link, ja.MODES.index("usb")), (ja.KEYS.link, ja.MODES.index("off"))]
+    seen = []
+    for _ in range(3):
+      panel._next_mode()
+      seen.append(panel._mode_line())
+    assert seen == ["USB", "iOS", "Off"]
+    assert [v for _, v in written] == [ja.MODES.index("usb"), ja.MODES.index("ios"), ja.MODES.index("off")]
+
+  def test_the_mici_button_cycles_the_same_modes(self):
+    from openpilot.selfdrive.ui.mici.layouts.settings import jetlink as mici
+    assert [mici.next_mode(m) for m in ("off", "usb", "ios", "bogus")] == ["usb", "ios", "off", "off"]
 
   def test_the_toggle_is_unavailable_while_driving_or_beside_a_chestnut(self, monkeypatch):
     from openpilot.selfdrive.ui.layouts.settings.starpilot import jetlink as panel

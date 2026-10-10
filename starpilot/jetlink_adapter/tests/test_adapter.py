@@ -202,8 +202,8 @@ class TestTheDevice:
 
 
 class TestModes:
-  def test_only_off_and_usb_are_offered(self):
-    assert ja.SUPPORTED_MODES == ("off", "usb")
+  def test_every_jetlink_mode_is_offered(self):
+    assert ja.SUPPORTED_MODES == ("off", "usb", "ios")
 
   def _set_mode(self, monkeypatch, tmp_path, index):
     (tmp_path / "d").mkdir(exist_ok=True)
@@ -211,12 +211,10 @@ class TestModes:
     monkeypatch.setenv("PARAMS_ROOT", str(tmp_path))
     monkeypatch.delenv("OPENPILOT_PREFIX", raising=False)
 
-  def test_ios_is_refused_with_a_reason_and_never_run(self, monkeypatch, tmp_path):
+  def test_ios_is_a_supported_mode(self, monkeypatch, tmp_path):
     self._set_mode(monkeypatch, tmp_path, 2)
     assert ja.stored_mode() == "ios"
-    assert ja.should_run(True, None, None) is False
-    assert ja.prepare() is False
-    assert "not supported" in ja.reason()
+    assert ja._wanted() is True
 
   def test_off_never_imports_jetlink_or_nags(self, monkeypatch, tmp_path):
     self._set_mode(monkeypatch, tmp_path, 0)

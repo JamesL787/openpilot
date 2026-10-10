@@ -1,8 +1,9 @@
-"""Jetlink settings: the large driving model on an attached Jetson or Mac, over USB.
+"""Jetlink settings: the large driving model on an attached Jetson, Linux PC or Mac (USB) or iPhone or iPad (iOS), over
+USB-C.
 
-A short tile panel: the on/off setting (parked only, never beside a Chestnut) and read-only status of the link, the model it
-runs and what is driving right now. The words come from starpilot.jetlink_adapter.summary so they are testable without a
-UI. iOS is not offered here: that transport is not validated on this fork."""
+A short tile panel: the link setting, Off / USB / iOS as Zoompilot offers it (parked only, never beside a Chestnut), and
+read-only status of the link, the USB-C port, the model it runs and what is driving right now. The words come from
+starpilot.jetlink_adapter.summary so they are testable without a UI."""
 from __future__ import annotations
 
 from openpilot.common.params import Params
@@ -13,8 +14,7 @@ from openpilot.starpilot.jetlink_adapter import summary
 from openpilot.system.ui.lib.multilang import tr
 
 LINK_KEY = jetlink_adapter.KEYS.link
-USB = jetlink_adapter.MODES.index('usb')
-OFF = jetlink_adapter.MODES.index('off')
+MODE_TITLES = {'off': "Off", 'usb': "USB", 'ios': "iOS"}
 
 
 def _live() -> dict | None:
@@ -47,30 +47,39 @@ def _toggle_enabled() -> bool:
   return (not ui_state.started) and jetlink_adapter.status_cached() is not None and not ui_state.usbgpu
 
 
-def _get_enabled() -> bool:
-  return jetlink_adapter.stored_mode() == 'usb'
+def _mode_line() -> str:
+  return tr(MODE_TITLES.get(jetlink_adapter.stored_mode(), "Off"))
 
 
-def _set_enabled(state: bool) -> None:
+def _next_mode() -> None:
+  """Off -> USB -> iOS -> Off. Parked only."""
   if ui_state.started:
     return
-  Params().put_int(LINK_KEY, USB if state else OFF)
+  modes = jetlink_adapter.MODES
+  current = jetlink_adapter.stored_mode()
+  index = modes.index(current) if current in modes else 0
+  Params().put_int(LINK_KEY, (index + 1) % len(modes))
+
+
+def _port_line() -> str:
+  return summary.port_line(jetlink_adapter.status_cached()) or "—"
 
 
 def build_jetlink_panel() -> StarPilotPanel:
   categories = [
     {
-      "type": "toggle",
-      "title": "Jetlink (USB)",
-      "desc": ("Run the large driving model on a Jetson or Mac connected by USB-C. The local model keeps driving until the host is " +
-               "ready and switches back by itself if the link fails. Changes only while parked."),
-      "get_state": _get_enabled,
-      "set_state": _set_enabled,
+      "type": "value",
+      "title": "Jetlink",
+      "desc": ("Run the large driving model on a host connected by USB-C: USB for a Jetson, Linux PC or Mac, iOS for an " +
+               "iPhone or iPad with the Jetlink app open. Tap to switch Off, USB, iOS. Turns off ADB. Changes only while parked."),
+      "get_value": _mode_line,
+      "on_click": _next_mode,
       "is_enabled": _toggle_enabled,
-      "disabled_label": tr("Parked only"),
     },
     {"type": "value", "title": "Status", "get_value": _status_line, "on_click": lambda: None,
      "desc": "What the link is doing right now."},
+    {"type": "value", "title": "USB-C Port", "get_value": _port_line, "on_click": lambda: None,
+     "desc": "What is on the comma's USB-C port."},
     {"type": "value", "title": "Large Model", "get_value": _model_line, "on_click": lambda: None,
      "desc": "The external model Jetlink runs. This build runs one validated model."},
   ]

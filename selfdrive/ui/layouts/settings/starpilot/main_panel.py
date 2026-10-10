@@ -46,7 +46,7 @@ class StarPilotLayout(Widget):
         },
         {"title": "Gas / Brake", "panel": "LONGITUDINAL", "icon": "road"},
         {"title": "Steering", "panel": "LATERAL", "icon": "steering"},
-        {"title": "Jetlink", "panel": "JETLINK", "icon": "aicar", "desc": "Large model on a Jetson or Mac"},
+        {"title": "Jetlink", "panel": "JETLINK", "icon": "aicar", "desc": "Large model on a Jetson, Mac or iPhone"},
       ],
     },
     {

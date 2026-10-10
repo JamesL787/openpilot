@@ -44,9 +44,10 @@ ADAPTER_MODULE = 'openpilot.starpilot.jetlink_adapter'
 # the control without importing Jetlink)
 MODES = ('off', 'usb', 'ios')
 
-# the modes this build offers. Jetlink also speaks to an iPhone on the cable ('ios'); that transport has not been
-# validated on this fork, so it is not offered, and a stored 'ios' setting is refused with a reason rather than run
-SUPPORTED_MODES = ('off', 'usb')
+# the modes this build offers: a Jetson or Mac on the cable ('usb') and an iPhone or iPad on it ('ios', the phone's own
+# Jetlink app serves the model). The iOS transport is Jetlink's own, vendored unchanged; it has not been bench-tested on
+# this fork's hardware the way USB has (see docs/JETLINK.md)
+SUPPORTED_MODES = ('off', 'usb', 'ios')
 
 # the params Jetlink reads and writes, all declared in params_keys.h. big_model and catalog stay None in phase 1: the
 # fork's ActiveBigModel is a model-key string and its manifest is not Jetlink's catalog, so Jetlink runs its pinned
@@ -167,6 +168,12 @@ def _wanted() -> bool:
   Jetlink is never imported by manager, hardwared, modeld or the UI."""
   mode = stored_mode()
   return mode != 'off' and mode in SUPPORTED_MODES
+
+
+def holds_usb_port() -> bool:
+  """Does the link want the comma's USB-C port? ADB's gadget holds the only device controller and Jetlink refuses to
+  share it, so while this is true the UI keeps ADB off. Files only, like _wanted."""
+  return _wanted()
 
 
 def effective_catalog(raw) -> dict:

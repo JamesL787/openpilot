@@ -90,6 +90,8 @@ class UIState:
     self.is_release = self.params.get_bool("IsReleaseBranch")
     self.always_on_dm: bool = self.params.get_bool("AlwaysOnDM")
     self.usbgpu: bool = False
+    # Jetlink holds the USB-C port, so ADB is off and its toggle greyed out
+    self.adb_blocked: bool = False
     self.usbgpu_compiled: bool = self.params.get_bool("UsbGpuCompiled")
     self.usbgpu_active: bool = self.params.get_bool("UsbGpuActive")
     self.usbgpu_loading: bool = self.params.get_bool("UsbGpuLoading")
@@ -294,7 +296,17 @@ class UIState:
       )
     else:
       self.experimental_mode_available = False
+    self._enforce_usb_port()
     self._param_update_time = time.monotonic()
+
+  def _enforce_usb_port(self) -> None:
+    """ADB and Jetlink both need the comma's USB-C port: with the link on ADB is turned off and the developer panels grey
+    its toggle out. Here rather than in the panels, so a link set from the Galaxy counts too. Jetlink's owner retries the
+    port in seconds while ADB's gadget still holds it. A fitted Chestnut keeps Jetlink off, so ADB is left alone."""
+    from openpilot.starpilot import jetlink_adapter
+    self.adb_blocked = jetlink_adapter.holds_usb_port() and not self.usbgpu
+    if self.adb_blocked and self.params.get_bool("AdbEnabled"):
+      self.params.put_bool("AdbEnabled", False)
 
 
 class Device:

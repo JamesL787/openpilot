@@ -1,15 +1,16 @@
-"""Jetlink on the comma four's settings list: one toggle whose second line says what the link is doing.
+"""Jetlink on the comma four's settings list: one button cycling off, usb, ios (Zoompilot's AcceleratorLinkToggle), a
+pill each, whose second line names the mode and says what the link is doing.
 
-USB only (iOS is not validated on this fork), parked only, and not beside a Chestnut, which owns the accelerator slot.
-The words come from starpilot.jetlink_adapter.summary."""
+usb is a Jetson, Linux PC or Mac; ios an iPhone or iPad with the Jetlink app open. Parked only, and not beside a
+Chestnut, which owns the accelerator slot. The words come from starpilot.jetlink_adapter.summary."""
 from openpilot.common.params import Params
-from openpilot.selfdrive.ui.mici.widgets.button import BigToggle
+from openpilot.selfdrive.ui.mici.widgets.button import BigButton, BigMultiToggle
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.starpilot import jetlink_adapter
 from openpilot.starpilot.jetlink_adapter import summary
 
-USB = jetlink_adapter.MODES.index('usb')
-OFF = jetlink_adapter.MODES.index('off')
+MODES = jetlink_adapter.MODES
+MODE_LABELS = {'off': "off", 'usb': "usb", 'ios': "iOS"}
 
 
 def available() -> bool:
@@ -17,18 +18,38 @@ def available() -> bool:
   return jetlink_adapter.VENDOR_DIR.is_dir()
 
 
-class JetlinkBigToggle(BigToggle):
-  def __init__(self):
-    super().__init__("jetlink (usb)", "", initial_state=jetlink_adapter.stored_mode() == 'usb',
-                     toggle_callback=self._on_toggle)
-    self.set_enabled(lambda: not ui_state.started and not ui_state.usbgpu)
-    self.set_value(self._line())
+def next_mode(mode: str) -> str:
+  return MODES[(MODES.index(mode) + 1) % len(MODES)] if mode in MODES else MODES[0]
 
-  @staticmethod
-  def _on_toggle(checked: bool) -> None:
-    if ui_state.started:
-      return
-    Params().put_int(jetlink_adapter.KEYS.link, USB if checked else OFF)
+
+class JetlinkBigToggle(BigMultiToggle):
+  """The pills follow the param, not a tap: a tap writes the next mode and the pills show what is stored."""
+
+  def __init__(self):
+    super().__init__("jetlink", [MODE_LABELS[m] for m in MODES])
+    self._mode = jetlink_adapter.stored_mode()
+    self.set_enabled(lambda: not ui_state.started and not ui_state.usbgpu)
+    self._show()
+
+  def _handle_mouse_release(self, mouse_pos) -> None:
+    BigButton._handle_mouse_release(self, mouse_pos)
+    if self.enabled and not ui_state.started:
+      self._mode = next_mode(self._mode)
+      Params().put_int(jetlink_adapter.KEYS.link, MODES.index(self._mode))
+    self._show()
+
+  def _draw_content(self, btn_y: float) -> None:
+    BigButton._draw_content(self, btn_y)
+    x = self._rect.x + self._rect.width - self._txt_enabled_toggle.width
+    for i, mode in enumerate(MODES):
+      self._draw_pill(x, btn_y + 35 * i, mode == self._mode)
+
+  def _show(self) -> None:
+    line = MODE_LABELS.get(self._mode, "off")
+    if self._mode != 'off':
+      line += f" · {self._line()}"
+    if line != self.value:
+      self.set_value(line)
 
   @staticmethod
   def _line() -> str:
@@ -42,7 +63,8 @@ class JetlinkBigToggle(BigToggle):
 
   def _update_state(self):
     super()._update_state()
-    self.set_value(self._line())
+    self._show()
 
   def refresh(self) -> None:
-    self.set_checked(jetlink_adapter.stored_mode() == 'usb')
+    self._mode = jetlink_adapter.stored_mode()
+    self._show()
