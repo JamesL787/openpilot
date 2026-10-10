@@ -330,6 +330,22 @@ def driving_compile_args(files: dict[str, Path], input_format: str) -> tuple[str
   return "vision_multi_policy", args
 
 
+def driving_model_size(files: dict[str, Path], input_format: str) -> tuple[int, int]:
+  """Model image size from the driving ONNX's road image input ((1, 12, H/2, W/2) packed YUV). Stock models give
+  512x256; a model trained on another framing (e.g. 768x448) gets its warp built at its own size."""
+  import onnx
+  source = files.get("driving_supercombo") if input_format == "supercombo" else files.get("driving_vision")
+  if source is None:
+    return MEDMODEL_INPUT_SIZE
+  graph = onnx.load(str(source), load_external_data=False).graph
+  for value in graph.input:
+    if value.name == "img":
+      dims = [int(dim.dim_value) for dim in value.type.tensor_type.shape.dim]
+      if len(dims) == 4 and dims[2] > 0 and dims[3] > 0:
+        return dims[3] * 2, dims[2] * 2
+  return MEDMODEL_INPUT_SIZE
+
+
 def remove_paths(paths: list[Path]) -> int:
   count = 0
   for path in paths:
@@ -543,6 +559,7 @@ def compile_driving(
   external_gpu: bool = False,
 ) -> Path:
   model_type, source_args = driving_compile_args(files, input_format)
+  model_w, model_h = driving_model_size(files, input_format)
   output_path = output_dir / f"{model_key}_driving_tinygrad.pkl"
   # A rebuild queue may compile several models into the same directory. Only
   # replace the selected model; deleting every driving artifact here loses
@@ -566,7 +583,7 @@ def compile_driving(
     "--model-type",
     model_type,
     "--model-size",
-    f"{MEDMODEL_INPUT_SIZE[0]}x{MEDMODEL_INPUT_SIZE[1]}",
+    f"{model_w}x{model_h}",
     "--camera-resolutions",
     *(f"{width}x{height}" for width, height in DEFAULT_CAMERA_RESOLUTIONS),
     "--output",
