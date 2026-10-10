@@ -91,9 +91,10 @@ def test_crv_carries_its_own_clamp_axes_r6_and_load():
 
 
 @pytest.mark.parametrize("name", ["civic_bosch_c120", "civic_tgg_a120"])
-def test_provisional_images_read_their_own_tables_but_carry_the_c020_r6_and_load(name):
+def test_provisional_images_read_their_own_tables_but_carry_the_c020_load(name):
   tune = FIRMWARE_CAR_TUNES[name]
-  assert tune.calibration.r6_angle_gain is not None  # own A table (C120) or the C020's measured curve (TGG)
+  r6 = core.C120_R6_CENTRE if name == "civic_bosch_c120" else core.C020_R6_CENTRE  # own A table / shared with C020
+  assert tune.calibration.r6_per_deg_s == r6 and tune.calibration.r6_angle_gain is not None
   assert tune.load == core.CIVIC_EPS_LOAD and tune.p_scale == core.CIVIC_P_SCALE
   assert tune.calibration.envelope_v == tuple(core.FLAT_ENVELOPE_V)
 

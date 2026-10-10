@@ -26,12 +26,14 @@ CIVIC_PROFILE = FirmwareControllerProfile("Civic Bosch C020", "civic_bosch_c020"
 TEG_PLACEHOLDER_PROFILE = FirmwareControllerProfile(
   "Civic TEG-A010 / Bosch C020 placeholder (not road-validated)", "civic_bosch_c020", provisional=True,
 )
-# R6 and column load measured from the owner's telemetry rlogs of this image.
+# Column load measured from the owner's telemetry rlogs of this image; R6 from its A table (the angle average of
+# which is the owner's telemetry fit).
 CRV_PROFILE = FirmwareControllerProfile("CR-V TLA-A040", "crv_tla_a040")
-# Tables read from the image; R6 and column load carried over from the C020.
+# Tables read from the image; column load carried over from the C020. R6 is the C120's own A table, and the C020's
+# measured curve on the TGG-A120 (same A table).
 CIVIC_C120_PROFILE = FirmwareControllerProfile("Civic Bosch C120", "civic_bosch_c120", provisional=True)
 CIVIC_TGG_PROFILE = FirmwareControllerProfile("Civic hatch TGG-A120", "civic_tgg_a120", provisional=True)
-# Column load measured from the owner's rlogs (no telemetry build, so R6 stays the C020's).
+# Column load measured from the owner's rlogs; R6 from its own A table (no telemetry build to measure it).
 INSIGHT_PROFILE = FirmwareControllerProfile("Insight TXM-A040", "insight_txm_a040")
 _PROFILES = {
   ("HONDA_CLARITY", "39990-TRW-A020"): CLARITY_PROFILE,
