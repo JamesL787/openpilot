@@ -803,6 +803,9 @@ class ModelState:
 
     self.road_key, self.wide_key = "img", "big_img"
     self.vision_input_names = [self.road_key, self.wide_key]
+    # compile_onnx keeps the ONNX metadata properties: a model with its own image geometry carries model_geometry (json)
+    geometry = artifact.get("metadata", {}).get("metadata", {}).get("model_geometry")
+    self.model_frame_corrections = model_frame_corrections(json.loads(geometry) if isinstance(geometry, str) else geometry)
     self.desire_key = next((name for name in self.numpy_inputs if name.startswith("desire")), "desire")
     if self.desire_key not in self.numpy_inputs:
       raise ValueError("Precompiled model artifact is missing a desire input")
