@@ -119,6 +119,16 @@ FUSED_QUEUE_INPUTS = ("img_q", "big_img_q", "feat_q", "desire_q", "packed_npy_in
 FUSED_MODELD_INPUTS = (*FUSED_FRAME_INPUTS, *FUSED_QUEUE_INPUTS)
 FUSED_LEGACY_MODELD_INPUTS = FUSED_QUEUE_INPUTS
 WARP_DEV = os.getenv("WARP_DEV") or Device.DEFAULT
+
+
+def to_model_device(tensor: Tensor) -> Tensor:
+  """Move a warp output to the model device. The USB AMD runtime pulls host memory but cannot read QCOM GPU memory
+  directly (a QCOM -> USB AMD copy of any buffer over 64 KiB needs a copyin it does not implement), so QCOM sources go
+  through CPU: the QCOM -> CPU hop is a host memcpy of mapped memory and CPU -> AMD is the supported upload."""
+  source = tensor.device if isinstance(tensor.device, str) else ""
+  if source.split(":")[0] == "QCOM" and str(Device.DEFAULT).split(":")[0] == "AMD":
+    return tensor.to("CPU").to(Device.DEFAULT)
+  return tensor.to(Device.DEFAULT)
 OOB_PICKLE = False
 
 
@@ -439,7 +449,8 @@ def make_warp(nv12, model_w, model_h, frame_skip, image_history_pipeline=IMAGE_H
     warped = Tensor.cat(
       frame_prepare(frame, tfm).unsqueeze(0),
       frame_prepare(big_frame, big_tfm).unsqueeze(0),
-    ).to(Device.DEFAULT)
+    )
+    warped = to_model_device(warped)
     img = shift_and_sample(img_q, warped[0:1], sample_skip_fn)
     big_img = shift_and_sample(big_img_q, warped[1:2], sample_skip_fn)
     return img, big_img
@@ -496,7 +507,7 @@ def make_run_split_policy(vision_runner, policy_runners, metadata, policy_order,
   if image_history_pipeline == IMAGE_HISTORY_IN_POLICY:
     def run_policy(warped, img_q, big_img_q, feat_q, desire_q, packed_npy_inputs):
       packed_npy_inputs = packed_npy_inputs.to(Device.DEFAULT)
-      warped = warped.to(Device.DEFAULT)
+      warped = to_model_device(warped)
       Tensor.realize(packed_npy_inputs, warped)
       img = shift_and_sample(img_q, warped[0:1], sample_skip_fn)
       big_img = shift_and_sample(big_img_q, warped[1:2], sample_skip_fn)
@@ -549,7 +560,7 @@ def make_run_supercombo(model_runner, metadata, frame_skip, image_history_pipeli
   if image_history_pipeline == IMAGE_HISTORY_IN_POLICY:
     def run_policy(warped, img_q, big_img_q, feat_q, desire_q, packed_npy_inputs):
       packed_npy_inputs = packed_npy_inputs.to(Device.DEFAULT)
-      warped = warped.to(Device.DEFAULT)
+      warped = to_model_device(warped)
       Tensor.realize(packed_npy_inputs, warped)
       img = shift_and_sample(img_q, warped[0:1], sample_skip_fn)
       big_img = shift_and_sample(big_img_q, warped[1:2], sample_skip_fn)
@@ -678,8 +689,10 @@ def compile_fused_jit(jit, make_queues, nv12, benchmark_runs):
         for value in frame_views.values():
           value[:] = rng.integers(0, 256, size=value.shape, dtype=np.uint8)
       else:
+        # frames from the seeded rng like the policy inputs: Tensor.randint draws from tinygrad's global generator, so
+        # the baseline and the reloaded artifact saw different frames and the bit-exact check could never pass
         frames = {
-          key: Tensor.randint(nv12.size, low=0, high=256, dtype="uint8", device=WARP_DEV).realize()
+          key: Tensor(rng.integers(0, 256, size=nv12.size, dtype=np.uint8), device=WARP_DEV).realize()
           for key in FUSED_FRAME_INPUTS
         }
       Device.default.synchronize()
