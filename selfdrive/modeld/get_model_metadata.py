@@ -2,6 +2,7 @@
 import sys
 import pathlib
 import codecs
+import json
 import pickle
 from typing import Any
 
@@ -39,8 +40,11 @@ def make_metadata_dict(model_path):
   model = MetadataOnnxPBParser(model_path).parse()
   output_slices = get_metadata_value_by_name(model, 'output_slices')
   assert output_slices is not None, 'output_slices not found in metadata'
+  # optional: a model warped to its own image geometry ({'road': [fl, cx, cy], 'wide': [fl, cx, cy]}); absent = stock
+  geometry = get_metadata_value_by_name(model, 'model_geometry')
   return {
     'model_checkpoint': get_metadata_value_by_name(model, 'model_checkpoint'),
+    'model_geometry': json.loads(geometry) if geometry else None,
     'output_slices': pickle.loads(codecs.decode(output_slices.encode(), "base64")),
     'input_shapes': dict(get_name_and_shape(x) for x in model["graph"]["input"]),
     'output_shapes': dict(get_name_and_shape(x) for x in model["graph"]["output"]),

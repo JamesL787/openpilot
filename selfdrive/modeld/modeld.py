@@ -35,7 +35,7 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.file_chunker import file_chunked_exists, open_file_chunked
 from openpilot.common.realtime import config_realtime_process, DT_MDL
 from openpilot.common.transformations.camera import DEVICE_CAMERAS
-from openpilot.common.transformations.model import get_warp_matrix
+from openpilot.common.transformations.model import get_warp_matrix, model_frame_corrections
 from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 from openpilot.system import sentry
 from opendbc.car.car_helpers import get_demo_car_params
@@ -939,6 +939,9 @@ class ModelState:
       self.road_key, self.wide_key = _detect_vision_keys(input_shapes)
       self.vision_input_names = [self.road_key, self.wide_key]
       self.warped_input_shape = (2, 6, *input_shapes[self.road_key][2:])
+      # a model warped to its own image geometry (e.g. a wider field of view) carries it in its ONNX metadata
+      geometry_metadata = self.metadata["model" if self.model_type == "supercombo" else "vision"]
+      self.model_frame_corrections = model_frame_corrections(geometry_metadata.get("model_geometry"))
       self.last_warp_output: Tensor | None = None
       self.numpy_inputs, self.prev_desired_curv_key = self._build_policy_inputs(self.policy_input_shapes)
       self.desire_key = next(key for key in self.numpy_inputs if key.startswith("desire"))
@@ -1365,7 +1368,15 @@ def _model_lab_shared_warp_compatible(lateral: ModelState, longitudinal: ModelSt
     and longitudinal.image_history_pipeline == IMAGE_HISTORY_IN_POLICY
     and lateral.warped_input_shape == longitudinal.warped_input_shape
     and lateral.WARP_DEV == longitudinal.WARP_DEV
+    and _same_frame_corrections(getattr(lateral, "model_frame_corrections", None),
+                                getattr(longitudinal, "model_frame_corrections", None))
   )
+
+
+def _same_frame_corrections(a, b) -> bool:
+  if a is None or b is None:
+    return a is None and b is None
+  return all(np.allclose(x, y) for x, y in zip(a, b, strict=True))
 
 
 def _isolate_next_model_artifact_load() -> int:
@@ -1464,6 +1475,10 @@ def _runner_frame_args(model: ModelState, buf_main, buf_extra,
     model.road_key: buf_main,
     model.wide_key: buf_extra,
   }
+  corrections = getattr(model, "model_frame_corrections", None)
+  if corrections is not None:   # model with its own image geometry: stock transform @ correction
+    model_transform_main = (model_transform_main @ corrections[0]).astype(np.float32)
+    model_transform_extra = (model_transform_extra @ corrections[1]).astype(np.float32)
   transforms = {
     model.road_key: model_transform_main,
     model.wide_key: model_transform_extra,

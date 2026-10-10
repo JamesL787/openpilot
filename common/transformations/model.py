@@ -61,6 +61,22 @@ medmodel_frame_from_bigmodel_frame = np.dot(medmodel_intrinsics, np.linalg.inv(b
 calib_from_medmodel = np.linalg.inv(medmodel_frame_from_calib_frame[:, :3])
 calib_from_sbigmodel = np.linalg.inv(sbigmodel_frame_from_calib_frame[:, :3])
 
+def calib_from_model_intrinsics(fl: float, cx: float, cy: float) -> np.ndarray:
+  """calib_from_medmodel for a model image with its own pinhole intrinsics (full-res model pixels)."""
+  model_intrinsics = np.array([[fl, 0.0, cx], [0.0, fl, cy], [0.0, 0.0, 1.0]])
+  return np.linalg.inv(np.dot(model_intrinsics, get_view_frame_from_calib_frame(0, 0, 0, 0))[:, :3])
+
+
+def model_frame_corrections(geometry: dict | None) -> tuple[np.ndarray, np.ndarray] | None:
+  """Right-multiplied corrections that turn get_warp_matrix's stock road / wide transforms into those of a model with
+  its own geometry ({'road': [fl, cx, cy], 'wide': [fl, cx, cy]}): M_model = M_stock @ correction. None for stock."""
+  if not geometry:
+    return None
+  road = medmodel_frame_from_calib_frame[:, :3] @ calib_from_model_intrinsics(*geometry['road'])
+  wide = sbigmodel_frame_from_calib_frame[:, :3] @ calib_from_model_intrinsics(*geometry['wide'])
+  return road.astype(np.float32), wide.astype(np.float32)
+
+
 # This function is verified to give similar results to xx.uncommon.utils.transform_img
 def get_warp_matrix(device_from_calib_euler: np.ndarray, intrinsics: np.ndarray, bigmodel_frame: bool = False) -> np.ndarray:
   calib_from_model = calib_from_sbigmodel if bigmodel_frame else calib_from_medmodel
