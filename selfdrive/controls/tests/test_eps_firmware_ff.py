@@ -108,6 +108,54 @@ def _hold(core, frames, des=20.0, angle=20.0, v=10.0, pressed=False):
     core.update(des, 0.0, angle, v, 0.0, pressed, False)
 
 
+def _wound_up_core(fade_up_s=0.5):
+  """9 m/s, target 0.5 deg left of the wheel for 3 s: a live integrator into the error."""
+  core = _core()
+  core.override_fade_up_s = fade_up_s
+  for _ in range(300):
+    core.update(0.5, 0.0, 0.0, 9.0, 0.0, False, False)
+  assert core.pid.i > 0.005
+  return core
+
+
+def _step_core(core, frames, pressed=False, limited=False):
+  for _ in range(frames):
+    core.update(0.5, 0.0, 0.0, 9.0, 0.0, pressed, limited)
+
+
+def test_integrator_bleeds_through_the_override_fade():
+  core = _wound_up_core(fade_up_s=0.5)
+  _step_core(core, 50, pressed=True, limited=True)
+  held = core.pid.i
+  assert held > 0.005                       # frozen, not bled, while the driver holds the wheel
+  _step_core(core, 50, limited=True)        # the carcontroller fading torque back in trips the limit
+  assert 0.0 < core.pid.i < held * 0.45     # a bleed (0.5 s at tau 0.5 s leaves 37 %), not a reset
+  after = core.pid.i
+  _step_core(core, 100, limited=True)       # past the fade: a limit with no recent press still just freezes
+  assert core.pid.i == after
+
+
+def test_a_limit_without_a_press_still_freezes_the_integrator():
+  core = _wound_up_core()
+  held = core.pid.i
+  _step_core(core, 100, limited=True)
+  assert core.pid.i == held
+
+
+def test_reset_forgets_the_press():
+  core = _wound_up_core()
+  _step_core(core, 10, pressed=True, limited=True)
+  core.reset()
+  assert core.pid.i == 0.0 and core.since_press_s == math.inf
+
+
+def test_controller_reads_the_override_fade_time(monkeypatch):
+  lac, _, _ = _controller(monkeypatch, {"HondaOverrideFadeUpSecs": "0.8"})
+  assert lac.core.override_fade_up_s == 0.8
+  lac, _, _ = _controller(monkeypatch)
+  assert lac.core.override_fade_up_s == eps_ff.OVERRIDE_FADE_UP_S_DEFAULT == 1.5
+
+
 def test_feedforward_waits_for_the_wheel_to_join_the_path():
   core = _core()
   _hold(core, 100, des=60.0, angle=20.0)   # engaged 40 deg off the path
