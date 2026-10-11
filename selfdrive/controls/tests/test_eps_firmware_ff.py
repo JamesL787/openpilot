@@ -255,6 +255,15 @@ def test_lateral_delay_follows_the_measured_execution_delay(v, delay):
   assert _clarity_lat_delay(v) == pytest.approx(delay)
 
 
+def test_every_vehicle_tells_the_model_the_measured_schedule():
+  # the Clarity's measured schedule is every car's until a measurement on that car says otherwise
+  for _, cal in eps_ff.EPS_FIRMWARE_PROFILES.values():
+    assert cal.lat_delay_schedule == eps_ff.CLARITY_LAT_DELAY_SCHEDULE, cal.name
+  CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
+  assert eps_fw_ctl.lateral_delay_schedule(CP, _Params({"HondaEpsFirmwareController": "1"})) == eps_ff.CLARITY_LAT_DELAY_SCHEDULE
+  assert eps_fw_ctl.lateral_delay_schedule(CP, _Params()) is None   # not on this controller: liveDelay
+
+
 def test_lateral_delay_dips_in_town_and_rises_from_there():
   # measured: the crawl is slower than town (small targets), and from town up the delay rises with speed
   assert _clarity_lat_delay(3.5) > _clarity_lat_delay(7.0)
