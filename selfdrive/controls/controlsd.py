@@ -802,6 +802,13 @@ class Controls:
                                         CS.steerFaultTemporary, CS.steerFaultPermanent,
                                         standstill, self.CP.steerAtStandstill,
                                         self.sm['starpilotPlan'].lateralCheck)
+    # Never steer from a model that stopped publishing. Engaged driving disengages on the resulting events, but
+    # always-on lateral runs with selfdrive disabled, so without this it kept tracking the last curvature (turn hold
+    # and lane centering keep shaping it) and wound the controller up to full torque for 20 s when the Chestnut model
+    # failed and the small-model fallback published nothing (route 000003bb, 2026-10-10). alive = a modelV2 within
+    # 10 periods (0.5 s); the valid flag is not used so occasional dropped frames do not toggle lateral.
+    if not self.sm.alive['modelV2']:
+      CC.latActive = False
     # EcuDisableFailed is set when car started in READY mode (ECU disable was rejected)
     # Disable longitudinal so stock ACC works instead
     self.update_ecu_disable_failed()
