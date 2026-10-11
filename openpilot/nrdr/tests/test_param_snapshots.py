@@ -99,9 +99,14 @@ class TestParamSnapshots(unittest.TestCase):
     }
     keys = [key for group in CONTROL_GROUPS for key in group.keys]
     self.assertFalse(retired & set(keys))
-    self.assertEqual(len(CONTROL_GROUPS), 12)
+    self.assertEqual(len(CONTROL_GROUPS), 13)
     self.assertEqual(len(keys), len(set(keys)))
-    self.assertEqual(len(keys), 52)
+    self.assertEqual(len(keys), 53)
+
+  def test_override_fade_time_is_live_but_not_an_output_transition_key(self):
+    key = "HondaOverrideFadeUpSecs"
+    self.assertIn(key, {key for group in CONTROL_GROUPS for key in group.keys})
+    self.assertNotIn(key, snapshots.LIVE_LATERAL_KEYS)
 
   def test_lane_settings_have_one_live_group_and_subsecond_cycle(self):
     self.assertIn(snapshots.LANE_CENTERING_PARAM_GROUP, CONTROL_GROUPS)

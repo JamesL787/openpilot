@@ -89,6 +89,8 @@ CONTROL_GROUPS = (
   LANE_CENTERING_PARAM_GROUP,
   ParamGroup(("LagdToggle", "LagdToggleDelay")),
   ParamGroup(("NrdrYawCommandDelayLow", "NrdrYawCommandDelayHigh")),
+  # The carcontroller's override fade-up time, so the Firmware Controller knows how long a fade lasts.
+  ParamGroup(("HondaOverrideFadeUpSecs",)),
 )
 
 # Exclude longitudinal tuning and learner maintenance from the steering-output
@@ -96,7 +98,8 @@ CONTROL_GROUPS = (
 LIVE_LATERAL_KEYS = tuple(key for group in CONTROL_GROUPS for key in group.keys
                           if not key.startswith(("Long", "HondaLiveLearningGas", "StaticFeedforwardLong",
                                                  "HondaStop", "HondaVEgo", "NrdrRoen"))
-                          and key not in ("NrdrTuneLearnerReset", "NrdrLaneChangeEntrySrReduction", "NrdrLaneChangeEntryReturnTime"))
+                          and key not in ("NrdrTuneLearnerReset", "NrdrLaneChangeEntrySrReduction", "NrdrLaneChangeEntryReturnTime",
+                                          "HondaOverrideFadeUpSecs"))
 
 PLANNER_GROUPS = (
   ParamGroup(("HondaVEgoStopping", "NrdrCruiseMismatchCorrection", "NrdrCruiseOverspeedAllowance",
