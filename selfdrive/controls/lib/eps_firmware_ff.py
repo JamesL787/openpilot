@@ -64,7 +64,9 @@ class ColumnLoadModel:
 # the delay they are told (Cinque v3: the same aim told 0.09 or 0.30 s; tsfdo: told 0.30 or 0.48 s), so
 # SteerDelay / lagd cannot fix it. Each delay is sized at or below what was measured, so it cannot make a car late.
 # - Clarity (Cinque v3): 0.12-0.14 s early (route 37e); 0.12 s took entries from -0.25 to -0.11 s (route 380).
-# - Civic Bosch C020 (tsfdo): routes 290 / 293 / 289 -0.09 / -0.15 / -0.22 s, median -0.15.
+# - Civic Bosch C020 (tsfdo): routes 290 / 293 / 289 -0.09 / -0.15 / -0.22 s, median -0.15. Checked with it on
+#   (routes 2b7 / 2c6 / 2d4): -0.14 / -0.11 / +0.03 s, -0.045 weighted, against -0.15 without it on 289 / 290 / 294.
+# - Insight: 0.15, inferred from a LatControlPID drive (see INSIGHT_TXM).
 # Unmeasured cars take the default, the smaller of the two, until plan_timing.py measures them.
 CMD_DELAY_DEFAULT_S = 0.12
 CMD_DELAY_SPEED_BP = (10.0, 15.0)  # m/s: the full delay below, none above (nothing was measured early on the highway)
@@ -352,6 +354,10 @@ INSIGHT_TXM = EpsFirmwareProfile(
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=(0, 222, 333, 665, 887, 1104, 1317, 1441, 1663), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=INSIGHT_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=INSIGHT_R6_GAIN, load=INSIGHT_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
+  # Inferred: on LatControlPID its route 0000001e ran the plan 0.06 s early (exit 0.12), and this controller runs
+  # ~0.13 s (Clarity) to ~0.18 s (C020) ahead of the PID, so ~0.19-0.24 s early here; 0.15 stays below that. Re-check
+  # with plan_timing.py after a drive on this controller.
+  cmd_delay_s=0.15,
 )
 # CR-V 5G 39990-TLA-A040, the owner's 08-24 Clarity_FF_tune_telemety_8cf8e537 (decoded full image sha256 d5dc04a8):
 # TargetMap-D, P117..265, D737, KFF45, Norm1650, Trk3200, clamps 7373/1774/9000 on the CR-V's stock axes. Key clamp
