@@ -26,7 +26,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
-from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, eps_firmware_profile, \
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, eps_firmware_calibration, \
   get_rack_map, lateral_delay_schedule, scheduled_lateral_delay
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
@@ -443,7 +443,7 @@ class Controls:
       self.LaC = LatControlAngle(self.CP, self.CI, DT_CTRL)
     elif self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
       self.LaC = LatControlCurvature(self.CP, self.CI, DT_CTRL)
-    elif (eps_profile := eps_firmware_profile(self.CP)) is not None:
+    elif (eps_profile := eps_firmware_calibration(self.CP)) is not None:
       self.LaC = LatControlHondaEps(self.CP, self.CI, DT_CTRL, eps_profile)
     elif self.CP.lateralTuning.which() == 'pid':
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
@@ -452,7 +452,7 @@ class Controls:
 
     eps_fw = isinstance(self.LaC, LatControlHondaEps)
     self.lat_delay_schedule = lateral_delay_schedule(self.CP) if eps_fw else None
-    self.rack_map = get_rack_map(self.CP, self.LaC.profile) if eps_fw else None
+    self.rack_map = get_rack_map(self.CP, self.LaC.calibration) if eps_fw else None
     # see TURN_SHAPING_TAU
     self.turn_shaping = isinstance(self.LaC, LatControlHondaEps)
 

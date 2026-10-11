@@ -1,5 +1,5 @@
 """Wheel angle <-> curvature through a rack ratio identified against the car's yaw sensor. Only numpy here, so offline
-tools can use it. Each vehicle that has been identified carries a RackMapTable on its EPS firmware profile.
+tools can use it. Each vehicle that has been identified carries a RackMapTable on its EPS firmware calibration.
 """
 import math
 from dataclasses import dataclass
@@ -39,7 +39,7 @@ CLARITY_TRW_A020_RACK = RackMapTable(
 )
 
 
-class RackMap:
+class HondaEpsRackMap:
   """Physical wheel angle (deg, left-positive) <-> curvature (1/m, openpilot's right-positive) for one RackMapTable."""
   def __init__(self, wheelbase: float, vgr_inverse, table: RackMapTable):
     linear_bp, angle_bp = (np.asarray(x, dtype=float) for x in vgr_inverse)

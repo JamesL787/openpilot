@@ -7,7 +7,7 @@ Everything is judged in true units: car curvature = VSA yaw / vEgo, decoded as c
 508 on this Clarity, clockwise under-read corrected), 17 ms latency,
 decoded straight from CAN so routes from before the carState.yawRate change work too. Sections:
   yaw sources   VSA zero on straights; livePose yaw (the comma's estimate) scale and lag against the VSA
-  map           car curvature vs what the shipped Clarity rack map (rack_map.RackMap) says the ACTUAL wheel angle gives (1.000 = exact)
+  map           car curvature vs what the shipped Clarity rack map (honda_eps_rack_map.HondaEpsRackMap) says the ACTUAL wheel angle gives (1.000 = exact)
   tracking      actual wheel angle vs the controller's target
   delivery      car curvature vs controlsd's output curvature (lag-aligned); = map x tracking
   timing        car curvature lag behind the model action -> the delay the model should be told, vs the schedule
@@ -30,8 +30,8 @@ from cereal import log
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse
 from opendbc.car.honda.values import CAR, HondaFlags
 from opendbc.car.honda.yaw_rate import RIGHT_LOSS_BP, YAW_RATE_CALIBRATION
-from openpilot.selfdrive.controls.lib.eps_firmware_ff import CLARITY_LAT_DELAY_SCHEDULE
-from openpilot.selfdrive.controls.lib.rack_map import CLARITY_TRW_A020_RACK, RackMap
+from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import CLARITY_LAT_DELAY_SCHEDULE
+from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CLARITY_TRW_A020_RACK, HondaEpsRackMap
 
 VSA_ADDR, VSA_LATENCY = 0x94, 0.017
 VSA_DEG_S, VSA_ZERO, VSA_RIGHT_LOSS = YAW_RATE_CALIBRATION[CAR.HONDA_CLARITY]  # zero: fallback when the drive never stops
@@ -120,7 +120,7 @@ def build(R, info):
   s['gyro'] = at(R['pose'], 1)
 
   inverse = get_honda_vgr_inverse(int(info.get('flags', 0))) or get_honda_vgr_inverse(HondaFlags.VGR_CLARITY_TRW_A020)
-  rack = RackMap(info.get('wheelbase') or 2.75, inverse, CLARITY_TRW_A020_RACK)
+  rack = HondaEpsRackMap(info.get('wheelbase') or 2.75, inverse, CLARITY_TRW_A020_RACK)
   lag_frames = np.round(np.interp(s['v'], *WHEEL_TO_YAW_LAG) / 0.01).astype(int)
   s['a_true'] = s['ang'] - s['off']
   a_lagged = s['a_true'][np.clip(np.arange(len(t)) - lag_frames, 0, len(t) - 1)]
