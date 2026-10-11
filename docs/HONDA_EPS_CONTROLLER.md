@@ -83,6 +83,7 @@ Old `NrdrLat*` names are migrated once at manager start.
 | VSA yaw scale | `tools/lateral/fit_yaw_scale.py --bus N <route>` | GPS; straight-to-straight pairs, both turn directions |
 | Rack map | `tools/lateral/fit_rack_map.py --car FP --vgr PROFILE --bus N --scale S --right R <routes>` | >= 300 s of turning at >= 3 deg, the GPS-checked yaw scale |
 | Command delay | `tools/lateral/plan_timing.py <route>` | a drive on this controller, turns at 5-12 m/s |
+| Per-drive check | `tools/lateral/eps_report.py <route>` | any drive: yaw sources, rack map vs the car, tracking, delivery, timing vs its schedule |
 | Command row | `tools/lateral/live_row_fit.py teg\|c020 <route>` | a telemetry build whose rows differ |
 | Column load | `tools/lateral/fit_column_load.py --source clarity\|c020\|teg\|e4 --calibration NAME <routes>` (the Clarity recipe) | telemetry, or the E4 -> firmware-law rebuild without it |
 
