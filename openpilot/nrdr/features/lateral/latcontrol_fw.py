@@ -13,9 +13,11 @@ import numpy as np
 
 from openpilot.cereal import log
 from openpilot.common.swaglog import cloudlog
+from openpilot.nrdr.params import NrdrParamKey, read_float
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.nrdr.features.lateral.controller_selection import firmware_controller_profile
-from openpilot.nrdr.features.lateral.vfn_eps_core import FIRMWARE_CAR_TUNES, HondaEpsFirmwareFeedforward, HondaEpsLateralCore
+from openpilot.nrdr.features.lateral.vfn_eps_core import (FIRMWARE_CAR_TUNES, OVERRIDE_FADE_UP_S_DEFAULT,
+                                                          HondaEpsFirmwareFeedforward, HondaEpsLateralCore)
 from openpilot.nrdr.features.lateral.yaw_control_timing import CommandDelay, command_delay, prediction_delay_schedule
 from openpilot.nrdr.features.lateral.latcontrol_pid import _eps_modified_steering_pressed
 from openpilot.nrdr.features.lateral.lane_change_tuning import optimized_lane_change_active
@@ -85,6 +87,9 @@ class LatControlFirmware(LatControl):
       self.pressed_prev = pressed
       state = 0 if self.model_v2 is None else self.model_v2.meta.laneChangeState.raw
       optimized = optimized_lane_change_active(self.live_tuning_snapshot, state)
+      if self.live_tuning_snapshot is not None:
+        self.core.override_fade_up_s = read_float(self.live_tuning_snapshot, NrdrParamKey.HONDA_OVERRIDE_FADE_UP_SECS,
+                                                  OVERRIDE_FADE_UP_S_DEFAULT, 0.0, 10.0)
       output = self.core.update(desired, params.angleOffsetDeg, CS.steeringAngleDeg, CS.vEgo, params.roll,
                                 pressed, steer_limited_by_safety, optimized_lane_change=optimized)
       output = float(np.clip(output, -self.steer_max, self.steer_max))

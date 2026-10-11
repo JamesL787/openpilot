@@ -288,3 +288,15 @@ def test_manual_ratio_changes_yaw_target_without_changing_fixed_gains():
                                   False, -.002, None, False, .3)[1])
     assert (control.core.pid.k_p, control.core.pid.k_i) == gains
   assert targets[1] / targets[0] == pytest.approx(20 / 12)
+
+
+def test_override_fade_time_comes_from_the_live_snapshot():
+  control = controller()
+  tick(control)
+  assert control.core.override_fade_up_s == pytest.approx(.01)  # unset: the carcontroller's default
+  control.set_live_tuning_snapshot(ParamSnapshot(1, {"HondaOverrideFadeUpSecs": b"1.0"}))
+  tick(control)
+  assert control.core.override_fade_up_s == pytest.approx(1.)
+  control.set_live_tuning_snapshot(ParamSnapshot(2, {"HondaOverrideFadeUpSecs": b"99"}))
+  tick(control)
+  assert control.core.override_fade_up_s == pytest.approx(10.)  # the carcontroller's own clamp

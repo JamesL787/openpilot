@@ -208,3 +208,34 @@ def test_optimized_lane_change_suppresses_ff_and_rejoins_gradually():
     assert core.pid.f == 0.0
   core.update(20.0, 0.0, 20.0, 10.0, 0.0, False, False)
   assert 0.0 < core.ff_weight < 0.1
+
+
+def _held_i(core, frames, *, pressed=False, limited=False, error=5.0):
+  for _ in range(frames):
+    core.update(20.0 + error, 0.0, 20.0, 15.0, 0.0, pressed, limited)
+  return core.pid.i
+
+
+def test_override_fade_bleeds_the_held_integrator_instead_of_freezing_it():
+  core = _core()
+  core.override_fade_up_s = 1.0
+  wound = _held_i(core, 300)
+  assert wound > 0.0
+  assert _held_i(core, 10, pressed=True) == pytest.approx(wound)  # a press still freezes it
+  _held_i(core, 50, limited=True)  # 0.5 s into the 1.0 s fade
+  assert core.pid.i == pytest.approx(wound * math.exp(-50 * DT_CTRL / eps_ff.OVERRIDE_FADE_I_BLEED_TAU), rel=1e-6)
+
+
+def test_limit_without_a_recent_press_still_freezes_the_integrator():
+  core = _core()
+  core.override_fade_up_s = 1.0
+  wound = _held_i(core, 300)
+  assert _held_i(core, 50, limited=True) == pytest.approx(wound)  # no press since engage
+  _held_i(core, 1, pressed=True)
+  held = _held_i(core, 101, limited=True)  # bleeds through the 1.0 s fade, then holds
+  assert _held_i(core, 50, limited=True) == pytest.approx(held)
+
+
+def test_default_fade_window_is_the_carcontrollers_default():
+  assert eps_ff.OVERRIDE_FADE_UP_S_DEFAULT == 0.01  # HondaOverrideFadeUpSecs default
+  assert _core().override_fade_up_s == eps_ff.OVERRIDE_FADE_UP_S_DEFAULT

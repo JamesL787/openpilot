@@ -137,6 +137,14 @@ CRV_P_SCALE = (1.0, 1.0, 1.0)
 CRV_I_SCALE = (1.0, 1.0, 1.0)
 OUTPUT_LPF_TAU = (0.07, 0.05, 0.01)
 INTEGRATOR_MIN_SPEED = 2.0  # m/s, below this the integrator is held at zero (as vfn)
+# After a press the carcontroller fades torque back in over HondaOverrideFadeUpSecs, and every faded frame trips
+# steer_limited_by_safety, which froze the integrator at its pre-press value. On the C020 (route 0000027a, 12:34,
+# LatControlPID) two override trips held I at 0.19 into the turn through the unwind, where it cancelled 35-45 % of P
+# and the car ran wide toward the curb; below 25 mph 60-70 % of the non-pressed limited frames on routes 277/278/27a
+# were in that window. So the held I bleeds toward 0 during the fade instead (trung791997/openpilot#14, Peter
+# Nguyen, did the same in LatControlPID). Pressed frames, and a limit with no recent press, still freeze.
+OVERRIDE_FADE_I_BLEED_TAU = 0.5  # s: 37 % of the held I is left after a 0.5 s fade
+OVERRIDE_FADE_UP_S_DEFAULT = 0.01  # s, the carcontroller's HondaOverrideFadeUpSecs default
 
 # The feedforward asks for the torque that moves the wheel ALONG the desired path, so it is only right
 # once the wheel is on it. Engaging mid-turn at low speed routinely starts 20-70 deg off (45 engagements on
@@ -477,11 +485,13 @@ class HondaEpsLateralCore:
     # The NRDR torque-output LPF, run exactly as LatControlPID runs it (the car controller deliberately does
     # not filter, so this is the only one): same filter class, same per-band update_alpha, reset to 0.
     self.output_lpf = FirstOrderFilter(0.0, OUTPUT_LPF_TAU[0], dt)
+    self.override_fade_up_s = OVERRIDE_FADE_UP_S_DEFAULT  # set by the caller from the live snapshot
     self.reset()
 
   def reset(self):
     self.pid.reset()
     self.ff.reset()
+    self.since_press_s = math.inf  # time since the driver-override detector last fired
     self.ff_ramp = 0.0
     self.ff_weight = 0.0
     self.output_lpf.x = 0.0
@@ -508,6 +518,10 @@ class HondaEpsLateralCore:
     if optimized_lane_change:
       self.ff_ramp = self.ff_weight = 0.0
     ff = self.ff_weight * ff_full
+
+    self.since_press_s = 0.0 if steering_pressed else self.since_press_s + self.dt
+    if steer_limited and not steering_pressed and self.since_press_s <= self.override_fade_up_s + self.dt:
+      self.pid.i *= math.exp(-self.dt / OVERRIDE_FADE_I_BLEED_TAU)  # see OVERRIDE_FADE_I_BLEED_TAU
 
     i_scale = speed_band(v_ego, self.i_scale)
     self.pid.update(error, speed=v_ego, feedforward=ff,

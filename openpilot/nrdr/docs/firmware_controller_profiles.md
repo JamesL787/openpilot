@@ -92,6 +92,13 @@ lane changes suppress feedforward (including modeled EPS damping) for either
 controller and fade it back in afterward. No extra rate damping or device-yaw
 blend is added to Firmware Controller.
 
+After a driver press, while the carcontroller fades torque back in
+(`HondaOverrideFadeUpSecs`, read from the live snapshot), the integrator bleeds
+toward 0 with a 0.5-second time constant instead of holding its pre-press value;
+pressed frames and safety limits with no recent press still freeze it. At the
+0.01-second default fade this touches one or two frames; profiles that set a
+1-second fade get the full bleed.
+
 ## Source audit and verification boundary
 
 Sources: JamesL787 `honda-eps-controller-update` ab868ea15561 (Clarity prediction
