@@ -186,7 +186,8 @@ class LatControlHondaEps(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    desired_curvature = self.cmd_delay.update(desired_curvature, command_delay(self.calibration, CS.vEgo))
+    cmd_delay = command_delay(self.calibration, CS.vEgo)
+    desired_curvature = self.cmd_delay.update(desired_curvature, cmd_delay)
     angle_des_no_offset = self._desired_angle_no_offset(VM, CS.vEgo, params.roll, desired_curvature)
     if active:
       angle_des_no_offset = rate_limit_desired_angle(angle_des_no_offset, self.prev_rate_limited_angle,
@@ -230,4 +231,7 @@ class LatControlHondaEps(LatControl):
     state.epsFfR5 = float(ff.r5)
     state.epsFfLoad = float(ff.load)
     state.epsFfDesiredRate = float(ff.rate)
+    state.epsCalibration = self.calibration.name
+    state.epsCommandDelay = float(cmd_delay)
+    state.epsModelDelay = float(lat_delay)
     return output, angle_des, pid_log

@@ -149,6 +149,16 @@ def test_reset_forgets_the_press():
   assert core.pid.i == 0.0 and core.since_press_s == math.inf
 
 
+def test_controller_logs_its_calibration_and_both_delays(monkeypatch):
+  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1"})
+  CS = car.CarState.new_message(vEgo=8.0)
+  params = log.LiveParametersData.new_message(steerRatio=16.0, stiffnessFactor=1.0)
+  lac.update(True, CS, VM, params, False, 0.01, False, 0.33, None, None, SimpleNamespace())
+  st = lac.starpilot_lateral_state
+  assert st.epsCalibration == "clarity_trw_a020"
+  assert st.epsCommandDelay == pytest.approx(0.12) and st.epsModelDelay == pytest.approx(0.33)
+
+
 def test_controller_reads_the_override_fade_time(monkeypatch):
   lac, _, _ = _controller(monkeypatch, {"HondaOverrideFadeUpSecs": "0.8"})
   assert lac.core.override_fade_up_s == 0.8
