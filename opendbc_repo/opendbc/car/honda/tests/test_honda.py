@@ -158,6 +158,7 @@ class TestHondaFingerprint:
     crv_cp = CarInterface.get_params(CAR.HONDA_CRV_5G, gen_empty_fingerprint(), crv_fw, False, False, False, toggles)
     assert not crv_cp.dashcamOnly
     assert crv_cp.flags & HondaFlags.EPS_MODIFIED
+    assert crv_cp.flags & HondaFlags.VGR_CRV_TLA_A040
     assert list(crv_cp.lateralParams.torqueBP) == [0, 4096]
     assert list(crv_cp.lateralParams.torqueV) == [0, 4096]
     # shares the same four-point handoff-at-25mph tune as the modified Civic above
@@ -237,6 +238,9 @@ class TestHondaFingerprint:
     (CAR.HONDA_CIVIC_BOSCH, "8263880e02000c57", 1.952),  # 521 counts, zero 513, 0.244 deg/s: Peter's route 154
     (CAR.HONDA_CIVIC_BOSCH, "6d638735ea000c40", -18.544),  # 437 counts
     (CAR.HONDA_CIVIC_BOSCH, "806387ddfa000c48", 0.0),    # 513 counts
+    (CAR.HONDA_CRV_5G, "9620491a0d000c45", 22.6625),    # 600 counts: route 00000013 clockwise turn
+    (CAR.HONDA_CRV_5G, "66a1071e0a000c53", -24.3775),  # 410 counts: counter-clockwise turn
+    (CAR.HONDA_CRV_5G, "7fa087de00000c50", 0.1225),    # 510 counts: half-count from seeded zero
   ])
   def test_honda_yaw_rate_from_vsa(self, car, frame, yaw_deg_s):
     CP = CarInterface.get_non_essential_params(car)
@@ -289,6 +293,7 @@ class TestHondaFingerprint:
   def test_yaw_rate_only_on_checked_cars(self):
     assert get_yaw_rate_calibration(CAR.HONDA_CLARITY) is not None
     assert get_yaw_rate_calibration(CAR.HONDA_CIVIC_BOSCH) is not None
+    assert get_yaw_rate_calibration(CAR.HONDA_CRV_5G) is not None
     assert get_yaw_rate_calibration(CAR.HONDA_ACCORD) is None
 
   def test_honda_clarity_brake_command_uses_hybrid_signals(self):
