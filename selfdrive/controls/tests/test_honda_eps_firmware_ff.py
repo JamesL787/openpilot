@@ -308,7 +308,7 @@ def test_every_vehicle_tells_the_model_the_measured_schedule():
   for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values():
     assert cal.lat_delay_schedule == eps_ff.CLARITY_LAT_DELAY_SCHEDULE, cal.name
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
-  assert honda_eps.lateral_delay_schedule(CP, _Params({"NrdrLatEpsFirmwareFF": "1"})) == eps_ff.CLARITY_LAT_DELAY_SCHEDULE
+  assert honda_eps.lateral_delay_schedule(CP, _Params({"HondaEpsController": "1"})) == eps_ff.CLARITY_LAT_DELAY_SCHEDULE
   assert honda_eps.lateral_delay_schedule(CP, _Params()) is None   # not on this controller: liveDelay
 
 
@@ -321,7 +321,7 @@ def test_lateral_delay_dips_in_town_and_rises_from_there():
 
 def test_nrdr_settings_are_read(monkeypatch):
   lac, _, _ = _controller(monkeypatch, {
-    "NrdrLatUseFirmwareVgr": "1", "NrdrLatAngleRateLimit": "219", "HondaTorqueOutputLowPassFilter": "1",
+    "HondaEpsFirmwareVgr": "1", "HondaEpsAngleRateLimit": "219", "HondaTorqueOutputLowPassFilter": "1",
     "HondaTorqueOutputLpfTauLowSpeed": "0.07", "HondaTorqueOutputLpfTauStandard": "0.05", "HondaTorqueOutputLpfTauHighway": "0.01",
   })
   assert lac.use_firmware_vgr and lac.vgr_inverse is not None
@@ -346,7 +346,7 @@ def _drive(lac, VM, frames=400, v=9.0):
 
 
 def test_controller_steers_logs_and_rests(monkeypatch):
-  lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1"})
+  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1"})
   outs = _drive(lac, VM)
   assert all(out == 0.0 and not pid_log.active for active, out, _, pid_log in outs if not active)
   assert max(abs(out) for _, out, _, _ in outs) > 0.05
@@ -361,7 +361,7 @@ def test_controller_steers_logs_and_rests(monkeypatch):
 
 
 def test_target_honours_the_angle_rate_limit(monkeypatch):
-  lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1", "NrdrLatAngleRateLimit": "100"})
+  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1", "HondaEpsAngleRateLimit": "100"})
   outs = _drive(lac, VM, frames=120)
   steps = [abs(b[2] - a[2]) for a, b in zip(outs[20:], outs[21:], strict=False)]
   assert max(steps) <= 100.0 * DT_CTRL + 1e-6
@@ -382,7 +382,7 @@ CALIBRATION_CARS = [
   (CAR.HONDA_CRV_5G, b'39990-TLA,A220\x00\x00', eps_ff.CRV_TLA_A220),
 ]
 ALL_PROFILES = [p for _, _, p in CALIBRATION_CARS]
-ON = {"NrdrLatEpsFirmwareFF": "1"}
+ON = {"HondaEpsController": "1"}
 
 
 @pytest.mark.parametrize("candidate,fw,cal", CALIBRATION_CARS, ids=[p.name for _, _, p in CALIBRATION_CARS])
@@ -548,7 +548,7 @@ def test_every_vehicle_has_its_own_command_delay():
 
 @pytest.mark.parametrize("v, late_frames", [(8.0, 12), (20.0, 0)])
 def test_target_follows_the_curvature_one_command_delay_late(monkeypatch, v, late_frames):
-  lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1"})
+  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1"})
   CS = car.CarState.new_message()
   CS.vEgo = v
   params = log.LiveParametersData.new_message()
@@ -599,7 +599,7 @@ def test_rack_map_reproduces_the_identified_ratio():
 
 
 def test_controller_steers_through_the_rack_map(monkeypatch):
-  lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1"})
+  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1"})
   VM.update_params(1.0, 17.3)   # a paramsd ratio must no longer change the target
   for curvature, v, roll in ((0.06, 7.0, 0.0), (-0.002, 30.0, 0.02), (0.0, 12.0, 0.0)):
     assert lac._desired_angle_no_offset(VM, v, roll, curvature) == pytest.approx(
@@ -608,7 +608,7 @@ def test_controller_steers_through_the_rack_map(monkeypatch):
 
 def test_rack_map_asks_less_wheel_than_the_paramsd_ratio_in_tight_turns(monkeypatch):
   # the city over-steer: paramsd's single ratio over VGR asks 3.5-6% too much wheel at 100-250 deg
-  lac, VM, _ = _controller(monkeypatch, {"NrdrLatUseFirmwareVgr": "1"})
+  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1"})
   VM.update_params(1.0, 17.3)
   for curvature in (0.04, 0.06, 0.1):
     old = vgr_linear_to_physical(math.degrees(VM.get_steer_from_curvature(-curvature, 7.0, 0.0)), lac.vgr_inverse)

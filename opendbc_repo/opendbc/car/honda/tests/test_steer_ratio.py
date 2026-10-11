@@ -7,8 +7,8 @@ from opendbc.car.honda.steer_ratio import (
   _CRV_TLA_A040_POSITION_Y,
   HONDA_VGR_CRV_TLA_A040,
   HONDA_VGR_INVERSE_BY_PROFILE,
-  NRDR_CRV_TLA_A040_VGR_ANGLE_BP,
-  NRDR_CRV_TLA_A040_VGR_LINEAR_BP,
+  CRV_TLA_A040_VGR_ANGLE_BP,
+  CRV_TLA_A040_VGR_LINEAR_BP,
   get_honda_vgr_profile,
   vgr_linear_to_physical,
   vgr_physical_to_linear,
@@ -40,7 +40,7 @@ def test_crv_5g_a040_table_uses_all_exact_firmware_knots():
     18651, 18697, 18761, 18803, 19129, 19345, 19527, 19657, 19756, 19989,
   ]
   inverse = HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CRV_TLA_A040]
-  assert inverse == (NRDR_CRV_TLA_A040_VGR_LINEAR_BP, NRDR_CRV_TLA_A040_VGR_ANGLE_BP)
+  assert inverse == (CRV_TLA_A040_VGR_LINEAR_BP, CRV_TLA_A040_VGR_ANGLE_BP)
   assert len(inverse[0]) == len(inverse[1]) > 30  # firmware intervals are subdivided, not reduced to a six-point fit
   assert inverse[0][0] == inverse[1][0] == 0.0
   assert inverse[1][-1] == pytest.approx(513.0 * 16384.0 / 19989.0)

@@ -38,9 +38,9 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
 # an unphysical ratio increase. A smoothstep-sampled 70-90 degree handoff rejoins the
 # previous road-proven curve at exactly its existing 90 degree value; 90 degrees onward is
 # unchanged except for the corrected Honda end-to-end specification of 12.72 at 450 degrees.
-NRDR_CLARITY_SR_CURVE_BP = [0., 2.5, 7.5, 12.5, 17.5, 22.5, 27.5, 32.5, 37.5, 42.5, 47.5, 52.5, 57.5,
+CLARITY_SR_CURVE_BP = [0., 2.5, 7.5, 12.5, 17.5, 22.5, 27.5, 32.5, 37.5, 42.5, 47.5, 52.5, 57.5,
                             62.5, 67.5, 70., 75., 80., 85., 90., 100., 140., 200., 300., 450.]  # |wheel angle|, deg
-NRDR_CLARITY_SR_CURVE_V = [19.680, 19.680, 19.680, 19.680, 19.344, 19.344, 19.307, 19.151, 18.406, 18.406,
+CLARITY_SR_CURVE_V = [19.680, 19.680, 19.680, 19.680, 19.344, 19.344, 19.307, 19.151, 18.406, 18.406,
                            18.406, 18.087, 17.999, 17.999, 17.710, 17.604, 17.222, 16.706, 16.308, 16.093333333333334,
                            15.940, 15.400, 14.300, 13.400, 12.720]
 
@@ -58,14 +58,14 @@ NRDR_CLARITY_SR_CURVE_V = [19.680, 19.680, 19.680, 19.680, 19.344, 19.344, 19.30
 # curve is within 2.5% while the 17.24 two-point profile is 6.4% off and tapers 1.459x,
 # failing with the same +10% centre / -15% outer signature an uncorrected kinematic fit
 # always produces.
-NRDR_CIVIC_BOSCH_SR_CURVE_BP = [0., 32., 50., 75., 110., 155., 220., 300., 400.]  # |wheel angle|, deg
-NRDR_CIVIC_BOSCH_SR_CURVE_V = [14.960, 14.960, 14.910, 14.740, 14.210, 13.630, 13.120, 12.904, 12.774]
+CIVIC_BOSCH_SR_CURVE_BP = [0., 32., 50., 75., 110., 155., 220., 300., 400.]  # |wheel angle|, deg
+CIVIC_BOSCH_SR_CURVE_V = [14.960, 14.960, 14.910, 14.740, 14.210, 13.630, 13.120, 12.904, 12.774]
 
 # CR-V 5G road-measured curve, carried over unchanged from 4f3271d6af. The A040 image also has an exact
 # firmware position map (steer_ratio.py, the owner's static decode, not road-checked), but this measured
-# effective-ratio curve stays the default: NrdrLatUseFirmwareVgr must be turned on to select the firmware map.
-NRDR_CRV_5G_SR_CURVE_BP = [0., 50., 100., 150., 175., 200.]  # |wheel angle|, deg
-NRDR_CRV_5G_SR_CURVE_V = [18.10, 17.80, 16.30, 15.30, 14.90, 14.60]
+# effective-ratio curve stays the default: HondaEpsFirmwareVgr must be turned on to select the firmware map.
+CRV_5G_SR_CURVE_BP = [0., 50., 100., 150., 175., 200.]  # |wheel angle|, deg
+CRV_5G_SR_CURVE_V = [18.10, 17.80, 16.30, 15.30, 14.90, 14.60]
 
 # Insight two-point road-tested profile from nrdr upstream (36e203995a).  No multi-knot
 # Insight measurement has ever existed on this branch, so this is the only road data for
@@ -75,19 +75,19 @@ NRDR_CRV_5G_SR_CURVE_V = [18.10, 17.80, 16.30, 15.30, 14.90, 14.60]
 NRDR_CLARITY_LOCK_ANGLE = 2.41 * 180.0
 NRDR_INSIGHT_LOCK_ANGLE = 2.54 * 180.0
 NRDR_TWO_POINT_OUTER_FRACTION = 250.0 / NRDR_CLARITY_LOCK_ANGLE
-NRDR_INSIGHT_SR_CURVE_BP = [0.0, NRDR_INSIGHT_LOCK_ANGLE * NRDR_TWO_POINT_OUTER_FRACTION]  # |wheel angle|, deg
-NRDR_INSIGHT_SR_CURVE_V = [16.82, 12.58]
+INSIGHT_SR_CURVE_BP = [0.0, NRDR_INSIGHT_LOCK_ANGLE * NRDR_TWO_POINT_OUTER_FRACTION]  # |wheel angle|, deg
+INSIGHT_SR_CURVE_V = [16.82, 12.58]
 
 # Road-measured effective-ratio curves, by fingerprint.  A car listed here uses its
 # measured curve and does NOT use the firmware VGR map: the EPS position table only
 # describes rack-to-steering-wheel (the VGR pinion), and misses the rack-to-roadwheel
 # linkage, so on its own it under-tapers and over-commands at angle.  A car absent from
 # this dict falls through to the firmware map if it has one, then to a flat CP.steerRatio.
-NRDR_SR_CURVE_BY_FP = {
-  "HONDA_CLARITY": (NRDR_CLARITY_SR_CURVE_BP, NRDR_CLARITY_SR_CURVE_V),
-  "HONDA_CIVIC_BOSCH": (NRDR_CIVIC_BOSCH_SR_CURVE_BP, NRDR_CIVIC_BOSCH_SR_CURVE_V),
-  "HONDA_CRV_5G": (NRDR_CRV_5G_SR_CURVE_BP, NRDR_CRV_5G_SR_CURVE_V),
-  "HONDA_INSIGHT": (NRDR_INSIGHT_SR_CURVE_BP, NRDR_INSIGHT_SR_CURVE_V),
+HONDA_SR_CURVE_BY_FP = {
+  "HONDA_CLARITY": (CLARITY_SR_CURVE_BP, CLARITY_SR_CURVE_V),
+  "HONDA_CIVIC_BOSCH": (CIVIC_BOSCH_SR_CURVE_BP, CIVIC_BOSCH_SR_CURVE_V),
+  "HONDA_CRV_5G": (CRV_5G_SR_CURVE_BP, CRV_5G_SR_CURVE_V),
+  "HONDA_INSIGHT": (INSIGHT_SR_CURVE_BP, INSIGHT_SR_CURVE_V),
 }
 
 
@@ -137,8 +137,8 @@ def solve_angle_from_ratio_curve(unit_ratio_angle_deg: float, curve_bp, curve_v,
   return math.copysign(solved, unit_ratio_angle_deg)
 
 
-NRDR_SR_CURVE_INVERSE_BY_FP = {
-  fingerprint: build_steer_ratio_inverse(*curve) for fingerprint, curve in NRDR_SR_CURVE_BY_FP.items()
+HONDA_SR_CURVE_INVERSE_BY_FP = {
+  fingerprint: build_steer_ratio_inverse(*curve) for fingerprint, curve in HONDA_SR_CURVE_BY_FP.items()
 }
 
 # NRDR modified-EPS speed-banded feedforward shared by Clarity and Civic Bosch. The
@@ -182,11 +182,11 @@ def get_nrdr_modified_eps_kf(v_ego: float) -> float:
 #
 # This is a slew clip, NOT a filter. Sustained target motion passes through untouched, so it
 # costs no phase lag on a real maneuver -- only the per-frame excursions are removed.
-NRDR_ANGLE_RATE_LIMIT_DEG_S = 300.0  # 0 disables
+HONDA_ANGLE_RATE_LIMIT_DEG_S = 300.0  # 0 disables
 
 # nrdr: time constant for smoothing the final modified-EPS torque command, seconds.
 # Speed-banded so the former carcontroller tune carries over without filtering the target.
-NRDR_TORQUE_OUTPUT_LPF_TAU = 0.1
+HONDA_TORQUE_OUTPUT_LPF_TAU = 0.1
 
 def rate_limit_desired_angle(angle_deg: float, prev_angle_deg: float, max_rate_deg_s: float, dt: float) -> float:
   if max_rate_deg_s <= 0.0 or not math.isfinite(angle_deg):
@@ -370,9 +370,9 @@ class LatControlPID(LatControl):
     # A car with a road-measured curve uses it. The firmware position map is a partial
     # correction (rack-to-steering-wheel only) and is the fallback for a mapped rack that
     # has no measured curve yet -- currently just the Civic Bosch.
-    self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
-    self.sr_curve_inverse = NRDR_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
-    # Selected at runtime by NrdrLatUseFirmwareVgr so the two maps can be A/B'd on the road.
+    self.sr_curve = HONDA_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
+    self.sr_curve_inverse = HONDA_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
+    # Selected at runtime by HondaEpsFirmwareVgr so the two maps can be A/B'd on the road.
     # They are NOT the same measurement: the road curve is the absolute effective ratio across
     # the whole chain and ignores what paramsd learned, while the firmware map is only a
     # relative warp applied on top of paramsd's scalar. Switching therefore moves the centre
@@ -400,14 +400,14 @@ class LatControlPID(LatControl):
     self.lat_f_scale_standard = 1.0
     self.lat_f_scale_highway = 1.0
     self.phase_direction = 0.0
-    self.angle_rate_limit_deg_s = NRDR_ANGLE_RATE_LIMIT_DEG_S
+    self.angle_rate_limit_deg_s = HONDA_ANGLE_RATE_LIMIT_DEG_S
     # The rate limiter needs its own reference so its allowance is independent of the output LPF.
     self.prev_rate_limited_angle = 0.0
-    self.torque_output_lpf = FirstOrderFilter(0.0, NRDR_TORQUE_OUTPUT_LPF_TAU, dt)
+    self.torque_output_lpf = FirstOrderFilter(0.0, HONDA_TORQUE_OUTPUT_LPF_TAU, dt)
     self.torque_output_lpf_enabled = True
-    self.torque_output_lpf_tau_low = NRDR_TORQUE_OUTPUT_LPF_TAU
-    self.torque_output_lpf_tau_standard = NRDR_TORQUE_OUTPUT_LPF_TAU
-    self.torque_output_lpf_tau_highway = NRDR_TORQUE_OUTPUT_LPF_TAU
+    self.torque_output_lpf_tau_low = HONDA_TORQUE_OUTPUT_LPF_TAU
+    self.torque_output_lpf_tau_standard = HONDA_TORQUE_OUTPUT_LPF_TAU
+    self.torque_output_lpf_tau_highway = HONDA_TORQUE_OUTPUT_LPF_TAU
 
   def update_honda_lateral_pid_gain_scale(self, starpilot_toggles):
     if not self.is_honda_pid_lateral:
@@ -568,19 +568,19 @@ class LatControlPID(LatControl):
           self.lat_f_scale_low = _get_param_float(self.params, "LatFScaleLowSpeed", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_standard = _get_param_float(self.params, "LatFScaleStandard", 1.0, 0.0, 5.0, scale=100.0)
           self.lat_f_scale_highway = _get_param_float(self.params, "LatFScaleHighway", 1.0, 0.0, 5.0, scale=100.0)
-          self.angle_rate_limit_deg_s = _get_param_float(self.params, "NrdrLatAngleRateLimit",
-                                                         NRDR_ANGLE_RATE_LIMIT_DEG_S, 0.0, 2000.0)
+          self.angle_rate_limit_deg_s = _get_param_float(self.params, "HondaEpsAngleRateLimit",
+                                                         HONDA_ANGLE_RATE_LIMIT_DEG_S, 0.0, 2000.0)
           self.torque_output_lpf_enabled = _get_param_bool(self.params, "HondaTorqueOutputLowPassFilter", True)
           self.torque_output_lpf_tau_low = _get_param_float(
-            self.params, "HondaTorqueOutputLpfTauLowSpeed", NRDR_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0,
+            self.params, "HondaTorqueOutputLpfTauLowSpeed", HONDA_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0,
           )
           self.torque_output_lpf_tau_standard = _get_param_float(
-            self.params, "HondaTorqueOutputLpfTauStandard", NRDR_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0,
+            self.params, "HondaTorqueOutputLpfTauStandard", HONDA_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0,
           )
           self.torque_output_lpf_tau_highway = _get_param_float(
-            self.params, "HondaTorqueOutputLpfTauHighway", NRDR_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0,
+            self.params, "HondaTorqueOutputLpfTauHighway", HONDA_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0,
           )
-          self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
+          self.use_firmware_vgr = _get_param_bool(self.params, "HondaEpsFirmwareVgr")
 
         p_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_p_scale_low, self.lat_p_scale_standard, self.lat_p_scale_highway)
         f_scale = _lat_pid_scale_banded(CS.vEgo, self.lat_f_scale_low, self.lat_f_scale_standard, self.lat_f_scale_highway)
