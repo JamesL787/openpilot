@@ -2,8 +2,8 @@
 
 Ported by JamesL787 in nrdr/openpilot PR #18 (ab868ea15561dd65a4bc52199ec11abbbd4bf789),
 from vfn-yaw-trim a434a79b19 (096aedb9 delay refit, 0fb4a6dc command delay).
-Clarity's measured table replaces the temporary fixed 0.30-second override.
-Civic has no measured prediction table and retains live/manual delay. Every other
+Clarity's measured table replaces the temporary fixed 0.30-second override, on every
+image (vfn eps-fw-multicar 1d6f820853): none has a measured table of its own. Every other
 image's command delay is its own source value (vfn eps-fw-multicar e7629ac5bd, ed55c7d783),
 with the same +25 ms SunnyPilot model-action interpolation compensation as the existing
 Clarity port.
@@ -19,7 +19,8 @@ from openpilot.nrdr.params import NrdrParamKey, read_float
 # measured lag of yaw-sensor curvature behind the logged model action, minus the fixed pipeline offset,
 # so the car reaches the requested curvature when the model intends it to. Refit 2026-10-01 against a
 # per-route gain: 2.5-5 m/s 0.18/0.14, 5-9 m/s 0.08, 9-15 m/s 0.10 s. Above 15 m/s the values sum the
-# stage lags. lagd only learns above 15 m/s, so it cannot find the low-speed end.
+# stage lags. lagd only learns above 15 m/s, so it cannot find the low-speed end. Every firmware-controller image
+# uses it (FirmwareControllerProfile.prediction_schedule) until one is measured to differ.
 DELAY_SCHEDULE_BP = (3.5, 7.0, 12.0, 20.0, 30.0)  # m/s, centres of the measured bands
 DELAY_SCHEDULE_V = (0.15, 0.08, 0.10, 0.20, 0.30)  # s
 

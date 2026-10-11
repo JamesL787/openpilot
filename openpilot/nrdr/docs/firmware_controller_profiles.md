@@ -26,12 +26,14 @@ changes are part of this port.
 
 ## Timing
 
-The temporary fixed 0.30-second prediction override is removed. Clarity uses
-0.15 / 0.08 / 0.10 / 0.20 / 0.30 seconds at 3.5 / 7 / 12 / 20 / 30 m/s,
-interpolated every frame, with endpoints held. Both model runtimes and controlsd
-use the same profile. Saved live/manual settings are preserved but unavailable
-while that schedule is selected. Civic has no measured prediction schedule in the
-source and therefore keeps live/manual delay normally, subject to Suggested locks.
+The temporary fixed 0.30-second prediction override is removed. Every image tells
+the model the Clarity's measured schedule, 0.15 / 0.08 / 0.10 / 0.20 / 0.30 seconds
+at 3.5 / 7 / 12 / 20 / 30 m/s, interpolated every frame, with endpoints held, until
+a car is measured to need its own. The models aim at a fixed time ahead whatever
+delay they are told, and lagd only learns above 15 m/s. Both model runtimes and
+controlsd use the same profile. Saved live/manual settings are preserved but
+unavailable while the Firmware Controller is selected; with it off the car keeps
+live/manual delay normally, subject to Suggested locks.
 Model-specific smoothing remains separate, as in the source implementation.
 
 Command delay is a separate interpolated curvature history buffer, not a blocking

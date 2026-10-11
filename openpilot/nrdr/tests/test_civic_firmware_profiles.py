@@ -111,9 +111,8 @@ def test_c020_feedforward_respects_source_caps_and_lane_change_bypass(speed):
 
 @pytest.mark.parametrize("profile", [CIVIC_PROFILE, CIVIC_C120_PROFILE, CIVIC_TGG_PROFILE, TEG_PLACEHOLDER_PROFILE,
                                      CRV_PROFILE, INSIGHT_PROFILE])
-def test_non_clarity_keeps_shared_prediction_delay_but_not_saved_clarity_command_delay(profile):
-  assert prediction_delay_schedule(profile) is None
-  assert prediction_delay_schedule(CLARITY_PROFILE) is not None
+def test_non_clarity_takes_the_clarity_prediction_schedule_but_not_saved_clarity_command_delay(profile):
+  assert prediction_delay_schedule(profile) == prediction_delay_schedule(CLARITY_PROFILE) is not None
   settings = {"NrdrLateralController": 1, "NrdrYawCommandDelayLow": .3, "NrdrYawCommandDelayHigh": .3}
   low = .145 if profile is CRV_PROFILE else .175  # each image's source delay + 0.025 port compensation
   assert [command_delay(settings, speed, calibration=profile.calibration) for speed in (0., 10., 12.5, 15., 30.)] == \

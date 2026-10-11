@@ -116,7 +116,7 @@ class ModelsLayout(Widget):
   def _update_lagd_description(self, lagd_toggle: bool):
     profile = firmware_controller_profile(ui_state.CP, ui_state.CP_SP)
     if firmware_controller_selected(ui_state.params, ui_state.CP, ui_state.CP_SP) and profile.prediction_schedule:
-      self.lagd_toggle.set_description(tr("Clarity Firmware Controller uses a measured speed-dependent prediction delay: " +
+      self.lagd_toggle.set_description(tr("Firmware Controller uses the Clarity's measured speed-dependent prediction delay: " +
                                          "0.15/0.08/0.10/0.20/0.30 s at 3.5/7/12/20/30 m/s, smoothly interpolated. " +
                                          "Live/manual settings are preserved, not overwritten. " +
                                          "Command delay and model-specific smoothing are separate."))

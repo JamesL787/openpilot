@@ -17,11 +17,14 @@ from openpilot.nrdr.features.lateral.honda_vgr import get_honda_vgr_profile, nor
 class FirmwareControllerProfile:
   name: str
   calibration: str
-  prediction_schedule: bool = False
+  # Tell the model the Clarity's measured delay schedule in place of lagd/SteerDelay. Every image takes it until a
+  # car shows a reason to differ: the models aim at a fixed time ahead whatever delay they are told, so the schedule
+  # matters little to them, and lagd only learns above 15 m/s.
+  prediction_schedule: bool = True
   provisional: bool = False
 
 
-CLARITY_PROFILE = FirmwareControllerProfile("Clarity TRW-A020", "clarity_trw_a020", prediction_schedule=True)
+CLARITY_PROFILE = FirmwareControllerProfile("Clarity TRW-A020", "clarity_trw_a020")
 CIVIC_PROFILE = FirmwareControllerProfile("Civic Bosch C020", "civic_bosch_c020")
 TEG_PLACEHOLDER_PROFILE = FirmwareControllerProfile(
   "Civic TEG-A010 / Bosch C020 placeholder (not road-validated)", "civic_bosch_c020", provisional=True,

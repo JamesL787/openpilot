@@ -11,6 +11,7 @@ from openpilot.nrdr.features.lateral.steer_ratio_tuning import resolve_steer_rat
 from openpilot.nrdr.features.lateral.lane_change_tuning import shape_lane_change_curvature
 from openpilot.nrdr.features.lateral.latcontrol_fw import LatControlFirmware
 from openpilot.nrdr.params.snapshots import ParamSnapshot
+from openpilot.nrdr.features.lateral.yaw_control_timing import DELAY_SCHEDULE_BP, DELAY_SCHEDULE_V
 
 
 def car(fingerprint="HONDA_CLARITY", firmware=b"39990-TRW-A020", modified=True):
@@ -70,7 +71,7 @@ def test_non_clarity_wrapper_uses_its_own_complete_tune_without_mutating_carpara
   assert control.core.ff.cal is tune.calibration
   assert control.core.ff.load_coefficients == tune.load
   assert control.core.p_scale == tune.p_scale and control.core.i_scale == tune.i_scale
-  assert control.delay_schedule is None
+  assert control.delay_schedule == (DELAY_SCHEDULE_BP, DELAY_SCHEDULE_V)  # the Clarity's, on every image
   # only images whose load was measured from their own rlogs (C020, CR-V, Insight) are not provisional
   is_c020 = changes["firmware"] == b"39990-TBA-C020"
   assert control.firmware_profile.provisional == (changes["firmware"] not in (b"39990-TBA-C020", b"39990-TLA-A040", b"39990-TXM-A040"))
