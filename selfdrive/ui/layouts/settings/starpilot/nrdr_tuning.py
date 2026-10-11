@@ -52,7 +52,7 @@ class NRDRManagerView(AetherSettingsView):
 
     self._grid.add_tile(HubTile(
       title=tr("NRDR Lateral"),
-      desc=tr("Configure Clarity EPS behavior, speed-banded PID gains, driver override, filters, and online tuning."),
+      desc=tr("Configure modified-EPS behavior, speed-banded PID gains, driver override, filters, and online tuning."),
       icon_key="steering",
       on_click=lambda: controller._navigate_to("lateral"),
       bg_color="#8B5CF6",
@@ -256,7 +256,7 @@ class NRDRTuningLayout(_SettingsPage):
 
     filter_rows = [
       toggle("HondaEpsFirmwareController", "EPS Firmware Controller",
-             "Civic, Insight and CR-V with a Clarity-profile EPS build: steer with the controller that inverts the EPS "
+             "Civic, Insight and CR-V with a PTM EPS build: steer with the controller that inverts the EPS "
              "firmware's own control law (always on for the Clarity). Takes effect the next time you start the car."),
       toggle("NrdrLatUseFirmwareVgr", "Use Firmware VGR Table",
              "Convert curvature with the EPS firmware's A (position) table on top of the learned steer "
@@ -392,7 +392,7 @@ class NRDRTuningLayout(_SettingsPage):
       self,
       lateral_sections,
       header_title=tr_noop("NRDR Lateral"),
-      header_subtitle=tr_noop("Clarity EPS tuning, driver override, filtering, and online learning."),
+      header_subtitle=tr_noop("Modified-EPS tuning, driver override, filtering, and online learning."),
       panel_style=PANEL_STYLE,
     )
     self._sub_panels["longitudinal"] = AetherSettingsView(
