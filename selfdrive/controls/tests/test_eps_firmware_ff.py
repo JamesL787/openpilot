@@ -491,8 +491,9 @@ def test_every_vehicle_has_its_own_command_delay():
   delays = {cal.name: cal.cmd_delay_s for _, cal in eps_ff.EPS_FIRMWARE_PROFILES.values()}
   measured = {"clarity_trw_a020": 0.12, "civic_c020": 0.15}
   same_chassis_as_c020 = {"civic_c120": 0.15, "civic_tgg_a120": 0.15}
+  inferred = {"insight_txm_a040": 0.15}
   for name, delay in delays.items():
-    assert delay == {**measured, **same_chassis_as_c020}.get(name, eps_ff.CMD_DELAY_DEFAULT_S), name
+    assert delay == {**measured, **same_chassis_as_c020, **inferred}.get(name, eps_ff.CMD_DELAY_DEFAULT_S), name
   # the default is the smaller measured value, so an unmeasured car cannot be pushed late
   assert eps_ff.CMD_DELAY_DEFAULT_S == min(measured.values())
 
