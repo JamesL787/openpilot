@@ -92,6 +92,7 @@ class HondaFlags(IntFlag):
   VGR_CIVIC_TBA_C020 = 65536
   VGR_INSIGHT_TXM_A040 = 131072
   VGR_CRV_TLA_A040 = 262144
+  VGR_CIVIC_TBA_C120 = 524288
 
 
 # Car button codes

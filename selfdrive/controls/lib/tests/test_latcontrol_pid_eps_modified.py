@@ -24,8 +24,10 @@ CarParams = structs.CarParams
 TOGGLES = SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False)
 
 # a comma in the eps fw version is what marks a modified EPS
-MODIFIED_FW = b'39990-TBA,A030\x00\x00'
-STOCK_FW = b'39990-TBA-A030\x00\x00'
+# A part number with no firmware VGR table (every PTM image now has one), so these exercise the road-curve and
+# fixed-ratio paths; the comma marks the modified image.
+MODIFIED_FW = b'39990-TBA,A010\x00\x00'
+STOCK_FW = b'39990-TBA-A010\x00\x00'
 
 # LatControlPID only reaches into CI for the feedforward function
 STUB_CI = SimpleNamespace(get_steer_feedforward_function=lambda: (lambda angle, v_ego: angle))

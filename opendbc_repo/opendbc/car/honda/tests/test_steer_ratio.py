@@ -51,3 +51,23 @@ def test_crv_5g_a040_position_map_round_trips(linear):
   inverse = HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CRV_TLA_A040]
   physical = vgr_linear_to_physical(linear, inverse)
   assert vgr_physical_to_linear(physical, inverse) == pytest.approx(linear)
+
+
+@pytest.mark.parametrize("version,profile", [
+  (b"39990-TBA,C120\0\0", "civic_tba_c120"), (b"39990-TBA,A030\0\0", "civic_tba_c120"),
+  (b"39990-TEG,A010\0\0", "civic_tba_c120"), (b"39990-TEG-A010\0\0", "civic_tba_c120"),
+  (b"39990-TGG,A120\0\0", "civic_tba_c020"),
+])
+def test_civic_images_select_the_a_table_each_image_carries(version, profile):
+  # C120 / A030 / TEG-A010 share the C120 table at 0x1306C / 0x130A8; the TGG-A120 carries the C020's there
+  assert get_honda_vgr_profile(_eps(version)) == profile
+
+
+def test_the_tgg_a020_has_no_ptm_table():
+  assert get_honda_vgr_profile(_eps(b"39990-TGG-A020\0\0")) is None
+
+
+@pytest.mark.parametrize("linear", [-400.0, -150.0, -20.0, 0.0, 20.0, 150.0, 400.0])
+def test_civic_c120_position_map_round_trips(linear):
+  inverse = HONDA_VGR_INVERSE_BY_PROFILE["civic_tba_c120"]
+  assert vgr_physical_to_linear(vgr_linear_to_physical(linear, inverse), inverse) == pytest.approx(linear)
