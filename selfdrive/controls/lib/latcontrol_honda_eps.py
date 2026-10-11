@@ -102,7 +102,7 @@ def eps_firmware_profile(CP, params=None) -> EpsFirmwareProfile | None:
   return profile
 
 
-def use_eps_firmware_controller(CP, params=None) -> bool:
+def use_honda_eps_controller(CP, params=None) -> bool:
   return eps_firmware_profile(CP, params) is not None
 
 
@@ -124,13 +124,13 @@ def get_rack_map(CP, profile: EpsFirmwareProfile | None) -> RackMap | None:
   return RackMap(CP.wheelbase, vgr_inverse, profile.rack)
 
 
-class LatControlEpsFirmware(LatControl):
+class LatControlHondaEps(LatControl):
   def __init__(self, CP, CI, dt, profile: EpsFirmwareProfile | None = None):
     super().__init__(CP, CI, dt)
     self.params = Params()
     self.profile = profile if profile is not None else eps_firmware_profile(CP, self.params)
     assert self.profile is not None, f"no EPS firmware profile for {CP.carFingerprint}"
-    cloudlog.info(f"LatControlEpsFirmware: {CP.carFingerprint} steering with EPS profile {self.profile.name}")
+    cloudlog.info(f"LatControlHondaEps: {CP.carFingerprint} steering with EPS profile {self.profile.name}")
     pid = CP.lateralTuning.pid
     self.core = EpsFirmwareLateralCore([float(x) for x in pid.kpBP], [float(x) for x in pid.kpV],
                                        [float(x) for x in pid.kiBP], [float(x) for x in pid.kiV], dt,

@@ -40,7 +40,7 @@ from openpilot.system import sentry
 from opendbc.car.car_helpers import get_demo_car_params
 from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
 from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan_tomb_raider, smooth_value
-from openpilot.selfdrive.controls.lib.latcontrol_eps_firmware import lateral_delay_schedule, scheduled_lateral_delay
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import lateral_delay_schedule, scheduled_lateral_delay
 from openpilot.selfdrive.modeld.camera_offset import CameraOffset, DEFAULT_CAMERA_HEIGHT
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_pose_msg, PublishState, get_curvature_from_output

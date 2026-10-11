@@ -7,7 +7,7 @@ import pytest
 from cereal import car, log
 import openpilot.selfdrive.controls.lib.rack_map as rack
 import openpilot.selfdrive.controls.lib.eps_firmware_ff as eps_ff
-import openpilot.selfdrive.controls.lib.latcontrol_eps_firmware as eps_fw_ctl
+import openpilot.selfdrive.controls.lib.latcontrol_honda_eps as honda_eps
 from opendbc.car import structs
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_linear_to_physical, vgr_physical_to_linear
@@ -230,24 +230,24 @@ class _Params:
 
 
 def _clarity_lat_delay(v):
-  return eps_fw_ctl.scheduled_lateral_delay(eps_ff.CLARITY_LAT_DELAY_SCHEDULE, v)
+  return honda_eps.scheduled_lateral_delay(eps_ff.CLARITY_LAT_DELAY_SCHEDULE, v)
 
 
 def _get_rack_map(fw):
   CP = _params(fw)
-  return eps_fw_ctl.get_rack_map(CP, eps_fw_ctl.eps_firmware_profile(CP, _Params()))
+  return honda_eps.get_rack_map(CP, honda_eps.eps_firmware_profile(CP, _Params()))
 
 
 def _controller(monkeypatch, values=None):
-  monkeypatch.setattr(eps_fw_ctl, "Params", lambda: _Params(values))
+  monkeypatch.setattr(honda_eps, "Params", lambda: _Params(values))
   CP = _params(CLARITY_MODIFIED_FW)
-  return eps_fw_ctl.LatControlEpsFirmware(CP, None, DT_CTRL), VehicleModel(CP), CP
+  return honda_eps.LatControlHondaEps(CP, None, DT_CTRL), VehicleModel(CP), CP
 
 
 def test_only_the_modified_eps_clarity_gets_this_controller_by_default():
-  assert eps_fw_ctl.use_eps_firmware_controller(_params(CLARITY_MODIFIED_FW), _Params())
-  assert not eps_fw_ctl.use_eps_firmware_controller(_params(CLARITY_STOCK_FW), _Params())
-  assert not eps_fw_ctl.use_eps_firmware_controller(_params(b'39990-TBA,A030\x00\x00', CAR.HONDA_CIVIC_BOSCH), _Params())
+  assert honda_eps.use_honda_eps_controller(_params(CLARITY_MODIFIED_FW), _Params())
+  assert not honda_eps.use_honda_eps_controller(_params(CLARITY_STOCK_FW), _Params())
+  assert not honda_eps.use_honda_eps_controller(_params(b'39990-TBA,A030\x00\x00', CAR.HONDA_CIVIC_BOSCH), _Params())
 
 
 @pytest.mark.parametrize("v, delay", [(0.0, 0.15), (3.5, 0.15), (7.0, 0.08), (12.0, 0.10), (20.0, 0.20), (30.0, 0.30), (40.0, 0.30)])
@@ -260,8 +260,8 @@ def test_every_vehicle_tells_the_model_the_measured_schedule():
   for _, cal in eps_ff.EPS_FIRMWARE_PROFILES.values():
     assert cal.lat_delay_schedule == eps_ff.CLARITY_LAT_DELAY_SCHEDULE, cal.name
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
-  assert eps_fw_ctl.lateral_delay_schedule(CP, _Params({"HondaEpsFirmwareController": "1"})) == eps_ff.CLARITY_LAT_DELAY_SCHEDULE
-  assert eps_fw_ctl.lateral_delay_schedule(CP, _Params()) is None   # not on this controller: liveDelay
+  assert honda_eps.lateral_delay_schedule(CP, _Params({"HondaEpsFirmwareController": "1"})) == eps_ff.CLARITY_LAT_DELAY_SCHEDULE
+  assert honda_eps.lateral_delay_schedule(CP, _Params()) is None   # not on this controller: liveDelay
 
 
 def test_lateral_delay_dips_in_town_and_rises_from_there():
@@ -341,16 +341,16 @@ ON = {"HondaEpsFirmwareController": "1"}
 def test_profile_matches_the_cars_torque_map_and_is_selected_only_when_enabled(candidate, fw, profile):
   CP = _params(fw, candidate)
   assert list(CP.lateralParams.torqueBP) == [0, profile.e4_per_output] == list(CP.lateralParams.torqueV)
-  assert eps_fw_ctl.eps_firmware_profile(CP, _Params(ON)) is profile
+  assert honda_eps.eps_firmware_profile(CP, _Params(ON)) is profile
   if candidate != CAR.HONDA_CLARITY:
-    assert eps_fw_ctl.eps_firmware_profile(CP, _Params()) is None
+    assert honda_eps.eps_firmware_profile(CP, _Params()) is None
 
 
 def test_clarity_always_steers_with_the_pminus5_build():
   # P-minus-5 is the Clarity standard; there is no build setting any more
   CP = _params(CLARITY_MODIFIED_FW)
-  assert eps_fw_ctl.eps_firmware_profile(CP, _Params()) is eps_ff.CLARITY_TRW_A020
-  assert eps_fw_ctl.eps_firmware_profile(CP, _Params({"HondaEpsClarityPminus5": "0"})) is eps_ff.CLARITY_TRW_A020
+  assert honda_eps.eps_firmware_profile(CP, _Params()) is eps_ff.CLARITY_TRW_A020
+  assert honda_eps.eps_firmware_profile(CP, _Params({"HondaEpsClarityPminus5": "0"})) is eps_ff.CLARITY_TRW_A020
   assert not hasattr(eps_ff, "CLARITY_P123")
 
 
@@ -360,13 +360,13 @@ def test_clarity_always_steers_with_the_pminus5_build():
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,A030\x00\x00'),   # a known image on the wrong car
 ])
 def test_cars_without_a_matching_profile_keep_latcontrol_pid(candidate, fw):
-  assert eps_fw_ctl.eps_firmware_profile(_params(fw, candidate), _Params(ON)) is None
+  assert honda_eps.eps_firmware_profile(_params(fw, candidate), _Params(ON)) is None
 
 
 def test_a_torque_map_the_profile_does_not_expect_keeps_latcontrol_pid():
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
   CP.lateralParams.torqueV = [0, 3840]
-  assert eps_fw_ctl.eps_firmware_profile(CP, _Params(ON)) is None
+  assert honda_eps.eps_firmware_profile(CP, _Params(ON)) is None
 
 
 def test_clarity_trw_a020_profile_is_the_validated_build():
@@ -429,9 +429,9 @@ def test_c020_full_output_lands_on_the_measured_rail():
 
 @pytest.mark.parametrize("candidate,fw,profile", PROFILE_CARS, ids=[p.name for _, _, p in PROFILE_CARS])
 def test_every_profile_car_steers_with_its_own_profile(monkeypatch, candidate, fw, profile):
-  monkeypatch.setattr(eps_fw_ctl, "Params", lambda: _Params(ON))
+  monkeypatch.setattr(honda_eps, "Params", lambda: _Params(ON))
   CP = _params(fw, candidate)
-  lac = eps_fw_ctl.LatControlEpsFirmware(CP, None, DT_CTRL)
+  lac = honda_eps.LatControlHondaEps(CP, None, DT_CTRL)
   assert lac.profile is profile and lac.core.ff.cal is profile
   assert (lac.core.p_scale, lac.core.i_scale) == (profile.p_scale, profile.i_scale)
   outs = _drive(lac, VehicleModel(CP))
@@ -471,11 +471,11 @@ def test_crv_a220_reads_its_own_command_axis_and_predicts_r6_from_the_a040():
 
 
 def test_command_delay_hands_over_the_value_issued_that_long_ago():
-  d = eps_fw_ctl.CommandDelay(DT_CTRL, 0.2)
+  d = honda_eps.CommandDelay(DT_CTRL, 0.2)
   outs = [d.update(float(k), 0.12) for k in range(40)]
   assert outs[30] == pytest.approx(18.0)
   assert outs[0] == 0.0 and outs[5] == 0.0              # not enough history yet: the oldest value
-  half = eps_fw_ctl.CommandDelay(DT_CTRL, 0.2)
+  half = honda_eps.CommandDelay(DT_CTRL, 0.2)
   assert [half.update(float(k), 0.125) for k in range(40)][30] == pytest.approx(17.5)
 
 
@@ -484,7 +484,7 @@ def test_command_delay_is_for_town_speeds_only():
   assert eps_ff.command_delay(cal, 0.0) == eps_ff.command_delay(cal, 10.0) == pytest.approx(0.12)
   assert eps_ff.command_delay(cal, 12.5) == pytest.approx(0.06)
   assert eps_ff.command_delay(cal, 15.0) == eps_ff.command_delay(cal, 30.0) == 0.0
-  assert eps_fw_ctl.CommandDelay(DT_CTRL, 0.2).update(3.0, 0.0) == 3.0
+  assert honda_eps.CommandDelay(DT_CTRL, 0.2).update(3.0, 0.0) == 3.0
 
 
 def test_every_vehicle_has_its_own_command_delay():
