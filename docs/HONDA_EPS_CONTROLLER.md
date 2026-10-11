@@ -33,6 +33,13 @@ A car runs `LatControlHondaEps` when its EPS part number has a calibration for t
 linear `[0, E4 cap]` the calibration expects, it is modified-EPS on PID tuning, and either the calibration is
 `default_on` (the Clarity) or `HondaEpsController` is on. Otherwise it stays on `LatControlPID`.
 
+### LatControlPID fallback (to be removed)
+
+`LatControlPID`'s modified-EPS path is kept for now as the fallback for PTM cars with `HondaEpsController` off. Once
+every image's vehicle calibration is measured (no `inferred` or `default` left in `CALIBRATION_PROVENANCE` for row,
+R6, load, command delay and geometry), the `HondaEpsController` toggle is deprecated so every PTM car runs
+`LatControlHondaEps`, and then the modified-EPS path in `LatControlPID` is removed.
+
 ## The calibration record
 
 `EpsFirmwareCalibration`, one per image, named by part number (`civic_tba_c020`, ...). Two halves:
