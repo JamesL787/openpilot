@@ -9,6 +9,7 @@ ramped in over RIGHT_LOSS_BP counts, the form opendbc/car/honda/yaw_rate.py deco
   fit_yaw_scale.py --bus 1 '<route dir>/rlog*' ['<another route>' ...]
 """
 import argparse
+import bz2
 import glob
 import re
 
@@ -22,14 +23,14 @@ GPS_LAG = 0.4  # s, GPS bearing behind the car
 
 
 def seg(p):
-  m = re.search(r'(?:rlog_|--)(\d+)(?:\.zst|/rlog)', p)
+  m = re.search(r'(?:rlog_|--)(\d+)(?:\.zst|\.bz2|/rlog)', p)
   return int(m.group(1)) if m else 0
 
 
 def read_route(pattern, bus):
   Y, G, V = [], [], []
   for p in sorted(glob.glob(pattern), key=seg):
-    raw = zstd.ZstdDecompressor().stream_reader(open(p, 'rb').read()).read()
+    raw = bz2.decompress(open(p, 'rb').read()) if p.endswith('.bz2') else zstd.ZstdDecompressor().stream_reader(open(p, 'rb').read()).read()
     try:
       for e in log.Event.read_multiple_bytes(raw):
         w, t = e.which(), e.logMonoTime * 1e-9
@@ -39,13 +40,13 @@ def read_route(pattern, bus):
               Y.append((t, (m.dat[0] << 2) | (m.dat[1] >> 6)))
         elif w in ('gpsLocation', 'gpsLocationExternal'):
           g = getattr(e, w)
-          if g.hasFix:
+          if g.hasFix or (g.flags & 1):  # logs before hasFix mark a fix in flags
             G.append((t, g.bearingDeg, g.speed, g.bearingAccuracyDeg))
         elif w == 'carState':
           V.append((t, e.carState.vEgo))
     except Exception:
       pass
-  return [np.array(x, float) for x in (Y, G, V)]
+  return [np.array(x, float).reshape(-1, n) for x, n in ((Y, 2), (G, 4), (V, 2))]
 
 
 def pairs(Y, G, V):
