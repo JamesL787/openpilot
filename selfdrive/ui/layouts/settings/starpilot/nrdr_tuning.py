@@ -255,12 +255,12 @@ class NRDRTuningLayout(_SettingsPage):
     ]
 
     filter_rows = [
-      toggle("HondaEpsController", "EPS Firmware Controller",
-             "Civic, Insight and CR-V with a PTM EPS build: steer with the controller that inverts the EPS "
-             "firmware's own control law (always on for the Clarity). Takes effect the next time you start the car."),
+      toggle("HondaEpsController", "Honda EPS Controller",
+             "Steer a PTM-flashed Civic, Insight or CR-V with the controller that inverts the EPS firmware's own "
+             "control law. The Clarity always uses it. Takes effect the next time you start the car."),
       toggle("HondaEpsFirmwareVgr", "Use Firmware VGR Table",
-             "Convert curvature with the EPS firmware's A (position) table on top of the learned steer "
-             "ratio, instead of the road-measured effective-ratio curve. Changes centre gain and taper."),
+             "For a car without a yaw-fitted rack map: convert curvature with the EPS firmware's A (position) "
+             "table instead of the road-measured ratio curve. Cars with a rack map always use it."),
       toggle("NrdrLatModelActionInterp", "Model Action Interpolation",
              "Ramp the model's 20 Hz steering action across the model frame instead of holding it. "
              "Removes the 20 Hz staircase in the target that the smoothing filter otherwise has to hide."),

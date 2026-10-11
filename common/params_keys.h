@@ -420,7 +420,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrLearnAngleOffset", {PERSISTENT, BOOL, "1", "1", 2}},
     {"HondaEpsAngleRateLimit", {PERSISTENT, INT, "300", "300", 2}},     // deg/s ceiling on desired wheel-angle slew; 0 disables. Backstops clip_curvature, whose ISO jerk limit is ~1/v^2 in angle space and so does not bind below ~20 mph
     {"NrdrLatModelActionInterp", {PERSISTENT, BOOL, "1", "1", 2}},   // ramp modeld's 20 Hz action across the model frame instead of holding it; removes the 20 Hz staircase in the lateral target
-    {"HondaEpsFirmwareVgr", {PERSISTENT, BOOL, "0", "0", 2}},      // use the EPS firmware A (position) VGR table instead of the road-measured effective-ratio curve
+    {"HondaEpsFirmwareVgr", {PERSISTENT, BOOL, "0", "0", 2}},      // cars without a yaw-fitted rack map: use the EPS firmware A (position) VGR table instead of the road-measured ratio curve
     {"ForceFingerprint", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ForceOffroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
     {"ForceOnroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
