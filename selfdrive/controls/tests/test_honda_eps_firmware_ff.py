@@ -695,3 +695,17 @@ def test_a_table_r6_model_matches_the_clarity_and_the_c020_centre():
   assert eps_ff.CIVIC_TBA_C120_R6_CENTRE == pytest.approx(-122.0 * 20972 / 16384, abs=0.01)
   assert eps_ff.INSIGHT_TXM_A040_R6_CENTRE == pytest.approx(-122.0 * 17613 / 16384, abs=0.01)
   assert eps_ff.CRV_TLA_A040_R6_CENTRE == pytest.approx(-122.0 * 16783 / 16384, abs=0.01)
+
+
+@pytest.mark.parametrize("name", [cal.name for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values()])
+def test_every_calibration_says_where_every_value_came_from(name):
+  cal = next(c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
+  prov = eps_ff.provenance(cal)
+  assert set(prov) == set(eps_ff.PROVENANCE_FIELDS)
+  for key, value in prov.items():
+    assert value.split(':')[0].split(' ')[0] in eps_ff.PROVENANCE_KINDS, (name, key, value)
+  # consistency with the calibration itself
+  assert (prov["rack"] == "none") == (cal.rack is None)
+  if cal.cmd_delay_s == eps_ff.CMD_DELAY_DEFAULT_S and not prov["cmd_delay"].startswith("measured"):
+    assert prov["cmd_delay"].startswith(("default", "inferred")), name
+  assert eps_ff.provenance_summary(cal)

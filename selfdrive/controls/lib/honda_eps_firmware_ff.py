@@ -433,6 +433,112 @@ EPS_FIRMWARE_CALIBRATIONS = {
 }
 
 
+# --- where each calibration value came from --------------------------------------------------------------------
+# One line per quantity per image, so what is measured and what is carried over is auditable in one place (and is
+# logged when LatControlHondaEps starts). Each value starts with its kind:
+#   firmware  read or computed from the image the owners run
+#   measured  fitted on that car's own drives (the routes say which)
+#   inferred  carried over from a related car or derived indirectly; re-measure when its logs exist
+#   default   the controller-wide default, nothing car-specific yet
+#   none      not applicable (no rack map: the road curve or the firmware table is the geometry)
+PROVENANCE_KINDS = ('firmware', 'measured', 'inferred', 'default', 'none')
+PROVENANCE_FIELDS = ('row', 'kp_axis', 'key_clamp', 'envelope', 'r6', 'load', 'trims', 'cmd_delay', 'model_delay', 'rack')
+CALIBRATION_PROVENANCE = {
+  "clarity_trw_a020": {
+    "row": "measured: telemetry R5 = row 0 exactly; every TRW variant record selects row 0",
+    "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
+    "r6": "measured: telemetry, routes 363/365/366/369 (-122 x the A-table slope)",
+    "load": "measured: route 352, against the firmware output (14 routes agree)",
+    "trims": "measured: the tune the car drove on vfn 35ddc44b",
+    "cmd_delay": "measured: plan_timing, routes 37e / 380",
+    "model_delay": "measured: routes 36c/36d/373/377 and 362-36b",
+    "rack": "measured: VSA yaw, routes 341-36b",
+  },
+  "civic_tba_c020": {
+    "row": "measured: telemetry R5 = row 1 (route 294, live_row_fit); TBCA9/TBHC8 select row 1",
+    "kp_axis": "firmware", "key_clamp": "firmware",
+    "envelope": "firmware (not road-checked above 89 km/h)",
+    "r6": "measured: telemetry, routes 64/154/287/289/294",
+    "load": "measured: owner telemetry 287/289/294; a 14-route refit agrees",
+    "trims": "measured: the owner's tune, route 284",
+    "cmd_delay": "measured: plan_timing 290/293/289; confirmed with it on, 2b7/2c6/2d4",
+    "model_delay": "default: the Clarity's schedule",
+    "rack": "measured: VSA yaw, routes 294/289/2b7/2c6/2d4/1b8/251",
+  },
+  "civic_tba_a030": {
+    "row": "inferred: the C020's row 1; the live row is variant-dependent (TBCA1 row 2, TBCA2 row 3)",
+    "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
+    "r6": "firmware: computed from its A table (the C120's)",
+    "load": "inferred: the TEG-A010 owner's",
+    "trims": "inferred: the C020 owner's",
+    "cmd_delay": "default", "model_delay": "default: the Clarity's schedule", "rack": "none",
+  },
+  "civic_teg_a010": {
+    "row": "inferred: the C020's row 1; a steering TEG is TEGA1 (row 2) or TEGA2 (row 3), not yet read",
+    "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
+    "r6": "firmware: computed from its A table; telemetry fit -161 at its 08-12 build",
+    "load": "measured: the owner's 08-18 telemetry drive (P+KFF rebuild, hands off, below 15 m/s)",
+    "trims": "inferred: the C020 owner's",
+    "cmd_delay": "default", "model_delay": "default: the Clarity's schedule", "rack": "none",
+  },
+  "civic_tba_c120": {
+    "row": "firmware: its variants' rows 0-4 agree within 5%",
+    "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
+    "r6": "firmware: computed from its A table",
+    "load": "inferred: the C020's",
+    "trims": "inferred: the C020 owner's",
+    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "default: the Clarity's schedule", "rack": "none",
+  },
+  "civic_tgg_a120": {
+    "row": "firmware: both variant records (TGGA5, TGGA6) select row 0",
+    "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
+    "r6": "inferred: the C020's measured curve (same A table)",
+    "load": "inferred: the C020's",
+    "trims": "inferred: the C020 owner's",
+    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "default: the Clarity's schedule", "rack": "none",
+  },
+  "insight_txm_a040": {
+    "row": "firmware: row 0 in every build and variant",
+    "kp_axis": "firmware", "key_clamp": "firmware",
+    "envelope": "default: not located in the image; flat assumed (the 1663 clamp binds first)",
+    "r6": "firmware: computed from its A table",
+    "load": "measured: the owner's konik route 0000001e",
+    "trims": "inferred: the C020 owner's",
+    "cmd_delay": "inferred: its LatControlPID drive (0.06 s early) plus this controller's lead over the PID",
+    "model_delay": "default: the Clarity's schedule",
+    "rack": "measured: VSA yaw (GPS-checked scale), route 0000001e",
+  },
+  "crv_tla_a040": {
+    "row": "firmware: every variant record selects row 0 (TLBA2 row 1, identical)",
+    "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
+    "r6": "firmware: computed from its A table; matches the owner's telemetry fit (route 82bb)",
+    "load": "measured: the owner's telemetry route 82bb",
+    "trims": "measured: the owner drives it untrimmed",
+    "cmd_delay": "default (the owner's LatControlPID drive ran 0.08 s late: re-check on this controller)",
+    "model_delay": "default: the Clarity's schedule", "rack": "none",
+  },
+  "crv_tla_a220": {
+    "row": "firmware", "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
+    "r6": "inferred: the A040's (its A table not checked)",
+    "load": "inferred: the A040 owner's",
+    "trims": "inferred: the A040 owner's",
+    "cmd_delay": "default", "model_delay": "default: the Clarity's schedule", "rack": "none",
+  },
+}
+
+
+def provenance(cal: EpsFirmwareCalibration) -> dict:
+  return CALIBRATION_PROVENANCE[cal.name]
+
+
+def provenance_summary(cal: EpsFirmwareCalibration) -> str:
+  """'measured: r6, load, ... | inferred: ... | default: ...', for the startup log."""
+  groups = {}
+  for key in PROVENANCE_FIELDS:
+    groups.setdefault(provenance(cal)[key].split(':')[0].split(' ')[0], []).append(key)
+  return ' | '.join(f"{kind}: {', '.join(keys)}" for kind, keys in groups.items())
+
+
 def select_eps_firmware_calibration(fingerprint: str, eps_fw: str) -> EpsFirmwareCalibration | None:
   """The profile for this car's EPS image, or None when there is no PTM build for it (or it is on another car)."""
   entry = EPS_FIRMWARE_CALIBRATIONS.get(eps_fw)
