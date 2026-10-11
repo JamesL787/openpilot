@@ -387,8 +387,8 @@ def test_external_gpu_nonfinite_outputs_trigger_fallback(monkeypatch):
     callbacks.append("sent")
 
   with pytest.raises(RuntimeError, match="external GPU model output not finite"):
-    state.run(buffers, transforms, inputs, False, after_output_sync=send_telemetry)
-  assert call_order == ["output_sync", "telemetry"]
+    state.run(buffers, transforms, inputs, False, after_enqueue=send_telemetry)
+  assert call_order == ["telemetry", "output_sync"]
   assert callbacks == ["sent"]
 
 

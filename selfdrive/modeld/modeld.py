@@ -124,6 +124,20 @@ def _should_publish_model_output(model_output, vipc_dropped_frames: int, externa
   return model_output is not None
 
 
+# A big model slower than the camera hands back to the small model before selfdrived's modeldLagging would see it
+# (zoompilot / jetlink ce5f834). On frameDropPerc / 100 as modeld publishes it: one dropped frame is forgiven, a
+# second within about 6.5 s is not. Route 000003bb drove ~10 % drops at 52 ms a frame with the big model steering.
+BIG_MODEL_DROP_LIMIT = 0.0075
+
+
+class BigModelBehind(RuntimeError):
+  pass
+
+
+def _big_model_behind(external_gpu_active: bool, has_small_model: bool, frame_drop_ratio: float) -> bool:
+  return external_gpu_active and has_small_model and frame_drop_ratio > BIG_MODEL_DROP_LIMIT
+
+
 MIN_LAT_CONTROL_SPEED = 0.3
 # Newer fused v16 artifacts can spend a long time loading and warming the
 # Chestnut graph on a cold boot. Match upstream's one-minute load watchdog.
@@ -1108,7 +1122,7 @@ class ModelState:
     self._reset_state()
 
   def _run_upstream_precompiled(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
-                                inputs: dict[str, np.ndarray], after_output_sync: Callable[[], None] | None,
+                                inputs: dict[str, np.ndarray], after_enqueue: Callable[[], None] | None,
                                 shared_warp: Tensor | None, blinker_on: bool) -> dict[str, np.ndarray]:
     if shared_warp is not None:
       raise RuntimeError("Comma precompiled artifacts cannot share a StarPilot warp graph")
@@ -1140,9 +1154,10 @@ class ModelState:
     self.input_queues["new_img"] = self.run_warp(**self.warp_inputs)
     self.last_warp_output = None
     self.run_model(output_buffers=self.model_outputs, **self.input_queues)
+    # The model is enqueued, not finished: the Chestnut telemetry's USB reads overlap its GPU work (comma #38704)
+    if after_enqueue is not None:
+      after_enqueue()
     model_output = self.model_outputs["outputs"].numpy().reshape(-1)
-    if after_output_sync is not None:
-      after_output_sync()
     if self.uses_external_gpu:
       _validate_external_gpu_outputs([model_output])
 
@@ -1153,11 +1168,11 @@ class ModelState:
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
           inputs: dict[str, np.ndarray], prepare_only: bool,
-          after_output_sync: Callable[[], None] | None = None,
+          after_enqueue: Callable[[], None] | None = None,
           shared_warp: Tensor | None = None, *, blinker_on: bool = False) -> dict[str, np.ndarray] | None:
     if getattr(self, "precompiled", False):
       return self._run_upstream_precompiled(
-        bufs, transforms, inputs, after_output_sync, shared_warp, blinker_on,
+        bufs, transforms, inputs, after_enqueue, shared_warp, blinker_on,
       )
 
     fused = getattr(self, "fused", False)
@@ -1243,12 +1258,11 @@ class ModelState:
           img=img,
           big_img=big_img,
         )
+    # The model is enqueued, not finished: the Chestnut telemetry's USB reads overlap its GPU work (comma #38704).
+    # output.numpy() below is the synchronization.
+    if after_enqueue is not None:
+      after_enqueue()
     outputs = [output.numpy().flatten() for output in output_tensors]
-
-    # output.numpy() synchronizes the GPU queue. Keep USB telemetry reads after
-    # that synchronization so they cannot contend with in-flight model work.
-    if after_output_sync is not None:
-      after_output_sync()
 
     if self.uses_external_gpu:
       _validate_external_gpu_outputs(outputs)
@@ -1580,6 +1594,10 @@ def main(demo=False):
   model = None
   small_model = None
   big_model = None
+  # External-GPU models dropped after a failure or disconnect stay referenced for the life of modeld. Freeing them
+  # means freeing their buffers on a Chestnut that just failed or vanished: each free can wait out the HCQ timeout,
+  # and on route 000003bb every fallback slept ~18 s and then died with SIGSEGV. comma master keeps its reference too.
+  retired_external_models: list = []
   model_lab_longitudinal = None
   model_lab_active = False
   model_lab_timings: list[float] = []
@@ -1810,10 +1828,13 @@ def main(demo=False):
     if external_gpu_active and run_count % ModelConstants.MODEL_FREQ == 0 and not usbgpu_present():
       if small_model is None:
         raise RuntimeError("External-GPU model has no active small fallback model")
+      if model is not small_model:
+        retired_external_models.append(model)   # Model Laboratory's lateral runner; big_model is retained below
       model = small_model
       camera_path.validate_model(model)
       was_model_lab_active = model_lab_active
       model_lab_active = False
+      retired_external_models.extend(m for m in (big_model, model_lab_longitudinal) if m is not None and m not in retired_external_models)
       model_lab_longitudinal = None
       external_gpu_active = False
       big_model = None
@@ -1854,8 +1875,14 @@ def main(demo=False):
                                                        log.LaneChangeState.laneChangeFinishing)
     blinker_on = bool(sm["carState"].leftBlinker or sm["carState"].rightBlinker) or lane_change_in_progress
 
+    big_model_behind = _big_model_behind(external_gpu_active, small_model is not None, frame_drop_ratio)
+
     mt1 = time.perf_counter()
     try:
+      if big_model_behind:
+        # through the failure fallback below: the small model drives from the next frame, and run_count = 0
+        # forgives the drops that decided it, so they never reach selfdrived
+        raise BigModelBehind(f"modeld dropped {frame_drop_ratio * 100:.2f} % of camera frames behind the big model")
       send_chestnut = (
         chestnut_state is not None and
         run_count % round(ModelConstants.MODEL_FREQ / SERVICE_LIST["chestnutState"].frequency) == 0
@@ -1886,7 +1913,7 @@ def main(demo=False):
           longitudinal_inputs,
           model_lab_longitudinal.can_prepare_only and dropped_frame,
           blinker_on=blinker_on,
-          after_output_sync=chestnut_state.send if send_chestnut else None,
+          after_enqueue=chestnut_state.send if send_chestnut else None,
           shared_warp=model.last_warp_output,
         )
         if (
@@ -1912,7 +1939,7 @@ def main(demo=False):
           inputs,
           model.can_prepare_only and dropped_frame,
           blinker_on=blinker_on,
-          after_output_sync=chestnut_state.send if send_chestnut else None,
+          after_enqueue=chestnut_state.send if send_chestnut else None,
         )
 
         lateral_model_output = model_output
@@ -1921,8 +1948,12 @@ def main(demo=False):
         cloudlog.exception("Model Laboratory inference failed, falling back to the active small model")
         if small_model is None:
           raise RuntimeError("Model Laboratory has no active small fallback model") from None
+        if model is not small_model:
+          retired_external_models.append(model)   # the lateral runner
         model = small_model
         camera_path.validate_model(model)
+        if model_lab_longitudinal is not None:
+          retired_external_models.append(model_lab_longitudinal)
         model_lab_longitudinal = None
         model_lab_active = False
         model_lab_error = "Model Laboratory inference failed; using the active small model"
@@ -1939,6 +1970,8 @@ def main(demo=False):
         cloudlog.exception("external GPU model failed, falling back to active small model")
         model = small_model
         camera_path.validate_model(model)
+        if big_model is not None:
+          retired_external_models.append(big_model)
         big_model = None
       params.put_bool("UsbGpuActive", False)
       external_gpu_active = False

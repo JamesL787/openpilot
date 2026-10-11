@@ -56,3 +56,38 @@ def test_builtin_model_load_failure_is_not_hidden(monkeypatch):
 
   with pytest.raises(TypeError, match="bad builtin"):
     modeld._load_model_state(1928, 1208, modeld.BUILTIN_MODEL_KEY, False, FakeParams())
+
+
+def _drop_ratio_after(drop_steps, n_steps):
+  # modeld's dropped-frame filter and ratio, one camera frame dropped at each step in drop_steps
+  from openpilot.common.filter_simple import FirstOrderFilter
+  from openpilot.selfdrive.modeld.constants import ModelConstants
+  f = FirstOrderFilter(0., 10., 1. / ModelConstants.MODEL_FREQ)
+  worst = 0.
+  for i in range(n_steps):
+    x = f.update(1 if i in drop_steps else 0)
+    worst = max(worst, x / (1 + x))
+  return worst
+
+
+def test_big_model_drop_gate_forgives_one_dropped_frame():
+  assert not modeld._big_model_behind(True, True, _drop_ratio_after({0}, 400))
+
+
+def test_big_model_drop_gate_trips_on_a_second_drop_within_six_seconds():
+  assert modeld._big_model_behind(True, True, _drop_ratio_after({0, 120}, 200))       # 6 s apart
+
+
+def test_big_model_drop_gate_forgives_drops_seven_seconds_apart():
+  assert not modeld._big_model_behind(True, True, _drop_ratio_after({0, 140}, 200))   # 7 s apart
+
+
+def test_big_model_drop_gate_trips_at_one_skip_in_thirteen():
+  # route 000003bb: 52 ms a frame skips about one camera frame in thirteen; the gate trips within a second
+  assert modeld._big_model_behind(True, True, _drop_ratio_after(set(range(0, 20, 13)), 20))
+
+
+def test_big_model_drop_gate_needs_an_external_model_and_a_small_fallback():
+  assert not modeld._big_model_behind(False, True, 0.5)
+  assert not modeld._big_model_behind(True, False, 0.5)
+  assert not modeld._big_model_behind(True, True, modeld.BIG_MODEL_DROP_LIMIT)
