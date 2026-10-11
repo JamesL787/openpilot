@@ -45,7 +45,7 @@ def _controller(candidate, fw_version):
 
 
 # All of these must land on LatControlPID, including Civic Bosch -- except the modified-EPS Clarity, which
-# controlsd hands to LatControlEpsFirmware, as it does the other PTM cars once
+# controlsd hands to LatControlHondaEps, as it does the other PTM cars once
 # HondaEpsFirmwareController is on (test_eps_firmware_ff.py).
 
 @pytest.mark.parametrize("candidate", MODIFIED_EPS_CARS)

@@ -26,7 +26,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
-from openpilot.selfdrive.controls.lib.latcontrol_eps_firmware import LatControlEpsFirmware, eps_firmware_profile, \
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, eps_firmware_profile, \
   get_rack_map, lateral_delay_schedule, scheduled_lateral_delay
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
@@ -444,17 +444,17 @@ class Controls:
     elif self.CP.steerControlType == car.CarParams.SteerControlType.curvatureDEPRECATED:
       self.LaC = LatControlCurvature(self.CP, self.CI, DT_CTRL)
     elif (eps_profile := eps_firmware_profile(self.CP)) is not None:
-      self.LaC = LatControlEpsFirmware(self.CP, self.CI, DT_CTRL, eps_profile)
+      self.LaC = LatControlHondaEps(self.CP, self.CI, DT_CTRL, eps_profile)
     elif self.CP.lateralTuning.which() == 'pid':
       self.LaC = LatControlPID(self.CP, self.CI, DT_CTRL)
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
 
-    eps_fw = isinstance(self.LaC, LatControlEpsFirmware)
+    eps_fw = isinstance(self.LaC, LatControlHondaEps)
     self.lat_delay_schedule = lateral_delay_schedule(self.CP) if eps_fw else None
     self.rack_map = get_rack_map(self.CP, self.LaC.profile) if eps_fw else None
     # see TURN_SHAPING_TAU
-    self.turn_shaping = isinstance(self.LaC, LatControlEpsFirmware)
+    self.turn_shaping = isinstance(self.LaC, LatControlHondaEps)
 
     self.sm = self.sm.extend(['liveDelay', 'starpilotCarState', 'starpilotPlan'])
 
@@ -858,7 +858,7 @@ class Controls:
     # Measured on route 00000276 under 15 mph: each model frame steps the desired wheel angle by
     # 2.0 deg at p50 and 6.9 deg at p90, half of those steps are smaller than the angle-rate clip
     # and so pass it untouched. Target smoothing is deliberately not used here; modified-EPS
-    # torque is filtered once, after output shaping, in LatControlPID (LatControlEpsFirmware on the cars that run it).
+    # torque is filtered once, after output shaping, in LatControlPID (LatControlHondaEps on the cars that run it).
     #
     # Ramp toward each new action across the model frame instead. Starting the ramp from the value
     # currently being commanded keeps the target continuous by construction -- there is no step
