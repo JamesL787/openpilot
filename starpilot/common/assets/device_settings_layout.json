@@ -652,6 +652,15 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "HondaEpsController",
+        "label": "Honda EPS Controller",
+        "description": "Steer a PTM-flashed Civic, Insight or CR-V with the controller that inverts the EPS firmware's own control law. The Clarity always uses it. Takes effect the next time you start the car.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LateralTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "HondaEpsFirmwareVgr",
         "label": "Use Firmware VGR Table",
         "description": "For a car without a yaw-fitted rack map: convert curvature with the EPS firmware's position table instead of the road-measured ratio curve. Cars with a rack map always use it.",
