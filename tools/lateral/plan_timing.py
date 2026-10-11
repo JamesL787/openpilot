@@ -26,20 +26,12 @@ import numpy as np
 import zstandard as zstd
 
 from cereal import log
+from opendbc.car.honda.yaw_rate import YAW_RATE_CALIBRATION, yaw_rate_deg_s
 
 T_IDX = 10.0 * (np.arange(33) / 32) ** 2
 T_FIT = (T_IDX >= 0.1) & (T_IDX <= 1.5)
 SHIFTS = np.arange(-0.4, 0.41, 0.01)
-VSA_LATENCY = 0.017  # s, measured on the Clarity against rear-wheel-speed yaw; assumed for Civic and CR-V
-# (bus, deg/s per count, extra deg/s once the count is 3-5 above zero clockwise)
-YAW_DECODE = {
-  'HONDA_CLARITY': (0, 0.246, 0.24),
-  'HONDA_CIVIC_BOSCH': (1, 0.244, 0.0),
-  # 00000013--da43527a2c: bus 1, GPS-integrated 0.24455/count + 0.4902 clockwise; production-rounded.
-  'HONDA_CRV_5G': (1, 0.245, 0.49),
-  # Insight: 0x94 on bus 1, GPS-checked (opendbc yaw_rate.py)
-  'HONDA_INSIGHT': (1, 0.243, 0.16),
-}
+VSA_LATENCY = 0.017  # s, measured on the Clarity against rear-wheel-speed yaw; assumed for the others
 
 
 def seg_number(path):
@@ -88,15 +80,15 @@ def read(paths):
 
 
 def car_curvature(Y, CS, fingerprint):
-  bus, scale, ramp = YAW_DECODE.get(fingerprint, (None, 0.244, 0.0))
-  if bus not in Y:
-    bus = max(Y, key=lambda b: len(Y[b]))
+  # scale and clockwise correction from opendbc's per-car calibration (GPS-checked); 0x94 is read on whichever bus
+  # carries it (Clarity 0, Bosch 1). An uncalibrated car falls back to the nominal 0.25 deg/s per count.
+  scale, _, right = YAW_RATE_CALIBRATION.get(fingerprint, (0.25, 512.0, 0.0))
+  bus = max(Y, key=lambda b: len(Y[b]))
   y = Y[bus]
   v = np.interp(y[:, 0], CS[:, 0], CS[:, 1])
   stopped = v < 0.01
   zero = y[stopped, 1].mean() if stopped.sum() > 100 else 512.0  # the zero drifts by unit and temperature
-  counts = y[:, 1] - zero
-  yaw = np.radians(counts * scale + ramp * np.clip((counts - 3) / 2, 0, 1))
+  yaw = np.radians([yaw_rate_deg_s(c, scale, right) for c in y[:, 1] - zero])
   k = np.convolve(yaw / np.maximum(v, 0.5), np.ones(5) / 5, 'same')
   return y[:, 0] - VSA_LATENCY, k, bus, zero
 
