@@ -1,7 +1,7 @@
 """The modified-EPS Honda lateral controller, built on the EPS firmware's own control law.
 
 Every PTM (Proper Torque Mod) EPS image -- Clarity, Civic, Insight, CR-V -- runs the same law with its own tables, so
-one controller serves them all through EpsFirmwareProfile below. It was developed on the Clarity, so the evidence
+one controller serves them all through EpsFirmwareCalibration below. It was developed on the Clarity, so the evidence
 below is the Clarity's.
 
 The LKAS path is not a torque command. The firmware turns our 0xE4 value into a target R5, compares it with
@@ -15,7 +15,7 @@ This inverts the chain instead. A column load model (stiffness, speed stiffness,
 road roll) says what motor output a motion needs; the firmware law is solved for the R5 that produces it,
 rate damping included; the command map is inverted back to a lateral output. On a turn-in the load and
 damping terms add, on an exit they cancel, so no hand-tuned asymmetry is needed. vfn's angle PID stays on
-the residual (EpsFirmwareLateralCore), with the gains and output filter the car ran on vfn 35ddc44b.
+the residual (HondaEpsLateralCore), with the gains and output filter the car ran on vfn 35ddc44b.
 
 Evidence, routes 00000352 / 00000353 (Clarity, vfn 35ddc44b, P-minus-5 firmware):
   - E4 = -3840 * u; R5 = 7.7 * E4 ~20 ms later (corr 0.998); firmware output reproduced to 1-2 counts
@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from opendbc.car.honda.steer_ratio import NRDR_CLARITY_VGR_ANGLE_BP, NRDR_CLARITY_VGR_LINEAR_BP
-from openpilot.selfdrive.controls.lib.rack_map import CLARITY_TRW_A020_RACK, RackMapTable
+from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CLARITY_TRW_A020_RACK, RackMapTable
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.pid import PIDController
 
@@ -66,13 +66,13 @@ class ColumnLoadModel:
 # - Clarity (Cinque v3): 0.12-0.14 s early (route 37e); 0.12 s took entries from -0.25 to -0.11 s (route 380).
 # - Civic Bosch C020 (tsfdo): routes 290 / 293 / 289 -0.09 / -0.15 / -0.22 s, median -0.15. Checked with it on
 #   (routes 2b7 / 2c6 / 2d4): -0.14 / -0.11 / +0.03 s, -0.045 weighted, against -0.15 without it on 289 / 290 / 294.
-# - Insight: 0.15, inferred from a LatControlPID drive (see INSIGHT_TXM).
+# - Insight: 0.15, inferred from a LatControlPID drive (see INSIGHT_TXM_A040).
 # Unmeasured cars take the default, the smaller of the two, until plan_timing.py measures them.
 CMD_DELAY_DEFAULT_S = 0.12
 CMD_DELAY_SPEED_BP = (10.0, 15.0)  # m/s: the full delay below, none above (nothing was measured early on the highway)
 
 
-def command_delay(cal: "EpsFirmwareProfile", v_ego: float) -> float:
+def command_delay(cal: "EpsFirmwareCalibration", v_ego: float) -> float:
   return float(np.interp(v_ego, CMD_DELAY_SPEED_BP, (cal.cmd_delay_s, 0.0)))
 
 
@@ -99,7 +99,7 @@ LAT_DELAY_SCHEDULE_DEFAULT = CLARITY_LAT_DELAY_SCHEDULE
 
 
 @dataclass(frozen=True)
-class EpsFirmwareProfile:
+class EpsFirmwareCalibration:
   """The per-image constants of the chain above, plus the car's residual-PID trims."""
   name: str
   e4_per_output: float         # 0xE4 value per unit of lateral output (the car's linear torqueBP/V cap)
@@ -120,9 +120,9 @@ class EpsFirmwareProfile:
   r6_angle_bp: tuple | None = None    # |published angle| axis of r6_angle_gain, for images whose A table compresses it
   r6_angle_gain: tuple | None = None  # R6 per published deg/s relative to r6_per_deg_s, see firmware_r6()
   cmd_delay_s: float = CMD_DELAY_DEFAULT_S  # command delay in town, see CMD_DELAY_SPEED_BP
-  default_on: bool = False     # steer with this controller without HondaEpsFirmwareController (validated on this car)
+  default_on: bool = False     # steer with this controller without NrdrLatEpsFirmwareFF (validated on this car)
   lat_delay_schedule: tuple = LAT_DELAY_SCHEDULE_DEFAULT  # (speed bp, s): the delay told to the model, see above
-  rack: RackMapTable | None = None  # yaw-identified rack ratio after the firmware angle table (rack_map.RackMap)
+  rack: RackMapTable | None = None  # yaw-identified rack ratio after the firmware angle table (honda_eps_rack_map.HondaEpsRackMap)
   kp_pieces: tuple = field(init=False, repr=False, compare=False)
 
   def __post_init__(self):
@@ -275,7 +275,7 @@ CRV_R6_GAIN = (1.0, 1.0233, 1.0273, 1.0431, 1.075, 1.1134, 1.1566, 1.199, 1.2195
 # Norm1650), the Clarity standard: what routes 352/353 and the whole replay validation ran on, and the parent of the
 # A280-flat build owners move to (which edits only the A280 cells, so every table here holds). The older ClarityMax
 # 07-22 P123..279 build differed only in the P row (123, 156, 194, 232, 258, 270, 277, 279, 279) and is not supported.
-CLARITY_TRW_A020 = EpsFirmwareProfile(
+CLARITY_TRW_A020 = EpsFirmwareCalibration(
   name="clarity_trw_a020",
   e4_per_output=3840.0,
   # command map row 0 (0x13810 / 0x1388E); key = trunc(trunc(E4 * 56756 / 32768) / 4)
@@ -297,8 +297,8 @@ CLARITY_TRW_A020 = EpsFirmwareProfile(
 # sha256 6ecd587c). Measured on the owner's telemetry (routes 284/287/289): E4 = -4096 * u, key clamp 1663 (0x137F2),
 # row 1 is live (94 counts RMS vs 200 for row 0 at 11-20 m/s; the largest R5 on 284 is 28497 = row 1 at 1663), R6,
 # the column load. Not checked: the envelope above 89 km/h.
-CIVIC_C020 = EpsFirmwareProfile(
-  name="civic_c020", e4_per_output=4096.0,
+CIVIC_TBA_C020 = EpsFirmwareCalibration(
+  name="civic_tba_c020", e4_per_output=4096.0,
   r5_key_bp=C020_ROW1_KEYS, r5_v=TARGET_MAP_D_R5, key_clamp=1663,
   envelope_bp=CIVIC_ENVELOPE[0], envelope_v=CIVIC_ENVELOPE[1],
   kp_key_bp=C020_P_KEYS, kp_v=P_ROW_PMINUS5,
@@ -316,18 +316,18 @@ CIVIC_C020 = EpsFirmwareProfile(
 # Every other variant (A030 TBAA0-3, TBAC0, TBCA0; TEG TEGA0, TBCA3) is row 0 or 1. The car's variant cannot be
 # read from openpilot, and the TEG telemetry drive cannot tell either: its build has the same command, P, D, A280 and
 # helper-A values in rows 0-5 (row 6 is ruled out). Settling it needs a telemetry build that reports the row selector.
-CIVIC_A030 = EpsFirmwareProfile(**{**{k: getattr(CIVIC_C020, k) for k in CIVIC_C020.__dataclass_fields__
-                                      if k != "kp_pieces"}, "name": "civic_a030", "e4_per_output": 3840.0,
+CIVIC_TBA_A030 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_C020, k) for k in CIVIC_TBA_C020.__dataclass_fields__
+                                      if k != "kp_pieces"}, "name": "civic_tba_a030", "e4_per_output": 3840.0,
                                    "r6_per_deg_s": C120_R6_CENTRE, "r6_angle_bp": R6_GAIN_BP,
                                    "r6_angle_gain": C120_R6_GAIN, "load": TEG_LOAD,
                                    "cmd_delay_s": CMD_DELAY_DEFAULT_S})  # Nidec Civic: not measured
-CIVIC_TEG_A010 = EpsFirmwareProfile(**{**{k: getattr(CIVIC_A030, k) for k in CIVIC_A030.__dataclass_fields__
+CIVIC_TEG_A010 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_A030, k) for k in CIVIC_TBA_A030.__dataclass_fields__
                                           if k != "kp_pieces"}, "name": "civic_teg_a010"})
 # Civic Bosch 39990-TBA-C120, 08-11 C020Profile Trk4250 (bin sha256 3d88d5ea). Its variants select rows 0-4, all
 # within 5% of each other in R5, so the row does not matter; row 1 (= row 2) is taken, as the C020's. Flat envelope.
 # E4 = -3840 * u: opendbc gives the C120 image its own [0, 3840] map, unlike the C020's 4096. Not measured: R6, load.
-CIVIC_C120 = EpsFirmwareProfile(
-  name="civic_c120", e4_per_output=3840.0,
+CIVIC_TBA_C120 = EpsFirmwareCalibration(
+  name="civic_tba_c120", e4_per_output=3840.0,
   r5_key_bp=(0, 103, 263, 459, 660, 861, 1111, 1549, 1774), r5_v=TARGET_MAP_D_R5, key_clamp=1663,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=C120_P_KEYS, kp_v=P_ROW_PMINUS5,
@@ -337,7 +337,7 @@ CIVIC_C120 = EpsFirmwareProfile(
 # Civic hatch 39990-TGG-A120, 08-07 C020Pminus5 Trk4250 KFF45 (bin sha256 7c60b3fa). Only row 0 carries car-specific
 # axes (rows 1-5 are the generic [0,222,333,...] row, 2x the key at low command). Row 0 is live: both of the image's
 # variant records (TGGA5, TGGA6, at 0x4B500) select row 0. Flat envelope. Not measured: R6, load.
-CIVIC_TGG_A120 = EpsFirmwareProfile(
+CIVIC_TGG_A120 = EpsFirmwareCalibration(
   name="civic_tgg_a120", e4_per_output=4096.0,
   r5_key_bp=(0, 103, 263, 459, 660, 862, 1111, 1549, 1774), r5_v=TARGET_MAP_D_R5, key_clamp=1663,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
@@ -352,7 +352,7 @@ CIVIC_TGG_A120 = EpsFirmwareProfile(
 # -> row 0, TXMA2 disabled -> row 0), so the row holds whichever build the car runs. The envelope was not located;
 # flat is assumed (the 1663 clamp binds). Load measured (INSIGHT_LOAD); R6 computed from its A table. Not measured:
 # envelope.
-INSIGHT_TXM = EpsFirmwareProfile(
+INSIGHT_TXM_A040 = EpsFirmwareCalibration(
   name="insight_txm_a040", e4_per_output=3840.0,
   r5_key_bp=(0, 111, 222, 333, 443, 665, 887, 1108, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1663,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
@@ -372,7 +372,7 @@ INSIGHT_TXM = EpsFirmwareProfile(
 # predicts the same from the shared motor-to-angle constant (3121) and the A-table centre divisor (16783/16384 x the
 # Clarity's). Column load measured on the same drive (CRV_LOAD). P/I trims: the owner's
 # (CRV_P_SCALE / CRV_I_SCALE, untrimmed).
-CRV_TLA = EpsFirmwareProfile(
+CRV_TLA_A040 = EpsFirmwareCalibration(
   name="crv_tla_a040", e4_per_output=4096.0,
   r5_key_bp=(0, 219, 443, 662, 887, 1108, 1330, 1552, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1774,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
@@ -396,37 +396,37 @@ CRV_TLA = EpsFirmwareProfile(
 # map, P and D rows are identical in all of rows 0-3. Row 0 is taken. The car's variant cannot be read from openpilot.
 # Envelope: unlike the A040's flat table, row 0 caps |key| at 1330 from 150 km/h (1774 up to 125 km/h); rows 1 and 2-3
 # differ only above 150 km/h (row 1: 1108 from 175 km/h), so the row choice does not matter below 150 km/h.
-# Carried over, NOT read from this image: load = CRV_LOAD and the P/I trims (the CR-V's, see CRV_TLA). R6 is PREDICTED,
+# Carried over, NOT read from this image: load = CRV_LOAD and the P/I trims (the CR-V's, see CRV_TLA_A040). R6 is PREDICTED,
 # not measured -- there is no A220 drive: the motor-to-angle constant (3121, 0x19C00), the A-table centre divisor
 # (16783, 0x11338, byte-identical to the A040's) and NORM (1650, PTM halfword 0x42558) all equal the A040's, so it takes
 # the A040's measured R6 (route 82bb at norm 1450, scaled to 1650).
-CRV_TLA_A220 = EpsFirmwareProfile(
+CRV_TLA_A220 = EpsFirmwareCalibration(
   name="crv_tla_a220", e4_per_output=4096.0,
   r5_key_bp=(0, 161, 222, 322, 409, 534, 696, 998, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1774,
   envelope_bp=(0, 50, 100, 150, 200, 250, 300, 350, 400), envelope_v=(1774, 1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330),
-  kp_key_bp=CRV_TLA.kp_key_bp, kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=CRV_TLA.r6_per_deg_s, r6_angle_bp=CRV_TLA.r6_angle_bp, r6_angle_gain=CRV_TLA.r6_angle_gain,
+  kp_key_bp=CRV_TLA_A040.kp_key_bp, kp_v=P_ROW_PMINUS5,
+  r6_per_deg_s=CRV_TLA_A040.r6_per_deg_s, r6_angle_bp=CRV_TLA_A040.r6_angle_bp, r6_angle_gain=CRV_TLA_A040.r6_angle_gain,
   load=CRV_LOAD, p_scale=CRV_P_SCALE, i_scale=CRV_I_SCALE,
 )
 
 # normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). TGG-A020 is a separate application from the A120 (its RWD updates only A010/A020)
 # and has no PTM build, so it is absent on purpose.
-EPS_FIRMWARE_PROFILES = {
+EPS_FIRMWARE_CALIBRATIONS = {
   "39990-TRW-A020": ("HONDA_CLARITY", CLARITY_TRW_A020),
-  "39990-TBA-C020": ("HONDA_CIVIC_BOSCH", CIVIC_C020),
-  "39990-TBA-C120": ("HONDA_CIVIC_BOSCH", CIVIC_C120),
+  "39990-TBA-C020": ("HONDA_CIVIC_BOSCH", CIVIC_TBA_C020),
+  "39990-TBA-C120": ("HONDA_CIVIC_BOSCH", CIVIC_TBA_C120),
   "39990-TGG-A120": ("HONDA_CIVIC_BOSCH", CIVIC_TGG_A120),
-  "39990-TBA-A030": ("HONDA_CIVIC", CIVIC_A030),
+  "39990-TBA-A030": ("HONDA_CIVIC", CIVIC_TBA_A030),
   "39990-TEG-A010": ("HONDA_CIVIC", CIVIC_TEG_A010),
-  "39990-TXM-A040": ("HONDA_INSIGHT", INSIGHT_TXM),
-  "39990-TLA-A040": ("HONDA_CRV_5G", CRV_TLA),
+  "39990-TXM-A040": ("HONDA_INSIGHT", INSIGHT_TXM_A040),
+  "39990-TLA-A040": ("HONDA_CRV_5G", CRV_TLA_A040),
   "39990-TLA-A220": ("HONDA_CRV_5G", CRV_TLA_A220),
 }
 
 
-def select_eps_firmware_profile(fingerprint: str, eps_fw: str) -> EpsFirmwareProfile | None:
+def select_eps_firmware_calibration(fingerprint: str, eps_fw: str) -> EpsFirmwareCalibration | None:
   """The profile for this car's EPS image, or None when there is no PTM build for it (or it is on another car)."""
-  entry = EPS_FIRMWARE_PROFILES.get(eps_fw)
+  entry = EPS_FIRMWARE_CALIBRATIONS.get(eps_fw)
   if entry is None or entry[0] != fingerprint:
     return None
   return entry[1]
@@ -491,35 +491,35 @@ FF_CRAWL_ANGLE_BP = [5.0, 20.0]  # deg
 FF_CRAWL_SPEED_BP = [5.0, 8.0]   # m/s
 
 
-def key_ceiling(v_ego: float, cal: EpsFirmwareProfile) -> float:
+def key_ceiling(v_ego: float, cal: EpsFirmwareCalibration) -> float:
   return cal.key_ceiling(v_ego)
 
 
-def r5_from_output(output: float, v_ego: float, cal: EpsFirmwareProfile) -> float:
+def r5_from_output(output: float, v_ego: float, cal: EpsFirmwareCalibration) -> float:
   """What the firmware makes of a lateral output: forward model of 0xE4 -> key -> R5."""
   key = command_key(-output * cal.e4_per_output)
   mag = float(np.interp(min(abs(key), cal.key_ceiling(v_ego)), cal.r5_key_bp, cal.r5_v))
   return math.copysign(mag, key) if key else 0.0
 
 
-def output_from_r5(r5: float, cal: EpsFirmwareProfile) -> float:
+def output_from_r5(r5: float, cal: EpsFirmwareCalibration) -> float:
   """Inverse of r5_from_output (up to integer truncation)."""
   key = float(np.interp(min(abs(r5), cal.r5_v[-1]), cal.r5_v, cal.r5_key_bp))
   e4 = key * 4.0 * 32768.0 / 56756.0
   return -math.copysign(e4, r5) / cal.e4_per_output
 
 
-def firmware_kp(r5: float, cal: EpsFirmwareProfile) -> float:
+def firmware_kp(r5: float, cal: EpsFirmwareCalibration) -> float:
   return cal._kp_at_r5(abs(r5))
 
 
-def firmware_r6(steering_rate_deg_s: float, angle_deg: float, cal: EpsFirmwareProfile) -> float:
+def firmware_r6(steering_rate_deg_s: float, angle_deg: float, cal: EpsFirmwareCalibration) -> float:
   """The firmware's rate feedback for a published steering rate at a published angle."""
   gain = 1.0 if cal.r6_angle_bp is None else float(np.interp(abs(angle_deg), cal.r6_angle_bp, cal.r6_angle_gain))
   return cal.r6_per_deg_s * gain * steering_rate_deg_s
 
 
-def firmware_output(r5: float, steering_rate_deg_s: float, cal: EpsFirmwareProfile, angle_deg: float = 0.0) -> float:
+def firmware_output(r5: float, steering_rate_deg_s: float, cal: EpsFirmwareCalibration, angle_deg: float = 0.0) -> float:
   """Steady-state firmware output for a target and a rate (D term omitted): scale*(Kp*(R5-R6) + KFF*R5)/1024/256."""
   r6 = firmware_r6(steering_rate_deg_s, angle_deg, cal)
   return cal.scale_q8 * (firmware_kp(r5, cal) * (r5 - r6) + cal.kff * r5) / 1024.0 / 256.0
@@ -531,7 +531,7 @@ def column_load(angle_deg: float, rate_deg_s: float, v_ego: float, roll: float,
           + load.friction * math.tanh(rate_deg_s / friction_width) + load.bias + load.kroll * roll * v_ego ** 2)
 
 
-def r5_for_motion(load: float, rate_deg_s: float, cal: EpsFirmwareProfile, r5_guess: float = 0.0, angle_deg: float = 0.0) -> float:
+def r5_for_motion(load: float, rate_deg_s: float, cal: EpsFirmwareCalibration, r5_guess: float = 0.0, angle_deg: float = 0.0) -> float:
   """Solve the firmware law for the target that yields `load` while the wheel moves at `rate_deg_s` through `angle_deg`.
 
   load = scale * (Kp*(R5 - R6) + KFF*R5) / 1024 / 256, with Kp piecewise linear in |R5|. On each piece
@@ -559,8 +559,8 @@ def r5_for_motion(load: float, rate_deg_s: float, cal: EpsFirmwareProfile, r5_gu
   return min(roots, key=lambda r: abs(r - r5_guess))
 
 
-class EpsFirmwareFeedforward:
-  def __init__(self, dt: float, cal: EpsFirmwareProfile, rate_tau: float = DESIRED_RATE_TAU, lead_s: float = LEAD_S,
+class HondaEpsFirmwareFeedforward:
+  def __init__(self, dt: float, cal: EpsFirmwareCalibration, rate_tau: float = DESIRED_RATE_TAU, lead_s: float = LEAD_S,
                output_tau: float = FF_OUTPUT_TAU, friction_width: float | None = None):
     self.dt = dt
     self.alpha = dt / (rate_tau + dt)
@@ -598,13 +598,13 @@ def speed_band(v_ego: float, values):
   return values[0] if v_ego < BAND_LOW_MAX else values[1] if v_ego < BAND_STD_MAX else values[2]
 
 
-class EpsFirmwareLateralCore:
+class HondaEpsLateralCore:
   """Angle PID on the residual + firmware-inversion feedforward, faded in once the wheel is on the path.
 
   Pure (no messaging, no params), so the closed-loop replay can drive exactly the code the car runs.
   """
 
-  def __init__(self, kp_bp, kp_v, ki_bp, ki_v, dt: float, ff: EpsFirmwareFeedforward, p_scale=None, i_scale=None):
+  def __init__(self, kp_bp, kp_v, ki_bp, ki_v, dt: float, ff: HondaEpsFirmwareFeedforward, p_scale=None, i_scale=None):
     self.dt = dt
     self.pid = PIDController((kp_bp, kp_v), (ki_bp, ki_v), pos_limit=1.0, neg_limit=-1.0, rate=1.0 / dt)
     self.ff = ff

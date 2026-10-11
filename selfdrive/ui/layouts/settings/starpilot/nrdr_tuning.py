@@ -255,7 +255,7 @@ class NRDRTuningLayout(_SettingsPage):
     ]
 
     filter_rows = [
-      toggle("HondaEpsFirmwareController", "EPS Firmware Controller",
+      toggle("NrdrLatEpsFirmwareFF", "EPS Firmware Controller",
              "Civic, Insight and CR-V with a PTM EPS build: steer with the controller that inverts the EPS "
              "firmware's own control law (always on for the Clarity). Takes effect the next time you start the car."),
       toggle("NrdrLatUseFirmwareVgr", "Use Firmware VGR Table",

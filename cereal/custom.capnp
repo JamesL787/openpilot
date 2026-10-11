@@ -311,7 +311,7 @@ struct StarPilotLateralState @0xc2243c65e0340384 {
   unwindDetected @7 :Bool;
 
   # Modified-EPS firmware controller (selfdrive/controls/lib/latcontrol_honda_eps.py). The feedforward
-  # inverts the EPS firmware law; see selfdrive/controls/lib/eps_firmware_ff.py.
+  # inverts the EPS firmware law; see selfdrive/controls/lib/honda_eps_firmware_ff.py.
   epsFfActive @8 :Bool;
   epsFfFeedforward @9 :Float32;   # lateral output ([-1, 1]) of the feedforward at full weight
   epsFfR5 @10 :Float32;           # EPS firmware target counts it asks for

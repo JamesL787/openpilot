@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 
 from cereal import car, log
-import openpilot.selfdrive.controls.lib.rack_map as rack
-import openpilot.selfdrive.controls.lib.eps_firmware_ff as eps_ff
+import openpilot.selfdrive.controls.lib.honda_eps_rack_map as rack
+import openpilot.selfdrive.controls.lib.honda_eps_firmware_ff as eps_ff
 import openpilot.selfdrive.controls.lib.latcontrol_honda_eps as honda_eps
 from opendbc.car import structs
 from opendbc.car.honda.interface import CarInterface
@@ -20,7 +20,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import _lat_pid_scale_bande
 TOGGLES = SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False)
 CLARITY_MODIFIED_FW = b'39990-TRW,A020\x00\x00'
 CLARITY_STOCK_FW = b'39990-TRW-A020\x00\x00'
-CLA = eps_ff.CLARITY_TRW_A020  # the reference profile these law tests were written on
+CLA = eps_ff.CLARITY_TRW_A020  # the reference calibration these law tests were written on
 KP_BP, KP_V, KI_V = [0.0, 11.175, 11.176, 22.352], [0.018, 0.024, 0.048, 0.060], [0.006, 0.008, 0.016, 0.020]
 
 
@@ -73,14 +73,14 @@ def test_turn_in_asks_more_than_a_hold_and_an_exit_less():
 
 @pytest.mark.parametrize("v_kph,cap", [(40.0, eps_ff.R5_CAP), (130.0, 0.9 * 24000)])
 def test_target_stays_clear_of_the_rail_and_the_speed_ceiling(v_kph, cap):
-  ff = eps_ff.EpsFirmwareFeedforward(DT_CTRL, CLA)
+  ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, CLA)
   for k in range(200):
     ff.update(400.0 + k, v_kph / 3.6, 0.0)
   assert abs(ff.r5) <= cap + 1e-6
 
 
 def test_desired_rate_tracks_a_ramp_and_resets():
-  ff = eps_ff.EpsFirmwareFeedforward(DT_CTRL, CLA)
+  ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, CLA)
   for k in range(150):
     ff.update(50.0 * k * DT_CTRL, 10.0, 0.0)
   assert ff.rate == pytest.approx(50.0, abs=1.0)
@@ -89,8 +89,8 @@ def test_desired_rate_tracks_a_ramp_and_resets():
 
 
 def test_feedforward_output_is_smoothed():
-  raw = eps_ff.EpsFirmwareFeedforward(DT_CTRL, CLA, output_tau=0.0)
-  smooth = eps_ff.EpsFirmwareFeedforward(DT_CTRL, CLA)
+  raw = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, CLA, output_tau=0.0)
+  smooth = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, CLA)
   for ff in (raw, smooth):
     ff.update(0.0, 10.0, 0.0)
     ff.update(30.0, 10.0, 0.0)   # a step in the target
@@ -100,7 +100,7 @@ def test_feedforward_output_is_smoothed():
 # --- control core ---------------------------------------------------------------------------------
 
 def _core():
-  return eps_ff.EpsFirmwareLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL, ff=eps_ff.EpsFirmwareFeedforward(DT_CTRL, CLA))
+  return eps_ff.HondaEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL, ff=eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, CLA))
 
 
 def _hold(core, frames, des=20.0, angle=20.0, v=10.0, pressed=False):
@@ -283,7 +283,7 @@ def _clarity_lat_delay(v):
 
 def _get_rack_map(fw):
   CP = _params(fw)
-  return honda_eps.get_rack_map(CP, honda_eps.eps_firmware_profile(CP, _Params()))
+  return honda_eps.get_rack_map(CP, honda_eps.eps_firmware_calibration(CP, _Params()))
 
 
 def _controller(monkeypatch, values=None):
@@ -305,10 +305,10 @@ def test_lateral_delay_follows_the_measured_execution_delay(v, delay):
 
 def test_every_vehicle_tells_the_model_the_measured_schedule():
   # the Clarity's measured schedule is every car's until a measurement on that car says otherwise
-  for _, cal in eps_ff.EPS_FIRMWARE_PROFILES.values():
+  for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values():
     assert cal.lat_delay_schedule == eps_ff.CLARITY_LAT_DELAY_SCHEDULE, cal.name
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
-  assert honda_eps.lateral_delay_schedule(CP, _Params({"HondaEpsFirmwareController": "1"})) == eps_ff.CLARITY_LAT_DELAY_SCHEDULE
+  assert honda_eps.lateral_delay_schedule(CP, _Params({"NrdrLatEpsFirmwareFF": "1"})) == eps_ff.CLARITY_LAT_DELAY_SCHEDULE
   assert honda_eps.lateral_delay_schedule(CP, _Params()) is None   # not on this controller: liveDelay
 
 
@@ -369,36 +369,36 @@ def test_target_honours_the_angle_rate_limit(monkeypatch):
 
 # --- per-image profiles ----------------------------------------------------------------------------
 
-# (candidate, modified EPS fwVersion, profile) for every PTM image
-PROFILE_CARS = [
+# (candidate, modified EPS fwVersion, calibration) for every PTM image
+CALIBRATION_CARS = [
   (CAR.HONDA_CLARITY, CLARITY_MODIFIED_FW, eps_ff.CLARITY_TRW_A020),
-  (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', eps_ff.CIVIC_C020),
-  (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00', eps_ff.CIVIC_C120),
+  (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', eps_ff.CIVIC_TBA_C020),
+  (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00', eps_ff.CIVIC_TBA_C120),
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TGG,A120\x00\x00', eps_ff.CIVIC_TGG_A120),
-  (CAR.HONDA_CIVIC, b'39990-TBA,A030\x00\x00', eps_ff.CIVIC_A030),
+  (CAR.HONDA_CIVIC, b'39990-TBA,A030\x00\x00', eps_ff.CIVIC_TBA_A030),
   (CAR.HONDA_CIVIC, b'39990-TEG,A010\x00\x00', eps_ff.CIVIC_TEG_A010),
-  (CAR.HONDA_INSIGHT, b'39990-TXM,A040\x00\x00', eps_ff.INSIGHT_TXM),
-  (CAR.HONDA_CRV_5G, b'39990-TLA,A040\x00\x00', eps_ff.CRV_TLA),
+  (CAR.HONDA_INSIGHT, b'39990-TXM,A040\x00\x00', eps_ff.INSIGHT_TXM_A040),
+  (CAR.HONDA_CRV_5G, b'39990-TLA,A040\x00\x00', eps_ff.CRV_TLA_A040),
   (CAR.HONDA_CRV_5G, b'39990-TLA,A220\x00\x00', eps_ff.CRV_TLA_A220),
 ]
-ALL_PROFILES = [p for _, _, p in PROFILE_CARS]
-ON = {"HondaEpsFirmwareController": "1"}
+ALL_PROFILES = [p for _, _, p in CALIBRATION_CARS]
+ON = {"NrdrLatEpsFirmwareFF": "1"}
 
 
-@pytest.mark.parametrize("candidate,fw,profile", PROFILE_CARS, ids=[p.name for _, _, p in PROFILE_CARS])
-def test_profile_matches_the_cars_torque_map_and_is_selected_only_when_enabled(candidate, fw, profile):
+@pytest.mark.parametrize("candidate,fw,cal", CALIBRATION_CARS, ids=[p.name for _, _, p in CALIBRATION_CARS])
+def test_calibration_matches_the_cars_torque_map_and_is_selected_only_when_enabled(candidate, fw, cal):
   CP = _params(fw, candidate)
-  assert list(CP.lateralParams.torqueBP) == [0, profile.e4_per_output] == list(CP.lateralParams.torqueV)
-  assert honda_eps.eps_firmware_profile(CP, _Params(ON)) is profile
+  assert list(CP.lateralParams.torqueBP) == [0, cal.e4_per_output] == list(CP.lateralParams.torqueV)
+  assert honda_eps.eps_firmware_calibration(CP, _Params(ON)) is cal
   if candidate != CAR.HONDA_CLARITY:
-    assert honda_eps.eps_firmware_profile(CP, _Params()) is None
+    assert honda_eps.eps_firmware_calibration(CP, _Params()) is None
 
 
 def test_clarity_always_steers_with_the_pminus5_build():
   # P-minus-5 is the Clarity standard; there is no build setting any more
   CP = _params(CLARITY_MODIFIED_FW)
-  assert honda_eps.eps_firmware_profile(CP, _Params()) is eps_ff.CLARITY_TRW_A020
-  assert honda_eps.eps_firmware_profile(CP, _Params({"HondaEpsClarityPminus5": "0"})) is eps_ff.CLARITY_TRW_A020
+  assert honda_eps.eps_firmware_calibration(CP, _Params()) is eps_ff.CLARITY_TRW_A020
+  assert honda_eps.eps_firmware_calibration(CP, _Params({"HondaEpsClarityPminus5": "0"})) is eps_ff.CLARITY_TRW_A020
   assert not hasattr(eps_ff, "CLARITY_P123")
 
 
@@ -408,13 +408,13 @@ def test_clarity_always_steers_with_the_pminus5_build():
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,A030\x00\x00'),   # a known image on the wrong car
 ])
 def test_cars_without_a_matching_profile_keep_latcontrol_pid(candidate, fw):
-  assert honda_eps.eps_firmware_profile(_params(fw, candidate), _Params(ON)) is None
+  assert honda_eps.eps_firmware_calibration(_params(fw, candidate), _Params(ON)) is None
 
 
 def test_a_torque_map_the_profile_does_not_expect_keeps_latcontrol_pid():
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
   CP.lateralParams.torqueV = [0, 3840]
-  assert honda_eps.eps_firmware_profile(CP, _Params(ON)) is None
+  assert honda_eps.eps_firmware_calibration(CP, _Params(ON)) is None
 
 
 def test_clarity_trw_a020_profile_is_the_validated_build():
@@ -430,9 +430,9 @@ def test_clarity_trw_a020_profile_is_the_validated_build():
 
 def test_nidec_civics_carry_the_teg_measurements():
   # the column load measured on the TEG-A010 telemetry drive and R6 from their own A table; tables stay the C020's
-  for cal in (eps_ff.CIVIC_A030, eps_ff.CIVIC_TEG_A010):
+  for cal in (eps_ff.CIVIC_TBA_A030, eps_ff.CIVIC_TEG_A010):
     assert cal.r6_per_deg_s == eps_ff.C120_R6_CENTRE and cal.r6_angle_gain == eps_ff.C120_R6_GAIN and cal.load == eps_ff.TEG_LOAD
-    assert (cal.r5_key_bp, cal.kp_key_bp, cal.e4_per_output) == (eps_ff.CIVIC_C020.r5_key_bp, eps_ff.CIVIC_C020.kp_key_bp, 3840.0)
+    assert (cal.r5_key_bp, cal.kp_key_bp, cal.e4_per_output) == (eps_ff.CIVIC_TBA_C020.r5_key_bp, eps_ff.CIVIC_TBA_C020.kp_key_bp, 3840.0)
   # the Nidec column asks for more than the C020's at every speed it was measured over
   for v in (3.0, 8.0, 15.0):
     for load in (eps_ff.TEG_LOAD, eps_ff.CIVIC_LOAD):
@@ -470,18 +470,18 @@ def test_every_profiles_inversion_reproduces_the_requested_load(cal, load, rate)
 
 def test_c020_full_output_lands_on_the_measured_rail():
   # route 00000284: the largest R5 the C020 ever ran was 28497, row 1 at the 1663 key clamp
-  assert abs(eps_ff.r5_from_output(1.0, 20.0, eps_ff.CIVIC_C020)) == pytest.approx(28497, abs=1)
+  assert abs(eps_ff.r5_from_output(1.0, 20.0, eps_ff.CIVIC_TBA_C020)) == pytest.approx(28497, abs=1)
   # and its envelope takes the ceiling to key 1108 from 160 km/h
-  assert eps_ff.CIVIC_C020.key_ceiling(170 / 3.6) == 1108
+  assert eps_ff.CIVIC_TBA_C020.key_ceiling(170 / 3.6) == 1108
 
 
-@pytest.mark.parametrize("candidate,fw,profile", PROFILE_CARS, ids=[p.name for _, _, p in PROFILE_CARS])
-def test_every_profile_car_steers_with_its_own_profile(monkeypatch, candidate, fw, profile):
+@pytest.mark.parametrize("candidate,fw,cal", CALIBRATION_CARS, ids=[p.name for _, _, p in CALIBRATION_CARS])
+def test_every_ptm_car_steers_with_its_own_calibration(monkeypatch, candidate, fw, cal):
   monkeypatch.setattr(honda_eps, "Params", lambda: _Params(ON))
   CP = _params(fw, candidate)
   lac = honda_eps.LatControlHondaEps(CP, None, DT_CTRL)
-  assert lac.profile is profile and lac.core.ff.cal is profile
-  assert (lac.core.p_scale, lac.core.i_scale) == (profile.p_scale, profile.i_scale)
+  assert lac.calibration is cal and lac.core.ff.cal is cal
+  assert (lac.core.p_scale, lac.core.i_scale) == (cal.p_scale, cal.i_scale)
   outs = _drive(lac, VehicleModel(CP))
   assert max(abs(out) for _, out, _, _ in outs) > 0.02
   assert all(abs(out) <= 1.0 and math.isfinite(out) for _, out, _, _ in outs)
@@ -490,18 +490,18 @@ def test_every_profile_car_steers_with_its_own_profile(monkeypatch, candidate, f
 
 def test_crv_carries_its_own_measured_r6_and_load():
   # route 00000006--82bb552a2c: R6 least squares at norm 1450 scaled to the image's 1650; load fitted in m/s with roll
-  assert eps_ff.CRV_TLA.r6_per_deg_s == eps_ff.CRV_R6_CENTRE and eps_ff.CRV_TLA.r6_angle_gain == eps_ff.CRV_R6_GAIN
+  assert eps_ff.CRV_TLA_A040.r6_per_deg_s == eps_ff.CRV_R6_CENTRE and eps_ff.CRV_TLA_A040.r6_angle_gain == eps_ff.CRV_R6_GAIN
   # the owner's single V5 fit (-138.4 against 0x14A) sits inside the curve the A table gives
-  assert eps_ff.firmware_r6(1.0, 0.0, eps_ff.CRV_TLA) > -138.4 > eps_ff.firmware_r6(1.0, 180.0, eps_ff.CRV_TLA)
-  assert eps_ff.CRV_TLA.load is eps_ff.CRV_LOAD
+  assert eps_ff.firmware_r6(1.0, 0.0, eps_ff.CRV_TLA_A040) > -138.4 > eps_ff.firmware_r6(1.0, 180.0, eps_ff.CRV_TLA_A040)
+  assert eps_ff.CRV_TLA_A040.load is eps_ff.CRV_LOAD
   assert -0.25 < eps_ff.CRV_LOAD.k1 < -0.10 and eps_ff.CRV_LOAD.kroll < 0.0
 
 
 def test_crv_a220_reads_its_own_command_axis_and_predicts_r6_from_the_a040():
-  a220, a040 = eps_ff.CRV_TLA_A220, eps_ff.CRV_TLA
+  a220, a040 = eps_ff.CRV_TLA_A220, eps_ff.CRV_TLA_A040
   # selected by the fw string in either spelling, and not on another car
-  assert eps_ff.select_eps_firmware_profile("HONDA_CRV_5G", "39990-TLA-A220") is a220
-  assert eps_ff.select_eps_firmware_profile("HONDA_CIVIC", "39990-TLA-A220") is None
+  assert eps_ff.select_eps_firmware_calibration("HONDA_CRV_5G", "39990-TLA-A220") is a220
+  assert eps_ff.select_eps_firmware_calibration("HONDA_CIVIC", "39990-TLA-A220") is None
   # command axis read from the A220 image (row 0, 0x11AE0): ~2.5x the A040's R5 at the same key
   assert a220.r5_key_bp == (0, 161, 222, 322, 409, 534, 696, 998, 1663) and a220.key_clamp == 1774
   assert abs(eps_ff.r5_from_output(1.0, 20.0, a220)) == 30000          # full output saturates the map below 150 km/h
@@ -536,9 +536,9 @@ def test_command_delay_is_for_town_speeds_only():
 
 
 def test_every_vehicle_has_its_own_command_delay():
-  delays = {cal.name: cal.cmd_delay_s for _, cal in eps_ff.EPS_FIRMWARE_PROFILES.values()}
-  measured = {"clarity_trw_a020": 0.12, "civic_c020": 0.15}
-  same_chassis_as_c020 = {"civic_c120": 0.15, "civic_tgg_a120": 0.15}
+  delays = {cal.name: cal.cmd_delay_s for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values()}
+  measured = {"clarity_trw_a020": 0.12, "civic_tba_c020": 0.15}
+  same_chassis_as_c020 = {"civic_tba_c120": 0.15, "civic_tgg_a120": 0.15}
   inferred = {"insight_txm_a040": 0.15}
   for name, delay in delays.items():
     assert delay == {**measured, **same_chassis_as_c020, **inferred}.get(name, eps_ff.CMD_DELAY_DEFAULT_S), name
@@ -617,7 +617,7 @@ def test_rack_map_asks_less_wheel_than_the_paramsd_ratio_in_tight_turns(monkeypa
 
 
 def test_insight_carries_its_own_measured_load_on_row_0():
-  cal = eps_ff.INSIGHT_TXM
+  cal = eps_ff.INSIGHT_TXM_A040
   assert cal.load is eps_ff.INSIGHT_LOAD and cal.load != eps_ff.CIVIC_LOAD
   assert cal.r5_key_bp == (0, 111, 222, 333, 443, 665, 887, 1108, 1663)  # row 0, every Insight build and variant
   assert cal.e4_per_output == 3840.0 and cal.r6_per_deg_s == eps_ff.INSIGHT_R6_CENTRE and cal.r6_angle_gain == eps_ff.INSIGHT_R6_GAIN
@@ -637,7 +637,7 @@ def test_every_image_has_angle_dependent_r6(cal):
                                             (125.0, -167.4), (175.0, -168.9), (250.0, -168.9)])
 def test_c020_r6_is_its_measured_curve(band, measured):
   # 0.1 s derivative of the published angle against 0x6A2 R6, routes 64/154/287/289/294
-  assert eps_ff.firmware_r6(1.0, band, eps_ff.CIVIC_C020) == pytest.approx(measured, rel=0.01)
+  assert eps_ff.firmware_r6(1.0, band, eps_ff.CIVIC_TBA_C020) == pytest.approx(measured, rel=0.01)
 
 
 def test_a_table_r6_model_matches_the_clarity_and_the_c020_centre():
