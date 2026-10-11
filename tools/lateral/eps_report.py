@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Per-drive lateral report for the Honda Clarity, measured against the car's own yaw sensor (0x94).
+"""Per-drive lateral report for a Honda on LatControlHondaEps, measured against the car's own yaw sensor (0x94).
 
-  PYTHONPATH=<repo>:<repo>/opendbc_repo python tools/clarity_lateral_report/report.py <rlog.zst | route dir> ...
+  PYTHONPATH=<repo>:<repo>/opendbc_repo python tools/lateral/eps_report.py <rlog.zst | route dir> ...
 
-Everything is judged in true units: car curvature = VSA yaw / vEgo, decoded as carstate does (yaw_rate.py: 0.246 deg/s per count, zero learned at standstill,
-508 on this Clarity, clockwise under-read corrected), 17 ms latency,
+Everything is judged in true units: car curvature = VSA yaw / vEgo, decoded as carstate does (the car's yaw_rate.py
+calibration, zero learned at standstill, clockwise under-read corrected, 0x94 on whichever bus carries it), 17 ms latency,
 decoded straight from CAN so routes from before the carState.yawRate change work too. Sections:
   yaw sources   VSA zero on straights; livePose yaw (the comma's estimate) scale and lag against the VSA
-  map           car curvature vs what the shipped Clarity rack map (honda_eps_rack_map.HondaEpsRackMap) says the ACTUAL wheel angle gives (1.000 = exact)
+  map           car curvature vs what the car's shipped rack map (its EpsFirmwareCalibration.rack) says the ACTUAL wheel
+                angle gives (1.000 = exact); skipped for a car without one
   tracking      actual wheel angle vs the controller's target
   delivery      car curvature vs controlsd's output curvature (lag-aligned); = map x tracking
-  timing        car curvature lag behind the model action -> the delay the model should be told, vs the schedule
+  timing        car curvature lag behind the model action -> the delay the model should be told, vs its calibration's schedule
   left/right    map and tracking by turn direction
   turns         engaged turns past 60 deg, ranked by how far the car overshot the requested curvature
 Slopes are robust regressions WITH an intercept, so an angle offset or road crown does not bias them.
@@ -27,14 +28,12 @@ import numpy as np
 import zstandard as zstd
 
 from cereal import log
-from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse
-from opendbc.car.honda.values import CAR, HondaFlags
+from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, normalize_honda_eps_fw
 from opendbc.car.honda.yaw_rate import RIGHT_LOSS_BP, YAW_RATE_CALIBRATION
-from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import CLARITY_TRW_A020_LAT_DELAY_SCHEDULE
-from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CLARITY_TRW_A020_RACK, HondaEpsRackMap
+from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import LAT_DELAY_SCHEDULE_DEFAULT, select_eps_firmware_calibration
+from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 
 VSA_ADDR, VSA_LATENCY = 0x94, 0.017
-VSA_DEG_S, VSA_ZERO, VSA_RIGHT_LOSS = YAW_RATE_CALIBRATION[CAR.HONDA_CLARITY]  # zero: fallback when the drive never stops
 PIPELINE_OFFSET = 0.038  # logged action -> on-time execution (publish + smoothing), see the delay schedule
 WHEEL_TO_YAW_LAG = ([3.75, 7.0, 12.0, 20.0, 30.0], [0.08, 0.06, 0.06, 0.08, 0.10])  # s, measured
 SPEED_BANDS = ((2.5, 5), (5, 9), (9, 15), (15, 25), (25, 40))
@@ -44,11 +43,20 @@ FRAMES_PER_MIN = 6000
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 
-def shipped_delay_schedule():
-  return [list(x) for x in CLARITY_TRW_A020_LAT_DELAY_SCHEDULE]
+def calibration_for(info):
+  fw = info.get('eps_fw')
+  return select_eps_firmware_calibration(str(info.get('fingerprint')), fw) if fw else None
+
+
+def shipped_delay_schedule(info):
+  cal = calibration_for(info)
+  return [list(x) for x in (cal.lat_delay_schedule if cal is not None else LAT_DELAY_SCHEDULE_DEFAULT)]
 
 
 def segment_number(path):
+  m = re.search(r'rlog_(\d+)\.(?:zst|bz2)$', path)    # flat downloads: rlog_<segment>.zst
+  if m:
+    return int(m.group(1))
   nums = re.findall(r'--(\d+)(?=/|$)', os.path.dirname(path) + '/')
   return int(nums[-1]) if nums else 0
 
@@ -62,6 +70,7 @@ def rlog_files(paths):
 
 def read(files):
   R = {k: [] for k in ('vsa', 'cs', 'cc', 'ctl', 'lp', 'pose', 'model')}
+  vsa = {}
   info = {}
   for f in files:
     raw = open(f, 'rb').read()
@@ -72,7 +81,9 @@ def read(files):
         w = e.which()
         t = e.logMonoTime * 1e-9
         if w == 'can':
-          R['vsa'] += [(t, (m.dat[0] << 2) | (m.dat[1] >> 6)) for m in e.can if m.src == 0 and m.address == VSA_ADDR]
+          for m in e.can:
+            if m.address == VSA_ADDR:
+              vsa.setdefault(m.src, []).append((t, (m.dat[0] << 2) | (m.dat[1] >> 6)))
         elif w == 'carState':
           c = e.carState
           R['cs'].append((t, c.vEgo, c.aEgo, c.steeringAngleDeg, c.steeringRateDeg, c.steeringTorque, c.steeringPressed,
@@ -94,8 +105,14 @@ def read(files):
           info.setdefault('commit', e.initData.gitCommit[:10])
         elif w == 'carParams':
           info.update(fingerprint=e.carParams.carFingerprint, flags=e.carParams.flags, wheelbase=e.carParams.wheelbase)
+          eps = [normalize_honda_eps_fw(f.fwVersion) for f in e.carParams.carFw if str(f.ecu) == 'eps']
+          if eps:
+            info['eps_fw'] = eps[0]
     except Exception as ex:  # a truncated last segment
       print(f'  (partial read {f}: {ex})', file=sys.stderr)
+  if vsa:
+    info['vsa_bus'] = max(vsa, key=lambda b: len(vsa[b]))
+    R['vsa'] = vsa[info['vsa_bus']]
   return {k: np.array(v, dtype=float) for k, v in R.items()}, info
 
 
@@ -112,19 +129,22 @@ def build(R, info):
   s['off'], s['roll'] = at(R['lp'], 1), at(R['lp'], 2)
   s['vsa_raw'] = at(R['vsa'], 1, VSA_LATENCY)
   stopped = s['v'] < 0.01
-  s['vsa_zero'] = float(np.mean(s['vsa_raw'][stopped])) if stopped.sum() > 200 else VSA_ZERO  # true yaw is 0 when stopped
+  vsa_deg_s, vsa_zero, vsa_right_loss = YAW_RATE_CALIBRATION.get(info.get('fingerprint'), (0.25, 512.0, 0.0))
+  s['vsa_zero'] = float(np.mean(s['vsa_raw'][stopped])) if stopped.sum() > 200 else vsa_zero  # true yaw is 0 when stopped
   counts = s['vsa_raw'] - s['vsa_zero']
-  right_loss = VSA_RIGHT_LOSS * np.clip((counts - RIGHT_LOSS_BP[0]) / (RIGHT_LOSS_BP[1] - RIGHT_LOSS_BP[0]), 0.0, 1.0)
-  s['yaw'] = np.radians(counts * VSA_DEG_S + right_loss)  # rad/s, RIGHT-positive like openpilot curvature (yaw_rate.yaw_rate_deg_s)
+  right_loss = vsa_right_loss * np.clip((counts - RIGHT_LOSS_BP[0]) / (RIGHT_LOSS_BP[1] - RIGHT_LOSS_BP[0]), 0.0, 1.0)
+  s['yaw'] = np.radians(counts * vsa_deg_s + right_loss)  # rad/s, RIGHT-positive like openpilot curvature (yaw_rate.yaw_rate_deg_s)
   s['k'] = np.convolve(s['yaw'], np.ones(10) / 10, 'same') / np.maximum(s['v'], 0.1)
   s['gyro'] = at(R['pose'], 1)
 
-  inverse = get_honda_vgr_inverse(int(info.get('flags', 0))) or get_honda_vgr_inverse(HondaFlags.VGR_CLARITY_TRW_A020)
-  rack = HondaEpsRackMap(info.get('wheelbase') or 2.75, inverse, CLARITY_TRW_A020_RACK)
+  cal = calibration_for(info)
+  inverse = get_honda_vgr_inverse(int(info.get('flags', 0)))
+  rack = HondaEpsRackMap(info.get('wheelbase') or 2.75, inverse, cal.rack) if cal is not None and cal.rack and inverse else None
   lag_frames = np.round(np.interp(s['v'], *WHEEL_TO_YAW_LAG) / 0.01).astype(int)
   s['a_true'] = s['ang'] - s['off']
   a_lagged = s['a_true'][np.clip(np.arange(len(t)) - lag_frames, 0, len(t) - 1)]
-  s['k_map'] = np.array([rack.curvature_from_angle(a, v, r) for a, v, r in zip(a_lagged, s['v'], s['roll'], strict=True)])
+  s['k_map'] = (np.array([rack.curvature_from_angle(a, v, r) for a, v, r in zip(a_lagged, s['v'], s['roll'], strict=True)])
+                if rack is not None else None)
 
   ok = (s['lat'] > 0.5) & (s['pr'] < 0.5) & (np.abs(s['tq']) < 400) & (np.abs(s['a']) < 2) & np.isfinite(s['k'] + s['dc'])
   s['ok'] = ok & (np.convolve(~ok, np.ones(100), 'same') == 0)  # 1 s clear of any disengagement or press
@@ -209,8 +229,8 @@ def delivery(s):
     print(f'  {vlo:4.1f}-{vhi:<4.0f}' + ''.join(f'{c:>14s}' for c in row) + f'   lag {lag:.2f} s')
 
 
-def timing(s, model):
-  bp, vals = shipped_delay_schedule()
+def timing(s, model, info):
+  bp, vals = shipped_delay_schedule(info)
   print(f'\ntiming: car curvature behind the model action   (on-time delay = lag - {PIPELINE_OFFSET:.3f})')
   if len(model) < 100:
     return
@@ -230,8 +250,9 @@ def left_right(s, des_s, ang_s):
   for name, sign in (('left ', 1), ('right', -1)):
     m = s['ok'] & (s['v'] >= 3) & (s['v'] < 15) & (s['a_true'] * sign > 45)
     if m.sum() > 300:
-      mp, tr = rob(s['k_map'][m], s['k'][m]), rob(des_s[m] - s['off'][m], ang_s[m] - s['off'][m])
-      print(f'  {name}: map {mp:.3f}   tracking {tr:.3f}  ({m.sum() / FRAMES_PER_MIN:.1f} min)')
+      tr = rob(des_s[m] - s['off'][m], ang_s[m] - s['off'][m])
+      mp = f"map {rob(s['k_map'][m], s['k'][m]):.3f}   " if s['k_map'] is not None else ''
+      print(f'  {name}: {mp}tracking {tr:.3f}  ({m.sum() / FRAMES_PER_MIN:.1f} min)')
 
 
 def turns(s):
@@ -258,21 +279,25 @@ def turns(s):
 
 def report(s, R, info):
   mins, engaged, usable = (s['t'][-1] - s['t'][0]) / 60, np.mean(s['lat'] > .5) * 100, np.mean(s['ok']) * 100
-  route = f"{info.get('branch', '?')} @ {info.get('commit', '?')}  {info.get('fingerprint', '?')}"
+  cal = calibration_for(info)
+  route = f"{info.get('branch', '?')} @ {info.get('commit', '?')}  {info.get('fingerprint', '?')}  {cal.name if cal else 'no EPS calibration'}"
   print(f'route: {route}   {mins:.1f} min, engaged {engaged:.0f}%, usable {usable:.0f}%')
   if len(R['vsa']) < 1000:
-    print('no 0x94 frames on bus 0: not a Clarity log, or CAN not logged')
+    print('no 0x94 frames: CAN not logged')
     return
   yaw_sources(s)
-  cell_table('map: car curvature / Clarity rack map(actual wheel angle)   (1.000 = the shipped map is exact)', s,
-             lambda m: rob(s['k_map'][m], s['k'][m]))
+  if s['k_map'] is not None:
+    cell_table('map: car curvature / its rack map(actual wheel angle)   (1.000 = the shipped map is exact)', s,
+               lambda m: rob(s['k_map'][m], s['k'][m]))
+  else:
+    print('\nmap: this car has no yaw-fitted rack map (fit one with tools/lateral/fit_rack_map.py)')
   # smoothed first: the target's frame-to-frame jitter would otherwise attenuate the slope at small angles
   des_s, ang_s = smooth(s['des']), smooth(s['ang'])
   cell_table('tracking: actual wheel angle / controller target (0.5 s smoothed)', s,
              lambda m: rob(des_s[m] - s['off'][m], ang_s[m] - s['off'][m]))
   cell_table('tracking: RMS angle error, deg', s, lambda m: float(np.sqrt(np.mean((s['ang'][m] - s['des'][m]) ** 2))))
   delivery(s)
-  timing(s, R['model'])
+  timing(s, R['model'], info)
   left_right(s, des_s, ang_s)
   turns(s)
 

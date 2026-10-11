@@ -87,7 +87,7 @@ def command_delay(cal: "EpsFirmwareCalibration", v_ego: float) -> float:
 #   first version of this table that much too long.
 # - The lag hardly depends on the delay the model was told (5-9 m/s: 0.15 / 0.15 / 0.17 s at 0.22 / 0.30 /
 #   0.48), so routes are pooled.
-# - The lag is fitted with a gain per route (tools/clarity_lateral_report timing). The first table (0.12 / 0.12 /
+# - The lag is fitted with a gain per route (tools/lateral/eps_report.py timing). The first table (0.12 / 0.12 /
 #   0.15 at 3.5 / 7 / 12 m/s, routes 354-36b) compared raw curves, and the car delivering only 0.85-0.96 of the
 #   request there read as extra lag: on 36c-377 the car turned 40-70 ms early in the city. Refit 2026-10-01 on
 #   36c/36d/373/377 and, separately, 362-36b (same answer): 2.5-5 m/s 0.18 / 0.14, 5-9 m/s 0.08 / 0.08,
