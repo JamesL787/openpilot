@@ -74,6 +74,28 @@ def command_delay(cal: "EpsFirmwareProfile", v_ego: float) -> float:
   return float(np.interp(v_ego, CMD_DELAY_SPEED_BP, (cal.cmd_delay_s, 0.0)))
 
 
+# Model-delay schedule, per vehicle: the lateral delay the model is told (liveDelay.lateralDelay's role in
+# lat_action_t), scheduled on speed, in place of the single SteerDelay / lagd value. Measured on the Clarity, where
+# this controller's real execution delay is not one number; every other car takes the Clarity's schedule until a
+# measurement on it gives a reason to change it. Each value is the measured lag of car curvature behind the logged
+# model action minus the fixed pipeline offset (0.038 s), so the car reaches the requested curvature when the model
+# intends it to.
+# - Car curvature comes from the yaw sensor (0x94). The comma gyro runs ~50 ms behind the car and put the
+#   first version of this table that much too long.
+# - The lag hardly depends on the delay the model was told (5-9 m/s: 0.15 / 0.15 / 0.17 s at 0.22 / 0.30 /
+#   0.48), so routes are pooled.
+# - The lag is fitted with a gain per route (tools/clarity_lateral_report timing). The first table (0.12 / 0.12 /
+#   0.15 at 3.5 / 7 / 12 m/s, routes 354-36b) compared raw curves, and the car delivering only 0.85-0.96 of the
+#   request there read as extra lag: on 36c-377 the car turned 40-70 ms early in the city. Refit 2026-10-01 on
+#   36c/36d/373/377 and, separately, 362-36b (same answer): 2.5-5 m/s 0.18 / 0.14, 5-9 m/s 0.08 / 0.08,
+#   9-15 m/s 0.10 / 0.10 s. Crawl is slower than town because the wheel gets ~0.8 of small targets there.
+# - Above 15 m/s lane centering pulls 6-10% of a curve back out through its 0.4 s smoothing and reads as extra
+#   lag. That is not delay and the model cannot aim around it, so those values sum the stage lags without it.
+# lagd only learns above 15 m/s, so it cannot find the low-speed end.
+CLARITY_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.15, 0.08, 0.10, 0.20, 0.30))  # m/s band centres, s
+LAT_DELAY_SCHEDULE_DEFAULT = CLARITY_LAT_DELAY_SCHEDULE
+
+
 @dataclass(frozen=True)
 class EpsFirmwareProfile:
   """The per-image constants of the chain above, plus the car's residual-PID trims."""
@@ -97,7 +119,7 @@ class EpsFirmwareProfile:
   r6_angle_gain: tuple | None = None  # R6 per published deg/s relative to r6_per_deg_s, see firmware_r6()
   cmd_delay_s: float = CMD_DELAY_DEFAULT_S  # command delay in town, see CMD_DELAY_SPEED_BP
   default_on: bool = False     # steer with this controller without HondaEpsFirmwareController (validated on this car)
-  lat_delay_schedule: tuple | None = None  # (speed bp, s): the delay told to the model in place of liveDelay
+  lat_delay_schedule: tuple = LAT_DELAY_SCHEDULE_DEFAULT  # (speed bp, s): the delay told to the model, see above
   rack: RackMapTable | None = None  # yaw-identified rack ratio after the firmware angle table (rack_map.RackMap)
   kp_pieces: tuple = field(init=False, repr=False, compare=False)
 
@@ -243,24 +265,6 @@ CRV_R6_CENTRE = -124.97
 CRV_R6_GAIN = (1.0, 1.0233, 1.0273, 1.0431, 1.075, 1.1134, 1.1566, 1.199, 1.2195, 1.2305, 1.2252, 1.2367, 1.2354,
                1.2381, 1.2328, 1.2243, 1.2257, 1.2162, 1.191)
 
-# Clarity: the lateral delay the model is told (liveDelay.lateralDelay's role in lat_action_t), scheduled on speed. It
-# replaces the single SteerDelay / lagd value for the Clarity on this controller, whose real execution delay is not one
-# number. Each value is the measured lag of car curvature behind the logged model action minus the fixed
-# pipeline offset (0.038 s), so the car reaches the requested curvature when the model intends it to.
-# - Car curvature comes from the yaw sensor (0x94). The comma gyro runs ~50 ms behind the car and put the
-#   first version of this table that much too long.
-# - The lag hardly depends on the delay the model was told (5-9 m/s: 0.15 / 0.15 / 0.17 s at 0.22 / 0.30 /
-#   0.48), so routes are pooled.
-# - The lag is fitted with a gain per route (tools/clarity_lateral_report timing). The first table (0.12 / 0.12 /
-#   0.15 at 3.5 / 7 / 12 m/s, routes 354-36b) compared raw curves, and the car delivering only 0.85-0.96 of the
-#   request there read as extra lag: on 36c-377 the car turned 40-70 ms early in the city. Refit 2026-10-01 on
-#   36c/36d/373/377 and, separately, 362-36b (same answer): 2.5-5 m/s 0.18 / 0.14, 5-9 m/s 0.08 / 0.08,
-#   9-15 m/s 0.10 / 0.10 s. Crawl is slower than town because the wheel gets ~0.8 of small targets there.
-# - Above 15 m/s lane centering pulls 6-10% of a curve back out through its 0.4 s smoothing and reads as extra
-#   lag. That is not delay and the model cannot aim around it, so those values sum the stage lags without it.
-# lagd only learns above 15 m/s, so it cannot find the low-speed end.
-CLARITY_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.15, 0.08, 0.10, 0.20, 0.30))  # m/s band centres, s
-
 # Clarity 39990-TRW-A020, the P-minus-5 build (07-28, bin sha256 92cde599; P117..265 D737 KFF45 NoR6L2 Tracker3200
 # Norm1650), the Clarity standard: what routes 352/353 and the whole replay validation ran on, and the parent of the
 # A280-flat build owners move to (which edits only the A280 cells, so every table here holds). The older ClarityMax
@@ -279,7 +283,7 @@ CLARITY_TRW_A020 = EpsFirmwareProfile(
   r5_per_key=18.04,
   cmd_delay_s=0.12,  # measured
   default_on=True,
-  lat_delay_schedule=CLARITY_LAT_DELAY_SCHEDULE,
+  lat_delay_schedule=CLARITY_LAT_DELAY_SCHEDULE,  # measured
   rack=CLARITY_TRW_A020_RACK,
 )
 

@@ -11,8 +11,8 @@ PTM cars (Civic A030/TEG/C020/C120/TGG-A120, Insight, CR-V) only with HondaEpsFi
 their calibration are carried over from a related car until a drive measures them. A car with no profile, or whose
 torque map is not the linear [0, E4 cap] the profile expects, keeps LatControlPID. The setting is read once, when
 controlsd starts.
-Per vehicle, from its profile: the command delay (cmd_delay_s, every car), the model-delay schedule
-(lat_delay_schedule) and the yaw-identified rack map (rack), the last two only where they were measured.
+Per vehicle, from its profile: the command delay (cmd_delay_s) and the model-delay schedule (lat_delay_schedule),
+every car (measured ones, else a default), and the yaw-identified rack map (rack) where one was identified.
 
 This shell does what LatControlPID does around its PID for a modified-EPS Honda, reusing the same helpers so
 each setting behaves identically: curvature -> wheel angle through the firmware VGR table (with the ratio and
@@ -107,8 +107,7 @@ def use_eps_firmware_controller(CP, params=None) -> bool:
 
 
 def lateral_delay_schedule(CP, params=None) -> tuple | None:
-  """controlsd, modeld: the delay to tell the model in place of liveDelay, when this controller steers the car and
-  its profile carries a measured schedule."""
+  """controlsd, modeld: the delay to tell the model in place of liveDelay, whenever this controller steers the car."""
   profile = eps_firmware_profile(CP, params)
   return profile.lat_delay_schedule if profile is not None else None
 
