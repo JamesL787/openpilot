@@ -218,13 +218,17 @@ CLARITY_R6_GAIN = tuple(float(x) for x in _VGR_SLOPE / _VGR_SLOPE[0])
 
 # Default residual-PID trims: vfn 35ddc44b's modified-EPS angle PID with the P/I trims the Clarity ran on it
 # (2026-09-26, LatPScale 125/100/125, LatIScale 70/95/35), fixed because the replay validated the feedforward
-# against exactly that PID. The CR-V takes them too (its CarParams carry the same untrimmed base gains).
+# against exactly that PID.
 DEFAULT_P_SCALE = (1.25, 1.00, 1.25)
 DEFAULT_I_SCALE = (0.70, 0.95, 0.35)
 # The C020 owner's trims on route 00000284 (LatPScale 115/125/115, LatIScale 75/95/100), the drive their port of
 # this controller was checked against. Every Civic-platform car starts here.
 CIVIC_P_SCALE = (1.15, 1.25, 1.15)
 CIVIC_I_SCALE = (0.75, 0.95, 1.00)
+# The CR-V owner drives this controller untrimmed (RiskyBiscuit-arc ns-bosch-updated CRV_5G_P/I_SCALE), on the
+# CarParams base gains.
+CRV_P_SCALE = (1.0, 1.0, 1.0)
+CRV_I_SCALE = (1.0, 1.0, 1.0)
 
 # The TargetMap-D R5 row every Civic-family image carries in all seven rows, and the Clarity's own row 0.
 TARGET_MAP_D_R5 = (0, 1926, 4938, 8455, 12036, 15926, 20138, 26955, 30000)
@@ -366,14 +370,14 @@ INSIGHT_TXM = EpsFirmwareProfile(
 # R6 measured: least squares of the image's own V5 feedback_R6 on steeringRateDeg, hands off, route 82bb (-121.6 at a
 # 15 ms lag, R^2 0.977) on the t9-67523237 build, whose norm reads 1450; x 1650/1450 for this image = -138.4. The firmware
 # predicts the same from the shared motor-to-angle constant (3121) and the A-table centre divisor (16783/16384 x the
-# Clarity's). Column load measured on the same drive (CRV_LOAD). The P/I trims stay the Clarity's: the CR-V CarParams
-# carry the Clarity's untrimmed base gains, which is what those trims were validated on.
+# Clarity's). Column load measured on the same drive (CRV_LOAD). P/I trims: the owner's
+# (CRV_P_SCALE / CRV_I_SCALE, untrimmed).
 CRV_TLA = EpsFirmwareProfile(
   name="crv_tla_a040", e4_per_output=4096.0,
   r5_key_bp=(0, 219, 443, 662, 887, 1108, 1330, 1552, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1774,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=(0, 104, 279, 510, 807, 1108, 1330, 1552, 1663), kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=CRV_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_R6_GAIN, load=CRV_LOAD, p_scale=DEFAULT_P_SCALE, i_scale=DEFAULT_I_SCALE,
+  r6_per_deg_s=CRV_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_R6_GAIN, load=CRV_LOAD, p_scale=CRV_P_SCALE, i_scale=CRV_I_SCALE,
 )
 # CR-V 5G 39990-TLA-A220 (2020+), the 10-06 A280Flat PTM build (full image sha256 5f706dd6, RWD 8f175250) on stock
 # df85f988: TargetMap-D, P117..265, D737, KFF45, Norm1650, Trk3200, clamps 7373/1774/9000, speed clamp 0. The
@@ -402,7 +406,7 @@ CRV_TLA_A220 = EpsFirmwareProfile(
   envelope_bp=(0, 50, 100, 150, 200, 250, 300, 350, 400), envelope_v=(1774, 1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330),
   kp_key_bp=CRV_TLA.kp_key_bp, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA.r6_per_deg_s, r6_angle_bp=CRV_TLA.r6_angle_bp, r6_angle_gain=CRV_TLA.r6_angle_gain,
-  load=CRV_LOAD, p_scale=DEFAULT_P_SCALE, i_scale=DEFAULT_I_SCALE,
+  load=CRV_LOAD, p_scale=CRV_P_SCALE, i_scale=CRV_I_SCALE,
 )
 
 # normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). TGG-A020 is a separate application from the A120 (its RWD updates only A010/A020)

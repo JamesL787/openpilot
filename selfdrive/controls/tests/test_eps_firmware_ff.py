@@ -467,7 +467,7 @@ def test_crv_a220_reads_its_own_command_axis_and_predicts_r6_from_the_a040():
   # R6 is predicted from the A040 (shared 3121 / A-centre 16783 / NORM 1650), not measured; load is the CR-V's
   assert a220.r6_per_deg_s == a040.r6_per_deg_s == eps_ff.CRV_R6_CENTRE and a220.r6_angle_gain == a040.r6_angle_gain
   assert a220.load is eps_ff.CRV_LOAD and a220.e4_per_output == 4096.0
-  assert (a220.p_scale, a220.i_scale) == (eps_ff.DEFAULT_P_SCALE, eps_ff.DEFAULT_I_SCALE)
+  assert (a220.p_scale, a220.i_scale) == (a040.p_scale, a040.i_scale) == (eps_ff.CRV_P_SCALE, eps_ff.CRV_I_SCALE) == ((1.0,) * 3,) * 2
 
 
 def test_command_delay_hands_over_the_value_issued_that_long_ago():
