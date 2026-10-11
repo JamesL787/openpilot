@@ -12,8 +12,8 @@ live command row, R6 gain and column load are carried over from the C020/Clarity
 A car with no profile, or whose torque map is not the linear [0, E4 cap] the profile expects, keeps LatControlPID.
 The Clarity steers with the P-minus-5 build's tables, the Clarity standard. The setting is read once, when
 controlsd starts.
-The Clarity alone also gets its measured model-delay schedule (clarity_lateral_delay), command delay and rack map:
-none of those were measured on the other cars.
+Every car gets its own command delay (EpsFirmwareProfile.cmd_delay_s). The Clarity alone also gets its measured
+model-delay schedule (clarity_lateral_delay) and rack map: neither was measured on the other cars.
 
 This shell does what LatControlPID does around its PID for a modified-EPS Honda, reusing the same helpers so
 each setting behaves identically: curvature -> wheel angle through the firmware VGR table (on the Clarity
@@ -41,6 +41,7 @@ from openpilot.selfdrive.controls.lib.eps_firmware_ff import (
   EpsFirmwareFeedforward,
   EpsFirmwareLateralCore,
   EpsFirmwareProfile,
+  command_delay,
   select_eps_firmware_profile,
 )
 from openpilot.selfdrive.controls.lib.clarity_rack_map import ClarityRackMap
@@ -77,17 +78,6 @@ SETTINGS_REFRESH_FRAMES = 300
 # lagd only learns above 15 m/s, so it cannot find the low-speed end.
 CLARITY_LAT_DELAY_BP = [3.5, 7.0, 12.0, 20.0, 30.0]  # m/s, centres of the measured bands
 CLARITY_LAT_DELAY_V = [0.15, 0.08, 0.10, 0.20, 0.30]  # s
-
-
-# Command delay: the curvature controlsd hands over is executed this much later. Cinque v3 aims its command at
-# ~0.28 s after the camera frame whatever delay it is told (0.30 and 0.09 s give the same aim), but this
-# controller reaches a command ~0.07 s after controlsd issues it, so the car ran the model's own plan 0.12-0.14 s
-# early on turns at 5-12 m/s: tight entries, loose exits (route 37e, both roundabouts and the whole drive).
-# LatControlPID on the same model was on time (+0.01 s) only because it is ~0.09 s slower. This keeps the new
-# controller's tracking and moves its timing onto the model's plan. Faded out at highway speed, where nothing
-# was measured early and the controller already drove well.
-CMD_DELAY_BP = [10.0, 15.0]  # m/s
-CMD_DELAY_V = [0.12, 0.0]    # s
 
 
 class CommandDelay:
@@ -172,8 +162,7 @@ class LatControlEpsFirmware(LatControl):
     self.sr_curve_inverse = NRDR_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
     self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
     self.rack_map = get_clarity_rack_map(CP)
-    # the Clarity's measured execution delay; the other cars' are not, so they get no command delay
-    self.cmd_delay = CommandDelay(dt, max(CMD_DELAY_V)) if is_modified_clarity(CP) else None
+    self.cmd_delay = CommandDelay(dt, self.profile.cmd_delay_s)
     self.frame = -1
     self.prev_rate_limited_angle = 0.0
     self.steering_pressed_filter_s = 0.0
@@ -216,8 +205,7 @@ class LatControlEpsFirmware(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    if self.cmd_delay is not None:
-      desired_curvature = self.cmd_delay.update(desired_curvature, float(np.interp(CS.vEgo, CMD_DELAY_BP, CMD_DELAY_V)))
+    desired_curvature = self.cmd_delay.update(desired_curvature, command_delay(self.profile, CS.vEgo))
     angle_des_no_offset = self._desired_angle_no_offset(VM, CS.vEgo, params.roll, desired_curvature)
     if active:
       angle_des_no_offset = rate_limit_desired_angle(angle_des_no_offset, self.prev_rate_limited_angle,

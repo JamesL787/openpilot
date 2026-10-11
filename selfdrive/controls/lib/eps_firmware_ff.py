@@ -55,6 +55,23 @@ class ColumnLoadModel:
   kroll: float
 
 
+# Command delay, per vehicle: the curvature controlsd hands over is executed this much later in town, faded out
+# between CMD_DELAY_SPEED_BP. Measured end to end with tools/lateral/plan_timing.py (car curvature from the VSA yaw
+# sensor against the model's own plan, hands-off turns at 5-12 m/s): every car measured ran its model's plan early
+# without it (early turn-in, loose exits), on this controller and on LatControlPID, and the models do not follow
+# the delay they are told (Cinque v3: the same aim told 0.09 or 0.30 s; tsfdo: told 0.30 or 0.48 s), so
+# SteerDelay / lagd cannot fix it. Each delay is sized at or below what was measured, so it cannot make a car late.
+# - Clarity (Cinque v3): 0.12-0.14 s early (route 37e); 0.12 s took entries from -0.25 to -0.11 s (route 380).
+# - Civic Bosch C020 (tsfdo): routes 290 / 293 / 289 -0.09 / -0.15 / -0.22 s, median -0.15.
+# Unmeasured cars take the default, the smaller of the two, until plan_timing.py measures them.
+CMD_DELAY_DEFAULT_S = 0.12
+CMD_DELAY_SPEED_BP = (10.0, 15.0)  # m/s: the full delay below, none above (nothing was measured early on the highway)
+
+
+def command_delay(cal: "EpsFirmwareProfile", v_ego: float) -> float:
+  return float(np.interp(v_ego, CMD_DELAY_SPEED_BP, (cal.cmd_delay_s, 0.0)))
+
+
 @dataclass(frozen=True)
 class EpsFirmwareProfile:
   """The per-image constants of the chain above, plus the car's residual-PID trims."""
@@ -76,6 +93,7 @@ class EpsFirmwareProfile:
   r5_per_key: float | None = None  # set when the row is linear in the key: Kp is then evaluated as the Clarity was
   r6_angle_bp: tuple | None = None    # |published angle| axis of r6_angle_gain, for images whose A table compresses it
   r6_angle_gain: tuple | None = None  # R6 per published deg/s relative to r6_per_deg_s, see firmware_r6()
+  cmd_delay_s: float = CMD_DELAY_DEFAULT_S  # command delay in town, see CMD_DELAY_SPEED_BP
   kp_pieces: tuple = field(init=False, repr=False, compare=False)
 
   def __post_init__(self):
@@ -250,6 +268,7 @@ CIVIC_C020 = EpsFirmwareProfile(
   kp_key_bp=C020_P_KEYS, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=C020_R6_CENTRE, r6_angle_bp=C020_R6_BP, r6_angle_gain=C020_R6_GAIN,
   load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
+  cmd_delay_s=0.15,  # measured
 )
 # Civic 39990-TBA-A030 (Nidec), 09-12 TEGLatestCalMatch Trk3200 (bin sha256 1de38bcb) and TEG-A010, 08-26
 # Tracker1-3200 (bin sha256 60f42ecc): both carry the C020's command axes, P axis and envelope byte for byte, so
@@ -264,7 +283,8 @@ CIVIC_C020 = EpsFirmwareProfile(
 CIVIC_A030 = EpsFirmwareProfile(**{**{k: getattr(CIVIC_C020, k) for k in CIVIC_C020.__dataclass_fields__
                                       if k != "kp_pieces"}, "name": "civic_a030", "e4_per_output": 3840.0,
                                    "r6_per_deg_s": C120_R6_CENTRE, "r6_angle_bp": R6_GAIN_BP,
-                                   "r6_angle_gain": C120_R6_GAIN, "load": TEG_LOAD})
+                                   "r6_angle_gain": C120_R6_GAIN, "load": TEG_LOAD,
+                                   "cmd_delay_s": CMD_DELAY_DEFAULT_S})  # Nidec Civic: not measured
 CIVIC_TEG_A010 = EpsFirmwareProfile(**{**{k: getattr(CIVIC_A030, k) for k in CIVIC_A030.__dataclass_fields__
                                           if k != "kp_pieces"}, "name": "civic_teg_a010"})
 # Civic Bosch 39990-TBA-C120, 08-11 C020Profile Trk4250 (bin sha256 3d88d5ea). Its variants select rows 0-4, all
@@ -276,6 +296,7 @@ CIVIC_C120 = EpsFirmwareProfile(
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=C120_P_KEYS, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=C120_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=C120_R6_GAIN, load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
+  cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
 )
 # Civic hatch 39990-TGG-A120, 08-07 C020Pminus5 Trk4250 KFF45 (bin sha256 7c60b3fa). Only row 0 carries car-specific
 # axes (rows 1-5 are the generic [0,222,333,...] row, 2x the key at low command). Row 0 is live: both of the image's
@@ -286,6 +307,7 @@ CIVIC_TGG_A120 = EpsFirmwareProfile(
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=C120_P_KEYS, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=C020_R6_CENTRE, r6_angle_bp=C020_R6_BP, r6_angle_gain=C020_R6_GAIN, load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
+  cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
 )
 # Insight 39990-TXM-A040, 08-08 C020Surface Trk1-4000 Trk2-3869 (bin sha256 1f1cfe6b). Rows 0-1 keep the Clarity-
 # style axis ending at the 1663 clamp and rows 2-5 are 2x it at low command. Row 0 is live: all three variant records
