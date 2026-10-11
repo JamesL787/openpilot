@@ -1,10 +1,11 @@
 """The modified-EPS Honda lateral controller, built on the EPS firmware's own control law.
 
-Developed on the Clarity; every "Clarity profile" EPS image (Civic, Insight, CR-V) runs the same law with its
-own tables, so one controller serves them all through EpsFirmwareProfile below.
+Every PTM (Proper Torque Mod) EPS image -- Clarity, Civic, Insight, CR-V -- runs the same law with its own tables, so
+one controller serves them all through EpsFirmwareProfile below. It was developed on the Clarity, so the evidence
+below is the Clarity's.
 
 The LKAS path is not a torque command. The firmware turns our 0xE4 value into a target R5, compares it with
-R6 -- a filtered steering RATE, taken before its angle table (Clarity: see R6_PER_CENTRE_DEG_S) -- and runs
+R6 -- a filtered steering RATE, taken before its angle table (see CLARITY_R6_CENTRE and R6_GAIN_BP) -- and runs
 P + D + KFF on the difference at 1 kHz. So every command first has to cancel the firmware's own rate damping
 (Kp * 122 / 1024 = 14..32 counts per deg/s at centre, 2-5x the rack's physical damping), which is why vfn's angle PID
 trails a turn-in by ~250 ms x steering rate below 25 mph. On a turn exit that same damping is the braking that
@@ -33,12 +34,13 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from opendbc.car.honda.steer_ratio import NRDR_CLARITY_VGR_ANGLE_BP, NRDR_CLARITY_VGR_LINEAR_BP
+from openpilot.selfdrive.controls.lib.rack_map import CLARITY_TRW_A020_RACK, RackMapTable
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.pid import PIDController
 
 
 def command_key(e4: float) -> int:
-  """0xE4 value -> command-map key, with the no-SHLL2 decode (every Clarity-profile image)."""
+  """0xE4 value -> command-map key, with the no-SHLL2 decode (every PTM image)."""
   return int(math.trunc(math.trunc(e4 * 56756 / 32768) / 4))
 
 
@@ -88,12 +90,15 @@ class EpsFirmwareProfile:
   load: ColumnLoadModel
   p_scale: tuple               # residual PID P/I trims per band (<25 mph, 25-50, >50), fixed per car
   i_scale: tuple
-  kff: float = 45.0            # project-added feedforward, KFF45 on every Clarity-profile image
+  kff: float = 45.0            # project-added feedforward, KFF45 on every PTM image
   scale_q8: float = 256.0      # helper A * B / 256 while the request is held (median on the Clarity and the C020)
-  r5_per_key: float | None = None  # set when the row is linear in the key: Kp is then evaluated as the Clarity was
+  r5_per_key: float | None = None  # set when the row is linear in the key (the Clarity's row 0): Kp per key, exactly
   r6_angle_bp: tuple | None = None    # |published angle| axis of r6_angle_gain, for images whose A table compresses it
   r6_angle_gain: tuple | None = None  # R6 per published deg/s relative to r6_per_deg_s, see firmware_r6()
   cmd_delay_s: float = CMD_DELAY_DEFAULT_S  # command delay in town, see CMD_DELAY_SPEED_BP
+  default_on: bool = False     # steer with this controller without HondaEpsFirmwareController (validated on this car)
+  lat_delay_schedule: tuple | None = None  # (speed bp, s): the delay told to the model in place of liveDelay
+  rack: RackMapTable | None = None  # yaw-identified rack ratio after the firmware angle table (rack_map.RackMap)
   kp_pieces: tuple = field(init=False, repr=False, compare=False)
 
   def __post_init__(self):
@@ -180,19 +185,18 @@ INSIGHT_LOAD = ColumnLoadModel(k0=-4.876, k1=-0.1376, c=-4.452, friction=-397.2,
 # steeringRateDeg (0x14A STEER_ANGLE_RATE) is NOT that derivative: the firmware publishes it through its second,
 # B (rate) table, indexed by angle. It reads 1.1% fast at centre (B[0] 16204 vs 16384) and 2-5% slow at 45-100
 # deg, so don't feed it here without converting (see steer_ratio.py).
-# Clarity only: the other images carry a constant R6 measured per published deg/s on their own drives, and their
-# A tables have not been checked for this effect.
-R6_PER_CENTRE_DEG_S = -122.0  # NORM 1650 / tracker-1 3200
+# The other images get the same treatment from their own A tables (R6_GAIN_BP below).
+CLARITY_R6_CENTRE = -122.0  # NORM 1650 / tracker-1 3200
 # d(pre-table angle) / d(published angle) along the A020 angle table, 1.0 at centre, ~1.19 from 150 deg
 _VGR_SLOPE = np.gradient(NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP)
-R6_ANGLE_BP = tuple(float(x) for x in NRDR_CLARITY_VGR_ANGLE_BP)
-R6_ANGLE_GAIN = tuple(float(x) for x in _VGR_SLOPE / _VGR_SLOPE[0])
+CLARITY_R6_BP = tuple(float(x) for x in NRDR_CLARITY_VGR_ANGLE_BP)
+CLARITY_R6_GAIN = tuple(float(x) for x in _VGR_SLOPE / _VGR_SLOPE[0])
 
-# The Clarity feedback path is vfn 35ddc44b's modified-EPS angle PID with the P/I trims the car ran on it
-# (2026-09-26, LatPScale 125/100/125, LatIScale 70/95/35), fixed here because the replay validated the
-# feedforward against exactly that PID.
-CLARITY_P_SCALE = (1.25, 1.00, 1.25)
-CLARITY_I_SCALE = (0.70, 0.95, 0.35)
+# Default residual-PID trims: vfn 35ddc44b's modified-EPS angle PID with the P/I trims the Clarity ran on it
+# (2026-09-26, LatPScale 125/100/125, LatIScale 70/95/35), fixed because the replay validated the feedforward
+# against exactly that PID. The CR-V takes them too (its CarParams carry the same untrimmed base gains).
+DEFAULT_P_SCALE = (1.25, 1.00, 1.25)
+DEFAULT_I_SCALE = (0.70, 0.95, 0.35)
 # The C020 owner's trims on route 00000284 (LatPScale 115/125/115, LatIScale 75/95/100), the drive their port of
 # this controller was checked against. Every Civic-platform car starts here.
 CIVIC_P_SCALE = (1.15, 1.25, 1.15)
@@ -239,12 +243,30 @@ CRV_R6_CENTRE = -124.97
 CRV_R6_GAIN = (1.0, 1.0233, 1.0273, 1.0431, 1.075, 1.1134, 1.1566, 1.199, 1.2195, 1.2305, 1.2252, 1.2367, 1.2354,
                1.2381, 1.2328, 1.2243, 1.2257, 1.2162, 1.191)
 
+# Clarity: the lateral delay the model is told (liveDelay.lateralDelay's role in lat_action_t), scheduled on speed. It
+# replaces the single SteerDelay / lagd value for the Clarity on this controller, whose real execution delay is not one
+# number. Each value is the measured lag of car curvature behind the logged model action minus the fixed
+# pipeline offset (0.038 s), so the car reaches the requested curvature when the model intends it to.
+# - Car curvature comes from the yaw sensor (0x94). The comma gyro runs ~50 ms behind the car and put the
+#   first version of this table that much too long.
+# - The lag hardly depends on the delay the model was told (5-9 m/s: 0.15 / 0.15 / 0.17 s at 0.22 / 0.30 /
+#   0.48), so routes are pooled.
+# - The lag is fitted with a gain per route (tools/clarity_lateral_report timing). The first table (0.12 / 0.12 /
+#   0.15 at 3.5 / 7 / 12 m/s, routes 354-36b) compared raw curves, and the car delivering only 0.85-0.96 of the
+#   request there read as extra lag: on 36c-377 the car turned 40-70 ms early in the city. Refit 2026-10-01 on
+#   36c/36d/373/377 and, separately, 362-36b (same answer): 2.5-5 m/s 0.18 / 0.14, 5-9 m/s 0.08 / 0.08,
+#   9-15 m/s 0.10 / 0.10 s. Crawl is slower than town because the wheel gets ~0.8 of small targets there.
+# - Above 15 m/s lane centering pulls 6-10% of a curve back out through its 0.4 s smoothing and reads as extra
+#   lag. That is not delay and the model cannot aim around it, so those values sum the stage lags without it.
+# lagd only learns above 15 m/s, so it cannot find the low-speed end.
+CLARITY_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.15, 0.08, 0.10, 0.20, 0.30))  # m/s band centres, s
+
 # Clarity 39990-TRW-A020, the P-minus-5 build (07-28, bin sha256 92cde599; P117..265 D737 KFF45 NoR6L2 Tracker3200
 # Norm1650), the Clarity standard: what routes 352/353 and the whole replay validation ran on, and the parent of the
 # A280-flat build owners move to (which edits only the A280 cells, so every table here holds). The older ClarityMax
 # 07-22 P123..279 build differed only in the P row (123, 156, 194, 232, 258, 270, 277, 279, 279) and is not supported.
-CLARITY_PMINUS5 = EpsFirmwareProfile(
-  name="clarity_pminus5",
+CLARITY_TRW_A020 = EpsFirmwareProfile(
+  name="clarity_trw_a020",
   e4_per_output=3840.0,
   # command map row 0 (0x13810 / 0x1388E); key = trunc(trunc(E4 * 56756 / 32768) / 4)
   r5_key_bp=(0, 111, 222, 333, 443, 665, 887, 1108, 1663), r5_v=CLARITY_R5, key_clamp=1663,
@@ -252,9 +274,13 @@ CLARITY_PMINUS5 = EpsFirmwareProfile(
   envelope_bp=(0, 50, 100, 150, 200, 260, 300, 350, 400), envelope_v=(1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330, 1330),
   # P row 0 (0x13B5E / 0x13BDC)
   kp_key_bp=(0, 222, 443, 665, 887, 1108, 1330, 1552, 1774), kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=R6_PER_CENTRE_DEG_S, r6_angle_bp=R6_ANGLE_BP, r6_angle_gain=R6_ANGLE_GAIN,
-  load=CLARITY_LOAD, p_scale=CLARITY_P_SCALE, i_scale=CLARITY_I_SCALE,
+  r6_per_deg_s=CLARITY_R6_CENTRE, r6_angle_bp=CLARITY_R6_BP, r6_angle_gain=CLARITY_R6_GAIN,
+  load=CLARITY_LOAD, p_scale=DEFAULT_P_SCALE, i_scale=DEFAULT_I_SCALE,
   r5_per_key=18.04,
+  cmd_delay_s=0.12,  # measured
+  default_on=True,
+  lat_delay_schedule=CLARITY_LAT_DELAY_SCHEDULE,
+  rack=CLARITY_TRW_A020_RACK,
 )
 
 # Civic Bosch 39990-TBA-C020, 08-05 ClarityPminus5 P117..265 D737 KFF45 Norm1650 Trk4500 TargetMapD Telem (bin
@@ -337,7 +363,7 @@ CRV_TLA = EpsFirmwareProfile(
   r5_key_bp=(0, 219, 443, 662, 887, 1108, 1330, 1552, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1774,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=(0, 104, 279, 510, 807, 1108, 1330, 1552, 1663), kp_v=P_ROW_PMINUS5,
-  r6_per_deg_s=CRV_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_R6_GAIN, load=CRV_LOAD, p_scale=CLARITY_P_SCALE, i_scale=CLARITY_I_SCALE,
+  r6_per_deg_s=CRV_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_R6_GAIN, load=CRV_LOAD, p_scale=DEFAULT_P_SCALE, i_scale=DEFAULT_I_SCALE,
 )
 # CR-V 5G 39990-TLA-A220 (2020+), the 10-06 A280Flat PTM build (full image sha256 5f706dd6, RWD 8f175250) on stock
 # df85f988: TargetMap-D, P117..265, D737, KFF45, Norm1650, Trk3200, clamps 7373/1774/9000, speed clamp 0. The
@@ -366,13 +392,13 @@ CRV_TLA_A220 = EpsFirmwareProfile(
   envelope_bp=(0, 50, 100, 150, 200, 250, 300, 350, 400), envelope_v=(1774, 1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330),
   kp_key_bp=CRV_TLA.kp_key_bp, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA.r6_per_deg_s, r6_angle_bp=CRV_TLA.r6_angle_bp, r6_angle_gain=CRV_TLA.r6_angle_gain,
-  load=CRV_LOAD, p_scale=CLARITY_P_SCALE, i_scale=CLARITY_I_SCALE,
+  load=CRV_LOAD, p_scale=DEFAULT_P_SCALE, i_scale=DEFAULT_I_SCALE,
 )
 
 # normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). TGG-A020 is a separate application from the A120 (its RWD updates only A010/A020)
-# and has no Clarity-profile build, so it is absent on purpose.
+# and has no PTM build, so it is absent on purpose.
 EPS_FIRMWARE_PROFILES = {
-  "39990-TRW-A020": ("HONDA_CLARITY", CLARITY_PMINUS5),
+  "39990-TRW-A020": ("HONDA_CLARITY", CLARITY_TRW_A020),
   "39990-TBA-C020": ("HONDA_CIVIC_BOSCH", CIVIC_C020),
   "39990-TBA-C120": ("HONDA_CIVIC_BOSCH", CIVIC_C120),
   "39990-TGG-A120": ("HONDA_CIVIC_BOSCH", CIVIC_TGG_A120),
@@ -385,30 +411,12 @@ EPS_FIRMWARE_PROFILES = {
 
 
 def select_eps_firmware_profile(fingerprint: str, eps_fw: str) -> EpsFirmwareProfile | None:
-  """The profile for this car's EPS image, or None when there is no Clarity-profile build for it (or it is on another car)."""
+  """The profile for this car's EPS image, or None when there is no PTM build for it (or it is on another car)."""
   entry = EPS_FIRMWARE_PROFILES.get(eps_fw)
   if entry is None or entry[0] != fingerprint:
     return None
   return entry[1]
 
-
-# --- the Clarity P-minus-5 build as module constants (the replay tooling and the tests read these) ---------------
-E4_PER_OUTPUT = CLARITY_PMINUS5.e4_per_output
-R5_KEY_BP = list(CLARITY_PMINUS5.r5_key_bp)
-R5_V = list(CLARITY_PMINUS5.r5_v)
-KEY_CLAMP = CLARITY_PMINUS5.key_clamp
-ENVELOPE_BP = list(CLARITY_PMINUS5.envelope_bp)
-ENVELOPE_V = list(CLARITY_PMINUS5.envelope_v)
-KP_KEY_BP = list(CLARITY_PMINUS5.kp_key_bp)
-KP_V = list(CLARITY_PMINUS5.kp_v)
-KFF = CLARITY_PMINUS5.kff
-R5_PER_KEY = CLARITY_PMINUS5.r5_per_key
-KP_PIECES = list(CLARITY_PMINUS5.kp_pieces)
-SCALE_Q8 = CLARITY_PMINUS5.scale_q8
-LOAD_K0, LOAD_K1, LOAD_C = CLARITY_LOAD.k0, CLARITY_LOAD.k1, CLARITY_LOAD.c
-LOAD_FRICTION, LOAD_BIAS, LOAD_KROLL = CLARITY_LOAD.friction, CLARITY_LOAD.bias, CLARITY_LOAD.kroll
-P_SCALE = CLARITY_P_SCALE
-I_SCALE = CLARITY_I_SCALE
 
 # The fits put the Coulomb knee at 2-5 deg/s, but the feedforward keys it on the DESIRED rate, so a knee that
 # sharp turns every small wiggle in the model's path into a friction square wave: in the closed-loop sim the wheel
@@ -461,49 +469,47 @@ FF_CRAWL_ANGLE_BP = [5.0, 20.0]  # deg
 FF_CRAWL_SPEED_BP = [5.0, 8.0]   # m/s
 
 
-def key_ceiling(v_ego: float, cal: EpsFirmwareProfile = CLARITY_PMINUS5) -> float:
+def key_ceiling(v_ego: float, cal: EpsFirmwareProfile) -> float:
   return cal.key_ceiling(v_ego)
 
 
-def r5_from_output(output: float, v_ego: float, cal: EpsFirmwareProfile = CLARITY_PMINUS5) -> float:
+def r5_from_output(output: float, v_ego: float, cal: EpsFirmwareProfile) -> float:
   """What the firmware makes of a lateral output: forward model of 0xE4 -> key -> R5."""
   key = command_key(-output * cal.e4_per_output)
   mag = float(np.interp(min(abs(key), cal.key_ceiling(v_ego)), cal.r5_key_bp, cal.r5_v))
   return math.copysign(mag, key) if key else 0.0
 
 
-def output_from_r5(r5: float, cal: EpsFirmwareProfile = CLARITY_PMINUS5) -> float:
+def output_from_r5(r5: float, cal: EpsFirmwareProfile) -> float:
   """Inverse of r5_from_output (up to integer truncation)."""
   key = float(np.interp(min(abs(r5), cal.r5_v[-1]), cal.r5_v, cal.r5_key_bp))
   e4 = key * 4.0 * 32768.0 / 56756.0
   return -math.copysign(e4, r5) / cal.e4_per_output
 
 
-def firmware_kp(r5: float, cal: EpsFirmwareProfile = CLARITY_PMINUS5) -> float:
+def firmware_kp(r5: float, cal: EpsFirmwareProfile) -> float:
   return cal._kp_at_r5(abs(r5))
 
 
-def firmware_r6(steering_rate_deg_s: float, angle_deg: float, cal: EpsFirmwareProfile = CLARITY_PMINUS5) -> float:
+def firmware_r6(steering_rate_deg_s: float, angle_deg: float, cal: EpsFirmwareProfile) -> float:
   """The firmware's rate feedback for a published steering rate at a published angle."""
   gain = 1.0 if cal.r6_angle_bp is None else float(np.interp(abs(angle_deg), cal.r6_angle_bp, cal.r6_angle_gain))
   return cal.r6_per_deg_s * gain * steering_rate_deg_s
 
 
-def firmware_output(r5: float, steering_rate_deg_s: float, angle_deg: float = 0.0,
-                    cal: EpsFirmwareProfile = CLARITY_PMINUS5) -> float:
+def firmware_output(r5: float, steering_rate_deg_s: float, cal: EpsFirmwareProfile, angle_deg: float = 0.0) -> float:
   """Steady-state firmware output for a target and a rate (D term omitted): scale*(Kp*(R5-R6) + KFF*R5)/1024/256."""
   r6 = firmware_r6(steering_rate_deg_s, angle_deg, cal)
   return cal.scale_q8 * (firmware_kp(r5, cal) * (r5 - r6) + cal.kff * r5) / 1024.0 / 256.0
 
 
 def column_load(angle_deg: float, rate_deg_s: float, v_ego: float, roll: float,
-                friction_width: float = FRICTION_WIDTH_DEG_S, load: ColumnLoadModel = CLARITY_LOAD) -> float:
+                load: ColumnLoadModel, friction_width: float = FRICTION_WIDTH_DEG_S) -> float:
   return (load.k0 * angle_deg + load.k1 * angle_deg * v_ego ** 2 + load.c * rate_deg_s
           + load.friction * math.tanh(rate_deg_s / friction_width) + load.bias + load.kroll * roll * v_ego ** 2)
 
 
-def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, angle_deg: float = 0.0,
-                  cal: EpsFirmwareProfile = CLARITY_PMINUS5) -> float:
+def r5_for_motion(load: float, rate_deg_s: float, cal: EpsFirmwareProfile, r5_guess: float = 0.0, angle_deg: float = 0.0) -> float:
   """Solve the firmware law for the target that yields `load` while the wheel moves at `rate_deg_s` through `angle_deg`.
 
   load = scale * (Kp*(R5 - R6) + KFF*R5) / 1024 / 256, with Kp piecewise linear in |R5|. On each piece
@@ -532,9 +538,8 @@ def r5_for_motion(load: float, rate_deg_s: float, r5_guess: float = 0.0, angle_d
 
 
 class EpsFirmwareFeedforward:
-  def __init__(self, dt: float, rate_tau: float = DESIRED_RATE_TAU, lead_s: float = LEAD_S,
-               output_tau: float = FF_OUTPUT_TAU, friction_width: float | None = None,
-               cal: EpsFirmwareProfile = CLARITY_PMINUS5):
+  def __init__(self, dt: float, cal: EpsFirmwareProfile, rate_tau: float = DESIRED_RATE_TAU, lead_s: float = LEAD_S,
+               output_tau: float = FF_OUTPUT_TAU, friction_width: float | None = None):
     self.dt = dt
     self.alpha = dt / (rate_tau + dt)
     self.output_alpha = dt / (output_tau + dt)
@@ -559,9 +564,9 @@ class EpsFirmwareFeedforward:
 
     angle = desired_angle_no_offset + self.lead_s * self.rate
     width = self.friction_width if self.friction_width is not None else friction_width(v_ego)
-    self.load = column_load(angle, self.rate, v_ego, roll, width, self.cal.load)
+    self.load = column_load(angle, self.rate, v_ego, roll, self.cal.load, width)
     cap = min(R5_CAP, R5_CAP_ENVELOPE_FRAC * self.cal.r5_ceiling(v_ego))
-    self.r5 = max(min(r5_for_motion(self.load, self.rate, self.r5, angle, self.cal), cap), -cap)
+    self.r5 = max(min(r5_for_motion(self.load, self.rate, self.cal, self.r5, angle), cap), -cap)
     target = output_from_r5(self.r5, self.cal)
     self.output = target if first else self.output + self.output_alpha * (target - self.output)
     return self.output
@@ -577,11 +582,10 @@ class EpsFirmwareLateralCore:
   Pure (no messaging, no params), so the closed-loop replay can drive exactly the code the car runs.
   """
 
-  def __init__(self, kp_bp, kp_v, ki_bp, ki_v, dt: float, ff: EpsFirmwareFeedforward | None = None,
-               p_scale=None, i_scale=None):
+  def __init__(self, kp_bp, kp_v, ki_bp, ki_v, dt: float, ff: EpsFirmwareFeedforward, p_scale=None, i_scale=None):
     self.dt = dt
     self.pid = PIDController((kp_bp, kp_v), (ki_bp, ki_v), pos_limit=1.0, neg_limit=-1.0, rate=1.0 / dt)
-    self.ff = ff if ff is not None else EpsFirmwareFeedforward(dt)
+    self.ff = ff
     self.p_scale = p_scale if p_scale is not None else self.ff.cal.p_scale
     self.i_scale = i_scale if i_scale is not None else self.ff.cal.i_scale
     # The Honda torque-output LPF, run exactly as LatControlPID runs it (the car controller deliberately does

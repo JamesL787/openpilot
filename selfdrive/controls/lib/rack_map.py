@@ -1,9 +1,12 @@
-"""Honda Clarity (TRW A020 EPS) wheel angle <-> curvature map. Only numpy here, so offline tools can use it."""
+"""Wheel angle <-> curvature through a rack ratio identified against the car's yaw sensor. Only numpy here, so offline
+tools can use it. Each vehicle that has been identified carries a RackMapTable on its EPS firmware profile.
+"""
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
-# Wheel angle <-> curvature, identified against the car's own yaw sensor (0x94, GPS-verified) on routes 341-36b.
+# Clarity (TRW A020): wheel angle <-> curvature, identified against the car's own yaw sensor (0x94, GPS-verified) on routes 341-36b.
 # VehicleModel's form is kept, lin = R * L * [k (1 - sf v^2) - g sf roll], with lin the firmware-VGR linear
 # angle of the physical wheel angle. But its single ratio (paramsd's, one value for every wheel angle)
 # and its slip factor (-0.00061 from the tyre stiffness defaults) are replaced by what the car does:
@@ -18,28 +21,41 @@ import numpy as np
 # curvature within ~1% below 16 m/s (the first fit was 1-5% short at 9-16 m/s) and 1-5% above.
 # The paramsd ratio with VM's slip factor over-predicted the angle needed by 3-6% in the city, the over-steer
 # through tight turns.
-CLARITY_RATIO_BP = [6.5, 15.0, 32.0, 57.0, 85.0, 125.0, 175.0, 230.0, 305.0, 400.0]  # physical wheel angle, deg
-CLARITY_RATIO_V = [17.34, 17.08, 16.94, 16.78, 16.78, 16.65, 16.48, 16.37, 16.29, 16.02]
-CLARITY_SLIP_FACTOR = -0.0005  # 1 / (m/s)^2
 GRAVITY = 9.81
 
 
-class ClarityRackMap:
-  """Physical wheel angle (deg, left-positive) <-> curvature (1/m, openpilot's right-positive), see CLARITY_RATIO_*."""
-  def __init__(self, wheelbase: float, vgr_inverse):
+@dataclass(frozen=True)
+class RackMapTable:
+  """Effective rack ratio after the firmware angle table, by physical wheel angle, and the slip factor."""
+  ratio_bp: tuple      # physical wheel angle, deg
+  ratio_v: tuple
+  slip_factor: float   # 1 / (m/s)^2
+
+
+CLARITY_TRW_A020_RACK = RackMapTable(
+  ratio_bp=(6.5, 15.0, 32.0, 57.0, 85.0, 125.0, 175.0, 230.0, 305.0, 400.0),
+  ratio_v=(17.34, 17.08, 16.94, 16.78, 16.78, 16.65, 16.48, 16.37, 16.29, 16.02),
+  slip_factor=-0.0005,
+)
+
+
+class RackMap:
+  """Physical wheel angle (deg, left-positive) <-> curvature (1/m, openpilot's right-positive) for one RackMapTable."""
+  def __init__(self, wheelbase: float, vgr_inverse, table: RackMapTable):
     linear_bp, angle_bp = (np.asarray(x, dtype=float) for x in vgr_inverse)
     self.wheelbase = float(wheelbase)
+    self.slip_factor = table.slip_factor
     self.angle_grid = np.unique(np.r_[angle_bp, np.linspace(0.0, angle_bp[-1], 1001)])
     linear = np.radians(np.interp(self.angle_grid, angle_bp, linear_bp))
-    self.path_grid = linear / np.interp(self.angle_grid, CLARITY_RATIO_BP, CLARITY_RATIO_V)  # = L * k at zero roll/slip
+    self.path_grid = linear / np.interp(self.angle_grid, table.ratio_bp, table.ratio_v)  # = L * k at zero roll/slip
     assert np.all(np.diff(self.path_grid) > 0), "rack map must be monotonic to invert"
 
   def angle_from_curvature(self, curvature: float, v_ego: float, roll: float) -> float:
     k = -curvature
-    path = self.wheelbase * (k * (1.0 - CLARITY_SLIP_FACTOR * v_ego ** 2) - GRAVITY * CLARITY_SLIP_FACTOR * roll)
+    path = self.wheelbase * (k * (1.0 - self.slip_factor * v_ego ** 2) - GRAVITY * self.slip_factor * roll)
     return math.copysign(float(np.interp(abs(path), self.path_grid, self.angle_grid)), path)
 
   def curvature_from_angle(self, angle_deg: float, v_ego: float, roll: float) -> float:
     path = math.copysign(float(np.interp(abs(angle_deg), self.angle_grid, self.path_grid)), angle_deg)
-    k = (path / self.wheelbase + GRAVITY * CLARITY_SLIP_FACTOR * roll) / (1.0 - CLARITY_SLIP_FACTOR * v_ego ** 2)
+    k = (path / self.wheelbase + GRAVITY * self.slip_factor * roll) / (1.0 - self.slip_factor * v_ego ** 2)
     return -k

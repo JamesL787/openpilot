@@ -26,8 +26,8 @@ from openpilot.selfdrive.controls.lib.drive_helpers import (
 from openpilot.selfdrive.controls.lib.lane_centering import LaneCenteringController
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
-from openpilot.selfdrive.controls.lib.latcontrol_eps_firmware import LatControlEpsFirmware, clarity_lateral_delay, \
-  eps_firmware_profile, get_clarity_rack_map, uses_clarity_schedule
+from openpilot.selfdrive.controls.lib.latcontrol_eps_firmware import LatControlEpsFirmware, eps_firmware_profile, \
+  get_rack_map, lateral_delay_schedule, scheduled_lateral_delay
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
 from openpilot.selfdrive.controls.lib.latcontrol_torque import (
@@ -171,7 +171,7 @@ CURVATURE_HOLD_OPPOSITE_RELEASE = 0.01  # 1/m
 # already bounds the captured floor in that band.
 CURVATURE_HOLD_CONFIRM_MIN = 0.003  # 1/m (~7 deg) of wound curvature before capture
 CURVATURE_HOLD_CONFIRM_SWEPT = 0.6  # rad of heading swept this blinker cycle; past this the push is exit-shaping, not initiation
-# nrdr: turn shaping for controllers that track the target closely (the Clarity's firmware-inversion
+# nrdr: turn shaping for controllers that track the target closely (the EPS-firmware inversion
 # controller). The hold and the turn lead enter the command as steps: the plan ratchet below the
 # plan-source speed jumps a model frame at a time, opposite-release and handoff drop the floor in one
 # frame, and at a stop the every-frame done reset re-arms the pre-wind the frame after
@@ -450,8 +450,9 @@ class Controls:
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
 
-    self.clarity_schedule = isinstance(self.LaC, LatControlEpsFirmware) and uses_clarity_schedule(self.CP)
-    self.clarity_rack_map = get_clarity_rack_map(self.CP) if self.clarity_schedule else None
+    eps_fw = isinstance(self.LaC, LatControlEpsFirmware)
+    self.lat_delay_schedule = lateral_delay_schedule(self.CP) if eps_fw else None
+    self.rack_map = get_rack_map(self.CP, self.LaC.profile) if eps_fw else None
     # see TURN_SHAPING_TAU
     self.turn_shaping = isinstance(self.LaC, LatControlEpsFirmware)
 
@@ -728,9 +729,9 @@ class Controls:
 
     angle_offset = lp.angleOffsetDeg if self.learn_angle_offset else 0.0
     steer_angle_without_offset = math.radians(CS.steeringAngleDeg - angle_offset)
-    if self.clarity_rack_map is not None:
+    if self.rack_map is not None:
       # the same map the controller steers through, so a held or seeded curvature comes back as the same wheel angle
-      self.curvature = self.clarity_rack_map.curvature_from_angle(CS.steeringAngleDeg - angle_offset, CS.vEgo, lp.roll)
+      self.curvature = self.rack_map.curvature_from_angle(CS.steeringAngleDeg - angle_offset, CS.vEgo, lp.roll)
     else:
       self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
@@ -932,7 +933,8 @@ class Controls:
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
                                                                jerk_factor)
     lat_smooth_seconds = get_control_lateral_smooth_seconds(self.CP.brand, CS.vEgo, self.CP.lateralSmoothSeconds)
-    lateral_delay = clarity_lateral_delay(CS.vEgo) if self.clarity_schedule else self.sm["liveDelay"].lateralDelay
+    lateral_delay = scheduled_lateral_delay(self.lat_delay_schedule, CS.vEgo) if self.lat_delay_schedule else \
+      self.sm["liveDelay"].lateralDelay
     lat_delay = lateral_delay + lat_smooth_seconds
 
     actuators.curvature = self.desired_curvature

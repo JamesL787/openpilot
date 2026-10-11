@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from cereal import car, log
-import openpilot.selfdrive.controls.lib.clarity_rack_map as rack
+import openpilot.selfdrive.controls.lib.rack_map as rack
 import openpilot.selfdrive.controls.lib.eps_firmware_ff as eps_ff
 import openpilot.selfdrive.controls.lib.latcontrol_eps_firmware as eps_fw_ctl
 from opendbc.car import structs
@@ -20,6 +20,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import _lat_pid_scale_bande
 TOGGLES = SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False)
 CLARITY_MODIFIED_FW = b'39990-TRW,A020\x00\x00'
 CLARITY_STOCK_FW = b'39990-TRW-A020\x00\x00'
+CLA = eps_ff.CLARITY_TRW_A020  # the reference profile these law tests were written on
 KP_BP, KP_V, KI_V = [0.0, 11.175, 11.176, 22.352], [0.018, 0.024, 0.048, 0.060], [0.006, 0.008, 0.016, 0.020]
 
 
@@ -27,44 +28,44 @@ KP_BP, KP_V, KI_V = [0.0, 11.175, 11.176, 22.352], [0.018, 0.024, 0.048, 0.060],
 
 @pytest.mark.parametrize("output", [-1.0, -0.4, -0.05, 0.0, 0.02, 0.3, 0.9])
 def test_command_map_round_trips(output):
-  r5 = eps_ff.r5_from_output(output, 20.0)
-  assert eps_ff.output_from_r5(r5) == pytest.approx(output, abs=2e-3)
+  r5 = eps_ff.r5_from_output(output, 20.0, CLA)
+  assert eps_ff.output_from_r5(r5, CLA) == pytest.approx(output, abs=2e-3)
 
 
 def test_command_map_matches_the_measured_gain():
   # route 00000352: R5 = 7.7 * E4 and E4 = -3840 * output
-  assert eps_ff.r5_from_output(0.1, 20.0) == pytest.approx(-0.1 * 3840 * 7.7, rel=0.03)
+  assert eps_ff.r5_from_output(0.1, 20.0, CLA) == pytest.approx(-0.1 * 3840 * 7.7, rel=0.03)
 
 
 @pytest.mark.parametrize("load,rate", [(500, 0), (-1500, 0), (800, 40), (-800, -40), (300, -60), (-4000, 120),
                                        (100, -216), (-6000, 0), (0, 0)])
 @pytest.mark.parametrize("guess", [0.0, 15000.0, -15000.0])
 def test_inversion_reproduces_the_requested_load(load, rate, guess):
-  r5 = eps_ff.r5_for_motion(load, rate, guess)
-  assert eps_ff.firmware_output(r5, rate) == pytest.approx(load, abs=1e-6)
+  r5 = eps_ff.r5_for_motion(load, rate, CLA, guess)
+  assert eps_ff.firmware_output(r5, rate, CLA) == pytest.approx(load, abs=1e-6)
 
 
 @pytest.mark.parametrize("angle", [0.0, 45.0, 150.0, -300.0])
 @pytest.mark.parametrize("load,rate", [(800, 40), (-4000, 120), (300, -60)])
 def test_inversion_reproduces_the_requested_load_at_an_angle(load, rate, angle):
-  r5 = eps_ff.r5_for_motion(load, rate, 0.0, angle)
-  assert eps_ff.firmware_output(r5, rate, angle) == pytest.approx(load, abs=1e-6)
+  r5 = eps_ff.r5_for_motion(load, rate, CLA, 0.0, angle)
+  assert eps_ff.firmware_output(r5, rate, CLA, angle) == pytest.approx(load, abs=1e-6)
 
 
 def test_firmware_damping_grows_with_angle_like_its_table():
   # R6 is taken before the firmware's angle table: per deg/s of the published rate it is -119 near centre
   # and -141..-146 past 60 deg on routes 363/365/366/369, flat per count of the pre-table 0x18F rate
-  assert eps_ff.firmware_r6(10.0, 0.0) == pytest.approx(-1220.0, rel=0.01)
-  assert eps_ff.firmware_r6(10.0, 5.0) == pytest.approx(-1220.0, rel=0.02)
-  assert eps_ff.firmware_r6(10.0, 200.0) == pytest.approx(-1220.0 * 1.19, rel=0.02)
-  assert eps_ff.firmware_r6(10.0, -200.0) == eps_ff.firmware_r6(10.0, 200.0)
-  assert eps_ff.firmware_r6(-10.0, 200.0) == -eps_ff.firmware_r6(10.0, 200.0)
+  assert eps_ff.firmware_r6(10.0, 0.0, CLA) == pytest.approx(-1220.0, rel=0.01)
+  assert eps_ff.firmware_r6(10.0, 5.0, CLA) == pytest.approx(-1220.0, rel=0.02)
+  assert eps_ff.firmware_r6(10.0, 200.0, CLA) == pytest.approx(-1220.0 * 1.19, rel=0.02)
+  assert eps_ff.firmware_r6(10.0, -200.0, CLA) == eps_ff.firmware_r6(10.0, 200.0, CLA)
+  assert eps_ff.firmware_r6(-10.0, 200.0, CLA) == -eps_ff.firmware_r6(10.0, 200.0, CLA)
 
 
 def test_turn_in_asks_more_than_a_hold_and_an_exit_less():
   # left turn (positive angle and output) at 60 deg, 8 m/s
   def out(rate):
-    return eps_ff.output_from_r5(eps_ff.r5_for_motion(eps_ff.column_load(60.0, rate, 8.0, 0.0), rate))
+    return eps_ff.output_from_r5(eps_ff.r5_for_motion(eps_ff.column_load(60.0, rate, 8.0, 0.0, CLA.load), rate, CLA), CLA)
   turn_in, hold, unwind = out(40.0), out(0.0), out(-40.0)
   assert turn_in > hold > unwind
   assert hold > 0.0
@@ -72,14 +73,14 @@ def test_turn_in_asks_more_than_a_hold_and_an_exit_less():
 
 @pytest.mark.parametrize("v_kph,cap", [(40.0, eps_ff.R5_CAP), (130.0, 0.9 * 24000)])
 def test_target_stays_clear_of_the_rail_and_the_speed_ceiling(v_kph, cap):
-  ff = eps_ff.EpsFirmwareFeedforward(DT_CTRL)
+  ff = eps_ff.EpsFirmwareFeedforward(DT_CTRL, CLA)
   for k in range(200):
     ff.update(400.0 + k, v_kph / 3.6, 0.0)
   assert abs(ff.r5) <= cap + 1e-6
 
 
 def test_desired_rate_tracks_a_ramp_and_resets():
-  ff = eps_ff.EpsFirmwareFeedforward(DT_CTRL)
+  ff = eps_ff.EpsFirmwareFeedforward(DT_CTRL, CLA)
   for k in range(150):
     ff.update(50.0 * k * DT_CTRL, 10.0, 0.0)
   assert ff.rate == pytest.approx(50.0, abs=1.0)
@@ -88,8 +89,8 @@ def test_desired_rate_tracks_a_ramp_and_resets():
 
 
 def test_feedforward_output_is_smoothed():
-  raw = eps_ff.EpsFirmwareFeedforward(DT_CTRL, output_tau=0.0)
-  smooth = eps_ff.EpsFirmwareFeedforward(DT_CTRL)
+  raw = eps_ff.EpsFirmwareFeedforward(DT_CTRL, CLA, output_tau=0.0)
+  smooth = eps_ff.EpsFirmwareFeedforward(DT_CTRL, CLA)
   for ff in (raw, smooth):
     ff.update(0.0, 10.0, 0.0)
     ff.update(30.0, 10.0, 0.0)   # a step in the target
@@ -99,7 +100,7 @@ def test_feedforward_output_is_smoothed():
 # --- control core ---------------------------------------------------------------------------------
 
 def _core():
-  return eps_ff.EpsFirmwareLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL)
+  return eps_ff.EpsFirmwareLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL, ff=eps_ff.EpsFirmwareFeedforward(DT_CTRL, CLA))
 
 
 def _hold(core, frames, des=20.0, angle=20.0, v=10.0, pressed=False):
@@ -151,10 +152,10 @@ def test_friction_knee_is_wide_in_the_city_and_sharp_at_speed():
   assert eps_ff.friction_width(0.0) == eps_ff.friction_width(8.0) == 20.0
   assert eps_ff.friction_width(15.0) == eps_ff.friction_width(30.0) == eps_ff.FRICTION_WIDTH_DEG_S == 5.0
   # a slow desired rate asks for less friction in the city than at speed; a turn-in rate gets it all either way
-  city = eps_ff.column_load(0.0, 5.0, 8.0, 0.0, eps_ff.friction_width(8.0)) - eps_ff.column_load(0.0, 5.0, 8.0, 0.0, 1e9)
-  fast = eps_ff.column_load(0.0, 5.0, 8.0, 0.0, eps_ff.friction_width(20.0)) - eps_ff.column_load(0.0, 5.0, 8.0, 0.0, 1e9)
+  city = eps_ff.column_load(0.0, 5.0, 8.0, 0.0, CLA.load, eps_ff.friction_width(8.0)) - eps_ff.column_load(0.0, 5.0, 8.0, 0.0, CLA.load, 1e9)
+  fast = eps_ff.column_load(0.0, 5.0, 8.0, 0.0, CLA.load, eps_ff.friction_width(20.0)) - eps_ff.column_load(0.0, 5.0, 8.0, 0.0, CLA.load, 1e9)
   assert abs(city) < 0.4 * abs(fast)
-  turn = [eps_ff.column_load(0.0, 100.0, 8.0, 0.0, w) - eps_ff.column_load(0.0, 100.0, 8.0, 0.0, 1e9) for w in (20.0, 5.0)]
+  turn = [eps_ff.column_load(0.0, 100.0, 8.0, 0.0, CLA.load, w) - eps_ff.column_load(0.0, 100.0, 8.0, 0.0, CLA.load, 1e9) for w in (20.0, 5.0)]
   assert turn[0] == pytest.approx(turn[1], rel=0.01)
 
 
@@ -228,6 +229,15 @@ class _Params:
     return self.values.get(key) == "1"
 
 
+def _clarity_lat_delay(v):
+  return eps_fw_ctl.scheduled_lateral_delay(eps_ff.CLARITY_LAT_DELAY_SCHEDULE, v)
+
+
+def _get_rack_map(fw):
+  CP = _params(fw)
+  return eps_fw_ctl.get_rack_map(CP, eps_fw_ctl.eps_firmware_profile(CP, _Params()))
+
+
 def _controller(monkeypatch, values=None):
   monkeypatch.setattr(eps_fw_ctl, "Params", lambda: _Params(values))
   CP = _params(CLARITY_MODIFIED_FW)
@@ -242,13 +252,13 @@ def test_only_the_modified_eps_clarity_gets_this_controller_by_default():
 
 @pytest.mark.parametrize("v, delay", [(0.0, 0.15), (3.5, 0.15), (7.0, 0.08), (12.0, 0.10), (20.0, 0.20), (30.0, 0.30), (40.0, 0.30)])
 def test_lateral_delay_follows_the_measured_execution_delay(v, delay):
-  assert eps_fw_ctl.clarity_lateral_delay(v) == pytest.approx(delay)
+  assert _clarity_lat_delay(v) == pytest.approx(delay)
 
 
 def test_lateral_delay_dips_in_town_and_rises_from_there():
   # measured: the crawl is slower than town (small targets), and from town up the delay rises with speed
-  assert eps_fw_ctl.clarity_lateral_delay(3.5) > eps_fw_ctl.clarity_lateral_delay(7.0)
-  delays = [eps_fw_ctl.clarity_lateral_delay(v) for v in np.linspace(7.0, 40.0, 67)]
+  assert _clarity_lat_delay(3.5) > _clarity_lat_delay(7.0)
+  delays = [_clarity_lat_delay(v) for v in np.linspace(7.0, 40.0, 67)]
   assert all(b >= a for a, b in zip(delays, delays[1:], strict=False))
 
 
@@ -302,9 +312,9 @@ def test_target_honours_the_angle_rate_limit(monkeypatch):
 
 # --- per-image profiles ----------------------------------------------------------------------------
 
-# (candidate, modified EPS fwVersion, profile) for every Clarity-profile image
+# (candidate, modified EPS fwVersion, profile) for every PTM image
 PROFILE_CARS = [
-  (CAR.HONDA_CLARITY, CLARITY_MODIFIED_FW, eps_ff.CLARITY_PMINUS5),
+  (CAR.HONDA_CLARITY, CLARITY_MODIFIED_FW, eps_ff.CLARITY_TRW_A020),
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', eps_ff.CIVIC_C020),
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00', eps_ff.CIVIC_C120),
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TGG,A120\x00\x00', eps_ff.CIVIC_TGG_A120),
@@ -330,14 +340,14 @@ def test_profile_matches_the_cars_torque_map_and_is_selected_only_when_enabled(c
 def test_clarity_always_steers_with_the_pminus5_build():
   # P-minus-5 is the Clarity standard; there is no build setting any more
   CP = _params(CLARITY_MODIFIED_FW)
-  assert eps_fw_ctl.eps_firmware_profile(CP, _Params()) is eps_ff.CLARITY_PMINUS5
-  assert eps_fw_ctl.eps_firmware_profile(CP, _Params({"HondaEpsClarityPminus5": "0"})) is eps_ff.CLARITY_PMINUS5
+  assert eps_fw_ctl.eps_firmware_profile(CP, _Params()) is eps_ff.CLARITY_TRW_A020
+  assert eps_fw_ctl.eps_firmware_profile(CP, _Params({"HondaEpsClarityPminus5": "0"})) is eps_ff.CLARITY_TRW_A020
   assert not hasattr(eps_ff, "CLARITY_P123")
 
 
 @pytest.mark.parametrize("candidate,fw", [
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA-C020\x00\x00'),   # stock EPS
-  (CAR.HONDA_CIVIC_BOSCH, b'39990-TGG,A020\x00\x00'),   # modified, but no Clarity-profile build exists
+  (CAR.HONDA_CIVIC_BOSCH, b'39990-TGG,A020\x00\x00'),   # modified, but no PTM build exists
   (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,A030\x00\x00'),   # a known image on the wrong car
 ])
 def test_cars_without_a_matching_profile_keep_latcontrol_pid(candidate, fw):
@@ -350,12 +360,12 @@ def test_a_torque_map_the_profile_does_not_expect_keeps_latcontrol_pid():
   assert eps_fw_ctl.eps_firmware_profile(CP, _Params(ON)) is None
 
 
-def test_clarity_pminus5_profile_is_the_validated_build():
+def test_clarity_trw_a020_profile_is_the_validated_build():
   # the constants routes 352/353 and the closed-loop replay were validated with; R6 is the angle-scaled centre value
   # re-measured on routes 363/365/366/369, the scale word on routes 35e/360/361
-  cal = eps_ff.CLARITY_PMINUS5
+  cal = eps_ff.CLARITY_TRW_A020
   assert cal.kp_v == (117, 148, 184, 220, 245, 257, 263, 265, 265) and cal.r5_per_key == 18.04
-  assert cal.r6_per_deg_s == eps_ff.R6_PER_CENTRE_DEG_S == -122.0 and cal.scale_q8 == 256.0
+  assert cal.r6_per_deg_s == eps_ff.CLARITY_R6_CENTRE == -122.0 and cal.scale_q8 == 256.0
   assert cal.r6_angle_bp is not None and cal.r6_angle_gain[0] == 1.0 and cal.r6_angle_gain[-1] > 1.15
   assert cal.load == eps_ff.CLARITY_LOAD and cal.e4_per_output == 3840.0
   assert (cal.p_scale, cal.i_scale) == ((1.25, 1.00, 1.25), (0.70, 0.95, 0.35))
@@ -397,7 +407,7 @@ def test_every_profiles_command_map_round_trips(cal, output):
 @pytest.mark.parametrize("cal", ALL_PROFILES, ids=[p.name for p in ALL_PROFILES])
 @pytest.mark.parametrize("load,rate", [(500, 0), (-1500, 0), (800, 40), (-800, -40), (300, -60), (-4000, 120), (0, 0)])
 def test_every_profiles_inversion_reproduces_the_requested_load(cal, load, rate):
-  r5 = eps_ff.r5_for_motion(load, rate, 0.0, cal=cal)
+  r5 = eps_ff.r5_for_motion(load, rate, cal, 0.0)
   assert eps_ff.firmware_output(r5, rate, cal=cal) == pytest.approx(load, abs=1e-6)
 
 
@@ -448,7 +458,7 @@ def test_crv_a220_reads_its_own_command_axis_and_predicts_r6_from_the_a040():
   # R6 is predicted from the A040 (shared 3121 / A-centre 16783 / NORM 1650), not measured; load is the CR-V's
   assert a220.r6_per_deg_s == a040.r6_per_deg_s == eps_ff.CRV_R6_CENTRE and a220.r6_angle_gain == a040.r6_angle_gain
   assert a220.load is eps_ff.CRV_LOAD and a220.e4_per_output == 4096.0
-  assert (a220.p_scale, a220.i_scale) == (eps_ff.CLARITY_P_SCALE, eps_ff.CLARITY_I_SCALE)
+  assert (a220.p_scale, a220.i_scale) == (eps_ff.DEFAULT_P_SCALE, eps_ff.DEFAULT_I_SCALE)
 
 
 def test_command_delay_hands_over_the_value_issued_that_long_ago():
@@ -461,7 +471,7 @@ def test_command_delay_hands_over_the_value_issued_that_long_ago():
 
 
 def test_command_delay_is_for_town_speeds_only():
-  cal = eps_ff.CLARITY_PMINUS5
+  cal = eps_ff.CLARITY_TRW_A020
   assert eps_ff.command_delay(cal, 0.0) == eps_ff.command_delay(cal, 10.0) == pytest.approx(0.12)
   assert eps_ff.command_delay(cal, 12.5) == pytest.approx(0.06)
   assert eps_ff.command_delay(cal, 15.0) == eps_ff.command_delay(cal, 30.0) == 0.0
@@ -470,7 +480,7 @@ def test_command_delay_is_for_town_speeds_only():
 
 def test_every_vehicle_has_its_own_command_delay():
   delays = {cal.name: cal.cmd_delay_s for _, cal in eps_ff.EPS_FIRMWARE_PROFILES.values()}
-  measured = {"clarity_pminus5": 0.12, "civic_c020": 0.15}
+  measured = {"clarity_trw_a020": 0.12, "civic_c020": 0.15}
   same_chassis_as_c020 = {"civic_c120": 0.15, "civic_tgg_a120": 0.15}
   for name, delay in delays.items():
     assert delay == {**measured, **same_chassis_as_c020}.get(name, eps_ff.CMD_DELAY_DEFAULT_S), name
@@ -493,14 +503,14 @@ def test_target_follows_the_curvature_one_command_delay_late(monkeypatch, v, lat
   assert first == 50 + late_frames
 
 def _rack_map():
-  rack_map = eps_fw_ctl.get_clarity_rack_map(_params(CLARITY_MODIFIED_FW))
+  rack_map = _get_rack_map(CLARITY_MODIFIED_FW)
   assert rack_map is not None
   return rack_map
 
 
 def test_rack_map_is_only_built_for_the_identified_car():
   _rack_map()
-  assert eps_fw_ctl.get_clarity_rack_map(_params(CLARITY_STOCK_FW)) is None
+  assert _get_rack_map(CLARITY_STOCK_FW) is None
 
 
 @pytest.mark.parametrize("v", [0.0, 7.0, 15.0, 30.0])
@@ -525,8 +535,8 @@ def test_rack_map_reproduces_the_identified_ratio():
   rack_map = _rack_map()
   angle, v = 154.0, 7.0
   lin = math.radians(vgr_physical_to_linear(angle, get_honda_vgr_inverse(HondaFlags.VGR_CLARITY_TRW_A020)))
-  ratio = float(np.interp(angle, rack.CLARITY_RATIO_BP, rack.CLARITY_RATIO_V))
-  expected = -lin / (ratio * 2.75 * (1.0 - rack.CLARITY_SLIP_FACTOR * v ** 2))
+  ratio = float(np.interp(angle, rack.CLARITY_TRW_A020_RACK.ratio_bp, rack.CLARITY_TRW_A020_RACK.ratio_v))
+  expected = -lin / (ratio * 2.75 * (1.0 - rack.CLARITY_TRW_A020_RACK.slip_factor * v ** 2))
   assert rack_map.curvature_from_angle(angle, v, 0.0) == pytest.approx(expected, rel=1e-3)
 
 
@@ -575,7 +585,7 @@ def test_c020_r6_is_its_measured_curve(band, measured):
 def test_a_table_r6_model_matches_the_clarity_and_the_c020_centre():
   # the A-table model, centre scaled by the divisor ratio, against telemetry: Clarity -121.5 at 0-15 deg,
   # C020 -153.2 at 0-15 deg (20647 / 16384 x -122 = -153.7)
-  assert eps_ff.R6_PER_CENTRE_DEG_S * 20647 / 16384 == pytest.approx(eps_ff.C020_R6_CENTRE, rel=0.01)
+  assert eps_ff.CLARITY_R6_CENTRE * 20647 / 16384 == pytest.approx(eps_ff.C020_R6_CENTRE, rel=0.01)
   assert eps_ff.C120_R6_CENTRE == pytest.approx(-122.0 * 20972 / 16384, abs=0.01)
   assert eps_ff.INSIGHT_R6_CENTRE == pytest.approx(-122.0 * 17613 / 16384, abs=0.01)
   assert eps_ff.CRV_R6_CENTRE == pytest.approx(-122.0 * 16783 / 16384, abs=0.01)
