@@ -359,6 +359,9 @@ struct StarPilotLateralState @0xc2243c65e0340384 {
   epsFfLoad @11 :Float32;         # firmware output counts the column load model says the motion needs
   epsFfDesiredRate @12 :Float32;  # deg/s, filtered desired steering-wheel rate it used
   epsFfWeight @13 :Float32;       # 0..1 fade-in; the command carries epsFfWeight * epsFfFeedforward
+  epsCalibration @14 :Text;        # the EPS image calibration it steers with (EpsFirmwareCalibration.name)
+  epsCommandDelay @15 :Float32;    # s, command delay applied this frame (the calibration's, faded with speed)
+  epsModelDelay @16 :Float32;      # s, lateral delay controlsd handed over (the delay told to the model + smoothing)
 }
 
 struct CustomReserved12 @0x9ccdc8676701b412 {
