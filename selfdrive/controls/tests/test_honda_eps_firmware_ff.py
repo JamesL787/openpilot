@@ -278,7 +278,7 @@ class _Params:
 
 
 def _clarity_lat_delay(v):
-  return honda_eps.scheduled_lateral_delay(eps_ff.CLARITY_LAT_DELAY_SCHEDULE, v)
+  return honda_eps.scheduled_lateral_delay(eps_ff.CLARITY_TRW_A020_LAT_DELAY_SCHEDULE, v)
 
 
 def _get_rack_map(fw):
@@ -306,9 +306,9 @@ def test_lateral_delay_follows_the_measured_execution_delay(v, delay):
 def test_every_vehicle_tells_the_model_the_measured_schedule():
   # the Clarity's measured schedule is every car's until a measurement on that car says otherwise
   for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values():
-    assert cal.lat_delay_schedule == eps_ff.CLARITY_LAT_DELAY_SCHEDULE, cal.name
+    assert cal.lat_delay_schedule == eps_ff.CLARITY_TRW_A020_LAT_DELAY_SCHEDULE, cal.name
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
-  assert honda_eps.lateral_delay_schedule(CP, _Params({"HondaEpsController": "1"})) == eps_ff.CLARITY_LAT_DELAY_SCHEDULE
+  assert honda_eps.lateral_delay_schedule(CP, _Params({"HondaEpsController": "1"})) == eps_ff.CLARITY_TRW_A020_LAT_DELAY_SCHEDULE
   assert honda_eps.lateral_delay_schedule(CP, _Params()) is None   # not on this controller: liveDelay
 
 
@@ -422,22 +422,23 @@ def test_clarity_trw_a020_profile_is_the_validated_build():
   # re-measured on routes 363/365/366/369, the scale word on routes 35e/360/361
   cal = eps_ff.CLARITY_TRW_A020
   assert cal.kp_v == (117, 148, 184, 220, 245, 257, 263, 265, 265) and cal.r5_per_key == 18.04
-  assert cal.r6_per_deg_s == eps_ff.CLARITY_R6_CENTRE == -122.0 and cal.scale_q8 == 256.0
+  assert cal.r6_per_deg_s == eps_ff.CLARITY_TRW_A020_R6_CENTRE == -122.0 and cal.scale_q8 == 256.0
   assert cal.r6_angle_bp is not None and cal.r6_angle_gain[0] == 1.0 and cal.r6_angle_gain[-1] > 1.15
-  assert cal.load == eps_ff.CLARITY_LOAD and cal.e4_per_output == 3840.0
+  assert cal.load == eps_ff.CLARITY_TRW_A020_LOAD and cal.e4_per_output == 3840.0
   assert (cal.p_scale, cal.i_scale) == ((1.25, 1.00, 1.25), (0.70, 0.95, 0.35))
 
 
 def test_nidec_civics_carry_the_teg_measurements():
   # the column load measured on the TEG-A010 telemetry drive and R6 from their own A table; tables stay the C020's
   for cal in (eps_ff.CIVIC_TBA_A030, eps_ff.CIVIC_TEG_A010):
-    assert cal.r6_per_deg_s == eps_ff.C120_R6_CENTRE and cal.r6_angle_gain == eps_ff.C120_R6_GAIN and cal.load == eps_ff.TEG_LOAD
+    assert cal.r6_per_deg_s == eps_ff.CIVIC_TBA_C120_R6_CENTRE and cal.r6_angle_gain == eps_ff.CIVIC_TBA_C120_R6_GAIN and cal.load == eps_ff.CIVIC_TEG_A010_LOAD
     assert (cal.r5_key_bp, cal.kp_key_bp, cal.e4_per_output) == (eps_ff.CIVIC_TBA_C020.r5_key_bp, eps_ff.CIVIC_TBA_C020.kp_key_bp, 3840.0)
   # the Nidec column asks for more than the C020's at every speed it was measured over
   for v in (3.0, 8.0, 15.0):
-    for load in (eps_ff.TEG_LOAD, eps_ff.CIVIC_LOAD):
+    for load in (eps_ff.CIVIC_TEG_A010_LOAD, eps_ff.CIVIC_TBA_C020_LOAD):
       assert load.k0 + load.k1 * v ** 2 < 0.0
-    assert eps_ff.TEG_LOAD.k0 + eps_ff.TEG_LOAD.k1 * v ** 2 < 1.4 * (eps_ff.CIVIC_LOAD.k0 + eps_ff.CIVIC_LOAD.k1 * v ** 2)
+    teg, c020 = eps_ff.CIVIC_TEG_A010_LOAD, eps_ff.CIVIC_TBA_C020_LOAD
+    assert teg.k0 + teg.k1 * v ** 2 < 1.4 * (c020.k0 + c020.k1 * v ** 2)
 
 
 @pytest.mark.parametrize("cal", ALL_PROFILES, ids=[p.name for p in ALL_PROFILES])
@@ -490,11 +491,11 @@ def test_every_ptm_car_steers_with_its_own_calibration(monkeypatch, candidate, f
 
 def test_crv_carries_its_own_measured_r6_and_load():
   # route 00000006--82bb552a2c: R6 least squares at norm 1450 scaled to the image's 1650; load fitted in m/s with roll
-  assert eps_ff.CRV_TLA_A040.r6_per_deg_s == eps_ff.CRV_R6_CENTRE and eps_ff.CRV_TLA_A040.r6_angle_gain == eps_ff.CRV_R6_GAIN
+  assert eps_ff.CRV_TLA_A040.r6_per_deg_s == eps_ff.CRV_TLA_A040_R6_CENTRE and eps_ff.CRV_TLA_A040.r6_angle_gain == eps_ff.CRV_TLA_A040_R6_GAIN
   # the owner's single V5 fit (-138.4 against 0x14A) sits inside the curve the A table gives
   assert eps_ff.firmware_r6(1.0, 0.0, eps_ff.CRV_TLA_A040) > -138.4 > eps_ff.firmware_r6(1.0, 180.0, eps_ff.CRV_TLA_A040)
-  assert eps_ff.CRV_TLA_A040.load is eps_ff.CRV_LOAD
-  assert -0.25 < eps_ff.CRV_LOAD.k1 < -0.10 and eps_ff.CRV_LOAD.kroll < 0.0
+  assert eps_ff.CRV_TLA_A040.load is eps_ff.CRV_TLA_A040_LOAD
+  assert -0.25 < eps_ff.CRV_TLA_A040_LOAD.k1 < -0.10 and eps_ff.CRV_TLA_A040_LOAD.kroll < 0.0
 
 
 def test_crv_a220_reads_its_own_command_axis_and_predicts_r6_from_the_a040():
@@ -513,9 +514,9 @@ def test_crv_a220_reads_its_own_command_axis_and_predicts_r6_from_the_a040():
   assert a220.key_ceiling(120 / 3.6) == 1774 and a220.key_ceiling(160 / 3.6) == 1330
   assert a040.key_ceiling(160 / 3.6) == 1774
   # R6 is predicted from the A040 (shared 3121 / A-centre 16783 / NORM 1650), not measured; load is the CR-V's
-  assert a220.r6_per_deg_s == a040.r6_per_deg_s == eps_ff.CRV_R6_CENTRE and a220.r6_angle_gain == a040.r6_angle_gain
-  assert a220.load is eps_ff.CRV_LOAD and a220.e4_per_output == 4096.0
-  assert (a220.p_scale, a220.i_scale) == (a040.p_scale, a040.i_scale) == (eps_ff.CRV_P_SCALE, eps_ff.CRV_I_SCALE) == ((1.0,) * 3,) * 2
+  assert a220.r6_per_deg_s == a040.r6_per_deg_s == eps_ff.CRV_TLA_A040_R6_CENTRE and a220.r6_angle_gain == a040.r6_angle_gain
+  assert a220.load is eps_ff.CRV_TLA_A040_LOAD and a220.e4_per_output == 4096.0
+  assert (a220.p_scale, a220.i_scale) == (a040.p_scale, a040.i_scale) == (eps_ff.CRV_TLA_A040_P_SCALE, eps_ff.CRV_TLA_A040_I_SCALE) == ((1.0,) * 3,) * 2
 
 
 def test_command_delay_hands_over_the_value_issued_that_long_ago():
@@ -654,11 +655,12 @@ def test_rack_map_asks_less_wheel_than_the_paramsd_ratio_in_tight_turns(monkeypa
 
 def test_insight_carries_its_own_measured_load_on_row_0():
   cal = eps_ff.INSIGHT_TXM_A040
-  assert cal.load is eps_ff.INSIGHT_LOAD and cal.load != eps_ff.CIVIC_LOAD
+  assert cal.load is eps_ff.INSIGHT_TXM_A040_LOAD and cal.load != eps_ff.CIVIC_TBA_C020_LOAD
   assert cal.r5_key_bp == (0, 111, 222, 333, 443, 665, 887, 1108, 1663)  # row 0, every Insight build and variant
-  assert cal.e4_per_output == 3840.0 and cal.r6_per_deg_s == eps_ff.INSIGHT_R6_CENTRE and cal.r6_angle_gain == eps_ff.INSIGHT_R6_GAIN
+  assert cal.e4_per_output == 3840.0 and cal.r6_per_deg_s == eps_ff.INSIGHT_TXM_A040_R6_CENTRE and cal.r6_angle_gain == eps_ff.INSIGHT_TXM_A040_R6_GAIN
   # the fitted column is lighter than the C020's at speed, which the carried-over load over-asked
-  assert abs(eps_ff.column_load(10., 0., 25., 0., load=eps_ff.INSIGHT_LOAD)) < abs(eps_ff.column_load(10., 0., 25., 0., load=eps_ff.CIVIC_LOAD))
+  insight = eps_ff.column_load(10., 0., 25., 0., load=eps_ff.INSIGHT_TXM_A040_LOAD)
+  assert abs(insight) < abs(eps_ff.column_load(10., 0., 25., 0., load=eps_ff.CIVIC_TBA_C020_LOAD))
 
 
 @pytest.mark.parametrize("cal", [c for c in ALL_PROFILES if not c.name.startswith("clarity")], ids=lambda c: c.name)
@@ -679,7 +681,7 @@ def test_c020_r6_is_its_measured_curve(band, measured):
 def test_a_table_r6_model_matches_the_clarity_and_the_c020_centre():
   # the A-table model, centre scaled by the divisor ratio, against telemetry: Clarity -121.5 at 0-15 deg,
   # C020 -153.2 at 0-15 deg (20647 / 16384 x -122 = -153.7)
-  assert eps_ff.CLARITY_R6_CENTRE * 20647 / 16384 == pytest.approx(eps_ff.C020_R6_CENTRE, rel=0.01)
-  assert eps_ff.C120_R6_CENTRE == pytest.approx(-122.0 * 20972 / 16384, abs=0.01)
-  assert eps_ff.INSIGHT_R6_CENTRE == pytest.approx(-122.0 * 17613 / 16384, abs=0.01)
-  assert eps_ff.CRV_R6_CENTRE == pytest.approx(-122.0 * 16783 / 16384, abs=0.01)
+  assert eps_ff.CLARITY_TRW_A020_R6_CENTRE * 20647 / 16384 == pytest.approx(eps_ff.CIVIC_TBA_C020_R6_CENTRE, rel=0.01)
+  assert eps_ff.CIVIC_TBA_C120_R6_CENTRE == pytest.approx(-122.0 * 20972 / 16384, abs=0.01)
+  assert eps_ff.INSIGHT_TXM_A040_R6_CENTRE == pytest.approx(-122.0 * 17613 / 16384, abs=0.01)
+  assert eps_ff.CRV_TLA_A040_R6_CENTRE == pytest.approx(-122.0 * 16783 / 16384, abs=0.01)
