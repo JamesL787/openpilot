@@ -124,6 +124,14 @@ def _should_publish_model_output(model_output, vipc_dropped_frames: int, externa
   return model_output is not None
 
 
+def drop_chestnut() -> None:
+  # comma master a0d47bcd08: every device that touched Chestnut memory waits on the Chestnut's timeline in synchronize(),
+  # so after a Chestnut failure the small model's syncs wait on a dead GPU. Forget those pending waits on fallback.
+  if "AMD" in Device._opened_devices:
+    for d in Device._opened_devices:
+      Device[d].pending.pop(Device["AMD"], None)
+
+
 # A big model slower than the camera hands back to the small model before selfdrived's modeldLagging would see it
 # (zoompilot / jetlink ce5f834). On frameDropPerc / 100 as modeld publishes it: one dropped frame is forgiven, a
 # second within about 6.5 s is not. Route 000003bb drove ~10 % drops at 52 ms a frame with the big model steering.
@@ -1594,10 +1602,6 @@ def main(demo=False):
   model = None
   small_model = None
   big_model = None
-  # External-GPU models dropped after a failure or disconnect stay referenced for the life of modeld. Freeing them
-  # means freeing their buffers on a Chestnut that just failed or vanished: each free can wait out the HCQ timeout,
-  # and on route 000003bb every fallback slept ~18 s and then died with SIGSEGV. comma master keeps its reference too.
-  retired_external_models: list = []
   model_lab_longitudinal = None
   model_lab_active = False
   model_lab_timings: list[float] = []
@@ -1668,6 +1672,8 @@ def main(demo=False):
       small_model_version,
       False,
     )
+    if big_model is None:
+      drop_chestnut()   # as comma master: a failed load must not leave the small model waiting on the Chestnut
     model = big_model if big_model is not None else small_model
     camera_path.validate_model(model)
     if big_model is not None:
@@ -1828,16 +1834,13 @@ def main(demo=False):
     if external_gpu_active and run_count % ModelConstants.MODEL_FREQ == 0 and not usbgpu_present():
       if small_model is None:
         raise RuntimeError("External-GPU model has no active small fallback model")
-      if model is not small_model:
-        retired_external_models.append(model)   # Model Laboratory's lateral runner; big_model is retained below
       model = small_model
       camera_path.validate_model(model)
       was_model_lab_active = model_lab_active
       model_lab_active = False
-      retired_external_models.extend(m for m in (big_model, model_lab_longitudinal) if m is not None and m not in retired_external_models)
+      drop_chestnut()
       model_lab_longitudinal = None
       external_gpu_active = False
-      big_model = None
       model_lab_error = "Chestnut disconnected; using the active small model" if was_model_lab_active else model_lab_error
       params.put_bool("UsbGpuPresent", False)
       params.put_bool("UsbGpuActive", False)
@@ -1948,12 +1951,8 @@ def main(demo=False):
         cloudlog.exception("Model Laboratory inference failed, falling back to the active small model")
         if small_model is None:
           raise RuntimeError("Model Laboratory has no active small fallback model") from None
-        if model is not small_model:
-          retired_external_models.append(model)   # the lateral runner
         model = small_model
         camera_path.validate_model(model)
-        if model_lab_longitudinal is not None:
-          retired_external_models.append(model_lab_longitudinal)
         model_lab_longitudinal = None
         model_lab_active = False
         model_lab_error = "Model Laboratory inference failed; using the active small model"
@@ -1970,9 +1969,7 @@ def main(demo=False):
         cloudlog.exception("external GPU model failed, falling back to active small model")
         model = small_model
         camera_path.validate_model(model)
-        if big_model is not None:
-          retired_external_models.append(big_model)
-        big_model = None
+      drop_chestnut()
       params.put_bool("UsbGpuActive", False)
       external_gpu_active = False
       params.put("ModelVersion", model.policy_generation)

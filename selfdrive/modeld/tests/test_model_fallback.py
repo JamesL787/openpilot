@@ -91,3 +91,30 @@ def test_big_model_drop_gate_needs_an_external_model_and_a_small_fallback():
   assert not modeld._big_model_behind(False, True, 0.5)
   assert not modeld._big_model_behind(True, False, 0.5)
   assert not modeld._big_model_behind(True, True, modeld.BIG_MODEL_DROP_LIMIT)
+
+
+class _FakeDevices:
+  def __init__(self, names):
+    self._opened_devices = set(names)
+    self.devs = {n: type("Dev", (), {"pending": {}})() for n in names}
+
+  def __getitem__(self, name): return self.devs[name]
+
+
+def test_drop_chestnut_forgets_every_pending_wait_on_the_chestnut(monkeypatch):
+  fake = _FakeDevices(["AMD", "QCOM", "CPU"])
+  amd, qcom, cpu = fake["AMD"], fake["QCOM"], fake["CPU"]
+  qcom.pending.update({amd: 7, cpu: 3})
+  cpu.pending[amd] = 9
+  monkeypatch.setattr(modeld, "Device", fake)
+  modeld.drop_chestnut()
+  assert qcom.pending == {cpu: 3}   # only the Chestnut's wait goes
+  assert cpu.pending == {}
+
+
+def test_drop_chestnut_without_a_chestnut_is_a_noop(monkeypatch):
+  fake = _FakeDevices(["QCOM", "CPU"])
+  fake["QCOM"].pending[fake["CPU"]] = 1
+  monkeypatch.setattr(modeld, "Device", fake)
+  modeld.drop_chestnut()
+  assert fake["QCOM"].pending == {fake["CPU"]: 1}
