@@ -36,6 +36,7 @@ from openpilot.system.hardware.usb import (
   set_usb_state,
 )
 from openpilot.system.hardware.chestnut.status import ChestnutStatus
+from openpilot.starpilot.assets.model_manager import chestnut_model_installed
 from openpilot.system.version import terms_version, training_version
 from openpilot.system.athena.registration import UNREGISTERED_DONGLE_ID
 
@@ -344,6 +345,7 @@ def hardware_thread(end_event, hw_queue) -> None:
   power_monitor = PowerMonitoring()
   chestnut = Chestnut() if AGNOS else None
   chestnut_status = ChestnutStatus() if AGNOS else None
+  chestnut_compiled, chestnut_compiled_checked = False, None
 
   uptime_offroad: float = params.get("UptimeOffroad", return_default=True)
   uptime_onroad: float = params.get("UptimeOnroad", return_default=True)
@@ -432,6 +434,17 @@ def hardware_thread(end_event, hw_queue) -> None:
       chestnut_expected = active_big_model.lower() not in ("", "none") or (
         isinstance(model_lab_config, dict) and bool(model_lab_config.get("enabled"))
       )
+      if started_ts is not None:
+        chestnut_compiled = params.get_bool("UsbGpuCompiled")   # modeld's own answer, set when it starts
+        chestnut_compiled_checked = None
+      elif chestnut_compiled_checked is None or time.monotonic() - chestnut_compiled_checked > 10.0:
+        # offroad UsbGpuCompiled is always cleared, so it showed "not installed" for installed models: ask the disk
+        try:
+          chestnut_compiled = chestnut_model_installed(params)
+        except Exception:
+          cloudlog.exception("chestnut model install check failed")
+          chestnut_compiled = True   # unknown is not "not installed"
+        chestnut_compiled_checked = time.monotonic()
       chestnut_state = sm["chestnutState"]
       chestnut_valid = sm.alive["chestnutState"] and sm.valid["chestnutState"]
       chestnut_status.update(
@@ -441,7 +454,7 @@ def hardware_thread(end_event, hw_queue) -> None:
         chestnut.failed,
         params.get_bool("UsbGpuLoading"),
         params.get("UsbGpuActive"),
-        params.get_bool("UsbGpuCompiled"),
+        chestnut_compiled,
         chestnut_state if chestnut_valid else None,
         set_offroad_alert_if_changed,
       )

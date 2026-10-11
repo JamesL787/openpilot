@@ -273,6 +273,20 @@ def model_accelerator_artifact_installed(model_key: str, accelerator: str = MODE
   )
 
 
+def chestnut_model_installed(params) -> bool:
+  """Whether the selected Chestnut model (or both Model Laboratory runners) is built on disk, decided as modeld decides
+  at start. UsbGpuCompiled only says that once modeld has run, and it is cleared on boot and on every offroad
+  transition, so offroad checks read the disk instead."""
+  big_model = get_model_profile(params, "big")[0]
+  if big_model and model_uses_external_gpu(big_model) and file_chunked_exists(MODELS_PATH / f"{big_model}_driving_tinygrad.pkl"):
+    return True
+  config = load_model_lab_config(params)
+  if config.get("enabled"):
+    roles = [canonical_model_key(config.get(key) or "") for key in ("lateralModel", "longitudinalModel")]
+    return all(roles) and all(model_accelerator_artifact_installed(role) for role in roles)
+  return False
+
+
 def external_gpu_available() -> bool:
   """Return whether the supported external GPU link is ready for modeld."""
   try:
