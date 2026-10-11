@@ -654,7 +654,7 @@
       {
         "key": "HondaEpsFirmwareVgr",
         "label": "Use Firmware VGR Table",
-        "description": "Convert curvature with the EPS firmware's position table on top of the learned steer ratio instead of the road-measured effective-ratio curve.",
+        "description": "For a car without a yaw-fitted rack map: convert curvature with the EPS firmware's position table instead of the road-measured ratio curve. Cars with a rack map always use it.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LateralTune",
