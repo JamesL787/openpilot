@@ -11088,3 +11088,17 @@ reads as matching stock Bosch-A ACC with light brake taps; the coasts removed in
 and lagged. It now fits the last 1.0 s. Closed-loop replay: -1.77 -> -1.44 (car -1.60), braking ~3 s earlier, min TTC
 4.9 -> 7.0 s. Testing agent: 21 of 23 windows identical, 2 within 0.01; 311 86:35 sim -4.27 -> -4.38 is sim carry-over
 with identical radar input. Tests: 3 new in `test_bosch_a_coast_fit_window.py`; Bosch-A radar tests 175 pass. Lint clean.
+
+## 241. A Bosch-A lead's braking reading is floored near a confident camera's (D-105). Replay + static only, not driven.
+
+31b 14:57 (bookmark, jolt): the radar read a real lead's braking at -2.5 vs camera -0.3, latching the Stock Brake Feel
+emergency path. aLeadK is now floored at min(camera accel, 0) - 1.0 while a confident camera lead sits at the radar
+lead's range. Closed-loop replay: 14:57 -2.00 -> -1.11, 319 3:31 -2.08 -> -1.54, 319 42:23 -2.43 -> -2.16. Accepted cost:
+2f2 15:07 (real hard brake) reaches full braking 0.45 s later, min gap 20.0 -> 18.0 m, peak unchanged (-3.51 -> -3.52).
+
+## 242. A lead switch onto a nearer, slower car is floored at the camera's speed (D-106). Replay + static only, not driven.
+
+31b 14:34 (bookmark): both sensors switched to a nearer car; the range slide read as closing -13.7 m/s and braking -4.2,
+and the car braked -3.5 below the lead's speed. A SlideBound entry now catches the range drop that neither sensor's speed
+explains. Closed-loop replay: plan -3.63 -> -2.55, sim -4.37 -> -3.67, min gap 33.4 -> 26.1 m. Only hit in an offline
+screen over 31b/319/311/2f5/299. Tests: 10 new in `test_radard_lead_switch.py`; radard tests 153 pass. Lint clean.

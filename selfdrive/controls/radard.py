@@ -256,6 +256,44 @@ SLIDE_CAM_SLOPE = 1.0
 SLIDE_HOLD_S = 4.0
 SLIDE_MIN_GAP = 3.0
 SLIDE_MIN_D = 20.0
+# D-106 LEAD_SWITCH: SlideBound also enters, with no decel or camera-slope test, when both sensors switch from a far
+# lead onto a nearer, slower car. Route 31b 14:34 (bookmark, night pack): track 28 held a lead at ~84 m / ~23 m/s; a
+# nearer car (~17.5 m/s) took over the same track and the camera lead. Camera x stepped 66 -> 50 m in ~0.5 s and the
+# radar range slid 60 -> 41 m while U11 vRel said only -6..-8, so the off-rail range assist published vRel -13.7, the
+# Doppler blend gave aLeadK -4.2 and STOCK_FEEL_EMERGENCY latched past the SBF depth cap: the car braked -3.5 down to
+# 14.6 m/s behind a 17.5 m/s lead. The camera speed was falling, which blocks the D-102 entry, so this entry reads ranges:
+#   the camera range fell >= LEAD_SWITCH_CAM_EXCESS_M further than its own speed explains over LEAD_SWITCH_WINDOW_S
+#   (that step latched for LEAD_SWITCH_WINDOW_S, since the radar slide trails it by ~0.4 s), AND the same radar track's
+#   range fell >= LEAD_SWITCH_RADAR_EXCESS_M further than its U11 vRel explains, plus the D-102 camera gates (same
+#   object, prob > 0.9 for 1 s, speed sd < 1.5, camera >= SLIDE_MIN_GAP faster). Floors and hold are D-102's.
+# Replay (car-matched, closed-loop, with D-105; the same without it): 31b 14:34 plan -3.63 -> -2.55, sim accel -4.37 ->
+# -3.67, sim min speed 15.2 -> ~17 m/s; closest gap 33.4 -> 26.1 m. In 15 replay windows (real brakes, stops, 2f5
+# emergency, 299 s49) it fires only there, and in 11 protected groups (297/298/2a6/2f2/311/312) it never raises a vRel.
+# Offline screen over 31b/319/311/2f5/299: 31b 14:34 is the only hit; nearest real brake, 311 86:42,
+# peaks at camera excess -7.3 m, radar excess -5.8 m. Blocking the range assist too only reached -2.31; left alone.
+# Risk: single positive example, and the floor trusts the camera's speed for the new car (31b: ~2.5 m/s fast). A slow
+# cut-in that slides the SAME radar track while the camera misreads it would be under-braked for up to SLIDE_HOLD_S.
+LEAD_SWITCH = True
+LEAD_SWITCH_WINDOW_S = 1.0
+LEAD_SWITCH_CAM_EXCESS_M = 10.0
+LEAD_SWITCH_RADAR_EXCESS_M = 7.0
+
+# D-105 CAM_A_BOUND: a Bosch-A lead's aLeadK goes no lower than min(camera accel, 0) - CAM_A_BOUND_MARGIN while a
+# confident camera lead (prob > 0.9 for 1 s) sits at its range (within max(10 m, 20%)), dRel >= CAM_A_BOUND_MIN_D, on
+# every lead slot carrying that track. Route 31b 14:57 (bookmark, jolt): the real lead went 17.5 -> 14 m/s at 35 m,
+# aLeadK read -2.5 against camera accel -0.3, STOCK_FEEL_EMERGENCY (aLeadK <= -2.0) latched and the car stabbed to -2.0
+# within 0.75 s, then let go. That latch fired 50+ times over 311/319/31b on leads really slowing at -0.5..-1.5; the one
+# real emergency (2f5 10:01) had camera accel -1.9, so it still latches. Replay (car-matched, closed-loop, 15 windows):
+# 31b 14:57 -2.00 -> -1.11 (gentle onset, gap 1.6 m shorter, still 27 m), 319 3:31 -2.08 -> -1.54, 319 42:23 -2.43 ->
+# -2.16; 311 8:54 (real slowdown, camera late) -3.45 -> -3.36, gap 0.2 m shorter; 2f5 10:01, 299 s49, stops, 311 41:34
+# unchanged. Cost, accepted by the owner (2026-10-11): 2f2 15:07, a real hard brake (lead closing ~8 m/s, camera
+# accel lagging), reaches -3.0 0.45 s later; closed loop min gap 20.0 -> 18.0 m, peak -3.51 -> -3.52, sim -3.98 -> -3.95.
+# Protected groups otherwise only shallower: 2f2 7:06 -1.07 -> -0.15 (car -0.47), 312b 13:34 -1.30 -> -0.89 (car -1.66),
+# gaps within 0.5 m; 2a6 4:08 onset +0.1..+1.1 shallower, min unchanged. Margin 0.5 rejected: 311 8:54 gap 12.7 ->
+# 9.5 m, 311 54:40 -2.87 -> -3.47. aLeadK only: vLead/vRel are untouched, so a closing lead still brakes.
+CAM_A_BOUND = True
+CAM_A_BOUND_MARGIN = 1.0
+CAM_A_BOUND_MIN_D = 15.0
 
 def birth_rail_vision_agrees(d_rel: float, y_rel: float, vision_lead: tuple[float, float, float, float] | None) -> bool:
   """D-077 LOW moving test: a confident model lead at the track's range and lateral offset, moving >= MIN_LEAD."""
@@ -2024,16 +2062,43 @@ def get_adjacent_stopped(tracks: dict[int, Track], model_data: capnp._DynamicStr
 
 
 
+def lead_switch_excess(hist, t: float, trk: int):
+  """D-106. (camera excess, radar excess) in m over the last LEAD_SWITCH_WINDOW_S: how much further each range fell
+  than its own speed says (negative = fell further). hist rows are (t, v_ego, cam_x, cam_v, track id, track dRel,
+  track U11 vRel). None when the history is too short or the track is younger than the window."""
+  t0 = t - LEAD_SWITCH_WINDOW_S
+  a0 = [x for x in hist if abs(x[0] - t0) <= 0.15]
+  a1 = [x for x in hist if t - 0.3 < x[0] <= t]
+  w = [x for x in hist if t0 <= x[0] <= t]
+  if len(a0) < 3 or len(a1) < 3 or len(w) < 10:
+    return None
+  cam_pred = -float(np.trapezoid([x[1] - x[3] for x in w], [x[0] for x in w]))
+  cam_ex = float(np.median([x[2] for x in a1]) - np.median([x[2] for x in a0])) - cam_pred
+  r = [x for x in w if x[4] == trk]
+  if len(r) < 10 or r[0][0] > t0 + 0.15:
+    return None
+  rad_pred = float(np.trapezoid([x[6] for x in r], [x[0] for x in r]))
+  return cam_ex, (r[-1][5] - r[0][5]) - rad_pred
+
+
 class SlideBound:
   """D-102: floor a sliding lead's speed at the camera's (see SLIDE_BOUND)."""
   def __init__(self):
     self.hist: deque = deque(maxlen=40)  # (t, track, vLead, prob, cam_v), model cadence, 2 s
     self.track = -1
     self.t_latch = 0.0
+    # D-106: (t, v_ego, cam_x, cam_v, track id, track dRel, track U11 vRel), model cadence, 2 s
+    self.switch_hist: deque = deque(maxlen=40)
+    self.cam_step_t = -1e9
+    self.switch_entries = 0
 
-  def step(self, lead, others, vis, cam_v: float, t: float) -> bool:
+  def step(self, lead, others, vis, cam_v: float, t: float, v_ego: float = 0.0, track=None) -> bool:
     trk = int(lead.radarTrackId) if lead.status and lead.radar else -1
     self.hist.append((t, trk, float(lead.vLead), float(vis.prob), cam_v))
+    if track is not None and trk >= 0:
+      self.switch_hist.append((t, v_ego, float(vis.x[0]), cam_v, trk, float(track.dRel), float(track.vRel)))
+    else:
+      self.switch_hist.append((t, v_ego, float(vis.x[0]), cam_v, -1, 0.0, 0.0))
     if trk < 0 or lead.dRel < SLIDE_MIN_D:
       self.track = -1
       return False
@@ -2047,9 +2112,19 @@ class SlideBound:
       cam2 = [x for x in self.hist if x[0] > t - 2.0]
       slope = float(np.polyfit([x[0] for x in cam2], [x[4] for x in cam2], 1)[0]) if len(cam2) >= 16 else -99.0
       old = [x for x in self.hist if t - 0.85 <= x[0] <= t - 0.65 and x[1] == trk]
-      if not (same_obj and len(cam1) >= 8 and all(x[3] > 0.9 for x in cam1) and float(np.std([x[4] for x in cam1])) < 1.5
-              and slope > -SLIDE_CAM_SLOPE and cam_v - float(lead.vLead) >= SLIDE_MIN_GAP and old
-              and (float(lead.vLead) - old[0][2]) / (t - old[0][0]) <= -SLIDE_DECEL):
+      cam_ok = (same_obj and len(cam1) >= 8 and all(x[3] > 0.9 for x in cam1) and float(np.std([x[4] for x in cam1])) < 1.5
+                and cam_v - float(lead.vLead) >= SLIDE_MIN_GAP)
+      slide = cam_ok and slope > -SLIDE_CAM_SLOPE and old and (float(lead.vLead) - old[0][2]) / (t - old[0][0]) <= -SLIDE_DECEL
+      switch = False
+      if LEAD_SWITCH:
+        ex = lead_switch_excess(self.switch_hist, t, trk)
+        if ex is not None and ex[0] <= -LEAD_SWITCH_CAM_EXCESS_M:
+          self.cam_step_t = t
+        switch = (cam_ok and not slide and ex is not None and t - self.cam_step_t <= LEAD_SWITCH_WINDOW_S
+                  and ex[1] <= -LEAD_SWITCH_RADAR_EXCESS_M)
+        if switch:
+          self.switch_entries += 1
+      if not (slide or switch):
         self.track = -1
         return False
       self.track, self.t_latch = trk, t
@@ -2068,6 +2143,30 @@ class SlideBound:
     return fired
 
 
+class CamABound:
+  """D-105: floor a Bosch-A lead's aLeadK at the confident camera lead's accel (see CAM_A_BOUND)."""
+  def __init__(self):
+    self.hist: deque = deque(maxlen=20)  # (t, prob), model cadence, 1 s
+
+  def step(self, lead, others, vis, t: float) -> bool:
+    self.hist.append((t, float(vis.prob)))
+    if not (lead.status and lead.radar and lead.dRel >= CAM_A_BOUND_MIN_D):
+      return False
+    cam1 = [x for x in self.hist if x[0] > t - 1.0]
+    if len(cam1) < 8 or not all(x[1] > 0.9 for x in cam1):
+      return False
+    if abs(float(lead.dRel) - float(vis.x[0])) >= max(10.0, 0.2 * float(lead.dRel)):
+      return False
+    a_floor = min(float(vis.a[0]), 0.0) - CAM_A_BOUND_MARGIN
+    trk = int(lead.radarTrackId)
+    fired = False
+    for ld in [lead] + [o for o in others if o.status and o.radar and int(o.radarTrackId) == trk]:
+      if float(ld.aLeadK) < a_floor:
+        ld.aLeadK = a_floor
+        fired = True
+    return fired
+
+
 class RadarD:
   def __init__(self, radar_ts: float = DT_MDL, delay: float = 0.0, g90_radar_filter: bool = False,
                honda_bosch_a_radar: bool = False):
@@ -2079,6 +2178,8 @@ class RadarD:
     self.far_rail_bound_count = 0
     self.slide_bound = SlideBound()
     self.slide_bound_count = 0
+    self.cam_a_bound = CamABound()
+    self.cam_a_bound_count = 0
     self.far_rail_hist = [deque(maxlen=FAR_RAIL_HIST_FRAMES) for _ in range(2)]  # per model lead slot
     # The lead KF consumes Bosch measurements at the physical radar cadence. Lead probability
     # filters, however, consume modelV2 leads every model cycle and must retain model-loop timing.
@@ -2343,6 +2444,10 @@ class RadarD:
 
       if SLIDE_BOUND and self.honda_bosch_a_radar:
         self._slide_bound(self.radar_state.leadOne, leads_v3[0], model_v_ego, sm.logMonoTime['modelV2'] * 1e-9)
+      if CAM_A_BOUND and self.honda_bosch_a_radar:
+        others = [self.radar_state.leadTwo] + ([self.radar_state.leadOnpath] if ONPATH_RADAR_ADOPT else [])
+        if self.cam_a_bound.step(self.radar_state.leadOne, others, leads_v3[0], sm.logMonoTime['modelV2'] * 1e-9):
+          self.cam_a_bound_count += 1
 
       for i, lead in enumerate((self.radar_state.leadOne, self.radar_state.leadTwo)):
         if lead.status and getattr(lead, "radar", False):
@@ -2370,7 +2475,8 @@ class RadarD:
 
   def _slide_bound(self, lead, vis, model_v_ego: float, t: float) -> None:
     others = [self.radar_state.leadTwo] + ([self.radar_state.leadOnpath] if ONPATH_RADAR_ADOPT else [])
-    if self.slide_bound.step(lead, others, vis, self.v_ego + float(vis.v[0]) - model_v_ego, t):
+    track = self.tracks.get(int(lead.radarTrackId)) if lead.status and lead.radar else None
+    if self.slide_bound.step(lead, others, vis, self.v_ego + float(vis.v[0]) - model_v_ego, t, self.v_ego, track):
       self.slide_bound_count += 1
 
   def publish(self, pm: messaging.PubMaster):

@@ -2405,3 +2405,61 @@ the tested env arm. Testing agent (Job), COASTWIN-only A/B, 23 windows incl. the
 0.01. In 311 s84 the only other change is 86:35, sim accel -4.27 -> -4.38: radard's leadOne is identical in both arms
 there (154 differing ticks, all vRel, all in 84:13-84:21); the difference is the sim car's state carried over from
 84:21 (+0.03 m/s, -0.5 m gap).
+
+## D-105 — A Bosch-A lead's braking reading is floored near a confident camera's (STATUS 241, 2026-10-11, replay only, not driven)
+
+**Problem (owner, 2026-10-10 bookmark):** route 0000031b 14:57, a jolt: the car stabbed to -2.0 within 0.75 s, then let go.
+
+**Cause:** the lead really slowed, 17.5 -> 14 m/s at 35 m. The radar read its braking (aLeadK) at -2.5 while the camera
+read -0.3. aLeadK <= -2.0 latches STOCK_FEEL_EMERGENCY, which bypasses the Stock Brake Feel shaping. That latch fired 50+
+times over 311/319/31b on leads really slowing at -0.5..-1.5. The one real emergency in the set (2f5 10:01) had camera
+accel -1.9.
+
+**Decision:** `CAM_A_BOUND` (radard.py, class `CamABound`, Bosch-A only, default ON). While the camera lead is confident
+(prob > 0.9 for 1 s) and at the radar lead's range (within max(10 m, 20 %)), with dRel >= `CAM_A_BOUND_MIN_D` (15 m),
+aLeadK is raised to at least min(camera accel, 0) - `CAM_A_BOUND_MARGIN` (1.0), on leadOne and on leadTwo / leadOnpath
+when they carry the same track. It runs after SlideBound. vLead / vRel are untouched, so a closing lead still brakes.
+Lift-only, nothing deleted (D-041/D-042).
+
+**Evidence (closed-loop replay, car-matched, 15 windows):** 31b 14:57 -2.00 -> -1.11 with a gentle onset (gap 1.6 m
+shorter, still 27 m; fidelity v RMSE 0.09, corr 0.991); 319 3:31 -2.08 -> -1.54; 319 42:23 -2.43 -> -2.16; 311 8:54
+(real, camera late) -3.45 -> -3.36, gap 0.2 m shorter; 2f5 10:01, 299 s49, stops and 311 41:34 unchanged. Protected
+groups (297a/297b/298/2a6/2f2/311/312a/312b/312c; the 313/305/308 rlogs are no longer on disk): only shallower ticks.
+
+**Accepted cost (owner, 2026-10-11, "if it doesn't make the brake worse I'm ok with sacrificing some distance"):**
+2f2 15:07 is a real hard brake (lead closing ~8 m/s, camera accel lagging). Closed loop, full braking (-3.0) comes
+0.45 s later and the closest gap is 18.0 m instead of 20.0 m. The brake is not deeper: plan -3.51 -> -3.52, sim
+-3.98 -> -3.95. Also shallower: 2f2 7:06 -1.07 -> -0.15 (car -0.47), 312b 13:34 -1.30 -> -0.89 (car -1.66).
+
+**Rejected:** margin 0.5. 311 8:54 lost 3.2 m of gap (12.7 -> 9.5) and 311 54:40 deepened -2.87 -> -3.47.
+
+**Lever:** `CAM_A_BOUND = False` restores the previous behaviour exactly.
+
+## D-106 — A lead switch onto a nearer, slower car is floored at the camera's speed (STATUS 242, 2026-10-11, replay only, not driven)
+
+**Problem (owner, 2026-10-10 bookmark):** route 0000031b 14:34, at night in a pack: the car braked -3.5 down to
+14.6 m/s behind a 17.5 m/s lead. "That was dangerous for a lead following behind me."
+
+**Cause:** track 28 and the camera lead both switched from a car at ~84 m / ~23 m/s to a nearer car at ~17.5 m/s. The
+camera range stepped 66 -> 50 m in ~0.5 s and the radar range slid 60 -> 41 m while U11 vRel said only -6..-8. The
+off-rail range assist read the slide as vRel -13.7, the Doppler blend gave aLeadK -4.2, and STOCK_FEEL_EMERGENCY
+latched past the Stock Brake Feel depth cap. The camera speed was falling, which blocks the D-102 SlideBound entry.
+
+**Decision:** `LEAD_SWITCH` (radard.py, a second SlideBound entry, default ON). Over the last `LEAD_SWITCH_WINDOW_S`
+(1.0 s), the camera range fell >= `LEAD_SWITCH_CAM_EXCESS_M` (10 m) further than the camera's own speed explains
+(that step is held for 1 s, because the radar slide trails it by ~0.4 s), and the same radar track's range fell >=
+`LEAD_SWITCH_RADAR_EXCESS_M` (7 m) further than its U11 vRel explains. The D-102 camera gates still apply (same object,
+prob > 0.9 for 1 s, speed stdev < 1.5, camera >= 3 m/s faster than vLead), and so do D-102's floors (camera speed - 1.0,
+camera accel - 0.5) and hold (4 s). The range assist is untouched: blocking it as well only reached -2.31, and it is
+shared with real far-approach fixes. Nothing deleted (D-041/D-042).
+
+**Evidence (closed-loop replay, car-matched):** 31b 14:34 plan -3.63 -> -2.55, sim accel -4.37 -> -3.67, sim min speed
+15.2 -> ~17 m/s, closest gap 33.4 -> 26.1 m; fidelity v RMSE 1.03, corr 0.955. Same with or without D-105. Fires nowhere
+else in the 15 windows. In the protected groups it never raises a vRel, and with D-105 off 2f2 15:07 is tick-identical.
+Offline screen over 31b/319/311/2f5/299: 31b 14:34 is the only hit. The nearest real brake, 311 86:42, peaks at camera
+excess -7.3 m and radar excess -5.8 m.
+
+**Risk:** one positive example. The floor trusts the camera's speed for the new car, which read ~2.5 m/s fast at 31b. A
+slow cut-in that slides the same radar track while the camera misreads it would be under-braked for up to 4 s.
+
+**Lever:** `LEAD_SWITCH = False` restores the previous behaviour exactly.
