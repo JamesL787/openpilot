@@ -40,6 +40,7 @@ from openpilot.selfdrive.controls.lib.eps_firmware_ff import (
   EpsFirmwareFeedforward,
   EpsFirmwareLateralCore,
   EpsFirmwareProfile,
+  OVERRIDE_FADE_UP_S_DEFAULT,
   command_delay,
   select_eps_firmware_profile,
 )
@@ -155,6 +156,7 @@ class LatControlHondaEps(LatControl):
       _get_param_float(self.params, key, NRDR_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0)
       for key in ("HondaTorqueOutputLpfTauLowSpeed", "HondaTorqueOutputLpfTauStandard", "HondaTorqueOutputLpfTauHighway")
     )
+    self.core.override_fade_up_s = _get_param_float(self.params, "HondaOverrideFadeUpSecs", OVERRIDE_FADE_UP_S_DEFAULT, 0.0, 10.0)
 
   def reset(self):
     super().reset()
