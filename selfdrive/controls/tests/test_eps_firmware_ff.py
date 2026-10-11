@@ -461,11 +461,21 @@ def test_command_delay_hands_over_the_value_issued_that_long_ago():
 
 
 def test_command_delay_is_for_town_speeds_only():
-  def delay(v):
-    return float(np.interp(v, eps_fw_ctl.CMD_DELAY_BP, eps_fw_ctl.CMD_DELAY_V))
-  assert delay(0.0) == delay(8.0) == delay(10.0) == pytest.approx(0.12)
-  assert delay(15.0) == delay(30.0) == 0.0
+  cal = eps_ff.CLARITY_PMINUS5
+  assert eps_ff.command_delay(cal, 0.0) == eps_ff.command_delay(cal, 10.0) == pytest.approx(0.12)
+  assert eps_ff.command_delay(cal, 12.5) == pytest.approx(0.06)
+  assert eps_ff.command_delay(cal, 15.0) == eps_ff.command_delay(cal, 30.0) == 0.0
   assert eps_fw_ctl.CommandDelay(DT_CTRL, 0.2).update(3.0, 0.0) == 3.0
+
+
+def test_every_vehicle_has_its_own_command_delay():
+  delays = {cal.name: cal.cmd_delay_s for _, cal in eps_ff.EPS_FIRMWARE_PROFILES.values()}
+  measured = {"clarity_pminus5": 0.12, "civic_c020": 0.15}
+  same_chassis_as_c020 = {"civic_c120": 0.15, "civic_tgg_a120": 0.15}
+  for name, delay in delays.items():
+    assert delay == {**measured, **same_chassis_as_c020}.get(name, eps_ff.CMD_DELAY_DEFAULT_S), name
+  # the default is the smaller measured value, so an unmeasured car cannot be pushed late
+  assert eps_ff.CMD_DELAY_DEFAULT_S == min(measured.values())
 
 
 @pytest.mark.parametrize("v, late_frames", [(8.0, 12), (20.0, 0)])
