@@ -48,7 +48,7 @@ def test_wrong_platform_or_eps_cannot_select_vfn(changes):
     controller(**changes)
 
 
-# Every admitted car but the Clarity: each runs its own calibration, load and trims, and the Civic command delay.
+# Every admitted car but the Clarity: each runs its own calibration, load, trims and command delay.
 NON_CLARITY_CARS = [
   {"fingerprint": "HONDA_CIVIC_BOSCH", "firmware": b"39990-TBA-C020"},
   {"fingerprint": "HONDA_CIVIC_BOSCH", "firmware": b"39990-TBA-C120"},
@@ -89,8 +89,10 @@ def test_non_clarity_wrapper_uses_its_own_complete_tune_without_mutating_carpara
 
 
 @pytest.mark.parametrize("changes", NON_CLARITY_CARS)
-@pytest.mark.parametrize("speed,delay", [(5., .175), (12.5, .10), (20., .025)])
-def test_non_clarity_wrapper_uses_the_civic_command_delay_and_preserves_shared_steer_ratio(changes, speed, delay):
+@pytest.mark.parametrize("speed,weight", [(5., 1.), (12.5, .5), (20., 0.)])
+def test_non_clarity_wrapper_uses_its_own_command_delay_and_preserves_shared_steer_ratio(changes, speed, weight):
+  low = .145 if changes["fingerprint"] == "HONDA_CRV_5G" else .175  # source delay + 0.025 port compensation
+  delay = weight * low + (1. - weight) * .025
   control = controller(**changes)
   cp, _ = car(**changes)
   selection = resolve_steer_ratio_selection(cp, {"NrdrSteerRatioMode": 3})

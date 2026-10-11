@@ -115,8 +115,9 @@ def test_non_clarity_keeps_shared_prediction_delay_but_not_saved_clarity_command
   assert prediction_delay_schedule(profile) is None
   assert prediction_delay_schedule(CLARITY_PROFILE) is not None
   settings = {"NrdrLateralController": 1, "NrdrYawCommandDelayLow": .3, "NrdrYawCommandDelayHigh": .3}
+  low = .145 if profile is CRV_PROFILE else .175  # each image's source delay + 0.025 port compensation
   assert [command_delay(settings, speed, calibration=profile.calibration) for speed in (0., 10., 12.5, 15., 30.)] == \
-    pytest.approx([.175, .175, .10, .025, .025])
+    pytest.approx([low, low, (low + .025) / 2, .025, .025])
   assert all(tuning_write_allowed(settings, key) for key in ("LagdToggle", "LagdToggleDelay"))
 
 

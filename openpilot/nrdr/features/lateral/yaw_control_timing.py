@@ -3,9 +3,10 @@
 Ported by JamesL787 in nrdr/openpilot PR #18 (ab868ea15561dd65a4bc52199ec11abbbd4bf789),
 from vfn-yaw-trim a434a79b19 (096aedb9 delay refit, 0fb4a6dc command delay).
 Clarity's measured table replaces the temporary fixed 0.30-second override.
-Civic has no measured prediction table and retains live/manual delay. Its command
-delay comes from JamesL787 59eb99e318 (0.15 -> 0 seconds), with the same +25 ms
-SunnyPilot model-action interpolation compensation as the existing Clarity port.
+Civic has no measured prediction table and retains live/manual delay. Every other
+image's command delay is its own source value (vfn eps-fw-multicar e7629ac5bd, ed55c7d783),
+with the same +25 ms SunnyPilot model-action interpolation compensation as the existing
+Clarity port.
 """
 from collections import deque
 import math
@@ -31,7 +32,21 @@ DELAY_SCHEDULE_V = (0.15, 0.08, 0.10, 0.20, 0.30)  # s
 COMMAND_DELAY_BP = (10.0, 15.0)  # m/s
 DEFAULT_COMMAND_DELAY_LOW = 0.145  # s
 DEFAULT_COMMAND_DELAY_HIGH = 0.025  # s
-CIVIC_COMMAND_DELAY_LOW = 0.175  # 0.15 source + 0.025 port compensation
+PORT_COMMAND_DELAY_COMPENSATION = 0.025  # s, the source's model-action interpolation
+# Source low-speed command delay per calibration, before the port compensation; each is sized at or below what
+# was measured, so it cannot make a car late.
+# - C020 (tsfdo): routes 290 / 293 / 289 ran -0.09 / -0.15 / -0.22 s early, median -0.15; with it on (routes
+#   2b7 / 2c6 / 2d4) -0.045 s weighted. C120 and TGG-A120 take it (same Civic Bosch chassis).
+# - Insight: 0.15, inferred. On LatControlPID its route 0000001e ran the plan 0.06 s early, and this controller
+#   runs ~0.13-0.18 s ahead of the PID.
+# - Every other image takes the Clarity's 0.12 s, the smaller measured value, until it is measured.
+SOURCE_COMMAND_DELAY_LOW = {
+  "civic_bosch_c020": 0.15,
+  "civic_bosch_c120": 0.15,
+  "civic_tgg_a120": 0.15,
+  "insight_txm_a040": 0.15,
+}
+SOURCE_COMMAND_DELAY_LOW_DEFAULT = 0.12  # s
 MAX_COMMAND_DELAY = 0.30  # s
 
 
@@ -52,9 +67,10 @@ def _command_delay_setting(settings, key, default: float) -> float:
 
 def command_delay(settings, speed: float, *, calibration: str = "clarity_trw_a020") -> float:
   if calibration != "clarity_trw_a020":
-    # Every image but the Clarity's takes the Civic's fixed delay (the only other one measured: C020). It is not
-    # measured on the other cars. Do not let persisted Clarity command-delay settings silently retune them.
-    return float(np.interp(speed, COMMAND_DELAY_BP, (CIVIC_COMMAND_DELAY_LOW, DEFAULT_COMMAND_DELAY_HIGH)))
+    # Every image but the Clarity's takes its own fixed source delay (SOURCE_COMMAND_DELAY_LOW). Do not let
+    # persisted Clarity command-delay settings silently retune them.
+    low = SOURCE_COMMAND_DELAY_LOW.get(calibration, SOURCE_COMMAND_DELAY_LOW_DEFAULT) + PORT_COMMAND_DELAY_COMPENSATION
+    return float(np.interp(speed, COMMAND_DELAY_BP, (low, DEFAULT_COMMAND_DELAY_HIGH)))
   low = _command_delay_setting(settings, NrdrParamKey.NRDR_YAW_COMMAND_DELAY_LOW, DEFAULT_COMMAND_DELAY_LOW)
   high = _command_delay_setting(settings, NrdrParamKey.NRDR_YAW_COMMAND_DELAY_HIGH, DEFAULT_COMMAND_DELAY_HIGH)
   return float(np.interp(speed, COMMAND_DELAY_BP, (low, high)))

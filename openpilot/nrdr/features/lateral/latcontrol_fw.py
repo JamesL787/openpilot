@@ -5,7 +5,7 @@ delay and output filter. Geometry is supplied by the shared steer-ratio selectio
 just as for PIF; choosing this controller must not replace the user's ratio choice.
 Optimized lane changes remain an explicit owner-requested adaptation. The command
 delay ends (NrdrYawCommandDelayLow/High) remain Clarity-specific. Every other image
-uses the source Civic schedule plus the existing SunnyPilot port compensation. Images
+uses its own source delay plus the existing SunnyPilot port compensation. Images
 marked provisional in controller_selection have not steered with this controller;
 no physical equivalence or road validation is implied.
 """

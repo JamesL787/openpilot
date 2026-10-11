@@ -36,11 +36,14 @@ Model-specific smoothing remains separate, as in the source implementation.
 
 Command delay is a separate interpolated curvature history buffer, not a blocking
 sleep. It fades between 10 and 15 m/s. Clarity retains its saved endpoints, default
-0.145 / 0.025 seconds. Every other image uses the Civic's fixed 0.175 / 0.025 seconds
-(source 0.150 / 0.000 plus the existing port's 0.025-second model-action
-compensation); saved Clarity command-delay settings do not retune them. Only the
-C020 measured that delay: it is carried over, unmeasured, to the other images. These
-are model-dependent calibrations, not a guarantee for every driving model.
+0.145 / 0.025 seconds. Every other image uses its own fixed source delay plus the
+existing port's 0.025-second model-action compensation
+(`SOURCE_COMMAND_DELAY_LOW`): C020, C120, TGG-A120 and Insight 0.175 / 0.025 seconds
+(source 0.150, measured on the C020, inferred for the Insight); CR-V and any image
+without its own value 0.145 / 0.025 (the Clarity's 0.120, the smaller measured value,
+so an unmeasured car cannot be pushed late). Saved Clarity command-delay settings do
+not retune them. These are model-dependent calibrations, not a guarantee for every
+driving model.
 
 ## Calibration and unchanged behavior
 
