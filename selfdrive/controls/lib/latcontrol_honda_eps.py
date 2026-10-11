@@ -165,7 +165,11 @@ class LatControlHondaEps(LatControl):
     self.steering_pressed_prev = False
 
   def _desired_angle_no_offset(self, VM, v_ego, roll, desired_curvature):
-    # Same rack map selection as LatControlPID; see the comments there for why the two maps differ.
+    # A yaw-identified rack map, where the car has one, is the geometry: road-measured against the car's own yaw
+    # sensor on the exact firmware table. Otherwise the same selection as LatControlPID (road curve, or the firmware
+    # table with HondaEpsFirmwareVgr).
+    if self.rack_map is not None:
+      return self.rack_map.angle_from_curvature(desired_curvature, v_ego, roll)
     if self.sr_curve is not None and not (self.use_firmware_vgr and self.vgr_inverse is not None):
       sr_bp, sr_v = self.sr_curve
       VM.sR = 1.0
@@ -173,8 +177,6 @@ class LatControlHondaEps(LatControl):
       angle = solve_angle_from_ratio_curve(unit_ratio_angle, sr_bp, sr_v, self.sr_curve_inverse)
       VM.sR = float(np.interp(abs(angle), sr_bp, sr_v))
       return angle
-    if self.rack_map is not None:
-      return self.rack_map.angle_from_curvature(desired_curvature, v_ego, roll)
     linear = math.degrees(VM.get_steer_from_curvature(-desired_curvature, v_ego, roll))
     return vgr_linear_to_physical(linear, self.vgr_inverse)
 

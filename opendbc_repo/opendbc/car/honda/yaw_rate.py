@@ -36,6 +36,9 @@ YAW_RATE_CALIBRATION = {
   # 0.24455 deg/s/count + 0.4902 deg/s clockwise correction; stopped mean 509.531 (44082 frames).
   # Rounded to the sensor's useful resolution (the CR-V owner's docs/honda_crv_5g_yaw_calibration.md).
   CAR.HONDA_CRV_5G: (0.245, 509.5, 0.49),
+  # Insight: owner's konik route 0000001e, 70k straight-to-straight GPS pairs (tools/lateral/fit_yaw_scale.py):
+  # 0.2428 deg/s per count + 0.157 clockwise (heading rms 0.72 deg against 1.09 for one scale); stopped mean 511.75.
+  CAR.HONDA_INSIGHT: (0.243, 512.0, 0.16),
 }
 RIGHT_LOSS_BP = (3.0, 5.0)  # counts from zero over which the clockwise under-read comes in
 

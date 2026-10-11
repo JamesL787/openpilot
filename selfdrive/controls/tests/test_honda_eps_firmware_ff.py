@@ -571,6 +571,42 @@ def test_rack_map_is_only_built_for_the_identified_car():
   assert _get_rack_map(CLARITY_STOCK_FW) is None
 
 
+def _ptm_cp(candidate, fw):
+  CP = _params(fw, candidate)
+  return CP, honda_eps.eps_firmware_calibration(CP, _Params({"HondaEpsController": "1"}))
+
+
+@pytest.mark.parametrize("candidate,fw,table", [
+  (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', rack.CIVIC_TBA_C020_RACK),
+  (CAR.HONDA_INSIGHT, b'39990-TXM,A040\x00\x00', rack.INSIGHT_TXM_A040_RACK),
+])
+def test_the_civic_c020_and_insight_have_their_own_yaw_fitted_rack_maps(candidate, fw, table):
+  CP, cal = _ptm_cp(candidate, fw)
+  assert cal.rack is table
+  rack_map = honda_eps.get_rack_map(CP, cal)
+  assert rack_map is not None
+  assert all(b <= a for a, b in zip(table.ratio_v, table.ratio_v[1:], strict=False))   # a rack cannot quicken back
+  for v in (3.0, 15.0):
+    for angle in (-200.0, -30.0, 5.0, 90.0, 250.0):
+      assert rack_map.angle_from_curvature(rack_map.curvature_from_angle(angle, v, 0.01), v, 0.01) == pytest.approx(angle, abs=1e-3)
+
+
+@pytest.mark.parametrize("candidate,fw", [(CAR.HONDA_CIVIC, b'39990-TEG,A010\x00\x00'),
+                                          (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00'),
+                                          (CAR.HONDA_CRV_5G, b'39990-TLA,A040\x00\x00')])
+def test_cars_without_a_yaw_fit_have_no_rack_map(candidate, fw):
+  CP, cal = _ptm_cp(candidate, fw)
+  assert cal.rack is None and honda_eps.get_rack_map(CP, cal) is None
+
+
+@pytest.mark.parametrize("firmware_vgr", ["0", "1"])
+def test_a_rack_map_is_the_geometry_whatever_the_firmware_vgr_setting(monkeypatch, firmware_vgr):
+  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": firmware_vgr})
+  assert lac.use_firmware_vgr == (firmware_vgr == "1")
+  for k in (-0.05, -0.01, 0.002, 0.03):
+    assert lac._desired_angle_no_offset(VM, 8.0, 0.0, k) == pytest.approx(lac.rack_map.angle_from_curvature(k, 8.0, 0.0))
+
+
 @pytest.mark.parametrize("v", [0.0, 7.0, 15.0, 30.0])
 @pytest.mark.parametrize("roll", [0.0, 0.03, -0.03])
 def test_rack_map_round_trips(v, roll):

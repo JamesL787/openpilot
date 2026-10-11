@@ -34,7 +34,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from opendbc.car.honda.steer_ratio import CLARITY_TRW_A020_VGR_ANGLE_BP, CLARITY_TRW_A020_VGR_LINEAR_BP
-from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CLARITY_TRW_A020_RACK, RackMapTable
+from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CLARITY_TRW_A020_RACK, INSIGHT_TXM_A040_RACK, \
+  RackMapTable
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.pid import PIDController
 
@@ -122,7 +123,8 @@ class EpsFirmwareCalibration:
   cmd_delay_s: float = CMD_DELAY_DEFAULT_S  # command delay in town, see CMD_DELAY_SPEED_BP
   default_on: bool = False     # steer with this controller without HondaEpsController (validated on this car)
   lat_delay_schedule: tuple = LAT_DELAY_SCHEDULE_DEFAULT  # (speed bp, s): the delay told to the model, see above
-  rack: RackMapTable | None = None  # yaw-identified rack ratio after the firmware angle table (honda_eps_rack_map.HondaEpsRackMap)
+  rack: RackMapTable | None = None  # yaw-identified rack ratio after the firmware angle table; when set it is the
+                                    # geometry, ahead of the road curve and HondaEpsFirmwareVgr
   kp_pieces: tuple = field(init=False, repr=False, compare=False)
 
   def __post_init__(self):
@@ -305,6 +307,7 @@ CIVIC_TBA_C020 = EpsFirmwareCalibration(
   r6_per_deg_s=C020_R6_CENTRE, r6_angle_bp=C020_R6_BP, r6_angle_gain=C020_R6_GAIN,
   load=CIVIC_LOAD, p_scale=CIVIC_P_SCALE, i_scale=CIVIC_I_SCALE,
   cmd_delay_s=0.15,  # measured
+  rack=CIVIC_TBA_C020_RACK,
 )
 # Civic 39990-TBA-A030 (Nidec), 09-12 TEGLatestCalMatch Trk3200 (bin sha256 1de38bcb) and TEG-A010, 08-26
 # Tracker1-3200 (bin sha256 60f42ecc): both carry the C020's command axes, P axis and envelope byte for byte, so
@@ -320,7 +323,8 @@ CIVIC_TBA_A030 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_C020, k) for 
                                       if k != "kp_pieces"}, "name": "civic_tba_a030", "e4_per_output": 3840.0,
                                    "r6_per_deg_s": C120_R6_CENTRE, "r6_angle_bp": R6_GAIN_BP,
                                    "r6_angle_gain": C120_R6_GAIN, "load": TEG_LOAD,
-                                   "cmd_delay_s": CMD_DELAY_DEFAULT_S})  # Nidec Civic: not measured
+                                   "cmd_delay_s": CMD_DELAY_DEFAULT_S,  # Nidec Civic: not measured
+                                   "rack": None})  # its own A table, not identified
 CIVIC_TEG_A010 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_A030, k) for k in CIVIC_TBA_A030.__dataclass_fields__
                                           if k != "kp_pieces"}, "name": "civic_teg_a010"})
 # Civic Bosch 39990-TBA-C120, 08-11 C020Profile Trk4250 (bin sha256 3d88d5ea). Its variants select rows 0-4, all
@@ -362,6 +366,7 @@ INSIGHT_TXM_A040 = EpsFirmwareCalibration(
   # ~0.13 s (Clarity) to ~0.18 s (C020) ahead of the PID, so ~0.19-0.24 s early here; 0.15 stays below that. Re-check
   # with plan_timing.py after a drive on this controller.
   cmd_delay_s=0.15,
+  rack=INSIGHT_TXM_A040_RACK,
 )
 # CR-V 5G 39990-TLA-A040, the owner's 08-24 Clarity_FF_tune_telemety_8cf8e537 (decoded full image sha256 d5dc04a8):
 # TargetMap-D, P117..265, D737, KFF45, Norm1650, Trk3200, clamps 7373/1774/9000 on the CR-V's stock axes. Key clamp
