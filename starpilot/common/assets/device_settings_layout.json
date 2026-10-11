@@ -640,7 +640,7 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "NrdrLatAngleRateLimit",
+        "key": "HondaEpsAngleRateLimit",
         "label": "Desired Angle Rate Limit",
         "description": "Ceiling on how fast the desired steering angle may move, deg/s. 0 disables.",
         "data_type": "int",
@@ -652,7 +652,7 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "NrdrLatUseFirmwareVgr",
+        "key": "HondaEpsFirmwareVgr",
         "label": "Use Firmware VGR Table",
         "description": "Convert curvature with the EPS firmware's position table on top of the learned steer ratio instead of the road-measured effective-ratio curve.",
         "data_type": "bool",

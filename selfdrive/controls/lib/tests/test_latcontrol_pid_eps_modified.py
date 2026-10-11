@@ -13,7 +13,7 @@ from openpilot.common.pid import PIDController
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   NRDR_MODIFIED_EPS_KF_SPEED_BP,
   NRDR_MODIFIED_EPS_KF_V,
-  NRDR_SR_CURVE_BY_FP,
+  HONDA_SR_CURVE_BY_FP,
   LatControlPID,
   _clarity_eps_pid_output_scale,
   get_nrdr_modified_eps_kf,
@@ -46,7 +46,7 @@ def _controller(candidate, fw_version):
 
 # All of these must land on LatControlPID, including Civic Bosch -- except the modified-EPS Clarity, which
 # controlsd hands to LatControlHondaEps, as it does the other PTM cars once
-# NrdrLatEpsFirmwareFF is on (test_honda_eps_firmware_ff.py).
+# HondaEpsController is on (test_honda_eps_firmware_ff.py).
 
 @pytest.mark.parametrize("candidate", MODIFIED_EPS_CARS)
 def test_modified_eps_hondas_select_the_pid_controller(candidate):
@@ -75,7 +75,7 @@ def test_road_measured_curve_defaults_over_exact_firmware_profile(candidate, fw_
   car_params = _params(candidate, fw_version)
   lat = LatControlPID(car_params, STUB_CI, 0.01)
   assert profile in HONDA_VGR_INVERSE_BY_PROFILE
-  assert lat.sr_curve is NRDR_SR_CURVE_BY_FP[str(candidate)]
+  assert lat.sr_curve is HONDA_SR_CURVE_BY_FP[str(candidate)]
   # The road curve is the default, but retain the exact firmware inverse for the
   # runtime VGR A/B setting instead of discarding a valid traced profile at init.
   assert not lat.use_firmware_vgr
@@ -85,7 +85,7 @@ def test_road_measured_curve_defaults_over_exact_firmware_profile(candidate, fw_
 @pytest.mark.parametrize("candidate", [CAR.HONDA_CLARITY, CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_INSIGHT, CAR.HONDA_CRV_5G])
 def test_road_measured_curve_does_not_depend_on_eps_firmware(candidate):
   lat = _controller(candidate, STOCK_FW)
-  assert lat.sr_curve is NRDR_SR_CURVE_BY_FP[str(candidate)]
+  assert lat.sr_curve is HONDA_SR_CURVE_BY_FP[str(candidate)]
   assert lat.vgr_inverse is None
 
 

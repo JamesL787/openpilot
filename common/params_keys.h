@@ -397,9 +397,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NrdrLearnSteerRatio", {PERSISTENT, BOOL, "1", "1", 2}},
     {"NrdrLearnStiffness", {PERSISTENT, BOOL, "1", "1", 2}},
     {"NrdrLearnAngleOffset", {PERSISTENT, BOOL, "1", "1", 2}},
-    {"NrdrLatAngleRateLimit", {PERSISTENT, INT, "300", "300", 2}},     // deg/s ceiling on desired wheel-angle slew; 0 disables. Backstops clip_curvature, whose ISO jerk limit is ~1/v^2 in angle space and so does not bind below ~20 mph
+    {"HondaEpsAngleRateLimit", {PERSISTENT, INT, "300", "300", 2}},     // deg/s ceiling on desired wheel-angle slew; 0 disables. Backstops clip_curvature, whose ISO jerk limit is ~1/v^2 in angle space and so does not bind below ~20 mph
     {"NrdrLatModelActionInterp", {PERSISTENT, BOOL, "1", "1", 2}},   // ramp modeld's 20 Hz action across the model frame instead of holding it; removes the 20 Hz staircase in the lateral target
-    {"NrdrLatUseFirmwareVgr", {PERSISTENT, BOOL, "0", "0", 2}},      // use the EPS firmware A (position) VGR table instead of the road-measured effective-ratio curve
+    {"HondaEpsFirmwareVgr", {PERSISTENT, BOOL, "0", "0", 2}},      // use the EPS firmware A (position) VGR table instead of the road-measured effective-ratio curve
     {"ForceFingerprint", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"ForceOffroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
     {"ForceOnroad", {CLEAR_ON_MANAGER_START, BOOL, "0", "0"}},
@@ -451,7 +451,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HigherBitrate", {PERSISTENT, BOOL, "0", "0", 2, SETTINGS_SIMPLE}},
     {"HolidayThemes", {PERSISTENT, BOOL, "1", "0", 0, SETTINGS_SIMPLE}},
     {"HondaDriverAssistDuringOverride", {PERSISTENT, BOOL, "0", "0", 2}},
-    {"NrdrLatEpsFirmwareFF", {PERSISTENT, BOOL, "0", "0", 2}},  // steer the PTM EPS cars without default_on with LatControlHondaEps (read when controlsd starts)
+    {"HondaEpsController", {PERSISTENT, BOOL, "0", "0", 2}},  // steer the PTM EPS cars without default_on with LatControlHondaEps (read when controlsd starts)
     {"HondaTorqueOutputLpfTauHighway", {PERSISTENT, FLOAT, "0.1", "0.1", 2}},
     {"HondaTorqueOutputLpfTauLowSpeed", {PERSISTENT, FLOAT, "0.1", "0.1", 2}},
     {"HondaTorqueOutputLpfTauStandard", {PERSISTENT, FLOAT, "0.1", "0.1", 2}},

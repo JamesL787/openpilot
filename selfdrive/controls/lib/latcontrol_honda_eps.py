@@ -7,7 +7,7 @@ wheel along the desired path rather than one it has to be dragged into by error.
 the car's own image (eps_firmware_ff.EpsFirmwareCalibration), picked by the EPS part number in carFw.
 
 Which cars get it: a calibration with default_on (the Clarity, where it was developed and validated) always; the other
-PTM cars (Civic A030/TEG/C020/C120/TGG-A120, Insight, CR-V) only with NrdrLatEpsFirmwareFF on, because parts of
+PTM cars (Civic A030/TEG/C020/C120/TGG-A120, Insight, CR-V) only with HondaEpsController on, because parts of
 their calibration are carried over from a related car until a drive measures them. A car with no calibration, or whose
 torque map is not the linear [0, E4 cap] the calibration expects, keeps LatControlPID. The setting is read once, when
 controlsd starts.
@@ -17,7 +17,7 @@ every car (measured ones, else a default), and the yaw-identified rack map (rack
 This shell does what LatControlPID does around its PID for a modified-EPS Honda, reusing the same helpers so
 each setting behaves identically: curvature -> wheel angle through the firmware VGR table (with the ratio and
 slip factor identified against the yaw sensor where the calibration has one, honda_eps_rack_map.HondaEpsRackMap) or the road-measured ratio
-curve (NrdrLatUseFirmwareVgr), the angle-rate ceiling (NrdrLatAngleRateLimit), the shared
+curve (HondaEpsFirmwareVgr), the angle-rate ceiling (HondaEpsAngleRateLimit), the shared
 driver-override detector, and the speed-banded output low-pass (HondaTorqueOutputLowPassFilter /
 HondaTorqueOutputLpfTau*). Settings read elsewhere (carcontroller, carstate, controlsd) apply unchanged.
 
@@ -47,10 +47,10 @@ from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import (
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
-  NRDR_ANGLE_RATE_LIMIT_DEG_S,
-  NRDR_SR_CURVE_BY_FP,
-  NRDR_SR_CURVE_INVERSE_BY_FP,
-  NRDR_TORQUE_OUTPUT_LPF_TAU,
+  HONDA_ANGLE_RATE_LIMIT_DEG_S,
+  HONDA_SR_CURVE_BY_FP,
+  HONDA_SR_CURVE_INVERSE_BY_FP,
+  HONDA_TORQUE_OUTPUT_LPF_TAU,
   _get_param_bool,
   _get_param_float,
   rate_limit_desired_angle,
@@ -98,7 +98,7 @@ def eps_firmware_calibration(CP, params=None) -> EpsFirmwareCalibration | None:
   cap = calibration.e4_per_output
   if [float(x) for x in CP.lateralParams.torqueBP] != [0.0, cap] or [float(x) for x in CP.lateralParams.torqueV] != [0.0, cap]:
     return None
-  if not calibration.default_on and not _get_param_bool(params, "NrdrLatEpsFirmwareFF", False):
+  if not calibration.default_on and not _get_param_bool(params, "HondaEpsController", False):
     return None
   return calibration
 
@@ -136,8 +136,8 @@ class LatControlHondaEps(LatControl):
     self.core = HondaEpsLateralCore([float(x) for x in pid.kpBP], [float(x) for x in pid.kpV],
                                        [float(x) for x in pid.kiBP], [float(x) for x in pid.kiV], dt,
                                        ff=HondaEpsFirmwareFeedforward(dt, cal=self.calibration))
-    self.sr_curve = NRDR_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
-    self.sr_curve_inverse = NRDR_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
+    self.sr_curve = HONDA_SR_CURVE_BY_FP.get(str(CP.carFingerprint))
+    self.sr_curve_inverse = HONDA_SR_CURVE_INVERSE_BY_FP.get(str(CP.carFingerprint))
     self.vgr_inverse = get_honda_vgr_inverse(CP.flags)
     self.rack_map = get_rack_map(CP, self.calibration)
     self.cmd_delay = CommandDelay(dt, self.calibration.cmd_delay_s)
@@ -149,11 +149,11 @@ class LatControlHondaEps(LatControl):
     self._read_settings()
 
   def _read_settings(self):
-    self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
-    self.angle_rate_limit_deg_s = _get_param_float(self.params, "NrdrLatAngleRateLimit", NRDR_ANGLE_RATE_LIMIT_DEG_S, 0.0, 2000.0)
+    self.use_firmware_vgr = _get_param_bool(self.params, "HondaEpsFirmwareVgr")
+    self.angle_rate_limit_deg_s = _get_param_float(self.params, "HondaEpsAngleRateLimit", HONDA_ANGLE_RATE_LIMIT_DEG_S, 0.0, 2000.0)
     self.core.output_lpf_enabled = _get_param_bool(self.params, "HondaTorqueOutputLowPassFilter", True)
     self.core.output_lpf_tau = tuple(
-      _get_param_float(self.params, key, NRDR_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0)
+      _get_param_float(self.params, key, HONDA_TORQUE_OUTPUT_LPF_TAU, 0.0, 5.0)
       for key in ("HondaTorqueOutputLpfTauLowSpeed", "HondaTorqueOutputLpfTauStandard", "HondaTorqueOutputLpfTauHighway")
     )
     self.core.override_fade_up_s = _get_param_float(self.params, "HondaOverrideFadeUpSecs", OVERRIDE_FADE_UP_S_DEFAULT, 0.0, 10.0)

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from opendbc.car.honda.steer_ratio import NRDR_CLARITY_VGR_ANGLE_BP, NRDR_CLARITY_VGR_LINEAR_BP
+from opendbc.car.honda.steer_ratio import CLARITY_TRW_A020_VGR_ANGLE_BP, CLARITY_TRW_A020_VGR_LINEAR_BP
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CLARITY_TRW_A020_RACK, RackMapTable
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.pid import PIDController
@@ -120,7 +120,7 @@ class EpsFirmwareCalibration:
   r6_angle_bp: tuple | None = None    # |published angle| axis of r6_angle_gain, for images whose A table compresses it
   r6_angle_gain: tuple | None = None  # R6 per published deg/s relative to r6_per_deg_s, see firmware_r6()
   cmd_delay_s: float = CMD_DELAY_DEFAULT_S  # command delay in town, see CMD_DELAY_SPEED_BP
-  default_on: bool = False     # steer with this controller without NrdrLatEpsFirmwareFF (validated on this car)
+  default_on: bool = False     # steer with this controller without HondaEpsController (validated on this car)
   lat_delay_schedule: tuple = LAT_DELAY_SCHEDULE_DEFAULT  # (speed bp, s): the delay told to the model, see above
   rack: RackMapTable | None = None  # yaw-identified rack ratio after the firmware angle table (honda_eps_rack_map.HondaEpsRackMap)
   kp_pieces: tuple = field(init=False, repr=False, compare=False)
@@ -212,8 +212,8 @@ INSIGHT_LOAD = ColumnLoadModel(k0=-4.876, k1=-0.1376, c=-4.452, friction=-397.2,
 # The other images get the same treatment from their own A tables (R6_GAIN_BP below).
 CLARITY_R6_CENTRE = -122.0  # NORM 1650 / tracker-1 3200
 # d(pre-table angle) / d(published angle) along the A020 angle table, 1.0 at centre, ~1.19 from 150 deg
-_VGR_SLOPE = np.gradient(NRDR_CLARITY_VGR_LINEAR_BP, NRDR_CLARITY_VGR_ANGLE_BP)
-CLARITY_R6_BP = tuple(float(x) for x in NRDR_CLARITY_VGR_ANGLE_BP)
+_VGR_SLOPE = np.gradient(CLARITY_TRW_A020_VGR_LINEAR_BP, CLARITY_TRW_A020_VGR_ANGLE_BP)
+CLARITY_R6_BP = tuple(float(x) for x in CLARITY_TRW_A020_VGR_ANGLE_BP)
 CLARITY_R6_GAIN = tuple(float(x) for x in _VGR_SLOPE / _VGR_SLOPE[0])
 
 # Default residual-PID trims: vfn 35ddc44b's modified-EPS angle PID with the P/I trims the Clarity ran on it
