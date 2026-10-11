@@ -10,6 +10,7 @@ Then held-out by route: how well the fitted map, and the car's current road curv
   fit_rack_map.py --car HONDA_CIVIC_BOSCH --vgr civic_tba_c020 --bus 1 --scale 0.244 '<route>/rlog*' ...
 """
 import argparse
+import bz2
 import ast
 import os
 import glob
@@ -46,7 +47,7 @@ VB = [2.5, 5, 7, 9, 12, 15, 20, 25, 40]                     # speed bands, m/s
 
 
 def seg(p):
-  m = re.search(r'(?:rlog_|--)(\d+)(?:\.zst|/rlog)', p)
+  m = re.search(r'(?:rlog_|--)(\d+)(?:\.zst|\.bz2|/rlog)', p)
   return int(m.group(1)) if m else 0
 
 
@@ -54,7 +55,7 @@ def read_route(pattern, bus):
   st = dict(y=np.nan, off=0.0, roll=0.0)
   rows = []
   for p in sorted({f for g in pattern.split(',') for f in glob.glob(g)}, key=seg):
-    raw = zstd.ZstdDecompressor().stream_reader(open(p, 'rb').read()).read()
+    raw = bz2.decompress(open(p, 'rb').read()) if p.endswith('.bz2') else zstd.ZstdDecompressor().stream_reader(open(p, 'rb').read()).read()
     try:
       for e in log.Event.read_multiple_bytes(raw):
         w = e.which()
@@ -122,7 +123,7 @@ class Fit:
       mu = np.average(vals, weights=ns)
       err += np.sum(ns * (vals / mu - 1) ** 2)
       w += ns.sum()
-    return err / w
+    return err / w if w else float('nan')
 
   def fit_sf(self, D):
     sfs = np.arange(-0.0012, 0.0002, 0.00005)
@@ -192,6 +193,8 @@ def main():
     print(f'{r}: zero {zero:.1f}, {len(D) / 20:.0f} s moving at >= 3 deg', flush=True)
     per.append(D)
   D = np.vstack(per)
+  if len(D) / 20 < 300:
+    raise SystemExit(f'only {len(D) / 20:.0f} s of turning at >= 3 deg: not enough to fit a rack map (the Insight fit had 440 s)')
   sf = fit.fit_sf(D)
   bp, val, n = fit.table(D, sf)
   print(f'\n{a.car} / {a.vgr}: wheelbase {wheelbase}, slip factor {sf} (from the speed dependence within each band)')
