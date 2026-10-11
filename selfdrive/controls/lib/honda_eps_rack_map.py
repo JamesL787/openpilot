@@ -38,6 +38,27 @@ CLARITY_TRW_A020_RACK = RackMapTable(
   slip_factor=-0.0005,
 )
 
+# Civic Bosch (TBA-C020): the same method (tools/lateral/fit_rack_map.py) on the C020's own VSA yaw (0x94 bus 1,
+# 0.244 deg/s per count, GPS-checked) over Peter's routes 294 / 289 / 2b7 / 2c6 / 2d4 / 1b8 / 251 (34 min of turning
+# at >= 3 deg). Held out one route at a time, it predicts the car's curvature within ~1% at 70 deg and up (0.99-1.01)
+# and within 0.97-1.03 below; the gyro-era road curve it replaces asks for ~3.5% too much wheel past 70 deg on every
+# route (measured / predicted 1.03-1.04). Slip factor fitted from the speed dependence within each band.
+CIVIC_TBA_C020_RACK = RackMapTable(
+  ratio_bp=(5.0, 12.5, 27.1, 53.5, 85.6, 123.4, 174.5, 226.6, 283.0),
+  ratio_v=(14.93, 14.81, 14.79, 14.78, 14.70, 14.62, 14.49, 14.38, 14.27),
+  slip_factor=-0.00065,
+)
+
+# Insight (TXM-A040): the same method on its VSA yaw (0x94 bus 1, 0.2428 deg/s per count + 0.157 clockwise, from
+# 70k straight-to-straight GPS pairs, tools/lateral/fit_yaw_scale.py) over the owner's konik route 0000001e, split
+# in halves (7 min of turning). Held out half against half it lands within ~2% (one fast small-angle cell 0.92); the
+# unmeasured two-point profile it replaces is 6-10% off everywhere (0.90-0.97). Thin past 50 deg: 10-24 s per band.
+INSIGHT_TXM_A040_RACK = RackMapTable(
+  ratio_bp=(4.6, 13.8, 35.8, 55.1, 83.3, 122.0, 174.0, 220.7),
+  ratio_v=(17.86, 17.86, 17.86, 17.40, 17.28, 17.28, 17.21, 17.17),
+  slip_factor=-0.00066,
+)
+
 
 class HondaEpsRackMap:
   """Physical wheel angle (deg, left-positive) <-> curvature (1/m, openpilot's right-positive) for one RackMapTable."""

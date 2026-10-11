@@ -37,8 +37,8 @@ YAW_DECODE = {
   'HONDA_CIVIC_BOSCH': (1, 0.244, 0.0),
   # 00000013--da43527a2c: bus 1, GPS-integrated 0.24455/count + 0.4902 clockwise; production-rounded.
   'HONDA_CRV_5G': (1, 0.245, 0.49),
-  # Insight: 0x94 on bus 1, zero ~511 at stops; scale assumed the Civic Bosch's (not GPS-checked)
-  'HONDA_INSIGHT': (1, 0.244, 0.0),
+  # Insight: 0x94 on bus 1, GPS-checked (opendbc yaw_rate.py)
+  'HONDA_INSIGHT': (1, 0.243, 0.16),
 }
 
 
