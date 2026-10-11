@@ -25,17 +25,17 @@ from opendbc.car.honda.values import CAR
 from opendbc.car.honda.yaw_rate import RIGHT_LOSS_BP
 
 G = 9.81
-LATCONTROL_PID = os.path.join(os.path.dirname(__file__), '..', '..', 'selfdrive', 'controls', 'lib', 'latcontrol_pid.py')
+LATERAL_COMMON = os.path.join(os.path.dirname(__file__), '..', '..', 'selfdrive', 'controls', 'lib', 'honda_lateral_common.py')
 
 
 def road_curves():
-  """The road steer-ratio curves (latcontrol_pid.HONDA_SR_CURVE_BY_FP), read from the source: importing
-  latcontrol_pid pulls in compiled device modules."""
+  """The road steer-ratio curves (honda_lateral_common.HONDA_SR_CURVE_BY_FP), read from the source so the tool
+  runs without the device's compiled modules."""
   env = {}
-  for node in ast.parse(open(LATCONTROL_PID).read()).body:
+  for node in ast.parse(open(LATERAL_COMMON).read()).body:
     if isinstance(node, ast.Assign) and all(isinstance(t, ast.Name) for t in node.targets):
       try:
-        exec(compile(ast.Module([node], []), LATCONTROL_PID, 'exec'), {}, env)
+        exec(compile(ast.Module([node], []), LATERAL_COMMON, 'exec'), {}, env)
       except Exception:
         pass
   return env.get('HONDA_SR_CURVE_BY_FP', {})

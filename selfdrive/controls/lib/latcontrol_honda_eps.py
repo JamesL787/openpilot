@@ -46,7 +46,7 @@ from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import (
 )
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
-from openpilot.selfdrive.controls.lib.latcontrol_pid import (
+from openpilot.selfdrive.controls.lib.honda_lateral_common import (
   HONDA_ANGLE_RATE_LIMIT_DEG_S,
   HONDA_SR_CURVE_BY_FP,
   HONDA_SR_CURVE_INVERSE_BY_FP,
