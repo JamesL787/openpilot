@@ -131,6 +131,10 @@ P_SCALE = (1.25, 1.00, 1.25)
 I_SCALE = (0.70, 0.95, 0.35)
 CIVIC_P_SCALE = (1.15, 1.25, 1.15)
 CIVIC_I_SCALE = (0.75, 0.95, 1.00)
+# The CR-V owner drives this controller untrimmed (RiskyBiscuit-arc ns-bosch-updated CRV_5G_P/I_SCALE), on the
+# CarParams base gains.
+CRV_P_SCALE = (1.0, 1.0, 1.0)
+CRV_I_SCALE = (1.0, 1.0, 1.0)
 OUTPUT_LPF_TAU = (0.07, 0.05, 0.01)
 INTEGRATOR_MIN_SPEED = 2.0  # m/s, below this the integrator is held at zero (as vfn)
 
@@ -329,14 +333,14 @@ class FirmwareCarTune:
 
 
 # Keyed by FirmwareControllerProfile.calibration. The Clarity's trims are the module defaults; the Civic family
-# shares the C020's; the CR-V runs the Clarity's (its CarParams carry the Clarity's untrimmed base gains).
+# shares the C020's; the CR-V runs untrimmed, as its owner drives it.
 FIRMWARE_CAR_TUNES = {
   "clarity_trw_a020": FirmwareCarTune(CLARITY_TRW_A020, CLARITY_EPS_LOAD, P_SCALE, I_SCALE),
   "civic_bosch_c020": FirmwareCarTune(CIVIC_BOSCH_C020, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
   "civic_bosch_c120": FirmwareCarTune(CIVIC_BOSCH_C120, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
   "civic_tgg_a120": FirmwareCarTune(CIVIC_TGG_A120, CIVIC_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
   "insight_txm_a040": FirmwareCarTune(INSIGHT_TXM_A040, INSIGHT_EPS_LOAD, CIVIC_P_SCALE, CIVIC_I_SCALE),
-  "crv_tla_a040": FirmwareCarTune(CRV_TLA_A040, CRV_EPS_LOAD, P_SCALE, I_SCALE),
+  "crv_tla_a040": FirmwareCarTune(CRV_TLA_A040, CRV_EPS_LOAD, CRV_P_SCALE, CRV_I_SCALE),
 }
 
 

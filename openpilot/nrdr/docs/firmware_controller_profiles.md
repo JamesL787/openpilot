@@ -52,7 +52,7 @@ angle-dependent R6 conversion and all existing core numerical behavior.
 Each image carries its own command map, P-row axis, key clamp, speed envelope,
 R6, column load and fixed P/I trims (`FIRMWARE_CAR_TUNES`), so no image is
 evaluated with another's tables. The Civic family runs the C020's trims
-(115 / 125 / 115% P, 75 / 95 / 100% I); the CR-V runs the Clarity's. Transport
+(115 / 125 / 115% P, 75 / 95 / 100% I); the CR-V runs untrimmed (100%), as its owner drives it. Transport
 differs by fingerprint and follows this tree's opendbc (`_EXTENDED_TORQUE_LIMITS`),
 which a test checks: the Clarity sends through the 3840-count transport; Civic
 Bosch (C020, C120, TGG-A120), Insight and CR-V through 4096. The command clamp word read from each image is 1663, which is E4 3840, on

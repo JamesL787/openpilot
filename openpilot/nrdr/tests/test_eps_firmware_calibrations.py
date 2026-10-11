@@ -85,7 +85,8 @@ def test_crv_carries_its_own_clamp_axes_r6_and_load():
   # the owner's single V5 fit (-138.4 against 0x14A) sits inside the curve the A table gives
   assert core.firmware_r6(1., 0., cal) > -138.4 > core.firmware_r6(1., 180., cal)
   assert FIRMWARE_CAR_TUNES["crv_tla_a040"].load == core.CRV_EPS_LOAD
-  assert FIRMWARE_CAR_TUNES["crv_tla_a040"].p_scale == core.P_SCALE  # the Clarity's trims, not the Civic's
+  tune = FIRMWARE_CAR_TUNES["crv_tla_a040"]
+  assert tune.p_scale == tune.i_scale == (1.0, 1.0, 1.0)  # the owner's untrimmed tune
   # its clamp, not the Clarity's 1663, is what bounds the key
   assert core.key_ceiling(5., cal) == 1774. and core.key_ceiling(5., core.CLARITY_TRW_A020) == 1663.
 
