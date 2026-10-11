@@ -30,7 +30,7 @@ from cereal import log
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse
 from opendbc.car.honda.values import CAR, HondaFlags
 from opendbc.car.honda.yaw_rate import RIGHT_LOSS_BP, YAW_RATE_CALIBRATION
-from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import CLARITY_LAT_DELAY_SCHEDULE
+from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import CLARITY_TRW_A020_LAT_DELAY_SCHEDULE
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CLARITY_TRW_A020_RACK, HondaEpsRackMap
 
 VSA_ADDR, VSA_LATENCY = 0x94, 0.017
@@ -45,7 +45,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 
 def shipped_delay_schedule():
-  return [list(x) for x in CLARITY_LAT_DELAY_SCHEDULE]
+  return [list(x) for x in CLARITY_TRW_A020_LAT_DELAY_SCHEDULE]
 
 
 def segment_number(path):
