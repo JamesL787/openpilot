@@ -19,6 +19,8 @@ LANE_CHANGE_SPEED_MIN = 20 * CV.MPH_TO_MS
 LANE_CHANGE_TIME_MAX = 10.
 LANE_CHANGE_NUDGE_TORQUE_THRESHOLD = 1200
 NAV_EXIT_COMMIT_DISTANCE = 500.0
+# D-113: a highway on-ramp is handled the way an off-ramp is (keep gating, lane guidance, exit lane change, auto keep)
+NAV_RAMP_MANEUVERS = ("off ramp", "on ramp")
 # D-107: lowest speed at which NavExitAutoKeep applies the exit keep without a wheel nudge
 NAV_EXIT_AUTO_KEEP_MIN_SPEED = 8.0
 # D-108: the driver steering against a started lane change for this long cancels it (LaneChangeCounterTorqueCancel)
@@ -196,6 +198,12 @@ class DesireHelper:
     )
 
   @staticmethod
+  def _nav_on_ramp_auto_keep(carstate, starpilot_toggles, maneuver_type):
+    # D-113: an on-ramp whose lane guidance marks the ramp-side lane is taken like a D-107 off-ramp, under the same
+    # NavExitAutoKeep toggle and gates
+    return maneuver_type == "on ramp" and DesireHelper._nav_exit_auto_keep(carstate, starpilot_toggles, "off ramp")
+
+  @staticmethod
   def _nav_turn_is_imminent(carstate, maneuver_distance):
     try:
       distance = float(maneuver_distance)
@@ -213,7 +221,7 @@ class DesireHelper:
 
   @staticmethod
   def _nav_should_delay_ambiguous_split(maneuver_type="", same_side_lane_count=0, lane_count=0):
-    if maneuver_type not in ("off ramp", "fork") or int(same_side_lane_count or 0) <= 1:
+    if maneuver_type not in (*NAV_RAMP_MANEUVERS, "fork") or int(same_side_lane_count or 0) <= 1:
       return False
 
     total_lanes = int(lane_count or 0)
@@ -238,7 +246,7 @@ class DesireHelper:
   @staticmethod
   def _nav_should_suppress_edge_lane_keep(nav_instruction_state):
     maneuver_type = str(nav_instruction_state.get("maneuverType", ""))
-    if maneuver_type not in ("off ramp", "fork"):
+    if maneuver_type not in (*NAV_RAMP_MANEUVERS, "fork"):
       return False
 
     active_lane_direction = str(nav_instruction_state.get("activeLaneDirection", ""))
@@ -262,7 +270,7 @@ class DesireHelper:
     same_side_lane_count = int(nav_instruction_state.get("sameSideLaneCount", 0) or 0)
     lane_count = int(nav_instruction_state.get("laneCount", 0) or 0)
 
-    if maneuver_type in ("off ramp", "fork") and modifier in ("slightLeft", "left", "sharpLeft", "slightRight", "right", "sharpRight"):
+    if maneuver_type in (*NAV_RAMP_MANEUVERS, "fork") and modifier in ("slightLeft", "left", "sharpLeft", "slightRight", "right", "sharpRight"):
       if not DesireHelper._nav_keep_is_imminent(carstate, maneuver_distance, maneuver_type, same_side_lane_count, lane_count):
         return ""
 
@@ -296,7 +304,8 @@ class DesireHelper:
 
     v_asm_enabled = bool(getattr(starpilot_toggles, "v_asm_enabled", False))
     maneuver_type = str(self._nav_instruction_state.get("maneuverType", ""))
-    auto_keep = self._nav_exit_auto_keep(carstate, starpilot_toggles, maneuver_type)
+    auto_keep = self._nav_exit_auto_keep(carstate, starpilot_toggles, maneuver_type) or \
+                self._nav_on_ramp_auto_keep(carstate, starpilot_toggles, maneuver_type)
     if modifier == "slightLeft":
       if not (self.nav_lane_positioning_allowed or auto_keep):
         return log.Desire.none
@@ -340,9 +349,9 @@ class DesireHelper:
       return LaneChangeDirection.none
 
     # As IQ.Pilot NavExitLaneChangeController: only a highway exit (Mapbox "off ramp") within
-    # NAV_EXIT_COMMIT_DISTANCE, in the maneuver's own direction
+    # NAV_EXIT_COMMIT_DISTANCE, in the maneuver's own direction. D-113: a highway on-ramp moves over the same way.
     maneuver_type = str(self._nav_instruction_state.get("maneuverType", "")).lower()
-    if maneuver_type != "off ramp":
+    if maneuver_type not in NAV_RAMP_MANEUVERS:
       return LaneChangeDirection.none
 
     # StarPilot-only: when navigationd has lane guidance for this exit, the existing keepLeft/keepRight

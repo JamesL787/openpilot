@@ -2635,3 +2635,23 @@ cancel window now closes 1.5 s into laneChangeStarting, or as soon as the target
 moved 0.8 m toward the car, whichever comes first. The other four were 0.7–1.75 s into the move with 0.55–1.4 s of
 opposing torque and still completed; three of them fall inside the window. The logs cannot tell whether the driver
 meant to abort, so that part is unresolved. Static tests and log replay of the rule only; not road-tested.
+
+
+## D-113 — A highway on-ramp is handled the way an off-ramp is (2026-10-12, static unit tests only, not driven, default off)
+
+**Problem (owner, 2026-10-12):** the car does not take an on-ramp onto the highway on its own. No route was cited.
+
+**Cause (static, from code):** every exit path matched Mapbox's `off ramp` maneuver type only. An `on ramp` step (the
+split from a surface road onto the ramp) skipped the lane-guidance keep, D-107's auto keep and the nav exit lane change.
+It fell through to the plain modifier path, which needs a wheel nudge for `slight` and a blinker below the minimum
+lane-change speed for `right`.
+
+**Decision:** `desire_helper.NAV_RAMP_MANEUVERS = ("off ramp", "on ramp")` is used by the keep gating
+(`_nav_effective_modifier`, imminence window, ambiguous-split delay, edge-lane suppression) and by the nav exit lane
+change. `_nav_on_ramp_auto_keep` applies D-107's auto keep with D-107's own gates and toggle (`NavExitAutoKeep`, still
+default off). D-107's off-ramp function is unchanged. `nav_lane_prompt` prompts an on-ramp as an exit. Left out:
+D-109's off-ramp slowdown (an on-ramp should not be slowed to 50 mph) and Mapbox's `merge` step at the end of the
+ramp, which would be a lane change into highway traffic with no native blind-spot monitor.
+
+**Evidence:** static unit tests only (`test_navigation_desires.py`, `test_nav_lane_prompt.py`). It has not been checked
+which maneuver type and lane guidance Mapbox gives on the owner's on-ramps. Not road-validated.

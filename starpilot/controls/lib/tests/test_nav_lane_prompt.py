@@ -64,3 +64,9 @@ def test_shared_or_wrong_side_lane_is_not_turn_only():
 
 def test_turn_only_lane_still_needs_a_lane_to_move_into():
   assert not prompt(lane_nav(), widths={"left": 3.5, "right": 0.0})["armed"]
+
+
+def test_on_ramp_is_prompted_like_an_exit():
+  # D-113
+  assert prompt(nav("on ramp", "slight right", 300.0), v=20.0)["kind"] == "exit"
+  assert prompt(nav("on ramp", "slight right", 300.0), v=20.0)["armed"]

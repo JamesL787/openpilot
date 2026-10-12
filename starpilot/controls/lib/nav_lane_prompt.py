@@ -44,7 +44,7 @@ def nav_lane_move_prompt(nav_state: dict, v_ego: float, min_speed: float, adjace
     return out
 
   # fork keeps its own keepLeft/keepRight path; only exits and plain turns get a move-over prompt
-  if maneuver_type == "off ramp":
+  if maneuver_type in ("off ramp", "on ramp"):  # D-113: an on-ramp is prompted like an exit
     kind = "exit"
   elif maneuver_type in ("turn", "end of road") and modifier in ("left", "right", "sharpleft", "sharpright"):
     kind = "turn"

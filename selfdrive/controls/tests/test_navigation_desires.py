@@ -980,3 +980,55 @@ def test_counter_torque_cancel_window_closes_once_the_car_reaches_the_line():
     helper2.update(make_car_state(leftBlinker=True, steeringPressed=True, steeringTorque=-1.0), True, 1.0, make_plan(), toggles,
                    modeldata=_lane_model(-1.7))
   assert helper2.lane_change_state == LaneChangeState.off, "before the line, a firm 0.25 s still cancels"
+
+
+# D-113: a highway on-ramp is handled the way an off-ramp is
+
+def test_on_ramp_lane_guidance_becomes_keep_right_with_nudge():
+  state = _exit_state(maneuverType="on ramp")
+  assert _exit_desire(state=state, car={"steeringPressed": True, "steeringTorque": -1.0},
+                      toggles={"nav_lane_positioning_allowed": True}) == log.Desire.keepRight
+
+
+def test_on_ramp_keep_waits_until_split_is_close():
+  state = _exit_state(maneuverType="on ramp", maneuverDistance=300.0)
+  assert _exit_desire(state=state, car={"steeringPressed": True, "steeringTorque": -1.0},
+                      toggles={"nav_lane_positioning_allowed": True}) == log.Desire.none
+
+
+def test_on_ramp_auto_keep_takes_ramp_without_nudge_or_blinker():
+  assert _exit_desire(state=_exit_state(maneuverType="on ramp"), toggles={"nav_exit_auto_keep": True}) == log.Desire.keepRight
+
+
+def test_on_ramp_auto_keep_is_off_by_default_and_keeps_its_gates():
+  state = _exit_state(maneuverType="on ramp")
+  on = {"nav_exit_auto_keep": True}
+  assert _exit_desire(state=state) == log.Desire.none
+  assert _exit_desire(state=state, car={"rightBlindspot": True}, toggles=on) == log.Desire.none
+  assert _exit_desire(state=state, car={"leftBlinker": True}, toggles=on) == log.Desire.none
+  assert _exit_desire(state=state, car={"vEgo": 5.0}, toggles=on) == log.Desire.none
+  assert _exit_desire(state=state, car={"steeringPressed": True, "steeringTorque": 1.0}, toggles=on) == log.Desire.none
+  assert _exit_desire(state=_exit_state(maneuverType="on ramp", activeLaneDirection="straight"), toggles=on) == log.Desire.none
+
+
+def test_on_ramp_without_lane_guidance_enters_pre_lane_change_and_needs_blinker():
+  helper = DesireHelper()
+  helper._update_nav_params = lambda: None
+  helper._nav_instruction_state = {"valid": True, "maneuverType": "on ramp", "maneuverModifier": "slight right", "maneuverDistance": 400.0}
+  toggles = make_toggles(nav_exit_lane_change=True, nudgeless=True)
+  helper.update(make_car_state(vEgo=25.0), True, 0.0, make_plan(), toggles)
+  assert helper.lane_change_state == LaneChangeState.preLaneChange
+  assert helper.lane_change_direction == LaneChangeDirection.right
+  for _ in range(5):
+    helper.update(make_car_state(vEgo=25.0), True, 0.0, make_plan(), toggles)
+  assert helper.lane_change_state == LaneChangeState.preLaneChange
+  helper.update(make_car_state(vEgo=25.0, rightBlinker=True), True, 0.0, make_plan(), toggles)
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+
+
+def test_merge_is_not_treated_as_a_ramp():
+  helper = DesireHelper()
+  helper._update_nav_params = lambda: None
+  helper._nav_instruction_state = {"valid": True, "maneuverType": "merge", "maneuverModifier": "slight left", "maneuverDistance": 300.0}
+  helper.update(make_car_state(vEgo=25.0), True, 0.0, make_plan(), make_toggles(nav_exit_lane_change=True))
+  assert helper.lane_change_state == LaneChangeState.off
