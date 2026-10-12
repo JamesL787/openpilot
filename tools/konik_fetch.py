@@ -24,7 +24,7 @@ via process tables (`ps`).
 
 Usage
 -----
-    python3 tools/konik_fetch.py --route 'DONGLE|ROUTE' --out DIR [--segments SPEC] [--qlogs | --qcameras] [--host HOST] [--dry-run]
+    python3 tools/konik_fetch.py --route 'DONGLE|ROUTE' --out DIR [--segments SPEC] [--qlogs | --qcameras | --dcameras] [--host HOST] [--dry-run]
 """
 
 from __future__ import annotations
@@ -130,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument("--segments", help="segment spec, e.g. '0-4,9'")
   parser.add_argument("--qlogs", action="store_true", help="download qlogs instead of rlogs")
   parser.add_argument("--qcameras", action="store_true", help="download qcamera.ts instead of rlogs")
+  parser.add_argument("--dcameras", action="store_true", help="download dcamera.hevc (driver camera) instead of rlogs")
   parser.add_argument(
     "--host",
     default=os.environ.get("API_HOST", KONIK_API_HOST),
@@ -153,13 +154,14 @@ def main(argv: list[str] | None = None) -> int:
   url = f"{host}/v1/route/{route}/files"
   files = get_json(url, headers=headers)
 
+  key = "dcameras" if args.dcameras else "qcameras" if args.qcameras else "qlogs" if args.qlogs else "logs"
   if isinstance(files, dict):
-    urls = files.get("qcameras" if args.qcameras else "qlogs" if args.qlogs else "logs") or []
+    urls = files.get(key) or []
   else:
     urls = []
 
   if not urls:
-    kind = "qcameras" if args.qcameras else "qlogs" if args.qlogs else "rlogs"
+    kind = "rlogs" if key == "logs" else key
     print(
       f"No {kind} found for route {route}. "
       + "rlogs are not uploaded yet (comma uploads rlogs only on WiFi).",
@@ -176,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
       continue
     filename = os.path.basename(urlparse(u).path)
     if not filename:
-      filename = "qcamera.ts" if args.qcameras else "qlog.zst" if args.qlogs else "rlog.zst"
+      filename = {"dcameras": "dcamera.hevc", "qcameras": "qcamera.ts", "qlogs": "qlog.zst"}.get(key, "rlog.zst")
     dst = destination(args.out, route, seg, filename)
     items.append((seg, dst, u))
 
