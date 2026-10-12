@@ -20,6 +20,8 @@ LANE_CHANGE_NUDGE_TORQUE_THRESHOLD = 1200
 NAV_EXIT_COMMIT_DISTANCE = 500.0
 # D-107: lowest speed at which NavExitAutoKeep applies the exit keep without a wheel nudge
 NAV_EXIT_AUTO_KEEP_MIN_SPEED = 8.0
+# D-108: the driver steering against a started lane change for this long cancels it (LaneChangeCounterTorqueCancel)
+LANE_CHANGE_CANCEL_TORQUE_FRAMES = round(0.25 / DT_MDL)
 NAV_TURN_DISTANCE_SPEED_BREAKPOINTS = [0.0, 5.0, 10.0]
 NAV_TURN_DISTANCE_BREAKPOINTS = [20.0, 25.0, 30.0]
 NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS = [0.0, 15.0, 30.0]
@@ -80,6 +82,7 @@ class DesireHelper:
     self.lane_change_completed = False
 
     self.lane_change_wait_timer = 0.0
+    self.counter_torque_frames = 0
     self.nav_desires_allowed = False
     self.nav_lane_positioning_allowed = False
     self.nav_exit_lane_change = False
@@ -496,8 +499,22 @@ class DesireHelper:
         # fade out over .5s
         self.lane_change_ll_prob = max(self.lane_change_ll_prob - 2 * DT_MDL, 0.0)
 
+        # D-108: steering against the move cancels it. Going to off (not preLaneChange) means a held blinker
+        # needs a fresh press and a nav exit move needs a fresh exit request before anything relaunches.
+        counter_torque = (carstate.steeringPressed or abs(carstate.steeringTorque) > LANE_CHANGE_NUDGE_TORQUE_THRESHOLD) and \
+                         ((carstate.steeringTorque < 0 and self.lane_change_direction == LaneChangeDirection.left) or
+                          (carstate.steeringTorque > 0 and self.lane_change_direction == LaneChangeDirection.right))
+        if counter_torque and getattr(starpilot_toggles, "lane_change_counter_torque_cancel", False):
+          self.counter_torque_frames += 1
+        else:
+          self.counter_torque_frames = 0
+
+        if self.counter_torque_frames >= LANE_CHANGE_CANCEL_TORQUE_FRAMES:
+          self.lane_change_state = LaneChangeState.off
+          self.lane_change_direction = LaneChangeDirection.none
+          self.nav_exit_lane_change = False
         # 98% certainty
-        if lane_change_prob < 0.02 and self.lane_change_ll_prob < 0.01:
+        elif lane_change_prob < 0.02 and self.lane_change_ll_prob < 0.01:
           self.lane_change_state = LaneChangeState.laneChangeFinishing
 
       # LaneChangeState.laneChangeFinishing
@@ -518,6 +535,9 @@ class DesireHelper:
           else:
             self.lane_change_state = LaneChangeState.off
             self.nav_exit_lane_change = False
+
+    if self.lane_change_state != LaneChangeState.laneChangeStarting:
+      self.counter_torque_frames = 0
 
     if self.lane_change_state in (LaneChangeState.off, LaneChangeState.preLaneChange):
       self.lane_change_timer = 0.0

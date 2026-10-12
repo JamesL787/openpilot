@@ -175,6 +175,13 @@ class StarPilotLateralLayout(_SettingsPage):
         visible=lc_on,
       ),
       SettingRow(
+        "LaneChangeCounterTorqueCancel", "toggle", tr_noop("Cancel by Steering Back"),
+        subtitle=tr_noop("Cancel a lane change once it has started if you steer against it for a quarter second. Experimental and off by default; not road-validated."),
+        get_state=lambda: p.get_bool("LaneChangeCounterTorqueCancel"),
+        set_state=lambda s: p.put_bool("LaneChangeCounterTorqueCancel", s),
+        visible=lc_on,
+      ),
+      SettingRow(
         "OneLaneChange", "toggle", tr_noop("One Per Signal"),
         subtitle=tr_noop("One lane change per signal activation."),
         get_state=lambda: p.get_bool("OneLaneChange"),

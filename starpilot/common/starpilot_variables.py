@@ -1247,6 +1247,7 @@ class StarPilotVariables:
     toggle.nav_desires_allowed = self.get_value("NavDesiresAllowed")
     toggle.nav_lane_positioning_allowed = self.get_value("NavLanePositioningAllowed")
     toggle.nav_exit_auto_keep = self.get_value("NavExitAutoKeep", condition=toggle.nav_desires_allowed)
+    toggle.lane_change_counter_torque_cancel = self.get_value("LaneChangeCounterTorqueCancel")
     toggle.nav_exit_lane_change = bool(toggle.nav_desires_allowed and toggle.nav_lane_positioning_allowed)
     toggle.use_turn_desires = self.get_value("TurnDesires", condition=lateral_tuning)
 

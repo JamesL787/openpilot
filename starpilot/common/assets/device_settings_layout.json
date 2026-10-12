@@ -171,6 +171,16 @@
         "settings_tier": "simple"
       },
       {
+        "key": "LaneChangeCounterTorqueCancel",
+        "label": "Cancel Lane Change by Steering Back",
+        "description": "Cancel a lane change once it has started if you steer against it for a quarter second. Experimental and off by default; not road-validated.",
+        "picker_description": "Steering against a started lane change cancels it.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LaneChanges",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NudgelessLaneChangeOnlyWhenEngaged",
         "label": "Automatic Lane Changes Only When Engaged",
         "description": "Require a steering-wheel nudge for lane changes while using Always On Lateral without full engagement.",

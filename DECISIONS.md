@@ -2496,3 +2496,27 @@ desire, and no closed-loop lateral replay was run.
 
 Not road-validated.
 
+
+## D-108 — Steering against a started lane change for 0.25 s cancels it (2026-10-12, static unit tests only, not driven, default off)
+
+**Problem:** once `laneChangeStarting` is reached, the driver has no way to call the move off short of overpowering the
+model for the whole move or waiting out `lane_change_time_max`. That matters most for the nav-exit moves added in
+D-107 and `NavLanePositioningAllowed`, which start without the driver's own blinker decision.
+
+**Decision:** behind the new default-off `LaneChangeCounterTorqueCancel` toggle, in `laneChangeStarting`, driver torque
+*against* the lane-change direction (same detection as the nudge: `steeringPressed` or |torque| > 1200, opposite sign)
+for 5 consecutive model frames (`LANE_CHANGE_CANCEL_TORQUE_FRAMES = round(0.25 / DT_MDL)`) sets the state to off and the
+direction to none. Any frame without counter-torque resets the count. Going to off (not preLaneChange) means a held
+blinker needs a fresh press, and a nav-exit move needs a fresh exit request, before anything relaunches. Only
+`laneChangeStarting` is guarded; `laneChangeFinishing` is left alone.
+
+**Evidence (static only):** five new tests in `test_navigation_desires.py` (45 pass, run on the Mac with
+`--noconftest` in a scratch venv): default-off, the 0.20 s / 0.25 s boundary and reset, torque toward the move does not
+cancel, no relaunch on a held blinker, no relaunch of the same nav-exit request. No replay or drive.
+
+**Provenance:** the idea (cancel on counter-torque, 0.25 s) comes from IQ.Pilot's compiled ActionEngine
+(`action_engine.so`, `LANE_CHANGE_CANCEL_TORQUE_FRAMES` built from 0.25 s), read statically. The code here is an
+independent implementation; no IQ.Pilot code is used, and IQ's exact cancel condition was not recovered.
+
+**Open:** `common/params_pyx.so` / `libcommon.a` must be rebuilt for this key (and for D-107's `NavExitAutoKeep`, which
+was also added without a rebuild) before this runs on the car.
