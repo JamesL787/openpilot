@@ -421,6 +421,7 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
   valid: dict = {}
   toggles = default_toggles()
   planners: dict = {}
+  lvf_seeded: set = set()
   ri = rd = None
   rsm = _RadardSM()
   rr_latest = None
@@ -560,6 +561,11 @@ def replay(route_dir: Path, bearings: list[float], fixes: bool = False, coast_bo
             sims[v].step(dt, sim_resid, float(cs.vEgo))
       try:
         for v, p in planners.items():
+          if v not in lvf_seeded:
+            # The car's MPC lead_v_filter is warm (v_ego+10 from earlier no-lead ticks); a replay that starts
+            # mid-drive leaves it at 0 and fakes a ~0 m/s lead the moment the model-lead path drops.
+            p.mpc.lead_v_filter.x = float(cs.vEgo) + 10.0
+            lvf_seeded.add(v)
           sm = _ReplaySM(state, valid)
           sm["controlsState"] = cstate
           if v in sims:

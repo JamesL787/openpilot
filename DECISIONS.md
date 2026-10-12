@@ -2463,3 +2463,164 @@ excess -7.3 m and radar excess -5.8 m.
 slow cut-in that slides the same radar track while the camera misreads it would be under-braked for up to 4 s.
 
 **Lever:** `LEAD_SWITCH = False` restores the previous behaviour exactly.
+
+## D-107 — An off-ramp whose lane guidance already marks the exit-side edge lane is taken without blinker or wheel nudge (2026-10-11, static + replay trigger timing only, not driven, default off)
+
+**Problem (owner, 2026-10-11, route 0000031d segs 38-44):** already in the right lane, "slight right" to the exit, the car
+did not take the exit on its own. The owner had to use the blinker (41:49, 61 m before the maneuver point).
+
+**Cause (static, from code and rlog; toggle values are not in the rlog):** navInstruction held `off ramp / right`
+from 39:50 and its lane guidance was `[straight] inactive, [straight, slightRight] active` every second 41:15-41:51, so
+`activeLaneDirection = slightRight`. `DesireHelper._get_nav_exit_lane_change_direction` then returns none by design (the
+lane is not a further lane to change into) and defers to the keepLeft/keepRight path. That path needs
+`NavLanePositioningAllowed` (default 0), `_nav_keep_is_imminent`, and `_nav_torque_applied` (a wheel nudge toward the
+exit). No `preLaneChange` happened before 41:49, matching the log. The lane-width gate is not the blocker:
+`LaneDetectionWidth` defaults to 0.0 (right width on the approach was 0.00-2.2 m, unstable).
+
+**Decision:** behind the new default-off `NavExitAutoKeep` toggle (`desire_helper._nav_exit_auto_keep`), when `off ramp`, the active lane's direction is
+the exit side, the distance is inside the existing `_nav_keep_is_imminent` window, vEgo is at least 8 m/s, no blinker
+is on, the exit-side blind spot is clear, and `lane_change_state == off`, issue keepLeft/keepRight without the torque
+requirement. Off ramps only, never forks. Any driver steering input withdraws it; the nudge path still works. Unit tests
+(`test_navigation_desires.py`, 40 pass) cover default-off, each gate and the withdrawal. Not wired to safe mode
+(`safe_mode.py` left alone). Still open: a minimum distance to finish the move, and a closed-loop lateral replay.
+
+**Provenance:** an independent design; no IQ.Pilot code is used. IQ.Pilot's actual exit logic is closed source (the
+compiled `navd/nav_turn_signals` .so, which turns on the real blinker). Its readable `NavExitLaneChangeController` is
+never called, and it has no lane-guidance or shared-lane handling. Read statically by John on the Mac at 762eaa1; nothing
+was run.
+
+**Evidence (replay trigger only):** `tools/replay/nav_exit_autotake_proto.py` on 31d segs 40-41: all gates pass first
+at 41:46, 142 m before the maneuver point at 27.1 m/s, about 5 s ahead of the owner's blinker (41:49, 61 m). Before that
+only the distance window blocked it. This checks trigger timing only; it does not show the model would follow the
+desire, and no closed-loop lateral replay was run.
+
+Not road-validated.
+
+
+## D-108 — Steering against a started lane change for 0.25 s cancels it (2026-10-12, static unit tests only, not driven, default off)
+
+**Problem:** once `laneChangeStarting` is reached, the driver has no way to call the move off short of overpowering the
+model for the whole move or waiting out `lane_change_time_max`. That matters most for the nav-exit moves added in
+D-107 and `NavLanePositioningAllowed`, which start without the driver's own blinker decision.
+
+**Decision:** behind the new default-off `LaneChangeCounterTorqueCancel` toggle, in `laneChangeStarting`, driver torque
+*against* the lane-change direction (same detection as the nudge: `steeringPressed` or |torque| > 1200, opposite sign)
+for 5 consecutive model frames (`LANE_CHANGE_CANCEL_TORQUE_FRAMES = round(0.25 / DT_MDL)`) sets the state to off and the
+direction to none. Any frame without counter-torque resets the count. Going to off (not preLaneChange) means a held
+blinker needs a fresh press, and a nav-exit move needs a fresh exit request, before anything relaunches. Only
+`laneChangeStarting` is guarded; `laneChangeFinishing` is left alone.
+
+**Evidence (static only):** five new tests in `test_navigation_desires.py` (45 pass, run on the Mac with
+`--noconftest` in a scratch venv): default-off, the 0.20 s / 0.25 s boundary and reset, torque toward the move does not
+cancel, no relaunch on a held blinker, no relaunch of the same nav-exit request. No replay or drive.
+
+**Provenance:** the idea (cancel on counter-torque, 0.25 s) comes from IQ.Pilot's compiled ActionEngine
+(`action_engine.so`, `LANE_CHANGE_CANCEL_TORQUE_FRAMES` built from 0.25 s), read statically. The code here is an
+independent implementation; no IQ.Pilot code is used, and IQ's exact cancel condition was not recovered.
+
+**Open:** `common/params_pyx.so` / `libcommon.a` must be rebuilt for this key (and for D-107's `NavExitAutoKeep`, which
+was also added without a rebuild) before this runs on the car.
+
+## D-109 — Slow to 50 mph by the split for a navigated off-ramp once in the exit-side lane (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** slow for off-ramps only, 50 mph. Drives are mostly DFW and I-35 to San Antonio.
+
+**Decision:** behind the new default-off `NavOffRampSlowdown` toggle (needs `NavLongitudinalAllowed`),
+`StarPilotVCruise._get_nav_off_ramp_target` adds a 50 mph target at the maneuver point when the current nav maneuver is
+`off ramp` (never `fork`) with a left/right modifier, eased in with the existing `NAV_TURN_COMFORT_DECEL` (0.45 m/s²)
+profile, and only while the model's exit-side road edge is within 6.0 m of the car (std ≤ 1.0, median over x 5–40 m).
+That edge test is the "already in the exit-side lane" gate: Mapbox's lane `active` flag marks lanes valid for the
+route, not the car's lane, so it cannot be used. Turn targets still take priority; the result joins the min-of-targets.
+
+**Why 50 mph:** TxDOT Roadway Design Manual 15.7, Table 15-1: ramps are designed for 70% ("usual") of the freeway design
+speed, 50 mph at 70 and 55 at 75. Texas exits mostly feed frontage roads (45 urban / 55 rural, RDM 15.8). Tighter
+ramp curves are left to the curve speed controllers.
+
+**Evidence (static only):** four tests in `test_starpilot_vcruise.py` (default-off, 50 mph at 0 m and a gradual
+profile further out, edge-lane / std / side / modifier gates, forks and missing model ignored); the file, the desire
+tests and the layout tests pass in `oprad-test:py312`. Params artifacts rebuilt (879 → 880 keys). No replay or drive.
+The 6.0 m edge threshold is an estimate from lane and shoulder widths, not measured on Peter's routes.
+
+**Provenance:** our own design. IQ.Pilot's `long_decel` (read statically) also lists exits among its decel maneuvers,
+but its route speed formula was not recovered and none of its code is used.
+
+## D-110 — Road edge guard: hold a lane change toward a road edge the model sees inside one lane (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** a road edge guard like IQ.Pilot's. The owner then asked for our own
+implementation, kept as close to IQ's behavior as possible, instead of shipping IQ's all-rights-reserved file.
+
+**Decision:** `starpilot/controls/lib/lateral_edge_guard.py` is an independent implementation. Its thresholds,
+debounce timing and fallbacks match IQ.Pilot's `iqpilot/selfdrive/controls/lib/helpers/lateral_edge_guard.py`, but
+none of IQ's code is used. `DesireHelper` updates it every frame. While the default-off `LaneChangeEdgeGuard` toggle
+is on, a block in the lane-change direction holds the preLaneChange → laneChangeStarting launch, exactly like a
+blind-spot hit. This applies to nudged, nudgeless and nav-exit lane changes.
+
+**The rule (IQ's numbers):**
+- Block when (nearest edge |y| over x 5–40 m) − 1·std < measured lane width + 0.95 + 0.25 m. The lane width is
+  clamped to 2.5–4.5 m and defaults to 3.5 m unless both ego lines have prob > 0.5.
+- Never block when the edge std is above 1.0 m, the edge is on the wrong side, or an outer lane line has prob > 0.5.
+- Inactive below 20 mph.
+- A block needs 0.30 s to set and 0.50 s to clear. Missing edges hold the last answer for 0.50 s, then fall back to
+  not blocking.
+
+**Failure direction:** the guard can only prevent or delay a lane change. It never steers. A false block means the
+driver has to steer the move manually, and a missed block is the same as today.
+
+**Evidence (static only):**
+- 11 guard tests (`starpilot/controls/lib/tests/test_lateral_edge_guard.py`, written here) and 2 integration tests
+  in `test_navigation_desires.py`.
+- A differential run against IQ's file over 2 × 400 random 200-frame sequences: 160,000 frames, including NaN
+  points, bad stds, wrong-side edges, empty edges, a missing model, low speed and toggle flips. It gave identical
+  `block_for_direction` on both sides in every frame (361 and 653 blocked side-frames), and the
+  missing-edge warnings fired at the same frames.
+- Params artifacts rebuilt, 880 → 881 keys (+LaneChangeEdgeGuard only).
+- Not replayed against Peter's routes. The thresholds are IQ's and were not re-derived here.
+
+## D-111 — Offer a faster route mid-drive; switch only when the driver taps Switch (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** re-check traffic during a drive the way IQ.Pilot does, and "ask before switching routes".
+
+**What it does (`NavTrafficReroute`, Visual → Navigation, off by default):** while a route is active, navigationd
+re-requests Mapbox `driving-traffic` with alternatives from the car's position every 120 s
+(`starpilot/navigation/traffic_reroute.py`). It finds the refreshed copy of the route being driven (≥ 90 % of its
+sampled points lie on the remaining route) and the fastest route that is not that one. If the second is faster by at
+least max(120 s, 10 %) on two checks in a row, the MICI HUD shows "Faster route: N min faster" with Switch and
+Keep buttons. The route changes only on Switch. Keep, no answer within 20 s, or a 500 m approach to the next
+maneuver withdraws the offer, and any answer starts a 10 min cooldown.
+
+**Where the rules come from:** our own code. These rules follow IQ.Pilot's `TrafficReroutePolicy`, with the
+constants that could be read from its shipped binary: a 500 m maneuver guard, 2 confirmations, a 10 % savings ratio
+and a 15 s retry base. IQ's refresh interval, minimum seconds saved, cooldown and retry cap were not recoverable.
+The 120 s, 120 s, 600 s and 240 s values used for them are our choice. IQ's road-closure inputs and its
+Google/Valhalla traffic sources are not ported. Mapbox's own route durations are the only traffic signal.
+
+**Fairness rule:** without a fresh time for the current route, nothing is offered. Comparing a fresh candidate
+against the duration from when the route was first fetched would not be like for like.
+
+**Evidence:** static unit tests only (`starpilot/navigation/test_traffic_reroute.py`). The tests cover the policy,
+same-route matching, confirmation, accept, decline, timeout, a stale response id, the maneuver guard, a reroute
+during the prompt, and backoff. The prompt's parse and tap logic was tested with stubbed UI modules. The drawn pill
+has not been seen on a device.
+
+## D-112 — Ease down before a Mapbox-reported jam ahead (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** slow down for traffic jams using the route's traffic data. IQ.Pilot has no jam
+slowdown (its traffic code only switches routes), so this design is ours.
+
+**What it does (`NavJamSlowdown`, under Use Route Speed Control, off by default):** route requests now ask Mapbox for
+`congestion` and `speed` annotations. navigationd publishes `jamDistance` and `jamSpeed` in `NavInstructionState`:
+- `jamDistance` is the distance to the first heavy or severe run at least 150 m long within 2 km ahead.
+- `jamSpeed` is the slowest Mapbox speed in that run.
+
+The data comes from the D-111 refresh when that is newer than the route itself. Nothing is published if the data is
+more than 10 min old or the car is more than 40 m off that route. The refresh runs when either toggle is on.
+
+`starpilot_vcruise` adds one more nav target to the min-of-targets: max(40 mph, jam speed + 10 mph), reached
+50 m before the jam on the turn comfort decel (0.45 m/s²). It releases inside 50 m.
+
+**Why it releases at the jam:** Mapbox traffic can be old or wrong. Holding a low target through a jam that has
+cleared would leave the car slow in flowing traffic. The real queue is the radar's job. The target can only lower
+cruise speed, never raise it, and a lower turn or off-ramp target still wins.
+
+**Evidence:** static unit tests only (`test_starpilot_vcruise.py` jam tests, `test_traffic_reroute.py` congestion
+tests). Not driven, and not compared against real Mapbox congestion on a route.

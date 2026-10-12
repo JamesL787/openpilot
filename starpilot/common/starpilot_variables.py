@@ -1246,6 +1246,9 @@ class StarPilotVariables:
     toggle.nnff_lite = self.get_value("NNFFLite", condition=not toggle.nnff and lateral_tuning and not is_angle_car)
     toggle.nav_desires_allowed = self.get_value("NavDesiresAllowed")
     toggle.nav_lane_positioning_allowed = self.get_value("NavLanePositioningAllowed")
+    toggle.nav_exit_auto_keep = self.get_value("NavExitAutoKeep", condition=toggle.nav_desires_allowed)
+    toggle.lane_change_counter_torque_cancel = self.get_value("LaneChangeCounterTorqueCancel")
+    toggle.lane_change_edge_guard = self.get_value("LaneChangeEdgeGuard")
     toggle.nav_exit_lane_change = bool(toggle.nav_desires_allowed and toggle.nav_lane_positioning_allowed)
     toggle.use_turn_desires = self.get_value("TurnDesires", condition=lateral_tuning)
 
@@ -1396,6 +1399,8 @@ class StarPilotVariables:
         pass
     toggle.human_lane_changes = has_radar and self.get_value("HumanLaneChanges", condition=longitudinal_tuning)
     toggle.nav_longitudinal_allowed = toggle.openpilot_longitudinal and self.get_value("NavLongitudinalAllowed", condition=longitudinal_tuning)
+    toggle.nav_off_ramp_slowdown = self.get_value("NavOffRampSlowdown", condition=toggle.nav_longitudinal_allowed)
+    toggle.nav_jam_slowdown = self.get_value("NavJamSlowdown", condition=toggle.nav_longitudinal_allowed)
     # Keep lead detection sensitivity normalized even when longitudinal tuning is disabled.
     # Some branches can return raw integer defaults (e.g. 35) when condition=False.
     lead_detection_probability = self.get_value("LeadDetectionThreshold", cast=float, condition=toggle.openpilot_longitudinal,

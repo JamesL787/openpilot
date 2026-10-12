@@ -803,3 +803,145 @@ def test_nav_exit_second_lane_needs_nudge_with_blinker():
   assert helper.lane_change_state == LaneChangeState.preLaneChange
   helper.update(make_car_state(vEgo=25.0, rightBlinker=True, steeringPressed=True, steeringTorque=-1.5), True, 0.0, make_plan(), toggles)
   assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+
+
+def _exit_state(**overrides):
+  state = {"valid": True, "maneuverType": "off ramp", "maneuverModifier": "right", "maneuverDistance": 80.0,
+           "activeLaneDirection": "slightRight", "laneCount": 2, "sameSideLaneCount": 1,
+           "activeLaneAtRoadEdge": True, "hasSharedSameSideLane": True}
+  state.update(overrides)
+  return state
+
+
+def _exit_desire(car=None, toggles=None, state=None, plan=None):
+  helper = DesireHelper()
+  helper._update_nav_params = lambda: None
+  helper._nav_instruction_state = state or _exit_state()
+  helper.update(make_car_state(**(car or {})), True, 0.0, plan or make_plan(laneWidthRight=0.0),
+                make_toggles(**{"nav_lane_positioning_allowed": False, "lane_detection_width": 0.0, **(toggles or {})}))
+  return helper.desire
+
+
+def test_nav_exit_auto_keep_takes_same_side_exit_without_nudge_or_blinker():
+  assert _exit_desire(toggles={"nav_exit_auto_keep": True}) == log.Desire.keepRight
+
+
+def test_nav_exit_auto_keep_is_off_by_default():
+  assert _exit_desire() == log.Desire.none
+  assert _exit_desire(toggles={"nav_exit_auto_keep": False}) == log.Desire.none
+
+
+def test_nav_exit_auto_keep_gates():
+  on = {"nav_exit_auto_keep": True}
+  assert _exit_desire(car={"rightBlindspot": True}, toggles=on) == log.Desire.none
+  assert _exit_desire(car={"leftBlinker": True}, toggles=on) == log.Desire.none
+  assert _exit_desire(car={"vEgo": 5.0}, toggles=on) == log.Desire.none
+  assert _exit_desire(state=_exit_state(maneuverDistance=300.0), toggles=on) == log.Desire.none
+  assert _exit_desire(state=_exit_state(maneuverType="fork"), toggles=on) == log.Desire.none
+
+
+def test_nav_exit_auto_keep_withdrawn_by_driver_steering():
+  on = {"nav_exit_auto_keep": True}
+  assert _exit_desire(car={"steeringPressed": True, "steeringTorque": 1.0}, toggles=on) == log.Desire.none
+  assert _exit_desire(car={"steeringPressed": True, "steeringTorque": -1.0},
+                      toggles={**on, "nav_lane_positioning_allowed": True}) == log.Desire.keepRight
+
+
+def _started_left_lane_change(toggles):
+  helper = DesireHelper()
+  helper._update_nav_params = lambda: None
+  for _ in range(2):
+    helper.update(make_car_state(leftBlinker=True), True, 1.0, make_plan(), toggles)
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+  return helper
+
+
+def _steer(helper, toggles, torque, frames, **cs):
+  for _ in range(frames):
+    helper.update(make_car_state(leftBlinker=True, steeringPressed=True, steeringTorque=torque, **cs), True, 1.0, make_plan(), toggles)
+
+
+def test_counter_torque_cancel_is_off_by_default():
+  toggles = make_toggles()
+  helper = _started_left_lane_change(toggles)
+  _steer(helper, toggles, -1.0, 20)
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+
+
+def test_counter_torque_cancel_needs_quarter_second_of_opposing_torque():
+  toggles = make_toggles(lane_change_counter_torque_cancel=True)
+  helper = _started_left_lane_change(toggles)
+  _steer(helper, toggles, -1.0, 4)
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting, "0.20 s is not enough"
+  helper.update(make_car_state(leftBlinker=True), True, 1.0, make_plan(), toggles)
+  _steer(helper, toggles, -1.0, 4)
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting, "a release resets the count"
+  _steer(helper, toggles, -1.0, 1)
+  assert helper.lane_change_state == LaneChangeState.off, "the fifth frame is 0.25 s"
+  assert helper.lane_change_direction == LaneChangeDirection.none
+  assert helper.desire == log.Desire.none
+
+
+def test_counter_torque_cancel_ignores_torque_toward_the_move():
+  toggles = make_toggles(lane_change_counter_torque_cancel=True)
+  helper = _started_left_lane_change(toggles)
+  _steer(helper, toggles, 1.0, 20)
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+
+
+def test_counter_torque_cancel_does_not_relaunch_on_held_blinker():
+  toggles = make_toggles(lane_change_counter_torque_cancel=True)
+  helper = _started_left_lane_change(toggles)
+  _steer(helper, toggles, -1.0, 5)
+  assert helper.lane_change_state == LaneChangeState.off
+  for _ in range(50):
+    helper.update(make_car_state(leftBlinker=True), True, 1.0, make_plan(), toggles)
+  assert helper.lane_change_state == LaneChangeState.off, "needs a fresh blinker press"
+  helper.update(make_car_state(), True, 1.0, make_plan(), toggles)
+  helper.update(make_car_state(leftBlinker=True), True, 1.0, make_plan(), toggles)
+  assert helper.lane_change_state == LaneChangeState.preLaneChange
+
+
+def test_counter_torque_cancel_does_not_relaunch_nav_exit_move():
+  toggles = make_toggles(lane_change_counter_torque_cancel=True)
+  helper = DesireHelper()
+  helper._update_nav_params = lambda: None
+  helper._get_nav_exit_lane_change_direction = lambda _t: LaneChangeDirection.right
+  helper.update(make_car_state(), True, 1.0, make_plan(), toggles)
+  assert helper.lane_change_state == LaneChangeState.preLaneChange and helper.nav_exit_lane_change
+  helper.update(make_car_state(rightBlinker=True), True, 1.0, make_plan(), toggles)
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+  for _ in range(5):
+    helper.update(make_car_state(rightBlinker=True, steeringPressed=True, steeringTorque=1.0), True, 1.0, make_plan(), toggles)
+  assert helper.lane_change_state == LaneChangeState.off
+  for _ in range(50):
+    helper.update(make_car_state(), True, 1.0, make_plan(), toggles)
+  assert helper.lane_change_state == LaneChangeState.off, "the same exit request does not relaunch"
+
+
+def _edge_model(left_y):
+  xs = [float(x) for x in range(0, 55, 5)]
+  edge = lambda y: SimpleNamespace(x=xs, y=[y] * len(xs))
+  return SimpleNamespace(roadEdges=[edge(left_y), edge(8.0)], roadEdgeStds=[0.2, 0.2],
+                         laneLines=[edge(-5.4), edge(-1.8), edge(1.8), edge(5.4)], laneLineProbs=[0.0, 0.9, 0.9, 0.0])
+
+
+def _edge_guard_launch(toggles, left_y):
+  helper = DesireHelper()
+  helper._update_nav_params = lambda: None
+  md = _edge_model(left_y)
+  for _ in range(10):
+    helper.update(make_car_state(), True, 1.0, make_plan(), toggles, modeldata=md)
+  for _ in range(3):
+    helper.update(make_car_state(leftBlinker=True), True, 1.0, make_plan(), toggles, modeldata=md)
+  return helper
+
+
+def test_edge_guard_is_off_by_default():
+  assert _edge_guard_launch(make_toggles(), -4.0).lane_change_state == LaneChangeState.laneChangeStarting
+
+
+def test_edge_guard_holds_lane_change_toward_a_near_road_edge():
+  toggles = make_toggles(lane_change_edge_guard=True)
+  assert _edge_guard_launch(toggles, -4.0).lane_change_state == LaneChangeState.preLaneChange
+  assert _edge_guard_launch(toggles, -8.0).lane_change_state == LaneChangeState.laneChangeStarting

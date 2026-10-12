@@ -9,6 +9,7 @@ from openpilot.common.constants import CV
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.common.realtime import DT_MDL
 from openpilot.starpilot.common.vision_bsm import get_fresh_vasm_state
+from openpilot.starpilot.controls.lib.lateral_edge_guard import LateralEdgeGuard
 from openpilot.starpilot.controls.lib.nav_lane_prompt import nav_lane_move_prompt
 
 LaneChangeState = log.LaneChangeState
@@ -18,6 +19,10 @@ LANE_CHANGE_SPEED_MIN = 20 * CV.MPH_TO_MS
 LANE_CHANGE_TIME_MAX = 10.
 LANE_CHANGE_NUDGE_TORQUE_THRESHOLD = 1200
 NAV_EXIT_COMMIT_DISTANCE = 500.0
+# D-107: lowest speed at which NavExitAutoKeep applies the exit keep without a wheel nudge
+NAV_EXIT_AUTO_KEEP_MIN_SPEED = 8.0
+# D-108: the driver steering against a started lane change for this long cancels it (LaneChangeCounterTorqueCancel)
+LANE_CHANGE_CANCEL_TORQUE_FRAMES = round(0.25 / DT_MDL)
 NAV_TURN_DISTANCE_SPEED_BREAKPOINTS = [0.0, 5.0, 10.0]
 NAV_TURN_DISTANCE_BREAKPOINTS = [20.0, 25.0, 30.0]
 NAV_KEEP_DISTANCE_SPEED_BREAKPOINTS = [0.0, 15.0, 30.0]
@@ -78,6 +83,8 @@ class DesireHelper:
     self.lane_change_completed = False
 
     self.lane_change_wait_timer = 0.0
+    self.counter_torque_frames = 0
+    self.edge_guard = LateralEdgeGuard()
     self.nav_desires_allowed = False
     self.nav_lane_positioning_allowed = False
     self.nav_exit_lane_change = False
@@ -165,6 +172,17 @@ class DesireHelper:
     return carstate.steeringPressed and (
       (lane_change_direction == LaneChangeDirection.left and carstate.steeringTorque > 0) or
       (lane_change_direction == LaneChangeDirection.right and carstate.steeringTorque < 0)
+    )
+
+  @staticmethod
+  def _nav_exit_auto_keep(carstate, starpilot_toggles, maneuver_type):
+    # D-107: an off-ramp whose lane guidance already marks the exit-side lane is kept without a nudge. Off ramps only,
+    # never forks. Any steering input from the driver withdraws it (the nudge path below still works).
+    return (
+      bool(getattr(starpilot_toggles, "nav_exit_auto_keep", False)) and
+      maneuver_type == "off ramp" and
+      carstate.vEgo >= NAV_EXIT_AUTO_KEEP_MIN_SPEED and
+      not carstate.steeringPressed
     )
 
   @staticmethod
@@ -267,21 +285,23 @@ class DesireHelper:
       return log.Desire.none
 
     v_asm_enabled = bool(getattr(starpilot_toggles, "v_asm_enabled", False))
+    maneuver_type = str(self._nav_instruction_state.get("maneuverType", ""))
+    auto_keep = self._nav_exit_auto_keep(carstate, starpilot_toggles, maneuver_type)
     if modifier == "slightLeft":
-      if not self.nav_lane_positioning_allowed:
+      if not (self.nav_lane_positioning_allowed or auto_keep):
         return log.Desire.none
       lane_change_direction = LaneChangeDirection.left
       desired_lane_width = starpilotPlan.laneWidthLeft
       if not carstate.rightBlinker and self._nav_keep_direction_is_clear(carstate, lane_change_direction, self.params_memory, v_asm_enabled):
-        if desired_lane_width >= starpilot_toggles.lane_detection_width and self._nav_torque_applied(carstate, lane_change_direction):
+        if desired_lane_width >= starpilot_toggles.lane_detection_width and (auto_keep or self._nav_torque_applied(carstate, lane_change_direction)):
           return log.Desire.keepLeft
     elif modifier == "slightRight":
-      if not self.nav_lane_positioning_allowed:
+      if not (self.nav_lane_positioning_allowed or auto_keep):
         return log.Desire.none
       lane_change_direction = LaneChangeDirection.right
       desired_lane_width = starpilotPlan.laneWidthRight
       if not carstate.leftBlinker and self._nav_keep_direction_is_clear(carstate, lane_change_direction, self.params_memory, v_asm_enabled):
-        if desired_lane_width >= starpilot_toggles.lane_detection_width and self._nav_torque_applied(carstate, lane_change_direction):
+        if desired_lane_width >= starpilot_toggles.lane_detection_width and (auto_keep or self._nav_torque_applied(carstate, lane_change_direction)):
           return log.Desire.keepRight
     elif modifier in ("left", "sharpLeft"):
       left_blocked = self._get_combined_blindspot(carstate, LaneChangeDirection.left, v_asm_enabled)
@@ -402,6 +422,8 @@ class DesireHelper:
     lane_change_time_max = getattr(starpilot_toggles, 'lane_change_time_max', LANE_CHANGE_TIME_MAX)
     nav_exit_direction = self._get_nav_exit_lane_change_direction(starpilot_toggles)
     nav_exit_active = nav_exit_direction != LaneChangeDirection.none
+    # D-110: runs every frame so its block/clear debounce is current when a lane change is requested
+    self.edge_guard.update(modeldata, v_ego, DT_MDL, enabled=bool(getattr(starpilot_toggles, "lane_change_edge_guard", False)))
 
     if not lateral_active or self.lane_change_timer > lane_change_time_max or not lane_changes_allowed:
       self.lane_change_state = LaneChangeState.off
@@ -449,6 +471,8 @@ class DesireHelper:
 
         v_asm_enabled = bool(getattr(starpilot_toggles, "v_asm_enabled", False))
         blindspot_detected = self._get_combined_blindspot(carstate, self.lane_change_direction, v_asm_enabled=v_asm_enabled)
+        # D-110: a road edge where the target lane should be holds the launch the same way a blind-spot car does
+        blindspot_detected |= self.edge_guard.block_for_direction(self.lane_change_direction)
 
         if self.nav_exit_lane_change:
           # Driver confirms with the blinker toward the exit (no native BSM; vision ASM can only block).
@@ -481,8 +505,22 @@ class DesireHelper:
         # fade out over .5s
         self.lane_change_ll_prob = max(self.lane_change_ll_prob - 2 * DT_MDL, 0.0)
 
+        # D-108: steering against the move cancels it. Going to off (not preLaneChange) means a held blinker
+        # needs a fresh press and a nav exit move needs a fresh exit request before anything relaunches.
+        counter_torque = (carstate.steeringPressed or abs(carstate.steeringTorque) > LANE_CHANGE_NUDGE_TORQUE_THRESHOLD) and \
+                         ((carstate.steeringTorque < 0 and self.lane_change_direction == LaneChangeDirection.left) or
+                          (carstate.steeringTorque > 0 and self.lane_change_direction == LaneChangeDirection.right))
+        if counter_torque and getattr(starpilot_toggles, "lane_change_counter_torque_cancel", False):
+          self.counter_torque_frames += 1
+        else:
+          self.counter_torque_frames = 0
+
+        if self.counter_torque_frames >= LANE_CHANGE_CANCEL_TORQUE_FRAMES:
+          self.lane_change_state = LaneChangeState.off
+          self.lane_change_direction = LaneChangeDirection.none
+          self.nav_exit_lane_change = False
         # 98% certainty
-        if lane_change_prob < 0.02 and self.lane_change_ll_prob < 0.01:
+        elif lane_change_prob < 0.02 and self.lane_change_ll_prob < 0.01:
           self.lane_change_state = LaneChangeState.laneChangeFinishing
 
       # LaneChangeState.laneChangeFinishing
@@ -503,6 +541,9 @@ class DesireHelper:
           else:
             self.lane_change_state = LaneChangeState.off
             self.nav_exit_lane_change = False
+
+    if self.lane_change_state != LaneChangeState.laneChangeStarting:
+      self.counter_torque_frames = 0
 
     if self.lane_change_state in (LaneChangeState.off, LaneChangeState.preLaneChange):
       self.lane_change_timer = 0.0

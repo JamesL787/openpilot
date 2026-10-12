@@ -61,6 +61,9 @@ def test_run_builds_one_payload_for_both_navigation_publishers():
   navigationd._publish_nav_instruction = Recorder()
   navigationd._publish_nav_state = Recorder()
   navigationd._publish_nav_route_if_needed = Recorder()
+  navigationd._maybe_check_traffic = Recorder()
+  navigationd._update_reroute_prompt = Recorder()
+  navigationd._jam_ahead = Recorder()
 
   with pytest.raises(StopLoop):
     navigationd.run()

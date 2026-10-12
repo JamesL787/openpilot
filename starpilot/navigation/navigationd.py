@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 import threading
-from math import isfinite
+from math import inf, isfinite
 from time import monotonic
 
 import cereal.messaging as messaging
@@ -12,12 +12,17 @@ from openpilot.common.swaglog import cloudlog
 
 from openpilot.starpilot.navigation.destination_store import parse_destination_json
 from openpilot.starpilot.navigation.route_engine import Coordinate, MapboxRouteEngine, NavigationRoute, RouteProgress
+from openpilot.starpilot.navigation.traffic_reroute import (
+  JAM_DATA_MAX_AGE_S, JAM_MAX_ROUTE_OFFSET_M, TRAFFIC_CONFIRM_RECHECK_S, TRAFFIC_MANEUVER_GUARD_M, TRAFFIC_PROMPT_TIMEOUT_S,
+  TRAFFIC_REFRESH_INTERVAL_S, TrafficReroutePolicy, congestion_ahead, retry_delay_s, same_route,
+)
 
 NAVIGATIOND_HZ = 1
 REROUTE_TRIGGER_SECONDS = 2.0
 ARRIVAL_CLEAR_SECONDS = 5.0
 LOCATION_STATE_STALE_SECONDS = 2.5
 NAV_ROUTE_REPUBLISH_SECONDS = 5.0  # map views that start after the route was sent still get it
+REROUTE_ACCEPT_MAX_OFFSET_M = 40.0  # an accepted candidate must still start under the car
 
 
 class Navigationd:
@@ -47,6 +52,19 @@ class Navigationd:
     self._bearing_misaligned_started_at: float | None = None
     self._arrival_started_at: float | None = None
     self._last_nav_state: dict[str, object] | None = None
+    self._route_fetched_at = -inf
+
+    # D-111 traffic re-check and D-112 congestion data
+    self._traffic_policy = TrafficReroutePolicy()
+    self._traffic_fetch_inflight = False
+    self._traffic_next_check_at = 0.0
+    self._traffic_failures = 0
+    self._traffic_candidate: NavigationRoute | None = None   # last qualifying candidate, to confirm it on the next check
+    self._traffic_route: NavigationRoute | None = None       # fresh copy of the current route's path (traffic only)
+    self._traffic_route_at = -inf
+    self._reroute_prompt: dict[str, object] | None = None
+    # ids start from the clock so a restarted navigationd can never reuse an id a leftover tap answer still names
+    self._reroute_prompt_id = int(monotonic() * 1000)
 
   @staticmethod
   def _destination_key(destination: dict[str, object] | None) -> tuple | None:
@@ -80,6 +98,7 @@ class Navigationd:
     self._off_route_started_at = None
     self._bearing_misaligned_started_at = None
     self._arrival_started_at = None
+    self._reset_traffic()
     self._publish_nav_state(None, None, False)
     self.params_memory.remove("NavInstructionCollapsed")
 
@@ -117,12 +136,183 @@ class Navigationd:
         self._route = route
         self._active_destination = destination
         self._route_generation += 1
+        self._route_fetched_at = monotonic()
 
+      self._reset_traffic()
       self._off_route_started_at = None
       self._bearing_misaligned_started_at = None
       self._arrival_started_at = None
 
     threading.Thread(target=worker, daemon=True).start()
+
+  # ===== D-111 / D-112: traffic re-check =====
+  def _reset_traffic(self) -> None:
+    self._traffic_policy.reset_candidate()
+    self._traffic_candidate = None
+    self._traffic_route = None
+    self._traffic_route_at = -inf
+    self._traffic_next_check_at = monotonic() + TRAFFIC_REFRESH_INTERVAL_S
+    self._clear_reroute_prompt()
+
+  def _clear_reroute_prompt(self) -> None:
+    if self._reroute_prompt is not None:
+      self._reroute_prompt = None
+      self.params_memory.remove("NavTrafficReroutePrompt")
+
+  def _maybe_check_traffic(self, route: NavigationRoute | None, destination: dict[str, object] | None,
+                           progress: RouteProgress | None, now: float) -> None:
+    reroute_on = self.params.get_bool("NavTrafficReroute")
+    if not (reroute_on or self.params.get_bool("NavJamSlowdown")):
+      return
+    if route is None or destination is None or progress is None or self._last_position is None:
+      return
+    if self._traffic_fetch_inflight or self._route_fetch_inflight or self._reroute_prompt is not None:
+      return
+    if now < self._traffic_next_check_at or progress.current_step_index >= len(route.steps) - 1:
+      return
+    token = self._route_token()
+    if not token:
+      return
+
+    position, bearing = self._last_position, self._last_bearing
+    along_m, next_maneuver_m = progress.along_distance, progress.distance_to_end_of_step
+    with self._route_lock:
+      generation = self._route_generation
+    self._traffic_fetch_inflight = True
+
+    def worker():
+      try:
+        routes = self.route_engine.fetch_routes(token, position, destination, bearing, alternatives=reroute_on)
+        self._handle_traffic_routes(routes, route, generation, along_m, next_maneuver_m, reroute_on, monotonic())
+      finally:
+        self._traffic_fetch_inflight = False
+
+    threading.Thread(target=worker, daemon=True).start()
+
+  def _handle_traffic_routes(self, routes: list[NavigationRoute], current: NavigationRoute, generation: int, along_m: float,
+                             next_maneuver_m: float, reroute_on: bool, now: float) -> None:
+    with self._route_lock:
+      if generation != self._route_generation:
+        return  # rerouted while the request was out
+    if not routes:
+      self._traffic_failures += 1
+      self._traffic_next_check_at = now + retry_delay_s(self._traffic_failures)
+      return
+    self._traffic_failures = 0
+    self._traffic_next_check_at = now + TRAFFIC_REFRESH_INTERVAL_S
+
+    fresh_current = next((r for r in routes if same_route(r, current, along_m)), None)
+    if fresh_current is not None:
+      with self._route_lock:
+        if generation != self._route_generation:
+          return  # the route was swapped while we compared; this copy belongs to the old one
+        self._traffic_route, self._traffic_route_at = fresh_current, now
+    if not reroute_on:
+      return
+    if fresh_current is None:
+      # without a fresh time for the route we are on there is nothing fair to compare against
+      self._traffic_policy.reset_candidate()
+      self._traffic_candidate = None
+      cloudlog.info("nav traffic: current route not among the refreshed routes")
+      return
+
+    others = [r for r in routes if r is not fresh_current and not same_route(r, current, along_m)]
+    best = min(others, key=lambda r: r.total_duration) if others else None
+    matches_previous = best is not None and self._traffic_candidate is not None and same_route(best, self._traffic_candidate)
+    decision = self._traffic_policy.evaluate(now, fresh_current.total_duration, best.total_duration if best else None,
+                                             next_maneuver_m, matches_previous)
+    cloudlog.info(f"nav traffic: {decision.reason} savings={decision.savings_s:.0f}s confirmations={decision.confirmations}")
+    self._traffic_candidate = best if decision.reason in ("awaiting_confirmation", "switch") else None
+    if decision.reason == "awaiting_confirmation":
+      self._traffic_next_check_at = now + TRAFFIC_CONFIRM_RECHECK_S
+    elif decision.reason == "switch" and best is not None:
+      with self._route_lock:
+        if generation != self._route_generation:
+          return
+        self._reroute_prompt_id += 1
+        # an answer left over from an earlier prompt (a tap that landed as it closed) must not answer this one
+        self.params_memory.remove("NavTrafficRerouteResponse")
+        self._reroute_prompt = {"id": self._reroute_prompt_id, "route": best, "savings_s": decision.savings_s,
+                                "shown_at": now, "generation": generation}
+
+  def _read_reroute_response(self) -> dict[str, object]:
+    raw = self.params_memory.get("NavTrafficRerouteResponse") or {}
+    if isinstance(raw, (str, bytes)):
+      try:
+        raw = json.loads(raw) if raw else {}
+      except json.JSONDecodeError:
+        raw = {}
+    return raw if isinstance(raw, dict) else {}
+
+  def _update_reroute_prompt(self, progress: RouteProgress | None, now: float) -> None:
+    prompt = self._reroute_prompt
+    if prompt is None:
+      return
+    with self._route_lock:
+      generation = self._route_generation
+    if prompt["generation"] != generation or progress is None:
+      self._clear_reroute_prompt()
+      return
+
+    response = self._read_reroute_response()
+    if response.get("id") == prompt["id"]:
+      self.params_memory.remove("NavTrafficRerouteResponse")
+      self._traffic_policy.mark_answered(now)
+      self._clear_reroute_prompt()
+      if bool(response.get("accept", False)):
+        self._accept_reroute(prompt["route"])
+      else:
+        cloudlog.info("nav traffic: driver kept the current route")
+      return
+
+    if now - float(prompt["shown_at"]) >= TRAFFIC_PROMPT_TIMEOUT_S:
+      self._traffic_policy.mark_answered(now)
+      self._clear_reroute_prompt()
+      cloudlog.info("nav traffic: prompt timed out, keeping the current route")
+      return
+    if progress.distance_to_end_of_step < TRAFFIC_MANEUVER_GUARD_M:
+      self._traffic_policy.reset_candidate()
+      self._clear_reroute_prompt()
+      return
+
+    self.params_memory.put_nonblocking("NavTrafficReroutePrompt", {
+      "armed": True,
+      "id": prompt["id"],
+      "savings_s": round(float(prompt["savings_s"])),
+      "remaining_s": round(max(TRAFFIC_PROMPT_TIMEOUT_S - (now - float(prompt["shown_at"])), 0.0), 1),
+      "ts": now,
+    })
+
+  def _accept_reroute(self, candidate: NavigationRoute) -> None:
+    position = self._last_position
+    progress = candidate.get_progress(position) if position is not None else None
+    if progress is None or progress.distance_from_route > REROUTE_ACCEPT_MAX_OFFSET_M:
+      cloudlog.warning("nav traffic: accepted route no longer starts at the car; not switching")
+      return
+    with self._route_lock:
+      self._route = candidate
+      self._route_generation += 1
+      self._route_fetched_at = monotonic()
+    self._off_route_started_at = None
+    self._bearing_misaligned_started_at = None
+    self._arrival_started_at = None
+    self._reset_traffic()
+    cloudlog.warning("nav traffic: driver switched to the faster route")
+
+  def _jam_ahead(self, route: NavigationRoute | None, progress: RouteProgress | None, now: float) -> tuple[float, float] | None:
+    if route is None or progress is None or self._last_position is None or not self.params.get_bool("NavJamSlowdown"):
+      return None
+    source, fetched_at, source_progress = route, self._route_fetched_at, progress
+    traffic_route = self._traffic_route
+    if traffic_route is not None and self._traffic_route_at > fetched_at:
+      source, fetched_at, source_progress = traffic_route, self._traffic_route_at, None
+    if now - fetched_at > JAM_DATA_MAX_AGE_S:
+      return None
+    if source_progress is None:
+      source_progress = source.get_progress(self._last_position)
+    if source_progress is None or source_progress.distance_from_route > JAM_MAX_ROUTE_OFFSET_M:
+      return None
+    return congestion_ahead(source, source_progress.along_distance)
 
   @staticmethod
   def _timer_expired(started_at: float | None, threshold: float, now: float) -> bool:
@@ -262,6 +452,7 @@ class Navigationd:
     progress: RouteProgress | None,
     location_valid: bool,
     payload: dict[str, object] | None = None,
+    jam: tuple[float, float] | None = None,
   ) -> None:
     if route is None or progress is None or not location_valid:
       if self._last_nav_state is not None:
@@ -324,7 +515,12 @@ class Navigationd:
       "nextManeuverType": str(next_maneuver.get("type") or ""),
       "nextManeuverModifier": str(next_maneuver.get("modifier") or ""),
       "nextManeuverDistance": float(next_maneuver.get("distance") or 0.0),
+      "jamDistance": -1.0,
+      "jamSpeed": 0.0,
     }
+    if jam is not None:
+      state["jamDistance"] = float(round(jam[0] / 10.0) * 10.0)
+      state["jamSpeed"] = round(float(jam[1]), 1)
     if state != self._last_nav_state:
       self.params_memory.put_nonblocking("NavInstructionState", state)
       self._last_nav_state = state
@@ -372,8 +568,14 @@ class Navigationd:
           use_vienna_sign=self.params.get_bool("UseVienna"),
         )
 
+      now = monotonic()
+      if location_valid:
+        self._maybe_check_traffic(route, current_destination or active_destination, progress, now)
+      self._update_reroute_prompt(progress if location_valid else None, now)
+      jam = self._jam_ahead(route, progress, now) if location_valid else None
+
       self._publish_nav_instruction(route, progress, location_valid, payload)
-      self._publish_nav_state(route, progress, location_valid, payload)
+      self._publish_nav_state(route, progress, location_valid, payload, jam)
       self._publish_nav_route_if_needed()
       self.rk.keep_time()
 

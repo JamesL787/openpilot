@@ -524,6 +524,16 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_state=lambda: self._params.get_bool("NavLongitudinalAllowed"),
                  set_state=lambda s: self._params.put_bool("NavLongitudinalAllowed", s),
                  visible=self._longitudinal_enabled),
+      SettingRow("NavOffRampSlowdown", "toggle", tr_noop("Slow for Off-Ramps"),
+                 subtitle=tr_noop("Ease down to 50 mph by the exit split when navigation takes an off-ramp and you are already in the exit-side lane. Experimental and off by default; not road-validated."),
+                 get_state=lambda: self._params.get_bool("NavOffRampSlowdown"),
+                 set_state=lambda s: self._params.put_bool("NavOffRampSlowdown", s),
+                 visible=lambda: self._longitudinal_enabled() and self._params.get_bool("NavLongitudinalAllowed")),
+      SettingRow("NavJamSlowdown", "toggle", tr_noop("Slow for Traffic Jams"),
+                 subtitle=tr_noop("Ease down before heavy traffic that Mapbox reports on the route ahead (not below 40 mph), and let go once you reach it. Mapbox traffic can be wrong or old; radar still does the real braking. Experimental and off by default; not road-validated."),
+                 get_state=lambda: self._params.get_bool("NavJamSlowdown"),
+                 set_state=lambda s: self._params.put_bool("NavJamSlowdown", s),
+                 visible=lambda: self._longitudinal_enabled() and self._params.get_bool("NavLongitudinalAllowed")),
     ]
 
     # ── 2. Advanced Actuators Rows ──

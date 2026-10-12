@@ -1812,3 +1812,94 @@ def test_learner_keeps_recording_while_manual_scaling_is_on(long_active, expecte
 
   assert vcruise.csc is vcruise.csc_static
   assert seen == [expected]
+
+
+def _off_ramp_model(right_edge_y=4.5, std=0.5):
+  xs = [0.0, 10.0, 20.0, 30.0, 50.0]
+
+  def edge(y):
+    return SimpleNamespace(x=xs, y=[y] * len(xs))
+
+  return SimpleNamespace(roadEdges=[edge(-8.0), edge(right_edge_y)], roadEdgeStds=[0.5, std])
+
+
+def _off_ramp_target(distance=200.0, modifier="slightRight", enabled=True, v_cruise=31.3, **model_kw):
+  _, vcruise = make_vcruise(nav_state={
+    "valid": True, "maneuverType": "off ramp", "maneuverModifier": modifier, "maneuverDistance": distance,
+    "nextManeuverType": "", "nextManeuverModifier": "", "nextManeuverDistance": 0.0,
+  })
+  toggles = make_toggles()
+  toggles.nav_longitudinal_allowed = True
+  toggles.nav_off_ramp_slowdown = enabled
+  return vcruise._get_nav_turn_control_target(v_cruise, {"modelV2": _off_ramp_model(**model_kw)}, toggles)
+
+
+def test_off_ramp_slowdown_is_off_by_default():
+  assert _off_ramp_target(enabled=False) == 0.0
+
+
+def test_off_ramp_slowdown_reaches_50_mph_at_the_split():
+  assert _off_ramp_target(distance=0.0) == pytest.approx(50.0 * CV.MPH_TO_MS)
+  far = _off_ramp_target(distance=300.0)
+  assert 50.0 * CV.MPH_TO_MS < far < 31.3, "eases down at the comfort decel, not a step"
+  assert _off_ramp_target(distance=2000.0) == 0.0, "too far out to bind below cruise"
+
+
+def test_off_ramp_slowdown_needs_the_exit_side_edge_lane():
+  assert _off_ramp_target(right_edge_y=8.5) == 0.0, "one lane further in: not yet in the exit lane"
+  assert _off_ramp_target(std=1.5) == 0.0, "unsure road edge: no slowdown"
+  assert _off_ramp_target(modifier="slightLeft") == 0.0, "left exit checks the left edge (8 m away here)"
+  assert _off_ramp_target(modifier="straight") == 0.0
+
+
+def test_off_ramp_slowdown_ignores_forks_and_missing_model():
+  _, vcruise = make_vcruise(nav_state={"valid": True, "maneuverType": "fork", "maneuverModifier": "slightRight",
+                                       "maneuverDistance": 0.0})
+  toggles = make_toggles()
+  toggles.nav_longitudinal_allowed = True
+  toggles.nav_off_ramp_slowdown = True
+  assert vcruise._get_nav_turn_control_target(31.3, {"modelV2": _off_ramp_model()}, toggles) == 0.0
+  vcruise._nav_instruction_state["maneuverType"] = "off ramp"
+  assert vcruise._get_nav_off_ramp_target(31.3, {}, toggles) == 0.0
+
+
+# D-112: jam slowdown from Mapbox congestion ahead
+def _jam_target(distance=600.0, jam_speed=3.0, enabled=True, v_cruise=31.3, extra=None):
+  state = {"valid": True, "maneuverType": "", "maneuverModifier": "", "maneuverDistance": 5000.0,
+           "jamDistance": distance, "jamSpeed": jam_speed}
+  state.update(extra or {})
+  _, vcruise = make_vcruise(nav_state=state)
+  toggles = make_toggles()
+  toggles.nav_longitudinal_allowed = True
+  toggles.nav_jam_slowdown = enabled
+  return vcruise._get_nav_turn_control_target(v_cruise, {}, toggles)
+
+
+def test_jam_slowdown_is_off_by_default():
+  assert _jam_target(enabled=False) == 0.0
+
+
+def test_jam_slowdown_eases_toward_the_floor_and_releases_at_the_jam():
+  floor = 40.0 * CV.MPH_TO_MS
+  assert _jam_target(distance=60.0) == pytest.approx(floor, abs=1.0), "near the jam the target is about the floor"
+  mid = _jam_target(distance=400.0)
+  assert floor < mid < 31.3, "eases down at the comfort decel, not a step"
+  assert _jam_target(distance=2000.0) == 0.0, "too far out to bind below cruise"
+  assert _jam_target(distance=20.0) == 0.0, "at the jam the radar takes over; no low target held inside it"
+  assert _jam_target(distance=-1.0) == 0.0, "no jam published"
+
+
+def test_jam_slowdown_uses_the_traffic_speed_plus_margin_above_the_floor():
+  fast_jam = 20.0  # m/s: target 20 + 10 mph
+  assert _jam_target(distance=60.0, jam_speed=fast_jam) == pytest.approx(fast_jam + 10.0 * CV.MPH_TO_MS, abs=1.0)
+
+
+def test_jam_slowdown_never_raises_a_lower_turn_target():
+  turn = _jam_target(distance=600.0, extra={"maneuverType": "turn", "maneuverModifier": "right", "maneuverDistance": 50.0})
+  jam_only = _jam_target(distance=600.0)
+  assert 0.0 < turn < jam_only, "the min of the nav targets wins"
+
+
+def test_jam_slowdown_handles_garbage_state():
+  assert _jam_target(distance="x") == 0.0
+  assert _jam_target(distance=float("nan")) == 0.0

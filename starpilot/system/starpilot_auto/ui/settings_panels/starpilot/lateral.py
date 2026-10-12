@@ -156,6 +156,13 @@ class StarPilotLateralLayout(_SettingsPage):
         set_state=lambda s: p.put_bool("NavLanePositioningAllowed", s),
         visible=lambda: p.get_bool("NavDesiresAllowed"),
       ),
+      SettingRow(
+        "NavExitAutoKeep", "toggle", tr_noop("Auto-Take Exit"),
+        subtitle=tr_noop("Take a same-side highway exit without the blinker or a wheel nudge when navigation lane guidance already puts you in the exit-side edge lane. Off-ramps only (never forks), above 8 m/s, withdrawn by any steering input. Experimental and off by default; not road-validated."),
+        get_state=lambda: p.get_bool("NavExitAutoKeep"),
+        set_state=lambda s: p.put_bool("NavExitAutoKeep", s),
+        visible=lambda: p.get_bool("NavDesiresAllowed") and p.get_bool("NavLanePositioningAllowed"),
+      ),
     ]
 
     # ── 2. Lane Changes ──
@@ -165,6 +172,20 @@ class StarPilotLateralLayout(_SettingsPage):
         subtitle=tr_noop("Signal triggers automatic lane change."),
         get_state=lambda: p.get_bool("NudgelessLaneChange"),
         set_state=lambda s: p.put_bool("NudgelessLaneChange", s),
+        visible=lc_on,
+      ),
+      SettingRow(
+        "LaneChangeCounterTorqueCancel", "toggle", tr_noop("Cancel by Steering Back"),
+        subtitle=tr_noop("Cancel a lane change once it has started if you steer against it for a quarter second. Experimental and off by default; not road-validated."),
+        get_state=lambda: p.get_bool("LaneChangeCounterTorqueCancel"),
+        set_state=lambda s: p.put_bool("LaneChangeCounterTorqueCancel", s),
+        visible=lc_on,
+      ),
+      SettingRow(
+        "LaneChangeEdgeGuard", "toggle", tr_noop("Road Edge Guard"),
+        subtitle=tr_noop("Hold a lane change while the model sees a road edge where the target lane should be. Experimental and off by default; not road-validated."),
+        get_state=lambda: p.get_bool("LaneChangeEdgeGuard"),
+        set_state=lambda s: p.put_bool("LaneChangeEdgeGuard", s),
         visible=lc_on,
       ),
       SettingRow(

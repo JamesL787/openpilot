@@ -171,6 +171,26 @@
         "settings_tier": "simple"
       },
       {
+        "key": "LaneChangeCounterTorqueCancel",
+        "label": "Cancel Lane Change by Steering Back",
+        "description": "Cancel a lane change once it has started if you steer against it for a quarter second. Experimental and off by default; not road-validated.",
+        "picker_description": "Steering against a started lane change cancels it.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LaneChanges",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "LaneChangeEdgeGuard",
+        "label": "Lane Change Road Edge Guard",
+        "description": "Hold a lane change while the model sees a road edge where the target lane should be. Experimental and off by default; not road-validated.",
+        "picker_description": "No lane change toward a road edge.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LaneChanges",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NudgelessLaneChangeOnlyWhenEngaged",
         "label": "Automatic Lane Changes Only When Engaged",
         "description": "Require a steering-wheel nudge for lane changes while using Always On Lateral without full engagement.",
@@ -298,6 +318,16 @@
         "label": "Route Lane Positioning",
         "description": "Requires Use Route Desires. Route lane keeping on forks and slight bends needs a light steering nudge toward the route. Highway exits (off-ramps within 500 m) start the first lane change when you turn on the blinker toward the exit; each further lane also needs a steering nudge toward the exit. Blind spot monitoring (or V-ASM) seeing a car blocks it.",
         "picker_description": "Lets navigation position in lane and request blinker-confirmed exit lane changes.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "NavDesiresAllowed",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NavExitAutoKeep",
+        "label": "Auto-Take Exit",
+        "description": "Requires Route Lane Positioning. Take a same-side highway exit without the blinker or a wheel nudge when navigation lane guidance already puts you in the exit-side edge lane. Off-ramps only (never forks), above 8 m/s, withdrawn by any steering input. Experimental and off by default; not road-validated.",
+        "picker_description": "Takes a same-side highway exit without blinker or nudge.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "NavDesiresAllowed",
@@ -2315,6 +2345,26 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "NavOffRampSlowdown",
+        "label": "Slow for Off-Ramps",
+        "description": "Ease down to 50 mph by the exit split when navigation takes an off-ramp and you are already in the exit-side lane. Experimental and off by default; not road-validated.",
+        "picker_description": "Slows to 50 mph for an off-ramp once you are in the exit lane.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NavJamSlowdown",
+        "label": "Slow for Traffic Jams",
+        "description": "Ease down before heavy traffic that Mapbox reports on the route ahead (not below 40 mph), and let go once you reach it. Mapbox traffic can be wrong or old; radar still does the real braking. Experimental and off by default; not road-validated.",
+        "picker_description": "Eases down before heavy traffic ahead on the route.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "QOLLongitudinal",
         "label": "Quality of Life",
         "description": "Miscellaneous acceleration and braking control changes to fine-tune how openpilot drives.",
@@ -3605,6 +3655,15 @@
         "max": 180,
         "step": 1,
         "parent_key": "ClearNavOnOffroad",
+        "settings_tier": "simple"
+      },
+      {
+        "key": "NavTrafficReroute",
+        "label": "Offer Faster Routes",
+        "description": "Check traffic every couple of minutes while navigating and offer a faster route when one saves at least 2 minutes and 10%. The route only changes if you tap Switch. Uses extra Mapbox requests.",
+        "picker_description": "Offers a faster route when traffic changes; you choose whether to switch.",
+        "data_type": "bool",
+        "ui_type": "toggle",
         "settings_tier": "simple"
       },
       {
