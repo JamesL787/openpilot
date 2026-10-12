@@ -1,13 +1,18 @@
 """Per segment: V-ASM params from initData, driver frame timestamps, radar adjacent leads, ego state."""
-import json, sys, glob, os
+
+import json
+import glob
+import os
 from openpilot.tools.lib.logreader import LogReader
+
 WANT = ("VASMAnnotationConfig", "VASMConfidenceThreshold", "VASMSmoothSeconds", "VASMEnabled", "VASMRadarAssist", "VASMConfHoldOff")
 for d in sorted(glob.glob("/work/dm/*/*")):
   out = {"params": {}, "frames": [], "radar": [], "car": []}
   t0 = None
   for m in LogReader(os.path.join(d, "rlog.zst")):
     w = m.which()
-    if t0 is None: t0 = m.logMonoTime
+    if t0 is None:
+      t0 = m.logMonoTime
     t = (m.logMonoTime - t0) * 1e-9
     if w == "initData":
       for e in m.initData.params.entries:
