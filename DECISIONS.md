@@ -2815,3 +2815,25 @@ detection needs a smoothed confidence of at least 0.94.
 passed and how long V-ASM takes to fire after that. Semi trailers are not handled. The camera sees the cab and drops
 the container side, so a radar-linked hold while the cab stays adjacent and close is planned once driver-camera
 footage is available.
+
+**Replay evidence (2026-10-12, driver-camera replay, 6 highway segments: 00000321--67540f4492 s30/31/41/42 and
+00000323--c20feb1f4b s3/4; scripts in `tools/vasm_replay/`).** The owner's live settings were threshold 0.80 and
+smoothing 0.1 s. At those settings the smoothing does nothing, because every sample is ≥0.3 s apart.
+- Radar loses a car being passed at 6.5–15 m ahead. The camera crop first reaches ≥0.8 on that car 0–4.9 s later,
+  because the crop looks at the rear quarter. This is the slow detection the owner reported.
+- `PassHold` fired 14 times and the camera confirmed a car on that side 14 times. The holds lasted 74.9 s in total.
+  Each hold started 0–4.9 s (median ~2 s) before the camera saw the car. It ended within −1.0…+1.5 s of the camera's
+  last sighting, and where it ended first the camera was already on. **12 m, 15 m and 0.5 s are kept.** The car leaves
+  the crop when it is 6–13 m behind the radar point, which matches `dRel + 12 m`.
+- Daemon sampling, simulated on the per-frame confidence: 44 camera intervals of at least 0.5 s. Without focus the
+  daemon missed 8 of them, with median onset 0.76 s and p90 1.83 s. With D-118 focus it missed 6, with median 0.42 s
+  and p90 1.61 s.
+- **Semi trucks:** the one semi in these segments was a tractor with a multi-axle trailer passed on the right. The
+  camera held 0.98–1.00 on every frame from the first trailer wheels through the cab. This footage does not reproduce
+  the reported dropout on a box/container trailer.
+- **The planned radar-linked truck hold is not built.** In 00000323 s4 t≈242–257, track 11 sat 12.4–13.9 m ahead in
+  the right lane with |vRel| < 0.7 m/s for 13 s. The road camera shows a white SUV pacing us, and the blind spot was
+  empty: the driver camera read 0.00–0.45 and the crop shows only the barrier. Radar cannot tell an SUV from a truck
+  cab at that range, so "adjacent track close ahead at similar speed means occupied" would have reported a false
+  blind-spot car for 13 s here. A truck hold needs evidence of the trailer itself: a timestamp where the camera drops
+  on a box trailer, then its radar/liveTracks picture.
