@@ -11,3 +11,14 @@ checkpoint. The shipped model's ONNX metadata says it is an Ultralytics YOLO26n-
 
 Run it the same way as `tools/vasm_replay` (scratch dir mounted at /work), with
 `pip install av opencv-python-headless onnx onnx2torch torch --extra-index-url https://download.pytorch.org/whl/cpu`.
+
+2. `extract_crops.py`: crops for labelling and the benchmark. It samples both sides at 4 Hz and saves the daemon's
+   exact model input (its own `_run_inference` blob) as a 352×352 PNG. Every PNG is checked to reload bit-identical to
+   that blob. `crops/manifest.csv` holds the shipped model's three probabilities, radar on that car side, the real
+   D-118 pass-hold state, speed, blinker, crop brightness, a proposed label, and why the row needs review.
+   Run `tools/vasm_replay/rlog_extract.py` first for the `ex_*.json` files. It is resumable per segment.
+   **Test-split crops must all be labelled by hand.** Model proposals there would bias the benchmark toward the shipped
+   model. Proposals are only a shortcut for training crops.
+   Result on 00000321 s30/31/41/42 + 00000323 s3/4: 2,582 crops (164 MB). `p_car` matches the earlier
+   `conf_replay` run within 5e-05. 1,272 were flagged for review: 1,091 uncertain (<0.98), 174 where the pass hold says
+   occupied but the camera says clear, 14 where radar is within 8 m but the camera says clear.
