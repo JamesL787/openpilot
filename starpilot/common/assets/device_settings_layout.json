@@ -304,6 +304,7 @@
       },
       {
         "key": "NavDesiresAllowed",
+        "galaxy_page": "navigation",
         "label": "Use Route Desires",
         "description": "Let an active navigation route request turns. A turn is requested only when your blinker points the same way as the route, you are below the minimum lane change speed, and blind spot monitoring (or V-ASM) sees no car on that side.",
         "picker_description": "Allows navigation to request lane keep and turns.",
@@ -315,6 +316,7 @@
       },
       {
         "key": "NavLanePositioningAllowed",
+        "galaxy_page": "navigation",
         "label": "Route Lane Positioning",
         "description": "Requires Use Route Desires. Route lane keeping on forks and slight bends needs a light steering nudge toward the route. Highway exits (off-ramps within 500 m) start the first lane change when you turn on the blinker toward the exit; each further lane also needs a steering nudge toward the exit. Blind spot monitoring (or V-ASM) seeing a car blocks it.",
         "picker_description": "Lets navigation position in lane and request blinker-confirmed exit lane changes.",
@@ -325,6 +327,7 @@
       },
       {
         "key": "NavExitAutoKeep",
+        "galaxy_page": "navigation",
         "label": "Auto-Take Exit",
         "description": "Requires Route Lane Positioning. Take a same-side highway exit or on-ramp without the blinker or a wheel nudge when navigation lane guidance already puts you in the ramp-side edge lane. Never forks, above 8 m/s, withdrawn by any steering input. Experimental and off by default; not road-validated.",
         "picker_description": "Takes a same-side highway exit or on-ramp without blinker or nudge.",
@@ -2336,6 +2339,7 @@
       },
       {
         "key": "NavLongitudinalAllowed",
+        "galaxy_page": "navigation",
         "label": "Use Route Speed Control",
         "description": "Allow an active navigation route to reduce cruise speed for upcoming turns, ramps, and roundabouts.",
         "picker_description": "Lets navigation lower cruise speed for upcoming turns.",
@@ -2346,6 +2350,7 @@
       },
       {
         "key": "NavOffRampSlowdown",
+        "galaxy_page": "navigation",
         "label": "Slow for Off-Ramps",
         "description": "Ease down to 50 mph by the exit split when navigation takes an off-ramp and you are already in the exit-side lane. Experimental and off by default; not road-validated.",
         "picker_description": "Slows to 50 mph for an off-ramp once you are in the exit lane.",
@@ -2356,6 +2361,7 @@
       },
       {
         "key": "NavJamSlowdown",
+        "galaxy_page": "navigation",
         "label": "Slow for Traffic Jams",
         "description": "Ease down before heavy traffic that Mapbox reports on the route ahead (not below 40 mph), and let go once you reach it. Mapbox traffic can be wrong or old; radar still does the real braking. Experimental and off by default; not road-validated.",
         "picker_description": "Eases down before heavy traffic ahead on the route.",
@@ -3627,6 +3633,7 @@
       },
       {
         "key": "NavigationUI",
+        "galaxy_page": "navigation",
         "label": "Navigation Widgets",
         "description": "Speed limits, and other navigation widgets.",
         "picker_description": "Shows navigation and speed-limit widgets.",
@@ -3637,6 +3644,7 @@
       },
       {
         "key": "ClearNavOnOffroad",
+        "galaxy_page": "navigation",
         "label": "Clear Route When Offroad",
         "description": "Clear the active navigation destination when the device goes offroad.",
         "picker_description": "Clears the active route when the device goes offroad.",
@@ -3647,6 +3655,7 @@
       },
       {
         "key": "ClearNavOnOffroadTimeoutMinutes",
+        "galaxy_page": "navigation",
         "label": "Clear Route Delay",
         "description": "How long the device can stay offroad before clearing the active route. Set to 0 for immediate clearing.",
         "data_type": "int",
@@ -3659,6 +3668,7 @@
       },
       {
         "key": "NavTrafficReroute",
+        "galaxy_page": "navigation",
         "label": "Offer Faster Routes",
         "description": "Check traffic every couple of minutes while navigating and offer a faster route when one saves at least 2 minutes and 10%. The route only changes if you tap Switch. Uses extra Mapbox requests.",
         "picker_description": "Offers a faster route when traffic changes; you choose whether to switch.",

@@ -107,14 +107,20 @@ function isHiddenByConditions(section, param, values) {
   return false
 }
 
+// Route-only settings live on the Navigation & Maps page, not in Toggles (Favorites still show them).
+export function isNavigationPageOnly(section, param) {
+  return param.galaxy_page === "navigation" && section.name !== "Favorites"
+}
+
 export function isSettingVisible(section, param, values) {
+  if (isNavigationPageOnly(section, param)) return false
   if (isHiddenByConditions(section, param, values)) return false
   if (values[GALAXY_DEVELOPER_MODE_KEY]) return true
   return section.name === "Favorites" || param.settings_tier === "simple"
 }
 
 export function isAdvancedHiddenByDeveloperMode(section, param, values) {
-  if (param.settings_tier !== "advanced") return false
+  if (param.settings_tier !== "advanced" || isNavigationPageOnly(section, param)) return false
   return !isHiddenByConditions(section, param, values)
 }
 

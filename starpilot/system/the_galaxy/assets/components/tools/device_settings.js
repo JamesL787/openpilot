@@ -212,6 +212,8 @@ function matchesSettingValueCondition(param) {
 }
 
 function isSettingVisible(section, param) {
+  // Route-only settings live on the Navigation page, not in Toggles (Favorites still show them).
+  if (param.galaxy_page === "navigation" && section.name !== "Favorites") return false
   if (param.longitudinal_mode && param.longitudinal_mode !== state.longitudinalMode?.mode) return false
   if (PROFILE_HIDDEN_LAYOUT_KEYS.has(param.key) || HIDDEN_SETTING_KEYS.has(param.key) ||
       !isVehicleSettingVisible(section, param) || !matchesSettingValueCondition(param)) return false
