@@ -921,7 +921,9 @@ def test_counter_torque_cancel_does_not_relaunch_nav_exit_move():
 
 def _edge_model(left_y):
   xs = [float(x) for x in range(0, 55, 5)]
-  edge = lambda y: SimpleNamespace(x=xs, y=[y] * len(xs))
+
+  def edge(y):
+    return SimpleNamespace(x=xs, y=[y] * len(xs))
   return SimpleNamespace(roadEdges=[edge(left_y), edge(8.0)], roadEdgeStds=[0.2, 0.2],
                          laneLines=[edge(-5.4), edge(-1.8), edge(1.8), edge(5.4)], laneLineProbs=[0.0, 0.9, 0.9, 0.0])
 
@@ -945,3 +947,36 @@ def test_edge_guard_holds_lane_change_toward_a_near_road_edge():
   toggles = make_toggles(lane_change_edge_guard=True)
   assert _edge_guard_launch(toggles, -4.0).lane_change_state == LaneChangeState.preLaneChange
   assert _edge_guard_launch(toggles, -8.0).lane_change_state == LaneChangeState.laneChangeStarting
+
+
+def test_counter_torque_cancel_window_closes_after_one_and_a_half_seconds():
+  # on Peter's drives drivers held the wheel against the move while settling into the new lane, after the line
+  toggles = make_toggles(lane_change_counter_torque_cancel=True)
+  helper = _started_left_lane_change(toggles)
+  for _ in range(30):
+    helper.update(make_car_state(leftBlinker=True), True, 1.0, make_plan(), toggles)
+  _steer(helper, toggles, -1.0, 20)
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+
+
+def _lane_model(left_y):
+  def line(y):
+    return SimpleNamespace(y=[y])
+  return SimpleNamespace(laneLineProbs=[0.9, 0.9, 0.9, 0.9], laneLines=[line(left_y - 3.6), line(left_y), line(left_y + 3.6), line(left_y + 7.2)])
+
+
+def test_counter_torque_cancel_window_closes_once_the_car_reaches_the_line():
+  toggles = make_toggles(lane_change_counter_torque_cancel=True)
+  helper = _started_left_lane_change(toggles)
+  for left_y in (-1.8, -1.5, -1.2, -0.9):   # the left line closes in as the car moves left
+    helper.update(make_car_state(leftBlinker=True), True, 1.0, make_plan(), toggles, modeldata=_lane_model(left_y))
+  for _ in range(10):
+    helper.update(make_car_state(leftBlinker=True, steeringPressed=True, steeringTorque=-1.0), True, 1.0, make_plan(), toggles,
+                  modeldata=_lane_model(-0.9))
+  assert helper.lane_change_state == LaneChangeState.laneChangeStarting
+
+  helper2 = _started_left_lane_change(toggles)
+  for _ in range(5):
+    helper2.update(make_car_state(leftBlinker=True, steeringPressed=True, steeringTorque=-1.0), True, 1.0, make_plan(), toggles,
+                   modeldata=_lane_model(-1.7))
+  assert helper2.lane_change_state == LaneChangeState.off, "before the line, a firm 0.25 s still cancels"
