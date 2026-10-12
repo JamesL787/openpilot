@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 MPH = 0.44704
 SPEED_DEFICIT = 5 * MPH       # at least this far under the allowed speed (owner, 2026-10-12)
 SLOW_SECONDS = 10.0           # for at least this long (owner, 2026-10-12)
+SHOULDER_EDGE_GAP = 1.5       # m: road edge closer than this beyond the outer line = a shoulder, not a lane (D-114 Open)
 MIN_LIMIT = 45 * MPH          # highway proxy: no suggestions below a 45 mph limit
 LEAD_MAX_HEADWAY_S = 3.0      # the lead is the cause only when it is this close in time...
 LEAD_MAX_DIST = 80.0          # ...or distance
@@ -59,12 +62,33 @@ class PassingInputs:
   right_blinker: bool
   exit_warn: bool = False   # NavExitOnlyWarn toggle
   keep_right: bool = False  # NavKeepRightReminder toggle
+  edge_gap_left: float = 99.0   # m, road edge beyond the outer lane line at 20 m (edge_gap()); 99 = unknown
+  edge_gap_right: float = 99.0
   speed_offset: float = 0.0  # m/s, the owner's SLC offset: allowed speed is limit + offset (owner, 2026-10-12)
 
 
-def lane_beside(width: float, detection_width: float) -> bool:
-  """A drivable lane on that side. Every D-114/D-115 prompt asks this one question."""
-  return width >= detection_width
+def lane_beside(width: float, detection_width: float, edge_gap: float = 99.0) -> bool:
+  """A drivable lane on that side. Every D-114/D-115 prompt asks this one question.
+
+  Width alone counts a paved shoulder as a lane: on I-35 (00000324, 00000321, 2026-10-12) the model draws the outer
+  line on the road edge in the edge lane, so the "lane" beyond the yellow or right white line still measures 3+ m. The
+  edge then sits within ~1 m of that line (shoulder p95 0.86 m), while a real lane leaves the edge 2.2+ m beyond the
+  next lane's outer line (p1 2.17 m). /routes/an2/shsep.py.
+  """
+  return width >= detection_width and edge_gap >= SHOULDER_EDGE_GAP
+
+
+def _left_lane(i: PassingInputs) -> bool:
+  return lane_beside(i.lane_width_left, i.lane_detection_width, i.edge_gap_left)
+
+
+def _right_lane(i: PassingInputs) -> bool:
+  return lane_beside(i.lane_width_right, i.lane_detection_width, i.edge_gap_right)
+
+
+def edge_gap(line_x, line_y, edge_x, edge_y, x: float = 20.0) -> float:
+  """How far the road edge lies beyond an outer lane line, lateral metres at x metres ahead."""
+  return abs(float(np.interp(x, edge_x, edge_y))) - abs(float(np.interp(x, line_x, line_y)))
 
 
 def _route_side_within(nav_state: dict, dist: float) -> str | None:
@@ -113,7 +137,7 @@ class NavPassingAdvisor:
       self.slow_since = now
     if now - self.slow_since < SLOW_SECONDS:
       return False
-    left_lane = lane_beside(i.lane_width_left, i.lane_detection_width)
+    left_lane = _left_lane(i)
     left_faster = (not i.lead_left.status or i.lead_left.d_rel > LEFT_CLEAR_DIST or
                    i.lead_left.v_lead >= lead.v_lead + LEFT_FASTER_BY)
     route_clear = _route_side_within(i.nav_state, ROUTE_CLEAR_DIST) is None
@@ -130,20 +154,20 @@ class NavPassingAdvisor:
     if side not in ("left", "right") or not 0.0 < distance <= EXIT_WARN_DIST:
       return ""
     away = "left" if side == "right" else "right"
-    edge_width, away_width = (i.lane_width_right, i.lane_width_left) if side == "right" else (i.lane_width_left, i.lane_width_right)
+    edge_lane, away_lane = (_right_lane(i), _left_lane(i)) if side == "right" else (_left_lane(i), _right_lane(i))
     away_blinker = i.left_blinker if away == "left" else i.right_blinker
-    in_edge_lane = not lane_beside(edge_width, i.lane_detection_width) and lane_beside(away_width, i.lane_detection_width)
+    in_edge_lane = not edge_lane and away_lane
     return away if in_edge_lane and not away_blinker else ""
 
   def _keep_right(self, i: PassingInputs, now: float) -> bool:
     """D-115: cruising in a lane with an open, not-slower right lane for a while. Idle state only."""
     if now - self.keep_right_shown_at < KEEP_RIGHT_SHOW_S:
-      if i.right_blinker or i.left_blinker or not lane_beside(i.lane_width_right, i.lane_detection_width):
+      if i.right_blinker or i.left_blinker or not _right_lane(i):
         self.keep_right_shown_at = now - KEEP_RIGHT_SHOW_S  # acted on or gone: end it now
         return False
       return True
     right = i.lead_right
-    right_open = (lane_beside(i.lane_width_right, i.lane_detection_width) and not i.blocked_right and
+    right_open = (_right_lane(i) and not i.blocked_right and
                   (not right.status or right.d_rel > RIGHT_CLEAR_DIST or right.v_lead >= i.v_ego))
     cruising = (i.speed_limit >= MIN_LIMIT and i.v_ego >= i.min_lane_change_speed and self.slow_since is None
                 and not i.left_blinker and not i.right_blinker)
@@ -176,7 +200,7 @@ class NavPassingAdvisor:
       return out
 
     route_side = _route_side_within(i.nav_state, ROUTE_CLEAR_DIST)
-    right_lane = lane_beside(i.lane_width_right, i.lane_detection_width)
+    right_lane = _right_lane(i)
 
     if self.state == IDLE:
       if self._pass_ready(i, now) and i.enabled:  # always evaluated: keep-right reads slow_since

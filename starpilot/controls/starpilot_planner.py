@@ -25,7 +25,7 @@ from openpilot.starpilot.common.starpilot_utilities import calculate_lane_width,
 from openpilot.starpilot.common.starpilot_variables import CRUISING_SPEED, MINIMUM_LATERAL_ACCELERATION, PLANNER_TIME, THRESHOLD
 from openpilot.starpilot.controls.lib.conditional_chill_mode import ConditionalChillMode
 from openpilot.starpilot.controls.lib.conditional_experimental_mode import ConditionalExperimentalMode
-from openpilot.starpilot.controls.lib.nav_passing import Lead, NavPassingAdvisor, PassingInputs
+from openpilot.starpilot.controls.lib.nav_passing import Lead, NavPassingAdvisor, PassingInputs, edge_gap
 from openpilot.starpilot.controls.lib.speed_limit_controller import SOURCE_NONE
 from openpilot.starpilot.controls.lib.starpilot_acceleration import StarPilotAcceleration
 from openpilot.starpilot.controls.lib.starpilot_events import StarPilotEvents
@@ -110,6 +110,8 @@ class StarPilotPlanner:
 
     self.lane_width_left = 0
     self.lane_width_right = 0
+    self.edge_gap_left = 99.0
+    self.edge_gap_right = 99.0
     self._lane_width_counter = 0
     self.lateral_acceleration = 0
     self.model_length = 0
@@ -173,6 +175,10 @@ class StarPilotPlanner:
       if self._lane_width_counter % 4 == 0:
         self.lane_width_left = calculate_lane_width(sm["modelV2"].laneLines[0], sm["modelV2"].laneLines[1], sm["modelV2"].roadEdges[0])
         self.lane_width_right = calculate_lane_width(sm["modelV2"].laneLines[3], sm["modelV2"].laneLines[2], sm["modelV2"].roadEdges[1])
+        lines, edges = sm["modelV2"].laneLines, sm["modelV2"].roadEdges
+        if len(lines) == 4 and len(edges) == 2:
+          self.edge_gap_left = edge_gap(lines[0].x, lines[0].y, edges[0].x, edges[0].y)
+          self.edge_gap_right = edge_gap(lines[3].x, lines[3].y, edges[1].x, edges[1].y)
     else:
       self._lane_width_counter = 0
       self.lane_width_left = 0
@@ -303,6 +309,7 @@ class StarPilotPlanner:
       min_lane_change_speed=float(starpilot_toggles.minimum_lane_change_speed),
       lead=lead(self.lead_one), lead_left=lead(radar.leadLeft), lead_right=lead(radar.leadRight),
       lane_width_left=float(self.lane_width_left), lane_width_right=float(self.lane_width_right),
+      edge_gap_left=float(self.edge_gap_left), edge_gap_right=float(self.edge_gap_right),
       # floor: with Lane Changes off the toggle reads 0, which would make any gap count as a lane
       lane_detection_width=max(float(starpilot_toggles.lane_detection_width), PASSING_MIN_LANE_WIDTH),
       vasm_live=vasm_live,

@@ -2697,6 +2697,21 @@ lane-width check reads as a lane (`calculate_lane_width` uses no line probabilit
 must come from the owner's route logs (left lane width against `laneLineProbs`, road edges and moving `leadLeft`), not
 from inference. Every D-114/D-115 lane check now goes through `nav_passing.lane_beside()`, so one fix covers all.
 
+**Resolved (2026-10-12, replay evidence on the owner's I-35 routes, not road-validated):** the owner added that the
+same shoulder exists beside the outermost right lane. The gate is `edge_gap = |roadEdge y| - |outer laneLine y|` at
+20 m ahead: a lane beside the car only counts when `edge_gap >= SHOULDER_EDGE_GAP` (1.5 m). In the edge lane the
+model draws the outer line on the shoulder's own edge, so the road edge sits just past it; beside a real lane, the
+road edge is a further lane-or-shoulder away. Camera-labelled replay of Konik routes `11c8fa231c0499ed|00000324`
+(segs 7, 10, 27, 30) and `|00000321` (segs 64-66), script `/routes/an2/shsep.py` (oprad-routes volume):
+- shoulder frames n=2593, gap p95 0.86 m; real-lane frames n=5150, gap p1 2.17 m. At 1.5 m no real-lane frame is
+  rejected; 3.4% of shoulder frames leak.
+- The whole leak is one 4.4 s run (00000321 seg 65, right side, t 0-4.4 s) beside a wide paved area, possibly a gore
+  or an exit lane opening. **UNRESOLVED** what that area is.
+- Rejected: `laneLineProbs` (00000324 seg 10 right is a real lane with moving cars at outer-line prob 0.06-0.17) and
+  moving `leadLeft/leadRight` (misassigned to a frontage road on 00000321 seg 66).
+The gate applies to the pass, return, keep-right (D-115) and exit-only (D-115) lane checks; when model edges are
+missing the gap is unknown (99) and only the width check applies. Published `laneWidthLeft/Right` are unchanged.
+
 ## D-115 — Warn about an exit-only lane the route does not take; remind to keep right (2026-10-12, static unit tests only, not driven, default off)
 
 **Request (owner, 2026-10-12):** "Yeah let's try 1 and 2": (1) warn when the car is in a lane that exits ahead while the
