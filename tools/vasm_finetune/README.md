@@ -32,3 +32,16 @@ Run it the same way as `tools/vasm_replay` (scratch dir mounted at /work), with
    - **Saving:** labels go to `<crops>/labels.json` after every key press. Reopening resumes at the first unlabelled crop.
    - **Verified with headless Chromium:** five rapid key presses land five labels, on five crops, in order. The first version lost
      fast presses to a save race. A path-traversal request returns 404.
+
+4. `benchmark.py`: the frozen benchmark, scored on the hand-labelled test crops only.
+   - **Model:** it runs any ONNX model through cv2.dnn on the saved PNGs, the same runtime the daemon uses. For the shipped
+     model it first checks the results reproduce the manifest.
+   - **Frame level:** precision, recall, F0.5, false positives and false negatives at the on threshold, plus the 3-class
+     confusion. Subsets: night, pass hold, radar within 8 m, and each route. A threshold sweep is included.
+   - **Event level:** the daemon's 1 s alternating sampling with the 0.3 s follow-up and on/off hysteresis. It reports
+     missed car events (at least 0.5 s long), onset latency p50/p90, and false-occupied s/h.
+   - **Compare:** `--compare base.json cand.json` refuses runs made on different test sets (both hash files are checked).
+     The gate is: missed ≤, false-occupied ≤, and latency p50 ≤ base + 0.125 s. Comparing runs at different `--on/--off`
+     is how a threshold-only change is judged.
+   - **Self-test:** the model's own proposals were used as stand-in labels, which proves the code only, not the model.
+     The manifest was reproduced to 5e-05, the confusion came out diagonal, and the gate passes against itself.
