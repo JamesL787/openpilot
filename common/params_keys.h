@@ -607,6 +607,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NavExitAutoKeep", {PERSISTENT, BOOL, "0", "0", 2}},
     {"LaneChangeCounterTorqueCancel", {PERSISTENT, BOOL, "0", "0", 2}},
     {"NavLongitudinalAllowed", {PERSISTENT, BOOL, "1", "0", 2}},
+    {"NavOffRampSlowdown", {PERSISTENT, BOOL, "0", "0", 2}},
     {"ClearNavOnOffroad", {PERSISTENT, BOOL, "1", "1", 2, SETTINGS_SIMPLE}},
     {"ClearNavOnOffroadTimeoutMinutes", {PERSISTENT, INT, "0", "0", 2, SETTINGS_SIMPLE}},
     {"NavDestination", {PERSISTENT | CLEAR_ON_MANAGER_START, STRING, "", ""}},

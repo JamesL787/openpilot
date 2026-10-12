@@ -2520,3 +2520,26 @@ independent implementation; no IQ.Pilot code is used, and IQ's exact cancel cond
 
 **Open:** `common/params_pyx.so` / `libcommon.a` must be rebuilt for this key (and for D-107's `NavExitAutoKeep`, which
 was also added without a rebuild) before this runs on the car.
+
+## D-109 — Slow to 50 mph by the split for a navigated off-ramp once in the exit-side lane (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** slow for off-ramps only, 50 mph. Drives are mostly DFW and I-35 to San Antonio.
+
+**Decision:** behind the new default-off `NavOffRampSlowdown` toggle (needs `NavLongitudinalAllowed`),
+`StarPilotVCruise._get_nav_off_ramp_target` adds a 50 mph target at the maneuver point when the current nav maneuver is
+`off ramp` (never `fork`) with a left/right modifier, eased in with the existing `NAV_TURN_COMFORT_DECEL` (0.45 m/s²)
+profile, and only while the model's exit-side road edge is within 6.0 m of the car (std ≤ 1.0, median over x 5–40 m).
+That edge test is the "already in the exit-side lane" gate: Mapbox's lane `active` flag marks lanes valid for the
+route, not the car's lane, so it cannot be used. Turn targets still take priority; the result joins the min-of-targets.
+
+**Why 50 mph:** TxDOT Roadway Design Manual 15.7, Table 15-1: ramps are designed for 70% ("usual") of the freeway design
+speed, 50 mph at 70 and 55 at 75. Texas exits mostly feed frontage roads (45 urban / 55 rural, RDM 15.8). Tighter
+ramp curves are left to the curve speed controllers.
+
+**Evidence (static only):** four tests in `test_starpilot_vcruise.py` (default-off, 50 mph at 0 m and a gradual
+profile further out, edge-lane / std / side / modifier gates, forks and missing model ignored); the file, the desire
+tests and the layout tests pass in `oprad-test:py312`. Params artifacts rebuilt (879 → 880 keys). No replay or drive.
+The 6.0 m edge threshold is an estimate from lane and shoulder widths, not measured on Peter's routes.
+
+**Provenance:** our own design. IQ.Pilot's `long_decel` (read statically) also lists exits among its decel maneuvers,
+but its route speed formula was not recovered and none of its code is used.

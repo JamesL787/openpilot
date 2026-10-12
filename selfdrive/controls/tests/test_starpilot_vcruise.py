@@ -1812,3 +1812,49 @@ def test_learner_keeps_recording_while_manual_scaling_is_on(long_active, expecte
 
   assert vcruise.csc is vcruise.csc_static
   assert seen == [expected]
+
+
+def _off_ramp_model(right_edge_y=4.5, std=0.5):
+  xs = [0.0, 10.0, 20.0, 30.0, 50.0]
+  edge = lambda y: SimpleNamespace(x=xs, y=[y] * len(xs))
+  return SimpleNamespace(roadEdges=[edge(-8.0), edge(right_edge_y)], roadEdgeStds=[0.5, std])
+
+
+def _off_ramp_target(distance=200.0, modifier="slightRight", enabled=True, v_cruise=31.3, **model_kw):
+  _, vcruise = make_vcruise(nav_state={
+    "valid": True, "maneuverType": "off ramp", "maneuverModifier": modifier, "maneuverDistance": distance,
+    "nextManeuverType": "", "nextManeuverModifier": "", "nextManeuverDistance": 0.0,
+  })
+  toggles = make_toggles()
+  toggles.nav_longitudinal_allowed = True
+  toggles.nav_off_ramp_slowdown = enabled
+  return vcruise._get_nav_turn_control_target(v_cruise, {"modelV2": _off_ramp_model(**model_kw)}, toggles)
+
+
+def test_off_ramp_slowdown_is_off_by_default():
+  assert _off_ramp_target(enabled=False) == 0.0
+
+
+def test_off_ramp_slowdown_reaches_50_mph_at_the_split():
+  assert _off_ramp_target(distance=0.0) == pytest.approx(50.0 * CV.MPH_TO_MS)
+  far = _off_ramp_target(distance=300.0)
+  assert 50.0 * CV.MPH_TO_MS < far < 31.3, "eases down at the comfort decel, not a step"
+  assert _off_ramp_target(distance=2000.0) == 0.0, "too far out to bind below cruise"
+
+
+def test_off_ramp_slowdown_needs_the_exit_side_edge_lane():
+  assert _off_ramp_target(right_edge_y=8.5) == 0.0, "one lane further in: not yet in the exit lane"
+  assert _off_ramp_target(std=1.5) == 0.0, "unsure road edge: no slowdown"
+  assert _off_ramp_target(modifier="slightLeft") == 0.0, "left exit checks the left edge (8 m away here)"
+  assert _off_ramp_target(modifier="straight") == 0.0
+
+
+def test_off_ramp_slowdown_ignores_forks_and_missing_model():
+  _, vcruise = make_vcruise(nav_state={"valid": True, "maneuverType": "fork", "maneuverModifier": "slightRight",
+                                       "maneuverDistance": 0.0})
+  toggles = make_toggles()
+  toggles.nav_longitudinal_allowed = True
+  toggles.nav_off_ramp_slowdown = True
+  assert vcruise._get_nav_turn_control_target(31.3, {"modelV2": _off_ramp_model()}, toggles) == 0.0
+  vcruise._nav_instruction_state["maneuverType"] = "off ramp"
+  assert vcruise._get_nav_off_ramp_target(31.3, {}, toggles) == 0.0

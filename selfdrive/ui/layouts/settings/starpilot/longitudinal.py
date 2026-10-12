@@ -524,6 +524,11 @@ class StarPilotLongitudinalLayout(_SettingsPage):
                  get_state=lambda: self._params.get_bool("NavLongitudinalAllowed"),
                  set_state=lambda s: self._params.put_bool("NavLongitudinalAllowed", s),
                  visible=self._longitudinal_enabled),
+      SettingRow("NavOffRampSlowdown", "toggle", tr_noop("Slow for Off-Ramps"),
+                 subtitle=tr_noop("Ease down to 50 mph by the exit split when navigation takes an off-ramp and you are already in the exit-side lane. Experimental and off by default; not road-validated."),
+                 get_state=lambda: self._params.get_bool("NavOffRampSlowdown"),
+                 set_state=lambda s: self._params.put_bool("NavOffRampSlowdown", s),
+                 visible=lambda: self._longitudinal_enabled() and self._params.get_bool("NavLongitudinalAllowed")),
     ]
 
     # ── 2. Advanced Actuators Rows ──

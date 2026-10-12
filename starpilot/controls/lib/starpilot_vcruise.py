@@ -2,6 +2,8 @@
 import json
 import math
 
+import numpy as np
+
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
 
@@ -46,6 +48,14 @@ SLC_LEAD_DROP_RELAXATION_DECEL_V = [0.7, 0.9, 1.15, 1.35]
 NAV_TURN_COMFORT_DECEL = 0.45
 NAV_TURN_DISTANCE_BUFFER = 8.0
 NAV_TURN_MIN_TARGET_DELTA = 0.25
+# D-109: off-ramp slowdown (NavOffRampSlowdown). 50 mph at the split is TxDOT's "usual" ramp design speed (70%) for a
+# 70 mph freeway (Roadway Design Manual 15.7, Table 15-1). The car must already be in the exit-side edge lane: the
+# model's exit-side road edge within NAV_OFF_RAMP_EDGE_LANE_MAX_M of the car. That allows a 3.0 m (10 ft) shoulder beside
+# the edge lane (~1.85 + 3.0 = 4.9 m); one lane further in puts the edge near 8.5 m. Our own numbers, not IQ.Pilot's.
+NAV_OFF_RAMP_TARGET_SPEED = 50.0 * CV.MPH_TO_MS
+NAV_OFF_RAMP_EDGE_LANE_MAX_M = 6.0
+NAV_OFF_RAMP_EDGE_MAX_STD = 1.0
+NAV_OFF_RAMP_EDGE_X_RANGE = (5.0, 40.0)
 NAV_TURN_TARGET_SPEEDS = {
   "uturn": 5.0 * CV.MPH_TO_MS,
   "sharpLeft": 10.0 * CV.MPH_TO_MS,
@@ -403,6 +413,48 @@ class StarPilotVCruise:
     return math.sqrt(max(target_speed * target_speed + (2.0 * NAV_TURN_COMFORT_DECEL * remaining_distance), 0.0))
 
   @staticmethod
+  def _exit_side_edge_distance(model, side):
+    # roadEdges[0] is the left edge (y < 0), roadEdges[1] the right edge (y > 0). Returns None when the model is unsure.
+    try:
+      index = 0 if side == "left" else 1
+      edge = model.roadEdges[index]
+      x = np.asarray(edge.x, dtype=float)
+      y = np.asarray(edge.y, dtype=float)
+      std = float(model.roadEdgeStds[index])
+    except (AttributeError, IndexError, TypeError, ValueError):
+      return None
+    near = (x >= NAV_OFF_RAMP_EDGE_X_RANGE[0]) & (x <= NAV_OFF_RAMP_EDGE_X_RANGE[1])
+    if not near.any() or not math.isfinite(std) or std > NAV_OFF_RAMP_EDGE_MAX_STD:
+      return None
+    return float(np.median(np.abs(y[near])))
+
+  def _get_nav_off_ramp_target(self, v_cruise, sm, starpilot_toggles):
+    if not getattr(starpilot_toggles, "nav_off_ramp_slowdown", False):
+      return 0.0
+    if str(self._nav_instruction_state.get("maneuverType") or "") != "off ramp":
+      return 0.0
+
+    modifier = str(self._nav_instruction_state.get("maneuverModifier") or "")
+    if modifier in ("slightRight", "right", "sharpRight"):
+      side = "right"
+    elif modifier in ("slightLeft", "left", "sharpLeft"):
+      side = "left"
+    else:
+      return 0.0
+
+    try:
+      model = sm["modelV2"]
+    except Exception:
+      return 0.0
+    edge_distance = self._exit_side_edge_distance(model, side)
+    if edge_distance is None or edge_distance > NAV_OFF_RAMP_EDGE_LANE_MAX_M:
+      return 0.0
+
+    target = max(NAV_OFF_RAMP_TARGET_SPEED, self._nav_target_for_distance(NAV_OFF_RAMP_TARGET_SPEED,
+                                                                          self._nav_instruction_state.get("maneuverDistance")))
+    return target if target + NAV_TURN_MIN_TARGET_DELTA < v_cruise else 0.0
+
+  @staticmethod
   def _get_nav_long_min_target_speed(sm):
     car_params = None
     try:
@@ -443,7 +495,7 @@ class StarPilotVCruise:
       if target + NAV_TURN_MIN_TARGET_DELTA < v_cruise:
         return target
 
-    return 0.0
+    return self._get_nav_off_ramp_target(v_cruise, sm, starpilot_toggles)
 
   # ===== Main update =====
 

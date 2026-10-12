@@ -2335,6 +2335,16 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "NavOffRampSlowdown",
+        "label": "Slow for Off-Ramps",
+        "description": "Ease down to 50 mph by the exit split when navigation takes an off-ramp and you are already in the exit-side lane. Experimental and off by default; not road-validated.",
+        "picker_description": "Slows to 50 mph for an off-ramp once you are in the exit lane.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "QOLLongitudinal",
         "label": "Quality of Life",
         "description": "Miscellaneous acceleration and braking control changes to fine-tune how openpilot drives.",
