@@ -22,3 +22,13 @@ Run it the same way as `tools/vasm_replay` (scratch dir mounted at /work), with
    Result on 00000321 s30/31/41/42 + 00000323 s3/4: 2,582 crops (164 MB). `p_car` matches the earlier
    `conf_replay` run within 5e-05. 1,272 were flagged for review: 1,091 uncertain (<0.98), 174 where the pass hold says
    occupied but the camera says clear, 14 where radar is within 8 m but the camera says clear.
+
+3. `labeler.py`: a local labelling page, stdlib only, on 127.0.0.1. Start it with
+   `python3 tools/vasm_finetune/labeler.py`, then open `http://127.0.0.1:8765/?split=test`.
+   - **Keys:** 0 no car, 1 car, 2 distant or rear, x unsure, arrow keys to move.
+   - **Context:** each crop is shown with the same side 0.25 s and 0.5 s before and after it, plus radar and the pass-hold state.
+   - **Blind test labelling:** test crops are labelled blind (the model's probabilities and proposal are hidden). `?split=train`
+     shows only the flagged crops, with the model's view.
+   - **Saving:** labels go to `<crops>/labels.json` after every key press. Reopening resumes at the first unlabelled crop.
+   - **Verified with headless Chromium:** five rapid key presses land five labels, on five crops, in order. The first version lost
+     fast presses to a save race. A path-traversal request returns 404.
