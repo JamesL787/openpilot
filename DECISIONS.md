@@ -2655,3 +2655,34 @@ ramp, which would be a lane change into highway traffic with no native blind-spo
 
 **Evidence:** static unit tests only (`test_navigation_desires.py`, `test_nav_lane_prompt.py`). It has not been checked
 which maneuver type and lane guidance Mapbox gives on the owner's on-ramps. Not road-validated.
+
+
+## D-114 — Suggest passing a slow lead on a navigated highway, then moving back right (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** when the car is held under the limit by slower traffic, prompt a pass to a faster lane
+when it is safe, wait until the slower car has been passed, and only then suggest going back once the blind spot is
+clear. Navigation-only. The owner approved the thresholds (5 mph under the limit for 10 s), no suggestions at all
+without a live V-ASM, and the move-back prompt.
+
+**Decision:** prompt only. `starpilot/controls/lib/nav_passing.py` (`NavPassingAdvisor`) runs in the StarPilot planner
+and publishes `NavPassingPrompt` (params memory, rewritten every 1 s while armed); the MICI HUD draws it
+(`nav_passing_prompt.py`) and `navPassingSuggested` / `navPassingReturn` chime once per episode. Nothing steers: the
+driver's blinker starts the existing lane change, which keeps its own blind-spot block. Toggle `NavPassingSuggest`,
+default off, under V-ASM on the navigation pages only.
+- **Pass (left only)** when all hold: an active route; V-ASM toggle on and its daemon updating (`vasm_is_live`; a stale
+  state means unknown, not clear); a sourced speed limit of at least 45 mph (SLC's set-speed fallback is not a limit);
+  ego above the minimum lane-change speed; ego and the lead both at least 5 mph under the limit for 10 s; the lead
+  within max(3 s, 80 m); a left lane at least the lane detection width (floored at 2.5 m); `leadLeft` absent, more
+  than 100 m ahead, or at least 5 mph faster than the lead; no route maneuver within 2 km; V-ASM and the car's blind
+  spot clear on the left.
+- **Move back** after the left blinker: once `leadRight` (the passed car) has been seen and then gone from radar for
+  3 s, or at once if the route needs the right side within 2 km; never while the route needs the left. Shown only
+  while a right lane exists and the right side is clear. Gives up after 120 s waiting for the pass and 30 s showing
+  the return.
+
+**Limits:** the radar faces forward, so a car coming up fast from behind in the left lane is only V-ASM's to see, and
+the car has no native blind-spot monitor; the banner and chime say to check the mirror. `leadLeft`/`leadRight` are
+moving-target-only, so a stopped car in the left lane does not count against the pass. If the passed car never shows
+as `leadRight`, there is no move-back prompt until the 120 s timeout ends the episode. All thresholds are starting
+values. Static unit tests only (`test_nav_passing.py`, `test_starpilot_planner.py`, `test_nav_passing_prompt.py`).
+Not replayed against a route and not road-validated.

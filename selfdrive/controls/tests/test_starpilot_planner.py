@@ -255,3 +255,66 @@ def test_untracked_vision_lead_still_uses_strict_entry_gate():
     assert not planner.update_lead_status(16.8)
   finally:
     planner.shutdown()
+
+
+class FakeMemory:
+  def __init__(self, values):
+    self.values = dict(values)
+    self.writes = []
+
+  def get(self, key):
+    return self.values.get(key)
+
+  def put_nonblocking(self, key, value):
+    self.writes.append((key, value))
+
+
+def test_nav_passing_publishes_prompt_and_chimes_once(monkeypatch):
+  planner = StarPilotPlanner(Path("/tmp/nonexistent"), DummyThemeManager())
+
+  try:
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(starpilot_planner_module.time, "monotonic", lambda: clock["t"])
+    memory = FakeMemory({"VASMLastUpdateMonoTime": "1000.0", "VASMLeftActive": "0", "VASMRightActive": "0"})
+    planner.params_memory = memory
+    planner.starpilot_vcruise._nav_instruction_state = {"valid": True, "maneuverModifier": "slight right", "maneuverDistance": 9000.0}
+    planner.starpilot_vcruise.slc.source = "Map Data"
+    planner.starpilot_vcruise.slc.target = 65 * CV.MPH_TO_MS
+    planner.lead_one = SimpleNamespace(status=True, dRel=30.0, vLead=55 * CV.MPH_TO_MS)
+    planner.lane_width_left = planner.lane_width_right = 3.6
+    no_lead = SimpleNamespace(status=False, dRel=0.0, vLead=0.0)
+    sm = {
+      "carState": SimpleNamespace(leftBlindspot=False, rightBlindspot=False, leftBlinker=False, rightBlinker=False),
+      "starpilotRadarState": SimpleNamespace(leadLeft=no_lead, leadRight=no_lead),
+    }
+    toggles = SimpleNamespace(nav_passing_suggest=True, v_asm_enabled=True, minimum_lane_change_speed=20 * CV.MPH_TO_MS,
+                              lane_detection_width=2.5)
+
+    chimes = []
+    for _ in range(25):
+      memory.values["VASMLastUpdateMonoTime"] = str(clock["t"])
+      planner.update_nav_passing(sm, toggles, 55 * CV.MPH_TO_MS)
+      chimes.append(planner.nav_passing_chime)
+      clock["t"] += 0.5
+
+    assert chimes.count("pass") == 1
+    key, prompt = memory.writes[-1]
+    assert key == "NavPassingPrompt" and prompt["armed"] and prompt["side"] == "left"
+
+    # V-ASM goes stale: the prompt is withdrawn, never shown as clear
+    clock["t"] += 4.0
+    planner.update_nav_passing(sm, toggles, 55 * CV.MPH_TO_MS)
+    assert memory.writes[-1][1]["armed"] is False
+  finally:
+    planner.shutdown()
+
+
+def test_nav_passing_ignores_slc_set_speed_fallback():
+  planner = StarPilotPlanner(Path("/tmp/nonexistent"), DummyThemeManager())
+
+  try:
+    planner.starpilot_vcruise.slc.source = "None"
+    planner.starpilot_vcruise.slc.target = 30.0
+    assert planner._passing_speed_limit() == 0.0
+  finally:
+    planner.shutdown()

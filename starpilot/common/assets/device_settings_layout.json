@@ -337,6 +337,17 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "NavPassingSuggest",
+        "galaxy_page": "navigation",
+        "label": "Suggest Passing",
+        "description": "Navigation only, highway limits of 45 mph and up. When you and the car ahead have both been at least 5 mph under the limit for 10 seconds, the left lane is free or faster on radar, V-ASM sees nobody on the left, and no route turn is within about a mile, a banner and chime suggest passing. Nothing steers on its own: your blinker starts the usual lane change. After the passed car leaves radar view, it suggests moving back right once V-ASM sees that side clear. Needs V-ASM; with V-ASM off or not running there are no suggestions. Radar cannot see cars coming up from behind, so always check your mirror. Experimental and off by default; not road-validated.",
+        "picker_description": "Suggests passing a slow car on a navigated highway, then moving back right.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "VASMEnabled",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NNFF",
         "label": "Neural Network Feedforward (NNFF)",
         "description": "Twilsonco's \"Neural Network FeedForward\" controller. Uses a trained neural network model to predict steering torque based on vehicle speed, roll, and past/future planned path data for smoother, model-based steering.",

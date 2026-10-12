@@ -4,13 +4,14 @@ import { html, reactive } from "/assets/vendor/arrow-core.js";
 // device_settings_layout.json (the single source of setting text). Writes use the same
 // PUT /api/params endpoint as the Device Settings page; route preference defaults use
 // /api/navigation/preferences through the caller's toggleRoutePreference.
-export const LAYOUT_URL = "/assets/components/tools/device_settings_layout.json?v=nav-settings-2";
+export const LAYOUT_URL = "/assets/components/tools/device_settings_layout.json?v=nav-settings-3";
 
 export const NAV_SETTING_KEYS = [
   "NavigationUI",
   "NavDesiresAllowed",
   "NavLanePositioningAllowed",
   "NavExitAutoKeep",
+  "NavPassingSuggest",
   "TurnDesires",
   "VASMEnabled",
   "NavLongitudinalAllowed",
@@ -27,6 +28,7 @@ export const NAV_SETTING_KEYS = [
 const ON_PAGE_PARENT = {
   NavLanePositioningAllowed: "NavDesiresAllowed",
   NavExitAutoKeep: "NavLanePositioningAllowed",
+  NavPassingSuggest: "VASMEnabled",
   NavOffRampSlowdown: "NavLongitudinalAllowed",
   NavJamSlowdown: "NavLongitudinalAllowed",
   ClearNavOnOffroadTimeoutMinutes: "ClearNavOnOffroad",

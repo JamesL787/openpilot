@@ -218,6 +218,8 @@ struct StarPilotOnroadEvent @0xe344718567f9ce71 {
     teslaCCDisengaged @38;
     teslaCCNotArmed @39;
     pedalNotCalibrated @40;
+    navPassingSuggested @41;
+    navPassingReturn @42;
   }
 }
 

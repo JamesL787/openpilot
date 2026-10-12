@@ -53,6 +53,11 @@ class StarPilotNavSettingsLayout(_SettingsPage):
                  get_state=lambda: p.get_bool("NavExitAutoKeep"),
                  set_state=lambda s: p.put_bool("NavExitAutoKeep", s),
                  visible=lambda: nav_desires() and p.get_bool("NavLanePositioningAllowed")),
+      SettingRow("NavPassingSuggest", "toggle", tr_noop("Suggest Passing"),
+                 subtitle=tr_noop("On a navigated highway, suggest passing when you and the car ahead are 5+ mph under the limit for 10 s and V-ASM sees the left side clear, then suggest moving back right after the pass. Prompt and chime only; your blinker does the lane change. Radar cannot see cars behind: check your mirror. Needs V-ASM. Experimental and off by default; not road-validated."),
+                 get_state=lambda: p.get_bool("NavPassingSuggest"),
+                 set_state=lambda s: p.put_bool("NavPassingSuggest", s),
+                 visible=lambda: p.get_bool("VASMEnabled")),
     ]
 
     gas_brake_rows = [

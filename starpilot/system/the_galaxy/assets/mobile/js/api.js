@@ -1,4 +1,4 @@
-export const LAYOUT_URL = "/assets/components/tools/device_settings_layout.json?v=nav-settings-2"
+export const LAYOUT_URL = "/assets/components/tools/device_settings_layout.json?v=nav-settings-3"
 
 async function parse(res) {
   const data = await res.json().catch(() => ({}))

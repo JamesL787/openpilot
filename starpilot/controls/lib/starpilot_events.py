@@ -64,6 +64,12 @@ class StarPilotEvents:
     if self.starpilot_planner.starpilot_vcruise.forcing_stop:
       self.events.add(StarPilotEventName.forcingStop)
 
+    passing_chime = getattr(self.starpilot_planner, "nav_passing_chime", "")
+    if passing_chime == "pass":
+      self.events.add(StarPilotEventName.navPassingSuggested)
+    elif passing_chime == "return":
+      self.events.add(StarPilotEventName.navPassingReturn)
+
     if not self.starpilot_planner.tracking_lead and sm["carState"].standstill and sm["carState"].gearShifter not in NON_DRIVING_GEARS:
       if not self.starpilot_planner.model_stopped and self.stopped_for_light and starpilot_toggles.green_light_alert:
         self.events.add(StarPilotEventName.greenLight)

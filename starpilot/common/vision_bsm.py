@@ -20,3 +20,14 @@ def get_fresh_vasm_state(params_memory, now: float | None = None) -> tuple[bool,
 
   active_values = ("1", b"1", True)
   return params_memory.get("VASMLeftActive") in active_values, params_memory.get("VASMRightActive") in active_values
+
+
+def vasm_is_live(params_memory, now: float | None = None) -> bool:
+  """True while the V-ASM vision daemon is updating; a stale or missing state means unknown, not clear."""
+  try:
+    updated_at = float(params_memory.get("VASMLastUpdateMonoTime") or 0)
+  except (TypeError, ValueError):
+    return False
+  current_time = time.monotonic() if now is None else now
+  age = current_time - updated_at
+  return updated_at > 0 and 0 <= age <= VASM_STATE_TIMEOUT_SECONDS

@@ -1186,6 +1186,23 @@ STARPILOT_EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOW, VisualAlert.steerRequired, StarPilotAudibleAlert.goat, 2.),
   },
 
+  # D-114: chime once when the passing banner appears; the banner carries the detail
+  StarPilotEventName.navPassingSuggested: {
+    ET.PERMANENT: Alert(
+      "Left Lane Is Faster",
+      "Check mirror, use blinker to pass",
+      StarPilotAlertStatus.starpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
+  StarPilotEventName.navPassingReturn: {
+    ET.PERMANENT: Alert(
+      "Passed",
+      "Check mirror, move back right when clear",
+      StarPilotAlertStatus.starpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
   StarPilotEventName.greenLight: {
     ET.PERMANENT: Alert(
       "Light Turned Green",

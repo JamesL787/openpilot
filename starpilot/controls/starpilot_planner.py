@@ -9,7 +9,7 @@ import numpy as np
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.gps import get_gps_location_service
-from openpilot.common.params import Params
+from openpilot.common.params import Params, UnknownKeyName
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.selfdrive.controls.lib.lead_behavior import (
@@ -20,10 +20,13 @@ from openpilot.selfdrive.controls.lib.lead_behavior import (
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import A_CHANGE_COST, DANGER_ZONE_COST, J_EGO_COST, STOP_DISTANCE
 from openpilot.selfdrive.controls.lib.longitudinal_vehicle_tunes import get_lead_follow_jerk_scale
 
+from openpilot.starpilot.common.vision_bsm import get_fresh_vasm_state, vasm_is_live
 from openpilot.starpilot.common.starpilot_utilities import calculate_lane_width, calculate_road_curvature, extract_curve_profile
 from openpilot.starpilot.common.starpilot_variables import CRUISING_SPEED, MINIMUM_LATERAL_ACCELERATION, PLANNER_TIME, THRESHOLD
 from openpilot.starpilot.controls.lib.conditional_chill_mode import ConditionalChillMode
 from openpilot.starpilot.controls.lib.conditional_experimental_mode import ConditionalExperimentalMode
+from openpilot.starpilot.controls.lib.nav_passing import Lead, NavPassingAdvisor, PassingInputs
+from openpilot.starpilot.controls.lib.speed_limit_controller import SOURCE_NONE
 from openpilot.starpilot.controls.lib.starpilot_acceleration import StarPilotAcceleration
 from openpilot.starpilot.controls.lib.starpilot_events import StarPilotEvents
 from openpilot.starpilot.controls.lib.starpilot_following import StarPilotFollowing
@@ -31,6 +34,7 @@ from openpilot.starpilot.controls.lib.starpilot_vcruise import StarPilotVCruise
 from openpilot.starpilot.controls.lib.weather_checker import WeatherChecker
 
 RADARLESS_TRACK_HOLD_TIME = 0.45
+PASSING_MIN_LANE_WIDTH = 2.5  # m, D-114
 GPS_MEMORY_REFRESH_SECONDS = 0.25
 GPS_NEW_FIX_REFRESH_SECONDS = 0.1  # a new fix is published at once; its timestamp starts the map's dead reckoning
 FORCE_STOP_JERK_SCALE = 0.20  # accel-change cost multiplier for the whole stop approach,
@@ -77,6 +81,13 @@ class StarPilotPlanner:
     self.starpilot_following = StarPilotFollowing(self)
     self.starpilot_vcruise = StarPilotVCruise(self)
     self.starpilot_weather = WeatherChecker(self)
+
+    self.nav_passing = NavPassingAdvisor()
+    self._passing_last = None
+    self._passing_last_t = 0.0
+    self._passing_publish_disabled = False
+    self._passing_chimed = set()
+    self.nav_passing_chime = ""
 
     self.driving_in_curve = False
     self.gps_valid = False
@@ -254,12 +265,72 @@ class StarPilotPlanner:
       self.starpilot_acceleration.min_accel = 0
       self.starpilot_acceleration.gas_override_coast = False
 
+    self.update_nav_passing(sm, starpilot_toggles, v_ego)
+
     self.starpilot_events.update(controls_enabled, v_cruise, sm, starpilot_toggles)
 
     if self.gps_valid and time_validated and starpilot_toggles.weather_presets:
       self.starpilot_weather.update_weather(now, starpilot_toggles)
     else:
       self.starpilot_weather.weather_id = 0
+
+  def _passing_speed_limit(self):
+    # a real posted limit only: SLC's set-speed fallback has no source and is not a limit
+    slc = self.starpilot_vcruise.slc
+    return float(slc.target or 0.0) if getattr(slc, "source", SOURCE_NONE) != SOURCE_NONE else 0.0
+
+  def _passing_inputs(self, sm, starpilot_toggles, v_ego, now):
+    CS = sm["carState"]
+    radar = sm["starpilotRadarState"]
+    vasm_on = bool(getattr(starpilot_toggles, "v_asm_enabled", False))
+    vasm_live = vasm_on and vasm_is_live(self.params_memory, now)
+    vasm_left, vasm_right = get_fresh_vasm_state(self.params_memory, now) if vasm_live else (False, False)
+
+    def lead(l):
+      return Lead(bool(l.status), float(l.dRel), float(l.vLead))
+
+    return PassingInputs(
+      enabled=True,
+      nav_state=self.starpilot_vcruise._nav_instruction_state,
+      v_ego=v_ego,
+      speed_limit=self._passing_speed_limit(),
+      min_lane_change_speed=float(starpilot_toggles.minimum_lane_change_speed),
+      lead=lead(self.lead_one), lead_left=lead(radar.leadLeft), lead_right=lead(radar.leadRight),
+      lane_width_left=float(self.lane_width_left), lane_width_right=float(self.lane_width_right),
+      # floor: with Lane Changes off the toggle reads 0, which would make any gap count as a lane
+      lane_detection_width=max(float(starpilot_toggles.lane_detection_width), PASSING_MIN_LANE_WIDTH),
+      vasm_live=vasm_live,
+      blocked_left=bool(CS.leftBlindspot or vasm_left), blocked_right=bool(CS.rightBlindspot or vasm_right),
+      left_blinker=bool(CS.leftBlinker), right_blinker=bool(CS.rightBlinker),
+    )
+
+  def update_nav_passing(self, sm, starpilot_toggles, v_ego):
+    """D-114: publish the pass / move-back suggestion. Prompt only; the driver's blinker does the lane change."""
+    self.nav_passing_chime = ""
+    if self._passing_publish_disabled:
+      return
+    now = time.monotonic()
+    if bool(getattr(starpilot_toggles, "nav_passing_suggest", False)):
+      inputs = self._passing_inputs(sm, starpilot_toggles, v_ego, now)
+    else:
+      inputs = PassingInputs(False, {}, v_ego, 0.0, 0.0, Lead(), Lead(), Lead(), 0.0, 0.0, 0.0, False, False, False, False, False)
+    prompt = self.nav_passing.update(inputs, now)
+    # one chime per phase per episode, so a flickering right-side block does not re-chime the return prompt
+    phase = prompt["phase"] if prompt["armed"] else ""
+    self.nav_passing_chime = phase if phase and phase not in self._passing_chimed else ""
+    if phase:
+      self._passing_chimed.add(phase)
+    elif self.nav_passing.state == "idle":
+      self._passing_chimed.clear()
+    key = (prompt["armed"], prompt["side"], prompt["phase"])
+    # rewrite every 1 s while armed so the UI can drop a stale prompt by timestamp
+    if key == self._passing_last and not (prompt["armed"] and now - self._passing_last_t >= 1.0):
+      return
+    self._passing_last, self._passing_last_t = key, now
+    try:
+      self.params_memory.put_nonblocking("NavPassingPrompt", prompt)
+    except UnknownKeyName:
+      self._passing_publish_disabled = True
 
   def update_lead_status(self, v_ego):
     following_lead = should_track_lead(
