@@ -2,6 +2,7 @@ import math
 
 import pytest
 
+import openpilot.starpilot.navigation.navigationd as navigationd_module
 from openpilot.starpilot.navigation.navigationd import Navigationd
 from openpilot.starpilot.navigation.route_engine import Coordinate, MapboxRouteEngine, NavigationRoute
 from openpilot.starpilot.navigation.traffic_reroute import (
@@ -213,6 +214,31 @@ def test_a_stale_response_id_is_ignored():
   nd.params_memory.values["NavTrafficRerouteResponse"] = {"id": 999, "accept": True}
   nd._update_reroute_prompt(current.get_progress(nd._last_position), 35.0)
   assert nd._reroute_prompt is not None and nd._route is current
+
+
+def test_a_leftover_accept_naming_the_next_id_cannot_switch_the_route():
+  # a tap that landed as an earlier prompt closed, or one left from before a navigationd restart, names an id the
+  # next prompt could reuse; it must not answer that prompt
+  current = _north(41, duration=3000.0)
+  nd = _navigationd(current)
+  _check(nd, current, [_north(41, duration=3000.0), _faster_detour()], 0.0)
+  nd.params_memory.values["NavTrafficRerouteResponse"] = {"id": nd._reroute_prompt_id + 1, "accept": True}
+  _check(nd, current, [_north(41, duration=3000.0), _faster_detour()], 30.0)
+  nd._update_reroute_prompt(current.get_progress(nd._last_position), 31.0)
+  assert nd._reroute_prompt is not None and nd._route is current
+
+
+def test_a_traffic_copy_is_dropped_if_the_route_is_swapped_mid_check(monkeypatch):
+  current = _north(41, duration=3000.0)
+  nd = _navigationd(current, reroute=False, jam=True)
+  real_same_route = navigationd_module.same_route
+
+  def swap_then_compare(*args, **kwargs):
+    nd._route_generation += 1   # a route fetch landed while this check was comparing
+    return real_same_route(*args, **kwargs)
+  monkeypatch.setattr(navigationd_module, "same_route", swap_then_compare)
+  nd._handle_traffic_routes([_north(41, duration=3000.0)], current, 1, 0.0, 5000.0, False, 10.0)
+  assert nd._traffic_route is None
 
 
 def test_no_offer_near_a_maneuver_or_without_a_fresh_time_for_the_current_route():

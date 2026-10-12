@@ -63,7 +63,8 @@ class Navigationd:
     self._traffic_route: NavigationRoute | None = None       # fresh copy of the current route's path (traffic only)
     self._traffic_route_at = -inf
     self._reroute_prompt: dict[str, object] | None = None
-    self._reroute_prompt_id = 0
+    # ids start from the clock so a restarted navigationd can never reuse an id a leftover tap answer still names
+    self._reroute_prompt_id = int(monotonic() * 1000)
 
   @staticmethod
   def _destination_key(destination: dict[str, object] | None) -> tuple | None:
@@ -202,7 +203,10 @@ class Navigationd:
 
     fresh_current = next((r for r in routes if same_route(r, current, along_m)), None)
     if fresh_current is not None:
-      self._traffic_route, self._traffic_route_at = fresh_current, now
+      with self._route_lock:
+        if generation != self._route_generation:
+          return  # the route was swapped while we compared; this copy belongs to the old one
+        self._traffic_route, self._traffic_route_at = fresh_current, now
     if not reroute_on:
       return
     if fresh_current is None:
@@ -226,6 +230,8 @@ class Navigationd:
         if generation != self._route_generation:
           return
         self._reroute_prompt_id += 1
+        # an answer left over from an earlier prompt (a tap that landed as it closed) must not answer this one
+        self.params_memory.remove("NavTrafficRerouteResponse")
         self._reroute_prompt = {"id": self._reroute_prompt_id, "route": best, "savings_s": decision.savings_s,
                                 "shown_at": now, "generation": generation}
 
