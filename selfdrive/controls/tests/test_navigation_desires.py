@@ -837,7 +837,19 @@ def test_nav_exit_auto_keep_gates():
   assert _exit_desire(car={"leftBlinker": True}, toggles=on) == log.Desire.none
   assert _exit_desire(car={"vEgo": 5.0}, toggles=on) == log.Desire.none
   assert _exit_desire(state=_exit_state(maneuverDistance=300.0), toggles=on) == log.Desire.none
-  assert _exit_desire(state=_exit_state(maneuverType="fork"), toggles=on) == log.Desire.none
+  assert _exit_desire(state=_exit_state(maneuverType="turn"), toggles=on) == log.Desire.none
+
+
+def test_nav_exit_auto_keep_follows_a_fork():
+  # D-119: route 325 seg 54, fork/right with lane guidance marking the right branch; D-107 left it to a wheel nudge
+  on = {"nav_exit_auto_keep": True}
+  assert _exit_desire(state=_exit_state(maneuverType="fork"), toggles=on) == log.Desire.keepRight
+  left = _exit_state(maneuverType="fork", maneuverModifier="slightLeft", activeLaneDirection="slightLeft")
+  assert _exit_desire(state=left, toggles=on, plan=make_plan(laneWidthLeft=0.0)) == log.Desire.keepLeft
+  assert _exit_desire(state=_exit_state(maneuverType="fork")) == log.Desire.none
+  assert _exit_desire(car={"rightBlindspot": True}, state=_exit_state(maneuverType="fork"), toggles=on) == log.Desire.none
+  assert _exit_desire(car={"steeringPressed": True, "steeringTorque": 1.0}, state=_exit_state(maneuverType="fork"),
+                      toggles=on) == log.Desire.none
 
 
 def test_nav_exit_auto_keep_withdrawn_by_driver_steering():

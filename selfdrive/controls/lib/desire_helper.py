@@ -23,6 +23,8 @@ NAV_EXIT_COMMIT_DISTANCE = 500.0
 NAV_RAMP_MANEUVERS = ("off ramp", "on ramp")
 # D-107: lowest speed at which NavExitAutoKeep applies the exit keep without a wheel nudge
 NAV_EXIT_AUTO_KEEP_MIN_SPEED = 8.0
+# D-119: NavExitAutoKeep follows the route at a fork too, not only at an off-ramp (owner, 2026-10-12, route 325 seg 54)
+NAV_AUTO_KEEP_MANEUVERS = ("off ramp", "fork")
 # D-108: the driver steering against a started lane change for this long cancels it (LaneChangeCounterTorqueCancel)
 LANE_CHANGE_CANCEL_TORQUE_FRAMES = round(0.25 / DT_MDL)
 # D-108: a cancel only makes sense before the car reaches the lane line; afterwards it would steer back across it.
@@ -188,11 +190,12 @@ class DesireHelper:
 
   @staticmethod
   def _nav_exit_auto_keep(carstate, starpilot_toggles, maneuver_type):
-    # D-107: an off-ramp whose lane guidance already marks the exit-side lane is kept without a nudge. Off ramps only,
-    # never forks. Any steering input from the driver withdraws it (the nudge path below still works).
+    # D-107: an off-ramp whose lane guidance already marks the exit-side lane is kept without a nudge. D-119: a fork
+    # whose lane guidance marks the route's side is followed the same way. Any steering input from the driver
+    # withdraws it (the nudge path below still works).
     return (
       bool(getattr(starpilot_toggles, "nav_exit_auto_keep", False)) and
-      maneuver_type == "off ramp" and
+      maneuver_type in NAV_AUTO_KEEP_MANEUVERS and
       carstate.vEgo >= NAV_EXIT_AUTO_KEEP_MIN_SPEED and
       not carstate.steeringPressed
     )

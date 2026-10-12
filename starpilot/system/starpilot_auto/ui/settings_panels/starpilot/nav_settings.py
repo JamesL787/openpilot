@@ -49,7 +49,7 @@ class StarPilotNavSettingsLayout(_SettingsPage):
                  set_state=lambda s: p.put_bool("NavLanePositioningAllowed", s),
                  visible=nav_desires),
       SettingRow("NavExitAutoKeep", "toggle", tr_noop("Auto-Take Exit"),
-                 subtitle=tr_noop("Take a same-side highway exit or on-ramp without the blinker or a wheel nudge when navigation lane guidance already puts you in the ramp-side edge lane. Never forks, above 8 m/s, withdrawn by any steering input. Experimental and off by default; not road-validated."),
+                 subtitle=tr_noop("Take a same-side highway exit or on-ramp without the blinker or a wheel nudge when navigation lane guidance already puts you in the ramp-side edge lane. Also follows the route at a fork. Above 8 m/s, withdrawn by any steering input. Experimental and off by default; not road-validated."),
                  get_state=lambda: p.get_bool("NavExitAutoKeep"),
                  set_state=lambda s: p.put_bool("NavExitAutoKeep", s),
                  visible=lambda: nav_desires() and p.get_bool("NavLanePositioningAllowed")),

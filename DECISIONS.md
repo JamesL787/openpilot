@@ -2837,3 +2837,30 @@ smoothing 0.1 s. At those settings the smoothing does nothing, because every sam
   cab at that range, so "adjacent track close ahead at similar speed means occupied" would have reported a false
   blind-spot car for 13 s here. A truck hold needs evidence of the trailer itself: a timestamp where the camera drops
   on a box trailer, then its radar/liveTracks picture.
+
+
+## D-119 — NavExitAutoKeep follows the route at a fork, not only at an off-ramp (2026-10-12, static unit tests only, not driven, default off)
+
+**Problem (owner, 2026-10-12, route 325 seg 54):** engaged at 66-68 mph with nav on `fork / right` ("Exit 480 I 635
+North"), the car stayed in its lane toward the other branch until Peter steered right himself. navInstruction carried
+lane guidance for the whole approach (rlog, 336 m down to 7 m): `[straight] inactive, [straight, slightRight] active,
+[slightRight] active, [slightRight] active`, active direction `slightRight`. laneChangeState stayed off, no blinker.
+
+**Cause (static):** the build on the road (e17fa5cb40) contains D-107, whose auto keep was off ramps only, never forks.
+A fork keep therefore still needed a wheel nudge (`_nav_torque_applied`), and there was none before Peter's own steer.
+
+**Decision (owner: "change D-107 to follow the navigation"):** `NAV_AUTO_KEEP_MANEUVERS = ("off ramp", "fork")`. A fork
+whose lane guidance marks the route's side is kept without blinker or nudge, under D-107's toggle (`NavExitAutoKeep`,
+still default off) and all of D-107's gates unchanged: `_nav_keep_is_imminent` window (shortened by
+`NAV_KEEP_AMBIGUOUS_SPLIT_DISTANCE_SCALE` for a split shared by 2+ lanes), `_nav_should_suppress_edge_lane_keep`,
+vEgo >= 8 m/s, no opposite blinker, blind spot (and V-ASM when on) clear, and any driver steering withdraws it. Left
+out: the nav exit lane *change* (`_get_nav_exit_lane_change_direction`) still covers ramps only, so a fork with no lane
+guidance, or with the car in a lane that does not go the route's way, is not acted on. Unit tests in
+`test_navigation_desires.py` (fork left and right, default off, blind spot, steering withdrawal; 116 pass in
+`selfdrive/controls/tests -k "nav or desire or lane"`).
+
+**Not checked:** whether `navigationd`'s `NavInstructionState` for the 325 seg 54 approach (not logged; it lives in
+memory params) passed the edge-lane suppression; with 3 of 4 lanes going right it may have been suppressed in the right
+edge lane. No replay of the desire against the log, and nothing driven.
+
+Not road-validated.
