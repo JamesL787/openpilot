@@ -2140,6 +2140,46 @@ def _live_car_state(wait_s=0.5):
     car_state = plots.live_message("carState")
   return car_state
 
+def _live_starpilot_plan(wait_s=0.5):
+  """The latest starpilotPlan through Plots' subscription, or None. Like _live_car_state, it never opens a
+  reader of its own."""
+  if not _safe_params_get_bool("IsOnroad"):
+    return None
+  plots = _get_drive_plots()
+  plan = plots.live_message("starpilotPlan")
+  if plan is not None or plots.paused_reason():
+    return plan
+  plots.touch()
+  deadline = time.monotonic() + wait_s
+  while plan is None and time.monotonic() < deadline:
+    time.sleep(0.05)
+    plan = plots.live_message("starpilotPlan")
+  return plan
+
+def speed_limit_live_payload(plan, is_metric, paused_reason=""):
+  """The posted speed limit the onroad UI is showing, for GalaxyNav's Android Auto sign. Display only:
+  nothing here feeds back into planning. available is False when there is no fresh plan or no limit,
+  and GalaxyNav then falls back to its own map's limit."""
+  unit_factor = CV.MS_TO_KPH if is_metric else CV.MS_TO_MPH
+  limit_ms = float(plan.slcSpeedLimit) if plan is not None else 0.0
+  pending_ms = float(plan.unconfirmedSlcSpeedLimit) if plan is not None else 0.0
+  limit_ms = limit_ms if limit_ms > 1 else 0.0
+  pending_ms = pending_ms if pending_ms > 1 else 0.0
+  if plan is None:
+    reason = paused_reason or "No live plan (offroad, or Plots is not running)."
+  elif limit_ms == 0.0:
+    reason = "No speed limit."
+  else:
+    reason = ""
+  return {
+    "available": limit_ms > 0.0,
+    "speedLimit": round(limit_ms * unit_factor),
+    "pendingSpeedLimit": round(pending_ms * unit_factor),
+    "unit": "km/h" if is_metric else "mph",
+    "source": str(plan.slcSpeedLimitSource) if plan is not None else "",
+    "reason": reason,
+  }
+
 def _get_drive_plots():
   global _drive_plots
   with _drive_plots_init_lock:
@@ -8727,6 +8767,12 @@ def setup(app):
       "visionStatus": vision_status,
       "visionStream": vision_stream,
     }
+
+  @app.route("/api/speed_limit/live", methods=["GET"])
+  def speed_limit_live():
+    plan = _live_starpilot_plan()
+    paused = _get_drive_plots().paused_reason() if plan is None and params.get_bool("IsOnroad") else ""
+    return jsonify(speed_limit_live_payload(plan, params.get_bool("IsMetric"), paused)), 200
 
   @app.route("/api/speed_limits/status", methods=["GET"])
   def speed_limits_status():
