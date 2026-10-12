@@ -11,7 +11,7 @@ import {
   highlightRoute,
   rankEcoRoutes,
 } from "./navigation_utilities.js?v=nav-route-prefs-1";
-import { NavigationSettings } from "./navigation_settings.js?v=nav-settings-2";
+import { NavigationSettings } from "./navigation_settings.js?v=nav-settings-5";
 import { Modal } from "/assets/components/modal.js";
 
 function sha1hex(str) {

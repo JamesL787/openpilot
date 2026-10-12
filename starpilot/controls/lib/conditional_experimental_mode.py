@@ -368,11 +368,29 @@ class ConditionalExperimentalMode:
       self.status_value = CEStatus["STOP_LIGHT"]
       return True
 
+    if getattr(starpilot_toggles, "nav_stop_anticipate", False) and self.nav_control_ahead(v_ego):
+      self.status_value = CEStatus["STOP_LIGHT"]
+      return True
+
     if self.starpilot_planner.starpilot_vcruise.slc.experimental_mode:
       self.status_value = CEStatus["SPEED_LIMIT"]
       return True
 
     return False
+
+  NAV_CONTROL_MIN_DIST = 80.0    # D-117: hand a Mapbox-flagged signal / stop / crossing to the model this far out...
+  NAV_CONTROL_SECONDS = 8.0      # ...or this many seconds ahead at the current speed, whichever is further
+
+  def nav_control_ahead(self, v_ego):
+    """D-117: navigationd reports a Mapbox-flagged traffic control close enough to let the model handle it."""
+    nav = getattr(self.starpilot_planner.starpilot_vcruise, "_nav_instruction_state", None) or {}
+    if not nav.get("valid", False) or nav.get("controlKind", "") not in ("signal", "stop", "rail"):
+      return False
+    try:
+      distance = float(nav.get("controlDistance", -1.0))
+    except (TypeError, ValueError):
+      return False
+    return 0.0 < distance <= max(self.NAV_CONTROL_MIN_DIST, v_ego * self.NAV_CONTROL_SECONDS)
 
   def open_road_lead_handoff_allowed(self, v_ego):
     lead = self.starpilot_planner.lead_one

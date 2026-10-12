@@ -1404,6 +1404,10 @@ class StarPilotVariables:
     toggle.nav_passing_suggest = self.get_value("NavPassingSuggest")
     toggle.nav_exit_only_warn = self.get_value("NavExitOnlyWarn")
     toggle.nav_keep_right = self.get_value("NavKeepRightReminder")
+    toggle.nav_merge_warn = self.get_value("NavMergeWarn")
+    toggle.nav_jam_exit_warn = self.get_value("NavJamExitWarn")
+    toggle.nav_stop_anticipate = self.get_value("NavStopAnticipate")
+    toggle.nav_arrival_help = self.get_value("NavArrivalHelp")
     # Keep lead detection sensitivity normalized even when longitudinal tuning is disabled.
     # Some branches can return raw integer defaults (e.g. 35) when condition=False.
     lead_detection_probability = self.get_value("LeadDetectionThreshold", cast=float, condition=toggle.openpilot_longitudinal,

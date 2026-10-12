@@ -328,7 +328,8 @@ def test_jam_notice_published_when_no_suggestion_is_up(monkeypatch):
     memory = FakeMemory({})
     planner.params_memory = memory
     planner.starpilot_vcruise.nav_jam_notice = (1234.0, 17.9)
-    toggles = SimpleNamespace(nav_passing_suggest=False, nav_exit_only_warn=False, nav_keep_right=False)
+    toggles = SimpleNamespace(nav_passing_suggest=False, nav_exit_only_warn=False, nav_keep_right=False,
+                              nav_merge_warn=False, nav_jam_exit_warn=False, nav_arrival_help=False)
     planner.update_nav_passing({}, toggles, 25.0)
     key, prompt = memory.writes[-1]
     assert key == "NavPassingPrompt" and prompt["armed"] and prompt["phase"] == "jam" and prompt["side"] == ""

@@ -91,6 +91,40 @@ def test_congestion_ahead_finds_the_first_long_enough_run():
   assert congestion_ahead(_north(41), along_m=0.0) is None, "no annotations: no jam"
 
 
+
+def _with_exit(route, modifier="slightRight"):
+  from dataclasses import replace
+  route.steps[1] = replace(route.steps[1], maneuver="off ramp", modifier=modifier)
+  return route
+
+
+def test_exit_jam_needs_a_jam_at_the_next_off_ramp():
+  from openpilot.starpilot.navigation.traffic_reroute import exit_jam_ahead
+  at_exit = ["low"] * 15 + ["heavy"] * 4 + ["low"] * 21       # 1.5-1.9 km: the queue before the 2 km exit
+  route = _with_exit(_north(41, congestion=at_exit, step_every=20))
+  distance, side = exit_jam_ahead(route, 0.0)
+  assert distance == pytest.approx(2000.0, abs=5.0) and side == "right"
+  assert exit_jam_ahead(route, 2100.0) is None, "the exit is behind"
+  assert exit_jam_ahead(route, 0.0, lookahead_m=1500.0) is None, "too far to say"
+  far = ["heavy"] * 5 + ["low"] * 35                           # a jam 2 km before the exit is not the exit's
+  assert exit_jam_ahead(_with_exit(_north(41, congestion=far, step_every=20)), 0.0) is None
+  assert exit_jam_ahead(_north(41, congestion=at_exit, step_every=20), 0.0) is None, "no off-ramp on the route"
+  left = _with_exit(_north(41, congestion=at_exit, step_every=20), modifier="slightLeft")
+  assert exit_jam_ahead(left, 0.0)[1] == "left"
+
+
+def test_arrival_side_from_the_arrive_modifier():
+  from dataclasses import replace
+  from openpilot.starpilot.navigation.traffic_reroute import arrival_side
+  route = _north(5)
+  assert arrival_side(route) == ""                             # "straight": no side
+  route.steps[-1] = replace(route.steps[-1], modifier="right")
+  assert arrival_side(route) == "right"
+  route.steps[-1] = replace(route.steps[-1], modifier="slightLeft")
+  assert arrival_side(route) == "left"
+  route.steps[-1] = replace(route.steps[-1], maneuver="turn")
+  assert arrival_side(route) == ""
+
 def test_route_engine_requests_and_parses_congestion():
   class Response:
     status_code = 200

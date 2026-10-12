@@ -351,8 +351,8 @@
         "key": "NavExitOnlyWarn",
         "galaxy_page": "navigation",
         "label": "Warn About Exit-Only Lanes",
-        "description": "Warn with a banner and chime when you are in an exit-only lane up to about a mile before an exit your route does not take. Uses Mapbox lane data, which some roads lack. Experimental and off by default; not road-validated.",
-        "picker_description": "Warns when your lane exits ahead and the route goes straight.",
+        "description": "Warn with a banner and chime when you are in an exit-only lane up to about a mile before an exit your route does not take, or in a city turn-only lane about 1000 ft before a turn your route does not take. Uses Mapbox lane data, which some roads lack. Experimental and off by default; not road-validated.",
+        "picker_description": "Warns when your lane exits or turns ahead and the route does not.",
         "data_type": "bool",
         "ui_type": "toggle",
         "settings_tier": "advanced"
@@ -366,6 +366,38 @@
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "VASMEnabled",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NavMergeWarn",
+        "galaxy_page": "navigation",
+        "label": "Warn About Merges",
+        "description": "Banner and chime about 1000 ft before the route merges, telling you which side; says to wait while V-ASM sees a car beside you on that side. Prompt only; your hands do the merge. Needs V-ASM. Experimental and off by default; not road-validated.",
+        "picker_description": "Warns before the route merges and shows which side is blocked.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "VASMEnabled",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NavJamExitWarn",
+        "galaxy_page": "navigation",
+        "label": "Warn When Your Exit Is Backed Up",
+        "description": "When Mapbox traffic shows the next exit on the route backed up within 2 miles, prompt you to move toward the exit early while a lane on that side exists. Prompt and chime only. Mapbox traffic can be wrong or old. Needs V-ASM. Experimental and off by default; not road-validated.",
+        "picker_description": "Prompts you to move over early when your exit is jammed.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "VASMEnabled",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NavArrivalHelp",
+        "galaxy_page": "navigation",
+        "label": "Show Destination Side",
+        "description": "In the last 1/4 mile, show which side of the road the destination is on. Banner only: no chime and no slowdown. Experimental and off by default; not road-validated.",
+        "picker_description": "Shows which side the destination is on near arrival.",
+        "data_type": "bool",
+        "ui_type": "toggle",
         "settings_tier": "advanced"
       },
       {
@@ -2400,6 +2432,17 @@
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NavStopAnticipate",
+        "galaxy_page": "navigation",
+        "label": "Hand Mapped Stops to the Model",
+        "description": "When Conditional Experimental Mode is on, switch to Experimental Mode about 8 s (at least 260 ft) before a traffic signal, stop sign, or railway crossing that Mapbox marks on the route, so the model can stop for it. Mapbox does not mark every control. Experimental and off by default; not road-validated.",
+        "picker_description": "Switches to Experimental Mode before mapped signals and stop signs.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "ConditionalExperimental",
         "settings_tier": "advanced"
       },
       {

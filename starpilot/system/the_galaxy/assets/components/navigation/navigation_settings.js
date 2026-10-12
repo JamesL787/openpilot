@@ -4,7 +4,7 @@ import { html, reactive } from "/assets/vendor/arrow-core.js";
 // device_settings_layout.json (the single source of setting text). Writes use the same
 // PUT /api/params endpoint as the Device Settings page; route preference defaults use
 // /api/navigation/preferences through the caller's toggleRoutePreference.
-export const LAYOUT_URL = "/assets/components/tools/device_settings_layout.json?v=nav-settings-4";
+export const LAYOUT_URL = "/assets/components/tools/device_settings_layout.json?v=nav-settings-5";
 
 export const NAV_SETTING_KEYS = [
   "NavigationUI",
@@ -14,11 +14,15 @@ export const NAV_SETTING_KEYS = [
   "NavPassingSuggest",
   "NavExitOnlyWarn",
   "NavKeepRightReminder",
+  "NavMergeWarn",
+  "NavJamExitWarn",
+  "NavArrivalHelp",
   "TurnDesires",
   "VASMEnabled",
   "NavLongitudinalAllowed",
   "NavOffRampSlowdown",
   "NavJamSlowdown",
+  "NavStopAnticipate",
   "NavTrafficReroute",
   "ClearNavOnOffroad",
   "ClearNavOnOffroadTimeoutMinutes",
@@ -32,6 +36,8 @@ const ON_PAGE_PARENT = {
   NavExitAutoKeep: "NavLanePositioningAllowed",
   NavPassingSuggest: "VASMEnabled",
   NavKeepRightReminder: "VASMEnabled",
+  NavMergeWarn: "VASMEnabled",
+  NavJamExitWarn: "VASMEnabled",
   NavOffRampSlowdown: "NavLongitudinalAllowed",
   NavJamSlowdown: "NavLongitudinalAllowed",
   ClearNavOnOffroadTimeoutMinutes: "ClearNavOnOffroad",
@@ -39,6 +45,7 @@ const ON_PAGE_PARENT = {
 
 // Layout parents that are not on this page but still gate the setting in code.
 const CODE_GATES = {
+  NavStopAnticipate: { key: "ConditionalExperimental", message: "Turn on Conditional Experimental Mode to use this." },
   TurnDesires: { key: "LateralTune", message: "Turn on Lateral Tuning in Device Settings to use this." },
   NavLongitudinalAllowed: { key: "LongitudinalTune", message: "Turn on Longitudinal Tuning in Device Settings to use this." },
   NavOffRampSlowdown: { key: "LongitudinalTune", message: "Turn on Longitudinal Tuning in Device Settings to use this." },

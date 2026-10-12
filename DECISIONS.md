@@ -2758,3 +2758,34 @@ that gate is settled from logs. Starting values. Static unit tests only (`test_l
 **Limits:** static unit tests only (`test_starpilot_vcruise.py`, `test_starpilot_planner.py`,
 `test_nav_passing_prompt.py`, `test_traffic_reroute.py`). The Galaxy banner has not been opened in a browser against
 the device.
+
+## D-117 — Highway and city nav prompts: turn-only lanes, merges, jammed exits, mapped stops, destination side (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** "Let's work on all the other enhancements for highway and city driving before pushing it."
+
+**Decision:** all prompt-first and off by default. Nothing here steers, and only the stop item changes longitudinal
+behaviour, by handing control to the model through Conditional Experimental Mode.
+- **Parsing.** `route_engine` keeps every Mapbox intersection that has lanes or any of `traffic_signal`, `stop_sign`,
+  `railway_crossing`. Each one is placed on the route by a forward-cursor nearest-geometry search, falling back to a
+  full scan past 50 m. `RouteStep.junction_controls` holds the `(metres along, signal|stop|rail)` pairs.
+- **City turn-only lane (#7, under `NavExitOnlyWarn`).** `lane_traps.exit_only_ahead` now returns `kind` `exit` or
+  `turn`. An edge lane whose indications are only right/sharp right, or only left/sharp left/uturn, is a turn trap
+  when the route goes straight. The prompt "Your lane turns ahead" fires within 300 m. Exit traps keep their 1600 m.
+- **Merge (#3, `NavMergeWarn`, needs V-ASM).** At a Mapbox `merge` step within 300 m the prompt reads "Merge {side}
+  ahead / Check mirror before merging". It switches to "Car beside you on the {side}: wait" while V-ASM reports that
+  side occupied. It chimes once per merge step.
+- **Jammed exit (#4, `NavJamExitWarn`, needs V-ASM).** If Mapbox congestion is heavy or severe from 800 m before to
+  300 m after the next `off ramp` within 3 km, and a lane exists on the exit side (shoulder-gated as in D-114), the
+  prompt reads "Exit backed up in {distance} / Move {side} early". This is a prompt, not a change to the automatic exit
+  lane change. It chimes once per exit.
+- **Mapped stops (#5, `NavStopAnticipate`, needs CEM).** navigationd publishes the next control within 400 m.
+  `ConditionalExperimentalMode` sets `CEStatus STOP_LIGHT` when it is within `max(80 m, 8 s × v_ego)`, so the model
+  owns the stop. It reuses the existing stop-light status, with no new UI.
+- **Destination side (#6, `NavArrivalHelp`).** In the last 400 m the "arrive" modifier shows "Destination on {side}".
+  This is a banner only, shown only when no other prompt is up: no chime and no slowdown.
+
+**Limits:** static unit tests only (`test_lane_traps.py`, `test_traffic_reroute.py`, `test_navigationd.py`,
+`test_nav_passing.py`, `test_cem_nav_stop.py`, `test_starpilot_planner.py`, `test_nav_passing_prompt.py`). UNVERIFIED:
+whether Mapbox fills `traffic_signal` / `stop_sign` / `railway_crossing`, turn-lane indications, and the arrive
+modifier on the owner's roads. Check with an offroad device-side request before turning `NavStopAnticipate` on. A
+signal Mapbox omits gets no early hand-off; one it misplaces hands off early for at most 8 s.

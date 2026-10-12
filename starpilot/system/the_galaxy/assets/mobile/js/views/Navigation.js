@@ -1,7 +1,7 @@
 import { NavigationDestinationPanel } from "../components/NavigationDestinationPanel.js?v=nav-route-prefs-1"
 import { MapsPanel } from "../components/MapsPanel.js?v=offline-download-4"
 import { NavigationKeysPanel } from "../components/NavigationKeysPanel.js"
-import { NavigationSettingsPanel } from "../components/NavigationSettingsPanel.js?v=nav-settings-4"
+import { NavigationSettingsPanel } from "../components/NavigationSettingsPanel.js?v=nav-settings-5"
 import { SpeedLimitsPanel } from "../components/SpeedLimitsPanel.js"
 import { StarpilotAutoOfflinePanel } from "../components/StarpilotAutoOfflinePanel.js?v=offline-layout-8"
 import { GalaxySection } from "../components/GalaxySection.js"

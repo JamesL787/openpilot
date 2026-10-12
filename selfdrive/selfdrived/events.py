@@ -1220,6 +1220,31 @@ STARPILOT_EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
+  # D-117: chime once per turn-only junction, route merge and jammed exit
+  StarPilotEventName.navTurnOnlyLane: {
+    ET.PERMANENT: Alert(
+      "Your Lane Turns Ahead",
+      "Move over to stay on route",
+      StarPilotAlertStatus.starpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
+  StarPilotEventName.navMergeAhead: {
+    ET.PERMANENT: Alert(
+      "Merge Ahead",
+      "Check mirror before merging",
+      StarPilotAlertStatus.starpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
+  StarPilotEventName.navExitJammed: {
+    ET.PERMANENT: Alert(
+      "Exit Is Backed Up",
+      "Move over early, check mirror",
+      StarPilotAlertStatus.starpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
   StarPilotEventName.greenLight: {
     ET.PERMANENT: Alert(
       "Light Turned Green",

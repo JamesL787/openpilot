@@ -164,6 +164,38 @@ def congestion_ahead(route, along_m: float, lookahead_m: float = JAM_LOOKAHEAD_M
   return None
 
 
+
+EXIT_JAM_LOOKAHEAD_M = 3000.0   # D-117: look for the route's next off-ramp this far ahead
+EXIT_JAM_BEFORE_M = 800.0       # a jam this far before the split, where the exit queue backs up onto the highway...
+EXIT_JAM_AFTER_M = 300.0        # ...or on the first stretch of the ramp itself
+
+
+def exit_jam_ahead(route, along_m: float, lookahead_m: float = EXIT_JAM_LOOKAHEAD_M) -> tuple[float, str] | None:
+  """D-117: (distance to the route's next off-ramp, its side) when Mapbox reports a jam at that exit, else None."""
+  for step in getattr(route, "steps", None) or []:
+    distance = step.cumulative_distance - along_m
+    if distance <= 0.0 or step.maneuver != "off ramp":
+      continue
+    if distance > lookahead_m:
+      return None
+    modifier = str(step.modifier).lower()
+    side = "left" if "left" in modifier else "right"
+    window_start = max(along_m, step.cumulative_distance - EXIT_JAM_BEFORE_M)
+    jam = congestion_ahead(route, window_start, step.cumulative_distance + EXIT_JAM_AFTER_M - window_start)
+    if jam is None:
+      return None
+    return distance, side
+  return None
+
+
+def arrival_side(route) -> str:
+  """D-117: "left"/"right" side of the destination from Mapbox's arrive modifier, "" when it gives none."""
+  steps = getattr(route, "steps", None) or []
+  if not steps or steps[-1].maneuver != "arrive":
+    return ""
+  modifier = str(steps[-1].modifier).lower()
+  return "left" if "left" in modifier else "right" if "right" in modifier else ""
+
 OFFER_STALE_S = 2.0  # navigationd rewrites an armed prompt every loop; older means it is gone
 
 

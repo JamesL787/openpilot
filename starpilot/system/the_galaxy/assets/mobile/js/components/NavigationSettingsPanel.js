@@ -14,11 +14,15 @@ export const NAV_SETTING_KEYS = [
   "NavPassingSuggest",
   "NavExitOnlyWarn",
   "NavKeepRightReminder",
+  "NavMergeWarn",
+  "NavJamExitWarn",
+  "NavArrivalHelp",
   "TurnDesires",
   "VASMEnabled",
   "NavLongitudinalAllowed",
   "NavOffRampSlowdown",
   "NavJamSlowdown",
+  "NavStopAnticipate",
   "NavTrafficReroute",
   "ClearNavOnOffroad",
   "ClearNavOnOffroadTimeoutMinutes",
@@ -26,6 +30,7 @@ export const NAV_SETTING_KEYS = [
 
 // Layout parents that are not shown here but still gate the setting in code.
 const CODE_GATES = {
+  NavStopAnticipate: { key: "ConditionalExperimental", message: "Turn on Conditional Experimental Mode to use this." },
   NavExitAutoKeep: { key: "NavLanePositioningAllowed", message: "Turn on Route Lane Positioning to use this." },
   TurnDesires: { key: "LateralTune", message: "Turn on Lateral Tuning in Settings to use this." },
   NavLongitudinalAllowed: { key: "LongitudinalTune", message: "Turn on Longitudinal Tuning in Settings to use this." },

@@ -59,7 +59,7 @@ class StarPilotNavSettingsLayout(_SettingsPage):
                  set_state=lambda s: p.put_bool("NavPassingSuggest", s),
                  visible=lambda: p.get_bool("VASMEnabled")),
       SettingRow("NavExitOnlyWarn", "toggle", tr_noop("Warn About Exit-Only Lanes"),
-                 subtitle=tr_noop("Warn with a banner and chime when you are in an exit-only lane up to about a mile before an exit your route does not take. Uses Mapbox lane data, which some roads lack. Experimental and off by default; not road-validated."),
+                 subtitle=tr_noop("Warn with a banner and chime when you are in an exit-only lane up to about a mile before an exit your route does not take, or in a city turn-only lane about 1000 ft before a turn your route does not take. Uses Mapbox lane data, which some roads lack. Experimental and off by default; not road-validated."),
                  get_state=lambda: p.get_bool("NavExitOnlyWarn"),
                  set_state=lambda s: p.put_bool("NavExitOnlyWarn", s)),
       SettingRow("NavKeepRightReminder", "toggle", tr_noop("Keep Right Reminder"),
@@ -67,6 +67,20 @@ class StarPilotNavSettingsLayout(_SettingsPage):
                  get_state=lambda: p.get_bool("NavKeepRightReminder"),
                  set_state=lambda s: p.put_bool("NavKeepRightReminder", s),
                  visible=lambda: p.get_bool("VASMEnabled")),
+      SettingRow("NavMergeWarn", "toggle", tr_noop("Warn About Merges"),
+                 subtitle=tr_noop("Banner and chime about 1000 ft before the route merges, telling you which side; says to wait while V-ASM sees a car beside you on that side. Prompt only; your hands do the merge. Needs V-ASM. Experimental and off by default; not road-validated."),
+                 get_state=lambda: p.get_bool("NavMergeWarn"),
+                 set_state=lambda s: p.put_bool("NavMergeWarn", s),
+                 visible=lambda: p.get_bool("VASMEnabled")),
+      SettingRow("NavJamExitWarn", "toggle", tr_noop("Warn When Your Exit Is Backed Up"),
+                 subtitle=tr_noop("When Mapbox traffic shows the next exit on the route backed up within 2 miles, prompt you to move toward the exit early while a lane on that side exists. Prompt and chime only. Mapbox traffic can be wrong or old. Needs V-ASM. Experimental and off by default; not road-validated."),
+                 get_state=lambda: p.get_bool("NavJamExitWarn"),
+                 set_state=lambda s: p.put_bool("NavJamExitWarn", s),
+                 visible=lambda: p.get_bool("VASMEnabled")),
+      SettingRow("NavArrivalHelp", "toggle", tr_noop("Show Destination Side"),
+                 subtitle=tr_noop("In the last 1/4 mile, show which side of the road the destination is on. Banner only: no chime and no slowdown. Experimental and off by default; not road-validated."),
+                 get_state=lambda: p.get_bool("NavArrivalHelp"),
+                 set_state=lambda s: p.put_bool("NavArrivalHelp", s)),
     ]
 
     gas_brake_rows = [
@@ -85,6 +99,11 @@ class StarPilotNavSettingsLayout(_SettingsPage):
                  get_state=lambda: p.get_bool("NavJamSlowdown"),
                  set_state=lambda s: p.put_bool("NavJamSlowdown", s),
                  visible=nav_long),
+      SettingRow("NavStopAnticipate", "toggle", tr_noop("Hand Mapped Stops to the Model"),
+                 subtitle=tr_noop("When Conditional Experimental Mode is on, switch to Experimental Mode about 8 s (at least 260 ft) before a traffic signal, stop sign, or railway crossing that Mapbox marks on the route, so the model can stop for it. Mapbox does not mark every control. Experimental and off by default; not road-validated."),
+                 get_state=lambda: p.get_bool("NavStopAnticipate"),
+                 set_state=lambda s: p.put_bool("NavStopAnticipate", s),
+                 visible=lambda: p.get_bool("ConditionalExperimental")),
     ]
 
     self._manager_view = AetherSettingsView(

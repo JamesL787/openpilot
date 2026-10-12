@@ -326,9 +326,13 @@ class StarPilotPlanner:
     passing = bool(getattr(starpilot_toggles, "nav_passing_suggest", False))
     exit_warn = bool(getattr(starpilot_toggles, "nav_exit_only_warn", False))
     keep_right = bool(getattr(starpilot_toggles, "nav_keep_right", False))
-    if passing or exit_warn or keep_right:
+    merge_warn = bool(getattr(starpilot_toggles, "nav_merge_warn", False))
+    exit_jam_warn = bool(getattr(starpilot_toggles, "nav_jam_exit_warn", False))
+    arrival_help = bool(getattr(starpilot_toggles, "nav_arrival_help", False))
+    if passing or exit_warn or keep_right or merge_warn or exit_jam_warn or arrival_help:
       inputs = self._passing_inputs(sm, starpilot_toggles, v_ego, now)
       inputs.enabled, inputs.exit_warn, inputs.keep_right = passing, exit_warn, keep_right
+      inputs.merge_warn, inputs.exit_jam_warn, inputs.arrival_help = merge_warn, exit_jam_warn, arrival_help
     else:
       inputs = PassingInputs(False, {}, v_ego, 0.0, 0.0, Lead(), Lead(), Lead(), 0.0, 0.0, 0.0, False, False, False, False, False)
     prompt = self.nav_passing.update(inputs, now)
@@ -344,9 +348,16 @@ class StarPilotPlanner:
     if not prompt["armed"] and jam is not None:
       prompt = {"armed": True, "side": "", "phase": "jam", "ts": now,
                 "distance": float(round(jam[0] / 10.0) * 10.0), "speed": round(float(jam[1]), 1)}
-    # one exit-only chime per junction: re-arm only once navigationd reports no exit-only lane ahead
-    if phase != "exit" and float(inputs.nav_state.get("exitOnlyDistance", -1.0) or -1.0) <= 0.0:
-      self._passing_chimed.discard("exit")
+    # one chime per junction / merge / jammed exit: re-arm only once navigationd no longer reports it
+    nav = inputs.nav_state
+    if phase not in ("exit", "turn") and float(nav.get("exitOnlyDistance", -1.0) or -1.0) <= 0.0:
+      self._passing_chimed -= {"exit", "turn"}
+    if phase != "merge" and nav.get("maneuverType", "") != "merge":
+      self._passing_chimed.discard("merge")
+    if phase != "exitjam" and float(nav.get("exitJamDistance", -1.0) or -1.0) <= 0.0:
+      self._passing_chimed.discard("exitjam")
+    if phase == "arrive":
+      self.nav_passing_chime = ""  # D-117: the destination side is a banner only
     key = (prompt["armed"], prompt["side"], prompt["phase"])
     # rewrite every 1 s while armed so the UI can drop a stale prompt by timestamp
     if key == self._passing_last and not (prompt["armed"] and now - self._passing_last_t >= 1.0):

@@ -20,7 +20,12 @@ TEXT = {
   "exit": ("Your lane exits ahead", "Move {side} to stay on route"),
   "keepright": ("Keep right", "Right lane is open, check mirror"),
   "jam": ("Traffic ahead in {distance}", "Easing to {speed} for the slowdown"),
+  "turn": ("Your lane turns ahead", "Move {side} to stay on route"),
+  "merge": ("Merge {side} ahead", "Check mirror before merging"),
+  "exitjam": ("Exit backed up in {distance}", "Move {side} early, check mirror"),
+  "arrive": ("Destination on {side}", "In {distance}"),
 }
+MERGE_BLOCKED = "Car beside you on the {side}: wait"
 
 
 def format_jam(distance_m: float, speed_ms: float, is_metric: bool) -> tuple[str, str]:
@@ -53,7 +58,9 @@ def parse_passing_prompt(raw, now: float) -> dict | None:
     return None
   if phase == "jam" and not (math.isfinite(distance) and math.isfinite(speed) and distance > 0.0 and speed > 0.0):
     return None
-  return {"side": side, "phase": phase, "ts": ts, "distance": distance, "speed": speed}
+  if phase in ("exitjam", "arrive") and not (math.isfinite(distance) and distance > 0.0):
+    return None
+  return {"side": side, "phase": phase, "ts": ts, "distance": distance, "speed": speed, "blocked": bool(raw.get("blocked", False))}
 
 
 class NavPassingPromptRenderer(Widget):
@@ -98,8 +105,10 @@ class NavPassingPromptRenderer(Widget):
     side = prompt["side"]
     title, detail = TEXT[prompt["phase"]]
     distance, speed = format_jam(prompt["distance"], prompt["speed"], ui_state.is_metric)
-    title = title.format(distance=distance)
-    detail = detail.format(side=side, speed=speed)
+    if prompt["phase"] == "merge" and prompt.get("blocked"):
+      detail = MERGE_BLOCKED
+    title = title.format(side=side, distance=distance, speed=speed)
+    detail = detail.format(side=side, distance=distance, speed=speed)
     accent = rl.Color(255, 176, 32, 220) if prompt["phase"] == "jam" else rl.Color(80, 200, 255, 210)
     title_size, detail_size = 30, 20
 

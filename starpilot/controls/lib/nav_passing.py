@@ -1,5 +1,6 @@
 """D-114: suggest passing a slow lead on a navigated highway, then suggest moving back right.
 D-115: warn when the car sits in an exit-only lane the route does not take, and remind to keep right.
+D-117: the same for a city turn-only lane; merge, jammed-exit and destination-side notices.
 
 Prompt only. Nothing here steers: the driver's blinker starts the existing lane change, which keeps its own
 blind-spot block. Starting values, not tuned; no replay or road evidence yet.
@@ -28,6 +29,9 @@ KEEP_RIGHT_SECONDS = 60.0     # D-115: cruising with the right lane open this lo
 KEEP_RIGHT_SHOW_S = 15.0      # show the reminder this long
 KEEP_RIGHT_COOLDOWN_S = 300.0 # then not again for this long
 RIGHT_CLEAR_DIST = 150.0      # no right-lane car within this distance, or one at least our speed
+TURN_WARN_DIST = 300.0        # D-117: warn about a turn-only lane this far ahead (city blocks are short)
+MERGE_WARN_DIST = 300.0       # D-117: announce a route "merge" step this far ahead (the end of an on-ramp)
+EXIT_JAM_WARN_DIST = 3000.0   # D-117: suggest moving over early for a jammed exit from this far out
 
 LEFT_MODIFIERS = ("left", "sharpleft", "slightleft")
 RIGHT_MODIFIERS = ("right", "sharpright", "slightright")
@@ -65,6 +69,9 @@ class PassingInputs:
   edge_gap_left: float = 99.0   # m, road edge beyond the outer lane line at 20 m (edge_gap()); 99 = unknown
   edge_gap_right: float = 99.0
   speed_offset: float = 0.0  # m/s, the owner's SLC offset: allowed speed is limit + offset (owner, 2026-10-12)
+  merge_warn: bool = False   # D-117 NavMergeWarn toggle
+  exit_jam_warn: bool = False  # D-117 NavJamExitWarn toggle
+  arrival_help: bool = False   # D-117 NavArrivalHelp toggle
 
 
 def lane_beside(width: float, detection_width: float, edge_gap: float = 99.0) -> bool:
@@ -107,6 +114,18 @@ def _route_side_within(nav_state: dict, dist: float) -> str | None:
   return "ahead"
 
 
+def _float(nav_state: dict, key: str) -> float:
+  try:
+    return float(nav_state.get(key, -1.0))
+  except (TypeError, ValueError):
+    return -1.0
+
+
+def _side(modifier) -> str:
+  modifier = str(modifier).replace(" ", "").lower()
+  return "left" if modifier in LEFT_MODIFIERS else "right" if modifier in RIGHT_MODIFIERS else ""
+
+
 class NavPassingAdvisor:
   def __init__(self):
     self.state = IDLE
@@ -144,20 +163,41 @@ class NavPassingAdvisor:
     return left_lane and left_faster and route_clear and not i.blocked_left
 
   @staticmethod
-  def _exit_trap(i: PassingInputs) -> str:
-    """D-115: the side to move to when the car is in the edge lane of an exit-only lane ahead, else ''."""
+  def _exit_trap(i: PassingInputs) -> tuple[str, str]:
+    """D-115/D-117: (side to move to, "exit"|"turn") when the car is in the edge lane of an exit- or turn-only
+    lane ahead, else ("", "")."""
     side = i.nav_state.get("exitOnlySide", "")
-    try:
-      distance = float(i.nav_state.get("exitOnlyDistance", -1.0))
-    except (TypeError, ValueError):
-      return ""
-    if side not in ("left", "right") or not 0.0 < distance <= EXIT_WARN_DIST:
-      return ""
+    kind = "turn" if i.nav_state.get("exitOnlyKind", "") == "turn" else "exit"
+    distance = _float(i.nav_state, "exitOnlyDistance")
+    if side not in ("left", "right") or not 0.0 < distance <= (TURN_WARN_DIST if kind == "turn" else EXIT_WARN_DIST):
+      return "", ""
     away = "left" if side == "right" else "right"
     edge_lane, away_lane = (_right_lane(i), _left_lane(i)) if side == "right" else (_left_lane(i), _right_lane(i))
     away_blinker = i.left_blinker if away == "left" else i.right_blinker
     in_edge_lane = not edge_lane and away_lane
-    return away if in_edge_lane and not away_blinker else ""
+    return (away, kind) if in_edge_lane and not away_blinker else ("", "")
+
+  @staticmethod
+  def _merge(i: PassingInputs) -> str:
+    """D-117: the side to merge to when the route's next step is a merge within MERGE_WARN_DIST, else ''."""
+    if str(i.nav_state.get("maneuverType", "")) != "merge":
+      return ""
+    distance = _float(i.nav_state, "maneuverDistance")
+    side = _side(i.nav_state.get("maneuverModifier", ""))
+    if not side or not 0.0 < distance <= MERGE_WARN_DIST:
+      return ""
+    return "" if (i.left_blinker if side == "left" else i.right_blinker) else side
+
+  @staticmethod
+  def _exit_jam(i: PassingInputs) -> str:
+    """D-117: the side to move to early when the route's exit is jammed and a lane is still between us and it."""
+    side = i.nav_state.get("exitJamSide", "")
+    distance = _float(i.nav_state, "exitJamDistance")
+    if side not in ("left", "right") or not 0.0 < distance <= EXIT_JAM_WARN_DIST:
+      return ""
+    lane_toward = _left_lane(i) if side == "left" else _right_lane(i)
+    blinker = i.left_blinker if side == "left" else i.right_blinker
+    return side if lane_toward and not blinker else ""
 
   def _keep_right(self, i: PassingInputs, now: float) -> bool:
     """D-115: cruising in a lane with an open, not-slower right lane for a while. Idle state only."""
@@ -184,11 +224,24 @@ class NavPassingAdvisor:
 
   def update(self, i: PassingInputs, now: float) -> dict:
     nav_ok = bool(i.nav_state) and bool(i.nav_state.get("valid", False))
-    # The exit-only warning is information about the route, not a lane change suggestion: no V-ASM needed.
-    trap = self._exit_trap(i) if i.exit_warn and nav_ok else ""
+    # Route information, not lane change suggestions: no V-ASM needed. "blocked" tells the driver V-ASM sees a car.
+    trap, kind = self._exit_trap(i) if i.exit_warn and nav_ok else ("", "")
+    merge = self._merge(i) if i.merge_warn and nav_ok else ""
+    exit_jam = self._exit_jam(i) if i.exit_jam_warn and nav_ok else ""
     prompt = self._update_passing(i, now)
     if trap:
-      return {"armed": True, "side": trap, "phase": "exit", "ts": now}
+      return {"armed": True, "side": trap, "phase": kind, "ts": now}
+    if merge:
+      return {"armed": True, "side": merge, "phase": "merge", "ts": now,
+              "blocked": bool(i.blocked_left if merge == "left" else i.blocked_right)}
+    if exit_jam:
+      return {"armed": True, "side": exit_jam, "phase": "exitjam", "ts": now,
+              "distance": _float(i.nav_state, "exitJamDistance")}
+    if not prompt["armed"] and i.arrival_help and nav_ok:
+      side = i.nav_state.get("arriveSide", "")
+      distance = _float(i.nav_state, "arriveDistance")
+      if side in ("left", "right") and distance > 0.0:
+        return {"armed": True, "side": side, "phase": "arrive", "ts": now, "distance": distance}
     return prompt
 
   def _update_passing(self, i: PassingInputs, now: float) -> dict:

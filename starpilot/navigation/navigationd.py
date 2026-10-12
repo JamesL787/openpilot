@@ -11,16 +11,18 @@ from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
 
 from openpilot.starpilot.navigation.destination_store import parse_destination_json
-from openpilot.starpilot.navigation.lane_traps import exit_only_ahead
+from openpilot.starpilot.navigation.lane_traps import control_ahead, exit_only_ahead
 from openpilot.starpilot.navigation.route_engine import Coordinate, MapboxRouteEngine, NavigationRoute, RouteProgress
 from openpilot.starpilot.navigation.traffic_reroute import (
   JAM_DATA_MAX_AGE_S, JAM_MAX_ROUTE_OFFSET_M, TRAFFIC_CONFIRM_RECHECK_S, TRAFFIC_MANEUVER_GUARD_M, TRAFFIC_PROMPT_TIMEOUT_S,
-  TRAFFIC_REFRESH_INTERVAL_S, TrafficReroutePolicy, congestion_ahead, retry_delay_s, same_route,
+  TRAFFIC_REFRESH_INTERVAL_S, TrafficReroutePolicy, arrival_side, congestion_ahead, exit_jam_ahead, retry_delay_s, same_route,
 )
 
 NAVIGATIOND_HZ = 1
 REROUTE_TRIGGER_SECONDS = 2.0
 ARRIVAL_CLEAR_SECONDS = 5.0
+CONTROL_LOOKAHEAD_M = 400.0   # D-117: report a Mapbox-flagged signal / stop / crossing this far ahead
+ARRIVE_NOTICE_M = 400.0       # D-117: say which side the destination is on from this far out
 LOCATION_STATE_STALE_SECONDS = 2.5
 NAV_ROUTE_REPUBLISH_SECONDS = 5.0  # map views that start after the route was sent still get it
 REROUTE_ACCEPT_MAX_OFFSET_M = 40.0  # an accepted candidate must still start under the car
@@ -163,7 +165,7 @@ class Navigationd:
   def _maybe_check_traffic(self, route: NavigationRoute | None, destination: dict[str, object] | None,
                            progress: RouteProgress | None, now: float) -> None:
     reroute_on = self.params.get_bool("NavTrafficReroute")
-    if not (reroute_on or self.params.get_bool("NavJamSlowdown")):
+    if not (reroute_on or self.params.get_bool("NavJamSlowdown") or self.params.get_bool("NavJamExitWarn")):
       return
     if route is None or destination is None or progress is None or self._last_position is None:
       return
@@ -300,8 +302,10 @@ class Navigationd:
     self._reset_traffic()
     cloudlog.warning("nav traffic: driver switched to the faster route")
 
-  def _jam_ahead(self, route: NavigationRoute | None, progress: RouteProgress | None, now: float) -> tuple[float, float] | None:
-    if route is None or progress is None or self._last_position is None or not self.params.get_bool("NavJamSlowdown"):
+  def _traffic_source(self, route: NavigationRoute | None, progress: RouteProgress | None,
+                      now: float) -> tuple[NavigationRoute, float] | None:
+    """The freshest congestion data for where the car is: (route it came from, metres along it), or None."""
+    if route is None or progress is None or self._last_position is None:
       return None
     source, fetched_at, source_progress = route, self._route_fetched_at, progress
     traffic_route = self._traffic_route
@@ -313,7 +317,20 @@ class Navigationd:
       source_progress = source.get_progress(self._last_position)
     if source_progress is None or source_progress.distance_from_route > JAM_MAX_ROUTE_OFFSET_M:
       return None
-    return congestion_ahead(source, source_progress.along_distance)
+    return source, source_progress.along_distance
+
+  def _jam_ahead(self, route: NavigationRoute | None, progress: RouteProgress | None, now: float) -> tuple[float, float] | None:
+    if not self.params.get_bool("NavJamSlowdown"):
+      return None
+    source = self._traffic_source(route, progress, now)
+    return congestion_ahead(*source) if source is not None else None
+
+  def _exit_jam(self, route: NavigationRoute | None, progress: RouteProgress | None, now: float) -> tuple[float, str] | None:
+    """D-117: the route's next off-ramp is jammed: (distance to it, side)."""
+    if not self.params.get_bool("NavJamExitWarn"):
+      return None
+    source = self._traffic_source(route, progress, now)
+    return exit_jam_ahead(*source) if source is not None else None
 
   @staticmethod
   def _timer_expired(started_at: float | None, threshold: float, now: float) -> bool:
@@ -454,6 +471,7 @@ class Navigationd:
     location_valid: bool,
     payload: dict[str, object] | None = None,
     jam: tuple[float, float] | None = None,
+    exit_jam: tuple[float, str] | None = None,
   ) -> None:
     if route is None or progress is None or not location_valid:
       if self._last_nav_state is not None:
@@ -525,11 +543,33 @@ class Navigationd:
     # D-115: the nearest exit-only lane ahead that the route does not take (-1 when none or the toggle is off)
     state["exitOnlyDistance"] = -1.0
     state["exitOnlySide"] = ""
+    state["exitOnlyKind"] = ""
     if progress.distance_from_route <= JAM_MAX_ROUTE_OFFSET_M and self.params.get_bool("NavExitOnlyWarn"):
       trap = exit_only_ahead(route, progress.along_distance)
       if trap is not None:
         state["exitOnlyDistance"] = float(round(trap["distance"] / 10.0) * 10.0)
         state["exitOnlySide"] = trap["side"]
+        state["exitOnlyKind"] = trap["kind"]
+    on_route = progress.distance_from_route <= JAM_MAX_ROUTE_OFFSET_M
+    # D-117: the nearest Mapbox-flagged signal / stop sign / railway crossing ahead
+    state["controlDistance"], state["controlKind"] = -1.0, ""
+    if on_route and self.params.get_bool("NavStopAnticipate"):
+      control = control_ahead(route, progress.along_distance, CONTROL_LOOKAHEAD_M)
+      if control is not None:
+        state["controlDistance"] = float(round(control["distance"] / 5.0) * 5.0)
+        state["controlKind"] = control["kind"]
+    # D-117: the route's next off-ramp is jammed
+    state["exitJamDistance"], state["exitJamSide"] = -1.0, ""
+    if exit_jam is not None:
+      state["exitJamDistance"] = float(round(exit_jam[0] / 10.0) * 10.0)
+      state["exitJamSide"] = exit_jam[1]
+    # D-117: which side the destination is on, near the end
+    state["arriveDistance"], state["arriveSide"] = -1.0, ""
+    if on_route and self.params.get_bool("NavArrivalHelp") and 0.0 < progress.distance_remaining <= ARRIVE_NOTICE_M:
+      side = arrival_side(route)
+      if side:
+        state["arriveDistance"] = float(round(progress.distance_remaining / 10.0) * 10.0)
+        state["arriveSide"] = side
     if state != self._last_nav_state:
       self.params_memory.put_nonblocking("NavInstructionState", state)
       self._last_nav_state = state
@@ -584,7 +624,8 @@ class Navigationd:
       jam = self._jam_ahead(route, progress, now) if location_valid else None
 
       self._publish_nav_instruction(route, progress, location_valid, payload)
-      self._publish_nav_state(route, progress, location_valid, payload, jam)
+      exit_jam = self._exit_jam(route, progress, now) if location_valid else None
+      self._publish_nav_state(route, progress, location_valid, payload, jam, exit_jam)
       self._publish_nav_route_if_needed()
       self.rk.keep_time()
 

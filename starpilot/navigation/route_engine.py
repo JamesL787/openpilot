@@ -77,23 +77,55 @@ class RouteStep:
   # D-115: Mapbox lane data at every junction on the step, including exits the route drives past:
   # (metres along the route, [{"valid": bool, "indications": [...]}, ...] left to right)
   junction_lanes: tuple = ()
+  # D-117: traffic controls Mapbox flags at intersections on the step: (metres along the route, "signal"|"stop"|"rail")
+  junction_controls: tuple = ()
 
 
-def _junction_lanes(intersections, geometry, cumulative_distances) -> tuple:
+CONTROL_FLAGS = (("traffic_signal", "signal"), ("stop_sign", "stop"), ("railway_crossing", "rail"))
+
+
+def _intersection_along(intersections, geometry, cumulative_distances):
+  """(metres along the route, intersection) for each parseable intersection, in route order."""
   out = []
+  cursor = 0
   for item in intersections or []:
     try:
       raw = item["location"]  # Mapbox [lon, lat] or {"latitude", "longitude"}
       location = (Coordinate(float(raw["latitude"]), float(raw["longitude"])) if isinstance(raw, dict)
                   else Coordinate(float(raw[1]), float(raw[0])))
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError):
+      continue
+    if not geometry:
+      continue
+    # intersections come in route order: search forward from the last match, so a road that passes the same spot
+    # twice snaps to the later pass; fall back to the whole route when that lands far away
+    closest = min(range(cursor, len(geometry)), key=lambda idx: location.distance_to(geometry[idx]))
+    if location.distance_to(geometry[closest]) > 50.0:
+      closest = min(range(len(geometry)), key=lambda idx: location.distance_to(geometry[idx]))
+    cursor = closest
+    out.append((cumulative_distances[closest], item))
+  return out
+
+
+def _junction_lanes(intersections, geometry, cumulative_distances) -> tuple:
+  out = []
+  for along, item in _intersection_along(intersections, geometry, cumulative_distances):
+    try:
       lanes = [{"valid": bool(lane.get("valid", False)), "indications": [str(i) for i in lane.get("indications") or []]}
                for lane in item["lanes"]]
     except (KeyError, TypeError, ValueError, AttributeError):
       continue
-    if not lanes or not geometry:
-      continue
-    closest = min(range(len(geometry)), key=lambda idx: location.distance_to(geometry[idx]))
-    out.append((cumulative_distances[closest], lanes))
+    if lanes:
+      out.append((along, lanes))
+  return tuple(out)
+
+
+def _junction_controls(intersections, geometry, cumulative_distances) -> tuple:
+  out = []
+  for along, item in _intersection_along(intersections, geometry, cumulative_distances):
+    kind = next((name for flag, name in CONTROL_FLAGS if item.get(flag) is True), None)
+    if kind is not None:
+      out.append((along, kind))
   return tuple(out)
 
 
@@ -295,6 +327,7 @@ class NavigationRoute:
         modifier=string_to_direction(str(step.get("modifier", "none"))),
         instruction=str(step.get("instruction", "")),
         junction_lanes=_junction_lanes(step.get("intersections", []), geometry, cumulative_distances),
+        junction_controls=_junction_controls(step.get("intersections", []), geometry, cumulative_distances),
       ))
 
     bearings = [bearing_between_two_points(geometry[index], geometry[index + 1]) for index in range(len(geometry) - 1)]
@@ -550,7 +583,8 @@ class MapboxRouteEngine:
           },
           "modifier": step["maneuver"].get("modifier", "none"),
           "bannerInstructions": step.get("bannerInstructions", []),
-          "intersections": [item for item in step.get("intersections") or [] if isinstance(item, dict) and item.get("lanes")],
+          "intersections": [item for item in step.get("intersections") or []
+                            if isinstance(item, dict) and (item.get("lanes") or any(item.get(f) is True for f, _ in CONTROL_FLAGS))],
         }
         for step in leg.get("steps", [])
       ],

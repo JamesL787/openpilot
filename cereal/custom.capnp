@@ -222,6 +222,9 @@ struct StarPilotOnroadEvent @0xe344718567f9ce71 {
     navPassingReturn @42;
     navExitOnlyLane @43;
     navKeepRight @44;
+    navTurnOnlyLane @45;
+    navMergeAhead @46;
+    navExitJammed @47;
   }
 }
 

@@ -1,8 +1,8 @@
 from dataclasses import replace
 
 from openpilot.starpilot.controls.lib.nav_passing import (
-  EXIT_WARN_DIST, KEEP_RIGHT_COOLDOWN_S, KEEP_RIGHT_SECONDS, KEEP_RIGHT_SHOW_S, MPH, PASS_TIMEOUT_S, RETURN_DELAY_S,
-  SLOW_SECONDS, Lead, NavPassingAdvisor, PassingInputs, edge_gap,
+  EXIT_JAM_WARN_DIST, EXIT_WARN_DIST, KEEP_RIGHT_COOLDOWN_S, KEEP_RIGHT_SECONDS, KEEP_RIGHT_SHOW_S, MERGE_WARN_DIST, MPH,
+  PASS_TIMEOUT_S, RETURN_DELAY_S, SLOW_SECONDS, TURN_WARN_DIST, Lead, NavPassingAdvisor, PassingInputs, edge_gap,
 )
 
 LIMIT = 65 * MPH
@@ -238,3 +238,78 @@ def test_edge_gap_measures_road_edge_beyond_the_outer_line_at_20m():
   x = [0.0, 10.0, 20.0, 40.0]
   assert abs(edge_gap(x, [-5.4] * 4, x, [-6.0] * 4) - 0.6) < 1e-6    # left shoulder: edge just past the line
   assert abs(edge_gap(x, [5.4] * 4, x, [9.0] * 4) - 3.6) < 1e-6      # real lane: shoulder-width gap beyond it
+
+
+# D-117 turn-only lane, merge, jammed exit, destination side
+def test_turn_only_lane_warns_only_within_city_range():
+  turn = dict(EXIT_NAV, exitOnlyKind="turn", exitOnlySide="right", exitOnlyDistance=250.0)
+  out = NavPassingAdvisor().update(exit_inputs(nav_state=turn), 0.0)
+  assert out["armed"] and out["side"] == "left" and out["phase"] == "turn"
+  far = dict(turn, exitOnlyDistance=TURN_WARN_DIST + 50.0)
+  assert not NavPassingAdvisor().update(exit_inputs(nav_state=far), 0.0)["armed"]
+  assert not NavPassingAdvisor().update(exit_inputs(nav_state=turn, exit_warn=False), 0.0)["armed"]
+
+
+MERGE_NAV = dict(NAV, maneuverType="merge", maneuverModifier="slight left", maneuverDistance=200.0)
+
+
+def merge_inputs(**kw):
+  base = dict(enabled=False, merge_warn=True, nav_state=dict(MERGE_NAV), lead=Lead(False), vasm_live=False)
+  base.update(kw)
+  return inputs(**base)
+
+
+def test_merge_announced_with_side_and_vasm_state():
+  out = NavPassingAdvisor().update(merge_inputs(), 0.0)
+  assert out["armed"] and out["phase"] == "merge" and out["side"] == "left" and not out["blocked"]
+  out = NavPassingAdvisor().update(merge_inputs(blocked_left=True), 0.0)
+  assert out["armed"] and out["blocked"]
+
+
+def test_merge_quiet_cases():
+  cases = [
+    {"merge_warn": False},
+    {"nav_state": dict(MERGE_NAV, maneuverDistance=MERGE_WARN_DIST + 50.0)},
+    {"nav_state": dict(MERGE_NAV, maneuverType="off ramp")},
+    {"nav_state": dict(MERGE_NAV, maneuverModifier="straight")},
+    {"left_blinker": True},                          # already merging
+  ]
+  for kw in cases:
+    assert not NavPassingAdvisor().update(merge_inputs(**kw), 0.0)["armed"], kw
+
+
+JAM_NAV = dict(NAV, exitJamDistance=2500.0, exitJamSide="right")
+
+
+def jam_inputs(**kw):
+  base = dict(enabled=False, exit_jam_warn=True, nav_state=dict(JAM_NAV), lead=Lead(False), vasm_live=False)
+  base.update(kw)
+  return inputs(**base)
+
+
+def test_jammed_exit_suggests_moving_over_early():
+  out = NavPassingAdvisor().update(jam_inputs(), 0.0)
+  assert out["armed"] and out["phase"] == "exitjam" and out["side"] == "right" and out["distance"] == 2500.0
+  cases = [
+    {"exit_jam_warn": False},
+    {"lane_width_right": 1.0},                       # already in the exit-side lane
+    {"edge_gap_right": 0.3},                         # the only "lane" on the right is the shoulder
+    {"right_blinker": True},
+    {"nav_state": dict(JAM_NAV, exitJamDistance=EXIT_JAM_WARN_DIST + 100.0)},
+    {"nav_state": dict(JAM_NAV, exitJamDistance=-1.0)},
+  ]
+  for kw in cases:
+    assert not NavPassingAdvisor().update(jam_inputs(**kw), 0.0)["armed"], kw
+
+
+def test_arrival_side_shows_only_when_nothing_else_is_up():
+  nav = dict(NAV, arriveSide="right", arriveDistance=300.0)
+  i = inputs(enabled=False, arrival_help=True, nav_state=nav, lead=Lead(False))
+  out = NavPassingAdvisor().update(i, 0.0)
+  assert out["armed"] and out["phase"] == "arrive" and out["side"] == "right" and out["distance"] == 300.0
+  assert not NavPassingAdvisor().update(replace(i, arrival_help=False), 0.0)["armed"]
+  assert not NavPassingAdvisor().update(replace(i, nav_state=dict(nav, arriveSide="")), 0.0)["armed"]
+  # an exit-only warning wins
+  trap = dict(nav, exitOnlyDistance=900.0, exitOnlySide="right")
+  out = NavPassingAdvisor().update(replace(i, nav_state=trap, exit_warn=True, lane_width_right=1.0), 0.0)
+  assert out["phase"] == "exit"
