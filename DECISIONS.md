@@ -2692,6 +2692,9 @@ limit plus their Speed Limit Controller offset, so openpilot may drive that much
 carries `slc.get_offset(limit)` and the 5 mph test is against limit + offset for both ego and the lead. The 45 mph
 highway floor and keep-right still use the posted limit. Static unit test only.
 
+**Amended (owner, 2026-10-12): the slow window is 5 s, not 10 s** ("lower the time for suggest passing to 5
+seconds"). `SLOW_SECONDS = 5.0`; the timer still restarts whenever any pass condition breaks. Static unit tests only.
+
 **Open (owner, 2026-10-12):** on Texas highways the prompt fires for the yellow-line left shoulder, which the
 lane-width check reads as a lane (`calculate_lane_width` uses no line probabilities). The gate is not chosen yet: it
 must come from the owner's route logs (left lane width against `laneLineProbs`, road edges and moving `leadLeft`), not

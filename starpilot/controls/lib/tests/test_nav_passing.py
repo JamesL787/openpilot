@@ -27,7 +27,7 @@ def run(adv, i, t0, seconds, dt=0.5):
   return out, t
 
 
-def test_suggests_pass_left_only_after_ten_slow_seconds():
+def test_suggests_pass_left_only_after_the_slow_window():
   adv = NavPassingAdvisor()
   out, t = run(adv, inputs(), 0.0, SLOW_SECONDS - 1.0)
   assert not out["armed"]

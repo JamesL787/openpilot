@@ -12,7 +12,7 @@ import numpy as np
 
 MPH = 0.44704
 SPEED_DEFICIT = 5 * MPH       # at least this far under the allowed speed (owner, 2026-10-12)
-SLOW_SECONDS = 10.0           # for at least this long (owner, 2026-10-12)
+SLOW_SECONDS = 5.0            # for at least this long (owner, 2026-10-12: 10 s, lowered to 5 s same day)
 SHOULDER_EDGE_GAP = 1.5       # m: road edge closer than this beyond the outer line = a shoulder, not a lane (D-114 Open)
 MIN_LIMIT = 45 * MPH          # highway proxy: no suggestions below a 45 mph limit
 LEAD_MAX_HEADWAY_S = 3.0      # the lead is the cause only when it is this close in time...
