@@ -233,6 +233,7 @@ class StarPilotVCruise:
     self.stop_sign_confirmed = False
     self.stop_seen_on_approach_at = None
     self.nav_turn_target = 0.0
+    self.nav_jam_notice = None  # D-116: (metres to the jam, target speed) while the jam slowdown is easing off
     self._nav_instruction_state_raw = None
     self._nav_instruction_state = {}
     self._applied_slc_control_target = 0.0
@@ -462,6 +463,7 @@ class StarPilotVCruise:
     return target if target + NAV_TURN_MIN_TARGET_DELTA < v_cruise else 0.0
 
   def _get_nav_jam_target(self, v_cruise, starpilot_toggles):
+    self.nav_jam_notice = None
     if not getattr(starpilot_toggles, "nav_jam_slowdown", False):
       return 0.0
     try:
@@ -475,7 +477,10 @@ class StarPilotVCruise:
     target_speed = max(NAV_JAM_MIN_TARGET_SPEED, jam_speed + NAV_JAM_SPEED_MARGIN)
     # reach the target by the release point, on the turn comfort decel
     target = math.sqrt(target_speed * target_speed + 2.0 * NAV_TURN_COMFORT_DECEL * (distance - NAV_JAM_RELEASE_DISTANCE))
-    return target if target + NAV_TURN_MIN_TARGET_DELTA < v_cruise else 0.0
+    if target + NAV_TURN_MIN_TARGET_DELTA >= v_cruise:
+      return 0.0
+    self.nav_jam_notice = (distance, target_speed)
+    return target
 
   @staticmethod
   def _get_nav_long_min_target_speed(sm):
@@ -791,6 +796,8 @@ class StarPilotVCruise:
       self._update_learned_csc(csc_available, long_control_active, v_cruise, v_ego, sm, starpilot_toggles)
 
     self.nav_turn_target = self._get_nav_turn_control_target(v_cruise, sm, starpilot_toggles)
+    if not long_control_active:
+      self.nav_jam_notice = None  # nothing is easing off, so say nothing
 
     # Single tuning knob (signed feet -> meters). Defense clamp on top of UI bounds.
     offset_ft_raw = int(getattr(starpilot_toggles, 'force_stop_distance_offset', 0) or 0)

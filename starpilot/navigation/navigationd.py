@@ -11,6 +11,7 @@ from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
 
 from openpilot.starpilot.navigation.destination_store import parse_destination_json
+from openpilot.starpilot.navigation.lane_traps import exit_only_ahead
 from openpilot.starpilot.navigation.route_engine import Coordinate, MapboxRouteEngine, NavigationRoute, RouteProgress
 from openpilot.starpilot.navigation.traffic_reroute import (
   JAM_DATA_MAX_AGE_S, JAM_MAX_ROUTE_OFFSET_M, TRAFFIC_CONFIRM_RECHECK_S, TRAFFIC_MANEUVER_GUARD_M, TRAFFIC_PROMPT_TIMEOUT_S,
@@ -521,6 +522,14 @@ class Navigationd:
     if jam is not None:
       state["jamDistance"] = float(round(jam[0] / 10.0) * 10.0)
       state["jamSpeed"] = round(float(jam[1]), 1)
+    # D-115: the nearest exit-only lane ahead that the route does not take (-1 when none or the toggle is off)
+    state["exitOnlyDistance"] = -1.0
+    state["exitOnlySide"] = ""
+    if progress.distance_from_route <= JAM_MAX_ROUTE_OFFSET_M and self.params.get_bool("NavExitOnlyWarn"):
+      trap = exit_only_ahead(route, progress.along_distance)
+      if trap is not None:
+        state["exitOnlyDistance"] = float(round(trap["distance"] / 10.0) * 10.0)
+        state["exitOnlySide"] = trap["side"]
     if state != self._last_nav_state:
       self.params_memory.put_nonblocking("NavInstructionState", state)
       self._last_nav_state = state

@@ -220,6 +220,8 @@ struct StarPilotOnroadEvent @0xe344718567f9ce71 {
     pedalNotCalibrated @40;
     navPassingSuggested @41;
     navPassingReturn @42;
+    navExitOnlyLane @43;
+    navKeepRight @44;
   }
 }
 

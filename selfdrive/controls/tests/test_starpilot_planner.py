@@ -318,3 +318,25 @@ def test_nav_passing_ignores_slc_set_speed_fallback():
     assert planner._passing_speed_limit() == 0.0
   finally:
     planner.shutdown()
+
+
+def test_jam_notice_published_when_no_suggestion_is_up(monkeypatch):
+  planner = StarPilotPlanner(Path("/tmp/nonexistent"), DummyThemeManager())
+
+  try:
+    monkeypatch.setattr(starpilot_planner_module.time, "monotonic", lambda: 500.0)
+    memory = FakeMemory({})
+    planner.params_memory = memory
+    planner.starpilot_vcruise.nav_jam_notice = (1234.0, 17.9)
+    toggles = SimpleNamespace(nav_passing_suggest=False, nav_exit_only_warn=False, nav_keep_right=False)
+    planner.update_nav_passing({}, toggles, 25.0)
+    key, prompt = memory.writes[-1]
+    assert key == "NavPassingPrompt" and prompt["armed"] and prompt["phase"] == "jam" and prompt["side"] == ""
+    assert prompt["distance"] == 1230.0 and prompt["speed"] == 17.9
+    assert planner.nav_passing_chime == ""
+
+    planner.starpilot_vcruise.nav_jam_notice = None
+    planner.update_nav_passing({}, toggles, 25.0)
+    assert memory.writes[-1][1]["armed"] is False
+  finally:
+    planner.shutdown()

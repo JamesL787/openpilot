@@ -288,3 +288,20 @@ def test_jam_uses_the_freshest_traffic_and_drops_old_data(monkeypatch):
   assert nd._jam_ahead(current, progress, 100.0 + 601.0) is None, "older than 10 min is not used"
   nd.params.values["NavJamSlowdown"] = False
   assert nd._jam_ahead(current, progress, 110.0) is None
+
+
+def test_galaxy_reroute_offer_and_answer():
+  from openpilot.starpilot.navigation.traffic_reroute import reroute_answer, reroute_offer
+  prompt = {"armed": True, "id": 7, "savings_s": 240, "remaining_s": 12.5, "ts": 100.0}
+  assert reroute_offer(prompt, 101.0) == {"id": 7, "savings_s": 240.0, "remaining_s": 12.5}
+  assert reroute_offer('{"armed": true, "id": 7, "ts": 100.0}', 100.5)["id"] == 7
+  assert reroute_offer(prompt, 103.0) is None, "stale: navigationd stopped refreshing it"
+  assert reroute_offer({**prompt, "armed": False}, 101.0) is None
+  assert reroute_offer("junk", 101.0) is None and reroute_offer(None, 101.0) is None
+
+  assert reroute_answer(prompt, {"id": 7, "accept": True}, 101.0) == {"id": 7, "accept": True}
+  assert reroute_answer(prompt, {"id": "7", "accept": False}, 101.0) == {"id": 7, "accept": False}
+  assert reroute_answer(prompt, {"id": 8, "accept": True}, 101.0) is None, "an old offer's answer is ignored"
+  assert reroute_answer(prompt, {"id": 7, "accept": "yes"}, 101.0) is None
+  assert reroute_answer(prompt, {"id": 7, "accept": True}, 103.0) is None
+  assert reroute_answer(prompt, None, 101.0) is None

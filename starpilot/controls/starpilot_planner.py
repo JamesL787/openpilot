@@ -310,8 +310,12 @@ class StarPilotPlanner:
     if self._passing_publish_disabled:
       return
     now = time.monotonic()
-    if bool(getattr(starpilot_toggles, "nav_passing_suggest", False)):
+    passing = bool(getattr(starpilot_toggles, "nav_passing_suggest", False))
+    exit_warn = bool(getattr(starpilot_toggles, "nav_exit_only_warn", False))
+    keep_right = bool(getattr(starpilot_toggles, "nav_keep_right", False))
+    if passing or exit_warn or keep_right:
       inputs = self._passing_inputs(sm, starpilot_toggles, v_ego, now)
+      inputs.enabled, inputs.exit_warn, inputs.keep_right = passing, exit_warn, keep_right
     else:
       inputs = PassingInputs(False, {}, v_ego, 0.0, 0.0, Lead(), Lead(), Lead(), 0.0, 0.0, 0.0, False, False, False, False, False)
     prompt = self.nav_passing.update(inputs, now)
@@ -321,7 +325,15 @@ class StarPilotPlanner:
     if phase:
       self._passing_chimed.add(phase)
     elif self.nav_passing.state == "idle":
-      self._passing_chimed.clear()
+      self._passing_chimed -= {"pass", "return", "keepright"}
+    # D-116: with no suggestion up, say why the jam slowdown is easing off. No chime; the banner only.
+    jam = getattr(self.starpilot_vcruise, "nav_jam_notice", None)
+    if not prompt["armed"] and jam is not None:
+      prompt = {"armed": True, "side": "", "phase": "jam", "ts": now,
+                "distance": float(round(jam[0] / 10.0) * 10.0), "speed": round(float(jam[1]), 1)}
+    # one exit-only chime per junction: re-arm only once navigationd reports no exit-only lane ahead
+    if phase != "exit" and float(inputs.nav_state.get("exitOnlyDistance", -1.0) or -1.0) <= 0.0:
+      self._passing_chimed.discard("exit")
     key = (prompt["armed"], prompt["side"], prompt["phase"])
     # rewrite every 1 s while armed so the UI can drop a stale prompt by timestamp
     if key == self._passing_last and not (prompt["armed"] and now - self._passing_last_t >= 1.0):

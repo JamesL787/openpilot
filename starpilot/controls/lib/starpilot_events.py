@@ -69,6 +69,10 @@ class StarPilotEvents:
       self.events.add(StarPilotEventName.navPassingSuggested)
     elif passing_chime == "return":
       self.events.add(StarPilotEventName.navPassingReturn)
+    elif passing_chime == "exit":
+      self.events.add(StarPilotEventName.navExitOnlyLane)
+    elif passing_chime == "keepright":
+      self.events.add(StarPilotEventName.navKeepRight)
 
     if not self.starpilot_planner.tracking_lead and sm["carState"].standstill and sm["carState"].gearShifter not in NON_DRIVING_GEARS:
       if not self.starpilot_planner.model_stopped and self.stopped_for_light and starpilot_toggles.green_light_alert:

@@ -6203,6 +6203,20 @@ def setup(app):
       "routePreferences": load_route_preferences(params),
     }
 
+  # D-116: answer the D-111 faster-route offer from the Galaxy. navigationd reads the response exactly as from the
+  # on-screen Switch / Keep buttons, and only for the offer id that is still showing.
+  @app.route("/api/navigation/reroute", methods=["GET", "POST"])
+  def navigation_reroute():
+    from openpilot.starpilot.navigation.traffic_reroute import reroute_answer, reroute_offer
+    raw = params_memory.get("NavTrafficReroutePrompt")
+    if request.method == "POST":
+      response = reroute_answer(raw, request.get_json(silent=True), time.monotonic())
+      if response is None:
+        return {"error": "No matching faster-route offer is showing"}, 409
+      params_memory.put("NavTrafficRerouteResponse", response)
+      return {"message": "Switching to the faster route" if response["accept"] else "Keeping the current route"}
+    return {"offer": reroute_offer(raw, time.monotonic())}
+
   @app.route("/api/navigation/preferences", methods=["GET", "POST"])
   def navigation_preferences():
     if request.method == "POST":

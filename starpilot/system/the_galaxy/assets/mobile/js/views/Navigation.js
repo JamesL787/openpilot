@@ -1,10 +1,11 @@
 import { NavigationDestinationPanel } from "../components/NavigationDestinationPanel.js?v=nav-route-prefs-1"
 import { MapsPanel } from "../components/MapsPanel.js?v=offline-download-4"
 import { NavigationKeysPanel } from "../components/NavigationKeysPanel.js"
-import { NavigationSettingsPanel } from "../components/NavigationSettingsPanel.js?v=nav-settings-3"
+import { NavigationSettingsPanel } from "../components/NavigationSettingsPanel.js?v=nav-settings-4"
 import { SpeedLimitsPanel } from "../components/SpeedLimitsPanel.js"
 import { StarpilotAutoOfflinePanel } from "../components/StarpilotAutoOfflinePanel.js?v=offline-layout-8"
 import { GalaxySection } from "../components/GalaxySection.js"
+import { RerouteOfferBanner } from "../components/RerouteOfferBanner.js?v=nav-reroute-1"
 import { GalaxyTabs } from "../components/GalaxyTabs.js"
 import { useTabRouting } from "../composables.js"
 
@@ -20,7 +21,7 @@ export const Navigation = {
   name: "Navigation",
   components: {
     NavigationDestinationPanel, NavigationSettingsPanel, MapsPanel, NavigationKeysPanel, SpeedLimitsPanel, GalaxyTabs,
-    StarpilotAutoOfflinePanel, GalaxySection,
+    StarpilotAutoOfflinePanel, GalaxySection, RerouteOfferBanner,
   },
   data() { return { TABS } },
   setup() {
@@ -31,6 +32,7 @@ export const Navigation = {
   template: `
     <template v-if="tab === 'nav'">
       <div class="gx-navigation-view">
+        <RerouteOfferBanner />
         <NavigationDestinationPanel />
         <div class="gx-navigation-tabs"><GalaxyTabs :items="TABS" :active="tab" @select="selectTab" /></div>
       </div>

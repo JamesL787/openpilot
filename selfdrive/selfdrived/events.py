@@ -1203,6 +1203,23 @@ STARPILOT_EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
   },
 
+  # D-115: chime once per exit-only junction, and once per keep-right reminder
+  StarPilotEventName.navExitOnlyLane: {
+    ET.PERMANENT: Alert(
+      "Your Lane Exits Ahead",
+      "Move over to stay on route",
+      StarPilotAlertStatus.starpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
+  StarPilotEventName.navKeepRight: {
+    ET.PERMANENT: Alert(
+      "Keep Right",
+      "Right lane is open, check mirror",
+      StarPilotAlertStatus.starpilot, AlertSize.mid,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
   StarPilotEventName.greenLight: {
     ET.PERMANENT: Alert(
       "Light Turned Green",

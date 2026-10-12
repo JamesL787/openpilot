@@ -17,7 +17,19 @@ PROMPT_UPDATE_INTERVAL = 0.1
 TEXT = {
   "pass": ("Left lane is faster", "Check mirror, blinker to pass"),
   "return": ("Passed: move back right", "Check mirror, blinker when clear"),
+  "exit": ("Your lane exits ahead", "Move {side} to stay on route"),
+  "keepright": ("Keep right", "Right lane is open, check mirror"),
+  "jam": ("Traffic ahead in {distance}", "Easing to {speed} for the slowdown"),
 }
+
+
+def format_jam(distance_m: float, speed_ms: float, is_metric: bool) -> tuple[str, str]:
+  if is_metric:
+    distance = f"{distance_m:.0f} m" if distance_m < 1000.0 else f"{distance_m / 1000.0:.1f} km"
+    return distance, f"{speed_ms * 3.6:.0f} km/h"
+  miles = distance_m / 1609.344
+  distance = f"{distance_m * 3.28084:.0f} ft" if miles < 0.1 else f"{miles:.1f} mi"
+  return distance, f"{speed_ms / 0.44704:.0f} mph"
 
 
 def parse_passing_prompt(raw, now: float) -> dict | None:
@@ -30,15 +42,18 @@ def parse_passing_prompt(raw, now: float) -> dict | None:
   if not isinstance(raw, dict) or not raw.get("armed", False):
     return None
   side, phase = raw.get("side"), raw.get("phase")
-  if side not in ("left", "right") or phase not in TEXT:
+  if phase not in TEXT or side not in (("",) if phase == "jam" else ("left", "right")):
     return None
   try:
     ts = float(raw.get("ts", -math.inf))
+    distance, speed = float(raw.get("distance", 0.0) or 0.0), float(raw.get("speed", 0.0) or 0.0)
   except (TypeError, ValueError):
     return None
   if not 0.0 <= now - ts <= PROMPT_STALE_SECONDS:
     return None
-  return {"side": side, "phase": phase, "ts": ts}
+  if phase == "jam" and not (math.isfinite(distance) and math.isfinite(speed) and distance > 0.0 and speed > 0.0):
+    return None
+  return {"side": side, "phase": phase, "ts": ts, "distance": distance, "speed": speed}
 
 
 class NavPassingPromptRenderer(Widget):
@@ -82,7 +97,10 @@ class NavPassingPromptRenderer(Widget):
 
     side = prompt["side"]
     title, detail = TEXT[prompt["phase"]]
-    accent = rl.Color(80, 200, 255, 210)
+    distance, speed = format_jam(prompt["distance"], prompt["speed"], ui_state.is_metric)
+    title = title.format(distance=distance)
+    detail = detail.format(side=side, speed=speed)
+    accent = rl.Color(255, 176, 32, 220) if prompt["phase"] == "jam" else rl.Color(80, 200, 255, 210)
     title_size, detail_size = 30, 20
 
     left_safe, right_margin = 96, 12
@@ -93,13 +111,17 @@ class NavPassingPromptRenderer(Widget):
     rl.draw_rectangle_rounded(box, 0.3, 10, rl.Color(7, 11, 18, 232))
     rl.draw_rectangle_rounded_lines_ex(box, 0.3, 10, 2, accent)
 
-    direction = -1.0 if side == "left" else 1.0
     cx, cy, size = x + 38, y + height / 2, 34 * (1.0 + 0.12 * math.sin(time.monotonic() * 6.0))
-    tip = rl.Vector2(cx + direction * size / 2, cy)
-    top = rl.Vector2(cx - direction * size / 2, cy - size / 2)
-    bottom = rl.Vector2(cx - direction * size / 2, cy + size / 2)
-    a, b = (bottom, top) if side == "left" else (top, bottom)
-    rl.draw_triangle(tip, a, b, accent)
+    if side:
+      direction = -1.0 if side == "left" else 1.0
+      tip = rl.Vector2(cx + direction * size / 2, cy)
+      top = rl.Vector2(cx - direction * size / 2, cy - size / 2)
+      bottom = rl.Vector2(cx - direction * size / 2, cy + size / 2)
+      a, b = (bottom, top) if side == "left" else (top, bottom)
+      rl.draw_triangle(tip, a, b, accent)
+    else:  # jam: a downward slow-down chevron
+      rl.draw_triangle(rl.Vector2(cx + size / 2, cy - size / 2), rl.Vector2(cx - size / 2, cy - size / 2),
+                       rl.Vector2(cx, cy + size / 2), accent)
 
     text_x = x + 74
     text_w = width - 74 - 12

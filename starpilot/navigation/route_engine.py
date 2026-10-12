@@ -74,6 +74,27 @@ class RouteStep:
   maxspeed_ms: float
   modifier: str
   instruction: str
+  # D-115: Mapbox lane data at every junction on the step, including exits the route drives past:
+  # (metres along the route, [{"valid": bool, "indications": [...]}, ...] left to right)
+  junction_lanes: tuple = ()
+
+
+def _junction_lanes(intersections, geometry, cumulative_distances) -> tuple:
+  out = []
+  for item in intersections or []:
+    try:
+      raw = item["location"]  # Mapbox [lon, lat] or {"latitude", "longitude"}
+      location = (Coordinate(float(raw["latitude"]), float(raw["longitude"])) if isinstance(raw, dict)
+                  else Coordinate(float(raw[1]), float(raw[0])))
+      lanes = [{"valid": bool(lane.get("valid", False)), "indications": [str(i) for i in lane.get("indications") or []]}
+               for lane in item["lanes"]]
+    except (KeyError, TypeError, ValueError, AttributeError):
+      continue
+    if not lanes or not geometry:
+      continue
+    closest = min(range(len(geometry)), key=lambda idx: location.distance_to(geometry[idx]))
+    out.append((cumulative_distances[closest], lanes))
+  return tuple(out)
 
 
 @dataclass(frozen=True)
@@ -273,6 +294,7 @@ class NavigationRoute:
         maxspeed_ms=maxspeed_ms,
         modifier=string_to_direction(str(step.get("modifier", "none"))),
         instruction=str(step.get("instruction", "")),
+        junction_lanes=_junction_lanes(step.get("intersections", []), geometry, cumulative_distances),
       ))
 
     bearings = [bearing_between_two_points(geometry[index], geometry[index + 1]) for index in range(len(geometry) - 1)]
@@ -528,6 +550,7 @@ class MapboxRouteEngine:
           },
           "modifier": step["maneuver"].get("modifier", "none"),
           "bannerInstructions": step.get("bannerInstructions", []),
+          "intersections": [item for item in step.get("intersections") or [] if isinstance(item, dict) and item.get("lanes")],
         }
         for step in leg.get("steps", [])
       ],

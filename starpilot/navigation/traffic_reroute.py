@@ -7,6 +7,7 @@ raises a prompt, and the route changes only when the driver accepts it on screen
 """
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 
@@ -161,3 +162,37 @@ def congestion_ahead(route, along_m: float, lookahead_m: float = JAM_LOOKAHEAD_M
     else:
       run_start = None
   return None
+
+
+OFFER_STALE_S = 2.0  # navigationd rewrites an armed prompt every loop; older means it is gone
+
+
+def reroute_offer(raw, now: float) -> dict | None:
+  """D-111 faster-route offer for the Galaxy (D-116), if armed and fresh: {id, savings_s, remaining_s}."""
+  if isinstance(raw, (str, bytes)):
+    try:
+      raw = json.loads(raw) if raw else {}
+    except ValueError:
+      return None
+  if not isinstance(raw, dict) or not raw.get("armed", False):
+    return None
+  try:
+    if not 0.0 <= now - float(raw["ts"]) <= OFFER_STALE_S:
+      return None
+    return {"id": int(raw["id"]), "savings_s": max(float(raw.get("savings_s", 0.0) or 0.0), 0.0),
+            "remaining_s": max(float(raw.get("remaining_s", 0.0) or 0.0), 0.0)}
+  except (KeyError, TypeError, ValueError):
+    return None
+
+
+def reroute_answer(raw_prompt, body, now: float) -> dict | None:
+  """The NavTrafficRerouteResponse to write for a Galaxy answer, or None when it does not match the live offer."""
+  offer = reroute_offer(raw_prompt, now)
+  if offer is None or not isinstance(body, dict) or not isinstance(body.get("accept"), bool):
+    return None
+  try:
+    if int(body.get("id")) != offer["id"]:
+      return None
+  except (TypeError, ValueError):
+    return None
+  return {"id": offer["id"], "accept": body["accept"]}

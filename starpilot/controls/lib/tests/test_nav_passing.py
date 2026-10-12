@@ -1,7 +1,8 @@
 from dataclasses import replace
 
 from openpilot.starpilot.controls.lib.nav_passing import (
-  MPH, PASS_TIMEOUT_S, RETURN_DELAY_S, SLOW_SECONDS, Lead, NavPassingAdvisor, PassingInputs,
+  EXIT_WARN_DIST, KEEP_RIGHT_COOLDOWN_S, KEEP_RIGHT_SECONDS, KEEP_RIGHT_SHOW_S, MPH, PASS_TIMEOUT_S, RETURN_DELAY_S,
+  SLOW_SECONDS, Lead, NavPassingAdvisor, PassingInputs,
 )
 
 LIMIT = 65 * MPH
@@ -120,3 +121,90 @@ def test_pass_gives_up_after_timeout_and_vasm_loss_clears_state():
   t = pass_then_blinker(adv)
   adv.update(inputs(vasm_live=False), t)
   assert adv.state == "idle"
+
+
+# D-115 exit-only lane warning
+EXIT_NAV = dict(NAV, exitOnlyDistance=900.0, exitOnlySide="right")
+
+
+def exit_inputs(**kw):
+  # rightmost lane: no lane to the right, one to the left; no slow lead, no passing toggle
+  base = dict(enabled=False, exit_warn=True, nav_state=dict(EXIT_NAV), lane_width_right=1.0, lead=Lead(False), vasm_live=False)
+  base.update(kw)
+  return inputs(**base)
+
+
+def test_exit_only_lane_warns_to_move_left_without_vasm():
+  out = NavPassingAdvisor().update(exit_inputs(), 0.0)
+  assert out["armed"] and out["side"] == "left" and out["phase"] == "exit"
+
+
+def test_exit_only_warning_needs_toggle_route_edge_lane_and_range():
+  cases = [
+    {"exit_warn": False},
+    {"nav_state": dict(EXIT_NAV, valid=False)},
+    {"lane_width_right": 3.6},                       # not in the edge lane
+    {"lane_width_left": 1.0},                        # nowhere to go
+    {"nav_state": dict(EXIT_NAV, exitOnlyDistance=EXIT_WARN_DIST + 100.0)},
+    {"nav_state": dict(EXIT_NAV, exitOnlyDistance=-1.0)},
+    {"nav_state": dict(EXIT_NAV, exitOnlySide="")},
+    {"left_blinker": True},                          # already moving
+  ]
+  for kw in cases:
+    assert not NavPassingAdvisor().update(exit_inputs(**kw), 0.0)["armed"], kw
+
+
+def test_left_exit_only_lane_warns_to_move_right():
+  i = exit_inputs(nav_state=dict(EXIT_NAV, exitOnlySide="left"), lane_width_left=1.0, lane_width_right=3.6)
+  out = NavPassingAdvisor().update(i, 0.0)
+  assert out["armed"] and out["side"] == "right" and out["phase"] == "exit"
+
+
+# D-115 keep-right reminder
+def keep_inputs(**kw):
+  base = dict(enabled=False, keep_right=True, lead=Lead(False), v_ego=LIMIT)
+  base.update(kw)
+  return inputs(**base)
+
+
+def test_keep_right_after_a_minute_then_shows_and_cools_down():
+  adv = NavPassingAdvisor()
+  out, t = run(adv, keep_inputs(), 0.0, KEEP_RIGHT_SECONDS - 1.0)
+  assert not out["armed"]
+  out, t = run(adv, keep_inputs(), t, 1.5)
+  assert out["armed"] and out["side"] == "right" and out["phase"] == "keepright"
+  out, t = run(adv, keep_inputs(), t, KEEP_RIGHT_SHOW_S)
+  assert not out["armed"]
+  out, t = run(adv, keep_inputs(), t, KEEP_RIGHT_COOLDOWN_S - KEEP_RIGHT_SHOW_S - 5.0)
+  assert not out["armed"]
+
+
+def test_keep_right_ends_on_blinker():
+  adv = NavPassingAdvisor()
+  out, t = run(adv, keep_inputs(), 0.0, KEEP_RIGHT_SECONDS + 1.0)
+  assert out["armed"]
+  assert not adv.update(keep_inputs(right_blinker=True), t)["armed"]
+  assert not adv.update(keep_inputs(), t + 0.5)["armed"]
+
+
+def test_keep_right_blocked_cases():
+  cases = [
+    {"keep_right": False},
+    {"vasm_live": False},
+    {"lane_width_right": 1.0},                                   # already rightmost
+    {"blocked_right": True},
+    {"lead_right": Lead(True, 60.0, LIMIT - 10 * MPH)},          # right lane is slower
+    {"lead": Lead(True, 30.0, 50 * MPH), "v_ego": 50 * MPH},     # stuck behind a slow lead
+    {"speed_limit": 35 * MPH},
+    {"nav_state": dict(NAV, maneuverModifier="slight left", maneuverDistance=1000.0)},
+  ]
+  for kw in cases:
+    adv = NavPassingAdvisor()
+    out, _ = run(adv, keep_inputs(**kw), 0.0, KEEP_RIGHT_SECONDS + 5.0)
+    assert not out["armed"], kw
+
+
+def test_keep_right_allows_a_faster_right_lane_car():
+  adv = NavPassingAdvisor()
+  out, _ = run(adv, keep_inputs(lead_right=Lead(True, 60.0, LIMIT + 2 * MPH)), 0.0, KEEP_RIGHT_SECONDS + 1.0)
+  assert out["armed"]

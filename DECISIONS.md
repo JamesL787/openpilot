@@ -2686,3 +2686,52 @@ moving-target-only, so a stopped car in the left lane does not count against the
 as `leadRight`, there is no move-back prompt until the 120 s timeout ends the episode. All thresholds are starting
 values. Static unit tests only (`test_nav_passing.py`, `test_starpilot_planner.py`, `test_nav_passing_prompt.py`).
 Not replayed against a route and not road-validated.
+
+**Open (owner, 2026-10-12):** on Texas highways the prompt fires for the yellow-line left shoulder, which the
+lane-width check reads as a lane (`calculate_lane_width` uses no line probabilities). The gate is not chosen yet: it
+must come from the owner's route logs (left lane width against `laneLineProbs`, road edges and moving `leadLeft`), not
+from inference. Every D-114/D-115 lane check now goes through `nav_passing.lane_beside()`, so one fix covers all.
+
+## D-115 — Warn about an exit-only lane the route does not take; remind to keep right (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** "Yeah let's try 1 and 2": (1) warn when the car is in a lane that exits ahead while the
+route goes on, (2) a keep-right reminder.
+
+**Decision:**
+- **Exit-only lane (`NavExitOnlyWarn`).** Banner instructions only describe the next maneuver, so a passed exit's lanes
+  were dropped. `route_engine` now keeps Mapbox `intersections[].lanes` for every junction on a step
+  (`RouteStep.junction_lanes`, metres along the route + lanes left to right). `lane_traps.exit_only_ahead` finds the
+  nearest junction within 2 km whose edge lane(s) are not valid for the route and point only toward that edge (a shared
+  lane, the route taking the exit, or a lane with no indications is not a trap). navigationd publishes
+  `exitOnlyDistance` / `exitOnlySide` in `NavInstructionState` while the car is within 40 m of the route. The planner
+  shows "Your lane exits ahead, move left/right" within 1600 m when the car is in that edge lane (no lane beyond it, one
+  on the other side) and the driver has not already signalled away; one chime (`navExitOnlyLane`) per junction. It is
+  route information, not a lane change suggestion, so it does not need V-ASM.
+- **Keep right (`NavKeepRightReminder`, under V-ASM).** Same live-V-ASM and navigated-highway (45 mph+ sourced limit)
+  conditions as D-114. After 60 s of cruising with a right lane that is V-ASM- and blind-spot-clear and has no car
+  within 150 m slower than us, and not stuck behind a slow lead, no route left/ahead maneuver within 2 km: a "Keep
+  right" banner for 15 s and one chime (`navKeepRight`), then not again for 5 minutes. Ends on either blinker.
+
+**Limits:** Mapbox lane data is missing on many roads, so the exit warning is silent there. The edge-lane test is the
+same lane-width check that misreads the Texas shoulder (D-114 Open): a right shoulder read as a lane makes the exit
+warning stay silent and can make the keep-right reminder fire in the rightmost lane. Do not turn on Keep Right before
+that gate is settled from logs. Starting values. Static unit tests only (`test_lane_traps.py`, `test_nav_passing.py`,
+`test_nav_passing_prompt.py`). Not replayed and not road-validated.
+
+## D-116 — Jam slowdown notice on screen; answer the faster-route offer from the Galaxy (2026-10-12, static unit tests only, not driven)
+
+**Request (owner, 2026-10-12):** "On screen notice for jam slowdown and letting galaxy answer the faster prompt."
+
+**Decision:**
+- **Jam notice.** When the D-112 jam slowdown binds below cruise and long control is active, `StarPilotVCruise`
+  records `nav_jam_notice` (distance, target speed) and the planner publishes it on `NavPassingPrompt` as phase `jam`
+  when no D-114/D-115 prompt is up. The HUD pill shows "Traffic ahead in 0.7 mi / Easing to 45 mph" with an amber
+  chevron. No chime. Shown only with `NavJamSlowdown` on, since it reports what that feature is doing.
+- **Galaxy answer.** `GET /api/navigation/reroute` returns the live D-111 offer (fresh within 2 s); `POST` with
+  `{id, accept}` writes `NavTrafficRerouteResponse` exactly as the on-screen Switch / Keep buttons do, only for the offer
+  id still showing (409 otherwise). The mobile Galaxy Navigation page polls it every 2 s while open and shows Switch /
+  Keep. The desktop Galaxy page does not have it yet.
+
+**Limits:** static unit tests only (`test_starpilot_vcruise.py`, `test_starpilot_planner.py`,
+`test_nav_passing_prompt.py`, `test_traffic_reroute.py`). The Galaxy banner has not been opened in a browser against
+the device.

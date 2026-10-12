@@ -1,4 +1,4 @@
-export const LAYOUT_URL = "/assets/components/tools/device_settings_layout.json?v=nav-settings-3"
+export const LAYOUT_URL = "/assets/components/tools/device_settings_layout.json?v=nav-settings-4"
 
 async function parse(res) {
   const data = await res.json().catch(() => ({}))
@@ -228,6 +228,8 @@ export const api = {
   getNavigationFavorites() { return request("/api/navigation/favorite", { cache: "no-store" }) },
   getNavigationPreferences() { return request("/api/navigation/preferences") },
   setNavigationPreferences(body) { return request("/api/navigation/preferences", { method: "POST", data: body }) },
+  getRerouteOffer() { return request("/api/navigation/reroute", { cache: "no-store" }) },
+  answerRerouteOffer(id, accept) { return request("/api/navigation/reroute", { method: "POST", data: { id, accept } }) },
   mapboxSuggest(query, accessToken, sessionToken, context = {}) {
     const params = new URLSearchParams({ access_token: accessToken, session_token: sessionToken, q: query, limit: "4", ...context })
     return request(`https://api.mapbox.com/search/searchbox/v1/suggest?${params.toString()}`, { cache: "no-store" })

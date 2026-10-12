@@ -348,6 +348,27 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "NavExitOnlyWarn",
+        "galaxy_page": "navigation",
+        "label": "Warn About Exit-Only Lanes",
+        "description": "Warn with a banner and chime when you are in an exit-only lane up to about a mile before an exit your route does not take. Uses Mapbox lane data, which some roads lack. Experimental and off by default; not road-validated.",
+        "picker_description": "Warns when your lane exits ahead and the route goes straight.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "settings_tier": "advanced"
+      },
+      {
+        "key": "NavKeepRightReminder",
+        "galaxy_page": "navigation",
+        "label": "Keep Right Reminder",
+        "description": "On a navigated highway, remind you to move right after a minute of cruising with the right lane open, not slower, and V-ASM clear on the right. At most once every 5 minutes. Prompt and chime only. Needs V-ASM. Experimental and off by default; not road-validated.",
+        "picker_description": "Reminds you to move right when the right lane is open.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "VASMEnabled",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NNFF",
         "label": "Neural Network Feedforward (NNFF)",
         "description": "Twilsonco's \"Neural Network FeedForward\" controller. Uses a trained neural network model to predict steering torque based on vehicle speed, roll, and past/future planned path data for smoother, model-based steering.",

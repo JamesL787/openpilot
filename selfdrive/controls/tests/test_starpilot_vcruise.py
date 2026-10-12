@@ -1864,6 +1864,9 @@ def test_off_ramp_slowdown_ignores_forks_and_missing_model():
 
 
 # D-112: jam slowdown from Mapbox congestion ahead
+_LAST_VCRUISE: list = []
+
+
 def _jam_target(distance=600.0, jam_speed=3.0, enabled=True, v_cruise=31.3, extra=None):
   state = {"valid": True, "maneuverType": "", "maneuverModifier": "", "maneuverDistance": 5000.0,
            "jamDistance": distance, "jamSpeed": jam_speed}
@@ -1872,6 +1875,7 @@ def _jam_target(distance=600.0, jam_speed=3.0, enabled=True, v_cruise=31.3, extr
   toggles = make_toggles()
   toggles.nav_longitudinal_allowed = True
   toggles.nav_jam_slowdown = enabled
+  _LAST_VCRUISE[:] = [vcruise]
   return vcruise._get_nav_turn_control_target(v_cruise, {}, toggles)
 
 
@@ -1892,6 +1896,17 @@ def test_jam_slowdown_eases_toward_the_floor_and_releases_at_the_jam():
 def test_jam_slowdown_uses_the_traffic_speed_plus_margin_above_the_floor():
   fast_jam = 20.0  # m/s: target 20 + 10 mph
   assert _jam_target(distance=60.0, jam_speed=fast_jam) == pytest.approx(fast_jam + 10.0 * CV.MPH_TO_MS, abs=1.0)
+
+
+def test_jam_notice_follows_the_jam_target():
+  # D-116: the on-screen notice is set exactly when the jam slowdown binds below cruise
+  def notice(**kw):
+    _jam_target(**kw)
+    return _LAST_VCRUISE[0].nav_jam_notice
+
+  assert notice(distance=400.0) == (400.0, pytest.approx(40.0 * CV.MPH_TO_MS))
+  assert notice(distance=2000.0) is None, "too far out to bind"
+  assert notice(distance=400.0, enabled=False) is None
 
 
 def test_jam_slowdown_never_raises_a_lower_turn_target():

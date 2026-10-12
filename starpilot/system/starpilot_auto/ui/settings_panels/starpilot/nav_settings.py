@@ -58,6 +58,15 @@ class StarPilotNavSettingsLayout(_SettingsPage):
                  get_state=lambda: p.get_bool("NavPassingSuggest"),
                  set_state=lambda s: p.put_bool("NavPassingSuggest", s),
                  visible=lambda: p.get_bool("VASMEnabled")),
+      SettingRow("NavExitOnlyWarn", "toggle", tr_noop("Warn About Exit-Only Lanes"),
+                 subtitle=tr_noop("Warn with a banner and chime when you are in an exit-only lane up to about a mile before an exit your route does not take. Uses Mapbox lane data, which some roads lack. Experimental and off by default; not road-validated."),
+                 get_state=lambda: p.get_bool("NavExitOnlyWarn"),
+                 set_state=lambda s: p.put_bool("NavExitOnlyWarn", s)),
+      SettingRow("NavKeepRightReminder", "toggle", tr_noop("Keep Right Reminder"),
+                 subtitle=tr_noop("On a navigated highway, remind you to move right after a minute of cruising with the right lane open, not slower, and V-ASM clear on the right. At most once every 5 minutes. Prompt and chime only. Needs V-ASM. Experimental and off by default; not road-validated."),
+                 get_state=lambda: p.get_bool("NavKeepRightReminder"),
+                 set_state=lambda s: p.put_bool("NavKeepRightReminder", s),
+                 visible=lambda: p.get_bool("VASMEnabled")),
     ]
 
     gas_brake_rows = [
