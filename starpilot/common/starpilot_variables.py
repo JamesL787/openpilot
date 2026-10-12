@@ -1400,6 +1400,7 @@ class StarPilotVariables:
     toggle.human_lane_changes = has_radar and self.get_value("HumanLaneChanges", condition=longitudinal_tuning)
     toggle.nav_longitudinal_allowed = toggle.openpilot_longitudinal and self.get_value("NavLongitudinalAllowed", condition=longitudinal_tuning)
     toggle.nav_off_ramp_slowdown = self.get_value("NavOffRampSlowdown", condition=toggle.nav_longitudinal_allowed)
+    toggle.nav_jam_slowdown = self.get_value("NavJamSlowdown", condition=toggle.nav_longitudinal_allowed)
     # Keep lead detection sensitivity normalized even when longitudinal tuning is disabled.
     # Some branches can return raw integer defaults (e.g. 35) when condition=False.
     lead_detection_probability = self.get_value("LeadDetectionThreshold", cast=float, condition=toggle.openpilot_longitudinal,

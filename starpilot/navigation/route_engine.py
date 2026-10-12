@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -89,6 +89,7 @@ class RouteProgress:
   time_remaining: float
   current_speed_limit_ms: float
   all_maneuvers: list[dict[str, Any]]
+  along_distance: float = 0.0  # metres along the route geometry to the car's projection
 
 
 def bearing_between_two_points(point_one: Coordinate, point_two: Coordinate) -> float:
@@ -217,6 +218,8 @@ class NavigationRoute:
   eco_cost: float = 0.0
   is_eco_recommended: bool = False
   eco_savings_pct: float = 0.0
+  congestion: list[str] = field(default_factory=list)       # Mapbox level per geometry segment (D-112)
+  segment_speeds: list[float] = field(default_factory=list)  # Mapbox typical speed per geometry segment, m/s
 
   def calculate_eco_cost(self) -> float:
     """Calculate estimated fuel/energy consumption index for a route.
@@ -280,6 +283,8 @@ class NavigationRoute:
       steps=steps,
       total_distance=float(route_data.get("totalDistance", 0.0)),
       total_duration=float(route_data.get("totalDuration", 0.0)),
+      congestion=[str(level) for level in route_data.get("congestion", [])],
+      segment_speeds=[float(speed) if isinstance(speed, (int, float)) else 0.0 for speed in route_data.get("speed", [])],
     )
 
   def route_bearing_misaligned(self, closest_segment_index: int, current_bearing: float | None, v_ego: float) -> bool:
@@ -358,6 +363,7 @@ class NavigationRoute:
       time_remaining=time_remaining,
       current_speed_limit_ms=current_step.maxspeed_ms,
       all_maneuvers=all_maneuvers,
+      along_distance=closest_cumulative,
     )
 
   def upcoming_turn_modifier(self, progress: RouteProgress, position: Coordinate, v_ego: float) -> str:
@@ -444,7 +450,7 @@ class MapboxRouteEngine:
       "geometries": "geojson",
       "steps": "true",
       "overview": "full",
-      "annotations": "maxspeed",
+      "annotations": "maxspeed,congestion,speed",
       "alternatives": "true" if alternatives else "false",
       "banner_instructions": "true",
     }
@@ -536,5 +542,7 @@ class MapboxRouteEngine:
         for item in leg.get("annotation", {}).get("maxspeed", [])
         if field_valid(item, "speed") and field_valid(item, "unit")
       ],
+      "congestion": list(leg.get("annotation", {}).get("congestion", [])),
+      "speed": list(leg.get("annotation", {}).get("speed", [])),
     }
     return NavigationRoute.from_mapbox_route(route_data)

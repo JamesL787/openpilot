@@ -2575,3 +2575,52 @@ driver has to steer the move manually, and a missed block is the same as today.
   missing-edge warnings fired at the same frames.
 - Params artifacts rebuilt, 880 → 881 keys (+LaneChangeEdgeGuard only).
 - Not replayed against Peter's routes. The thresholds are IQ's and were not re-derived here.
+
+## D-111 — Offer a faster route mid-drive; switch only when the driver taps Switch (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** re-check traffic during a drive the way IQ.Pilot does, and "ask before switching routes".
+
+**What it does (`NavTrafficReroute`, Visual → Navigation, off by default):** while a route is active, navigationd
+re-requests Mapbox `driving-traffic` with alternatives from the car's position every 120 s
+(`starpilot/navigation/traffic_reroute.py`). It finds the refreshed copy of the route being driven (≥ 90 % of its
+sampled points lie on the remaining route) and the fastest route that is not that one. If the second is faster by at
+least max(120 s, 10 %) on two checks in a row, the MICI HUD shows "Faster route: N min faster" with Switch and
+Keep buttons. The route changes only on Switch. Keep, no answer within 20 s, or a 500 m approach to the next
+maneuver withdraws the offer, and any answer starts a 10 min cooldown.
+
+**Where the rules come from:** our own code. These rules follow IQ.Pilot's `TrafficReroutePolicy`, with the
+constants that could be read from its shipped binary: a 500 m maneuver guard, 2 confirmations, a 10 % savings ratio
+and a 15 s retry base. IQ's refresh interval, minimum seconds saved, cooldown and retry cap were not recoverable.
+The 120 s, 120 s, 600 s and 240 s values used for them are our choice. IQ's road-closure inputs and its
+Google/Valhalla traffic sources are not ported. Mapbox's own route durations are the only traffic signal.
+
+**Fairness rule:** without a fresh time for the current route, nothing is offered. Comparing a fresh candidate
+against the duration from when the route was first fetched would not be like for like.
+
+**Evidence:** static unit tests only (`starpilot/navigation/test_traffic_reroute.py`). The tests cover the policy,
+same-route matching, confirmation, accept, decline, timeout, a stale response id, the maneuver guard, a reroute
+during the prompt, and backoff. The prompt's parse and tap logic was tested with stubbed UI modules. The drawn pill
+has not been seen on a device.
+
+## D-112 — Ease down before a Mapbox-reported jam ahead (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** slow down for traffic jams using the route's traffic data. IQ.Pilot has no jam
+slowdown (its traffic code only switches routes), so this design is ours.
+
+**What it does (`NavJamSlowdown`, under Use Route Speed Control, off by default):** route requests now ask Mapbox for
+`congestion` and `speed` annotations. navigationd publishes `jamDistance` and `jamSpeed` in `NavInstructionState`:
+- `jamDistance` is the distance to the first heavy or severe run at least 150 m long within 2 km ahead.
+- `jamSpeed` is the slowest Mapbox speed in that run.
+
+The data comes from the D-111 refresh when that is newer than the route itself. Nothing is published if the data is
+more than 10 min old or the car is more than 40 m off that route. The refresh runs when either toggle is on.
+
+`starpilot_vcruise` adds one more nav target to the min-of-targets: max(40 mph, jam speed + 10 mph), reached
+50 m before the jam on the turn comfort decel (0.45 m/s²). It releases inside 50 m.
+
+**Why it releases at the jam:** Mapbox traffic can be old or wrong. Holding a low target through a jam that has
+cleared would leave the car slow in flowing traffic. The real queue is the radar's job. The target can only lower
+cruise speed, never raise it, and a lower turn or off-ramp target still wins.
+
+**Evidence:** static unit tests only (`test_starpilot_vcruise.py` jam tests, `test_traffic_reroute.py` congestion
+tests). Not driven, and not compared against real Mapbox congestion on a route.

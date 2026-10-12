@@ -2355,6 +2355,16 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "NavJamSlowdown",
+        "label": "Slow for Traffic Jams",
+        "description": "Ease down before heavy traffic that Mapbox reports on the route ahead (not below 40 mph), and let go once you reach it. Mapbox traffic can be wrong or old; radar still does the real braking. Experimental and off by default; not road-validated.",
+        "picker_description": "Eases down before heavy traffic ahead on the route.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "QOLLongitudinal",
         "label": "Quality of Life",
         "description": "Miscellaneous acceleration and braking control changes to fine-tune how openpilot drives.",
@@ -3645,6 +3655,15 @@
         "max": 180,
         "step": 1,
         "parent_key": "ClearNavOnOffroad",
+        "settings_tier": "simple"
+      },
+      {
+        "key": "NavTrafficReroute",
+        "label": "Offer Faster Routes",
+        "description": "Check traffic every couple of minutes while navigating and offer a faster route when one saves at least 2 minutes and 10%. The route only changes if you tap Switch. Uses extra Mapbox requests.",
+        "picker_description": "Offers a faster route when traffic changes; you choose whether to switch.",
+        "data_type": "bool",
+        "ui_type": "toggle",
         "settings_tier": "simple"
       },
       {

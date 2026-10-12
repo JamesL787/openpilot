@@ -56,6 +56,13 @@ NAV_OFF_RAMP_TARGET_SPEED = 50.0 * CV.MPH_TO_MS
 NAV_OFF_RAMP_EDGE_LANE_MAX_M = 6.0
 NAV_OFF_RAMP_EDGE_MAX_STD = 1.0
 NAV_OFF_RAMP_EDGE_X_RANGE = (5.0, 40.0)
+# D-112: jam slowdown (NavJamSlowdown). navigationd publishes the distance to the first heavy/severe Mapbox congestion run
+# ahead (jamDistance, -1 when none) and the slowest Mapbox typical speed in it (jamSpeed). We ease toward that speed plus a
+# margin, never below the floor, on the same comfort envelope as turns, and let go once the car is at the jam: the queue
+# itself is the radar's job, and holding a low target inside stale or wrong traffic data would be worse. Our numbers.
+NAV_JAM_MIN_TARGET_SPEED = 40.0 * CV.MPH_TO_MS
+NAV_JAM_SPEED_MARGIN = 10.0 * CV.MPH_TO_MS
+NAV_JAM_RELEASE_DISTANCE = 50.0
 NAV_TURN_TARGET_SPEEDS = {
   "uturn": 5.0 * CV.MPH_TO_MS,
   "sharpLeft": 10.0 * CV.MPH_TO_MS,
@@ -454,6 +461,22 @@ class StarPilotVCruise:
                                                                           self._nav_instruction_state.get("maneuverDistance")))
     return target if target + NAV_TURN_MIN_TARGET_DELTA < v_cruise else 0.0
 
+  def _get_nav_jam_target(self, v_cruise, starpilot_toggles):
+    if not getattr(starpilot_toggles, "nav_jam_slowdown", False):
+      return 0.0
+    try:
+      distance = float(self._nav_instruction_state.get("jamDistance", -1.0))
+      jam_speed = float(self._nav_instruction_state.get("jamSpeed", 0.0) or 0.0)
+    except (TypeError, ValueError):
+      return 0.0
+    if not (math.isfinite(distance) and math.isfinite(jam_speed)) or distance < NAV_JAM_RELEASE_DISTANCE:
+      return 0.0
+
+    target_speed = max(NAV_JAM_MIN_TARGET_SPEED, jam_speed + NAV_JAM_SPEED_MARGIN)
+    # reach the target by the release point, on the turn comfort decel
+    target = math.sqrt(target_speed * target_speed + 2.0 * NAV_TURN_COMFORT_DECEL * (distance - NAV_JAM_RELEASE_DISTANCE))
+    return target if target + NAV_TURN_MIN_TARGET_DELTA < v_cruise else 0.0
+
   @staticmethod
   def _get_nav_long_min_target_speed(sm):
     car_params = None
@@ -485,6 +508,7 @@ class StarPilotVCruise:
         self._nav_instruction_state.get("nextManeuverDistance"),
       ),
     ]
+    turn_target = 0.0
     for maneuver_type, maneuver_modifier, maneuver_distance in candidates:
       target_speed = self._nav_maneuver_target_speed(maneuver_type, maneuver_modifier)
       if target_speed is None:
@@ -493,9 +517,13 @@ class StarPilotVCruise:
 
       target = max(target_speed, self._nav_target_for_distance(target_speed, maneuver_distance))
       if target + NAV_TURN_MIN_TARGET_DELTA < v_cruise:
-        return target
+        turn_target = target
+        break
 
-    return self._get_nav_off_ramp_target(v_cruise, sm, starpilot_toggles)
+    if turn_target <= 0.0:
+      turn_target = self._get_nav_off_ramp_target(v_cruise, sm, starpilot_toggles)
+    targets = [t for t in (turn_target, self._get_nav_jam_target(v_cruise, starpilot_toggles)) if t > 0.0]
+    return min(targets) if targets else 0.0
 
   # ===== Main update =====
 
