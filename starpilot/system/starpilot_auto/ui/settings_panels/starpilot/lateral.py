@@ -143,26 +143,6 @@ class StarPilotLateralLayout(_SettingsPage):
         on_click=lambda: self._show_slider("LateralResumeDelay", 0.0, 5.0, step=0.1, unit="s", value_type="float"),
         visible=pos_on,
       ),
-      SettingRow(
-        "NavDesiresAllowed", "toggle", tr_noop("Use Route Desires"),
-        subtitle=tr_noop("Allow navigation to request lane keep and turns."),
-        get_state=lambda: p.get_bool("NavDesiresAllowed"),
-        set_state=lambda s: p.put_bool("NavDesiresAllowed", s),
-      ),
-      SettingRow(
-        "NavLanePositioningAllowed", "toggle", tr_noop("Route Lane Positioning"),
-        subtitle=tr_noop("Allow navigation to position in lane and request highway exit lane changes: blinker toward the exit for the first lane, blinker + nudge for each further lane."),
-        get_state=lambda: p.get_bool("NavLanePositioningAllowed"),
-        set_state=lambda s: p.put_bool("NavLanePositioningAllowed", s),
-        visible=lambda: p.get_bool("NavDesiresAllowed"),
-      ),
-      SettingRow(
-        "NavExitAutoKeep", "toggle", tr_noop("Auto-Take Exit"),
-        subtitle=tr_noop("Take a same-side highway exit without the blinker or a wheel nudge when navigation lane guidance already puts you in the exit-side edge lane. Off-ramps only (never forks), above 8 m/s, withdrawn by any steering input. Experimental and off by default; not road-validated."),
-        get_state=lambda: p.get_bool("NavExitAutoKeep"),
-        set_state=lambda s: p.put_bool("NavExitAutoKeep", s),
-        visible=lambda: p.get_bool("NavDesiresAllowed") and p.get_bool("NavLanePositioningAllowed"),
-      ),
     ]
 
     # ── 2. Lane Changes ──

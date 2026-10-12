@@ -7,11 +7,16 @@ import { GalaxySection } from "./GalaxySection.js"
 // device_settings_layout.json (the single source of setting text); writes go through
 // the same api.updateParam (PUT /api/params) path as the Settings view.
 export const NAV_SETTING_KEYS = [
+  "NavigationUI",
   "NavDesiresAllowed",
   "NavLanePositioningAllowed",
+  "NavExitAutoKeep",
   "TurnDesires",
   "VASMEnabled",
   "NavLongitudinalAllowed",
+  "NavOffRampSlowdown",
+  "NavJamSlowdown",
+  "NavTrafficReroute",
   "ClearNavOnOffroad",
   "ClearNavOnOffroadTimeoutMinutes",
 ]
@@ -20,6 +25,8 @@ export const NAV_SETTING_KEYS = [
 const CODE_GATES = {
   TurnDesires: { key: "LateralTune", message: "Turn on Lateral Tuning in Settings to use this." },
   NavLongitudinalAllowed: { key: "LongitudinalTune", message: "Turn on Longitudinal Tuning in Settings to use this." },
+  NavOffRampSlowdown: { key: "LongitudinalTune", message: "Turn on Longitudinal Tuning in Settings to use this." },
+  NavJamSlowdown: { key: "LongitudinalTune", message: "Turn on Longitudinal Tuning in Settings to use this." },
 }
 
 export const ROUTE_PREFERENCE_ROWS = [

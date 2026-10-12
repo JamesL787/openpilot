@@ -365,18 +365,6 @@ class StarPilotAppearanceLayout(_SettingsPage):
 
         # ═══ 4. Navigation & Mapping ═══
         self._nav_rows = [
-            SettingRow("NavigationUI", "toggle", tr_noop("Navigation Widgets"),
-                       subtitle=tr_noop("Show navigation info on the driving screen."),
-                       get_state=lambda: self._params.get_bool("NavigationUI"),
-                       set_state=lambda s: self._params.put_bool("NavigationUI", s)),
-            SettingRow("ClearNavOnOffroad", "toggle", tr_noop("Clear Route When Offroad"),
-                       subtitle=tr_noop("Clear the active navigation destination when the device goes offroad."),
-                       get_state=lambda: self._params.get_bool("ClearNavOnOffroad"),
-                       set_state=lambda s: self._params.put_bool("ClearNavOnOffroad", s)),
-            SettingRow("NavTrafficReroute", "toggle", tr_noop("Offer Faster Routes"),
-                       subtitle=tr_noop("Check traffic every couple of minutes while navigating and offer a faster route when one saves at least 2 minutes and 10%. The route only changes if you tap Switch. Uses extra Mapbox requests."),
-                       get_state=lambda: self._params.get_bool("NavTrafficReroute"),
-                       set_state=lambda s: self._params.put_bool("NavTrafficReroute", s)),
             SettingRow("RoadNameUI", "toggle", tr_noop("Road Name"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("RoadNameUI"),
@@ -539,7 +527,7 @@ class StarPilotAppearanceLayout(_SettingsPage):
             self,
             [SettingSection(title="", rows=self._nav_rows)],
             header_title=tr_noop("Navigation & Mapping"),
-            header_subtitle=tr_noop("Configure road names, Vienna signs, and offroad routes."),
+            header_subtitle=tr_noop("Configure road names and speed limit signs. Route settings are in Navigation Settings."),
             panel_style=PANEL_STYLE,
         )
         self._sub_panels["system"] = AetherSettingsView(

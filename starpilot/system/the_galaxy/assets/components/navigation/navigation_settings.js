@@ -7,11 +7,16 @@ import { html, reactive } from "/assets/vendor/arrow-core.js";
 export const LAYOUT_URL = "/assets/components/tools/device_settings_layout.json?v=nav-settings-2";
 
 export const NAV_SETTING_KEYS = [
+  "NavigationUI",
   "NavDesiresAllowed",
   "NavLanePositioningAllowed",
+  "NavExitAutoKeep",
   "TurnDesires",
   "VASMEnabled",
   "NavLongitudinalAllowed",
+  "NavOffRampSlowdown",
+  "NavJamSlowdown",
+  "NavTrafficReroute",
   "ClearNavOnOffroad",
   "ClearNavOnOffroadTimeoutMinutes",
 ];
@@ -21,6 +26,9 @@ export const NAV_SETTING_KEYS = [
 // Shown only while their on-page parent is on.
 const ON_PAGE_PARENT = {
   NavLanePositioningAllowed: "NavDesiresAllowed",
+  NavExitAutoKeep: "NavLanePositioningAllowed",
+  NavOffRampSlowdown: "NavLongitudinalAllowed",
+  NavJamSlowdown: "NavLongitudinalAllowed",
   ClearNavOnOffroadTimeoutMinutes: "ClearNavOnOffroad",
 };
 
@@ -28,6 +36,8 @@ const ON_PAGE_PARENT = {
 const CODE_GATES = {
   TurnDesires: { key: "LateralTune", message: "Turn on Lateral Tuning in Device Settings to use this." },
   NavLongitudinalAllowed: { key: "LongitudinalTune", message: "Turn on Longitudinal Tuning in Device Settings to use this." },
+  NavOffRampSlowdown: { key: "LongitudinalTune", message: "Turn on Longitudinal Tuning in Device Settings to use this." },
+  NavJamSlowdown: { key: "LongitudinalTune", message: "Turn on Longitudinal Tuning in Device Settings to use this." },
 };
 
 const ROUTE_PREFERENCE_ROWS = [

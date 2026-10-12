@@ -82,6 +82,7 @@ def test_driving_controls_contains_nested_navigation_folder_and_leaf_routes():
   assert navigation_maps["children"] == [
     {"title": "Map Data", "panel": "MAPS", "icon": "navigate"},
     {"title": "Navigation", "panel": "NAVIGATION", "icon": "road"},
+    {"title": "Navigation Settings", "panel": "NAV_SETTINGS", "icon": "navigate"},
   ]
 
   assert controls["children"][1]["panel"] == "LONGITUDINAL"

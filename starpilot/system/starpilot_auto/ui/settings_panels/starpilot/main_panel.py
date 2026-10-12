@@ -13,6 +13,7 @@ from openpilot.starpilot.system.starpilot_auto.ui.settings_panels.starpilot.long
 from openpilot.starpilot.system.starpilot_auto.ui.settings_panels.starpilot.lateral import StarPilotLateralLayout
 from openpilot.starpilot.system.starpilot_auto.ui.settings_panels.starpilot.maps import StarPilotMapsLayout
 from openpilot.starpilot.system.starpilot_auto.ui.settings_panels.starpilot.navigation import StarPilotNavigationLayout
+from openpilot.starpilot.system.starpilot_auto.ui.settings_panels.starpilot.nav_settings import StarPilotNavSettingsLayout
 from openpilot.starpilot.system.starpilot_auto.ui.settings_panels.starpilot.system_settings import StarPilotSystemLayout
 from openpilot.starpilot.system.starpilot_auto.ui.settings_panels.starpilot.appearance import StarPilotAppearanceLayout
 from openpilot.starpilot.system.starpilot_auto.ui.settings_panels.starpilot.vehicle import StarPilotVehicleSettingsLayout
@@ -41,6 +42,7 @@ class StarPilotLayout(Widget):
           "children": [
             {"title": "Map Data", "panel": "MAPS", "icon": "navigate"},
             {"title": "Navigation", "panel": "NAVIGATION", "icon": "road"},
+            {"title": "Navigation Settings", "panel": "NAV_SETTINGS", "icon": "navigate"},
           ],
         },
         {"title": "Gas / Brake", "panel": "LONGITUDINAL", "icon": "road"},
@@ -72,6 +74,7 @@ class StarPilotLayout(Widget):
     "LATERAL": StarPilotPanelType.LATERAL,
     "MAPS": StarPilotPanelType.MAPS,
     "NAVIGATION": StarPilotPanelType.NAVIGATION,
+    "NAV_SETTINGS": StarPilotPanelType.NAV_SETTINGS,
     "VISUALS": StarPilotPanelType.VISUALS,
     "VEHICLE": StarPilotPanelType.VEHICLE,
   }
@@ -103,6 +106,7 @@ class StarPilotLayout(Widget):
       StarPilotPanelType.LATERAL: StarPilotPanelInfo(tr_noop("Steering"), StarPilotLateralLayout()),
       StarPilotPanelType.MAPS: self._create_maps_panel(),
       StarPilotPanelType.NAVIGATION: self._create_navigation_panel(),
+      StarPilotPanelType.NAV_SETTINGS: StarPilotPanelInfo(tr_noop("Navigation Settings"), StarPilotNavSettingsLayout()),
       StarPilotPanelType.VISUALS: StarPilotPanelInfo(tr_noop("Appearance"), StarPilotAppearanceLayout()),
       StarPilotPanelType.VEHICLE: StarPilotPanelInfo(tr_noop("Vehicle Settings"), StarPilotVehicleSettingsLayout()),
     }
@@ -114,6 +118,7 @@ class StarPilotLayout(Widget):
       StarPilotPanelType.LATERAL,
       StarPilotPanelType.MAPS,
       StarPilotPanelType.NAVIGATION,
+      StarPilotPanelType.NAV_SETTINGS,
       StarPilotPanelType.VISUALS,
       StarPilotPanelType.VEHICLE,
     )
