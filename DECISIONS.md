@@ -2687,6 +2687,11 @@ as `leadRight`, there is no move-back prompt until the 120 s timeout ends the ep
 values. Static unit tests only (`test_nav_passing.py`, `test_starpilot_planner.py`, `test_nav_passing_prompt.py`).
 Not replayed against a route and not road-validated.
 
+**Amended (owner, 2026-10-12): "under the limit" means under the allowed speed.** The owner sets speed at the
+limit plus their Speed Limit Controller offset, so openpilot may drive that much over the limit. `PassingInputs.speed_offset`
+carries `slc.get_offset(limit)` and the 5 mph test is against limit + offset for both ego and the lead. The 45 mph
+highway floor and keep-right still use the posted limit. Static unit test only.
+
 **Open (owner, 2026-10-12):** on Texas highways the prompt fires for the yellow-line left shoulder, which the
 lane-width check reads as a lane (`calculate_lane_width` uses no line probabilities). The gate is not chosen yet: it
 must come from the owner's route logs (left lane width against `laneLineProbs`, road edges and moving `leadLeft`), not

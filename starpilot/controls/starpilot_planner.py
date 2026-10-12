@@ -279,6 +279,10 @@ class StarPilotPlanner:
     slc = self.starpilot_vcruise.slc
     return float(slc.target or 0.0) if getattr(slc, "source", SOURCE_NONE) != SOURCE_NONE else 0.0
 
+  def _passing_speed_offset(self, limit):
+    # the owner's SLC offset for this limit: openpilot may drive up to limit + offset
+    return 0.0 if limit <= 0.0 else float(self.starpilot_vcruise.slc.get_offset(limit) or 0.0)
+
   def _passing_inputs(self, sm, starpilot_toggles, v_ego, now):
     CS = sm["carState"]
     radar = sm["starpilotRadarState"]
@@ -289,11 +293,13 @@ class StarPilotPlanner:
     def lead(l):
       return Lead(bool(l.status), float(l.dRel), float(l.vLead))
 
+    speed_limit = self._passing_speed_limit()
     return PassingInputs(
       enabled=True,
       nav_state=self.starpilot_vcruise._nav_instruction_state,
       v_ego=v_ego,
-      speed_limit=self._passing_speed_limit(),
+      speed_limit=speed_limit,
+      speed_offset=self._passing_speed_offset(speed_limit),
       min_lane_change_speed=float(starpilot_toggles.minimum_lane_change_speed),
       lead=lead(self.lead_one), lead_left=lead(radar.leadLeft), lead_right=lead(radar.leadRight),
       lane_width_left=float(self.lane_width_left), lane_width_right=float(self.lane_width_right),

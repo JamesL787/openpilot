@@ -35,6 +35,19 @@ def test_suggests_pass_left_only_after_ten_slow_seconds():
   assert out["armed"] and out["side"] == "left" and out["phase"] == "pass"
 
 
+def test_speed_offset_raises_the_allowed_speed():
+  # 65 limit + 5 offset: 63 mph with a 63 mph lead is only 2 under the limit, but 7 under the allowed 70
+  i = inputs(v_ego=63 * MPH, lead=Lead(True, 30.0, 63 * MPH))
+  out, _ = run(NavPassingAdvisor(), i, 0.0, SLOW_SECONDS + 1.0)
+  assert not out["armed"]
+  out, _ = run(NavPassingAdvisor(), replace(i, speed_offset=5 * MPH), 0.0, SLOW_SECONDS + 1.0)
+  assert out["armed"] and out["phase"] == "pass"
+  # 68 mph is only 2 under the allowed 70: no suggestion
+  out, _ = run(NavPassingAdvisor(), replace(i, v_ego=68 * MPH, lead=Lead(True, 30.0, 68 * MPH), speed_offset=5 * MPH),
+               0.0, SLOW_SECONDS + 1.0)
+  assert not out["armed"]
+
+
 def test_no_suggestion_without_route_toggle_or_live_vasm():
   for kw in ({"enabled": False}, {"vasm_live": False}, {"nav_state": {}}, {"nav_state": {"valid": False}}):
     adv = NavPassingAdvisor()

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 MPH = 0.44704
-SPEED_DEFICIT = 5 * MPH       # at least this far under the limit (owner, 2026-10-12)
+SPEED_DEFICIT = 5 * MPH       # at least this far under the allowed speed (owner, 2026-10-12)
 SLOW_SECONDS = 10.0           # for at least this long (owner, 2026-10-12)
 MIN_LIMIT = 45 * MPH          # highway proxy: no suggestions below a 45 mph limit
 LEAD_MAX_HEADWAY_S = 3.0      # the lead is the cause only when it is this close in time...
@@ -59,6 +59,7 @@ class PassingInputs:
   right_blinker: bool
   exit_warn: bool = False   # NavExitOnlyWarn toggle
   keep_right: bool = False  # NavKeepRightReminder toggle
+  speed_offset: float = 0.0  # m/s, the owner's SLC offset: allowed speed is limit + offset (owner, 2026-10-12)
 
 
 def lane_beside(width: float, detection_width: float) -> bool:
@@ -101,9 +102,10 @@ class NavPassingAdvisor:
   def _pass_ready(self, i: PassingInputs, now: float) -> bool:
     lead = i.lead
     limit = i.speed_limit
+    allowed = limit + max(i.speed_offset, 0.0)
     lead_close = lead.status and (lead.d_rel < max(i.v_ego * LEAD_MAX_HEADWAY_S, 1.0) or lead.d_rel < LEAD_MAX_DIST)
-    slow = (limit >= MIN_LIMIT and i.v_ego >= i.min_lane_change_speed and i.v_ego <= limit - SPEED_DEFICIT
-            and lead_close and lead.v_lead <= limit - SPEED_DEFICIT)
+    slow = (limit >= MIN_LIMIT and i.v_ego >= i.min_lane_change_speed and i.v_ego <= allowed - SPEED_DEFICIT
+            and lead_close and lead.v_lead <= allowed - SPEED_DEFICIT)
     if not slow:
       self.slow_since = None
       return False
