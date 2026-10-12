@@ -181,6 +181,16 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "LaneChangeEdgeGuard",
+        "label": "Lane Change Road Edge Guard",
+        "description": "Hold a lane change while the model sees a road edge where the target lane should be. Experimental and off by default; not road-validated.",
+        "picker_description": "No lane change toward a road edge.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "LaneChanges",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NudgelessLaneChangeOnlyWhenEngaged",
         "label": "Automatic Lane Changes Only When Engaged",
         "description": "Require a steering-wheel nudge for lane changes while using Always On Lateral without full engagement.",

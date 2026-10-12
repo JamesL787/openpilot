@@ -9,6 +9,7 @@ from openpilot.common.constants import CV
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.common.realtime import DT_MDL
 from openpilot.starpilot.common.vision_bsm import get_fresh_vasm_state
+from openpilot.starpilot.controls.lib.lateral_edge_guard import LateralEdgeGuard
 from openpilot.starpilot.controls.lib.nav_lane_prompt import nav_lane_move_prompt
 
 LaneChangeState = log.LaneChangeState
@@ -83,6 +84,7 @@ class DesireHelper:
 
     self.lane_change_wait_timer = 0.0
     self.counter_torque_frames = 0
+    self.edge_guard = LateralEdgeGuard()
     self.nav_desires_allowed = False
     self.nav_lane_positioning_allowed = False
     self.nav_exit_lane_change = False
@@ -420,6 +422,8 @@ class DesireHelper:
     lane_change_time_max = getattr(starpilot_toggles, 'lane_change_time_max', LANE_CHANGE_TIME_MAX)
     nav_exit_direction = self._get_nav_exit_lane_change_direction(starpilot_toggles)
     nav_exit_active = nav_exit_direction != LaneChangeDirection.none
+    # D-110: runs every frame so its block/clear debounce is current when a lane change is requested
+    self.edge_guard.update(modeldata, v_ego, DT_MDL, enabled=bool(getattr(starpilot_toggles, "lane_change_edge_guard", False)))
 
     if not lateral_active or self.lane_change_timer > lane_change_time_max or not lane_changes_allowed:
       self.lane_change_state = LaneChangeState.off
@@ -467,6 +471,8 @@ class DesireHelper:
 
         v_asm_enabled = bool(getattr(starpilot_toggles, "v_asm_enabled", False))
         blindspot_detected = self._get_combined_blindspot(carstate, self.lane_change_direction, v_asm_enabled=v_asm_enabled)
+        # D-110: a road edge where the target lane should be holds the launch the same way a blind-spot car does
+        blindspot_detected |= self.edge_guard.block_for_direction(self.lane_change_direction)
 
         if self.nav_exit_lane_change:
           # Driver confirms with the blinker toward the exit (no native BSM; vision ASM can only block).

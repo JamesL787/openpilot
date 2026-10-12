@@ -182,6 +182,13 @@ class StarPilotLateralLayout(_SettingsPage):
         visible=lc_on,
       ),
       SettingRow(
+        "LaneChangeEdgeGuard", "toggle", tr_noop("Road Edge Guard"),
+        subtitle=tr_noop("Hold a lane change while the model sees a road edge where the target lane should be. Experimental and off by default; not road-validated."),
+        get_state=lambda: p.get_bool("LaneChangeEdgeGuard"),
+        set_state=lambda s: p.put_bool("LaneChangeEdgeGuard", s),
+        visible=lc_on,
+      ),
+      SettingRow(
         "OneLaneChange", "toggle", tr_noop("One Per Signal"),
         subtitle=tr_noop("One lane change per signal activation."),
         get_state=lambda: p.get_bool("OneLaneChange"),

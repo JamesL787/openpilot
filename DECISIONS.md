@@ -2543,3 +2543,35 @@ The 6.0 m edge threshold is an estimate from lane and shoulder widths, not measu
 
 **Provenance:** our own design. IQ.Pilot's `long_decel` (read statically) also lists exits among its decel maneuvers,
 but its route speed formula was not recovered and none of its code is used.
+
+## D-110 — Road edge guard: hold a lane change toward a road edge the model sees inside one lane (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** a road edge guard like IQ.Pilot's. The owner then asked for our own
+implementation, kept as close to IQ's behavior as possible, instead of shipping IQ's all-rights-reserved file.
+
+**Decision:** `starpilot/controls/lib/lateral_edge_guard.py` is an independent implementation. Its thresholds,
+debounce timing and fallbacks match IQ.Pilot's `iqpilot/selfdrive/controls/lib/helpers/lateral_edge_guard.py`, but
+none of IQ's code is used. `DesireHelper` updates it every frame. While the default-off `LaneChangeEdgeGuard` toggle
+is on, a block in the lane-change direction holds the preLaneChange → laneChangeStarting launch, exactly like a
+blind-spot hit. This applies to nudged, nudgeless and nav-exit lane changes.
+
+**The rule (IQ's numbers):**
+- Block when (nearest edge |y| over x 5–40 m) − 1·std < measured lane width + 0.95 + 0.25 m. The lane width is
+  clamped to 2.5–4.5 m and defaults to 3.5 m unless both ego lines have prob > 0.5.
+- Never block when the edge std is above 1.0 m, the edge is on the wrong side, or an outer lane line has prob > 0.5.
+- Inactive below 20 mph.
+- A block needs 0.30 s to set and 0.50 s to clear. Missing edges hold the last answer for 0.50 s, then fall back to
+  not blocking.
+
+**Failure direction:** the guard can only prevent or delay a lane change. It never steers. A false block means the
+driver has to steer the move manually, and a missed block is the same as today.
+
+**Evidence (static only):**
+- 11 guard tests (`starpilot/controls/lib/tests/test_lateral_edge_guard.py`, written here) and 2 integration tests
+  in `test_navigation_desires.py`.
+- A differential run against IQ's file over 2 × 400 random 200-frame sequences: 160,000 frames, including NaN
+  points, bad stds, wrong-side edges, empty edges, a missing model, low speed and toggle flips. It gave identical
+  `block_for_direction` on both sides in every frame (361 and 653 blocked side-frames), and the
+  missing-edge warnings fired at the same frames.
+- Params artifacts rebuilt, 880 → 881 keys (+LaneChangeEdgeGuard only).
+- Not replayed against Peter's routes. The thresholds are IQ's and were not re-derived here.

@@ -917,3 +917,31 @@ def test_counter_torque_cancel_does_not_relaunch_nav_exit_move():
   for _ in range(50):
     helper.update(make_car_state(), True, 1.0, make_plan(), toggles)
   assert helper.lane_change_state == LaneChangeState.off, "the same exit request does not relaunch"
+
+
+def _edge_model(left_y):
+  xs = [float(x) for x in range(0, 55, 5)]
+  edge = lambda y: SimpleNamespace(x=xs, y=[y] * len(xs))
+  return SimpleNamespace(roadEdges=[edge(left_y), edge(8.0)], roadEdgeStds=[0.2, 0.2],
+                         laneLines=[edge(-5.4), edge(-1.8), edge(1.8), edge(5.4)], laneLineProbs=[0.0, 0.9, 0.9, 0.0])
+
+
+def _edge_guard_launch(toggles, left_y):
+  helper = DesireHelper()
+  helper._update_nav_params = lambda: None
+  md = _edge_model(left_y)
+  for _ in range(10):
+    helper.update(make_car_state(), True, 1.0, make_plan(), toggles, modeldata=md)
+  for _ in range(3):
+    helper.update(make_car_state(leftBlinker=True), True, 1.0, make_plan(), toggles, modeldata=md)
+  return helper
+
+
+def test_edge_guard_is_off_by_default():
+  assert _edge_guard_launch(make_toggles(), -4.0).lane_change_state == LaneChangeState.laneChangeStarting
+
+
+def test_edge_guard_holds_lane_change_toward_a_near_road_edge():
+  toggles = make_toggles(lane_change_edge_guard=True)
+  assert _edge_guard_launch(toggles, -4.0).lane_change_state == LaneChangeState.preLaneChange
+  assert _edge_guard_launch(toggles, -8.0).lane_change_state == LaneChangeState.laneChangeStarting
