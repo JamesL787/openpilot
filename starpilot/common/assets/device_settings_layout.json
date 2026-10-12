@@ -577,6 +577,16 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "VASMRadarAssist",
+        "label": "Radar Assist",
+        "description": "Check the side you signal toward, a side a passing or merge prompt points to, or a side where radar sees a car within 50 ft, every 0.3 s instead of every 2 s. After you pass a car that radar was tracking beside you, keep that side marked occupied for 1-6 s depending on how much faster you passed it. Only ever marks a side occupied, never clear. Experimental and off by default; not road-validated.",
+        "picker_description": "Faster V-ASM checks when it matters, and holds the blind spot after you pass a car.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "VASMEnabled",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "NrdrPidController",
         "label": "NRDR PID Controller",
         "description": "Peter's modified-EPS Civic Bosch/Clarity steering: the controller choice, override, PID trims, smoothing and learners. Manage to show them.",

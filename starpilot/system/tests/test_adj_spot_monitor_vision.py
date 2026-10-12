@@ -133,3 +133,73 @@ def test_publish_writes_freshness_and_maps_camera_sides_to_ui_sides():
   assert daemon.params_memory.values["VASMLastUpdateMonoTime"] == "50.0"
   assert daemon.params_memory.values["VASMLeftActive"] == "0"
   assert daemon.params_memory.values["VASMRightActive"] == "1"
+
+class _Lead:
+  def __init__(self, status=False, dRel=0.0, vRel=0.0, radarTrackId=-1):
+    self.status, self.dRel, self.vRel, self.radarTrackId = status, dRel, vRel, radarTrackId
+
+
+class _FakeSM:
+  def __init__(self, left=None, right=None, left_blinker=False, right_blinker=False):
+    from types import SimpleNamespace
+    self.valid = {"starpilotRadarState": True, "carState": True}
+    self.msgs = {"starpilotRadarState": SimpleNamespace(leadLeft=left or _Lead(), leadRight=right or _Lead()),
+                 "carState": SimpleNamespace(leftBlinker=left_blinker, rightBlinker=right_blinker)}
+
+  def __getitem__(self, key):
+    return self.msgs[key]
+
+
+def _assist_daemon(radar_assist=True):
+  from openpilot.starpilot.common.vasm_assist import PassHold
+
+  class Memory(FakeMemoryParams):
+    def get(self, key):
+      return self.values.get(key)
+
+  daemon = VASMDaemon.__new__(VASMDaemon)
+  daemon.params_memory = Memory()
+  daemon._radar_assist = radar_assist
+  daemon.pass_hold = PassHold()
+  daemon._hold = {"left": False, "right": False}
+  daemon._focus_image = set()
+  daemon._last_pub_left = (False, False)
+  daemon._last_pub_right = (False, False)
+  daemon._last_pub_left_conf = -1.0
+  daemon._last_pub_right_conf = -1.0
+  daemon._last_update_at = 0.0
+  return daemon
+
+
+def test_d118_pass_hold_marks_the_car_side_occupied_while_the_camera_sees_nothing():
+  daemon = _assist_daemon()
+  daemon.sm = _FakeSM(left=_Lead(True, 3.0, -4.0, 7))
+  daemon._update_assist(0.0)
+  daemon.sm = _FakeSM()
+  daemon._update_assist(0.1)
+  assert daemon._hold == {"left": True, "right": False}
+  daemon._publish(False, False, 0.1, 0.1, 1, updated_at=0.1)
+  assert daemon.params_memory.values["VASMLeftActive"] == "1", "car-frame left, not mirrored"
+  assert daemon.params_memory.values["VASMRightActive"] == "0"
+
+  daemon._update_assist(10.0)
+  daemon._publish(False, False, 0.1, 0.1, 1, updated_at=10.0)
+  assert daemon.params_memory.values["VASMLeftActive"] == "0", "a hold ending is published even with no camera change"
+
+
+def test_d118_focus_is_image_frame_and_off_means_no_assist():
+  daemon = _assist_daemon()
+  daemon.sm = _FakeSM(left_blinker=True)
+  daemon._update_assist(0.0)
+  assert daemon._focus_image == {"right"}, "car left is image right on the driver camera"
+  daemon.params_memory.put("NavPassingPrompt", '{"armed": true, "side": "right"}')
+  daemon.sm = _FakeSM()
+  daemon._update_assist(0.1)
+  assert daemon._focus_image == {"left"}
+
+  off = _assist_daemon(radar_assist=False)
+  off.sm = _FakeSM(left=_Lead(True, 3.0, -4.0, 7), left_blinker=True)
+  off._update_assist(0.0)
+  off.sm = _FakeSM()
+  off._update_assist(0.1)
+  assert off._hold == {"left": False, "right": False} and off._focus_image == set()

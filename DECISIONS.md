@@ -2789,3 +2789,29 @@ behaviour, by handing control to the model through Conditional Experimental Mode
 whether Mapbox fills `traffic_signal` / `stop_sign` / `railway_crossing`, turn-lane indications, and the arrive
 modifier on the owner's roads. Check with an offroad device-side request before turning `NavStopAnticipate` on. A
 signal Mapbox omits gets no early hand-off; one it misplaces hands off early for at most 8 s.
+
+## D-118 — V-ASM radar assist: look sooner where it matters; hold the blind spot after a pass (2026-10-12, static unit tests only, not driven, default off)
+
+**Request (owner, 2026-10-12):** V-ASM is slow to catch cars in the blind spot. After passing a car, assume it is still
+in the blind spot for a while, scaled by how fast you passed it.
+
+**Finding (static, from the code):** the daemon runs one inference per second and alternates sides, so each side is
+looked at about every 2 s, longer under CPU throttle. It only goes to 0.3 s after something is already detected. A
+detection needs a smoothed confidence of at least 0.94.
+
+**Decision:** one toggle, `VASMRadarAssist` (Galaxy, under V-ASM). Both parts only ever add "occupied".
+- **Look sooner.** Inference runs every 0.3 s while any of these holds: a blinker is on, a D-114/D-117 prompt points
+  to a side, or radar has `leadLeft`/`leadRight` within 15 m. When exactly one side is focused, that side gets the
+  turns, but the other side is never starved for more than 1 s. Sides are mapped car→image because the driver camera
+  is mirrored.
+- **Pass hold.** `PassHold` remembers the last sighting of an adjacent radar car we were closing on by ≥0.5 m/s at
+  0–15 m. When radar loses it, or a different car replaces it, within 0.5 s of that sighting, the side stays occupied
+  for `clamp((dRel + 12 m) / closing, 1 s, 6 s)` from the sighting. The 12 m is its length, ours, and a margin. That
+  gives 5 mph faster ≈ 5.4 s, 10 mph ≈ 2.7 s, and ≥27 mph = 1 s. Holds are ORed into `VASMLeftActive`/`VASMRightActive`,
+  so lane-change blocking, the border, the side camera, and the nav prompts all see them.
+
+**Limits:** static unit tests only (`test_vasm_assist.py`, `test_adj_spot_monitor_vision.py`). The 12 m, 15 m and
+0.5 s constants are chosen, not measured. Check on the owner's I-35 routes how far ahead radar last sees a car being
+passed and how long V-ASM takes to fire after that. Semi trailers are not handled. The camera sees the cab and drops
+the container side, so a radar-linked hold while the cab stays adjacent and close is planned once driver-camera
+footage is available.

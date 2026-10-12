@@ -916,6 +916,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"VASMRightActive", {CLEAR_ON_MANAGER_START, STRING, "0", "0", 2}},
     {"VASMRightConfidence", {CLEAR_ON_MANAGER_START, STRING, "0.0", "0.0", 2}},
     {"VASMSmoothSeconds", {PERSISTENT, FLOAT, "0.2", "0.2", 2}},
+    {"VASMRadarAssist", {PERSISTENT, BOOL, "0", "0", 2}},
     {"VASMTimestampEof", {CLEAR_ON_MANAGER_START, STRING, "0", "0", 2}},
     {"VEgoStarting", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
     {"VEgoStartingStock", {PERSISTENT, FLOAT, "0.0", "0.0", 3}},
