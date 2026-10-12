@@ -326,8 +326,8 @@
       {
         "key": "NavExitAutoKeep",
         "label": "Auto-Take Exit",
-        "description": "Requires Route Lane Positioning. Take a same-side highway exit without the blinker or a wheel nudge when navigation lane guidance already puts you in the exit-side edge lane. Off-ramps only (never forks), above 8 m/s, withdrawn by any steering input. Experimental and off by default; not road-validated.",
-        "picker_description": "Takes a same-side highway exit without blinker or nudge.",
+        "description": "Requires Route Lane Positioning. Take a same-side highway exit or on-ramp without the blinker or a wheel nudge when navigation lane guidance already puts you in the ramp-side edge lane. Never forks, above 8 m/s, withdrawn by any steering input. Experimental and off by default; not road-validated.",
+        "picker_description": "Takes a same-side highway exit or on-ramp without blinker or nudge.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "NavDesiresAllowed",
