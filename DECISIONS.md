@@ -2624,3 +2624,14 @@ cruise speed, never raise it, and a lower turn or off-ramp target still wins.
 
 **Evidence:** static unit tests only (`test_starpilot_vcruise.py` jam tests, `test_traffic_reroute.py` congestion
 tests). Not driven, and not compared against real Mapbox congestion on a route.
+
+### D-108 amendment (2026-10-12): the counter-torque cancel only works before the car reaches the lane line
+
+Replayed against the comma's own logs (52 rlog segments from routes 00000312, 00000313, 00000319, 0000031b–0000031e;
+56 completed lane changes): 6 of them had 0.25 s of opposing torque above the nudge threshold and would have been
+cancelled. Two of those came after the car had crossed the line (opposing torque 3.2 s in, line crossed at 2.5–2.9 s),
+when the driver catches the car settling into the new lane; a cancel there steers the car back across the line. The
+cancel window now closes 1.5 s into laneChangeStarting, or as soon as the target-side ego lane line (prob >= 0.5) has
+moved 0.8 m toward the car, whichever comes first. The other four were 0.7–1.75 s into the move with 0.55–1.4 s of
+opposing torque and still completed; three of them fall inside the window. The logs cannot tell whether the driver
+meant to abort, so that part is unresolved. Static tests and log replay of the rule only; not road-tested.
