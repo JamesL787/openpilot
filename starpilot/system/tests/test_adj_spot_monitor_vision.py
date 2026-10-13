@@ -140,17 +140,18 @@ class _Lead:
 
 
 class _FakeSM:
-  def __init__(self, left=None, right=None, left_blinker=False, right_blinker=False):
+  def __init__(self, left=None, right=None, left_blinker=False, right_blinker=False, v_ego=30.0):
     from types import SimpleNamespace
     self.valid = {"starpilotRadarState": True, "carState": True}
     self.msgs = {"starpilotRadarState": SimpleNamespace(leadLeft=left or _Lead(), leadRight=right or _Lead()),
-                 "carState": SimpleNamespace(leftBlinker=left_blinker, rightBlinker=right_blinker)}
+                 "carState": SimpleNamespace(leftBlinker=left_blinker, rightBlinker=right_blinker, vEgo=v_ego)}
 
   def __getitem__(self, key):
     return self.msgs[key]
 
 
 def _assist_daemon(radar_assist=True):
+  from types import SimpleNamespace
   from openpilot.starpilot.common.vasm_assist import PassHold
 
   class Memory(FakeMemoryParams):
@@ -161,6 +162,7 @@ def _assist_daemon(radar_assist=True):
   daemon.params_memory = Memory()
   daemon._radar_assist = radar_assist
   daemon.pass_hold = PassHold()
+  daemon.inference = SimpleNamespace(left_active=False, right_active=False)
   daemon._hold = {"left": False, "right": False}
   daemon._focus_image = set()
   daemon._last_pub_left = (False, False)
@@ -203,3 +205,21 @@ def test_d118_focus_is_image_frame_and_off_means_no_assist():
   off.sm = _FakeSM()
   off._update_assist(0.1)
   assert off._hold == {"left": False, "right": False} and off._focus_image == set()
+
+
+def test_d121_camera_on_the_car_side_feeds_the_semi_hold():
+  daemon = _assist_daemon()
+  daemon.sm = _FakeSM(right=_Lead(True, 8.0, -4.0, 44))
+  daemon._update_assist(0.0)
+  daemon.sm = _FakeSM()
+  t = 0.05
+  while t < 2.0:  # plain hold covers the hand-off
+    daemon._update_assist(t)
+    t += 0.05
+  daemon.inference.left_active = True  # image left = car right
+  while t < 8.0:  # 6 s at 4 m/s: 24 m of trailer and tractor
+    daemon._update_assist(t)
+    t += 0.05
+  daemon.inference.left_active = False
+  daemon._update_assist(t)
+  assert daemon._hold["right"] and not daemon._hold["left"], "camera lost the truck, but its front is still beside us"

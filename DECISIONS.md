@@ -2902,3 +2902,38 @@ below 20 s from stopping or the emergency latch fires. 2f5 10:01 was not re-run 
 event's aLeadK of -2.46 latches the emergency, which this change does not touch.
 
 **Lever:** `STOCK_FEEL_LEAD_STOP_MAX_T = 0` restores the previous behaviour exactly.
+
+## D-121 — V-ASM radar assist holds a passed semi until its front is well behind, and bridges camera drop-outs (2026-10-12, static unit tests + log replay of the hold only, not driven, default off)
+
+**Problem (owner, 2026-10-12):** passing a semi on the right at ~70 mph (semi ~65 mph), it took Peter 7 s from his
+front bumper lining up with the trailer's rear to a gap he would move back into. D-118's pass hold is sized for cars
+(1-6 s) and D-118 already listed semi trailers as not handled.
+
+**Evidence (replay, route 324 segs 101/104/108 and 321 seg 42; semis confirmed by eye on the driver-camera crops):**
+truck positions are dead-reckoned from the last radar sighting, assuming the truck held the speed radar measured, and our
+carState speed. The camera stopped seeing the truck when its rear was 29.7-30.4 m behind our radar in all three 324
+passes (5.6-8.6 s after bumper alignment); in 321 s42 (Peter slowing, closing 5.2 -> 2.4 m/s) it stopped at 17.4 m, 4.2
+s after alignment, with the cab still about level with us. With Peter's settings (threshold 0.80, smoothing 0.1 s) the
+daemon also released the side for 0.3-0.4 s on plain trailer sides after D-118's hold had expired (324 s104 6274.3 and
+6275.3, s108 6524.8). Car passes gave 3-10 m of relative travel with the camera on.
+
+**Decision (owner approved the numbers):** under `VASMRadarAssist` (default off), after D-118's radar hand-off,
+`PassHold` follows the vehicle with the camera state for that car side and carState vEgo:
+- `PASS_BRIDGE_S = 0.6`: once the camera has seen it, a drop-out up to 0.6 s keeps the side occupied.
+- `LONG_VEHICLE_SEEN_M = 12`: relative travel with the camera on beyond this marks a long vehicle.
+- `LONG_VEHICLE_CLEAR_M = 38`: a long vehicle is held until its dead-reckoned rear is 38 m behind our radar (a ~23 m
+  semi's front ~10 m, about two car lengths, behind our rear bumper).
+- `LONG_VEHICLE_MAX_S = 20`: cap after radar lost it, for when the gap stops closing.
+Like D-118 it only adds "occupied". Without vEgo (e.g. `extract_crops.py`) it is the D-118 hold alone.
+
+**Replay of the hold (`~/oprad-scratch/vasm/semi_replay.py`, camera = the daemon's EMA and hysteresis on the shipped
+model's per-frame output; 15 segment-sides from routes 321/323/324):** 324 s101 held 2.0 s past the camera (to 6089.7),
+s104 bridged both mid-trailer gaps and held 0.8 s more, s108 bridged its gap and held 1.3 s more, 321 s42 held 7.6 s more
+(to 2550.7, 11.9 s after alignment). Car passes gained only 0.2-0.6 s bridges. 323 s4 (the SUV pacing at 12-14 m that
+ruled out a radar-only truck hold in D-118) gained nothing. One over-hold: 324 s67, a pickup then a Subaru seen back to
+back added up past 12 m, so the side stayed occupied 2.0 s longer after the Subaru.
+
+**Not checked:** dead reckoning error when the truck changes speed; whether the lane-change logic reacts within a
+0.3-0.4 s release (the bridge removes those releases either way); nothing driven.
+
+Not road-validated.

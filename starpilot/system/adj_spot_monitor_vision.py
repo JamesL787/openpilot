@@ -163,9 +163,12 @@ class VASMDaemon:
     if self.sm.valid.get("starpilotRadarState", False):
       radar = self.sm["starpilotRadarState"]
       leads = {"left": lead_from_capnp(radar.leadLeft), "right": lead_from_capnp(radar.leadRight)}
-    for side in ("left", "right"):
-      self._hold[side] = self.pass_hold.update(side, leads[side], now)
     car_state = self.sm["carState"] if self.sm.valid.get("carState", False) else None
+    v_ego = float(car_state.vEgo) if car_state is not None else None
+    # D-121: the camera's latest verdict per car side (image left = car right, the camera is mirrored)
+    camera = {"left": bool(self.inference.right_active), "right": bool(self.inference.left_active)}
+    for side in ("left", "right"):
+      self._hold[side] = self.pass_hold.update(side, leads[side], now, v_ego, camera[side])
     prompt_side = ""
     try:
       prompt = json.loads(self.params_memory.get("NavPassingPrompt") or "{}")

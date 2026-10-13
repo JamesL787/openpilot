@@ -25,6 +25,15 @@ PASS_HANDOFF_DIST = 15.0    # m: the last sighting must be this close to mean "a
 PASS_SIGHTING_MAX_AGE = 0.5  # s: a sighting older than this when radar loses the car proves nothing
 SAME_TRACK_JUMP_M = 5.0     # without track ids, a jump this large is a different car
 
+# D-121 semi hold. After the hand-off above, follow the vehicle with the camera and dead-reckon where its rear is
+# (it keeps the speed radar last measured; ours comes from carState). Route 324 segs 101/104/108 (three semis on the
+# right, replay): the camera stopped seeing the truck when its rear was 29.7-30.4 m behind our radar, and dropped
+# out for 0.3-0.4 s on plain trailer sides after the pass hold had already ended. Cars showed 3-10 m of camera travel.
+PASS_BRIDGE_S = 0.6         # s: a camera drop-out this short during a handed-off pass is the same vehicle
+LONG_VEHICLE_SEEN_M = 12.0  # m of relative travel with the camera on: longer than any car, so a truck or trailer
+LONG_VEHICLE_CLEAR_M = 38.0  # m: hold a long vehicle until its rear is this far behind our radar (front ~10 m behind us)
+LONG_VEHICLE_MAX_S = 20.0   # s after radar lost it: cap, in case the speeds stop closing the gap
+
 CAR_TO_IMAGE = {"left": "right", "right": "left"}  # the driver camera is mirrored (see VASMDaemon._publish)
 
 
@@ -51,35 +60,94 @@ def _same_car(a: AdjacentLead, b: AdjacentLead) -> bool:
   return abs(a.d_rel - b.d_rel) < SAME_TRACK_JUMP_M
 
 
+@dataclass
+class _Pass:
+  """D-121: one handed-off vehicle, followed after radar lost it."""
+  lost_at: float
+  hold_until: float     # the plain pass hold above
+  v_ego: float | None   # our speed at the last sighting; with v_rel it fixes the vehicle's speed
+  v_rel: float
+  d_rel: float          # dead-reckoned position of its rear relative to our radar (negative: behind)
+  updated_at: float
+  seen: bool = False    # the camera has picked it up since radar lost it
+  seen_m: float = 0.0   # relative travel while the camera saw it
+  camera_off_at: float | None = None  # last camera-on -> off edge; None while on or never seen
+
+  @property
+  def long_vehicle(self) -> bool:
+    return self.seen_m >= LONG_VEHICLE_SEEN_M
+
+  def advance(self, now: float, v_ego: float | None, camera: bool) -> bool:
+    """Move it on to now; True while it still holds the side."""
+    dt = max(now - self.updated_at, 0.0)
+    self.updated_at = now
+    closing = 0.0
+    if v_ego is not None and self.v_ego is not None:
+      closing = v_ego - (self.v_ego + self.v_rel)
+      self.d_rel -= closing * dt
+    if camera:
+      if self.seen:
+        self.seen_m += max(closing, 0.0) * dt
+      self.seen = True
+      self.camera_off_at = None
+    elif self.seen and self.camera_off_at is None:
+      self.camera_off_at = now
+
+    if self.long_vehicle:
+      return self.d_rel > -LONG_VEHICLE_CLEAR_M and now - self.lost_at < LONG_VEHICLE_MAX_S
+    if camera:
+      return now - self.lost_at < LONG_VEHICLE_MAX_S
+    if self.camera_off_at is not None:
+      return now - self.camera_off_at <= PASS_BRIDGE_S
+    return now < self.hold_until  # the camera has not picked it up yet
+
+
 class PassHold:
-  """Per side: remember the last close sighting of a car we were passing; hold the side when radar loses it."""
+  """Per side: remember the last close sighting of a car we were passing; hold the side when radar loses it.
+
+  With v_ego and the camera state (D-121) it also follows the vehicle after the hand-off: short camera drop-outs are
+  bridged, and a vehicle the camera saw for more than LONG_VEHICLE_SEEN_M is held until it is LONG_VEHICLE_CLEAR_M
+  behind. Without them it is the D-118 hold alone.
+  """
 
   def __init__(self):
-    self._sighting: dict[str, tuple[AdjacentLead, float]] = {}
+    self._sighting: dict[str, tuple[AdjacentLead, float, float | None]] = {}
     self._until = {"left": 0.0, "right": 0.0}
+    self._pass: dict[str, _Pass] = {}
 
   def reset(self):
     self._sighting.clear()
     self._until = {"left": 0.0, "right": 0.0}
+    self._pass.clear()
 
-  def update(self, side: str, lead: AdjacentLead | None, now: float) -> bool:
+  def update(self, side: str, lead: AdjacentLead | None, now: float, v_ego: float | None = None,
+             camera: bool = False) -> bool:
     present = lead is not None and lead.status
     sighting = self._sighting.get(side)
 
     if sighting is not None:
-      seen, seen_at = sighting
+      seen, seen_at, seen_v_ego = sighting
       if not present or not _same_car(seen, lead):
         if now - seen_at <= PASS_SIGHTING_MAX_AGE:
           hold_until = seen_at + pass_hold_seconds(seen.d_rel, -seen.v_rel)
           self._until[side] = max(self._until[side], hold_until)
+          if v_ego is not None:
+            self._pass[side] = _Pass(seen_at, hold_until, seen_v_ego, seen.v_rel, seen.d_rel, seen_at)
         del self._sighting[side]
 
     if present and -lead.v_rel >= PASS_MIN_CLOSING and 0.0 <= lead.d_rel <= PASS_HANDOFF_DIST:
-      self._sighting[side] = (lead, now)
+      self._sighting[side] = (lead, now, v_ego)
     elif present and side in self._sighting:
       del self._sighting[side]  # same car, but it pulled away or matched our speed: not being passed
 
-    return now < self._until[side]
+    followed = False
+    tracked = self._pass.get(side)
+    if tracked is not None:
+      followed = tracked.advance(now, v_ego, camera)
+      if not followed:
+        del self._pass[side]
+
+    return now < self._until[side] or followed
 
 
 def focus_sides(left_blinker: bool, right_blinker: bool, leads: dict[str, AdjacentLead | None],
