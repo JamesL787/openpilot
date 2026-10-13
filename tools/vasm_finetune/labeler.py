@@ -4,7 +4,8 @@
   then open http://127.0.0.1:8765/?split=test   (every test crop, labelled blind)
        or   http://127.0.0.1:8765/?split=train  (only the crops extract_crops flagged for review)
 
-Keys: 0 no car, 1 car, 2 distant or rear, x unsure (left out of training and scoring), left/right arrows to move.
+Keys: 0 no car, 1 adjacent lane, 2 two or more lanes over, t truck part (labelled 1 and tagged so training can
+oversample it), x unsure (left out of training and scoring), left/right arrows to move. Class rules: see the page legend.
 Labels go to <crops>/labels.json after every key press, so closing the page loses nothing and reopening resumes at
 the first unlabelled crop. Stdlib only, listens on 127.0.0.1.
 
@@ -39,15 +40,17 @@ PAGE = r"""<!doctype html><meta charset="utf-8"><title>V-ASM labeler</title>
  <div><div>after</div><img class="ctx" id="next1"><br><img class="ctx" id="next2"></div>
  <div id="info"></div>
 </div>
-<p><span class="k">0</span>no car in the blind-spot zone &nbsp; <span class="k">1</span>car (a lane-change threat)
- &nbsp; <span class="k">2</span>distant or rear (in the next lane, too far back to block a lane change)
+<p><span class="k">0</span>no car &nbsp; <span class="k">1</span>adjacent lane: the vehicle covers the lane line and fills most
+ of the crop, or any part of an adjacent-lane vehicle is in view (a bit of its front, a truck hitch)
+ &nbsp; <span class="k">2</span>two or more lanes over, judged by distance: the vehicle sits beyond the lane line
+ (no lane lines, e.g. parking lots: small and far = 2, big and close = 1)
+ &nbsp; <span class="k">t</span>truck part (trailer, container, rest of the cab): saved as 1, tagged for oversampling
  &nbsp; <span class="k">x</span>unsure &nbsp; <span class="k">&larr;</span><span class="k">&rarr;</span>move</p>
-<p style="color:#888">Class 2 follows the upstream model's class name "distant_or_rear"; the exact boundary is still to be confirmed with its author.
- "before" and "after" are this side 0.25 s and 0.5 s either side.</p>
+<p style="color:#888">"before" and "after" are this side 0.25 s and 0.5 s either side.</p>
 <script>
 const split = new URLSearchParams(location.search).get("split") || "test";
 let rows = [], labels = {}, i = 0;
-const NAMES = {0: "no car", 1: "car", 2: "distant/rear", x: "unsure"};
+const NAMES = {0: "no car", 1: "adjacent", 2: "2+ lanes over", x: "unsure"};
 async function load() {
   const r = await (await fetch("/api/rows?split=" + split)).json();
   rows = r.rows; labels = r.labels;
@@ -62,7 +65,7 @@ function show() {
   const r = rows[i]; if (!r) { document.getElementById("bar").textContent = "nothing to label"; return; }
   const n = rows.filter(x => x.file in labels).length;
   document.getElementById("bar").innerHTML = `<b>${split}</b> ${i + 1}/${rows.length} &nbsp; labelled ${n} &nbsp; ` +
-    (r.file in labels ? `this one: <b>${NAMES[labels[r.file].label]}</b>` : "unlabelled");
+    (r.file in labels ? `this one: <b>${NAMES[labels[r.file].label]}${labels[r.file].truck ? " (truck part)" : ""}</b>` : "unlabelled");
   const main = document.getElementById("main");
   main.src = "/crop/" + r.file; main.className = r.file in labels ? "done" : "";
   img("prev2", r.prev2); img("prev1", r.prev1); img("next1", r.next1); img("next2", r.next2);
@@ -75,11 +78,11 @@ function show() {
   document.getElementById("info").textContent = s;
 }
 let saving = Promise.resolve(), failed = 0;
-function setLabel(v) {
+function setLabel(v, truck = false) {
   // label and advance immediately, so fast key presses each hit their own crop; saves go out in order
   const file = rows[i].file;
-  labels[file] = {label: v};
-  saving = saving.then(() => fetch("/api/label", {method: "POST", body: JSON.stringify({file, label: v})}))
+  labels[file] = truck ? {label: v, truck} : {label: v};
+  saving = saving.then(() => fetch("/api/label", {method: "POST", body: JSON.stringify({file, label: v, truck})}))
     .then(r => { if (!r.ok) throw r; }).catch(() => { failed++; alert("Save failed for " + file + "; is labeler.py still running?"); });
   if (i < rows.length - 1) i++;
   show();
@@ -87,6 +90,7 @@ function setLabel(v) {
 document.addEventListener("keydown", e => {
   if (e.key === "0" || e.key === "1" || e.key === "2") setLabel(Number(e.key));
   else if (e.key === "x") setLabel("x");
+  else if (e.key === "t") setLabel(1, true);
   else if (e.key === "ArrowRight" && i < rows.length - 1) { i++; show(); }
   else if (e.key === "ArrowLeft" && i > 0) { i--; show(); }
 });
@@ -126,11 +130,13 @@ class Store:
     out.sort(key=lambda r: (r["route"], int(r["seg"]), r["image_side"], float(r["t"])))
     return out
 
-  def set(self, file, label):
-    if label not in (0, 1, 2, "x") or not any(r["file"] == file for r in self.rows):
+  def set(self, file, label, truck=False):
+    if label not in (0, 1, 2, "x") or (truck and label != 1) or not any(r["file"] == file for r in self.rows):
       return False
     with self.lock:
       self.labels[file] = {"label": label, "at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}  # noqa: UP017 (macOS python3 is 3.9)
+      if truck:
+        self.labels[file]["truck"] = True
       tmp = self.path + ".tmp"
       with open(tmp, "w") as f:
         json.dump(self.labels, f, indent=0, sort_keys=True)
@@ -170,7 +176,7 @@ def handler(store):
       if urlparse(self.path).path != "/api/label":
         return self.send(404, b"not found", "text/plain")
       body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
-      ok = store.set(str(body.get("file", "")), body.get("label"))
+      ok = store.set(str(body.get("file", "")), body.get("label"), body.get("truck") is True)
       return self.send(200 if ok else 400, b"ok" if ok else b"bad label", "text/plain")
 
   return Handler

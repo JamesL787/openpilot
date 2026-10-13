@@ -25,7 +25,12 @@ Run it the same way as `tools/vasm_replay` (scratch dir mounted at /work), with
 
 3. `labeler.py`: a local labelling page, stdlib only, on 127.0.0.1. Start it with
    `python3 tools/vasm_finetune/labeler.py`, then open `http://127.0.0.1:8765/?split=test`.
-   - **Keys:** 0 no car, 1 car, 2 distant or rear, x unsure, arrow keys to move.
+   - **Keys:** 0 no car, 1 adjacent lane, 2 two or more lanes over, t truck part, x unsure, arrow keys to move.
+   - **Class rules (owner, 2026-10-13):** 1 = the vehicle covers the lane line and fills most of the crop, or any part of
+     an adjacent-lane vehicle is in view (a bit of its front, a truck hitch). 2 = two or more lanes over, judged by
+     distance: the vehicle sits beyond the lane line; with no lane lines, small and far = 2, big and close = 1. Truck
+     trailers, containers and the rest of the cab are the vehicle, never 0. `t` saves 1 with `"truck": true`: the
+     current model handles these crops badly, so training oversamples them.
    - **Context:** each crop is shown with the same side 0.25 s and 0.5 s before and after it, plus radar and the pass-hold state.
    - **Blind test labelling:** test crops are labelled blind (the model's probabilities and proposal are hidden). `?split=train`
      shows only the flagged crops, with the model's view.
