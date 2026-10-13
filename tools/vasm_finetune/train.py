@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import random
+import time
 
 import cv2
 import numpy as np
@@ -74,12 +75,12 @@ class Crops(Dataset):
     return torch.from_numpy(rgb.transpose(2, 0, 1) / 255.0), r["y"]
 
 
-def evaluate(model, loader, on):
+def evaluate(model, loader, on, dev):
   model.eval()
   ps, ys = [], []
   with torch.no_grad():
     for x, y in loader:
-      ps.append(model(x.float()))
+      ps.append(model(x.float().to(dev)).cpu())
       ys.append(y)
   p, y = torch.cat(ps), torch.cat(ys)
   nll = torch.nn.functional.nll_loss(torch.log(p.clamp_min(1e-7)), y).item()
@@ -102,6 +103,7 @@ def main():
   ap.add_argument("--val-frac", type=float, default=0.1)
   ap.add_argument("--on", type=float, default=0.8)
   ap.add_argument("--seed", type=int, default=0)
+  ap.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu", help="mps = Apple GPU (native macOS), else cpu")
   ap.add_argument("--limit", type=int, default=0, help="smoke test: use only this many train and val crops")
   args = ap.parse_args()
   random.seed(args.seed)
@@ -126,31 +128,34 @@ def main():
   train_loader = DataLoader(Crops(args.crops, tr, True), batch_size=args.batch, sampler=sampler, num_workers=4)
   val_loader = DataLoader(Crops(args.crops, va, False), batch_size=64, num_workers=4)
 
-  model = torch.load(args.base, weights_only=False)
+  dev = torch.device(args.device)
+  model = torch.load(args.base, weights_only=False).to(dev)
   opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
   sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs)
-  log = {"args": vars(args), "data": summary, "base": evaluate(model, val_loader, args.on), "epochs": []}
+  log = {"args": vars(args), "data": summary, "base": evaluate(model, val_loader, args.on, dev), "epochs": []}
   print("base", log["base"], flush=True)
   best = -1.0
   for ep in range(args.epochs):
     model.train()
-    total = 0.0
+    total, t0 = 0.0, time.time()
     for x, y in train_loader:
-      loss = torch.nn.functional.nll_loss(torch.log(model(x.float()).clamp_min(1e-7)), y)
+      x, y = x.float().to(dev), y.to(dev)
+      loss = torch.nn.functional.nll_loss(torch.log(model(x).clamp_min(1e-7)), y)
       opt.zero_grad()
       loss.backward()
       opt.step()
       total += loss.item() * len(y)
     sched.step()
-    v = evaluate(model, val_loader, args.on)
-    log["epochs"].append({"epoch": ep, "train_nll": total / len(tr), "val": v})
-    print(ep, round(total / len(tr), 4), v, flush=True)
+    secs = time.time() - t0
+    v = evaluate(model, val_loader, args.on, dev)
+    log["epochs"].append({"epoch": ep, "train_nll": total / len(tr), "train_s": round(secs, 1), "val": v})
+    print(ep, round(total / len(tr), 4), f"{secs:.0f}s", v, flush=True)
     if v["f05"] > best:
       best = v["f05"]
       torch.save(model, os.path.join(args.out, "best.pt"))
     json.dump(log, open(os.path.join(args.out, "train_log.json"), "w"), indent=1)
 
-  model = torch.load(os.path.join(args.out, "best.pt"), weights_only=False).eval()
+  model = torch.load(os.path.join(args.out, "best.pt"), weights_only=False, map_location="cpu").eval()
   onnx_path = os.path.join(args.out, "vasm_ft.onnx")
   torch.onnx.export(model, torch.zeros(1, 3, 352, 352), onnx_path, input_names=["images"], output_names=["output0"], opset_version=17, dynamo=False)
   print("best val f05", best, "->", onnx_path)

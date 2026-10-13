@@ -1,6 +1,7 @@
 """ONNX -> PyTorch (onnx2torch); prove the converted model matches cv2.dnn on real V-ASM crops."""
 
 import json
+import os
 import av
 import numpy as np
 import torch
@@ -8,6 +9,8 @@ import onnx
 from onnx2torch import convert
 from openpilot.starpilot.system.adj_spot_monitor_vision_inference import VASMInference, V_ASM_MODEL_PATH
 from onnx import shape_inference, helper, numpy_helper
+
+WORK = os.environ.get("VASM_WORK", "/work")  # scratch dir; /work in docker
 
 g = shape_inference.infer_shapes(onnx.load(str(V_ASM_MODEL_PATH)))
 # opset-18 Split(num_outputs=k) -> opset-13 Split with explicit sizes, so onnx2torch can convert it
@@ -50,13 +53,13 @@ for n in g.graph.node:
 print("reshape batch dims patched:", patched, "of", sum(n.op_type == "Reshape" for n in g.graph.node))
 onnx.checker.check_model(g)
 m = convert(g).eval()
-torch.save(m, "/work/ft/vasm_converted.pt")
+torch.save(m, f"{WORK}/ft/vasm_converted.pt")
 inf = VASMInference(V_ASM_MODEL_PATH)
 assert inf.load()
-ex = json.load(open("/work/dm/ex_00000321--67540f4492_42.json"))
+ex = json.load(open(f"{WORK}/dm/ex_00000321--67540f4492_42.json"))
 inf.load_config(json.loads(ex["params"]["VASMAnnotationConfig"]))
 blobs = []
-for i, fr in enumerate(av.open("/work/dm/00000321--67540f4492/42/dcamera.hevc").decode(video=0)):
+for i, fr in enumerate(av.open(f"{WORK}/dm/00000321--67540f4492/42/dcamera.hevc").decode(video=0)):
   if i % 25:
     continue
   nv = fr.to_ndarray(format="nv12")
