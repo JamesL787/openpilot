@@ -765,7 +765,17 @@ def _auto_plots(tmp_path, onroad, now, pub=None):
                         meta_fn=lambda: {"car": "HONDA_TEST", "tune": {"NrdrX": "1"}}, route_fn=lambda: "abc--0123456789",
                         publisher_factory=(lambda: pub) if pub is not None else None)
   plots._ensure_thread_locked = lambda: None
+  plots.set_settings({"auto_record": True})
   return plots
+
+
+def test_auto_record_is_off_by_default(tmp_path):
+  onroad = [True]
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: onroad[0], clock=lambda: 0.0)
+  plots._ensure_thread_locked = lambda: None
+  assert plots.settings()["auto_record"] is False, "Plots' carState reader is msgq's 16th: it evicts openpilot's"
+  plots.auto_tick()
+  assert plots.rec is None
 
 
 def test_auto_record_starts_with_the_drive_and_respects_a_manual_stop(tmp_path):

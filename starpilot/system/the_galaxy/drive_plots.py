@@ -115,7 +115,7 @@ FLUSH_EVERY_ROWS = 20
 AUTO_CHECK_S = 2.0               # how often the watcher looks at IsOnroad
 AUTO_KEEP_SESSIONS = 20          # automatic sessions kept (manual ones are never pruned)
 AUTO_KEEP_BYTES = 1_000_000_000  # and at most this much disk for them
-DEFAULT_SETTINGS = {"auto_record": True, "publish_to_log": True}
+DEFAULT_SETTINGS = {"auto_record": False, "publish_to_log": True}  # off: recording opens a 16th carState reader
 # The rlog carrier: cereal's customReservedRawData0 (a logged :Data slot nothing else uses), so the device needs no
 # rebuild. Each message is one JSON object {"schema": RLOG_SCHEMA, "type": "start"|"moment"|"takeover"|"summary"|"end"}.
 # Times in it are monotonic (mono_s / mono_ns, the same clock as logMonoTime), never route-relative.
