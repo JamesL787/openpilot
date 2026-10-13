@@ -11116,3 +11116,10 @@ lead's range. Closed-loop replay: 14:57 -2.00 -> -1.11, 319 3:31 -2.08 -> -1.54,
 and the car braked -3.5 below the lead's speed. A SlideBound entry now catches the range drop that neither sensor's speed
 explains. Closed-loop replay: plan -3.63 -> -2.55, sim -4.37 -> -3.67, min gap 33.4 -> 26.1 m. Only hit in an offline
 screen over 31b/319/311/2f5/299. Tests: 10 new in `test_radard_lead_switch.py`; radard tests 153 pass. Lint clean.
+
+## 243. Stock Brake Feel's lead-stop law skips a lead more than 20 s from stopping (D-120). Replay + static only, not driven.
+
+324 (bookmark 67:40, 28:00, 41:50): the camera-bounded aLeadK of exactly -1.0 on 25-28 m/s leads triggered the lead-stop
+law, so the planner's -1.2 to -1.4 passed the depth cap at 60-80 m. Closed-loop replay: peaks -1.42 -> -1.20,
+-1.29 -> -1.16, -1.00 -> -0.83, gap cost <= 0.6 m. 2f2 15:07, 18:08 and 24:33 unchanged. Tests: 3 new in
+`test_stock_feel_stop.py`; Stock Brake Feel stop and emergency tests 19 pass. Lint clean on changed lines.

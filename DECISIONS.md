@@ -2864,3 +2864,41 @@ memory params) passed the edge-lane suppression; with 3 of 4 lanes going right i
 edge lane. No replay of the desire against the log, and nothing driven.
 
 Not road-validated.
+
+## D-120 — Stock Brake Feel's lead-stop law skips a lead more than 20 s from stopping (STATUS 243, 2026-10-13, replay only, not driven)
+
+**Problem (owner, route 00000324):** early, firm brakes for far highway leads (bookmark 67:40, and 28:00, 41:50).
+Peter: nausea from speed swings, brakes that come too early or too hard.
+
+**Cause:** the radar was right that the leads were slowing, but the brakes reached -1.2 to -1.4 at 60-80 m where about
+-0.8 matched the physics. D-105 floors an overread aLeadK at the camera's accel minus 1.0. With the camera at about 0 that
+is exactly -1.0, which is `STOCK_FEEL_LEAD_STOP_A`, so the lead-stop law (D-086) planned a stop behind a 25-28 m/s lead
+that would need 25+ s to stop. Its need (~1.2) beat the TTC table (~-1.1) and returns before the table cap, so the MPC's
+-1.2 to -1.4 passed through. The 2f2 stops the law was written for had leads at 8-15 m/s braking -1.5 to -4, 2-9 s from
+stopping.
+
+**Decision:** `STOCK_FEEL_LEAD_STOP_MAX_T = 20.0` (longitudinal_planner.py, default ON). In the cap law, a lead whose
+vLead / -aLeadK exceeds 20 s is skipped and the TTC table applies. The emergency latch still counts every lead. Radar
+data is untouched (D-041/D-042). This is not the removed far-lead limit (D-060): the table and D-085's floor are as before.
+
+**Evidence (closed-loop replay, Stock Brake Feel on, car-matched; fidelity cmd corr 0.98-0.995):**
+- 324 seg 28: peak plan -1.42 -> -1.20, gap unchanged.
+- 324 seg 41: -1.29 -> -1.16, gap 54.4 -> 54.1 m.
+- 324 seg 67 (bookmark): -1.00 -> -0.83, gap 62.0 -> 61.4 m.
+- 324 segs 5, 16, 22, 46, 85: unchanged.
+- Open-loop protected groups:
+  - 297a, 297b, 298, 2a6, 2f2 (to 16:03, including 15:07) and 311 are identical.
+  - 312c 22:27, the same pattern on a 24 m/s lead drifting out of lane, goes from -1.33 to -1.09.
+  - Other 312 changes are under 0.1.
+- 2f2 18:08 and 24:33 (the lead-stop law's own stops), closed-loop: identical.
+
+Rejected variants:
+- A 12 s limit delayed a real slowing lead (324 seg 46, 14 m/s at -1.1, 12.8 s), which then braked 0.07 harder.
+- Capping far-lead brakes at the physics need (1.0x / 1.2x) braked harder later on 324 seg 85: -1.10 -> -1.43, gap
+  22 -> 17 m.
+
+**Risk:** a lead truly braking at -1.0 from highway speed is met at the table depth (about -1.1 at TTC 11) until it slows
+below 20 s from stopping or the emergency latch fires. 2f5 10:01 was not re-run (its log is not on this machine). That
+event's aLeadK of -2.46 latches the emergency, which this change does not touch.
+
+**Lever:** `STOCK_FEEL_LEAD_STOP_MAX_T = 0` restores the previous behaviour exactly.

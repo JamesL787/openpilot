@@ -419,6 +419,16 @@ STOCK_FEEL_CAP_RELEASE_JERK = 0.3  # m/s^3
 STOCK_FEEL_LEAD_STOP = True
 STOCK_FEEL_LEAD_STOP_A = -1.0  # m/s^2
 STOCK_FEEL_LEAD_STOP_GAP = 4.0  # m
+# Far-lead gate (owner 2026-10-13, 00000324; replay only). D-105 floors a radar-overread aLeadK at the camera's accel
+# minus 1.0, so on a highway lead the camera sees holding speed it lands on exactly -1.0 = STOCK_FEEL_LEAD_STOP_A, and the
+# law above planned a stop behind a 25-28 m/s lead that would need 25+ s to stop: need ~1.2 against a table depth ~1.1 at
+# 60-80 m, so the planner's -1.2 to -1.4 passed through (324 1680 / 2510 / 4060, the last one bookmarked; 312c 1347 the
+# same on a 24 m/s lead). The 2f2 stops this law exists for had leads at 8-15 m/s braking -1.5 to -4, 2-9 s from stopping.
+# A lead that would need more than STOCK_FEEL_LEAD_STOP_MAX_T s to stop is now left to the table (the emergency latch
+# still sees every lead). Replay, Stock Brake Feel on: 324 peaks -1.29 -> -1.16, -1.42 -> -1.20, -1.00 -> -0.83, gap
+# cost <= 0.6 m; 312c -1.33 -> -1.09; 2f2 15:07, 18:08, 24:33 and 297/298/2a6/311 unchanged. 12 s was tried and delayed
+# a real slowing lead on 324 2790 (14 m/s at -1.1, 12.8 s), which then braked 0.07 harder; 20 s leaves it unchanged.
+STOCK_FEEL_LEAD_STOP_MAX_T = 20.0  # s
 # Emergency bypass (owner 2026-10-07, 000002f5 at about 10:01; static only). A lead at 41 m braked at about -6.5 from
 # 18.5 m/s; the target ramped -0.35 -> -2.5 over 1.4 s at exactly the depth and jerk tables above while stopping behind
 # it needed -4.4, and the driver had to brake (car peaked -7.6, stopped 4.5 m short). Stock's law has no lead-braking
@@ -513,9 +523,10 @@ def brake_onset_ttc(leads, min_closing: float = 1e-3) -> float:
   return ttc_min
 
 
-def lead_stop_need(leads, v_ego: float) -> float:
+def lead_stop_need(leads, v_ego: float, max_t: float = 0.0) -> float:
   """Decel (m/s^2, >= 0) to stop STOCK_FEEL_LEAD_STOP_GAP behind where the worst closing, braking lead will stop; 0 when
-  no closing lead is braking at STOCK_FEEL_LEAD_STOP_A or harder."""
+  no closing lead is braking at STOCK_FEEL_LEAD_STOP_A or harder. With max_t > 0, a lead more than max_t s from stopping
+  is skipped."""
   need = 0.0
   for lead in leads:
     if lead is None or not bool(getattr(lead, 'status', False)) or not -float(lead.vRel) > STOCK_FEEL_MIN_CLOSING:
@@ -524,6 +535,8 @@ def lead_stop_need(leads, v_ego: float) -> float:
     if not a_lead <= STOCK_FEEL_LEAD_STOP_A:
       continue
     v_lead = max(float(getattr(lead, 'vLead', v_ego + float(lead.vRel))), 0.0)
+    if max_t > 0 and v_lead > max_t * -a_lead:
+      continue
     room = float(lead.dRel) + v_lead * v_lead / (2.0 * -a_lead) - STOCK_FEEL_LEAD_STOP_GAP
     need = max(need, float(v_ego) ** 2 / (2.0 * max(room, 0.5)))
   return need
@@ -568,7 +581,7 @@ def stock_feel_target(leads, prev: float, target: float, dt: float, v_ego: float
     return brake_onset_limited_target(prev, target, dt, STOCK_FEEL_JERK_OUTSIDE)
   depth = float(np.interp(ttc, STOCK_FEEL_DEPTH_BP, STOCK_FEEL_DEPTH_V))
   if STOCK_FEEL_LEAD_STOP:
-    need = lead_stop_need(leads, v_ego)
+    need = lead_stop_need(leads, v_ego, STOCK_FEEL_LEAD_STOP_MAX_T)
     if need > -depth:
       return brake_onset_limited_target(prev, max(target, stock_feel_held_cap(prev, -min(need, 3.5), dt)), dt,
                                         STOCK_FEEL_JERK_OUTSIDE)
