@@ -2122,11 +2122,7 @@ def _drive_plots_paused_reason():
   # car screen starting, so Plots never holds a slot when the phone connects mid-drive.
   if _safe_params_get_bool("StarpilotAutoEnabled"):
     return "Plots is paused while Android Auto is on: carState has no subscriber slot left for it."
-  # carState now has 15 permanent readers even without Android Auto (V-ASM and starpilot_process joined
-  # the stock ones), so Plots' SubMaster is always the 16th. On 2026-10-13 that evicted every carState
-  # reader for ~8 s mid-drive (msgqwatch: the_galaxy took the slot, then calibrationd, lagd and torqued
-  # all lost carState) and raised TAKE CONTROL IMMEDIATELY. Plots stays off until a slot is freed.
-  return "Live Plots is off: carState has no free subscriber slot, and taking one cuts openpilot off from the car."
+  return ""
 
 def _live_car_state(wait_s=0.5):
   """The latest carState through Plots' subscription, or None. Never opens a reader of its own: every

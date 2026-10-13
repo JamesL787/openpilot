@@ -137,6 +137,12 @@ struct StarPilotCarState @0xf35cc4560bbf6ec2 {
   aEgoGps @41 :Float32;
   gpsGrade @42 :Float32;
   gpsAccelValid @43 :Bool;
+
+  # Copies of carState fields for helpers that need only these. carState is at msgq's 15-reader limit, and a
+  # 16th reader evicts every carState reader in a loop (TAKE CONTROL IMMEDIATELY, 2026-10-13); V-ASM reads these.
+  vEgo @44 :Float32;
+  leftBlinker @45 :Bool;
+  rightBlinker @46 :Bool;
 }
 
 struct StarPilotDeviceState @0xda96579883444c35 {

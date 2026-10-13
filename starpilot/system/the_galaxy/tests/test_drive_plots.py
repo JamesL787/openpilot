@@ -13,6 +13,8 @@ import starpilot.system.the_galaxy.drive_plots_agents as agents
 
 DT = 0.05
 
+_REAL_MSGQ_FULL_TOPICS = dp.msgq_full_topics
+
 
 def _drive(n_s=120.0, lat_lag=0.0, lat_gain=1.0, lat_bias=0.0, wobble_hz=None, wobble_amp=0.0,
            long_lag=0.0, long_gain=1.0, lat_active=True, long_active=True, v=25.0):
@@ -593,6 +595,39 @@ class _SlotSM:
 
   def __getitem__(self, s):
     return self.data[s]
+
+
+@pytest.fixture(autouse=True)
+def _free_msgq_slots(monkeypatch):
+  # Tests never read this machine's real /dev/shm queues.
+  monkeypatch.setattr(dp, "msgq_full_topics", lambda services: [])
+
+
+def test_full_msgq_topic_keeps_plots_from_subscribing(tmp_path):
+  # 2026-10-13: carState had 15 permanent readers; Plots as the 16th evicted them all mid-drive (red alert).
+  _SlotSM.made = 0
+  clock, full = [0.0], [["carState"]]
+  plots = dp.DrivePlots(tmp_path, is_onroad=lambda: True, submaster_factory=_SlotSM, clock=lambda: clock[0],
+                        full_topics_fn=lambda services: list(full[0]))
+  plots._ensure_thread_locked = lambda: pytest.fail("Plots must not subscribe to a topic with no free slot")
+  plots.set_settings({"auto_record": True})
+  plots.touch()
+  plots.auto_tick()
+  assert plots.rec is None and not plots._should_run() and _SlotSM.made == 0
+  assert "carState" in plots.live()["lastError"]
+  full[0] = []
+  assert "carState" in plots.paused_reason(), "the count is re-read at most every SLOT_CHECK_S"
+  clock[0] += dp.SLOT_CHECK_S
+  assert plots.paused_reason() == ""
+
+
+def test_msgq_full_topics_reads_the_queue_header(tmp_path):
+  import struct
+  (tmp_path / "msgq_carState").write_bytes(struct.pack("<48Q", 15, *([0] * 47)))
+  (tmp_path / "msgq_modelV2").write_bytes(struct.pack("<48Q", 14, *([0] * 47)))
+  (tmp_path / "msgq_radarState").write_bytes(b"\x01")
+  full = _REAL_MSGQ_FULL_TOPICS(["carState", "modelV2", "radarState", "liveDelay"], base=str(tmp_path / "msgq_"))
+  assert full == ["carState"], "15 readers is full; 14, a short header and no queue yet are not"
 
 
 def test_paused_plots_never_subscribes_or_records(tmp_path):

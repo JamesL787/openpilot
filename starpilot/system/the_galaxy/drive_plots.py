@@ -22,6 +22,7 @@ import gzip
 import json
 import os
 import shutil
+import struct
 import threading
 import time
 from collections import deque
@@ -115,6 +116,28 @@ FLUSH_EVERY_ROWS = 20
 AUTO_CHECK_S = 2.0               # how often the watcher looks at IsOnroad
 AUTO_KEEP_SESSIONS = 20          # automatic sessions kept (manual ones are never pruned)
 AUTO_KEEP_BYTES = 1_000_000_000  # and at most this much disk for them
+MSGQ_NUM_READERS = 15           # msgq_repo/msgq/msgq.h NUM_READERS: a 16th subscriber evicts every reader of the topic
+SLOT_CHECK_S = 2.0               # how often a Plots that holds no slot yet re-reads the topics' reader counts
+
+
+def msgq_full_topics(services, base=None):
+  """Topics whose msgq queue already has every reader slot taken, so subscribing would evict all their readers.
+  Reads the reader count from the queue header in /dev/shm; a topic without a queue yet is not full."""
+  if base is None:
+    prefix = os.environ.get("OPENPILOT_PREFIX")
+    base = "/dev/shm/msgq_" + (prefix + "/" if prefix else "")
+  full = []
+  for service in services:
+    try:
+      with open(base + service, "rb") as f:
+        (num_readers,) = struct.unpack("<Q", f.read(8))
+    except (OSError, struct.error):
+      continue
+    if num_readers >= MSGQ_NUM_READERS:
+      full.append(service)
+  return full
+
+
 DEFAULT_SETTINGS = {"auto_record": False, "publish_to_log": True}  # off: recording opens a 16th carState reader
 # The rlog carrier: cereal's customReservedRawData0 (a logged :Data slot nothing else uses), so the device needs no
 # rebuild. Each message is one JSON object {"schema": RLOG_SCHEMA, "type": "start"|"moment"|"takeover"|"summary"|"end"}.
@@ -1086,12 +1109,16 @@ class DrivePlots:
               "starpilotRadarState"]
 
   def __init__(self, root, is_onroad, submaster_factory=None, clock=time.monotonic, controller_fn=None,
-               meta_fn=None, route_fn=None, publisher_factory=None, paused_fn=None):
+               meta_fn=None, route_fn=None, publisher_factory=None, paused_fn=None, full_topics_fn=None):
     self.root = Path(root)
     # -> why Plots must not subscribe right now ("" when it may). msgq gives each topic 15 reader slots and a
     # 16th evicts every reader on that topic, over and over: with Android Auto's car screen running, Plots
     # was carState's 16th reader and calibrationd/torqued/lagd saw it at ~1 Hz (commIssue, 2026-10-02).
     self.paused_fn = paused_fn
+    # 2026-10-13: carState reached 15 permanent readers and Plots, the 16th, evicted them all for ~8 s mid-drive
+    # (TAKE CONTROL IMMEDIATELY). Before it first subscribes, Plots checks that every topic has a free slot.
+    self.full_topics_fn = full_topics_fn  # -> topics with no free slot; None reads the real queues
+    self._slot_check = (-1e9, "")
     self._sm = None                      # one SubMaster for the life of the Galaxy: a new one takes a new slot
     self.meta_fn = meta_fn               # -> dict snapshot of car/tune for an automatic recording
     self.route_fn = route_fn             # -> loggerd's CurrentRoute, or None before it is set
@@ -1117,12 +1144,30 @@ class DrivePlots:
 
   # ---------------- lifecycle ----------------
   def paused_reason(self):
-    if self.paused_fn is None:
+    reason = ""
+    if self.paused_fn is not None:
+      try:
+        reason = self.paused_fn() or ""
+      except Exception:
+        reason = ""
+    return reason or self._no_slot_reason()
+
+  def _no_slot_reason(self):
+    """Why Plots may not take its reader slots ("" when it may). Once it holds them it keeps them, so no check."""
+    if self._sm is not None:
       return ""
+    now = self.clock()
+    checked_at, reason = self._slot_check
+    if now - checked_at < SLOT_CHECK_S:
+      return reason
     try:
-      return self.paused_fn() or ""
+      full = (self.full_topics_fn or msgq_full_topics)(self.SERVICES)
     except Exception:
-      return ""
+      full = []
+    reason = (f"Plots is paused: {', '.join(full)} already has msgq's {MSGQ_NUM_READERS} readers, and one more would "
+              "cut openpilot off from it." if full else "")
+    self._slot_check = (now, reason)
+    return reason
 
   def live_message(self, service, max_age_s=1.0):
     """The latest `service` message from Plots' own subscription if it is fresh, else None.

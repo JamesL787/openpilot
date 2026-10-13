@@ -142,9 +142,9 @@ class _Lead:
 class _FakeSM:
   def __init__(self, left=None, right=None, left_blinker=False, right_blinker=False, v_ego=30.0):
     from types import SimpleNamespace
-    self.valid = {"starpilotRadarState": True, "carState": True}
+    self.valid = {"starpilotRadarState": True, "starpilotCarState": True}
     self.msgs = {"starpilotRadarState": SimpleNamespace(leadLeft=left or _Lead(), leadRight=right or _Lead()),
-                 "carState": SimpleNamespace(leftBlinker=left_blinker, rightBlinker=right_blinker, vEgo=v_ego)}
+                 "starpilotCarState": SimpleNamespace(leftBlinker=left_blinker, rightBlinker=right_blinker, vEgo=v_ego)}
 
   def __getitem__(self, key):
     return self.msgs[key]

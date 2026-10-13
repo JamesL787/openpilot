@@ -37,7 +37,9 @@ class VASMDaemon:
 
     self.params = Params()
     self.params_memory = Params(memory=True)
-    self.sm = messaging.SubMaster(["deviceState", "starpilotCarState", "carState", "starpilotRadarState"])
+    # No carState: it is at msgq's 15-reader limit, and one more reader evicts them all (2026-10-13).
+    # starpilotCarState carries the speed and blinkers this needs.
+    self.sm = messaging.SubMaster(["deviceState", "starpilotCarState", "starpilotRadarState"])
 
     self.VisionIpcClient = VisionIpcClient
     self.stream_type = VisionStreamType.VISION_STREAM_DRIVER
@@ -163,7 +165,7 @@ class VASMDaemon:
     if self.sm.valid.get("starpilotRadarState", False):
       radar = self.sm["starpilotRadarState"]
       leads = {"left": lead_from_capnp(radar.leadLeft), "right": lead_from_capnp(radar.leadRight)}
-    car_state = self.sm["carState"] if self.sm.valid.get("carState", False) else None
+    car_state = self.sm["starpilotCarState"] if self.sm.valid.get("starpilotCarState", False) else None
     v_ego = float(car_state.vEgo) if car_state is not None else None
     # D-121: the camera's latest verdict per car side (image left = car right, the camera is mirrored)
     camera = {"left": bool(self.inference.right_active), "right": bool(self.inference.left_active)}

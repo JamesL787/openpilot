@@ -481,6 +481,9 @@ class Car:
     fpcs_send = messaging.new_message('starpilotCarState')
     fpcs_send.valid = CS.canValid
     fpcs_send.starpilotCarState = FPCS
+    fpcs_send.starpilotCarState.vEgo = CS.vEgo
+    fpcs_send.starpilotCarState.leftBlinker = CS.leftBlinker
+    fpcs_send.starpilotCarState.rightBlinker = CS.rightBlinker
     set_gas_learner_fields(fpcs_send.starpilotCarState, getattr(self.CI, 'CC', None))
     self.update_accel_log_fields(fpcs_send.starpilotCarState)
     self.pm.send('starpilotCarState', fpcs_send)
