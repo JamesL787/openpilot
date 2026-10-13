@@ -50,3 +50,10 @@ Run it the same way as `tools/vasm_replay` (scratch dir mounted at /work), with
      is how a threshold-only change is judged.
    - **Self-test:** the model's own proposals were used as stand-in labels, which proves the code only, not the model.
      The manifest was reproduced to 5e-05, the confusion came out diagonal, and the gate passes against itself.
+
+5. `train.py`: fine-tunes the converted model on labelled train crops only (test is never read) and exports ONNX.
+   - **Sampling:** classes are balanced. A crop tagged `"truck": true` in labels.json, or listed in `<crops>/truck_tags.json`,
+     is drawn `--truck-weight` (default 4) times as often, because the shipped model handles truck parts badly.
+   - **Validation:** whole (route, segment) groups, 10 % by hash. The best epoch is chosen by class-1 F0.5 at `--on`.
+   - **Smoke test (2026-10-13, docker oprad-test:py312):** 2 epochs on 64 crops ran. The exported ONNX loads in cv2.dnn and
+     matches the torch model to 4e-10. This proves the pipeline only, not any accuracy.
