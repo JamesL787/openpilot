@@ -12,6 +12,7 @@ TURN_LANE_MIN_M, TURN_LANE_MAX_M = 100.0, 300.0
 LEFT_MODIFIERS = ("left", "sharpleft", "slightleft")
 MIN_LEAD_SECONDS = 4.0  # too close to finish a lane change: stop prompting
 RIGHT_MODIFIERS = ("right", "sharpright", "slightright")
+MIN_ADJACENT_LANE_M = 2.5  # floor: LaneDetectionWidth defaults to 0, which made the edge-lane check dead
 
 
 def prompt_window_m(kind: str, v_ego: float) -> float:
@@ -66,7 +67,7 @@ def nav_lane_move_prompt(nav_state: dict, v_ego: float, min_speed: float, adjace
 
   # No adjacent lane on that side (width below the detection threshold): already in the edge lane
   width = adjacent_lane_width.get(side)
-  if width is not None and width < lane_detection_width:
+  if width is not None and width < max(lane_detection_width, MIN_ADJACENT_LANE_M):
     return out
 
   out["armed"] = True

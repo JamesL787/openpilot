@@ -70,3 +70,13 @@ def test_on_ramp_is_prompted_like_an_exit():
   # D-113
   assert prompt(nav("on ramp", "slight right", 300.0), v=20.0)["kind"] == "exit"
   assert prompt(nav("on ramp", "slight right", 300.0), v=20.0)["armed"]
+
+
+def test_edge_lane_blocks_even_with_default_zero_threshold():
+  def zero(state, widths):
+    return nav_lane_move_prompt(state, 13.0, 8.9, widths, 0.0, 100.0)
+
+  assert not zero(nav(), {"left": 3.5, "right": 0.0})["armed"]
+  assert not zero(nav(mod="left"), {"left": 1.0, "right": 3.5})["armed"]
+  assert zero(nav(), {"left": 0.0, "right": 3.5})["armed"]
+  assert zero(nav(), {"left": 3.5, "right": 3.5})["armed"]
