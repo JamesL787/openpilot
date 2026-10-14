@@ -5,6 +5,8 @@
        or   http://127.0.0.1:8765/?split=train  (only the crops extract_crops flagged for review)
        or   http://127.0.0.1:8765/?split=review (only the crops in <crops>/review_list.json: owner labels an agent
                                                   disagreed with, shown with the agent's label; a key press re-labels)
+       or   http://127.0.0.1:8765/?split=queue  (every crop of the segment sides in <crops>/queue.json, labelled blind:
+                                                  dense validation segments, so the event-level gate has more to score)
 
 Keys: 0 no car, 1 adjacent lane, 2 two or more lanes over, t truck part (labelled 1 and tagged so training can
 oversample it), x unsure (left out of training and scoring), left/right arrows to move. Class rules: see the page legend.
@@ -35,7 +37,7 @@ PAGE = r"""<!doctype html><meta charset="utf-8"><title>V-ASM labeler</title>
  .done{border-color:#2a7} a{color:#8cf}
  b{color:#fff} .k{display:inline-block;border:1px solid #666;border-radius:4px;padding:0 6px;margin-right:4px}
 </style>
-<div><a href="?split=test">test</a> &middot; <a href="?split=train">train</a> &middot; <a href="?split=review">review</a></div>
+<div><a href="?split=test">test</a> &middot; <a href="?split=train">train</a> &middot; <a href="?split=review">review</a> &middot; <a href="?split=queue">queue</a></div>
 <div id="bar"></div>
 <div id="row">
  <div><div>before</div><img class="ctx" id="prev2"><br><img class="ctx" id="prev1"></div>
@@ -58,7 +60,9 @@ async function load() {
   const r = await (await fetch("/api/rows?split=" + split)).json();
   rows = r.rows; labels = r.labels;
   // review: resume at the first crop not re-labelled since the review list was made
-  const todo = split === "review" ? (x => !(x.file in labels) || (labels[x.file].at || "9") < r.created) : (x => !(x.file in labels));
+  const todo = split === "review" ? (x => !(x.file in labels) || (labels[x.file].at || "9") < r.created)
+    : split === "queue" ? (x => !(x.file in labels) || "by" in labels[x.file])  // agent labels still need the owner's
+    : (x => !(x.file in labels));
   reviewed = x => !todo(x);
   i = rows.findIndex(todo); if (i < 0) i = 0;
   show();
@@ -79,7 +83,7 @@ function show() {
     `speed ${r.v_ego} m/s  blinker ${r.blinker == 1 ? "ON" : "off"}\n\n` +
     `radar ${r.car_side}: ` + (r.radar_status == 1 ? `${r.radar_drel} m ahead, rel ${r.radar_vrel} m/s` : "none") +
     `\npass hold: ${r.pass_hold == 1 ? "HOLDING" : "-"}\n`;
-  if (split !== "test") s += `\nmodel: nocar ${r.p_nocar}  car ${r.p_car}  distant ${r.p_distant}\n` +
+  if (split !== "test" && split !== "queue") s += `\nmodel: nocar ${r.p_nocar}  car ${r.p_car}  distant ${r.p_distant}\n` +
     `proposal: ${NAMES[r.proposal]}\nflag: ${r.review || "-"}`;
   if (split === "review") s += `\n\nAGENT said: ${NAMES[r.agent_label]}\nyou said: ${NAMES[r.owner_label]}` +
     `\n(press the key for the right answer, even if it is yours)`;
@@ -155,6 +159,22 @@ class Store:
     out.sort(key=lambda r: (r["priority"], r["route"], int(r["seg"]), r["image_side"], float(r["t"])))
     return out, lst["created"]
 
+  def queue(self):
+    # every crop of the queued (route, seg, side)s, in camera-view order; route matched by suffix like the notes use
+    path = os.path.join(self.crops, "queue.json")
+    if not os.path.exists(path):
+      return []
+    want = [(q["route"], str(q["seg"]), q["side"]) for q in json.load(open(path))["sides"]]
+    out = []
+    for k, r in enumerate(self.rows):
+      if any(r["route"].endswith(rt) and r["seg"] == sg and r["image_side"] == sd for rt, sg, sd in want):
+        row = dict(r)
+        for name, other in self.neighbours[k].items():
+          row[name] = self.rows[other]["file"] if other is not None else ""
+        out.append(row)
+    out.sort(key=lambda r: (r["route"], int(r["seg"]), r["image_side"], float(r["t"])))
+    return out
+
   def set(self, file, label, truck=False):
     if label not in (0, 1, 2, "x") or (truck and label != 1) or not any(r["file"] == file for r in self.rows):
       return False
@@ -189,7 +209,7 @@ def handler(store):
         return self.send(204, b"", "image/x-icon")
       if url.path == "/api/rows":
         split = parse_qs(url.query).get("split", ["test"])[0]
-        rows, created = store.review() if split == "review" else (store.view(split), "")
+        rows, created = store.review() if split == "review" else (store.queue() if split == "queue" else store.view(split), "")
         return self.send(200, json.dumps({"rows": rows, "labels": store.labels, "created": created}).encode(), "application/json")
       if url.path.startswith("/crop/"):
         path = os.path.normpath(os.path.join(store.crops, url.path[len("/crop/") :]))
