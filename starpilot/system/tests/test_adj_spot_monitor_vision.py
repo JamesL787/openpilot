@@ -223,3 +223,63 @@ def test_d121_camera_on_the_car_side_feeds_the_semi_hold():
   daemon.inference.left_active = False
   daemon._update_assist(t)
   assert daemon._hold["right"] and not daemon._hold["left"], "camera lost the truck, but its front is still beside us"
+
+
+def test_luma_matches_extract_crops_measure_and_ignores_letterbox_padding():
+  inference = VASMInference(Path("unused.onnx"))
+  inference.load_config({"width": 200, "height": 100, "poly_left": [[0, 0], [200, 0], [200, 100], [0, 100]], "poly_right": []})
+  inference._prepare_geometry(100, 200)
+
+  class FakeNet:
+    def setInput(self, blob):
+      self.blob = blob
+
+    def forward(self):
+      return np.array([[1.0, 0.0, 0.0]], dtype=np.float32)
+
+  inference.net = FakeNet()
+  nv12 = np.full((150, 200), 128, dtype=np.uint8)
+  nv12[:100] = 20  # dark Y, neutral UV
+  inference._run_inference(nv12, 100, "left")
+  rgb = (inference.net.blob[0].transpose(1, 2, 0) * 255.0).round().astype(np.uint8)
+  lit = rgb[rgb.max(axis=2) > 0]
+  assert lit.size < rgb.size, "a 2:1 crop is letterboxed"
+  assert inference.luma["left"] == float(lit.mean())
+  assert inference.luma["left"] < 30
+
+
+def _dark_daemon(luma):
+  from types import SimpleNamespace
+  daemon = VASMDaemon.__new__(VASMDaemon)
+  daemon._dark = {"left": False, "right": False}
+  cleared = []
+  daemon.inference = SimpleNamespace(luma={"left": luma, "right": 100.0}, clear_side=cleared.append)
+  return daemon, cleared
+
+
+def test_night_gate_has_hysteresis_and_drops_the_dark_side_detection():
+  from starpilot.system.adj_spot_monitor_vision import DARK_LUMA_ENTER, DARK_LUMA_EXIT
+  daemon, cleared = _dark_daemon(DARK_LUMA_ENTER + 1)
+  assert not daemon._apply_dark_gate("left") and cleared == []
+  daemon.inference.luma["left"] = DARK_LUMA_ENTER - 1
+  assert daemon._apply_dark_gate("left") and cleared == ["left"]
+  daemon.inference.luma["left"] = DARK_LUMA_EXIT  # a headlight sweep inside the band keeps it dark
+  assert daemon._apply_dark_gate("left")
+  daemon.inference.luma["left"] = DARK_LUMA_EXIT + 1
+  assert not daemon._apply_dark_gate("left")
+  assert not daemon._dark["right"]
+
+
+def test_dark_side_stays_live_and_the_radar_hold_still_publishes():
+  from openpilot.starpilot.common.vision_bsm import get_fresh_vasm_state, vasm_is_live
+
+  class Memory(FakeMemoryParams):
+    def get(self, key):
+      return self.values.get(key)
+
+  daemon = _assist_daemon()
+  daemon.params_memory = Memory()
+  daemon._hold = {"left": True, "right": False}  # car left = image right, whose camera verdict the gate dropped
+  daemon._publish(False, False, 0.0, 0.0, 1, updated_at=5.0)
+  assert vasm_is_live(daemon.params_memory, now=5.0)
+  assert get_fresh_vasm_state(daemon.params_memory, now=5.0) == (True, False)

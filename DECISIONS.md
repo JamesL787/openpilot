@@ -2937,3 +2937,25 @@ back added up past 12 m, so the side stayed occupied 2.0 s longer after the Suba
 0.3-0.4 s release (the bridge removes those releases either way); nothing driven.
 
 Not road-validated.
+
+## D-122 — V-ASM ignores the camera on a dark side; the radar pass hold covers it at night (2026-10-14, static unit tests + label replay only, not driven)
+
+The owner relabelled the night segment sides and could not make out cars in several of them. On his labels the shipped
+model missed both night car events and raised 68 s/h of false-occupied time (3 night sides, replay). Fine-tuning made
+night quieter but not better at seeing cars (run5 missed 16 of 16 night car frames at 0.8), so the camera, not the model,
+is the limit there.
+
+- **Gate:** the daemon measures each side's crop brightness exactly as `tools/vasm_finetune/extract_crops.py` does
+  (`mean_luma`: mean of the model input's non-padding pixels). A side goes dark below 30 and comes back above 40.
+- **Effect:** a dark side's camera detection is dropped. V-ASM stays live, and the D-118/D-121 radar pass holds still
+  publish on that side, so at night V-ASM is the radar hold alone (owner's call over making V-ASM unavailable).
+  Those holds exist only with Radar Assist (`VASMRadarAssist`, default off) on.
+- **Gap the owner accepted:** a car the radar never tracked ahead of us (one that comes up from behind into the blind
+  spot) is not held, so at night that side reads clear to nav passing and lane-change blocking unless the car's own
+  blind-spot sensor sees it.
+- **Replay over 183 owner-labelled segment sides (25,409 crops):** the gate trips on the 6 night sides only, none of the
+  other 177. It removes 19 of the shipped model's 229 false-alarm frames and 28 of its 1,653 true-detection frames
+  (23 of those on 478af4/13 right, where the shipped model did see a car at night).
+- **Not done:** no on-road check of the cutoff or of the hold at night, no toggle.
+
+Not road-validated.

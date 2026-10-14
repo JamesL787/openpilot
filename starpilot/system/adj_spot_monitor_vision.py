@@ -25,6 +25,14 @@ V_ASM_SOLO_AFFINITY_CORES = [0, 1, 2]
 BASE_INTERVAL = 1.000
 FOLLOWUP_INTERVAL = 0.300
 FOLLOWUP_WINDOW = 1.0
+# Night gate (owner, 2026-10-14). Below this crop brightness the owner could not make out cars in the side crops, and
+# on his labels the shipped model missed both night car events while raising 68 s/h of false-occupied (replay, 3 sides).
+# A dark side's camera verdict is dropped; V-ASM stays live and the D-118/D-121 radar pass holds alone mark that side
+# occupied (owner: rely on the radar hold at night). Owner-labelled crops by mean_luma, shipped model at 0.8: < 30 held 19 of its 229
+# false alarms and 28 of its 1,653 true detections; every night segment side sat at mean 15-20. Exit at 40 is
+# extract_crops.NIGHT_LUMA; the gap stops a passing headlight from toggling the gate.
+DARK_LUMA_ENTER = 30.0
+DARK_LUMA_EXIT = 40.0
 
 PARAM_REFRESH_INTERVAL = 2.0
 STATUS_LOG_INTERVAL = 10.0
@@ -57,6 +65,7 @@ class VASMDaemon:
     self.followup_until = 0.0
     self.pass_hold = PassHold()
     self._hold = {"left": False, "right": False}  # car-frame D-118 pass holds
+    self._dark = {"left": False, "right": False}  # image-frame night gate
     self._focus_image: set[str] = set()
     self.onroad_prev = False
     self.parked_prev = False
@@ -187,6 +196,7 @@ class VASMDaemon:
     self._focus_image = set()
     if reset_inference:
       self.inference.reset_state()
+      self._dark = {"left": False, "right": False}
     published = self._last_update_at != 0.0 or any(self._last_pub_left) or any(self._last_pub_right)
     if published or self._last_pub_left_conf != 0.0 or self._last_pub_right_conf != 0.0:
       self._publish(False, False, 0.0, 0.0, 0, force=True, updated_at=0.0)
@@ -308,6 +318,10 @@ class VASMDaemon:
           conf_hold_off=self._conf_hold_off,
         )
 
+        if self._apply_dark_gate(self.current_side):
+          l_active, r_active = self.inference.left_active, self.inference.right_active
+        dark = any(self._dark.values())
+
         self._inference_count += 1
         if now - self._last_status_log >= STATUS_LOG_INTERVAL:
           self._last_status_log = now
@@ -316,6 +330,8 @@ class VASMDaemon:
           status = f"[VASM] {self._inference_count} inf {self._throttle_reason} | {cpu_str}"
           status += f" | factor={self._throttle_factor:.1f}x | L={self.inference.left_confidence:.3f}"
           status += f" R={self.inference.right_confidence:.3f}"
+          status += f" | luma L={self.inference.luma['left']:.0f} R={self.inference.luma['right']:.0f}"
+          status += " DARK (radar hold only)" if dark else ""
           print(status)
           self._inference_count = 0
 
@@ -334,6 +350,14 @@ class VASMDaemon:
         print(f"VASM Daemon Error: {e}")
         self._update_inactive(reset_inference=True)
         time.sleep(1.0)
+
+  def _apply_dark_gate(self, side):
+    """Night gate with hysteresis on the side just inferred; a dark side's detection is dropped. True if dark."""
+    luma = self.inference.luma[side]
+    self._dark[side] = luma <= DARK_LUMA_EXIT if self._dark[side] else luma < DARK_LUMA_ENTER
+    if self._dark[side]:
+      self.inference.clear_side(side)
+    return self._dark[side]
 
   def _publish(self, left_active, right_active, left_conf, right_conf, ts_sof, force=False, updated_at=None):
     if updated_at is not None:

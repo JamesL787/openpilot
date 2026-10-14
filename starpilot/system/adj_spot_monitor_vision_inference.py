@@ -53,6 +53,13 @@ class VASMInference:
     self.right_active = False
     self.left_confidence = 0.0
     self.right_confidence = 0.0
+    self.luma = {"left": 0.0, "right": 0.0}  # mean of the model input's unpadded pixels, last frame per side
+
+  def clear_side(self, side: str):
+    if side == "left":
+      self._l_score, self.left_active, self.left_confidence = 0.0, False, 0.0
+    else:
+      self._r_score, self.right_active, self.right_confidence = 0.0, False, 0.0
 
   @property
   def valid(self):
@@ -139,6 +146,9 @@ class VASMInference:
     top = (rs - nh) // 2
     left = (rs - nw) // 2
     crop_sq[top : top + nh, left : left + nw] = resized
+    # same measure as tools/vasm_finetune/extract_crops.py mean_luma, so the night cutoff carries over from the crops
+    lit = crop_sq[crop_sq.max(axis=2) > 0]
+    self.luma[side] = float(lit.mean()) if lit.size else 0.0
 
     blob = crop_sq.astype(np.float32) / 255.0
     blob = np.transpose(blob, (2, 0, 1))
