@@ -10,6 +10,10 @@ model handles trailers, containers and the rest of a cab badly (owner, 2026-10-1
 --truck-weight times as often as a crop of the same class. Classes are balanced first (each class drawn equally often
 per epoch), because most crops are 0.
 
+--owner-only drops agent labels (entries with a `by`). The agents put the adjacent lane one dashed line too far out:
+on the owner-relabelled test set, 107 of 201 crops the owner calls 2 were agent 1, and run1 (trained mostly on
+agent labels) failed the benchmark gate by calling distant traffic adjacent.
+
 Validation: whole (route, segment) groups, --val-frac of them, chosen by a hash so the split is stable across runs and
 neighbouring 4 Hz frames never straddle it. The best epoch by validation class-1 F0.5 at --on is kept.
 
@@ -31,7 +35,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 
-def load_rows(crops):
+def load_rows(crops, owner_only=False):
   with open(os.path.join(crops, "manifest.csv")) as f:
     manifest = [r for r in csv.DictReader(f) if r["split"] == "train"]
   with open(os.path.join(crops, "labels.json")) as f:
@@ -41,7 +45,7 @@ def load_rows(crops):
   rows = []
   for r in manifest:
     e = labels.get(r["file"], {})
-    if e.get("label") in (0, 1, 2):
+    if e.get("label") in (0, 1, 2) and not (owner_only and "by" in e):
       truck = bool(e.get("truck") or tags.get(r["file"])) and e["label"] != 0
       rows.append({"file": r["file"], "y": e["label"], "truck": truck, "group": f"{r['route']}/{r['seg']}"})
   return rows
@@ -51,9 +55,11 @@ def is_val(group, frac):
   return int(hashlib.sha1(group.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF < frac
 
 
-def sample_weights(rows, truck_weight):
+def sample_weights(rows, truck_weight, balance=1.0):
+  # balance 1 = each class drawn equally often; 0 = natural frequency. Full balancing makes the model call "car" too
+  # readily at the daemon's fixed --on threshold (run2: false-occupied 29 -> 45 s/h on the owner test labels).
   count = np.bincount([r["y"] for r in rows], minlength=3).astype(float)
-  return [(1.0 / count[r["y"]]) * (truck_weight if r["truck"] else 1.0) for r in rows]
+  return [count[r["y"]] ** -balance * (truck_weight if r["truck"] else 1.0) for r in rows]
 
 
 class Crops(Dataset):
@@ -88,7 +94,8 @@ def evaluate(model, loader, on, dev):
   tp, fp, fn = int((pred & truth).sum()), int((pred & ~truth).sum()), int((~pred & truth).sum())
   prec, rec = tp / max(tp + fp, 1), tp / max(tp + fn, 1)
   f05 = 1.25 * prec * rec / max(0.25 * prec + rec, 1e-9)
-  return {"nll": nll, "precision": prec, "recall": rec, "f05": f05, "tp": tp, "fp": fp, "fn": fn}
+  fp2 = int((pred & (y == 2)).sum())  # distant traffic called adjacent: the run1 failure
+  return {"nll": nll, "precision": prec, "recall": rec, "f05": f05, "tp": tp, "fp": fp, "fn": fn, "fp_from2": fp2}
 
 
 def main():
@@ -100,8 +107,10 @@ def main():
   ap.add_argument("--batch", type=int, default=32)
   ap.add_argument("--lr", type=float, default=1e-4)
   ap.add_argument("--truck-weight", type=float, default=4.0)
+  ap.add_argument("--balance", type=float, default=1.0, help="class balancing exponent: 1 = equal draws per class, 0 = natural")
   ap.add_argument("--val-frac", type=float, default=0.1)
   ap.add_argument("--on", type=float, default=0.8)
+  ap.add_argument("--owner-only", action="store_true", help="train and validate on the owner's labels only (no `by`)")
   ap.add_argument("--seed", type=int, default=0)
   ap.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu", help="mps = Apple GPU (native macOS), else cpu")
   ap.add_argument("--limit", type=int, default=0, help="smoke test: use only this many train and val crops")
@@ -110,7 +119,7 @@ def main():
   torch.manual_seed(args.seed)
   os.makedirs(args.out, exist_ok=True)
 
-  rows = load_rows(args.crops)
+  rows = load_rows(args.crops, args.owner_only)
   tr = [r for r in rows if not is_val(r["group"], args.val_frac)]
   va = [r for r in rows if is_val(r["group"], args.val_frac)]
   if args.limit:
@@ -124,7 +133,7 @@ def main():
   if not tr or not va:
     raise SystemExit("not enough labelled train crops")
 
-  sampler = WeightedRandomSampler(sample_weights(tr, args.truck_weight), num_samples=len(tr), replacement=True)
+  sampler = WeightedRandomSampler(sample_weights(tr, args.truck_weight, args.balance), num_samples=len(tr), replacement=True)
   train_loader = DataLoader(Crops(args.crops, tr, True), batch_size=args.batch, sampler=sampler, num_workers=4)
   val_loader = DataLoader(Crops(args.crops, va, False), batch_size=64, num_workers=4)
 
