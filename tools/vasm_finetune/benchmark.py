@@ -12,7 +12,7 @@ positives, and the 3-class confusion. The same is reported for the subsets night
 within 8 m, and each route. A sweep over on-thresholds shows what a threshold change alone would buy.
 
 Event level, the daemon's sampling: one side per 1 s, alternating; 0.3 s for 1 s after any occupied; on/off
-hysteresis. Each segment is simulated with both sides on the 4 Hz crop clock (the daemon's sample time snaps to the
+hysteresis; D-118 focus (see FOCUS below). Each segment is simulated with both sides on the 4 Hz crop clock (the daemon's sample time snaps to the
 nearest crop, at most 0.125 s off). Truth events are runs of "car" labels (gaps up to 0.5 s merged) lasting at least 0.5 s. Missed = never
 published from its start to 1 s after its end; latency = first published - start; false-occupied = published while
 the label is not car and no car label is within 1 s, per hour per side. Only segment sides labelled >= 95 % count.
@@ -32,6 +32,8 @@ import sys
 import cv2
 import numpy as np
 
+from openpilot.starpilot.common.vasm_assist import FOCUS_INTERVAL, FOCUS_LEAD_DIST, pick_image_side
+
 NIGHT_LUMA = 40.0
 RADAR_NEAR_M = 8.0
 LABELLED_MIN = 0.95
@@ -43,6 +45,10 @@ LATENCY_SLACK = 0.125
 # LATENCY_SLACK. Events are scored over PHASES seeded random phases (start side, offset within the 1 s interval);
 # latency p50/p90 are the median over phases, missed and false-occupied the mean. 0 = the old single fixed phase.
 PHASES = 50
+# D-118 focus (adj_spot_monitor_vision._update_assist, VASMRadarAssist on): a side with its blinker on or a radar car
+# in that lane within FOCUS_LEAD_DIST is sampled every FOCUS_INTERVAL, the other at least every OTHER_SIDE_MAX_GAP.
+# From the manifest's per-crop blinker / radar_status / radar_drel; the nav passing prompt is not in it and is left out.
+# VASMRadarAssist was 1 in route 326's initData (absent before 325), so the daemon as driven now has it on.
 MIN_EVENT_S = 0.5  # shorter car runs are counted apart: 1 s per-side sampling cannot be expected to see them
 
 
@@ -74,43 +80,50 @@ def runs(t, mask, gap):
   return out
 
 
-def simulate(t, p, on, off, side0="left", last0=-1e9):
+def simulate(t, p, on, off, side0="left", last0=-1e9, focus=None):
   """Daemon sampling over one segment. t: crop times; p: {image_side: p_car per crop}. Returns {image_side: published}.
-  side0/last0 set the sampling phase: the first side looked at and when the previous sample was taken."""
+  side0/last0 set the sampling phase: the first side looked at and when the previous sample was taken.
+  focus: {image_side: bool per crop} for D-118 focus, None = off."""
   pub = {s: np.zeros(len(t), bool) for s in p}
   act = dict.fromkeys(p, False)
   side, last, follow = side0, last0, -1e9
+  last_at = {"left": last0, "right": last0}
   for i, ti in enumerate(t):
+    focus_img = {s for s in focus if focus[s][i]} if focus else set()
     interval = 0.3 if ti < follow else 1.0
+    if focus_img:
+      interval = min(interval, FOCUS_INTERVAL)
     if ti - last >= interval - 0.13:  # a crop every 0.25 s: take the first one at or past the due time
+      side = pick_image_side(focus_img, ["left", "right"], side, last_at, ti)
       if side in p:
         c = p[side][i]
         act[side] = c >= (off if act[side] else on)
         if any(act.values()):
           follow = ti + 1.0
-      last = ti
+      last = last_at[side] = ti
       side = "right" if side == "left" else "left"
     for s in p:
       pub[s][i] = act[s]
   return pub
 
 
-def event_scores(rows, p_car, on, off, phases=PHASES):
+def event_scores(rows, p_car, on, off, phases=PHASES, focus=True):
   if not phases:
-    return _event_scores(rows, p_car, on, off, None)
+    return _event_scores(rows, p_car, on, off, None, focus)
   rng = np.random.default_rng(0)
-  runs_ = [_event_scores(rows, p_car, on, off, rng) for _ in range(phases)]
+  runs_ = [_event_scores(rows, p_car, on, off, rng, focus) for _ in range(phases)]
   e = dict(runs_[0])
   for k in ("missed", "false_occupied_s_per_h"):
     e[k] = float(np.mean([r[k] for r in runs_]))
   for k in ("latency_p50", "latency_p90"):
     e[k] = float(np.median([r[k] for r in runs_]))
   e["phases"] = phases
+  e["focus"] = focus
   e["latency_p50_5_95"] = [float(np.percentile([r["latency_p50"] for r in runs_], q)) for q in (5, 95)]
   return e
 
 
-def _event_scores(rows, p_car, on, off, rng):
+def _event_scores(rows, p_car, on, off, rng, focus=True):
   by_seg = {}
   for k, r in enumerate(rows):
     by_seg.setdefault((r["route"], r["seg"]), []).append(k)
@@ -121,17 +134,20 @@ def _event_scores(rows, p_car, on, off, rng):
     t = np.array(times)
     p = {}
     lab = {}
+    foc = {}
     for side in ("left", "right"):
       ks = [k for k in idx if rows[k]["image_side"] == side]
       if not ks:
         continue
       p[side] = np.zeros(len(t))
       lab[side] = np.full(len(t), -1)
+      foc[side] = np.zeros(len(t), bool)
       for k in ks:
         p[side][pos[float(rows[k]["t"])]] = p_car[k]
         lab[side][pos[float(rows[k]["t"])]] = rows[k]["y"]
+        foc[side][pos[float(rows[k]["t"])]] = rows[k]["blinker"] == "1" or (rows[k]["radar_status"] == "1" and float(rows[k]["radar_drel"]) <= FOCUS_LEAD_DIST)
     phase = {} if rng is None else {"side0": str(rng.choice(["left", "right"])), "last0": t[0] - rng.uniform(0.0, 1.0)}
-    pub = simulate(t, p, on, off, **phase)
+    pub = simulate(t, p, on, off, **phase, focus=foc if focus else None)
     dt = np.median(np.diff(t)) if len(t) > 1 else 0.25
     for side in p:
       if np.mean(lab[side] >= 0) < LABELLED_MIN:
@@ -245,7 +261,7 @@ def run(args):
     "frame": {name: frame_scores(y_car[m], p_car[m], args.on) for name, m in subsets.items() if m.any()},
     "confusion": [[int(np.sum((y == a) & (probs.argmax(1) == b))) for b in range(3)] for a in range(3)],
     "sweep": {f"{on:.2f}": frame_scores(y_car, p_car, on) for on in SWEEP},
-    "events": event_scores(rows, p_car, args.on, args.off),
+    "events": event_scores(rows, p_car, args.on, args.off, focus=args.focus),
   }
   report(res)
   if args.out:
@@ -278,6 +294,8 @@ def compare(a_path, b_path):
     sys.exit("one run has the D-122 night gate and the other does not: re-run both the same way")
   if a["events"].get("phases", 0) != b["events"].get("phases", 0):
     sys.exit("the runs scored latency over different sampling phases: re-run both the same way")
+  if a["events"].get("focus", False) != b["events"].get("focus", False):
+    sys.exit("one run simulates D-118 focus and the other does not: re-run both the same way")
   ea, eb = a["events"], b["events"]
   checks = [
     ("missed events", ea["missed"], eb["missed"], eb["missed"] <= ea["missed"]),
@@ -310,6 +328,7 @@ def main():
   ap.add_argument("--off", type=float, default=0.65)
   ap.add_argument("--out")
   ap.add_argument("--no-night-gate", dest="night_gate", action="store_false", help="score without the daemon's D-122 gate")
+  ap.add_argument("--no-focus", dest="focus", action="store_false", help="simulate the daemon with VASMRadarAssist off")
   ap.add_argument("--compare", nargs=2, metavar=("BASE", "CANDIDATE"))
   args = ap.parse_args()
   if args.compare:
