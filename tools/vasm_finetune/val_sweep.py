@@ -18,7 +18,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from benchmark import default_model, event_scores, frame_scores, infer  # noqa: E402
+from benchmark import default_model, event_scores, frame_scores, infer, night_gate  # noqa: E402
 from train import is_val  # noqa: E402
 
 GAP = 0.15
@@ -53,8 +53,8 @@ def main():
 
   rows = val_rows(args.crops, args.val_frac)
   print(len(rows), "validation crops,", sum(r["y"] == 1 for r in rows), "car", flush=True)
-  ref = score(rows, infer(args.base or default_model(), args.crops, rows)[:, 1], 0.8)
-  p = infer(args.model, args.crops, rows)[:, 1]
+  ref = score(rows, night_gate(rows, infer(args.base or default_model(), args.crops, rows)[:, 1]), 0.8)
+  p = night_gate(rows, infer(args.model, args.crops, rows)[:, 1])
   sweep = [score(rows, p, on) for on in np.round(np.arange(0.70, 0.991, 0.01), 2)]
   use_events = ref["events"]["segment_sides_used"] > 0
 

@@ -143,6 +143,26 @@ def event_scores(rows, p_car, on, off):
   }
 
 
+# starpilot/system/adj_spot_monitor_vision.py DARK_LUMA_ENTER / DARK_LUMA_EXIT (D-122); mean_luma is the same measure
+DARK_LUMA_ENTER, DARK_LUMA_EXIT = 30.0, 40.0
+
+
+def night_gate(rows, p_car):
+  """The daemon's D-122 night gate: on a dark side the camera verdict is dropped (p_car 0), hysteresis per side."""
+  p = np.array(p_car, dtype=np.float64)
+  by_side = {}
+  for k, r in enumerate(rows):
+    by_side.setdefault((r["route"], r["seg"], r["image_side"]), []).append(k)
+  for ks in by_side.values():
+    dark = False
+    for k in sorted(ks, key=lambda k: float(rows[k]["t"])):
+      luma = float(rows[k]["mean_luma"])
+      dark = luma <= DARK_LUMA_EXIT if dark else luma < DARK_LUMA_ENTER
+      if dark:
+        p[k] = 0.0
+  return p
+
+
 def infer(model_path, crops, rows):
   net = cv2.dnn.readNetFromONNX(model_path)
   out = np.zeros((len(rows), 3), np.float32)
@@ -180,6 +200,8 @@ def run(args):
 
   y = np.array([r["y"] for r in rows])
   y_car, p_car = y == 1, probs[:, 1]
+  if args.night_gate:
+    p_car = night_gate(rows, p_car)
   luma = np.array([float(r["mean_luma"]) for r in rows])
   subsets = {
     "all": np.ones(len(rows), bool),
@@ -197,6 +219,7 @@ def run(args):
     "labelled": len(rows),
     "on": args.on,
     "off": args.off,
+    "night_gate": args.night_gate,
     "frame": {name: frame_scores(y_car[m], p_car[m], args.on) for name, m in subsets.items() if m.any()},
     "confusion": [[int(np.sum((y == a) & (probs.argmax(1) == b))) for b in range(3)] for a in range(3)],
     "sweep": {f"{on:.2f}": frame_scores(y_car, p_car, on) for on in SWEEP},
@@ -229,6 +252,8 @@ def compare(a_path, b_path):
     b = json.load(f)
   if (a["manifest_sha256"], a["labels_sha256"]) != (b["manifest_sha256"], b["labels_sha256"]):
     sys.exit("different test sets (manifest or labels changed): re-run both")
+  if a.get("night_gate", False) != b.get("night_gate", False):
+    sys.exit("one run has the D-122 night gate and the other does not: re-run both the same way")
   ea, eb = a["events"], b["events"]
   checks = [
     ("missed events", ea["missed"], eb["missed"], eb["missed"] <= ea["missed"]),
@@ -260,6 +285,7 @@ def main():
   ap.add_argument("--on", type=float, default=0.8)
   ap.add_argument("--off", type=float, default=0.65)
   ap.add_argument("--out")
+  ap.add_argument("--no-night-gate", dest="night_gate", action="store_false", help="score without the daemon's D-122 gate")
   ap.add_argument("--compare", nargs=2, metavar=("BASE", "CANDIDATE"))
   args = ap.parse_args()
   if args.compare:

@@ -49,22 +49,68 @@ def load_rows(crops, owner_only=False, hardneg=()):
   for r in manifest:
     e = labels.get(r["file"], {})
     if r["file"] in hardneg and e.get("label") == 0:
-      rows.append({"file": r["file"], "y": 0, "truck": False, "group": f"{r['route']}/{r['seg']}", "hardneg": True})
+      rows.append({**_where(r), "file": r["file"], "y": 0, "truck": False, "group": f"{r['route']}/{r['seg']}", "hardneg": True})
     elif e.get("label") in (0, 1, 2) and not (owner_only and "by" in e):
       truck = bool(e.get("truck") or tags.get(r["file"])) and e["label"] != 0
-      rows.append({"file": r["file"], "y": e["label"], "truck": truck, "group": f"{r['route']}/{r['seg']}"})
+      rows.append({**_where(r), "file": r["file"], "y": e["label"], "truck": truck, "group": f"{r['route']}/{r['seg']}"})
   return rows
+
+
+def _where(r):
+  return {"route": r["route"], "seg": r["seg"], "side": r["image_side"], "t": float(r["t"])}
+
+
+def queue_segments(path):
+  # (route suffix, seg) of every queue.json side: the owner's dense validation segments, kept out of training
+  return {(s["route"], str(s["seg"])) for s in json.load(open(path))["sides"]}
+
+
+def in_segments(r, segs):
+  return any(r["route"].endswith(q) and r["seg"] == s for q, s in segs)
+
+
+def drop_hardneg_near_cars(rows, crops, gap):
+  """Hard negatives within `gap` s of a crop labelled 1 (anyone's label) on the same side are likely a car's first or
+  last sliver, which the owner labels 1 (partial vehicles count); 124 of the 678 accepted ones were within 1 s."""
+  with open(os.path.join(crops, "labels.json")) as f:
+    labels = json.load(f)
+  with open(os.path.join(crops, "manifest.csv")) as f:
+    cars = {}
+    for r in csv.DictReader(f):
+      if labels.get(r["file"], {}).get("label") == 1:
+        cars.setdefault((r["route"], r["seg"], r["image_side"]), []).append(float(r["t"]))
+  def near(r):
+    return any(abs(r["t"] - t) <= gap for t in cars.get((r["route"], r["seg"], r["side"]), ()))
+  return [r for r in rows if not (r.get("hardneg") and near(r))]
+
+
+def mark_onsets(rows, onset_s, frame_gap=0.6):
+  """Flag class-1 rows in the first `onset_s` of their run (consecutive 1s on one side, gaps under frame_gap s)."""
+  by_side = {}
+  for r in rows:
+    by_side.setdefault((r["route"], r["seg"], r["side"]), []).append(r)
+  for side_rows in by_side.values():
+    start, prev = None, None
+    for r in sorted(side_rows, key=lambda r: r["t"]):
+      if r["y"] != 1:
+        start = None
+      elif start is None or r["t"] - prev > frame_gap:
+        start = r["t"]
+      if r["y"] == 1:
+        r["onset"] = r["t"] - start <= onset_s
+        prev = r["t"]
 
 
 def is_val(group, frac):
   return int(hashlib.sha1(group.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF < frac
 
 
-def sample_weights(rows, truck_weight, balance=1.0):
+def sample_weights(rows, truck_weight, balance=1.0, onset_weight=1.0):
   # balance 1 = each class drawn equally often; 0 = natural frequency. Full balancing makes the model call "car" too
   # readily at the daemon's fixed --on threshold (run2: false-occupied 29 -> 45 s/h on the owner test labels).
   count = np.bincount([r["y"] for r in rows], minlength=3).astype(float)
-  return [count[r["y"]] ** -balance * (truck_weight if r["truck"] else 1.0) for r in rows]
+  return [count[r["y"]] ** -balance * (truck_weight if r["truck"] else 1.0) * (onset_weight if r.get("onset") else 1.0)
+          for r in rows]
 
 
 class Crops(Dataset):
@@ -117,6 +163,11 @@ def main():
   ap.add_argument("--on", type=float, default=0.8)
   ap.add_argument("--owner-only", action="store_true", help="train and validate on the owner's labels only (no `by`)")
   ap.add_argument("--hardneg", default=None, help="json list of agent-0 crops checked by eye; added as 0 to TRAIN only")
+  ap.add_argument("--exclude-queue", default=None, help="queue.json: its segments are never trained on (dense validation)")
+  ap.add_argument("--hardneg-gap", type=float, default=0.0, help="drop hard negatives within this many s of a labelled car")
+  ap.add_argument("--onset-weight", type=float, default=1.0, help="sampling weight on the first --onset-s of each car run")
+  ap.add_argument("--onset-s", type=float, default=1.0)
+  ap.add_argument("--save-epochs", action="store_true", help="also export ep<N>.onnx every epoch, for queue-based selection")
   ap.add_argument("--seed", type=int, default=0)
   ap.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu", help="mps = Apple GPU (native macOS), else cpu")
   ap.add_argument("--limit", type=int, default=0, help="smoke test: use only this many train and val crops")
@@ -126,6 +177,12 @@ def main():
   os.makedirs(args.out, exist_ok=True)
 
   rows = load_rows(args.crops, args.owner_only, set(json.load(open(args.hardneg))) if args.hardneg else ())
+  if args.exclude_queue:
+    segs = queue_segments(args.exclude_queue)
+    rows = [r for r in rows if not in_segments(r, segs)]
+  if args.hardneg_gap > 0:
+    rows = drop_hardneg_near_cars(rows, args.crops, args.hardneg_gap)
+  mark_onsets(rows, args.onset_s)
   tr = [r for r in rows if not is_val(r["group"], args.val_frac)]
   va = [r for r in rows if is_val(r["group"], args.val_frac) and not r.get("hardneg")]
   if args.limit:
@@ -135,12 +192,14 @@ def main():
     "train_classes": np.bincount([r["y"] for r in tr], minlength=3).tolist(),
     "train_truck": sum(r["truck"] for r in tr),
     "train_hardneg": sum(bool(r.get("hardneg")) for r in tr),
+    "train_onset": sum(bool(r.get("onset")) for r in tr),
   }
   print(summary, flush=True)
   if not tr or not va:
     raise SystemExit("not enough labelled train crops")
 
-  sampler = WeightedRandomSampler(sample_weights(tr, args.truck_weight, args.balance), num_samples=len(tr), replacement=True)
+  weights = sample_weights(tr, args.truck_weight, args.balance, args.onset_weight)
+  sampler = WeightedRandomSampler(weights, num_samples=len(tr), replacement=True)
   train_loader = DataLoader(Crops(args.crops, tr, True), batch_size=args.batch, sampler=sampler, num_workers=4)
   val_loader = DataLoader(Crops(args.crops, va, False), batch_size=64, num_workers=4)
 
@@ -169,12 +228,21 @@ def main():
     if v["f05"] > best:
       best = v["f05"]
       torch.save(model, os.path.join(args.out, "best.pt"))
+    if args.save_epochs:
+      export(model, os.path.join(args.out, f"ep{ep}.onnx"), dev)
     json.dump(log, open(os.path.join(args.out, "train_log.json"), "w"), indent=1)
 
   model = torch.load(os.path.join(args.out, "best.pt"), weights_only=False, map_location="cpu").eval()
   onnx_path = os.path.join(args.out, "vasm_ft.onnx")
-  torch.onnx.export(model, torch.zeros(1, 3, 352, 352), onnx_path, input_names=["images"], output_names=["output0"], opset_version=17, dynamo=False)
+  export(model, onnx_path, None)
   print("best val f05", best, "->", onnx_path)
+
+
+def export(model, path, dev):
+  m = model.to("cpu").eval()
+  torch.onnx.export(m, torch.zeros(1, 3, 352, 352), path, input_names=["images"], output_names=["output0"], opset_version=17, dynamo=False)
+  if dev is not None:
+    model.to(dev)
 
 
 if __name__ == "__main__":
