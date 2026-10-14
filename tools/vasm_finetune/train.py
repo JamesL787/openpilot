@@ -177,13 +177,12 @@ def main():
   os.makedirs(args.out, exist_ok=True)
 
   rows = load_rows(args.crops, args.owner_only, set(json.load(open(args.hardneg))) if args.hardneg else ())
-  if args.exclude_queue:
-    segs = queue_segments(args.exclude_queue)
-    rows = [r for r in rows if not in_segments(r, segs)]
+  segs = queue_segments(args.exclude_queue) if args.exclude_queue else set()
   if args.hardneg_gap > 0:
     rows = drop_hardneg_near_cars(rows, args.crops, args.hardneg_gap)
   mark_onsets(rows, args.onset_s)
-  tr = [r for r in rows if not is_val(r["group"], args.val_frac)]
+  # queue segments stay out of training only; validation groups queued for dense labelling (tier A) remain validation
+  tr = [r for r in rows if not is_val(r["group"], args.val_frac) and not in_segments(r, segs)]
   va = [r for r in rows if is_val(r["group"], args.val_frac) and not r.get("hardneg")]
   if args.limit:
     tr, va = random.sample(tr, min(args.limit, len(tr))), random.sample(va, min(args.limit, len(va)))
