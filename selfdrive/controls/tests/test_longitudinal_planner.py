@@ -5237,6 +5237,54 @@ def test_exp_close_lead_floor_does_not_delay_closing_speed_demand():
   assert planner.close_lead_brake_cap_value <= -3.0
 
 
+
+def _chill_close_lead_case(a_lead=-1.2):
+  # D-123, 327 34:55 shape: chill, highway lead 40 m ahead, 4 m/s slower, braking at about 1 m/s^2. The aLeadK share
+  # takes the cap to the -1.0 comfort floor; the closing speed alone asks for about -0.04.
+  v_ego = 21.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=40.0, v_lead=17.0, a_lead=a_lead, radar=True, model_prob=1.0)
+  lead.vRel = 17.0 - v_ego
+  sm = make_sm(v_ego, -0.2, -1.0, experimental_mode=False, tracking_lead=True, lead_one=lead)
+  return planner, lead, sm, v_ego
+
+
+
+def test_rate_limit_lead_brake_share():
+  # D-123 / D-073: the aLeadK share stops at the floor; the closing-speed demand goes past it at once.
+  limit = longitudinal_planner_module.rate_limit_lead_brake_share
+  assert limit(-1.0, -0.3, None) == pytest.approx(-0.3)        # 327 34:55: lead braking only, floor holds
+  assert limit(-1.0, -0.3, -0.04) == pytest.approx(-0.3)       # a mild closing demand stays inside the floor
+  assert limit(-1.0, -0.3, -0.8) == pytest.approx(-0.8)        # a deeper closing demand applies now
+  assert limit(-0.2, -0.3, None) == pytest.approx(-0.2)        # a cap shallower than the floor is untouched
+
+def test_chill_close_lead_hard_lead_brake_is_not_rate_limited():
+  # A lead braking harder than CHILL_CLOSE_LEAD_MAX_BRAKE gets the full cap on the first frame.
+  planner, lead, sm, v_ego = _chill_close_lead_case(a_lead=-3.0)
+  planner.update(sm, make_toggles())
+  assert planner.close_lead_brake_cap_value == pytest.approx(planner.get_close_lead_brake_cap(lead, v_ego, -1.0))
+  assert planner.close_lead_brake_cap_value <= -1.0 + 1e-6
+  assert planner.chill_close_lead_floor == 0.0
+
+
+def test_chill_close_lead_floor_does_not_delay_closing_speed_demand():
+  # Stopped car 20 m ahead at 20 m/s in chill: the closing speed alone reaches the comfort floor, so it applies at once.
+  v_ego = 20.0
+  CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+  planner = LongitudinalPlanner(CP, init_v=v_ego)
+  lead = make_lead(status=True, d_rel=20.0, v_lead=0.0, a_lead=-1.0, radar=True, model_prob=0.99)
+  sm = make_sm(v_ego, -0.05, -1.0, experimental_mode=False, tracking_lead=True, lead_one=lead)
+  planner.update(sm, make_toggles())
+  assert planner.close_lead_brake_cap_value <= -1.0 + 1e-6
+
+
+def test_chill_close_lead_floor_leaves_experimental_mode_alone():
+  planner, lead, sm, _ = _exp_close_lead_case()
+  for _ in range(20):
+    planner.update(sm, make_toggles())
+    assert planner.chill_close_lead_floor == 0.0
+
 def _boost_planner_run(*, lead_one=None, presses=3):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=17.0)

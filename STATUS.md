@@ -11123,3 +11123,12 @@ screen over 31b/319/311/2f5/299. Tests: 10 new in `test_radard_lead_switch.py`; 
 law, so the planner's -1.2 to -1.4 passed the depth cap at 60-80 m. Closed-loop replay: peaks -1.42 -> -1.20,
 -1.29 -> -1.16, -1.00 -> -0.83, gap cost <= 0.6 m. 2f2 15:07, 18:08 and 24:33 unchanged. Tests: 3 new in
 `test_stock_feel_stop.py`; Stock Brake Feel stop and emergency tests 19 pass. Lint clean on changed lines.
+
+## 244. Chill's close-lead cap eases in when a far lead slows for a moment (D-123). Replay + static only, not driven.
+
+327 34:55 and 328 14:06 / 24:14: a lead 40-70 m ahead really slowed for about a second. The close-lead cap's aLeadK
+share stepped the target to the -1.00 comfort floor in about 0.15 s. That share now deepens at most 1.0 m/s^3 below the
+current target; the closing-speed demand still applies at once. Closed-loop replay, fidelity mean |d| <= 0.017:
+biggest 0.25 s drop 0.54 / 0.89 / 1.38 -> 0.26 / 0.26 / 0.61, gap cost <= 1.3 m. 324 chill set: 8 of 11 unchanged,
+including the f18 / f24 hard stops. e46 is 0.11 deeper later. Tests: 5 new in `test_longitudinal_planner.py`; the
+controls suite passes except the 2 pre-existing latcontrol failures. py39 compat passes; no new lint.

@@ -2959,3 +2959,42 @@ is the limit there.
 - **Not done:** no on-road check of the cutoff or of the hold at night, no toggle.
 
 Not road-validated.
+
+## D-123 — Chill's close-lead cap eases in when a far lead slows for a moment (STATUS 244, 2026-10-14, replay only, not driven)
+
+**Problem (owner, routes 00000327 / 00000328):** sudden -1.0 brakes on the highway at 328 14:06 / 14:10, 24:14 / 24:19
+and 327 34:55. Peter: nausea from speed swings, brakes that come too suddenly.
+
+**Cause:** the close-lead brake cap (`get_close_lead_brake_cap`), not Stock Brake Feel or D-120. A lead 40-70 m ahead
+slowed by 3-7 m/s for about a second. The radar range fell as fast as the radar speed said, and the camera range agreed,
+so the leads were real (the camera's own speed under-read the change). The cap's 0.7 * aLeadK share pushed it past the
+chill comfort floor, so it clipped at -1.00. The target stepped from -0.25..-0.7 to -1.00 in about 0.15 s, held 0.5-1.0 s
+and released. Logged `closeLeadBrakeCap` -1.00 in every case.
+
+**Decision:** in chill, the aLeadK share of the close-lead cap may deepen at most `CHILL_CLOSE_LEAD_RATE = 1.0` m/s^3
+below where the target already is. This is D-073's Experimental Mode mechanism moved to the comfort floor, via the
+shared `rate_limit_lead_brake_share`. What the closing speed alone demands still applies at once, so a stopped car
+ahead gets the full cap on the first frame. Not rate limited: a lead braking harder than `CHILL_CLOSE_LEAD_MAX_BRAKE =
+2.0`, a cap already built below the comfort floor, fast-closing leads, and Experimental Mode (D-073 as before). Radar
+data is untouched (D-041/D-042). Default ON.
+
+**Evidence (closed-loop replay, acl2s with the fitted plant; car long path 1aec23886, logged toggles):**
+- Fidelity: open-loop replay against the logged plan, mean |d| 0.008 / 0.017 / 0.003, every -1.00 reproduced.
+  Sim car min -1.27 / -1.22 / -1.40 against logged aEgo -1.27 / -1.25 / -1.39.
+- Biggest 0.25 s target drop: 0.54 / 0.89 / 1.38 -> 0.26 / 0.26 / 0.61.
+- Sim peak: -1.27 / -1.22 / -1.40 -> -1.25 / -1.04 / -1.26.
+- Closest gap: 0.4 / 1.3 / 1.2 m nearer.
+- 324 chill set (Stock Brake Feel on):
+  - Unchanged: segs 5, 16, 22, 28, 41, 67, 85 and the f18 / f24 hard stops (target -3.31 / -2.65).
+  - e85b: drop 0.78 -> 0.28, 0.9 m nearer.
+  - e46 (a lead that kept slowing): drop 0.97 -> 0.72, but its later peak is 0.11 deeper (-1.47 -> -1.58, sim -1.82 ->
+    -1.93), gap unchanged.
+- Open-loop protected groups 297a, 297b, 298, 2a6, 2f2, 311, 312a, 312b, 312c: identical. Most are Experimental Mode;
+  on 312c the limiter ran 425 ticks and never bound.
+- 1.5 m/s^3 kept about half the softening (drops 0.38 / 0.39 / 0.73).
+
+**Risk:** a lead that keeps braking at up to 2 m/s^2 is met about 0.2-0.7 s later, then slightly deeper (e46). Above 2
+m/s^2, or once the closing speed alone needs the brake, nothing changes.
+
+**Lever:** `CHILL_CLOSE_LEAD_RATE` large (e.g. 100) restores the instant cap; `CHILL_CLOSE_LEAD_MAX_BRAKE = 0` turns
+the limiter off.

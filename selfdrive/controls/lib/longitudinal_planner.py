@@ -261,6 +261,21 @@ CLOSE_LEAD_BRAKE_CAP_RAMP_FULL = 0.5
 # The fast-closing path is not rate limited.
 EXP_CLOSE_LEAD_FLOOR_RATE = 1.5   # m/s^3, how fast the Exp cap floor may deepen below chill's
 EXP_CLOSE_LEAD_FLOOR_RELAX = 2.0  # m/s^3, how fast it returns once the cap stops asking
+# D-123: chill's close-lead cap, same idea at the comfort floor. Its aLeadK share used to step the target from the MPC's
+# -0.25..-0.7 to the -1.0 floor in about 0.15 s when a highway lead 40-70 m ahead slowed for about a second (radar
+# range fall matched the radar speed and the camera range, so the leads were real). Peter felt these as sudden
+# brakes: 328 14:06 / 14:10, 328 24:14 / 24:19, 327 34:55 (car 1aec23886 long path, chill, logged
+# closeLeadBrakeCap -1.00 for 0.5-1.0 s). The aLeadK share may now deepen at most CHILL_CLOSE_LEAD_RATE below where
+# the target already is; what the closing speed alone demands still applies at once. Closed-loop replay (acl2s, fitted
+# plant, open-loop fidelity mean |d| <= 0.017): biggest 0.25 s target drop 0.54 / 0.89 / 1.38 -> 0.26 / 0.26 / 0.61,
+# sim peak -1.27 / -1.22 / -1.40 -> -1.25 / -1.04 / -1.26, closest gap 0.4 / 1.3 / 1.2 m nearer. 324 chill set:
+# 8 of 11 unchanged incl. the f18 / f24 hard stops, e85b drop 0.78 -> 0.28 (0.9 m nearer), e46 (a lead that kept
+# slowing) drop 0.97 -> 0.72 but its peak 0.11 deeper. 1.5 m/s^3 kept about half the softening.
+# Only comfort brakes: a lead braking harder than CHILL_CLOSE_LEAD_MAX_BRAKE, or a cap already built below the
+# comfort floor, keeps the instant cap (test_off_axis_lead_bound_leaves_straight_lead_unchanged: aLeadK -7.8 at 52 m
+# must reach -3.0 within 15 frames).
+CHILL_CLOSE_LEAD_RATE = 1.0       # m/s^3
+CHILL_CLOSE_LEAD_MAX_BRAKE = 2.0  # m/s^2 of lead braking (aLeadK), above it the cap is not rate limited
 
 # Off-axis radar leads (STATUS 74e): at bearing |yRel|/dRel above this the lead is on a curve relative
 # to the ego x axis, where Bosch-A radial range-rate is not the lead's longitudinal speed and aLeadK
@@ -1284,6 +1299,12 @@ def off_axis_lead_a_lead(lead, model_msg, held=False):
   return bounded if bounded > a_lead else None
 
 
+def rate_limit_lead_brake_share(cap, floor, closing_cap):
+  """D-073 / D-123: the close-lead cap may go no deeper than `floor`, except for what the closing speed alone demands
+  (`closing_cap`, the same cap with aLeadK not counted), which applies at once."""
+  return max(cap, floor if closing_cap is None else min(floor, closing_cap))
+
+
 def fast_closing_accel_min(vehicle_accel_min):
   """Floor the close-lead cap is built against while FAST_CLOSING_LEAD_* passes the comfort floor."""
   if FAST_CLOSING_LEAD_MAX_BRAKE <= 0.0:
@@ -1550,6 +1571,7 @@ class LongitudinalPlanner:
     self.fcw = False
     self.dt = dt
     self.exp_close_lead_floor = 0.0
+    self.chill_close_lead_floor = 0.0
     self.model_allow_throttle = True
     self.model_allow_throttle_transition_t = 0.0
     self.allow_throttle = True
@@ -3702,6 +3724,10 @@ class LongitudinalPlanner:
                                      if self.fast_closing_tick - t <= FAST_CLOSING_LEAD_VISION_MEMORY_TICKS}
     exp_close_lead_cap = None
     exp_close_lead_floor = min(self.exp_close_lead_floor, accel_limits_turns[0])
+    # D-123: where the target already is (or the floor the chill cap has reached), one rate step deeper
+    chill_anchor = min(self.chill_close_lead_floor, output_a_target)
+    chill_close_lead_floor = chill_anchor - CHILL_CLOSE_LEAD_RATE * self.dt
+    chill_close_lead_cap = None
     if lead_control_active:
       for lead, lead_source in ((self.lead_one, 'lead0'), (self.lead_two, 'lead1')):
         rav4_early_lead_cap = get_toyota_rav4_tss2_early_lead_cap(
@@ -3717,7 +3743,13 @@ class LongitudinalPlanner:
           # floor at EXP_CLOSE_LEAD_FLOOR_RATE; what the closing speed alone demands applies at once.
           exp_close_lead_cap = cap if exp_close_lead_cap is None else min(exp_close_lead_cap, cap)
           closing_cap = self.get_close_lead_brake_cap(lead, v_ego, output_accel_min, count_lead_brake=False)
-          cap = max(cap, exp_close_lead_floor if closing_cap is None else min(exp_close_lead_floor, closing_cap))
+          cap = rate_limit_lead_brake_share(cap, exp_close_lead_floor, closing_cap)
+        elif (cap is not None and not experimental_mlsim and not fast_closing and output_accel_min >= A_CRUISE_MIN and
+              -float(lead.aLeadK) <= CHILL_CLOSE_LEAD_MAX_BRAKE):
+          # D-123: in chill the aLeadK share deepens at CHILL_CLOSE_LEAD_RATE; the closing-speed demand applies at once.
+          chill_close_lead_cap = cap if chill_close_lead_cap is None else min(chill_close_lead_cap, cap)
+          closing_cap = self.get_close_lead_brake_cap(lead, v_ego, output_accel_min, count_lead_brake=False)
+          cap = rate_limit_lead_brake_share(cap, chill_close_lead_floor, closing_cap)
         if cap is not None:
           close_lead_caps.append(cap)
           self.close_lead_brake_cap_value = min(self.close_lead_brake_cap_value, cap)
@@ -3741,6 +3773,10 @@ class LongitudinalPlanner:
       self.exp_close_lead_floor = max(output_accel_min, exp_close_lead_floor - EXP_CLOSE_LEAD_FLOOR_RATE * self.dt)
     else:
       self.exp_close_lead_floor = min(0.0, self.exp_close_lead_floor + EXP_CLOSE_LEAD_FLOOR_RELAX * self.dt)
+    if chill_close_lead_cap is not None and chill_close_lead_cap < chill_anchor:
+      self.chill_close_lead_floor = max(output_accel_min, chill_close_lead_floor)
+    else:
+      self.chill_close_lead_floor = 0.0
     if fast_closing_cap is not None:
       # The floor opens to the fast-closing cap's own value only (FAST_CLOSING_LEAD_*).
       output_accel_min = min(output_accel_min, fast_closing_cap)
