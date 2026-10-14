@@ -10,6 +10,9 @@ model handles trailers, containers and the rest of a cab badly (owner, 2026-10-1
 --truck-weight times as often as a crop of the same class. Classes are balanced first (each class drawn equally often
 per epoch), because most crops are 0.
 
+--hardneg adds agent-0 crops the model scored as car, each checked by eye (concrete barriers, night window
+reflections: run3's new false-occupied time on test), to train only; validation stays owner-labelled.
+
 --owner-only drops agent labels (entries with a `by`). The agents put the adjacent lane one dashed line too far out:
 on the owner-relabelled test set, 107 of 201 crops the owner calls 2 were agent 1, and run1 (trained mostly on
 agent labels) failed the benchmark gate by calling distant traffic adjacent.
@@ -35,7 +38,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 
-def load_rows(crops, owner_only=False):
+def load_rows(crops, owner_only=False, hardneg=()):
   with open(os.path.join(crops, "manifest.csv")) as f:
     manifest = [r for r in csv.DictReader(f) if r["split"] == "train"]
   with open(os.path.join(crops, "labels.json")) as f:
@@ -45,7 +48,9 @@ def load_rows(crops, owner_only=False):
   rows = []
   for r in manifest:
     e = labels.get(r["file"], {})
-    if e.get("label") in (0, 1, 2) and not (owner_only and "by" in e):
+    if r["file"] in hardneg and e.get("label") == 0:
+      rows.append({"file": r["file"], "y": 0, "truck": False, "group": f"{r['route']}/{r['seg']}", "hardneg": True})
+    elif e.get("label") in (0, 1, 2) and not (owner_only and "by" in e):
       truck = bool(e.get("truck") or tags.get(r["file"])) and e["label"] != 0
       rows.append({"file": r["file"], "y": e["label"], "truck": truck, "group": f"{r['route']}/{r['seg']}"})
   return rows
@@ -111,6 +116,7 @@ def main():
   ap.add_argument("--val-frac", type=float, default=0.1)
   ap.add_argument("--on", type=float, default=0.8)
   ap.add_argument("--owner-only", action="store_true", help="train and validate on the owner's labels only (no `by`)")
+  ap.add_argument("--hardneg", default=None, help="json list of agent-0 crops checked by eye; added as 0 to TRAIN only")
   ap.add_argument("--seed", type=int, default=0)
   ap.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu", help="mps = Apple GPU (native macOS), else cpu")
   ap.add_argument("--limit", type=int, default=0, help="smoke test: use only this many train and val crops")
@@ -119,15 +125,16 @@ def main():
   torch.manual_seed(args.seed)
   os.makedirs(args.out, exist_ok=True)
 
-  rows = load_rows(args.crops, args.owner_only)
+  rows = load_rows(args.crops, args.owner_only, set(json.load(open(args.hardneg))) if args.hardneg else ())
   tr = [r for r in rows if not is_val(r["group"], args.val_frac)]
-  va = [r for r in rows if is_val(r["group"], args.val_frac)]
+  va = [r for r in rows if is_val(r["group"], args.val_frac) and not r.get("hardneg")]
   if args.limit:
     tr, va = random.sample(tr, min(args.limit, len(tr))), random.sample(va, min(args.limit, len(va)))
   summary = {
     "train": len(tr), "val": len(va),
     "train_classes": np.bincount([r["y"] for r in tr], minlength=3).tolist(),
     "train_truck": sum(r["truck"] for r in tr),
+    "train_hardneg": sum(bool(r.get("hardneg")) for r in tr),
   }
   print(summary, flush=True)
   if not tr or not va:
