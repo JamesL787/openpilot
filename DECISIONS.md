@@ -2998,3 +2998,36 @@ m/s^2, or once the closing speed alone needs the brake, nothing changes.
 
 **Lever:** `CHILL_CLOSE_LEAD_RATE` large (e.g. 100) restores the instant cap; `CHILL_CLOSE_LEAD_MAX_BRAKE = 0` turns
 the limiter off.
+
+## D-124 — Experimental Mode's close-lead cap eases in too (STATUS 245, 2026-10-14, replay only, not driven)
+
+**Problem (owner):** Peter drives mostly in Experimental Mode. D-123 only covers chill: the three brakes it was built on
+(328 14:06, 328 24:14, 327 34:55) were all chill for the whole window. In Experimental Mode, D-073 still let the
+close-lead cap step straight to chill's floor (about -1.0) and only rate limited it below that. 327 21:47 (newest
+Experimental Mode drive): logged `closeLeadBrakeCap` 0.00 -> -1.00 in one step with the lead at aLeadK -1.29.
+
+**Decision:** in Experimental Mode, for a lead braking no harder than `CHILL_CLOSE_LEAD_MAX_BRAKE` (2.0), the floor of
+the aLeadK share starts where the target already is and deepens at `EXP_CLOSE_LEAD_FLOOR_RATE` (1.5 m/s^3, D-073's
+rate) all the way (`ease_close_lead_floor`, state `exp_close_lead_ease`). D-073's floor only starts deepening below
+chill's floor once the eased floor has reached it. Unchanged: the closing-speed demand applies at once; fast-closing
+leads; and once any lead brakes harder than 2.0, D-073 as before (its floor starts at chill's and deepens at once).
+Radar data is untouched (D-041/D-042). Default ON.
+
+**Evidence (closed-loop replay, acl2s with the fitted plant, logged toggles; 2a4 / 2a6 / 2f2 logs predate D-073, so
+"before" is the current code replayed):**
+- Fidelity: sim vs logged aEgo mean |d| <= 0.094 and target vs logged <= 0.010 over each window's first 2 s.
+- Biggest 0.25 s target drop / closest gap:
+  - 327 21:47: 0.51 -> 0.44, 19.6 -> 19.5 m.
+  - 2f2 17:23 (highway slow-down): 1.58 -> 1.28, target min -1.75 -> -1.45, sim min -1.47 -> -1.15, 15.6 -> 15.4 m.
+  - 2a6 4:08 (into a stop): 1.19 -> 0.70, sim peak -1.68 -> -1.70, 6.9 -> 6.6 m.
+  - 2a6 15:08 (D-073's close case): 0.80 -> 0.40, sim peak -2.74 -> -2.54, 16.2 -> 15.6 m.
+  - 2f2 15:45 and 2a4 22:00 (hard brake, target -3.26): unchanged within 0.1 m.
+- 1.0 m/s^3 softened about as much and cost up to 0.9 m of gap.
+- Open-loop protected groups 297a, 297b, 298, 2a6, 2f2, 311, 312a, 312b, 312c: only softer onsets (2a6, 2f2, 312c),
+  except 312a 10:16, where the same -1.82 brake comes one frame sooner (-0.40 -> -1.52 -> -1.82, against a one-frame
+  -0.40 -> -1.82 now), and 311 41:35, softer onset (-1.00 -> -0.71) then up to 0.25 deeper while it catches up.
+
+**Risk:** a lead braking up to 2 m/s^2 is met up to about 0.5 s later, then a little deeper (311, 2a6 4:08); gap cost
+up to 0.6 m in these replays.
+
+**Lever:** `CHILL_CLOSE_LEAD_MAX_BRAKE = 0` sends every braking Experimental Mode lead back to D-073 (and turns D-123 off).

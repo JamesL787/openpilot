@@ -5285,6 +5285,25 @@ def test_chill_close_lead_floor_leaves_experimental_mode_alone():
     planner.update(sm, make_toggles())
     assert planner.chill_close_lead_floor == 0.0
 
+def test_ease_close_lead_floor():
+  # D-124: in Experimental Mode the floor starts at the current target, not at chill's -1.0, and stops at chill's
+  # floor (D-073 takes over below it).
+  ease = longitudinal_planner_module.ease_close_lead_floor
+  step = longitudinal_planner_module.EXP_CLOSE_LEAD_FLOOR_RATE * 0.05
+  assert ease(0.0, -0.3, -1.0, 0.05) == pytest.approx((-0.3 - step, -0.3 - step))   # 327 21:47: from the target
+  assert ease(-0.6, -0.3, -1.0, 0.05) == pytest.approx((-0.6 - step, -0.6 - step))  # keeps going from its own state
+  assert ease(-0.98, -0.3, -1.0, 0.05) == pytest.approx((-0.98 - step, -1.0))       # held at chill's floor
+
+
+def test_exp_close_lead_hard_lead_keeps_d073_floor():
+  # A lead braking harder than CHILL_CLOSE_LEAD_MAX_BRAKE: the Exp floor starts at chill's and deepens on frame one.
+  planner, _, sm, _ = _exp_close_lead_case()
+  planner.update(sm, make_toggles())
+  step = longitudinal_planner_module.EXP_CLOSE_LEAD_FLOOR_RATE * planner.dt
+  assert planner.exp_close_lead_floor == pytest.approx(longitudinal_planner_module.A_CRUISE_MIN - step)
+  assert planner.close_lead_brake_cap_value <= longitudinal_planner_module.A_CRUISE_MIN + 1e-6
+
+
 def _boost_planner_run(*, lead_one=None, presses=3):
   CP = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
   planner = LongitudinalPlanner(CP, init_v=17.0)

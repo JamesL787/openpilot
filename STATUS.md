@@ -11132,3 +11132,14 @@ current target; the closing-speed demand still applies at once. Closed-loop repl
 biggest 0.25 s drop 0.54 / 0.89 / 1.38 -> 0.26 / 0.26 / 0.61, gap cost <= 1.3 m. 324 chill set: 8 of 11 unchanged,
 including the f18 / f24 hard stops. e46 is 0.11 deeper later. Tests: 5 new in `test_longitudinal_planner.py`; the
 controls suite passes except the 2 pre-existing latcontrol failures. py39 compat passes; no new lint.
+
+## 245. Experimental Mode's close-lead cap eases in too (D-124). Replay + static only, not driven.
+
+Peter drives mostly in Experimental Mode, where D-123 never ran: there the close-lead cap still stepped straight to about
+-1.0 (327 21:47: 0.00 -> -1.00 in one step, lead at -1.29). For a lead braking no harder than 2 m/s^2 the floor now
+eases from the current target at 1.5 m/s^3 (D-073's rate) and hands over to D-073 below chill's floor. Closed-loop
+replay on 6 Experimental Mode brakes (fidelity sim vs log aEgo <= 0.094): biggest 0.25 s drop 0.51 / 1.58 / 1.19 / 0.80
+-> 0.44 / 1.28 / 0.70 / 0.40, closest gap at most 0.6 m nearer, hard brakes unchanged. Protected set: softer onsets;
+312a 10:16 reaches the same -1.82 one frame sooner, 311 41:35 up to 0.25 deeper after a softer onset. Tests: 2 new in
+`test_longitudinal_planner.py`, 655 pass; the controls suite passes except the 2 pre-existing latcontrol failures. py39
+compat passes; no new lint.
