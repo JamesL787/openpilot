@@ -5,7 +5,12 @@ import cv2
 import numpy as np
 
 _ASSETS = Path(__file__).resolve().parents[1] / "assets" / "vision_models"
-V_ASM_MODEL_PATH = _ASSETS / "v_asm_model.onnx"
+# Upstream model: the benchmark baseline (tools/vasm_finetune), whose probabilities the crop manifest records.
+V_ASM_UPSTREAM_MODEL_PATH = _ASSETS / "v_asm_model.onnx"
+# The daemon runs the fine-tune (tools/vasm_finetune run8 ep0, 2026-10-14; test replay at on 0.83 / off 0.68 vs upstream
+# at 0.80 / 0.65 with D-118 focus: missed 2.38 vs 3.38, false-occupied 25.9 vs 29.4 s/h, latency p50 0.80 vs 0.78 s).
+# Its threshold is VASMConfidenceThreshold 0.83, set on the car; no road evidence yet.
+V_ASM_MODEL_PATH = _ASSETS / "v_asm_model_ft.onnx"
 
 MODEL_INPUT_SIZE = 352
 

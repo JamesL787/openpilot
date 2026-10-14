@@ -315,9 +315,9 @@ def compare(a_path, b_path):
 
 
 def default_model():
-  from openpilot.starpilot.system.adj_spot_monitor_vision_inference import V_ASM_MODEL_PATH
+  from openpilot.starpilot.system.adj_spot_monitor_vision_inference import V_ASM_UPSTREAM_MODEL_PATH
 
-  return V_ASM_MODEL_PATH
+  return V_ASM_UPSTREAM_MODEL_PATH
 
 
 def main():

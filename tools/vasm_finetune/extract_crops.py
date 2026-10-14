@@ -28,7 +28,7 @@ import av
 import cv2
 import numpy as np
 from openpilot.starpilot.common.vasm_assist import AdjacentLead, PassHold
-from openpilot.starpilot.system.adj_spot_monitor_vision_inference import V_ASM_MODEL_PATH, VASMInference
+from openpilot.starpilot.system.adj_spot_monitor_vision_inference import V_ASM_UPSTREAM_MODEL_PATH, VASMInference
 
 SURE = 0.98  # model probability taken as a proposal without review
 RADAR_NEAR_M = 8.0  # radar car in the next lane this close ahead: its rear may already be in the crop
@@ -132,7 +132,7 @@ def main():
         continue
       with open(ex_path) as f:
         ex = json.load(f)
-      inf = VASMInference(V_ASM_MODEL_PATH)
+      inf = VASMInference(V_ASM_UPSTREAM_MODEL_PATH)
       assert inf.load(), inf.last_error
       inf.load_config(json.loads(ex["params"]["VASMAnnotationConfig"]))
       net, tap = inf.net, BlobTap(inf.net)
