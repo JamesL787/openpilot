@@ -38,6 +38,11 @@ LABELLED_MIN = 0.95
 MERGE_GAP = 0.5
 SWEEP = (0.3, 0.4, 0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95)
 LATENCY_SLACK = 0.125
+# Idle, the daemon samples one side per second, alternating: each side is seen every 2 s, so one fixed sampling phase
+# moves latency p50 by ~0.5 s (shipped model, selection set, 5-95% over 200 random phases: 0.58-1.11 s), four times
+# LATENCY_SLACK. Events are scored over PHASES seeded random phases (start side, offset within the 1 s interval);
+# latency p50/p90 are the median over phases, missed and false-occupied the mean. 0 = the old single fixed phase.
+PHASES = 50
 MIN_EVENT_S = 0.5  # shorter car runs are counted apart: 1 s per-side sampling cannot be expected to see them
 
 
@@ -69,11 +74,12 @@ def runs(t, mask, gap):
   return out
 
 
-def simulate(t, p, on, off):
-  """Daemon sampling over one segment. t: crop times; p: {image_side: p_car per crop}. Returns {image_side: published}."""
+def simulate(t, p, on, off, side0="left", last0=-1e9):
+  """Daemon sampling over one segment. t: crop times; p: {image_side: p_car per crop}. Returns {image_side: published}.
+  side0/last0 set the sampling phase: the first side looked at and when the previous sample was taken."""
   pub = {s: np.zeros(len(t), bool) for s in p}
   act = dict.fromkeys(p, False)
-  side, last, follow = "left", -1e9, -1e9
+  side, last, follow = side0, last0, -1e9
   for i, ti in enumerate(t):
     interval = 0.3 if ti < follow else 1.0
     if ti - last >= interval - 0.13:  # a crop every 0.25 s: take the first one at or past the due time
@@ -89,7 +95,22 @@ def simulate(t, p, on, off):
   return pub
 
 
-def event_scores(rows, p_car, on, off):
+def event_scores(rows, p_car, on, off, phases=PHASES):
+  if not phases:
+    return _event_scores(rows, p_car, on, off, None)
+  rng = np.random.default_rng(0)
+  runs_ = [_event_scores(rows, p_car, on, off, rng) for _ in range(phases)]
+  e = dict(runs_[0])
+  for k in ("missed", "false_occupied_s_per_h"):
+    e[k] = float(np.mean([r[k] for r in runs_]))
+  for k in ("latency_p50", "latency_p90"):
+    e[k] = float(np.median([r[k] for r in runs_]))
+  e["phases"] = phases
+  e["latency_p50_5_95"] = [float(np.percentile([r["latency_p50"] for r in runs_], q)) for q in (5, 95)]
+  return e
+
+
+def _event_scores(rows, p_car, on, off, rng):
   by_seg = {}
   for k, r in enumerate(rows):
     by_seg.setdefault((r["route"], r["seg"]), []).append(k)
@@ -109,7 +130,8 @@ def event_scores(rows, p_car, on, off):
       for k in ks:
         p[side][pos[float(rows[k]["t"])]] = p_car[k]
         lab[side][pos[float(rows[k]["t"])]] = rows[k]["y"]
-    pub = simulate(t, p, on, off)
+    phase = {} if rng is None else {"side0": str(rng.choice(["left", "right"])), "last0": t[0] - rng.uniform(0.0, 1.0)}
+    pub = simulate(t, p, on, off, **phase)
     dt = np.median(np.diff(t)) if len(t) > 1 else 0.25
     for side in p:
       if np.mean(lab[side] >= 0) < LABELLED_MIN:
@@ -254,6 +276,8 @@ def compare(a_path, b_path):
     sys.exit("different test sets (manifest or labels changed): re-run both")
   if a.get("night_gate", False) != b.get("night_gate", False):
     sys.exit("one run has the D-122 night gate and the other does not: re-run both the same way")
+  if a["events"].get("phases", 0) != b["events"].get("phases", 0):
+    sys.exit("the runs scored latency over different sampling phases: re-run both the same way")
   ea, eb = a["events"], b["events"]
   checks = [
     ("missed events", ea["missed"], eb["missed"], eb["missed"] <= ea["missed"]),
