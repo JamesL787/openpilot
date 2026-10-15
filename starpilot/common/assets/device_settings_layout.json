@@ -119,6 +119,16 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "LatSeedPrevCurvature",
+        "label": "Seed Model Curvature When Off",
+        "description": "While steering is off, the model's smoothing starts from the car's own curvature instead of its last command, so steering turns on where the wheel already is (upstream openpilot PR 39091). Mostly helps turn-ons at a stop with the wheel turned.",
+        "picker_description": "Steering turns on from where the wheel already is.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLateralTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "ForceTorqueController",
         "label": "Force Torque Controller",
         "description": "Use torque-based steering control instead of angle-based control for smoother lane keeping, especially in curves.",

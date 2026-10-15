@@ -1912,6 +1912,7 @@ _TROUBLESHOOT_ADVANCED_LATERAL_KEYS = [
   "ForceAutoTune",
   "ForceAutoTuneOff",
   "ForceTorqueController",
+  "LatSeedPrevCurvature",
   "CameraOffset",
   "LaneCentering",
   "LaneCenteringPauseOnSignal",

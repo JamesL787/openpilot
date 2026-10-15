@@ -284,6 +284,13 @@ class StarPilotLateralLayout(_SettingsPage):
         visible=alt_on,
       ),
       SettingRow(
+        "LatSeedPrevCurvature", "toggle", tr_noop("Seed Model Curvature When Off"),
+        subtitle=tr_noop("Steering turns on from where the wheel already is (upstream PR 39091)."),
+        get_state=lambda: p.get_bool("LatSeedPrevCurvature"),
+        set_state=lambda s: p.put_bool("LatSeedPrevCurvature", s),
+        visible=alt_on,
+      ),
+      SettingRow(
         "UseAutoSteerDelay", "toggle", tr_noop("Use Auto-Learned Delay"),
         subtitle=tr_noop("Learn the full steering delay automatically. The manual value below is ignored while enabled."),
         get_state=lambda: p.get_bool("UseAutoSteerDelay"),
