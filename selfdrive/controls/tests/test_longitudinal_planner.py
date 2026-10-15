@@ -5451,6 +5451,7 @@ def test_exp_cam_lead_brake_floor_needs_a_steady_confident_camera():
   (dict(d_rel=25.0, v_lead=15.0, a_lead=-0.3), _cam_model(0.95, 40.0, -1.2)),  # camera lead is another car
   (dict(d_rel=25.0, v_lead=15.0, a_lead=-0.3), _cam_model(0.95, 25.0, -0.3)),  # not braking enough
   (dict(d_rel=25.0, v_lead=15.0, a_lead=1.0), _cam_model(0.95, 25.0, -1.2)),   # radar contradicts by over 1.5
+  (dict(d_rel=25.0, v_lead=15.0, a_lead=0.4), _cam_model(0.95, 25.0, -0.6)),   # 332 8:20: radar sees it pulling away
 ])
 def test_exp_cam_lead_brake_floor_gates(lead_kw, model):
   planner = _exp_early_planner(make_lead(status=True, **lead_kw), v_ego=15.0)

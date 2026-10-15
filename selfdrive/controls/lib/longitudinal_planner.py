@@ -314,6 +314,10 @@ EXP_CAM_LEAD_BRAKE_MAX = 2.0       # m/s^2
 EXP_CAM_LEAD_BRAKE_GAP_S = 3.0     # s
 EXP_CAM_LEAD_BRAKE_JERK = 1.5      # m/s^3
 EXP_CAM_LEAD_BRAKE_AVG_N = 10      # model frames (0.5 s) of camera lead accel averaged
+# Radar must not see the lead pulling away. Job's whole-route replay, 332 8:20: camera mean -0.5 while radar aLeadK was
+# +0.2..+0.63 (lead accelerating), so the floor went -0.19 -> -0.58 for nothing. At 332 19:02 radar read +0.12 -> 0.0 as
+# the camera saw the lead braking, then followed it down.
+EXP_CAM_LEAD_BRAKE_RADAR_MAX_A = 0.1  # m/s^2
 EXP_EARLY_RELEASE_JERK = 1.0       # m/s^3
 # D-125, 329 5:25: one radar range glitch at creep (7.95 -> 6.27 m, vRel -3.75 at 1.6 m/s) read the stopped lead as
 # backing toward us at -2.15 m/s; the close-lead cap went -0.76 -> -1.50 for one frame. The cap now reads vLead no lower
@@ -1861,7 +1865,8 @@ class LongitudinalPlanner:
     EXP_EARLY_ONSET: a lead closing faster than EXP_EARLY_ONSET_MIN_CLOSING whose geometry needs at least
     EXP_EARLY_ONSET_MIN_NEED, while the model is already slowing: brake toward that need, at most EXP_EARLY_ONSET_MAX.
     EXP_CAM_LEAD_BRAKE: a lead within EXP_CAM_LEAD_BRAKE_GAP_S that a confident camera at the same range sees braking at
-    EXP_CAM_LEAD_BRAKE_A or harder (and the radar does not contradict by more than 1.5): brake as hard as it does,
+    EXP_CAM_LEAD_BRAKE_A or harder (and the radar neither contradicts by more than 1.5 nor sees the lead pulling away,
+    EXP_CAM_LEAD_BRAKE_RADAR_MAX_A): brake as hard as it does,
     at most EXP_CAM_LEAD_BRAKE_MAX."""
     floor, jerk = None, EXP_EARLY_ONSET_JERK
     lead = self.lead_one
@@ -1888,7 +1893,8 @@ class LongitudinalPlanner:
         self.exp_cam_a_hist.clear()
       if len(self.exp_cam_a_hist) == self.exp_cam_a_hist.maxlen:
         cam_a = float(np.mean(self.exp_cam_a_hist))
-        if cam_a <= EXP_CAM_LEAD_BRAKE_A and float(lead.aLeadK) < cam_a + 1.5:
+        a_radar = float(lead.aLeadK)
+        if cam_a <= EXP_CAM_LEAD_BRAKE_A and a_radar < cam_a + 1.5 and a_radar <= EXP_CAM_LEAD_BRAKE_RADAR_MAX_A:
           cam_floor = max(cam_a, -EXP_CAM_LEAD_BRAKE_MAX)
           if floor is None or cam_floor < floor:
             floor, jerk = cam_floor, EXP_CAM_LEAD_BRAKE_JERK
