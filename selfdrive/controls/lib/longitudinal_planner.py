@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+from collections import deque
 import numpy as np
 import time
 import cereal.messaging as messaging
@@ -287,6 +288,39 @@ CHILL_CLOSE_LEAD_MAX_BRAKE = 2.0  # m/s^2 of lead braking (aLeadK), above it the
 # CHILL_CLOSE_LEAD_MAX_BRAKE (2f2 17:23 and 2a6 4:08 reach -2.4 / -2.6), D-073's floor deepens at once again.
 # Open-loop protected set (1.5 prototype): only softer onsets, except 312a 10:16 where the same -1.82 brake is
 # reached one frame sooner (-0.40 -> -1.52 -> -1.82).
+# D-125 (Experimental Mode only; replay and log evidence, not driven): both hard brakes on 332 were late starts, not deep
+# brakes. 332 4:09: a camera lead 60-100 m ahead was stopping; the geometry need (get_lead_geometry_required_accel) was
+# 0.8 from 6 s before and 1.6 at 2.5 s before, while the MPC source stayed "cruise" and e2e gave -0.4..-1.1, then the MPC
+# jumped to -3.5. EXP_EARLY_ONSET brakes toward that need (at most 1.5, deepening at 0.8 m/s^3) once the model is
+# already slowing and the lead closes faster than 2 m/s. 332 19:02: the camera saw the lead braking at -1.2..-1.45 for
+# 0.7 s while ego still commanded +0.66 -> +0.15, Stock Brake Feel's TTC table (TTC ~40 s) held -0.35, and then radar
+# aLeadK -2.7 tripped its emergency latch and passed the planner's -3.2 within 0.15 s. EXP_CAM_LEAD_BRAKE follows a
+# confident camera lead within 3 s of gap at the same range as the radar lead, braking at -0.5 or harder over a 0.5 s
+# mean (a raw-frame version pulsed -0.83 <-> -1.41 with camera noise on 329 8:04), as hard as it brakes, at most 2.0.
+# It is applied after Stock Brake Feel, because Stock Brake Feel capped it at -0.35. The floor rises at 1.0 m/s^3.
+# Closed-loop replay (fixes off -> on; min target / biggest 0.25 s drop): 332 4:09 -3.46 -> -2.21, 0.74 -> 0.69 (closest
+# gap 5.4 -> 4.2 m; sim speed RMSE 1.21, target vs logged r 0.967); 332 19:02 -3.19 -> -2.20, 2.48 -> 2.30 (the sim
+# diverges after the brake in both arms; r 0.747).
+EXP_EARLY_ONSET = True
+EXP_EARLY_ONSET_MIN_CLOSING = 2.0  # m/s
+EXP_EARLY_ONSET_MIN_NEED = 0.5     # m/s^2
+EXP_EARLY_ONSET_MAX = 1.5          # m/s^2
+EXP_EARLY_ONSET_E2E = -0.2         # m/s^2, the model must already be slowing
+EXP_EARLY_ONSET_JERK = 0.8         # m/s^3
+EXP_CAM_LEAD_BRAKE = True
+EXP_CAM_LEAD_BRAKE_PROB = 0.9
+EXP_CAM_LEAD_BRAKE_A = -0.5        # m/s^2
+EXP_CAM_LEAD_BRAKE_MAX = 2.0       # m/s^2
+EXP_CAM_LEAD_BRAKE_GAP_S = 3.0     # s
+EXP_CAM_LEAD_BRAKE_JERK = 1.5      # m/s^3
+EXP_CAM_LEAD_BRAKE_AVG_N = 10      # model frames (0.5 s) of camera lead accel averaged
+EXP_EARLY_RELEASE_JERK = 1.0       # m/s^3
+# D-125, 329 5:25: one radar range glitch at creep (7.95 -> 6.27 m, vRel -3.75 at 1.6 m/s) read the stopped lead as
+# backing toward us at -2.15 m/s; the close-lead cap went -0.76 -> -1.50 for one frame. The cap now reads vLead no lower
+# than -0.5 (a stopped lead's normal noise reaches -0.3). The lead itself is still published (D-041). Replay: min target
+# -1.62 -> -1.06, biggest 0.25 s drop 0.93 -> 0.28, closest gap 4.3 -> 3.2 m (r 0.907).
+CLOSE_LEAD_CAP_VLEAD_FLOOR = True
+CLOSE_LEAD_CAP_VLEAD_MIN = -0.5  # m/s
 
 # Off-axis radar leads (STATUS 74e): at bearing |yRel|/dRel above this the lead is on a curve relative
 # to the ego x axis, where Bosch-A radial range-rate is not the lead's longitudinal speed and aLeadK
@@ -427,6 +461,14 @@ STOCK_FEEL_MIN_CLOSING = 0.5  # m/s
 # a simulated gap crossed TTC 2 s or a lead began opening (e5 -11.9, dfa -33, dfb -15 m/s^3). Stock's own p98 rate is
 # 2-3.4 m/s^3 at every TTC; 5 reaches -3.5 from -1.85 in 0.33 s.
 STOCK_FEEL_JERK_OUTSIDE = 5.0  # m/s^3
+# D-125, 329 8:02: the closing speed fell under STOCK_FEEL_MIN_CLOSING, TTC went to inf, and the outside path stepped
+# the target -0.35 -> -0.73 in one frame. For STOCK_FEEL_EXIT_HOLD_S after the law last applied, and while no lead
+# brakes at STOCK_FEEL_LEAD_STOP_A or harder, the target deepens at STOCK_FEEL_EXIT_JERK instead. Replay: -0.35 -> -0.44
+# -> -0.53 -> -0.62 instead of -0.68 at once; the brake then follows the lead's own braking (8:04-8:06) to -1.32 where the
+# logged car reached -1.11 (r 0.968).
+STOCK_FEEL_SOFT_EXIT = True
+STOCK_FEEL_EXIT_JERK = 0.6   # m/s^3
+STOCK_FEEL_EXIT_HOLD_S = 2.0  # s
 # Takeover hold (owner 2026-10-08, "let's try that fix"; replay and limited road evidence only). The depth table used to
 # cut a brake already under way: on 2f7 26:38 (1598.3) the planner was at -1.02 for a car 25 m ahead when the closing
 # speed crossed STOCK_FEEL_MIN_CLOSING; at TTC ~30 s the table allows -0.35, so the brake eased to -0.36 in 0.4 s and
@@ -592,17 +634,29 @@ def stock_feel_held_cap(prev: float, cap: float, dt: float) -> float:
   return float(cap)
 
 
+def stock_feel_law_active(leads, emergency: bool) -> bool:
+  """True while stock_feel_target applies the fitted law (a lead closing, TTC over the floor, no emergency)."""
+  ttc = brake_onset_ttc(leads, STOCK_FEEL_MIN_CLOSING)
+  return not emergency and ttc > STOCK_FEEL_TTC_FLOOR_S and ttc != float('inf')
+
+
 def stock_feel_target(leads, prev: float, target: float, dt: float, v_ego: float = 0.0,
-                     emergency: bool = False) -> float:
+                     emergency: bool = False, law_recent: bool = False) -> float:
   """D-086 stock Honda ACC brake law: while a lead is closing and the worst TTC is over STOCK_FEEL_TTC_FLOOR_S, the
   target goes no deeper than stock's depth at that TTC and deepens no faster than stock's rate; otherwise the planner's
   depth is kept and deepens at most STOCK_FEEL_JERK_OUTSIDE. STOCK_FEEL_LEAD_STOP: when stopping behind a braking lead
   needs more than the table's depth, the cap is that need instead, deepening at STOCK_FEEL_JERK_OUTSIDE. A brake already
   deeper than the cap is let off no faster than STOCK_FEEL_CAP_RELEASE_JERK (stock_feel_held_cap). emergency
-  (stock_feel_emergency): the planner's target passes through untouched."""
+  (stock_feel_emergency): the planner's target passes through untouched. law_recent (STOCK_FEEL_SOFT_EXIT): the law
+  applied within STOCK_FEEL_EXIT_HOLD_S; when no lead is closing any more and none brakes at STOCK_FEEL_LEAD_STOP_A or
+  harder, the target deepens at STOCK_FEEL_EXIT_JERK instead of STOCK_FEEL_JERK_OUTSIDE."""
   if emergency:
     return float(target)
   ttc = brake_onset_ttc(leads, STOCK_FEEL_MIN_CLOSING)
+  if ttc == float('inf') and law_recent and STOCK_FEEL_SOFT_EXIT and not any(
+      lead is not None and bool(getattr(lead, 'status', False)) and float(lead.aLeadK) <= STOCK_FEEL_LEAD_STOP_A
+      for lead in leads):
+    return brake_onset_limited_target(prev, target, dt, STOCK_FEEL_EXIT_JERK)
   if not ttc > STOCK_FEEL_TTC_FLOOR_S or ttc == float('inf'):
     return brake_onset_limited_target(prev, target, dt, STOCK_FEEL_JERK_OUTSIDE)
   depth = float(np.interp(ttc, STOCK_FEEL_DEPTH_BP, STOCK_FEEL_DEPTH_V))
@@ -1613,6 +1667,7 @@ class LongitudinalPlanner:
     self.brake_release_rise_ticks = BRAKE_RELEASE_DWELL_TICKS + 1
     self.coast_ceiling = None
     self.stock_feel_emergency = False
+    self.stock_feel_law_t = 0.0
     self.fast_closing_lead_track = None
     self.fast_closing_tick = 0
     self.fast_closing_vision_seen = {}
@@ -1675,6 +1730,8 @@ class LongitudinalPlanner:
     self.exp_lead_departure_weight = 0.0
     self.exp_lead_departure_lift = 0.0
     self.accel_boost = AccelBoost()
+    self.exp_early_floor = float('inf')  # D-125, inf while inactive
+    self.exp_cam_a_hist: deque = deque(maxlen=EXP_CAM_LEAD_BRAKE_AVG_N)  # D-125 camera lead accel, model cadence
     self.experimental_release_accel_until = 0.0
     self.exp_mode_blend_weight = 0.0
 
@@ -1763,7 +1820,8 @@ class LongitudinalPlanner:
 
   @staticmethod
   def get_lead_geometry_required_accel(lead, v_ego: float) -> float:
-    """Telemetry only: a DIAGNOSTIC SCENARIO ENVELOPE, not a physical requirement. Nothing consumes it.
+    """A DIAGNOSTIC SCENARIO ENVELOPE, not a physical requirement. Logged as telemetry; D-125 (EXP_EARLY_ONSET) uses it in
+    Experimental Mode only as a floor bounded at EXP_EARLY_ONSET_MAX, never as a full control reference.
 
     It is the larger of two scenarios, and neither is a guarantee: `match` assumes the lead holds
     its current speed, `stop` assumes the lead decelerates at exactly the current aLeadK until it
@@ -1798,13 +1856,69 @@ class LongitudinalPlanner:
       stop_term = v_ego ** 2 / (2.0 * (d + v_lead ** 2 / (2.0 * lead_brake)))
     return float(min(max(match_term, stop_term), LEAD_GEOMETRY_MAX_REQUIRED_ACCEL))
 
+  def exp_early_brake_target(self, a_e2e: float, v_ego: float, model_msg) -> tuple[float | None, float]:
+    """D-125 desired floor (m/s^2, None when neither part applies) and the jerk it may deepen at.
+    EXP_EARLY_ONSET: a lead closing faster than EXP_EARLY_ONSET_MIN_CLOSING whose geometry needs at least
+    EXP_EARLY_ONSET_MIN_NEED, while the model is already slowing: brake toward that need, at most EXP_EARLY_ONSET_MAX.
+    EXP_CAM_LEAD_BRAKE: a lead within EXP_CAM_LEAD_BRAKE_GAP_S that a confident camera at the same range sees braking at
+    EXP_CAM_LEAD_BRAKE_A or harder (and the radar does not contradict by more than 1.5): brake as hard as it does,
+    at most EXP_CAM_LEAD_BRAKE_MAX."""
+    floor, jerk = None, EXP_EARLY_ONSET_JERK
+    lead = self.lead_one
+    if lead is None or not bool(getattr(lead, 'status', False)):
+      self.exp_cam_a_hist.clear()
+      return None, jerk
+    if EXP_EARLY_ONSET and a_e2e <= EXP_EARLY_ONSET_E2E:
+      need = 0.0
+      for ld in (self.lead_one, self.lead_two):
+        if ld is not None and bool(getattr(ld, 'status', False)) and \
+           v_ego - max(float(ld.vLead), 0.0) > EXP_EARLY_ONSET_MIN_CLOSING:
+          need = max(need, self.get_lead_geometry_required_accel(ld, v_ego))
+      if need >= EXP_EARLY_ONSET_MIN_NEED:
+        floor = -min(need, EXP_EARLY_ONSET_MAX)
+    if not (EXP_CAM_LEAD_BRAKE and v_ego > 1.0 and float(lead.dRel) <= EXP_CAM_LEAD_BRAKE_GAP_S * v_ego):
+      self.exp_cam_a_hist.clear()
+    else:
+      leads = getattr(model_msg, "leadsV3", None) if model_msg is not None else None
+      cam = leads[0] if leads is not None and len(leads) and len(leads[0].x) and len(leads[0].a) else None
+      if cam is not None and float(cam.prob) >= EXP_CAM_LEAD_BRAKE_PROB and \
+         abs(float(cam.x[0]) - float(lead.dRel)) <= max(5.0, 0.15 * float(lead.dRel)):
+        self.exp_cam_a_hist.append(float(cam.a[0]))
+      else:
+        self.exp_cam_a_hist.clear()
+      if len(self.exp_cam_a_hist) == self.exp_cam_a_hist.maxlen:
+        cam_a = float(np.mean(self.exp_cam_a_hist))
+        if cam_a <= EXP_CAM_LEAD_BRAKE_A and float(lead.aLeadK) < cam_a + 1.5:
+          cam_floor = max(cam_a, -EXP_CAM_LEAD_BRAKE_MAX)
+          if floor is None or cam_floor < floor:
+            floor, jerk = cam_floor, EXP_CAM_LEAD_BRAKE_JERK
+    return floor, jerk
+
+  def update_exp_early_floor(self, a_e2e: float, prev: float, v_ego: float, model_msg) -> float | None:
+    """D-125: the Experimental Mode floor from exp_early_brake_target. It deepens from where the target already is at no
+    more than its jerk, rises at EXP_EARLY_RELEASE_JERK while it still applies, and is gone (None) the moment it does
+    not; the brake release limit then lets the target back up."""
+    floor, jerk = self.exp_early_brake_target(float(a_e2e), float(v_ego), model_msg)
+    if floor is None:
+      self.exp_early_floor = float('inf')
+      return None
+    base = min(self.exp_early_floor, float(prev))
+    if floor < base:
+      self.exp_early_floor = max(floor, base - jerk * self.dt)
+    else:
+      self.exp_early_floor = min(floor, self.exp_early_floor + EXP_EARLY_RELEASE_JERK * self.dt)
+    return float(self.exp_early_floor)
+
   def get_close_lead_brake_cap(self, lead, v_ego, accel_min, count_lead_brake=True):
     if lead is None or not lead.status:
       return None
 
     lead_brake = max(0.0, -float(lead.aLeadK)) if count_lead_brake else 0.0
     reaction_t = max(self.longitudinal_actuator_delay, self.dt)
-    closing_speed = max(0.0, v_ego - lead.vLead)
+    # D-125 (CLOSE_LEAD_CAP_VLEAD_FLOOR): a lead reading as backing toward us faster than CLOSE_LEAD_CAP_VLEAD_MIN is a
+    # range glitch, not a car reversing; the cap reads CLOSE_LEAD_CAP_VLEAD_MIN.
+    v_lead_cap = max(float(lead.vLead), CLOSE_LEAD_CAP_VLEAD_MIN) if CLOSE_LEAD_CAP_VLEAD_FLOOR else float(lead.vLead)
+    closing_speed = max(0.0, v_ego - v_lead_cap)
     projected_closing_speed = closing_speed + lead_brake * reaction_t
     if projected_closing_speed < 0.1 and lead_brake < 0.5:
       return None
@@ -3565,8 +3679,10 @@ class LongitudinalPlanner:
       model_launch_accel = self.get_model_launch_accel(model_launch_v, model_launch_a, action_t, scene_v_ego)
 
     output_a_target_mpc = None
+    exp_early_floor = None
     if self.mode == 'acc':
       self.exp_lead_departure_weight = 0.0
+      self.exp_early_floor = float('inf')
       self.exp_lead_departure_lift = 0.0
     if classic_model:
       output_a_target, output_should_stop = get_accel_from_plan_classic(
@@ -3623,6 +3739,12 @@ class LongitudinalPlanner:
           output_a_target, output_a_target_e2e, output_a_target_mpc, scene_v_ego,
           sm['starpilotPlan'].tFollow, hold_experimental,
         )
+        if hold_experimental or reset_state or sm['carState'].standstill:
+          self.exp_early_floor = float('inf')
+          self.exp_cam_a_hist.clear()
+        else:
+          exp_early_floor = self.update_exp_early_floor(output_a_target_e2e, prev_output_a_target, scene_v_ego,
+                                                        sm['modelV2'])
     else:
       output_a_target, output_should_stop = get_accel_from_plan(
         self.v_desired_trajectory, self.a_desired_trajectory,
@@ -4374,9 +4496,18 @@ class LongitudinalPlanner:
       self.stock_feel_emergency = stock_feel_emergency((self.lead_one, self.lead_two), scene_v_ego,
                                                        self.stock_feel_emergency)
       output_a_target = stock_feel_target((self.lead_one, self.lead_two), prev_output_a_target, output_a_target, self.dt,
-                                          scene_v_ego, self.stock_feel_emergency)
+                                          scene_v_ego, self.stock_feel_emergency, self.stock_feel_law_t > 0.0)
+      if stock_feel_law_active((self.lead_one, self.lead_two), self.stock_feel_emergency):
+        self.stock_feel_law_t = STOCK_FEEL_EXIT_HOLD_S
+      else:
+        self.stock_feel_law_t = max(0.0, self.stock_feel_law_t - self.dt)
     else:
       self.stock_feel_emergency = False
+      self.stock_feel_law_t = 0.0
+    if exp_early_floor is not None:
+      # D-125 runs after Stock Brake Feel: its TTC table held -0.35 while the camera saw the lead braking (332 19:02)
+      output_a_target = min(output_a_target, exp_early_floor)
+      self.a_desired = min(self.a_desired, exp_early_floor)
     if bool(getattr(starpilot_toggles, "stock_brake_feel", False)) and not reset_state and not bool(sm['carState'].standstill):
       d_lead = float(self.lead_one.dRel) if bool(getattr(self.lead_one, 'status', False)) else None
       output_a_target = stop_eased_target(prev_output_a_target, output_a_target, stop_ease_floor(scene_v_ego, d_lead), self.dt)

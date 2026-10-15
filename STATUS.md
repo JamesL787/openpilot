@@ -11143,3 +11143,30 @@ replay on 6 Experimental Mode brakes (fidelity sim vs log aEgo <= 0.094): bigges
 312a 10:16 reaches the same -1.82 one frame sooner, 311 41:35 up to 0.25 deeper after a softer onset. Tests: 2 new in
 `test_longitudinal_planner.py`, 655 pass; the controls suite passes except the 2 pre-existing latcontrol failures. py39
 compat passes; no new lint.
+
+## 246. Earlier, gentler brake start toward stopping or braking leads, plus three jerk fixes (D-125). Replay + static only, not driven.
+
+Both hard brakes on 332 were late starts. At 4:09 the lead was stopping 60-100 m ahead while the MPC stayed on cruise.
+At 19:02 the camera saw the lead braking while Stock Brake Feel held -0.35, until its emergency latch let -3.2 through.
+In Experimental Mode the planner now:
+- starts toward the geometry need (at most -1.5, 0.8 m/s^3);
+- follows a confident camera lead's braking (0.5 s mean, at most -2.0, applied after Stock Brake Feel).
+
+Two jerks on 329 are also fixed:
+- 5:25: a radar range glitch read the lead as reversing. The close-lead cap now floors vLead at -0.5.
+- 8:02: Stock Brake Feel stepped -0.35 -> -0.73 when the closing speed ended. It now deepens at 0.6 m/s^3 for 2 s after
+  the law applied.
+
+Closed-loop replay, off -> on:
+- 332 4:09: -3.46 -> -2.21.
+- 332 19:02: -3.19 -> -2.20 (weak fidelity, r 0.747).
+- 329 5:25: biggest 0.25 s drop 0.93 -> 0.28.
+- 329 8:02: a 0.09-per-frame ramp instead of the step.
+
+Protected set (21 closed-loop windows, 9 open-loop groups):
+- Mostly softer peaks (t54 -3.05 -> -2.14, t65 -3.50 -> -2.83).
+- Earlier, deeper starts on bk2, n03 and n30, up to 0.3 deeper.
+- Closest gap at most 0.4 m nearer; the bookmarked stops are about 1 m nearer.
+
+Tests: 10 new (`test_longitudinal_planner.py`, `test_brake_onset.py`). The controls suite gives 2194 passed, 2 failed;
+both failures are the pre-existing latcontrol ones. py39 compat passes; no new lint.

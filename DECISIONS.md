@@ -3031,3 +3031,57 @@ Radar data is untouched (D-041/D-042). Default ON.
 up to 0.6 m in these replays.
 
 **Lever:** `CHILL_CLOSE_LEAD_MAX_BRAKE = 0` sends every braking Experimental Mode lead back to D-073 (and turns D-123 off).
+
+## D-125 — Earlier, gentler start toward a stopping or braking lead; three jerk fixes (STATUS 246, 2026-10-15, replay only, not driven)
+
+**Problem (owner bookmarks, 332 and 329):** both hard brakes on 332 were late starts, not over-deep brakes.
+- 332 4:09 (Experimental Mode): a camera lead 60-100 m ahead was stopping. The geometry need was 0.8 m/s^2 from 6 s
+  before and 1.6 at 2.5 s before, while the MPC source stayed "cruise" and e2e gave -0.4..-1.1. Then the MPC jumped to -3.5.
+- 332 19:02: the camera saw the lead braking at -1.2..-1.45 for 0.7 s while ego still commanded +0.66 -> +0.15. Stock
+  Brake Feel's TTC table (TTC about 40 s) held -0.35. Radar aLeadK then reached -2.7, tripped the emergency latch, and the
+  planner's -3.2 passed through within 0.15 s.
+- 329 5:25: a one-frame radar range glitch at creep (7.95 -> 6.27 m, vRel -3.75 at 1.6 m/s) read the stopped lead as
+  backing at -2.15 m/s. The close-lead cap jabbed -0.76 -> -1.50.
+- 329 8:02: the closing speed fell under STOCK_FEEL_MIN_CLOSING, TTC went to inf, and Stock Brake Feel's outside path
+  stepped -0.35 -> -0.73 in one frame.
+
+**Decision (all default ON):**
+- `EXP_EARLY_ONSET` (Experimental Mode): when the model is already slowing (e2e <= -0.2) and a lead closes faster than
+  2 m/s with a geometry need of at least 0.5, floor the target at -min(need, 1.5). The floor deepens from the current
+  target at 0.8 m/s^3.
+- `EXP_CAM_LEAD_BRAKE` (Experimental Mode): for a lead within 3 s of gap where a camera lead with prob >= 0.9 sits at the
+  same range, and the camera's 0.5 s mean accel is -0.5 or harder, floor at that accel (at most -2.0, at 1.5 m/s^3).
+  It does not apply if the radar aLeadK is more than 1.5 above the camera. It is applied after Stock Brake Feel. Both
+  floors release at 1.0 m/s^3.
+- `CLOSE_LEAD_CAP_VLEAD_FLOOR`: the close-lead cap reads vLead no lower than -0.5 m/s. The radar lead itself is
+  unchanged (D-041/D-042).
+- `STOCK_FEEL_SOFT_EXIT`: within 2 s of the fitted law applying, a lost closing speed deepens at 0.6 m/s^3, not 5.
+  This does not apply when a lead brakes at STOCK_FEEL_LEAD_STOP_A or harder, or in an emergency.
+
+**Evidence (closed-loop replay, acl2s/alpha_closed_loop_replay, car's commit dc8a42150 + toggles; off -> on; min
+target, biggest 0.25 s drop, closest gap; fidelity is the off arm's target vs the logged command):**
+- The bookmarked events:
+  - 332 4:09: -3.46 -> -2.21, 0.74 -> 0.69, gap 5.4 -> 4.2 m (sim speed RMSE 1.21, r 0.967).
+  - 332 19:02: -3.19 -> -2.20, 2.48 -> 2.30 (r 0.747; the sim diverges after the brake in both arms).
+  - 329 5:25: -1.62 -> -1.06, 0.93 -> 0.28, gap 4.3 -> 3.2 m (r 0.907).
+  - 329 8:02: the step became -0.35 -> -0.44 -> -0.53 -> -0.62, then followed the lead's real braking to -1.32 vs -1.12
+    (r 0.968).
+- Protected closed-loop windows (15 /tmp/rv/ct windows + 6 D-124 Experimental Mode windows):
+  - Softer: t54 -3.05 -> -2.14 (gap +1.7 m), t65 -3.50 -> -2.83, t08 -3.37 -> -3.10, b02 -2.38 -> -1.93,
+    n42 drop 0.94 -> 0.37, b21 -3.26 -> -2.93.
+  - Earlier but deeper start: bk2 -1.06 -> -1.34 (car -2.03), n03 -1.58 -> -1.73, n30 -2.66 -> -2.88 (gap 23.8 -> 29.2).
+  - a15 and a4: 0.07 deeper.
+  - The rest unchanged. Closest gap never more than 0.4 m nearer.
+- Open-loop protected groups:
+  - 298, 312b, 312c identical.
+  - 297a, 297b, 2f2 15:44, 311: earlier onset, shallower peak.
+  - 312a 10:16: the D-124 one-frame jab (-0.40 -> -1.52 -> -1.82 on a vRel -12 glitch) becomes a ramp; peak -2.17 -> -1.99.
+
+**Risk:**
+- In Experimental Mode the car starts slowing 1-2 s earlier for stopping or braking leads (up to -1.5 / -2.0), and on
+  some events the start is deeper than before.
+- The early-onset geometry need assumes a constant lead speed.
+- Gaps on the bookmarked stops are about 1 m nearer, because the late jab no longer sheds the speed.
+
+**Lever:** each fix has its own constant (`EXP_EARLY_ONSET`, `EXP_CAM_LEAD_BRAKE`, `CLOSE_LEAD_CAP_VLEAD_FLOOR`,
+`STOCK_FEEL_SOFT_EXIT`).

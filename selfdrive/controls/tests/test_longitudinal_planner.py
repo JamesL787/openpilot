@@ -5381,3 +5381,88 @@ def test_soft_stop_floor_softens_only_with_room():
 def test_soft_stop_floor_stands_down(lead_kwargs, v_ego):
   assert longitudinal_planner_module.get_soft_stop_floor(make_lead(**lead_kwargs), v_ego) is None
 
+
+
+def _cam_model(prob, x, a):
+  return SimpleNamespace(leadsV3=[SimpleNamespace(prob=prob, x=[x], a=[a])])
+
+
+def _exp_early_planner(lead_one, lead_two=None, v_ego=20.0):
+  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=v_ego)
+  planner.lead_one = lead_one
+  planner.lead_two = lead_two if lead_two is not None else make_lead(status=False)
+  return planner
+
+
+def test_exp_early_onset_floor_follows_geometry_need():
+  # D-125, 332 4:09: a camera lead stopping 60 m ahead needed 0.8..1.6 for 6 s while the MPC sat on cruise.
+  lead = make_lead(status=True, d_rel=60.0, v_lead=0.0)
+  planner = _exp_early_planner(lead)
+  need = planner.get_lead_geometry_required_accel(lead, 20.0)
+  assert need > longitudinal_planner_module.EXP_EARLY_ONSET_MAX
+  floor, jerk = planner.exp_early_brake_target(-0.3, 20.0, None)
+  assert floor == pytest.approx(-longitudinal_planner_module.EXP_EARLY_ONSET_MAX)
+  assert jerk == longitudinal_planner_module.EXP_EARLY_ONSET_JERK
+  # the model must already be slowing, and the lead must be closing fast enough
+  assert planner.exp_early_brake_target(0.0, 20.0, None)[0] is None
+  slow = _exp_early_planner(make_lead(status=True, d_rel=20.0, v_lead=19.0))
+  assert slow.exp_early_brake_target(-0.3, 20.0, None)[0] is None
+  # a small need stays with the MPC
+  far = _exp_early_planner(make_lead(status=True, d_rel=150.0, v_lead=17.5))
+  assert far.exp_early_brake_target(-0.3, 20.0, None)[0] is None
+
+
+def test_exp_early_floor_deepens_from_the_target_and_releases_slowly():
+  planner = _exp_early_planner(make_lead(status=True, d_rel=60.0, v_lead=0.0))
+  dt = planner.dt
+  a = planner.update_exp_early_floor(-0.3, -0.2, 20.0, None)
+  assert a == pytest.approx(-0.2 - longitudinal_planner_module.EXP_EARLY_ONSET_JERK * dt)
+  a2 = planner.update_exp_early_floor(-0.3, 0.5, 20.0, None)  # deepens from its own state, not from a rising target
+  assert a2 == pytest.approx(a - longitudinal_planner_module.EXP_EARLY_ONSET_JERK * dt)
+  planner.exp_early_floor = -2.0
+  assert planner.update_exp_early_floor(-0.3, -2.0, 20.0, None) == \
+    pytest.approx(-2.0 + longitudinal_planner_module.EXP_EARLY_RELEASE_JERK * dt)
+  assert planner.update_exp_early_floor(0.0, -2.0, 20.0, None) is None  # gone when it no longer applies
+  assert planner.exp_early_floor == float('inf')
+
+
+def test_exp_cam_lead_brake_floor_needs_a_steady_confident_camera():
+  # D-125, 332 19:02: the camera saw the lead at -1.2..-1.45 while the radar aLeadK lagged and ego still accelerated.
+  n = longitudinal_planner_module.EXP_CAM_LEAD_BRAKE_AVG_N
+  lead = make_lead(status=True, d_rel=25.0, v_lead=15.0, a_lead=-0.3)
+  planner = _exp_early_planner(lead, v_ego=15.0)
+  model = _cam_model(0.95, 25.0, -1.2)
+  for _ in range(n - 1):
+    assert planner.exp_early_brake_target(0.0, 15.0, model)[0] is None
+  floor, jerk = planner.exp_early_brake_target(0.0, 15.0, model)
+  assert floor == pytest.approx(-1.2) and jerk == longitudinal_planner_module.EXP_CAM_LEAD_BRAKE_JERK
+  # capped at EXP_CAM_LEAD_BRAKE_MAX (radar agreeing within 1.5)
+  planner.lead_one.aLeadK = -3.0
+  for _ in range(n):
+    floor, _ = planner.exp_early_brake_target(0.0, 15.0, _cam_model(0.95, 25.0, -4.0))
+  assert floor == pytest.approx(-longitudinal_planner_module.EXP_CAM_LEAD_BRAKE_MAX)
+  # one unconfident frame restarts the average
+  planner.exp_early_brake_target(0.0, 15.0, _cam_model(0.5, 25.0, -1.2))
+  assert len(planner.exp_cam_a_hist) == 0
+
+
+@pytest.mark.parametrize("lead_kw,model", [
+  (dict(d_rel=50.0, v_lead=15.0, a_lead=-0.3), _cam_model(0.95, 50.0, -1.2)),  # beyond 3 s of gap
+  (dict(d_rel=25.0, v_lead=15.0, a_lead=-0.3), _cam_model(0.95, 40.0, -1.2)),  # camera lead is another car
+  (dict(d_rel=25.0, v_lead=15.0, a_lead=-0.3), _cam_model(0.95, 25.0, -0.3)),  # not braking enough
+  (dict(d_rel=25.0, v_lead=15.0, a_lead=1.0), _cam_model(0.95, 25.0, -1.2)),   # radar contradicts by over 1.5
+])
+def test_exp_cam_lead_brake_floor_gates(lead_kw, model):
+  planner = _exp_early_planner(make_lead(status=True, **lead_kw), v_ego=15.0)
+  for _ in range(2 * longitudinal_planner_module.EXP_CAM_LEAD_BRAKE_AVG_N):
+    assert planner.exp_early_brake_target(0.0, 15.0, model)[0] is None
+
+
+def test_close_lead_cap_floors_a_backward_lead_speed():
+  # D-125, 329 5:25: one radar range glitch at creep read the lead backing at -2.15 m/s; the cap went -0.76 -> -1.50.
+  planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=1.6)
+  glitch = make_lead(status=True, d_rel=6.27, v_lead=-2.15, radar=True)
+  floored = make_lead(status=True, d_rel=6.27, v_lead=longitudinal_planner_module.CLOSE_LEAD_CAP_VLEAD_MIN, radar=True)
+  assert planner.get_close_lead_brake_cap(glitch, 1.6, -3.5) == pytest.approx(planner.get_close_lead_brake_cap(floored, 1.6, -3.5))
+  noise = make_lead(status=True, d_rel=6.27, v_lead=-0.3, radar=True)  # stopped-lead noise is untouched
+  assert planner.get_close_lead_brake_cap(noise, 1.6, -3.5) != pytest.approx(planner.get_close_lead_brake_cap(floored, 1.6, -3.5))

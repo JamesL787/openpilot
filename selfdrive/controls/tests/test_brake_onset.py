@@ -197,3 +197,28 @@ def test_stock_feel_depth_table_is_monotone():
   assert all(a < b for a, b in zip(lp.STOCK_FEEL_DEPTH_BP[:-1], lp.STOCK_FEEL_DEPTH_BP[1:], strict=True))
   assert all(a <= b for a, b in zip(lp.STOCK_FEEL_DEPTH_V[:-1], lp.STOCK_FEEL_DEPTH_V[1:], strict=True))
   assert lp.STOCK_FEEL_DEPTH_V[0] <= -3.5 and len(lp.STOCK_FEEL_DEPTH_BP) == len(lp.STOCK_FEEL_DEPTH_V)
+
+
+def test_stock_feel_soft_exit_when_closing_stops():
+  # D-125, 329 8:02: the closing speed fell under STOCK_FEEL_MIN_CLOSING, TTC went to inf and the outside path stepped
+  # the target -0.35 -> -0.73 in one frame. Within STOCK_FEEL_EXIT_HOLD_S of the law it deepens at STOCK_FEEL_EXIT_JERK.
+  opening = (_lead(30.0, 0.2),)
+  assert lp.stock_feel_target(opening, -0.35, -0.73, 0.05, law_recent=True) == \
+    pytest.approx(-0.35 - lp.STOCK_FEEL_EXIT_JERK * 0.05)
+  assert lp.stock_feel_target(opening, -0.35, -0.73, 0.05) == pytest.approx(-0.35 - lp.STOCK_FEEL_JERK_OUTSIDE * 0.05)
+  assert lp.stock_feel_target(opening, -0.73, -0.2, 0.05, law_recent=True) == -0.2  # release untouched
+  # a lead braking at the lead-stop threshold keeps the outside rate, and so does an emergency
+  braking = (_lead(30.0, 0.2, a=lp.STOCK_FEEL_LEAD_STOP_A),)
+  assert lp.stock_feel_target(braking, -0.35, -0.73, 0.05, law_recent=True) == \
+    pytest.approx(-0.35 - lp.STOCK_FEEL_JERK_OUTSIDE * 0.05)
+  assert lp.stock_feel_target(opening, -0.35, -2.0, 0.05, emergency=True, law_recent=True) == -2.0
+  # TTC under the floor is not an exit: the outside rate stays
+  assert lp.stock_feel_target((_lead(30.0, -16.0),), 0.0, -3.5, 0.05, law_recent=True) == \
+    pytest.approx(-lp.STOCK_FEEL_JERK_OUTSIDE * 0.05)
+
+
+def test_stock_feel_law_active_matches_the_fitted_law():
+  assert lp.stock_feel_law_active((_lead(100.0, -8.0),), False)
+  assert not lp.stock_feel_law_active((_lead(100.0, -8.0),), True)
+  assert not lp.stock_feel_law_active((_lead(30.0, 0.2),), False)
+  assert not lp.stock_feel_law_active((_lead(30.0, -16.0),), False)
