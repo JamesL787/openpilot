@@ -66,6 +66,9 @@ RESUME_RAMP_MIN_S = 0.05
 # step. From the resume the output also slews from zero at no more than this (full scale in half a second), until the
 # angle ramp is over and the output has caught up.
 RESUME_TORQUE_RATE = 2.0  # output units per s
+# No ramp while a turn desire is active (the same condition desire_helper uses for Force Turn Desires: one blinker,
+# below the lane-change speed). Turning from a stop needs the wheel to wind in at once, so it follows the model at the
+# angle-rate ceiling from the wheel's angle, as without the ramp. A turn desire that starts mid-ramp ends it there.
 
 
 def use_honda_eps_controller(CP, params=None) -> bool:
@@ -182,7 +185,14 @@ class LatControlHondaEps(LatControl):
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_prev = False
 
-  def _resume_ramp(self, angle_des_no_offset, active, CS, angle_offset):
+  @staticmethod
+  def _turn_desire_active(CS, starpilot_toggles):
+    if not getattr(starpilot_toggles, "use_turn_desires", False):
+      return False
+    min_speed = getattr(starpilot_toggles, "minimum_lane_change_speed", 0.0)
+    return bool(CS.leftBlinker) != bool(CS.rightBlinker) and CS.vEgo < min_speed
+
+  def _resume_ramp(self, angle_des_no_offset, active, CS, angle_offset, turn_desire=False):
     """The desired angle with the resume ramp applied (see RESUME_RAMP_S), ahead of the angle-rate ceiling, which the
     ramp stays under (a 70 deg blend peaks at ~105 deg/s). While torque is held it is the wheel's own angle, unlimited."""
     wheel = float(CS.steeringAngleDeg) - angle_offset
@@ -199,6 +209,9 @@ class LatControlHondaEps(LatControl):
       self.resume_s = float(np.interp(CS.vEgo, *RESUME_RAMP_S))
       self.resume_start_angle = wheel
       self.resume_slewing = self.resume_s >= RESUME_RAMP_MIN_S
+    if turn_desire:
+      self.resume_s = 0.0
+      self.resume_slewing = False
     if self.resume_s < RESUME_RAMP_MIN_S or self.resume_t >= self.resume_s:
       self.resume_s = 0.0
       return angle_des_no_offset
@@ -232,7 +245,8 @@ class LatControlHondaEps(LatControl):
     desired_curvature = self.cmd_delay.update(desired_curvature, float(np.interp(CS.vEgo, *self.cmd_delay_schedule)))
     angle_des_no_offset = self._desired_angle_no_offset(VM, CS.vEgo, params.roll, desired_curvature)
     if self.resume_ramp:
-      angle_des_no_offset = self._resume_ramp(angle_des_no_offset, active, CS, params.angleOffsetDeg)
+      angle_des_no_offset = self._resume_ramp(angle_des_no_offset, active, CS, params.angleOffsetDeg,
+                                              self._turn_desire_active(CS, starpilot_toggles))
     if active and not (self.resume_ramp and self.torque_held):
       angle_des_no_offset = rate_limit_desired_angle(angle_des_no_offset, self.prev_rate_limited_angle,
                                                      self.angle_rate_limit_deg_s, self.dt)
