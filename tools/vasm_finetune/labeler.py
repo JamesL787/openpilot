@@ -164,10 +164,12 @@ class Store:
     path = os.path.join(self.crops, "queue.json")
     if not os.path.exists(path):
       return []
-    want = [(q["route"], str(q["seg"]), q["side"]) for q in json.load(open(path))["sides"]]
+    # optional t0/t1 (segment time, s) limit an entry to a window, e.g. where two models disagreed on a drive
+    want = [(q["route"], str(q["seg"]), q["side"], q.get("t0", -1e9), q.get("t1", 1e9)) for q in json.load(open(path))["sides"]]
     out = []
     for k, r in enumerate(self.rows):
-      if any(r["route"].endswith(rt) and r["seg"] == sg and r["image_side"] == sd for rt, sg, sd in want):
+      if any(r["route"].endswith(rt) and r["seg"] == sg and r["image_side"] == sd and t0 <= float(r["t"]) <= t1
+             for rt, sg, sd, t0, t1 in want):
         row = dict(r)
         for name, other in self.neighbours[k].items():
           row[name] = self.rows[other]["file"] if other is not None else ""

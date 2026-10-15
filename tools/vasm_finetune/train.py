@@ -229,6 +229,7 @@ def main():
       torch.save(model, os.path.join(args.out, "best.pt"))
     if args.save_epochs:
       export(model, os.path.join(args.out, f"ep{ep}.onnx"), dev)
+      torch.save(model.state_dict(), os.path.join(args.out, f"ep{ep}.pt"))  # for soup.py (weight averaging across seeds)
     json.dump(log, open(os.path.join(args.out, "train_log.json"), "w"), indent=1)
 
   model = torch.load(os.path.join(args.out, "best.pt"), weights_only=False, map_location="cpu").eval()
