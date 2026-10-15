@@ -11170,3 +11170,27 @@ Protected set (21 closed-loop windows, 9 open-loop groups):
 
 Tests: 10 new (`test_longitudinal_planner.py`, `test_brake_onset.py`). The controls suite gives 2194 passed, 2 failed;
 both failures are the pre-existing latcontrol ones. py39 compat passes; no new lint.
+
+## 247. The long MPC re-solves once when its QP stops at the iteration cap (D-126). Open-loop replay + static only, not driven.
+
+327 42:43 braked to -1.1 in replay with a lead 35 m ahead pulling away; the car did not. The cause was HPIPM stopping at
+10 iterations: acados still reports status 0, and the unconverged answer was published. A 1e-7 change upstream picked
+which branch; D-125 was one such change. The MPC now calls `solve()` once more when the QP hit the cap
+(`MPC_QP_CAP_RESOLVE`).
+
+Open loop, whole 327 + 332:
+- 42:43: -1.10 -> -0.26.
+- On cap frames, no output got deeper by more than 0.25.
+- Two capped hard-brake frames, 327 1871.1 and 1871.7, went -4.94 -> -2.20 and -3.61 -> -2.77. The geometry need there
+  was -2.17 / -2.12.
+- 332 899.7 (stopped): a -1.25 hold releases 0.4 s later.
+- Fidelity is unchanged: 327 r 0.898, 332 r 0.901.
+- The second solve ran on about 0.05% of frames.
+
+Not run closed loop or timed on the comma.
+
+Tests:
+- 5 new in `test_long_mpc_qp_cap.py`.
+- `test_exp_close_lead_cap_deepens_past_chill_floor_at_bounded_rate`: the cap may now step past 0.25 only while it follows
+  a target that is already deeper (D-124). The cold first solve converges deeper.
+- The controls suite gives 2200 passed, 2 failed; both failures are the pre-existing latcontrol ones.

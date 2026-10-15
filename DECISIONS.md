@@ -3085,3 +3085,42 @@ target, biggest 0.25 s drop, closest gap; fidelity is the off arm's target vs th
 
 **Lever:** each fix has its own constant (`EXP_EARLY_ONSET`, `EXP_CAM_LEAD_BRAKE`, `CLOSE_LEAD_CAP_VLEAD_FLOOR`,
 `STOCK_FEEL_SOFT_EXIT`).
+
+## D-126 — Re-solve the long MPC once when its QP stops at the iteration cap (STATUS 247, 2026-10-15, open-loop replay only, not driven)
+
+**Problem:** a 1.1 m/s^2 brake with nothing to brake for (327 42:43, lead 35 m ahead and pulling away, e2e +0.25).
+It showed up in the D-125 replay, but D-125 was only the trigger. A +1e-7 nudge to a_desired 3.5 s earlier, with all
+D-125 code off, gave the same drop; the logged car command stayed at -0.12 or above.
+
+**Cause:** HPIPM is capped at `qp_solver_iter_max = 10`. When it stops there, acados SQP_RTI still returns status 0
+(qp_stat 2, ACADOS_MAXITER), and the unconverged answer is published. At 2563.694, the params, x0 and yref were equal
+to 1e-12. The frame sat on the a_max = 0.0 slack (LIMIT_COST 1e6) with x0 a ~ 0. The capped solve returned asol[1]
+-1.51, while the converged one returns -0.005.
+
+**Decision:** `MPC_QP_CAP_RESOLVE` (long_mpc.py, default ON). If the solve returns status 0 with `statistics[1, -1] == 2`,
+call `solve()` once more from that iterate. If the second solve also caps, its answer is published. The planner's
+on-path shadow MPC gets the guard too. `solve_time` is the sum of both solves.
+
+**Evidence (open loop, whole routes 327 + 332, continuous from seg 0, Long Sim (Job)):**
+- 327 42:43: min out -1.10 -> -0.26. The capped first solve gave -1.49; the re-solve gave -0.006 in 3 iterations.
+- 47 cap frames on the unguarded arm (33 on 327, 14 on 332):
+  - No output deeper by more than 0.25.
+  - Two outputs shallower: 327 1871.126 -4.94 -> -2.20 and 1871.727 -3.61 -> -2.77.
+    - There, get_accel_from_plan extrapolated a capped asol -3.46 from a_now -1.0.
+    - The geometry need was -2.17 / -2.12 (lead 12.8 m, v 6.6, vLead 1.2).
+    - A constant decel keeping a 2 m gap is -1.81 / -1.64.
+    - The re-solve (-1.90) matches the neighbouring converged frames. The car's own aTarget went to -4.94 on that frame.
+- One new difference elsewhere: 332 899.7, car stopped. A -1.25 hold now releases 0.4 s later, closer to the logged
+  -0.71 command.
+- Fidelity is unchanged:
+  - 327: r(out, cmd) 0.898, RMSE 0.271.
+  - 332: r 0.901, RMSE 0.296.
+- Re-solves: 27 of 53863 frames on 327, 13 of 28846 on 332.
+
+**Risk:**
+- Any of these frames can now run a second solve. This was timed on x86 under load only, not on the comma.
+- A converged solve can differ from a capped one in either direction. Hard brakes from capped solves (the 1871 kind) get
+  shallower but stay at or below the geometry need.
+- Not checked closed loop. There is no closed-loop gap result for 1871.
+
+**Lever:** `MPC_QP_CAP_RESOLVE`.

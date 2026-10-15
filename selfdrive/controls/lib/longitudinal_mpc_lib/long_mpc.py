@@ -133,6 +133,15 @@ CRASH_DISTANCE = .25
 LEAD_DANGER_FACTOR = 0.75
 LIMIT_COST = 1e6
 ACADOS_SOLVER_TYPE = 'SQP_RTI'
+# QP iteration-cap re-solve (open-loop replay only, not driven; 2026-10-15, D-126). SQP_RTI returns status 0 when HPIPM
+# stops at qp_solver_iter_max (qp_stat 2, ACADOS_MAXITER), and that unconverged answer is published. 327 2563.69
+# (42:43, lead 35 m ahead pulling away, a_max 0.0 with x0 a ~ 0 on the LIMIT_COST slack): a 1e-7 change in a_desired
+# 3.5 s earlier sent the QP to the cap and asol[1] -0.005 -> -1.51, a -1.1 brake the car never made (logged cmd
+# >= -0.12). A second solve from that iterate gave -0.005 (3 QP iterations, stat 0). Off arm census: the cap is hit on
+# 33 of 53863 frames on 327 and 14 of 28846 on 332 (~0.05%), so the extra solve is rare.
+# Costs: one more solve (about the same time as the first) on a cap frame; if that one also caps it is published.
+MPC_QP_CAP_RESOLVE = True
+ACADOS_QP_MAXITER = 2
 # Default lead acceleration decay set to 50% at 1s
 LEAD_ACCEL_TAU = 1.5
 FCW_MIN_MODEL_PROB = 0.9
@@ -493,6 +502,7 @@ class LongitudinalMpc:
     self.solution_status = 0
     # timers
     self.solve_time = 0.0
+    self.qp_cap_resolved = False
     self.time_qp_solution = 0.0
     self.time_linearization = 0.0
     self.time_integrator = 0.0
@@ -1121,6 +1131,11 @@ class LongitudinalMpc:
          (lead_1_obstacle[0] - lead_0_obstacle[0]):
         self.source = 'lead1'
 
+  def qp_hit_iter_cap(self):
+    # 'statistics' rows for SQP_RTI: iteration, qp_stat, qp_iter; the last column is this solve
+    stats = self.solver.get_stats('statistics')
+    return stats.shape[0] > 1 and stats.shape[1] > 0 and int(stats[1, -1]) == ACADOS_QP_MAXITER
+
   def run(self):
     # t0 = time.monotonic()
     # reset = 0
@@ -1130,7 +1145,14 @@ class LongitudinalMpc:
     self.solver.constraints_set(0, "ubx", self.x0)
 
     self.solution_status = self.solver.solve()
-    self.solve_time = float(self.solver.get_stats('time_tot')[0])
+    self.qp_cap_resolved = False
+    first_solve_time = 0.0
+    if MPC_QP_CAP_RESOLVE and self.solution_status == 0 and self.qp_hit_iter_cap():
+      # D-126: one more RTI step from the capped iterate instead of publishing it.
+      first_solve_time = float(self.solver.get_stats('time_tot')[0])
+      self.solution_status = self.solver.solve()
+      self.qp_cap_resolved = True
+    self.solve_time = first_solve_time + float(self.solver.get_stats('time_tot')[0])
     self.time_qp_solution = float(self.solver.get_stats('time_qp')[0])
     self.time_linearization = float(self.solver.get_stats('time_lin')[0])
     self.time_integrator = float(self.solver.get_stats('time_sim')[0])

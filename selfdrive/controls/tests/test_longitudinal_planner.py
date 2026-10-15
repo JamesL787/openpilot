@@ -5183,15 +5183,19 @@ def test_exp_close_lead_cap_deepens_past_chill_floor_at_bounded_rate():
   raw = planner.get_close_lead_brake_cap(lead, v_ego, -3.5)
   assert raw < -2.5
   step = longitudinal_planner_module.EXP_CLOSE_LEAD_FLOOR_RATE * planner.dt
-  caps, floors = [], []
+  caps, floors, outs = [], [], []
   for _ in range(60):
     planner.update(sm, make_toggles())
     caps.append(planner.close_lead_brake_cap_value)
     floors.append(planner.exp_close_lead_floor)
+    outs.append(float(planner.output_a_target))
   assert planner.mode == "blended"
   assert caps[0] >= longitudinal_planner_module.A_CRUISE_MIN - 1e-6
   assert floors[0] == pytest.approx(longitudinal_planner_module.A_CRUISE_MIN - step)
-  assert all(c1 >= c0 - 0.25 for c0, c1 in zip(caps, caps[1:], strict=False))
+  # The cap steps at most 0.25 per cycle unless it is following a target that is already deeper (D-124 eases from
+  # where the target is); with D-126 the cold first solve converges and the target starts deeper.
+  assert all(c1 >= c0 - 0.25 or c1 >= o0 - step - 1e-6
+             for c0, c1, o0 in zip(caps, caps[1:], outs, strict=False))
   assert caps[-1] == pytest.approx(raw, abs=0.1)
 
 
