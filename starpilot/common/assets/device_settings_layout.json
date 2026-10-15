@@ -119,10 +119,10 @@
         "settings_tier": "advanced"
       },
       {
-        "key": "LatSeedPrevCurvature",
-        "label": "Seed Model Curvature When Off",
-        "description": "While steering is off, the model's smoothing starts from the car's own curvature instead of its last command, so steering turns on where the wheel already is (upstream openpilot PR 39091). Mostly helps turn-ons at a stop with the wheel turned.",
-        "picker_description": "Steering turns on from where the wheel already is.",
+        "key": "NrdrLatResumeRamp",
+        "label": "Ease Steering In When It Resumes",
+        "description": "Modified-EPS Honda steering controller only. When steering torque comes back below 20 mph (lateral turning on, or pulling away from a stop with Always On Lateral), the target starts at the wheel's current angle and blends to the model's over about a second, instead of snapping the wheel toward the model. Mostly helps pulling away with the wheel turned.",
+        "picker_description": "Steering eases in from where the wheel is when it resumes.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "AdvancedLateralTune",

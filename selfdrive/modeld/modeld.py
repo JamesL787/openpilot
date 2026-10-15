@@ -443,14 +443,6 @@ def _close_tinygrad_disk_cache_connection() -> None:
       tinygrad_helpers._db_connection = None
 
 
-def _seed_prev_curvature_enabled(params) -> bool:
-  # A params binary built before LatSeedPrevCurvature raises UnknownKeyName; read that as off rather than kill modeld.
-  try:
-    return params.get_bool("LatSeedPrevCurvature")
-  except Exception:
-    return False
-
-
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
                           lat_action_t: float, long_action_t: float, v_ego: float, mlsim: bool,
                           is_v9: bool, is_v14: bool, is_v15: bool, starpilot_toggles,
@@ -1326,8 +1318,7 @@ def main(demo=False):
   if external_gpu_requested:
     publish_services.append("chestnutState")
   pm = PubMaster(publish_services)
-  sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay", "starpilotPlan",
-                  "controlsState"])
+  sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay", "starpilotPlan"])
 
   publish_state = PublishState()
   chestnut_state = ChestnutState(pm, external_gpu_active) if external_gpu_requested else None
@@ -1360,7 +1351,6 @@ def main(demo=False):
   lat_smooth_seconds = _model_smooth_seconds(params, "LatSmoothSeconds", LAT_SMOOTH_SECONDS)
   long_smooth_seconds = _model_smooth_seconds(params, "LongSmoothSeconds", LONG_SMOOTH_SECONDS)
   prev_action = log.ModelDataV2.Action()
-  seed_prev_curvature = _seed_prev_curvature_enabled(params)
 
   DH = DesireHelper()
 
@@ -1415,7 +1405,6 @@ def main(demo=False):
     lateral_control_params = np.array([v_ego, lat_delay], dtype=np.float32)
     if sm.frame % 60 == 0:
       camera_offset.set_target(params.get_float("CameraOffset", return_default=True))
-      seed_prev_curvature = _seed_prev_curvature_enabled(params)
 
     if sm.updated["liveCalibration"] and sm.seen['roadCameraState'] and sm.seen['deviceState']:
       device_from_calib_euler = np.array(sm["liveCalibration"].rpyCalib, dtype=np.float32)
@@ -1627,12 +1616,6 @@ def main(demo=False):
       starpilot_modelv2_send = messaging.new_message('starpilotModelV2')
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')
-
-      # LatSeedPrevCurvature (upstream commaai PR 39091): while lateral is off, smooth from the car's own curvature
-      # instead of the last model command, so the first commands after a turn-on start where the wheel is. Open-loop
-      # log check on 118 turn-ons: helps standstill turn-ons, 0-6 deg at or above the 2 mph cutoff. Default off.
-      if seed_prev_curvature and not sm['carControl'].latActive:
-        prev_action.desiredCurvature = sm['controlsState'].curvature
 
       if model_lab_active and longitudinal_model_output is not None:
         lateral_action = get_action_from_model(

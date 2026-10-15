@@ -27,6 +27,7 @@ from collections import deque
 import numpy as np
 
 from cereal import custom, log
+from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_linear_to_physical
 from opendbc.car.honda.values import CAR as HONDA, HondaFlags
@@ -51,6 +52,20 @@ from openpilot.selfdrive.controls.lib.nrdr_eps_firmware_ff import (
 )
 
 SETTINGS_REFRESH_FRAMES = 300
+
+# Resume ramp (NrdrLatResumeRamp). Pulling away with the wheel turned, the car gets no steering torque until it is
+# moving: lateral is paused below PauseLateralSpeed and the car controller sends zero below NrdrMinSteerSpeed, while the
+# model already asks for nearly straight. When torque comes back, the target jumped to the model's angle at the
+# 300 deg/s angle-rate ceiling, i.e. a ~70 deg step in a quarter second (route 2f2 at 24.3 min: wheel 63 -> 27 -> 60 deg).
+# With the ramp, the target holds the wheel's own angle while no torque reaches the car, then blends from that angle
+# to the model's along a smoothstep, so the P term (all there is below 2 m/s: no integrator, no feedforward) grows from
+# zero. Triggers on torque coming back, not on latActive, so it covers Always On Lateral staying active through a stop.
+RESUME_RAMP_S = ([4.5, 9.0], [1.0, 0.0])  # m/s, s: full ramp up to ~10 mph, none from 20 mph (the wheel is near the path)
+RESUME_RAMP_MIN_S = 0.05
+# Below 2 m/s the P gain saturates the output on a few degrees of error, so the angle path alone does not stop a torque
+# step. From the resume the output also slews from zero at no more than this (full scale in half a second), until the
+# angle ramp is over and the output has caught up.
+RESUME_TORQUE_RATE = 2.0  # output units per s
 
 
 def use_honda_eps_controller(CP, params=None) -> bool:
@@ -142,6 +157,12 @@ class LatControlHondaEps(LatControl):
     self.params = Params()
     self.frame = -1
     self.prev_rate_limited_angle = 0.0
+    self.torque_held = True
+    self.resume_t = 0.0
+    self.resume_s = 0.0
+    self.resume_start_angle = 0.0
+    self.resume_output = 0.0
+    self.resume_slewing = False
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_prev = False
     self.starpilot_lateral_state = custom.StarPilotLateralState.new_message()
@@ -150,6 +171,9 @@ class LatControlHondaEps(LatControl):
   def _read_settings(self):
     self.use_firmware_vgr = _get_param_bool(self.params, "NrdrLatUseFirmwareVgr")
     self.angle_rate_limit_deg_s = _get_param_float(self.params, "NrdrLatAngleRateLimit", NRDR_ANGLE_RATE_LIMIT_DEG_S, 0.0, 2000.0)
+    self.resume_ramp = _get_param_bool(self.params, "NrdrLatResumeRamp")
+    # same read and clip as the car controller's torque cut-off
+    self.min_steer_speed = _get_param_float(self.params, "NrdrMinSteerSpeed", 1.0, 0.0, 45.0) * CV.MPH_TO_MS
     # upstream also reads HondaTorqueOutputLowPassFilter / HondaTorqueOutputLpfTau* here; not keys on this branch
 
   def reset(self):
@@ -157,6 +181,35 @@ class LatControlHondaEps(LatControl):
     self.core.reset()
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_prev = False
+
+  def _resume_ramp(self, angle_des_no_offset, active, CS, angle_offset):
+    """The desired angle with the resume ramp applied (see RESUME_RAMP_S), ahead of the angle-rate ceiling, which the
+    ramp stays under (a 70 deg blend peaks at ~105 deg/s). While torque is held it is the wheel's own angle, unlimited."""
+    wheel = float(CS.steeringAngleDeg) - angle_offset
+    held = not active or CS.vEgo < self.min_steer_speed
+    if held:
+      self.torque_held = True
+      self.resume_s = 0.0
+      self.resume_output = 0.0
+      self.resume_slewing = False
+      return wheel
+    if self.torque_held:
+      self.torque_held = False
+      self.resume_t = 0.0
+      self.resume_s = float(np.interp(CS.vEgo, *RESUME_RAMP_S))
+      self.resume_start_angle = wheel
+      self.resume_slewing = self.resume_s >= RESUME_RAMP_MIN_S
+    if self.resume_s < RESUME_RAMP_MIN_S or self.resume_t >= self.resume_s:
+      self.resume_s = 0.0
+      return angle_des_no_offset
+    if self.steering_pressed_prev:
+      # the driver is turning the wheel: take over again from wherever they leave it
+      self.resume_t = 0.0
+      self.resume_start_angle = wheel
+    self.resume_t += self.dt
+    x = min(self.resume_t / self.resume_s, 1.0)
+    w = x * x * (3.0 - 2.0 * x)
+    return self.resume_start_angle + w * (angle_des_no_offset - self.resume_start_angle)
 
   def _desired_angle_no_offset(self, VM, v_ego, roll, desired_curvature):
     # Same rack map selection as LatControlPID; see the comments there for why the two maps differ.
@@ -178,7 +231,9 @@ class LatControlHondaEps(LatControl):
 
     desired_curvature = self.cmd_delay.update(desired_curvature, float(np.interp(CS.vEgo, *self.cmd_delay_schedule)))
     angle_des_no_offset = self._desired_angle_no_offset(VM, CS.vEgo, params.roll, desired_curvature)
-    if active:
+    if self.resume_ramp:
+      angle_des_no_offset = self._resume_ramp(angle_des_no_offset, active, CS, params.angleOffsetDeg)
+    if active and not (self.resume_ramp and self.torque_held):
       angle_des_no_offset = rate_limit_desired_angle(angle_des_no_offset, self.prev_rate_limited_angle,
                                                      self.angle_rate_limit_deg_s, self.dt)
     self.prev_rate_limited_angle = angle_des_no_offset
@@ -203,6 +258,13 @@ class LatControlHondaEps(LatControl):
       output = self.core.update(angle_des_no_offset, params.angleOffsetDeg, CS.steeringAngleDeg, CS.vEgo, params.roll,
                                 steering_pressed, steer_limited_by_safety)
       output = float(max(min(output, self.steer_max), -self.steer_max))
+      if self.resume_ramp and self.resume_slewing:
+        step = RESUME_TORQUE_RATE * self.dt
+        slewed = float(min(max(output, self.resume_output - step), self.resume_output + step))
+        # keeps slewing past the end of the angle ramp until the output has caught up, so the end is not a step
+        self.resume_slewing = self.resume_s > 0.0 or slewed != output
+        output = slewed
+      self.resume_output = output
 
       pid_log.active = True
       pid_log.p = float(self.core.pid.p)

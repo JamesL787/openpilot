@@ -284,10 +284,10 @@ class StarPilotLateralLayout(_SettingsPage):
         visible=alt_on,
       ),
       SettingRow(
-        "LatSeedPrevCurvature", "toggle", tr_noop("Seed Model Curvature When Off"),
-        subtitle=tr_noop("Steering turns on from where the wheel already is (upstream PR 39091)."),
-        get_state=lambda: p.get_bool("LatSeedPrevCurvature"),
-        set_state=lambda s: p.put_bool("LatSeedPrevCurvature", s),
+        "NrdrLatResumeRamp", "toggle", tr_noop("Ease Steering In When It Resumes"),
+        subtitle=tr_noop("Modified-EPS Hondas: steering takes over from where the wheel is when it resumes below 20 mph."),
+        get_state=lambda: p.get_bool("NrdrLatResumeRamp"),
+        set_state=lambda s: p.put_bool("NrdrLatResumeRamp", s),
         visible=alt_on,
       ),
       SettingRow(
