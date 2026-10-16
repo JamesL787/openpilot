@@ -1852,10 +1852,11 @@ Recorded 2026-10-07, owner decision (Peter, in chat): "fix the internal code to 
 Civic and CR-V, and remove the toggle completely." **Static evidence only; not road-measured.**
 
 dRel = `raw/16 + bosch_a_range_offset_m(fingerprint)`:
-- Civic (36802TBA A160): config word 0, so n0 = 335 (the literal fallback); offset −335/128 = −2.6171875 m.
+- Civic (36802TBA A160): config 5530, so n0 = trunc(5530/16 + 0.5) = 346; offset −346/128 = −2.703125 m.
+  (Corrected 2026-10-16; see the amendment below. It was config 0 → 335 literal fallback → −2.6171875 m.)
 - CR-V (36802TLA A070): config 5448, so n0 = trunc(5448/16 + 0.5) = 341; offset −341/128 = −2.6640625 m.
 
-Against the old −3.0, Civic dRel reads 0.383 m longer and CR-V 0.336 m longer. Scale, vRel, U11, azimuth and gates
+Against the old −3.0, Civic dRel reads 0.297 m longer (0.383 m at 335) and CR-V 0.336 m longer. Scale, vRel, U11, azimuth and gates
 are unchanged, and range differences cancel the offset.
 
 Removed: the `BoschARangeOffsetFallback` param, its UI rows and the CAN 0x669 runtime addend (Gemini, `04b3374034`,
@@ -1871,6 +1872,15 @@ Removed: the `BoschARangeOffsetFallback` param, its UI rows and the CAN 0x669 ru
 - NvM overrides of the config word, since Peter's radar runs A150 and no image of it is available.
 
 Why it is still a choice and not a proof: n0 is a ROM default. A longer dRel is the less conservative direction.
+
+**Amendment 2026-10-16 (Civic 335 → 346; Jason's static trace, Peter asked for the change; static only).** The Civic
+config word is not 0. At startup the radar copies a ROM record into its RAM config struct S = 0x40039A64
+(memcpy(S+3, rec+3, 241) at 0xB732E, fallback copy at 0xB7386) and reads cfg at S+0xD6 (0xDB998, 0xDC03C). The TBA A160
+record table at ROM 0x15BC94 (stride 244) holds cfg 0x159A = 5530 at +0xD6 in all 26 records, so n0 = 346. Positive
+control: the same method gives CR-V (TLA A070) 5448 → 341, unchanged. Every Civic dRel now reads 0.0859 m shorter (the
+more conservative direction); vRel, U11 and range differences are unchanged. Still open: A150 image (346 is A160);
+runtime NvM overwrite of cfg (TBA writer 0xB60A8, store to S+0xD6 at 0xB61F2); whether the −0xC0 addend applies; no
+tape/laser measurement.
 
 Not done: the offline tools (`bosch_a_scenarios.py`, `bosch_a_dropout_census.py`, `bosch_a_sweep_trace.py`) take
 `BOSCH_A_RANGE_OFFSET_M`, so they now use the Civic value. The larch64 `params_pyx.so`/`libcommon.a` still list the

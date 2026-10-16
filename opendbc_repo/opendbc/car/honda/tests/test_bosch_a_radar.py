@@ -708,17 +708,17 @@ class TestU11Scale72:
 
 
 class TestRangeOffsetFirmwareDefault:
-  """D-076: fixed firmware ROM-default offset per car, -335/128 Civic and -341/128 CR-V. No toggle, no CAN 0x669."""
+  """D-076: fixed firmware ROM-default offset per car, -346/128 Civic (cfg 5530) and -341/128 CR-V. No toggle, no CAN 0x669."""
 
   def test_constants(self):
-    assert BOSCH_A_RANGE_OFFSET_M == -335.0 / 128.0 == -2.6171875
-    assert bosch_a_range_offset_m(CAR.HONDA_CIVIC_BOSCH) == -2.6171875
+    assert BOSCH_A_RANGE_OFFSET_M == -346.0 / 128.0 == -2.703125
+    assert bosch_a_range_offset_m(CAR.HONDA_CIVIC_BOSCH) == -2.703125
     assert bosch_a_range_offset_m(CAR.HONDA_CRV_5G) == -2.6640625
     assert bosch_a_range_offset_m(CAR.HONDA_CRV_HYBRID) == -2.6640625
-    assert bosch_a_range_offset_m() == -2.6171875
+    assert bosch_a_range_offset_m() == -2.703125
 
   def test_interface_uses_the_cars_offset(self):
-    assert make_radar_interface().range_offset_m == -2.6171875
+    assert make_radar_interface().range_offset_m == -2.703125
 
   def test_0x669_is_not_a_parser_message(self):
     # A required 0x669 would raise canError whenever the camera does not send it.

@@ -70,28 +70,36 @@ BOSCH_A_FREQ_HZ = 14.35
 # (~9% low, -9 m at 60 m against vision).
 BOSCH_A_RANGE_SCALE_M = 1.0 / 16.0
 
-# Offset: the radar firmware's ROM default n0, as -n0/128 m, per car (D-076, 2026-10-07, Peter).
+# Offset: the radar firmware's ROM default n0, as -n0/128 m, per car (D-076, 2026-10-07, Peter;
+# Civic corrected 2026-10-16, Jason's static trace).
 #
-#   Civic (36802TBA A160): cfg word 0 -> n0 = 335 (literal fallback) -> -2.6171875 m
-#   CR-V  (36802TLA A070): cfg 5448   -> n0 = trunc(5448/16 + 0.5) = 341 -> -2.6640625 m
+#   Civic (36802TBA A160): cfg 5530 -> n0 = trunc(5530/16 + 0.5) = 346 -> -2.703125 m
+#   CR-V  (36802TLA A070): cfg 5448 -> n0 = trunc(5448/16 + 0.5) = 341 -> -2.6640625 m
 #
 # Evidence and its limits (static only, never road-measured):
-# - n0 is a ROM default. A unit may override cfg in NvM; Peter's radar is A150, whose image we do not have.
+# - D-076 first took Civic cfg = 0, which selects the 335 literal fallback (-2.6171875 m). The ROM refutes that:
+#   at startup the radar copies a ROM record into RAM config S = 0x40039A64 (memcpy(S+3, rec+3, 241) at 0xB732E,
+#   fallback copy 0xB7386) and reads cfg from S+0xD6 (0xDB998, 0xDC03C). The TBA A160 table at ROM 0x15BC94
+#   (stride 244) holds cfg 0x159A = 5530 at +0xD6 in all 26 records. The same method reproduces CR-V 5448
+#   (positive control). 335 -> 346 moves every Civic dRel 0.0859 m shorter; vRel and range differences unchanged.
+# - n0 is a ROM default. NvM can overwrite cfg at runtime (TBA writer 0xB60A8, store to S+0xD6 at 0xB61F2), so the
+#   runtime value is unproven; Peter's radar is A150, whose image we do not have (346 is the A160 value); whether
+#   the -0xC0 addend applies is open.
 # - The firmware adds a runtime addend from camera CAN 0x669 X (Peter's car: n = 220). That path, and the
 #   BoschARangeOffsetFallback toggle that applied it, are REMOVED: 0x669 was a required parser message
 #   (canError risk if absent), and the firmware never applies n/128 to a transmitted range. Range is copied
 #   unmodified (0xdb7ee -> rec+0x10); (range - n)/128 is only a lever arm for lateral (0xdc004) and the
 #   width gate (0xaa5a4).
 # - So this number is a firmware-sourced choice, not a proven range origin. It replaces -3.0 (James's fw
-#   math + tape check), moving dRel +0.38 m (Civic). The real origin of the camera's range vs openpilot's
+#   math + tape check), moving dRel +0.30 m (Civic, 346). The real origin of the camera's range vs openpilot's
 #   bumper-frame dRel needs a laser/tape check to a parked car (5/10/20/40/60 m).
-BOSCH_A_RANGE_OFFSET_CIVIC_M = -335.0 / 128.0  # -2.6171875 m
+BOSCH_A_RANGE_OFFSET_CIVIC_M = -346.0 / 128.0  # -2.703125 m
 BOSCH_A_RANGE_OFFSET_CRV_M = -341.0 / 128.0    # -2.6640625 m
 BOSCH_A_RANGE_OFFSET_M = BOSCH_A_RANGE_OFFSET_CIVIC_M
 
 
 def bosch_a_range_offset_m(car_fingerprint: str = "") -> float:
-  """Firmware ROM-default range offset for the car: CR-V -341/128, everything else (Civic) -335/128."""
+  """Firmware ROM-default range offset for the car: CR-V -341/128, everything else (Civic) -346/128."""
   from opendbc.car.honda.values import CAR
   if car_fingerprint in (CAR.HONDA_CRV_5G, CAR.HONDA_CRV_HYBRID):
     return BOSCH_A_RANGE_OFFSET_CRV_M
@@ -165,7 +173,7 @@ BOSCH_A_DIRECT_VREL_CENTER_RAW = 864
 #     STATUS 7 src 2 U10<64, 55.7-70.0) bracket about 55-70 counts per m/s, which excludes 72; Job's per-dRel-band
 #     range check (D-074 second addendum) depends on the band, column A running 66.8-77.0, so the result is band-
 #     dependent rather than a clean exclusion. The encoder is firmware-proven 1/72 and the range scale is firmware-
-#     proven raw/16 (R18); the range offset (BOSCH_A_RANGE_OFFSET_M, -335/128 on Civic) is a constant and does not change a range
+#     proven raw/16 (R18); the range offset (BOSCH_A_RANGE_OFFSET_M, -346/128 on Civic) is a constant and does not change a range
 #     slope. So this reads as a range-vs-U11 discrepancy (the range slope runs faster than U11), not a decode
 #     error. Unresolved; see STATUS. No closing-speed figure here is road-validated.
 # Centre 864, rails raw 0/1728, sentinel 0x7FE, u10, range and azimuth are unchanged. 1/72 publishes 64/72 of the
@@ -734,7 +742,7 @@ class RadarInterface(RadarInterfaceBase):
       # D-074: U11 counts per m/s (72). An attribute so replays of 1/64-era logs can set it.
       self.u11_counts_per_mps = BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
       self.newborn_range_publish = BOSCH_A_NEWBORN_RANGE_PUBLISH
-      # D-076: firmware ROM-default range offset (-2.617 m Civic, -2.664 m CR-V). Fixed per car.
+      # D-076: firmware ROM-default range offset (-2.703 m Civic, -2.664 m CR-V). Fixed per car.
       self.range_offset_m = bosch_a_range_offset_m(CP.carFingerprint)
     else:
       # Nidec
