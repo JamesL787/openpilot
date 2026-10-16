@@ -17,6 +17,7 @@ NAVIGATIOND_HZ = 1
 REROUTE_TRIGGER_SECONDS = 2.0
 ARRIVAL_CLEAR_SECONDS = 5.0
 LOCATION_STATE_STALE_SECONDS = 2.5
+ROUTE_RESEND_SECONDS = 10.0  # a mapsd started after the route was computed gets it within this
 
 
 class Navigationd:
@@ -35,6 +36,7 @@ class Navigationd:
     self._route_fetch_inflight = False
     self._route_generation = 0
     self._published_route_generation = -1
+    self._route_published_at = 0.0
 
     self._last_position: Coordinate | None = None
     self._last_bearing: float | None = None
@@ -240,7 +242,7 @@ class Navigationd:
       nav_instruction.showFull = bool(payload["showFull"])
       nav_instruction.speedLimit = float(payload["speedLimit"])
       nav_instruction.speedLimitSign = payload["speedLimitSign"]
-      nav_instruction.allManeuvers = payload["allManeuvers"]
+      nav_instruction.allManeuvers = route.upcoming_maneuvers(progress)
 
     self.pm.send("navInstruction", msg)
 
@@ -311,7 +313,8 @@ class Navigationd:
 
   def _publish_nav_route_if_needed(self) -> None:
     route, _, route_generation = self._snapshot_route()
-    if route_generation == self._published_route_generation:
+    now = monotonic()
+    if route_generation == self._published_route_generation and now - self._route_published_at < ROUTE_RESEND_SECONDS:
       return
 
     msg = messaging.new_message("navRoute")
@@ -324,6 +327,7 @@ class Navigationd:
 
     self.pm.send("navRoute", msg)
     self._published_route_generation = route_generation
+    self._route_published_at = now
 
   def run(self) -> None:
     cloudlog.warning("navigationd init")

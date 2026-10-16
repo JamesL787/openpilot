@@ -74,6 +74,7 @@ class RouteStep:
   maxspeed_ms: float
   modifier: str
   instruction: str
+  mapbox_modifier: str = ""  # as Mapbox sends it ("slight right"), for the nav model's maneuver input
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,7 @@ class RouteProgress:
   time_remaining: float
   current_speed_limit_ms: float
   all_maneuvers: list[dict[str, Any]]
+  progress_distance: float = 0.0  # meters along the route geometry to the closest point
 
 
 def bearing_between_two_points(point_one: Coordinate, point_two: Coordinate) -> float:
@@ -244,6 +246,7 @@ class NavigationRoute:
         maxspeed_ms=maxspeed_ms,
         modifier=string_to_direction(str(step.get("modifier", "none"))),
         instruction=str(step.get("instruction", "")),
+        mapbox_modifier="" if step.get("modifier") in (None, "none") else str(step["modifier"]),
       ))
 
     bearings = [bearing_between_two_points(geometry[index], geometry[index + 1]) for index in range(len(geometry) - 1)]
@@ -332,7 +335,14 @@ class NavigationRoute:
       time_remaining=time_remaining,
       current_speed_limit_ms=current_step.maxspeed_ms,
       all_maneuvers=all_maneuvers,
+      progress_distance=closest_cumulative,
     )
+
+  def upcoming_maneuvers(self, progress: RouteProgress) -> list[dict[str, Any]]:
+    """Every maneuver not yet passed, with its distance along the route and Mapbox's own type and modifier, the way
+    comma's navd fills navInstruction.allManeuvers for the nav model (each Mapbox step begins with its maneuver)."""
+    return [{"distance": step.cumulative_distance - progress.progress_distance, "type": step.maneuver,
+             "modifier": step.mapbox_modifier} for step in self.steps if step.cumulative_distance >= progress.progress_distance]
 
   def upcoming_turn_modifier(self, progress: RouteProgress, position: Coordinate, v_ego: float) -> str:
     if progress.next_step is None:

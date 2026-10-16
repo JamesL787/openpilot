@@ -10,6 +10,7 @@ from openpilot.common.params import Params
 from opendbc.car.gps import car_gps_available
 from openpilot.system.hardware import HARDWARE, PC, TICI
 from openpilot.selfdrive.modeld.reproject_config import select_reproject_session
+from openpilot.selfdrive.navigation.tiles import basemap_available
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 
 WEBCAM = os.getenv("USE_WEBCAM") is not None
@@ -124,6 +125,9 @@ def run_speed_limit_vision(started: bool, params: Params, CP: car.CarParams, sta
 def run_navigationd(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   return started and params.get("NavDestination") is not None
 
+def run_mapsd(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
+  return run_navigationd(started, params, CP, starpilot_toggles) and basemap_available()
+
 
 def run_mapd(started: bool, params: Params, CP: car.CarParams, starpilot_toggles: SimpleNamespace) -> bool:
   if started:
@@ -236,6 +240,7 @@ procs += [
   PythonProcess("starpilot_process", "starpilot.starpilot_process", always_run),
   PythonProcess("mapd", "starpilot.navigation.mapd_wrapper", run_mapd, nice=19),
   PythonProcess("navigationd", "starpilot.navigation.navigationd", run_navigationd, nice=19),
+  PythonProcess("mapsd", "selfdrive.navigation.mapsd", run_mapsd),
   PythonProcess("speed_limit_filler", "starpilot.system.speed_limit_filler", run_speed_limit_filler, nice=19),
   PythonProcess("speed_limit_vision", "starpilot.system.speed_limit_vision", run_speed_limit_vision, nice=19),
   PythonProcess("adj_spot_monitor_vision", "starpilot.system.adj_spot_monitor_vision", run_v_asm, nice=19),

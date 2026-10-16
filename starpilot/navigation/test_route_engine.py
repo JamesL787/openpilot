@@ -1,5 +1,8 @@
+import numpy as np
+
 from cereal import log
 
+from openpilot.selfdrive.navigation.helpers import navigation_input
 from openpilot.starpilot.navigation.route_engine import Coordinate, NavigationRoute
 
 
@@ -78,6 +81,25 @@ def test_route_progress_and_instruction_payload():
   assert payload["maneuverSecondaryText"] == "onto Market St"
   assert payload["maneuverType"] == "turn"
   assert payload["maneuverModifier"] == "right"
+
+
+def test_upcoming_maneuvers_for_the_nav_model():
+  """comma's semantics: maneuvers not yet passed, distance along the route, Mapbox's own type and modifier."""
+  route = make_route()
+  progress = route.get_progress(Coordinate(0.0, 0.0015))
+  assert progress is not None
+  maneuvers = route.upcoming_maneuvers(progress)
+  assert [(m["type"], m["modifier"]) for m in maneuvers] == [("turn", "right"), ("arrive", "right")]  # depart is behind
+  turn_distance = Coordinate(0.0, 0.0015).distance_to(Coordinate(0.0, 0.002))
+  assert abs(maneuvers[0]["distance"] - turn_distance) < 1.0
+
+  # the model's input: a one-hot Valhalla right turn (10) and the distance in hundreds of meters
+  class Maneuver:
+    def __init__(self, m):
+      self.distance, self.type, self.modifier = m["distance"], m["type"], m["modifier"]
+  vector = navigation_input([Maneuver(m) for m in maneuvers], traveled=5.0)
+  assert np.flatnonzero(vector[:-1]).tolist() == [10]
+  assert abs(vector[-1] - (maneuvers[0]["distance"] - 5.0) / 100) < 1e-5
 
 
 def test_route_off_route_and_arrival_detection():

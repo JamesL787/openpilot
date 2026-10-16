@@ -50,6 +50,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan_t
 from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import lateral_delay_schedule, scheduled_lateral_delay
 from openpilot.selfdrive.modeld.camera_offset import CameraOffset, DEFAULT_CAMERA_HEIGHT
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
+from openpilot.selfdrive.navigation.helpers import navigation_input
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_pose_msg, PublishState, get_curvature_from_output
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.modeld.compile_modeld import (
@@ -1611,12 +1612,39 @@ def _set_model_lab_runtime(params: Params, *, requested: bool, active: bool,
   })
 
 
+NAV_MAP_TIMEOUT = 0.5  # seconds, as comma's nav-model-integration modeld
+NAV_INSTRUCTION_TIMEOUT = 2.0
+
+
+class NavInputs:
+  """The nav model's map frame (mapsd) and next-maneuver vector (navInstruction), as comma's nav-model-integration modeld
+  builds them; a stale or missing one is left out, and the runner feeds zeros in its place."""
+
+  def __init__(self):
+    self.client = VisionIpcClient("mapsd", VisionStreamType.VISION_STREAM_MAP, True)
+    self.nav_map, self.nav_map_time = None, 0.
+
+  def update(self, sm, v_ego: float) -> dict[str, np.ndarray]:
+    inputs = {}
+    now = time.monotonic()
+    if self.client.is_connected() or self.client.connect(False):
+      if (buf := self.client.recv(0)) is not None:
+        self.nav_map = np.frombuffer(buf.data, dtype=np.uint8, count=buf.width * buf.height).reshape(buf.height, buf.width).copy()
+        self.nav_map_time = now
+    if self.nav_map is not None and now - self.nav_map_time < NAV_MAP_TIMEOUT:
+      inputs["nav_map"] = self.nav_map
+    if sm.valid["navInstruction"] and now - sm.recv_time["navInstruction"] < NAV_INSTRUCTION_TIMEOUT:
+      inputs["navigation"] = navigation_input(sm["navInstruction"].allManeuvers, v_ego * (now - sm.recv_time["navInstruction"]))
+    return inputs
+
+
 def _runner_frame_args(model: ModelState, buf_main, buf_extra,
                        model_transform_main: np.ndarray, model_transform_extra: np.ndarray,
                        vec_desire: np.ndarray, traffic_convention: np.ndarray,
                        lat_action_t: float, long_action_t: float,
                        prev_action: log.ModelDataV2.Action, v_ego: float,
-                       lateral_control_params: np.ndarray) -> tuple[dict, dict, dict[str, np.ndarray]]:
+                       lateral_control_params: np.ndarray,
+                       nav_inputs: dict[str, np.ndarray] | None = None) -> tuple[dict, dict, dict[str, np.ndarray]]:
   bufs = {
     model.road_key: buf_main,
     model.wide_key: buf_extra,
@@ -1642,6 +1670,9 @@ def _runner_frame_args(model: ModelState, buf_main, buf_extra,
     ], dtype=np.float32)
   if "lateral_control_params" in model.numpy_inputs:
     inputs["lateral_control_params"] = lateral_control_params
+  for name in ("nav_map", "navigation"):  # only nav models take these; zeros without a fresh map or maneuver
+    if name in model.numpy_inputs:
+      inputs[name] = (nav_inputs or {}).get(name, 0.)
   return bufs, transforms, inputs
 
 
@@ -1852,7 +1883,8 @@ def main(demo=False):
     publish_services.append("chestnutState")
   pm = PubMaster(publish_services)
   sm = SubMaster(["deviceState", "carState", "roadCameraState", "wideRoadCameraState", "liveCalibration", "driverMonitoringState", "carControl",
-                  "controlsState", "liveDelay", "starpilotPlan"])
+                  "controlsState", "liveDelay", "starpilotPlan", "navInstruction"])
+  nav = NavInputs()
 
   publish_state = PublishState()
   chestnut_state = ChestnutState(pm, external_gpu_active) if external_gpu_requested else None
@@ -1936,6 +1968,7 @@ def main(demo=False):
     lateral_delay = scheduled_lateral_delay(lat_delay_schedule, v_ego) if lat_delay_schedule else sm["liveDelay"].lateralDelay
     lat_delay = lateral_delay + lat_smooth_seconds
     lateral_control_params = np.array([v_ego, lat_delay], dtype=np.float32)
+    nav_inputs = nav.update(sm, v_ego)
     if sm.frame % 60 == 0:
       camera_offset.set_target(params.get_float("CameraOffset", return_default=True))
 
@@ -2036,7 +2069,7 @@ def main(demo=False):
         lateral_bufs, lateral_transforms, lateral_inputs = _runner_frame_args(
           model, buf_main, buf_extra, model_transform_main, model_transform_extra,
           vec_desire, traffic_convention, lat_action_t, long_action_t,
-          prev_action, v_ego, lateral_control_params,
+          prev_action, v_ego, lateral_control_params, nav_inputs,
         )
         lateral_model_output = model.run(
           lateral_bufs,
@@ -2050,7 +2083,7 @@ def main(demo=False):
         longitudinal_bufs, longitudinal_transforms, longitudinal_inputs = _runner_frame_args(
           model_lab_longitudinal, buf_main, buf_extra, model_transform_main, model_transform_extra,
           vec_desire, traffic_convention, lat_action_t, long_action_t,
-          prev_action, v_ego, lateral_control_params,
+          prev_action, v_ego, lateral_control_params, nav_inputs,
         )
         longitudinal_model_output = model_lab_longitudinal.run(
           longitudinal_bufs,
@@ -2076,7 +2109,7 @@ def main(demo=False):
         bufs, transforms, inputs = _runner_frame_args(
           model, buf_main, buf_extra, model_transform_main, model_transform_extra,
           vec_desire, traffic_convention, lat_action_t, long_action_t,
-          prev_action, v_ego, lateral_control_params,
+          prev_action, v_ego, lateral_control_params, nav_inputs,
         )
         model_output = model.run(
           bufs,
