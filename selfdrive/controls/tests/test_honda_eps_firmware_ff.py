@@ -536,10 +536,9 @@ def test_crv_a220_reads_its_own_command_axis_and_predicts_r6_from_the_a040():
   clarity = eps_ff.CLARITY_TRW_A020
   for key, r5 in zip(a220.r5_key_bp, a220.r5_v, strict=True):
     assert r5 == round(float(np.interp(key * 3840 / 4096, clarity.r5_key_bp, clarity.r5_v)))
-  for key, kp in zip(a220.kp_key_bp, a220.kp_v, strict=True):
-    assert kp == round(float(np.interp(key * 3840 / 4096, clarity.kp_key_bp, clarity.kp_v)))
-  # P axis is the A040's (the values are not); the envelope is the A220's own (1330 from 150 km/h, not flat)
-  assert a220.kp_key_bp == a040.kp_key_bp and a220.kp_v != a040.kp_v
+  # P: the Clarity's own knots moved to the A220's key domain (x 4096/3840), with the Clarity's values
+  assert a220.kp_key_bp == tuple(round(k * 4096 / 3840) for k in clarity.kp_key_bp) and a220.kp_v == clarity.kp_v
+  # the envelope is the A220's own (1330 from 150 km/h, not flat)
   assert a220.key_ceiling(120 / 3.6) == 1774 and a220.key_ceiling(160 / 3.6) == 1330
   assert a040.key_ceiling(160 / 3.6) == 1774
   # R6 is predicted from the A040 (shared 3121 / A-centre 16783 / NORM 1650), not measured; load is the CR-V's

@@ -437,16 +437,17 @@ CRV_TLA_A040 = EpsFirmwareCalibration(
   r6_per_deg_s=CRV_TLA_A040_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_TLA_A040_R6_GAIN,
   load=CRV_TLA_A040_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
 )
-# CR-V 5G 39990-TLA-A220 (2020+), the CORRECTED PTM build of 2026-10-16 (full image sha256 bead3bd4, RWD d62490b3; KB
-# A220_PTM_FIX_20261016) on stock df85f988: command map and P table Clarity-equivalent, D737, KFF45, Norm1650, Trk3200,
+# CR-V 5G 39990-TLA-A220 (2020+), the CORRECTED PTM build of 2026-10-16, revision b (payload sha256 a62337a9, RWD 2c992997;
+# KB PTM_FIX_FAMILY_20261016/out/A220, proof/) on stock df85f988: command map and P table Clarity-equivalent, D737, KFF45, Norm1650, Trk3200,
 # clamps 7373/1774/9000, speed clamp 0, row 6 stock.
 # It replaces the 10-06 build (RWD 8f175250), which pasted the A040 PTM's TargetMap-D Y and P117..265 Y onto the A220's
 # own, much more compressed axes: 0.71x the Clarity below key 161 and up to 1.76x above it, a 4.1x incremental-gain kink
 # at output ~0.09, where highway lane keeping sits (p90 key 169 on the owner's routes 0x30A-0x30D). Both builds report
 # 39990-TLA,A220, so a car still on the 10-06 build must be reflashed: on this calibration it would get ~0.7x on the
 # highway and ~2x in turns. The corrected rows: at each row's own stock X knots, Y = the Clarity's row 0 at key x
-# 3840/4096 (the A220 takes E4 0..4096 per unit output, the Clarity 0..3840), so firmware output per unit output is
-# within 0.7% of the Clarity's from 0.05 to 0.94. The
+# 3840/4096 (the A220 takes E4 0..4096 per unit output, the Clarity 0..3840); the P table is the Clarity's own knots x
+# 4096/3840 with the Clarity's values. The executed firmware (SH-2A emulation) is within 0.6% of the Clarity's output
+# from 0.05 to 0.93 (key quantization). The
 # controller block is the A040's shifted -0x448 (only RAM literals differ), every calibration literal resolves to the
 # SAME table address, and the PTM edits left the command axes, P axis, envelope and VGR tables stock. Read from THIS
 # image: the command-map key axis (rows 0-3 at 0x11AE0 + 18*row), the P axis (0x11E2E), the speed envelope (values
@@ -469,7 +470,7 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
   name="crv_tla_a220", e4_per_output=4096.0,
   r5_key_bp=(0, 161, 222, 322, 409, 534, 696, 998, 1663), r5_v=(0, 2720, 3750, 5439, 6917, 9038, 11775, 16880, 28127), key_clamp=1774,
   envelope_bp=(0, 50, 100, 150, 200, 250, 300, 350, 400), envelope_v=(1774, 1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330),
-  kp_key_bp=CRV_TLA_A040.kp_key_bp, kp_v=(117, 131, 154, 190, 230, 253, 261, 264, 265),
+  kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA_A040.r6_per_deg_s, r6_angle_bp=CRV_TLA_A040.r6_angle_bp, r6_angle_gain=CRV_TLA_A040.r6_angle_gain,
   load=CRV_TLA_A040_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
 )
