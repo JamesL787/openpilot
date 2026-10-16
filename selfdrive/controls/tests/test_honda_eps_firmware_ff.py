@@ -698,6 +698,14 @@ def test_insight_carries_its_own_measured_load_on_row_0():
   cal = eps_ff.INSIGHT_TXM_A040
   assert cal.load is eps_ff.INSIGHT_TXM_A040_LOAD and cal.load != eps_ff.CIVIC_TBA_C020_LOAD
   assert cal.r5_key_bp == (0, 111, 222, 333, 443, 665, 887, 1108, 1663)  # row 0, every Insight build and variant
+  # the corrected PTM: the Clarity's own map and P table, so the firmware law is the Clarity's
+  assert cal.r5_v == eps_ff.CLARITY_TRW_A020_R5 and cal.key_clamp == 1663
+  clarity = eps_ff.CLARITY_TRW_A020
+  assert (cal.kp_key_bp, cal.kp_v) == (clarity.kp_key_bp, clarity.kp_v)
+  def out(c, u):
+    return abs(eps_ff.firmware_output(eps_ff.r5_from_output(u, 10.0, c), 0.0, c))
+  for u in (0.03, 0.05, 0.1, 0.15, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0):
+    assert out(cal, u) / out(clarity, u) == pytest.approx(1.0, abs=0.01), u
   assert cal.e4_per_output == 3840.0 and cal.r6_per_deg_s == eps_ff.INSIGHT_TXM_A040_R6_CENTRE and cal.r6_angle_gain == eps_ff.INSIGHT_TXM_A040_R6_GAIN
   # the fitted column is lighter than the C020's at speed, which the carried-over load over-asked
   insight = eps_ff.column_load(10., 0., 25., 0., load=eps_ff.INSIGHT_TXM_A040_LOAD)

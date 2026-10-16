@@ -242,6 +242,7 @@ CRV_TLA_A040_I_SCALE = (1.0, 1.0, 1.0)
 TARGET_MAP_D_R5 = (0, 1926, 4938, 8455, 12036, 15926, 20138, 26955, 30000)
 CLARITY_TRW_A020_R5 = (0, 2000, 4000, 6000, 8000, 12000, 16000, 20000, 30000)
 P_ROW_PMINUS5 = (117, 148, 184, 220, 245, 257, 263, 265, 265)
+CLARITY_TRW_A020_P_KEYS = (0, 222, 443, 665, 887, 1108, 1330, 1552, 1774)  # P row 0 key axis (0x13B5E)
 FLAT_ENVELOPE = ((0, 50, 100, 150, 200, 250, 300, 350, 400), (1774,) * 9)
 # C020 / TEG / A030 speed envelope (axis 0x13644, values 0x136C2 on the C020): 1552 from 120 km/h, 1108 from 160
 CIVIC_TBA_C020_ENVELOPE = ((0, 50, 100, 150, 200, 240, 300, 321, 400), (1774, 1774, 1774, 1774, 1774, 1552, 1219, 1108, 1108))
@@ -303,7 +304,7 @@ CLARITY_TRW_A020 = EpsFirmwareCalibration(
   # 1774 up to 100 km/h, so the 1663 key clamp binds first until ~107 km/h; 1330 from 130 km/h (0x13660 / 0x136DE)
   envelope_bp=(0, 50, 100, 150, 200, 260, 300, 350, 400), envelope_v=(1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330, 1330),
   # P row 0 (0x13B5E / 0x13BDC)
-  kp_key_bp=(0, 222, 443, 665, 887, 1108, 1330, 1552, 1774), kp_v=P_ROW_PMINUS5,
+  kp_key_bp=CLARITY_TRW_A020_P_KEYS, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CLARITY_TRW_A020_R6_CENTRE, r6_angle_bp=CLARITY_TRW_A020_R6_BP, r6_angle_gain=CLARITY_TRW_A020_R6_GAIN,
   load=CLARITY_TRW_A020_LOAD, p_scale=CLARITY_TRW_A020_P_SCALE, i_scale=CLARITY_TRW_A020_I_SCALE,
   r5_per_key=18.04,
@@ -393,18 +394,24 @@ CIVIC_TGG_A120 = EpsFirmwareCalibration(
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
 )
-# Insight 39990-TXM-A040, 08-08 C020Surface Trk1-4000 Trk2-3869 (bin sha256 1f1cfe6b). Rows 0-1 keep the Clarity-
-# style axis ending at the 1663 clamp and rows 2-5 are 2x it at low command. Row 0 is live: all three variant records
-# (TXMA0/1/2, at 0xECF7, laid out among the part-number strings) select row 0, and rows 0 and 1 are identical anyway.
-# Every Insight image we have (08-01 through 08-08) carries the same row-0 axis and variant records (TXMA0/1 enabled
-# -> row 0, TXMA2 disabled -> row 0), so the row holds whichever build the car runs. The envelope was not located;
-# flat is assumed (the 1663 clamp binds). Load measured (INSIGHT_TXM_A040_LOAD); R6 computed from its A table. Not measured:
-# envelope.
+# Insight 39990-TXM-A040, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (payload sha256 089a8a72, RWD 7ba37432;
+# KB PTM_FIX_FAMILY_20261016/out/TXM, proof/), on the released PTM 39990-TXM,A040-PTM.rwd (rwd 833a41bf, the 08-08 C020Surface Trk1-4000
+# Trk2-3869 build, full image 1f1cfe6b). The release wrote TargetMap-D, a curve made for the C020's axis, onto row 0's
+# key axis, which IS the Clarity's (0x11B3C: 0,111,222,...,1663 at the same E4 3840 per unit output). So it ran
+# 1.14 / 1.32 / 1.53 / 1.50x the Clarity at outputs 0.10 / 0.15 / 0.20 / 0.30, and the residual PID ~1.5-1.9x hotter there.
+# The corrected build puts the Clarity's own map values on rows 0-5 (0x11BBA, each on its own stock axis) and the
+# Clarity's own P table (knots and values, 0x11E8A/0x11F08), returns row 6 (forced override) to stock and flattens
+# A280 rows 0-3. Rows 0-1 are then the Clarity's tables exactly: the executed firmware (SH-2A emulation) matches the
+# Clarity's output at every u. Both builds report 39990-TXM,A040: a car on the
+# released image must be reflashed together with this calibration (on it the released image runs up to 1.5x hot).
+# Row 0 is live: all three variant records (TXMA0/1/2, at 0xECF7) select row 0. The envelope was not located; flat is
+# assumed (the 1663 clamp binds). Load measured (INSIGHT_TXM_A040_LOAD, in firmware output counts, so it holds across
+# the reflash); R6 computed from its A table. Not measured: envelope.
 INSIGHT_TXM_A040 = EpsFirmwareCalibration(
   name="insight_txm_a040", e4_per_output=3840.0,
-  r5_key_bp=(0, 111, 222, 333, 443, 665, 887, 1108, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1663,
+  r5_key_bp=(0, 111, 222, 333, 443, 665, 887, 1108, 1663), r5_v=CLARITY_TRW_A020_R5, key_clamp=1663,
   envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
-  kp_key_bp=(0, 222, 333, 665, 887, 1104, 1317, 1441, 1663), kp_v=P_ROW_PMINUS5,
+  kp_key_bp=CLARITY_TRW_A020_P_KEYS, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=INSIGHT_TXM_A040_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=INSIGHT_TXM_A040_R6_GAIN,
   load=INSIGHT_TXM_A040_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   # Inferred: on LatControlPID its route 0000001e ran the plan 0.06 s early (exit 0.12), and this controller runs
