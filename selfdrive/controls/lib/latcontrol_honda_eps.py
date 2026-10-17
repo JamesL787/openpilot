@@ -41,6 +41,7 @@ from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import (
   HondaEpsLateralCore,
   EpsFirmwareCalibration,
   OVERRIDE_FADE_UP_S_DEFAULT,
+  REQUIRED_PTM_RWD,
   command_delay,
   provenance_summary,
   select_eps_firmware_calibration,
@@ -132,8 +133,10 @@ class LatControlHondaEps(LatControl):
     self.params = Params()
     self.calibration = calibration if calibration is not None else eps_firmware_calibration(CP, self.params)
     assert self.calibration is not None, f"no EPS firmware calibration for {CP.carFingerprint}"
+    required = REQUIRED_PTM_RWD.get(self.calibration.name)
     cloudlog.info(f"LatControlHondaEps: {CP.carFingerprint} steering with EPS calibration {self.calibration.name} " +
-                  f"({provenance_summary(self.calibration)})")
+                  f"({provenance_summary(self.calibration)})" +
+                  (f"; requires the corrected PTM build, RWD sha256 {required}..." if required else ""))
     pid = CP.lateralTuning.pid
     self.core = HondaEpsLateralCore([float(x) for x in pid.kpBP], [float(x) for x in pid.kpV],
                                        [float(x) for x in pid.kiBP], [float(x) for x in pid.kiV], dt,

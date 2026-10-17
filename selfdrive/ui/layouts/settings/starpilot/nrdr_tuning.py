@@ -257,7 +257,9 @@ class NRDRTuningLayout(_SettingsPage):
     filter_rows = [
       toggle("HondaEpsController", "Honda EPS Controller",
              "Steer a PTM-flashed Civic, Insight or CR-V with the controller that inverts the EPS firmware's own "
-             "control law. The Clarity always uses it. Takes effect the next time you start the car."),
+             "control law. Requires the corrected (revision b, 2026-10-16) PTM build for your EPS: earlier PTM builds "
+             "report the same version and do not match. The Clarity always uses it. Takes effect the next time you "
+             "start the car."),
       toggle("HondaEpsFirmwareVgr", "Use Firmware VGR Table",
              "For a car without a yaw-fitted rack map: convert curvature with the EPS firmware's A (position) "
              "table instead of the road-measured ratio curve. Cars with a rack map always use it."),

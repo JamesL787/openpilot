@@ -654,7 +654,7 @@
       {
         "key": "HondaEpsController",
         "label": "Honda EPS Controller",
-        "description": "Steer a PTM-flashed Civic, Insight or CR-V with the controller that inverts the EPS firmware's own control law. The Clarity always uses it. Takes effect the next time you start the car.",
+        "description": "Steer a PTM-flashed Civic, Insight or CR-V with the controller that inverts the EPS firmware's own control law. Requires the corrected (revision b, 2026-10-16) PTM build for your EPS: earlier PTM builds report the same version and do not match. The Clarity always uses it. Takes effect the next time you start the car.",
         "data_type": "bool",
         "ui_type": "toggle",
         "parent_key": "LateralTune",

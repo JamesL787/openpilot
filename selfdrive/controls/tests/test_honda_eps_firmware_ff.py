@@ -440,20 +440,17 @@ def test_clarity_trw_a020_profile_is_the_validated_build():
 
 
 def test_nidec_civics_carry_the_teg_measurements():
-  # both Nidec images take the column load measured on the TEG-A010 telemetry routes; the A030 takes R6's shape from
-  # its A table, the TEG its own measured shape
+  # both Nidec images take the column load, R6 (centre and angle shape) and command delay measured on the TEG-A010
+  # telemetry routes; on rev b the A030's rows 0-5 are the TEG's row 3, so it is the TEG's calibration without the rack
   for cal in (eps_ff.CIVIC_TBA_A030, eps_ff.CIVIC_TEG_A010):
     assert cal.load == eps_ff.CIVIC_TEG_A010_LOAD and cal.e4_per_output == 3840.0
-  assert eps_ff.CIVIC_TBA_A030.r6_angle_gain == eps_ff.CIVIC_TBA_C120_R6_GAIN
   teg = eps_ff.CIVIC_TEG_A010
   assert teg.r6_angle_bp == eps_ff.CIVIC_TEG_A010_R6_BP and teg.r6_angle_gain == eps_ff.CIVIC_TEG_A010_R6_GAIN
   # the measured R6 per published deg/s by |angle| band (routes 133/134/137), within 1.5%
   for angle, measured in ((7.5, -151.4), (30., -152.2), (67.5, -165.7), (120., -170.4), (200., -176.4)):
     assert eps_ff.firmware_r6(1.0, angle, teg) == pytest.approx(measured, rel=.015)
-  # the A030's row is not read: it keeps the C020's row 1 and R6 computed from the A table
   a030 = eps_ff.CIVIC_TBA_A030
-  assert (a030.r5_key_bp, a030.kp_key_bp, a030.r6_per_deg_s) == (eps_ff.CIVIC_TBA_C020.r5_key_bp, eps_ff.CIVIC_TBA_C020.kp_key_bp,
-                                                                  eps_ff.CIVIC_TBA_C120_R6_CENTRE)
+  assert dataclasses.replace(a030, name=teg.name, rack=teg.rack) == teg and a030.rack is None
   # the TEG owner's car runs row 3 (TEGA2), measured on its telemetry; the corrected (rev b) image's row 3 carries the
   # Clarity's R5 per key on that row's axis and the Clarity's P knots
   teg = eps_ff.CIVIC_TEG_A010
@@ -581,7 +578,7 @@ def test_every_vehicle_has_its_own_command_delay():
   delays = {cal.name: cal.cmd_delay_s for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values()}
   measured = {"clarity_trw_a020": 0.12, "civic_tba_c020": 0.15, "civic_teg_a010": 0.15}
   same_chassis_as_c020 = {"civic_tba_c120": 0.15, "civic_tgg_a120": 0.15}
-  inferred = {"insight_txm_a040": 0.15}
+  inferred = {"insight_txm_a040": 0.15, "civic_tba_a030": 0.15}  # the A030: the TEG's (same Nidec image family)
   for name, delay in delays.items():
     assert delay == {**measured, **same_chassis_as_c020, **inferred}.get(name, eps_ff.CMD_DELAY_DEFAULT_S), name
   # the default is the smaller measured value, so an unmeasured car cannot be pushed late
@@ -759,3 +756,32 @@ def test_teg_rev_b_asks_the_clarity_r5_and_kp(u):
   row2 = float(np.interp(key, (0, 111, 222, 333, 499, 665, 887, 1108, 1774), (0, 2000, 4000, 6000, 9009, 12000, 16000, 20000, 32000)))
   assert row2 == pytest.approx(r5_teg, rel=.005, abs=2.)
   assert eps_ff.firmware_kp(r5_teg, teg) == pytest.approx(eps_ff.firmware_kp(r5_cla, clarity), rel=.005)
+
+
+REV_B = {  # each calibration's modelled row in the corrected PTM build (KB PTM_FIX_FAMILY_20261016/out/<car>/plan.json)
+  "civic_tba_a030": ((0, 222, 333, 495, 656, 887, 1108, 1552, 1774), (0, 4000, 6000, 8937, 11838, 16000, 20000, 28000, 32000)),
+  "civic_tba_c120": ((0, 103, 263, 459, 660, 861, 1111, 1549, 1774), (0, 1856, 4739, 8288, 11910, 15532, 20054, 27946, 32000)),
+  "civic_tgg_a120": ((0, 103, 263, 459, 660, 862, 1111, 1549, 1774), (0, 1740, 4443, 7769, 11167, 14579, 18798, 26202, 30002)),
+  "crv_tla_a040": ((0, 219, 443, 662, 887, 1108, 1330, 1552, 1663), (0, 3699, 7497, 11200, 15001, 18747, 22502, 26252, 28127)),
+}
+
+
+@pytest.mark.parametrize("name", sorted(REV_B))
+def test_held_cars_model_their_corrected_ptm_row_and_ask_the_clarity_command(name):
+  cal = next(c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
+  assert (cal.r5_key_bp, cal.r5_v) == REV_B[name]
+  scale = cal.e4_per_output / 3840.0
+  assert cal.kp_key_bp == tuple(round(k * scale) for k in eps_ff.CLARITY_TRW_A020_P_KEYS) and cal.kp_v == eps_ff.P_ROW_PMINUS5
+  clarity = eps_ff.CLARITY_TRW_A020
+  # PTM rule: the same output asks for the Clarity's R5 and Kp within 0.6% (key truncation and the 4096 cars' knots)
+  for u in np.linspace(.05, .9, 35):
+    mine, ref = eps_ff.r5_from_output(u, 20.0, cal), eps_ff.r5_from_output(u, 20.0, clarity)
+    assert mine == pytest.approx(ref, rel=.006, abs=40.)
+    assert eps_ff.firmware_kp(mine, cal) == pytest.approx(eps_ff.firmware_kp(ref, clarity), rel=.006)
+
+
+def test_every_ptm_calibration_names_its_required_corrected_build():
+  names = {c.name for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values()}
+  # the Clarity is the reference and the C020 is held on its owner's Trk4500 build
+  assert set(eps_ff.REQUIRED_PTM_RWD) == names - {"clarity_trw_a020", "civic_tba_c020"}
+  assert all(len(sha) == 8 and int(sha, 16) >= 0 for sha in eps_ff.REQUIRED_PTM_RWD.values())

@@ -328,22 +328,6 @@ CIVIC_TBA_C020 = EpsFirmwareCalibration(
   cmd_delay_s=0.15,  # measured
   rack=CIVIC_TBA_C020_RACK,
 )
-# Civic 39990-TBA-A030 (Nidec), 09-12 TEGLatestCalMatch Trk3200 (bin sha256 1de38bcb) and TEG-A010, 08-26
-# Tracker1-3200 (bin sha256 60f42ecc): both carry the C020's command axes, P axis and envelope byte for byte, so
-# they take the C020's row 1. E4 = -3840 * u (HONDA_CIVIC torque map). The load is the TEG owner's (CIVIC_TEG_A010_LOAD,
-# measured on their 10-14/15 telemetry routes; E4 -> R5 -> P + KFF law exact there; Kp keyed on |command key|); the A030
-# shares the fingerprint, so it takes it too (not measured on an A030). The TEG's own row (3) is measured, see below.
-# The live row is VARIANT-DEPENDENT here, and it matters: rows 0 and 1 agree within 8%, but A030 TBCA1 / TEG TEGA1
-# select row 2 (R5 1.28-1.30x row 1 at mid command) and A030 TBCA2 / TEG TEGA2 row 3 (0.48-0.70x at low command).
-# Every other variant (A030 TBAA0-3, TBAC0, TBCA0; TEG TEGA0, TBCA3) is row 0 or 1. The car's variant cannot be
-# read from openpilot, and the TEG telemetry drive cannot tell either: its build has the same command, P, D, A280 and
-# helper-A values in rows 0-5 (row 6 is ruled out). Settling it needs a telemetry build that reports the row selector.
-CIVIC_TBA_A030 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_C020, k) for k in CIVIC_TBA_C020.__dataclass_fields__
-                                      if k != "kp_pieces"}, "name": "civic_tba_a030", "e4_per_output": 3840.0,
-                                   "r6_per_deg_s": CIVIC_TBA_C120_R6_CENTRE, "r6_angle_bp": R6_GAIN_BP,
-                                   "r6_angle_gain": CIVIC_TBA_C120_R6_GAIN, "load": CIVIC_TEG_A010_LOAD,
-                                   "cmd_delay_s": CMD_DELAY_DEFAULT_S,  # Nidec Civic: not measured
-                                   "rack": None})  # its own A table, not identified
 # TEG-A010, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 04147917, payload 110e29ba; KB
 # PTM_FIX_FAMILY_20261016/out/TEG, proof/), a data-only fix of the Tracker1-3200 build (10-03 A280-flat, bin 4fa7c252):
 # 177 bytes, the command-map Y and P key axes of rows 0-5, row 6 (map, P, D) back to stock, and the two checksums.
@@ -357,8 +341,9 @@ CIVIC_TBA_A030 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_C020, k) for 
 # over. Both builds report 39990-TEG,A010: a car still on the earlier image must be reflashed with this calibration
 # (on it the car would make about half the R5 this expects up to key 222).
 CIVIC_TEG_A010_R5 = (0, 4000, 6000, 8937, 11838, 16000, 20000, 28000, 32000)  # rev b row 3 (0x137D0)
-CIVIC_TEG_A010 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_A030, k) for k in CIVIC_TBA_A030.__dataclass_fields__
-                                          if k != "kp_pieces"}, "name": "civic_teg_a010",
+CIVIC_TEG_A010 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_C020, k) for k in CIVIC_TBA_C020.__dataclass_fields__
+                                          if k != "kp_pieces"}, "name": "civic_teg_a010", "e4_per_output": 3840.0,
+                                       "load": CIVIC_TEG_A010_LOAD,
                                        "r5_key_bp": (0, 222, 333, 495, 656, 887, 1108, 1552, 1774),
                                        "r5_v": CIVIC_TEG_A010_R5,
                                        "kp_key_bp": CLARITY_TRW_A020.kp_key_bp,
@@ -370,26 +355,43 @@ CIVIC_TEG_A010 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_A030, k) for 
                                        # branch's terms; 0.15 stays below it (the C020 family's value). Mostly highway.
                                        "cmd_delay_s": 0.15,
                                        "rack": CIVIC_TEG_A010_RACK})
-# Civic Bosch 39990-TBA-C120, 08-11 C020Profile Trk4250 (bin sha256 3d88d5ea). Its variants select rows 0-4, all
-# within 5% of each other in R5, so the row does not matter; row 1 (= row 2) is taken, as the C020's. Flat envelope.
-# E4 = -3840 * u: opendbc gives the C120 image its own [0, 3840] map, unlike the C020's 4096. Not measured: R6, load.
+# Civic 39990-TBA-A030 (Nidec), the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 55c37266; KB
+# PTM_FIX_FAMILY_20261016/out/A030), a data-only fix of the Drive A030 release. Its rows 0-5 carry exactly the TEG
+# rev b's row 3 (the same key axis, the Clarity's R5 per key, the Clarity's P knots), so the variant row (TBAA3 1,
+# TBCA1 2, TBCA2 3, others 0) no longer changes the command. The rate path is the TEG's too: tracker-1 3200, R6 clamp
+# 32765, key clamp 1663, NORM 1650 and a byte-identical A table, so it takes the TEG's measured R6 (centre and angle
+# shape), load and command delay (inferred: same image family and chassis, not measured on an A030). Its tracker-2
+# reads 5968 (the Drive release's; the owners' 09-12 build has 3869); it does not feed R6. No rack map: its own A table
+# is not yaw-identified, so geometry falls back to the road curve / firmware VGR. Both builds report 39990-TBA,A030:
+# a car on the 09-12 or the Drive image must be reflashed with this calibration.
+CIVIC_TBA_A030 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TEG_A010, k) for k in CIVIC_TEG_A010.__dataclass_fields__
+                                         if k != "kp_pieces"}, "name": "civic_tba_a030", "rack": None})
+# Civic Bosch 39990-TBA-C120, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 9261b8db; KB
+# PTM_FIX_FAMILY_20261016/out/C120), a data-only fix of the Drive C120 release (tracker-1 4250 and tracker-2 5968, as the
+# 08-11 C020Profile build). Its variants select rows 0-4; each row keeps its own key axis and carries the Clarity's R5
+# for each key, and P sits on the Clarity's knots, so every row makes the same command. Row 1 (= row 2) is modelled.
+# Flat envelope. E4 = -3840 * u: opendbc gives the C120 image its own [0, 3840] map, unlike the C020's 4096. Not
+# measured: R6, load. Both builds report 39990-TBA,C120: a car on an earlier image must be reflashed.
 CIVIC_TBA_C120 = EpsFirmwareCalibration(
   name="civic_tba_c120", e4_per_output=3840.0,
-  r5_key_bp=(0, 103, 263, 459, 660, 861, 1111, 1549, 1774), r5_v=TARGET_MAP_D_R5, key_clamp=1663,
-  envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
-  kp_key_bp=CIVIC_TBA_C120_P_KEYS, kp_v=P_ROW_PMINUS5,
+  r5_key_bp=(0, 103, 263, 459, 660, 861, 1111, 1549, 1774), r5_v=(0, 1856, 4739, 8288, 11910, 15532, 20054, 27946, 32000),
+  key_clamp=1663, envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
+  kp_key_bp=CLARITY_TRW_A020_P_KEYS, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TBA_C120_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CIVIC_TBA_C120_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
 )
-# Civic hatch 39990-TGG-A120, 08-07 C020Pminus5 Trk4250 KFF45 (bin sha256 7c60b3fa). Only row 0 carries car-specific
-# axes (rows 1-5 are the generic [0,222,333,...] row, 2x the key at low command). Row 0 is live: both of the image's
-# variant records (TGGA5, TGGA6, at 0x4B500) select row 0. Flat envelope. Not measured: R6, load.
+# Civic hatch 39990-TGG-A120, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 6640806d; KB
+# PTM_FIX_FAMILY_20261016/out/TGG), a data-only fix of the Drive TGG release (tracker-1 4250, as the 08-07 build). Row 0
+# is live: both variant records (TGGA5, TGGA6, at 0x4B500) select it. It keeps its own key axis and carries the
+# Clarity's R5 for each key at this car's 4096 E4 per unit (Clarity(key x 3840/4096)), with P on the Clarity's knots
+# x 4096/3840, and A280 is flat in it. Flat envelope. Not measured: R6, load. Both builds report 39990-TGG,A120: a car
+# on an earlier image must be reflashed.
 CIVIC_TGG_A120 = EpsFirmwareCalibration(
   name="civic_tgg_a120", e4_per_output=4096.0,
-  r5_key_bp=(0, 103, 263, 459, 660, 862, 1111, 1549, 1774), r5_v=TARGET_MAP_D_R5, key_clamp=1663,
-  envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
-  kp_key_bp=CIVIC_TBA_C120_P_KEYS, kp_v=P_ROW_PMINUS5,
+  r5_key_bp=(0, 103, 263, 459, 660, 862, 1111, 1549, 1774), r5_v=(0, 1740, 4443, 7769, 11167, 14579, 18798, 26202, 30002),
+  key_clamp=1663, envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
+  kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
@@ -420,10 +422,13 @@ INSIGHT_TXM_A040 = EpsFirmwareCalibration(
   cmd_delay_s=0.15,
   rack=INSIGHT_TXM_A040_RACK,
 )
-# CR-V 5G 39990-TLA-A040, the owner's 08-24 Clarity_FF_tune_telemety_8cf8e537 (decoded full image sha256 d5dc04a8):
-# TargetMap-D, P117..265, D737, KFF45, Norm1650, Trk3200, clamps 7373/1774/9000 on the CR-V's stock axes. Key clamp
-# 1774 (the others' 1663). Rows 0-1 and 2-5 differ by under 5%, so the row choice barely matters; row 0 is taken, and
-# every variant record selects row 0 except TLBA2 (row 1, identical to row 0).
+# CR-V 5G 39990-TLA-A040, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 2e6a8802; KB
+# PTM_FIX_FAMILY_20261016/out/A040), a data-only fix of the Drive A040 release; the owner's 10-06 A280-flat build
+# (8cf8e537 lineage) has the same rate path (tracker-1 3200, tracker-2 3870, R6 clamp 32765, key clamp 1774). Every
+# variant record selects row 0 except TLBA2 (row 1, identical to row 0). Row 0 keeps the CR-V's stock key axis and
+# carries the Clarity's R5 for each key at this car's 4096 E4 per unit (Clarity(key x 3840/4096); its last knot, 1663,
+# holds to the 1774 clamp), with P on the Clarity's knots x 4096/3840. Key clamp 1774 (the others' 1663). Both builds
+# report 39990-TLA,A040: a car on an earlier image must be reflashed.
 # R6 measured: least squares of the image's own V5 feedback_R6 on steeringRateDeg, hands off, route 82bb (-121.6 at a
 # 15 ms lag, R^2 0.977) on the t9-67523237 build, whose norm reads 1450; x 1650/1450 for this image = -138.4. The firmware
 # predicts the same from the shared motor-to-angle constant (3121) and the A-table centre divisor (16783/16384 x the
@@ -431,9 +436,9 @@ INSIGHT_TXM_A040 = EpsFirmwareCalibration(
 # (CRV_TLA_A040_P_SCALE / CRV_TLA_A040_I_SCALE, untrimmed).
 CRV_TLA_A040 = EpsFirmwareCalibration(
   name="crv_tla_a040", e4_per_output=4096.0,
-  r5_key_bp=(0, 219, 443, 662, 887, 1108, 1330, 1552, 1663), r5_v=TARGET_MAP_D_R5, key_clamp=1774,
-  envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
-  kp_key_bp=(0, 104, 279, 510, 807, 1108, 1330, 1552, 1663), kp_v=P_ROW_PMINUS5,
+  r5_key_bp=(0, 219, 443, 662, 887, 1108, 1330, 1552, 1663), r5_v=(0, 3699, 7497, 11200, 15001, 18747, 22502, 26252, 28127),
+  key_clamp=1774, envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
+  kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA_A040_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_TLA_A040_R6_GAIN,
   load=CRV_TLA_A040_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
 )
@@ -523,12 +528,12 @@ CALIBRATION_PROVENANCE = {
     "rack": "measured: VSA yaw, routes 294/289/2b7/2c6/2d4/1b8/251",
   },
   "civic_tba_a030": {
-    "row": "inferred: the C020's row 1; the live row is variant-dependent (TBCA1 row 2, TBCA2 row 3)",
+    "row": "firmware: rev b rows 0-5 are the TEG's row 3, so every variant (TBCA1 row 2, TBCA2 row 3) makes the same command",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
-    "r6": "firmware: computed from its A table (the C120's)",
+    "r6": "inferred: the TEG-A010's measured centre and angle shape (same A table, tracker-1 and NORM)",
     "load": "inferred: the TEG-A010 owner's",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "default", "model_delay": "default: the Clarity's schedule", "rack": "none",
+    "cmd_delay": "inferred: the TEG-A010's", "model_delay": "default: the Clarity's schedule", "rack": "none",
   },
   "civic_teg_a010": {
     "row": "measured: row 3 (TEGA2), telemetry R5 vs E4 on routes 0000012f/00000139 (live_row_fit.py teg); rev b rows 2-3 agree",
@@ -541,7 +546,7 @@ CALIBRATION_PROVENANCE = {
     "rack": "measured: VSA yaw (GPS-checked scale), routes 0000012d-00000139",
   },
   "civic_tba_c120": {
-    "row": "firmware: its variants' rows 0-4 agree within 5%",
+    "row": "firmware: rev b rows 0-4 all carry the Clarity's R5 per key on their own axes",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
     "r6": "firmware: computed from its A table",
     "load": "inferred: the C020's",
@@ -579,11 +584,25 @@ CALIBRATION_PROVENANCE = {
   "crv_tla_a220": {
     "row": "firmware: rows 0-5 all Clarity-equivalent in the corrected build, so the untraced variant row does not matter",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
-    "r6": "inferred: the A040's (its A table not checked)",
+    "r6": "inferred: the A040's (its A table is byte-identical)",
     "load": "inferred: the A040 owner's (the A220 drives 0x30A-0x30D ran the 10-06 build: refit after the reflash)",
     "trims": "inferred: the A040 owner's",
     "cmd_delay": "default", "model_delay": "default: the Clarity's schedule", "rack": "none",
   },
+}
+
+
+# The corrected (revision b, 2026-10-16) PTM build each calibration models, by RWD sha256 prefix (KB
+# PTM_FIX_FAMILY_20261016/out/<car>). Each earlier PTM build reports the same EPS version string, so openpilot cannot tell
+# them apart: the owner must flash this build before turning HondaEpsController on.
+REQUIRED_PTM_RWD = {
+  "civic_tba_a030": "55c37266",
+  "civic_teg_a010": "04147917",
+  "civic_tba_c120": "9261b8db",
+  "civic_tgg_a120": "6640806d",
+  "insight_txm_a040": "7ba37432",
+  "crv_tla_a040": "2e6a8802",
+  "crv_tla_a220": "2c992997",
 }
 
 
