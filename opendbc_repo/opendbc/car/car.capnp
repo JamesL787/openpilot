@@ -324,6 +324,18 @@ struct RadarData @0x888ad6581cf0aacb {
 
     # some radars flag measurements VS estimates
     measured @6 :Bool;
+
+    # Honda Bosch-A only: closing vRel implied by NORMALIZED_CLOSING (-NC * dRel) on a measured sweep, with NO range or
+    # sigma limit applied; ncValid when NC has a closing reading (raw != 512), else ignore ncVRel. ncSigma is the raw NC
+    # sigma (7-bit, 127 when absent). Consumers apply their own limits (radard's RANGE_VREL_RAIL_NC_VETO, D-071).
+    ncVRel @7 :Float32; # m/s
+    ncValid @8 :Bool;
+    ncSigma @9 :UInt8;
+
+    # Honda Bosch-A only: OBJECT_EXISTENCE_PROBABILITY_RAW / 127 (0..1) from the observation that produced this point.
+    # -1 (the default) means "not provided": every other radar, and every log recorded before this field existed.
+    # radard gates only NEW onpath adoption on its window median (ONPATH_ADOPT_MIN_MEDIAN_EXISTENCE).
+    existence @10 :Float32 = -1.0;
   }
 
   enum ErrorDEPRECATED {
