@@ -21,7 +21,7 @@ here. Where the two touch — the CR-V lateral profile, the steering-ratio curve
 `extract_drives.py` lineage — that is recorded below as a cross-reference only.
 
 **Open topics to revisit** (parked by decision, not closed):
-- **Range offset: D-076 ACCEPTED 2026-10-07, fixed per car, no toggle.** Firmware ROM default −335/128 = −2.617 m (Civic) and −341/128 = −2.664 m (CR-V), replacing −3.0. The `BoschARangeOffsetFallback` toggle and the CAN 0x669 addend are removed. Static only; the true range origin is unmeasured, and the laser range check settles it.
+- **Range offset: D-076 ACCEPTED 2026-10-07, fixed per car, no toggle.** Firmware ROM default −346/128 = −2.703 m (Civic; amended 2026-10-16 from 335, which was only the zero-config fallback) and −341/128 = −2.664 m (CR-V), replacing −3.0. The `BoschARangeOffsetFallback` toggle and the CAN 0x669 addend are removed. Static only; the true range origin is unmeasured, and the laser range check settles it.
 - **Newborn radar points: D-075, built in ON since 2026-10-03 (the `BoschANewbornLeads` toggle is removed).** Replay and static only, limited road evidence from Peter's drives with the toggle on. Publishes young closing radar points earlier and lets one lead only once its own range closes.
 - **U11 scale 1/72: D-074 ACCEPTED (owner, 2026-10-02), built in; the 1/64 switch back was removed 2026-10-03.**
   Static and replay only, not driven. Rails ±12.0 m/s; every closing speed published is 64/72 of the old 1/64 reading (−11.1 %), the D-041 danger
@@ -76,10 +76,10 @@ declared so opendbc enforces them.
   was solved from a **single tape point with the offset assumed** and read ~9% short —
   −9 m at 60 m against vision.
 - **Range offset is a per-unit calibration value, not a constant.** The firmware term is
-  `−n/128`, with `n` assembled from a config word plus a runtime addend; `335` (−2.617 m) is
-  only the fallback when the config word reads zero. `−3.0` is retained because it sits
-  inside the plausible calibration range. Read it from the radar's own configuration rather
-  than re-fitting it.
+  `−n/128`, with `n` assembled from an NvM config word plus a runtime addend; `335` (−2.617 m) is only the
+  fallback when the config word reads zero. The ROM table gives `346` for the Civic (cfg 5530,
+  −2.703 m) and `341` for the CR-V (cfg 5448); these replaced `−3.0` under D-076. Static only:
+  Peter's own unit (A150) may carry a different value, and no tape check has been done.
 - **Azimuth = `(raw_angle − 1024)/2048` rad**, closed independently by the `f3` angular-edge
   pair. Supersedes the older empirical 0.032 deg/count fit.
 - **Sweep cadence = 14.35 Hz** (median of `0x280` inter-arrival across Peter's routes; p5
@@ -89,7 +89,7 @@ declared so opendbc enforces them.
 ### The U11 / u10 velocity channel — the expensive part
 
 `[CONFIRMED, replay + route evidence]` The auxiliary frame carries an 11-bit offset-binary
-velocity field (**U11**, `1/64` m/s per count, centre 864) and a 10-bit companion
+velocity field (**U11**, `1/72` m/s per count since D-074, logged at `1/64` before 2026-10-02, centre 864) and a 10-bit companion
 uncertainty (**u10**). Two hard-won rules govern it, and both were learned by breaking them:
 
 1. **A saturation rail is a bound, not a missing measurement, and it must still be
