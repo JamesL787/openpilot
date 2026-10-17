@@ -268,8 +268,17 @@ CIVIC_TBA_C020_R6_GAIN = (1.0, 0.99347, 1.01175, 1.05875, 1.09269, 1.10248, 1.10
 # C120 / A030 / TEG-A010 A table (centre divisor 20972), computed
 CIVIC_TBA_C120_R6_CENTRE = -156.16
 # TEG-A010 measured: its telemetry R6 (0x6A1 w1) on steeringRateDeg, hands off, route 00000139: -152.5 at 0 lag
-# (R^2 0.943; -143 at 20 ms). The C120 A table's angle shape is kept.
+# (R^2 0.943; -143 at 20 ms).
 CIVIC_TEG_A010_R6_CENTRE = -152.5
+# TEG-A010 measured angle shape, per published deg/s (the rate this feedforward differentiates): the telemetry R6
+# (0x6A1 w1 = tracker-1's filtered output) against d(0x14A angle)/dt, both as 0.2 s window means, routes 00000133,
+# 00000134 and 00000137 (centre -149.8 / -152.4 / -151.9). By |angle| band 0-15 / 15-45 / 45-90 / 90-150 / 150-250 /
+# 250-420 deg: 1.000 / 1.006 / 1.094 / 1.126 / 1.165 / 1.093 (the three routes agree within 0.02-0.04 up to 250 deg;
+# 250-420 spreads 1.03-1.17 on few frames). The C120 A table's computed shape it replaces read 1.08 / 1.11 / 1.20 /
+# 1.19 in the same bands, 2-9% strong past 150 deg. Same CAN layout as the Clarity: 0x18F is the raw rate (R6 flat
+# against it to 150 deg), 0x14A angle and rate are published.
+CIVIC_TEG_A010_R6_BP = (0.0, 30.0, 67.5, 120.0, 200.0, 335.0)
+CIVIC_TEG_A010_R6_GAIN = (1.0, 1.006, 1.094, 1.126, 1.165, 1.093)
 CIVIC_TBA_C120_R6_GAIN = (1.0, 0.9838, 0.9927, 1.0254, 1.0699, 1.097, 1.1244, 1.1465, 1.1099, 1.1222, 1.1905, 1.257, 1.1758,
                 1.1618, 1.1702, 1.1787, 1.196, 1.2137, 1.2317)
 # Insight TXM-A040 A table (centre divisor 17613), computed
@@ -341,7 +350,8 @@ CIVIC_TEG_A010 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_A030, k) for 
                                           if k != "kp_pieces"}, "name": "civic_teg_a010",
                                        "r5_key_bp": (0, 222, 333, 495, 656, 887, 1108, 1552, 1774),
                                        "kp_key_bp": CIVIC_TBA_C120_P_KEYS,
-                                       "r6_per_deg_s": CIVIC_TEG_A010_R6_CENTRE,
+                                       "r6_per_deg_s": CIVIC_TEG_A010_R6_CENTRE, "r6_angle_bp": CIVIC_TEG_A010_R6_BP,
+                                       "r6_angle_gain": CIVIC_TEG_A010_R6_GAIN,
                                        # plan_timing on routes 12e/134/137/139 with nrdr's fixed Civic delay applied
                                        # (0.175 s = 0.15 + its 0.025 model-action compensation, which this branch does
                                        # not need): -0.05 s weighted (+0.02/-0.06/-0.06/-0.08), so ~0.20 s in this
@@ -504,7 +514,7 @@ CALIBRATION_PROVENANCE = {
   "civic_teg_a010": {
     "row": "measured: row 3 (TEGA2), telemetry R5 vs E4 on routes 0000012f/00000139 (live_row_fit.py teg)",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
-    "r6": "measured: telemetry -152.5 per deg/s on route 00000139 (angle shape from its A table)",
+    "r6": "measured: telemetry -152.5 per deg/s on route 00000139; angle shape measured on routes 133/134/137",
     "load": "measured: the owner's 11 telemetry routes 0000012d-00000139 (fit_column_load.py --source teg)",
     "trims": "inferred: the C020 owner's",
     "cmd_delay": "measured: plan_timing on routes 12e/134/137/139, sized below the ~0.20 s measured",

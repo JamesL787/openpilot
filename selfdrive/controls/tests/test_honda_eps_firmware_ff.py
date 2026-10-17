@@ -440,9 +440,16 @@ def test_clarity_trw_a020_profile_is_the_validated_build():
 
 
 def test_nidec_civics_carry_the_teg_measurements():
-  # both Nidec images take the column load measured on the TEG-A010 telemetry routes and R6's shape from their A table
+  # both Nidec images take the column load measured on the TEG-A010 telemetry routes; the A030 takes R6's shape from
+  # its A table, the TEG its own measured shape
   for cal in (eps_ff.CIVIC_TBA_A030, eps_ff.CIVIC_TEG_A010):
-    assert cal.r6_angle_gain == eps_ff.CIVIC_TBA_C120_R6_GAIN and cal.load == eps_ff.CIVIC_TEG_A010_LOAD and cal.e4_per_output == 3840.0
+    assert cal.load == eps_ff.CIVIC_TEG_A010_LOAD and cal.e4_per_output == 3840.0
+  assert eps_ff.CIVIC_TBA_A030.r6_angle_gain == eps_ff.CIVIC_TBA_C120_R6_GAIN
+  teg = eps_ff.CIVIC_TEG_A010
+  assert teg.r6_angle_bp == eps_ff.CIVIC_TEG_A010_R6_BP and teg.r6_angle_gain == eps_ff.CIVIC_TEG_A010_R6_GAIN
+  # the measured R6 per published deg/s by |angle| band (routes 133/134/137), within 1.5%
+  for angle, measured in ((7.5, -151.4), (30., -152.2), (67.5, -165.7), (120., -170.4), (200., -176.4)):
+    assert eps_ff.firmware_r6(1.0, angle, teg) == pytest.approx(measured, rel=.015)
   # the A030's row is not read: it keeps the C020's row 1 and R6 computed from the A table
   a030 = eps_ff.CIVIC_TBA_A030
   assert (a030.r5_key_bp, a030.kp_key_bp, a030.r6_per_deg_s) == (eps_ff.CIVIC_TBA_C020.r5_key_bp, eps_ff.CIVIC_TBA_C020.kp_key_bp,
