@@ -343,13 +343,24 @@ CIVIC_TBA_A030 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_C020, k) for 
                                    "r6_angle_gain": CIVIC_TBA_C120_R6_GAIN, "load": CIVIC_TEG_A010_LOAD,
                                    "cmd_delay_s": CMD_DELAY_DEFAULT_S,  # Nidec Civic: not measured
                                    "rack": None})  # its own A table, not identified
-# TEG-A010: the owner's car runs ROW 3 (TEGA2), measured on its telemetry (tools/lateral/live_row_fit.py teg, routes
-# 0000012f and 00000139: median |R5 - row 3| 9 counts, rows 0-2 1046-1325). Row 3's command axis and its P axis
-# (= the C120's P keys); Kp values, D, clamps and envelope are those of every row.
+# TEG-A010, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 04147917, payload 110e29ba; KB
+# PTM_FIX_FAMILY_20261016/out/TEG, proof/), a data-only fix of the Tracker1-3200 build (10-03 A280-flat, bin 4fa7c252):
+# 177 bytes, the command-map Y and P key axes of rows 0-5, row 6 (map, P, D) back to stock, and the two checksums.
+# That build pasted TargetMap-D onto row 3's key axis (3.1x incremental gain at key 222, u ~0.13) with P on the row's
+# own knots. Rev b keeps every row's own key axis and writes the Clarity's R5 for each key (a knot past the 1663 clamp
+# on the line through the Clarity's 30000 at 1663), and puts rows 0-5 P on the Clarity's knots, so rows 2 and 3 now make
+# the same R5 per key and the TEGA1/TEGA2 variant no longer changes the command. The owner's car runs ROW 3 (TEGA2),
+# measured on its telemetry on the earlier build (tools/lateral/live_row_fit.py teg, routes 0000012f and 00000139:
+# median |R5 - row 3| 9 counts, rows 0-2 1046-1325). Kp values, D, clamps and envelope are those of every row. R6, load
+# and rack were measured on the earlier build; the fix touches neither the rate path nor the column, so they carry
+# over. Both builds report 39990-TEG,A010: a car still on the earlier image must be reflashed with this calibration
+# (on it the car would make about half the R5 this expects up to key 222).
+CIVIC_TEG_A010_R5 = (0, 4000, 6000, 8937, 11838, 16000, 20000, 28000, 32000)  # rev b row 3 (0x137D0)
 CIVIC_TEG_A010 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_A030, k) for k in CIVIC_TBA_A030.__dataclass_fields__
                                           if k != "kp_pieces"}, "name": "civic_teg_a010",
                                        "r5_key_bp": (0, 222, 333, 495, 656, 887, 1108, 1552, 1774),
-                                       "kp_key_bp": CIVIC_TBA_C120_P_KEYS,
+                                       "r5_v": CIVIC_TEG_A010_R5,
+                                       "kp_key_bp": CLARITY_TRW_A020.kp_key_bp,
                                        "r6_per_deg_s": CIVIC_TEG_A010_R6_CENTRE, "r6_angle_bp": CIVIC_TEG_A010_R6_BP,
                                        "r6_angle_gain": CIVIC_TEG_A010_R6_GAIN,
                                        # plan_timing on routes 12e/134/137/139 with nrdr's fixed Civic delay applied
@@ -512,7 +523,7 @@ CALIBRATION_PROVENANCE = {
     "cmd_delay": "default", "model_delay": "default: the Clarity's schedule", "rack": "none",
   },
   "civic_teg_a010": {
-    "row": "measured: row 3 (TEGA2), telemetry R5 vs E4 on routes 0000012f/00000139 (live_row_fit.py teg)",
+    "row": "measured: row 3 (TEGA2), telemetry R5 vs E4 on routes 0000012f/00000139 (live_row_fit.py teg); rev b rows 2-3 agree",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
     "r6": "measured: telemetry -152.5 per deg/s on route 00000139; angle shape measured on routes 133/134/137",
     "load": "measured: the owner's 11 telemetry routes 0000012d-00000139 (fit_column_load.py --source teg)",

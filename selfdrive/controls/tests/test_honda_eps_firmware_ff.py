@@ -454,9 +454,11 @@ def test_nidec_civics_carry_the_teg_measurements():
   a030 = eps_ff.CIVIC_TBA_A030
   assert (a030.r5_key_bp, a030.kp_key_bp, a030.r6_per_deg_s) == (eps_ff.CIVIC_TBA_C020.r5_key_bp, eps_ff.CIVIC_TBA_C020.kp_key_bp,
                                                                   eps_ff.CIVIC_TBA_C120_R6_CENTRE)
-  # the TEG owner's car runs row 3 (TEGA2), measured on its telemetry, with that row's P axis and its own R6
+  # the TEG owner's car runs row 3 (TEGA2), measured on its telemetry; the corrected (rev b) image's row 3 carries the
+  # Clarity's R5 per key on that row's axis and the Clarity's P knots
   teg = eps_ff.CIVIC_TEG_A010
-  assert teg.r5_key_bp == (0, 222, 333, 495, 656, 887, 1108, 1552, 1774) and teg.kp_key_bp == eps_ff.CIVIC_TBA_C120_P_KEYS
+  assert teg.r5_key_bp == (0, 222, 333, 495, 656, 887, 1108, 1552, 1774) and teg.kp_key_bp == eps_ff.CLARITY_TRW_A020.kp_key_bp
+  assert teg.r5_v == (0, 4000, 6000, 8937, 11838, 16000, 20000, 28000, 32000) and teg.kp_v == eps_ff.CLARITY_TRW_A020.kp_v
   assert teg.r6_per_deg_s == eps_ff.CIVIC_TEG_A010_R6_CENTRE and teg.rack is eps_ff.CIVIC_TEG_A010_RACK
   # the Nidec column is stiffer than the C020's at low speed (1.29x at 3 m/s, 1.07x at 8) and alike by 15 m/s
   teg, c020 = eps_ff.CIVIC_TEG_A010_LOAD, eps_ff.CIVIC_TBA_C020_LOAD
@@ -738,3 +740,15 @@ def test_every_calibration_says_where_every_value_came_from(name):
   if cal.cmd_delay_s == eps_ff.CMD_DELAY_DEFAULT_S and not prov["cmd_delay"].startswith("measured"):
     assert prov["cmd_delay"].startswith(("default", "inferred")), name
   assert eps_ff.provenance_summary(cal)
+
+
+@pytest.mark.parametrize("u", np.linspace(.02, 1.0, 50))
+def test_teg_rev_b_asks_the_clarity_r5_and_kp(u):
+  # the PTM rule at the TEG's 3840 E4 per unit: the same output gives the Clarity's R5 and Kp, rows 2 and 3 alike
+  teg, clarity = eps_ff.CIVIC_TEG_A010, eps_ff.CLARITY_TRW_A020
+  key = min(abs(eps_ff.command_key(-u * 3840.0)), 1663)
+  r5_teg, r5_cla = float(np.interp(key, teg.r5_key_bp, teg.r5_v)), float(np.interp(key, clarity.r5_key_bp, clarity.r5_v))
+  assert r5_teg == pytest.approx(r5_cla, rel=.005, abs=2.)
+  row2 = float(np.interp(key, (0, 111, 222, 333, 499, 665, 887, 1108, 1774), (0, 2000, 4000, 6000, 9009, 12000, 16000, 20000, 32000)))
+  assert row2 == pytest.approx(r5_teg, rel=.005, abs=2.)
+  assert eps_ff.firmware_kp(r5_teg, teg) == pytest.approx(eps_ff.firmware_kp(r5_cla, clarity), rel=.005)
