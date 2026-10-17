@@ -102,6 +102,24 @@ def car_params(cp):
   return b.as_reader()
 
 
+# RADAR_PKL=<radard_head.py output>: replace each logged radarState with the one this tree's parser + radard make from the
+# same CAN (matched on mdMonoTime, so it reaches the planner at the same frame). Unset = the logged radarState.
+_RADAR = pickle.load(open(os.environ["RADAR_PKL"], "rb")) if os.environ.get("RADAR_PKL") else None
+RADAR_MISS = [0, 0]
+
+
+def _radar(rs):
+  if _RADAR is None:
+    return rs
+  from cereal import log as _log
+  b = _RADAR.get(rs.mdMonoTime)
+  RADAR_MISS[0] += 1; RADAR_MISS[1] += b is None
+  if b is None:
+    return rs
+  with _log.RadarState.from_bytes(b) as r:
+    return r.as_builder().as_reader()
+
+
 def run_event(ev):
   files = segment_files(Path(ev["route"]).expanduser())
   T0, T1 = ev["T0"], ev["T1"]
@@ -118,7 +136,7 @@ def run_event(ev):
           planners[c] = LP.LongitudinalPlanner(cp, 0.0, 0.0, clock_ns=lambda: _Clock.now_ns)
         continue
       if w in SERVICES:
-        state[w] = getattr(msg, w); valid[w] = bool(msg.valid); mono[w] = msg.logMonoTime
+        state[w] = _radar(msg.radarState) if w == "radarState" else getattr(msg, w); valid[w] = bool(msg.valid); mono[w] = msg.logMonoTime
         continue
       if w != "modelV2" or not planners or not all(k in state for k in NEED):
         continue
@@ -186,7 +204,7 @@ def main():
       continue
     res[ev["id"]] = dict(ev=ev, rows=run_event(ev))
     pickle.dump(res, open(outp, "wb"))
-    print(ev["id"], len(res[ev["id"]]["rows"]), flush=True)
+    print(ev["id"], len(res[ev["id"]]["rows"]), "radar frames/missed", RADAR_MISS, flush=True)
 
 
 if __name__ == "__main__":

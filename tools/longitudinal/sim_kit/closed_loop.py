@@ -148,6 +148,24 @@ def xform(c, rs, v_ego, t):
     leads.append(_O(ld, vLead=nv, vRel=nv - v_ego))
   return LP._BoundedRadarState(rs, leads[0], leads[1])
 
+# RADAR_PKL=<radard_head.py output>: replace each logged radarState with the one this tree's parser + radard make from the
+# same CAN (matched on mdMonoTime, so it reaches the planner at the same frame). Unset = the logged radarState.
+_RADAR = pickle.load(open(os.environ["RADAR_PKL"], "rb")) if os.environ.get("RADAR_PKL") else None
+RADAR_MISS = [0, 0]
+
+
+def _radar(rs):
+  if _RADAR is None:
+    return rs
+  from cereal import log as _log
+  b = _RADAR.get(rs.mdMonoTime)
+  RADAR_MISS[0] += 1; RADAR_MISS[1] += b is None
+  if b is None:
+    return rs
+  with _log.RadarState.from_bytes(b) as r:
+    return r.as_builder().as_reader()
+
+
 def run_event(ev):
   route = (Path(os.environ["ROUTES"]) / Path(ev["route"]).name) if os.environ.get("ROUTES") else Path(ev["route"]).expanduser()
   files = segment_files(route)
@@ -176,7 +194,7 @@ def run_event(ev):
           planners[c] = p
         continue
       if w == "radarState" or w in T.PLANNER_SERVICES:
-        state[w] = getattr(msg, w); valid[w] = bool(msg.valid)
+        state[w] = _radar(msg.radarState) if w == "radarState" else getattr(msg, w); valid[w] = bool(msg.valid)
         if w == "starpilotPlan":
           toggles = parse_toggles(state["starpilotPlan"].starpilotToggles, toggles)
         continue
@@ -254,7 +272,7 @@ def main():
     except Exception as e:
       print("ERR", ev["id"], repr(e), flush=True); continue
     pickle.dump(res, open(outp, "wb"))
-    print(ev["id"], len(res[ev["id"]]["rows"]), flush=True)
+    print(ev["id"], len(res[ev["id"]]["rows"]), "radar frames/missed", RADAR_MISS, flush=True)
 
 
 if __name__ == "__main__":

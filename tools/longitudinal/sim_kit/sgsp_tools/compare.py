@@ -2,7 +2,7 @@
 import glob, os, pickle, sys
 import numpy as np
 O = os.path.expanduser("~/longsim_frames/sgsp")
-FAMS = ("car", "tree", "sgsp")
+FAMS = tuple(sys.argv[1].split(",")) if len(sys.argv) > 1 else ("car", "tree", "sgsp")
 ma = lambda y, n: np.convolve(np.pad(y, (n // 2, n - 1 - n // 2), mode="edge"), np.ones(n) / n, "valid")
 bp = lambda y: ma(y, 7) - ma(y, 100)  # ~0.2-3 Hz band at 20 Hz
 
