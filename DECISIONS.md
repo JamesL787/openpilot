@@ -1824,6 +1824,23 @@ logs can set it. The two param keys stay in `params_keys.h` only because the com
 rebuilt; nothing reads them. Units on routes logged 2026-10-01..10-03 still follow `BoschAU11Scale72` in that route's
 initData; from this change on they are always 1/72. Static tests only; not road-validated.
 
+**Fourth addendum (2026-10-17, replay): range and U11 against ego speed on stopped leads.** From Radar Knowledge
+(Jason), firmware-analysis-kit 096d776, `radar-re/u11_rangecheck/` (REPORT.md; `run_all.sh` reproduces it in about
+3.5 min, re-run with identical numbers). 270 segments on 12 routes, 37 stopped-lead events, selected
+(pre-registered) without using U11 or the range slope. Positive control: the rebuilt decode reproduces
+`u11_leadstop` byte for byte (k0 71.55 [71.26, 72.40]; range rate 0.974 x −vEgo·cos az).
+- 0–20 m (32 events): range slope / ego speed 0.956 [0.915, 0.996]; U11 69.3 [66.8, 71.1] counts per m/s; U11 against
+  range slope 73.1 [70.1, 76.0], 72.4–73.9 across 10 sensitivity runs. This excludes the moving-lead 66.8 in Job's
+  0–19 m band, so that gap is not a scale error in either channel. It is specific to moving leads; cause untested.
+- The shared ~4 % shortfall comes from the truth, not the signals: "stopped" leads are still creeping (vision v0
+  median 0.13 m/s). With the window moved 3 s nearer the stop, U11 reads 0.998 [0.979, 1.011] and range 0.972
+  [0.895, 1.049].
+- `u11_azimuth`'s 0.80 range-rate deficit comes only from far (median 55 m), U11-selected stationary objects, where
+  U11 reads ~0.965 and the range lags. It is not elevation and not a general range-scale error.
+- UNRESOLVED: no coverage at 40 m or more, or at vEgo 10 m/s or more, so Job's 40–79 m band values (72.4, 77.0) are
+  untested; 20–40 m has 6 events and is not interpreted; the cause of the moving-lead gap is unknown.
+1/72 stays as is; no code or constant change.
+
 ## D-075 — PROPOSED (toggle OFF): `BoschANewbornLeads` publishes newborn Bosch-A points early, leads only on proven range closing
 Recorded 2026-10-02, owner decision (Peter, in chat): build it as an opt-in toggle, default OFF, on main and pr10-smooth.
 **Replay and static evidence only; no road evidence.** With the toggle OFF, `BOSCH_A_NEWBORN_RANGE_PUBLISH`,
