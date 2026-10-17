@@ -13,7 +13,6 @@ from openpilot.cereal import log
 from opendbc.car.structs import car
 from opendbc.car.hyundai.ev6_aol import qualified as ev6_aol_qualified
 from opendbc.car.honda.stock_aol import qualified as honda_aol_qualified, temporary_restriction as honda_temporary_restriction
-from opendbc.car.honda.values import HondaFlags
 from openpilot.cereal.visionipc import VisionStreamType
 from msgq.visionipc import VisionIpcClient
 
@@ -85,12 +84,6 @@ AlertLevel = log.DriverMonitoringState.AlertLevel
 MonitoringPolicy = log.DriverMonitoringState.MonitoringPolicy
 
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
-
-
-def suppress_steer_saturated_alert(CP) -> bool:
-  # a modified-EPS Honda reaches full authority routinely, so "steer saturated" is noise there. A future clean
-  # branch may restore openpilot's alert behavior.
-  return CP.brand == "honda" and bool(CP.flags & HondaFlags.EPS_MODIFIED)
 
 
 class SelfdriveD:
@@ -676,7 +669,7 @@ class SelfdriveD:
       undershooting = abs(desired_lateral_accel) / abs(1e-3 + actual_lateral_accel) > 1.2
       turning = abs(desired_lateral_accel) > 1.0
       # TODO: lac.saturated includes speed and other checks, should be pulled out
-      if undershooting and turning and lac.saturated and not suppress_steer_saturated_alert(self.CP):
+      if undershooting and turning and lac.saturated:
         self.events.add(EventName.steerSaturated)
 
     # Check for FCW

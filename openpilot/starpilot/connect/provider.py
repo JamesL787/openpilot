@@ -37,11 +37,6 @@ TRANSIENT_KEYS = ('AccessToken', 'LastAthenaPingTime')
 MAX_STATE_BYTES = 8 * 1024 * 1024
 ROUTE_MARKER = '.cloud-provider'
 OFFLINE = Provider('offline', 'Cloud Unavailable', '', '', '', 'user.upload.disabled')
-# Night Star is Konik-only. comma stays in PROVIDERS because recordings, uploads and the Galaxy device id still name
-# it (untagged recordings and the factory identity are comma's), but it can never be selected or activated.
-ALLOWED_PROVIDERS = ('konik',)
-DEFAULT_PROVIDER = 'konik'
-DEFAULT_CONFIGURATION = {'active': DEFAULT_PROVIDER, 'selected': DEFAULT_PROVIDER, 'requestedBoot': ''}
 
 
 def root_path():
@@ -78,7 +73,7 @@ def _write(path, value):
 
 
 def configuration(root=None):
-  value = _read((root or root_path()) / 'provider.json', dict(DEFAULT_CONFIGURATION))
+  value = _read((root or root_path()) / 'provider.json', {'active': 'comma', 'selected': 'comma', 'requestedBoot': ''})
   if (type(value) is not dict or set(value) != {'active', 'selected', 'requestedBoot'} or
       value['active'] not in PROVIDERS or value['selected'] not in PROVIDERS or type(value['requestedBoot']) is not str):
     raise ValueError('Cloud provider configuration is invalid')
@@ -119,8 +114,6 @@ def select_provider(name, revision, authorized, *, root=None, boot=boot_id):
   root = root or root_path()
   if name not in PROVIDERS:
     raise ValueError('Unknown cloud provider')
-  if name not in ALLOWED_PROVIDERS:
-    raise ValueError('This software connects to Konik only')
   with _exclusive(root):
     value = configuration(root)
     if not authorized() or state_revision(value) != revision:
@@ -135,7 +128,7 @@ def select_provider(name, revision, authorized, *, root=None, boot=boot_id):
 def status(root=None):
   value = configuration(root)
   return {**value, 'revision': state_revision(value), 'restartRequired': value['active'] != value['selected'],
-          'providers': [{'id': p.name, 'label': p.label, 'url': p.web} for p in PROVIDERS.values() if p.name in ALLOWED_PROVIDERS]}
+          'providers': [{'id': p.name, 'label': p.label, 'url': p.web} for p in PROVIDERS.values()]}
 
 
 def _capture(params):
@@ -186,19 +179,11 @@ def activate_at_boot(params, *, root=None, boot=boot_id):
   """Called before managed services start; never changes provider in a live session."""
   root = root or root_path()
   if not (root / 'provider.json').exists() and not (root / 'switch.json').exists():
-    # No provider state: a fresh device, or one that ran a build allowing comma (which writes none while on comma).
-    # Whatever identity is in params is comma's, so switch to Konik the journaled way: comma's state is kept and
-    # Konik registers with the separate key konik_key_pair makes. A vfn device never gets here: konik_adoption has
-    # already carried its Konik identity over.
-    with _exclusive(root):
-      _write(root / 'provider.json', {'active': 'comma', 'selected': DEFAULT_PROVIDER, 'requestedBoot': ''})
+    params.put('ConnectProvider', 'comma', block=True)
+    return
   with _exclusive(root):
     value = configuration(root)
     journal = _read(root / 'switch.json')
-    if journal is None and value['selected'] not in ALLOWED_PROVIDERS:
-      # state from a build that allowed comma: switch to Konik at this boot, through the normal journaled switch
-      value.update(selected=DEFAULT_PROVIDER, requestedBoot='')
-      _write(root / 'provider.json', value)
     if journal is None:
       if value['active'] == value['selected'] or value['requestedBoot'] == boot():
         params.put('ConnectProvider', value['active'], block=True)

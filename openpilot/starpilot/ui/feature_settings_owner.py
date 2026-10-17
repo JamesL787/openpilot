@@ -820,8 +820,9 @@ class FeatureSettingsOwner:
               FeatureRow("", "Conditional Driving Modes", "Choose when to switch between Chill and Experimental", page=FeaturePage.CONDITIONAL, available=True),
               FeatureRow("", "Steering and Torque", "Select the steering controller and tune its response", page=FeaturePage.TORQUE, available=True),
               FeatureRow("", "Always On Lateral", "Keep steering assistance active independently of cruise control", page=FeaturePage.AOL, available=True),
-              FeatureRow("", "Wheel Controls", "Assign steering-wheel buttons and cruise behavior", page=FeaturePage.WHEEL, available=True),
-              FeatureRow("", "Night Star", "Modified-EPS steering and this fork's own settings", page=FeaturePage.NIGHT_STAR, available=True)]
+              FeatureRow("", "Wheel Controls", "Assign steering-wheel buttons and cruise behavior", page=FeaturePage.WHEEL, available=True)]
+      if self.night_star.capability() is not None:
+        rows.append(FeatureRow("", "Night Star", "Modified-EPS steering settings", page=FeaturePage.NIGHT_STAR, available=True))
       if (self._long_pitch_capability() is not None or self._bolt_disable_capability() is not None or
           self._auto_hold_capability() is not None or self._jeep_hold_capability() is not None or
           self._toyota_radar_capability() is not None or self._pedal_setup_capability() is not None or

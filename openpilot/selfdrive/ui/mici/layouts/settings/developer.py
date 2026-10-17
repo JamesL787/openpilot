@@ -74,7 +74,7 @@ class DeveloperLayoutMici(NavScroller):
     self._ssh_keys_btn.set_click_callback(ssh_keys_callback)
 
     from openpilot.starpilot.connect.settings import CloudProviderConfirmation
-    from openpilot.starpilot.connect.provider import ALLOWED_PROVIDERS, PROVIDERS, status
+    from openpilot.starpilot.connect.provider import PROVIDERS, status
     self._cloud_provider_btn = BigButton('Cloud Provider', 'Changes apply after the next reboot')
     def refresh_cloud():
       try:
@@ -85,13 +85,13 @@ class DeveloperLayoutMici(NavScroller):
     def choose_cloud():
       try:
         current = status()
-        target = next(name for name in ALLOWED_PROVIDERS if name != current['selected'])   # none while Konik-only
+        target = next(name for name in PROVIDERS if name != current['selected'])
       except (OSError, ValueError, TypeError, StopIteration):
         gui_app.push_widget(BigDialog('', 'Cloud Provider is unavailable. Refresh and try again.'))
         return
       gui_app.push_widget(CloudProviderConfirmation(target, current['revision'], refresh_cloud))
     self._cloud_provider_btn.set_click_callback(choose_cloud)
-    self._cloud_provider_btn.set_enabled(lambda: ui_state.is_offroad() and len(ALLOWED_PROVIDERS) > 1)
+    self._cloud_provider_btn.set_enabled(ui_state.is_offroad)
     refresh_cloud()
 
     # adb, ssh, ssh keys, debug mode, joystick debug mode, ip address

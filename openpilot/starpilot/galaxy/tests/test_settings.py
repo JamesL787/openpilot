@@ -249,7 +249,7 @@ class SettingsGatewayTest(unittest.TestCase):
   def test_all_saved_groups_are_display_only_projection(self):
     hub = self.page("hub")
     self.assertEqual([row["page"] for row in hub["rows"]],
-                     ["curve", "slc", "lane", "lane_change", "profiles", "conditional", "torque", "aol", "wheel", "night_star",
+                     ["curve", "slc", "lane", "lane_change", "profiles", "conditional", "torque", "aol", "wheel",
                       "aggressive", "standard", "relaxed", "traffic"])
     for page in ("slc", "lane", "lane_change", "profiles", "conditional", "conditional/cem", "conditional/ccm",
                  "curve", "torque", "aol", "appearance", "display", "sounds", "pip", "sentry", "aggressive/following"):

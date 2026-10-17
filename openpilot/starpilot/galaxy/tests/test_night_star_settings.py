@@ -50,14 +50,12 @@ class TestNightStarSettings(unittest.TestCase):
     self.assertNotIn('Honda EPS Controller', labels)
     self.assertEqual(labels[0], 'Steering Angle Rate Limit')
     self.assertIn('Override Torque Threshold', labels)
-    self.assertEqual(labels[-1], 'Disable Seatbelt Check')
+    self.assertNotIn('Disable Seatbelt Check', labels)
     self.assertFalse(any('Fade' in label or 'Filter' in label or 'Scale' in label for label in labels))
 
   def test_settings_are_live_onroad(self):
     self.assertTrue(self.set('Override Torque Threshold', '1840'))
     self.assertEqual(self.params.get('HondaDriverOverrideThreshold'), 1840)
-    self.assertTrue(self.set('Disable Seatbelt Check', 'On'))
-    self.assertTrue(self.params.get_bool('DisableSeatbeltCheck'))
 
   def test_off_grid_saved_rate_limit_steps_from_where_it_is(self):
     self.params.put('HondaEpsAngleRateLimit', 219, block=True)
@@ -86,9 +84,10 @@ class TestNightStarSettings(unittest.TestCase):
     self.assertNotIn('Steering Angle Rate Limit', labels)
     self.assertIn('Override Torque Threshold', labels)
 
-  def test_other_cars_see_only_the_seatbelt_check(self):
+  def test_other_cars_get_no_page_link(self):
     self.use(vehicle(fw_version=b'39990-TRW-A010\x00\x00'), parked=True)   # a stock Clarity EPS
-    self.assertEqual(self.labels(), ['Disable Seatbelt Check'])
+    self.assertEqual(self.labels(), [])
+    self.assertNotIn('Night Star', {row['label'] for row in self.page('hub')['rows']})
 
 
 if __name__ == "__main__":

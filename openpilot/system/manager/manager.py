@@ -35,12 +35,6 @@ def manager_init() -> None:
       cloudlog.warning(f"Renamed Honda EPS settings: {renamed}")
   except OSError:
     cloudlog.exception("Honda EPS settings rename interrupted; retrying at next startup")
-  # Konik only: carry a vfn device's Konik identity over before the migration archives vfn's keys
-  from openpilot.starpilot.connect.konik_adoption import adopt_vfn_konik_identity
-  try:
-    cloudlog.warning(f"Konik identity: {adopt_vfn_konik_identity(params)}")
-  except (OSError, ValueError, TypeError):
-    cloudlog.exception("Konik identity adoption interrupted; retrying at next startup")
   prepare_manager_start(params, starpilot_storage_root(), auto_migrate=True)
   if not PC:
     from openpilot.starpilot.external_preferences_reset import reset_external_preferences

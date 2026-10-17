@@ -2,7 +2,6 @@
 
 7.0's first start (state_migration.prepare_manager_start) archives every saved setting outside OPERATIONAL_KEYS and
 starts fresh. The Honda EPS tuning below is kept instead: it is per-car calibration, not a StarPilot preference.
-DisableSeatbeltCheck rides along: it is the driver's standing choice, and losing it silently would bring the check back.
 Settings saved under vfn's older names are renamed first, as vfn's manager does, so they are not lost as unknown
 keys.
 """
@@ -30,7 +29,6 @@ HONDA_EPS_PRESERVED_KEYS = frozenset({
   "LatFScaleLowSpeed", "LatFScaleStandard", "LatFScaleHighway",
   "HondaDriverOverrideThreshold", "HondaMinSteerSpeed", "HondaOverrideFadeDownSecs", "HondaOverrideTorqueScale",
   "HondaDriverAssistDuringOverride", "HondaSteerDeltaLimiter", "HondaSteerDeltaUp", "HondaSteerDeltaDown",
-  "DisableSeatbeltCheck",
 })
 
 

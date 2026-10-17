@@ -4,6 +4,13 @@ Branch `night-star7` (worktree `~/nrdr/openpilot-sp7`), started 2026-10-16 from 
 7.0 is not released: it moves SGSP → `Dom` (dev/testing) → `StarPilot` (release). This branch gets us ready ahead of that.
 `night-star7` tracks `origin/night-star7` (our fork). Never push it to the `starpilot` remote.
 
+**This is `night-star7-clean`:** `night-star7` plus one commit, "night star port: clean branch", that deletes the Night Star
+policy code — Konik-only and the vfn Konik identity carry-over (cloud is stock 7.0: comma, Konik selectable), the
+seatbelt-check toggle, the steer-saturated suppression, and `night-star7`'s driver-monitoring timing (stock 7.0 DM here). Car
+capability and safety work (modified-EPS steering, controllers, hybrid brake, stopped-model guard) is the same as
+`night-star7`. After each port slice: `git rebase night-star7 night-star7-clean`, and if a slice adds new policy, delete it in that
+commit too.
+
 `night-star7` starts from **one snapshot commit** of the 7.0 tree (`e2d325132e`), not 7.0's history: that history
 references ~5.3 GB of comma-master LFS models GitHub would demand in our fork's LFS store. The full-history version is
 the local branch `night-star7-history`. To take a newer 7.0, apply `git diff <current base> <new SecretGoodStarPilot>` onto

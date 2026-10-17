@@ -1,4 +1,4 @@
-"""The Night Star settings page: the fork's own settings, edited live (onroad too).
+"""The Night Star settings page: modified-EPS Honda steering settings, edited live (onroad too).
 
 Every row here is read again while driving (the EPS rows once a second, the controller rows each refresh). Every
 calibrated EPS image steers with LatControlHondaEps, so the controller has no row. The override fades and the output
@@ -10,13 +10,11 @@ from openpilot.starpilot.saved_document import commit_exact
 from openpilot.starpilot.saved_source import read_saved
 from openpilot.starpilot.ui.feature_settings_state import FeatureRow
 
-SEATBELT_KEY = "DisableSeatbeltCheck"
 
 # key -> (label, reason)
 BOOL_ROWS = {
   "HondaDriverAssistDuringOverride": ("Assist During Override",
                                       "Keep steering assist active while you override the wheel."),
-  SEATBELT_KEY: ("Disable Seatbelt Check", "Allow engaging and staying engaged with the driver's seatbelt unlatched."),
 }
 # key -> (label, reason, minimum, maximum, step, unit, integer)
 NUMBER_ROWS = {
@@ -60,13 +58,13 @@ class NightStarFeature:
     return str(cp.carFingerprint), int(cp.flags), calibration is not None
 
   def _keys(self, capability) -> tuple[str, ...]:
+    if capability is None:
+      return ()
+    _, _, calibrated = capability
     keys = []
-    if capability is not None:
-      _, _, calibrated = capability
-      if calibrated:  # read by LatControlHondaEps only
-        keys.append("HondaEpsAngleRateLimit")
-      keys.extend(EPS_KEYS)
-    keys.append(SEATBELT_KEY)
+    if calibrated:  # read by LatControlHondaEps only
+      keys.append("HondaEpsAngleRateLimit")
+    keys.extend(EPS_KEYS)
     return tuple(keys)
 
   def _saved_bool(self, key):
@@ -82,7 +80,7 @@ class NightStarFeature:
   def _row(self, key, live, capability) -> FeatureRow:
     raw, readable = read_saved(self.params, key, 32)
     allowed = live
-    binding = {} if key == SEATBELT_KEY else {"capability": capability, "vehicle_fingerprint": self.vehicle_fingerprint()}
+    binding = {"capability": capability, "vehicle_fingerprint": self.vehicle_fingerprint()}
     if key in BOOL_ROWS:
       label, reason = BOOL_ROWS[key]
       value = self._saved_bool(key) if readable else None
@@ -113,8 +111,8 @@ class NightStarFeature:
     if (key not in self._keys(capability) or request.dependencies or request.related_source is not None or
         request.display_unit or request.direction):
       return False
-    if key != SEATBELT_KEY and (request.capability is None or request.capability != capability or
-                                not request.vehicle_fingerprint or self.vehicle_fingerprint() != request.vehicle_fingerprint):
+    if (request.capability is None or request.capability != capability or
+        not request.vehicle_fingerprint or self.vehicle_fingerprint() != request.vehicle_fingerprint):
       return False
     if key in BOOL_ROWS:
       if request.value not in ("Off", "On") or request.expected not in (None, b"0", b"1"):
@@ -132,7 +130,7 @@ class NightStarFeature:
 
     def authorized():
       return (self.authority("preferences") and self.capability() == capability and
-              (key == SEATBELT_KEY or self.vehicle_fingerprint() == request.vehicle_fingerprint))
+              self.vehicle_fingerprint() == request.vehicle_fingerprint)
 
     result = commit_exact(self.params, key=key, max_bytes=32, expected=request.expected, raw=raw,
                           authorized=authorized, temp_prefix=".night-star-")

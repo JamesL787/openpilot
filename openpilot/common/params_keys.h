@@ -298,7 +298,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"Offset7", {PERSISTENT, FLOAT, "0.0"}},
     {"PandaHeartbeatLost", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
     {"PairingEmail", {PERSISTENT, STRING}},
-    {"ConnectProvider", {PERSISTENT, STRING, "konik"}},  // Night Star: Konik only
+    {"ConnectProvider", {PERSISTENT, STRING, "comma"}},
     {"PairingProvider", {PERSISTENT, STRING}},
     {"PedalsOnUI", {PERSISTENT, BOOL, "0"}},
     {"PrimeType", {PERSISTENT, INT}},
@@ -388,7 +388,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HondaEpsAngleRateLimit", {PERSISTENT, INT, "300"}},  // deg/s ceiling on desired wheel-angle slew; 0 disables
     {"HondaEpsFirmwareVgr", {PERSISTENT, BOOL, "0"}},  // cars without a yaw-fitted rack map: use the EPS firmware A (position) VGR table
     {"HondaOverrideFadeUpSecs", {PERSISTENT, FLOAT, "0.5"}},  // fixed by design; no settings UI
-    {"DisableSeatbeltCheck", {PERSISTENT, BOOL, "0"}},  // Night Star: card clears seatbeltUnlatched
     {"HondaTorqueOutputLowPassFilter", {PERSISTENT, BOOL, "1"}},  // on unless set off (vfn seeded it on at first start)
     {"HondaTorqueOutputLpfTauHighway", {PERSISTENT, FLOAT, "0.01"}},
     {"HondaTorqueOutputLpfTauLowSpeed", {PERSISTENT, FLOAT, "0.07"}},

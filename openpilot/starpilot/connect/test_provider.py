@@ -39,41 +39,67 @@ def choose(root, name, boot='first'):
   return p.select_provider(name, p.status(root)['revision'], lambda: True, root=root, boot=lambda: boot)
 
 
-def comma_state(root):
-  """Provider state as a build that allowed comma leaves it."""
-  p._write(root / 'provider.json', {'active': 'comma', 'selected': 'comma', 'requestedBoot': ''})
-
-
-def test_comma_cannot_be_selected_or_listed(environment):
-  root, _ = environment
-  with pytest.raises(ValueError):
-    choose(root, 'comma')
-  assert [entry['id'] for entry in p.status(root)['providers']] == ['konik']
-  assert p.status(root)['active'] == 'konik'
-
-
-def test_comma_state_switches_to_konik_and_keeps_the_comma_identity(environment):
+def test_selection_waits_for_reboot_and_restores_exact_previous_identity(environment):
   root, params = environment
-  comma_state(root)
   params.put('DongleId', '0123456789abcdef')
   params.put('PairingEmail', 'owner@example.test')
+  params.put('AthenadUploadQueue', b'[ {"url":"https://comma.test/item"} ]')
   params.put('AccessToken', 'transient')
   original = {key: Path(params.get_param_path(key)).read_bytes() if Path(params.get_param_path(key)).exists() else None for key in p.STATE_KEYS}
+  choose(root, 'konik')
   p.activate_at_boot(params, root=root, boot=lambda: 'first')
+  assert params.get('DongleId') == '0123456789abcdef'
+  p.activate_at_boot(params, root=root, boot=lambda: 'second')
   assert params.get('DongleId') is None and params.get('AccessToken') is None
   assert params.get('ConnectProvider') == 'konik'
-  assert p.configuration(root)['active'] == 'konik'
-  assert p._read(root / 'comma' / 'params.json') == {key: None if raw is None else base64.b64encode(raw).decode()
-                                                     for key, raw in original.items()}
-  params.put('DongleId', 'fedcba9876543210')   # Konik registered
-  p.activate_at_boot(params, root=root, boot=lambda: 'second')
+  params.put('DongleId', 'fedcba9876543210')
+  params.put('PairingEmail', 'separate@example.test')
+  choose(root, 'comma', 'second')
+  p.activate_at_boot(params, root=root, boot=lambda: 'third')
+  assert p._capture(params) == {key: None if raw is None else base64.b64encode(raw).decode() for key, raw in original.items()}
+  assert params.get('ConnectProvider') == 'comma'
+  choose(root, 'konik', 'third')
+  p.activate_at_boot(params, root=root, boot=lambda: 'fourth')
   assert params.get('DongleId') == 'fedcba9876543210'
+  assert params.get('PairingEmail') == 'separate@example.test'
 
 
-def test_bad_switch_journal_keeps_the_identity(environment):
+def test_failed_restore_is_replayed_from_durable_journal(environment):
   root, params = environment
-  comma_state(root)
   params.put('DongleId', '0123456789abcdef')
+  choose(root, 'konik')
+  def interrupted(params, values):
+    params.remove('DongleId')
+    raise OSError('interrupted')
+  with patch.object(p, '_restore', side_effect=interrupted), pytest.raises(OSError):
+    p.activate_at_boot(params, root=root, boot=lambda: 'second')
+  assert (root / 'switch.json').exists()
+  p.activate_at_boot(params, root=root, boot=lambda: 'second')
+  assert not (root / 'switch.json').exists()
+  assert p.configuration(root)['active'] == 'konik'
+  choose(root, 'comma', 'second')
+  p.activate_at_boot(params, root=root, boot=lambda: 'third')
+  assert params.get('DongleId') == '0123456789abcdef'
+
+
+def test_selection_requires_fresh_revision_and_authority(environment):
+  root, _ = environment
+  rev = p.status(root)['revision']
+  with pytest.raises(ValueError):
+    p.select_provider('konik', rev, lambda: False, root=root, boot=lambda: 'one')
+  choose(root, 'konik')
+  with pytest.raises(ValueError):
+    p.select_provider('comma', rev, lambda: True, root=root, boot=lambda: 'one')
+  calls = iter((True, False))
+  with pytest.raises(ValueError):
+    p.select_provider('comma', p.status(root)['revision'], lambda: next(calls), root=root, boot=lambda: 'one')
+  assert p.configuration(root)['selected'] == 'konik'
+
+
+def test_malformed_journal_does_not_partially_restore(environment):
+  root, params = environment
+  params.put('DongleId', '0123456789abcdef')
+  choose(root, 'konik')
   bad = dict.fromkeys(p.STATE_KEYS)
   bad['DongleId'] = 'not base64!'
   p._write(root / 'switch.json', {'target': 'konik', 'values': bad})
@@ -82,13 +108,13 @@ def test_bad_switch_journal_keeps_the_identity(environment):
   assert params.get('DongleId') == '0123456789abcdef'
 
 
-def test_default_boot_never_sends_a_comma_registration_to_konik(environment):
+def test_default_boot_never_discards_existing_registration(environment):
   root, params = environment
   params.put('DongleId', '0123456789abcdef')
   p.activate_at_boot(params, root=root)
-  assert params.get('ConnectProvider') == 'konik'
-  assert params.get('DongleId') is None
-  assert base64.b64decode(p._read(root / 'comma' / 'params.json')['DongleId']).decode() == '0123456789abcdef'
+  assert params.get('DongleId') == '0123456789abcdef'
+  assert params.get('ConnectProvider') == 'comma'
+  assert not root.exists()
 
 
 def test_corrupt_provider_goes_offline_without_selecting_other_account(environment):
@@ -130,12 +156,16 @@ def test_actual_params_registration_switch_and_cache_isolation(tmp_path):
   from openpilot.common.params import Params
   params = Params(str(tmp_path / 'real-params'))
   root = tmp_path / 'real-cloud'
-  comma_state(root)
   params.put('DongleId', '0123456789abcdef', block=True)
   params.put('ApiCache_Device', '{"owner":"original"}', block=True)
+  choose(root, 'konik')
   p.activate_at_boot(params, root=root, boot=lambda: 'next')
   assert params.get('ConnectProvider') == 'konik'
   assert params.get('DongleId') is None and params.get('ApiCache_Device') is None
+  choose(root, 'comma', 'next')
+  p.activate_at_boot(params, root=root, boot=lambda: 'last')
+  assert params.get('DongleId') == '0123456789abcdef'
+  assert params.get('ApiCache_Device') == '{"owner":"original"}'
 
 
 def test_registration_uses_konik_key_and_query_contract(environment):
@@ -173,8 +203,6 @@ def test_api_never_sends_credentials_when_configuration_invalid(environment):
 def test_cloudlogs_stay_with_their_provider(environment):
   root, _ = environment
   with patch.object(p, 'root_path', return_value=root), patch.object(p.Paths, 'swaglog_root', return_value='/tmp/cloudlogs'):
-    assert p.cloudlog_root() == '/tmp/cloudlogs/konik'   # Konik by default
-    comma_state(root)
     assert p.cloudlog_root() == '/tmp/cloudlogs'
     p._write(root / 'provider.json', {'active': 'konik', 'selected': 'konik', 'requestedBoot': ''})
     assert p.cloudlog_root() == '/tmp/cloudlogs/konik'
@@ -198,7 +226,7 @@ def test_bootlogs_are_owned_per_file_without_retagging_legacy(tmp_path):
 def test_galaxy_identity_stays_physical_when_konik_config_is_corrupt(environment):
   root, params = environment
   params.put('DongleId', '0123456789abcdef')
-  comma_state(root)
+  choose(root, 'konik')
   p.activate_at_boot(params, root=root, boot=lambda: 'second')
   params.put('DongleId', 'fedcba9876543210')
   with patch.object(p, 'root_path', return_value=root):

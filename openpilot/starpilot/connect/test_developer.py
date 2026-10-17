@@ -22,8 +22,6 @@ class TestDeveloperProviderHTTP(unittest.TestCase):
       access = GalaxyAccessOwner(root/'access')
       access.configure('password123', lambda: True)
       cloud_root = root/'cloud'
-      # Night Star is Konik-only; start from state a build that allowed comma leaves, so Konik can be selected
-      provider._write(cloud_root/'provider.json', {'active': 'comma', 'selected': 'comma', 'requestedBoot': ''})
       class Cloud:
         def status(self):
           return provider.status(cloud_root)

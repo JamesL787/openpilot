@@ -92,7 +92,6 @@ DESCRIPTIONS = {
   'HondaMinSteerSpeed': 'Sends no steering torque below this speed.',
   'HondaOverrideTorqueScale': 'Keeps this share of the steering command while you override the wheel.',
   'HondaDriverAssistDuringOverride': 'Keeps steering assist active while you override the wheel.',
-  'DisableSeatbeltCheck': "Allows engaging and staying engaged with the driver's seatbelt unlatched.",
   'RemoteStartBootsComma': 'Wakes comma during GM remote start.',
   'HKGRemoteStartBootsComma': 'Wakes comma during Hyundai, Kia or Genesis remote climate operation.',
   'IgnoreIgnitionLine': 'Uses GM CAN ignition instead of the harness ignition signal.',

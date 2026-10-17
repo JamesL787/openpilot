@@ -6,7 +6,7 @@ from opendbc.car.structs import car
 from types import SimpleNamespace
 
 EventName = log.OnroadEvent.EventName
-dm_settings = DRIVER_MONITOR_SETTINGS(night_star_timing=False)  # Night Star port: these cases check the stock timing
+dm_settings = DRIVER_MONITOR_SETTINGS()
 
 TEST_TIMESPAN = 120  # seconds
 DISTRACTED_SECONDS_TO_ORANGE = dm_settings._VISION_POLICY_ALERT_2_TIMEOUT + 1
@@ -52,7 +52,7 @@ always_false = [False] * int(TEST_TIMESPAN / DT_DMON)
 
 class TestMonitoring(OpenpilotTestCase):
   def test_lateral_only_reuses_engaged_monitoring_without_always_on_dm(self):
-    DM = DriverMonitoring(settings=dm_settings, always_on=False)
+    DM = DriverMonitoring(always_on=False)
     sm = {
       'carState': car.CarState(vEgo=20.0, gearShifter=car.CarState.GearShifter.drive),
       'selfdriveState': SimpleNamespace(enabled=False),
@@ -68,7 +68,7 @@ class TestMonitoring(OpenpilotTestCase):
     assert DM.lockout_active
 
   def _run_seq(self, msgs, interaction, engaged, lowspeed):
-    DM = DriverMonitoring(settings=dm_settings)
+    DM = DriverMonitoring()
     alert_lvls = []
     for idx in range(len(msgs)):
       DM._update_states(msgs[idx], [0, 0, 0], 0, engaged[idx], lowspeed[idx])
@@ -245,13 +245,3 @@ class TestMonitoring(OpenpilotTestCase):
     assert alert_lvls[int((INVISIBLE_SECONDS_TO_ORANGE-1+DT_DMON*s._HI_STD_FALLBACK_TIME-0.1)/DT_DMON)] == 1
     assert alert_lvls[int((INVISIBLE_SECONDS_TO_ORANGE-1+DT_DMON*s._HI_STD_FALLBACK_TIME+0.1)/DT_DMON)] == 2
     assert alert_lvls[int((INVISIBLE_SECONDS_TO_RED-1+DT_DMON*s._HI_STD_FALLBACK_TIME+0.1)/DT_DMON)] == 3
-
-
-def test_night_star_timing_is_the_default():
-  # Night Star port: the default policy runs vfn's 24 h timing; the stock warning spacing near terminal is kept
-  settings = DRIVER_MONITOR_SETTINGS()
-  assert settings._VISION_POLICY_ALERT_3_TIMEOUT == settings._WHEELTOUCH_POLICY_ALERT_3_TIMEOUT == 86400.
-  assert settings._VISION_POLICY_ALERT_3_TIMEOUT - settings._VISION_POLICY_ALERT_2_TIMEOUT == 6.
-  assert settings._WHEELTOUCH_POLICY_ALERT_3_TIMEOUT - settings._WHEELTOUCH_POLICY_ALERT_1_TIMEOUT == 15.
-  assert settings._MAX_ALERT_3 == settings._MAX_NO_RESPONSE == 86400
-  assert DriverMonitoring().settings._LOCKOUT_TIMES == [int(86400 / DT_DMON)]

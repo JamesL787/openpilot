@@ -6,7 +6,7 @@ from openpilot.selfdrive.ui.mici.widgets.qr import QR
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets.scroller import NavScroller
-from openpilot.starpilot.connect.provider import ALLOWED_PROVIDERS, PROVIDERS, active_provider, select_provider, status
+from openpilot.starpilot.connect.provider import PROVIDERS, active_provider, select_provider, status
 
 
 class CloudProviderConfirmation(NavScroller):
@@ -42,7 +42,7 @@ class CloudProviderPage(NavScroller):
       GreyBigButton('', 'Changes apply after a device reboot. Turn off the vehicle first.'),
       QR(active.web),
     ])
-    for provider in (PROVIDERS[name] for name in ALLOWED_PROVIDERS):   # Konik only
+    for provider in PROVIDERS.values():
       button = BigButton(f'Use {provider.label}', 'Next boot only')
       button.set_enabled(lambda name=provider.name: ui_state.is_offroad() and name != current['selected'])
       button.set_click_callback(lambda name=provider.name: gui_app.push_widget(
