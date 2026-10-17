@@ -1,6 +1,6 @@
 # Status
 
-**As of: 2026-10-05**
+**As of: 2026-10-17**
 
 Update the date above whenever this file changes. If it is stale, trust `git log` over this
 file.
@@ -23,6 +23,13 @@ here. Where the two touch — the CR-V lateral profile, the steering-ratio curve
 **Open topics to revisit** (parked by decision, not closed):
 - **Range offset: D-076 ACCEPTED 2026-10-07, fixed per car, no toggle.** Firmware ROM default −346/128 = −2.703 m (Civic; amended 2026-10-16 from 335, which was only the zero-config fallback) and −341/128 = −2.664 m (CR-V), replacing −3.0. The `BoschARangeOffsetFallback` toggle and the CAN 0x669 addend are removed. Static only; the true range origin is unmeasured, and the laser range check settles it.
 - **Newborn radar points: D-075, built in ON since 2026-10-03 (the `BoschANewbornLeads` toggle is removed).** Replay and static only, limited road evidence from Peter's drives with the toggle on. Publishes young closing radar points earlier and lets one lead only once its own range closes.
+- **Young-track camera hold (`YOUNG_TRACK_VISION_HOLD`, radard.py), built in ON since 2026-10-17.** Below 3 m/s, a Bosch-A track
+  under 0.4 s old does not take the lead from a confident (prob ≥ 0.9), non-braking, non-closing camera lead that it reads
+  more than 1.5 m/s slower, unless its own range is closing. Fixes the 00000361 24:33 launch sag (young-track U11 lag).
+  Replay only (Job, routes 327/328/329/361 full, 2f7 full, 2ae segs 16–18): closed-loop gap_min and cmd_min equal ON vs OFF
+  in every changed window, TTC equal except 361 21:02 (7.77 vs 7.83 s, disengaged); open loop ON never brakes more; 361
+  24:33 planner sag 1.67 → 1.07. 15 changed ticks, all vEgo < 2.2. Sim launch fidelity weak at 24:28 (aEgo corr 0.68).
+  Not driven. Risk to watch: at a launch it trusts the camera's vLead for up to 0.4 s; not covered: 328 33:20 (track 1.6 s old).
 - **U11 scale 1/72: D-074 ACCEPTED (owner, 2026-10-02), built in; the 1/64 switch back was removed 2026-10-03.**
   Static and replay only, not driven. Rails ±12.0 m/s; every closing speed published is 64/72 of the old 1/64 reading (−11.1 %), the D-041 danger
   direction. `ONPATH_ADOPT_RAIL_VREL_MPS` = rail + 1.0 = −11.0 (approved). Open: a separate fit of the scale itself,
