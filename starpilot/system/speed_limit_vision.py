@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import json
 import math
 import time
@@ -56,9 +58,17 @@ LIVE_POSE_RECOVERY_INFERENCE_INTERVAL = 1.0
 RUNTIME_TELEMETRY_INTERVAL_SECONDS = 2.0
 DEBUG_HEARTBEAT_INTERVAL_SECONDS = 30.0
 DEFAULT_DETECTOR_INPUT_SIZE = 640
-DETECTOR_INPUT_SIZE_CANDIDATES = (640, 512, 448, 416, 384, 320, 288, 256, 224, 192)
 DEFAULT_CLASSIFIER_INPUT_SIZE = 128
-CLASSIFIER_INPUT_SIZE_CANDIDATES = (128, 112, 96, 80, 64)
+# Square input sizes the shipped models declare. These used to be read at startup with
+# onnx.load, which pulled the onnx package into this process for ~7 MB of resident memory
+# on a 3.6 GB device that already sits near the low-memory warning with this daemon on.
+# test_model_input_sizes_match_the_model_files checks them against the files.
+US_DETECTOR_INPUT_SIZE = 256
+US_CLASSIFIER_INPUT_SIZE = 128
+LEGACY_DETECTOR_INPUT_SIZE = 640
+# Hand freed heap back to the system: once after the models load (the load leaves
+# several MB of freed parser memory behind) and then on this interval while running.
+HEAP_TRIM_INTERVAL_SECONDS = 30.0
 FULL_FRAME_OCR_FALLBACK_ENABLED = False
 DETECTOR_CLASSIFIER_CROP_OCR_ENABLED = False
 DETECTOR_CLASSIFIER_REGION_MODE = "right_roi"  # full, right_roi, full_and_right_roi
@@ -326,6 +336,15 @@ class HistoryEntry:
   strong_consensus: bool = False
 
 
+def release_freed_memory():
+  """Hand freed heap back to the system (glibc malloc_trim). A no-op off glibc."""
+  try:
+    libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
+    libc.malloc_trim(0)
+  except (AttributeError, OSError):
+    pass
+
+
 class SpeedLimitVisionDaemon:
   def __init__(self, use_runtime=True):
     self.use_runtime = use_runtime
@@ -441,7 +460,9 @@ class SpeedLimitVisionDaemon:
 
     self.digit_templates = self._build_digit_templates()
     self.speed_value_templates = self._build_speed_value_templates()
+    self.last_heap_trim_at = -float("inf")
     self._load_model()
+    self._trim_heap()
 
   def _start_debug_session(self) -> bool:
     if not self.use_runtime or self.params_memory is None or self.debug_session_id or self.debug_session_unavailable:
@@ -1012,26 +1033,11 @@ class SpeedLimitVisionDaemon:
     self.last_inference_interval_reason = reason
     return interval
 
-  @staticmethod
-  def _read_onnx_square_input_size(model_path, default_size=DEFAULT_DETECTOR_INPUT_SIZE, candidates=DETECTOR_INPUT_SIZE_CANDIDATES):
-    try:
-      import onnx
-
-      model = onnx.load(str(model_path), load_external_data=False)
-      if not model.graph.input:
-        return default_size
-
-      shape = model.graph.input[0].type.tensor_type.shape.dim
-      if len(shape) < 4:
-        return default_size
-
-      height = int(shape[2].dim_value)
-      width = int(shape[3].dim_value)
-      if height == width and height in candidates:
-        return height
-    except Exception:
-      pass
-    return default_size
+  def _trim_heap(self, now=None):
+    if now is not None and now - getattr(self, "last_heap_trim_at", -float("inf")) < HEAP_TRIM_INTERVAL_SECONDS:
+      return
+    self.last_heap_trim_at = time.monotonic() if now is None else now
+    release_freed_memory()
 
   def _load_model(self):
     self.net = None
@@ -1043,15 +1049,11 @@ class SpeedLimitVisionDaemon:
 
     if US_DETECTOR_MODEL_PATH.is_file() and US_CLASSIFIER_MODEL_PATH.is_file():
       try:
-        self.detector_input_size = self._read_onnx_square_input_size(US_DETECTOR_MODEL_PATH)
+        self.detector_input_size = US_DETECTOR_INPUT_SIZE
         self.net = cv2.dnn.readNetFromONNX(str(US_DETECTOR_MODEL_PATH))
         self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-        self.classifier_input_size = self._read_onnx_square_input_size(
-          US_CLASSIFIER_MODEL_PATH,
-          DEFAULT_CLASSIFIER_INPUT_SIZE,
-          CLASSIFIER_INPUT_SIZE_CANDIDATES,
-        )
+        self.classifier_input_size = US_CLASSIFIER_INPUT_SIZE
         self.classifier_net = cv2.dnn.readNetFromONNX(str(US_CLASSIFIER_MODEL_PATH))
         self.classifier_net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         self.classifier_net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
@@ -1079,7 +1081,7 @@ class SpeedLimitVisionDaemon:
       return
 
     try:
-      self.detector_input_size = self._read_onnx_square_input_size(LEGACY_MODEL_PATH)
+      self.detector_input_size = LEGACY_DETECTOR_INPUT_SIZE
       self.net = cv2.dnn.readNetFromONNX(str(LEGACY_MODEL_PATH))
       self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
       self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
@@ -2679,6 +2681,7 @@ class SpeedLimitVisionDaemon:
       self.loop_count += 1
       self.sm.update(0)
       self._update_memory_pressure()
+      self._trim_heap(now)
 
       if self.sm.updated["userBookmark"]:
         if self.ignore_next_user_bookmark:

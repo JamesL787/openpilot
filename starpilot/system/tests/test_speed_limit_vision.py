@@ -593,3 +593,76 @@ def test_detector_classifier_runtime_rejects_tiny_model_only_consensus_without_o
   detection = daemon._detect_sign_from_detector_classifier(np.zeros((480, 960, 3), dtype=np.uint8))
 
   assert detection is None
+
+
+def _varint(buf, i):
+  value = shift = 0
+  while True:
+    byte = buf[i]
+    i += 1
+    value |= (byte & 0x7F) << shift
+    shift += 7
+    if byte < 0x80:
+      return value, i
+
+
+def _proto_fields(buf):
+  i = 0
+  while i < len(buf):
+    key, i = _varint(buf, i)
+    field, wire = key >> 3, key & 7
+    if wire == 0:
+      value, i = _varint(buf, i)
+    elif wire == 2:
+      length, i = _varint(buf, i)
+      value, i = buf[i:i + length], i + length
+    elif wire == 1:
+      value, i = buf[i:i + 8], i + 8
+    elif wire == 5:
+      value, i = buf[i:i + 4], i + 4
+    else:
+      raise ValueError(f"unsupported wire type {wire}")
+    yield field, value
+
+
+def _first(buf, field_number):
+  return next(value for field, value in _proto_fields(buf) if field == field_number)
+
+
+def _onnx_input_dims(path):
+  # ModelProto.graph(7) -> GraphProto.input(11) -> ValueInfoProto.type(2) -> TypeProto.tensor_type(1)
+  # -> shape(2) -> TensorShapeProto.dim(1) -> dim_value(1). Read without the onnx package, which the
+  # daemon no longer imports.
+  shape = _first(_first(_first(_first(_first(path.read_bytes(), 7), 11), 2), 1), 2)
+  return [_first(dim, 1) for field, dim in _proto_fields(shape) if field == 1]
+
+
+@pytest.mark.parametrize("model_path,size", [
+  (slv.US_DETECTOR_MODEL_PATH, slv.US_DETECTOR_INPUT_SIZE),
+  (slv.US_CLASSIFIER_MODEL_PATH, slv.US_CLASSIFIER_INPUT_SIZE),
+  (slv.US_REJECT_CLASSIFIER_MODEL_PATH, slv.US_CLASSIFIER_INPUT_SIZE),
+  (slv.LEGACY_MODEL_PATH, slv.LEGACY_DETECTOR_INPUT_SIZE),
+])
+def test_model_input_sizes_match_the_model_files(model_path, size):
+  assert _onnx_input_dims(model_path) == [1, 3, size, size]
+
+
+def test_loaded_daemon_uses_the_model_input_sizes_without_onnx(monkeypatch):
+  import sys
+  monkeypatch.setitem(sys.modules, "onnx", None)
+  daemon = SpeedLimitVisionDaemon(use_runtime=False)
+  assert daemon.model_mode == "detector_classifier"
+  assert daemon.detector_input_size == slv.US_DETECTOR_INPUT_SIZE
+  assert daemon.classifier_input_size == slv.US_CLASSIFIER_INPUT_SIZE
+
+
+def test_heap_trim_runs_once_per_interval(monkeypatch):
+  calls = []
+  monkeypatch.setattr(slv, "release_freed_memory", lambda: calls.append(1))
+  daemon = SpeedLimitVisionDaemon.__new__(SpeedLimitVisionDaemon)
+  daemon.last_heap_trim_at = -float("inf")
+  daemon._trim_heap(100.0)
+  daemon._trim_heap(100.0 + slv.HEAP_TRIM_INTERVAL_SECONDS - 1)
+  assert len(calls) == 1
+  daemon._trim_heap(100.0 + slv.HEAP_TRIM_INTERVAL_SECONDS)
+  assert len(calls) == 2
