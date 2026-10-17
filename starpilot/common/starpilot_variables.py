@@ -890,6 +890,13 @@ class StarPilotVariables:
       toggle.stock_brake_feel = self.get_value("StockBrakeFeel", condition=advanced_longitudinal_tuning and bosch_a_radar)
     except Exception:
       toggle.stock_brake_feel = False
+    # Weak-lead cap ease (longitudinal_planner WEAK_LEAD_CAP_EASE_*): the low-speed weak-lead accel cap slews in and out
+    # instead of stepping, and a newborn radar lead's accel is read from the model. Off unless the parent and this are on.
+    # A params library built before the key existed raises on the read; that means off.
+    try:
+      toggle.weak_lead_cap_ease = self.get_value("WeakLeadCapEase", condition=advanced_longitudinal_tuning)
+    except Exception:
+      toggle.weak_lead_cap_ease = False
 
     toggle.alert_volume_controller = self.get_value("AlertVolumeControl")
     toggle.below_steer_speed_volume = self.get_value("BelowSteerSpeedVolume", cast=float, condition=toggle.alert_volume_controller)

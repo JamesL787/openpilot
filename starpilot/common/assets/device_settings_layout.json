@@ -1008,6 +1008,16 @@
         "settings_tier": "advanced"
       },
       {
+        "key": "WeakLeadCapEase",
+        "label": "Ease Weak-Lead Accel Cap",
+        "description": "Under 4.5 m/s behind a slow or barely moving lead, openpilot limits acceleration to 0.08-0.22 m/s^2. With this on, that limit eases in and out at 2 m/s^3 instead of cutting in within one frame, and a car the radar has only just picked up is judged by the camera's view of how fast it is pulling away. Braking is never limited or delayed.",
+        "picker_description": "Low-speed accel limit behind a slow lead eases in and out.",
+        "data_type": "bool",
+        "ui_type": "toggle",
+        "parent_key": "AdvancedLongitudinalTune",
+        "settings_tier": "advanced"
+      },
+      {
         "key": "StockBrakeFeel",
         "label": "Stock Brake Feel",
         "description": "Honda Bosch-A Radar only; with that radar off this does nothing and the normal planner drives alone. Matches stock Honda Bosch-A ACC when closing on a slower car: light brake taps that build slowly and go no deeper than stock would at the same time to contact. Normal braking under 2 s to contact, when stopping, and at a red light. Also eases a held stopping brake while still rolling, and ignores a brief false braking reading on a newly seen car.",

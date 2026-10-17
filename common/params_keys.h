@@ -890,6 +890,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // Default OFF. D-086 stock Honda ACC brake law (STOCK_FEEL_* in longitudinal_planner.py): depth and deepening rate
     // capped at stock's by TTC. Read live through starpilot_toggles. Replay only, not driven.
     {"StockBrakeFeel", {PERSISTENT, BOOL, "0", "0", 3}},
+    // Default OFF. Weak-lead cap ease (WEAK_LEAD_CAP_EASE_* in longitudinal_planner.py): the low-speed weak-lead
+    // accel cap engages and releases at 2 m/s^3, and reads a newborn radar lead's accel from the model. Replay only.
+    {"WeakLeadCapEase", {PERSISTENT, BOOL, "0", "0", 3}},
     {"TuningLevel", {PERSISTENT, INT, "0", "0", 0}},
     {"TuningLevelConfirmed", {PERSISTENT, BOOL, "0", "0", 0}},
     {"TurnDesires", {PERSISTENT, BOOL, "0", "0", 2}},

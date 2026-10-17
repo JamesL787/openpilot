@@ -197,6 +197,9 @@ def run_event(ev):
         state[w] = _radar(msg.radarState) if w == "radarState" else getattr(msg, w); valid[w] = bool(msg.valid)
         if w == "starpilotPlan":
           toggles = parse_toggles(state["starpilotPlan"].starpilotToggles, toggles)
+          for kv in filter(None, os.environ.get("TOGGLE_SET", "").split(",")):  # TOGGLE_SET=name=1,...: force toggles
+            k, v = kv.split("=")
+            setattr(toggles, k, v == "1")
         continue
       if w != "modelV2" or not planners or not all(k in state for k in T.PLANNER_SERVICES) or "radarState" not in state:
         continue

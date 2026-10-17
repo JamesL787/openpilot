@@ -1248,6 +1248,27 @@ LOW_SPEED_WEAK_LEAD_ACCEL_CAP_STRONG_DEPART_MIN_GAP = 4.0
 LOW_SPEED_WEAK_LEAD_ACCEL_CAP_STRONG_DEPART_MIN_LEAD_SPEED = 1.2
 LOW_SPEED_WEAK_LEAD_ACCEL_CAP_STRONG_DEPART_MIN_LEAD_DELTA = 0.8
 LOW_SPEED_WEAK_LEAD_ACCEL_CAP_STRONG_DEPART_MIN_LEAD_ACCEL = 0.5
+# Weak-lead cap ease (WeakLeadCapEase toggle, default off). Closed-loop and open-loop replay evidence only, not driven:
+# 8 stop-and-go events of route 332, every planner fed the same radar re-parsed from CAN by this tree's parser.
+# The cap above engages and releases within one frame (0.05 s), and the most common trigger is a radar track just
+# born under the vision lead: its aLeadK starts near 0 while the model's lead is pulling away (+1.7 m/s^2), so the
+# cap clamps a departure and lets go 0.5-2 s later. Two changes, both only while the toggle is on:
+#  1. Slew. Engaging, the cap may cut the accel target by no more than WEAK_LEAD_CAP_EASE_JERK per second; after it
+#     drops out, the target may rise above max(previous, 0) by no more than that until it catches up. Only this
+#     positive cap is eased: it is applied as a min() after every braking cap, so it cannot lift one, and release
+#     limits positive accel only, never a brake release. Slew alone, open-loop command jerk median 0.63 -> 0.47
+#     m/s^3; 1.0 m/s^3 was smoother (0.45) but cut event 06's open-loop aEgo corr 0.95 -> 0.74, 2.0 cut it to 0.86.
+#  2. Newborn track. For the first NEWBORN_LEAD_FRAMES a radar track is a lead (same newborn rules as D-080), the
+#     cap reads the lead's accel as max(aLeadK, the model lead's a[0]) when the model lead prob is at least
+#     LOW_SPEED_WEAK_LEAD_ACCEL_CAP_MIN_MODEL_PROB. Accel only; dRel, vLead and radarState are untouched. When this is
+#     what lifts a cap the raw lead would have set, the rise takes the release ramp above: without it, event 06's
+#     launch from a stop stepped -0.24 -> +0.67 m/s^2 in one frame where the raw cap had held +0.14.
+# Both together: open-loop command jerk median 0.63 -> 0.44 m/s^3 (00: 0.91 -> 0.47, 02: 0.93 -> 0.76, 05: 0.97 ->
+# 0.85, 06: 0.49 -> 0.31), closed-loop commanded jerk 02: 0.80 -> 0.53, 06: 0.55 -> 0.52; min accel, gap and TTC
+# unchanged in every event; open-loop aEgo corr 00: 0.92 -> 0.88, 06: 0.95 -> 0.87. Toggle off is bit-identical.
+# Both make the cap less conservative: the slew lets accel exceed the cap for up to about 0.5 s while it engages,
+# and the newborn rule engages it less often. Braking caps and the MPC are untouched.
+WEAK_LEAD_CAP_EASE_JERK = 2.0  # m/s^3
 VISION_CLOSE_STOP_HOLD_MIN_BRAKE = 0.20
 VISION_CLOSE_STOP_HOLD_MAX_BRAKE = 0.36
 VISION_CLOSE_SETTLE_MAX_LEAD_DELTA = 2.6
@@ -1579,8 +1600,8 @@ class NewbornLeadHold:
     a_rel = 2.0 * float(np.polyfit(t, d, 2)[0])
     return a_rel + float(np.mean([a for _, _, a in h]))
 
-  def bound(self, lead, a_ego):
-    """aLeadK for `lead`, or None when it is left as is. Call once per lead per frame, after tick()."""
+  def observe(self, lead, a_ego):
+    """Record `lead` this frame; its history, or None for a missing or vision-only lead. Call after tick()."""
     if lead is None or not bool(getattr(lead, "status", False)) or not bool(getattr(lead, "radar", False)):
       return None
     tid = int(getattr(lead, "radarTrackId", -1))
@@ -1590,7 +1611,19 @@ class NewbornLeadHold:
       h = self.hist[tid] = [(self.frame, d_rel, float(a_ego))]
     elif h[-1][0] != self.frame:  # leadOne and leadTwo on one track: record it once
       h.append((self.frame, d_rel, float(a_ego)))
-    if self.frame - h[0][0] >= NEWBORN_LEAD_FRAMES:
+    return h
+
+  def is_newborn(self, lead):
+    """`lead` is a radar track observed this frame and a lead for under NEWBORN_LEAD_FRAMES."""
+    if lead is None or not bool(getattr(lead, "status", False)) or not bool(getattr(lead, "radar", False)):
+      return False
+    h = self.hist.get(int(getattr(lead, "radarTrackId", -1)))
+    return h is not None and h[-1][0] == self.frame and self.frame - h[0][0] < NEWBORN_LEAD_FRAMES
+
+  def bound(self, lead, a_ego):
+    """aLeadK for `lead`, or None when it is left as is. Call once per lead per frame, after tick()."""
+    h = self.observe(lead, a_ego)
+    if h is None or self.frame - h[0][0] >= NEWBORN_LEAD_FRAMES:
       return None
     a_lead = float(lead.aLeadK)
     a_range = self._range_decel(h)
@@ -1640,6 +1673,9 @@ class LongitudinalPlanner:
     self.off_axis_lead_hold = OffAxisLeadHold()
     self.reassociation_hold = ReassociationHold()
     self.newborn_lead_hold = NewbornLeadHold()
+    self.weak_lead_cap_ease = False
+    self.weak_lead_cap_newborn = NewbornLeadHold()  # WeakLeadCapEase: its own history, independent of StockBrakeFeel
+    self.weak_lead_cap_releasing = False
     self.longitudinal_actuator_delay = max(DT_MDL, float(CP.longitudinalActuatorDelay))
     self.close_lead_brake_cap_value = 0.0
     self.lead_geometry_required_accel = 0.0
@@ -2722,6 +2758,35 @@ class LongitudinalPlanner:
 
     return float(self.lead_depart_accel_hold_floor)
 
+  def low_speed_weak_lead_accel_cap_for(self, leads, v_ego):
+    caps = [cap for cap in (self.get_low_speed_weak_lead_accel_cap(lead, v_ego) for lead in leads) if cap is not None]
+    return min(caps) if caps else None
+
+  def weak_lead_cap_ease_leads(self, sm):
+    """WeakLeadCapEase: leadOne/leadTwo for the weak-lead cap. A newborn radar lead reads the lead accel as
+    max(aLeadK, model lead a[0]) when the model lead is confident; everything else is the original lead."""
+    hold = self.weak_lead_cap_newborn
+    hold.tick()
+    try:
+      a_ego = float(sm['carState'].aEgo)
+    except (KeyError, AttributeError):
+      a_ego = 0.0
+    for lead in (self.lead_one, self.lead_two):
+      hold.observe(lead, a_ego)
+    model_accel = None
+    try:
+      model_leads = sm['modelV2'].leadsV3
+      if len(model_leads) and len(model_leads[0].a) and float(model_leads[0].prob) >= LOW_SPEED_WEAK_LEAD_ACCEL_CAP_MIN_MODEL_PROB:
+        model_accel = float(model_leads[0].a[0])
+    except (KeyError, AttributeError, IndexError, TypeError):
+      model_accel = None
+    leads = []
+    for lead in (self.lead_one, self.lead_two):
+      if model_accel is not None and hold.is_newborn(lead) and model_accel > float(getattr(lead, "aLeadK", 0.0)):
+        lead = _BoundedLead(lead, model_accel)
+      leads.append(lead)
+    return leads
+
   def get_low_speed_weak_lead_accel_cap(self, lead, v_ego):
     if lead is None or not lead.status:
       return None
@@ -3247,6 +3312,7 @@ class LongitudinalPlanner:
       sm = bound_off_axis_leads(sm, self.off_axis_lead_hold)
     if bool(getattr(starpilot_toggles, "stock_brake_feel", False)):
       sm = bound_newborn_leads(sm, self.newborn_lead_hold)
+    self.weak_lead_cap_ease = bool(getattr(starpilot_toggles, "weak_lead_cap_ease", False))
     if self.is_preap:
       self._preap_param_frame += 1
       if self._preap_params is not None and (self._preap_param_frame % 20) == 0:
@@ -4178,15 +4244,15 @@ class LongitudinalPlanner:
     )
 
     low_speed_weak_lead_accel_cap = None
+    weak_lead_cap_newborn_lifted = False
     if not output_should_stop:
-      low_speed_weak_lead_accel_caps = [
-        cap for cap in (
-          self.get_low_speed_weak_lead_accel_cap(self.lead_one, scene_v_ego),
-          self.get_low_speed_weak_lead_accel_cap(self.lead_two, scene_v_ego),
-        ) if cap is not None
-      ]
-      if low_speed_weak_lead_accel_caps:
-        low_speed_weak_lead_accel_cap = min(low_speed_weak_lead_accel_caps)
+      low_speed_weak_lead_accel_cap = self.low_speed_weak_lead_accel_cap_for((self.lead_one, self.lead_two), scene_v_ego)
+      if self.weak_lead_cap_ease:
+        raw_cap_applies = low_speed_weak_lead_accel_cap is not None
+        low_speed_weak_lead_accel_cap = self.low_speed_weak_lead_accel_cap_for(self.weak_lead_cap_ease_leads(sm), scene_v_ego)
+        weak_lead_cap_newborn_lifted = raw_cap_applies and low_speed_weak_lead_accel_cap is None
+    elif self.weak_lead_cap_ease:
+      self.weak_lead_cap_ease_leads(sm)  # keep the newborn history current
 
     close_stop_active = bool(output_should_stop or vision_low_speed_stop_active)
 
@@ -4341,9 +4407,24 @@ class LongitudinalPlanner:
     if lead_depart_accel_hold_active:
       output_a_target = max(output_a_target, lead_depart_accel_floor)
 
-    if low_speed_weak_lead_accel_cap is not None and not (lead_depart_accel_hold_active and lead_depart_accel_floor_reused):
+    weak_lead_cap_applies = (
+      low_speed_weak_lead_accel_cap is not None and
+      not (lead_depart_accel_hold_active and lead_depart_accel_floor_reused)
+    )
+    weak_lead_cap_step = WEAK_LEAD_CAP_EASE_JERK * self.dt
+    if weak_lead_cap_applies:
+      if self.weak_lead_cap_ease:
+        # Only relaxes this cap; the braking caps are already in output_a_target and min() keeps them.
+        low_speed_weak_lead_accel_cap = max(low_speed_weak_lead_accel_cap, prev_output_a_target - weak_lead_cap_step)
       self.a_desired = min(self.a_desired, low_speed_weak_lead_accel_cap)
       output_a_target = min(output_a_target, low_speed_weak_lead_accel_cap)
+      self.weak_lead_cap_releasing = self.weak_lead_cap_ease
+    elif self.weak_lead_cap_releasing or weak_lead_cap_newborn_lifted:
+      # Also when the newborn rule is what lifts the cap, so it can only ease a release, never step one.
+      release_limit = max(prev_output_a_target, 0.0) + weak_lead_cap_step  # positive side only: brake release is never slowed
+      self.weak_lead_cap_releasing = self.weak_lead_cap_ease and output_a_target > release_limit
+      if self.weak_lead_cap_releasing:
+        output_a_target = release_limit
 
     if (
       lead_control_active and
