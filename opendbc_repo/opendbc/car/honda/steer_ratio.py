@@ -208,6 +208,16 @@ HONDA_VGR_INVERSE_BY_PROFILE = {
   HONDA_VGR_CIVIC_TBA_C120: (CIVIC_TBA_C120_VGR_LINEAR_BP, CIVIC_TBA_C120_VGR_ANGLE_BP),
 }
 
+# Each A table's centre divisor (Y[0]): the published angle is raw * 2**14 / Y, so a published degree near centre is
+# Y[0] / 16384 raw (pre-table) degrees. The EPS's rate feedback R6 works on the raw angle.
+HONDA_VGR_CENTRE_DIVISOR_BY_PROFILE = {
+  HONDA_VGR_CLARITY_TRW_A020: _CLARITY_POSITION_Y[0],
+  HONDA_VGR_CIVIC_TBA_C020: _CIVIC_C020_POSITION_Y[0],
+  HONDA_VGR_INSIGHT_TXM_A040: _INSIGHT_TXM_A040_POSITION_Y[0],
+  HONDA_VGR_CRV_TLA_A040: _CRV_TLA_A040_POSITION_Y[0],
+  HONDA_VGR_CIVIC_TBA_C120: _CIVIC_C120_POSITION_Y[0],
+}
+
 HONDA_VGR_INVERSE_BY_FLAG = {
   int(flag): HONDA_VGR_INVERSE_BY_PROFILE[profile]
   for profile, flag in HONDA_VGR_PROFILE_FLAGS.items()

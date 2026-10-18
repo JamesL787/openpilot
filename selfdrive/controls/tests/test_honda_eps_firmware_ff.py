@@ -11,7 +11,10 @@ import openpilot.selfdrive.controls.lib.honda_eps_firmware_ff as eps_ff
 import openpilot.selfdrive.controls.lib.latcontrol_honda_eps as honda_eps
 from opendbc.car import structs
 from opendbc.car.honda.interface import CarInterface
-from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, vgr_linear_to_physical, vgr_physical_to_linear
+from opendbc.car.honda.steer_ratio import (
+  HONDA_VGR_CENTRE_DIVISOR_BY_PROFILE, HONDA_VGR_CIVIC_TBA_C020, HONDA_VGR_CIVIC_TBA_C120, HONDA_VGR_CLARITY_TRW_A020,
+  HONDA_VGR_CRV_TLA_A040, HONDA_VGR_INSIGHT_TXM_A040, get_honda_vgr_inverse, vgr_linear_to_physical, vgr_physical_to_linear,
+)
 from opendbc.car.honda.values import CAR, HondaFlags
 from opendbc.car.vehicle_model import VehicleModel
 from openpilot.common.filter_simple import FirstOrderFilter
@@ -446,9 +449,8 @@ def test_nidec_civics_carry_the_teg_measurements():
     assert cal.load == eps_ff.CIVIC_TEG_A010_LOAD and cal.e4_per_output == 3840.0
   teg = eps_ff.CIVIC_TEG_A010
   assert teg.r6_angle_bp == eps_ff.CIVIC_TEG_A010_R6_BP and teg.r6_angle_gain == eps_ff.CIVIC_TEG_A010_R6_GAIN
-  # the measured R6 per published deg/s by |angle| band (routes 133/134/137), within 1.5%
-  for angle, measured in ((7.5, -151.4), (30., -152.2), (67.5, -165.7), (120., -170.4), (200., -176.4)):
-    assert eps_ff.firmware_r6(1.0, angle, teg) == pytest.approx(measured, rel=.015)
+  # R6 is the C120 A table's, computed; the telemetry agrees once railed frames are left out (see below)
+  assert (teg.r6_per_deg_s, teg.r6_angle_gain) == (eps_ff.CIVIC_TBA_C120_R6_CENTRE, eps_ff.CIVIC_TBA_C120_R6_GAIN)
   a030 = eps_ff.CIVIC_TBA_A030
   assert dataclasses.replace(a030, name=teg.name, rack=teg.rack) == teg and a030.rack is None
   # the TEG owner's car runs row 3 (TEGA2), measured on its telemetry; the corrected (rev b) image's row 3 carries the
@@ -716,17 +718,57 @@ def test_every_image_has_angle_dependent_r6(cal):
   assert eps_ff.firmware_r6(1.0, -180.0, cal) == eps_ff.firmware_r6(1.0, 180.0, cal)
 
 
-@pytest.mark.parametrize("band, measured", [(7.5, -153.2), (22.5, -152.2), (45.0, -155.0), (80.0, -162.2),
-                                            (125.0, -167.4), (175.0, -168.9), (250.0, -168.9)])
-def test_c020_r6_is_its_measured_curve(band, measured):
-  # 0.1 s derivative of the published angle against 0x6A2 R6, routes 64/154/287/289/294
-  assert eps_ff.firmware_r6(1.0, band, eps_ff.CIVIC_TBA_C020) == pytest.approx(measured, rel=0.01)
+# Telemetry R6 per published deg/s on unrailed frames (10-150 deg/s, |R6| < 30000), by |angle| band (median angle
+# ~7/28/65/115/190/310 deg), against a 0.06 s derivative of carState's angle, 2026-10-18: Clarity 363/365/369 (R6 =
+# 0x6A3 w3), C020 287/289/294 (0x6A2 w0, bus 1), TEG-A010 133/134/137/13d (0x6A1 w1).
+R6_TELEMETRY_ANGLES = (7.0, 28.0, 65.0, 115.0, 190.0, 310.0)
+R6_TELEMETRY = {
+  "clarity_trw_a020": (-123.3, (1.0, 1.005, 1.072, 1.177, 1.185, 1.197), 0.015),
+  "civic_tba_c020": (-158.4, (1.0, 1.003, 1.062, 1.168, 1.181, 1.187), 0.035),
+  "civic_teg_a010": (-160.9, (1.0, 0.978, 1.064, 1.117, 1.202, 1.162), 0.03),
+}
+
+
+@pytest.mark.parametrize("name", R6_TELEMETRY)
+def test_computed_r6_matches_unrailed_telemetry(name):
+  cal = next(c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
+  centre, shape, tol = R6_TELEMETRY[name]
+  for angle, gain in zip(R6_TELEMETRY_ANGLES, shape, strict=True):
+    assert eps_ff.firmware_r6(1.0, angle, cal) == pytest.approx(centre * gain, rel=tol)
+
+
+@pytest.mark.parametrize("name, profile", [
+  ("clarity_trw_a020", HONDA_VGR_CLARITY_TRW_A020), ("civic_tba_c020", HONDA_VGR_CIVIC_TBA_C020),
+  ("civic_tgg_a120", HONDA_VGR_CIVIC_TBA_C020), ("civic_tba_c120", HONDA_VGR_CIVIC_TBA_C120),
+  ("civic_tba_a030", HONDA_VGR_CIVIC_TBA_C120), ("civic_teg_a010", HONDA_VGR_CIVIC_TBA_C120),
+  ("insight_txm_a040", HONDA_VGR_INSIGHT_TXM_A040), ("crv_tla_a040", HONDA_VGR_CRV_TLA_A040),
+  ("crv_tla_a220", HONDA_VGR_CRV_TLA_A040),
+])
+def test_every_calibration_takes_its_a_tables_computed_r6(name, profile):
+  cal = next(c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
+  centre, bp, gain = eps_ff.computed_r6(profile)
+  assert (cal.r6_per_deg_s, tuple(cal.r6_angle_bp), tuple(cal.r6_angle_gain)) == (centre, bp, gain)
+  assert centre == pytest.approx(-122.0 * HONDA_VGR_CENTRE_DIVISOR_BY_PROFILE[profile] / 16384, abs=0.01)
+
+
+@pytest.mark.parametrize("cal", [c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values()], ids=lambda c: c.name)
+def test_r6_rails_at_the_firmware_clamp(cal):
+  # 0x1380C clamps R6 at +/-32765 in every image: from ~185 deg/s on the Civics, ~260 on the Clarity
+  for angle in (0.0, 90.0, 300.0):
+    assert eps_ff.firmware_r6(1000.0, angle, cal) == -eps_ff.R6_CLAMP
+    assert eps_ff.firmware_r6(-1000.0, angle, cal) == eps_ff.R6_CLAMP
+    rail = eps_ff.R6_CLAMP / abs(eps_ff.firmware_r6(1.0, angle, cal))
+    assert abs(eps_ff.firmware_r6(0.99 * rail, angle, cal)) < eps_ff.R6_CLAMP
+    # past the rail the law no longer depends on the rate
+    assert eps_ff.firmware_output(9000.0, 1.5 * rail, cal, angle) == eps_ff.firmware_output(9000.0, 3.0 * rail, cal, angle)
+    assert eps_ff.r5_for_motion(500.0, 1.5 * rail, cal, angle_deg=angle) == pytest.approx(
+      eps_ff.r5_for_motion(500.0, 3.0 * rail, cal, angle_deg=angle))
 
 
 def test_a_table_r6_model_matches_the_clarity_and_the_c020_centre():
   # the A-table model, centre scaled by the divisor ratio, against telemetry: Clarity -121.5 at 0-15 deg,
   # C020 -153.2 at 0-15 deg (20647 / 16384 x -122 = -153.7)
-  assert eps_ff.CLARITY_TRW_A020_R6_CENTRE * 20647 / 16384 == pytest.approx(eps_ff.CIVIC_TBA_C020_R6_CENTRE, rel=0.01)
+  assert eps_ff.CLARITY_TRW_A020_R6_CENTRE * 20647 / 16384 == pytest.approx(eps_ff.CIVIC_TBA_C020_R6_CENTRE, abs=0.01)
   assert eps_ff.CIVIC_TBA_C120_R6_CENTRE == pytest.approx(-122.0 * 20972 / 16384, abs=0.01)
   assert eps_ff.INSIGHT_TXM_A040_R6_CENTRE == pytest.approx(-122.0 * 17613 / 16384, abs=0.01)
   assert eps_ff.CRV_TLA_A040_R6_CENTRE == pytest.approx(-122.0 * 16783 / 16384, abs=0.01)
