@@ -10145,6 +10145,9 @@ Replay of the fixed code (base = the old law, same 10 routes):
 - **Why default OFF:** in the open-loop replay Peter pressed the brake in every case the ramp would have softened. It
   is not yet known whether at 2cc 5:20 (right turn) and 2b7 ~18:31 he braked because it was too sudden (ramp helps)
   or not enough (ramp makes it worse). If the answer is "not enough", narrow it to big steps from 0 with nothing close.
+- **Answered 2026-10-18 (Job's frames, log only):** at 2cc 5:20 there was a stop sign and a right turn; at 2b7 18:33, a
+  right-turn lane at a red light. Neither had a lead. Peter braked because the car was *not slowing enough*
+  (Experimental Mode was too soft), so the ramp would have made both worse. It stays OFF; Peter: not a big deal, no work.
 - **Params artifacts:** `ResumeBrakeRamp` (BOOL, default 0) added; `params_pyx.so`/`libcommon.a` rebuilt in a separate
   commit.
 
