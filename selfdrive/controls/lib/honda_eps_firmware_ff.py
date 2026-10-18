@@ -5,8 +5,8 @@ one controller serves them all through EpsFirmwareCalibration below. It was deve
 below is the Clarity's.
 
 The LKAS path is not a torque command. The firmware turns our 0xE4 value into a target R5, compares it with
-R6 -- a filtered steering RATE, taken before its angle table (see CLARITY_TRW_A020_R6_CENTRE and R6_GAIN_BP) -- and runs
-P + D + KFF on the difference at 1 kHz. So every command first has to cancel the firmware's own rate damping
+R6 -- a filtered steering RATE, taken before its angle table (see computed_r6) -- and runs P + D + KFF on the
+difference in its fast control loop (1-2 kHz). So every command first has to cancel the firmware's own rate damping
 (Kp * 122 / 1024 = 14..32 counts per deg/s at centre, 2-5x the rack's physical damping), which is why vfn's angle PID
 trails a turn-in by ~250 ms x steering rate below 25 mph. On a turn exit that same damping is the braking that
 holds the line -- which is why the symmetric rate feedforward of 709dbba828 cut exits and was reverted.
@@ -64,9 +64,12 @@ class ColumnLoadModel:
 # Command delay, per vehicle: the curvature controlsd hands over is executed this much later in town, faded out
 # between CMD_DELAY_SPEED_BP. Measured end to end with tools/lateral/plan_timing.py (car curvature from the VSA yaw
 # sensor against the model's own plan, hands-off turns at 5-12 m/s): every car measured ran its model's plan early
-# without it (early turn-in, loose exits), on this controller and on LatControlPID, and the models do not follow
-# the delay they are told (Cinque v3: the same aim told 0.09 or 0.30 s; tsfdo: told 0.30 or 0.48 s), so
-# SteerDelay / lagd cannot fix it. Each delay is sized at or below what was measured, so it cannot make a car late.
+# without it (early turn-in, loose exits), on this controller and on LatControlPID, because the controller reaches a
+# command faster than the model assumes. The delay the model is told cannot fix that: an action-head model (Cinque
+# v3) moves its aim by only ~half of a change in action_t (aim ~ 0.30 + 0.53 * action_t), and a plan-only model
+# (Pop v2) reads its plan at action_t floored at MIN_STABLE_DELAY 0.3 s, so a shorter told delay does nothing there.
+# The model also gives some of a command delay back (Cinque about half), so how much is needed depends on the model.
+# Each delay is sized at or below what was measured, so it cannot make a car late.
 # - Clarity (Cinque v3): 0.12-0.14 s early (route 37e); 0.12 s took entries from -0.25 to -0.11 s (route 380).
 # - Civic Bosch C020 (tsfdo): routes 290 / 293 / 289 -0.09 / -0.15 / -0.22 s, median -0.15. Checked with it on
 #   (routes 2b7 / 2c6 / 2d4): -0.14 / -0.11 / +0.03 s, -0.045 weighted, against -0.15 without it on 289 / 290 / 294.
@@ -88,8 +91,9 @@ def command_delay(cal: "EpsFirmwareCalibration", v_ego: float) -> float:
 # intends it to.
 # - Car curvature comes from the yaw sensor (0x94). The comma gyro runs ~50 ms behind the car and put the
 #   first version of this table that much too long.
-# - The lag hardly depends on the delay the model was told (5-9 m/s: 0.15 / 0.15 / 0.17 s at 0.22 / 0.30 /
-#   0.48), so routes are pooled.
+# - On Cinque v3 the lag hardly depends on the delay the model was told (5-9 m/s: 0.15 / 0.15 / 0.17 s at 0.22 /
+#   0.30 / 0.48), so routes are pooled. That is model-specific: on a plan-only model the action IS the plan read at
+#   action_t (floored at 0.3 s), so this table's town values (below 0.225 s told) change nothing there.
 # - The lag is fitted with a gain per route (tools/lateral/eps_report.py timing). The first table (0.12 / 0.12 /
 #   0.15 at 3.5 / 7 / 12 m/s, routes 354-36b) compared raw curves, and the car delivering only 0.85-0.96 of the
 #   request there read as extra lag: on 36c-377 the car turned 40-70 ms early in the city. Refit 2026-10-01 on
@@ -114,7 +118,7 @@ class EpsFirmwareCalibration:
   envelope_v: tuple
   kp_key_bp: tuple             # P row 0, indexed by the command key
   kp_v: tuple
-  r6_per_deg_s: float          # R6 counts per deg/s of carState.steeringRateDeg (at centre when r6_angle_* is set)
+  r6_per_deg_s: float          # R6 counts per published deg/s (d(0x14A angle)/dt) at centre; see computed_r6
   load: ColumnLoadModel
   p_scale: tuple               # residual PID P/I trims per band (<25 mph, 25-50, >50), fixed per car
   i_scale: tuple
@@ -184,12 +188,6 @@ CLARITY_TRW_A020_LOAD = ColumnLoadModel(k0=-7.00387, k1=-0.21857, c=-6.8317, fri
 # own now that three drives identify them.
 CIVIC_TBA_C020_LOAD = ColumnLoadModel(k0=-5.574, k1=-0.1831, c=-4.540, friction=-326.5, bias=-83.6, kroll=-3.185)
 
-# Nidec Civic column (HONDA_CIVIC), fitted on the TEG-A010 owner's 08-12 telemetry drive (route 00000001, 18 min of
-# city driving up to 15 m/s, hands off), from the same P + KFF rebuild as CIVIC_TBA_C020_LOAD. It needs ~1.6x the C020's output
-# for the same motion, even at |driver torque| < 60 (so it is the column, not resting hands); NORM is 1650 on both.
-# Held out a minute at a time, R^2 0.74 against 0.61 for CIVIC_TBA_C020_LOAD and 0.68 for the Clarity's. Bias and roll could
-# not be told apart on this drive (fitting them gains 0.005 R^2), so they stay the C020's. k1 is fitted below 15 m/s
-# only; the highway is an extrapolation.
 # TEG-A010 column, the standard recipe (tools/lateral/fit_column_load.py --source teg: target 0x6A3 w0 = P + D +
 # KFF*R5/1024 exactly, row-independent) on the owner's 11 telemetry routes 0000012d-00000139 (2026-10-14/15, 81 min of
 # frames): R^2 0.735, held out by route 0.39-0.78 against -0.73-0.74 for the 08-18 fit it replaces
@@ -335,31 +333,38 @@ CIVIC_TBA_C020 = EpsFirmwareCalibration(
 # out. Both builds report 39990-TEG,A010: a car still on the earlier image must be reflashed with this calibration (on
 # it the car would make about half the R5 this expects up to key 222).
 CIVIC_TEG_A010_R5 = (0, 4000, 6000, 8937, 11838, 16000, 20000, 28000, 32000)  # rev b row 3 (0x137D0)
-CIVIC_TEG_A010 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TBA_C020, k) for k in CIVIC_TBA_C020.__dataclass_fields__
-                                          if k != "kp_pieces"}, "name": "civic_teg_a010", "e4_per_output": 3840.0,
-                                       "load": CIVIC_TEG_A010_LOAD,
-                                       "r5_key_bp": (0, 222, 333, 495, 656, 887, 1108, 1552, 1774),
-                                       "r5_v": CIVIC_TEG_A010_R5,
-                                       "kp_key_bp": CLARITY_TRW_A020.kp_key_bp,
-                                       "r6_per_deg_s": CIVIC_TEG_A010_R6_CENTRE, "r6_angle_bp": CIVIC_TEG_A010_R6_BP,
-                                       "r6_angle_gain": CIVIC_TEG_A010_R6_GAIN,
-                                       # plan_timing on routes 12e/134/137/139 with nrdr's fixed Civic delay applied
-                                       # (0.175 s = 0.15 + its 0.025 model-action compensation, which this branch does
-                                       # not need): -0.05 s weighted (+0.02/-0.06/-0.06/-0.08), so ~0.20 s in this
-                                       # branch's terms; 0.15 stays below it (the C020 family's value). Mostly highway.
-                                       "cmd_delay_s": 0.15,
-                                       "rack": CIVIC_TEG_A010_RACK})
+CIVIC_TEG_A010 = EpsFirmwareCalibration(
+  name="civic_teg_a010", e4_per_output=3840.0,
+  r5_key_bp=(0, 222, 333, 495, 656, 887, 1108, 1552, 1774), r5_v=CIVIC_TEG_A010_R5, key_clamp=1663,
+  envelope_bp=CIVIC_TBA_C020_ENVELOPE[0], envelope_v=CIVIC_TBA_C020_ENVELOPE[1],  # read from the image: the C020's
+  kp_key_bp=CLARITY_TRW_A020_P_KEYS, kp_v=P_ROW_PMINUS5,
+  r6_per_deg_s=CIVIC_TEG_A010_R6_CENTRE, r6_angle_bp=CIVIC_TEG_A010_R6_BP, r6_angle_gain=CIVIC_TEG_A010_R6_GAIN,
+  load=CIVIC_TEG_A010_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
+  # plan_timing on routes 12e/134/137/139 under nrdr's fixed Civic delay (0.175 s = 0.15 + a 0.025 s compensation for
+  # a model-action interpolation it lacks): -0.05 s weighted (+0.02/-0.06/-0.06/-0.08), so ~0.20 s here; 0.15 stays
+  # below it (the C020 family's value). Mostly highway, on the placeholder calibration.
+  cmd_delay_s=0.15,
+  rack=CIVIC_TEG_A010_RACK,
+)
 # Civic 39990-TBA-A030 (Nidec), the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 55c37266; KB
 # PTM_FIX_FAMILY_20261016/out/A030), a data-only fix of the Drive A030 release. Its rows 0-5 carry exactly the TEG
 # rev b's row 3 (the same key axis, the Clarity's R5 per key, the Clarity's P knots), so the variant row (TBAA3 1,
 # TBCA1 2, TBCA2 3, others 0) no longer changes the command. The rate path is the TEG's too: tracker-1 3200, R6 clamp
 # 32765, key clamp 1663, NORM 1650 and a byte-identical A table, so it has the TEG's computed R6 and takes its load and
-# command delay (inferred: same image family and chassis, not measured on an A030). Its tracker-2
-# reads 5968 (the Drive release's; the owners' 09-12 build has 3869); it does not feed R6. No rack map: its own A table
-# is not yaw-identified, so geometry falls back to the road curve / firmware VGR. Both builds report 39990-TBA,A030:
-# a car on the 09-12 or the Drive image must be reflashed with this calibration.
-CIVIC_TBA_A030 = EpsFirmwareCalibration(**{**{k: getattr(CIVIC_TEG_A010, k) for k in CIVIC_TEG_A010.__dataclass_fields__
-                                         if k != "kp_pieces"}, "name": "civic_tba_a030", "rack": None})
+# command delay, and its rack map: the same Nidec Civic (HONDA_CIVIC) with the same A table, so the TEG's yaw-fitted
+# rack is the A030's geometry until an A030 drive refits it (inferred, not measured on an A030). Its tracker-2 reads 5968
+# (the Drive release's; the owners' 09-12 build has 3869); it does not feed R6. Both builds report 39990-TBA,A030: a
+# car on the 09-12 or the Drive image must be reflashed with this calibration.
+CIVIC_TBA_A030 = EpsFirmwareCalibration(
+  name="civic_tba_a030", e4_per_output=3840.0,
+  r5_key_bp=(0, 222, 333, 495, 656, 887, 1108, 1552, 1774), r5_v=CIVIC_TEG_A010_R5, key_clamp=1663,
+  envelope_bp=CIVIC_TBA_C020_ENVELOPE[0], envelope_v=CIVIC_TBA_C020_ENVELOPE[1],
+  kp_key_bp=CLARITY_TRW_A020_P_KEYS, kp_v=P_ROW_PMINUS5,
+  r6_per_deg_s=CIVIC_TEG_A010_R6_CENTRE, r6_angle_bp=CIVIC_TEG_A010_R6_BP, r6_angle_gain=CIVIC_TEG_A010_R6_GAIN,
+  load=CIVIC_TEG_A010_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
+  cmd_delay_s=0.15,
+  rack=CIVIC_TEG_A010_RACK,
+)
 # Civic Bosch 39990-TBA-C120, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 9261b8db; KB
 # PTM_FIX_FAMILY_20261016/out/C120), a data-only fix of the Drive C120 release (tracker-1 4250 and tracker-2 5968, as the
 # 08-11 C020Profile build). Its variants select rows 0-4; each row keeps its own key axis and carries the Clarity's R5
@@ -526,7 +531,8 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table (the C120's, as the TEG-A010)",
     "load": "inferred: the TEG-A010 owner's",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "inferred: the TEG-A010's", "model_delay": "default: the Clarity's schedule", "rack": "none",
+    "cmd_delay": "inferred: the TEG-A010's", "model_delay": "default: the Clarity's schedule",
+    "rack": "inferred: the TEG-A010's (same Nidec Civic and A table)",
   },
   "civic_teg_a010": {
     "row": "measured: row 3 (TEGA2), telemetry R5 vs E4 on routes 0000012f/00000139 (live_row_fit.py teg); rev b rows 2-3 agree",

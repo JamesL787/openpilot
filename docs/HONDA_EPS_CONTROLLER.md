@@ -8,7 +8,8 @@ one calibration record per EPS image.
 ## How it steers
 
 The LKAS path is not a torque command. The firmware turns the 0xE4 value into a target R5, compares it with R6 (a
-filtered steering rate, taken before the angle table) and runs P + D + KFF on the difference at 1 kHz. The controller
+filtered steering rate, taken before the angle table) and runs P + D + KFF on the difference in its fast control
+loop. The controller
 inverts that chain: a column load model says what motor output the desired motion needs, the firmware law is solved
 for the R5 that produces it (rate damping included), and the command map is inverted back to a lateral output. An
 angle PID on the residual closes the loop.
@@ -37,7 +38,7 @@ linear `[0, E4 cap]` the calibration expects, it is modified-EPS on PID tuning, 
 
 `LatControlPID`'s modified-EPS path is kept for now as the fallback for PTM cars with `HondaEpsController` off. Once
 every image's vehicle calibration is measured (no `inferred` or `default` left in `CALIBRATION_PROVENANCE` for row,
-R6, load, command delay and geometry), the `HondaEpsController` toggle is deprecated so every PTM car runs
+load, command delay and geometry; R6 comes from the image), the `HondaEpsController` toggle is deprecated so every PTM car runs
 `LatControlHondaEps`, and then the modified-EPS path in `LatControlPID` is removed.
 
 ## The calibration record
@@ -45,7 +46,9 @@ R6, load, command delay and geometry), the `HondaEpsController` toggle is deprec
 `EpsFirmwareCalibration`, one per image, named by part number (`civic_tba_c020`, ...). Two halves:
 
 - **Firmware**, read from the image: command-map row (key axis + R5), P-row key axis, key clamp, speed envelope,
-  KFF, scale word, R6 (computed from the image's A table, or a telemetry fit).
+  KFF, scale word, R6. R6 is computed from the image's A table (`computed_r6`: -122 counts per deg/s at centre x
+  NORM/1650 x A0/16384, shaped by the table's slope by angle) and clamped at +-32765 as the firmware clamps it, so
+  it needs no EPS telemetry.
 - **Vehicle**, measured on the road: column load, residual-PID trims, command delay, model-delay schedule, rack map.
 
 `CALIBRATION_PROVENANCE` records, for every quantity of every image, whether it is `firmware`, `measured` (with the
@@ -55,13 +58,17 @@ complete, and the controller logs the summary at start.
 ## Rules the controller follows
 
 - **Geometry.** A calibration's yaw-fitted rack map, where it has one, is the geometry (firmware A table x a rack ratio
-  by angle + slip factor, fitted against the car's yaw sensor). Without one: the road-measured steer-ratio curve, or
-  the firmware table with `HondaEpsFirmwareVgr` on, or the table alone when the car has no road curve.
+  by angle + slip factor, fitted against the car's yaw sensor). A car with no rack map of its own may carry a related car's (the A030
+  uses the TEG-A010's: same Nidec Civic, same A table), marked `inferred`. Without one: the road-measured steer-ratio
+  curve, or the firmware table with `HondaEpsFirmwareVgr` on, or the table alone when the car has no road curve.
 - **Command delay.** Every car delays the curvature it executes by its `cmd_delay_s` below 10 m/s, faded to 0 by
-  15 m/s: the models aim at a fixed time ahead whatever delay they are told, and this controller reaches a command
-  faster than the PID. Default 0.12 s, the smaller measured value, so an unmeasured car cannot be pushed late.
+  15 m/s: this controller reaches a command faster than the PID, and the model gives back only part of a shorter
+  delay. How much it gives back depends on the model: an action-head model moves its aim about half as far as the
+  delay it is told (aim ~0.30 + 0.53 x action_t on Cinque v3), a plan-only model reads its plan at the told delay but
+  never earlier than 0.3 s (`MIN_STABLE_DELAY`). The measured values come from action-head drives. Default 0.12 s,
+  the smaller measured value, so an unmeasured car cannot be pushed late.
 - **Model delay.** Every car tells the model its `lat_delay_schedule` in place of `liveDelay`; the Clarity's measured
-  schedule is the default.
+  schedule is the default. Town values below 0.3 s change nothing on a plan-only model (the floor above).
 - **Driver override.** The shared modified-EPS press detector; after a press, while the carcontroller fades torque
   back in, the integrator bleeds toward 0 (tau 0.5 s) rather than holding its pre-press value.
 - **Disengage** resets the PID and the feedforward.
@@ -101,3 +108,8 @@ Old `NrdrLat*` names are migrated once at manager start.
 2. Add an `EpsFirmwareCalibration` and an `EPS_FIRMWARE_CALIBRATIONS` entry, with R6 computed from the A table.
 3. Fill `CALIBRATION_PROVENANCE`, marking everything carried over as `inferred`.
 4. Measure what its logs allow (table above) and replace `inferred` / `default` entries as measurements land.
+
+## Testing
+
+`tools/lateral/run_eps_tests.sh` runs the controller's tests on a Mac against this checkout. Plain `pytest` goes
+through the repo conftest, which can import a stale `.host_runtime` copy of the code and pass against it.

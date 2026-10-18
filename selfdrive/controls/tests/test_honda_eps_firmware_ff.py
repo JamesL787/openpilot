@@ -444,7 +444,8 @@ def test_clarity_trw_a020_profile_is_the_validated_build():
 
 def test_nidec_civics_carry_the_teg_measurements():
   # both Nidec images take the column load, R6 (centre and angle shape) and command delay measured on the TEG-A010
-  # telemetry routes; on rev b the A030's rows 0-5 are the TEG's row 3, so it is the TEG's calibration without the rack
+  # telemetry routes; on rev b the A030's rows 0-5 are the TEG's row 3, and it is the same Nidec Civic with the same A
+  # table, so it is the TEG's calibration, rack map included
   for cal in (eps_ff.CIVIC_TBA_A030, eps_ff.CIVIC_TEG_A010):
     assert cal.load == eps_ff.CIVIC_TEG_A010_LOAD and cal.e4_per_output == 3840.0
   teg = eps_ff.CIVIC_TEG_A010
@@ -452,7 +453,7 @@ def test_nidec_civics_carry_the_teg_measurements():
   # R6 is the C120 A table's, computed; the telemetry agrees once railed frames are left out (see below)
   assert (teg.r6_per_deg_s, teg.r6_angle_gain) == (eps_ff.CIVIC_TBA_C120_R6_CENTRE, eps_ff.CIVIC_TBA_C120_R6_GAIN)
   a030 = eps_ff.CIVIC_TBA_A030
-  assert dataclasses.replace(a030, name=teg.name, rack=teg.rack) == teg and a030.rack is None
+  assert dataclasses.replace(a030, name=teg.name) == teg and a030.rack is eps_ff.CIVIC_TEG_A010_RACK
   # the TEG owner's car runs row 3 (TEGA2), measured on its telemetry; the corrected (rev b) image's row 3 carries the
   # Clarity's R5 per key on that row's axis and the Clarity's P knots
   teg = eps_ff.CIVIC_TEG_A010
