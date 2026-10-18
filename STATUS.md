@@ -11225,3 +11225,26 @@ Tests:
 - **Not fixed:** 366 E2's brake comes from the birth frames, before any check can apply.
 - **Tests:** 3 new in `test_range_vrel_assist.py`. The controls suite gives 2233 passed, 2 failed; both failures are the
   pre-existing latcontrol ones. py39 compat passes.
+
+## 249. Radar reading a slowing car as barely closing (U11 under-read off the rail): 21 real cases; the camera-gated assist from §224 already covers them. No code change (2026-10-18). Log, frames and open-loop replay only.
+- **Question (owner, after 380 4:01.6):** "let's try and look for more cases ... look actually frames of what happened instead
+  of relying on just the rlogs".
+- **Scan (Job, corpus):** the lead is radar and measured, 25–120 m away. For at least 1 s, raw U11 reads ≥3 m/s less closing
+  than both the 1 s range fit (rms < 0.5) and the camera (p > 0.8).
+  - 25 events. Labelled from camera frames: 21 REAL-UNDERREAD (almost all queues stopping at lights, many at night),
+    3 UNCLEAR (E04 26f 3:41, E08 2ef 2:15, E09 2f1 13:40), 1 FALSE (E05 271 36:24, empty road, camera p fell to 0.03).
+  - Bob checked the frames of E05, E10 and E12 and agrees with the labels.
+- **Why the logs showed late hard brakes with no assist (E10 2f2 3:28, E11 2f5 5:36, E12 2f5 12:25):** these were drives
+  before §224 (10-07). Gate trace (open loop, radard at 3f3909da9, logged CAN/model):
+  - Today's assist arms in 10 of 11 traced events. Its correction reaches 2 m/s between −0.93 and +1.17 s from onset,
+    always before the cmd minimum.
+  - E21 (37e 10:34) never arms: |yRel| > 1.5 on 56 % of updates.
+  - On recent builds the logs agree: E20, E22, E23 and E24 armed within about 0.9 s.
+- **Rejected for now (evaluated, not built):** off-rail arm when U11 is ≥3 m/s below both the short fit and (vEgo − cam v),
+  with cam p ≥ 0.8, cam range within 15 %, for 3 updates, sized min(fit, cam + 2).
+  - It arms 0.2–1.0 s earlier in 8 of 11 events, adds E21, and never arms on the 8 §214 controls.
+  - It misses E12, and is uncapped up to 13–14 m/s (today's cap is 8).
+  - The gain over §224 is under a second of ramp on events that already brake in time, so it does not justify reopening
+    D-082. Revisit only if a post-§224 drive shows a late brake with the assist unarmed.
+- Job's artifacts: `gate_trace_req6.zip` (per-event CSVs, summary_gates.txt, gate_trace.py), ur_summary.txt and the frame
+  grids. These are route-derived, so they are not committed.
