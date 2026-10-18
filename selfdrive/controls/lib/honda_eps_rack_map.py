@@ -81,12 +81,25 @@ class HondaEpsRackMap:
     self.path_grid = linear / np.interp(self.angle_grid, table.ratio_bp, table.ratio_v)  # = L * k at zero roll/slip
     assert np.all(np.diff(self.path_grid) > 0), "rack map must be monotonic to invert"
 
+  # Past Table A's last knot the firmware holds its last divisor (linear = physical * Y_end / Y0) and the ratio holds
+  # its value there, so the path keeps growing in proportion to the angle: the Insight's table ends at 430.5 deg, short
+  # of its 457 deg lock, and without this the controller could not ask for the last 27 deg. nrdr's port does the same.
+  def _angle(self, path: float) -> float:
+    if path > self.path_grid[-1]:
+      return float(self.angle_grid[-1] * path / self.path_grid[-1])
+    return float(np.interp(path, self.path_grid, self.angle_grid))
+
+  def _path(self, angle_deg: float) -> float:
+    if angle_deg > self.angle_grid[-1]:
+      return float(self.path_grid[-1] * angle_deg / self.angle_grid[-1])
+    return float(np.interp(angle_deg, self.angle_grid, self.path_grid))
+
   def angle_from_curvature(self, curvature: float, v_ego: float, roll: float) -> float:
     k = -curvature
     path = self.wheelbase * (k * (1.0 - self.slip_factor * v_ego ** 2) - GRAVITY * self.slip_factor * roll)
-    return math.copysign(float(np.interp(abs(path), self.path_grid, self.angle_grid)), path)
+    return math.copysign(self._angle(abs(path)), path)
 
   def curvature_from_angle(self, angle_deg: float, v_ego: float, roll: float) -> float:
-    path = math.copysign(float(np.interp(abs(angle_deg), self.angle_grid, self.path_grid)), angle_deg)
+    path = math.copysign(self._path(abs(angle_deg)), angle_deg)
     k = (path / self.wheelbase + GRAVITY * self.slip_factor * roll) / (1.0 - self.slip_factor * v_ego ** 2)
     return -k

@@ -685,6 +685,20 @@ def test_rack_map_round_trips(v, roll):
     assert rack_map.angle_from_curvature(curvature, v, roll) == pytest.approx(angle, abs=1e-3)
 
 
+@pytest.mark.parametrize("v", [3.0, 15.0])
+def test_rack_map_reaches_lock_past_table_a(v):
+  # the Insight's Table A ends at 430.5 deg, its lock is 457 deg: past the last knot the firmware holds its last
+  # divisor, so the map keeps going (it used to clamp at 430.5, so no curvature could ask for more)
+  inv = get_honda_vgr_inverse(HondaFlags.VGR_INSIGHT_TXM_A040)
+  rack_map = rack.HondaEpsRackMap(2.7, inv, eps_cal.INSIGHT_TXM_A040.rack)
+  end = inv[1][-1]
+  for angle in (440.0, 457.0, -457.0):
+    assert rack_map.angle_from_curvature(rack_map.curvature_from_angle(angle, v, 0.0), v, 0.0) == pytest.approx(angle, abs=1e-6)
+  k_end, k_lock = (abs(rack_map.curvature_from_angle(a, v, 0.0)) for a in (end, 457.0))
+  assert k_lock == pytest.approx(k_end * 457.0 / end)  # the path grows with the angle at the last divisor and ratio
+  assert abs(rack_map.curvature_from_angle(end - 1e-6, v, 0.0)) == pytest.approx(k_end, rel=1e-6)  # continuous at the knot
+
+
 def test_rack_map_signs_follow_openpilot():
   rack_map = _rack_map()
   assert rack_map.angle_from_curvature(0.05, 7.0, 0.0) < 0.0   # right-positive curvature, left-positive wheel

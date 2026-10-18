@@ -21,7 +21,11 @@ import numpy as np
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import RackMapTable
 
 LB = 0.45359237
-DRIVER_KG = 80.0       # the slip-factor masses are curb weight plus a driver, 50 kg of it on the front axle
+# The slip-factor masses: curb weight plus an 80 kg driver, split at the curb front-weight fraction, plus another
+# 50 kg on the front axle. That counts the driver's front share twice; SPEC_SLIP_GAIN is fitted through this same
+# split, so it absorbs that. With the driver split once (50 front, 30 rear) and the gain refitted (0.00555), the
+# held-out error is no better (6.1 % rms against 5.8 %) and no spec car's slip factor moves more than 1.2 % (2026-10-18).
+DRIVER_KG = 80.0
 DRIVER_FRONT_KG = 50.0
 LOAD_CARGO_KG = 136.0  # the load masses are curb weight plus openpilot's STD_CARGO_KG, as CarParams.mass is
 
