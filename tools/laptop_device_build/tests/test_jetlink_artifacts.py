@@ -120,10 +120,15 @@ class TestBareJetlinkCapture(unittest.TestCase):
     original = (root / artifacts.MODEL_DIR / 'jetlink_warp_1344x760_512x256.pkl').read_bytes()
     cases = (
       ('jetlink_warp_1344x760_512x256.pkl', original.replace(b'QCOM', b'AMD!', 1)),
-      ('jetlink_warp_1344x760_512x256.pkl', original.replace(b'unsigned char', b'unsigned long', 1)),
+      # personal branch: tinygrad 02e698160e pickles the frame dtype as 'u8' (9d0446a4: 'unsigned char')
+      ('jetlink_warp_1344x760_512x256.pkl', original.replace(b'unsigned char', b'unsigned long', 1)
+       if b'unsigned char' in original else original.replace(b'\x8c\x02u8', b'\x8c\x02i8', 1)),
       ('jetlink_warp_1344x760_1024x512.pkl', original),
-      ('jetlink_warp_1928x1208_512x256.pkl', original),
     )
+    # personal branch: a 9d0446a4 capture records the frame size, so a wrong camera name is caught; in 02e698160e
+    # captures the frame inputs are size-less placeholders, so only the model geometry, dtype and backend are checkable
+    if b'unsigned char' in original:
+      cases += (('jetlink_warp_1928x1208_512x256.pkl', original),)
     with tempfile.TemporaryDirectory() as directory:
       for name, data in cases:
         with self.subTest(name=name, changed=data != original):
