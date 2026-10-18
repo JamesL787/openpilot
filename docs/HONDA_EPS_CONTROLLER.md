@@ -32,7 +32,8 @@ firmware-inversion feedforward -> output filter -> carcontroller.
 ## Which cars run it
 
 A car runs `LatControlHondaEps` when its EPS part number has a calibration for that fingerprint, its torque map is the
-linear `[0, E4 cap]` the calibration expects, it is modified-EPS on PID tuning, and either the calibration is
+linear `[0, E4 cap]` the calibration expects, its firmware A table is known (the rack map needs it), it is
+modified-EPS on PID tuning, and either the calibration is
 `default_on` (the Clarity) or `HondaEpsController` is on. Otherwise it stays on `LatControlPID`.
 
 ### LatControlPID fallback (to be removed)
@@ -63,8 +64,8 @@ complete, and the controller logs the summary at start.
   published specs (`honda_eps_spec_plant`): every measured map is the A table, a tan, and one centre ratio R0, and R0
   comes from the published lock-to-lock turns and lock ratio through the A table (held out one car at a time, 1.6%
   rms, 2.5% worst); the slip factor comes from the axle loads (within 10%). The A030 carries the TEG-A010's measured
-  map (same car, same A table). Without a rack map: the road-measured steer-ratio curve, or the firmware table with
-  `HondaEpsFirmwareVgr` on.
+  map (same car, same A table). Every calibration has one, and a car whose firmware A table is unknown stays on
+  LatControlPID; paramsd's steer ratio, the road-measured curves and `HondaEpsFirmwareVgr` are LatControlPID's only.
 - **Column load.** Measured per car, or carried over from the same platform. `spec_load_terms` predicts one from
   front-axle mass / R0^2 for an image with no sibling (holds within ~12%, turn rates ~15%, held out).
 - **Command delay.** Every car delays the curvature it executes by its `cmd_delay_s` below 10 m/s, faded to 0 by
@@ -84,7 +85,6 @@ complete, and the controller logs the summary at start.
 | Param | Meaning |
 |---|---|
 | `HondaEpsController` | run it on the cars that are not `default_on` (read when controlsd starts) |
-| `HondaEpsFirmwareVgr` | cars without a rack map: the firmware table instead of the road curve |
 | `HondaEpsAngleRateLimit` | deg/s ceiling on the desired-angle slew (0 disables) |
 | `HondaTorqueOutputLowPassFilter`, `HondaTorqueOutputLpfTau*` | the output filter |
 | `HondaOverrideFadeUpSecs` / `FadeDownSecs` / `TorqueScale` | the override fade the carcontroller applies |

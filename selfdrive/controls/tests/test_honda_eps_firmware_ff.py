@@ -154,7 +154,7 @@ def test_reset_forgets_the_press():
 
 
 def test_controller_logs_its_calibration_and_both_delays(monkeypatch):
-  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1"})
+  lac, VM, _ = _controller(monkeypatch)
   CS = car.CarState.new_message(vEgo=8.0)
   params = log.LiveParametersData.new_message(steerRatio=16.0, stiffnessFactor=1.0)
   lac.update(True, CS, VM, params, False, 0.01, False, 0.33, None, None, SimpleNamespace())
@@ -335,10 +335,9 @@ def test_lateral_delay_dips_in_town_and_rises_from_there():
 
 def test_nrdr_settings_are_read(monkeypatch):
   lac, _, _ = _controller(monkeypatch, {
-    "HondaEpsFirmwareVgr": "1", "HondaEpsAngleRateLimit": "219", "HondaTorqueOutputLowPassFilter": "1",
+    "HondaEpsAngleRateLimit": "219", "HondaTorqueOutputLowPassFilter": "1",
     "HondaTorqueOutputLpfTauLowSpeed": "0.07", "HondaTorqueOutputLpfTauStandard": "0.05", "HondaTorqueOutputLpfTauHighway": "0.01",
   })
-  assert lac.use_firmware_vgr and lac.vgr_inverse is not None
   assert lac.angle_rate_limit_deg_s == 219.0
   assert lac.core.output_lpf_enabled
   assert lac.core.output_lpf_tau == (0.07, 0.05, 0.01)
@@ -360,7 +359,7 @@ def _drive(lac, VM, frames=400, v=9.0):
 
 
 def test_controller_steers_logs_and_rests(monkeypatch):
-  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1"})
+  lac, VM, _ = _controller(monkeypatch)
   outs = _drive(lac, VM)
   assert all(out == 0.0 and not pid_log.active for active, out, _, pid_log in outs if not active)
   assert max(abs(out) for _, out, _, _ in outs) > 0.05
@@ -375,7 +374,7 @@ def test_controller_steers_logs_and_rests(monkeypatch):
 
 
 def test_target_honours_the_angle_rate_limit(monkeypatch):
-  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1", "HondaEpsAngleRateLimit": "100"})
+  lac, VM, _ = _controller(monkeypatch, {"HondaEpsAngleRateLimit": "100"})
   outs = _drive(lac, VM, frames=120)
   steps = [abs(b[2] - a[2]) for a, b in zip(outs[20:], outs[21:], strict=False)]
   assert max(steps) <= 100.0 * DT_CTRL + 1e-6
@@ -590,7 +589,7 @@ def test_every_vehicle_has_its_own_command_delay():
 
 @pytest.mark.parametrize("v, late_frames", [(8.0, 12), (20.0, 0)])
 def test_target_follows_the_curvature_one_command_delay_late(monkeypatch, v, late_frames):
-  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1"})
+  lac, VM, _ = _controller(monkeypatch)
   CS = car.CarState.new_message()
   CS.vEgo = v
   params = log.LiveParametersData.new_message()
@@ -644,7 +643,6 @@ def test_cars_without_a_yaw_fit_steer_on_a_spec_rack_map(candidate, fw):
 @pytest.mark.parametrize("firmware_vgr", ["0", "1"])
 def test_a_rack_map_is_the_geometry_whatever_the_firmware_vgr_setting(monkeypatch, firmware_vgr):
   lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": firmware_vgr})
-  assert lac.use_firmware_vgr == (firmware_vgr == "1")
   for k in (-0.05, -0.01, 0.002, 0.03):
     assert lac._desired_angle_no_offset(VM, 8.0, 0.0, k) == pytest.approx(lac.rack_map.angle_from_curvature(k, 8.0, 0.0))
 
@@ -677,7 +675,7 @@ def test_rack_map_reproduces_the_identified_ratio():
 
 
 def test_controller_steers_through_the_rack_map(monkeypatch):
-  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1"})
+  lac, VM, _ = _controller(monkeypatch)
   VM.update_params(1.0, 17.3)   # a paramsd ratio must no longer change the target
   for curvature, v, roll in ((0.06, 7.0, 0.0), (-0.002, 30.0, 0.02), (0.0, 12.0, 0.0)):
     assert lac._desired_angle_no_offset(VM, v, roll, curvature) == pytest.approx(
@@ -686,10 +684,11 @@ def test_controller_steers_through_the_rack_map(monkeypatch):
 
 def test_rack_map_asks_less_wheel_than_the_paramsd_ratio_in_tight_turns(monkeypatch):
   # the city over-steer: paramsd's single ratio over VGR asks 3.5-6% too much wheel at 100-250 deg
-  lac, VM, _ = _controller(monkeypatch, {"HondaEpsFirmwareVgr": "1"})
+  lac, VM, _ = _controller(monkeypatch)
   VM.update_params(1.0, 17.3)
   for curvature in (0.04, 0.06, 0.1):
-    old = vgr_linear_to_physical(math.degrees(VM.get_steer_from_curvature(-curvature, 7.0, 0.0)), lac.vgr_inverse)
+    old = vgr_linear_to_physical(math.degrees(VM.get_steer_from_curvature(-curvature, 7.0, 0.0)),
+                                 get_honda_vgr_inverse(HondaFlags.VGR_CLARITY_TRW_A020))
     new = lac.rack_map.angle_from_curvature(curvature, 7.0, 0.0)
     assert 0.93 < new / old < 0.97
 
@@ -829,3 +828,11 @@ def test_every_ptm_calibration_names_its_required_corrected_build():
   # the Clarity is the reference and the C020 is held on its owner's Trk4500 build
   assert set(eps_ff.REQUIRED_PTM_RWD) == names - {"clarity_trw_a020", "civic_tba_c020"}
   assert all(len(sha) == 8 and int(sha, 16) >= 0 for sha in eps_ff.REQUIRED_PTM_RWD.values())
+
+
+def test_every_calibration_has_a_rack_map_and_the_controller_requires_one(monkeypatch):
+  assert all(cal.rack is not None for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values())
+  CP = _params(CLARITY_MODIFIED_FW)
+  assert honda_eps.eps_firmware_calibration(CP, _Params()) is eps_ff.CLARITY_TRW_A020
+  CP.flags = int(CP.flags) & ~int(HondaFlags.VGR_CLARITY_TRW_A020)   # no firmware A table: no geometry, so LatControlPID
+  assert honda_eps.eps_firmware_calibration(CP, _Params()) is None
