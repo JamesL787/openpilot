@@ -112,7 +112,7 @@ CLARITY_TRW_A020 = EpsFirmwareCalibration(
   r6_per_deg_s=CLARITY_TRW_A020_R6_CENTRE, r6_angle_bp=CLARITY_TRW_A020_R6_BP, r6_angle_gain=CLARITY_TRW_A020_R6_GAIN,
   load=CLARITY_TRW_A020_LOAD, p_scale=CLARITY_TRW_A020_P_SCALE, i_scale=CLARITY_TRW_A020_I_SCALE,
   r5_per_key=18.04,
-  cmd_delay_s=0.12,  # measured
+  cmd_delay_s=0.12, cmd_delay_highway_s=0.10,  # measured
   default_on=True,
   lat_delay_schedule=CLARITY_TRW_A020_LAT_DELAY_SCHEDULE,  # measured
   rack=CLARITY_TRW_A020_RACK,
@@ -355,7 +355,7 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table; telemetry 363/365/369 agrees within 0.7% (unrailed)",
     "load": "measured: route 352, against the firmware output (14 routes agree)",
     "trims": "measured: the tune the car drove on vfn 35ddc44b",
-    "cmd_delay": "measured: plan_timing, routes 37e / 380",
+    "cmd_delay": "measured: plan_timing, routes 37e / 380; highway 3f1 / 3f5 by speed band",
     "model_delay": "measured: routes 36c/36d/373/377 and 362-36b",
     "rack": "measured: VSA yaw, routes 341-36b",
   },

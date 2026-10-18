@@ -70,8 +70,8 @@ complete, and the controller logs the summary at start.
 - **Column load.** Measured per car, or carried over from the same platform. `spec_load_terms` predicts one from
   front-axle mass / R0^2 for an image with no sibling (holds within ~12%, turn rates ~15%, held out).
 - **Command delay.** The curvature the car executes is delayed by the calibration's `cmd_delay_s` below 10 m/s and
-  `cmd_delay_highway_s` from 15 m/s (0 on the Clarity and the Insight; the Civics hold theirs flat, since they ran as
-  early on the highway as in town), scaled by where the steering comes from (`starpilotModelV2.lateralSource`, which modeld sets
+  `cmd_delay_highway_s` from 15 m/s (the Civics hold theirs flat and the Clarity takes 0.10 s, since they ran as early
+  on the highway as in town; 0 on the Insight), scaled by where the steering comes from (`starpilotModelV2.lateralSource`, which modeld sets
   per frame from the model actually steering):
   - **action head** (v14-v16, e.g. Cinque v3): the full `cmd_delay_s`. The model moves its aim only ~0.53 of a change
     in the told delay (aim ~0.30 + 0.53 x action_t), and this controller reaches a command faster than the model

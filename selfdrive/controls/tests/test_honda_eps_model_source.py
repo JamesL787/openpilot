@@ -92,6 +92,6 @@ def test_a_model_swap_ramps_back(monkeypatch):
   assert back[0] < 0.01 and back[-1] == pytest.approx(0.12)
 
 
-def test_the_command_delay_still_fades_out_with_speed(monkeypatch):
+def test_the_command_delay_takes_its_highway_value_with_speed(monkeypatch):
   lac, VM, _ = _controller(monkeypatch)
-  assert _delays(lac, VM, ["actionHead"] * 3, v_ego=20.0)[-1] == pytest.approx(0.0)
+  assert _delays(lac, VM, ["actionHead"] * 3, v_ego=20.0)[-1] == pytest.approx(0.10)

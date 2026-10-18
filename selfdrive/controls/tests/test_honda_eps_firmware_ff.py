@@ -585,19 +585,22 @@ def test_command_delay_hands_over_the_value_issued_that_long_ago():
   assert [half.update(float(k), 0.125) for k in range(40)][30] == pytest.approx(17.5)
 
 
-def test_command_delay_is_for_town_speeds_only():
+def test_command_delay_moves_from_its_town_to_its_highway_value():
   cal = eps_cal.CLARITY_TRW_A020
   assert eps_ff.command_delay(cal, 0.0) == eps_ff.command_delay(cal, 10.0) == pytest.approx(0.12)
-  assert eps_ff.command_delay(cal, 12.5) == pytest.approx(0.06)
-  assert eps_ff.command_delay(cal, 15.0) == eps_ff.command_delay(cal, 30.0) == 0.0
+  assert eps_ff.command_delay(cal, 12.5) == pytest.approx(0.11)
+  assert eps_ff.command_delay(cal, 15.0) == eps_ff.command_delay(cal, 30.0) == pytest.approx(0.10)
+  assert eps_ff.command_delay(eps_cal.INSIGHT_TXM_A040, 30.0) == 0.0
   assert honda_eps.CommandDelay(DT_CTRL, 0.2).update(3.0, 0.0) == 3.0
 
 
 def test_the_civics_hold_their_command_delay_on_the_highway():
-  # they ran as early above 15 m/s as in town (TEG routes 12e-13d, C020 route 380); the Clarity and the Insight did not
+  # they ran as early above 15 m/s as in town (TEG routes 12e-13d, C020 route 380); the Clarity 0.10-0.14 s (routes
+  # 3f1 / 3f5), so it takes 0.10; the Insight needed less than the default there, so it fades to none
+  highway = {"clarity_trw_a020": 0.10}
   for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values():
     civic = cal.name.startswith("civic_")
-    assert cal.cmd_delay_highway_s == (cal.cmd_delay_s if civic else 0.0), cal.name
+    assert cal.cmd_delay_highway_s == (cal.cmd_delay_s if civic else highway.get(cal.name, 0.0)), cal.name
     if civic:
       assert [eps_ff.command_delay(cal, v) for v in (0.0, 12.5, 15.0, 30.0)] == pytest.approx([0.15] * 4), cal.name
 
@@ -613,7 +616,7 @@ def test_every_vehicle_has_its_own_command_delay():
   assert eps_ff.CMD_DELAY_DEFAULT_S == min(measured.values())
 
 
-@pytest.mark.parametrize("v, late_frames", [(8.0, 12), (20.0, 0)])
+@pytest.mark.parametrize("v, late_frames", [(8.0, 12), (20.0, 10)])  # 0.12 s in town, 0.10 s on the highway
 def test_target_follows_the_curvature_one_command_delay_late(monkeypatch, v, late_frames):
   lac, VM, _ = _controller(monkeypatch)
   CS = car.CarState.new_message()

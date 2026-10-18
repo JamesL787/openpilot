@@ -73,9 +73,11 @@ class ColumnLoadModel:
 #   (routes 2b7 / 2c6 / 2d4): -0.14 / -0.11 / +0.03 s, -0.045 weighted, against -0.15 without it on 289 / 290 / 294.
 # - Insight: 0.15, inferred from a LatControlPID drive (see INSIGHT_TXM_A040).
 # Unmeasured cars take the default, the smaller of the two, until plan_timing.py measures them.
-# Above 15 m/s the Clarity and the Insight need none, but the Civics run early there as much as in town (2026-10-18,
-# per speed band): the TEG 0.13-0.17 s at 12-40 m/s on nrdr routes 12e-13d, whose command delay fades out there, and
-# the C020 0.16 s at 20-40 m/s on route 380 (no command delay). So the Civics hold theirs flat (cmd_delay_highway_s).
+# Above 15 m/s, where it used to fade out, the cars run early too (2026-10-18, per speed band): the TEG 0.13-0.17 s at
+# 12-40 m/s on nrdr routes 12e-13d, the C020 0.16 s at 20-40 m/s on route 380 (no command delay), and the Clarity
+# 0.12 / 0.14 / 0.10 s at 17 / 16 / 25 m/s on routes 3f1 / 3f5 (a Mountain-Dew-style action head; 0.10 s is the
+# 1667-frame highway band). So the Civics hold theirs flat and the Clarity takes 0.10 s (cmd_delay_highway_s). The
+# Insight's Cinque route needed ~0.05 s at 12-20 m/s, under the default, so it still fades to none.
 CMD_DELAY_DEFAULT_S = 0.12
 CMD_DELAY_SPEED_BP = (10.0, 15.0)  # m/s: cmd_delay_s below, cmd_delay_highway_s above
 
