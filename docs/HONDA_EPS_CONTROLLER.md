@@ -69,8 +69,9 @@ complete, and the controller logs the summary at start.
   LatControlPID; paramsd's steer ratio, the road-measured curves and `HondaEpsFirmwareVgr` are LatControlPID's only.
 - **Column load.** Measured per car, or carried over from the same platform. `spec_load_terms` predicts one from
   front-axle mass / R0^2 for an image with no sibling (holds within ~12%, turn rates ~15%, held out).
-- **Command delay.** The curvature the car executes is delayed by the calibration's `cmd_delay_s` below 10 m/s,
-  faded to 0 by 15 m/s, scaled by where the steering comes from (`starpilotModelV2.lateralSource`, which modeld sets
+- **Command delay.** The curvature the car executes is delayed by the calibration's `cmd_delay_s` below 10 m/s and
+  `cmd_delay_highway_s` from 15 m/s (0 on the Clarity and the Insight; the Civics hold theirs flat, since they ran as
+  early on the highway as in town), scaled by where the steering comes from (`starpilotModelV2.lateralSource`, which modeld sets
   per frame from the model actually steering):
   - **action head** (v14-v16, e.g. Cinque v3): the full `cmd_delay_s`. The model moves its aim only ~0.53 of a change
     in the told delay (aim ~0.30 + 0.53 x action_t), and this controller reaches a command faster than the model
@@ -82,7 +83,10 @@ complete, and the controller logs the summary at start.
   `starpilotModelV2.delayInput` records how the told delay reaches the model (`actionT`, `lateralControlParams` or
   `none`); a model with none ignores the told delay.
 - **Model delay.** Every car tells the model its `lat_delay_schedule` in place of `liveDelay`; the Clarity's measured
-  schedule is the default. It is the car's measured lag, which a plan model follows exactly and an action head in part.
+  schedule is the default. It is the car's measured lag (from the camera frame to its own yaw curvature, less modeld's
+  0.075 s), which a plan model follows exactly and an action head in part. The TEG has its own (0.20 s flat) and the
+  C020 a provisional one (0.28 s in town, 0.26 s on the highway, from an older controller's drive); the A030 takes the
+  TEG's and the C120 and TGG the C020's. lagd told the Civics 0.37-0.39 s, which ran them early.
 - **Driver override.** The shared modified-EPS press detector; after a press, while the carcontroller fades torque
   back in, the integrator bleeds toward 0 (tau 0.5 s) rather than holding its pre-press value.
 - **Disengage** resets the PID and the feedforward.

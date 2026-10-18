@@ -58,8 +58,8 @@ class ColumnLoadModel:
   kroll: float
 
 
-# Command delay, per vehicle: the curvature controlsd hands over is executed this much later in town, faded out
-# between CMD_DELAY_SPEED_BP. Measured end to end with tools/lateral/plan_timing.py (car curvature from the VSA yaw
+# Command delay, per vehicle: the curvature controlsd hands over is executed this much later, cmd_delay_s in town and
+# cmd_delay_highway_s above CMD_DELAY_SPEED_BP. Measured end to end with tools/lateral/plan_timing.py (car curvature from the VSA yaw
 # sensor against the model's own plan, hands-off turns at 5-12 m/s): every car measured ran its model's plan early
 # without it (early turn-in, loose exits), on this controller and on LatControlPID, because the controller reaches a
 # command faster than the model assumes. On an action-head model (Cinque v3) the delay the model is told cannot fix
@@ -73,20 +73,23 @@ class ColumnLoadModel:
 #   (routes 2b7 / 2c6 / 2d4): -0.14 / -0.11 / +0.03 s, -0.045 weighted, against -0.15 without it on 289 / 290 / 294.
 # - Insight: 0.15, inferred from a LatControlPID drive (see INSIGHT_TXM_A040).
 # Unmeasured cars take the default, the smaller of the two, until plan_timing.py measures them.
+# Above 15 m/s the Clarity and the Insight need none, but the Civics run early there as much as in town (2026-10-18,
+# per speed band): the TEG 0.13-0.17 s at 12-40 m/s on nrdr routes 12e-13d, whose command delay fades out there, and
+# the C020 0.16 s at 20-40 m/s on route 380 (no command delay). So the Civics hold theirs flat (cmd_delay_highway_s).
 CMD_DELAY_DEFAULT_S = 0.12
-CMD_DELAY_SPEED_BP = (10.0, 15.0)  # m/s: the full delay below, none above (nothing was measured early on the highway)
+CMD_DELAY_SPEED_BP = (10.0, 15.0)  # m/s: cmd_delay_s below, cmd_delay_highway_s above
 
 
 def command_delay(cal: "EpsFirmwareCalibration", v_ego: float) -> float:
-  return float(np.interp(v_ego, CMD_DELAY_SPEED_BP, (cal.cmd_delay_s, 0.0)))
+  return float(np.interp(v_ego, CMD_DELAY_SPEED_BP, (cal.cmd_delay_s, cal.cmd_delay_highway_s)))
 
 
 # Model-delay schedule, per vehicle: the lateral delay the model is told (liveDelay.lateralDelay's role in
 # lat_action_t), scheduled on speed, in place of the single SteerDelay / lagd value. Measured on the Clarity, where
-# this controller's real execution delay is not one number; every other car takes the Clarity's schedule until a
-# measurement on it gives a reason to change it. Each value is the measured lag of car curvature behind the logged
-# model action minus the fixed pipeline offset (0.038 s), so the car reaches the requested curvature when the model
-# intends it to.
+# this controller's real execution delay is not one number; the TEG and the C020 have their own (honda_eps_calibrations),
+# and every other car takes the Clarity's schedule until a measurement on it gives a reason to change it. Each value
+# is the measured lag of car curvature behind the logged model action minus the fixed pipeline offset (0.038 s), so
+# the car reaches the requested curvature when the model intends it to.
 # - Car curvature comes from the yaw sensor (0x94). The comma gyro runs ~50 ms behind the car and put the
 #   first version of this table that much too long.
 # - On Cinque v3 the lag hardly depends on the delay the model was told (5-9 m/s: 0.15 / 0.15 / 0.17 s at 0.22 /
@@ -126,6 +129,7 @@ class EpsFirmwareCalibration:
   r6_angle_bp: tuple | None = None    # |published angle| axis of r6_angle_gain, for images whose A table compresses it
   r6_angle_gain: tuple | None = None  # R6 per published deg/s relative to r6_per_deg_s, see firmware_r6()
   cmd_delay_s: float = CMD_DELAY_DEFAULT_S  # command delay in town, see CMD_DELAY_SPEED_BP
+  cmd_delay_highway_s: float = 0.0  # command delay above CMD_DELAY_SPEED_BP
   default_on: bool = False     # steer with this controller without HondaEpsController (validated on this car)
   lat_delay_schedule: tuple = LAT_DELAY_SCHEDULE_DEFAULT  # (speed bp, s): the delay told to the model, see above
   rack: RackMapTable | None = None  # rack ratio after the firmware angle table, yaw-fitted on the car or predicted

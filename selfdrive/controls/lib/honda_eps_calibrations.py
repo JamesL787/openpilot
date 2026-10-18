@@ -118,6 +118,18 @@ CLARITY_TRW_A020 = EpsFirmwareCalibration(
   rack=CLARITY_TRW_A020_RACK,
 )
 
+# Model-delay schedules for the Civics (2026-10-18), each the car's measured lag from the camera frame to its own yaw
+# curvature, less modeld's fixed 0.075 s (frame + half a model step), so a plan model read at the told delay lands on
+# time (honda_eps_firmware_ff, model-delay schedule). Before this they took the Clarity's, and nrdr's lagd (0.37-0.39 on
+# the TEG) told them much more than the car takes, which ran them early.
+# - TEG-A010: 0.26-0.31 s at every speed on its owner's nrdr routes 12e/12f/133/134/137/139/13d (Pop v2, this
+#   controller's nrdr port, the command delay taken out), so 0.20 s flat.
+# - C020 (provisional): 0.37-0.43 s on route 380 (NovaSpark, the older PID + firmware FF with a 0.09-0.10 s output
+#   filter and no command delay); with this controller's filter (0.07 / 0.05 / 0.01 s) that is ~0.35-0.41 in town and
+#   ~0.33 on the highway, so 0.28 / 0.26 s. Re-measure on a drive with this controller.
+CIVIC_TEG_A010_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.20, 0.20, 0.20, 0.20, 0.20))
+CIVIC_TBA_C020_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.28, 0.28, 0.28, 0.26, 0.26))
+
 # Civic Bosch 39990-TBA-C020, 08-05 ClarityPminus5 P117..265 D737 KFF45 Norm1650 Trk4500 TargetMapD Telem (bin
 # sha256 6ecd587c). Measured on the owner's telemetry (routes 284/287/289): E4 = -4096 * u, key clamp 1663 (0x137F2),
 # row 1 is live (94 counts RMS vs 200 for row 0 at 11-20 m/s; the largest R5 on 284 is 28497 = row 1 at 1663), R6,
@@ -131,7 +143,8 @@ CIVIC_TBA_C020 = EpsFirmwareCalibration(
   kp_key_bp=CIVIC_TBA_C020_P_KEYS, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
-  cmd_delay_s=0.15,  # measured
+  cmd_delay_s=0.15, cmd_delay_highway_s=0.15,  # measured
+  lat_delay_schedule=CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
   rack=CIVIC_TBA_C020_RACK,
 )
 # TEG-A010, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 04147917, payload 110e29ba; KB
@@ -155,10 +168,12 @@ CIVIC_TEG_A010 = EpsFirmwareCalibration(
   kp_key_bp=CLARITY_TRW_A020_P_KEYS, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TEG_A010_R6_CENTRE, r6_angle_bp=CIVIC_TEG_A010_R6_BP, r6_angle_gain=CIVIC_TEG_A010_R6_GAIN,
   load=CIVIC_TEG_A010_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
-  # plan_timing on routes 12e/134/137/139 under nrdr's fixed Civic delay (0.175 s = 0.15 + a 0.025 s compensation for
-  # a model-action interpolation it lacks): -0.05 s weighted (+0.02/-0.06/-0.06/-0.08), so ~0.20 s here; 0.15 stays
-  # below it (the C020 family's value). Mostly highway, on the placeholder calibration.
-  cmd_delay_s=0.15,
+  # plan_timing on routes 12e/134/137/139 under nrdr's Civic delay (0.175 s = 0.15 + a 0.025 s compensation for a
+  # model-action interpolation it lacks): -0.05 s weighted at 5-12 m/s, so ~0.20 s here; 0.15 stays below it (the
+  # C020 family's value). By speed band (2026-10-18) it runs as early above 15 m/s, where that delay had faded out, so
+  # it holds flat. That was Pop v2 told lagd's 0.38 s: its own schedule (above) now carries that part for plan models.
+  cmd_delay_s=0.15, cmd_delay_highway_s=0.15,
+  lat_delay_schedule=CIVIC_TEG_A010_LAT_DELAY_SCHEDULE,
   rack=CIVIC_TEG_A010_RACK,
 )
 # Civic 39990-TBA-A030 (Nidec), the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 55c37266; KB
@@ -178,7 +193,8 @@ CIVIC_TBA_A030 = EpsFirmwareCalibration(
   kp_key_bp=CLARITY_TRW_A020_P_KEYS, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TEG_A010_R6_CENTRE, r6_angle_bp=CIVIC_TEG_A010_R6_BP, r6_angle_gain=CIVIC_TEG_A010_R6_GAIN,
   load=CIVIC_TEG_A010_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
-  cmd_delay_s=0.15,
+  cmd_delay_s=0.15, cmd_delay_highway_s=0.15,
+  lat_delay_schedule=CIVIC_TEG_A010_LAT_DELAY_SCHEDULE,
   rack=CIVIC_TEG_A010_RACK,
 )
 # Civic Bosch 39990-TBA-C120, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 9261b8db; KB
@@ -196,7 +212,8 @@ CIVIC_TBA_C120 = EpsFirmwareCalibration(
   kp_key_bp=CLARITY_TRW_A020_P_KEYS, kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TBA_C120_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CIVIC_TBA_C120_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
-  cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
+  cmd_delay_s=0.15, cmd_delay_highway_s=0.15,  # the C020's (same Civic Bosch chassis)
+  lat_delay_schedule=CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
   rack=CIVIC_TBA_C120_SPEC_RACK,
 )
 # Civic hatch 39990-TGG-A120, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 6640806d; KB
@@ -213,7 +230,8 @@ CIVIC_TGG_A120 = EpsFirmwareCalibration(
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
-  cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
+  cmd_delay_s=0.15, cmd_delay_highway_s=0.15,  # the C020's (same Civic Bosch chassis)
+  lat_delay_schedule=CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
   rack=CIVIC_TGG_A120_SPEC_RACK,
 )
 # Insight 39990-TXM-A040, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (payload sha256 089a8a72, RWD 7ba37432;
@@ -348,8 +366,8 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table; telemetry 287/289/294 agrees within 1.9% (unrailed)",
     "load": "measured: owner telemetry 287/289/294; a 14-route refit agrees",
     "trims": "measured: the owner's tune, route 284",
-    "cmd_delay": "measured: plan_timing 290/293/289; confirmed with it on, 2b7/2c6/2d4",
-    "model_delay": "default: the Clarity's schedule",
+    "cmd_delay": "measured: plan_timing 290/293/289; confirmed with it on, 2b7/2c6/2d4; flat to 40 m/s per route 380",
+    "model_delay": "measured: route 380 by speed band, on the older controller (provisional; re-measure on this one)",
     "rack": "measured: VSA yaw, routes 294/289/2b7/2c6/2d4/1b8/251",
   },
   "civic_tba_a030": {
@@ -358,7 +376,7 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table (the C120's, as the TEG-A010)",
     "load": "inferred: the TEG-A010 owner's",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "inferred: the TEG-A010's", "model_delay": "default: the Clarity's schedule",
+    "cmd_delay": "inferred: the TEG-A010's", "model_delay": "inferred: the TEG-A010's (the same car)",
     "rack": "inferred: the TEG-A010's (the same 2016-18 Civic sedan: same specs and A table)",
   },
   "civic_teg_a010": {
@@ -367,8 +385,8 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table (the C120's); telemetry 133/134/137/13d agrees within 0.8% (unrailed)",
     "load": "measured: the owner's 11 telemetry routes 0000012d-00000139 (fit_column_load.py --source teg)",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "measured: plan_timing on routes 12e/134/137/139, sized below the ~0.20 s measured",
-    "model_delay": "default: the Clarity's schedule",
+    "cmd_delay": "measured: plan_timing on routes 12e/134/137/139, sized below the ~0.20 s measured; flat by speed band",
+    "model_delay": "measured: routes 12e-13d by speed band (lag from the frame to its yaw curvature)",
     "rack": "measured: VSA yaw (GPS-checked scale), routes 0000012d-00000139",
   },
   "civic_tba_c120": {
@@ -377,7 +395,7 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table",
     "load": "inferred: the C020's",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "default: the Clarity's schedule",
+    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "inferred: the C020's (same chassis)",
     "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
   },
   "civic_tgg_a120": {
@@ -386,7 +404,7 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table (the C020's)",
     "load": "inferred: the C020's",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "default: the Clarity's schedule",
+    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "inferred: the C020's (same chassis)",
     "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
   },
   "insight_txm_a040": {

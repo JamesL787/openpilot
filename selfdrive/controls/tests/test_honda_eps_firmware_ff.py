@@ -319,12 +319,26 @@ def test_lateral_delay_follows_the_measured_execution_delay(v, delay):
 
 
 def test_every_vehicle_tells_the_model_the_measured_schedule():
-  # the Clarity's measured schedule is every car's until a measurement on that car says otherwise
+  # the Clarity's measured schedule is every car's until a measurement on that car says otherwise: the TEG and the
+  # C020 have their own, and the same cars take theirs (the A030 the TEG's; the C120 and the TGG the C020's)
+  own = {"civic_teg_a010": eps_cal.CIVIC_TEG_A010_LAT_DELAY_SCHEDULE, "civic_tba_a030": eps_cal.CIVIC_TEG_A010_LAT_DELAY_SCHEDULE,
+         "civic_tba_c020": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE, "civic_tba_c120": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
+         "civic_tgg_a120": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE}
   for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values():
-    assert cal.lat_delay_schedule == eps_ff.CLARITY_TRW_A020_LAT_DELAY_SCHEDULE, cal.name
+    assert cal.lat_delay_schedule == own.get(cal.name, eps_ff.CLARITY_TRW_A020_LAT_DELAY_SCHEDULE), cal.name
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
-  assert honda_eps.lateral_delay_schedule(CP, _Params({"HondaEpsController": "1"})) == eps_ff.CLARITY_TRW_A020_LAT_DELAY_SCHEDULE
+  assert honda_eps.lateral_delay_schedule(CP, _Params({"HondaEpsController": "1"})) == eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE
   assert honda_eps.lateral_delay_schedule(CP, _Params()) is None   # not on this controller: liveDelay
+
+
+@pytest.mark.parametrize("schedule, lag", [
+  (eps_cal.CIVIC_TEG_A010_LAT_DELAY_SCHEDULE, (0.26, 0.31)),  # TEG routes 12e-13d, every speed band
+  (eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE, (0.33, 0.41)),  # route 380, this controller's output filter
+])
+def test_a_civic_is_told_its_measured_lag_from_the_frame(schedule, lag):
+  # modeld reads a plan model at told + 0.075 s (frame + half a step), so that is where the car's own lag must land
+  for v in (3.5, 7.0, 12.0, 20.0, 30.0):
+    assert lag[0] - 0.03 <= honda_eps.scheduled_lateral_delay(schedule, v) + 0.075 <= lag[1] + 0.03, v
 
 
 def test_lateral_delay_dips_in_town_and_rises_from_there():
@@ -577,6 +591,15 @@ def test_command_delay_is_for_town_speeds_only():
   assert eps_ff.command_delay(cal, 12.5) == pytest.approx(0.06)
   assert eps_ff.command_delay(cal, 15.0) == eps_ff.command_delay(cal, 30.0) == 0.0
   assert honda_eps.CommandDelay(DT_CTRL, 0.2).update(3.0, 0.0) == 3.0
+
+
+def test_the_civics_hold_their_command_delay_on_the_highway():
+  # they ran as early above 15 m/s as in town (TEG routes 12e-13d, C020 route 380); the Clarity and the Insight did not
+  for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values():
+    civic = cal.name.startswith("civic_")
+    assert cal.cmd_delay_highway_s == (cal.cmd_delay_s if civic else 0.0), cal.name
+    if civic:
+      assert [eps_ff.command_delay(cal, v) for v in (0.0, 12.5, 15.0, 30.0)] == pytest.approx([0.15] * 4), cal.name
 
 
 def test_every_vehicle_has_its_own_command_delay():
