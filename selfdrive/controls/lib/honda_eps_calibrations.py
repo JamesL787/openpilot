@@ -164,8 +164,9 @@ CIVIC_TEG_A010 = EpsFirmwareCalibration(
 # rev b's row 3 (the same key axis, the Clarity's R5 per key, the Clarity's P knots), so the variant row (TBAA3 1,
 # TBCA1 2, TBCA2 3, others 0) no longer changes the command. The rate path is the TEG's too: tracker-1 3200, R6 clamp
 # 32765, key clamp 1663, NORM 1650 and a byte-identical A table, so it has the TEG's computed R6 and takes its load and
-# command delay, and its rack map: the same Nidec Civic (HONDA_CIVIC) with the same A table, so the TEG's yaw-fitted
-# rack is the A030's geometry until an A030 drive refits it (inferred, not measured on an A030). Its tracker-2 reads 5968
+# command delay, and its rack map: it is the same 2016-18 Civic sedan as the TEG (US vs Japanese part number; the same
+# published steering specs and a byte-identical A table), so the TEG's yaw-fitted rack is the A030's geometry until an
+# A030 drive refits it (inferred, not measured on an A030). Its own spec prediction would be 2% further off. Its tracker-2 reads 5968
 # (the Drive release's; the owners' 09-12 build has 3869); it does not feed R6. Both builds report 39990-TBA,A030: a
 # car on the 09-12 or the Drive image must be reflashed with this calibration.
 CIVIC_TBA_A030 = EpsFirmwareCalibration(
@@ -356,7 +357,7 @@ CALIBRATION_PROVENANCE = {
     "load": "inferred: the TEG-A010 owner's",
     "trims": "inferred: the C020 owner's",
     "cmd_delay": "inferred: the TEG-A010's", "model_delay": "default: the Clarity's schedule",
-    "rack": "inferred: the TEG-A010's (same Nidec Civic and A table)",
+    "rack": "inferred: the TEG-A010's (the same 2016-18 Civic sedan: same specs and A table)",
   },
   "civic_teg_a010": {
     "row": "measured: row 3 (TEGA2), telemetry R5 vs E4 on routes 0000012f/00000139 (live_row_fit.py teg); rev b rows 2-3 agree",
