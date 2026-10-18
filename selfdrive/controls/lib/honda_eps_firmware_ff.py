@@ -186,10 +186,9 @@ R6_GAIN_BP = (0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 180, 210, 240, 270,
 def computed_r6(profile: str, norm: float = 1650.0) -> tuple[float, tuple, tuple]:
   """(R6 per published deg/s at centre, |angle| axis, gain by angle) from an image's A table; see above."""
   linear_bp, angle_bp = (np.asarray(x, dtype=float) for x in HONDA_VGR_INVERSE_BY_PROFILE[profile])
-  tail = (linear_bp[-1] - linear_bp[-2]) / (angle_bp[-1] - angle_bp[-2])
 
-  def linear(a: float) -> float:  # past the last knot the table holds its last divisor: a straight line
-    return float(np.interp(a, angle_bp, linear_bp)) if a <= angle_bp[-1] else float(linear_bp[-1] + tail * (a - angle_bp[-1]))
+  def linear(a: float) -> float:  # past the last knot the table holds its last divisor: linear = a * Y_end / Y0
+    return float(np.interp(a, angle_bp, linear_bp)) if a <= angle_bp[-1] else float(a * linear_bp[-1] / angle_bp[-1])
 
   def slope(a: float) -> float:
     lo = max(a - 10.0, 0.0)

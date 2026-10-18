@@ -73,12 +73,12 @@ CRV_2020_SPEC = HondaSteeringSpec(lock_turns=2.30, lock_ratio=12.3, curb_mass_lb
 
 
 def linear_angle(vgr_inverse, physical_deg: float) -> float:
-  """The A table's linear angle (deg) for a physical one; past the last knot the table holds its last divisor."""
+  """The A table's linear angle (deg) for a physical one. Past the last knot the firmware holds its last divisor, so
+  linear = physical * Y_end / Y0 exactly (= linear / physical at the last knot)."""
   linear_bp, angle_bp = (np.asarray(x, dtype=float) for x in vgr_inverse)
   if physical_deg <= angle_bp[-1]:
     return float(np.interp(physical_deg, angle_bp, linear_bp))
-  tail = (linear_bp[-1] - linear_bp[-2]) / (angle_bp[-1] - angle_bp[-2])
-  return float(linear_bp[-1] + tail * (physical_deg - angle_bp[-1]))
+  return float(physical_deg * linear_bp[-1] / angle_bp[-1])
 
 
 def spec_r0(spec: HondaSteeringSpec, vgr_inverse) -> float:

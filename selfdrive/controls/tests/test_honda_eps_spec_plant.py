@@ -123,6 +123,6 @@ def test_measured_cars_keep_their_own_fits():
 def test_past_the_table_end_the_linear_angle_holds_the_last_divisor():
   inv = INV[sr.HONDA_VGR_INSIGHT_TXM_A040]   # the Insight locks at 457 deg, past its table's 430.5
   end_angle, end_linear = inv[1][-1], inv[0][-1]
-  tail = (inv[0][-1] - inv[0][-2]) / (inv[1][-1] - inv[1][-2])
-  assert spec.linear_angle(inv, end_angle + 20.0) == pytest.approx(end_linear + 20.0 * tail)
+  y = sr._INSIGHT_TXM_A040_POSITION_Y
+  assert spec.linear_angle(inv, end_angle + 20.0) == pytest.approx((end_angle + 20.0) * y[-1] / y[0], rel=1e-4)
   assert spec.linear_angle(inv, end_angle) == pytest.approx(end_linear)
