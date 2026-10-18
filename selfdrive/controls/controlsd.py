@@ -401,7 +401,8 @@ class Controls:
 
     self.sm = messaging.SubMaster(['liveDelay', 'liveParameters', 'liveTorqueParameters', 'modelV2', 'selfdriveState',
                                    'liveCalibration', 'livePose', 'longitudinalPlan', 'lateralManeuverPlan', 'carState', 'carOutput',
-                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance', 'radarState'], poll='selfdriveState')
+                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance', 'radarState', 'starpilotModelV2'],
+                                  poll='selfdriveState')
     self.pm = messaging.PubMaster(['carControl', 'controlsState', 'starpilotLateralState'])
 
     self.steer_limited_by_safety = False
@@ -945,6 +946,8 @@ class Controls:
     lat_delay = lateral_delay + lat_smooth_seconds
 
     actuators.curvature = self.desired_curvature
+    if isinstance(self.LaC, LatControlHondaEps) and self.sm.updated['starpilotModelV2']:
+      self.LaC.update_lateral_source(self.sm['starpilotModelV2'].lateralSource)
     steer, lateral_output, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
                                                      self.steer_limited_by_safety, self.desired_curvature,
                                                      curvature_limited, lat_delay,

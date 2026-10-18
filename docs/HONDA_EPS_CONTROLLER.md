@@ -69,14 +69,20 @@ complete, and the controller logs the summary at start.
   LatControlPID; paramsd's steer ratio, the road-measured curves and `HondaEpsFirmwareVgr` are LatControlPID's only.
 - **Column load.** Measured per car, or carried over from the same platform. `spec_load_terms` predicts one from
   front-axle mass / R0^2 for an image with no sibling (holds within ~12%, turn rates ~15%, held out).
-- **Command delay.** Every car delays the curvature it executes by its `cmd_delay_s` below 10 m/s, faded to 0 by
-  15 m/s: this controller reaches a command faster than the PID, and the model gives back only part of a shorter
-  delay. How much it gives back depends on the model: an action-head model moves its aim about half as far as the
-  delay it is told (aim ~0.30 + 0.53 x action_t on Cinque v3), a plan-only model reads its plan at the told delay but
-  never earlier than 0.3 s (`MIN_STABLE_DELAY`). The measured values come from action-head drives. Default 0.12 s,
-  the smaller measured value, so an unmeasured car cannot be pushed late.
+- **Command delay.** The curvature the car executes is delayed by the calibration's `cmd_delay_s` below 10 m/s,
+  faded to 0 by 15 m/s, scaled by where the steering comes from (`starpilotModelV2.lateralSource`, which modeld sets
+  per frame from the model actually steering):
+  - **action head** (v14-v16, e.g. Cinque v3): the full `cmd_delay_s`. The model moves its aim only ~0.53 of a change
+    in the told delay (aim ~0.30 + 0.53 x action_t), and this controller reaches a command faster than the model
+    assumes; the measured values come from these drives. Default 0.12 s, the smaller measured value.
+  - **plan** (v11-v12): no command delay. This fork reads the plan at the told action time exactly (there is no
+    `MIN_STABLE_DELAY` floor here; upstream and nrdr floor it at 0.3 s), so the told delay already lands it on time.
+  - **curvature head** (v9, pre-tinygrad) and **unknown** (older logs, no message yet): the full `cmd_delay_s`.
+  When the model changes (eGPU, model lab, a fallback) the delay ramps to the new value over 1 s.
+  `starpilotModelV2.delayInput` records how the told delay reaches the model (`actionT`, `lateralControlParams` or
+  `none`); a model with none ignores the told delay.
 - **Model delay.** Every car tells the model its `lat_delay_schedule` in place of `liveDelay`; the Clarity's measured
-  schedule is the default. Town values below 0.3 s change nothing on a plan-only model (the floor above).
+  schedule is the default. It is the car's measured lag, which a plan model follows exactly and an action head in part.
 - **Driver override.** The shared modified-EPS press detector; after a press, while the carcontroller fades torque
   back in, the integrator bleeds toward 0 (tau 0.5 s) rather than holding its pre-press value.
 - **Disengage** resets the PID and the feedforward.

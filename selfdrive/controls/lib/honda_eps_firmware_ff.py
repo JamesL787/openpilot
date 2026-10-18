@@ -62,11 +62,12 @@ class ColumnLoadModel:
 # between CMD_DELAY_SPEED_BP. Measured end to end with tools/lateral/plan_timing.py (car curvature from the VSA yaw
 # sensor against the model's own plan, hands-off turns at 5-12 m/s): every car measured ran its model's plan early
 # without it (early turn-in, loose exits), on this controller and on LatControlPID, because the controller reaches a
-# command faster than the model assumes. The delay the model is told cannot fix that: an action-head model (Cinque
-# v3) moves its aim by only ~half of a change in action_t (aim ~ 0.30 + 0.53 * action_t), and a plan-only model
-# (Pop v2) reads its plan at action_t floored at MIN_STABLE_DELAY 0.3 s, so a shorter told delay does nothing there.
-# The model also gives some of a command delay back (Cinque about half), so how much is needed depends on the model.
-# Each delay is sized at or below what was measured, so it cannot make a car late.
+# command faster than the model assumes. On an action-head model (Cinque v3) the delay the model is told cannot fix
+# that alone: it moves its aim by only ~half of a change in action_t (aim ~ 0.30 + 0.53 * action_t). A plan model is
+# read at the told action time exactly (this fork has no MIN_STABLE_DELAY floor; upstream and nrdr floor it at 0.3 s),
+# so the told delay lands it on time and LatControlHondaEps runs it with no command delay (CMD_DELAY_SCALE_BY_SOURCE,
+# from starpilotModelV2.lateralSource). These values are the action-head ones, measured on action-head drives. Each
+# delay is sized at or below what was measured, so it cannot make a car late.
 # - Clarity (Cinque v3): 0.12-0.14 s early (route 37e); 0.12 s took entries from -0.25 to -0.11 s (route 380).
 # - Civic Bosch C020 (tsfdo): routes 290 / 293 / 289 -0.09 / -0.15 / -0.22 s, median -0.15. Checked with it on
 #   (routes 2b7 / 2c6 / 2d4): -0.14 / -0.11 / +0.03 s, -0.045 weighted, against -0.15 without it on 289 / 290 / 294.
@@ -89,8 +90,8 @@ def command_delay(cal: "EpsFirmwareCalibration", v_ego: float) -> float:
 # - Car curvature comes from the yaw sensor (0x94). The comma gyro runs ~50 ms behind the car and put the
 #   first version of this table that much too long.
 # - On Cinque v3 the lag hardly depends on the delay the model was told (5-9 m/s: 0.15 / 0.15 / 0.17 s at 0.22 /
-#   0.30 / 0.48), so routes are pooled. That is model-specific: on a plan-only model the action IS the plan read at
-#   action_t (floored at 0.3 s), so this table's town values (below 0.225 s told) change nothing there.
+#   0.30 / 0.48), so routes are pooled. That is model-specific: on a plan model the action IS the plan read at
+#   action_t, exactly (no MIN_STABLE_DELAY floor in this fork), so there the told delay sets the timing 1:1.
 # - The lag is fitted with a gain per route (tools/lateral/eps_report.py timing). The first table (0.12 / 0.12 /
 #   0.15 at 3.5 / 7 / 12 m/s, routes 354-36b) compared raw curves, and the car delivering only 0.85-0.96 of the
 #   request there read as extra lag: on 36c-377 the car turned 40-70 ms early in the city. Refit 2026-10-01 on

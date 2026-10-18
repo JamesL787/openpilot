@@ -63,6 +63,14 @@ from openpilot.selfdrive.controls.lib.honda_lateral_common import (
 
 SETTINGS_REFRESH_FRAMES = 300
 
+# The command delay makes up for the part of the told delay the model does not follow, so it depends on where the
+# steering comes from (starpilotModelV2.lateralSource). A plan model is read at the told delay exactly (this fork has no
+# MIN_STABLE_DELAY floor), so telling it the measured lag already lands the car on time: no command delay. An action
+# head (Cinque v3) moves its aim only ~0.53 of a change in the told delay, which is what the calibration's command
+# delay was measured against; a curvature head and an unknown source (older logs, no message yet) take it too.
+CMD_DELAY_SCALE_BY_SOURCE = {"plan": 0.0}
+CMD_DELAY_RAMP_S = 1.0  # s, from one source's command delay to the other's when the model changes
+
 
 
 
@@ -149,6 +157,8 @@ class LatControlHondaEps(LatControl):
     self.rack_map = get_rack_map(CP, self.calibration)
     assert self.rack_map is not None, f"no rack map for {self.calibration.name}"
     self.cmd_delay = CommandDelay(dt, self.calibration.cmd_delay_s)
+    self.lateral_source = "unknown"
+    self.cmd_delay_scale = 1.0
     self.frame = -1
     self.prev_rate_limited_angle = 0.0
     self.steering_pressed_filter_s = 0.0
@@ -164,6 +174,16 @@ class LatControlHondaEps(LatControl):
       for key in ("HondaTorqueOutputLpfTauLowSpeed", "HondaTorqueOutputLpfTauStandard", "HondaTorqueOutputLpfTauHighway")
     )
     self.core.override_fade_up_s = _get_param_float(self.params, "HondaOverrideFadeUpSecs", OVERRIDE_FADE_UP_S_DEFAULT, 0.0, 10.0)
+
+  def update_lateral_source(self, source: str) -> None:
+    """controlsd: where the model's steering comes from (starpilotModelV2.lateralSource)."""
+    self.lateral_source = str(source)
+
+  def _command_delay(self, v_ego: float) -> float:
+    target = CMD_DELAY_SCALE_BY_SOURCE.get(self.lateral_source, 1.0)
+    step = self.dt / CMD_DELAY_RAMP_S
+    self.cmd_delay_scale += max(min(target - self.cmd_delay_scale, step), -step)
+    return self.cmd_delay_scale * command_delay(self.calibration, v_ego)
 
   def reset(self):
     super().reset()
@@ -182,7 +202,7 @@ class LatControlHondaEps(LatControl):
     pid_log.steeringAngleDeg = float(CS.steeringAngleDeg)
     pid_log.steeringRateDeg = float(CS.steeringRateDeg)
 
-    cmd_delay = command_delay(self.calibration, CS.vEgo)
+    cmd_delay = self._command_delay(CS.vEgo)
     desired_curvature = self.cmd_delay.update(desired_curvature, cmd_delay)
     angle_des_no_offset = self._desired_angle_no_offset(VM, CS.vEgo, params.roll, desired_curvature)
     if active:
