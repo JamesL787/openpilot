@@ -24,8 +24,15 @@ def test_the_ptm_rdx_gets_its_road_measured_vgr_and_its_calibration():
   assert honda_eps.eps_firmware_calibration(CP, _Params({"HondaEpsController": "1"})) is CAL
   assert honda_eps.eps_firmware_calibration(CP, _Params()) is None   # not default_on: LatControlPID unless asked
   assert honda_eps.get_rack_map(CP, CAL) is not None
-  # the 2022+ RDX is a different platform (its own E4 cap); nothing measured there
-  assert eps_cal.select_eps_firmware_calibration("ACURA_RDX_3G_MMR", "39990-TJB-A220") is None
+  # the 2022+ (MMR) runs the same PTM image on the same rack, sent the same 4096 per unit
+  assert eps_cal.select_eps_firmware_calibration("ACURA_RDX_3G_MMR", "39990-TJB-A220") is CAL
+  assert eps_cal.select_eps_firmware_calibration("HONDA_CRV_5G", "39990-TJB-A220") is None
+
+
+def test_the_ptm_mmr_gets_the_same_calibration():
+  CP = _params(RDX_PTM_FW, CAR.ACURA_RDX_3G_MMR)
+  assert [float(x) for x in CP.lateralParams.torqueV] == [0.0, 4096.0]
+  assert honda_eps.eps_firmware_calibration(CP, _Params({"HondaEpsController": "1"})) is CAL
 
 
 def test_the_stock_rdx_is_untouched():

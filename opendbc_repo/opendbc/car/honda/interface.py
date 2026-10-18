@@ -294,7 +294,8 @@ class CarInterface(CarInterfaceBase):
       # 2019-21 and 2022+ cars end up on the same rack image and share this branch. Its target map X axis runs
       # E4 0..4096 (command key a = E4/4 up to 1024), and Route A puts the 30000 top there, level with the
       # Clarity's 29982 at its 3840 cap -- so at 4096 the normalized output asks for the same target as the
-      # Clarity and its gains carry over 1:1. No EPS firmware calibration yet, so it stays on LatControlPID.
+      # Clarity and its gains carry over 1:1. LatControlHondaEps steers it with HondaEpsController on
+      # (honda_eps_calibrations ACURA_RDX_TJB_A220); otherwise LatControlPID on this tune.
       ret.lateralParams.torqueBP, ret.lateralParams.torqueV = [[0, 4096], [0, 4096]]
       # Shares the modified-EPS Clarity tune: four-point handoff at 25 mph.
       ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kpV = [[0., 25. * CV.MPH_TO_MS - 1e-3, 25. * CV.MPH_TO_MS, 50. * CV.MPH_TO_MS], [0.018, 0.024, 0.048, 0.060]]

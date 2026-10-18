@@ -376,7 +376,9 @@ EPS_FIRMWARE_CALIBRATIONS = {
   "39990-TXM-A040": ("HONDA_INSIGHT", INSIGHT_TXM_A040),
   "39990-TLA-A040": ("HONDA_CRV_5G", CRV_TLA_A040),
   "39990-TLA-A220": ("HONDA_CRV_5G", CRV_TLA_A220),
-  "39990-TJB-A220": ("ACURA_RDX_3G", ACURA_RDX_TJB_A220),
+  # Stock A220 accepts every RDX 3G image as a source, so the 2019-21 and 2022+ (MMR) cars run the same PTM image on
+  # the same rack; the vehicle side was measured on a 2019.
+  "39990-TJB-A220": (("ACURA_RDX_3G", "ACURA_RDX_3G_MMR"), ACURA_RDX_TJB_A220),
 }
 
 
@@ -475,11 +477,11 @@ CALIBRATION_PROVENANCE = {
     "row": "firmware: rows 0-3 carry the same Route-A target, P and D (0x57BAE + 0x300*row), so the variant row does not matter",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
     "r6": "inferred: 0.4812 x 32 x its 0x18F rate word (the Clarity's R6 relation); its drives allow 0.7-1.1x",
-    "load": "measured: the owner's routes 000000c6 / 000000c7, rebuilt through the law from the sent 0xE4",
+    "load": "measured: the owner's routes 000000c6 / 000000c7 (a 2019), rebuilt through the law from the sent 0xE4; the MMR takes it",
     "trims": "default: untrimmed",
     "cmd_delay": "default (its LatControlPID drives ran 0.10-0.24 s early at 7-12 m/s: re-check on this controller)",
     "model_delay": "default: the Clarity's schedule",
-    "rack": "measured: VSA yaw (GPS-checked scale), routes 000000c6 / 000000c7, through its road-measured linear map",
+    "rack": "measured: VSA yaw (GPS-checked scale), routes 000000c6 / 000000c7 (a 2019; the MMR takes it), through its road-measured linear map",
   },
   "crv_tla_a220": {
     "row": "firmware: rows 0-5 all Clarity-equivalent in the corrected build, so the untraced variant row does not matter",
@@ -523,6 +525,6 @@ def provenance_summary(cal: EpsFirmwareCalibration) -> str:
 def select_eps_firmware_calibration(fingerprint: str, eps_fw: str) -> EpsFirmwareCalibration | None:
   """The profile for this car's EPS image, or None when there is no PTM build for it (or it is on another car)."""
   entry = EPS_FIRMWARE_CALIBRATIONS.get(eps_fw)
-  if entry is None or entry[0] != fingerprint:
+  if entry is None or fingerprint not in (entry[0] if isinstance(entry[0], tuple) else (entry[0],)):
     return None
   return entry[1]
