@@ -787,6 +787,17 @@ FAR_RAIL_RANGE_WINDOW_S = 1.5
 # no D-096 veto) while its range converged 66 -> 54 m onto the camera's 52 m; read as a -11 m/s fit, that removed
 # the -3.6 bound and braked -1.67 (shipped -1.45 later). Replay evidence only; not road-validated.
 FAR_RAIL_COASTED_OWN_RANGE_VETO = True
+# Route 00000380 3:17.6-3:19.9 (Peter's bookmark, replay-reproduced -1.40, car -1.27): far track 47 at 93-105 m coasted
+# at the -12.0 rail for 2.2 s, as leadOne and leadTwo, while the camera car at the same range read 23.5-24.2 m/s (vEgo
+# ~22, strict match 12-19 of 20). Its birth ranges really fell at ~10 m/s (fit rms 0.1), so the frozen vRelRangeDerived
+# (-7.8) armed the veto and the fresh fit (slope -9.1 easing to -2.5) never rose past the camera floor (-1.0..-1.7) to
+# lift it: the full rail stood. But the rail is a clamp (D-090) and the track's own fresh ranges said -9 .. -2.5. When
+# the veto keeps the rail on a coasted lead whose own fresh ranges fit, the lead now publishes that fit's flat-range
+# floor (slope - YOUNG_TRACK_FLAT_MARGIN, minus the noise term) instead -- the D-101 wide-match floor, from the radar
+# alone; the camera only decides that a bound is considered at all. Whatever closes at or beyond the rail by its own
+# range (a stopped car, 266 484 at -15..-19, 311 2490.0) has a floor at or below the rail and keeps it. Never above
+# the camera floor (the fit slope is at or below it when the veto holds). Replay pending; static tests only.
+FAR_RAIL_VETO_OWN_RANGE_FLOOR = True
 
 # D-089 (STATUS 225; replay only, not driven): a Bosch-A point re-admitted by the range-scaled far-range re-anchor
 # (RadarPoint.recovered, see BOSCH_A_REANCHOR_RECOVER_SIGMA_FRAC) may be a lead, adjacent or onpath candidate only after
@@ -1056,8 +1067,12 @@ def far_rail_vrel_floor(lead, hist, v_ego: float, range_hist=None) -> float | No
     if not (FAR_RAIL_COASTED_OWN_RANGE_VETO and range_hist is not None and not getattr(lead, "measuredRadar", True)):
       return None
     fit = own_range_fit(range_hist)
-    if fit is None or fit[0] <= floor:
+    if fit is None:
       return None
+    if fit[0] <= floor:
+      # FAR_RAIL_VETO_OWN_RANGE_FLOOR: the own range closes, but not as the rail claims; bound by it alone
+      own = min(fit[1], floor)
+      return own if FAR_RAIL_VETO_OWN_RANGE_FLOOR and own > lead.vRel else None
   return floor
 
 

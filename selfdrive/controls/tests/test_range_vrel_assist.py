@@ -1774,6 +1774,35 @@ def test_coasted_veto_switch_off(monkeypatch):
   assert radard.far_rail_vrel_floor(lead, cam, 32.2, _range_hist(slope=2.5, d0=84.0)) is None
 
 
+# FAR_RAIL_VETO_OWN_RANGE_FLOOR (route 00000380 3:17.6-3:19.9, track 47): the frozen vRelRangeDerived (-7.8) armed the
+# veto and the fresh fit (-9.1 easing to -2.5) never rose past the camera floor, so the -12 rail stood for 2.2 s.
+def _veto_380(slope, measured=False):
+  cam = _far_hist(x=97.0 + radard.RADAR_TO_CAMERA, v=23.8)
+  return radard.far_rail_vrel_floor(_far_lead(d_rel=97.0, v_rel=radard.BOSCH_A_U11_LOW_RAIL_MPS, v_range=-7.8,
+                                                              measured=measured), cam, 22.2,
+                                    _range_hist(slope=slope, d0=100.0))
+
+
+def test_veto_publishes_the_own_range_floor_not_the_rail():
+  assert _veto_380(-2.5) == pytest.approx(-2.5 - radard.YOUNG_TRACK_FLAT_MARGIN, abs=0.05)
+  assert _veto_380(-6.0) == pytest.approx(-6.0 - radard.YOUNG_TRACK_FLAT_MARGIN, abs=0.05)
+  # Never above the camera floor, and the floor tracks the fit: a fit that lifts the veto still gives the camera floor.
+  assert _veto_380(0.5) == pytest.approx(23.8 - 22.2 - radard.FAR_RAIL_MARGIN_MPS)
+
+
+def test_veto_own_range_floor_keeps_the_rail_when_the_range_closes_like_it():
+  # own floor at or below the rail: nothing moves (the wide path may still return it)
+  for slope in (radard.BOSCH_A_U11_LOW_RAIL_MPS + radard.YOUNG_TRACK_FLAT_MARGIN - 0.1, -16.0):
+    floor = _veto_380(slope)
+    assert floor is None or floor <= radard.BOSCH_A_U11_LOW_RAIL_MPS
+  assert _veto_380(-2.5, measured=True) is None  # measured: vRelRangeDerived is fresh and its veto stands
+
+
+def test_veto_own_range_floor_switch_off(monkeypatch):
+  monkeypatch.setattr(radard, "FAR_RAIL_VETO_OWN_RANGE_FLOOR", False)
+  assert _veto_380(-2.5) is None
+
+
 def test_recent_range_hist_keeps_fresh_sweeps_in_window():
   track = new_track()
   for i in range(60):
