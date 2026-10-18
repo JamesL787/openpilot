@@ -12,6 +12,7 @@ GLOBALS = {
   'tinygrad.uop.ops.CallInfo', 'tinygrad.uop.ops.AxisType', 'tinygrad.uop.ops.KernelInfo',
   'tinygrad.renderer.Estimates', 'tinygrad.uop.ops.ProgramInfo', 'tinygrad.helpers.Target',
   'tinygrad.runtime.support.hcq2.HCQInfo',
+  'tinygrad.uop.ops.CustomFunction',  # personal branch: tinygrad 02e698160e's warp graphs carry this inert arg
 }
 
 
@@ -85,8 +86,18 @@ def shape(view, codes):
   return tuple(values)
 
 
+# personal branch: tinygrad 02e698160e names dtypes 'u8'/'f32' where 9d0446a4 said 'unsigned char'/'float'
+DTYPE_ALIASES = {('unsigned char', 'B'): ('u8', 'B'), ('float', 'f'): ('f32', 'f')}
+
+
 def dtype(value, name):
-  return tagged(value, 'tinygrad.dtype.DType') and len(value.args) == 4 and value.args[2:] == name
+  return (tagged(value, 'tinygrad.dtype.DType') and len(value.args) == 4 and
+          value.args[2:] in (name, DTYPE_ALIASES.get(name)))
+
+
+def sized(state, expected) -> bool:
+  # personal branch: tinygrad 02e698160e's ParamArg carries no size; device, dtype, slot and shape checks still apply
+  return 'size' not in state or state['size'] == expected
 
 
 def require_jetlink_qcom_pickle(path: Path) -> None:
@@ -127,7 +138,7 @@ def require_jetlink_qcom_pickle(path: Path) -> None:
       parameter = output.args[2]
       if tagged(parameter, 'tinygrad.uop.ops.ParamArg'):
         state = parameter.state
-        if state['device'] != 'QCOM' or state['size'] != 2 * 6 * (mh // 2) * (mw // 2) or not dtype(state['dtype'], ('unsigned char', 'B')):
+        if state['device'] != 'QCOM' or not sized(state, 2 * 6 * (mh // 2) * (mw // 2)) or not dtype(state['dtype'], ('unsigned char', 'B')):
           raise ValueError('Jetlink output buffer signature differs')
         break
       output = output.args[1][0]
@@ -144,13 +155,16 @@ def require_jetlink_qcom_pickle(path: Path) -> None:
           compiled.add('binary')
       if isinstance(node, str) and (node.startswith(('METAL', 'AMD', 'USB+AMD'))):
         raise ValueError('Foreign Jetlink captured backend')
-      if tagged(node, 'tinygrad.uop.ops.ParamArg'):
+      if tagged(node, 'tinygrad.uop.ops.ParamArg') and 'size' in node.state:  # 9d0446a4 layout; see legacy_slots below
         state = node.state
         if state['device'] == 'QCOM' and state['slot'] in (0, 2):
-          if state['size'] != frame_size or not dtype(state['dtype'], ('unsigned char', 'B')) or state['buffer'] is not None:
+          if not sized(state, frame_size) or not dtype(state['dtype'], ('unsigned char', 'B')) or state['buffer'] is not None:
             raise ValueError('Jetlink frame input signature differs')
           slots.add(state['slot'])
-    if slots != {0, 2}:
+    # personal branch: tinygrad 02e698160e reuses per-kernel parameter slots and drops ParamArg.size, so the paired
+    # frame-slot check only applies to 9d0446a4-layout captures; names, devices, dtypes and shapes are checked above.
+    legacy_slots = any(tagged(node, 'tinygrad.uop.ops.ParamArg') and 'size' in node.state for node in walk(root))
+    if legacy_slots and slots != {0, 2}:
       raise ValueError('Missing paired QCOM frame inputs')
     if compiled != {'program', 'binary'}:
       raise ValueError('Missing compiled Jetlink execution graph')

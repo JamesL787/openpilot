@@ -51,7 +51,7 @@ class TestModelParts(unittest.TestCase):
     dm.write_bytes(b'old dm')
     parts.package_file(dm, dm)
     dm.write_bytes(b'new dm')
-    rdf = source / 'rdf43_driving_tinygrad.pkl'
+    rdf = source / 'comma-small-65a08adc_driving_tinygrad.pkl'
     rdf.write_bytes(b'verified rdf')
     parts.package_file(rdf, rdf)
     rdf.unlink()
