@@ -5,16 +5,17 @@ import pytest
 
 from opendbc.car.honda import steer_ratio as sr
 import openpilot.selfdrive.controls.lib.honda_eps_firmware_ff as eps_ff
+import openpilot.selfdrive.controls.lib.honda_eps_calibrations as eps_cal
 import openpilot.selfdrive.controls.lib.honda_eps_rack_map as rack
 import openpilot.selfdrive.controls.lib.honda_eps_spec_plant as spec
 
 INV = sr.HONDA_VGR_INVERSE_BY_PROFILE
 # The cars whose rack maps were fitted against their yaw sensor: (specs, A table, rack table, column load)
 MEASURED = {
-  "clarity": (spec.CLARITY_SPEC, INV[sr.HONDA_VGR_CLARITY_TRW_A020], rack.CLARITY_TRW_A020_RACK, eps_ff.CLARITY_TRW_A020_LOAD),
-  "c020": (spec.CIVIC_SPORT_SEDAN_SPEC, INV[sr.HONDA_VGR_CIVIC_TBA_C020], rack.CIVIC_TBA_C020_RACK, eps_ff.CIVIC_TBA_C020_LOAD),
-  "insight": (spec.INSIGHT_SPEC, INV[sr.HONDA_VGR_INSIGHT_TXM_A040], rack.INSIGHT_TXM_A040_RACK, eps_ff.INSIGHT_TXM_A040_LOAD),
-  "teg": (spec.CIVIC_2016_SEDAN_SPEC, INV[sr.HONDA_VGR_CIVIC_TBA_C120], rack.CIVIC_TEG_A010_RACK, eps_ff.CIVIC_TEG_A010_LOAD),
+  "clarity": (spec.CLARITY_SPEC, INV[sr.HONDA_VGR_CLARITY_TRW_A020], rack.CLARITY_TRW_A020_RACK, eps_cal.CLARITY_TRW_A020_LOAD),
+  "c020": (spec.CIVIC_SPORT_SEDAN_SPEC, INV[sr.HONDA_VGR_CIVIC_TBA_C020], rack.CIVIC_TBA_C020_RACK, eps_cal.CIVIC_TBA_C020_LOAD),
+  "insight": (spec.INSIGHT_SPEC, INV[sr.HONDA_VGR_INSIGHT_TXM_A040], rack.INSIGHT_TXM_A040_RACK, eps_cal.INSIGHT_TXM_A040_LOAD),
+  "teg": (spec.CIVIC_2016_SEDAN_SPEC, INV[sr.HONDA_VGR_CIVIC_TBA_C120], rack.CIVIC_TEG_A010_RACK, eps_cal.CIVIC_TEG_A010_LOAD),
 }
 
 
@@ -81,7 +82,7 @@ def _rate(load, rate):
 
 @pytest.mark.parametrize("name,s,profile,load", [
   *[(n, m[0], None, m[3]) for n, m in MEASURED.items()],
-  ("crv", spec.CRV_2017_SPEC, sr.HONDA_VGR_CRV_TLA_A040, eps_ff.CRV_TLA_A040_LOAD),
+  ("crv", spec.CRV_2017_SPEC, sr.HONDA_VGR_CRV_TLA_A040, eps_cal.CRV_TLA_A040_LOAD),
 ])
 def test_the_spec_load_is_close_to_every_measured_load(name, s, profile, load):
   # holds within 20%, turn rates within 25% of the car's own fit; copying the Clarity's load is up to 58% off
@@ -95,14 +96,14 @@ def test_the_spec_load_is_close_to_every_measured_load(name, s, profile, load):
 
 
 @pytest.mark.parametrize("cal,s,profile", [
-  (eps_ff.CIVIC_TBA_C120, spec.CIVIC_2019_SEDAN_SPEC, sr.HONDA_VGR_CIVIC_TBA_C120),
-  (eps_ff.CIVIC_TGG_A120, spec.CIVIC_HATCH_SPORT_SPEC, sr.HONDA_VGR_CIVIC_TBA_C020),
-  (eps_ff.CRV_TLA_A040, spec.CRV_2017_SPEC, sr.HONDA_VGR_CRV_TLA_A040),
-  (eps_ff.CRV_TLA_A220, spec.CRV_2020_SPEC, sr.HONDA_VGR_CRV_TLA_A040),
+  (eps_cal.CIVIC_TBA_C120, spec.CIVIC_2019_SEDAN_SPEC, sr.HONDA_VGR_CIVIC_TBA_C120),
+  (eps_cal.CIVIC_TGG_A120, spec.CIVIC_HATCH_SPORT_SPEC, sr.HONDA_VGR_CIVIC_TBA_C020),
+  (eps_cal.CRV_TLA_A040, spec.CRV_2017_SPEC, sr.HONDA_VGR_CRV_TLA_A040),
+  (eps_cal.CRV_TLA_A220, spec.CRV_2020_SPEC, sr.HONDA_VGR_CRV_TLA_A040),
 ])
 def test_cars_without_a_yaw_fit_steer_on_their_spec_rack_map(cal, s, profile):
   assert cal.rack == spec.spec_rack_table(s, INV[profile])
-  assert eps_ff.provenance(cal)["rack"].startswith("spec")
+  assert eps_cal.provenance(cal)["rack"].startswith("spec")
   assert all(b <= a for a, b in zip(cal.rack.ratio_v, cal.rack.ratio_v[1:], strict=False))  # quickens off centre only
   assert cal.rack.ratio_v[0] == pytest.approx(spec.spec_r0(s, INV[profile]), rel=1e-3)
   rack_map = rack.HondaEpsRackMap(s.wheelbase, INV[profile], cal.rack)
@@ -112,11 +113,11 @@ def test_cars_without_a_yaw_fit_steer_on_their_spec_rack_map(cal, s, profile):
 
 
 def test_measured_cars_keep_their_own_fits():
-  assert eps_ff.CLARITY_TRW_A020.rack is rack.CLARITY_TRW_A020_RACK
-  assert eps_ff.CIVIC_TBA_C020.rack is rack.CIVIC_TBA_C020_RACK
-  assert eps_ff.INSIGHT_TXM_A040.rack is rack.INSIGHT_TXM_A040_RACK
-  assert eps_ff.CIVIC_TEG_A010.rack is rack.CIVIC_TEG_A010_RACK
-  assert eps_ff.CIVIC_TBA_A030.rack is rack.CIVIC_TEG_A010_RACK  # the same car on the same A table
+  assert eps_cal.CLARITY_TRW_A020.rack is rack.CLARITY_TRW_A020_RACK
+  assert eps_cal.CIVIC_TBA_C020.rack is rack.CIVIC_TBA_C020_RACK
+  assert eps_cal.INSIGHT_TXM_A040.rack is rack.INSIGHT_TXM_A040_RACK
+  assert eps_cal.CIVIC_TEG_A010.rack is rack.CIVIC_TEG_A010_RACK
+  assert eps_cal.CIVIC_TBA_A030.rack is rack.CIVIC_TEG_A010_RACK  # the same car on the same A table
 
 
 def test_past_the_table_end_the_linear_angle_holds_the_last_divisor():

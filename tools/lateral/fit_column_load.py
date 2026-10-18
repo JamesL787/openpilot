@@ -28,6 +28,7 @@ import zstandard as zstd
 
 from cereal import log
 from openpilot.selfdrive.controls.lib import honda_eps_firmware_ff as eps_ff
+from openpilot.selfdrive.controls.lib import honda_eps_calibrations as eps_cal
 
 NAMES = ('k0', 'k1', 'c', 'friction', 'j', 'bias', 'kroll')
 s16 = lambda b, i: struct.unpack('>h', b[i:i + 2])[0]  # noqa: E731
@@ -114,7 +115,7 @@ def main():
   ap.add_argument('--max-torque', type=float, default=300.0, help='|steeringTorque| cap where there is no scale word')
   ap.add_argument('routes', nargs='+', help='rlog glob per route, comma-separated globs allowed (quote it)')
   a = ap.parse_args()
-  cal = next(c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == a.calibration)
+  cal = next(c for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == a.calibration)
   data = []
   for r in a.routes:
     d = read_route(r, a.source, cal)

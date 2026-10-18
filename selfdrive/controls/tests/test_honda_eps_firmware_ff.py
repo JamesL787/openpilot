@@ -8,6 +8,7 @@ import pytest
 from cereal import car, log
 import openpilot.selfdrive.controls.lib.honda_eps_rack_map as rack
 import openpilot.selfdrive.controls.lib.honda_eps_firmware_ff as eps_ff
+import openpilot.selfdrive.controls.lib.honda_eps_calibrations as eps_cal
 import openpilot.selfdrive.controls.lib.latcontrol_honda_eps as honda_eps
 from opendbc.car import structs
 from opendbc.car.honda.interface import CarInterface
@@ -24,7 +25,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import _lat_pid_scale_bande
 TOGGLES = SimpleNamespace(force_torque_controller=False, nnff=False, nnff_lite=False)
 CLARITY_MODIFIED_FW = b'39990-TRW,A020\x00\x00'
 CLARITY_STOCK_FW = b'39990-TRW-A020\x00\x00'
-CLA = eps_ff.CLARITY_TRW_A020  # the reference calibration these law tests were written on
+CLA = eps_cal.CLARITY_TRW_A020  # the reference calibration these law tests were written on
 KP_BP, KP_V, KI_V = [0.0, 11.175, 11.176, 22.352], [0.018, 0.024, 0.048, 0.060], [0.006, 0.008, 0.016, 0.020]
 
 
@@ -319,7 +320,7 @@ def test_lateral_delay_follows_the_measured_execution_delay(v, delay):
 
 def test_every_vehicle_tells_the_model_the_measured_schedule():
   # the Clarity's measured schedule is every car's until a measurement on that car says otherwise
-  for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values():
+  for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values():
     assert cal.lat_delay_schedule == eps_ff.CLARITY_TRW_A020_LAT_DELAY_SCHEDULE, cal.name
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
   assert honda_eps.lateral_delay_schedule(CP, _Params({"HondaEpsController": "1"})) == eps_ff.CLARITY_TRW_A020_LAT_DELAY_SCHEDULE
@@ -384,15 +385,15 @@ def test_target_honours_the_angle_rate_limit(monkeypatch):
 
 # (candidate, modified EPS fwVersion, calibration) for every PTM image
 CALIBRATION_CARS = [
-  (CAR.HONDA_CLARITY, CLARITY_MODIFIED_FW, eps_ff.CLARITY_TRW_A020),
-  (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', eps_ff.CIVIC_TBA_C020),
-  (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00', eps_ff.CIVIC_TBA_C120),
-  (CAR.HONDA_CIVIC_BOSCH, b'39990-TGG,A120\x00\x00', eps_ff.CIVIC_TGG_A120),
-  (CAR.HONDA_CIVIC, b'39990-TBA,A030\x00\x00', eps_ff.CIVIC_TBA_A030),
-  (CAR.HONDA_CIVIC, b'39990-TEG,A010\x00\x00', eps_ff.CIVIC_TEG_A010),
-  (CAR.HONDA_INSIGHT, b'39990-TXM,A040\x00\x00', eps_ff.INSIGHT_TXM_A040),
-  (CAR.HONDA_CRV_5G, b'39990-TLA,A040\x00\x00', eps_ff.CRV_TLA_A040),
-  (CAR.HONDA_CRV_5G, b'39990-TLA,A220\x00\x00', eps_ff.CRV_TLA_A220),
+  (CAR.HONDA_CLARITY, CLARITY_MODIFIED_FW, eps_cal.CLARITY_TRW_A020),
+  (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00', eps_cal.CIVIC_TBA_C020),
+  (CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00', eps_cal.CIVIC_TBA_C120),
+  (CAR.HONDA_CIVIC_BOSCH, b'39990-TGG,A120\x00\x00', eps_cal.CIVIC_TGG_A120),
+  (CAR.HONDA_CIVIC, b'39990-TBA,A030\x00\x00', eps_cal.CIVIC_TBA_A030),
+  (CAR.HONDA_CIVIC, b'39990-TEG,A010\x00\x00', eps_cal.CIVIC_TEG_A010),
+  (CAR.HONDA_INSIGHT, b'39990-TXM,A040\x00\x00', eps_cal.INSIGHT_TXM_A040),
+  (CAR.HONDA_CRV_5G, b'39990-TLA,A040\x00\x00', eps_cal.CRV_TLA_A040),
+  (CAR.HONDA_CRV_5G, b'39990-TLA,A220\x00\x00', eps_cal.CRV_TLA_A220),
 ]
 ALL_PROFILES = [p for _, _, p in CALIBRATION_CARS]
 ON = {"HondaEpsController": "1"}
@@ -410,8 +411,8 @@ def test_calibration_matches_the_cars_torque_map_and_is_selected_only_when_enabl
 def test_clarity_always_steers_with_the_pminus5_build():
   # P-minus-5 is the Clarity standard; there is no build setting any more
   CP = _params(CLARITY_MODIFIED_FW)
-  assert honda_eps.eps_firmware_calibration(CP, _Params()) is eps_ff.CLARITY_TRW_A020
-  assert honda_eps.eps_firmware_calibration(CP, _Params({"HondaEpsClarityPminus5": "0"})) is eps_ff.CLARITY_TRW_A020
+  assert honda_eps.eps_firmware_calibration(CP, _Params()) is eps_cal.CLARITY_TRW_A020
+  assert honda_eps.eps_firmware_calibration(CP, _Params({"HondaEpsClarityPminus5": "0"})) is eps_cal.CLARITY_TRW_A020
   assert not hasattr(eps_ff, "CLARITY_P123")
 
 
@@ -433,11 +434,11 @@ def test_a_torque_map_the_profile_does_not_expect_keeps_latcontrol_pid():
 def test_clarity_trw_a020_profile_is_the_validated_build():
   # the constants routes 352/353 and the closed-loop replay were validated with; R6 is the angle-scaled centre value
   # re-measured on routes 363/365/366/369, the scale word on routes 35e/360/361
-  cal = eps_ff.CLARITY_TRW_A020
+  cal = eps_cal.CLARITY_TRW_A020
   assert cal.kp_v == (117, 148, 184, 220, 245, 257, 263, 265, 265) and cal.r5_per_key == 18.04
-  assert cal.r6_per_deg_s == eps_ff.CLARITY_TRW_A020_R6_CENTRE == -122.0 and cal.scale_q8 == 256.0
+  assert cal.r6_per_deg_s == eps_cal.CLARITY_TRW_A020_R6_CENTRE == -122.0 and cal.scale_q8 == 256.0
   assert cal.r6_angle_bp is not None and cal.r6_angle_gain[0] == 1.0 and cal.r6_angle_gain[-1] > 1.15
-  assert cal.load == eps_ff.CLARITY_TRW_A020_LOAD and cal.e4_per_output == 3840.0
+  assert cal.load == eps_cal.CLARITY_TRW_A020_LOAD and cal.e4_per_output == 3840.0
   assert (cal.p_scale, cal.i_scale) == ((1.25, 1.00, 1.25), (0.70, 0.95, 0.35))
 
 
@@ -445,22 +446,22 @@ def test_nidec_civics_carry_the_teg_measurements():
   # both Nidec images take the column load, R6 (centre and angle shape) and command delay measured on the TEG-A010
   # telemetry routes; on rev b the A030's rows 0-5 are the TEG's row 3, and it is the same Nidec Civic with the same A
   # table, so it is the TEG's calibration, rack map included
-  for cal in (eps_ff.CIVIC_TBA_A030, eps_ff.CIVIC_TEG_A010):
-    assert cal.load == eps_ff.CIVIC_TEG_A010_LOAD and cal.e4_per_output == 3840.0
-  teg = eps_ff.CIVIC_TEG_A010
-  assert teg.r6_angle_bp == eps_ff.CIVIC_TEG_A010_R6_BP and teg.r6_angle_gain == eps_ff.CIVIC_TEG_A010_R6_GAIN
+  for cal in (eps_cal.CIVIC_TBA_A030, eps_cal.CIVIC_TEG_A010):
+    assert cal.load == eps_cal.CIVIC_TEG_A010_LOAD and cal.e4_per_output == 3840.0
+  teg = eps_cal.CIVIC_TEG_A010
+  assert teg.r6_angle_bp == eps_cal.CIVIC_TEG_A010_R6_BP and teg.r6_angle_gain == eps_cal.CIVIC_TEG_A010_R6_GAIN
   # R6 is the C120 A table's, computed; the telemetry agrees once railed frames are left out (see below)
-  assert (teg.r6_per_deg_s, teg.r6_angle_gain) == (eps_ff.CIVIC_TBA_C120_R6_CENTRE, eps_ff.CIVIC_TBA_C120_R6_GAIN)
-  a030 = eps_ff.CIVIC_TBA_A030
-  assert dataclasses.replace(a030, name=teg.name) == teg and a030.rack is eps_ff.CIVIC_TEG_A010_RACK
+  assert (teg.r6_per_deg_s, teg.r6_angle_gain) == (eps_cal.CIVIC_TBA_C120_R6_CENTRE, eps_cal.CIVIC_TBA_C120_R6_GAIN)
+  a030 = eps_cal.CIVIC_TBA_A030
+  assert dataclasses.replace(a030, name=teg.name) == teg and a030.rack is rack.CIVIC_TEG_A010_RACK
   # the TEG owner's car runs row 3 (TEGA2), measured on its telemetry; the corrected (rev b) image's row 3 carries the
   # Clarity's R5 per key on that row's axis and the Clarity's P knots
-  teg = eps_ff.CIVIC_TEG_A010
-  assert teg.r5_key_bp == (0, 222, 333, 495, 656, 887, 1108, 1552, 1774) and teg.kp_key_bp == eps_ff.CLARITY_TRW_A020.kp_key_bp
-  assert teg.r5_v == (0, 4000, 6000, 8937, 11838, 16000, 20000, 28000, 32000) and teg.kp_v == eps_ff.CLARITY_TRW_A020.kp_v
-  assert teg.r6_per_deg_s == eps_ff.CIVIC_TEG_A010_R6_CENTRE and teg.rack is eps_ff.CIVIC_TEG_A010_RACK
+  teg = eps_cal.CIVIC_TEG_A010
+  assert teg.r5_key_bp == (0, 222, 333, 495, 656, 887, 1108, 1552, 1774) and teg.kp_key_bp == eps_cal.CLARITY_TRW_A020.kp_key_bp
+  assert teg.r5_v == (0, 4000, 6000, 8937, 11838, 16000, 20000, 28000, 32000) and teg.kp_v == eps_cal.CLARITY_TRW_A020.kp_v
+  assert teg.r6_per_deg_s == eps_cal.CIVIC_TEG_A010_R6_CENTRE and teg.rack is rack.CIVIC_TEG_A010_RACK
   # the Nidec column is stiffer than the C020's at low speed (1.29x at 3 m/s, 1.07x at 8) and alike by 15 m/s
-  teg, c020 = eps_ff.CIVIC_TEG_A010_LOAD, eps_ff.CIVIC_TBA_C020_LOAD
+  teg, c020 = eps_cal.CIVIC_TEG_A010_LOAD, eps_cal.CIVIC_TBA_C020_LOAD
   for v, lo, hi in ((3.0, 1.2, 1.4), (8.0, 1.0, 1.15), (15.0, 0.9, 1.1)):
     for load in (teg, c020):
       assert load.k0 + load.k1 * v ** 2 < 0.0
@@ -497,9 +498,9 @@ def test_every_profiles_inversion_reproduces_the_requested_load(cal, load, rate)
 
 def test_c020_full_output_lands_on_the_measured_rail():
   # route 00000284: the largest R5 the C020 ever ran was 28497, row 1 at the 1663 key clamp
-  assert abs(eps_ff.r5_from_output(1.0, 20.0, eps_ff.CIVIC_TBA_C020)) == pytest.approx(28497, abs=1)
+  assert abs(eps_ff.r5_from_output(1.0, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28497, abs=1)
   # and its envelope takes the ceiling to key 1108 from 160 km/h
-  assert eps_ff.CIVIC_TBA_C020.key_ceiling(170 / 3.6) == 1108
+  assert eps_cal.CIVIC_TBA_C020.key_ceiling(170 / 3.6) == 1108
 
 
 @pytest.mark.parametrize("candidate,fw,cal", CALIBRATION_CARS, ids=[p.name for _, _, p in CALIBRATION_CARS])
@@ -517,22 +518,22 @@ def test_every_ptm_car_steers_with_its_own_calibration(monkeypatch, candidate, f
 
 def test_crv_carries_its_own_measured_r6_and_load():
   # route 00000006--82bb552a2c: R6 least squares at norm 1450 scaled to the image's 1650; load fitted in m/s with roll
-  assert eps_ff.CRV_TLA_A040.r6_per_deg_s == eps_ff.CRV_TLA_A040_R6_CENTRE and eps_ff.CRV_TLA_A040.r6_angle_gain == eps_ff.CRV_TLA_A040_R6_GAIN
+  assert eps_cal.CRV_TLA_A040.r6_per_deg_s == eps_cal.CRV_TLA_A040_R6_CENTRE and eps_cal.CRV_TLA_A040.r6_angle_gain == eps_cal.CRV_TLA_A040_R6_GAIN
   # the owner's single V5 fit (-138.4 against 0x14A) sits inside the curve the A table gives
-  assert eps_ff.firmware_r6(1.0, 0.0, eps_ff.CRV_TLA_A040) > -138.4 > eps_ff.firmware_r6(1.0, 180.0, eps_ff.CRV_TLA_A040)
-  assert eps_ff.CRV_TLA_A040.load is eps_ff.CRV_TLA_A040_LOAD
-  assert -0.25 < eps_ff.CRV_TLA_A040_LOAD.k1 < -0.10 and eps_ff.CRV_TLA_A040_LOAD.kroll < 0.0
+  assert eps_ff.firmware_r6(1.0, 0.0, eps_cal.CRV_TLA_A040) > -138.4 > eps_ff.firmware_r6(1.0, 180.0, eps_cal.CRV_TLA_A040)
+  assert eps_cal.CRV_TLA_A040.load is eps_cal.CRV_TLA_A040_LOAD
+  assert -0.25 < eps_cal.CRV_TLA_A040_LOAD.k1 < -0.10 and eps_cal.CRV_TLA_A040_LOAD.kroll < 0.0
 
 
 def test_crv_a220_reads_its_own_command_axis_and_predicts_r6_from_the_a040():
-  a220, a040 = eps_ff.CRV_TLA_A220, eps_ff.CRV_TLA_A040
+  a220, a040 = eps_cal.CRV_TLA_A220, eps_cal.CRV_TLA_A040
   # selected by the fw string in either spelling, and not on another car
-  assert eps_ff.select_eps_firmware_calibration("HONDA_CRV_5G", "39990-TLA-A220") is a220
-  assert eps_ff.select_eps_firmware_calibration("HONDA_CIVIC", "39990-TLA-A220") is None
+  assert eps_cal.select_eps_firmware_calibration("HONDA_CRV_5G", "39990-TLA-A220") is a220
+  assert eps_cal.select_eps_firmware_calibration("HONDA_CIVIC", "39990-TLA-A220") is None
   # command axis read from the A220 image (row 0, 0x11AE0), much more compressed than the A040's
   assert a220.r5_key_bp == (0, 161, 222, 322, 409, 534, 696, 998, 1663) and a220.key_clamp == 1774
   # the corrected build's values are the Clarity's curve on that axis: the Clarity's R5 at key x 3840/4096
-  clarity = eps_ff.CLARITY_TRW_A020
+  clarity = eps_cal.CLARITY_TRW_A020
   for key, r5 in zip(a220.r5_key_bp, a220.r5_v, strict=True):
     assert r5 == round(float(np.interp(key * 3840 / 4096, clarity.r5_key_bp, clarity.r5_v)))
   # P: the Clarity's own knots moved to the A220's key domain (x 4096/3840), with the Clarity's values
@@ -541,21 +542,21 @@ def test_crv_a220_reads_its_own_command_axis_and_predicts_r6_from_the_a040():
   assert a220.key_ceiling(120 / 3.6) == 1774 and a220.key_ceiling(160 / 3.6) == 1330
   assert a040.key_ceiling(160 / 3.6) == 1774
   # R6 is predicted from the A040 (shared 3121 / A-centre 16783 / NORM 1650), not measured; load is the CR-V's
-  assert a220.r6_per_deg_s == a040.r6_per_deg_s == eps_ff.CRV_TLA_A040_R6_CENTRE and a220.r6_angle_gain == a040.r6_angle_gain
-  assert a220.load is eps_ff.CRV_TLA_A040_LOAD and a220.e4_per_output == 4096.0
-  assert (a220.p_scale, a220.i_scale) == (a040.p_scale, a040.i_scale) == (eps_ff.CRV_TLA_A040_P_SCALE, eps_ff.CRV_TLA_A040_I_SCALE) == ((1.0,) * 3,) * 2
+  assert a220.r6_per_deg_s == a040.r6_per_deg_s == eps_cal.CRV_TLA_A040_R6_CENTRE and a220.r6_angle_gain == a040.r6_angle_gain
+  assert a220.load is eps_cal.CRV_TLA_A040_LOAD and a220.e4_per_output == 4096.0
+  assert (a220.p_scale, a220.i_scale) == (a040.p_scale, a040.i_scale) == (eps_cal.CRV_TLA_A040_P_SCALE, eps_cal.CRV_TLA_A040_I_SCALE) == ((1.0,) * 3,) * 2
 
 
 
 def test_crv_a220_firmware_output_matches_the_clarity():
   # the point of the corrected build: same firmware output per unit output as the Clarity, everywhere. The 10-06 build
   # (TargetMap-D pasted onto this axis) ran 0.71x below output ~0.09 and up to 1.98x above it.
-  a220, clarity = eps_ff.CRV_TLA_A220, eps_ff.CLARITY_TRW_A020
+  a220, clarity = eps_cal.CRV_TLA_A220, eps_cal.CLARITY_TRW_A020
   def out(cal, u):
     return abs(eps_ff.firmware_output(eps_ff.r5_from_output(u, 10.0, cal), 0.0, cal))
   for u in (0.03, 0.05, 0.1, 0.15, 0.2, 0.3, 0.45, 0.6, 0.8):
     assert out(a220, u) / out(clarity, u) == pytest.approx(1.0, abs=0.03), u
-  pasted = dataclasses.replace(a220, r5_v=eps_ff.TARGET_MAP_D_R5, kp_v=eps_ff.P_ROW_PMINUS5)
+  pasted = dataclasses.replace(a220, r5_v=eps_cal.TARGET_MAP_D_R5, kp_v=eps_cal.P_ROW_PMINUS5)
   assert out(pasted, 0.05) / out(clarity, 0.05) < 0.8 and out(pasted, 0.3) / out(clarity, 0.3) > 1.7
 
 
@@ -569,7 +570,7 @@ def test_command_delay_hands_over_the_value_issued_that_long_ago():
 
 
 def test_command_delay_is_for_town_speeds_only():
-  cal = eps_ff.CLARITY_TRW_A020
+  cal = eps_cal.CLARITY_TRW_A020
   assert eps_ff.command_delay(cal, 0.0) == eps_ff.command_delay(cal, 10.0) == pytest.approx(0.12)
   assert eps_ff.command_delay(cal, 12.5) == pytest.approx(0.06)
   assert eps_ff.command_delay(cal, 15.0) == eps_ff.command_delay(cal, 30.0) == 0.0
@@ -577,7 +578,7 @@ def test_command_delay_is_for_town_speeds_only():
 
 
 def test_every_vehicle_has_its_own_command_delay():
-  delays = {cal.name: cal.cmd_delay_s for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values()}
+  delays = {cal.name: cal.cmd_delay_s for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values()}
   measured = {"clarity_trw_a020": 0.12, "civic_tba_c020": 0.15, "civic_teg_a010": 0.15}
   same_chassis_as_c020 = {"civic_tba_c120": 0.15, "civic_tgg_a120": 0.15}
   inferred = {"insight_txm_a040": 0.15, "civic_tba_a030": 0.15}  # the A030: the TEG's (same Nidec image family)
@@ -637,7 +638,7 @@ def test_the_civic_c020_and_insight_have_their_own_yaw_fitted_rack_maps(candidat
 def test_cars_without_a_yaw_fit_steer_on_a_spec_rack_map(candidate, fw):
   # see test_honda_eps_spec_plant.py for how well the spec map predicts the measured ones
   CP, cal = _ptm_cp(candidate, fw)
-  assert eps_ff.provenance(cal)["rack"].startswith("spec") and honda_eps.get_rack_map(CP, cal) is not None
+  assert eps_cal.provenance(cal)["rack"].startswith("spec") and honda_eps.get_rack_map(CP, cal) is not None
 
 
 @pytest.mark.parametrize("firmware_vgr", ["0", "1"])
@@ -694,21 +695,21 @@ def test_rack_map_asks_less_wheel_than_the_paramsd_ratio_in_tight_turns(monkeypa
 
 
 def test_insight_carries_its_own_measured_load_on_row_0():
-  cal = eps_ff.INSIGHT_TXM_A040
-  assert cal.load is eps_ff.INSIGHT_TXM_A040_LOAD and cal.load != eps_ff.CIVIC_TBA_C020_LOAD
+  cal = eps_cal.INSIGHT_TXM_A040
+  assert cal.load is eps_cal.INSIGHT_TXM_A040_LOAD and cal.load != eps_cal.CIVIC_TBA_C020_LOAD
   assert cal.r5_key_bp == (0, 111, 222, 333, 443, 665, 887, 1108, 1663)  # row 0, every Insight build and variant
   # the corrected PTM: the Clarity's own map and P table, so the firmware law is the Clarity's
-  assert cal.r5_v == eps_ff.CLARITY_TRW_A020_R5 and cal.key_clamp == 1663
-  clarity = eps_ff.CLARITY_TRW_A020
+  assert cal.r5_v == eps_cal.CLARITY_TRW_A020_R5 and cal.key_clamp == 1663
+  clarity = eps_cal.CLARITY_TRW_A020
   assert (cal.kp_key_bp, cal.kp_v) == (clarity.kp_key_bp, clarity.kp_v)
   def out(c, u):
     return abs(eps_ff.firmware_output(eps_ff.r5_from_output(u, 10.0, c), 0.0, c))
   for u in (0.03, 0.05, 0.1, 0.15, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0):
     assert out(cal, u) / out(clarity, u) == pytest.approx(1.0, abs=0.01), u
-  assert cal.e4_per_output == 3840.0 and cal.r6_per_deg_s == eps_ff.INSIGHT_TXM_A040_R6_CENTRE and cal.r6_angle_gain == eps_ff.INSIGHT_TXM_A040_R6_GAIN
+  assert cal.e4_per_output == 3840.0 and cal.r6_per_deg_s == eps_cal.INSIGHT_TXM_A040_R6_CENTRE and cal.r6_angle_gain == eps_cal.INSIGHT_TXM_A040_R6_GAIN
   # the fitted column is lighter than the C020's at speed, which the carried-over load over-asked
-  insight = eps_ff.column_load(10., 0., 25., 0., load=eps_ff.INSIGHT_TXM_A040_LOAD)
-  assert abs(insight) < abs(eps_ff.column_load(10., 0., 25., 0., load=eps_ff.CIVIC_TBA_C020_LOAD))
+  insight = eps_ff.column_load(10., 0., 25., 0., load=eps_cal.INSIGHT_TXM_A040_LOAD)
+  assert abs(insight) < abs(eps_ff.column_load(10., 0., 25., 0., load=eps_cal.CIVIC_TBA_C020_LOAD))
 
 
 @pytest.mark.parametrize("cal", [c for c in ALL_PROFILES if not c.name.startswith("clarity")], ids=lambda c: c.name)
@@ -732,7 +733,7 @@ R6_TELEMETRY = {
 
 @pytest.mark.parametrize("name", R6_TELEMETRY)
 def test_computed_r6_matches_unrailed_telemetry(name):
-  cal = next(c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
+  cal = next(c for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
   centre, shape, tol = R6_TELEMETRY[name]
   for angle, gain in zip(R6_TELEMETRY_ANGLES, shape, strict=True):
     assert eps_ff.firmware_r6(1.0, angle, cal) == pytest.approx(centre * gain, rel=tol)
@@ -746,13 +747,13 @@ def test_computed_r6_matches_unrailed_telemetry(name):
   ("crv_tla_a220", HONDA_VGR_CRV_TLA_A040),
 ])
 def test_every_calibration_takes_its_a_tables_computed_r6(name, profile):
-  cal = next(c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
+  cal = next(c for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
   centre, bp, gain = eps_ff.computed_r6(profile)
   assert (cal.r6_per_deg_s, tuple(cal.r6_angle_bp), tuple(cal.r6_angle_gain)) == (centre, bp, gain)
   assert centre == pytest.approx(-122.0 * HONDA_VGR_CENTRE_DIVISOR_BY_PROFILE[profile] / 16384, abs=0.01)
 
 
-@pytest.mark.parametrize("cal", [c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values()], ids=lambda c: c.name)
+@pytest.mark.parametrize("cal", [c for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values()], ids=lambda c: c.name)
 def test_r6_rails_at_the_firmware_clamp(cal):
   # 0x1380C clamps R6 at +/-32765 in every image: from ~185 deg/s on the Civics, ~260 on the Clarity
   for angle in (0.0, 90.0, 300.0):
@@ -769,30 +770,30 @@ def test_r6_rails_at_the_firmware_clamp(cal):
 def test_a_table_r6_model_matches_the_clarity_and_the_c020_centre():
   # the A-table model, centre scaled by the divisor ratio, against telemetry: Clarity -121.5 at 0-15 deg,
   # C020 -153.2 at 0-15 deg (20647 / 16384 x -122 = -153.7)
-  assert eps_ff.CLARITY_TRW_A020_R6_CENTRE * 20647 / 16384 == pytest.approx(eps_ff.CIVIC_TBA_C020_R6_CENTRE, abs=0.01)
-  assert eps_ff.CIVIC_TBA_C120_R6_CENTRE == pytest.approx(-122.0 * 20972 / 16384, abs=0.01)
-  assert eps_ff.INSIGHT_TXM_A040_R6_CENTRE == pytest.approx(-122.0 * 17613 / 16384, abs=0.01)
-  assert eps_ff.CRV_TLA_A040_R6_CENTRE == pytest.approx(-122.0 * 16783 / 16384, abs=0.01)
+  assert eps_cal.CLARITY_TRW_A020_R6_CENTRE * 20647 / 16384 == pytest.approx(eps_cal.CIVIC_TBA_C020_R6_CENTRE, abs=0.01)
+  assert eps_cal.CIVIC_TBA_C120_R6_CENTRE == pytest.approx(-122.0 * 20972 / 16384, abs=0.01)
+  assert eps_cal.INSIGHT_TXM_A040_R6_CENTRE == pytest.approx(-122.0 * 17613 / 16384, abs=0.01)
+  assert eps_cal.CRV_TLA_A040_R6_CENTRE == pytest.approx(-122.0 * 16783 / 16384, abs=0.01)
 
 
-@pytest.mark.parametrize("name", [cal.name for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values()])
+@pytest.mark.parametrize("name", [cal.name for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values()])
 def test_every_calibration_says_where_every_value_came_from(name):
-  cal = next(c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
-  prov = eps_ff.provenance(cal)
-  assert set(prov) == set(eps_ff.PROVENANCE_FIELDS)
+  cal = next(c for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
+  prov = eps_cal.provenance(cal)
+  assert set(prov) == set(eps_cal.PROVENANCE_FIELDS)
   for key, value in prov.items():
-    assert value.split(':')[0].split(' ')[0] in eps_ff.PROVENANCE_KINDS, (name, key, value)
+    assert value.split(':')[0].split(' ')[0] in eps_cal.PROVENANCE_KINDS, (name, key, value)
   # consistency with the calibration itself
   assert (prov["rack"] == "none") == (cal.rack is None)
   if cal.cmd_delay_s == eps_ff.CMD_DELAY_DEFAULT_S and not prov["cmd_delay"].startswith("measured"):
     assert prov["cmd_delay"].startswith(("default", "inferred")), name
-  assert eps_ff.provenance_summary(cal)
+  assert eps_cal.provenance_summary(cal)
 
 
 @pytest.mark.parametrize("u", np.linspace(.02, 1.0, 50))
 def test_teg_rev_b_asks_the_clarity_r5_and_kp(u):
   # the PTM rule at the TEG's 3840 E4 per unit: the same output gives the Clarity's R5 and Kp, rows 2 and 3 alike
-  teg, clarity = eps_ff.CIVIC_TEG_A010, eps_ff.CLARITY_TRW_A020
+  teg, clarity = eps_cal.CIVIC_TEG_A010, eps_cal.CLARITY_TRW_A020
   key = min(abs(eps_ff.command_key(-u * 3840.0)), 1663)
   r5_teg, r5_cla = float(np.interp(key, teg.r5_key_bp, teg.r5_v)), float(np.interp(key, clarity.r5_key_bp, clarity.r5_v))
   assert r5_teg == pytest.approx(r5_cla, rel=.005, abs=2.)
@@ -811,11 +812,11 @@ REV_B = {  # each calibration's modelled row in the corrected PTM build (KB PTM_
 
 @pytest.mark.parametrize("name", sorted(REV_B))
 def test_held_cars_model_their_corrected_ptm_row_and_ask_the_clarity_command(name):
-  cal = next(c for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
+  cal = next(c for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
   assert (cal.r5_key_bp, cal.r5_v) == REV_B[name]
   scale = cal.e4_per_output / 3840.0
-  assert cal.kp_key_bp == tuple(round(k * scale) for k in eps_ff.CLARITY_TRW_A020_P_KEYS) and cal.kp_v == eps_ff.P_ROW_PMINUS5
-  clarity = eps_ff.CLARITY_TRW_A020
+  assert cal.kp_key_bp == tuple(round(k * scale) for k in eps_cal.CLARITY_TRW_A020_P_KEYS) and cal.kp_v == eps_cal.P_ROW_PMINUS5
+  clarity = eps_cal.CLARITY_TRW_A020
   # PTM rule: the same output asks for the Clarity's R5 and Kp within 0.6% (key truncation and the 4096 cars' knots)
   for u in np.linspace(.05, .9, 35):
     mine, ref = eps_ff.r5_from_output(u, 20.0, cal), eps_ff.r5_from_output(u, 20.0, clarity)
@@ -824,15 +825,15 @@ def test_held_cars_model_their_corrected_ptm_row_and_ask_the_clarity_command(nam
 
 
 def test_every_ptm_calibration_names_its_required_corrected_build():
-  names = {c.name for _, c in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values()}
+  names = {c.name for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values()}
   # the Clarity is the reference and the C020 is held on its owner's Trk4500 build
-  assert set(eps_ff.REQUIRED_PTM_RWD) == names - {"clarity_trw_a020", "civic_tba_c020"}
-  assert all(len(sha) == 8 and int(sha, 16) >= 0 for sha in eps_ff.REQUIRED_PTM_RWD.values())
+  assert set(eps_cal.REQUIRED_PTM_RWD) == names - {"clarity_trw_a020", "civic_tba_c020"}
+  assert all(len(sha) == 8 and int(sha, 16) >= 0 for sha in eps_cal.REQUIRED_PTM_RWD.values())
 
 
 def test_every_calibration_has_a_rack_map_and_the_controller_requires_one(monkeypatch):
-  assert all(cal.rack is not None for _, cal in eps_ff.EPS_FIRMWARE_CALIBRATIONS.values())
+  assert all(cal.rack is not None for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values())
   CP = _params(CLARITY_MODIFIED_FW)
-  assert honda_eps.eps_firmware_calibration(CP, _Params()) is eps_ff.CLARITY_TRW_A020
+  assert honda_eps.eps_firmware_calibration(CP, _Params()) is eps_cal.CLARITY_TRW_A020
   CP.flags = int(CP.flags) & ~int(HondaFlags.VGR_CLARITY_TRW_A020)   # no firmware A table: no geometry, so LatControlPID
   assert honda_eps.eps_firmware_calibration(CP, _Params()) is None

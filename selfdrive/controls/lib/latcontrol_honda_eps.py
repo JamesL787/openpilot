@@ -39,15 +39,17 @@ from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, normalize_honda
 from opendbc.car.honda.values import HondaFlags
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.controls.lib.honda_eps_calibrations import (
+  REQUIRED_PTM_RWD,
+  provenance_summary,
+  select_eps_firmware_calibration,
+)
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import (
   HondaEpsFirmwareFeedforward,
   HondaEpsLateralCore,
   EpsFirmwareCalibration,
   OVERRIDE_FADE_UP_S_DEFAULT,
-  REQUIRED_PTM_RWD,
   command_delay,
-  provenance_summary,
-  select_eps_firmware_calibration,
 )
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl

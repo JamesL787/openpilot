@@ -22,7 +22,8 @@ firmware-inversion feedforward -> output filter -> carcontroller.
 | File | What it holds |
 |---|---|
 | `selfdrive/controls/lib/latcontrol_honda_eps.py` | `LatControlHondaEps`, `use_honda_eps_controller()`, calibration selection, geometry, command delay |
-| `selfdrive/controls/lib/honda_eps_firmware_ff.py` | the firmware law, `EpsFirmwareCalibration` and every image's calibration, `CALIBRATION_PROVENANCE`, `HondaEpsFirmwareFeedforward`, `HondaEpsLateralCore` |
+| `selfdrive/controls/lib/honda_eps_firmware_ff.py` | the firmware law, `computed_r6`, `EpsFirmwareCalibration`, `HondaEpsFirmwareFeedforward`, `HondaEpsLateralCore` |
+| `selfdrive/controls/lib/honda_eps_calibrations.py` | every image's calibration, `EPS_FIRMWARE_CALIBRATIONS`, `CALIBRATION_PROVENANCE`, `REQUIRED_PTM_RWD` |
 | `selfdrive/controls/lib/honda_eps_rack_map.py` | `HondaEpsRackMap` and the yaw-fitted `RackMapTable`s |
 | `selfdrive/controls/lib/honda_eps_spec_plant.py` | rack map, slip factor and column load predicted from a car's published specs and its A table |
 | `selfdrive/controls/lib/honda_lateral_common.py` | what LatControlPID shares: road steer-ratio curves, slew limit, param readers |
@@ -111,7 +112,8 @@ Old `NrdrLat*` names are migrated once at manager start.
 
 1. Read its tables from the image the owners run: command-map rows and the variant record that selects the live row,
    P row, key clamp, envelope, A table (into `steer_ratio.py` if it is new).
-2. Add an `EpsFirmwareCalibration` and an `EPS_FIRMWARE_CALIBRATIONS` entry, with R6 computed from the A table.
+2. Add an `EpsFirmwareCalibration` and an `EPS_FIRMWARE_CALIBRATIONS` entry in `honda_eps_calibrations.py`, with R6
+   computed from the A table and, until the car is measured, its rack map from its published specs (`honda_eps_spec_plant`).
 3. Fill `CALIBRATION_PROVENANCE`, marking everything carried over as `inferred`.
 4. Measure what its logs allow (table above) and replace `inferred` / `default` entries as measurements land.
 

@@ -30,7 +30,8 @@ import zstandard as zstd
 from cereal import log
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, normalize_honda_eps_fw
 from opendbc.car.honda.yaw_rate import RIGHT_LOSS_BP, YAW_RATE_CALIBRATION
-from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import LAT_DELAY_SCHEDULE_DEFAULT, select_eps_firmware_calibration
+from openpilot.selfdrive.controls.lib.honda_eps_calibrations import select_eps_firmware_calibration
+from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import LAT_DELAY_SCHEDULE_DEFAULT
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 
 VSA_ADDR, VSA_LATENCY = 0x94, 0.017
