@@ -185,7 +185,7 @@ CIVIC_TBA_A030 = EpsFirmwareCalibration(
 # Flat envelope. E4 = -3840 * u: opendbc gives the C120 image its own [0, 3840] map, unlike the C020's 4096. Not
 # measured: load (R6 is computed from its A table). Both builds report 39990-TBA,C120: a car on an earlier image must be reflashed.
 # Its rack map is predicted from the 2019-21 Civic sedan's specs through its own A table (no C120 yaw fit yet).
-CIVIC_TBA_C120_RACK = spec_rack_table(CIVIC_2019_SEDAN_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CIVIC_TBA_C120])
+CIVIC_TBA_C120_SPEC_RACK = spec_rack_table(CIVIC_2019_SEDAN_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CIVIC_TBA_C120])
 CIVIC_TBA_C120 = EpsFirmwareCalibration(
   name="civic_tba_c120", e4_per_output=3840.0,
   r5_key_bp=(0, 103, 263, 459, 660, 861, 1111, 1549, 1774), r5_v=(0, 1856, 4739, 8288, 11910, 15532, 20054, 27946, 32000),
@@ -194,7 +194,7 @@ CIVIC_TBA_C120 = EpsFirmwareCalibration(
   r6_per_deg_s=CIVIC_TBA_C120_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CIVIC_TBA_C120_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
-  rack=CIVIC_TBA_C120_RACK,
+  rack=CIVIC_TBA_C120_SPEC_RACK,
 )
 # Civic hatch 39990-TGG-A120, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 6640806d; KB
 # PTM_FIX_FAMILY_20261016/out/TGG), a data-only fix of the Drive TGG release (tracker-1 4250, as the 08-07 build). Row 0
@@ -202,7 +202,7 @@ CIVIC_TBA_C120 = EpsFirmwareCalibration(
 # Clarity's R5 for each key at this car's 4096 E4 per unit (Clarity(key x 3840/4096)), with P on the Clarity's knots
 # x 4096/3840, and A280 is flat in it. Flat envelope. Not measured: load (R6 is computed from its A table, the C020's). Both builds report 39990-TGG,A120: a car
 # on an earlier image must be reflashed. Its rack map is predicted from the Civic hatch Sport's specs through the A table.
-CIVIC_TGG_A120_RACK = spec_rack_table(CIVIC_HATCH_SPORT_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CIVIC_TBA_C020])
+CIVIC_TGG_A120_SPEC_RACK = spec_rack_table(CIVIC_HATCH_SPORT_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CIVIC_TBA_C020])
 CIVIC_TGG_A120 = EpsFirmwareCalibration(
   name="civic_tgg_a120", e4_per_output=4096.0,
   r5_key_bp=(0, 103, 263, 459, 660, 862, 1111, 1549, 1774), r5_v=(0, 1740, 4443, 7769, 11167, 14579, 18798, 26202, 30002),
@@ -211,7 +211,7 @@ CIVIC_TGG_A120 = EpsFirmwareCalibration(
   r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
-  rack=CIVIC_TGG_A120_RACK,
+  rack=CIVIC_TGG_A120_SPEC_RACK,
 )
 # Insight 39990-TXM-A040, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (payload sha256 089a8a72, RWD 7ba37432;
 # KB PTM_FIX_FAMILY_20261016/out/TXM, proof/), on the released PTM 39990-TXM,A040-PTM.rwd (rwd 833a41bf, the 08-08 C020Surface Trk1-4000
@@ -251,7 +251,7 @@ INSIGHT_TXM_A040 = EpsFirmwareCalibration(
 # x 1650/1450 = -138.4) is an angle average against the B-table rate, not the centre value.
 # Column load measured on the same drive (CRV_TLA_A040_LOAD). P/I trims: the owner's (CRV_TLA_A040_P_SCALE /
 # CRV_TLA_A040_I_SCALE, untrimmed). Rack map predicted from the 2017-19 CR-V's specs through its A table (no yaw fit).
-CRV_TLA_A040_RACK = spec_rack_table(CRV_2017_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CRV_TLA_A040])
+CRV_TLA_A040_SPEC_RACK = spec_rack_table(CRV_2017_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CRV_TLA_A040])
 CRV_TLA_A040 = EpsFirmwareCalibration(
   name="crv_tla_a040", e4_per_output=4096.0,
   r5_key_bp=(0, 219, 443, 662, 887, 1108, 1330, 1552, 1663), r5_v=(0, 3699, 7497, 11200, 15001, 18747, 22502, 26252, 28127),
@@ -259,7 +259,7 @@ CRV_TLA_A040 = EpsFirmwareCalibration(
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA_A040_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_TLA_A040_R6_GAIN,
   load=CRV_TLA_A040_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
-  rack=CRV_TLA_A040_RACK,
+  rack=CRV_TLA_A040_SPEC_RACK,
 )
 # CR-V 5G 39990-TLA-A220 (2020+), the CORRECTED PTM build of 2026-10-16, revision b (payload sha256 a62337a9, RWD 2c992997;
 # KB PTM_FIX_FAMILY_20261016/out/A220, proof/) on stock df85f988: command map and P table Clarity-equivalent, D737, KFF45, Norm1650, Trk3200,
@@ -290,7 +290,7 @@ CRV_TLA_A040 = EpsFirmwareCalibration(
 # from its A table: the motor-to-angle constant (3121, 0x19C00), the A table (16783 at centre, 0x11338, byte-identical to
 # the A040's) and NORM (1650, PTM halfword 0x42558) all equal the A040's, so it has the A040's R6.
 # Rack map predicted from the 2020+ CR-V's specs through the same A table (no yaw fit).
-CRV_TLA_A220_RACK = spec_rack_table(CRV_2020_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CRV_TLA_A040])
+CRV_TLA_A220_SPEC_RACK = spec_rack_table(CRV_2020_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CRV_TLA_A040])
 CRV_TLA_A220 = EpsFirmwareCalibration(
   name="crv_tla_a220", e4_per_output=4096.0,
   r5_key_bp=(0, 161, 222, 322, 409, 534, 696, 998, 1663), r5_v=(0, 2720, 3750, 5439, 6917, 9038, 11775, 16880, 28127), key_clamp=1774,
@@ -298,7 +298,7 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA_A040.r6_per_deg_s, r6_angle_bp=CRV_TLA_A040.r6_angle_bp, r6_angle_gain=CRV_TLA_A040.r6_angle_gain,
   load=CRV_TLA_A040_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
-  rack=CRV_TLA_A220_RACK,
+  rack=CRV_TLA_A220_SPEC_RACK,
 )
 
 # normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). TGG-A020 is a separate application from the A120 (its RWD updates only A010/A020)
