@@ -11201,3 +11201,24 @@ Tests:
 - `test_exp_close_lead_cap_deepens_past_chill_floor_at_bounded_rate`: the cap may now step past 0.25 only while it follows
   a target that is already deeper (D-124). The cold first solve converges deeper.
 - The controls suite gives 2200 passed, 2 failed; both failures are the pre-existing latcontrol ones.
+
+## 248. Phantom slowdown behind a far car: a stuck −12 m/s rail reading is bounded by the track's own range (`FAR_RAIL_VETO_OWN_RANGE_FLOOR`, ships ON, 2026-10-18). Closed-loop replay + static only, not driven.
+- **Problem (bookmark, 11c8fa231c0499ed/00000380 3:17–3:21):** a car about 97 m ahead going our speed (the camera saw
+  it) held U11 on the −12 low rail. Its own range was closing at first, so the far-rail range veto kept the rail, and the
+  car braked to −1.27 (log) for nothing.
+- **Change (`far_rail_vrel_floor`, radard.py):** when the veto fires because the own range does close, but slower than
+  the rail claims, publish min(own-range floor, rail floor) instead of the raw rail. The floor is the fit slope − 3 m/s −
+  noise SE. If the own range closes like the rail, or the track is measured, nothing changes. This is a bound, not a
+  deletion (D-041/D-042). `FAR_RAIL_VETO_OWN_RANGE_FLOOR = False` restores the old output.
+- **Replay (Job, closed loop, HEAD dd25c021d + 3f3909da9, ON vs OFF):**
+  - 380 id47: cmd_min −1.42 → −0.69, brake time 2.35 → 2.10 s, ttc_min 7.42 → 8.15, gap_min > 72 m.
+    - OFF reproduces the log (−1.42 vs −1.27; aEgo corr 0.952, vEgo RMSE 0.26).
+    - The published vRel never rose above −6.5.
+  - 366 E1: identical. 366 E2 (id23, 0.35 s lifted at 57 m): same depth, brake time +0.05 s.
+  - Protected set (237, 266, 232, 1f9, 298, 312, 313, 2d5, 268, 2d9, 26b, 236, 287): identical on every metric.
+  - Whole-route lead diff: only those 2 events change. Both had their own range closing faster than 3 m/s, and neither
+    was measured.
+  - Low-fidelity windows (266, 298, 312 23:33, 313 54:51, 287) are low in both modes.
+- **Not fixed:** 366 E2's brake comes from the birth frames, before any check can apply.
+- **Tests:** 3 new in `test_range_vrel_assist.py`. The controls suite gives 2233 passed, 2 failed; both failures are the
+  pre-existing latcontrol ones. py39 compat passes.
