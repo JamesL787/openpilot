@@ -181,8 +181,8 @@ class TestHondaFingerprint:
     # NRDR: modified-EPS Hondas run the angle-space PID controller, as they do on nrdr-nightly
     assert CP.lateralTuning.which() == "pid"
     clarity_matched_bp = [0.0, 25.0 * CV.MPH_TO_MS - 1e-3, 25.0 * CV.MPH_TO_MS, 50.0 * CV.MPH_TO_MS]
-    assert list(CP.lateralParams.torqueBP) == [0, 4096]
-    assert list(CP.lateralParams.torqueV) == [0, 4096]
+    assert list(CP.lateralParams.torqueBP) == [0, 3840]  # the Civic Bosch EPS clamps at key 1663 = E4 3840
+    assert list(CP.lateralParams.torqueV) == [0, 3840]
     assert list(CP.lateralTuning.pid.kpBP) == pytest.approx(clarity_matched_bp)
     assert list(CP.lateralTuning.pid.kiBP) == pytest.approx(clarity_matched_bp)
     assert list(CP.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])

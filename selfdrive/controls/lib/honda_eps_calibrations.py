@@ -121,9 +121,11 @@ CLARITY_TRW_A020 = EpsFirmwareCalibration(
 # Civic Bosch 39990-TBA-C020, 08-05 ClarityPminus5 P117..265 D737 KFF45 Norm1650 Trk4500 TargetMapD Telem (bin
 # sha256 6ecd587c). Measured on the owner's telemetry (routes 284/287/289): E4 = -4096 * u, key clamp 1663 (0x137F2),
 # row 1 is live (94 counts RMS vs 200 for row 0 at 11-20 m/s; the largest R5 on 284 is 28497 = row 1 at 1663), R6,
-# the column load. Not checked: the envelope above 89 km/h.
+# the column load. Not checked: the envelope above 89 km/h. Now sent 3840 per unit (opendbc HONDA_CIVIC_BOSCH): the image
+# clamps at key 1663 = E4 3840, so 4096 left the last ~6% of the output range dead. Its map was set at 4096, so per unit
+# of output it now asks 0.94x the R5 it did and reaches the clamp at full output; the inversion uses 3840.
 CIVIC_TBA_C020 = EpsFirmwareCalibration(
-  name="civic_tba_c020", e4_per_output=4096.0,
+  name="civic_tba_c020", e4_per_output=3840.0,
   r5_key_bp=CIVIC_TBA_C020_ROW1_KEYS, r5_v=TARGET_MAP_D_R5, key_clamp=1663,
   envelope_bp=CIVIC_TBA_C020_ENVELOPE[0], envelope_v=CIVIC_TBA_C020_ENVELOPE[1],
   kp_key_bp=CIVIC_TBA_C020_P_KEYS, kp_v=P_ROW_PMINUS5,
@@ -183,7 +185,7 @@ CIVIC_TBA_A030 = EpsFirmwareCalibration(
 # PTM_FIX_FAMILY_20261016/out/C120), a data-only fix of the Drive C120 release (tracker-1 4250 and tracker-2 5968, as the
 # 08-11 C020Profile build). Its variants select rows 0-4; each row keeps its own key axis and carries the Clarity's R5
 # for each key, and P sits on the Clarity's knots, so every row makes the same command. Row 1 (= row 2) is modelled.
-# Flat envelope. E4 = -3840 * u: opendbc gives the C120 image its own [0, 3840] map, unlike the C020's 4096. Not
+# Flat envelope. E4 = -3840 * u: opendbc sends HONDA_CIVIC_BOSCH 3840, the C120's own key clamp. Not
 # measured: load (R6 is computed from its A table). Both builds report 39990-TBA,C120: a car on an earlier image must be reflashed.
 # Its rack map is predicted from the 2019-21 Civic sedan's specs through its own A table (no C120 yaw fit yet).
 CIVIC_TBA_C120_SPEC_RACK = spec_rack_table(CIVIC_2019_SEDAN_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CIVIC_TBA_C120])
@@ -205,7 +207,7 @@ CIVIC_TBA_C120 = EpsFirmwareCalibration(
 # on an earlier image must be reflashed. Its rack map is predicted from the Civic hatch Sport's specs through the A table.
 CIVIC_TGG_A120_SPEC_RACK = spec_rack_table(CIVIC_HATCH_SPORT_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CIVIC_TBA_C020])
 CIVIC_TGG_A120 = EpsFirmwareCalibration(
-  name="civic_tgg_a120", e4_per_output=4096.0,
+  name="civic_tgg_a120", e4_per_output=3840.0,  # built for 4096 (below), sent 3840: its key clamp is 1663
   r5_key_bp=(0, 103, 263, 459, 660, 862, 1111, 1549, 1774), r5_v=(0, 1740, 4443, 7769, 11167, 14579, 18798, 26202, 30002),
   key_clamp=1663, envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,

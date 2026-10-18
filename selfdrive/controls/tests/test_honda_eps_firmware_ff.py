@@ -427,7 +427,7 @@ def test_cars_without_a_matching_profile_keep_latcontrol_pid(candidate, fw):
 
 def test_a_torque_map_the_profile_does_not_expect_keeps_latcontrol_pid():
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
-  CP.lateralParams.torqueV = [0, 3840]
+  CP.lateralParams.torqueV = [0, 4096]  # the calibration expects [0, 3840]
   assert honda_eps.eps_firmware_calibration(CP, _Params(ON)) is None
 
 
@@ -497,8 +497,10 @@ def test_every_profiles_inversion_reproduces_the_requested_load(cal, load, rate)
 
 
 def test_c020_full_output_lands_on_the_measured_rail():
-  # route 00000284: the largest R5 the C020 ever ran was 28497, row 1 at the 1663 key clamp
-  assert abs(eps_ff.r5_from_output(1.0, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28497, abs=1)
+  # route 00000284 (sent 4096): the largest R5 the C020 ever ran was 28497, row 1 at the 1663 key clamp. At 3840 full
+  # output decodes to key 1662, the last key under the clamp, one key (13 counts) below it, and 4096 still clamps there.
+  assert abs(eps_ff.r5_from_output(1.0, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28484, abs=1)
+  assert abs(eps_ff.r5_from_output(4096 / 3840, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28497, abs=1)
   # and its envelope takes the ceiling to key 1108 from 160 km/h
   assert eps_cal.CIVIC_TBA_C020.key_ceiling(170 / 3.6) == 1108
 
@@ -810,16 +812,22 @@ REV_B = {  # each calibration's modelled row in the corrected PTM build (KB PTM_
 }
 
 
+BUILT_FOR_E4 = {"civic_tgg_a120": 4096.0, "crv_tla_a040": 4096.0}
+
+
 @pytest.mark.parametrize("name", sorted(REV_B))
 def test_held_cars_model_their_corrected_ptm_row_and_ask_the_clarity_command(name):
   cal = next(c for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values() if c.name == name)
   assert (cal.r5_key_bp, cal.r5_v) == REV_B[name]
-  scale = cal.e4_per_output / 3840.0
-  assert cal.kp_key_bp == tuple(round(k * scale) for k in eps_cal.CLARITY_TRW_A020_P_KEYS) and cal.kp_v == eps_cal.P_ROW_PMINUS5
+  built = BUILT_FOR_E4.get(name, 3840.0)  # the E4 per unit the corrected image's rows and P knots were set for
+  assert cal.kp_key_bp == tuple(round(k * built / 3840.0) for k in eps_cal.CLARITY_TRW_A020_P_KEYS) and cal.kp_v == eps_cal.P_ROW_PMINUS5
   clarity = eps_cal.CLARITY_TRW_A020
-  # PTM rule: the same output asks for the Clarity's R5 and Kp within 0.6% (key truncation and the 4096 cars' knots)
+  # PTM rule: the E4 the image was built for asks for the Clarity's R5 and Kp within 0.6% (key truncation and the 4096
+  # images' knots). An image sent less than it was built for (the TGG-A120: built 4096, sent 3840) asks it at a
+  # proportionally larger output.
   for u in np.linspace(.05, .9, 35):
-    mine, ref = eps_ff.r5_from_output(u, 20.0, cal), eps_ff.r5_from_output(u, 20.0, clarity)
+    mine = eps_ff.r5_from_output(u * built / cal.e4_per_output, 20.0, cal)
+    ref = eps_ff.r5_from_output(u, 20.0, clarity)
     assert mine == pytest.approx(ref, rel=.006, abs=40.)
     assert eps_ff.firmware_kp(mine, cal) == pytest.approx(eps_ff.firmware_kp(ref, clarity), rel=.006)
 
