@@ -38,6 +38,7 @@ PIPELINE_OFFSET = 0.038  # logged action -> on-time execution (publish + smoothi
 WHEEL_TO_YAW_LAG = ([3.75, 7.0, 12.0, 20.0, 30.0], [0.08, 0.06, 0.06, 0.08, 0.10])  # s, measured
 SPEED_BANDS = ((2.5, 5), (5, 9), (9, 15), (15, 25), (25, 40))
 ANGLE_BANDS = ((0, 20), (20, 90), (90, 500))
+ROUTE_GAP_S = 100.0
 LAGS = np.arange(0.0, 0.8, 0.01)
 FRAMES_PER_MIN = 6000
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -65,14 +66,22 @@ def rlog_files(paths):
   files = []
   for p in paths:
     files += sorted(glob.glob(os.path.join(p, '**', 'rlog*'), recursive=True)) if os.path.isdir(p) else [p]
-  return sorted(set(files), key=lambda f: (os.path.dirname(os.path.dirname(f)), segment_number(f), f))
+  # route by route, each in segment order: '<route>--<n>/rlog*' folders of several routes must not interleave
+  route = lambda f: re.sub(r'--\d+$', '', os.path.basename(os.path.dirname(f)))  # noqa: E731
+  return sorted(set(files), key=lambda f: (os.path.dirname(os.path.dirname(f)), route(f), segment_number(f), f))
 
 
 def read(files):
   R = {k: [] for k in ('vsa', 'cs', 'cc', 'ctl', 'lp', 'pose', 'model')}
   vsa = {}
   info = {}
+  # Each route's logMonoTime restarts at its device boot, so a later route can run backwards from an earlier one.
+  # Shift each route to start ROUTE_GAP_S after the previous one ended, so time stays increasing across routes.
+  route_of = lambda f: re.sub(r'--\d+$', '', os.path.basename(os.path.dirname(f)))  # noqa: E731
+  prev_route, offset, last_t, pending = None, 0.0, None, False
   for f in files:
+    if route_of(f) != prev_route:
+      prev_route, pending = route_of(f), last_t is not None
     raw = open(f, 'rb').read()
     if f.endswith('.zst'):
       raw = zstd.ZstdDecompressor().stream_reader(raw).read()
@@ -80,6 +89,10 @@ def read(files):
       for e in log.Event.read_multiple_bytes(raw):
         w = e.which()
         t = e.logMonoTime * 1e-9
+        if pending:
+          offset, pending = last_t + ROUTE_GAP_S - t, False
+        t += offset
+        last_t = t if last_t is None else max(last_t, t)
         if w == 'can':
           for m in e.can:
             if m.address == VSA_ADDR:
