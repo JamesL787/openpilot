@@ -93,9 +93,11 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
 
 
 def drop_chestnut() -> None:
+  # tinygrad 02e698160e has no per-device pending-dependency map to clear (Device.pending), so nothing holds the Chestnut
   if "AMD" in Device._opened_devices:
     for d in Device._opened_devices:
-      Device[d].pending.pop(Device["AMD"], None)
+      if (pending := getattr(Device[d], "pending", None)) is not None:
+        pending.pop(Device["AMD"], None)
 
 
 class ChestnutGpuState:
@@ -155,8 +157,9 @@ class FrameMeta:
 
 
 def input_view(buffer: Buffer, shape: tuple[int, ...], dtype: DType, offset: int) -> Tensor:
-  view = buffer.view(math.prod(shape), dtype, offset).ensure_allocated()
-  return Tensor(UOp.from_buffer(view)).reshape(shape)
+  # tinygrad 02e698160e: views are (nbytes, offset) and from_buffer takes the dtype
+  view = buffer.view(math.prod(shape) * dtype.itemsize, offset).ensure_allocated()
+  return Tensor(UOp.from_buffer(view, dtype)).reshape(shape)
 
 
 class ModelState:

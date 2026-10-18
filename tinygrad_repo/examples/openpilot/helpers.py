@@ -2,7 +2,7 @@
 import io, pathlib, pickle, shutil, struct, time, tempfile
 import numpy as np
 from typing import Callable
-from tinygrad import Tensor, Device, Context, dtypes
+from tinygrad import Tensor, Device, Context
 from tinygrad.device import Buffer
 from tinygrad.uop.ops import PatternMatcher, UPat, Ops, graph_rewrite
 from tinygrad.nn.state import get_parameters
@@ -22,7 +22,7 @@ def dump_pickle(obj, path):
       if not isinstance(b, Buffer) or b.device != Device.DEFAULT: return None
       offset += buffers.write(bytes((-offset) % 256))
       offset = (off:=offset) + buffers.write(b.as_memoryview())
-      return b.size, b.dtype, off
+      return b.nbytes, off
 
     p = pickle.Pickler(opcodes)
     p.persistent_id = persistent_id
@@ -37,24 +37,18 @@ def load_pickle(path, *, out_of_band=False):
   with open(path, "rb") as f:
     if not out_of_band: return pickle.load(f)
     opcodes = f.read(struct.unpack('<q', f.read(8))[0])
-    if f.tell() == pathlib.Path(path).stat().st_size:
+    if f.tell() == pathlib.Path(path).stat().st_size:  # StarPilot local patch: an artifact with no out-of-band buffers
       return pickle.loads(opcodes)
-    buffers = Tensor(pathlib.Path(path))[f.tell():].uop.buffer.ensure_allocated()
+    buffers = Tensor(pathlib.Path(path))[f.tell():].to(Device.DEFAULT).realize().uop.buffer
 
-  # FIXME: we load in chunks here because hcq_submit for one large copy is very slow to compile
-  arena, CHUNK_SIZE = Buffer(Device.DEFAULT, buffers.nbytes, dtypes.uchar, preallocate=True), 32 << 20
-  for off in range(0, buffers.nbytes, CHUNK_SIZE):
-    size = min(CHUNK_SIZE, buffers.nbytes-off)
-    arena.view(size, dtypes.uchar, off).ensure_allocated().copy_from(buffers.view(size, dtypes.uchar, off).ensure_allocated())
-
-  def persistent_load(pid): return arena.view(*pid)
+  def persistent_load(pid): return buffers.view(*pid)
 
   u = pickle.Unpickler(io.BytesIO(opcodes))
   u.persistent_load = persistent_load
   return u.load()
 
 def benchmark(fxn:Callable, cb=None, **kwargs):
-  # Select benchmark options when called, without probing devices on import.
+  # StarPilot local patch: select benchmark options when called, without probing devices on import.
   with Context(OPENPILOT_HACKS=1, **{'AMD': {'TC_OPT': 2, 'TC_MIN_GLOBALS': 32}}.get(Device.DEFAULT, {})):
     Device.default.synchronize()
     start = time.perf_counter()

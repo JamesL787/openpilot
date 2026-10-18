@@ -442,9 +442,10 @@ def make_stateful_input_queues(metadata, device):
   queues['packed_npy_inputs'] = Tensor(packed, device='NPY').realize()
   if metadata.get('mapped_image_input', False):
     image_shape = tuple(metadata['input_shapes']['new_img'])
-    buffer = Buffer(device, math.prod(image_shape), dtypes.uint8,
+    # tinygrad 02e698160e: Buffer sizes are bytes and from_buffer takes the dtype
+    buffer = Buffer(device, math.prod(image_shape) * dtypes.uint8.itemsize,
                     options=BufferSpec(cpu_access=True), preallocate=True)
-    queues['mapped_gpu_image'] = Tensor(UOp.from_buffer(buffer)).reshape(image_shape)
+    queues['mapped_gpu_image'] = Tensor(UOp.from_buffer(buffer, dtypes.uint8)).reshape(image_shape)
   for name in metadata['state_pairs']:
     queues[name] = Tensor(np.zeros(metadata['input_shapes'][name], dtype=metadata['input_dtypes'][name]),
                           device=device).contiguous().realize()

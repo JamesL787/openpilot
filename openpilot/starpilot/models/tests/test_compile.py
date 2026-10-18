@@ -66,7 +66,7 @@ class CompileTest(unittest.TestCase):
       return {"outputs": inputs["features_buffer"].sum(axis=1) + inputs["desire"].sum(axis=1) + inputs["traffic_convention"]}
     def supercombo(inputs):
       return {"outputs": policy(inputs)["outputs"] + vision(inputs)["outputs"]}
-    with Context(DEV="CPU:LLVM", IMAGE=0, FLOAT16=0, JIT_BATCH_SIZE=0):
+    with Context(DEV="CPU:LLVM", IMAGE=0, FLOAT16=0):
       for kind in ("split", "supercombo"):
         with self.subTest(kind=kind):
           if kind == "split":
@@ -98,7 +98,7 @@ class CompileTest(unittest.TestCase):
         state = inputs["history"] + inputs["new_img"].float().mean() + inputs["action_t"]
         return {"outputs": state, "next_history": state}
 
-    with Context(DEV="CPU:LLVM", IMAGE=0, FLOAT16=0, JIT_BATCH_SIZE=0):
+    with Context(DEV="CPU:LLVM", IMAGE=0, FLOAT16=0):
       queues, _ = make_stateful_input_queues(metadata, Device.DEFAULT)
       image_buffer = queues["mapped_gpu_image"].uop.base.buffer
       self.assertTrue(image_buffer.options.cpu_access)
@@ -218,7 +218,7 @@ class CompileTest(unittest.TestCase):
       root = Path(temporary)
       source, artifact = root / "fixture.onnx", root / "fixture.pkl"
       source.write_bytes(stateful_onnx())
-      environment = dict(os.environ, DEV="CPU:LLVM", JIT_BATCH_SIZE="0", IMAGE="0", FLOAT16="0")
+      environment = dict(os.environ, DEV="CPU:LLVM", IMAGE="0", FLOAT16="0")
       environment.pop("WARP_DEV", None)
       command = [sys.executable, "-m", "openpilot.starpilot.models.compile", "--model-type", "supercombo",
                  "--model-size", "4x4", "--camera-resolutions", "8x8", "--behavior-version", "v16",

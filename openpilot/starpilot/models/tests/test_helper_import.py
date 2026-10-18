@@ -97,7 +97,8 @@ with Context(DEV=""), patch.object(type(Device), "_select_device", property(unex
     get_device = type(Device).__getitem__
 
     def disk_only(device, name):
-      self.assertEqual(name.split(":", 1)[0], "DISK")
+      # tinygrad 02e698160e reads DISK tensors through the host CPU device; a GPU must still never be opened
+      self.assertIn(name.split(":", 1)[0], ("DISK", "CPU"))
       return get_device(device, name)
 
     with tempfile.TemporaryDirectory() as temporary, Context(DEV="CPU:LLVM"), \
