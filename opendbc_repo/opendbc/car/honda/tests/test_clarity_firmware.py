@@ -49,8 +49,17 @@ def test_complete_original_cohort_exact_and_fuzzy_keep_correct_controller(versio
   assert (ci.CC.modified_eps_steering is not None) == modified   # the modified-EPS steering stage
 
 
-@pytest.mark.parametrize("ecu", (Ecu.eps, Ecu.vsa, Ecu.fwdRadar))
-@pytest.mark.parametrize("corruption", ("missing", "unknown", "mixed"))
+def test_cohort_without_radar_response_fingerprints():
+  # what the modified Clarity actually answers: EPS, VSA and SRS, no fwdRadar/gateway/shift-by-wire
+  answered = {Ecu.eps: b"39990-TRW,A020\x00\x00", Ecu.vsa: b"57114-TRW-A010\x00\x00", Ecu.srs: b"77959-TRW-A210\x00\x00"}
+  fw = [structs.CarParams.CarFw(ecu=ecu, address=address, subAddress=0, fwVersion=answered[ecu], brand="honda")
+        for ecu, address in SOURCE if ecu in answered]
+  assert match_fw_to_car(fw, "", log=False)[1] == {CAR.HONDA_CLARITY}
+
+
+@pytest.mark.parametrize("ecu,corruption", [(ecu, corruption) for ecu in (Ecu.eps, Ecu.vsa, Ecu.fwdRadar)
+                                            for corruption in ("missing", "unknown", "mixed")
+                                            if not (ecu == Ecu.fwdRadar and corruption == "missing")])
 def test_mandatory_evidence_cannot_fall_through_to_fuzzy(ecu, corruption):
   fw = cohort()
   original = next(observation for observation in fw if observation.ecu == ecu)

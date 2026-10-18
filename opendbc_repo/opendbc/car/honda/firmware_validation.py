@@ -5,7 +5,9 @@ from opendbc.car.structs import CarParams
 def validate_fw_match(candidate: str, observed: LiveFwVersions, versions: OfflineFwVersions) -> bool:
   if candidate != "HONDA_CLARITY":
     return True
-  required = {CarParams.Ecu.eps, CarParams.Ecu.vsa, CarParams.Ecu.fwdRadar}
+  # Real Clarities do not always answer the fwdRadar query (this car answers EPS, VSA and SRS only, on every logged
+  # drive), so the radar is checked when present but is not required.
+  required = {CarParams.Ecu.eps, CarParams.Ecu.vsa}
   expected = versions.get(candidate, {})
   found = set()
   for (ecu, address, subaddress), allowed in expected.items():
