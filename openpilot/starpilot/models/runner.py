@@ -17,6 +17,7 @@ from openpilot.starpilot.models.parser import Parser
 from openpilot.starpilot.models.catalog import ARTIFACT_ABI, COMPILER_REVISION
 from openpilot.starpilot.models.receipt import PreparedArtifact, artifact_identity, prepare_artifact
 from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
+from openpilot.common.transformations.model import model_frame_corrections
 
 
 SUPPORTED_VERSIONS = frozenset(f"v{version}" for version in range(8, 17))
@@ -160,6 +161,9 @@ class CatalogModelState:
     self.run_policy = artifact["run_policy"]
     self.warp_enqueue = artifact[(cam_w, cam_h)]
     self.onnx_history = self.model_type == "supercombo" and bool(self.metadata["model"].get("state_pairs"))
+    # personal branch: a model with its own camera geometry (our wide-FOV students) corrects modeld's stock transforms
+    geometry = (self.metadata.get("model") or self.metadata.get("vision") or {}).get("model_geometry")
+    self.model_frame_corrections = model_frame_corrections(geometry)
     self.queue_device = artifact["execution_device"]
     self.warp_device = artifact["warp_device"]
     if (not isinstance(self.queue_device, str) or not isinstance(self.warp_device, str) or

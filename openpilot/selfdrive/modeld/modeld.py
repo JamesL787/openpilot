@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from collections.abc import Callable
 import base64
+import contextlib
 import ctypes
 import gc
 from functools import cached_property
@@ -90,6 +91,47 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
   return log.ModelDataV2.Action(desiredCurvature=float(desired_curvature),
                                 desiredAcceleration=float(desired_accel),
                                 shouldStop=bool(stop))
+
+
+def pin_chestnut_gfxclk() -> None:
+  """Personal branch (from vfn 4c63b8d069). With AM_POWER_LIMIT the AM driver leaves every clock to the SMU (auto), which
+  costs ~6 ms/frame on our wide-FOV graphs; with no limit it pins every domain at max, and pinned max memory/fabric
+  clocks made those graphs' summarizer matmuls intermittently write a wrong element (the action NaN; bench 76/800).
+  Pinning only the core clock at max: 0/800, +0.8 ms vs all-max. CHESTNUT_PIN_GFXCLK=0 leaves the SMU in charge."""
+  if os.getenv("CHESTNUT_PIN_GFXCLK", "1") != "1" or "AMD" not in Device._opened_devices:
+    return
+  try:
+    smu = Device["AMD"].iface.dev_impl.smu
+    clk = smu.smu_mod.PPCLK_GFXCLK
+    freq = smu.read_clocks((clk,))[clk][-1]
+    smu._send_msg(smu.smu_mod.PPSMC_MSG_SetSoftMinByFreq, clk << 16 | freq, timeout=20)
+    smu._send_msg(smu.smu_mod.PPSMC_MSG_SetSoftMaxByFreq, clk << 16 | freq)
+    cloudlog.info(f"chestnut: GFXCLK pinned at {freq} MHz, memory/fabric clocks left to the SMU")
+  except Exception:
+    cloudlog.exception("chestnut: pinning GFXCLK failed, clocks stay under the SMU")
+
+
+CHESTNUT_RETRY_MARKER = "/dev/shm/modeld_chestnut_retry"
+CHESTNUT_RETRY_WINDOW_S = 600.
+
+
+def request_big_model_retry(params: Params) -> bool:
+  """Personal branch, comma #39086: a failed big model load (the Chestnut re-enumerating during a flash, a crank cutting
+  its power) is retried once with an onroad cycle. comma latches it in a ChestnutRetry param; this keeps it in a /dev/shm
+  marker instead (no params_keys.h change): at most one retry per 10 minutes, cleared by a successful load."""
+  try:
+    if time.time() - os.path.getmtime(CHESTNUT_RETRY_MARKER) < CHESTNUT_RETRY_WINDOW_S:
+      return False
+  except OSError:
+    pass
+  try:
+    with open(CHESTNUT_RETRY_MARKER, "w") as f:
+      f.write(str(time.time()))
+  except OSError:
+    return False
+  cloudlog.error("big model load failed, cycling onroad to retry")
+  params.put_bool("OnroadCycleRequested", True)
+  return True
 
 
 def drop_chestnut() -> None:
@@ -382,6 +424,7 @@ def main(demo=False):
           m = ModelState(vipc_client_main.width, vipc_client_main.height, True)
           m.warmup()
           prepared = receipt_owner.prepare(big_path, big_artifact_identity)
+        pin_chestnut_gfxclk()
         big_prepared = prepared
         big_model = m
       except Exception:
@@ -395,6 +438,11 @@ def main(demo=False):
     params.put_bool("ChestnutActive", model is not None)
     if model is None:
       drop_chestnut()
+      if not demo and not recovery_small_only:
+        request_big_model_retry(params)
+    else:
+      with contextlib.suppress(OSError):
+        os.remove(CHESTNUT_RETRY_MARKER)
 
   if small_model is None:
     small_model, small_prepared, selected_small_failed = load_small()
@@ -530,6 +578,9 @@ def main(demo=False):
 
     bufs = {name: buf_extra if 'big' in name else buf_main for name in model.vision_input_names}
     transforms = {name: model_transform_extra if 'big' in name else model_transform_main for name in model.vision_input_names}
+    if (corrections := getattr(model, 'model_frame_corrections', None)) is not None:  # personal branch: wide-FOV geometry
+      transforms = {name: (model_transform_extra @ corrections[1] if 'big' in name else model_transform_main @ corrections[0]).astype(np.float32)
+                    for name in model.vision_input_names}
     frame_delay = DT_MDL # compensate for time passed since the frame was captured: current_time - timestamp_eof is 50ms on average
     action_delay = DT_MDL / 2 # middle of the interval between model output (current state) and next frame (expected state)
     lat_action_t = lat_delay + frame_delay + action_delay

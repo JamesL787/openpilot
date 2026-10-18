@@ -41,12 +41,15 @@ def make_metadata_dict(path, runner):
       parser.reader.skip_field(wire_type)
   if "output_slices" not in properties:
     raise ValueError(f"Missing output_slices metadata: {path}")
-  return {
+  metadata = {
     "model_checkpoint": properties.get("model_checkpoint"),
     "output_slices": pickle.loads(base64.b64decode(properties["output_slices"])),
     "input_shapes": {name: tuple(spec.shape) for name, spec in runner.graph_inputs.items()},
     "output_shapes": output_shapes,
   }
+  if "model_geometry" in properties:  # personal branch: wide-FOV students carry their own camera geometry
+    metadata["model_geometry"] = properties["model_geometry"]
+  return metadata
 
 
 ARTIFACT_FORMAT_VERSION = 1

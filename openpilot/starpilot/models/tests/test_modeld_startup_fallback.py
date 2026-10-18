@@ -1,3 +1,4 @@
+import contextlib
 """CPU-only regressions for modeld startup scheduling and runner-owned fallback."""
 
 import ast
@@ -184,7 +185,10 @@ def test_big_worker_waits_before_load_and_timeout_preserves_small_fallback(custo
          "params": params, "requested_model_id": "big", "ModelVariant": ModelVariant,
          "CP": SimpleNamespace(brand="mock"), "demo": False,
          "wait_for_chestnut_power": lambda CP, timeout: events.append("power"), "attach_jetlink": attach_jetlink,
-         "drop_chestnut": Mock(), "release_compile_pool": Mock(), "gc": Mock()}
+         "drop_chestnut": Mock(), "release_compile_pool": Mock(), "gc": Mock(),
+         # personal branch: GFXCLK pin after a big load, one onroad-cycle retry after a failed one
+         "pin_chestnut_gfxclk": Mock(), "request_big_model_retry": Mock(), "recovery_small_only": False,
+         "contextlib": contextlib, "os": SimpleNamespace(remove=Mock()), "CHESTNUT_RETRY_MARKER": "/dev/shm/retry"}
   wrapper = ast.parse("def startup():\n  pass").body[0]
   wrapper.body = body[start:end] + [ast.Return(value=ast.Call(func=ast.Name(id="locals", ctx=ast.Load()), args=[], keywords=[]))]
   execute([wrapper], env)
@@ -206,6 +210,13 @@ def test_big_worker_waits_before_load_and_timeout_preserves_small_fallback(custo
   params.put_bool.assert_any_call("ChestnutLoading", False)
   assert receipt.loaded.call_args.args[1] == (ModelVariant.SMALL if timeout else ModelVariant.CHESTNUT)
   assert receipt.loaded.call_args.args[2] == ("chestnut-load-failed" if timeout else None)
+  assert env["pin_chestnut_gfxclk"].call_count == int(not timeout)
+  if timeout:
+    env["request_big_model_retry"].assert_called_once_with(params)
+    env["os"].remove.assert_not_called()
+  else:
+    env["request_big_model_retry"].assert_not_called()
+    env["os"].remove.assert_called_once_with("/dev/shm/retry")
 
 
 def test_wait_for_enumeration_succeeds_without_real_sleep(monkeypatch):
