@@ -12,11 +12,12 @@ their calibration are carried over from a related car until a drive measures the
 torque map is not the linear [0, E4 cap] the calibration expects, keeps LatControlPID. The setting is read once, when
 controlsd starts.
 Per vehicle, from its calibration: the command delay (cmd_delay_s) and the model-delay schedule (lat_delay_schedule),
-every car (measured ones, else a default), and the yaw-identified rack map (rack) where one was identified.
+every car (measured ones, else a default), and the rack map (rack): yaw-fitted on the car, else predicted from its
+published specs (honda_eps_spec_plant).
 
 This shell does what LatControlPID does around its PID for a modified-EPS Honda, reusing the same helpers so
 each setting behaves identically: curvature -> wheel angle through the firmware VGR table (with the ratio and
-slip factor identified against the yaw sensor where the calibration has one, honda_eps_rack_map.HondaEpsRackMap) or the road-measured ratio
+slip factor of the calibration's rack map where it has one, honda_eps_rack_map.HondaEpsRackMap) or the road-measured ratio
 curve (HondaEpsFirmwareVgr), the angle-rate ceiling (HondaEpsAngleRateLimit), the shared
 driver-override detector, and the speed-banded output low-pass (HondaTorqueOutputLowPassFilter /
 HondaTorqueOutputLpfTau*). Settings read elsewhere (carcontroller, carstate, controlsd) apply unchanged.
@@ -120,7 +121,7 @@ def scheduled_lateral_delay(schedule: tuple, v_ego: float) -> float:
 
 
 def get_rack_map(CP, calibration: EpsFirmwareCalibration | None) -> HondaEpsRackMap | None:
-  """The yaw-identified rack map, for a calibration that has one and the firmware VGR table it was identified through."""
+  """The calibration's rack map (yaw-fitted or spec-predicted), on the firmware VGR table it was made for."""
   vgr_inverse = get_honda_vgr_inverse(CP.flags)
   if calibration is None or calibration.rack is None or vgr_inverse is None:
     return None
@@ -170,9 +171,9 @@ class LatControlHondaEps(LatControl):
     self.steering_pressed_prev = False
 
   def _desired_angle_no_offset(self, VM, v_ego, roll, desired_curvature):
-    # A yaw-identified rack map, where the car has one, is the geometry: road-measured against the car's own yaw
-    # sensor on the exact firmware table. Otherwise the same selection as LatControlPID (road curve, or the firmware
-    # table with HondaEpsFirmwareVgr).
+    # The calibration's rack map, where it has one, is the geometry: fitted against the car's own yaw sensor, or
+    # predicted from its specs, on the exact firmware table. Otherwise the same selection as LatControlPID (road
+    # curve, or the firmware table with HondaEpsFirmwareVgr).
     if self.rack_map is not None:
       return self.rack_map.angle_from_curvature(desired_curvature, v_ego, roll)
     if self.sr_curve is not None and not (self.use_firmware_vgr and self.vgr_inverse is not None):

@@ -635,9 +635,10 @@ def test_the_civic_c020_and_insight_have_their_own_yaw_fitted_rack_maps(candidat
 
 @pytest.mark.parametrize("candidate,fw", [(CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C120\x00\x00'),
                                           (CAR.HONDA_CRV_5G, b'39990-TLA,A040\x00\x00')])
-def test_cars_without_a_yaw_fit_have_no_rack_map(candidate, fw):
+def test_cars_without_a_yaw_fit_steer_on_a_spec_rack_map(candidate, fw):
+  # see test_honda_eps_spec_plant.py for how well the spec map predicts the measured ones
   CP, cal = _ptm_cp(candidate, fw)
-  assert cal.rack is None and honda_eps.get_rack_map(CP, cal) is None
+  assert eps_ff.provenance(cal)["rack"].startswith("spec") and honda_eps.get_rack_map(CP, cal) is not None
 
 
 @pytest.mark.parametrize("firmware_vgr", ["0", "1"])

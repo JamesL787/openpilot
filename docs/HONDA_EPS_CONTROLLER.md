@@ -24,6 +24,7 @@ firmware-inversion feedforward -> output filter -> carcontroller.
 | `selfdrive/controls/lib/latcontrol_honda_eps.py` | `LatControlHondaEps`, `use_honda_eps_controller()`, calibration selection, geometry, command delay |
 | `selfdrive/controls/lib/honda_eps_firmware_ff.py` | the firmware law, `EpsFirmwareCalibration` and every image's calibration, `CALIBRATION_PROVENANCE`, `HondaEpsFirmwareFeedforward`, `HondaEpsLateralCore` |
 | `selfdrive/controls/lib/honda_eps_rack_map.py` | `HondaEpsRackMap` and the yaw-fitted `RackMapTable`s |
+| `selfdrive/controls/lib/honda_eps_spec_plant.py` | rack map, slip factor and column load predicted from a car's published specs and its A table |
 | `selfdrive/controls/lib/honda_lateral_common.py` | what LatControlPID shares: road steer-ratio curves, slew limit, param readers |
 | `opendbc/car/honda/steer_ratio.py` | each image's firmware A (position) table |
 | `opendbc/car/honda/yaw_rate.py` | each car's VSA yaw (0x94) calibration |
@@ -52,15 +53,20 @@ load, command delay and geometry; R6 comes from the image), the `HondaEpsControl
 - **Vehicle**, measured on the road: column load, residual-PID trims, command delay, model-delay schedule, rack map.
 
 `CALIBRATION_PROVENANCE` records, for every quantity of every image, whether it is `firmware`, `measured` (with the
-routes), `inferred` (carried over from a related car), `default` or `none`. A test requires the record to be
+routes), `inferred` (carried over from a related car), `spec` (predicted from published specs), `default` or `none`. A test requires the record to be
 complete, and the controller logs the summary at start.
 
 ## Rules the controller follows
 
-- **Geometry.** A calibration's yaw-fitted rack map, where it has one, is the geometry (firmware A table x a rack ratio
-  by angle + slip factor, fitted against the car's yaw sensor). A car with no rack map of its own may carry a related car's (the A030
-  uses the TEG-A010's: same Nidec Civic, same A table), marked `inferred`. Without one: the road-measured steer-ratio
-  curve, or the firmware table with `HondaEpsFirmwareVgr` on, or the table alone when the car has no road curve.
+- **Geometry.** The calibration's rack map is the geometry: firmware A table x a rack ratio by angle + slip factor.
+  Where the car has been measured it is fitted against its yaw sensor. Otherwise it is predicted from Honda's
+  published specs (`honda_eps_spec_plant`): every measured map is the A table, a tan, and one centre ratio R0, and R0
+  comes from the published lock-to-lock turns and lock ratio through the A table (held out one car at a time, 1.6%
+  rms, 2.5% worst); the slip factor comes from the axle loads (within 10%). The A030 carries the TEG-A010's measured
+  map (same car, same A table). Without a rack map: the road-measured steer-ratio curve, or the firmware table with
+  `HondaEpsFirmwareVgr` on.
+- **Column load.** Measured per car, or carried over from the same platform. `spec_load_terms` predicts one from
+  front-axle mass / R0^2 for an image with no sibling (holds within ~12%, turn rates ~15%, held out).
 - **Command delay.** Every car delays the curvature it executes by its `cmd_delay_s` below 10 m/s, faded to 0 by
   15 m/s: this controller reaches a command faster than the PID, and the model gives back only part of a shorter
   delay. How much it gives back depends on the model: an action-head model moves its aim about half as far as the

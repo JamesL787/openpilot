@@ -39,6 +39,8 @@ from opendbc.car.honda.steer_ratio import (
 )
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CIVIC_TEG_A010_RACK, CLARITY_TRW_A020_RACK, \
   INSIGHT_TXM_A040_RACK, RackMapTable
+from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, CIVIC_HATCH_SPORT_SPEC, CRV_2017_SPEC, \
+  CRV_2020_SPEC, spec_rack_table
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.pid import PIDController
 
@@ -130,8 +132,9 @@ class EpsFirmwareCalibration:
   cmd_delay_s: float = CMD_DELAY_DEFAULT_S  # command delay in town, see CMD_DELAY_SPEED_BP
   default_on: bool = False     # steer with this controller without HondaEpsController (validated on this car)
   lat_delay_schedule: tuple = LAT_DELAY_SCHEDULE_DEFAULT  # (speed bp, s): the delay told to the model, see above
-  rack: RackMapTable | None = None  # yaw-identified rack ratio after the firmware angle table; when set it is the
-                                    # geometry, ahead of the road curve and HondaEpsFirmwareVgr
+  rack: RackMapTable | None = None  # rack ratio after the firmware angle table, yaw-fitted on the car or predicted
+                                    # from its specs (honda_eps_spec_plant); when set it is the geometry, ahead of the
+                                    # road curve and HondaEpsFirmwareVgr
   kp_pieces: tuple = field(init=False, repr=False, compare=False)
 
   def __post_init__(self):
@@ -371,6 +374,8 @@ CIVIC_TBA_A030 = EpsFirmwareCalibration(
 # for each key, and P sits on the Clarity's knots, so every row makes the same command. Row 1 (= row 2) is modelled.
 # Flat envelope. E4 = -3840 * u: opendbc gives the C120 image its own [0, 3840] map, unlike the C020's 4096. Not
 # measured: load (R6 is computed from its A table). Both builds report 39990-TBA,C120: a car on an earlier image must be reflashed.
+# Its rack map is predicted from the 2019-21 Civic sedan's specs through its own A table (no C120 yaw fit yet).
+CIVIC_TBA_C120_RACK = spec_rack_table(CIVIC_2019_SEDAN_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CIVIC_TBA_C120])
 CIVIC_TBA_C120 = EpsFirmwareCalibration(
   name="civic_tba_c120", e4_per_output=3840.0,
   r5_key_bp=(0, 103, 263, 459, 660, 861, 1111, 1549, 1774), r5_v=(0, 1856, 4739, 8288, 11910, 15532, 20054, 27946, 32000),
@@ -379,13 +384,15 @@ CIVIC_TBA_C120 = EpsFirmwareCalibration(
   r6_per_deg_s=CIVIC_TBA_C120_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CIVIC_TBA_C120_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
+  rack=CIVIC_TBA_C120_RACK,
 )
 # Civic hatch 39990-TGG-A120, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 6640806d; KB
 # PTM_FIX_FAMILY_20261016/out/TGG), a data-only fix of the Drive TGG release (tracker-1 4250, as the 08-07 build). Row 0
 # is live: both variant records (TGGA5, TGGA6, at 0x4B500) select it. It keeps its own key axis and carries the
 # Clarity's R5 for each key at this car's 4096 E4 per unit (Clarity(key x 3840/4096)), with P on the Clarity's knots
 # x 4096/3840, and A280 is flat in it. Flat envelope. Not measured: load (R6 is computed from its A table, the C020's). Both builds report 39990-TGG,A120: a car
-# on an earlier image must be reflashed.
+# on an earlier image must be reflashed. Its rack map is predicted from the Civic hatch Sport's specs through the A table.
+CIVIC_TGG_A120_RACK = spec_rack_table(CIVIC_HATCH_SPORT_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CIVIC_TBA_C020])
 CIVIC_TGG_A120 = EpsFirmwareCalibration(
   name="civic_tgg_a120", e4_per_output=4096.0,
   r5_key_bp=(0, 103, 263, 459, 660, 862, 1111, 1549, 1774), r5_v=(0, 1740, 4443, 7769, 11167, 14579, 18798, 26202, 30002),
@@ -394,6 +401,7 @@ CIVIC_TGG_A120 = EpsFirmwareCalibration(
   r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15,  # the C020's (same Civic Bosch chassis)
+  rack=CIVIC_TGG_A120_RACK,
 )
 # Insight 39990-TXM-A040, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (payload sha256 089a8a72, RWD 7ba37432;
 # KB PTM_FIX_FAMILY_20261016/out/TXM, proof/), on the released PTM 39990-TXM,A040-PTM.rwd (rwd 833a41bf, the 08-08 C020Surface Trk1-4000
@@ -432,7 +440,8 @@ INSIGHT_TXM_A040 = EpsFirmwareCalibration(
 # feedback_R6 on steeringRateDeg, hands off, route 82bb (-121.6 at a 15 ms lag on the t9-67523237 build, norm 1450;
 # x 1650/1450 = -138.4) is an angle average against the B-table rate, not the centre value.
 # Column load measured on the same drive (CRV_TLA_A040_LOAD). P/I trims: the owner's (CRV_TLA_A040_P_SCALE /
-# CRV_TLA_A040_I_SCALE, untrimmed).
+# CRV_TLA_A040_I_SCALE, untrimmed). Rack map predicted from the 2017-19 CR-V's specs through its A table (no yaw fit).
+CRV_TLA_A040_RACK = spec_rack_table(CRV_2017_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CRV_TLA_A040])
 CRV_TLA_A040 = EpsFirmwareCalibration(
   name="crv_tla_a040", e4_per_output=4096.0,
   r5_key_bp=(0, 219, 443, 662, 887, 1108, 1330, 1552, 1663), r5_v=(0, 3699, 7497, 11200, 15001, 18747, 22502, 26252, 28127),
@@ -440,6 +449,7 @@ CRV_TLA_A040 = EpsFirmwareCalibration(
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA_A040_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=CRV_TLA_A040_R6_GAIN,
   load=CRV_TLA_A040_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
+  rack=CRV_TLA_A040_RACK,
 )
 # CR-V 5G 39990-TLA-A220 (2020+), the CORRECTED PTM build of 2026-10-16, revision b (payload sha256 a62337a9, RWD 2c992997;
 # KB PTM_FIX_FAMILY_20261016/out/A220, proof/) on stock df85f988: command map and P table Clarity-equivalent, D737, KFF45, Norm1650, Trk3200,
@@ -469,6 +479,8 @@ CRV_TLA_A040 = EpsFirmwareCalibration(
 # Carried over, NOT read from this image: load = CRV_TLA_A040_LOAD and the P/I trims (the CR-V's, see CRV_TLA_A040). R6 is computed
 # from its A table: the motor-to-angle constant (3121, 0x19C00), the A table (16783 at centre, 0x11338, byte-identical to
 # the A040's) and NORM (1650, PTM halfword 0x42558) all equal the A040's, so it has the A040's R6.
+# Rack map predicted from the 2020+ CR-V's specs through the same A table (no yaw fit).
+CRV_TLA_A220_RACK = spec_rack_table(CRV_2020_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CRV_TLA_A040])
 CRV_TLA_A220 = EpsFirmwareCalibration(
   name="crv_tla_a220", e4_per_output=4096.0,
   r5_key_bp=(0, 161, 222, 322, 409, 534, 696, 998, 1663), r5_v=(0, 2720, 3750, 5439, 6917, 9038, 11775, 16880, 28127), key_clamp=1774,
@@ -476,6 +488,7 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CRV_TLA_A040.r6_per_deg_s, r6_angle_bp=CRV_TLA_A040.r6_angle_bp, r6_angle_gain=CRV_TLA_A040.r6_angle_gain,
   load=CRV_TLA_A040_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
+  rack=CRV_TLA_A220_RACK,
 )
 
 # normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). TGG-A020 is a separate application from the A120 (its RWD updates only A010/A020)
@@ -499,9 +512,10 @@ EPS_FIRMWARE_CALIBRATIONS = {
 #   firmware  read or computed from the image the owners run
 #   measured  fitted on that car's own drives (the routes say which)
 #   inferred  carried over from a related car or derived indirectly; re-measure when its logs exist
+#   spec      predicted from the car's published specs and its A table (honda_eps_spec_plant); re-measure when its logs exist
 #   default   the controller-wide default, nothing car-specific yet
 #   none      not applicable (no rack map: the road curve or the firmware table is the geometry)
-PROVENANCE_KINDS = ('firmware', 'measured', 'inferred', 'default', 'none')
+PROVENANCE_KINDS = ('firmware', 'measured', 'inferred', 'spec', 'default', 'none')
 PROVENANCE_FIELDS = ('row', 'kp_axis', 'key_clamp', 'envelope', 'r6', 'load', 'trims', 'cmd_delay', 'model_delay', 'rack')
 CALIBRATION_PROVENANCE = {
   "clarity_trw_a020": {
@@ -550,7 +564,8 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table",
     "load": "inferred: the C020's",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "default: the Clarity's schedule", "rack": "none",
+    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "default: the Clarity's schedule",
+    "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
   },
   "civic_tgg_a120": {
     "row": "firmware: both variant records (TGGA5, TGGA6) select row 0",
@@ -558,7 +573,8 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table (the C020's)",
     "load": "inferred: the C020's",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "default: the Clarity's schedule", "rack": "none",
+    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "default: the Clarity's schedule",
+    "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
   },
   "insight_txm_a040": {
     "row": "firmware: row 0 in every build and variant",
@@ -578,7 +594,8 @@ CALIBRATION_PROVENANCE = {
     "load": "measured: the owner's telemetry route 82bb",
     "trims": "measured: the owner drives it untrimmed",
     "cmd_delay": "default (the owner's LatControlPID drive ran 0.08 s late: re-check on this controller)",
-    "model_delay": "default: the Clarity's schedule", "rack": "none",
+    "model_delay": "default: the Clarity's schedule",
+    "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
   },
   "crv_tla_a220": {
     "row": "firmware: rows 0-5 all Clarity-equivalent in the corrected build, so the untraced variant row does not matter",
@@ -586,7 +603,8 @@ CALIBRATION_PROVENANCE = {
     "r6": "firmware: computed from its A table (byte-identical to the A040's)",
     "load": "inferred: the A040 owner's (the A220 drives 0x30A-0x30D ran the 10-06 build: refit after the reflash)",
     "trims": "inferred: the A040 owner's",
-    "cmd_delay": "default", "model_delay": "default: the Clarity's schedule", "rack": "none",
+    "cmd_delay": "default", "model_delay": "default: the Clarity's schedule",
+    "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
   },
 }
 
