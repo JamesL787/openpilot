@@ -7,14 +7,14 @@ from openpilot.starpilot.models import manager
 from openpilot.starpilot.models.catalog import BUNDLED_CURRENT, DEFAULT_SMALL, DEFAULT_SMALL_SHA256
 
 
-def test_unset_small_loads_shipped_rdf_v4_with_v15_parser(tmp_path, monkeypatch):
+def test_unset_small_loads_the_built_in_small_model_with_its_parser(tmp_path, monkeypatch):
   artifact = tmp_path / "shipped.pkl"
   artifact.write_bytes(b"verified fixture")
   monkeypatch.setattr(manager, "shipped_default", lambda: artifact)
   selected = manager.resolve_runtime(False, root=tmp_path)
   assert manager.preferences(tmp_path)["small"] == DEFAULT_SMALL
-  assert selected.small_id == "rdf43"
-  assert selected.small_version == "v15"
+  assert selected.small_id == DEFAULT_SMALL  # personal branch: comma's small model replaces RDF V4
+  assert selected.small_version == "v16"
   assert selected.small_path == artifact
   assert selected.small_sha256 == DEFAULT_SMALL_SHA256
   assert not selected.allow_big
@@ -32,7 +32,7 @@ def test_legacy_alias_and_missing_selected_artifact_use_rdf_only(tmp_path, monke
 
 def test_missing_or_corrupt_only_shipped_model_refuses_startup(tmp_path, monkeypatch):
   monkeypatch.setattr(manager, "shipped_default", lambda: None)
-  with pytest.raises(manager.ModelError, match="Shipped RDFv4 is missing or corrupt"):
+  with pytest.raises(manager.ModelError, match="The built-in small model is missing or corrupt"):
     manager.resolve_runtime(False, root=tmp_path)
 
 
@@ -61,12 +61,12 @@ def test_shipped_parts_require_pinned_hash_and_size(tmp_path, monkeypatch, damag
   data = b"small isolated compiled artifact fixture"
   source = tmp_path / "source.pkl"
   source.write_bytes(data)
-  destination = tmp_path / "rdf43_driving_tinygrad.pkl"
+  destination = tmp_path / f"{DEFAULT_SMALL}_driving_tinygrad.pkl"
   package_file(source, destination)
   monkeypatch.setattr(manager, "SHIPPED_MODELS", tmp_path)
   monkeypatch.setattr(manager, "DEFAULT_SMALL_SHA256", hashlib.sha256(data).hexdigest())
   monkeypatch.setattr(manager, "DEFAULT_SMALL_SIZE", len(data) + (damage == "size"))
-  part = tmp_path / "rdf43_driving_tinygrad.pkl.chunk01of01"
+  part = tmp_path / f"{DEFAULT_SMALL}_driving_tinygrad.pkl.chunk01of01"
   if damage == "bytes":
     part.write_bytes(b"x" * len(data))
   elif damage == "missing":
@@ -82,7 +82,7 @@ def test_shipped_default_is_verified_asynchronously_in_menu(tmp_path, monkeypatc
   source = tmp_path / "source.pkl"
   source.write_bytes(data)
   shipped = tmp_path / "shipped"
-  package_file(source, shipped / "rdf43_driving_tinygrad.pkl")
+  package_file(source, shipped / f"{DEFAULT_SMALL}_driving_tinygrad.pkl")
   monkeypatch.setattr(manager, "SHIPPED_MODELS", shipped)
   monkeypatch.setattr(manager, "DEFAULT_SMALL_SHA256", hashlib.sha256(data).hexdigest())
   monkeypatch.setattr(manager, "DEFAULT_SMALL_SIZE", len(data))

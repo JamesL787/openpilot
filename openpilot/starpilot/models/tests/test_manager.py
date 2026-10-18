@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from openpilot.starpilot.models.catalog import ARTIFACT_ABI, BUNDLED_CURRENT, CATALOG_PATH, DEFAULT_SMALL
+from openpilot.starpilot.models.catalog import ARTIFACT_ABI, BUNDLED_CURRENT, CATALOG_PATH, COMPILER_REVISION, DEFAULT_SMALL
 from openpilot.starpilot.models.manager import (
   ModelError, ModelManager, atomic_json, catalog, preferences, randomize_next_start, resolve_runtime, validate_manifest,
 )
@@ -57,16 +57,19 @@ class ModelManagerTest(unittest.TestCase):
     from openpilot.common.file_chunker import package_file
     source = self.root / 'shipped-source.pkl'
     source.write_bytes(self.data)
-    package_file(source, self.root / 'shipped/rdf43_driving_tinygrad.pkl')
+    package_file(source, self.root / f'shipped/{DEFAULT_SMALL}_driving_tinygrad.pkl')
     source.unlink()
     for attribute, value in (('DEFAULT_SMALL_SHA256', hashlib.sha256(self.data).hexdigest()), ('DEFAULT_SMALL_SIZE', len(self.data))):
       identity = patch('openpilot.starpilot.models.manager.' + attribute, value)
       identity.start()
       self.addCleanup(identity.stop)
     self.manifest = json.loads(CATALOG_PATH.read_text())
+    self.manifest['compiler_revision'] = COMPILER_REVISION  # personal branch: a manifest published for this tinygrad
     self.row = next(x for x in self.manifest['models'] if x['id'] == 'gwm8223')
     self.row.update(artifact_format=ARTIFACT_ABI, artifact_sha256=hashlib.sha256(self.data).hexdigest(),
                     artifact_size=len(self.data), artifact_chunk_count=2)
+    # personal branch: only manifests for this tinygrad are installable, so start from one already published for it
+    atomic_json(self.root / 'catalog.json', self.manifest)
     self.urls = []
     self.bad = False
 
@@ -500,19 +503,18 @@ class ModelManagerTest(unittest.TestCase):
     self.assertEqual(preferences(self.root)['small'], 'gwm8223')
 
   def test_randomizer_avoids_repeat_ignores_favorites_and_respects_exclusions(self):
-    self.install_fixture('gwm8223')
-    self.install_fixture('rdf43')
+    self.install_fixture('gwm8223')  # personal branch: the built-in default joins through shipped_default()
     self.manager.action('preferences', {'randomizer': True, 'userFavorites': ['gwm8223'],
                                        'blacklistedModels': ['gwm8223', BUNDLED_CURRENT]})
-    self.assertEqual(randomize_next_start(False, root=self.root)['small'], 'rdf43')
-    self.assertEqual(randomize_next_start(False, root=self.root)['small'], 'rdf43')
+    self.assertEqual(randomize_next_start(False, root=self.root)['small'], DEFAULT_SMALL)
+    self.assertEqual(randomize_next_start(False, root=self.root)['small'], DEFAULT_SMALL)
     self.manager.action('preferences', {'blacklistedModels': []})
     seen = []
     def choose(options):
       seen.extend(options)
       return options[0]
     randomize_next_start(False, root=self.root, chooser=choose)
-    self.assertNotIn('rdf43', seen)
+    self.assertNotIn(DEFAULT_SMALL, seen)
     self.assertIn('gwm8223', seen)
     self.assertEqual(seen, ['gwm8223'])
 
@@ -696,19 +698,23 @@ class ModelManagerTest(unittest.TestCase):
       self.assertIs(self.manager.worker, previous)
     self.assertFalse(any("/models/" in url for url in self.urls))
 
-  def test_unpublished_catalog_is_visible_but_not_selectable(self):
-    manifest_ids = [row['id'] for row in json.loads(CATALOG_PATH.read_text())['models']]
-    self.assertEqual(len(manifest_ids), len(set(manifest_ids)))
-    self.assertCountEqual(catalog(self.root), manifest_ids)
+  def test_only_this_runtimes_manifest_is_offered(self):
+    # Personal branch: StarPilot's bundled catalog-v26.json targets 9d0446a4, so a fresh install offers only the
+    # built-in small model; a manifest published for this tinygrad (root/catalog.json) adds its rows.
+    (self.root / 'catalog.json').unlink()
+    self.assertEqual(list(catalog(self.root)), [DEFAULT_SMALL])
     self.manager.snapshot()
     if self.manager.verify_worker is not None:
       self.manager.verify_worker.join(2)
     models = self.manager.snapshot()['models']
-    visible_ids = [row['value'] for row in models]
-    self.assertEqual(len(visible_ids), len(set(visible_ids)))
-    self.assertCountEqual(visible_ids, manifest_ids)
-    self.assertEqual(sum(row['selectable'] for row in models), 1)
-    self.assertTrue(all(row.get('unavailableReason') for row in models if not row['selectable']))
+    self.assertEqual([row['value'] for row in models], [DEFAULT_SMALL])
+    self.assertTrue(models[0]['selectable'] and models[0]['builtin'])
+    atomic_json(self.root / 'catalog.json', self.manifest)
+    manifest_ids = [row['id'] for row in self.manifest['models']]
+    self.assertCountEqual(catalog(self.root), [DEFAULT_SMALL, *manifest_ids])
+    stale = dict(self.manifest, compiler_revision='9d0446a4ba8a532c8b674fb6ad795af015cd9dcf')
+    atomic_json(self.root / 'catalog.json', stale)
+    self.assertEqual(list(catalog(self.root)), [DEFAULT_SMALL])
 
   def test_fresh_install_knows_published_downloads_without_network_or_gpu(self):
     self.manager.gpu_present = lambda: False
@@ -722,7 +728,6 @@ class ModelManagerTest(unittest.TestCase):
     self.assertFalse(big['gpuAvailable'])
     self.assertEqual(big['unavailableReason'], 'Download required')
     self.assertEqual(self.urls, [])
-    self.assertFalse((self.root / 'catalog.json').exists())
 
 
 if __name__ == '__main__':

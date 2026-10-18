@@ -64,9 +64,11 @@ def compile_env(gpu: bool = False) -> dict[str, str]:
   for key, value in defaults.items():
     env.setdefault(key, value)
   if gpu:
-    for key in ("IMAGE", "NOLOCALS", "OPENPILOT_HACKS"):
+    for key in ("IMAGE", "NOLOCALS"):
       env.pop(key, None)
-    env.update(DEV="USB+AMD:LLVM", WARP_DEV="QCOM", GMMU="0", TC_OPT="2", TC_MIN_GLOBALS="32")
+    # Personal branch: comma's Chestnut recipe (tinygrad examples/openpilot/helpers.py): FLOAT16 off, OPENPILOT_HACKS on.
+    # The small-model flags (FLOAT16=1, no OPENPILOT_HACKS) NaN'd our big models on the road (2026-10-12).
+    env.update(DEV="USB+AMD:LLVM", WARP_DEV="QCOM", GMMU="0", TC_OPT="2", TC_MIN_GLOBALS="32", FLOAT16="0", OPENPILOT_HACKS="1")
   return env
 
 
@@ -80,6 +82,11 @@ def parse_args(argv=None):
   parser.add_argument("--gpu", action="store_true")
   parser.add_argument("--image-history-pipeline", choices=("policy", "warp"), default="policy")
   parser.add_argument("--frame-skip", type=int)
+  # personal branch
+  parser.add_argument("--model-size", default="512x256", help="Model image size, e.g. 768x448 for the wide-FOV students")
+  parser.add_argument("--name", help="Display name for --install")
+  parser.add_argument("--install", action="store_true",
+                      help="Install into the models root and list it in its catalog.json (personal branch local catalog)")
   args, unknown = parser.parse_known_args(argv)
   if unknown:
     if len(unknown) != 1 or not unknown[0].startswith("--") or args.model:
@@ -110,7 +117,7 @@ def main(argv=None):
     env["TMPDIR"] = temporary
     staged = Path(temporary) / output.name
     command = [sys.executable, "-m", "openpilot.starpilot.models.compile", "--model-type", model_type,
-               "--model-size", "512x256", "--camera-resolutions", "1928x1208", "1344x760",
+               "--model-size", args.model_size, "--camera-resolutions", "1928x1208", "1344x760",
                "--behavior-version", args.version, "--output", str(staged), "--out-of-band",
                "--image-history-pipeline", args.image_history_pipeline, *source_args]
     if args.frame_skip is not None:
@@ -131,7 +138,39 @@ def main(argv=None):
     temporary_receipt.write_text(json.dumps(receipt, indent=2) + "\n")
     temporary_receipt.replace(receipt_path)
   print(f"Compiled {output}; build receipt {receipt_path}")
+  if args.install:
+    print(f"Installed {install(output, receipt, args.name or args.model, args.gpu)}")
   return 0
+
+
+def install(artifact: Path, receipt: dict, name: str, gpu: bool, root: Path | None = None) -> Path:
+  """Personal branch: copy the artifact to where the catalog runtime reads it and list it in root/catalog.json, the
+  file the manager reads for installable models (validated against this tinygrad, so StarPilot never overwrites it)."""
+  import shutil
+  from openpilot.starpilot.models.catalog import ARTIFACT_ABI, COMPILER_REVISION, GENERATION
+  from openpilot.starpilot.models.manager import ROOT, atomic_json, read_json, state_lock, validate_manifest
+  root = ROOT if root is None else root
+  if receipt["compiler_revision"] != COMPILER_REVISION:
+    raise ValueError(f"artifact compiled for {receipt['compiler_revision']}, runtime is {COMPILER_REVISION}")
+  model_id = receipt["model_id"]
+  target = root / model_id / f"{model_id}_driving_tinygrad.pkl"
+  with state_lock(root):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staged = target.with_name(f".{target.name}.tmp")
+    shutil.copyfile(artifact, staged)
+    staged.replace(target)
+    try:
+      document = read_json(root / "catalog.json")
+      validate_manifest(document)
+    except (OSError, ValueError, TypeError):
+      document = {"generation": GENERATION, "compiler_revision": COMPILER_REVISION, "artifact_abi": ARTIFACT_ABI, "models": []}
+    row = {"id": model_id, "name": name, "version": receipt["behavior_version"], "uses_external_gpu": gpu, "series": "Local",
+           "artifact_format": ARTIFACT_ABI, "artifact_sha256": receipt["artifact_sha256"], "artifact_size": receipt["artifact_size"],
+           "artifact_chunk_count": 0}
+    document["models"] = [entry for entry in document["models"] if entry.get("id") != model_id] + [row]
+    validate_manifest(document)
+    atomic_json(root / "catalog.json", document)
+  return target
 
 
 if __name__ == "__main__":

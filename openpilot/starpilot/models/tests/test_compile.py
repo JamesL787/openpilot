@@ -238,7 +238,8 @@ class CompileTest(unittest.TestCase):
           for step in range(1, 4):
             output, = loaded["run_policy"](warped=warped, **{name: queues[name] for name in loaded["policy_input_keys"]})
             np.testing.assert_array_equal(output.numpy(), [[step, step * 2]])
-          self.assertEqual(loaded["compiler_revision"], "9d0446a4ba8a532c8b674fb6ad795af015cd9dcf")
+          from openpilot.starpilot.models.catalog import COMPILER_REVISION
+          self.assertEqual(loaded["compiler_revision"], COMPILER_REVISION)
           self.assertEqual(loaded["frame_skip"], 1)
           self.assertIn((8, 8), loaded)
 

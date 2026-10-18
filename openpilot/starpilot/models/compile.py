@@ -17,7 +17,7 @@ from tinygrad.device import Buffer, BufferSpec
 from tinygrad.uop.ops import UOp
 from tinygrad_repo.examples.openpilot.helpers import dump_pickle, load_pickle
 
-COMPILER_REVISION = "9d0446a4ba8a532c8b674fb6ad795af015cd9dcf"
+from openpilot.starpilot.models.catalog import COMPILER_REVISION  # personal branch: the vendored tinygrad (02e698160e)
 ARTIFACT_ABI = "tinygrad_single_v1_arena"
 
 

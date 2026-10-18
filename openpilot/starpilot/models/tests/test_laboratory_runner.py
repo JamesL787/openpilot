@@ -124,6 +124,7 @@ class TestLaboratoryLoad(unittest.TestCase):
     self.root = Path(directory.name)
     self.config = {"enabled": True, "lateralModel": "gwm8223", "longitudinalModel": "sc23"}
     manifest = json.loads(CATALOG_PATH.read_text())
+    manifest['compiler_revision'] = COMPILER_REVISION  # personal branch: a manifest published for this tinygrad
     self.rows = {}
     for mid in ("gwm8223", "sc23"):
       content = f"verified AMD {mid}".encode()

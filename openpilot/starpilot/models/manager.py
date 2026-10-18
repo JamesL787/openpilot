@@ -74,8 +74,10 @@ def state_lock(root: Path):
     yield
 
 
-def validate_manifest(data: object) -> dict[str, dict]:
-  if (not isinstance(data, dict) or data.get("generation") != GENERATION or data.get("compiler_revision") != COMPILER_REVISION or
+def validate_manifest(data: object, compiler_revision: str = COMPILER_REVISION) -> dict[str, dict]:
+  """Personal branch: installable manifests target COMPILER_REVISION (the vendored tinygrad). StarPilot's published
+  manifest targets STARPILOT_COMPILER_REVISION, so a network refresh is rejected and never replaces root/catalog.json."""
+  if (not isinstance(data, dict) or data.get("generation") != GENERATION or data.get("compiler_revision") != compiler_revision or
       data.get("artifact_abi") != ARTIFACT_ABI or not isinstance(data.get("models"), list)):
     raise ModelError("The model catalog targets a different runtime")
   rows = {}
@@ -107,7 +109,7 @@ def validate_manifest(data: object) -> dict[str, dict]:
     amd = variants.get("amd")
     if amd is not None and (not isinstance(amd, dict) or entry.get("uses_external_gpu", False) or
                             entry.get("model_lab_eligible") is not True or amd.get("execution_device") != "AMD" or
-                            amd.get("compiler_revision") != COMPILER_REVISION):
+                            amd.get("compiler_revision") != compiler_revision):
       raise ModelError("Invalid laboratory artifact hardware or runtime")
     runtime_artifacts = entry.get("runtime_artifacts", [])
     if not isinstance(runtime_artifacts, list):
@@ -141,7 +143,11 @@ def validate_manifest(data: object) -> dict[str, dict]:
 
 
 def catalog(root: Path = ROOT) -> dict[str, dict]:
-  base = validate_manifest(read_json(CATALOG_PATH))
+  """Personal branch: the built-in small model plus the models compiled on this device for the vendored tinygrad, which
+  tools/personal/compile_local_model.py records in root/catalog.json. StarPilot's bundled catalog-v26.json rows target
+  STARPILOT_COMPILER_REVISION, so they are not offered."""
+  default = BY_ID[DEFAULT_SMALL]
+  base = {DEFAULT_SMALL: {"id": DEFAULT_SMALL, "name": default.name, "version": default.version, "series": "comma"}}
   try:
     base.update(validate_manifest(read_json(root / "catalog.json")))
   except (OSError, ValueError, TypeError):
@@ -266,7 +272,7 @@ def resolve_runtime(chestnut_available: bool, *, root: Path = ROOT, randomize: b
     shipped = True
     small_path = shipped_default()
   if small_path is None:
-    raise ModelError("Shipped RDFv4 is missing or corrupt; reinstall the validated model package")
+    raise ModelError("The built-in small model is missing or corrupt; reinstall the validated model package")
   big_path = verified_artifact(big, entries, root) if big not in ("", BUNDLED_CURRENT) and chestnut_available else None
   allow_big = chestnut_available and big_path is not None
   return RuntimeSelection(small, small_path, entries[small]["version"], big, big_path,

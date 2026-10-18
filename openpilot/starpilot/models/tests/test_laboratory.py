@@ -7,7 +7,7 @@ import tempfile
 import time
 import unittest
 
-from openpilot.starpilot.models.catalog import ARTIFACT_ABI, CATALOG_PATH, COMPILER_REVISION
+from openpilot.starpilot.models.catalog import ARTIFACT_ABI, CATALOG_PATH, COMPILER_REVISION, DEFAULT_SMALL
 from openpilot.starpilot.models.laboratory import ModelLaboratory, configuration
 from openpilot.starpilot.models.manager import ModelError, ModelManager, artifact_path, atomic_json, validate_manifest
 
@@ -20,6 +20,7 @@ class LaboratoryTest(unittest.TestCase):
     self.parked = True
     self.gpu = False
     self.manifest = json.loads(CATALOG_PATH.read_text())
+    self.manifest['compiler_revision'] = COMPILER_REVISION  # personal branch: a manifest published for this tinygrad
     self.payloads = {}
     for mid in ('gwm8223', 'sc23'):
       row = next(row for row in self.manifest['models'] if row['id'] == mid)
@@ -66,8 +67,9 @@ class LaboratoryTest(unittest.TestCase):
   def test_catalog_discovery_keeps_unpublished_and_big_rows_visible(self):
     result = self.ready_snapshot()
     rows = {row['value']: row for row in result['models']}
-    self.assertEqual(set(rows), {row['id'] for row in self.manifest['models']})
-    self.assertEqual(result['summary']['catalog'], len(self.manifest['models']))
+    # personal branch: the built-in comma small model is listed alongside the published manifest
+    self.assertEqual(set(rows), {row['id'] for row in self.manifest['models']} | {DEFAULT_SMALL})
+    self.assertEqual(result['summary']['catalog'], len(self.manifest['models']) + 1)
     self.assertEqual(result['summary']['published'], 2)
     self.assertFalse(result['runtimeSupported'])
     big = rows['cinquev3']

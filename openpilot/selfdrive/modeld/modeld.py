@@ -391,11 +391,11 @@ def main(demo=False):
                                                  selection.small_id, selection.small_sha256)
         return selected, prepared, False
       except Exception:
-        cloudlog.exception("selected small model load failed, using shipped RDFv4")
+        cloudlog.exception("selected small model load failed, using the built-in small model")
     from openpilot.starpilot.models.manager import shipped_default
     path = shipped_default()
     if path is None:
-      raise RuntimeError("Shipped RDFv4 is missing or corrupt")
+      raise RuntimeError("The built-in small model is missing or corrupt")
     fallback, prepared = load_verified_model(vipc_client_main.width, vipc_client_main.height,
                                              path, BY_ID[DEFAULT_SMALL].version, False,
                                              DEFAULT_SMALL, DEFAULT_SMALL_SHA256)

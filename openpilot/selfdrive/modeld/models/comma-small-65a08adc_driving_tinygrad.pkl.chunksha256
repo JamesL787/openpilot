@@ -1,0 +1,14 @@
+{
+  "bytes": 74526562,
+  "sha256": "da0638070bc621eaadea07d371ceea96bdc2dc07c1a5459f43db4aaffacfe729",
+  "parts": [
+    {
+      "bytes": 47185920,
+      "sha256": "b6fdbe28006d91e2cc87536d91dd058a832149a7f0bbe5d827241ff2d234038d"
+    },
+    {
+      "bytes": 27340642,
+      "sha256": "338f3b9e09ef3f39adf64d10397c0494b161fbfe0667f72b4219429c886643a0"
+    }
+  ]
+}

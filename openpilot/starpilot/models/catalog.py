@@ -7,11 +7,16 @@ from pathlib import Path
 
 
 BUNDLED_CURRENT = "bundled-current"
-DEFAULT_SMALL = "rdf43"
-DEFAULT_SMALL_SHA256 = "e23f65b3790a2092348024603966717506c2ad1fae10b4312bdfe1f2b932df61"
-DEFAULT_SMALL_SIZE = 125895084
+# Personal branch: the vendored tinygrad is comma's 02e698160e, so StarPilot's published (9d0446a4) artifacts cannot
+# load here. The built-in small model is comma's own (master driving_supercombo.onnx, sha 65a08adc), compiled on a
+# device for this pin with starpilot/models/compile.py; locally compiled models are listed in the models root's catalog.json.
+DEFAULT_SMALL = "comma-small-65a08adc"
+DEFAULT_SMALL_NAME = "comma small model (65a08adc)"
+DEFAULT_SMALL_SHA256 = "da0638070bc621eaadea07d371ceea96bdc2dc07c1a5459f43db4aaffacfe729"  # QCOM, compiled on the comma 2026-10-18
+DEFAULT_SMALL_SIZE = 74526562
 GENERATION = "v26"
-COMPILER_REVISION = "9d0446a4ba8a532c8b674fb6ad795af015cd9dcf"
+COMPILER_REVISION = "02e698160eed1751738212144a7ea2cfb160b3f1"
+STARPILOT_COMPILER_REVISION = "9d0446a4ba8a532c8b674fb6ad795af015cd9dcf"  # what StarPilot's published catalog targets
 ARTIFACT_ABI = "tinygrad_single_v1_arena"
 CATALOG_PATH = Path(__file__).with_name("catalog-v26.json")
 
@@ -29,26 +34,26 @@ class ModelEntry:
   uses_external_gpu: bool = False
 
 
-BUNDLED = (
-  ModelEntry(
-    model_id=BUNDLED_CURRENT,
-    name="Regret Driven Framework V4",
-    source_sha256=DEFAULT_SMALL_SHA256,
-    source_path="openpilot/selfdrive/modeld/models/rdf43_driving_tinygrad.pkl",
-    compiler_revision="9d0446a4ba8a532c8b674fb6ad795af015cd9dcf",
-    artifact_abi=ARTIFACT_ABI,
-    selectable=True,
-    version="v15",
-  ),
-)
+DEFAULT_SMALL_PATH = f"openpilot/selfdrive/modeld/models/{DEFAULT_SMALL}_driving_tinygrad.pkl"
 
+BUNDLED = tuple(ModelEntry(
+  model_id=model_id,
+  name=DEFAULT_SMALL_NAME,
+  source_sha256=DEFAULT_SMALL_SHA256,
+  source_path=DEFAULT_SMALL_PATH,
+  compiler_revision=COMPILER_REVISION,
+  artifact_abi=ARTIFACT_ABI,
+  selectable=True,
+  version="v16",
+) for model_id in (BUNDLED_CURRENT, DEFAULT_SMALL))
+
+# StarPilot's published models stay known by name and behavior (old preferences resolve to a clean fallback), but they
+# are never selectable: their artifacts target STARPILOT_COMPILER_REVISION.
 CATALOG = BUNDLED + tuple(ModelEntry(
-  model_id=m["id"], name=m["name"],
-  source_sha256=DEFAULT_SMALL_SHA256 if m["id"] == DEFAULT_SMALL else "",
-  source_path="openpilot/selfdrive/modeld/models/rdf43_driving_tinygrad.pkl" if m["id"] == DEFAULT_SMALL else "",
-  compiler_revision=COMPILER_REVISION, artifact_abi=ARTIFACT_ABI, selectable=True,
+  model_id=m["id"], name=m["name"], source_sha256="", source_path="",
+  compiler_revision=STARPILOT_COMPILER_REVISION, artifact_abi=ARTIFACT_ABI, selectable=False,
   version=m["version"], uses_external_gpu=bool(m.get("uses_external_gpu", False)),
-) for m in json.loads(CATALOG_PATH.read_text())["models"])
+) for m in json.loads(CATALOG_PATH.read_text())["models"] if m["id"] != DEFAULT_SMALL)
 
 BY_ID = {entry.model_id: entry for entry in CATALOG}
 
@@ -66,7 +71,9 @@ def _cached_entries(root: Path, identities: tuple) -> tuple[ModelEntry, ...]:
   from openpilot.starpilot.models.manager import catalog
   entries = dict(BY_ID)
   for model_id, row in catalog(root).items():
-    entries[model_id] = (replace(BY_ID[model_id], name=row["name"]) if model_id in BY_ID else
+    # catalog() lists only installable rows (personal branch), so a listed StarPilot ID is a local rebuild for this pin
+    entries[model_id] = (replace(BY_ID[model_id], name=row["name"], selectable=True, compiler_revision=COMPILER_REVISION)
+                         if model_id in BY_ID else
                          ModelEntry(model_id, row["name"], "", "", COMPILER_REVISION, ARTIFACT_ABI,
                                     True, row["version"], row.get("uses_external_gpu", False)))
   return tuple(entries.values())

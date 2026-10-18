@@ -16,9 +16,11 @@ def main():
   parser.add_argument('--source', type=Path, required=True)
   parser.add_argument('--destination', type=Path, required=True)
   args = parser.parse_args()
-  for name in ('dmonitoring_model_tinygrad.pkl', 'rdf43_driving_tinygrad.pkl'):
+  # personal branch: the built-in small model is comma's (catalog.DEFAULT_SMALL), compiled on a device for this tinygrad
+  default_small = 'comma-small-65a08adc_driving_tinygrad.pkl'
+  for name in ('dmonitoring_model_tinygrad.pkl', default_small):
     source = (_chunk_owner.materialize_file_chunked(args.source / name)
-              if name == 'rdf43_driving_tinygrad.pkl' else args.source / name)
+              if name == default_small else args.source / name)
     package_file(source, args.destination / name)
 
 if __name__ == '__main__':
