@@ -7,7 +7,7 @@ wheel along the desired path rather than one it has to be dragged into by error.
 the car's own image (eps_firmware_ff.EpsFirmwareCalibration), picked by the EPS part number in carFw.
 
 Which cars get it: a calibration with default_on (the Clarity, where it was developed and validated) always; the other
-PTM cars (Civic A030/TEG/C020/C120/TGG-A120, Insight, CR-V) only with HondaEpsController on, because parts of
+PTM cars (Civic A030/TEG/C020/C120/TGG-A120, Insight, CR-V, RDX 3G) only with HondaEpsController on, because parts of
 their calibration are carried over from a related car until a drive measures them. A car with no calibration, whose
 torque map is not the linear [0, E4 cap] the calibration expects, or with no firmware A table for its rack map, keeps
 LatControlPID. The setting is read once, when

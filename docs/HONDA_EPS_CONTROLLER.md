@@ -1,9 +1,12 @@
 # Honda EPS controller (`LatControlHondaEps`)
 
 The lateral controller for Hondas whose EPS runs a PTM (Proper Torque Mod) image: Clarity TRW-A020, Civic TBA-C020 /
-TBA-C120 / TGG-A120 / TBA-A030 / TEG-A010, Insight TXM-A040, CR-V TLA-A040 / TLA-A220. Every one of those images runs
-the same firmware control law with its own tables, so one controller serves them all; what differs per car lives in
-one calibration record per EPS image.
+TBA-C120 / TGG-A120 / TBA-A030 / TEG-A010, Insight TXM-A040, CR-V TLA-A040 / TLA-A220, and the Acura RDX 3G's
+TJB-A220. Every one of those images runs the same firmware control law with its own tables, so one controller serves
+them all; what differs per car lives in one calibration record per EPS image. The TJB is the exception that proves
+it: it runs THR (Odyssey) code in its own units, and its Route-A build ports the Clarity's tables into them, so in
+the Clarity's units (key x 1.732, gains x 16) it is the same law. It has no angle table (its rack is variably
+geared and a separate sensor sends the wheel angle), so its linear map is measured from its 0x18F rate word.
 
 ## How it steers
 

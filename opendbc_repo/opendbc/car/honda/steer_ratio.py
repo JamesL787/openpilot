@@ -19,6 +19,7 @@ HONDA_VGR_CIVIC_TBA_C020 = "civic_tba_c020"
 HONDA_VGR_INSIGHT_TXM_A040 = "insight_txm_a040"
 HONDA_VGR_CRV_TLA_A040 = "crv_tla_a040"
 HONDA_VGR_CIVIC_TBA_C120 = "civic_tba_c120"
+HONDA_VGR_RDX_TJB_A220 = "rdx_tjb_a220"
 
 
 # Firmware queries return the modified image with a comma in place of the
@@ -36,6 +37,7 @@ HONDA_VGR_PROFILE_BY_FW = {
   "39990-TEG-A010": HONDA_VGR_CIVIC_TBA_C120,
   # Position X/Y at 0x11374/0x11338 (0x11300-0x113B0) byte-identical to the A040's, read by the same shifted controller code.
   "39990-TLA-A220": HONDA_VGR_CRV_TLA_A040,
+  "39990-TJB-A220": HONDA_VGR_RDX_TJB_A220,
 }
 
 HONDA_VGR_PROFILE_FLAGS = {
@@ -44,6 +46,7 @@ HONDA_VGR_PROFILE_FLAGS = {
   HONDA_VGR_INSIGHT_TXM_A040: HondaFlags.VGR_INSIGHT_TXM_A040,
   HONDA_VGR_CRV_TLA_A040: HondaFlags.VGR_CRV_TLA_A040,
   HONDA_VGR_CIVIC_TBA_C120: HondaFlags.VGR_CIVIC_TBA_C120,
+  HONDA_VGR_RDX_TJB_A220: HondaFlags.VGR_RDX_TJB_A220,
 }
 
 
@@ -199,6 +202,29 @@ CRV_TLA_A040_VGR_LINEAR_BP, CRV_TLA_A040_VGR_ANGLE_BP, CRV_TLA_A040_VGR_REL_LOCA
 CIVIC_TBA_C120_VGR_LINEAR_BP, CIVIC_TBA_C120_VGR_ANGLE_BP, CIVIC_TBA_C120_VGR_REL_LOCAL = _build_vgr_position_inverse(
   _CIVIC_C120_POSITION_X, _CIVIC_C120_POSITION_Y)
 
+# Acura RDX 3G on 39990-TJB-A220 (the PTM image). Measured, not traced: this image has no angle table. Its CAN RX
+# table (0x3D9D0) takes 0x156 STEERING_SENSORS from the steering-angle sensor, so the EPS neither computes nor
+# publishes the wheel angle; the rack itself is variable (the yaw-fitted ratio falls 19.3 -> 14.1 from centre to
+# 250-400 deg on routes 412ed2539bfc2c42/000000c6 and 000000c7). The EPS's own rate word, 0x18F STEER_ANGLE_RATE,
+# is pinion-side: per published deg/s it rises 7.2 -> 9.5 counts from centre to past 100 deg, the same quickening
+# (both routes agree within 2% from 15 deg out; centre from c7, where the yaw ratio puts it). Its ratio to the
+# centre value is d(linear)/d(published), integrated here into the same linear/physical map a traced A table gives.
+_RDX_TJB_A220_RATE_WORD_BP = [0, 15, 30, 45, 60, 75, 90, 105, 480]
+_RDX_TJB_A220_RATE_WORD = [7.2, 7.57, 7.70, 7.82, 8.37, 8.84, 9.40, 9.50, 9.50]
+
+
+def _piecewise(x, xp, fp):
+  for x0, x1, f0, f1 in zip(xp, xp[1:], fp, fp[1:], strict=False):
+    if x <= x1:
+      return f0 + (f1 - f0) * (x - x0) / (x1 - x0)
+  return fp[-1]
+
+
+RDX_TJB_A220_VGR_ANGLE_BP = [float(a) for a in range(0, 481, 5)]
+RDX_TJB_A220_VGR_REL_LOCAL = [_RDX_TJB_A220_RATE_WORD[0] / _piecewise(a, _RDX_TJB_A220_RATE_WORD_BP, _RDX_TJB_A220_RATE_WORD)
+                              for a in RDX_TJB_A220_VGR_ANGLE_BP]  # d(published)/d(linear), as the B tables
+RDX_TJB_A220_VGR_LINEAR_BP = _integrate_inverse_local_gain(RDX_TJB_A220_VGR_ANGLE_BP, RDX_TJB_A220_VGR_REL_LOCAL)
+
 
 HONDA_VGR_INVERSE_BY_PROFILE = {
   HONDA_VGR_CLARITY_TRW_A020: (CLARITY_TRW_A020_VGR_LINEAR_BP, CLARITY_TRW_A020_VGR_ANGLE_BP),
@@ -206,6 +232,7 @@ HONDA_VGR_INVERSE_BY_PROFILE = {
   HONDA_VGR_INSIGHT_TXM_A040: (INSIGHT_TXM_A040_VGR_LINEAR_BP, INSIGHT_TXM_A040_VGR_ANGLE_BP),
   HONDA_VGR_CRV_TLA_A040: (CRV_TLA_A040_VGR_LINEAR_BP, CRV_TLA_A040_VGR_ANGLE_BP),
   HONDA_VGR_CIVIC_TBA_C120: (CIVIC_TBA_C120_VGR_LINEAR_BP, CIVIC_TBA_C120_VGR_ANGLE_BP),
+  HONDA_VGR_RDX_TJB_A220: (RDX_TJB_A220_VGR_LINEAR_BP, RDX_TJB_A220_VGR_ANGLE_BP),
 }
 
 # Each A table's centre divisor (Y[0]): the published angle is raw * 2**14 / Y, so a published degree near centre is
@@ -216,6 +243,7 @@ HONDA_VGR_CENTRE_DIVISOR_BY_PROFILE = {
   HONDA_VGR_INSIGHT_TXM_A040: _INSIGHT_TXM_A040_POSITION_Y[0],
   HONDA_VGR_CRV_TLA_A040: _CRV_TLA_A040_POSITION_Y[0],
   HONDA_VGR_CIVIC_TBA_C120: _CIVIC_C120_POSITION_Y[0],
+  HONDA_VGR_RDX_TJB_A220: 1 << 14,  # no table: the published angle is the linear one at centre
 }
 
 HONDA_VGR_INVERSE_BY_FLAG = {
