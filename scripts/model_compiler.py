@@ -147,6 +147,8 @@ def install(artifact: Path, receipt: dict, name: str, gpu: bool, root: Path | No
   """Personal branch: copy the artifact to where the catalog runtime reads it and list it in root/catalog.json, the
   file the manager reads for installable models (validated against this tinygrad, so StarPilot never overwrites it)."""
   import shutil
+  if str(REPO_ROOT) not in sys.path:  # run as scripts/model_compiler.py, only the compile subprocess got PYTHONPATH
+    sys.path.insert(0, str(REPO_ROOT))
   from openpilot.starpilot.models.catalog import ARTIFACT_ABI, COMPILER_REVISION, GENERATION
   from openpilot.starpilot.models.manager import ROOT, atomic_json, read_json, state_lock, validate_manifest
   root = ROOT if root is None else root
