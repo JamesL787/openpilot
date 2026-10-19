@@ -340,15 +340,15 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
 #   D 1774, output 8868 (the Clarity's 9000: the motor sum caps at 8868 on both); FF45 in a code cave at the P+D sum,
 #   as the Clarity's. A280 (G/H) flat. Speed envelope flat at a 1024 (0x57B3C). Emulator-exact (1500/1500 per stage).
 # - R6: TJB's feedback ref has no NORM; the build scales it x 15768/32768 (= 1650/3429, the Clarity's NORM ratio) at
-#   its load. The ref is read from a RAM block (FFF8B4B4) that nothing in the image writes, as on THR (filled from
-#   outside the application, likely the motor-control side), so the firmware cannot close its scale on its own. Honda's
-#   shared override row does: TJB row 4 copies the Clarity's row 6 target verbatim with Kp/Kd exactly / 16, so the
-#   ref is in the Clarity's R6 units, and the Clarity's R6 is 32 x its 0x18F STEER_ANGLE_RATE word. TJB's word is
-#   7.8 per published deg/s at centre (steer_ratio HONDA_VGR_RDX_TJB_A220, the same method gives the Clarity's 3.82
-#   against its firmware's 3.81), so R6 here = 0.4812 x 32 x -7.8 = -120.1 per published deg/s at centre: 0.98 of the
-#   Clarity's. Its angle shape is the rate word's (the linear map's slope, as computed_r6). The drives cannot pin it
-#   by themselves: on routes c6 / c7 the load fit through the law was flat in R^2 from 0.5x to 2x R6, since R6 trades
-#   off against the viscous term.
+#   its load. Ref and the 0x18F STEER_ANGLE_RATE word come from one motor-speed product, written through struct
+#   pointers (so no literal names the words): 0x1C668 takes the per-call motor position change d (wrapped to +-16384)
+#   and writes ref = (d * k) >> 7 to FFF8B4B4 and x = (d * k) >> 12 = ref / 32 to FFF8B4AA; 0x1D300 publishes
+#   FFF8B25E = two cascaded unity-gain one-poles (0x2FF26, 12946/32768) of (x + x_prev) / 2, clamped +-24000. So
+#   ref = 32 x the published word, as on the Clarity. The word is 7.8 per published deg/s at centre (steer_ratio
+#   HONDA_VGR_RDX_TJB_A220; the same method gives the Clarity's 3.82 against its firmware's 3.81), so R6 here =
+#   0.4812 x 32 x -7.8 = -120.1 per published deg/s at centre: 0.98 of the Clarity's. Its angle shape is the rate
+#   word's (the linear map's slope, as computed_r6). The drives cannot pin it by themselves: on routes c6 / c7 the
+#   load fit through the law was flat in R^2 from 0.5x to 2x R6, since R6 trades off against the viscous term.
 # - Helper A and the override fade (driver torque) stay stock, as the PTM rule keeps them: they back off harder than
 #   the Clarity's once a hand pushes, but on the owner's drives they keep 0.95-0.99 of LKAS on average, as the
 #   Clarity's tables would (1.00-1.015x); scale_q8 256 is the hands-off value as everywhere.
@@ -484,7 +484,7 @@ CALIBRATION_PROVENANCE = {
   "rdx_tjb_a220": {
     "row": "firmware: rows 0-3 carry the same Route-A target, P and D (0x57BAE + 0x300*row), so the variant row does not matter",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
-    "r6": "inferred: 0.4812 x 32 x its 0x18F rate word, 7.8 at centre on routes b8/c7/cc/d2 (the Clarity's R6 relation; the ref's producer is off-image)",
+    "r6": "firmware: ref = 32 x its 0x18F rate word (0x1C668 / 0x1D300) x 0.4812 (the build); the word measured at 7.8 per deg/s on routes b8/c7/cc/d2",
     "load": "measured: the owner's routes 000000c6 / c7 / cc / d2 (a 2019), rebuilt through the law from the sent 0xE4; the MMR takes it",
     "trims": "default: untrimmed",
     "cmd_delay": "measured: plan_timing on this controller, routes cc / d2: on time at 5-12 m/s (+0.04 / +0.03 s), so the default stands",

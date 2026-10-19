@@ -80,6 +80,7 @@ def test_its_rack_map_round_trips_to_lock(v):
 
 
 def test_its_feedback_is_the_word_derived_value():
-  # R6 = (15768 / 32768) x 32 x the rate word's -7.8 per published deg/s at centre
+  # ref = 32 x the 0x18F rate word in the image (0x1C668 / 0x1D300), x 15768/32768 in the build; the word is -7.8 per
+  # published deg/s at centre
   assert CAL.r6_per_deg_s == pytest.approx(15768 / 32768 * 32 * -7.8, abs=0.1)
-  assert eps_cal.provenance(CAL)["r6"].startswith("inferred")
+  assert eps_cal.provenance(CAL)["r6"].startswith("firmware")
