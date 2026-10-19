@@ -211,7 +211,10 @@ CIVIC_TBA_C120_VGR_LINEAR_BP, CIVIC_TBA_C120_VGR_ANGLE_BP, CIVIC_TBA_C120_VGR_RE
 # Clarity's word as 3.82 at centre on routes 38e/3a1/3a2, where its firmware fixes it at 3.81 (R6 -122 = 32 x the
 # word); regressing the word on the angle's derivative reads 1 % low there but 8 % low here (7.2), the noise in this
 # car's angle derivative. Its ratio to the centre value is d(linear)/d(published), integrated here into the same
-# linear/physical map a traced A table gives.
+# linear/physical map a traced A table gives. Check over whole maneuvers: the word integrated into the EPS's pinion
+# angle (0x1C668 builds it from the motor position change) tracks this map of the published angle with gain 1.004
+# (IQR 0.995-1.019) over 204 20 s windows on all five routes, with no bias by |angle| out to lock (band means within
+# +-0.2 deg); the rest is column twist, about -0.5 deg of pinion per 1000 steeringTorque counts.
 _RDX_TJB_A220_RATE_WORD_BP = [0, 15, 30, 45, 60, 75, 90, 105, 480]
 _RDX_TJB_A220_RATE_WORD = [7.80, 7.83, 7.94, 8.24, 8.64, 9.06, 9.41, 9.60, 9.58]
 
