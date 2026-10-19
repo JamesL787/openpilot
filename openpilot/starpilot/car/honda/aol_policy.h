@@ -14,7 +14,8 @@ inline bool honda_stock_aol_param(uint16_t param) {
 }
 
 inline bool honda_nidec_aol_param(uint16_t param) {
-  return (param == 0U) || (param == 4U) || (param == 260U);
+  // 544: GAS_INTERCEPTOR | AOL_NIDEC_INTERCEPTOR, a Nidec on openpilot long through a gas interceptor
+  return (param == 0U) || (param == 4U) || (param == 260U) || (param == 544U);
 }
 
 inline constexpr AolSafetyProfile HONDA_STOCK_AOL_PROFILE{20U, honda_stock_aol_param, true};

@@ -396,7 +396,7 @@ int main() {
     assert(aol_capable(stock_honda, 20U, VEHICLE_REGISTRY) == (classic || stock));
     assert(aol_runtime_enabled(false, stock_honda, VEHICLE_REGISTRY) == stock);
     stock_honda.safety_mode = 1U;
-    const bool nidec = word == 0U || word == 4U || word == 260U;
+    const bool nidec = word == 0U || word == 4U || word == 260U || word == 544U;
     assert(aol_capable(stock_honda, 1U, VEHICLE_REGISTRY) == nidec);
     assert(aol_runtime_enabled(false, stock_honda, VEHICLE_REGISTRY) == nidec);
     stock_honda.capability_flags = 0U;
