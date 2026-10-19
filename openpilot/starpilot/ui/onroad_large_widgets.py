@@ -242,6 +242,19 @@ class CurrentSpeedHud:
 
 
 
+def wheel_box(content: rl.Rectangle, state: OnroadState) -> rl.Rectangle:
+  """The steering wheel's circle, after the layout's offset and size."""
+  dx, dy = offset(state.customization, "large", "steering_wheel")
+  size, _ = widget_size(state.customization, "large", "steering_wheel")
+  return rl.Rectangle(content.x + content.width - 146 - 96 + dx, content.y + 45 + dy, size, size)
+
+
+def model_source_box(content: rl.Rectangle, state: OnroadState) -> rl.Rectangle:
+  """Just below the steering wheel, the size of its wheel glyph, for the Chestnut model-source icon."""
+  wheel = wheel_box(content, state)
+  return rl.Rectangle(wheel.x + wheel.width / 8, wheel.y + wheel.height + 24, wheel.width * .75, wheel.height * .75)
+
+
 class SteeringWheelWidget:
   """Frozen ExpButton shape; clicks are handled by the separate request input."""
 
@@ -274,10 +287,8 @@ class SteeringWheelWidget:
   def render(self, content: rl.Rectangle, state: OnroadState) -> None:
     if self._texture is None:
       self.prepare()
-    dx, dy = offset(state.customization, "large", "steering_wheel")
-    x = content.x + content.width - 146 - 96 + dx
-    y = content.y + 45 + dy
-    size, _ = widget_size(state.customization, "large", "steering_wheel")
+    box = wheel_box(content, state)
+    x, y, size = box.x, box.y, box.width
     radius = size / 2
     rl.draw_circle(int(x + radius), int(y + radius), radius, rl.Color(*rgba(state.customization, "cardFill", "large", "steering_wheel")))
     border = rl.Color(*rgba(state.customization, "cardBorder", "large", "steering_wheel"))

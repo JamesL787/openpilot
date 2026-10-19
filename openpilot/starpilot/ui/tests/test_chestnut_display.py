@@ -185,22 +185,31 @@ def test_large_hud_gpu_icons_match_mici_states(state, small_engaged, texture):
   from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
 
   icons = {key: SimpleNamespace(name=key, width=240, height=176) for key in ('white', 'green', 'orange', 'crossed')}
-  renderer = Mock(spec=HudRenderer, _small_model_engaged=small_engaged, _chestnut_icon=None,
+  renderer = Mock(spec=HudRenderer, _small_model_engaged=small_engaged,
                   _txt_chestnut=icons['white'], _txt_chestnut_green=icons['green'],
                   _txt_chestnut_orange=icons['orange'], _txt_chestnut_crossed=icons['crossed'])
   renderer._chestnut_alpha_filter = Mock()
   renderer._chestnut_alpha_filter.update.return_value = 1.
-  with patch('openpilot.selfdrive.ui.onroad.hud_renderer.ui_state', SimpleNamespace(chestnut_state=state)), \
-       patch('openpilot.selfdrive.ui.onroad.hud_renderer.rl.get_time', return_value=10.), \
-       patch('openpilot.selfdrive.ui.onroad.hud_renderer.rl.draw_texture_ex') as draw:
-    HudRenderer._draw_model_source(renderer, rl.Rectangle(0, 0, 2160, 1080))
-  assert draw.call_args.args[0] is icons[texture]
-  assert draw.call_args.args[1].x == 2160 - 30 - 240 and draw.call_args.args[1].y == 1080 - 30 - 176
+  box = rl.Rectangle(1942, 285, 144, 144)  # under the default 192 px wheel
+  for now in (10., 1000.):  # steady: no fade-out however long the state holds
+    with patch('openpilot.selfdrive.ui.onroad.hud_renderer.ui_state', SimpleNamespace(chestnut_state=state)), \
+         patch('openpilot.selfdrive.ui.onroad.hud_renderer.rl.get_time', return_value=now), \
+         patch('openpilot.selfdrive.ui.onroad.hud_renderer.rl.draw_texture_ex') as draw:
+      HudRenderer._draw_model_source(renderer, rl.Rectangle(0, 0, 2160, 1080))
+      assert draw.call_args.args[0] is icons[texture]
+      assert draw.call_args.args[1].x == 2160 - 30 - 240 and draw.call_args.args[1].y == 1080 - 30 - 176
+      HudRenderer._draw_model_source(renderer, rl.Rectangle(0, 0, 2160, 1080), box)
+      icon, pos, _, scale = draw.call_args.args[:4]
+      assert icon is icons[texture] and scale == pytest.approx(0.6)
+      assert pos.x == pytest.approx(1942) and pos.y == pytest.approx(285 + (144 - 176 * 0.6) / 2)
+      if state != ChestnutState.LOADING and not (small_engaged and state == ChestnutState.FAILED):
+        assert draw.call_args.args[4].a == 255
 
 
 def test_large_hud_draws_nothing_without_chestnut():
   from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
-  renderer = Mock(spec=HudRenderer, _small_model_engaged=False, _chestnut_icon=None)
+  renderer = Mock(spec=HudRenderer, _small_model_engaged=False)
+  renderer._chestnut_alpha_filter = Mock()
   with patch('openpilot.selfdrive.ui.onroad.hud_renderer.ui_state', SimpleNamespace(chestnut_state=ChestnutState.DISCONNECTED)), \
        patch('openpilot.selfdrive.ui.onroad.hud_renderer.rl.draw_texture_ex') as draw:
     HudRenderer._draw_model_source(renderer, rl.Rectangle(0, 0, 2160, 1080))
@@ -211,6 +220,21 @@ def test_large_model_source_layer_uses_hud_icon():
   from openpilot.selfdrive.ui.onroad.augmented_road_view import AugmentedRoadView as LargeRoadView
   view = Mock(spec=LargeRoadView, _hud_renderer=Mock())
   rect = rl.Rectangle(0, 0, 2160, 1080)
-  LargeRoadView.render_model_source_layer(view, rect)
+  box = rl.Rectangle(1942, 285, 144, 144)
+  LargeRoadView.render_model_source_layer(view, rect, box)
   view._hud_renderer._update_state.assert_called_once_with()
-  view._hud_renderer._draw_model_source.assert_called_once_with(rect)
+  view._hud_renderer._draw_model_source.assert_called_once_with(rect, box)
+
+
+def test_model_source_box_sits_under_the_wheel_glyph_and_follows_the_layout():
+  from openpilot.starpilot.ui import onroad_large_widgets as widgets
+  state = SimpleNamespace(customization={})
+  content = rl.Rectangle(0, 0, 2160, 1080)
+  with patch.object(widgets, 'offset', return_value=(0, 0)), patch.object(widgets, 'widget_size', return_value=(192, 192)):
+    wheel = widgets.wheel_box(content, state)
+    box = widgets.model_source_box(content, state)
+  assert (wheel.x, wheel.y, wheel.width) == (2160 - 146 - 96, 45, 192)
+  assert (box.x, box.y, box.width, box.height) == (wheel.x + 24, 45 + 192 + 24, 144, 144)
+  with patch.object(widgets, 'offset', return_value=(-40, 10)), patch.object(widgets, 'widget_size', return_value=(160, 160)):
+    moved = widgets.model_source_box(content, state)
+  assert (moved.x, moved.y, moved.width) == (2160 - 146 - 96 - 40 + 20, 55 + 160 + 24, 120)

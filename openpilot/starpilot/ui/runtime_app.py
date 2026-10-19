@@ -189,7 +189,8 @@ class StarShellSession:
         self.view.onroad.extra_overlays = lambda rect, state: camera_owner.render_model_source_layer(rect, show_long_indicator=None)
         self.view.onroad.compact_sidebar.personality_renderer = self._render_personality
       else:
-        self.view.onroad.extra_overlays = lambda rect, state: camera_owner.render_model_source_layer(rect)
+        from openpilot.starpilot.ui.onroad_large_widgets import model_source_box
+        self.view.onroad.extra_overlays = lambda rect, state: camera_owner.render_model_source_layer(rect, model_source_box(rect, state))
     except Exception:
       self.fonts.close()
       raise

@@ -14,7 +14,6 @@ from openpilot.system.ui.widgets import Widget
 SET_SPEED_NA = 255
 KM_TO_MILE = 0.621371
 CRUISE_DISABLED_CHAR = '–'
-MODEL_SOURCE_PERSISTENCE = 2.5  # seconds, as the mici HUD's set-speed persistence
 # The mici HUD draws on a quarter-scale surface; keep the Chestnut icon's physical size on the 3X (vfn's Big UI GPU widget)
 MODEL_SOURCE_ICON_SCALE = 4
 
@@ -80,13 +79,11 @@ class HudRenderer(Widget):
     # Chestnut model source, same states as the mici HUD
     self._engaged: bool = False
     self._small_model_engaged = False
-    self._chestnut_fade_time: float = 0
     k = MODEL_SOURCE_ICON_SCALE
     self._txt_chestnut: rl.Texture = gui_app.texture('icons_mici/chestnut.png', 60 * k, 44 * k)
     self._txt_chestnut_green: rl.Texture = gui_app.texture('icons_mici/chestnut_green.png', 60 * k, 44 * k)
     self._txt_chestnut_orange: rl.Texture = gui_app.texture('icons_mici/chestnut_orange.png', 75 * k, 44 * k)
     self._txt_chestnut_crossed: rl.Texture = gui_app.texture('icons_mici/egpu_crossed.png', 60 * k, 52 * k)
-    self._chestnut_icon: rl.Texture | None = None
     self._chestnut_alpha_filter = FirstOrderFilter(0.0, 0.1, 1 / gui_app.target_fps)
 
   def _update_state(self) -> None:
@@ -109,8 +106,6 @@ class HudRenderer(Widget):
     if (engaged and not self._engaged and not ui_state.chestnut_loading and ui_state.chestnut_active is not True and
         sm.recv_frame['modelV2'] > ui_state.started_frame):
       self._small_model_engaged = True
-    if engaged != self._engaged:
-      self._chestnut_fade_time = rl.get_time() if engaged else 0
     self._engaged = engaged
     self.is_cruise_set = 0 < self.set_speed < SET_SPEED_NA
     self.is_cruise_available = self.set_speed != -1
@@ -147,9 +142,10 @@ class HudRenderer(Widget):
 
     self._draw_model_source(rect)
 
-  def _draw_model_source(self, rect: rl.Rectangle) -> None:
-    """The mici HUD's Chestnut icon: pulsing while the big model loads, green when it drives, orange when it failed or is
-    not compiled, crossed out once engaged on the small model. Shown while loading and for a moment after a change."""
+  def _draw_model_source(self, rect: rl.Rectangle, box: "rl.Rectangle | None" = None) -> None:
+    """The mici HUD's Chestnut icon, held steady so the GPU state is always visible: pulsing while the big model loads,
+    green when it drives, orange when it failed or is not compiled, crossed out once engaged on the small model. Fitted
+    into `box` (the StarPilot shell puts it under the steering wheel), else in the bottom-right corner."""
     loading = ui_state.chestnut_state == ChestnutState.LOADING
     self._small_model_engaged &= ui_state.chestnut_state in (ChestnutState.FAILED, ChestnutState.DISCONNECTED)
     if loading:
@@ -165,19 +161,18 @@ class HudRenderer(Widget):
       icon = self._txt_chestnut_green
       opacity = 1.0
     else:
+      self._chestnut_alpha_filter.x = 0.0
       return
 
-    if icon is not self._chestnut_icon:
-      self._chestnut_fade_time = rl.get_time()
-      self._chestnut_icon = icon
-    visible = loading or rl.get_time() - self._chestnut_fade_time < MODEL_SOURCE_PERSISTENCE
-    alpha = self._chestnut_alpha_filter.update(visible)
-    if alpha < 1e-2:
-      return
-
-    pos = rl.Vector2(rect.x + rect.width - UI_CONFIG.border_size - icon.width,
-                     rect.y + rect.height - UI_CONFIG.border_size - icon.height)
-    rl.draw_texture_ex(icon, pos, 0.0, 1.0, rl.Color(255, 255, 255, int(255 * opacity * alpha)))
+    alpha = self._chestnut_alpha_filter.update(1.0)  # fade in once, then steady
+    if box is None:
+      scale = 1.0
+      pos = rl.Vector2(rect.x + rect.width - UI_CONFIG.border_size - icon.width,
+                       rect.y + rect.height - UI_CONFIG.border_size - icon.height)
+    else:
+      scale = min(box.width / icon.width, box.height / icon.height)
+      pos = rl.Vector2(box.x + (box.width - icon.width * scale) / 2, box.y + (box.height - icon.height * scale) / 2)
+    rl.draw_texture_ex(icon, pos, 0.0, scale, rl.Color(255, 255, 255, int(255 * opacity * alpha)))
 
   def user_interacting(self) -> bool:
     return self._exp_button.is_pressed
