@@ -224,7 +224,8 @@ def configure_controller(CI, params):
     if getattr(CI, "CS", None) is not None:
       CI.CS.modified_eps_settings = preferences
 
-  if controller is not None and cp.brand == "honda" and getattr(controller, "nidec_interceptor", None) is not None:
+  if (controller is not None and cp.brand == "honda" and getattr(controller, "nidec_interceptor", None) is not None and
+      controller.nidec_interceptor.learn):
     from openpilot.starpilot.car.honda.longitudinal import BoschLearningParams
     controller.interceptor_learning_params = BoschLearningParams(params, controller.nidec_interceptor)
 

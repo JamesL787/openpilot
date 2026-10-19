@@ -73,9 +73,26 @@ def test_actual_command_codec_has_dual_track_encoding_and_disabled_zero(identity
         assert (first * 0.253984064 - 83.3) == pytest.approx(demand * 255, abs=0.13)
 
 
+def test_pedal_factors_stay_fixed_by_default():
+  # interceptor Clarity route aa72d9572459015c/00000013 booted with persisted 1.72 / 4.51 from the always-on learner
+  cp = factory(CAR.HONDA_CLARITY)
+  owner = NidecInterceptor(cp)
+  assert not owner.learn
+  owner.set_factors(1.7177049910374358, 4.50668378908807)
+  assert (owner.bosch_gas_factor, owner.bosch_wind_factor) == (1.0, 1.0)
+  cc = structs.CarControl(longActive=True)
+  cc.actuators.accel = 1.0
+  cc.actuators.longControlState = "pid"
+  cs = SimpleNamespace(out=SimpleNamespace(aEgo=0.5, gasPressed=False, brakePressed=False, vEgo=27.0))
+  for _ in range(500):
+    output = owner.update(cc, cs, 0.2, 0.0, 0.11)
+  assert (owner.bosch_gas_factor, owner.bosch_wind_factor) == (1.0, 1.0)
+  assert output == pytest.approx(0.2 + 0.11 * 0.75)
+
+
 def test_original_nidec_learning_and_inactive_zero():
   cp = factory(CAR.HONDA_CIVIC)
-  owner = NidecInterceptor(cp)
+  owner = NidecInterceptor(cp, learn=True)
   cc = structs.CarControl(longActive=True)
   cc.actuators.accel = 1.0
   cc.actuators.longControlState = "pid"

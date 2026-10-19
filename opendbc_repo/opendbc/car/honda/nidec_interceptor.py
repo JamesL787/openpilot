@@ -60,20 +60,29 @@ def pedal_crc(data):
 
 
 class NidecInterceptor:
-  def __init__(self, cp):
+  # Pedal cars run fixed gas/wind factors unless learning is asked for, as on the 6.x Honda port, where live gas
+  # learning defaulted on for Bosch only. This learner compares the plan with aEgo on the same frame, ~0.5 s before
+  # the pedal's response arrives, and its brake ratchet only lets the wind factor climb: on the interceptor Clarity
+  # it reached 4.5 within a day (route aa72d9572459015c/00000013), holding the pedal on at 35-65 mph so the car
+  # accelerated +0.1-0.3 m/s2 when the plan coasted and did ~0 when the plan asked for -0.3..-0.4. The fixed 1.0
+  # drag model matches the measured coast decel there (-0.37..-0.39 m/s2 vs -0.35..-0.54 assumed).
+  def __init__(self, cp, learn=False):
     if not qualified(cp):
       raise ValueError("Honda interceptor requires its admitted Nidec profile")
+    self.learn = bool(learn)
     self.command = 0.0
     self.set_factors(1.0, 1.0)
 
   def set_factors(self, gas, wind):
+    if not self.learn:
+      gas = wind = 1.0
     self.bosch_gas_factor = float(gas) if math.isfinite(gas) and 0.1 <= gas <= 3.0 else 1.0
     self.bosch_wind_factor = float(wind) if math.isfinite(wind) and 0.1 <= wind <= 5.0 else 1.0
     self.bosch_wind_factor_before_brake = self.bosch_wind_factor
 
   def update(self, CC, CS, gas, brake, wind_brake):
     gas_error = CC.actuators.accel - CS.out.aEgo
-    if not CS.out.gasPressed and CC.actuators.longControlState == LongCtrlState.pid:
+    if self.learn and not CS.out.gasPressed and CC.actuators.longControlState == LongCtrlState.pid:
       if gas_error != 0.0 and gas > 0.0:
         self.bosch_gas_factor = float(np.clip(self.bosch_gas_factor + gas_error / 150.0 * (gas * 4.8), 0.1, 3.0))
       if gas_error != 0.0 and not CS.out.brakePressed and CS.out.vEgo > 0.0:
