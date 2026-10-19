@@ -421,20 +421,10 @@ class LongControl:
       self.reset(preserve_stop_release=True)
 
     elif self.long_control_state == LongCtrlState.starting:
-      if traffic_mode_enabled:
-        # Traffic Mode has its own soft launch curve (a_target); bypass the raw
-        # StartAccel kick used elsewhere so launches stay within the traffic cap.
-        output_accel = clip(a_target, 0.0, long_tuning.startAccel)
-      elif getattr(starpilot_toggles, "custom_accel_profile", False):
-        output_accel = clip(a_target, 0.0, long_tuning.startAccel)
-      elif has_lead and a_target <= LEAD_GAP_SETTLE_MAX_START_ACCEL:
-        output_accel = clip(a_target, 0.0, long_tuning.startAccel)
-      elif profile_max_accel > 0.0:
-        # Keep the StartAccel friction-overcoming shove, but cap it at the selected
-        # acceleration profile's launch ceiling so Eco launches soft and Sport hard.
-        output_accel = min(long_tuning.startAccel, profile_max_accel)
-      else:
-        output_accel = long_tuning.startAccel
+      # HumanAcceleration (FrogPilot-Testing 728f65472 longcontrol.py), always on since STATUS 118:
+      # launch from the planner's a_target instead of the fixed startAccel shove. Cars without
+      # CP.startingState (Honda included) never enter this state.
+      output_accel = a_target
       self.reset()
 
     else:  # LongCtrlState.pid
@@ -577,10 +567,7 @@ class LongControl:
       self.reset_old_long(CS.vEgo)
 
     elif self.long_control_state == LongCtrlState.starting:
-      if getattr(starpilot_toggles, "custom_accel_profile", False):
-        output_accel = clip(a_target, 0.0, long_tuning.startAccel)
-      else:
-        output_accel = long_tuning.startAccel
+      output_accel = a_target  # HumanAcceleration launch, as above (STATUS 118)
       self.reset_old_long(CS.vEgo)
 
     elif self.long_control_state == LongCtrlState.pid:

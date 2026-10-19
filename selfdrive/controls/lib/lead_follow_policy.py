@@ -17,16 +17,10 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import desir
 
 FOLLOW_MIN_SPEED = 8.0
 FOLLOW_MATCHED_MIN_SPEED = 22.0
-FOLLOW_MAX_CLOSING = 3.5
 FOLLOW_MAX_LEAD_BRAKE = 0.35
 FOLLOW_GAP_BUFFER_MIN = 4.0
 FOLLOW_GAP_BUFFER_GAIN = 0.15
-FOLLOW_TRANSITION_MIN_STEP = 0.06
-FOLLOW_TRANSITION_MAX_STEP = 0.18
-FOLLOW_TRANSITION_MIN_TTC = 6.0
 FOLLOW_HEADWAY_MARGIN = 0.90
-FOLLOW_SIGN_CROSS_STEP = 0.10
-FOLLOW_TRANSITION_MAX_BRAKE = 0.25
 FOLLOW_STEADY_DEADBAND_MAX_TARGET = 0.28
 FOLLOW_STEADY_DEADBAND_MAX_CLOSING = 0.75
 FOLLOW_STEADY_DEADBAND_MAX_HEADWAY_MARGIN = 0.90
@@ -36,7 +30,6 @@ FOLLOW_STEADY_DEADBAND_MAX_HEADWAY_MARGIN = 0.90
 class FollowResult:
   lead: object | None
   accel_cap: float | None
-  brake_floor: float | None
   target: float
 
 
@@ -139,45 +132,6 @@ def _catchup_cap(lead, v_ego: float, t_follow: float, *, source: str, tracking: 
   return min(1.5, cap)
 
 
-def _matched_brake_floor(lead, v_ego: float, t_follow: float) -> float | None:
-  if lead is None or not _matched(lead, v_ego, t_follow):
-    return None
-
-  relative_speed = float(v_ego) - float(lead.vLead)
-  decel = float(np.interp(relative_speed, [-1.2, 0.0, 2.2], [0.08, 0.12, 0.32]))
-  deficit = float(np.clip((float(t_follow) - _headway(lead, v_ego)) / 0.35, 0.0, 1.0))
-  return -min(0.32, decel + 0.05 * deficit)
-
-
-def _transition_target(lead, v_ego: float, t_follow: float, previous: float, target: float) -> float | None:
-  if lead is None or not lead.status:
-    return None
-  if abs(float(target) - float(previous)) < 0.06:
-    return None
-  if _lead_brake(lead) > 0.8:
-    return None
-  # The follow smoother may shape small MPC reversals, but it must never turn
-  # an already meaningful braking request into a coast request.
-  if float(target) < -FOLLOW_TRANSITION_MAX_BRAKE:
-    return None
-
-  closing = max(0.0, float(v_ego) - float(lead.vLead))
-  ttc = float(lead.dRel) / max(closing, 0.1) if closing > 0.1 else float("inf")
-  margin = _headway(lead, v_ego) - float(t_follow)
-  if closing > FOLLOW_MAX_CLOSING or ttc < FOLLOW_TRANSITION_MIN_TTC or margin > FOLLOW_HEADWAY_MARGIN:
-    return None
-
-  opening = max(0.0, float(lead.vLead) - float(v_ego))
-  up_step = float(np.interp(opening, [0.0, 1.0, 2.25],
-                            [FOLLOW_TRANSITION_MIN_STEP, 0.12, FOLLOW_TRANSITION_MAX_STEP]))
-  down_step = float(np.interp(closing, [0.0, FOLLOW_MAX_CLOSING], [0.06, 0.18]))
-  if float(previous) * float(target) < 0.0:
-    up_step = down_step = FOLLOW_SIGN_CROSS_STEP
-
-  limited = float(np.clip(target, float(previous) - down_step, float(previous) + up_step))
-  return limited if abs(limited - float(target)) > 1e-6 else None
-
-
 def _steady_follow_deadband(lead, v_ego: float, t_follow: float, previous: float, target: float) -> float:
   """Remove only small sign reversals in an already matched, non-urgent follow."""
   if not _matched(lead, v_ego, t_follow):
@@ -201,25 +155,16 @@ def apply(lead_one, lead_two, *, source: str, active: bool, v_ego: float, t_foll
           previous_target: float, raw_target: float, tracking: bool, post_departure: bool,
           blocked: bool, panic_bypass: bool) -> FollowResult:
   if blocked or panic_bypass or post_departure:
-    return FollowResult(None, None, None, float(raw_target))
+    return FollowResult(None, None, float(raw_target))
 
   lead = select_lead(lead_one, lead_two, source, active, v_ego, t_follow)
   if lead is None:
-    return FollowResult(None, None, None, float(raw_target))
+    return FollowResult(None, None, float(raw_target))
 
   cap = _catchup_cap(lead, v_ego, t_follow, source=source, tracking=tracking,
                      post_departure=post_departure)
-  floor = _matched_brake_floor(lead, v_ego, t_follow)
   target = float(raw_target)
-  if floor is not None:
-    target = max(target, floor)
   if cap is not None:
     target = min(target, cap)
-  deadband_target = _steady_follow_deadband(lead, v_ego, t_follow, previous_target, target)
-  if deadband_target != target:
-    target = deadband_target
-  else:
-    transition = _transition_target(lead, v_ego, t_follow, previous_target, target)
-    if transition is not None:
-      target = transition
-  return FollowResult(lead, cap, floor, target)
+  target = _steady_follow_deadband(lead, v_ego, t_follow, previous_target, target)
+  return FollowResult(lead, cap, target)

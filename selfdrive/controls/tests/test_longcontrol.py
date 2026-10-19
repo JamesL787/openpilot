@@ -203,30 +203,6 @@ def test_stopping_release_allows_launch_while_cruise_standstill_latched():
   assert next_state == LongCtrlState.pid
 
 
-def test_starting_accel_unchanged_when_custom_profile_disabled():
-  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
-  CP.longitudinalTuning.kpBP = [0.0]
-  CP.longitudinalTuning.kpV = [0.1]
-  CP.longitudinalTuning.kiBP = [0.0]
-  CP.longitudinalTuning.kiV = [0.03]
-
-  lc = LongControl(CP)
-  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
-  CS.cruiseState.standstill = False
-
-  output_accel = lc.update(
-    active=True,
-    CS=CS,
-    a_target=0.1,
-    should_stop=False,
-    accel_limits=(-3.0, 2.0),
-    starpilot_toggles=make_toggles(startAccel=1.5),
-  )
-
-  assert lc.long_control_state == LongCtrlState.starting
-  assert output_accel == 1.5
-
-
 def test_starting_accel_uses_small_planner_target_for_lead_gap_settle():
   CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
   CP.longitudinalTuning.kpBP = [0.0]
@@ -303,7 +279,16 @@ def test_starting_accel_obeys_a_target_cap_when_traffic_mode_enabled():
   assert output_accel == pytest.approx(1.10)
 
 
-def test_starting_accel_uses_raw_start_accel_when_no_profile_ceiling():
+@pytest.mark.parametrize(("start_accel", "profile_max_accel", "custom_accel_profile"), [
+  (1.5, 0.0, False),
+  (3.5, 0.0, False),
+  (3.5, 1.5, False),
+  (1.5, 3.5, False),
+  (3.5, 1.5, True),
+])
+def test_starting_state_launches_on_planner_target(start_accel, profile_max_accel, custom_accel_profile):
+  # HumanAcceleration launch (FrogPilot, STATUS 118): the starting state outputs a_target,
+  # never the raw StartAccel shove, whatever the profile ceiling.
   CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
   CP.longitudinalTuning.kpBP = [0.0]
   CP.longitudinalTuning.kpV = [0.1]
@@ -314,77 +299,19 @@ def test_starting_accel_uses_raw_start_accel_when_no_profile_ceiling():
   CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
   CS.cruiseState.standstill = False
 
-  # No usable profile ceiling published (e.g. a stale/zero starpilotPlan) -> keep the
-  # raw StartAccel shove so a publish gap never zeroes out the launch.
   output_accel = lc.update(
     active=True,
     CS=CS,
     a_target=1.10,
     should_stop=False,
     accel_limits=(-3.0, 4.0),
-    starpilot_toggles=make_toggles(startAccel=3.5),
+    starpilot_toggles=make_toggles(startAccel=start_accel, custom_accel_profile=custom_accel_profile),
     traffic_mode_enabled=False,
-    profile_max_accel=0.0,
+    profile_max_accel=profile_max_accel,
   )
 
   assert lc.long_control_state == LongCtrlState.starting
-  assert output_accel == pytest.approx(3.5)
-
-
-def test_starting_accel_capped_by_profile_ceiling():
-  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
-  CP.longitudinalTuning.kpBP = [0.0]
-  CP.longitudinalTuning.kpV = [0.1]
-  CP.longitudinalTuning.kiBP = [0.0]
-  CP.longitudinalTuning.kiV = [0.03]
-
-  lc = LongControl(CP)
-  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
-  CS.cruiseState.standstill = False
-
-  # A large StartAccel override (3.5) must be capped to the selected profile's launch
-  # ceiling (e.g. Eco = 1.5) so a soft profile launches soft.
-  output_accel = lc.update(
-    active=True,
-    CS=CS,
-    a_target=1.10,
-    should_stop=False,
-    accel_limits=(-3.0, 4.0),
-    starpilot_toggles=make_toggles(startAccel=3.5),
-    traffic_mode_enabled=False,
-    profile_max_accel=1.5,
-  )
-
-  assert lc.long_control_state == LongCtrlState.starting
-  assert output_accel == pytest.approx(1.5)
-
-
-def test_starting_accel_keeps_start_accel_shove_below_profile_ceiling():
-  CP = car.CarParams.new_message(startingState=True, vEgoStarting=0.5)
-  CP.longitudinalTuning.kpBP = [0.0]
-  CP.longitudinalTuning.kpV = [0.1]
-  CP.longitudinalTuning.kiBP = [0.0]
-  CP.longitudinalTuning.kiV = [0.03]
-
-  lc = LongControl(CP)
-  CS = car.CarState.new_message(vEgo=0.0, aEgo=0.0, brakePressed=False)
-  CS.cruiseState.standstill = False
-
-  # StartAccel below the profile ceiling (e.g. Sport+ = 3.5) is preserved in full -
-  # the cap only trims launches that exceed the profile, it does not weaken the shove.
-  output_accel = lc.update(
-    active=True,
-    CS=CS,
-    a_target=1.10,
-    should_stop=False,
-    accel_limits=(-3.0, 4.0),
-    starpilot_toggles=make_toggles(startAccel=1.5),
-    traffic_mode_enabled=False,
-    profile_max_accel=3.5,
-  )
-
-  assert lc.long_control_state == LongCtrlState.starting
-  assert output_accel == pytest.approx(1.5)
+  assert output_accel == pytest.approx(1.10)
 
 
 def test_bolt_acc_pedal_starting_handoff_keeps_small_positive_command():
