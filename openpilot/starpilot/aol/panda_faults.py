@@ -8,6 +8,11 @@ from openpilot.cereal import log
 
 def _diagnostic_mask(cp):
   try:
+    # The interceptor Clarity's panda intermittently latches the CAN interrupt-rate diagnostic (interruptRateCan2) at
+    # startup, with normal engagement unaffected (seen before and after its AOL word); it is admitted as the Bolt CC's is.
+    if cp.brand == 'honda' and len(cp.safetyConfigs) == 1 and int(cp.safetyConfigs[0].safetyParam) == 544:
+      from openpilot.starpilot.car.honda.aol import qualified_nidec_interceptor
+      return (1 << 2) | (1 << 3) if qualified_nidec_interceptor(cp) else 0
     from opendbc.car.gm.aol import qualified_gm
     from opendbc.car.gm.values import CAR, is_volt_sdgm_profile, is_bolt_present_no_acc_pedal_profile
     if cp.brand != 'gm' or not qualified_gm(cp) or int(cp.alternativeExperience) != 32 or len(cp.safetyConfigs) != 1:

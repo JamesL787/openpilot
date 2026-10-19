@@ -203,3 +203,25 @@ def test_real_native_permission_and_brake_withdrawal_remain_authoritative(label)
                              no_entry=False, immediate_disable=False, dm_lockout=False, pause_brake_mps=0.)
       assert not decision.longitudinal_active
   safety.set_alternative_experience(0)
+
+
+def test_interceptor_clarity_admits_only_interrupt_rate_faults():
+  from opendbc.car import gen_empty_fingerprint
+  from opendbc.car.honda.interface import CarInterface
+  from opendbc.car.honda.values import CAR
+  from openpilot.starpilot.aol.panda_faults import blocking_fault_list, blocking_fault_mask
+  from openpilot.cereal import log
+  fp = gen_empty_fingerprint()
+  fp[0][0x201] = 6
+  cp = CarInterface.get_params(CAR.HONDA_CLARITY, fp, [], False, False, False)
+  assert blocking_fault_mask(1 << 3, cp)  # plain interceptor word: no AOL, no admission
+  cp.safetyConfigs[0].safetyParam = 544
+  for bits in (0, 1 << 2, 1 << 3, (1 << 2) | (1 << 3)):
+    assert not blocking_fault_mask(bits, cp)
+  for bits in (1 << 0, 1 << 18, (1 << 3) | (1 << 0)):
+    assert blocking_fault_mask(bits, cp)
+  assert not blocking_fault_list([log.PandaState.FaultType.interruptRateCan2], cp)
+  assert blocking_fault_list([log.PandaState.FaultType.relayMalfunction], cp)
+  civic = CarInterface.get_params(CAR.HONDA_CIVIC, fp, [], False, False, False)
+  civic.safetyConfigs[0].safetyParam = 544
+  assert blocking_fault_mask(1 << 3, civic)  # only the Clarity is qualified
