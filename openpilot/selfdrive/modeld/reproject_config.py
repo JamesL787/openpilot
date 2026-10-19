@@ -17,10 +17,16 @@ from openpilot.common.params import Params
 REPROJECT_SESSION_PARAM = "ReprojectSessionActive"
 REPROJECT_CAMERA_SIZE = (1344, 760)
 REPROJECT_DEVICE_TYPES = ("tizi",)   # the 3X; the lens and pair geometry in reproject_c4 are the 3X's
+# Personal branch: off. 7.0's catalog compiles Chestnut models with WARP_DEV=QCOM, so the model warp already runs on
+# the comma GPU and only the warped model inputs cross USB; the virtual pair would just be a second full-frame QCOM
+# warp (and a second resample). It only pays when the model warp runs on the Chestnut, as comma master's does.
+REPROJECT_ENABLED = False
 
 
 @cache
 def _device_supported() -> bool:
+  if not REPROJECT_ENABLED:
+    return False
   try:
     return AGNOS and HARDWARE.get_device_type() in REPROJECT_DEVICE_TYPES
   except Exception:
