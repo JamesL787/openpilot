@@ -338,7 +338,7 @@ def test_failed_selected_small_uses_only_verified_rdf_or_refuses_startup(monkeyp
       env['load_small']()
   stock.assert_not_called()
   if fallback_failure != 'missing':
-    assert loader.call_args.args == (1928, 1208, shipped, 'v16', False, DEFAULT_SMALL, DEFAULT_SMALL_SHA256)
+    assert loader.call_args.args == (1928, 1208, shipped, 'v12', False, DEFAULT_SMALL, DEFAULT_SMALL_SHA256)
 
 
 @pytest.mark.parametrize("opened", [("QCOM",), ("QCOM", "AMD")])

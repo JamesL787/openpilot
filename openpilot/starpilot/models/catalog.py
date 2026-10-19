@@ -12,7 +12,7 @@ BUNDLED_CURRENT = "bundled-current"
 # device for this pin with starpilot/models/compile.py; locally compiled models are listed in the models root's catalog.json.
 DEFAULT_SMALL = "comma-small-65a08adc"
 DEFAULT_SMALL_NAME = "comma small model (65a08adc)"
-DEFAULT_SMALL_SHA256 = "da0638070bc621eaadea07d371ceea96bdc2dc07c1a5459f43db4aaffacfe729"  # QCOM, compiled on the comma 2026-10-18
+DEFAULT_SMALL_SHA256 = "856b1a2f7a79465b9256c361bd7ce43982d57d8adc8603a0ec62dc4006efdbdb"  # QCOM, compiled on the comma 2026-10-18; behavior v12
 DEFAULT_SMALL_SIZE = 74526562
 GENERATION = "v26"
 COMPILER_REVISION = "02e698160eed1751738212144a7ea2cfb160b3f1"
@@ -44,7 +44,7 @@ BUNDLED = tuple(ModelEntry(
   compiler_revision=COMPILER_REVISION,
   artifact_abi=ARTIFACT_ABI,
   selectable=True,
-  version="v16",
+  version="v12",  # no action head: like comma's modeld, the action comes from the plan
 ) for model_id in (BUNDLED_CURRENT, DEFAULT_SMALL))
 
 # StarPilot's published models stay known by name and behavior (old preferences resolve to a clean fallback), but they

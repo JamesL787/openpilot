@@ -37,7 +37,7 @@ class TestModelCatalogStatus(unittest.TestCase):
         while block := stream.read(1024 * 1024):
           digest.update(block)
     self.assertEqual(digest.hexdigest(), entry.source_sha256)
-    self.assertEqual(entry.version, "v16")
+    self.assertEqual(entry.version, "v12")  # plan-derived action, no action head
     with self.assertRaises(ValueError):
       resolve_selection("rdf43")  # published for 9d0446a4, not loadable on this tinygrad
     with self.assertRaises(ValueError):

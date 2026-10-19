@@ -14,7 +14,7 @@ def test_unset_small_loads_the_built_in_small_model_with_its_parser(tmp_path, mo
   selected = manager.resolve_runtime(False, root=tmp_path)
   assert manager.preferences(tmp_path)["small"] == DEFAULT_SMALL
   assert selected.small_id == DEFAULT_SMALL  # personal branch: comma's small model replaces RDF V4
-  assert selected.small_version == "v16"
+  assert selected.small_version == "v12"
   assert selected.small_path == artifact
   assert selected.small_sha256 == DEFAULT_SMALL_SHA256
   assert not selected.allow_big
