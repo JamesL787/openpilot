@@ -211,6 +211,16 @@ def test_crawl_gate_holds_the_feedforward_off_near_straight(v, des, weight):
   assert core.ff_weight == pytest.approx(weight)
 
 
+def test_the_tgg_steers_on_its_own_measured_column_and_rack():
+  tgg = eps_cal.CIVIC_TGG_A120
+  assert tgg.load == eps_cal.CIVIC_TGG_A120_LOAD and tgg.rack is rack.CIVIC_TGG_A120_RACK
+  assert eps_cal.provenance(tgg)["load"].startswith("measured") and eps_cal.provenance(tgg)["rack"].startswith("measured")
+  # its column holds about 2x the C020's at a crawl and alike on the highway
+  hold = lambda load, v: load.k0 + load.k1 * v * v  # noqa: E731
+  assert 1.7 < hold(tgg.load, 5.0) / hold(eps_cal.CIVIC_TBA_C020_LOAD, 5.0) < 2.2
+  assert 0.85 < hold(tgg.load, 30.0) / hold(eps_cal.CIVIC_TBA_C020_LOAD, 30.0) < 1.05
+
+
 def test_a_calibration_can_carry_its_own_friction_knee():
   rdx = eps_cal.ACURA_RDX_TJB_A220
   assert eps_ff.friction_width(8.0, rdx) == 20.0 and eps_ff.friction_width(30.0, rdx) == 15.0

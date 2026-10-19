@@ -69,6 +69,18 @@ CIVIC_TEG_A010_RACK = RackMapTable(
   slip_factor=-0.00067,
 )
 
+# Civic hatch (TGG-A120), through the C020's A table that image carries: the same method on its VSA yaw (0x94 bus 1,
+# 0.2429 deg/s per count + 0.134 clockwise from 65k straight-to-straight GPS pairs, tools/lateral/fit_yaw_scale.py)
+# over the owner's routes 83ccc6a9a4e14d0b/0000000b-00000010 (2026-10-12/13, 1,700 s moving at >= 3 deg). Held out
+# route by route it predicts the measured curvature within 0.98-1.03 (one slow mid-angle cell 1.034). The spec map it
+# replaces asked 2 % too little wheel in town and 8-10 % too little at 25-32 m/s (centre 14.88 vs 15.09, slip factor
+# -0.00063 vs -0.00079), and on the road curve the car ran instead it delivered 0.92-0.94 of the curvature from 9 m/s.
+CIVIC_TGG_A120_RACK = RackMapTable(
+  ratio_bp=(4.9, 14.1, 28.3, 57.2, 83.4, 123.4, 176.5, 220.5, 299.3, 383.4),
+  ratio_v=(15.09, 15.09, 15.10, 15.10, 14.88, 14.85, 14.72, 14.59, 14.33, 13.94),
+  slip_factor=-0.00079,
+)
+
 # Acura RDX 3G (TJB-A220 PTM), through its road-measured linear map (steer_ratio HONDA_VGR_RDX_TJB_A220: the rack is
 # variable and the image has no table). Fitted the same way on its VSA yaw (0x94 bus 1, 0.2511 deg/s per count - 0.20
 # clockwise, opendbc honda/yaw_rate.py) over routes 412ed2539bfc2c42/000000b8, c6, c7, cc and d2 (1,245 s moving at

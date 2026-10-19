@@ -9,9 +9,9 @@ from opendbc.car.honda.steer_ratio import (
 )
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import CLARITY_TRW_A020_LAT_DELAY_SCHEDULE, ColumnLoadModel, \
   EpsFirmwareCalibration, R6_GAIN_BP, computed_r6
-from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CIVIC_TEG_A010_RACK, CLARITY_TRW_A020_RACK, \
-  INSIGHT_TXM_A040_RACK, RDX_TJB_A220_RACK
-from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, CIVIC_HATCH_SPORT_SPEC, CRV_2017_SPEC, \
+from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CIVIC_TEG_A010_RACK, CIVIC_TGG_A120_RACK, \
+  CLARITY_TRW_A020_RACK, INSIGHT_TXM_A040_RACK, RDX_TJB_A220_RACK
+from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, CRV_2017_SPEC, \
   CRV_2020_SPEC, spec_rack_table
 
 # --- the images ------------------------------------------------------------------------------------------------
@@ -225,19 +225,29 @@ CIVIC_TBA_C120 = EpsFirmwareCalibration(
 # PTM_FIX_FAMILY_20261016/out/TGG), a data-only fix of the Drive TGG release (tracker-1 4250, as the 08-07 build). Row 0
 # is live: both variant records (TGGA5, TGGA6, at 0x4B500) select it. It keeps its own key axis and carries the
 # Clarity's R5 for each key at this car's 4096 E4 per unit (Clarity(key x 3840/4096)), with P on the Clarity's knots
-# x 4096/3840, and A280 is flat in it. Flat envelope. Not measured: load (R6 is computed from its A table, the C020's). Both builds report 39990-TGG,A120: a car
-# on an earlier image must be reflashed. Its rack map is predicted from the Civic hatch Sport's specs through the A table.
-CIVIC_TGG_A120_SPEC_RACK = spec_rack_table(CIVIC_HATCH_SPORT_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CIVIC_TBA_C020])
+# x 4096/3840, and A280 is flat in it. Flat envelope. R6 is computed from its A table (the C020's); on the owner's
+# routes the 0x18F rate word reads 4.85 per published deg/s at centre and 1.21x that to lock (displacement windows,
+# five routes), against 4.80 and 1.21x computed, so R6 = 32 x the word holds within 1 %. Both builds report
+# 39990-TGG,A120: a car on an earlier image must be reflashed.
+# Rack map: yaw-fitted on the owner's car (honda_eps_rack_map.CIVIC_TGG_A120_RACK).
+# Load: fitted through the law of the build those drives ran, the 08-07 C020Pminus5 Trk4250 KFF45 image (row 0 on
+# TargetMap-D R5 0..30000, P-minus-5 on the C120's P keys, 4096 E4 per unit), not rev b's: the column is the car's,
+# whichever image moves it. Routes 83ccc6a9a4e14d0b/0000000b-00000010, 73 min of engaged unpressed frames, R^2 0.794,
+# held out by route 0.838 / 0.558 / 0.840 / 0.703 / 0.735 (the C020's load it carried: 0.761 / 0.520 / 0.641 / 0.267 /
+# 0.318). Its column is 2x stiffer than the C020's at 5 m/s (k0 -15.7 vs -5.6), alike by 30 m/s: carrying the C020's
+# under-asked the hold in tight turns, the owner's "low speed sometimes doesn't turn hard enough", while the
+# highway was right.
+CIVIC_TGG_A120_LOAD = ColumnLoadModel(k0=-15.67, k1=-0.157, c=-5.449, friction=-388.8, bias=75.77, kroll=-0.6084)
 CIVIC_TGG_A120 = EpsFirmwareCalibration(
   name="civic_tgg_a120", e4_per_output=3840.0,  # built for 4096 (below), sent 3840: its key clamp is 1663
   r5_key_bp=(0, 103, 263, 459, 660, 862, 1111, 1549, 1774), r5_v=(0, 1740, 4443, 7769, 11167, 14579, 18798, 26202, 30002),
   key_clamp=1663, envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
-  load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
+  load=CIVIC_TGG_A120_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15, cmd_delay_highway_s=0.15,  # the C020's (same Civic Bosch chassis)
   lat_delay_schedule=CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
-  rack=CIVIC_TGG_A120_SPEC_RACK,
+  rack=CIVIC_TGG_A120_RACK,
 )
 # Insight 39990-TXM-A040, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (payload sha256 089a8a72, RWD 7ba37432;
 # KB PTM_FIX_FAMILY_20261016/out/TXM, proof/), on the released PTM 39990-TXM,A040-PTM.rwd (rwd 833a41bf, the 08-08 C020Surface Trk1-4000
@@ -468,11 +478,12 @@ CALIBRATION_PROVENANCE = {
   "civic_tgg_a120": {
     "row": "firmware: both variant records (TGGA5, TGGA6) select row 0",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
-    "r6": "firmware: computed from its A table (the C020's)",
-    "load": "inferred: the C020's",
+    "r6": "firmware: computed from its A table (the C020's); the owner's 0x18F rate word agrees within 1 %",
+    "load": "measured: the owner's routes 0000000b-00000010, through the 08-07 build's law they ran",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "inferred: the C020's (same chassis)",
-    "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
+    "cmd_delay": "inferred: the C020's (same chassis; on time to 0.15 s early on routes 0c/0d/0f, older code)",
+    "model_delay": "inferred: the C020's (same chassis)",
+    "rack": "measured: VSA yaw (GPS-checked scale), routes 0000000b-00000010",
   },
   "insight_txm_a040": {
     "row": "firmware: row 0 in every build and variant",
