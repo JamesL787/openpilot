@@ -510,11 +510,12 @@ def test_every_profiles_inversion_reproduces_the_requested_load(cal, load, rate)
   assert eps_ff.firmware_output(r5, rate, cal=cal) == pytest.approx(load, abs=1e-6)
 
 
-def test_c020_full_output_lands_on_the_measured_rail():
-  # route 00000284 (sent 4096): the largest R5 the C020 ever ran was 28497, row 1 at the 1663 key clamp. At 3840 full
-  # output decodes to key 1662, the last key under the clamp, one key (13 counts) below it, and 4096 still clamps there.
-  assert abs(eps_ff.r5_from_output(1.0, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28484, abs=1)
-  assert abs(eps_ff.r5_from_output(4096 / 3840, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28497, abs=1)
+def test_c020_full_output_lands_on_the_key_clamp():
+  # route 00000284 (sent 4096, the 08-05 build) put the rail at row 1's key clamp 1663 (R5 28497 there on TargetMap-D).
+  # On rev b row 1 that key is 28127; at 3840 full output decodes to key 1662, one key (17 counts) below it, and 4096
+  # still clamps there.
+  assert abs(eps_ff.r5_from_output(1.0, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28110, abs=1)
+  assert abs(eps_ff.r5_from_output(4096 / 3840, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28127, abs=1)
   # and its envelope takes the ceiling to key 1108 from 160 km/h
   assert eps_cal.CIVIC_TBA_C020.key_ceiling(170 / 3.6) == 1108
 
@@ -874,8 +875,8 @@ def test_held_cars_model_their_corrected_ptm_row_and_ask_the_clarity_command(nam
 
 def test_every_ptm_calibration_names_its_required_corrected_build():
   names = {c.name for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values()}
-  # the Clarity is the reference and the C020 is held on its owner's Trk4500 build
-  assert set(eps_cal.REQUIRED_PTM_RWD) == names - {"clarity_trw_a020", "civic_tba_c020"}
+  # the Clarity is the reference
+  assert set(eps_cal.REQUIRED_PTM_RWD) == names - {"clarity_trw_a020"}
   assert all(len(sha) == 8 and int(sha, 16) >= 0 for sha in eps_cal.REQUIRED_PTM_RWD.values())
 
 

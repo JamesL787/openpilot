@@ -86,7 +86,6 @@ FLAT_ENVELOPE = ((0, 50, 100, 150, 200, 250, 300, 350, 400), (1774,) * 9)
 CIVIC_TBA_C020_ENVELOPE = ((0, 50, 100, 150, 200, 240, 300, 321, 400), (1774, 1774, 1774, 1774, 1774, 1552, 1219, 1108, 1108))
 # C020 row 1 (axis 0x13806); the TEG-A010 and the 09-12 A030 images carry the C020's axes in every row
 CIVIC_TBA_C020_ROW1_KEYS = (0, 115, 254, 449, 654, 862, 1111, 1549, 1774)
-CIVIC_TBA_C020_P_KEYS = (0, 223, 441, 665, 883, 1108, 1330, 1552, 1774)
 CIVIC_TBA_C120_P_KEYS = (3, 173, 441, 665, 887, 1104, 1317, 1610, 1774)
 # Every image's R6, computed from its own A table (see computed_r6). The TGG-A120 shares the C020's A table; the
 # TEG-A010 and A030 share the C120's (centre divisor 20972); the CR-V A220's is byte-identical to the A040's.
@@ -130,17 +129,23 @@ CLARITY_TRW_A020 = EpsFirmwareCalibration(
 CIVIC_TEG_A010_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.20, 0.20, 0.20, 0.20, 0.20))
 CIVIC_TBA_C020_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.28, 0.28, 0.28, 0.26, 0.26))
 
-# Civic Bosch 39990-TBA-C020, 08-05 ClarityPminus5 P117..265 D737 KFF45 Norm1650 Trk4500 TargetMapD Telem (bin
-# sha256 6ecd587c). Measured on the owner's telemetry (routes 284/287/289): E4 = -4096 * u, key clamp 1663 (0x137F2),
-# row 1 is live (94 counts RMS vs 200 for row 0 at 11-20 m/s; the largest R5 on 284 is 28497 = row 1 at 1663), R6,
-# the column load. Not checked: the envelope above 89 km/h. Now sent 3840 per unit (opendbc HONDA_CIVIC_BOSCH): the image
-# clamps at key 1663 = E4 3840, so 4096 left the last ~6% of the output range dead. Its map was set at 4096, so per unit
-# of output it now asks 0.94x the R5 it did and reaches the clamp at full output; the inversion uses 3840.
+# Civic Bosch 39990-TBA-C020, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 df67bf6f; KB
+# PTM_FIX_FAMILY_20261016/out/C020, independent_verify 48/48, brick_check 70/70), a data-only fix of nrdr's Drive
+# release (39990-TBA,C020-Trk4000-PTM, 2d8836e8). That release equals the owner's earlier 08-05 ClarityPminus5
+# TargetMapD Telem build except tracker-1 (4000 here, 4500 there: ~2 ms of R6 lag, ~3 deg at 6.2 Hz; A280 is flat in
+# rows 0-1 now, which is what stopped the stutter). Rows 0-5 carry the Clarity's R5 at key x 3840/4096 on their own
+# axes, P on the Clarity's knots x 4096/3840, row 6 back to stock. Row 1 is live (TBCA9/TBHC8; telemetry on route 294:
+# 94 counts RMS vs 200 for row 0 at 11-20 m/s). Its R6, column load and trims were measured on the 08-05 build
+# (routes 284/287/289/294); the fix touches neither the rate path nor the column, so they carry over. Key clamp 1663
+# (0x137F2). Not checked: the envelope above 89 km/h. Sent 3840 per unit here (opendbc HONDA_CIVIC_BOSCH, the image's
+# clamp), the build was made for 4096, so per unit of output it asks 0.94x the Clarity's R5 and reaches the clamp at
+# full output; the inversion uses 3840. On the 08-05 build (TargetMap-D) this map would be 7-13 % hot mid-range.
+CIVIC_TBA_C020_R5 = (0, 1943, 4291, 7599, 11065, 14579, 18798, 26202, 30002)  # rev b row 1 (0x13884)
 CIVIC_TBA_C020 = EpsFirmwareCalibration(
   name="civic_tba_c020", e4_per_output=3840.0,
-  r5_key_bp=CIVIC_TBA_C020_ROW1_KEYS, r5_v=TARGET_MAP_D_R5, key_clamp=1663,
+  r5_key_bp=CIVIC_TBA_C020_ROW1_KEYS, r5_v=CIVIC_TBA_C020_R5, key_clamp=1663,
   envelope_bp=CIVIC_TBA_C020_ENVELOPE[0], envelope_v=CIVIC_TBA_C020_ENVELOPE[1],
-  kp_key_bp=CIVIC_TBA_C020_P_KEYS, kp_v=P_ROW_PMINUS5,
+  kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15, cmd_delay_highway_s=0.15,  # measured
@@ -499,6 +504,7 @@ CALIBRATION_PROVENANCE = {
 # PTM_FIX_FAMILY_20261016/out/<car>). Each earlier PTM build reports the same EPS version string, so openpilot cannot tell
 # them apart: the owner must flash this build before turning HondaEpsController on.
 REQUIRED_PTM_RWD = {
+  "civic_tba_c020": "df67bf6f",
   "civic_tba_a030": "55c37266",
   "civic_teg_a010": "04147917",
   "civic_tba_c120": "9261b8db",
