@@ -340,23 +340,26 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
 #   D 1774, output 8868 (the Clarity's 9000: the motor sum caps at 8868 on both); FF45 in a code cave at the P+D sum,
 #   as the Clarity's. A280 (G/H) flat. Speed envelope flat at a 1024 (0x57B3C). Emulator-exact (1500/1500 per stage).
 # - R6: TJB's feedback ref has no NORM; the build scales it x 15768/32768 (= 1650/3429, the Clarity's NORM ratio) at
-#   its load. Its 0x18F STEER_ANGLE_RATE word, pinion-side and unscaled, reads -7.2 per published deg/s at centre;
-#   on the Clarity R6 is 32 x that word (32 x -3.7..-3.8 = -118..-122, the firmware-derived -122). So, if TJB's ref
-#   is 32 x its word (THR's open item), R6 here = 0.4812 x 32 x -7.2 = -110.9 per published deg/s at centre:
-#   0.91 of the Clarity's. Its angle shape is the rate word's (the linear map's slope, as computed_r6). The drives
-#   cannot pin it more closely: fitting the load through the law (tools/lateral/fit_column_load.py --source e4) at
-#   0.5-2x this R6 gives R^2 0.815-0.825 throughout, since R6 trades off against the viscous term, which stays
-#   negative (as on every measured car) only up to ~1.1x. So the word-derived value stands.
+#   its load. The ref is read from a RAM block (FFF8B4B4) that nothing in the image writes, as on THR (filled from
+#   outside the application, likely the motor-control side), so the firmware cannot close its scale on its own. Honda's
+#   shared override row does: TJB row 4 copies the Clarity's row 6 target verbatim with Kp/Kd exactly / 16, so the
+#   ref is in the Clarity's R6 units, and the Clarity's R6 is 32 x its 0x18F STEER_ANGLE_RATE word. TJB's word is
+#   7.8 per published deg/s at centre (steer_ratio HONDA_VGR_RDX_TJB_A220, the same method gives the Clarity's 3.82
+#   against its firmware's 3.81), so R6 here = 0.4812 x 32 x -7.8 = -120.1 per published deg/s at centre: 0.98 of the
+#   Clarity's. Its angle shape is the rate word's (the linear map's slope, as computed_r6). The drives cannot pin it
+#   by themselves: on routes c6 / c7 the load fit through the law was flat in R^2 from 0.5x to 2x R6, since R6 trades
+#   off against the viscous term.
 # - Helper A and the override fade (driver torque) stay stock, as the PTM rule keeps them: they back off harder than
 #   the Clarity's once a hand pushes, but on the owner's drives they keep 0.95-0.99 of LKAS on average, as the
 #   Clarity's tables would (1.00-1.015x); scale_q8 256 is the hands-off value as everywhere.
 _, _, RDX_TJB_A220_R6_GAIN = computed_r6(HONDA_VGR_RDX_TJB_A220)
-RDX_TJB_A220_R6_CENTRE = -110.9
+RDX_TJB_A220_R6_CENTRE = -120.1
 _RDX_A = 56756 / 32768  # TJB a -> the Clarity's key q
-# Load: fitted through this law on the sent 0xE4 (the car drove LatControlPID, so there is no telemetry), routes
-# 412ed2539bfc2c42/000000c6 and 000000c7, 12.8 min of engaged, unpressed frames; R^2 0.819, held out by route 0.638 /
-# 0.800 (the CR-V's load: 0.516 / 0.712).
-RDX_TJB_A220_LOAD = ColumnLoadModel(k0=-10.01, k1=-0.1533, c=-2.136, friction=-233.2, bias=90.99, kroll=-4.198)
+# Load: fitted through this law (at the R6 above) on the sent 0xE4, since the car has no telemetry build: routes
+# 412ed2539bfc2c42/000000c6 and c7 (LatControlPID) and cc and d2 (this controller), 34 min of engaged, unpressed
+# frames; R^2 0.822, held out by route 0.636 / 0.847 / 0.833 / 0.790 (the two-route fit it replaces: 0.606 / 0.795 /
+# 0.780 / 0.751). Route b8 is left out: which PTM build it ran is not known.
+RDX_TJB_A220_LOAD = ColumnLoadModel(k0=-11.19, k1=-0.1363, c=-2.479, friction=-241.5, bias=119.2, kroll=-3.592)
 ACURA_RDX_TJB_A220 = EpsFirmwareCalibration(
   name="rdx_tjb_a220", e4_per_output=4096.0,
   r5_key_bp=tuple(round(a * _RDX_A) for a in (0, 128, 256, 384, 512, 640, 768, 896, 1024)),
@@ -481,12 +484,12 @@ CALIBRATION_PROVENANCE = {
   "rdx_tjb_a220": {
     "row": "firmware: rows 0-3 carry the same Route-A target, P and D (0x57BAE + 0x300*row), so the variant row does not matter",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
-    "r6": "inferred: 0.4812 x 32 x its 0x18F rate word (the Clarity's R6 relation); its drives allow 0.7-1.1x",
-    "load": "measured: the owner's routes 000000c6 / 000000c7 (a 2019), rebuilt through the law from the sent 0xE4; the MMR takes it",
+    "r6": "inferred: 0.4812 x 32 x its 0x18F rate word, 7.8 at centre on routes b8/c7/cc/d2 (the Clarity's R6 relation; the ref's producer is off-image)",
+    "load": "measured: the owner's routes 000000c6 / c7 / cc / d2 (a 2019), rebuilt through the law from the sent 0xE4; the MMR takes it",
     "trims": "default: untrimmed",
-    "cmd_delay": "default (its LatControlPID drives ran 0.10-0.24 s early at 7-12 m/s: re-check on this controller)",
+    "cmd_delay": "measured: plan_timing on this controller, routes cc / d2: on time at 5-12 m/s (+0.04 / +0.03 s), so the default stands",
     "model_delay": "default: the Clarity's schedule",
-    "rack": "measured: VSA yaw (GPS-checked scale), routes 000000c6 / 000000c7 (a 2019; the MMR takes it), through its road-measured linear map",
+    "rack": "measured: VSA yaw (GPS-checked scale), routes 000000b8 / c6 / c7 / cc / d2 (a 2019; the MMR takes it), through its road-measured linear map",
   },
   "crv_tla_a220": {
     "row": "firmware: rows 0-5 all Clarity-equivalent in the corrected build, so the untraced variant row does not matter",

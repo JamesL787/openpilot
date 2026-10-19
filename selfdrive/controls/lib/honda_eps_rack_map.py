@@ -70,14 +70,15 @@ CIVIC_TEG_A010_RACK = RackMapTable(
 )
 
 # Acura RDX 3G (TJB-A220 PTM), through its road-measured linear map (steer_ratio HONDA_VGR_RDX_TJB_A220: the rack is
-# variable and the image has no table). Fitted the same way on its VSA yaw (0x94 bus 1, 0.248 deg/s per count - 0.15
-# clockwise, opendbc honda/yaw_rate.py) over routes 412ed2539bfc2c42/000000c6 and 000000c7 (392 s moving at >= 3 deg),
-# 4.8-126 deg; past that the tan shape of its R0 (17.29, honda_eps_spec_plant.r0_of_table) carries it to 400 deg,
-# matched to the last fitted knot. Held out route by route it predicts the measured curvature within 1.5-3.7 %.
+# variable and the image has no table). Fitted the same way on its VSA yaw (0x94 bus 1, 0.2511 deg/s per count - 0.20
+# clockwise, opendbc honda/yaw_rate.py) over routes 412ed2539bfc2c42/000000b8, c6, c7, cc and d2 (1,245 s moving at
+# >= 3 deg), 5-169 deg; past that the tan shape of its R0 (16.41, honda_eps_spec_plant.r0_of_table) carries it to
+# 400 deg, matched to the last fitted knot. Held out route by route it predicts the measured curvature within 0.97-1.03
+# (one slow small-angle cell 0.94).
 RDX_TJB_A220_RACK = RackMapTable(
-  ratio_bp=(4.8, 15.1, 29.1, 49.3, 84.5, 126.2, 200.0, 300.0, 400.0),
-  ratio_v=(18.81, 17.51, 17.30, 17.30, 17.16, 16.98, 16.75, 16.27, 15.57),
-  slip_factor=-0.00104,
+  ratio_bp=(5.0, 15.0, 29.1, 51.8, 83.4, 117.6, 169.0, 200.0, 300.0, 400.0),
+  ratio_v=(18.54, 17.00, 16.58, 16.53, 16.23, 16.01, 15.79, 15.69, 15.25, 14.61),
+  slip_factor=-0.00101,
 )
 
 
