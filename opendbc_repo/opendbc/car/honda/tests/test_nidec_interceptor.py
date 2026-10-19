@@ -90,6 +90,17 @@ def test_pedal_factors_stay_fixed_by_default():
   assert output == pytest.approx(0.2 + 0.11 * 0.75)
 
 
+@pytest.mark.parametrize("identity, expected", ((CAR.HONDA_CLARITY, 1.0), (CAR.ACURA_ILX, 0.4 + 0.6 * 0.15)))
+def test_launch_pedal_is_only_scaled_down_for_gas_cars(identity, expected):
+  # interceptor Clarity route aa72d9572459015c/00000015 launched at pedal 0.08-0.17 / ~0.7 m/s2 under the 0.4 ramp
+  owner = NidecInterceptor(factory(identity))
+  cc = structs.CarControl(longActive=True)
+  cc.actuators.accel = 1.6
+  cc.actuators.longControlState = "pid"
+  cs = SimpleNamespace(out=SimpleNamespace(aEgo=0.6, gasPressed=False, brakePressed=False, vEgo=1.5))
+  assert owner.update(cc, cs, 0.25, 0.0, 0.0) == pytest.approx(0.25 * expected)
+
+
 def test_original_nidec_learning_and_inactive_zero():
   cp = factory(CAR.HONDA_CIVIC)
   owner = NidecInterceptor(cp, learn=True)

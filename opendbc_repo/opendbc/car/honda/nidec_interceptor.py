@@ -59,6 +59,14 @@ def pedal_crc(data):
   return crc
 
 
+# The pedal is scaled down at launch speeds so a jumpy gas car eases off the line (MVL's ILX ramp). The Clarity is an
+# EV that already creeps at ~0.6 m/s2 and needs pedal past ~0.15 before the motor adds anything, so the ramp left its
+# launches at pedal 0.08-0.17 and ~0.7 m/s2 while the plan asked for 1.6 (route aa72d9572459015c/00000015).
+GAS_MULT_BP = [0.0, 10.0]
+GAS_MULT_V = [0.4, 1.0]
+CLARITY_GAS_MULT_V = [1.0, 1.0]
+
+
 class NidecInterceptor:
   # Pedal cars run fixed gas/wind factors unless learning is asked for, as on the 6.x Honda port, where live gas
   # learning defaulted on for Bosch only. This learner compares the plan with aEgo on the same frame, ~0.5 s before
@@ -70,6 +78,7 @@ class NidecInterceptor:
     if not qualified(cp):
       raise ValueError("Honda interceptor requires its admitted Nidec profile")
     self.learn = bool(learn)
+    self.gas_mult_v = CLARITY_GAS_MULT_V if cp.carFingerprint == CAR.HONDA_CLARITY else GAS_MULT_V
     self.command = 0.0
     self.set_factors(1.0, 1.0)
 
@@ -95,7 +104,7 @@ class NidecInterceptor:
         self.bosch_wind_factor = max(self.bosch_wind_factor, self.bosch_wind_factor_before_brake)
       else:
         self.bosch_wind_factor_before_brake = self.bosch_wind_factor
-    gas_mult = float(np.interp(CS.out.vEgo, [0.0, 10.0], [0.4, 1.0]))
+    gas_mult = float(np.interp(CS.out.vEgo, GAS_MULT_BP, self.gas_mult_v))
     self.command = float(np.clip(gas_mult * ((gas * self.bosch_gas_factor) - brake +
                                 (wind_brake * self.bosch_wind_factor * 3.0 / 4.0)), 0.0, 1.0)) if CC.longActive else 0.0
     return self.command
