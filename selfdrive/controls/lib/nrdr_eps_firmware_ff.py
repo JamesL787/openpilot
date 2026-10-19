@@ -156,8 +156,10 @@ FF_CRAWL_SPEED_BP = [5.0, 8.0]   # m/s
 class EpsFirmwareCalibration:
   """The per-image constants of the chain above. The law, KFF, SCALE_Q8 and the load model are shared."""
 
-  def __init__(self, e4_per_output, r5_key_bp, r5_v, envelope_bp, envelope_v, r6_per_deg_s, r5_per_key=None):
+  def __init__(self, e4_per_output, r5_key_bp, r5_v, envelope_bp, envelope_v, r6_per_deg_s, r5_per_key=None,
+               kp_key_bp=None):
     self.e4_per_output = e4_per_output
+    self.kp_key_bp = kp_key_bp if kp_key_bp is not None else KP_KEY_BP  # the image's P row key axis (P Y is KP_V)
     self.r5_key_bp = r5_key_bp
     self.r5_v = r5_v
     self.envelope_bp = envelope_bp
@@ -168,8 +170,8 @@ class EpsFirmwareCalibration:
       self.kp_pieces = KP_PIECES
     else:
       # a non-linear map: Kp(key(|R5|)) is still piecewise linear in |R5|, on the union of both tables' knots
-      knots = sorted(set(r5_v) | {float(np.interp(k, r5_key_bp, r5_v)) for k in KP_KEY_BP if k <= r5_key_bp[-1]})
-      kps = [float(np.interp(np.interp(r, r5_v, r5_key_bp), KP_KEY_BP, KP_V)) for r in knots]
+      knots = sorted(set(r5_v) | {float(np.interp(k, r5_key_bp, r5_v)) for k in self.kp_key_bp if k <= r5_key_bp[-1]})
+      kps = [float(np.interp(np.interp(r, r5_v, r5_key_bp), self.kp_key_bp, KP_V)) for r in knots]
       self.kp_pieces = [(lo, hi, kp_lo, (kp_hi - kp_lo) / (hi - lo))
                         for lo, hi, kp_lo, kp_hi in zip(knots[:-1], knots[1:], kps[:-1], kps[1:], strict=True)]
       self.kp_pieces.append((knots[-1], math.inf, kps[-1], 0.0))
@@ -180,10 +182,17 @@ class EpsFirmwareCalibration:
 CLARITY_A020 = EpsFirmwareCalibration(E4_PER_OUTPUT, R5_KEY_BP, R5_V, ENVELOPE_BP, ENVELOPE_V, R6_PER_DEG_S,
                                       r5_per_key=R5_PER_KEY)
 
-# Civic Bosch 39990-TBA C020, the owner's image
-# 39990-TBA,C020-20260805-ClarityPminus5-P117to265-D737-KFF45-Norm1650-Trk4500-TargetMapD-Telem-SpeedClamp0-Pclamp7373
-# (eps_tools/rwd/). Tables read from that image; the rest checked against its telemetry (bus 1 0x6A1/0x6A2,
-# R5 = err + X + R6) on route 00000284, STATUS 163:
+# Civic Bosch 39990-TBA C020, the owner's image: the CORRECTED Proper Torque Mod of 2026-10-16, revision b
+# 39990-TBA,C020-20261016b-PTMFix-ClarityEquivMap-ClarityPKnots-Row6Stock-A280FlatRows01.rwd (RWD sha256 df67bf6f;
+# independent_verify 48/48, brick_check 70/70), a data-only fix of nrdr's Drive PTM 39990-TBA,C020-Trk4000-PTM
+# (2d8836e8). That release is the earlier owner build below except tracker-1 (4000 vs 4500, ~2 ms of R6 lag). Rows
+# 0-5 carry the Clarity's R5 at key x 3840/4096 on their own axes and P on the Clarity's knots x 4096/3840, so at
+# E4 = -4096 * u the car asks the Clarity's R5 and Kp; row 6 is back to stock and A280 is flat in rows 0-1. Row 1
+# stays live; its key axis, the clamp, envelope and R6 path are untouched, so what was measured below carries over.
+# On the earlier build (TargetMap-D, P on 0,223,441,...) this calibration is 7-13 % hot mid-range: reflash first.
+# Earlier owner build: 39990-TBA,C020-20260805-ClarityPminus5-P117to265-D737-KFF45-Norm1650-Trk4500-TargetMapD-Telem-
+# SpeedClamp0-Pclamp7373 (eps_tools/rwd/), checked against its telemetry (bus 1 0x6A1/0x6A2, R5 = err + X + R6) on
+# route 00000284, STATUS 163:
 #   - E4 = -4096 * u (torqueBP/V = [0, 4096] identity). Key decode and the 1663 clamp (0x137F2) as the Clarity:
 #     the largest R5 on 284 is 28497, row 1 at key 1663.
 #   - Command map row 1 (axis 0x13806, R5 0x13872). All seven rows share the R5 row and differ in the key axis;
@@ -198,7 +207,8 @@ CLARITY_A020 = EpsFirmwareCalibration(E4_PER_OUTPUT, R5_KEY_BP, R5_V, ENVELOPE_B
 CIVIC_BOSCH_C020 = EpsFirmwareCalibration(
   e4_per_output=4096.0,
   r5_key_bp=[0, 115, 254, 449, 654, 862, 1111, 1549, 1774],
-  r5_v=[0, 1926, 4938, 8455, 12036, 15926, 20138, 26955, 30000],
+  r5_v=[0, 1943, 4291, 7599, 11065, 14579, 18798, 26202, 30002],  # rev b row 1 (0x13884)
+  kp_key_bp=[0, 237, 473, 709, 946, 1182, 1419, 1655, 1892],  # rev b P row 1 (0x13B54), the Clarity's knots x 4096/3840
   envelope_bp=[0, 50, 100, 150, 200, 240, 300, 321, 400],
   envelope_v=[1774, 1774, 1774, 1774, 1774, 1552, 1219, 1108, 1108],
   r6_per_deg_s=-173.0,

@@ -87,17 +87,17 @@ def test_c020_command_map_round_trips(output):
 
 
 def test_c020_command_map_matches_the_telemetry():
-  # route 00000284 telemetry: E4 = -4096 * output, the 1663 key clamp gives the largest R5 seen (28497)
-  assert eps_ff.r5_from_output(-1.0, 20.0, C020) == pytest.approx(28497, abs=15)
+  # route 00000284 telemetry: E4 = -4096 * output, the 1663 key clamp gave the largest R5 seen; on rev b row 1 that is 28127
+  assert eps_ff.r5_from_output(-1.0, 20.0, C020) == pytest.approx(28127, abs=15)
   assert eps_ff.r5_from_output(-0.94, 20.0, C020) == eps_ff.r5_from_output(-1.0, 20.0, C020)
-  # row 1: key 115 -> 1926, E4 = 115 * 4 * 32768 / 56756 = 265.6 -> key 115
-  assert eps_ff.r5_from_output(-266 / 4096, 20.0, C020) == pytest.approx(1926, abs=20)
+  # row 1: key 115 -> 1943 (rev b), E4 = 115 * 4 * 32768 / 56756 = 265.6 -> key 115
+  assert eps_ff.r5_from_output(-266 / 4096, 20.0, C020) == pytest.approx(1943, abs=20)
 
 
 @pytest.mark.parametrize("r5", [0.0, 500.0, 1926.0, 3000.0, 8455.0, 15000.0, 22000.0, 28497.0, 31000.0])
 def test_c020_kp_follows_the_p_row_through_the_command_map(r5):
   key = float(eps_ff.np.interp(min(r5, 30000.0), C020.r5_v, C020.r5_key_bp))
-  assert eps_ff.firmware_kp(r5, C020) == pytest.approx(float(eps_ff.np.interp(key, eps_ff.KP_KEY_BP, eps_ff.KP_V)), abs=1e-9)
+  assert eps_ff.firmware_kp(r5, C020) == pytest.approx(float(eps_ff.np.interp(key, C020.kp_key_bp, eps_ff.KP_V)), abs=1e-9)
   assert eps_ff.firmware_kp(-r5, C020) == eps_ff.firmware_kp(r5, C020)
 
 
