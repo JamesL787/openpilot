@@ -36,7 +36,7 @@ def qualified(cp):
           cp.openpilotLongitudinalControl and not cp.pcmCruise and
           not cp.passive and not cp.dashcamOnly and not cp.notCar and len(configs) == 1 and
           configs[0].safetyModel == structs.CarParams.SafetyModel.hondaNidec and
-          configs[0].safetyParam == (36 if cp.flags & HondaFlags.NIDEC_ALT_SCM_MESSAGES else 32))
+          configs[0].safetyParam in ((36,) if cp.flags & HondaFlags.NIDEC_ALT_SCM_MESSAGES else (32, 32 | 512)))
 
 
 def create_command(packer, gas_amount, counter):

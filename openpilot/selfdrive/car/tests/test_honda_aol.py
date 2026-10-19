@@ -303,3 +303,79 @@ class CardAxisSessionTests(unittest.TestCase):
     axis.aolAxisState.sessionId = 'selfdrived'
     card.sm.update_msgs(1.0, [axis.as_reader()])
     self.assertEqual(card.aol_axis_session(), 'selfdrived')
+
+
+class HondaNidecInterceptorAolTests(unittest.TestCase):
+  """Nidec + gas interceptor (openpilot long, no PCM cruise): AOL from the saved request alone, safety word 32 | 512."""
+
+  @staticmethod
+  def interceptor_cp(candidate=CAR.HONDA_CLARITY):
+    fp = gen_empty_fingerprint()
+    fp[0][0x201] = 6
+    return CarInterface.get_params(candidate, fp, [], False, False, False)
+
+  def test_policy_word_and_native_receipt(self):
+    from opendbc.car.honda.nidec_interceptor import qualified as interceptor_qualified
+    from openpilot.starpilot.car.honda.aol import native_accepts_cp, native_profile_supported, policy_for, \
+      qualified_nidec_interceptor
+    cp = self.interceptor_cp()
+    self.assertTrue(qualified_nidec_interceptor(cp))
+    self.assertEqual(cp.safetyConfigs[0].safetyParam, 32)
+    policy = policy_for(cp)
+    self.assertTrue(policy.intent_supported and policy.settings_supported and policy.normal_runtime_supported)
+    self.assertFalse(policy.runtime_supported)  # until card adds the AOL bit
+    self.assertEqual(policy.safety_param_addition, 512)
+    cp.safetyConfigs[0].safetyParam |= policy.safety_param_addition
+    self.assertTrue(policy_for(cp).runtime_supported)
+    self.assertTrue(interceptor_qualified(cp))  # the pedal stays on with the AOL word
+    self.assertIsNotNone(CarInterface(cp).CC.nidec_interceptor)
+    nidec = int(car.CarParams.SafetyModel.hondaNidec)
+    self.assertTrue(native_profile_supported(nidec, 544) and native_accepts_cp(cp, nidec, 544))
+    self.assertFalse(native_accepts_cp(cp, nidec, 32))
+
+  def test_other_interceptor_cars_and_stock_clarity_are_not_offered(self):
+    from openpilot.starpilot.car.honda.aol import policy_for, qualified_nidec_interceptor
+    for candidate in (CAR.HONDA_CIVIC, CAR.ACURA_ILX, CAR.HONDA_ODYSSEY):
+      with self.subTest(candidate=candidate):
+        cp = self.interceptor_cp(candidate)
+        self.assertFalse(qualified_nidec_interceptor(cp))
+        self.assertEqual(policy_for(cp).safety_param_addition & 512, 0)
+    stock = CarInterface.get_params(CAR.HONDA_CLARITY, gen_empty_fingerprint(), [], False, False, False)
+    self.assertFalse(qualified_nidec_interceptor(stock))
+    self.assertEqual(policy_for(stock).safety_param_addition & 512, 0)
+    cp = self.interceptor_cp()
+    cp.safetyConfigs[0].safetyParam = 36
+    self.assertFalse(qualified_nidec_interceptor(cp))
+
+  def test_card_opts_in_from_saved_request_without_replay_env(self):
+    test = self
+
+    class FakeHonda:
+      CC = object()
+      CS = object()
+
+      def __init__(self):
+        self.CP = test.interceptor_cp()
+
+      def init(self, _cp, _recv, _send):
+        pass
+
+    class FakeRadar(RadarInterfaceBase):
+      def update(self, can_packets):
+        return None
+
+    from openpilot.starpilot.feature_runtime import enabled as feature_enabled
+    for aol_on in (False, True):
+      with self.subTest(aol_on=aol_on), OpenpilotPrefix(), mock.patch.dict('os.environ', {'SIMULATION': '1'}):
+        messaging.reset_context()
+        params = Params()
+        params.put_bool('OpenpilotEnabledToggle', True, block=True)
+        params.put_bool('AlwaysOnLateral', aol_on, block=True)
+        params.put('LKASButtonControl', 9, block=True)
+        honda = FakeHonda()
+        card = Car(honda, FakeRadar(honda.CP))
+        self.assertEqual(card.aol_qualified, aol_on)
+        self.assertEqual(card.CP.safetyConfigs[0].safetyParam, 544 if aol_on else 32)
+        with car.CarParams.from_bytes(params.get('CarParams')) as published:
+          self.assertEqual(published.safetyConfigs[0].safetyParam, 544 if aol_on else 32)
+          self.assertEqual(feature_enabled(params, published, 'aol', {}), aol_on)
