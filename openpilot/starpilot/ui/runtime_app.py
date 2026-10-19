@@ -188,6 +188,8 @@ class StarShellSession:
         self.view.onroad.stock_confidence_reset = camera_owner.reset_stock_confidence_layer
         self.view.onroad.extra_overlays = lambda rect, state: camera_owner.render_model_source_layer(rect, show_long_indicator=None)
         self.view.onroad.compact_sidebar.personality_renderer = self._render_personality
+      else:
+        self.view.onroad.extra_overlays = lambda rect, state: camera_owner.render_model_source_layer(rect)
     except Exception:
       self.fonts.close()
       raise

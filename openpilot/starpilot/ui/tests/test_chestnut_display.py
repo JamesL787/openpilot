@@ -170,3 +170,47 @@ def test_initial_valid_small_output_is_failed_despite_loaded_big_marker():
   with patch('openpilot.selfdrive.ui.ui_state.time.monotonic_ns', return_value=1_100_000_000):
     UIState._update_chestnut_state(state)
   assert state.chestnut_state == ChestnutState.FAILED
+
+
+@pytest.mark.parametrize('state,small_engaged,texture', [
+  (ChestnutState.LOADING, False, 'white'),
+  (ChestnutState.ACTIVE, False, 'green'),
+  (ChestnutState.FAILED, False, 'orange'),
+  (ChestnutState.UNCOMPILED, False, 'orange'),
+  (ChestnutState.FAILED, True, 'crossed'),
+  (ChestnutState.ACTIVE, True, 'green'),
+])
+def test_large_hud_gpu_icons_match_mici_states(state, small_engaged, texture):
+  # the 3X (LARGE) HUD carries the mici Chestnut icon, at the physical size of vfn's Big UI GPU widget
+  from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
+
+  icons = {key: SimpleNamespace(name=key, width=240, height=176) for key in ('white', 'green', 'orange', 'crossed')}
+  renderer = Mock(spec=HudRenderer, _small_model_engaged=small_engaged, _chestnut_icon=None,
+                  _txt_chestnut=icons['white'], _txt_chestnut_green=icons['green'],
+                  _txt_chestnut_orange=icons['orange'], _txt_chestnut_crossed=icons['crossed'])
+  renderer._chestnut_alpha_filter = Mock()
+  renderer._chestnut_alpha_filter.update.return_value = 1.
+  with patch('openpilot.selfdrive.ui.onroad.hud_renderer.ui_state', SimpleNamespace(chestnut_state=state)), \
+       patch('openpilot.selfdrive.ui.onroad.hud_renderer.rl.get_time', return_value=10.), \
+       patch('openpilot.selfdrive.ui.onroad.hud_renderer.rl.draw_texture_ex') as draw:
+    HudRenderer._draw_model_source(renderer, rl.Rectangle(0, 0, 2160, 1080))
+  assert draw.call_args.args[0] is icons[texture]
+  assert draw.call_args.args[1].x == 2160 - 30 - 240 and draw.call_args.args[1].y == 1080 - 30 - 176
+
+
+def test_large_hud_draws_nothing_without_chestnut():
+  from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
+  renderer = Mock(spec=HudRenderer, _small_model_engaged=False, _chestnut_icon=None)
+  with patch('openpilot.selfdrive.ui.onroad.hud_renderer.ui_state', SimpleNamespace(chestnut_state=ChestnutState.DISCONNECTED)), \
+       patch('openpilot.selfdrive.ui.onroad.hud_renderer.rl.draw_texture_ex') as draw:
+    HudRenderer._draw_model_source(renderer, rl.Rectangle(0, 0, 2160, 1080))
+  draw.assert_not_called()
+
+
+def test_large_model_source_layer_uses_hud_icon():
+  from openpilot.selfdrive.ui.onroad.augmented_road_view import AugmentedRoadView as LargeRoadView
+  view = Mock(spec=LargeRoadView, _hud_renderer=Mock())
+  rect = rl.Rectangle(0, 0, 2160, 1080)
+  LargeRoadView.render_model_source_layer(view, rect)
+  view._hud_renderer._update_state.assert_called_once_with()
+  view._hud_renderer._draw_model_source.assert_called_once_with(rect)

@@ -1,8 +1,10 @@
+import math
 import pyray as rl
 from dataclasses import dataclass
 from openpilot.common.constants import CV
+from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.ui.onroad.exp_button import ExpButton
-from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
+from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus, ChestnutState
 from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -12,6 +14,9 @@ from openpilot.system.ui.widgets import Widget
 SET_SPEED_NA = 255
 KM_TO_MILE = 0.621371
 CRUISE_DISABLED_CHAR = '–'
+MODEL_SOURCE_PERSISTENCE = 2.5  # seconds, as the mici HUD's set-speed persistence
+# The mici HUD draws on a quarter-scale surface; keep the Chestnut icon's physical size on the 3X (vfn's Big UI GPU widget)
+MODEL_SOURCE_ICON_SCALE = 4
 
 
 @dataclass(frozen=True)
@@ -72,6 +77,18 @@ class HudRenderer(Widget):
 
     self._exp_button: ExpButton = ExpButton(UI_CONFIG.button_size, UI_CONFIG.wheel_icon_size)
 
+    # Chestnut model source, same states as the mici HUD
+    self._engaged: bool = False
+    self._small_model_engaged = False
+    self._chestnut_fade_time: float = 0
+    k = MODEL_SOURCE_ICON_SCALE
+    self._txt_chestnut: rl.Texture = gui_app.texture('icons_mici/chestnut.png', 60 * k, 44 * k)
+    self._txt_chestnut_green: rl.Texture = gui_app.texture('icons_mici/chestnut_green.png', 60 * k, 44 * k)
+    self._txt_chestnut_orange: rl.Texture = gui_app.texture('icons_mici/chestnut_orange.png', 75 * k, 44 * k)
+    self._txt_chestnut_crossed: rl.Texture = gui_app.texture('icons_mici/egpu_crossed.png', 60 * k, 52 * k)
+    self._chestnut_icon: rl.Texture | None = None
+    self._chestnut_alpha_filter = FirstOrderFilter(0.0, 0.1, 1 / gui_app.target_fps)
+
   def _update_state(self) -> None:
     """Update HUD state based on car state and controls state."""
     sm = ui_state.sm
@@ -88,6 +105,13 @@ class HudRenderer(Widget):
     self.set_speed = (
       controls_state.deprecated.vCruise if v_cruise_cluster == 0.0 else v_cruise_cluster
     )
+    engaged = sm['selfdriveState'].enabled
+    if (engaged and not self._engaged and not ui_state.chestnut_loading and ui_state.chestnut_active is not True and
+        sm.recv_frame['modelV2'] > ui_state.started_frame):
+      self._small_model_engaged = True
+    if engaged != self._engaged:
+      self._chestnut_fade_time = rl.get_time() if engaged else 0
+    self._engaged = engaged
     self.is_cruise_set = 0 < self.set_speed < SET_SPEED_NA
     self.is_cruise_available = self.set_speed != -1
 
@@ -120,6 +144,40 @@ class HudRenderer(Widget):
     button_x = rect.x + rect.width - UI_CONFIG.border_size - UI_CONFIG.button_size
     button_y = rect.y + UI_CONFIG.border_size
     self._exp_button.render(rl.Rectangle(button_x, button_y, UI_CONFIG.button_size, UI_CONFIG.button_size))
+
+    self._draw_model_source(rect)
+
+  def _draw_model_source(self, rect: rl.Rectangle) -> None:
+    """The mici HUD's Chestnut icon: pulsing while the big model loads, green when it drives, orange when it failed or is
+    not compiled, crossed out once engaged on the small model. Shown while loading and for a moment after a change."""
+    loading = ui_state.chestnut_state == ChestnutState.LOADING
+    self._small_model_engaged &= ui_state.chestnut_state in (ChestnutState.FAILED, ChestnutState.DISCONNECTED)
+    if loading:
+      icon = self._txt_chestnut
+      opacity = 0.35 + 0.65 * (0.5 - 0.5 * math.cos(rl.get_time() * 6.0))
+    elif self._small_model_engaged:
+      icon = self._txt_chestnut_crossed
+      opacity = 0.65
+    elif ui_state.chestnut_state in (ChestnutState.UNCOMPILED, ChestnutState.FAILED):
+      icon = self._txt_chestnut_orange
+      opacity = 1.0
+    elif ui_state.chestnut_state == ChestnutState.ACTIVE:
+      icon = self._txt_chestnut_green
+      opacity = 1.0
+    else:
+      return
+
+    if icon is not self._chestnut_icon:
+      self._chestnut_fade_time = rl.get_time()
+      self._chestnut_icon = icon
+    visible = loading or rl.get_time() - self._chestnut_fade_time < MODEL_SOURCE_PERSISTENCE
+    alpha = self._chestnut_alpha_filter.update(visible)
+    if alpha < 1e-2:
+      return
+
+    pos = rl.Vector2(rect.x + rect.width - UI_CONFIG.border_size - icon.width,
+                     rect.y + rect.height - UI_CONFIG.border_size - icon.height)
+    rl.draw_texture_ex(icon, pos, 0.0, 1.0, rl.Color(255, 255, 255, int(255 * opacity * alpha)))
 
   def user_interacting(self) -> bool:
     return self._exp_button.is_pressed
