@@ -397,9 +397,48 @@ def test_controller_steers_logs_and_rests(monkeypatch):
   assert state.epsFfActive and state.epsFfWeight == 1.0 and state.epsFfR5 != 0.0
   msg = log.Event.new_message(starpilotLateralState=state)   # what controlsd publishes
   assert msg.starpilotLateralState.epsFfWeight == 1.0
-  lac.update(False, car.CarState.new_message(), VM, log.LiveParametersData.new_message(), False, 0.0, False, 0.2,
-             None, None, SimpleNamespace())
-  assert lac.core.ff_weight == 0.0 and lac.core.output == 0.0
+  # past the ride-through a disengagement resets it
+  for _ in range(lac.ride_through_frames + 1):
+    lac.reset()   # controlsd, every inactive frame
+    out, _, pid_log = lac.update(False, car.CarState.new_message(), VM, log.LiveParametersData.new_message(), False, 0.0,
+                                 False, 0.2, None, None, SimpleNamespace())
+    assert out == 0.0 and not pid_log.active
+  assert lac.core.ff_weight == 0.0 and lac.core.output == 0.0 and lac.core.pid.i == 0.0
+
+
+def _engaged_in_a_turn(lac, VM, frames=300, v=13.0):
+  CS = car.CarState.new_message()
+  CS.vEgo = v
+  params = log.LiveParametersData.new_message()
+  params.steerRatio, params.stiffnessFactor = 16.0, 1.0
+  for k in range(frames):
+    CS.steeringAngleDeg = 18.0 + 0.5 * math.sin(k * 0.05)
+    lac.update(True, CS, VM, params, False, -0.004, False, 0.2, None, None, SimpleNamespace())
+  return CS, params
+
+
+def test_a_one_frame_fault_does_not_throw_the_turn_away(monkeypatch):
+  # a single inactive frame (a one-sample STEER_STATUS fault) sends nothing but keeps the feedforward and integrator
+  lac, VM, _ = _controller(monkeypatch)
+  CS, params = _engaged_in_a_turn(lac, VM)
+  ff, i = lac.core.ff.output, lac.core.pid.i
+  assert lac.core.ff_weight == 1.0 and abs(ff) > 0.05
+  lac.reset()
+  out, _, pid_log = lac.update(False, CS, VM, params, False, -0.004, False, 0.2, None, None, SimpleNamespace())
+  assert out == 0.0 and not pid_log.active
+  assert lac.core.ff_weight == 1.0 and lac.core.ff.output == pytest.approx(ff, rel=0.05) and lac.core.pid.i == i
+  out, _, pid_log = lac.update(True, CS, VM, params, False, -0.004, False, 0.2, None, None, SimpleNamespace())
+  assert pid_log.active and lac.core.ff_weight == 1.0 and abs(out) > 0.05
+
+
+def test_a_long_dropout_still_resets(monkeypatch):
+  lac, VM, _ = _controller(monkeypatch)
+  CS, params = _engaged_in_a_turn(lac, VM)
+  for k in range(lac.ride_through_frames + 1):
+    assert lac.core.ff_weight == 1.0, k
+    lac.reset()
+    lac.update(False, CS, VM, params, False, -0.004, False, 0.2, None, None, SimpleNamespace())
+  assert lac.core.ff_weight == 0.0 and lac.core.pid.i == 0.0
 
 
 def test_target_honours_the_angle_rate_limit(monkeypatch):
