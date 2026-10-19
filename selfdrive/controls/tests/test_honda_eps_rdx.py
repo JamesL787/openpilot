@@ -84,3 +84,10 @@ def test_its_feedback_is_the_word_derived_value():
   # published deg/s at centre
   assert CAL.r6_per_deg_s == pytest.approx(15768 / 32768 * 32 * -7.8, abs=0.1)
   assert eps_cal.provenance(CAL)["r6"].startswith("firmware")
+
+
+def test_its_trims_come_from_the_closed_loop_replay():
+  # P x0.7 above 50 mph and a 15 deg/s friction knee at speed (see RDX_TJB_A220_P_SCALE); I and town untouched
+  assert CAL.p_scale == (1.0, 1.0, 0.7) and CAL.i_scale == (1.0, 1.0, 1.0)
+  assert CAL.friction_width_v == (20.0, 15.0)
+  assert eps_cal.provenance(CAL)["trims"].startswith("measured: closed-loop replay")

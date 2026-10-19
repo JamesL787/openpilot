@@ -137,6 +137,7 @@ class EpsFirmwareCalibration:
   rack: RackMapTable | None = None  # rack ratio after the firmware angle table, yaw-fitted on the car or predicted
                                     # from its specs (honda_eps_spec_plant); when set it is the geometry, ahead of the
                                     # road curve and HondaEpsFirmwareVgr
+  friction_width_v: tuple | None = None  # the friction knee at FRICTION_WIDTH_SPEED_BP, deg/s; None: FRICTION_WIDTH_V
   kp_pieces: tuple = field(init=False, repr=False, compare=False)
 
   def __post_init__(self):
@@ -214,14 +215,17 @@ def computed_r6(profile: str, norm: float = 1650.0) -> tuple[float, tuple, tuple
 # (the friction is then under-compensated), which only pays off at city speed: replaying hands-off chunks of routes
 # 35e/360/361, a 20 deg/s knee cut the 0.6-2 Hz wheel/target transfer 0.93 -> 0.73 at 10-16 m/s for +25 ms, but
 # above 16 m/s bought nothing (1.02 -> 0.97) for +45 ms of lag and RMS error 0.27 -> 0.37 deg. So it is scheduled:
-# 20 deg/s up to 8 m/s, back to 5 by 15 m/s (10-16 m/s: 0.76 at +10 ms; above: unchanged).
+# 20 deg/s up to 8 m/s, back to 5 by 15 m/s (10-16 m/s: 0.76 at +10 ms; above: unchanged). A calibration can carry
+# its own (friction_width_v): on a car whose loop is delay-limited at speed the sharp knee is a rate gain the loop
+# cannot afford (the RDX, see ACURA_RDX_TJB_A220).
 FRICTION_WIDTH_DEG_S = 5.0
 FRICTION_WIDTH_SPEED_BP = [8.0, 15.0]  # m/s
 FRICTION_WIDTH_V = [20.0, FRICTION_WIDTH_DEG_S]  # deg/s
 
 
-def friction_width(v_ego: float) -> float:
-  return float(np.interp(v_ego, FRICTION_WIDTH_SPEED_BP, FRICTION_WIDTH_V))
+def friction_width(v_ego: float, cal: "EpsFirmwareCalibration | None" = None) -> float:
+  widths = cal.friction_width_v if cal is not None and cal.friction_width_v is not None else FRICTION_WIDTH_V
+  return float(np.interp(v_ego, FRICTION_WIDTH_SPEED_BP, widths))
 
 # Smoothing, picked in the closed-loop replay of route 352 over three plants (nominal, the 353 fit, +15 ms
 # motor lag): unsmoothed, the command carried 3.8x vfn's 5-8 Hz content (the Clarity column's stutter band);
@@ -361,7 +365,7 @@ class HondaEpsFirmwareFeedforward:
     self.prev_angle = desired_angle_no_offset
 
     angle = desired_angle_no_offset + self.lead_s * self.rate
-    width = self.friction_width if self.friction_width is not None else friction_width(v_ego)
+    width = self.friction_width if self.friction_width is not None else friction_width(v_ego, self.cal)
     self.load = column_load(angle, self.rate, v_ego, roll, self.cal.load, width)
     cap = min(R5_CAP, R5_CAP_ENVELOPE_FRAC * self.cal.r5_ceiling(v_ego))
     self.r5 = max(min(r5_for_motion(self.load, self.rate, self.cal, self.r5, angle), cap), -cap)

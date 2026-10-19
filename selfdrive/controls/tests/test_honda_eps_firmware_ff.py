@@ -211,6 +211,20 @@ def test_crawl_gate_holds_the_feedforward_off_near_straight(v, des, weight):
   assert core.ff_weight == pytest.approx(weight)
 
 
+def test_a_calibration_can_carry_its_own_friction_knee():
+  rdx = eps_cal.ACURA_RDX_TJB_A220
+  assert eps_ff.friction_width(8.0, rdx) == 20.0 and eps_ff.friction_width(30.0, rdx) == 15.0
+  assert eps_ff.friction_width(30.0, CLA) == eps_ff.friction_width(30.0) == 5.0   # everyone else: the default
+  # a slow 2 deg/s correction at speed gets a third of the default knee's friction
+  loads = []
+  for cal in (rdx, dataclasses.replace(rdx, friction_width_v=None)):
+    ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, cal)
+    for k in range(100):
+      ff.update(2.0 * k * DT_CTRL, 30.0, 0.0)
+    loads.append(ff.load - eps_ff.column_load(ff.prev_angle + eps_ff.LEAD_S * ff.rate, ff.rate, 30.0, 0.0, cal.load, 1e9))
+  assert loads[0] / loads[1] == pytest.approx(math.tanh(2.0 / 15.0) / math.tanh(2.0 / 5.0), rel=0.05)
+
+
 def test_friction_knee_is_wide_in_the_city_and_sharp_at_speed():
   assert eps_ff.friction_width(0.0) == eps_ff.friction_width(8.0) == 20.0
   assert eps_ff.friction_width(15.0) == eps_ff.friction_width(30.0) == eps_ff.FRICTION_WIDTH_DEG_S == 5.0

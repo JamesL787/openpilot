@@ -360,6 +360,20 @@ _RDX_A = 56756 / 32768  # TJB a -> the Clarity's key q
 # frames; R^2 0.822, held out by route 0.636 / 0.847 / 0.833 / 0.790 (the two-route fit it replaces: 0.606 / 0.795 /
 # 0.780 / 0.751). Route b8 is left out: which PTM build it ran is not known.
 RDX_TJB_A220_LOAD = ColumnLoadModel(k0=-11.19, k1=-0.1363, c=-2.479, friction=-241.5, bias=119.2, kroll=-3.592)
+# Trims, picked in a closed-loop replay (tools/lateral/eps_closed_loop.py) of the owner's routes cc and d2: the logged
+# targets drive HondaEpsLateralCore into this firmware law and column (no stiction), with 40 ms of angle sensing and
+# 20 ms of command transport. Driven by the logged 0xE4 alone that plant reproduces the wheel's 0.6-2.5 Hz motion at
+# gain 1.03 on the freeway on both routes (correlation 0.92-0.94; 9-20 m/s 0.98 / 1.21, so town is the looser);
+# closed, it reproduces the freeway ping-pong the owner reported, 1-2 Hz wheel/target 1.33 against 1.29 measured on
+# d2 (cc: 1.26 / 1.18). The loop is delay-limited (0.96 with no delay, 1.42 at 70 ms), so gain is what
+# rings, and the default 5 deg/s friction knee is most of it at speed: the desired rate is under 5 deg/s 95 % of the
+# time there, so the knee acts as a ~47 counts per deg/s rate gain. A 15 deg/s knee at speed and P x0.7 above 50 mph
+# take the freeway 1-2 Hz gain 1.32 -> 0.95 on d2 (cc 1.26 -> 1.10, 9-20 m/s 1.39 -> 1.19) for tracking RMS 0.35 ->
+# 0.39 deg, with 0.1-0.5 Hz tracking unchanged (1.05 -> 1.06). Rejected there: the output LPF (default taus: 1.41 on
+# the freeway, 2.13 at 9-20 m/s, its lag costs more than it smooths), a D term on the measured rate (unstable in some
+# windows at 0.002-0.006), and P alone (x0.6: 1.10, but tracking 0.40 deg).
+RDX_TJB_A220_P_SCALE = (1.0, 1.0, 0.7)
+RDX_TJB_A220_FRICTION_WIDTH_V = (20.0, 15.0)
 ACURA_RDX_TJB_A220 = EpsFirmwareCalibration(
   name="rdx_tjb_a220", e4_per_output=4096.0,
   r5_key_bp=tuple(round(a * _RDX_A) for a in (0, 128, 256, 384, 512, 640, 768, 896, 1024)),
@@ -368,8 +382,8 @@ ACURA_RDX_TJB_A220 = EpsFirmwareCalibration(
   kp_key_bp=tuple(round(a * _RDX_A) for a in (0, 58, 109, 243, 320, 448, 640, 896, 1024)),
   kp_v=tuple(16 * k for k in (7, 8, 9, 11, 13, 15, 16, 17, 17)),
   r6_per_deg_s=RDX_TJB_A220_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=RDX_TJB_A220_R6_GAIN,
-  load=RDX_TJB_A220_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,  # untrimmed
-  rack=RDX_TJB_A220_RACK,
+  load=RDX_TJB_A220_LOAD, p_scale=RDX_TJB_A220_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
+  rack=RDX_TJB_A220_RACK, friction_width_v=RDX_TJB_A220_FRICTION_WIDTH_V,
 )
 
 # normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). TGG-A020 is a separate application from the A120 (its RWD updates only A010/A020)
@@ -486,7 +500,7 @@ CALIBRATION_PROVENANCE = {
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
     "r6": "firmware: ref = 32 x its 0x18F rate word (0x1C668 / 0x1D300) x 0.4812 (the build); the word measured at 7.8 per deg/s on routes b8/c7/cc/d2",
     "load": "measured: the owner's routes 000000c6 / c7 / cc / d2 (a 2019), rebuilt through the law from the sent 0xE4; the MMR takes it",
-    "trims": "default: untrimmed",
+    "trims": "measured: closed-loop replay of routes cc / d2 (P x0.7 above 50 mph, a 15 deg/s friction knee at speed)",
     "cmd_delay": "measured: plan_timing on this controller, routes cc / d2: on time at 5-12 m/s (+0.04 / +0.03 s), so the default stands",
     "model_delay": "default: the Clarity's schedule",
     "rack": "measured: VSA yaw (GPS-checked scale), routes 000000b8 / c6 / c7 / cc / d2 (a 2019; the MMR takes it), through its road-measured linear map",
