@@ -27,3 +27,11 @@ def test_turn_desire_document_rejects_bad_values():
   missing = dict(good)
   del missing["turnDesireSpeedMps"]
   assert decode(json.dumps(missing).encode()) is None
+
+
+def test_lane_change_wire_carries_the_turn_desire_and_old_frames_read_none():
+  from openpilot.starpilot.lateral.lane_change_status_wire import Direction, LaneChangeStatus, Phase, decode, encode
+  status = LaneChangeStatus("s", 3, 9, 10, 20, 30, Phase.MANUAL_REQUIRED, Direction.NONE, False, True, Direction.LEFT)
+  assert decode(encode(status)) == status
+  old = LaneChangeStatus("s", 3, 9, 10, 20, 30, Phase.MANUAL_REQUIRED, Direction.RIGHT, False, True)
+  assert decode(encode(old)).turn_direction == Direction.NONE

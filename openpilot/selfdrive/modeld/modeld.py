@@ -709,7 +709,9 @@ def main(demo=False):
       lane_status = LaneChangeStatus(lane_status_session, lane_status_sequence,
                                      int(modelv2_send.modelV2.frameId), int(modelv2_send.modelV2.timestampEof),
                                      mono_now_ns, mono_now_ns + 150_000_000, phase, status_direction,
-                                     runtime_lane_policy.auto_lane_change, engaged)
+                                     runtime_lane_policy.auto_lane_change, engaged,
+                                     StatusDirection.LEFT if desire == log.Desire.turnLeft else
+                                     StatusDirection.RIGHT if desire == log.Desire.turnRight else StatusDirection.NONE)
       lane_status_sequence += 1
       lane_status_msg = None
       status_bytes = encode_lane_status(lane_status)

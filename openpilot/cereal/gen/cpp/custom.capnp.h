@@ -8655,6 +8655,8 @@ public:
 
   inline bool getEngaged() const;
 
+  inline  ::cereal::AolAxisState::LaneChangeStatusWire::Direction getTurnDirection() const;
+
 private:
   ::capnp::_::StructReader _reader;
   template <typename, ::capnp::Kind>
@@ -8722,6 +8724,9 @@ public:
 
   inline bool getEngaged();
   inline void setEngaged(bool value);
+
+  inline  ::cereal::AolAxisState::LaneChangeStatusWire::Direction getTurnDirection();
+  inline void setTurnDirection( ::cereal::AolAxisState::LaneChangeStatusWire::Direction value);
 
 private:
   ::capnp::_::StructBuilder _builder;
@@ -23711,6 +23716,20 @@ inline bool AolAxisState::LaneChangeStatusWire::Builder::getEngaged() {
 inline void AolAxisState::LaneChangeStatusWire::Builder::setEngaged(bool value) {
   _builder.setDataField<bool>(
       ::capnp::bounded<9>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::cereal::AolAxisState::LaneChangeStatusWire::Direction AolAxisState::LaneChangeStatusWire::Reader::getTurnDirection() const {
+  return _reader.getDataField< ::cereal::AolAxisState::LaneChangeStatusWire::Direction>(
+      ::capnp::bounded<22>() * ::capnp::ELEMENTS);
+}
+
+inline  ::cereal::AolAxisState::LaneChangeStatusWire::Direction AolAxisState::LaneChangeStatusWire::Builder::getTurnDirection() {
+  return _builder.getDataField< ::cereal::AolAxisState::LaneChangeStatusWire::Direction>(
+      ::capnp::bounded<22>() * ::capnp::ELEMENTS);
+}
+inline void AolAxisState::LaneChangeStatusWire::Builder::setTurnDirection( ::cereal::AolAxisState::LaneChangeStatusWire::Direction value) {
+  _builder.setDataField< ::cereal::AolAxisState::LaneChangeStatusWire::Direction>(
+      ::capnp::bounded<22>() * ::capnp::ELEMENTS, value);
 }
 
 inline bool MapdExtendedOut::Reader::hasDownloadProgress() const {

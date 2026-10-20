@@ -28,6 +28,7 @@ from openpilot.selfdrive.car.car_events import CarEvents
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 from openpilot.selfdrive.selfdrived.events import Events, ET, Alert, Priority as AlertPriority
 from openpilot.starpilot.longitudinal.force_stop_alert import HoldAlertState, EVENT_TYPE as FORCE_STOP_HOLD
+TURNING_EVENT = 'turning'
 from openpilot.selfdrive.selfdrived.helpers import (ExcessiveActuationCheck, jetlink_in_control, jetlink_lost_alert, throttled_param,
                                                     update_big_model_status, update_jetlink_swaps)
 from openpilot.starpilot.models import jetlink_adapter
@@ -58,7 +59,8 @@ from openpilot.starpilot.conditional_mode.status import settings_fingerprint
 from openpilot.starpilot.feature_runtime import enabled as feature_enabled
 from openpilot.starpilot.nostalgia import aol_no_entry, paddle_cancel, physical_cancel, saved_enabled as nostalgia_saved_enabled
 from openpilot.starpilot.lateral.low_speed_advisory import LowSpeedAdvisory
-from openpilot.starpilot.lateral.lane_change_status_wire import alert_wording, decode as decode_lane_status, fresh_for_model
+from openpilot.starpilot.lateral.lane_change_status_wire import alert_wording, decode as decode_lane_status, fresh_for_model, \
+  turn_alert_direction
 from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
 
 from openpilot.common.version import get_build_metadata
@@ -1084,6 +1086,23 @@ class SelfdriveD:
       replacement = copy(alert)
       replacement.alert_text_1, replacement.alert_text_2 = wording
       alerts[index] = replacement
+    # "Turning Left/Right" while modeld is giving the model a turn desire (6.x's turning banner)
+    turning = None
+    try:
+      if (ET.WARNING in self.state_machine.current_alert_types and self.sm.seen['laneChangeAssistWire'] and
+          self.sm.alive['laneChangeAssistWire'] and self.sm.valid['laneChangeAssistWire'] and self.sm.valid['modelV2']):
+        turning = turn_alert_direction(decode_lane_status(self.sm['laneChangeAssistWire']), self.sm['modelV2'],
+                                       time.monotonic_ns(), int(self.sm.recv_time['laneChangeAssistWire'] * 1e9),
+                                       int(self.sm.logMonoTime['laneChangeAssistWire']))
+    except KeyError:
+      turning = None
+    if turning is not None:
+      alert = Alert(f"Turning {turning}", "", log.SelfdriveState.AlertStatus.normal, log.SelfdriveState.AlertSize.small,
+                    AlertPriority.LOWEST, car.CarControl.HUDControl.VisualAlert.none, log.SelfdriveState.AudibleAlert.none, 0.)
+      alert.alert_type, alert.event_type = "turning/warning", TURNING_EVENT
+      alerts.append(alert)
+    else:
+      clear_event_types.add(TURNING_EVENT)
     if not hasattr(self, 'force_stop_hold_alert'):
       self.force_stop_hold_alert = HoldAlertState()
     holding = self.force_stop_hold_alert.active(

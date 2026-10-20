@@ -926,6 +926,7 @@ struct AolAxisState @0xfc6241ed8877b611 {
     direction @9 :Direction;
     autoConfigured @10 :Bool;
     engaged @11 :Bool;
+    turnDirection @12 :Direction;  # the turn desire modeld gave this model frame (navigation or Force turn desires)
 
     enum Phase {
       manualRequired @0;

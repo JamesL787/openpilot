@@ -44,6 +44,7 @@ class LaneChangeStatus:
   direction: Direction
   auto_configured: bool
   engaged: bool
+  turn_direction: Direction = Direction.NONE
 
 
 def _valid(value: LaneChangeStatus) -> bool:
@@ -52,7 +53,7 @@ def _valid(value: LaneChangeStatus) -> bool:
           0 < value.model_timestamp_eof_ns < 2**64 and
           0 < value.observed_mono_time_ns <= value.valid_until_mono_time_ns < 2**64 and
           type(value.phase) is Phase and type(value.direction) is Direction and
-          type(value.auto_configured) is bool and type(value.engaged) is bool)
+          type(value.auto_configured) is bool and type(value.engaged) is bool and type(value.turn_direction) is Direction)
 
 
 def encode(value: LaneChangeStatus) -> bytes:
@@ -64,7 +65,7 @@ def encode(value: LaneChangeStatus) -> bytes:
     modelTimestampEofNs=value.model_timestamp_eof_ns,
     observedMonoTimeNs=value.observed_mono_time_ns, validUntilMonoTimeNs=value.valid_until_mono_time_ns,
     phase=int(value.phase), direction=int(value.direction),
-    autoConfigured=value.auto_configured, engaged=value.engaged)
+    autoConfigured=value.auto_configured, engaged=value.engaged, turnDirection=int(value.turn_direction))
   raw = msg.to_bytes()
   if len(raw) > MAX_BYTES:
     raise ValueError("lane-change status exceeds wire bound")
@@ -95,7 +96,7 @@ def decode(raw_value: bytes) -> LaneChangeStatus | None:
       result = LaneChangeStatus(str(msg.producerSessionId), int(msg.sequence), int(msg.modelFrameId),
                                 int(msg.modelTimestampEofNs), int(msg.observedMonoTimeNs),
                                 int(msg.validUntilMonoTimeNs), Phase(int(msg.phase.raw)), Direction(int(msg.direction.raw)),
-                                bool(msg.autoConfigured), bool(msg.engaged))
+                                bool(msg.autoConfigured), bool(msg.engaged), Direction(int(msg.turnDirection.raw)))
       return result if _valid(result) else None
   except (ValueError, OverflowError, RuntimeError, UnicodeDecodeError, capnp.KjException):
     return None
@@ -118,6 +119,24 @@ def fresh_for_model(status: LaneChangeStatus | None, model, now_mono_ns: int, re
              (status.direction == Direction.RIGHT and str(model.meta.laneChangeDirection) == "right")))
   except (AttributeError, TypeError, ValueError):
     return False
+
+
+def turn_alert_direction(status: LaneChangeStatus | None, model, now_mono_ns: int, recv_mono_ns: int,
+                         message_mono_ns: int | None = None) -> str | None:
+  """"Left"/"Right" while a fresh status for the published model frame says that frame was given a turn desire."""
+  if status is None or not status.engaged or status.turn_direction == Direction.NONE:
+    return None
+  if not (0 <= now_mono_ns - status.observed_mono_time_ns <= 100_000_000 and 0 <= now_mono_ns - recv_mono_ns <= 100_000_000 and
+          now_mono_ns <= status.valid_until_mono_time_ns):
+    return None
+  if message_mono_ns is not None and not 0 <= now_mono_ns - message_mono_ns <= 100_000_000:
+    return None
+  try:
+    if int(model.frameId) != status.model_frame_id or int(model.timestampEof) != status.model_timestamp_eof_ns:
+      return None
+  except (AttributeError, TypeError, ValueError):
+    return None
+  return "Left" if status.turn_direction == Direction.LEFT else "Right"
 
 
 def alert_wording(status: LaneChangeStatus | None, model, now_mono_ns: int, recv_mono_ns: int,
