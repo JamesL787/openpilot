@@ -1098,7 +1098,7 @@ class SelfdriveD:
       turning = None
     if turning is not None:
       alert = Alert(f"Turning {turning}", "", log.SelfdriveState.AlertStatus.normal, log.SelfdriveState.AlertSize.small,
-                    AlertPriority.LOWEST, car.CarControl.HUDControl.VisualAlert.none, log.SelfdriveState.AudibleAlert.none, 0.)
+                    AlertPriority.LOWEST, car.CarControl.HUDControl.VisualAlert.none, log.SelfdriveState.AudibleAlert.none, .1)
       alert.alert_type, alert.event_type = "turning/warning", TURNING_EVENT
       alerts.append(alert)
     else:
