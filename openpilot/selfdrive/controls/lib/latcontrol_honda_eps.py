@@ -37,6 +37,7 @@ from opendbc.car.honda.carcontroller import get_eps_modified_steering_pressed
 from opendbc.car.honda.steer_ratio import get_honda_vgr_inverse, normalize_honda_eps_fw
 from opendbc.car.honda.values import CarControllerParams, HondaFlags
 from openpilot.common.params import Params
+from openpilot.common.realtime import DT_CTRL, DT_MDL
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.controls.lib.honda_eps_calibrations import (
   REQUIRED_PTM_RWD,
@@ -117,6 +118,40 @@ def eps_firmware_calibration(CP) -> EpsFirmwareCalibration | None:
 
 def use_honda_eps_controller(CP) -> bool:
   return eps_firmware_calibration(CP) is not None
+
+
+# vfn's lateral smoothing, which this controller's delay schedules were measured with: modeld low-passes the model's
+# curvature over 0.1 s and adds the 0.1 s to the delay it tells the model and this controller. 7.0 runs upstream's 0.0
+# (for action-head models that smooth internally) and holds the 20 Hz action across each model frame, so in low-speed
+# turns the controller saw 3.3x the >3 Hz target content of vfn (route aa72d9572459015c/00000013 vs 00000389).
+LAT_SMOOTH_SECONDS = 0.1
+
+
+def lateral_smooth_seconds(CP, default: float) -> float:
+  """controlsd, modeld: the model-curvature smoothing (and the matching delay) for this car."""
+  return LAT_SMOOTH_SECONDS if use_honda_eps_controller(CP) else default
+
+
+class ModelActionRamp:
+  """vfn's NrdrLatModelActionInterp: ramp modeld's 20 Hz action across the model frame instead of holding it, so the
+  100 Hz target has no 20 Hz staircase. A new model frame starts a ramp from wherever the output is now."""
+  def __init__(self):
+    self.reset(0.0)
+
+  def reset(self, curvature: float) -> None:
+    self.output = self.start = self.target = float(curvature)
+    self.elapsed = 0.0
+
+  def update(self, curvature: float, new_frame: bool, active: bool) -> float:
+    if not active:
+      self.reset(curvature)
+      return self.output
+    if new_frame:
+      self.start, self.target, self.elapsed = self.output, float(curvature), 0.0
+    else:
+      self.elapsed += DT_CTRL
+    self.output = self.start + min(self.elapsed / DT_MDL, 1.0) * (self.target - self.start)
+    return self.output
 
 
 def lateral_delay_schedule(CP) -> tuple | None:

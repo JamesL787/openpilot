@@ -20,7 +20,8 @@ from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_angle import STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.lateral_controller_factory import create_lateral_controller
-from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, get_rack_map, lateral_delay_schedule, \
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, ModelActionRamp, get_rack_map, \
+  lateral_delay_schedule, lateral_smooth_seconds, \
   scheduled_lateral_delay, write_eps_state
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
 from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS
@@ -130,6 +131,9 @@ class Controls:
     honda_eps = isinstance(self.LaC, LatControlHondaEps)
     self.rack_map = get_rack_map(self.CP, self.LaC.calibration) if honda_eps else None
     self.lat_delay_schedule = lateral_delay_schedule(self.CP) if honda_eps else None
+    # and keeps vfn's model-curvature smoothing: the 0.1 s low-pass's delay here, and the action ramped across each frame
+    self.lat_smooth_seconds = lateral_smooth_seconds(self.CP, LAT_SMOOTH_SECONDS)
+    self.model_action_ramp = ModelActionRamp() if honda_eps else None
 
     from openpilot.starpilot.lateral.controller_selection import model_turn_assist_supported
     assist_enabled = self.vehicle_startup_preferences.turn_assist and model_turn_assist_supported(self.CP)
@@ -309,6 +313,8 @@ class Controls:
       new_desired_curvature = self.sm['lateralManeuverPlan'].desiredCurvature if CC.latActive else self.curvature
     else:
       new_desired_curvature = model_v2.action.desiredCurvature if CC.latActive else self.curvature
+      if getattr(self, 'model_action_ramp', None) is not None:
+        new_desired_curvature = self.model_action_ramp.update(new_desired_curvature, self.sm.updated['modelV2'], CC.latActive)
     assist = self.turn_assist_enabled()
     rolling = math.isfinite(CS.vEgo) and CS.vEgo > max(.1 * CV.MPH_TO_MS, self.CP.minSteerSpeed)
     if (assist and rolling and self.sm.all_checks(['modelV2']) and CC.latActive and not CS.standstill and not CS.steerFaultTemporary and
@@ -359,7 +365,7 @@ class Controls:
       self.lane_centering_applied = self.desired_curvature - baseline_curvature
     lateral_delay = scheduled_lateral_delay(self.lat_delay_schedule, CS.vEgo) if self.lat_delay_schedule else \
       self.sm["lateralDelay"].lateralDelay
-    lat_delay = lateral_delay + LAT_SMOOTH_SECONDS
+    lat_delay = lateral_delay + getattr(self, 'lat_smooth_seconds', LAT_SMOOTH_SECONDS)
 
     actuators.curvature = self.desired_curvature
     automatic = getattr(self, 'global_learning', None)

@@ -386,8 +386,13 @@ def main(demo=False):
   cloudlog.info("modeld got CarParams: %s", CP.brand)
   # A car on LatControlHondaEps tells the model its calibration's measured delay schedule instead of lagd's, as controlsd
   # does for the controller (Night Star port; the schedule and the command delay are sized together).
-  from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import lateral_delay_schedule, scheduled_lateral_delay
+  from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import lateral_delay_schedule, lateral_smooth_seconds, \
+    scheduled_lateral_delay
   lat_delay_schedule = lateral_delay_schedule(CP)
+  # ... and keeps vfn's 0.1 s curvature smoothing; every runner's action (bundled, catalog, Jetlink) reads this module's
+  # LAT_SMOOTH_SECONDS, and the manager runs modeld by its module name, so they all see it
+  global LAT_SMOOTH_SECONDS
+  LAT_SMOOTH_SECONDS = lateral_smooth_seconds(CP, LAT_SMOOTH_SECONDS)
 
   st = time.monotonic()
   cloudlog.warning("loading model")

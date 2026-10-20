@@ -901,3 +901,24 @@ def test_every_calibration_has_a_rack_map_and_the_controller_requires_one(monkey
   assert honda_eps.eps_firmware_calibration(CP) is eps_cal.CLARITY_TRW_A020
   CP.flags = int(CP.flags) & ~int(HondaFlags.VGR_CLARITY_TRW_A020)   # no firmware A table: no geometry, so the modified PID
   assert honda_eps.eps_firmware_calibration(CP) is None
+
+
+def test_honda_eps_cars_keep_vfns_model_smoothing():
+  assert honda_eps.lateral_smooth_seconds(_params(CLARITY_MODIFIED_FW), 0.0) == 0.1
+  assert honda_eps.lateral_smooth_seconds(_params(CLARITY_STOCK_FW), 0.0) == 0.0
+
+
+def test_model_action_ramps_across_the_frame():
+  from openpilot.common.realtime import DT_CTRL, DT_MDL
+  ramp = honda_eps.ModelActionRamp()
+  assert ramp.update(0.01, True, True) == 0.0         # a new frame starts from where the output is
+  outputs = [ramp.update(0.01, False, True) for _ in range(round(DT_MDL / DT_CTRL) + 2)]
+  assert outputs[0] == pytest.approx(0.01 * DT_CTRL / DT_MDL)
+  assert all(b >= a for a, b in zip(outputs, outputs[1:])) and outputs[-1] == pytest.approx(0.01)
+  ramp.update(0.005, False, True)                     # between frames the held target doesn't move
+  assert ramp.output == pytest.approx(0.01)
+  for _ in range(2):
+    ramp.update(-0.01, True, True) if _ == 0 else ramp.update(-0.01, False, True)
+  assert ramp.output == pytest.approx(0.01 - 0.02 * DT_CTRL / DT_MDL)   # mid-ramp, not a step
+  assert ramp.update(0.003, False, False) == 0.003    # inactive follows the input exactly
+  assert ramp.update(0.004, True, True) == 0.003
