@@ -69,3 +69,9 @@ def native_accepts(cp, model, param):
     and model == int(cp.safetyConfigs[0].safetyModel.raw)
     and param == aol_word(cp)
   )
+
+
+def independent_buttons_qualified(cp, *, marked_only=True):
+  return bool(cp.carFingerprint == CAR.HYUNDAI_SONATA and qualified(cp, marked_only=marked_only) and
+              cp.alternativeExperience in ((AOL_EXPERIENCE,) if marked_only else (0, AOL_EXPERIENCE)) and
+              aol_word(cp) == 0xC04)

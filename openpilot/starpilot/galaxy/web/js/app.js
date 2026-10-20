@@ -2,9 +2,9 @@ import { rememberInstallPrompt } from "./install-app.js"
 import { toggleHaptic } from "./haptics.js"
 import { GxState } from "./state.js"
 import { BottomNav, NAV, primaryTab } from "./bottom-nav.js"
-import { UpdateRestart, UPDATE_RESTART_MESSAGE } from "./update-restart.js"
+import { UpdateRestart } from "./update-restart.js"
 import { DeviceRestartWatch } from "./device-restart.js"
-import { GalaxyLoading } from "./loading-screen.js"
+import { bootScreenMode, dismissBootScreen, showBootScreen, showRestartScreen } from "./boot-screen.js"
 import { GxNotice } from "./notice.js"
 import { createApp, reactive, defineAsyncComponent } from "../vendor/vue/vue.esm-browser.js"
 import { route, navigate, navigateBack, ensureBackEntry, setRouteLeaveGuard, startRouter } from "./router.js"
@@ -23,6 +23,7 @@ const PlotsPage = page(() => import("./plots.js").then((module) => module.PlotsP
 const FlmPage = page(() => import("./flm.js").then((module) => module.FlmPage))
 import { LocalAuth } from "./auth-client.js"
 import { Home } from "./home.js"
+import { LocalAccess } from "./local-access.js"
 import { MenuTile } from "./menu-tile.js"
 const LocalRecordingsPage = page(() => import("./record-history.js").then((module) => module.LocalRecordingsPage))
 const CamerasPage = page(() => import("./cameras.js").then((module) => module.CamerasPage))
@@ -39,7 +40,7 @@ const OnroadLayoutPage = page(() => import("./onroad-layout.js").then((module) =
 const GalaxyPage = page(() => import("./galaxy.js").then((module) => module.GalaxyPage))
 import { DevicePicker } from "./device-picker.js"
 import { DeviceState } from "./device-state.js"
-import { spawnAmbientStars } from "./ambient-stars.js"
+import { spawnAmbientStars, pauseStarsOnSlowFirefoxScroll } from "./ambient-stars.js"
 
 function page(loader) {
   return defineAsyncComponent({
@@ -59,7 +60,6 @@ const save = (key, value) => { try { localStorage.setItem(key, value) } catch {}
 const state = reactive({
   tools: [],
   loading: true,
-  startupPending: false,
   updateRestarting: false,
   error: "",
   pageError: "",
@@ -69,7 +69,11 @@ const state = reactive({
   theme: stored(THEME_KEY) === "light" ? "light" : "dark",
   searchPage: "",
 })
-const updateRestart = new UpdateRestart({ publish: waiting => { state.updateRestarting = waiting } })
+const updateRestart = new UpdateRestart({ publish: waiting => {
+  state.updateRestarting = waiting
+  if (waiting) showRestartScreen()
+  else if (bootScreenMode() === "restart" && !state.loading) dismissBootScreen()
+} })
 const deviceRestart = new DeviceRestartWatch({ paused: () => state.updateRestarting })
 const authState = reactive({ status: "checking", error: "", localAccess: false, gatewayAccess: false })
 const authForm = reactive({ password: "" })
@@ -81,8 +85,8 @@ const auth = new LocalAuth({ publish: (update) => {
 
 
 createApp({
-  components: { BottomNav, GalaxyLoading, Home, Tools, Logs, SoftwarePage, NavigationPage, ModelsPage, LaboratoryPage, SettingsPage, SettingsRecoveryPage, ToggleSearch, PlotsPage, FlmPage, LocalRecordingsPage, CamerasPage, SentryEventsPage, VasmPage, PipPage, DrivingPage, DevicePreferencesPage, BluetoothPage, AndroidAutoPage, LongitudinalCurvesPage, VehicleControlsPage, OnroadLayoutPage, GalaxyPage, DevicePicker, DeviceState, MenuTile },
-  data: () => ({ state, authState, authForm, route, NAV, routeDirection: 1, updateRestart, UPDATE_RESTART_MESSAGE, nextLayoutLeavePresentation: "inline" }),
+  components: { BottomNav, Home, LocalAccess, Tools, Logs, SoftwarePage, NavigationPage, ModelsPage, LaboratoryPage, SettingsPage, SettingsRecoveryPage, ToggleSearch, PlotsPage, FlmPage, LocalRecordingsPage, CamerasPage, SentryEventsPage, VasmPage, PipPage, DrivingPage, DevicePreferencesPage, BluetoothPage, AndroidAutoPage, LongitudinalCurvesPage, VehicleControlsPage, OnroadLayoutPage, GalaxyPage, DevicePicker, DeviceState, MenuTile },
+  data: () => ({ state, authState, authForm, route, NAV, routeDirection: 1, updateRestart, deviceRestart, nextLayoutLeavePresentation: "inline" }),
   computed: {
     visibleTools() { return state.tools.filter(tool => tool.visibility !== "authenticated" ||
       (state.monitorMode === "local" && authState.status === "authenticated")).sort((a, b) =>
@@ -101,7 +105,12 @@ createApp({
       return authState.status === "checking" ? "Connecting…" : "Not connected"
     },
   },
-  errorCaptured() { state.pageError = "This page could not finish loading."; return false },
+  errorCaptured(error, _instance, info) {
+    console.error("Galaxy page error", info, error)
+    if (updateRestart.prepared) updateRestart.start(updateRestart.prepared, { provisional: true })
+    else state.pageError = "This page could not finish loading."
+    return false
+  },
   watch: { 'route.path'(path, previous) {
     state.pageError = ""
     this.routeDirection = route.direction < 0 || primaryTab(path) < primaryTab(previous) ? -1 : 1
@@ -171,9 +180,7 @@ createApp({
     deviceRestart.stop()
   },
   template: `
-    <div class="gx-app" :class="{'gx-nav-pinned':state.navPinned}" @change.capture="toggleHaptic">
-      <GalaxyLoading v-if="state.updateRestarting" :message="UPDATE_RESTART_MESSAGE" refresh />
-      <template v-else>
+    <div class="gx-app" :class="{'gx-nav-pinned':state.navPinned}" :inert="state.updateRestarting" @change.capture="toggleHaptic">
       <header class="gx-appbar">
         <button type="button" class="gx-icon-btn gx-appbar__back gx-back-btn" aria-label="Back" @click="routeBack"><i class="bi bi-arrow-left"></i></button>
         <div class="gx-appbar__pill">
@@ -193,7 +200,7 @@ createApp({
         <div class="gx-nav-section"><div class="gx-nav-section__title">Main</div>
           <button v-for="item in NAV.slice(0,3)" :key="item.path" type="button" class="gx-nav-item" :class="{active:isActive(item.path)}" @click="goFromMenu(item.path)"><i class="bi" :class="item.icon"></i><span>{{ item.name }}</span></button>
         </div>
-        <div v-if="authState.localAccess" class="gx-nav-section"><div class="gx-nav-section__title">Routes</div><button type="button" class="gx-nav-item" :class="{active:isActive('/recordings')}" @click="goFromMenu('/recordings')"><i class="bi bi-camera-reels"></i><span>Routes</span></button></div>
+        <div class="gx-nav-section"><div class="gx-nav-section__title">Routes</div><button type="button" class="gx-nav-item" :class="{active:isActive('/recordings')}" @click="goFromMenu('/recordings')"><i class="bi bi-camera-reels"></i><span>Routes</span></button></div>
         <div class="gx-nav-section"><div class="gx-nav-section__title">Tools</div>
           <button v-for="tool in visibleTools.filter(tool => tool.path !== '/galaxy')" :key="tool.path" type="button" class="gx-nav-item" :class="{active:isActive(tool.path)}" @click="goFromMenu(tool.path)"><i class="bi" :class="tool.icon"></i><span>{{ tool.name }}</span></button>
 
@@ -204,7 +211,7 @@ createApp({
       </aside>
       <main class="gx-content" :style="{'--route-direction': routeDirection}"><div class="gx-route-stage">
         <Transition name="gx-route" @before-enter="setPageActive($event, true)" @before-leave="setPageActive($event, false)"><div class="gx-route" :key="isActive('/recordings') ? '/recordings' : route.path">
-        <template v-if="state.loading && !state.error"><GalaxyLoading v-if="state.startupPending && !state.updateRestarting" message="Connecting to your device…" /></template>
+        <template v-if="state.loading && !state.error"></template>
         <GxNotice v-else-if="state.error" tone="danger">{{ state.error }}</GxNotice>
         <section v-else-if="state.monitorMode === 'local' && authState.status !== 'authenticated'" class="gx-card gx-auth" aria-label="Galaxy sign in">
           <h2>Galaxy access</h2>
@@ -219,7 +226,10 @@ createApp({
         <GxNotice v-else-if="state.pageError" tone="danger">{{ state.pageError }} <button class="gx-btn" @click="reloadPage">Reload page</button></GxNotice>
         <Home v-else-if="route.path === '/'" :mode="state.monitorMode" :unauthorized="sessionExpired" :go="go" />
         <LocalRecordingsPage v-else-if="isActive('/recordings') && authState.localAccess" :mode="state.monitorMode" :unauthorized="sessionExpired" :route-path="route.path" :go="go" />
-        <GxState v-else-if="isActive('/recordings')">Routes require a local Galaxy connection. Open a local address from Home while connected to the comma's hotspot or local network.</GxState>
+        <div v-else-if="isActive('/recordings')" class="gx-stack">
+          <GxState title="Local connection required">Routes are unavailable through the Galaxy tunnel. Open Galaxy locally to access Routes.</GxState>
+          <LocalAccess :mode="state.monitorMode" :on-unauthorized="sessionExpired" />
+        </div>
         <CamerasPage v-else-if="route.path === '/cameras'" :mode="state.monitorMode" :go="go" :unauthorized="sessionExpired" />
         <SentryEventsPage v-else-if="['/cameras/events', '/cameras/sentry-settings'].includes(route.path)" :mode="state.monitorMode" :unauthorized="sessionExpired" :go="go" />
         <PipPage v-else-if="route.path === '/cameras/pip'" :mode="state.monitorMode" :unauthorized="sessionExpired" :go="go" />
@@ -230,7 +240,8 @@ createApp({
         <OnroadLayoutPage ref="activeLayout" v-else-if="['/theme_maker', '/theme_maker/android_auto', '/appearance'].includes(route.path)" :key="route.path" :projection="route.path === '/theme_maker/android_auto'" :initial-panel="route.path === '/appearance' ? 'display' : 'widgets'" :mode="state.monitorMode" :unauthorized="sessionExpired" @target="go($event === 'projection' ? '/theme_maker/android_auto' : '/theme_maker')" @close="routeBack" />
         <SettingsRecoveryPage v-else-if="route.path === '/settings/recovery'" :mode="state.monitorMode" :unauthorized="sessionExpired" />
         <Logs v-else-if="route.path === '/logs' || route.path.startsWith('/logs/') || ['/troubleshoot', '/manage_tmux'].includes(route.path)" :path="route.path === '/troubleshoot' ? '/logs/troubleshoot' : route.path === '/manage_tmux' ? '/logs/tmux' : route.path" :mode="state.monitorMode" :unauthorized="sessionExpired" />
-        <SoftwarePage v-else-if="route.path === '/system'" :mode="state.monitorMode" :unauthorized="sessionExpired" :restarting="baseline => updateRestart.start({ ...baseline, instance: deviceRestart.instance })" />
+        <SoftwarePage v-else-if="route.path === '/system'" :mode="state.monitorMode" :unauthorized="sessionExpired" :restarting="baseline => updateRestart.start({ ...baseline, instance: deviceRestart.instance })"
+          :preparing="baseline => updateRestart.prepare({ ...baseline, instance: deviceRestart.instance })" :cancel-preparation="() => updateRestart.cancelPreparation()" />
         <NavigationPage v-else-if="['/navigation', '/navigation/maps', '/navigation/setup'].includes(route.path)" :mode="state.monitorMode" :unauthorized="sessionExpired" :go="go"
           :initial-tab="route.path === '/navigation/maps' ? 'maps' : route.path === '/navigation/setup' ? 'setup' : 'route'" />
         <ModelsPage v-else-if="route.path === '/manage_models'" :mode="state.monitorMode" :unauthorized="sessionExpired" />
@@ -245,17 +256,20 @@ createApp({
         <SettingsPage @nested="ensureBackEntry" ref="activeSettings" v-else-if="drivingSettingsPage" :key="drivingSettingsPage" :mode="state.monitorMode" :unauthorized="sessionExpired" :initial-page="drivingSettingsPage" :title="'Driving settings · ' + drivingSettingsPage.replaceAll('_', ' ')" :return-to="returnToDriving" />
         <SettingsPage @nested="ensureBackEntry" ref="activeSettings" v-else-if="route.path === '/settings'" :key="state.searchPage || 'hub'" :mode="state.monitorMode" :unauthorized="sessionExpired"
           :initial-page="state.searchPage || 'hub'" :return-to="state.searchPage ? returnFromSearch : null" />
-        <PlotsPage v-else-if="['/tuning', '/tuning/plots'].includes(route.path)" :mode="state.monitorMode" :unauthorized="sessionExpired" />
-        <FlmPage v-else-if="route.path === '/tuning/flm'" :mode="state.monitorMode" :unauthorized="sessionExpired" :go="go" />
+        <div v-else-if="['/tuning', '/tuning/plots', '/tuning/flm'].includes(route.path)" class="gx-stack">
+          <PlotsPage :mode="state.monitorMode" :unauthorized="sessionExpired" />
+          <FlmPage embedded :mode="state.monitorMode" :unauthorized="sessionExpired" />
+        </div>
         <GxState v-else :title="pageName">This capability is unavailable in this build. No operation was attempted.</GxState>
       </div></Transition></div></main>
-      <BottomNav :path="route.path" :local-access="authState.localAccess" @navigate="go" />
-      </template>
+      <BottomNav :path="route.path" @navigate="go" />
     </div>
   `,
 }).component("GxState", GxState).component("GxNotice", GxNotice).mount("#galaxy-app")
 
-spawnAmbientStars(document.getElementById("galaxy-bg"))
+const galaxyBackground = document.getElementById("galaxy-bg")
+spawnAmbientStars(galaxyBackground)
+pauseStarsOnSlowFirefoxScroll(galaxyBackground)
 
 startRouter()
 
@@ -276,7 +290,7 @@ async function initialize() {
   clearTimeout(reconnectTimer)
   reconnectTimer = null
   state.loading = !state.tools.length
-  const loadingDelay = setTimeout(() => { if (generation === startupGeneration) state.startupPending = true }, 150)
+  if (state.loading && !state.updateRestarting) showBootScreen("connecting", "Connecting to your device…")
   try {
     const catalog = await loadCatalog()
     if (generation !== startupGeneration) return
@@ -289,9 +303,9 @@ async function initialize() {
   } catch {
     if (generation === startupGeneration) state.error = "Galaxy could not connect. Reconnecting automatically…"
   } finally {
-    clearTimeout(loadingDelay)
     if (generation === startupGeneration) {
-      state.loading = state.startupPending = false
+      state.loading = false
+      if (bootScreenMode() === "connecting") dismissBootScreen()
       initializing = false
       if (state.error || authState.status === "unavailable") scheduleReconnect()
     }

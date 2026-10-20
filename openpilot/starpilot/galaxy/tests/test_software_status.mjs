@@ -11,10 +11,11 @@ const snapshot = (changes = {}) => ({ schemaVersion: 1, installed, updater, oper
 const request = (action, state = "pending", target = null, error = null) => ({ id: "one", action, target, state, error })
 const response = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
 
-function fixture(includeHistory = true) {
+function fixture(includeHistory = true, restarting = () => {}, preparing = () => {}, cancelPreparation = () => {}) {
   const requests = [], states = [], timers = new Map()
   let nextTimer = 0, unauthorized = 0
   const feed = new SoftwareStatusFeed({ includeHistory, publish: (state) => states.push(state), unauthorized: () => { unauthorized++ },
+    restarting, preparing, cancelPreparation,
     later: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id },
     cancelTimer: (id) => timers.delete(id),
     fetcher: (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })) })
@@ -55,15 +56,53 @@ const unavailable = fixture()
 unavailable.feed.start()
 assert.equal(unavailable.states.at(-1).status, "loading")
 await unavailable.reply(0, { error: "Updater status is unavailable" }, 503)
-assert.equal(unavailable.states.at(-1).status, "unavailable")
-assert.match(unavailable.states.at(-1).error, /Updater status is unavailable/)
-unavailable.fire(2000)
-assert.equal(unavailable.states.at(-1).status, "unavailable")
-assert.match(unavailable.states.at(-1).error, /Updater status is unavailable/)
+assert.equal(unavailable.states.at(-1).status, "loading")
+assert.equal(unavailable.states.at(-1).error, "")
+unavailable.fire(5000)
+assert.equal(unavailable.states.at(-1).status, "loading")
 await unavailable.reply(1, snapshot())
 assert.equal(unavailable.states.at(-1).status, "ready")
 assert.equal(unavailable.states.at(-1).error, "")
 unavailable.feed.stop()
+
+const persistentUnavailable = fixture()
+persistentUnavailable.feed.start()
+for (let attempt = 0; attempt < 3; attempt++) {
+  await persistentUnavailable.reply(attempt, { error: "Updater status is unavailable" }, 503)
+  if (attempt < 2) {
+    assert.equal(persistentUnavailable.states.at(-1).status, "loading")
+    persistentUnavailable.fire(5000)
+  }
+}
+assert.equal(persistentUnavailable.states.at(-1).status, "unavailable")
+assert.match(persistentUnavailable.states.at(-1).error, /Updater status is unavailable/)
+persistentUnavailable.feed.stop()
+
+const restartScreens = []
+const preparedUpdates = []
+const restartingUpdate = fixture(true, baseline => restartScreens.push(baseline), baseline => preparedUpdates.push(baseline))
+restartingUpdate.feed.start()
+await restartingUpdate.reply(0, snapshot({ operations: { ...operations, canFastUpdate: true } }))
+restartingUpdate.feed.action("update", "Dom")
+assert.equal(preparedUpdates.length, 1, "update intent is saved before the request can disconnect")
+await restartingUpdate.reply(1, snapshot({ operations: { ...operations, canFastUpdate: true, request: request("update", "pending", "Dom") } }))
+assert.deepEqual(restartScreens, [], "accepted updates keep their progress page visible")
+restartingUpdate.fire(1000)
+await restartingUpdate.reply(2, { error: "Updater status is unavailable" }, 503)
+assert.deepEqual(restartScreens, [], "an updater status error does not mean the device restarted")
+restartingUpdate.fire(2000)
+await restartingUpdate.fail(3)
+assert.equal(restartScreens.at(-1).target, "Dom", "connection loss starts the reconnect screen")
+restartingUpdate.feed.stop()
+
+let canceledPreparation = 0
+const rejectedUpdate = fixture(true, () => {}, () => {}, () => canceledPreparation++)
+rejectedUpdate.feed.start()
+await rejectedUpdate.reply(0, snapshot({ operations: { ...operations, canFastUpdate: true } }))
+rejectedUpdate.feed.action("update", "Dom")
+await rejectedUpdate.reply(1, { error: "Update rejected" }, 409)
+assert.equal(canceledPreparation, 1)
+rejectedUpdate.feed.stop()
 
 const normal = fixture()
 normal.feed.start()

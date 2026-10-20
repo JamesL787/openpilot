@@ -266,7 +266,9 @@ class Car:
           if long_cp is not None:
             preflight = inspect_ioniq6_long_sources(self.can_callbacks[0])
             cloudlog.event('ioniq6_long_preflight', reason=preflight.reason)
-            if preflight.source_period is None:
+            if preflight.source_period is None or preflight.vehicle_ready is not False:
+              # Reboot in READY retains original stock CP before CI/parsers and
+              # publication. Unknown evidence cannot be treated as Ready=False.
               long_cp = None
           if long_cp is not None:
             initialize_aol_preference(long_cp)
@@ -427,6 +429,7 @@ class Car:
     self.v_cruise_helper.intervals = read_cruise_intervals(self.params, pcm_cruise=self.CP.pcmCruise)
 
     self.experimental_mode = self.params.get_bool("ExperimentalMode")
+    self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
 
     # card is driven by can recv, expected at 100Hz
     self.rk = Ratekeeper(100, print_delay_threshold=None)
@@ -614,7 +617,8 @@ class Car:
           native,
           latched=self.aol_card_intent.allowed_latch,
           panda_ready=angle_panda_ready,
-          restricted=restrict(self.CP, CS) or ((mazda_aol or preap_aol) and self.aol_card_intent.pause_lateral),
+          restricted=restrict(self.CP, CS) or ((angle_aol or mazda_aol or preap_aol) and self.aol_card_intent.pause_lateral) or
+            (angle_aol and CS.brakePressed and not CS.standstill and CS.vEgo < self.aol_settings.pause_brake_mps),
           now_ns=now_ns,
           pending_since_ns=getattr(self, '_angle_aol_pending_since_ns', 0),
           **preap_observation,
@@ -770,7 +774,7 @@ class Car:
     if self.sm['carControl'].enabled and not self.CC_prev.enabled:
       # Initialization owns this edge; evaluate commands against its final speed.
       self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.experimental_mode,
-                                            resume=self.vehicle_startup.consume_cruise_resume())
+                                            resume=self.vehicle_startup.consume_cruise_resume(), initial_speed=self.initial_cruise_speed)
 
   def aol_cancel_source(self, CS, now_ns: int) -> int:
     """Bind Cancel to this parsed CAN batch and its local monotonic receipt."""
@@ -1025,7 +1029,7 @@ class Car:
       self.pm.send('slcDashboardObservation', source)
 
     change = self.v_cruise_helper.slc_cruise_change
-    if (self.slc_replay or self.curve_replay) and not self.CP.pcmCruise:
+    if self.slc_replay or self.curve_replay:
       if change is not None:
         self.slc_receipts.append(('driverChange', change, change[0], change[1], int(cs_send.logMonoTime)))
       for kind, detail, previous_mps, selected_mps, observed_ns in self.slc_receipts:
@@ -1352,7 +1356,25 @@ class Car:
   def mixed_startup_keepalive(self):
     from opendbc.car.hyundai.blended_longitudinal import BlendedStartup
     owner = getattr(getattr(self, 'vehicle_startup', None), 'owner', None)
-    return isinstance(owner, BlendedStartup) and owner.owner.published and not owner.closed and (owner.pending_target or owner.owner.active())
+    from opendbc.car.hyundai.ioniq5pe_startup import PEPendingStartup
+    return (isinstance(owner, (BlendedStartup, PEPendingStartup)) and owner.owner.published and not owner.closed and
+            (owner.pending_target or owner.owner.active()))
+
+  def prepare_pe_restoration(self):
+    from opendbc.car.hyundai.ioniq5pe_startup import PEPendingStartup
+    owner = getattr(getattr(self, 'vehicle_startup', None), 'owner', None)
+    if not isinstance(owner, PEPendingStartup) or not (owner.session_attempted or owner.takeover_attempted) or owner.restored:
+      return True
+    owner.quiesce()
+
+
+    self.params.put_bool('ControlsReady', False)
+    deadline = time.monotonic() + 1.
+    while time.monotonic() < deadline:
+      if self.startup_diagnostic_admission():
+        return True
+      time.sleep(.01)
+    return False
 
   def controls_update(self, CS: car.CarState, CC: car.CarControl, *, initialize_only=False):
     """control update loop, driven by carControl"""
@@ -1582,6 +1604,7 @@ class Car:
         settings_worker.refresh(time.monotonic_ns())
       self.is_metric = self.params.get_bool("IsMetric")
       self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
+      self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
       if self.aol_card_intent is not None:
         self.aol_card_intent.settings = read_settings(self.params)
       now = time.monotonic()
@@ -1622,7 +1645,10 @@ def main():
     car.card_thread()
   finally:
     if getattr(car, 'vehicle_startup', None) is not None:
-      car.vehicle_startup.close()
+      try:
+        car.prepare_pe_restoration()
+      finally:
+        car.vehicle_startup.close()
     if getattr(car, 'ioniq6_keepalive', None) is not None:
       car.ioniq6_long_lost = True
       car.ioniq6_keepalive.stop()

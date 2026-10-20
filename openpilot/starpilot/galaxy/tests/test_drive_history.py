@@ -105,16 +105,16 @@ class DriveHistoryTest(unittest.TestCase):
     self.assertTrue(result['scanIncomplete'])
     self.assertNotIn('00000009--bbbbbbbbbb', [r['routeId'] for r in result['routes']])
 
-  def test_stats_only_limit_includes_long_route_without_changing_default(self):
+  def test_default_includes_long_route_and_explicit_limit_remains_bounded(self):
     route_id = '2026-09-25--12-00-00'
     for number in range(129):
       self.segment(f'{route_id}--{number}', 'qlog.zst')
     ordinary = self.reader.snapshot()
-    self.assertTrue(ordinary['scanIncomplete'])
-    self.assertEqual(ordinary['routes'][0]['segmentCount'], 64)
-    extended = drive_history.DriveHistory(self.root, max_segments_per_route=129).snapshot()
-    self.assertFalse(extended['scanIncomplete'])
-    self.assertEqual(extended['routes'][0]['segmentCount'], 129)
+    self.assertFalse(ordinary['scanIncomplete'])
+    self.assertEqual(ordinary['routes'][0]['segmentCount'], 129)
+    capped = drive_history.DriveHistory(self.root, max_segments_per_route=64).snapshot()
+    self.assertTrue(capped['scanIncomplete'])
+    self.assertEqual(capped['routes'][0]['segmentCount'], 64)
     with self.assertRaises(ValueError):
       drive_history.DriveHistory(self.root, max_segments_per_route=513)
 

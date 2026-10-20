@@ -10,7 +10,8 @@ from openpilot.common.hardware import COMMA_HARDWARE
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.egl import init_egl, create_egl_image, destroy_egl_image, bind_egl_image_to_texture, EGLImage
 from openpilot.system.ui.widgets import Widget
-from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
+from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.starpilot.ui.camera_color import ROAD_COLOR_SHADER, road_color_strength
 
 CONNECTION_RETRY_INTERVAL = 0.2  # seconds between connection attempts
 ROAD_STREAMS = (VisionStreamType.VISION_STREAM_NARROW_ROAD, VisionStreamType.VISION_STREAM_WIDE_ROAD)
@@ -49,19 +50,13 @@ if COMMA_HARDWARE:
     in vec2 fragTexCoord;
     uniform samplerExternalOES texture0;
     out vec4 fragColor;
-    uniform int engaged;
+    uniform float color_strength;
     uniform int road_camera;
+    """ + ROAD_COLOR_SHADER + """
     void main() {
       vec4 color = texture(texture0, fragTexCoord);
       if (road_camera == 1) {
-        if (engaged == 1) {
-          float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-          color.rgb = mix(vec3(gray), color.rgb, 0.2);
-          color.rgb = clamp((color.rgb - 0.5) * 1.2 + 0.5, 0.0, 1.0);
-          color.rgb = pow(color.rgb, vec3(1.0/1.28));
-        } else {
-          color.rgb *= 0.85;
-        }
+        color.rgb = road_color(color.rgb, color_strength);
       } else {
         color.rgb = pow(color.rgb, vec3(1.0/1.28));
       }
@@ -74,20 +69,15 @@ else:
     uniform sampler2D texture0;
     uniform sampler2D texture1;
     out vec4 fragColor;
-    uniform int engaged;
+    uniform float color_strength;
     uniform int road_camera;
+    """ + ROAD_COLOR_SHADER + """
     void main() {
       float y = texture(texture0, fragTexCoord).r;
       vec2 uv = texture(texture1, fragTexCoord).ra - 0.5;
       vec3 rgb = vec3(y + 1.402*uv.y, y - 0.344*uv.x - 0.714*uv.y, y + 1.772*uv.x);
       if (road_camera == 1) {
-        if (engaged == 1) {
-          float gray = dot(rgb, vec3(0.299, 0.587, 0.114));
-          rgb = mix(vec3(gray), rgb, 0.2);
-          rgb = clamp((rgb - 0.5) * 1.2 + 0.5, 0.0, 1.0);
-        } else {
-          rgb *= 0.85;
-        }
+        rgb = road_color(rgb, color_strength);
       }
       fragColor = vec4(rgb, 1.0);
     }
@@ -112,8 +102,8 @@ class CameraView(Widget):
     self.last_connection_attempt: float = 0.0
     self.shader = rl.load_shader_from_memory(VERTEX_SHADER, FRAME_FRAGMENT_SHADER)
     self._texture1_loc: int = rl.get_shader_location(self.shader, "texture1") if not COMMA_HARDWARE else -1
-    self._engaged_loc = rl.get_shader_location(self.shader, "engaged")
-    self._engaged_val = rl.ffi.new("int[1]", [1])
+    self._color_strength_loc = rl.get_shader_location(self.shader, "color_strength")
+    self._color_strength_val = rl.ffi.new("float[1]")
     self._road_camera_loc = rl.get_shader_location(self.shader, "road_camera")
     self._road_camera_val = rl.ffi.new("int[1]", [int(stream_type in ROAD_STREAMS)])
 
@@ -314,9 +304,9 @@ class CameraView(Widget):
     rl.end_shader_mode()
 
   def _update_texture_color_filtering(self):
-    self._engaged_val[0] = int(ui_state.status != UIStatus.DISENGAGED)
+    self._color_strength_val[0] = road_color_strength(ui_state)
     self._road_camera_val[0] = int(self._stream_type in ROAD_STREAMS)
-    rl.set_shader_value(self.shader, self._engaged_loc, self._engaged_val, rl.ShaderUniformDataType.SHADER_UNIFORM_INT)
+    rl.set_shader_value(self.shader, self._color_strength_loc, self._color_strength_val, rl.ShaderUniformDataType.SHADER_UNIFORM_FLOAT)
     rl.set_shader_value(self.shader, self._road_camera_loc, self._road_camera_val, rl.ShaderUniformDataType.SHADER_UNIFORM_INT)
 
   def _ensure_connection(self) -> bool:

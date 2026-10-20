@@ -44,6 +44,7 @@ class HyundaiECUStartup:
     self.cp = cp
     self.callbacks = callbacks
     self.outcome = None
+    self.session_attempted = False
     self.disable_attempted = False
     self.restored = False
     self.admission = None
@@ -67,6 +68,8 @@ class HyundaiECUStartup:
     # The exact3-byte UDS request fits an ISO-TP single frame. Mark before
     # invoking transport: a callback exception cannot prove no ECU mutation.
     for address, data, bus in frames:
+      if address == self.address and bus == self.bus and len(data) >= 3 and data[:3] == b'\x02\x10\x03':
+        self.session_attempted = True
       if address == self.address and bus == self.bus and len(data) >= 4 and data[:4] == b'\x03\x28\x83\x01':
         self.disable_attempted = True
     self.callbacks[1](frames)
@@ -76,12 +79,17 @@ class HyundaiECUStartup:
     if not admission():
       return False
     recv, send = self.callbacks
-    session = self._query(send, recv, self.bus, [(self.address, None)], [b'\x10\x03'], [b'\x50\x03'])
-    if not session.get_data(.1):
-      return False
-    # Restore is deliberately unsuppressed; a sent288001 cannot prove stock.
-    restore = self._query(send, recv, self.bus, [(self.address, None)], [b'\x28\x00\x01'], [b'\x68\x00'])
-    if not restore.get_data(.1):
+    if self.disable_attempted:
+      session = self._query(send, recv, self.bus, [(self.address, None)], [b'\x10\x03'], [b'\x50\x03'])
+      session_payload = session.get_data(.1).get((self.address, None))
+      if session_payload is None or len(session_payload) not in (0, 4):
+        return False
+      restore = self._query(send, recv, self.bus, [(self.address, None)], [b'\x28\x00\x01'], [b'\x68\x00'])
+      if restore.get_data(.1).get((self.address, None)) != b'':
+        return False
+    normal = self._query(send, recv, self.bus, [(self.address, None)], [b'\x10\x01'], [b'\x50\x01'])
+    normal_payload = normal.get_data(.1).get((self.address, None))
+    if normal_payload is None or len(normal_payload) not in (0, 4):
       return False
     self.restored = True
     self.floor_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
@@ -103,7 +111,7 @@ class HyundaiECUStartup:
       self.outcome = Outcome.SENT_UNCONFIRMED
       self.prepared_cp = deepcopy(self.cp.to_dict())
       return self.cp
-    if not self.disable_attempted:
+    if not (self.session_attempted or self.disable_attempted):
       self.outcome = Outcome.STOCK_UNTOUCHED
     else:
       try:
@@ -178,9 +186,11 @@ class HyundaiECUStartup:
 
   def close(self):
     if self.closed:
+      if self.outcome is Outcome.ABORT_UNCERTAIN:
+        raise RuntimeError(f'{self.label} cleanup remains unverified')
       return
     self.closed = True
-    if self.disable_attempted and not self.published and not self.restored:
+    if (self.session_attempted or self.disable_attempted) and not self.published and not self.restored:
       try:
         restored = self._restore()
       except Exception:

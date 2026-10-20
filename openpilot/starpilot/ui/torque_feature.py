@@ -72,7 +72,10 @@ class TorqueFeature:
     bolt = capability is not None and capability[0] in BOLT_VEHICLES
     try:
       if capability is None:
-        return False, (FeatureRow("", "Vehicle", "Select your vehicle in Vehicle settings to configure steering"),)
+        cp = self.owner.vehicle_params()
+        identified = bool(cp and getattr(cp, "carFingerprint", None))
+        return False, (FeatureRow("", "Vehicle", "Steering torque tuning is unavailable for this vehicle" if identified else
+                                  "Turn on the car and wait for vehicle identification before configuring steering"),)
       fingerprint = capability[0]
       basis = (capability[5], capability[6], capability[7])
       if raw is None:

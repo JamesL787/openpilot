@@ -14,6 +14,10 @@ const history = { schemaVersion: 1, source: 'local', partialHistory: true, scanI
     { number: 2, segmentName: `${current}--2`, files: { rlog: false, qlog: true, fcamera: false, dcamera: true, ecamera: false, qcamera: true } },
   ] }] }
 assert.equal(validLocalHistory(history), true)
+const longRoute = { ...history, scanIncomplete: false, routes: [{ ...history.routes[0],
+  segmentCount: 82, segments: Array.from({ length: 82 }, (_, number) => ({
+    ...history.routes[0].segments[0], number, segmentName: `${current}--${number}` })) }] }
+assert.equal(validLocalHistory(longRoute), true)
 assert.equal(validLocalHistory({ ...history, source: 'cloud' }), false)
 assert.equal(validLocalHistory({ ...history, routes: [{ ...history.routes[0], routeId: '<script>' }] }), false)
 assert.equal(validLocalHistory({ ...history, routes: [{ ...history.routes[0], segmentCount: 3 }] }), false)
@@ -57,10 +61,11 @@ const cards = LocalRecordingsPage.computed.routeCards.call({ query: "", data: { 
 assert.equal(cards[0].routeId, current)
 const app = readFileSync(new URL('../web/js/app.js', import.meta.url), 'utf8')
 assert.match(app, /<LocalRecordingsPage v-else-if="isActive\('\/recordings'\) && authState.localAccess"/)
-assert.match(app, /<div v-if="authState.localAccess" class="gx-nav-section"><div class="gx-nav-section__title">Routes<\/div>/)
-assert.match(app, /<GxState v-else-if="isActive\('\/recordings'\)">Routes require a local Galaxy connection/)
-assert.match(app, /<BottomNav[^>]*:local-access="authState.localAccess"/)
-assert.match(BottomNav.template, /:disabled="item.path === '\/recordings' && !localAccess"/)
+assert.match(app, /<div class="gx-nav-section"><div class="gx-nav-section__title">Routes<\/div><button[^>]*@click="goFromMenu\('\/recordings'\)"/)
+assert.match(app, /<div v-else-if="isActive\('\/recordings'\)" class="gx-stack">\s*<GxState[^>]*>Routes are unavailable through the Galaxy tunnel\. Open Galaxy locally to access Routes\.<\/GxState>\s*<LocalAccess :mode="state.monitorMode" :on-unauthorized="sessionExpired" \/>/)
+assert.match(app, /<BottomNav :path="route.path" @navigate="go"/)
+assert.doesNotMatch(BottomNav.template, /disabled|localAccess/)
+assert.match(BottomNav.template, /@click="\$emit\('navigate', item.path\)"/)
 
 function fixture() {
   const requests = [], states = [], timers = new Map()

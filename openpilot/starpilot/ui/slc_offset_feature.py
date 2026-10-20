@@ -147,7 +147,7 @@ class SlcOffsetOwner:
     if isinstance(snap.document, od.OffsetDocument) and snap.metric is not None:
       unit = "km/h" if snap.metric else "mph"
       scale = 1 / _unit_factor(snap.metric)
-      display_bounds = tuple(_display(bound * scale) for bound in snap.document.bounds_mps)
+      display_bounds = tuple(str(round(bound * scale)) for bound in snap.document.bounds_mps)
       for index in range(7):
         # Round presentation only: the stored SI boundaries remain authoritative.
         label = f"{display_bounds[index]}–<{display_bounds[index + 1]} {unit}"
@@ -157,7 +157,7 @@ class SlcOffsetOwner:
                                minimum=_minimum_offset(snap.document, index, snap.metric), maximum=150 if snap.metric else 99,
                                available=available and snap.raw_document is not None,
                                reason="Legacy value; adopt to edit" if snap.raw_document is None else
-                                      "Upper boundary excluded; ranges rounded to 2 decimals. Unsafe reductions use the unadjusted limit",
+                                      "Upper boundary excluded; displayed ranges rounded to whole speeds. Unsafe reductions use the unadjusted limit",
                                related_source=snap.raw_unit, capability=capable, dependencies=deps,
                                display_unit=unit, default_value="0"))
       rows.append(FeatureRow("", f"{display_bounds[-1]} {unit} and above", "Zero offset"))

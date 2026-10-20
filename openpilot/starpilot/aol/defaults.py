@@ -1,15 +1,12 @@
-"""Capability-aware preference enrollment, separate from runtime authority."""
+"""Global AOL preference default, separate from runtime authority."""
 from pathlib import Path
 
-from openpilot.starpilot.aol.vehicle import policy_for
 from openpilot.starpilot.state_migration import _atomic_write, _params_lock, _read_value
 
 
-def default_enabled(cp) -> bool:
-  if cp is None or getattr(cp, 'notCar', True) or getattr(cp, 'passive', True) or getattr(cp, 'dashcamOnly', True):
-    return False
-  policy = policy_for(cp)
-  return bool(policy.settings_supported and policy.intent_supported)
+def default_enabled(_cp=None) -> bool:
+  # A preference default grants no vehicle, native or steering authority.
+  return True
 
 
 def enroll_missing_preference(params, cp) -> bool:

@@ -32,8 +32,8 @@ class TestIoniq5PEMetadata(unittest.TestCase):
     radar = versions[(structs.CarParams.Ecu.fwdRadar, 0x7d0, None)]
     camera = versions[(structs.CarParams.Ecu.fwdCamera, 0x7c4, None)]
     self.assertEqual(len(versions), 2)
-    self.assertEqual(len(radar), 2)
-    self.assertEqual(len(camera), 4)
+    self.assertEqual(len(radar), 3)
+    self.assertEqual(len(camera), 5)
     self.assertTrue(all(version.startswith(b"\xf1\x00NE__ RDR") for version in radar))
     self.assertTrue(all(version.startswith(b"\xf1\x00NE  MFC") for version in camera))
     old_camera = FW_VERSIONS[CAR.HYUNDAI_IONIQ_5][(structs.CarParams.Ecu.fwdCamera, 0x7c4, None)]

@@ -336,6 +336,7 @@ class CAR(Platforms):
     [HyundaiCarDocs("Hyundai Ioniq Hybrid 2017-19", car_parts=CarParts.common([CarHarness.hyundai_c]))],
     CarSpecs(mass=1490, wheelbase=2.7, steerRatio=13.73, tireStiffnessFactor=0.385),
     flags=HyundaiFlags.HYBRID | HyundaiFlags.MIN_STEER_32_MPH,
+    dbc_dict={Bus.pt: "hyundai_can_generated", Bus.radar: "hyundai_kia_mando_front_radar_generated"},
   )
   HYUNDAI_IONIQ_HEV_2022 = HyundaiPlatformConfig(
     [HyundaiCarDocs("Hyundai Ioniq Hybrid 2020-22", car_parts=CarParts.common([CarHarness.hyundai_h]))],
@@ -381,12 +382,14 @@ class CAR(Platforms):
     [HyundaiCarDocs("Hyundai Kona Electric 2022-23", car_parts=CarParts.common([CarHarness.hyundai_o]))],
     CarSpecs(mass=1743, wheelbase=2.6, steerRatio=13.42, tireStiffnessFactor=0.385),
     flags=HyundaiFlags.CAMERA_SCC | HyundaiFlags.EV | HyundaiFlags.ALT_LIMITS,
+    dbc_dict={Bus.pt: "hyundai_can_generated", Bus.radar: HYUNDAI_MRREVO14F_RADAR_DBC},
   )
   HYUNDAI_KONA_EV_2ND_GEN = HyundaiCanFDPlatformConfig(
     [HyundaiCarDocs("Hyundai Kona Electric (with HDA II, Korea only) 2023", video="https://www.youtube.com/watch?v=U2fOCmcQ8hw",
                     car_parts=CarParts.common([CarHarness.hyundai_r]))],
     CarSpecs(mass=1740, wheelbase=2.66, steerRatio=13.6, tireStiffnessFactor=0.385),
     flags=HyundaiFlags.EV | HyundaiFlags.CANFD_NO_RADAR_DISABLE,
+    radar_dbc=HYUNDAI_MRR35_RADAR_DBC,
   )
   HYUNDAI_KONA_HEV = HyundaiPlatformConfig(
     [HyundaiCarDocs("Hyundai Kona Hybrid 2020", car_parts=CarParts.common([CarHarness.hyundai_i]))],  # TODO: check packages,
@@ -409,16 +412,19 @@ class CAR(Platforms):
                     car_parts=CarParts.common([CarHarness.hyundai_l]))],
     HYUNDAI_SANTA_FE.specs,
     flags=HyundaiFlags.CHECKSUM_CRC8,
+    dbc_dict={Bus.pt: "hyundai_can_generated", Bus.radar: "hyundai_kia_mando_front_radar_generated"},
   )
   HYUNDAI_SANTA_FE_HEV_2022 = HyundaiPlatformConfig(
     [HyundaiCarDocs("Hyundai Santa Fe Hybrid 2022-23", "All", car_parts=CarParts.common([CarHarness.hyundai_l]))],
     HYUNDAI_SANTA_FE.specs,
     flags=HyundaiFlags.CHECKSUM_CRC8 | HyundaiFlags.HYBRID,
+    dbc_dict={Bus.pt: "hyundai_can_generated", Bus.radar: "hyundai_kia_mando_front_radar_generated"},
   )
   HYUNDAI_SANTA_FE_PHEV_2022 = HyundaiPlatformConfig(
     [HyundaiCarDocs("Hyundai Santa Fe Plug-in Hybrid 2022-23", "All", car_parts=CarParts.common([CarHarness.hyundai_l]))],
     HYUNDAI_SANTA_FE.specs,
     flags=HyundaiFlags.CHECKSUM_CRC8 | HyundaiFlags.HYBRID,
+    dbc_dict={Bus.pt: "hyundai_can_generated", Bus.radar: "hyundai_kia_mando_front_radar_generated"},
   )
   HYUNDAI_SONATA = HyundaiPlatformConfig(
     [HyundaiCarDocs("Hyundai Sonata 2020-23", "All", video="https://www.youtube.com/watch?v=ix63r9kE3Fw",
@@ -494,10 +500,11 @@ class CAR(Platforms):
     ],
     CarSpecs(mass=1948, wheelbase=2.97, steerRatio=14.26, tireStiffnessFactor=0.65),
     flags=HyundaiFlags.EV,
+    radar_dbc=HYUNDAI_MRR30_RADAR_DBC,
   )
   HYUNDAI_IONIQ_5_PE = HyundaiCanFDPlatformConfig(
     [
-      HyundaiCarDocs("Hyundai Ioniq 5 PE (with HDA II & LFA2) 2025-26", "Highway Driving Assist II & Lane Follow Assist 2",
+      HyundaiCarDocs("Hyundai Ioniq 5 PE (with HDA II & LFA2) 2025-27", "Highway Driving Assist II & Lane Follow Assist 2",
                      car_parts=CarParts.common([CarHarness.hyundai_q]))
     ],
     HYUNDAI_IONIQ_5.specs,
@@ -508,6 +515,7 @@ class CAR(Platforms):
     [HyundaiCarDocs("Hyundai Ioniq 5 N (with HDA II) 2024", car_parts=CarParts.common([CarHarness.hyundai_s]))],
     CarSpecs(mass=2205, wheelbase=3.00, steerRatio=14.26, tireStiffnessFactor=1.3),
     flags=HyundaiFlags.EV | HyundaiFlags.CCNC,
+    radar_dbc=HYUNDAI_MRR30_RADAR_DBC,
   )
   HYUNDAI_IONIQ_9 = HyundaiCanFDPlatformConfig(
     [HyundaiCarDocs("Hyundai Ioniq 9 (with HDA II & LFA2) 2025-26", "Highway Driving Assist II & Lane Follow Assist 2",
@@ -784,6 +792,7 @@ class CAR(Platforms):
     ],
     CarSpecs(mass=2055, wheelbase=2.9, steerRatio=16, tireStiffnessFactor=0.65),
     flags=HyundaiFlags.EV,
+    radar_dbc=HYUNDAI_MRR30_RADAR_DBC,
   )
   KIA_EV6_2025 = HyundaiCanFDPlatformConfig(
     [
@@ -836,6 +845,7 @@ class CAR(Platforms):
     ],
     CarSpecs(mass=2205, wheelbase=2.9, steerRatio=17.6),
     flags=HyundaiFlags.EV,
+    radar_dbc=HYUNDAI_MRR30_RADAR_DBC,
   )
   GENESIS_G70 = HyundaiPlatformConfig(
     [HyundaiCarDocs("Genesis G70 2018", "All", car_parts=CarParts.common([CarHarness.hyundai_f]))],
@@ -979,6 +989,11 @@ class Buttons:
   CANCEL = 4  # on newer models, this is a pause/resume button
 
 
+# Recorded PI110 firmware is qualified for exact recognition only. It must not
+# add a new part or extend the existing PE camera date range in fuzzy matching.
+IONIQ5_PE_EXACT_CAMERA_FW = b'\xf1\x00NE  MFC  AT USA LHD 1.00 1.10 99211-PI110 260204'
+
+
 def get_platform_codes(fw_versions: list[bytes]) -> set[tuple[bytes, bytes | None]]:
   # Returns unique, platform-specific identification codes for a set of versions
   codes = set()  # (code-Optional[part], date)
@@ -1016,6 +1031,9 @@ def match_fw_to_car_fuzzy(live_fw_versions, vin, offline_fw_versions) -> set[str
       # Only check ECUs expected to have platform codes
       if ecu[0] not in PLATFORM_CODE_ECUS:
         continue
+
+      if candidate == CAR.HYUNDAI_IONIQ_5_PE and ecu[0] == Ecu.fwdCamera:
+        expected_versions = [fw for fw in expected_versions if fw != IONIQ5_PE_EXACT_CAMERA_FW]
 
       # Expected platform codes & dates
       codes = get_platform_codes(expected_versions)

@@ -14,11 +14,14 @@ import uuid
 import numpy as np
 
 from openpilot.common.params import Params
+from openpilot.common.realtime import set_core_affinity
 from openpilot.common.swaglog import cloudlog
+from openpilot.starpilot.feature_runtime import requested as feature_requested
 from openpilot.starpilot.speed_limits.vision.observation import clock_pair_ns
-from openpilot.starpilot.spot_monitor.inference import VASMInference
+from openpilot.starpilot.spot_monitor.inference import DEFAULT_MODEL_PATH, VASMInference
 from openpilot.starpilot.spot_monitor.policy import WarningPolicy, WarningState
 from openpilot.starpilot.spot_monitor.preferences import SavedPreferences, read_preferences
+from openpilot.starpilot.vision_cpu import LITTLE_CORES, VASM_WITH_VISION
 
 
 TICK_SECONDS = 0.1
@@ -40,9 +43,12 @@ class CpuBudget:
     self.factor = 1.0
     self.last_mono_ns: int | None = None
 
-  def update(self, usage: Iterable[int | float] | None, *, now_mono_ns: int) -> float:
+  def update(self, usage: Iterable[int | float] | None, *, now_mono_ns: int,
+             cores: tuple[int, ...] | None = None) -> float:
     try:
       values = list(usage) if usage is not None and not isinstance(usage, (str, bytes)) else []
+      if cores is not None:
+        values = [values[core] for core in cores if core < len(values)]
     except TypeError:
       values = []
     if (type(now_mono_ns) is not int or now_mono_ns < 0 or
@@ -168,6 +174,7 @@ class VASMRuntime:
     self.sequence = 0
     self.saved = SavedPreferences(None, True, True)
     self.settings_read_ns = -SETTINGS_REFRESH_NS
+    self.inference_cores = LITTLE_CORES
     self.model: VASMInference | None = None
     self.last_model_attempt_ns = -MODEL_RETRY_NS
     self.policy = WarningPolicy()
@@ -245,6 +252,11 @@ class VASMRuntime:
     if now_ns - self.settings_read_ns < SETTINGS_REFRESH_NS:
       return
     self.settings_read_ns = now_ns
+    self.inference_cores = VASM_WITH_VISION if feature_requested(self.params, "vision") else LITTLE_CORES
+    try:
+      set_core_affinity(list(self.inference_cores))
+    except OSError:
+      pass
     saved = read_preferences(self.params)
     if saved != self.saved:
       self.saved = saved
@@ -256,7 +268,7 @@ class VASMRuntime:
     self.messages.update(0)
     now_ns = self.mono_clock()
     self._refresh_settings(now_ns)
-    active = (os.getenv("STARPILOT_VASM_DEVELOPMENT") == "1" and self.saved.readable and self.saved.valid and
+    active = (self.saved.readable and self.saved.valid and
               self.saved.preferences.enabled and self.saved.preferences.annotation is not None and self.model_path is not None)
     if not active:
       self._reset("disabled", now_ns)
@@ -287,7 +299,8 @@ class VASMRuntime:
         return None
       base_interval_ns = FOLLOWUP_INTERVAL_NS if now_ns < self.followup_until_ns else BASE_INTERVAL_NS
       cpu_usage = getattr(self.messages["deviceState"], "cpuUsagePercent", None)
-      interval_ns = int(base_interval_ns * self.cpu_budget.update(cpu_usage, now_mono_ns=now_ns))
+      interval_ns = int(base_interval_ns * self.cpu_budget.update(
+        cpu_usage, now_mono_ns=now_ns, cores=self.inference_cores))
       if self.last_processed_ns and now_ns - self.last_processed_ns < interval_ns:
         return None
       frame = copy_cabin_nv12(self.client)
@@ -369,7 +382,7 @@ def main() -> None:
   previous = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
   for number in previous:
     signal.signal(number, lambda _signal, _frame: stop.set())
-  path = os.getenv("STARPILOT_VASM_MODEL_PATH", "")
+  path = os.getenv("STARPILOT_VASM_MODEL_PATH", str(DEFAULT_MODEL_PATH))
   model_path = Path(path) if path and Path(path).is_absolute() else None
   messages = messaging.SubMaster(["deviceState", "carState"])
   pm = messaging.PubMaster(["spotMonitorState"])

@@ -1,6 +1,6 @@
 import itertools
 from openpilot.common.test import OpenpilotTestCase
-from openpilot.common.parameterized import parameterized_class
+from openpilot.common.parameterized import parameterized
 
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import STOP_DISTANCE
 from openpilot.selfdrive.test.longitudinal_maneuvers.maneuver import Maneuver
@@ -181,14 +181,10 @@ def create_maneuvers(kwargs):
   return maneuvers
 
 
-@parameterized_class(("e2e", "force_decel"), itertools.product([True, False], repeat=2))
 class TestLongitudinalControl(OpenpilotTestCase):
-  e2e: bool
-  force_decel: bool
-
-  def test_maneuver(self, subtests):
-    for maneuver in create_maneuvers({"e2e": self.e2e, "force_decel": self.force_decel}):
-      with subtests.test(title=maneuver.title, e2e=maneuver.e2e, force_decel=maneuver.force_decel):
-        print(maneuver.title, f'in {"e2e" if maneuver.e2e else "acc"} mode')
-        valid, _ = maneuver.evaluate()
-        assert valid
+  @parameterized.expand([m for e2e, force_decel in itertools.product([True, False], repeat=2)
+                         for m in create_maneuvers({"e2e": e2e, "force_decel": force_decel})],
+                        ids=lambda m: f"{m.title}_e2e_{m.e2e}_force_decel_{m.force_decel}")
+  def test_maneuver(self, maneuver):
+    valid, _ = maneuver.evaluate()
+    assert valid

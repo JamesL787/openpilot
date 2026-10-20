@@ -37,6 +37,7 @@ class FakeIoniq6Bus:
     self.missing_required = missing_required
     self.post_missing_required = post_missing_required
     self.counter = 0
+    self.vehicle_ready = False
     self.queries = []
 
   @staticmethod
@@ -62,7 +63,16 @@ class FakeIoniq6Bus:
       self.counter = (self.counter + 1) % 256
     if self.heartbeat_source:
       messages.append(CanData(0x100, self.frame(0x100, 24, self.counter).dat, 0))
-    return [messages]
+    from opendbc.car.hyundai.ioniq6_handoff import TimestampedCanPacket
+    for index, message in enumerate(messages):
+      if message.address == 0x35:
+        data = bytearray(message.dat)
+        data[2] = int(round(self.now * 50)) % 256
+        if self.vehicle_ready:
+          data[3] |= 0x40
+        data[:2] = hkg_can_fd_checksum(0x35, None, data).to_bytes(2, 'little')
+        messages[index] = CanData(0x35, bytes(data), 1)
+    return [TimestampedCanPacket(messages, int(self.now * 1e9))]
 
   def exchange(self, request, expected):
     self.queries.append((request, expected))
@@ -249,7 +259,7 @@ class TestIoniq6PrepublicationHandoff(unittest.TestCase):
       with self.subTest(options=options):
         self.assert_card_prepublication_fallback(options)
 
-  def assert_card_prepublication_fallback(self, options):
+  def assert_card_prepublication_fallback(self, options, *, vehicle_ready=False, alternate=False, unknown=False):
     from openpilot.common.params import Params
     from openpilot.selfdrive.car import card as card_module
 
@@ -257,10 +267,15 @@ class TestIoniq6PrepublicationHandoff(unittest.TestCase):
       pass
 
     fp = gen_empty_fingerprint()
-    fp[2].update({0x50: 16, 0x2A4: 24})
+    camera_source = 0x362 if alternate else 0x2A4
+    fp[2].update({0x110: 32, 0x362: 32} if alternate else {0x50: 16, 0x2A4: 24})
     fp[0][0x3A5] = 24
     fp[1].update({0x1CF: 8, 0x35: 32, 0x175: 24, 0xA0: 24, 0xEA: 24, 0x1BA: 24, 0x1E5: 16, 0x36A: 16})
     bus = FakeIoniq6Bus(**options)
+    bus.vehicle_ready = vehicle_ready
+    expected_stock = bool(options) or vehicle_ready or unknown
+    stock_word = 0x91 if alternate else 0x11
+    long_word = 0x8895 if alternate else 0x8815
     stock = CarInterface.get_params(CAR.HYUNDAI_IONIQ_6, fp, [], False, False, False)
     directory = tempfile.TemporaryDirectory()
     self.addCleanup(directory.cleanup)
@@ -287,24 +302,24 @@ class TestIoniq6PrepublicationHandoff(unittest.TestCase):
       selected = pre_create_hook(stock, CAR.HYUNDAI_IONIQ_6, fp, [])
       self.assertEqual(selected.carFingerprint, CAR.HYUNDAI_IONIQ_6)
       self.assertFalse(selected.dashcamOnly)
-      self.assertEqual(selected.safetyConfigs[-1].safetyParam, 0x11 if options else 0x8815)
-      self.assertEqual(selected.openpilotLongitudinalControl, not bool(options))
-      self.assertEqual(selected.pcmCruise, bool(options))
+      self.assertEqual(selected.safetyConfigs[-1].safetyParam, stock_word if expected_stock else long_word)
+      self.assertEqual(selected.openpilotLongitudinalControl, not expected_stock)
+      self.assertEqual(selected.pcmCruise, expected_stock)
       interface = CarInterface(selected)
       parser = interface.CS.get_can_parsers(selected)
       from opendbc.car import Bus
-      if options:
-        self.assertNotIn(0x2A4, parser[Bus.cam].message_states)
+      if expected_stock:
+        self.assertNotIn(camera_source, parser[Bus.cam].message_states)
         self.assertEqual(parser[Bus.pt].message_states[0x1CF].frequency, 1)
       else:
-        self.assertEqual(parser[Bus.cam].message_states[0x2A4].frequency, 20)
+        self.assertEqual(parser[Bus.cam].message_states[camera_source].frequency, 20)
       raise CandidateCaptured
 
     def capture_preparation(stock_cp, long_cp, **kwargs):
-      if options:
+      if expected_stock:
         self.assertIsNone(long_cp)
       else:
-        self.assertEqual(long_cp.safetyConfigs[-1].safetyParam, 0x8815)
+        self.assertEqual(long_cp.safetyConfigs[-1].safetyParam, long_word)
       self.assertTrue(kwargs["enabled"])
       return prepare_ioniq6_long_candidate(stock_cp, long_cp, **kwargs)
 
@@ -321,6 +336,7 @@ class TestIoniq6PrepublicationHandoff(unittest.TestCase):
          patch.object(card_module, "can_comm_callbacks", return_value=(lambda wait_for_one=False: [], lambda msgs: None)), \
          patch.object(card_module, "read_settings", return_value=object()), \
          patch.object(card_module, "independent_axis_requested", return_value=True), \
+         patch("opendbc.car.hyundai.ioniq6_handoff._ioniq6_boot_ns", side_effect=lambda: 0 if unknown else int(bus.now * 1e9)), \
          patch.object(card_module, "inspect_ioniq6_long_sources",
                       side_effect=lambda recv: inspect_ioniq6_long_sources(bus.recv, lambda: bus.now)), \
          patch.object(card_module, "prepare_ioniq6_long_candidate", side_effect=capture_preparation), \
@@ -330,6 +346,23 @@ class TestIoniq6PrepublicationHandoff(unittest.TestCase):
         card_module.Car()
       confirm.assert_not_called()
       self.assertEqual(bus.queries, [])
+      self.assertTrue(params.get_bool("OpenpilotEnabledToggle"))
+      self.assertTrue(params.get_bool("AlphaLongitudinalEnabled"))
+
+  def test_ready_reboot_retains_stock_before_ci_and_never_attempts_takeover(self):
+    for alternate in (False, True):
+      with self.subTest(alternate=alternate):
+        self.assert_card_prepublication_fallback({}, vehicle_ready=True, alternate=alternate)
+
+  def test_not_ready_cold_start_retains_existing_long_candidate(self):
+    for alternate in (False, True):
+      with self.subTest(alternate=alternate):
+        self.assert_card_prepublication_fallback({}, vehicle_ready=False, alternate=alternate)
+
+  def test_unknown_ready_retains_stock_before_ci_for_both_camera_topologies(self):
+    for alternate in (False, True):
+      with self.subTest(alternate=alternate):
+        self.assert_card_prepublication_fallback({}, alternate=alternate, unknown=True)
 
   def test_prepublication_candidate_is_selected_only_after_complete_takeover(self):
     for bus_options, expected in (({}, HandoffOutcome.CONFIRMED),
@@ -818,6 +851,7 @@ class TestIoniq6PrepublicationHandoff(unittest.TestCase):
     card_owner.rk = SimpleNamespace(remaining=0.0)
     card_owner.is_metric = True
     card_owner.experimental_mode = False
+    card_owner.initial_cruise_speed = 40
     card_owner.v_cruise_helper = SimpleNamespace(update_v_cruise=lambda *_: None, initialize_v_cruise=lambda *_, **kwargs: None,
                                                  slc_consumed_button=None,
                                                  slc_cruise_change=None, v_cruise_kph=60.0, v_cruise_cluster_kph=60.0)

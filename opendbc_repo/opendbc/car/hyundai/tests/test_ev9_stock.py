@@ -50,7 +50,7 @@ class TestEV9Stock(unittest.TestCase):
         self.assertFalse(cp.openpilotLongitudinalControl)
       for release in (False, True):
         pe = params(alpha=alpha, release=release)
-        self.assertFalse(pe.alphaLongitudinalAvailable)
+        self.assertEqual(pe.alphaLongitudinalAvailable, not release)
         self.assertFalse(pe.openpilotLongitudinalControl)
         self.assertEqual(pe.safetyConfigs[0].safetyParam, 0x5491)
 

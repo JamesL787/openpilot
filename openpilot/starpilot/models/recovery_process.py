@@ -6,7 +6,7 @@ from multiprocessing import Process
 
 from openpilot.common.swaglog import cloudlog
 from openpilot.starpilot.models.receipt import process_start_ticks, read_receipt
-from openpilot.starpilot.models.recovery import KILL_GRACE_NS, ModelRecoveryOwner, RecoveryEvidence
+from openpilot.starpilot.models.recovery import KILL_GRACE_NS, STARTUP_FALLBACK_EXIT, ModelRecoveryOwner, RecoveryEvidence
 from openpilot.starpilot.models.status import ModelVariant
 from openpilot.system.manager.process import PythonProcess, join_process, launcher
 
@@ -27,6 +27,7 @@ class ModeldProcess(PythonProcess):
     super().__init__(name, module, should_run, enabled=enabled)
     self.recovery = ModelRecoveryOwner()
     self.context_ready = False
+    self.launch_drive_id = 0
 
   def observe(self, sm, started):
     now = time.monotonic_ns()
@@ -50,6 +51,18 @@ class ModeldProcess(PythonProcess):
     device_fresh = (sm.seen['deviceState'] and sm.valid['deviceState'] and sm.alive['deviceState'] and
                     0 < int(sm.logMonoTime['deviceState']) <= now <= int(sm.logMonoTime['deviceState']) + 1_000_000_000)
     self.context_ready = bool(device_fresh and started)
+    if (self.context_ready and self.proc is not None and not alive and not self.shutting_down and
+        self.proc.exitcode == STARTUP_FALLBACK_EXIT and self.recovery.phase == 'monitor' and
+        not self.recovery.small_only and 0 < self.launch_drive_id == evidence.drive_id):
+      # Only our explicitly failed startup may request this one fresh process.
+      # Never reuse the old GPU context or retry an arbitrary Small crash.
+      self.proc.join(timeout=0)
+      self.proc = None
+      self.recovery.drive_id = evidence.drive_id
+      self.recovery.small_only = True
+      self.recovery.phase = 'small'
+      cloudlog.event('modeld.recovery', action='small-after-startup-exit', pid=pid, drive=evidence.drive_id)
+      return
     if not device_fresh and self.recovery.phase == 'monitor':
       self.recovery._withdraw()
       return
@@ -106,5 +119,6 @@ class ModeldProcess(PythonProcess):
       return
     self.proc = Process(name=self.name, target=modeld_launcher,
                         args=(self.module, self.name, self.recovery.small_only))
+    self.launch_drive_id = self.recovery.drive_id
     self.proc.start()
     self.shutting_down = False

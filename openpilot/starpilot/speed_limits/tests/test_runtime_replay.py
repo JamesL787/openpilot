@@ -634,6 +634,7 @@ class RuntimeReplayTests(unittest.TestCase):
     fake.CC_prev.enabled = False
     fake.CS_prev = car.CarState(vEgo=20.0)
     fake.experimental_mode = False
+    fake.initial_cruise_speed = 40
     fake.slc_last_command_id = 0
     fake.slc_command_session = ''
     fake.v_cruise_helper.v_cruise_kph = 60.0

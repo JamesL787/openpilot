@@ -2,14 +2,14 @@
   "schema_version": 1,
   "upstream": {
     "url": "https://github.com/commaai/openpilot.git",
-    "commit": "3f06ed3bc7a4cc9c320be1f7d03dcd8a885a8e6f"
+    "commit": "2ab952d5eb16020116d3354b83f30303db5a99b4"
   },
   "dependencies": [
     {
       "path": "msgq_repo",
       "url": "https://github.com/commaai/msgq.git",
-      "commit": "0e266c1dbcf7328beee3e57b4a8688555387c877",
-      "tree": "380b9182bd1ac533eabe527b4f6fb6f6614dfe57",
+      "commit": "a95f3c1c5e7a4d84b193433a2a04d20c7a72878c",
+      "tree": "7ca6bb28fbdda7bf3d6ad73fc31ded92ae4c9098",
       "exclude": []
     },
     {
@@ -22,8 +22,8 @@
     {
       "path": "panda",
       "url": "https://github.com/commaai/panda.git",
-      "commit": "92eb565169fd553f4dfaf508c1a3f8dbc14fbfbf",
-      "tree": "d95b794ba2355ea4362ebd342c942715f0100e77",
+      "commit": "a59195163c32a3a375ea6c86715dc08fd0984c1b",
+      "tree": "207668f2df34a2ca503de012208c394ad01b2c6b",
       "exclude": []
     },
     {

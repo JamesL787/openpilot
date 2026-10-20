@@ -19,7 +19,7 @@ function check(component, label) {
   for (const [name, child] of Object.entries(component.components || {})) check(child, `${label}/${name}`)
 }
 for (const file of await readdir(directory)) {
-  if (!file.endsWith('.js') || ['app.js', 'boot.js'].includes(file)) continue
+  if (!file.endsWith('.js') || ['app.js', 'boot.js', 'boot-screen.js'].includes(file)) continue
   const module = await import(new URL(file, directory))
   for (const [name, component] of Object.entries(module)) check(component, `${file}/${name}`)
 }

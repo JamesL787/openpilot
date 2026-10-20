@@ -17,7 +17,8 @@ def checksum(address, _sig, data):
 
 
 SOURCE = Path(__file__).resolve().parents[1] / 'ioniq6_handoff.py'
-NAMES = {'HandoffOutcome', 'HandoffResult', '_valid_canfd_crc', '_read_window', '_measured_period', 'inspect_ioniq6_long_sources', 'run_ioniq6_handoff'}
+NAMES = {'_ioniq6_boot_ns', '_qualified_ioniq6_ready', 'HandoffOutcome', 'HandoffResult', '_valid_canfd_crc',
+         '_read_window', '_measured_period', 'inspect_ioniq6_long_sources', 'run_ioniq6_handoff'}
 tree = ast.parse(SOURCE.read_text())
 body = [n for n in tree.body if (isinstance(n, (ast.FunctionDef, ast.ClassDef)) and n.name in NAMES) or
         (isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id.startswith('IONIQ6_') for t in n.targets))]
@@ -90,7 +91,8 @@ class TestRetry(unittest.TestCase):
     self.assertLess(bus.now, .81)
 
   def test_crc_counter_health_unchanged(self):
-    for mode, reason in [('crc', 'scc_period'), ('counter', 'scc_period'), ('required', 'required_rx'), ('bsm', 'bsm_status'), ('heartbeat', 'radar_heartbeat')]:
+    for mode, reason in [('crc', 'scc_period'), ('counter', 'scc_period'), ('required', 'required_rx'),
+                         ('bsm', 'bsm_status'), ('heartbeat', 'radar_heartbeat')]:
       with self.subTest(mode=mode):
         bus, result = self.inspect([mode])
         self.assertIsNone(result.source_period)
@@ -115,7 +117,7 @@ class TestRetry(unittest.TestCase):
     measured = ns['_measured_period']
     good = [(i * .020, i, i * .020) for i in range(8)]
     self.assertAlmostEqual(measured(good), .020)
-    for bad in ([ (t,c,0.) for t,c,_ in good], [(t,c*2,r) for t,c,r in good],
+    for bad in ([(t,c,0.) for t,c,_ in good], [(t,c*2,r) for t,c,r in good],
                 [(i*.031,i,i*.031) for i in range(8)], [(i*.011,i,i*.020) for i in range(8)], good[:3]):
       self.assertIsNone(measured(bad))
 

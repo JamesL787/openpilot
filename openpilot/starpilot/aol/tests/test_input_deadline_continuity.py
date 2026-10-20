@@ -22,14 +22,16 @@ def intent(stamp, sequence, *, latched=True):
   return wire
 
 
-@pytest.mark.parametrize('pulse', ['healthy', 'cancel', 'brake', 'permanent_eps', 'temporary_eps', 'invalid_envelope', 'reordered', 'aol_gas_permanent_eps'])
+@pytest.mark.parametrize('pulse', ['healthy', 'cancel', 'brake', 'permanent_eps', 'temporary_eps', 'invalid_envelope', 'reordered', 'aol_gas_permanent_eps',
+                                  'stock_angle_gas_invalid_envelope', 'stock_angle_gas_permanent_eps'])
 def test_late_carstate_during_environment_work_reaches_final_owners_once(pulse):
   case = fixture.IoniqAvailabilityTests(methodName='runTest')
   with ExitStack() as cleanup:
     cleanup.callback(case.doCleanups)
     with OpenpilotPrefix():
-      held_gas = pulse == 'aol_gas_permanent_eps'
-      sd, _, step, _, _ = case._ioniq_availability_callers(full_op=not held_gas)
+      stock_angle = pulse.startswith('stock_angle_gas_')
+      held_gas = pulse == 'aol_gas_permanent_eps' or stock_angle
+      sd, _, step, _, _ = case._ioniq_availability_callers(full_op=not held_gas, stock_angle=stock_angle)
       initial, _, initial_command = step(2, offset_ns=4_012_592, state_stamp=BASE, intent_message=intent(BASE, 3), gas=held_gas)
       if held_gas:
         assert initial.lateralActive and initial_command.latActive and sd.CS_prev.gasPressed
@@ -37,12 +39,13 @@ def test_late_carstate_during_environment_work_reaches_final_owners_once(pulse):
       a, b, now = BASE, BASE + 27_819_143, BASE + 30_721_946
       late = fixture.car_state()
       late.vEgo = 25.0
+      late.vEgoRaw = 25.0
       late.gasPressed = held_gas
       if pulse == 'cancel':
         late.buttonEvents = [car.CarState.ButtonEvent(type=car.CarState.ButtonEvent.Type.cancel, pressed=True)]
       elif pulse == 'brake':
         late.brakePressed = True
-      elif pulse in ('permanent_eps', 'aol_gas_permanent_eps'):
+      elif pulse in ('permanent_eps', 'aol_gas_permanent_eps', 'stock_angle_gas_permanent_eps'):
         late.steerFaultPermanent = True
       elif pulse == 'temporary_eps':
         late.steerFaultTemporary = late.standstill = True
@@ -52,7 +55,8 @@ def test_late_carstate_during_environment_work_reaches_final_owners_once(pulse):
 
       def finish_preamble():
         result = original_status()
-        queued.append(message(a - 1 if pulse == 'reordered' else b, late, valid=pulse != 'invalid_envelope'))
+        queued.append(message(a - 1 if pulse == 'reordered' else b, late,
+                              valid=pulse not in ('invalid_envelope', 'stock_angle_gas_invalid_envelope')))
         return result
 
       def receive(sock):
@@ -81,7 +85,7 @@ def test_late_carstate_during_environment_work_reaches_final_owners_once(pulse):
           assert not axis.longitudinalActive and not command.longActive
         if pulse not in ('brake',):
           assert not axis.lateralActive and not command.latActive
-        if pulse in ('invalid_envelope', 'reordered'):
+        if pulse in ('invalid_envelope', 'reordered', 'stock_angle_gas_invalid_envelope'):
           assert axis.sourceCarStateMonoTime == 0 and not sd.conditional_car_state_valid
         if pulse == 'temporary_eps':
           assert log.OnroadEvent.EventName.steerTempUnavailableSilent in sd.events.names
@@ -90,7 +94,7 @@ def test_late_carstate_during_environment_work_reaches_final_owners_once(pulse):
           assert not sd.enabled and not sd.events.contains(fixture.ET.ENABLE)
 
 
-@pytest.mark.parametrize('operation', ['ordinary', 'aol_only', 'aol_only_gas'])
+@pytest.mark.parametrize('operation', ['ordinary', 'aol_only', 'aol_only_gas', 'stock_angle_gas'])
 @pytest.mark.parametrize('timing', ['timely', 'late_poll', 'processing_crosses_deadline'])
 def test_fresh_source_replaces_expired_output_without_restoring_disengagement(operation, timing):
   case = fixture.IoniqAvailabilityTests(methodName='runTest')
@@ -99,9 +103,10 @@ def test_fresh_source_replaces_expired_output_without_restoring_disengagement(op
     with OpenpilotPrefix():
       full_op = operation == 'ordinary'
       state = fixture.car_state()
-      held_gas = operation == 'aol_only_gas'
+      held_gas = operation in ('aol_only_gas', 'stock_angle_gas')
       state.gasPressed = held_gas
-      sd, controls, step, _, _ = case._ioniq_availability_callers(full_op=full_op)
+      state.vEgoRaw = state.vEgo
+      sd, controls, step, _, _ = case._ioniq_availability_callers(full_op=full_op, stock_angle=operation == 'stock_angle_gas')
       original, _, command = step(2, offset_ns=4_266_961, state_stamp=BASE, intent_message=intent(BASE, 3), observed_state=state, gas=held_gas)
       assert original.lateralActive and command.latActive
       assert original.longitudinalActive == full_op and command.longActive == full_op

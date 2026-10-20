@@ -46,7 +46,7 @@ from openpilot.starpilot.ui.unified_speed_presentation import displayed_adjusted
 from openpilot.starpilot.ui.onroad_stopped_timer import StoppedTimer
 from openpilot.starpilot.ui.onroad_lane_alerts import lateral_lane_alert
 from openpilot.starpilot.ui.onroad_camera import ReverseDriverCamera
-from openpilot.starpilot.ui.navigation_state import navigation_display
+from openpilot.starpilot.ui.navigation_state import navigation_display, official_navigation_display
 from openpilot.starpilot.ui.settings_state import Destination, DestinationAvailability, SettingsState
 from openpilot.starpilot.ui.shell import ShellMode, ShellSnapshot
 from openpilot.starpilot.ui.software_state import DownloadLabel, SoftwareRequest, SoftwareState
@@ -444,6 +444,13 @@ class RuntimeSnapshotAdapter:
 
     from openpilot.starpilot.navigation.wire import navigation_state
     navigation = navigation_state(_message_at_age(sm, "starpilotNavigation", now_ns, after, 3_000_000_000)) if started else None
+    displayed_navigation = navigation_display(navigation, now_ns=now_ns, drive_id=drive_id)
+    if displayed_navigation is None and started and _flag(params, "NavigationEnabled"):
+      displayed_navigation = official_navigation_display(
+        _message_at_age(sm, "navInstruction", now_ns, after, 3_000_000_000),
+        _message_at_age(sm, "navRoute", now_ns, after, 30_000_000_000),
+        destination=params.get("NavDestination"), drive_id=drive_id)
+
 
     long_active = bool(control.longActive) if control is not None else False
     system_long = bool(long_active and controls is not None and str(controls.longControlState) != "off" and
@@ -654,13 +661,16 @@ class RuntimeSnapshotAdapter:
                          wheel_acceleration=observe_wheel_acceleration(display_car),
                          lateral_active=display_lat_active, longitudinal_active=display_long_active,
                          longitudinal_overridden=longitudinal_overridden,
+                         driver_override_active=bool(display_car_valid and
+                           (display_lat_active or display_long_active or longitudinal_overridden) and
+                           (getattr(display_car, 'gasPressed', False) or getattr(display_car, 'steeringPressed', False))),
                          stock_cruise_active=stock_cruise,
                          slc_system_long_available=system_long,
                          curve=curve, show_curve_status=_flag(params, "ShowCSCStatus"),
                          conditional_configured=self._conditional_choice, conditional_effective=conditional,
                          conditional_perception=perception,
                          conditional_lead=conditional_lead_from_message(display_radar) if display_car_valid else None,
-                         navigation=navigation_display(navigation, now_ns=now_ns, drive_id=drive_id),
+                         navigation=displayed_navigation,
                          border_signals=border_signals, stopped_duration_s=stopped_duration,
                          reverse_driver_camera=reverse_driver_camera,
                          reversing=bool(reverse_source_fresh and timer_reverse),

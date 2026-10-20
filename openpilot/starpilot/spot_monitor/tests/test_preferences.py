@@ -67,22 +67,20 @@ def test_corrupt_unreadable_and_wrong_types_preserved_disabled(tmp_path):
   assert decode(b"{" + b" " * 8192) is None
 
 
-def test_manager_predicate_requires_saved_doc_development_gate_and_absolute_asset(tmp_path, monkeypatch):
+def test_manager_predicate_requires_saved_doc_and_model(tmp_path, monkeypatch):
   from openpilot.system.manager.process_config import vasm_monitor
 
   params = Params(str(tmp_path / "params"))
   path = Path(params.get_param_path("VASMPreferences"))
   path.write_bytes(encode(Preferences(True, decode_annotation(json.dumps(ANNOTATION)))))
-  monkeypatch.setenv("STARPILOT_VASM_DEVELOPMENT", "1")
-  monkeypatch.delenv("STARPILOT_VASM_MODEL_PATH", raising=False)
+  monkeypatch.setenv("STARPILOT_VASM_MODEL_PATH", "")
   assert not vasm_monitor(True, params, None)
   monkeypatch.setenv("STARPILOT_VASM_MODEL_PATH", "relative/model.onnx")
   assert not vasm_monitor(True, params, None)
-  monkeypatch.setenv("STARPILOT_VASM_MODEL_PATH", "/external/model.onnx")
+  model = tmp_path / "model.onnx"
+  model.write_bytes(b"model")
+  monkeypatch.setenv("STARPILOT_VASM_MODEL_PATH", str(model))
   assert vasm_monitor(True, params, None)
   assert not vasm_monitor(False, params, None)
-  monkeypatch.delenv("STARPILOT_VASM_DEVELOPMENT")
-  assert not vasm_monitor(True, params, None)
   path.write_bytes(b"bad")
-  monkeypatch.setenv("STARPILOT_VASM_DEVELOPMENT", "1")
   assert not vasm_monitor(True, params, None)

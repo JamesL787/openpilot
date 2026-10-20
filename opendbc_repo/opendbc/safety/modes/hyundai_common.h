@@ -50,6 +50,17 @@ bool hyundai_alt_limits_2 = false;
 
 static uint8_t hyundai_last_button_interaction;  // button messages since the user pressed an enable button
 
+enum {
+  HYUNDAI_MAIN_NONE = 0,
+  HYUNDAI_MAIN_WITHDRAW = 1,
+  HYUNDAI_MAIN_TRACK = 2,
+};
+
+static int hyundai_long_main_policy = HYUNDAI_MAIN_NONE;
+static bool hyundai_long_main_on = false;
+static bool hyundai_long_main_previous = false;
+static bool hyundai_long_rearm_blocked = false;
+
 void hyundai_common_init(uint16_t param) {
   const uint16_t HYUNDAI_PARAM_EV_GAS = 1;
   const uint16_t HYUNDAI_PARAM_HYBRID_GAS = 2;
@@ -74,6 +85,10 @@ void hyundai_common_init(uint16_t param) {
   hyundai_can_refresh_msgs = GET_FLAG(param, HYUNDAI_PARAM_CAN_REFRESH_MSGS);
 
   hyundai_last_button_interaction = HYUNDAI_PREV_BUTTON_SAMPLES;
+  hyundai_long_main_policy = HYUNDAI_MAIN_NONE;
+  hyundai_long_main_on = false;
+  hyundai_long_main_previous = false;
+  hyundai_long_rearm_blocked = false;
 
 #ifdef ALLOW_DEBUG
   const uint16_t HYUNDAI_PARAM_LONGITUDINAL = 4;
@@ -100,14 +115,28 @@ void hyundai_common_cruise_state_check(const bool cruise_engaged) {
   }
 }
 
-void hyundai_common_cruise_buttons_check(const int cruise_button, const bool main_button) {
-  if ((cruise_button == HYUNDAI_BTN_RESUME) || (cruise_button == HYUNDAI_BTN_SET) || (cruise_button == HYUNDAI_BTN_CANCEL) || main_button) {
+void hyundai_common_cruise_buttons_check(const int cruise_button, const bool main_button, const bool normal_main_button,
+                                       const int main_policy) {
+  const bool any_main = main_button || ((main_policy != HYUNDAI_MAIN_NONE) && normal_main_button);
+  if ((main_policy == HYUNDAI_MAIN_TRACK) && main_button && !hyundai_long_main_previous) {
+    hyundai_long_main_on = !hyundai_long_main_on;
+  }
+  hyundai_long_main_previous = main_button;
+  if ((cruise_button == HYUNDAI_BTN_RESUME) || (cruise_button == HYUNDAI_BTN_SET) || (cruise_button == HYUNDAI_BTN_CANCEL) || any_main) {
     hyundai_last_button_interaction = 0U;
   } else {
     hyundai_last_button_interaction = SAFETY_MIN(hyundai_last_button_interaction + 1U, HYUNDAI_PREV_BUTTON_SAMPLES);
   }
 
   if (hyundai_longitudinal) {
+    if ((main_policy != HYUNDAI_MAIN_NONE) &&
+        (any_main || (cruise_button == HYUNDAI_BTN_CANCEL) || hyundai_long_rearm_blocked ||
+         ((main_policy == HYUNDAI_MAIN_TRACK) && !hyundai_long_main_on))) {
+      controls_allowed = false;
+      cruise_button_prev = HYUNDAI_BTN_NONE;
+      hyundai_long_rearm_blocked = any_main || (cruise_button != HYUNDAI_BTN_NONE);
+      return;
+    }
     // enter controls on falling edge of resume or set
     bool set = (cruise_button != HYUNDAI_BTN_SET) && (cruise_button_prev == HYUNDAI_BTN_SET);
     bool res = (cruise_button != HYUNDAI_BTN_RESUME) && (cruise_button_prev == HYUNDAI_BTN_RESUME);

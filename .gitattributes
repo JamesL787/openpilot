@@ -23,6 +23,7 @@ panda/** !filter !diff !merge -text
 rednose_repo/** !filter !diff !merge -text
 teleoprtc_repo/** !filter !diff !merge -text
 tinygrad_repo/** !filter !diff !merge -text
+tinygrad_model_runtime/** !filter !diff !merge -text
 
 # Compiled model parts must retain exact binary bytes.
 *.pkl.chunk* -text

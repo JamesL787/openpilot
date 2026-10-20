@@ -38,13 +38,15 @@ class TestEV9Startup(unittest.TestCase):
     owner = EV9Startup(long, (lambda **kwargs: [], sent.extend), stock_cp=stock, keeper_factory=Keeper)
     def query(send, recv, bus, addresses, requests_arg, responses):
       request = requests_arg[0]
-      expected = {b'\x10\x03': b'\x50\x03', b'\x28\x01\x01': b'', b'\x28\x00\x01': b'\x68\x00'}
+      expected = {b'\x10\x03': b'\x50\x03', b'\x28\x01\x01': b'', b'\x28\x00\x01': b'\x68\x00', b'\x10\x01': b'\x50\x01'}
       self.assertEqual((bus, addresses, responses), (1, [(0x730, None)], [expected[request]]))
       requests.append(request)
       def data(timeout):
         send([CanData(0x730, bytes((len(request),)) + request + bytes(7 - len(request)), 1)])
         if request == b'\x10\x03':
           return {} if mode == 'untouched' else {(0x730, None): b''}
+        if request == b'\x10\x01':
+          return {(0x730, None): b''} if mode in ('untouched', 'restored') else {}
         if request == b'\x28\x01\x01':
           if mode in ('restored', 'uncertain'):
             raise OSError('after actual command emission')
@@ -66,11 +68,15 @@ class TestEV9Startup(unittest.TestCase):
     self.assertAlmostEqual(cp.longitudinalActuatorDelay, 0.3)
 
   @patch.object(time, 'CLOCK_BOOTTIME', getattr(time, 'CLOCK_BOOTTIME', time.CLOCK_MONOTONIC), create=True)
-  def test_session_failure_no_disable_emission_returns_exact_stock(self):
+  def test_session_failure_requires_default_ack_before_exact_stock(self):
     stock, owner, sent, requests, query = self.owner('untouched')
     with patch.object(owner, '_ready', return_value=False), patch.object(owner, '_query', side_effect=query):
       cp = owner.prepare(admission=lambda: True)
-    self.assertIs(owner.outcome, Outcome.STOCK_UNTOUCHED)
+    self.assertIs(owner.outcome, Outcome.STOCK_RESTORED)
+    self.assertTrue(owner.session_attempted)
+    self.assertTrue(owner.restored)
+    self.assertIn(b'\x10\x01', requests)
+    self.assertNotIn(b'\x28\x00\x01', requests)
     self.assertFalse(owner.disable_attempted)
     self.assertEqual(cp.to_dict(), stock.to_dict())
 
@@ -185,7 +191,16 @@ class TestEV9Startup(unittest.TestCase):
     self.assertFalse(candidate(stock, enabled=False, is_release=False).openpilotLongitudinalControl)
     self.assertFalse(candidate(stock, enabled=True, is_release=True).openpilotLongitudinalControl)
     sibling = params(candidate=CAR.HYUNDAI_IONIQ_5_PE)
-    self.assertIsNone(CarInterface.startup_owner(sibling, actual.callbacks, requested=True))
+    from opendbc.car.hyundai.ioniq5pe_startup import PEPendingStartup, Phase
+    from opendbc.car.hyundai.ioniq5pe_long_profile import qualified as pe_qualified
+    pe = CarInterface.startup_owner(sibling, actual.callbacks, requested=True)
+    self.assertIsInstance(pe, PEPendingStartup)
+    self.assertNotIsInstance(pe, EV9Startup)
+    self.assertEqual(pe.stock_cp.to_dict(), sibling.to_dict())
+    self.assertIs(pe.owner.phase, Phase.NEW)
+    self.assertTrue(pe_qualified(pe.owner.cp))
+    self.assertFalse(qualified(pe.owner.cp))
+    self.assertFalse(qualified(sibling))
 
   def test_ready_poll_is_nonblocking_and_exact_source_bound(self):
     stock, owner, sent, requests, query = self.owner()
@@ -198,7 +213,7 @@ class TestEV9Startup(unittest.TestCase):
       return []
     owner.callbacks = (recv, sent.extend)
     with patch('opendbc.car.hyundai.ev9_startup.time.sleep'):
-      self.assertFalse(owner._ready())
+      self.assertIsNone(owner._ready())
     self.assertEqual(len(polls), 5)
 
   def test_unsuppressed_reply_classification(self):

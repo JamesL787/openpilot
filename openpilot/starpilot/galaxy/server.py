@@ -40,7 +40,7 @@ from openpilot.starpilot.galaxy.map_operations import MapOperationError, MapOper
 from openpilot.starpilot.galaxy.plots import Plots
 from openpilot.starpilot.galaxy.software_status import SoftwareStatus, SoftwareUnavailable
 from openpilot.starpilot.galaxy.software_operations import SoftwareOperations, SoftwareOperationError
-from openpilot.starpilot.galaxy.settings import SettingsGateway, SettingsChanged, SettingsUnavailable
+from openpilot.starpilot.galaxy.settings import PAGES, SettingsGateway, SettingsChanged, SettingsUnavailable
 from openpilot.starpilot.galaxy.onroad_layout import LayoutChanged, OnroadLayoutOwner
 from openpilot.starpilot.ui.layout_preview_transport import (request_profile)
 from openpilot.starpilot.favorites.owner import FavoritesChanged
@@ -1612,7 +1612,7 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             self.json(409, {'error': 'A fresh parked vehicle connection is required'})
         except SnapshotUnavailable:
           if self.require_session():
-            self.json(503, {'error': 'No fresh camera frame. Turn off the vehicle and open its camera preview, then try again.'})
+            self.json(503, {'error': 'No fresh camera frame. Try taking a new snapshot.'})
         else:
           self.respond(200, body, 'image/jpeg')
         return
@@ -2362,9 +2362,11 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             result = feature_settings().preview(payload['view'], payload['row'], payload.get('direction', 0), *identity,
                                                 draft=payload.get('draft'), value=payload.get('value'))
           else:
-            if not isinstance(payload, dict) or set(payload) != {'intent', 'confirmed'} or \
+            if not isinstance(payload, dict) or set(payload) not in ({'intent', 'confirmed'}, {'intent', 'confirmed', 'page'}) or \
                not isinstance(payload['intent'], str) or len(payload['intent']) > 64 or payload['confirmed'] is not True:
               raise ValueError('Invalid confirmation request')
+            if 'page' in payload and (type(payload['page']) is not str or payload['page'] not in PAGES):
+              raise ValueError('Invalid settings page')
             with effect_lock:
               if self.settings_session() != identity:
                 raise SettingsChanged('Session changed')
@@ -2373,6 +2375,11 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
             if not saved:
               raise SettingsChanged('Saved source or vehicle state changed')
             result = {'saved': True}
+            if 'page' in payload:
+              try:
+                result['page'] = feature_settings().page(payload['page'], *identity)
+              except (SettingsChanged, SettingsUnavailable, OSError, RuntimeError):
+                pass
         except ValueError:
           if self.settings_session() == identity:
             self.json(400, {'error': 'Invalid request'})

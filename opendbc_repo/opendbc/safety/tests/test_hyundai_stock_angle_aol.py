@@ -19,6 +19,7 @@ class TestHyundaiStockAngleAol(unittest.TestCase):
     self.safety.set_alternative_experience(32)
     self.assertEqual(self.safety.set_safety_hooks(structs.CarParams.SafetyModel.hyundaiCanfd, word), 0)
     self.safety.init_tests()
+    self.safety.set_alternative_experience(32)
     self.safety.set_timer(1_000_000)
 
   def rx(self, name, bus, values):
@@ -136,3 +137,86 @@ class TestHyundaiStockAngleAol(unittest.TestCase):
           self.sources(word, **kwargs)
           self.gesture(word)
           self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+
+  def test_physical_gas_press_and_release_keep_only_lateral_permission_and_active_tx(self):
+    for word in WORDS:
+      with self.subTest(word=hex(word)):
+        self.mode(word)
+        self.sources(word)
+        self.gesture(word)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+        for counter, gas in enumerate((True, False, True, False), start=1):
+          self.safety.set_timer(1_000_000 + counter * 10_000)
+          self.sources(word, gas=gas)
+          self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+          self.assertTrue(self.safety.safety_tx_hook(self.command(word, counter)))
+        self.sources(word, gas=True, brake=True)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+        self.assertTrue(self.safety.safety_tx_hook(self.command(word, 5)))
+        self.sources(word, gas=True, brake=True, gear=7)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+        self.assertFalse(self.safety.safety_tx_hook(self.command(word, 6)))
+
+  def test_gas_never_substitutes_for_physical_latch_or_fresh_host_request(self):
+    for word in WORDS:
+      with self.subTest(word=hex(word)):
+        self.mode(word)
+        self.sources(word, gas=True)
+        self.safety.set_aol_test_heartbeat(True)
+        self.safety.aol_set_host_request(3)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+        self.assertFalse(self.safety.safety_tx_hook(self.command(word, 1)))
+        self.gesture(word)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+        self.safety.aol_set_host_request(0)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+        self.assertFalse(self.safety.safety_tx_hook(self.command(word, 2)))
+
+  def test_actual_host_intent_and_native_permission_keep_latch_through_pedals(self):
+    from opendbc.car.hyundai.canfd_angle_aol import MODELS, command_allowed, temporary_restriction, native_observation
+    from opendbc.car.hyundai.tests.test_stock_angle_aol import source_profile
+    from opendbc.car.hyundai.values import CAR
+    from openpilot.starpilot.aol.intent import AolSettings
+    from openpilot.starpilot.aol.vehicle import native_latch_rejected
+    from openpilot.starpilot.aol.wire import SafetyState
+    from openpilot.starpilot.car.hyundai.aol import create_intent
+
+    for identity in MODELS:
+      with self.subTest(identity=identity):
+        cp = source_profile(CAR(identity))
+        cp.alternativeExperience = 32
+        word = cp.safetyConfigs[0].safetyParam
+        state = structs.CarState(canValid=True, gearShifter='drive', vEgoRaw=10)
+        state.cruiseState.available = True
+        settings = AolSettings(True, 0., 9, 0, (0, 0, 0), (0, 0, 0))
+        owner = create_intent(cp, settings)
+        now = 1_000_000_000
+        for buttons in ([], [{'type': 'lkas', 'pressed': True}], [{'type': 'lkas', 'pressed': False}]):
+          state.buttonEvents = buttons
+          owner.update(state, fault_active=False, now_ns=now)
+          now += 10_000_000
+        self.assertTrue(owner.allowed_latch)
+        state.buttonEvents = []
+        self.mode(word)
+        self.sources(word)
+        self.gesture(word)
+        self.safety.aol_set_host_request(1)
+        for counter, (gas, brake) in enumerate(((True, False), (False, False), (False, True), (True, True), (False, False)), start=1):
+          state.gasPressed = gas
+          state.brakePressed = brake
+          self.safety.set_timer(1_000_000 + counter * 10_000)
+          self.sources(word, gas=gas, brake=brake)
+          permission = self.safety.aol_get_permission_mask()
+          native = SafetyState(1, True, now, now + 200_000_000, cp.safetyConfigs[0].safetyModel.raw, word,
+                               bool(permission & 1), bool(permission & 2), True, False, 'gas-test', 'gas-session')
+          rejected = native_latch_rejected(cp, native, state=state)
+          pending, lost, reset = native_observation(native, latched=owner.allowed_latch, panda_ready=True,
+            restricted=temporary_restriction(cp, state), now_ns=now, pending_since_ns=0)
+          owner.update(state, fault_active=lost, now_ns=now,
+                       native_rejection_ns=now if rejected or reset else 0)
+          self.assertTrue(owner.allowed_latch)
+          self.assertTrue(command_allowed(cp, state))
+          self.assertEqual((pending, lost, reset), (0, False, False))
+          self.assertEqual(permission, 1)
+          self.assertTrue(self.safety.safety_tx_hook(self.command(word, counter)))
+          now += 10_000_000

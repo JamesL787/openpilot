@@ -17,10 +17,17 @@ if arch not in ('comma_arm64', 'Darwin') and ctypes.util.find_library('LLVM') is
   Return()
 
 lenv = env.Clone()
-lenv.PrependENVPath('PYTHONPATH', Dir('#tinygrad_repo').abspath)
+compiler_tree = (Dir('#tinygrad_model_runtime/legacy9d/tinygrad_repo')
+                 if arch == 'comma_arm64' else Dir('#tinygrad_repo'))
+lenv.PrependENVPath('PYTHONPATH', compiler_tree.abspath)
+if arch == 'comma_arm64':
+  lenv['ENV']['PYTHONDONTWRITEBYTECODE'] = '1'
+  compiler_cache = Path(Dir('#.cache/model-compiler/9d0446a4ba8a532c8b674fb6ad795af015cd9dcf').abspath)
+  lenv['ENV']['CACHEDB'] = str(compiler_cache / 'tinygrad.db')
+  lenv['ENV']['XDG_CACHE_HOME'] = str(compiler_cache / 'xdg')
 
 tinygrad_root = env.Dir("#").abspath
-tinygrad_files = ["#"+x for x in glob.glob(env.Dir("#tinygrad_repo").relpath + "/**", recursive=True, root_dir=tinygrad_root)
+tinygrad_files = ["#"+x for x in glob.glob(compiler_tree.relpath + "/**", recursive=True, root_dir=tinygrad_root)
                   if 'pycache' not in x and os.path.isfile(os.path.join(tinygrad_root, x))]
 
 camera_configs = [(c.width, c.height) for c in (_ar_ox_fisheye, _os_fisheye)]
@@ -47,13 +54,14 @@ if arch == 'comma_arm64':
   tg_flags = 'DEV=QCOM IMAGE=1 FLOAT16=1 NOLOCALS=1 JIT_BATCH_SIZE=0 OPENPILOT_HACKS=1'
 else:
   # JIT=2 disables graph batching, which produces incorrect outputs after buffers change.
-  tg_flags = 'DEV=METAL JIT=2' if arch == 'Darwin' else 'DEV=CPU:LLVM'
+  # Use Apple's clang for the CPU helper runtime without requiring libLLVM.
+  tg_flags = 'DEV=METAL HCQ_RUNTIME_DEV=CPU:CLANG JIT=2' if arch == 'Darwin' else 'DEV=CPU:LLVM'
 
 # tinygrad calls brew which needs a $HOME in the env
 mac_brew_string = f'HOME={os.path.expanduser("~")}' if arch == 'Darwin' else ''
 
 warp_deps = [File("#openpilot/system/camerad/cameras/nv12_info.py")]
-compiler = Dir('#tinygrad_repo/examples/openpilot').abspath
+compiler = str(Path(compiler_tree.abspath) / 'examples/openpilot')
 # build on all cores
 taskset = 'taskset -c 0-7 ' if arch == 'comma_arm64' else ''
 

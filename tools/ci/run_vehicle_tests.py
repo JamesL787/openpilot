@@ -21,7 +21,37 @@ sys.path.insert(0, str(ROOT))
 from tools import test_runner
 from tools.ci import vehicle_pytest
 
+DEBUG_SAFETY_CLASS_TARGETS = {
+  "opendbc_repo/opendbc/safety/tests/test_hyundai_main_rearm.py": (
+    "opendbc_repo/opendbc/safety/tests/test_hyundai_main_rearm.py::TestHkgMainDebug",
+  ),
+  "opendbc_repo/opendbc/safety/tests/test_hyundai_classic_cancel_joined.py": (
+    "opendbc_repo/opendbc/safety/tests/test_hyundai_classic_cancel_joined.py::TestClassicCancelDebug",
+  ),
+  "opendbc_repo/opendbc/safety/tests/test_ioniq5pe_paired_native.py": ("opendbc_repo/opendbc/safety/tests/test_ioniq5pe_paired_native.py::TestPELongDebug",),
+}
+
+
 RELEASE_TARGETS = (
+  "openpilot/starpilot/aol/tests/test_angle_stop_native_feedback.py",
+  "openpilot/starpilot/aol/tests/test_angle_stop_fault_guards.py",
+  "openpilot/starpilot/aol/tests/test_torque_stock_cruise_transition.py",
+  "openpilot/starpilot/aol/tests/test_torque_stock_brake_guards.py",
+  "opendbc_repo/opendbc/safety/tests/test_hyundai_torque_stock_transition.py",
+  "openpilot/starpilot/aol/tests/test_angle_stock_cruise_transition.py",
+  "opendbc_repo/opendbc/safety/tests/test_hyundai_stock_cruise_transition.py",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_ioniq5pe_replacement_duplicates.py",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_ioniq5pe_pending_startup.py",
+  "opendbc_repo/opendbc/safety/tests/test_hyundai_angle_cancel.py",
+  "openpilot/starpilot/aol/tests/test_angle_cancel.py",
+  "openpilot/starpilot/aol/tests/test_angle_cancel_batches.py",
+  "openpilot/starpilot/aol/tests/test_angle_brake_deadline.py",
+  "opendbc_repo/opendbc/safety/tests/test_hyundai_main_rearm.py::TestHkgMainRelease",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_long_main_buttons.py",
+  "opendbc_repo/opendbc/safety/tests/test_hyundai_classic_cancel_joined.py::TestClassicCancelReleaseDenied",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_classic_cancel_construction.py",
+  "openpilot/starpilot/aol/tests/test_classic_cancel_guards.py",
+  "opendbc_repo/opendbc/safety/tests/test_ioniq5pe_paired_native.py::TestPELongReleaseDenied",
   "opendbc_repo/opendbc/safety/tests/test_tesla_preap_stock.py",
   "opendbc_repo/opendbc/car/tesla/tests/test_preap_startup.py",
   "opendbc_repo/opendbc/car/tesla/tests/test_preap_stock.py",
@@ -43,7 +73,13 @@ RELEASE_TARGETS = (
   "opendbc_repo/opendbc/safety/tests/test_nexo_stock_aol.py",
   "opendbc_repo/opendbc/safety/tests/test_hyundai_stock_angle_aol.py",
   "opendbc_repo/opendbc/car/hyundai/tests/test_stock_angle_aol.py",
+  "openpilot/starpilot/aol/tests/test_stock_angle_pedals.py",
   "opendbc_repo/opendbc/car/hyundai/tests/test_g90_startup.py",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_shared_session_recovery_contract.py",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_ev9_ready.py",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_dom_radar_vehicle_bindings.py",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_dom_radar_complete_paths.py",
+  "opendbc_repo/opendbc/car/hyundai/tests/test_dom_firmware_catalog.py",
   "opendbc_repo/opendbc/safety/tests/test_hyundai_classic_long_aol.py",
   "openpilot/starpilot/aol/tests/test_classic_long_profiles.py",
   "opendbc_repo/opendbc/safety/tests/test_hyundai_shared_canfd_stock_aol.py",
@@ -185,7 +221,8 @@ def targets_for(suite):
     return [str(path.relative_to(ROOT)) for path in sorted(car_root.rglob("test_*.py"))
             if path != car_root / "tests/test_models.py"]
   if suite == "safety-debug":
-    return [str(path.relative_to(ROOT)) for path in sorted((ROOT / "opendbc_repo/opendbc/safety/tests").glob("test_*.py"))]
+    paths = [str(path.relative_to(ROOT)) for path in sorted((ROOT / "opendbc_repo/opendbc/safety/tests").glob("test_*.py"))]
+    return [selected for path in paths for selected in DEBUG_SAFETY_CLASS_TARGETS.get(path, (path,))]
   if suite == "safety-release":
     return list(RELEASE_TARGETS)
   raise ValueError(f"Unknown vehicle test suite: {suite}")

@@ -210,7 +210,7 @@ export const BluetoothPage = {
                 <button class="gx-btn" :disabled="!canAllowPair" @click="respond(true)">{{ status.pairing.prompt.kind === 'pin' ? 'Submit PIN' : status.pairing.prompt.kind === 'passkey' ? 'Submit Passkey' : 'Allow' }}</button></div></div>
             <button v-if="status.pairing.state === 'pairing'" class="gx-btn gx-btn--tonal" @click="action('cancel_pair')">Cancel Pairing</button></div>
           <div class="gx-card gx-driving__intro"><h3>Saved Devices</h3><p v-if="!saved.length">No saved devices found.</p>
-            <div v-for="device in saved" :key="device.address" class="gx-row"><div class="gx-row__info"><strong>{{ device.name }}</strong><small>{{ device.connected ? 'Connected' : 'Disconnected' }}</small></div>
+            <div v-for="device in saved" :key="device.address" class="gx-row"><div class="gx-row__info"><span class="gx-row__label">{{ device.name }}</span><span class="gx-row__desc">{{ device.connected ? 'Connected' : 'Disconnected' }}</span></div>
               <div class="gx-driving__actions gx-actions"><button class="gx-btn gx-btn--tonal" :disabled="!status.powered" @click="action(device.connected ? 'disconnect' : 'connect', {address:device.address})">{{ device.connected ? 'Disconnect' : 'Connect' }}</button>
                 <button class="gx-btn gx-btn--tonal" @click="action('forget', {address:device.address})">Forget</button></div></div></div>
           <div class="gx-card gx-driving__intro"><h3>Nearby Devices</h3><p v-if="!nearby.length">{{ status.discovering ? 'Searching…' : 'No nearby devices found.' }}</p>

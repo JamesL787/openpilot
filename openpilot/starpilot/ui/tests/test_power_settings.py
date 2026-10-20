@@ -13,7 +13,7 @@ from unittest.mock import Mock
 from openpilot.common.params import Params
 from openpilot.starpilot.power.offroad_preferences import KEY, PowerPolicy, decode, effective, encode, read_saved
 from openpilot.starpilot.ui.feature_settings_state import FeatureInput, FeatureSettingsRequest, row_change
-from openpilot.starpilot.ui.feature_settings_state import FeatureUiAction
+from openpilot.starpilot.ui.feature_settings_state import FeatureUiAction, value_buttons
 from openpilot.starpilot.ui.power_owner import ENABLED, HOURS, VOLTS, PowerOwner, confirm_question, power_row_change
 from openpilot.starpilot.ui.display_owner import DisplayOwner
 from openpilot.starpilot.ui.power_compact import PowerCompact
@@ -219,39 +219,49 @@ class PowerSettingsTests(unittest.TestCase):
     native_input.press(1980, 245, displayed)
     native_input.release(1980, 245, displayed)
     self.assertEqual(actions[0].row.key, ENABLED)
+    self.assertEqual(actions[0].kind, 'open')
     native_input.press(1980, 245, displayed)
     native_input.cancel()
     native_input.release(1980, 165, displayed)
     self.assertEqual(len(actions), 1)
-    row = next(row for row in session.system_snapshot().rows if row.key == ENABLED)
+    def request_enable():
+      state = session.system_snapshot()
+      if not state.editor:
+        row = next(row for row in state.rows if row.key == ENABLED)
+        session._display_ui(FeatureUiAction('open', row))
+      state = session.system_snapshot()
+      self.assertTrue(state.editor)
+      self.assertEqual(state.save_hint, 'Changes require confirmation')
+      row = state.rows[0]
+      index = next(i for i, button in enumerate(value_buttons(state, row)) if button[0] == 'On')
+      session._display_ui(FeatureUiAction('action', row, index))
+
     def fake_dialog(_question, _button, callback):
       return NS(_callback=callback)
     with patch("openpilot.starpilot.ui.runtime_app.gui_app.push_widget") as pushed, \
          patch("openpilot.system.ui.widgets.confirm_dialog.ConfirmDialog", side_effect=fake_dialog):
-      session._display_ui(FeatureUiAction("change", row))
+      request_enable()
     dialog = pushed.call_args.args[0]
     self.path.write_bytes(encode(PowerPolicy(False, 4, 121)))
     dialog._callback(DialogResult.CONFIRM)
     self.assertEqual(read_saved(self.params).policy, PowerPolicy(False, 4, 121))
-    row = next(row for row in session.system_snapshot().rows if row.key == ENABLED)
     with patch("openpilot.starpilot.ui.runtime_app.gui_app.push_widget") as pushed, \
          patch("openpilot.system.ui.widgets.confirm_dialog.ConfirmDialog", side_effect=fake_dialog):
-      session._display_ui(FeatureUiAction("change", row))
+      request_enable()
     self.parked = False
     pushed.call_args.args[0]._callback(DialogResult.CONFIRM)
     self.assertFalse(read_saved(self.params).policy.enabled)
     self.parked = True
-    row = next(row for row in session.system_snapshot().rows if row.key == ENABLED)
     with patch("openpilot.starpilot.ui.runtime_app.gui_app.push_widget") as pushed, \
          patch("openpilot.system.ui.widgets.confirm_dialog.ConfirmDialog", side_effect=fake_dialog):
-      session._display_ui(FeatureUiAction("change", row))
+      request_enable()
     abandoned = pushed.call_args.args[0]
     session.cancel()  # Leaving settings revokes the old confirmation, even after returning.
     abandoned._callback(DialogResult.CONFIRM)
     self.assertFalse(read_saved(self.params).policy.enabled)
     with patch("openpilot.starpilot.ui.runtime_app.gui_app.push_widget") as pushed, \
          patch("openpilot.system.ui.widgets.confirm_dialog.ConfirmDialog", side_effect=fake_dialog):
-      session._display_ui(FeatureUiAction("change", row))
+      request_enable()
     pushed.call_args.args[0]._callback(DialogResult.CONFIRM)
     self.assertTrue(read_saved(self.params).policy.enabled)
 

@@ -21,7 +21,7 @@ assert.deepEqual(JSON.parse(requests[1].options.body), { view: "opaque-view", ro
 await reply(1, { intent: "reset-intent", question: "Reset to default?", proposed: "On" })
 assert.equal(updates.at(-1).pending, null, "defaults never display a per-setting confirmation")
 assert.equal(requests[2].url, "./api/settings/confirm")
-assert.deepEqual(JSON.parse(requests[2].options.body), { intent: "reset-intent", confirmed: true })
+assert.deepEqual(JSON.parse(requests[2].options.body), { intent: "reset-intent", confirmed: true, page: "appearance" })
 await reply(2, { saved: true })
 await reply(3, { ...page, view: "fresh", rows: [{ ...row, value: "On", resetAvailable: false }] })
 feed.resetDefault(0)

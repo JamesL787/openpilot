@@ -69,7 +69,7 @@ def clock_text(now: datetime | None = None, use_24_hour: bool = False) -> str:
 
 def axis_status_color(state: OnroadState) -> rl.Color:
   """Retain StarPilot's existing off, AOL, long-only, and combined edge colors."""
-  if state.longitudinal_overridden:
+  if state.driver_override_active or state.longitudinal_overridden:
     return rl.Color(145, 155, 149, 255)
   if state.lateral_active and state.switchback_mode:
     return rl.Color(139, 108, 197, 255)
@@ -425,8 +425,7 @@ class OnroadView:
     render_glow(content, state, border_width=30, time_s=state.observed_ns / 1e9 if state.observed_ns else rl.get_time())
     rl.draw_rectangle_lines_ex(frame, 30, rl.BLACK)
     rl.draw_rectangle_rounded_lines_ex(content, 0.12, 10, 30, edge)
-    if self.projection_viewport:
-      render_large_half_borders(state, state.observed_ns / 1e9 if state.observed_ns else rl.get_time(), content, int(height))
+    render_large_half_borders(state, state.observed_ns / 1e9 if state.observed_ns else rl.get_time(), content, int(height))
     self._preview_badge(state)
 
   def _compact(self, state: OnroadState) -> None:
@@ -448,7 +447,10 @@ class OnroadView:
       self._stock_confidence_last_drive_frame = state.stock_confidence_drive_frame
     else:
       self._stock_confidence_last_source_ns = None
-    color = axis_status_color(state) if state.alert.size == AlertSize.NONE else rl.Color(18, 40, 57, 255)
+    color = axis_status_color(state)
+    if state.alert.size != AlertSize.NONE and (
+        not state.driver_override_active or state.alert.critical or state.alert.size == AlertSize.FULL):
+      color = rl.Color(18, 40, 57, 255)
     rl.draw_rectangle(0, 0, 536, 240, rl.BLACK)
     clip.begin_scissor_mode(0, 0, 476, 240)
     try:

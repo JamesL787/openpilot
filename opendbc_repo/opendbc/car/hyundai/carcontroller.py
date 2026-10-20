@@ -1,3 +1,6 @@
+from opendbc.car.hyundai.ioniq5pe_long_profile import qualified as pe_long_qualified
+from opendbc.car.hyundai.ioniq5pe_longitudinal import PELongitudinalPolicy
+from opendbc.car.hyundai import ioniq5pe_long_sender
 from opendbc.car.hyundai.canfd_angle_aol import qualified as qualified_angle_aol, command_allowed as angle_aol_command_allowed
 from opendbc.car.hyundai.ev9_longitudinal import (
   EV9LongitudinalPolicy,
@@ -117,10 +120,12 @@ class CarController(CarControllerBase):
     self.ccnc_baselined = False
     self.ioniq6_longitudinal = (Ioniq6LongitudinalPolicy()
                                 if CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and CP.openpilotLongitudinalControl else None)
+    self.pe_longitudinal = PELongitudinalPolicy() if pe_long_qualified(CP) else None
+    self.pe_startup = None
     self.ev9_longitudinal = EV9LongitudinalPolicy() if ev9_long_qualified(CP) else None
     self.ev9_lead_inputs = None
-    self.ev9_legacy_envelope = LegacyAngleEnvelope() if self.ev9_longitudinal is not None else None
-    self.ev9_angle_filter = FirstOrderFilter(0.0, 0.2, DT_CTRL) if self.ev9_longitudinal is not None else None
+    self.ev9_legacy_envelope = LegacyAngleEnvelope() if self.ev9_longitudinal is not None or self.pe_longitudinal is not None else None
+    self.ev9_angle_filter = FirstOrderFilter(0.0, 0.2, DT_CTRL) if self.ev9_longitudinal is not None or self.pe_longitudinal is not None else None
     self.ioniq6_accel_request = None
     self.ioniq6_lead_inputs = None
     self.torque_ev_scc_enabled = torque_ev_scc_eligible(CP)
@@ -152,6 +157,10 @@ class CarController(CarControllerBase):
     self._ray_disengage_frame = None
 
   def update(self, CC, CS, now_nanos):
+    if self.pe_longitudinal is not None and (self.pe_startup is None or not self.pe_startup.can_emit(self)):
+      return structs.CarControl.Actuators.new_message(), []
+    if self.pe_longitudinal is not None and not self.pe_startup.handed_off:
+      CC = structs.CarControl.new_message().as_reader()
     _projection = self.learning_projection_observer
     if _projection is not None:
       _projection.begin(CC.actuators.torque, self.frame)
@@ -195,6 +204,11 @@ class CarController(CarControllerBase):
     # accel + longitudinal
     accel = float(np.clip(actuators.accel, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
     stopping = actuators.longControlState == LongCtrlState.stopping
+    if self.pe_longitudinal is not None:
+      request = self.pe_longitudinal.update(self.frame, active=CC.enabled and CC.longActive,
+        override=CC.cruiseControl.override, accel=accel, speed=CS.out.vEgo, measured_accel=CS.out.aEgo,
+        control_state=actuators.longControlState, last_sent_accel=self.accel_last)
+      accel, stopping = request.accel, request.stopping
     if self.ev9_longitudinal is not None:
       accel = self.ev9_longitudinal.update(self.frame, float(np.clip(actuators.accel, -3.5, 3.5)), CS.out.vEgo,
                                             CS.out.aEgo, actuators.longControlState, CC.enabled, CC.cruiseControl.override)
@@ -380,7 +394,10 @@ class CarController(CarControllerBase):
         self.ccnc_baselined = True
       self.last_ccnc_now_ns = now_nanos
 
-    ev9_long = self.ev9_longitudinal is not None
+    ccnc_longitudinal = self.pe_longitudinal or self.ev9_longitudinal
+    pe_long = self.pe_longitudinal is not None
+    long_sender = ioniq5pe_long_sender if pe_long else ev9_long_sender
+    ev9_long = ccnc_longitudinal is not None
     angle_aol = qualified_angle_aol(self.CP, marked_only=True)
     angle_aol_active = angle_aol and CC.latActive and angle_aol_command_allowed(self.CP, CS.out)
     ccnc_ev_stock = self.CP.carFingerprint in (CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV9) and not ev9_long
@@ -397,7 +414,8 @@ class CarController(CarControllerBase):
       active = bool(ev9_lateral_allowed and CC.latActive and abs(measured) <= bound and abs(self.apply_angle_last) <= bound)
       self.ev9_angle_filter.update_alpha(float(np.interp(CS.out.vEgo, [5.0, 10.0, 20.0], [0.2, 0.1, 0.0])))
       desired = self.ev9_angle_filter.update(float(np.clip(CC.actuators.steeringAngleDeg,
-                                                         -EV9_OP_LONG_ANGLE_TARGET_MAX, EV9_OP_LONG_ANGLE_TARGET_MAX)))
+                                                         -(self.params.ANGLE_LIMITS.STEER_ANGLE_MAX if pe_long else EV9_OP_LONG_ANGLE_TARGET_MAX),
+                                                         self.params.ANGLE_LIMITS.STEER_ANGLE_MAX if pe_long else EV9_OP_LONG_ANGLE_TARGET_MAX)))
       # Preserve the original two VM passes and its final tolerance-envelope delta.
       angle = apply_steer_angle_limits_vm(desired, self.apply_angle_last, CS.out.vEgoRaw, measured,
                                          active, self.params, self.angle_vm)
@@ -416,10 +434,10 @@ class CarController(CarControllerBase):
       # Native checks health even for an inactive CB; do not emit stale measurements.
       if CS.out.canValid and not CS.out.canTimeout:
         if drive:
-          can_sends.append(ev9_long_sender.create_angle_adas_cmd(self.packer, self.CAN, self.apply_angle_last,
+          can_sends.append(long_sender.create_angle_adas_cmd(self.packer, self.CAN, self.apply_angle_last,
                                                                 active, self.angle_gain_last))
         else:
-          can_sends.extend(ev9_long_sender.create_inactive_angle_steering_messages(self.packer, self.CAN,
+          can_sends.extend(long_sender.create_inactive_angle_steering_messages(self.packer, self.CAN,
                                                                                  self.apply_angle_last))
     elif self.angle_vm is not None:
       drive_gear_required = self.CP.carFingerprint in (CAR.HYUNDAI_AZERA_HEV_7TH_GEN,
@@ -512,16 +530,16 @@ class CarController(CarControllerBase):
         right_escalated = CS.right_blindspot_from_radar and CC.rightBlinker and not CC.leftBlinker
         left_warning, right_warning = BlindspotWarningOutput(), BlindspotWarningOutput()
         if self.frame % 5 == 0:
-          left_warning = update_blindspot_warning(self.ev9_longitudinal.left_warning, left_escalated, CC.leftBlinker)
-          right_warning = update_blindspot_warning(self.ev9_longitudinal.right_warning, right_escalated, CC.rightBlinker)
-        can_sends.extend(ev9_long_sender.create_ccnc_adrv_messages(
+          left_warning = update_blindspot_warning(ccnc_longitudinal.left_warning, left_escalated, CC.leftBlinker)
+          right_warning = update_blindspot_warning(ccnc_longitudinal.right_warning, right_escalated, CC.rightBlinker)
+        can_sends.extend(long_sender.create_ccnc_adrv_messages(
           self.packer, self.CP, self.CAN, self.frame, CC.enabled, CS.out.cruiseState.available, hud_control, CS.out,
           CS.is_metric, CC.latActive or CC.enabled, active and self.angle_gain_last != 0.0 and not CS.out.steeringPressed,
           CS.left_blindspot_from_radar, CS.right_blindspot_from_radar, drive_gear=drive, hba_icon=CS.hba_icon,
           left_escalated=left_escalated, right_escalated=right_escalated,
           left_warning_lamp=left_warning.mirror_lamp_active, right_warning_lamp=right_warning.mirror_lamp_active,
           left_sound_active=left_warning.sound_active, right_sound_active=right_warning.sound_active))
-        can_sends.append(ev9_long_sender.create_radar_heartbeat(self.frame, CS.out.brakePressed, CS.out.gasPressed))
+        can_sends.append(long_sender.create_radar_heartbeat(self.frame, CS.out.brakePressed, CS.out.gasPressed))
       elif lka_steering:
         can_sends.extend(hyundaicanfd.create_adrv_messages(
           self.packer, self.CAN, self.frame, template=self.adrv_template,
@@ -565,20 +583,20 @@ class CarController(CarControllerBase):
             if self.gv70_lead_inputs is not None else ABSENT
           acc_options.update(lead_distance=lead.distance, lead_rel_speed=lead.relative_speed, lead_visible=lead.visible)
         if ev9_long:
-          tuning = self.ev9_longitudinal.tuning
+          tuning = ccnc_longitudinal.tuning
           dynamic = CC.actuators.longControlState in (LongCtrlState.starting, LongCtrlState.pid, LongCtrlState.stopping)
           jerk_lower = tuning.jerk_lower if dynamic else (5.0 if CC.enabled else 1.0)
           jerk_upper = tuning.jerk_upper if dynamic else (3.0 if CC.actuators.longControlState == LongCtrlState.pid else 1.0)
-          zero = self.ev9_longitudinal.update_stop(CC.enabled, CC.cruiseControl.override, stopping, CS.out.vEgo)
+          zero = ccnc_longitudinal.update_stop(CC.enabled, CC.cruiseControl.override, stopping, CS.out.vEgo)
           if zero is not None:
             accel = zero
           lead = (self.ev9_lead_inputs.update(CS.ev9_camera_lead, hud_control.leadVisible, now_nanos)
                   if self.ev9_lead_inputs is not None else ABSENT)
           lead_visible, lead_distance, lead_rel_speed = lead.visible, lead.distance, lead.relative_speed
-          accel = float(np.clip(accel, -3.5, 2.2))
-          can_sends.append(ev9_long_sender.create_ccnc_acc_control(
-            self.packer, self.CAN, CC.enabled, accel, self.ev9_longitudinal.stop.stop_request,
-            self.ev9_longitudinal.stop.cruise_standstill, CC.cruiseControl.override, set_speed_in_units,
+          accel = float(np.clip(accel, -3.5, 2.0 if pe_long else 2.2))
+          can_sends.append(long_sender.create_ccnc_acc_control(
+            self.packer, self.CAN, CC.enabled, accel, ccnc_longitudinal.stop.stop_request,
+            ccnc_longitudinal.stop.cruise_standstill, CC.cruiseControl.override, set_speed_in_units,
             int(CS.out.cruiseState.available), lead_distance, lead_rel_speed, lead_visible, CS.out.vEgo,
             jerk_lower=jerk_lower, jerk_upper=jerk_upper))
         else:

@@ -1,4 +1,5 @@
 """Classify ordinary host source loss without granting commands or engagement."""
+from math import isfinite
 from opendbc.car.structs import car
 from openpilot.cereal import log
 from openpilot.selfdrive.selfdrived.events import ET
@@ -12,12 +13,35 @@ EventName = log.OnroadEvent.EventName
 AlertLevel = log.DriverMonitoringState.AlertLevel
 
 
-def stock_lateral_role(self, CS, native, intent=None):
+def stock_lateral_role(self, CS, native, intent=None, *, allow_independent_cancel=False, allow_independent_brake=False, now_ns=0):
   """Current stock USER role while an established independent LAT owner remains."""
+  cancel_role = False
+  if allow_independent_cancel:
+    from opendbc.car.hyundai.canfd_angle_aol import qualified as angle_qualified
+    from openpilot.starpilot.car.hyundai.aol import physical_cancel_lateral_allowed
+
+    cancel_role = bool(angle_qualified(self.CP, marked_only=True) and
+      physical_cancel_lateral_allowed(self.CP, CS, intent, native, settings=self.aol_settings,
+        previous=getattr(self, 'aol_axis_decision', None), source_ns=getattr(self, 'aol_car_state_log_ns', 0),
+        now_ns=now_ns, axis_session_id=self.aol_session_id))
+  brake_role = False
+  if allow_independent_brake:
+    from opendbc.car.hyundai.canfd_angle_aol import command_allowed
+    from opendbc.car.hyundai.canfd_stock_aol import qualified as stock_canfd_qualified
+
+    settings = getattr(self, 'aol_settings', None)
+    previous = getattr(self, 'aol_axis_decision', None)
+    brake_role = bool(settings is not None and settings.enabled and CS.brakePressed and not CS.regenBraking and
+      previous is not None and previous.lateral_active and previous.native_acknowledged and not previous.longitudinal_active and
+      (CS.vEgo >= settings.pause_brake_mps and command_allowed(self.CP, CS) or
+       len(self.CP.safetyConfigs) == 1 and stock_canfd_qualified(self.CP, marked_only=True) and
+       CS.gearShifter == car.CarState.GearShifter.drive and isfinite(CS.vEgoRaw) and isfinite(CS.vEgo) and
+       (settings.pause_brake_mps <= 0 or CS.vEgo >= settings.pause_brake_mps or CS.standstill)))
   rules = self.events.event_rules
   stock_user = stock_lateral_user_event(self.CP)
   users = [name for name in self.events.names if ET.USER_DISABLE in rules.get(name, {})]
-  if stock_user is None or not users or any(name != stock_user or
+  if stock_user is None or not users or any((name != stock_user and not (cancel_role and name == EventName.buttonCancel) and
+      not (brake_role and name == EventName.pedalPressed)) or
       ET.SOFT_DISABLE in rules.get(name, {}) or ET.IMMEDIATE_DISABLE in rules.get(name, {}) for name in users):
     return False
   anchor = getattr(self, 'aol_ordinary_source_anchor', None)
@@ -29,7 +53,8 @@ def stock_lateral_role(self, CS, native, intent=None):
       self.sm['extrinsicsCalibration'].calStatus != log.ExtrinsicsCalibration.Status.calibrated or
       self.sm['driverMonitoringState'].alertLevel == AlertLevel.three or
       self.sm['driverMonitoringState'].lockout or self.sm['driverMonitoringState'].alwaysOnLockout or
-      not stock_lateral_off(self.CP, CS, native)):
+      not stock_lateral_off(self.CP, CS, native, allow_independent_cancel=cancel_role,
+                            allow_independent_brake=brake_role)):
     return False
   accepted = intent if intent is not None else anchor[2]
   companion = getattr(self, 'aol_intent_companion', None)

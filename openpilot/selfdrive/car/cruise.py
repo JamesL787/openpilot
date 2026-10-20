@@ -43,6 +43,12 @@ class SlcConsumedButton:
   button: str
 
 
+def validated_initial_cruise_speed(value: object) -> int:
+  if type(value) is int and V_CRUISE_INITIAL <= value <= V_CRUISE_MAX:
+    return value
+  return V_CRUISE_INITIAL
+
+
 class VCruiseHelper:
   def __init__(self, CP):
     self.CP = CP
@@ -53,7 +59,9 @@ class VCruiseHelper:
     self.pending_resume_ns = 0
     self.button_timers = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0}
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
-    # Set only by the non-PCM button path that actually changes vCruise.
+    self.pcm_slc_sample: tuple[float, int] | None = None
+    self.pcm_slc_button = ButtonType.unknown
+    # Set by software cruise steps or a checked Toyota PCM physical +/- change.
     self.slc_cruise_change: tuple[float, float, str, bool] | None = None
     self.slc_consumed_button: SlcConsumedButton | None = None
     self.slc_suppressed_buttons: set[ButtonType] = set()
@@ -77,7 +85,8 @@ class VCruiseHelper:
     if not self.CP.pcmCruise:
       for button in CS.buttonEvents:
         self.pending_resume_ns = 0
-        if (not enabled and CS.cruiseState.available and not button.pressed and
+        resume_edge = not button.pressed or self.CP.brand == 'gm' and CS.buttonEnable
+        if (not enabled and CS.cruiseState.available and resume_edge and
             button.type in (ButtonType.accelCruise, ButtonType.resumeCruise) and self.v_cruise_initialized):
           self.pending_resume_ns = now_ns
 
@@ -93,6 +102,7 @@ class VCruiseHelper:
       else:
         self.v_cruise_kph = CS.cruiseState.speed * CV.MS_TO_KPH
         self.v_cruise_cluster_kph = CS.cruiseState.speedCluster * CV.MS_TO_KPH
+        self._update_toyota_pcm_slc_change(CS, enabled, now_ns)
         if CS.cruiseState.speed == 0:
           self.v_cruise_kph = V_CRUISE_UNSET
           self.v_cruise_cluster_kph = V_CRUISE_UNSET
@@ -102,8 +112,42 @@ class VCruiseHelper:
     else:
       self.v_cruise_kph = V_CRUISE_UNSET
       self.v_cruise_cluster_kph = V_CRUISE_UNSET
+      self.pcm_slc_sample = None
+      self.pcm_slc_button = ButtonType.unknown
       if not self.CP.pcmCruise:
         self.update_button_timers(CS, enabled)
+
+  def _update_toyota_pcm_slc_change(self, CS, enabled: bool, now_ns: int) -> None:
+    """Observe a physical PCM speed change without writing stock selected speed."""
+    previous = self.pcm_slc_sample
+    button = self.pcm_slc_button
+    self.pcm_slc_sample = None
+    self.pcm_slc_button = ButtonType.unknown
+    if (self.CP.brand != 'toyota' or not self.CP.openpilotLongitudinalControl or
+        not enabled or not CS.canValid or CS.canTimeout or not CS.cruiseState.enabled or
+        CS.standstill or CS.cruiseState.standstill or
+        not math.isfinite(self.v_cruise_kph) or not V_CRUISE_MIN <= self.v_cruise_kph <= V_CRUISE_MAX):
+      return
+    continuous = previous is not None and 0 < now_ns - previous[1] <= 150_000_000
+    if not continuous:
+      button = ButtonType.unknown
+    # A held stalk can generate multiple PCM steps. On release, the previous
+    # held direction remains eligible for this frame only; no guessed time window.
+    held = button
+    for edge in CS.buttonEvents:
+      if edge.type in (ButtonType.accelCruise, ButtonType.decelCruise):
+        if edge.pressed:
+          button = held = edge.type
+        elif edge.type == held:
+          held = ButtonType.unknown
+    if continuous:
+      delta = self.v_cruise_kph - previous[0]
+      if ((button == ButtonType.accelCruise and delta > 0.) or
+          (button == ButtonType.decelCruise and delta < 0.)):
+        self.slc_cruise_change = (previous[0] / 3.6, self.v_cruise_kph / 3.6,
+                                  'accel' if delta > 0. else 'decel', False)
+    self.pcm_slc_button = held
+    self.pcm_slc_sample = (float(self.v_cruise_kph), now_ns)
 
   def _update_slc_button_latches(self, CS, enabled, slc_pending: SlcPendingConfirmation | None) -> None:
     for b in CS.buttonEvents:
@@ -212,7 +256,7 @@ class VCruiseHelper:
     self.v_cruise_kph = float(np.clip(target_kph, V_CRUISE_MIN, V_CRUISE_MAX))
     self.v_cruise_cluster_kph = self.v_cruise_kph
 
-  def initialize_v_cruise(self, CS, experimental_mode: bool, *, resume: bool | None = None) -> None:
+  def initialize_v_cruise(self, CS, experimental_mode: bool, *, resume: bool | None = None, initial_speed: object = V_CRUISE_INITIAL) -> None:
     # initializing is handled by the PCM
     if self.CP.pcmCruise:
       return
@@ -227,6 +271,6 @@ class VCruiseHelper:
     if resume and self.v_cruise_initialized:
       self.v_cruise_kph = self.v_cruise_kph_last
     else:
-      self.v_cruise_kph = int(round(np.clip(CS.vEgo * CV.MS_TO_KPH, V_CRUISE_INITIAL, V_CRUISE_MAX)))
+      self.v_cruise_kph = int(round(np.clip(max(CS.vEgo * CV.MS_TO_KPH, validated_initial_cruise_speed(initial_speed)), V_CRUISE_INITIAL, V_CRUISE_MAX)))
 
     self.v_cruise_cluster_kph = self.v_cruise_kph

@@ -1008,6 +1008,29 @@ class TestGmBoltPedalSafety(unittest.TestCase):
             self.assertEqual(self.safety.safety_fwd_hook(0, 0x3D1), 2)
           self.assertFalse(self.safety.safety_tx_hook(self.packet((0x3D1, status[1], 2))))
 
+  def test_accelerator_override_keeps_only_dashboard_replacement(self):
+    from opendbc.car.gm import gmcan
+    for word in (0xBD, 0x9D, 0x19D, 0xE700, 0xE701, 0xE702):
+      with self.subTest(word=word):
+        self.safety.set_safety_hooks(CarParams.SafetyModel.gm, word)
+        self.safety.init_tests()
+        self.safety.reset_recorded_can()
+        self.status_sources(1_000_000)
+        raw = self.stock('ECMCruiseControl', {})
+        self.safety.safety_rx_hook(raw)
+        self.assertTrue(self.safety.safety_rx_hook(self.sensor(1, gas=30.)))
+        self.assertTrue(self.safety.get_gas_pressed_prev())
+        status = gmcan.create_ecm_cruise_control_command(self.packer, 0, True, 80.)
+        self.assertFalse(self.safety.safety_tx_hook(self.packet(status)))
+        self.assertEqual(self.safety.safety_fwd_hook(0, 0x3D1), -1)
+        self.safety.safety_rx_hook(raw)
+        self.assertEqual(self.recorded(), [(0x3D1, 0, status[1])])
+        self.safety.set_controls_allowed(True)
+        self.assertFalse(self.safety.safety_tx_hook(self.packet(create_pedal_command(self.packer, .2, 0))))
+        self.safety.safety_tx_hook(self.packet(create_bolt_regen_paddle(self.packer, True)))
+        self.safety.safety_rx_hook(self.stock("EBCMRegenPaddle", {}))
+        self.assertEqual(self.recorded(), [(0x3D1, 0, status[1])])
+
   def test_status_physical_jitter_does_not_halve_output_cadence(self):
     from opendbc.car.gm import gmcan
     for word in (0xBD, 0x9D, 0x19D, 0xE700, 0xE701, 0xE702):

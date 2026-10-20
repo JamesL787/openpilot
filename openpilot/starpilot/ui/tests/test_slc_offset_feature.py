@@ -151,14 +151,14 @@ class SlcOffsetFeatureTests(unittest.TestCase):
     original = self.raw(DOCUMENT_KEY)
     rows = [self.row(f"Offset{index}").label for index in range(1, 8)]
     self.assertEqual(rows, [f"{low}–<{high} mph offset" for low, high in
-                           (("0", "25.05"), ("25.05", "34"), ("34", "43.84"), ("43.84", "53.91"),
-                            ("53.91", "63.98"), ("63.98", "74.04"), ("74.04", "98.87"))])
+                           (("0", "25"), ("25", "34"), ("34", "44"), ("44", "54"),
+                            ("54", "64"), ("64", "74"), ("74", "99"))])
     state = self.owner.snapshot("slc", parked=True, system_long=True, lateral_context=True, metric=False)
-    self.assertTrue(any(row.label == "98.87 mph and above" and row.value == "Zero offset" for row in state.rows))
+    self.assertTrue(any(row.label == "99 mph and above" and row.value == "Zero offset" for row in state.rows))
     self.assertEqual(self.raw(DOCUMENT_KEY), original)
     self.assertTrue(self.units.change_units(True, None))
     self.assertEqual(od.decode(self.raw(DOCUMENT_KEY)), document)
-    self.assertEqual(self.row("Offset4").label, "70.56–<86.76 km/h offset")
+    self.assertEqual(self.row("Offset4").label, "71–<87 km/h offset")
 
   def test_editor_rejects_offsets_that_cannot_produce_a_positive_target_in_the_band(self):
     for metric, offset in ((False, -30), (True, -45)):

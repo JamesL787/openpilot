@@ -296,10 +296,7 @@ common = [_common, 'json11', 'zmq']
 Export('common')
 
 # Build messaging (cereal + msgq + socketmaster + their dependencies)
-# Enable swaglog include in dependency sources
-env_swaglog = env.Clone()
-env_swaglog['CXXFLAGS'].append('-DSWAGLOG="\\"common/swaglog.h\\""')
-SConscript(['msgq_repo/SConscript'], exports={'env': env_swaglog})
+SConscript(['msgq_repo/SConscript'])
 
 SConscript(['openpilot/cereal/SConscript'])
 
@@ -331,6 +328,7 @@ SConscript([
   'openpilot/selfdrive/modeld/SConscript',
   'openpilot/selfdrive/ui/SConscript',
   'openpilot/starpilot/audio/native/SConscript',
+  'openpilot/starpilot/models/runtime_bridge/SConscript',
 ])
 
 # Replay is also the isolated on-device viewer engine.

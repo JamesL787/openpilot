@@ -9,6 +9,8 @@ from opendbc.car.hyundai.ev9_longitudinal import qualified, copy_cp
 from opendbc.car.hyundai.ccnc_ev_stock import qualified as stock_qualified
 from opendbc.car.hyundai.values import CAR
 from opendbc.car.hyundai.ev9_keeper import EV9Keeper
+from opendbc.car.hyundai.ioniq5pe_ready import PEReadySource as EVReadySource
+from opendbc.car.hyundai.torque_ev_scc import clock_boot_ns
 
 
 def required(cp):
@@ -22,6 +24,7 @@ class EV9Startup(HyundaiECUStartup):
     if stock_cp.carFingerprint != CAR.KIA_EV9 or not stock_qualified(stock_cp):
       raise ValueError('EV9 startup requires exact original stock CP')
     self.clock = clock
+    self.boot_clock = clock_boot_ns
     self.stock_cp = copy_cp(stock_cp)
     self.keeper_factory = keeper_factory
     self.keeper = None
@@ -34,7 +37,7 @@ class EV9Startup(HyundaiECUStartup):
     for address, data, bus in frames:
       if address == self.address and bus == self.bus and len(data) >= 4 and data[:4] == b"\x03\x28\x01\x01":
         self.disable_attempted = True
-    self.callbacks[1](frames)
+    super()._send(frames)
 
   def _disable(self, can_recv, can_send, **kwargs):
     # Keep the original outcome distinction: command silence is sent,
@@ -70,21 +73,22 @@ class EV9Startup(HyundaiECUStartup):
     return False
 
   def _ready(self):
+    observer = EVReadySource()
+    floor = self.boot_clock()
     deadline = self.clock() + 0.5
     while self.clock() < deadline:
       packets = self.callbacks[0](wait_for_one=False)
-      for packet in packets:
-        for message in packet:
-          if message.address == 0x35 and message.src == self.bus and len(message.dat) > 3 and message.dat[3] & 0x40:
-            return True
+      observer.update([(int(getattr(packet, 'log_mono_time_ns', 0)), list(packet)) for packet in packets], self.boot_clock())
+      if observer.current(self.boot_clock(), floor, 100_000_000) is True:
+        return True
       time.sleep(.005)
-    return False
+    return observer.current(self.boot_clock(), floor, 100_000_000)
 
   def prepare(self, *, admission):
     if not qualified(self.cp):
       raise ValueError('Unqualified EV9 LONG startup profile')
     # A READY vehicle retains stock SCC and never receives communication control.
-    skip = not admission() or self._ready()
+    skip = not admission() or self._ready() is not False
     super().prepare(admission=(lambda: False) if skip else admission)
     if self.outcome in (Outcome.STOCK_UNTOUCHED, Outcome.STOCK_RESTORED):
       self.cp = copy_cp(self.stock_cp)

@@ -1,6 +1,6 @@
 """Immutable saved-feature settings presentation and guarded user intent."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 import math
 from collections import deque
@@ -27,6 +27,16 @@ FEATURE_FLICK_DISTANCE = 60
 FEATURE_FLICK_VELOCITY = 800
 FEATURE_FLICK_WINDOW = 0.1
 FEATURE_FLICK_PAUSE = 0.06
+
+SOUND_PRESETS = ("0", "10", "25", "50", "75", "100", "Auto")
+SYSTEM_PRESETS = {
+  "ScreenBrightness": tuple((str(value), f"{value}%") for value in (10, 25, 50, 75, 100)) + (("Auto", "Auto"),),
+  "ScreenTimeout": tuple((str(value), f"{value} s") for value in (5, 10, 15, 30, 60)),
+  "power:hours": tuple((f"{value} h", f"{value} h") for value in (1, 3, 6, 12, 24, 30)),
+  "power:volts": tuple((f"{value} V", f"{value} V") for value in ("11.8", "12.0", "12.2", "12.5")),
+}
+SYSTEM_PRESETS["ScreenBrightnessOnroad"] = SYSTEM_PRESETS["ScreenBrightness"]
+SYSTEM_PRESETS["ScreenTimeoutOnroad"] = SYSTEM_PRESETS["ScreenTimeout"]
 
 
 def is_long_confirm_action(key: str) -> bool:
@@ -174,6 +184,54 @@ def value_text(row: FeatureRow) -> str:
   if label is not None:
     return "Muted" if label == "Mute" else label
   return row.value + (("" if row.unit == "%" else " ") + row.unit if row.unit and row.value != "Auto" else "")
+
+
+def value_editor_state(state: FeatureSettingsState, key: str | None) -> FeatureSettingsState:
+  """Reuse the large value editor without changing saved-setting owners or compact rows."""
+  rows = []
+  for row in state.rows:
+    if row.key and not (row.page or row.presets or row.actions or row.repair_value or boolean_value(row) is not None):
+      presets = ()
+      if row.step:
+        try:
+          current = float(row.value)
+          numbers = {row.minimum, row.maximum}
+          if row.default_value is not None and not row.default_key:
+            numbers.add(float(row.default_value))
+          if not all(math.isfinite(value) for value in (*numbers, current)) or row.minimum >= row.maximum:
+            rows.append(row)
+            continue
+          if row.key == "lane_change:speed":
+            numbers = set((10., 30., 50., 70., 100.) if row.unit == "km/h" else (5., 15., 30., 45., 60.))
+          presets = tuple((row.value if number == current else str(number),
+                           value_text(replace(row, value=f"{number:g}", presets=())))
+                          for number in sorted(numbers) if row.minimum <= number <= row.maximum)
+        except ValueError:
+          pass
+      elif len(row.choices) > 1 and row.value in row.choices:
+        choices = row.choices if len(row.choices) <= 3 else tuple(dict.fromkeys((
+          row.choices[0], row.default_value if row.default_value in row.choices else row.choices[len(row.choices) // 2], row.choices[-1])))
+        presets = tuple((value, value) for value in choices)
+      if presets:
+        row = replace(row, presets=presets, page=row.key)
+    rows.append(row)
+  selected = next((row for row in rows if row.key == key and row.presets), None)
+  if selected is not None:
+    return replace(state, title=selected.label, subtitle=value_reason(selected), rows=(replace(selected, page=""),),
+                   parent_title=state.title, scroll=0, editor=True)
+  return replace(state, rows=tuple(rows))
+
+
+def sound_editor_state(state: FeatureSettingsState, key: str | None) -> FeatureSettingsState:
+  rows = tuple(replace(row, presets=tuple(
+    (value, "Mute" if value == "0" else value if value == "Auto" else value + "%")
+    for value in SOUND_PRESETS if value == "Auto" or row.minimum <= int(value) <= row.maximum))
+    if row.unit == "%" else row for row in state.rows)
+  rows = value_editor_state(replace(state, rows=rows), None).rows
+  if key is not None:
+    row = next(row for row in rows if row.key == key)
+    return replace(state, title=row.label, subtitle=row.reason, rows=(row,), parent_title="Sounds & Alerts", editor=True)
+  return replace(state, page="sounds:overview", rows=tuple(replace(row, page=row.key) for row in rows), subtitle="")
 
 
 def feature_page_counter_left(state: FeatureSettingsState) -> float:
@@ -451,7 +509,7 @@ def row_request(row: FeatureRow, value: str) -> FeatureSettingsRequest:
 
 def value_request(state: FeatureSettingsState, action: FeatureUiAction) -> FeatureSettingsRequest | None:
   row = action.row
-  if row is None or row not in state.rows or not row.available:
+  if row is None or row not in state.rows or not row.available or (row.presets and not state.editor):
     return None
   buttons = value_buttons(state, row)
   if action.kind == "action":

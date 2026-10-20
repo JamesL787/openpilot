@@ -19,7 +19,7 @@ from openpilot.starpilot.connect.provider import PROVIDERS, recording_provider, 
 MAX_ROOT_ENTRIES = 2048
 MAX_ROUTES = 100
 MAX_SEGMENTS = 512
-MAX_SEGMENTS_PER_ROUTE = 64
+MAX_SEGMENTS_PER_ROUTE = MAX_SEGMENTS
 MAX_STATS_SEGMENTS_PER_ROUTE = 512
 MAX_SEGMENT_ENTRIES = 32
 # logger_get_identifier emits the local v2 form without a dongle ID. Older

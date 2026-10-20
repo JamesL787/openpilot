@@ -721,6 +721,7 @@ msgstr "Update wird finalisiert..."
 msgid "for \"{}\""
 msgstr "für „{}“"
 
+#: openpilot/selfdrive/ui/layouts/settings/initial_cruise_speed.py
 #: openpilot/selfdrive/ui/onroad/hud_renderer.py
 msgid "km/h"
 msgstr "km/h"
@@ -737,6 +738,7 @@ msgstr "links"
 msgid "metered"
 msgstr "getaktet"
 
+#: openpilot/selfdrive/ui/layouts/settings/initial_cruise_speed.py
 #: openpilot/selfdrive/ui/onroad/hud_renderer.py
 msgid "mph"
 msgstr "mph"
@@ -817,3 +819,10 @@ msgstr[1] "vor {} Minuten"
 msgid "✓ SUBSCRIBED"
 msgstr "✓ ABONNIERT"
 
+#: openpilot/selfdrive/ui/layouts/settings/toggles.py
+msgid "Initial Max Speed"
+msgstr ""
+
+#: openpilot/selfdrive/ui/layouts/settings/toggles.py
+msgid "Max speed when engaging openpilot. If you are already driving faster, your current speed is used. Resume restores the previous max speed. Changes apply the next time you engage."
+msgstr ""

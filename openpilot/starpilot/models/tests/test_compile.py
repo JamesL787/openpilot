@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from functools import partial
 from unittest.mock import patch
+from openpilot.starpilot.models.runtime_bridge.runtime import PERSONAL_VENDORED_RUNTIME
 
 import numpy as np
 
@@ -213,6 +214,76 @@ class CompileTest(unittest.TestCase):
       self.assertEqual(len(scratch_paths), 1)
       self.assertFalse(scratch_paths[0].parent.exists())
 
+  @unittest.skipIf(PERSONAL_VENDORED_RUNTIME, "personal branch: the legacy runtime bridge is inert (runtime_bridge.PERSONAL_VENDORED_RUNTIME)")
+  def test_build_receipt_keeps_bank_compiler_when_global_runtime_advances(self):
+    global_revision = "02e698160eed1751738212144a7ea2cfb160b3f1"
+    bank_revision = "9d0446a4ba8a532c8b674fb6ad795af015cd9dcf"
+    global_metadata = json.dumps({"dependencies": [{"path": "tinygrad_repo", "commit": global_revision}]})
+    read_text = Path.read_text
+
+    def read_with_advanced_global(path, *args, **kwargs):
+      if path == model_compiler.REPO_ROOT / "upstream-sync.json":
+        return global_metadata
+      return read_text(path, *args, **kwargs)
+
+    with tempfile.TemporaryDirectory() as temporary:
+      root = Path(temporary)
+      source = root / "driving_supercombo.onnx"
+      source.write_bytes(stateful_onnx())
+      compiled = b"compiled fixture bytes from pinned bank compiler"
+
+      def compile_stub(command, **kwargs):
+        self.assertEqual(command[:3], [sys.executable, "-m", "openpilot.starpilot.models.compile"])
+        self.assertEqual(kwargs["cwd"], model_compiler.REPO_ROOT)
+        staged = Path(command[command.index("--output") + 1])
+        self.assertEqual(staged.parent.parent, root.resolve())
+        staged.write_bytes(compiled)
+
+      with patch.object(Path, "read_text", read_with_advanced_global), \
+           patch.object(model_compiler.subprocess, "run", side_effect=compile_stub):
+        # The old wrapper read this global metadata into its receipt. The bank
+        # compiler remains pinned independently of the advanced global runtime.
+        self.assertEqual(json.loads((model_compiler.REPO_ROOT / "upstream-sync.json").read_text())
+                         ["dependencies"][0]["commit"], global_revision)
+        model_compiler.main(["--model", "test", "--version", "v16", "--input-dir", str(root), "--output-dir", str(root)])
+      output = root / "test_driving_tinygrad.pkl"
+      receipt = json.loads(output.with_suffix(".build.json").read_text())
+      self.assertEqual(output.read_bytes(), compiled)
+      self.assertEqual(receipt["compiler_revision"], bank_revision)
+      self.assertNotEqual(receipt["compiler_revision"], global_revision)
+      self.assertEqual(receipt["source_sha256"], {source.name: model_compiler.sha256_file(source)})
+      self.assertEqual(receipt["artifact_sha256"], model_compiler.sha256_file(output))
+      self.assertEqual(receipt["artifact_size"], len(compiled))
+      self.assertEqual(receipt["artifact_abi"], "tinygrad_single_v1_arena")
+
+  @unittest.skipIf(PERSONAL_VENDORED_RUNTIME, "personal branch: the legacy runtime bridge is inert (runtime_bridge.PERSONAL_VENDORED_RUNTIME)")
+  def test_bank_compiler_rejects_same_origin_valid_revision_mismatch(self):
+    from openpilot.starpilot.models import catalog
+    from openpilot.starpilot.models.runtime_bridge import bootstrap, runtime
+
+    global_revision = "02e698160eed1751738212144a7ea2cfb160b3f1"
+    self.assertEqual(Path(catalog.__file__).resolve(),
+                     (model_compiler.REPO_ROOT / "openpilot/starpilot/models/catalog.py").resolve())
+    self.assertEqual(bootstrap.LEGACY_REVISION, runtime.LEGACY_REVISION)
+    self.assertNotEqual(global_revision, bootstrap.LEGACY_REVISION)
+    original_path = sys.path[:]
+    original_environment = dict(os.environ)
+    original_selection, original_protection = runtime._selection, runtime._protection
+
+    def tinygrad_modules():
+      return {name: module for name, module in sys.modules.items()
+              if any(name == family or name.startswith(family + ".") for family in bootstrap.IMPORT_FAMILIES)}
+
+    original_modules = tinygrad_modules()
+    with patch.object(catalog, "COMPILER_REVISION", global_revision):
+      with self.assertRaisesRegex(ValueError, "does not match the selected compiler runtime"):
+        model_compiler.bank_compiler_revision()
+    self.assertEqual(sys.path, original_path)
+    self.assertEqual(dict(os.environ), original_environment)
+    self.assertEqual(tinygrad_modules(), original_modules)
+    self.assertIs(runtime._selection, original_selection)
+    self.assertIs(runtime._protection, original_protection)
+
   def test_stateful_onnx_compiles_warp_and_replays_arena_on_cpu(self):
     with tempfile.TemporaryDirectory() as temporary:
       root = Path(temporary)
@@ -225,23 +296,35 @@ class CompileTest(unittest.TestCase):
                  "--supercombo-onnx", str(source), "--output", str(artifact)]
       result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=90)
       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-      with patch.dict(os.environ, environment):
-        from tinygrad import Context
-        from tinygrad_repo.examples.openpilot.helpers import load_pickle
-        from openpilot.starpilot.models.compile import make_stateful_input_queues
-        with Context(DEV="CPU:LLVM"):
-          loaded = load_pickle(artifact, out_of_band=True)
-          queues, host = make_stateful_input_queues(loaded["metadata"]["model"], loaded["execution_device"])
-          from tinygrad import Tensor
-          warped = Tensor(np.zeros((2, 6, 2, 2), dtype=np.uint8)).realize()
-          host["desire"][:] = (1, 2)
-          for step in range(1, 4):
-            output, = loaded["run_policy"](warped=warped, **{name: queues[name] for name in loaded["policy_input_keys"]})
-            np.testing.assert_array_equal(output.numpy(), [[step, step * 2]])
-          from openpilot.starpilot.models.catalog import COMPILER_REVISION
-          self.assertEqual(loaded["compiler_revision"], COMPILER_REVISION)
-          self.assertEqual(loaded["frame_skip"], 1)
-          self.assertIn((8, 8), loaded)
+      validator = """import sys
+import unittest
+from pathlib import Path
+from openpilot.starpilot.models.runtime_bridge.runtime import prepare_compiler
+prepare_compiler()
+import numpy as np
+from tinygrad import Context
+from tinygrad_repo.examples.openpilot.helpers import load_pickle
+from openpilot.starpilot.models.compile import make_stateful_input_queues
+artifact = Path(sys.argv[1])
+self = unittest.TestCase()
+with Context(DEV="CPU:LLVM"):
+  loaded = load_pickle(artifact, out_of_band=True)
+  queues, host = make_stateful_input_queues(loaded["metadata"]["model"], loaded["execution_device"])
+  from tinygrad import Tensor
+  warped = Tensor(np.zeros((2, 6, 2, 2), dtype=np.uint8)).realize()
+  host["desire"][:] = (1, 2)
+  for step in range(1, 4):
+    output, = loaded["run_policy"](warped=warped, **{name: queues[name] for name in loaded["policy_input_keys"]})
+    np.testing.assert_array_equal(output.numpy(), [[step, step * 2]])
+  # personal branch: artifacts carry the vendored tinygrad's revision (catalog.COMPILER_REVISION)
+  from openpilot.starpilot.models.catalog import COMPILER_REVISION
+  self.assertEqual(loaded["compiler_revision"], COMPILER_REVISION)
+  self.assertEqual(loaded["frame_skip"], 1)
+  self.assertIn((8, 8), loaded)
+"""
+      validation = subprocess.run([sys.executable, "-c", validator, str(artifact)], env=environment,
+                                  capture_output=True, text=True, timeout=90)
+      self.assertEqual(validation.returncode, 0, validation.stdout + validation.stderr)
 
 
 if __name__ == "__main__":

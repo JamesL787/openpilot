@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 
 from openpilot.common.basedir import BASEDIR
+from openpilot.common.hardware import COMMA_HARDWARE
 from openpilot.common.params import Params
 from openpilot.common.vendor_manifest import validate_revision
 from openpilot.starpilot.galaxy.software_status import SoftwareStatus, SoftwareUnavailable
@@ -342,7 +343,7 @@ class SoftwareOperations:
       elif reboot:
         reason = "Reboot is pending"
       elif not process:
-        reason = "Updater status is unavailable"
+        reason = "Getting the updater ready…" if COMMA_HARDWARE else "Updater status is unavailable"
       elif pending or not updater_idle:
         reason = "Updater is busy"
       fast = status["updater"].get("fast")
@@ -352,7 +353,8 @@ class SoftwareOperations:
       detail = fast["detail"] if fast and status["updater"]["state"] == "updating..." else ""
       if not process and not updater_idle:
         stage = "unavailable"
-        detail = "Update checks require the device updater service, which is unavailable when Galaxy runs alone on a development computer."
+        detail = ("Waiting for the device updater service…" if COMMA_HARDWARE else
+                  "Update checks require the device updater service, which is unavailable when Galaxy runs alone on a development computer.")
       elif self.request is not None and self.request.get("error") == "Updater did not report completion":
         stage, detail = "timed_out", "Request timed out; the updater may still be running"
       return {

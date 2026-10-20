@@ -178,7 +178,7 @@ def command_allowed(cp, state):
     and not state.standstill
     and math.isfinite(state.vEgoRaw)
     and state.vEgoRaw > 0.3
-    and not (state.brakePressed or state.gasPressed or state.steerFaultTemporary or state.steerFaultPermanent)
+    and not (state.steerFaultTemporary or state.steerFaultPermanent)
   )
 
 
@@ -192,7 +192,7 @@ def temporary_restriction(cp, state):
     and not state.steerFaultPermanent
     and state.gearShifter in (gears.drive, gears.reverse, gears.park, gears.neutral)
     and math.isfinite(state.vEgoRaw)
-    and (state.gearShifter != gears.drive or state.standstill or state.vEgoRaw <= 0.3 or state.steerFaultTemporary or state.brakePressed or state.gasPressed)
+    and (state.gearShifter != gears.drive or state.standstill or state.vEgoRaw <= 0.3 or state.steerFaultTemporary)
   )
 
 

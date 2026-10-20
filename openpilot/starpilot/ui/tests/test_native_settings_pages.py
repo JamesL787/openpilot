@@ -11,7 +11,9 @@ from unittest.mock import Mock, patch
 
 import pyray as rl
 
-from openpilot.starpilot.ui.feature_settings_state import FEATURE_ROW_TOP, FEATURE_ROW_HEIGHT, FeatureInput, FeatureUiAction
+from openpilot.starpilot.ui.feature_settings_state import (
+  FEATURE_ROW_TOP, FEATURE_ROW_HEIGHT, FeatureInput, FeatureUiAction, feature_row_top, value_buttons, value_done_rect,
+)
 from openpilot.starpilot.ui.starpilot_settings_adapter_large import StarPilotSettingsAdapterLarge
 from openpilot.starpilot.ui.network_panel import NetworkPanelBridge
 from openpilot.starpilot.ui.tests.test_feature_settings_visuals import fake_fonts
@@ -35,6 +37,83 @@ def button_action():
 
 
 class NativeSettingsPageTests(unittest.TestCase):
+  def test_initial_cruise_editor_uses_real_control_and_params_in_both_units(self):
+    import tempfile
+    from openpilot.common.params import Params
+    from openpilot.selfdrive.ui.layouts.settings import initial_cruise_speed as initial_speed
+
+    with tempfile.TemporaryDirectory() as directory:
+      params = Params(directory)
+      ui = NS(params=params, is_metric=True, initial_cruise_speed=80, CP=NS(pcmCruise=False), has_longitudinal_control=True)
+
+      def refresh():
+        ui.is_metric = params.get_bool("IsMetric")
+        ui.initial_cruise_speed = params.get("InitialCruiseSpeedKph", return_default=True)
+        row.is_visible = ui.CP is not None and ui.has_longitudinal_control and not ui.CP.pcmCruise
+
+      ui.update_params = refresh
+      with patch.object(initial_speed, "ui_state", ui):
+        for metric in (True, False):
+          with self.subTest(metric=metric):
+            params.put_bool("IsMetric", metric, block=True)
+            params.put("InitialCruiseSpeedKph", 80, block=True)
+            ui.is_metric, ui.initial_cruise_speed = metric, 80
+            with patch.object(gui_app, 'font', return_value=rl.Font()):
+              control = initial_speed.InitialCruiseSpeedControl()
+            row = item("Initial Max Speed", control)
+            pane = self.panel([row])
+            pane.title = "Toggles"
+            pane.panel._update_toggles = refresh
+            refresh()
+            before = params.get("InitialCruiseSpeedKph")
+            displayed = pane.snapshot().rows[0]
+            self.assertTrue(displayed.available)
+            self.assertTrue(displayed.value.endswith("km/h" if metric else "mph"))
+            self.assertTrue(displayed.presets)
+            self.click(pane)
+            self.assertTrue(pane.snapshot().editor)
+            self.choose(pane, "+")
+            self.assertGreater(params.get("InitialCruiseSpeedKph"), before)
+            editor = pane.snapshot()
+            minimum, maximum = editor.rows[0].choices[0], editor.rows[0].choices[-1]
+            self.choose(pane, minimum)
+            self.assertEqual(params.get("InitialCruiseSpeedKph"), 40)
+            self.choose(pane, "-")
+            self.assertEqual(params.get("InitialCruiseSpeedKph"), 40)
+            self.choose(pane, maximum)
+            self.assertEqual(params.get("InitialCruiseSpeedKph"), 145)
+            self.choose(pane, "+")
+            self.assertEqual(params.get("InitialCruiseSpeedKph"), 145)
+
+            # Native callback rejects an input tied to an earlier displayed value.
+            stale = pane.snapshot().rows[0]
+            params.put("InitialCruiseSpeedKph", 100, block=True)
+            pane._emit(FeatureUiAction("change", stale, -1))
+            self.assertEqual(params.get("InitialCruiseSpeedKph"), 100)
+            current = pane.snapshot().rows[0]
+            control.set_enabled(False)
+            pane._emit(FeatureUiAction("change", current, -1))
+            self.assertEqual(params.get("InitialCruiseSpeedKph"), 100)
+            control.set_enabled(True)
+            current = pane.snapshot().rows[0]
+            ui.CP.pcmCruise = True
+            pane._emit(FeatureUiAction("change", current, -1))
+            self.assertEqual(params.get("InitialCruiseSpeedKph"), 100)
+            self.assertEqual(pane.snapshot().rows, ())
+            ui.CP.pcmCruise = False
+            refresh()
+
+            # Done uses the existing touch router and keeps the parent panel alive.
+            self.choose(pane, "-")
+            state = pane.snapshot()
+            x, y, width, height = value_done_rect(state)
+            pos = MousePos(x + width / 2, y + height / 2)
+            pane._handle_mouse_press(pos)
+            pane._handle_mouse_release(pos)
+            self.assertFalse(pane.snapshot().editor)
+            self.assertTrue(pane.active)
+            pane.hide_event()
+
   def panel(self, items):
     owner = NS(_scroller=NS(_items=items), show_event=Mock(), hide_event=Mock(), _update_state=Mock())
     pane = StarPilotSettingsAdapterLarge(owner, fake_fonts(), "Device", Mock())
@@ -43,6 +122,13 @@ class NativeSettingsPageTests(unittest.TestCase):
 
   def click(self, pane, x=1930, index=0):
     pos = MousePos(x + pane.origin[0], FEATURE_ROW_TOP + (index + .5) * FEATURE_ROW_HEIGHT + pane.origin[1])
+    pane._handle_mouse_press(pos)
+    pane._handle_mouse_release(pos)
+
+  def choose(self, pane, value):
+    state = pane.snapshot()
+    _, (x, y, width, height), _ = next(button for button in value_buttons(state, state.rows[0], feature_row_top(state)) if button[0] == value)
+    pos = MousePos(x + width / 2 + pane.origin[0], y + height / 2 + pane.origin[1])
     pane._handle_mouse_press(pos)
     pane._handle_mouse_release(pos)
 
@@ -348,12 +434,14 @@ class NativeSettingsPageTests(unittest.TestCase):
     pane._handle_mouse_release(pos)
     action.callback.assert_not_called()
     self.click(pane, 2000)
+    self.assertTrue(pane.snapshot().editor)
+    self.choose(pane, 'Unmetered')
     action.callback.assert_called_once_with(2)
-    self.click(pane, 1800)
+    self.choose(pane, 'Metered')
     self.assertEqual(action.callback.call_args.args, (1,))
     action.callback.reset_mock()
     action.set_enabled(False)
-    self.click(pane, 2000)
+    self.choose(pane, 'Unmetered')
     action.set_enabled(True)
     pane.hide_event()
     self.click(pane, 2000)
@@ -404,6 +492,7 @@ class NativeSettingsPageTests(unittest.TestCase):
     action.toggle._callback.assert_not_called()
     self.assertFalse(action.get_state())
     self.click(pane, 2000, index=1)
+    self.choose(pane, 'Relaxed')
     pane.panel.request_personality.assert_called_once_with(2)
     personality.callback.assert_not_called()
     self.assertEqual(personality.selected_button, 1)
@@ -437,6 +526,7 @@ class NativeSettingsPageTests(unittest.TestCase):
     owner._slc_offsets = NS(_raw=lambda key: b'0')
     owner._update_experimental_mode_icon = Mock()
     owner._long_personality_setting = personality
+    owner._initial_cruise_speed = NS(action_item=NS(refresh=Mock()))
     owner._scroller = NS(_items=[toggle, personality, experimental])
     pane = self.panel(owner._scroller._items)
     pane.panel, pane.title = owner, 'Toggles'
@@ -445,11 +535,13 @@ class NativeSettingsPageTests(unittest.TestCase):
       pane._update_state()
       self.assertEqual(saved['IsLdwEnabled'], desired)
       self.assertEqual(pane.snapshot().rows[0].value, 'On' if desired else 'Off')
+    self.click(pane, 2000, index=1)
     for expected in (2, 0, 1):
-      self.click(pane, 2000, index=1)
+      self.choose(pane, personality.action_item.buttons[expected])
       pane._update_state()
       self.assertEqual(saved['LongitudinalPersonality'], expected)
-      self.assertEqual(pane.snapshot().rows[1].value, personality.action_item.buttons[expected])
+      self.assertEqual(pane.snapshot().rows[0].value, personality.action_item.buttons[expected])
+    pane._emit(FeatureUiAction('back'))
     owner._toggle_defs['IsLdwEnabled'] = ('', '', '', True)
     ui.engaged = True
     self.click(pane, 2000)
@@ -461,6 +553,31 @@ class NativeSettingsPageTests(unittest.TestCase):
       self.assertEqual(saved['ExperimentalMode'], desired)
       self.assertEqual(pane.snapshot().rows[2].value, 'On' if desired else 'Off')
     app.push_widget.assert_not_called()
+
+  def test_native_choice_editor_preserves_position_done_and_touch_guards(self):
+    with patch.object(gui_app, 'font', return_value=rl.Font()):
+      action = MultipleButtonAction(['Default', 'Metered', 'Unmetered'], 255, callback=Mock())
+    pane = self.panel([*(item(str(i), button_action()) for i in range(5)), item('Wi-Fi Network Metered', action)])
+    pane.scroll = 5
+    self.click(pane)
+    state = pane.snapshot()
+    row = state.rows[0]
+    self.assertTrue(state.editor)
+    self.assertEqual(state.parent_title, 'Device')
+    _, (x, y, width, height), _ = next(button for button in value_buttons(state, row, feature_row_top(state)) if button[0] == 'Unmetered')
+    pos = MousePos(x + width / 2, y + height / 2)
+    pane._handle_mouse_press(pos)
+    action.set_selected_button(1)
+    pane._handle_mouse_release(pos)
+    action.callback.assert_not_called()
+    state = pane.snapshot()
+    x, y, width, height = value_done_rect(state)
+    done = MousePos(x + width / 2, y + height / 2)
+    pane._handle_mouse_press(done)
+    pane._handle_mouse_release(done)
+    self.assertFalse(pane.snapshot().editor)
+    self.assertEqual(pane.scroll, 5)
+    pane.on_back.assert_not_called()
 
   def network_panel(self):
     manager = Mock(spec=WifiManager, is_connection_saved=lambda ssid: ssid == "Saved", connected_ssid="Saved",

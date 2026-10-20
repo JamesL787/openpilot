@@ -54,7 +54,7 @@ class VasmSavedSettingsTest(unittest.TestCase):
     self.assertEqual(page["editorRow"], 3)
     self.assertEqual(page["editor"]["cameraLeft"], [])
     intent = self.preview(page, page["editorRow"], DRAFT)
-    self.assertIn("camera right / vehicle left (4 points)", intent["question"])
+    self.assertEqual(intent["question"], "Save these camera window regions?")
     self.assertFalse(path.exists())
     self.assertTrue(self.confirm(intent))
     with self.assertRaises(SettingsChanged):

@@ -13,6 +13,7 @@ uint16_t sound_output_level = 0U;
 
 // heartbeat state
 uint32_t heartbeat_counter = 0;
+uint32_t heartbeat_tick_counter = 0;        // 8Hz
 bool heartbeat_lost = false;
 bool heartbeat_disabled = false;            // set over USB
 

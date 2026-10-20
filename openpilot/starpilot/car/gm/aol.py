@@ -122,6 +122,24 @@ def create_intent(cp, settings):
   return GmAolCardIntent(settings, cp) if qualified_gm(cp) else None
 
 
+def cold_main_readiness(cp, cs, native, events, *, recovering=False):
+  """A MAIN request may wait for host startup without acquiring either axis."""
+  from openpilot.cereal import log
+  names = (log.OnroadEvent.EventName.commIssue, log.OnroadEvent.EventName.commIssueAvgFreq,
+           log.OnroadEvent.EventName.locationdTemporaryError)
+  faults = [event for event in events if event.softDisable or event.immediateDisable]
+  host_wait = not faults if recovering else bool(faults and
+    all(event.softDisable and not event.immediateDisable and event.name in names for event in faults))
+  return bool(qualified_gm(cp) and aol_enabled(cp) and host_wait and
+    not any(event.userDisable for event in events) and
+    cs.canValid and not cs.canTimeout and cs.cruiseState.available and
+    not cs.steerFaultTemporary and not cs.steerFaultPermanent and not cs.accFaulted and
+    not cs.doorOpen and not cs.seatbeltUnlatched and not cs.steeringDisengage and
+    native is not None and native.pandaInventory and
+    not native.requestedLateral and not native.lateralAllowed and
+    not native.requestedLongitudinal and not native.longitudinalAllowed)
+
+
 def prior_main_off_intent_current(feedback, sm, cp, cs, axis, now_ns, *, latched, main_arm_ns, producer):
   """An older idle response cannot reject a newly armed cruise MAIN request."""
   from opendbc.car.structs import car

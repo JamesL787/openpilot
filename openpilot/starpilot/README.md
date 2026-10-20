@@ -61,9 +61,9 @@ the admission checks before launching processes.
 The initial Boolean allowlist is `AlwaysOnLateral`, `IsMetric`, `RecordAudio`,
 `RecordFront`, `RecordFrontLock`, `ShowDebugInfo`, `GsmMetered` and
 `OpenpilotEnabledToggle`. Saved values must be canonical `0` or `1` bytes.
-`AlwaysOnLateral` defaults to false for a fresh namespace; an existing true or
-false value is preserved. Registering this preference does not enable lateral
-control or claim that the feature has been ported.
+`AlwaysOnLateral` defaults to true for every fresh namespace, independently of
+vehicle identification; an existing true or false value is preserved. This
+preference default does not bypass vehicle, native or steering safety checks.
 
 The neutral bundle has `format: "starpilot-settings"`, integer `version: 1`,
 `source`, `preferences`, `pending` and `omitted`. Source metadata includes the full

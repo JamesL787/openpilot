@@ -265,6 +265,24 @@ class LaneRuntimeTests(unittest.TestCase):
           self.assertEqual(params.get('PauseLateralSpeed'), 0.)
           params.put('PauseLateralSpeed', 10., block=True)
 
+  def test_toyota_aol_remains_active_at_standstill_with_current_native_permission(self):
+    with OpenpilotPrefix(), mock.patch.dict(os.environ, {'REPLAY': '1'}), \
+         mock.patch('openpilot.selfdrive.controls.controlsd.messaging.PubMaster'):
+      params = Params()
+      cp = publish_corolla_params(params)
+      params.put('CarParams', cp.to_bytes(), block=True)
+      controls = Controls()
+      self.assertEqual(cp.minSteerSpeed, 0.)
+      for tick, (speed, allowed, fault) in enumerate(((2., True, False), (0., True, False),
+                                                     (0., False, False), (0., True, True),
+                                                     (0., True, False), (2., True, False))):
+        feed(controls, 2_000_000_000 + tick * 10_000_000, tick, speed=speed,
+             active=False, enabled=False, independent=True, native_allowed=allowed, fault=fault)
+        command, _ = controls.state_control()
+        self.assertEqual(command.latActive, allowed and not fault, (tick, speed))
+        self.assertFalse(command.longActive)
+        self.assertFalse(command.enabled)
+
   def test_strength_saved_values_and_live_refresh_keep_existing_admission(self):
     with tempfile.TemporaryDirectory() as temporary:
       root = Path(temporary)

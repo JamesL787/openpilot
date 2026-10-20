@@ -106,6 +106,8 @@ def test_remote_inference_failure_does_not_change_chestnut_status():
 def execute(statements, env):
   env.setdefault("os", SimpleNamespace(getenv=lambda key: None))
   env.setdefault("recovery_small_only", False)
+  from openpilot.starpilot.models.recovery import STARTUP_FALLBACK_EXIT
+  env.setdefault("STARTUP_FALLBACK_EXIT", STARTUP_FALLBACK_EXIT)
   exec(compile(ast.fix_missing_locations(ast.Module(body=statements, type_ignores=[])), str(MODEL_SOURCE), "exec"), env)
 
 
@@ -153,6 +155,8 @@ def test_observed_availability_and_big_eligibility(monkeypatch, present, cable, 
 @pytest.mark.parametrize("timeout", [False, True])
 @pytest.mark.parametrize("custom", [False, True])
 def test_big_worker_waits_before_load_and_timeout_preserves_small_fallback(custom, timeout):
+  # personal branch: a failed big load drops the Chestnut and keeps the Small fallback in this process (and
+  # requests a big-model retry); StarPilot instead exits for an isolated Small restart
   body = main_body()
   start = next(i for i, node in enumerate(body) if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "st")
   end = next(i for i, node in enumerate(body) if ast.unparse(node).startswith("config_realtime_process("))

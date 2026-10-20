@@ -97,7 +97,7 @@ class CameraSnapshotTest(unittest.TestCase):
     client = Client()
     result = capture('cabin', client_factory=lambda *args: client, clock=lambda: now)
     self.assertFalse(client.blocking)
-    self.assertEqual(client.frames, 2)
+    self.assertEqual(client.frames, 100)
     image = Image.open(BytesIO(result))
     self.assertEqual(image.size, (4, 4))
     self.assertEqual(image.mode, 'RGB')

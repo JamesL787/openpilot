@@ -3266,8 +3266,8 @@ struct Event {
     UPLOADER_STATE_D_E_P_R_E_C_A_T_E_D,
     PERIPHERAL_STATE,
     PANDA_STATES,
-    NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D,
-    NAV_ROUTE_D_E_P_R_E_C_A_T_E_D,
+    NAV_INSTRUCTION,
+    NAV_ROUTE,
     NAV_THUMBNAIL_D_E_P_R_E_C_A_T_E_D,
     ERROR_LOG_MESSAGE,
     NARROW_ROAD_ENCODE_DATA,
@@ -23101,13 +23101,13 @@ public:
   inline bool hasPandaStates() const;
   inline  ::capnp::List< ::cereal::PandaState,  ::capnp::Kind::STRUCT>::Reader getPandaStates() const;
 
-  inline bool isNavInstructionDEPRECATED() const;
-  inline bool hasNavInstructionDEPRECATED() const;
-  inline  ::cereal::NavInstruction::Reader getNavInstructionDEPRECATED() const;
+  inline bool isNavInstruction() const;
+  inline bool hasNavInstruction() const;
+  inline  ::cereal::NavInstruction::Reader getNavInstruction() const;
 
-  inline bool isNavRouteDEPRECATED() const;
-  inline bool hasNavRouteDEPRECATED() const;
-  inline  ::cereal::NavRoute::Reader getNavRouteDEPRECATED() const;
+  inline bool isNavRoute() const;
+  inline bool hasNavRoute() const;
+  inline  ::cereal::NavRoute::Reader getNavRoute() const;
 
   inline bool isNavThumbnailDEPRECATED() const;
   inline bool hasNavThumbnailDEPRECATED() const;
@@ -24064,21 +24064,21 @@ public:
   inline void adoptPandaStates(::capnp::Orphan< ::capnp::List< ::cereal::PandaState,  ::capnp::Kind::STRUCT>>&& value);
   inline ::capnp::Orphan< ::capnp::List< ::cereal::PandaState,  ::capnp::Kind::STRUCT>> disownPandaStates();
 
-  inline bool isNavInstructionDEPRECATED();
-  inline bool hasNavInstructionDEPRECATED();
-  inline  ::cereal::NavInstruction::Builder getNavInstructionDEPRECATED();
-  inline void setNavInstructionDEPRECATED( ::cereal::NavInstruction::Reader value);
-  inline  ::cereal::NavInstruction::Builder initNavInstructionDEPRECATED();
-  inline void adoptNavInstructionDEPRECATED(::capnp::Orphan< ::cereal::NavInstruction>&& value);
-  inline ::capnp::Orphan< ::cereal::NavInstruction> disownNavInstructionDEPRECATED();
+  inline bool isNavInstruction();
+  inline bool hasNavInstruction();
+  inline  ::cereal::NavInstruction::Builder getNavInstruction();
+  inline void setNavInstruction( ::cereal::NavInstruction::Reader value);
+  inline  ::cereal::NavInstruction::Builder initNavInstruction();
+  inline void adoptNavInstruction(::capnp::Orphan< ::cereal::NavInstruction>&& value);
+  inline ::capnp::Orphan< ::cereal::NavInstruction> disownNavInstruction();
 
-  inline bool isNavRouteDEPRECATED();
-  inline bool hasNavRouteDEPRECATED();
-  inline  ::cereal::NavRoute::Builder getNavRouteDEPRECATED();
-  inline void setNavRouteDEPRECATED( ::cereal::NavRoute::Reader value);
-  inline  ::cereal::NavRoute::Builder initNavRouteDEPRECATED();
-  inline void adoptNavRouteDEPRECATED(::capnp::Orphan< ::cereal::NavRoute>&& value);
-  inline ::capnp::Orphan< ::cereal::NavRoute> disownNavRouteDEPRECATED();
+  inline bool isNavRoute();
+  inline bool hasNavRoute();
+  inline  ::cereal::NavRoute::Builder getNavRoute();
+  inline void setNavRoute( ::cereal::NavRoute::Reader value);
+  inline  ::cereal::NavRoute::Builder initNavRoute();
+  inline void adoptNavRoute(::capnp::Orphan< ::cereal::NavRoute>&& value);
+  inline ::capnp::Orphan< ::cereal::NavRoute> disownNavRoute();
 
   inline bool isNavThumbnailDEPRECATED();
   inline bool hasNavThumbnailDEPRECATED();
@@ -56107,109 +56107,109 @@ inline ::capnp::Orphan< ::capnp::List< ::cereal::PandaState,  ::capnp::Kind::STR
       ::capnp::bounded<0>() * ::capnp::POINTERS));
 }
 
-inline bool Event::Reader::isNavInstructionDEPRECATED() const {
-  return which() == Event::NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D;
+inline bool Event::Reader::isNavInstruction() const {
+  return which() == Event::NAV_INSTRUCTION;
 }
-inline bool Event::Builder::isNavInstructionDEPRECATED() {
-  return which() == Event::NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D;
+inline bool Event::Builder::isNavInstruction() {
+  return which() == Event::NAV_INSTRUCTION;
 }
-inline bool Event::Reader::hasNavInstructionDEPRECATED() const {
-  if (which() != Event::NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D) return false;
+inline bool Event::Reader::hasNavInstruction() const {
+  if (which() != Event::NAV_INSTRUCTION) return false;
   return !_reader.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
 }
-inline bool Event::Builder::hasNavInstructionDEPRECATED() {
-  if (which() != Event::NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D) return false;
+inline bool Event::Builder::hasNavInstruction() {
+  if (which() != Event::NAV_INSTRUCTION) return false;
   return !_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
 }
-inline  ::cereal::NavInstruction::Reader Event::Reader::getNavInstructionDEPRECATED() const {
-  KJ_IREQUIRE((which() == Event::NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D),
+inline  ::cereal::NavInstruction::Reader Event::Reader::getNavInstruction() const {
+  KJ_IREQUIRE((which() == Event::NAV_INSTRUCTION),
               "Must check which() before get()ing a union member.");
   return ::capnp::_::PointerHelpers< ::cereal::NavInstruction>::get(_reader.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
 }
-inline  ::cereal::NavInstruction::Builder Event::Builder::getNavInstructionDEPRECATED() {
-  KJ_IREQUIRE((which() == Event::NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D),
+inline  ::cereal::NavInstruction::Builder Event::Builder::getNavInstruction() {
+  KJ_IREQUIRE((which() == Event::NAV_INSTRUCTION),
               "Must check which() before get()ing a union member.");
   return ::capnp::_::PointerHelpers< ::cereal::NavInstruction>::get(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
 }
-inline void Event::Builder::setNavInstructionDEPRECATED( ::cereal::NavInstruction::Reader value) {
+inline void Event::Builder::setNavInstruction( ::cereal::NavInstruction::Reader value) {
   _builder.setDataField<Event::Which>(
-      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D);
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_INSTRUCTION);
   ::capnp::_::PointerHelpers< ::cereal::NavInstruction>::set(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS), value);
 }
-inline  ::cereal::NavInstruction::Builder Event::Builder::initNavInstructionDEPRECATED() {
+inline  ::cereal::NavInstruction::Builder Event::Builder::initNavInstruction() {
   _builder.setDataField<Event::Which>(
-      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D);
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_INSTRUCTION);
   return ::capnp::_::PointerHelpers< ::cereal::NavInstruction>::init(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
 }
-inline void Event::Builder::adoptNavInstructionDEPRECATED(
+inline void Event::Builder::adoptNavInstruction(
     ::capnp::Orphan< ::cereal::NavInstruction>&& value) {
   _builder.setDataField<Event::Which>(
-      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D);
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_INSTRUCTION);
   ::capnp::_::PointerHelpers< ::cereal::NavInstruction>::adopt(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
 }
-inline ::capnp::Orphan< ::cereal::NavInstruction> Event::Builder::disownNavInstructionDEPRECATED() {
-  KJ_IREQUIRE((which() == Event::NAV_INSTRUCTION_D_E_P_R_E_C_A_T_E_D),
+inline ::capnp::Orphan< ::cereal::NavInstruction> Event::Builder::disownNavInstruction() {
+  KJ_IREQUIRE((which() == Event::NAV_INSTRUCTION),
               "Must check which() before get()ing a union member.");
   return ::capnp::_::PointerHelpers< ::cereal::NavInstruction>::disown(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
 }
 
-inline bool Event::Reader::isNavRouteDEPRECATED() const {
-  return which() == Event::NAV_ROUTE_D_E_P_R_E_C_A_T_E_D;
+inline bool Event::Reader::isNavRoute() const {
+  return which() == Event::NAV_ROUTE;
 }
-inline bool Event::Builder::isNavRouteDEPRECATED() {
-  return which() == Event::NAV_ROUTE_D_E_P_R_E_C_A_T_E_D;
+inline bool Event::Builder::isNavRoute() {
+  return which() == Event::NAV_ROUTE;
 }
-inline bool Event::Reader::hasNavRouteDEPRECATED() const {
-  if (which() != Event::NAV_ROUTE_D_E_P_R_E_C_A_T_E_D) return false;
+inline bool Event::Reader::hasNavRoute() const {
+  if (which() != Event::NAV_ROUTE) return false;
   return !_reader.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
 }
-inline bool Event::Builder::hasNavRouteDEPRECATED() {
-  if (which() != Event::NAV_ROUTE_D_E_P_R_E_C_A_T_E_D) return false;
+inline bool Event::Builder::hasNavRoute() {
+  if (which() != Event::NAV_ROUTE) return false;
   return !_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
 }
-inline  ::cereal::NavRoute::Reader Event::Reader::getNavRouteDEPRECATED() const {
-  KJ_IREQUIRE((which() == Event::NAV_ROUTE_D_E_P_R_E_C_A_T_E_D),
+inline  ::cereal::NavRoute::Reader Event::Reader::getNavRoute() const {
+  KJ_IREQUIRE((which() == Event::NAV_ROUTE),
               "Must check which() before get()ing a union member.");
   return ::capnp::_::PointerHelpers< ::cereal::NavRoute>::get(_reader.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
 }
-inline  ::cereal::NavRoute::Builder Event::Builder::getNavRouteDEPRECATED() {
-  KJ_IREQUIRE((which() == Event::NAV_ROUTE_D_E_P_R_E_C_A_T_E_D),
+inline  ::cereal::NavRoute::Builder Event::Builder::getNavRoute() {
+  KJ_IREQUIRE((which() == Event::NAV_ROUTE),
               "Must check which() before get()ing a union member.");
   return ::capnp::_::PointerHelpers< ::cereal::NavRoute>::get(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
 }
-inline void Event::Builder::setNavRouteDEPRECATED( ::cereal::NavRoute::Reader value) {
+inline void Event::Builder::setNavRoute( ::cereal::NavRoute::Reader value) {
   _builder.setDataField<Event::Which>(
-      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_ROUTE_D_E_P_R_E_C_A_T_E_D);
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_ROUTE);
   ::capnp::_::PointerHelpers< ::cereal::NavRoute>::set(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS), value);
 }
-inline  ::cereal::NavRoute::Builder Event::Builder::initNavRouteDEPRECATED() {
+inline  ::cereal::NavRoute::Builder Event::Builder::initNavRoute() {
   _builder.setDataField<Event::Which>(
-      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_ROUTE_D_E_P_R_E_C_A_T_E_D);
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_ROUTE);
   return ::capnp::_::PointerHelpers< ::cereal::NavRoute>::init(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
 }
-inline void Event::Builder::adoptNavRouteDEPRECATED(
+inline void Event::Builder::adoptNavRoute(
     ::capnp::Orphan< ::cereal::NavRoute>&& value) {
   _builder.setDataField<Event::Which>(
-      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_ROUTE_D_E_P_R_E_C_A_T_E_D);
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, Event::NAV_ROUTE);
   ::capnp::_::PointerHelpers< ::cereal::NavRoute>::adopt(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
 }
-inline ::capnp::Orphan< ::cereal::NavRoute> Event::Builder::disownNavRouteDEPRECATED() {
-  KJ_IREQUIRE((which() == Event::NAV_ROUTE_D_E_P_R_E_C_A_T_E_D),
+inline ::capnp::Orphan< ::cereal::NavRoute> Event::Builder::disownNavRoute() {
+  KJ_IREQUIRE((which() == Event::NAV_ROUTE),
               "Must check which() before get()ing a union member.");
   return ::capnp::_::PointerHelpers< ::cereal::NavRoute>::disown(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));

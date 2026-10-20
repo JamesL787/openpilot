@@ -316,7 +316,7 @@ class IoniqAvailabilityTests(unittest.TestCase):
       return sd.pm.messages['aolAxisState'].aolAxisState, sd.pm.messages['selfdriveState'].selfdriveState, command
     return sd, controls, step
 
-  def _ioniq_availability_callers(self, full_op=True, *, initially_armed=True):
+  def _ioniq_availability_callers(self, full_op=True, *, initially_armed=True, stock_angle=False):
     from opendbc.car.hyundai.interface import CarInterface
     from opendbc.car.hyundai.radar_interface import RadarInterface
     from openpilot.selfdrive.car.card import Car
@@ -332,13 +332,18 @@ class IoniqAvailabilityTests(unittest.TestCase):
 
     self.addCleanup(restore_simulation)
     os.environ['SIMULATION'] = '0'
-    _, cp = candidate(True)
-    cp.safetyConfigs[-1].safetyParam |= 0x0800
+    if stock_angle:
+      from opendbc.car.hyundai.tests.test_stock_angle_aol import source_profile
+      from opendbc.car.hyundai.values import CAR
+      cp = source_profile(CAR.HYUNDAI_IONIQ_5_PE if stock_angle is True else CAR(stock_angle))
+    else:
+      _, cp = candidate(True)
+      cp.safetyConfigs[-1].safetyParam |= 0x0800
     sd, controls, step = self._authority_callers(full_op, cp=cp, genuine_events=True)
     card_cp = cp.as_reader().as_builder()
     card = Car(CI=CarInterface(card_cp), RI=RadarInterface(card_cp))
     self.assertEqual(card.CP.to_dict(), sd.CP.to_dict())
-    self.assertEqual(card.CP.safetyConfigs[-1].safetyParam, 0x8895)
+    self.assertEqual(card.CP.safetyConfigs[-1].safetyParam, cp.safetyConfigs[-1].safetyParam if stock_angle else 0x8895)
     self.assertTrue(card.aol_card_intent.explicit_latch)
     card.slc_producer_session = 'authority-card'
     cs = car_state()
@@ -361,11 +366,14 @@ class IoniqAvailabilityTests(unittest.TestCase):
         frames.append(messaging.log_from_bytes(message.to_bytes()))
       card.sm.update_msgs(now / 1e9, frames + [m for m in (axis, event, sd.pm.messages.get('selfdriveState')) if m is not None])
       observed = state if state is not None else car_state()
+      if stock_angle and state is None:
+        observed.vEgoRaw = observed.vEgo
       observed.cruiseState.available = True
       card.CC_prev = card.sm['carControl']
       with mock.patch('openpilot.selfdrive.car.card.messaging.drain_sock_raw', return_value=[b'fixture']), \
            mock.patch('openpilot.selfdrive.car.card.can_capnp_to_list', return_value=[]), \
            mock.patch('openpilot.selfdrive.car.card.time.monotonic_ns', return_value=now), \
+           mock.patch('openpilot.selfdrive.car.card.time.clock_gettime_ns', return_value=now), \
            mock.patch('openpilot.selfdrive.car.card.REPLAY', False), \
            mock.patch.object(card.CI, 'update', return_value=observed), \
            mock.patch.object(card.RI, 'update', return_value=None), mock.patch.object(card.sm, 'update'):
@@ -375,6 +383,10 @@ class IoniqAvailabilityTests(unittest.TestCase):
 
     def drive(tick, **kwargs):
       kwargs.setdefault('latched', card.aol_card_intent.allowed_latch)
+      if stock_angle and 'observed_state' not in kwargs:
+        state = car_state(brake=kwargs.get('brake', False))
+        state.vEgoRaw = state.vEgo
+        kwargs['observed_state'] = state
       return step(tick, **kwargs)
 
     for tick in (0, 1):

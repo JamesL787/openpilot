@@ -15,6 +15,7 @@ import weakref
 from openpilot.starpilot.ui.pip_sidecam import Crop, Mask, PiPStream, Rect, Signals, bubble_rect, curved_crop, selected_sides
 from openpilot.starpilot.ui.pip_shaders import PIP_CURVED_FRAGMENT_SHADER, PIP_FRAGMENT_SHADER
 from openpilot.starpilot.ui.pip_render import PiPRenderer, _external_shader
+from openpilot.starpilot.ui import pip_render
 from openpilot.starpilot.ui.pip_preferences import SavedPiP, starting_mask
 from openpilot.starpilot.ui.pip_warning import PiPWarningSource
 from openpilot.starpilot.spot_monitor.inference import MODEL_SHA256
@@ -36,15 +37,15 @@ def test_mask_maps_image_left_to_vehicle_right_and_rejects_unbounded_crop():
     assert Mask.parse(invalid) is None
 
 
-def test_selected_sides_use_pip_triggers_independently_of_vasm():
+def test_selected_sides_use_pip_triggers_including_vasm():
   mask = Mask.parse({"width": 100, "height": 100, "center_left": [25, 50],
                      "center_right": [75, 50], "crop_size": 20})
   assert mask is not None
   signals = Signals(True, left_blinker=True, right_blinker=False, left_blindspot=False,
                     right_blindspot=False, vasm_right=True)
   active = {"started": True, "enabled": True, "on_blinker": True, "on_bsm": True}
-  assert selected_sides(mask, signals, **active) == ("left",)
-  assert selected_sides(mask, Signals(True, False, False, False, False, True, True), **active) == ()
+  assert selected_sides(mask, signals, **active) == ("right", "left")
+  assert selected_sides(mask, Signals(True, False, False, False, False, True, True), **active) == ("right", "left")
   assert selected_sides(mask, signals, **{**active, "on_bsm": False}) == ("left",)
   assert selected_sides(mask, signals, **{**active, "started": False}) == ()
   assert selected_sides(mask, Signals(False, True, True, True, True), **active) == ()
@@ -167,7 +168,7 @@ def test_native_pip_passes_only_qualified_visual_sides_without_replacing_oem_bsm
        patch.object(runtime_app.time, "monotonic_ns", return_value=101), \
        patch.dict("os.environ", {"STARPILOT_PIP_DEV": "1", "STARPILOT_VASM_DEVELOPMENT": "0"}):
     shell._render_pip(SimpleNamespace(x=0), state)
-    assert shell.pip_warning.sample.call_args.kwargs["enabled"] is False
+    assert shell.pip_warning.sample.call_args.kwargs["enabled"] is True
     assert shell.pip_renderer.render.call_args.args[2].right_blindspot
   with patch.object(runtime_app, "ui_state", SimpleNamespace(params=object(), sm=object(), started_frame=0)), \
        patch.object(runtime_app, "display_message", return_value=None), \
@@ -202,7 +203,7 @@ def test_native_pip_passes_only_qualified_visual_sides_without_replacing_oem_bsm
   with patch.object(runtime_app.time, "monotonic_ns", return_value=104):
     rendered_before = shell.pip_renderer.render.call_count
     shell._render_pip(SimpleNamespace(x=0), state)
-    shell.pip_warning.close.assert_called_once()
+    shell.pip_warning.close.assert_not_called()
     shell.pip_renderer.deactivate.assert_called_once()
     assert shell.pip_renderer.render.call_count == rendered_before
 
@@ -284,6 +285,18 @@ def test_renderer_uses_saved_widget_position_and_removal_deactivates_camera():
     assert stream.poll.call_count == count
     stream.set_active.assert_called_with(False)
 
+
+
+def test_curved_pip_draws_red_rim_only_for_warning():
+  renderer = PiPRenderer("curved", Mock(spec=PiPStream), frame_availability=Mock())
+  frame = SimpleNamespace(width=100, height=100, stride=100)
+  with patch.object(pip_render, "rl") as graphics, patch.object(pip_render, "COMMA_HARDWARE", False):
+    renderer._draw(Mock(), Mock(), frame, Rect(10, 20, 200, 100), 0, 0, 50, False, warning=True)
+    graphics.draw_rectangle_rounded_lines_ex.assert_called_once()
+    assert graphics.draw_rectangle_rounded_lines_ex.call_args.args[1:4] == (0.44, 16, 4)
+    graphics.draw_rectangle_rounded_lines_ex.reset_mock()
+    renderer._draw(Mock(), Mock(), frame, Rect(10, 20, 200, 100), 0, 0, 50, False)
+    graphics.draw_rectangle_rounded_lines_ex.assert_not_called()
 
 
 def test_renderer_c4_uses_recent_side_and_keeps_camera_warm_while_hidden():
@@ -649,7 +662,7 @@ class TestPiPSidecam(unittest.TestCase):
     test_mask_maps_image_left_to_vehicle_right_and_rejects_unbounded_crop()
 
   def test_selected_sides(self):
-    test_selected_sides_use_pip_triggers_independently_of_vasm()
+    test_selected_sides_use_pip_triggers_including_vasm()
 
   def test_visual_warning_expiry_and_oem_bsm(self):
     test_visual_warning_event_expires_without_refresh_and_preserves_oem_bsm()

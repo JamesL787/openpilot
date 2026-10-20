@@ -137,8 +137,17 @@ class TestVehicleCollection(unittest.TestCase):
 
   def test_native_safety_targets_are_top_level_and_complete(self):
     root = Path(__file__).resolve().parents[3] / "opendbc_repo/opendbc/safety/tests"
-    self.assertEqual({Path(target).name for target in targets_for("safety-debug")}, {path.name for path in root.glob("test_*.py")})
-    self.assertTrue(all(Path(target).parent.name == "tests" for target in targets_for("safety-debug")))
+    self.assertEqual({Path(target.split("::", 1)[0]).name for target in targets_for("safety-debug")}, {path.name for path in root.glob("test_*.py")})
+    self.assertTrue(all(Path(target.split("::", 1)[0]).parent.name == "tests" for target in targets_for("safety-debug")))
+
+  def test_pe_native_variants_select_healthy_acceptance_and_denial_classes_separately(self):
+    path = "opendbc_repo/opendbc/safety/tests/test_ioniq5pe_paired_native.py"
+    debug, release = targets_for("safety-debug"), targets_for("safety-release")
+    self.assertIn(path + "::TestPELongDebug", debug)
+    self.assertNotIn(path + "::TestPELongReleaseDenied", debug)
+    self.assertIn(path + "::TestPELongReleaseDenied", release)
+    self.assertNotIn(path + "::TestPELongDebug", release)
+    self.assertNotIn(path, debug)
 
   def test_interfaces_do_not_mislabel_historical_route_test_base(self):
     root = Path(__file__).resolve().parents[3]

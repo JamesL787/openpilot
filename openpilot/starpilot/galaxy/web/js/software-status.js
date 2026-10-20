@@ -79,9 +79,9 @@ export function validHistory(value) {
 }
 
 export class SoftwareStatusFeed {
-  constructor({ includeHistory = true, publish, unauthorized = () => {}, restarting = () => {}, fetcher = (...args) => fetch(...args),
+  constructor({ includeHistory = true, publish, unauthorized = () => {}, restarting = () => {}, preparing = () => {}, cancelPreparation = () => {}, fetcher = (...args) => fetch(...args),
                 later = (fn, ms) => setTimeout(fn, ms), cancelTimer = (id) => clearTimeout(id) }) {
-    Object.assign(this, { includeHistory, publish, unauthorized, restarting, fetcher, later, cancelTimer })
+    Object.assign(this, { includeHistory, publish, unauthorized, restarting, preparing, cancelPreparation, fetcher, later, cancelTimer })
     this.active = false
     this.generation = 0
     this.controller = null
@@ -99,6 +99,8 @@ export class SoftwareStatusFeed {
     this.installBaseline = null
     this.notice = ""
     this.error = ""
+    this.startupFailures = 0
+    this.waitingForStatus = false
   }
 
   emit(status) {
@@ -117,6 +119,8 @@ export class SoftwareStatusFeed {
     this.attempted = false
     this.busy = this.mutating = this.blocked = this.connectionLost = this.uncertain = false
     this.notice = this.error = ""
+    this.startupFailures = 0
+    this.waitingForStatus = false
     this.emit("idle")
   }
 
@@ -184,12 +188,15 @@ export class SoftwareStatusFeed {
       if (!response.ok) {
         const error = new Error(payload?.error || payload?.message || "Software request failed. Refresh to try again.")
         error.rejected = response.status >= 400 && response.status < 500
+        error.startupUnavailable = body === null && response.status === 503 && payload?.error === "Updater status is unavailable"
         throw error
       }
       if (!validSoftwareSnapshot(payload)) throw new Error("Software response is unavailable. Refresh to try again.")
       this.data = payload.operations === undefined ? { ...payload, operations: unavailableOperations() } : payload
       this.attempted = true
       this.blocked = false
+      this.startupFailures = 0
+      this.waitingForStatus = false
       if (body !== null) {
         this.uncertain = false
         this.uncertainAction = null
@@ -240,13 +247,22 @@ export class SoftwareStatusFeed {
       return payload
     } catch (error) {
       if (this.active && generation === this.generation && !controller.signal.aborted) {
+        if (error?.startupUnavailable && !this.data && ++this.startupFailures < 3) {
+          this.waitingForStatus = true
+          this.error = ""
+          return null
+        }
         this.attempted = true
         this.blocked = true
+        this.waitingForStatus = false
         this.connectionLost = !reachedServer
         if (body !== null) {
           this.uncertain = !error?.rejected
           this.uncertainAction = this.uncertain ? body : null
-          if (error?.rejected && ["install", "update", "fast", "rollback", "version"].includes(body.action)) this.installBaseline = null
+          if (error?.rejected && ["install", "update", "fast", "rollback", "version"].includes(body.action)) {
+            this.installBaseline = null
+            this.cancelPreparation()
+          }
         }
         this.error = error?.message || "Software request failed. Refresh to try again."
         this.emit(this.data ? "ready" : this.attempted ? "unavailable" : "loading")
@@ -257,7 +273,7 @@ export class SoftwareStatusFeed {
         if (this.timeout !== null) this.cancelTimer(this.timeout)
         this.controller = this.timeout = null
         this.busy = this.mutating = false
-        this.emit(this.data ? "ready" : "unavailable")
+        this.emit(this.data ? "ready" : this.waitingForStatus ? "loading" : "unavailable")
         this.schedulePoll(this.error ? 2000 : null)
       }
     }
@@ -290,6 +306,7 @@ export class SoftwareStatusFeed {
     if (action === "install") this.installBaseline = { commit: this.data.installed.commit,
       branch: this.data.installed.branch, target: branch, action }
     if (["update", "fast", "rollback", "version"].includes(action)) this.installBaseline = { commit: this.data.installed.commit, branch: this.data.installed.branch, target: branch, action, ...(action === "version" ? { selectedCommit: selection.selectedCommit } : {}) }
+    if (this.installBaseline) this.preparing(this.installBaseline)
     if (action === "version") return this.run({ action, branch, expectedCommit: selection.expectedCommit, selectedCommit: selection.selectedCommit })
     return this.run(action === "check" ? { action } : { action, branch })
   }
@@ -298,14 +315,16 @@ export class SoftwareStatusFeed {
 export const SoftwarePage = {
   components: { GxDialog, GxState, GxNotice, GalaxySelect, GalaxySettingRow, ToggleBackup },
   name: "SoftwarePage",
-  props: { mode: { type: String, required: true }, unauthorized: { type: Function, required: true }, restarting: { type: Function, default: () => {} } },
+  props: { mode: { type: String, required: true }, unauthorized: { type: Function, required: true }, restarting: { type: Function, default: () => {} },
+    preparing: { type: Function, default: () => {} }, cancelPreparation: { type: Function, default: () => {} } },
   data: () => ({ status: "idle", data: null, busy: false, uncertain: false, notice: "", error: "",
     initialChecking: true, draftBranch: "", primaryChoice: "", draftTouched: false, dialog: null, historyKind: "recent", version: "" }),
   created() {
     this.feed = new SoftwareStatusFeed({ includeHistory: false, publish: (update) => {
       Object.assign(this.$data, update)
       if (update.data && !this.draftTouched) this.syncDraftBranch(update.data.operations.selectedTarget)
-    }, unauthorized: this.unauthorized, restarting: this.restarting })
+    }, unauthorized: this.unauthorized, restarting: this.restarting,
+    preparing: this.preparing, cancelPreparation: this.cancelPreparation })
   },
   async mounted() {
     if (this.mode !== "local") return

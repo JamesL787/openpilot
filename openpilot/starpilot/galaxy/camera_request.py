@@ -7,7 +7,7 @@ import stat
 import tempfile
 import time
 
-TTL_NS = 15_000_000_000
+TTL_NS = 27_000_000_000
 FRAME_TTL_NS = 5_000_000_000
 
 

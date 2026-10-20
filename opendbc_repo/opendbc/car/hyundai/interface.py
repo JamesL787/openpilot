@@ -1,3 +1,4 @@
+from opendbc.car.hyundai.ioniq5pe_long_profile import required as pe_long_required, candidate as pe_long_candidate
 from opendbc.car.pedal import supported_pedal_detected
 from opendbc.car.hyundai.classic_scc_aol import CLASSIC_SCC_IDS
 from opendbc.car import Bus, get_safety_config, structs, uds
@@ -5,7 +6,7 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.non_scc_aol import NON_SCC_IDS
 from opendbc.car.hyundai.values import (is_blended, is_blended_alpha, HyundaiFlags, CAR, DBC, HyundaiSafetyFlags, CANFD_ANGLE_MODEL_BITS,
                                         CANFD_ANGLE_OBSERVED_ADAS_BIT, HYUNDAI_MRR35_RADAR_DBC, HYUNDAI_MRR30_RADAR_DBC,
-                                        HYUNDAI_GV70_RADAR_DBC, HYUNDAI_G90_RADAR_DBC)
+                                        HYUNDAI_GV70_RADAR_DBC, HYUNDAI_G90_RADAR_DBC, HYUNDAI_MRREVO14F_RADAR_DBC)
 from opendbc.car.hyundai.radar_interface import RADAR_START_ADDR, MRR35_RADAR_START_ADDR, MRR30_RADAR_START_ADDR, radar_bus
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.disable_ecu import disable_ecu
@@ -41,10 +42,15 @@ class CarInterface(CarInterfaceBase):
     from opendbc.car.hyundai.torque_ev_startup import required as torque_ev_required
     from opendbc.car.hyundai.blended_longitudinal import startup_required as blended_required
     from opendbc.car.hyundai.legacy_long_startup import required as legacy_required
-    return legacy_required(cp) or blended_required(cp) or required(cp) or ev6_required(cp) or gv70_required(cp) or ev9_required(cp) or torque_ev_required(cp)
+    return (pe_long_required(cp) or legacy_required(cp) or blended_required(cp) or required(cp) or
+            ev6_required(cp) or gv70_required(cp) or ev9_required(cp) or torque_ev_required(cp))
 
   @staticmethod
   def startup_owner(cp, callbacks, *, requested):
+    from opendbc.car.hyundai.ioniq5pe_startup import PEPendingStartup
+    pe_cp = pe_long_candidate(cp, enabled=requested, is_release=False)
+    if pe_cp is not None:
+      return PEPendingStartup(pe_cp, callbacks, stock_cp=cp)
     from opendbc.car.hyundai.legacy_long_aol import candidate as legacy_candidate
     from opendbc.car.hyundai.legacy_long_startup import LegacyLongStartup
     legacy_cp = legacy_candidate(cp, requested=requested)
@@ -252,6 +258,8 @@ class CarInterface(CarInterfaceBase):
       ret.radarUnavailable = not all(fingerprint[1].get(addr) == 8 for addr in range(0x500, 0x520))
     elif blended_track_radar(ret) or DBC[ret.carFingerprint].get(Bus.radar) == HYUNDAI_GV70_RADAR_DBC:
       ret.radarUnavailable = not all(fingerprint[0].get(addr) == 32 for addr in range(0x210, 0x220))
+    elif DBC[ret.carFingerprint].get(Bus.radar) == HYUNDAI_MRREVO14F_RADAR_DBC:
+      ret.radarUnavailable = fingerprint[1].get(KONA_NON_SCC_FCA_RADAR_ADDR) != 8
     elif DBC[ret.carFingerprint].get(Bus.radar) == HYUNDAI_MRR30_RADAR_DBC:
       ret.radarUnavailable = fingerprint[radar_bus(ret)].get(MRR30_RADAR_START_ADDR) != 32
     elif DBC[ret.carFingerprint].get(Bus.radar) == HYUNDAI_MRR35_RADAR_DBC:
@@ -333,7 +341,7 @@ class CarInterface(CarInterfaceBase):
 
     # Advertise only the exact developer stock profile. Startup still owns the
     # saved-choice promotion, so availability never selects LONG during fingerprinting.
-    if candidate == CAR.KIA_EV9:
+    if candidate in (CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5_PE):
       from opendbc.car.hyundai.ccnc_ev_stock import qualified as ev9_stock_qualified
       ret.alphaLongitudinalAvailable = not is_release and ev9_stock_qualified(ret)
 
@@ -346,12 +354,14 @@ class CarInterface(CarInterfaceBase):
     return ret
 
   def update(self, can_packets):
-    if (self.CS.gv70_camera_lead is not None or self.CS.ev9_camera_lead is not None or
+    if (self.CS.pe_ready is not None or self.CS.gv70_camera_lead is not None or self.CS.ev9_camera_lead is not None or
         self.CS.ioniq6_camera_lead is not None or self.CS.torque_ev_camera_lead is not None or self.CS.forte_lkas_sources is not None):
       # This isolated optional parser must never join required controls health.
       can_packets = list(can_packets)
       if self.CS.gv70_camera_lead is not None:
         self.CS.gv70_camera_lead.update(can_packets)
+      if self.CS.pe_ready is not None:
+        self.CS.pe_ready.observe(can_packets)
       if self.CS.ev9_camera_lead is not None:
         self.CS.ev9_camera_lead.update(can_packets)
       if self.CS.ioniq6_camera_lead is not None:

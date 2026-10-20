@@ -624,9 +624,9 @@ wheels = [
 ]
 
 [[package]]
-name = "msgq"
-version = "0.0.1"
-source = { editable = "msgq_repo" }
+name = "msgq-ipc"
+version = "1.1"
+source = { virtual = "msgq_repo" }
 
 [package.metadata]
 requires-dist = [
@@ -757,7 +757,7 @@ tools = [
 ]
 vendored = [
     { name = "jetlink" },
-    { name = "msgq" },
+    { name = "msgq-ipc" },
     { name = "opendbc" },
     { name = "pandacan" },
     { name = "rednose" },
@@ -793,7 +793,7 @@ requires-dist = [
     { name = "jeepney" },
     { name = "jetlink", marker = "extra == 'vendored'", editable = "jetlink_repo" },
     { name = "matplotlib", marker = "extra == 'tools'" },
-    { name = "msgq", marker = "extra == 'vendored'", editable = "msgq_repo" },
+    { name = "msgq-ipc", marker = "extra == 'vendored'", virtual = "msgq_repo" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "opendbc", marker = "extra == 'vendored'", editable = "opendbc_repo" },
     { name = "pandacan", marker = "extra == 'vendored'", editable = "panda" },

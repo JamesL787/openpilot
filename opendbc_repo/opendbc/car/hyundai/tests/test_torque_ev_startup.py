@@ -53,13 +53,15 @@ def owner(stock, *, session=True, reply=None, restore=True, send_exception=False
     request = requests[0]
 
     def get_data(timeout):
+      sender([(instance.address, bytes((len(request),)) + request + bytes(7 - len(request)), bus)])
       if request == b"\x10\x03":
-        return {(instance.address, None): b"\x50\x03"} if session else {}
+        return {(instance.address, None): b""} if session else {}
       if request == b"\x28\x83\x01":
-        sender([(instance.address, b"\x03" + request + b"\x00" * 4, bus)])
         return {} if reply is None else {(instance.address, None): reply}
       if request == b"\x28\x00\x01":
-        return {(instance.address, None): b"\x68\x00"} if restore else {}
+        return {(instance.address, None): b""} if restore else {}
+      if request == b"\x10\x01":
+        return {(instance.address, None): b""} if restore else {}
       raise AssertionError(request)
 
     return SimpleNamespace(get_data=get_data)
@@ -80,12 +82,14 @@ def test_exact_typed_cp_promotes_without_stock_aol_alias(stock):
   assert required(cp)  # malformed LONG still requires sealed owner
 
 
-def test_session_failure_never_emits_and_retains_entire_stock(stock):
+def test_session_failure_restores_default_without_disable_and_retains_entire_stock(stock):
   startup, sent = owner(stock, session=False)
   with patch("opendbc.car.hyundai.torque_ev_startup.time.sleep"):
     final = startup.prepare(admission=lambda: True)
-  assert sent == []
-  assert startup.outcome is Outcome.STOCK_UNTOUCHED
+  assert startup.session_attempted and not startup.disable_attempted
+  assert all(data[1:2] == b"\x10" for _, data, _ in sent)
+  assert sent[-1][1][:3] == b"\x02\x10\x01"
+  assert startup.outcome is Outcome.STOCK_RESTORED
   assert final.to_dict() == stock.to_dict()
 
 
@@ -96,7 +100,7 @@ def test_suppressed_silence_is_sent_unconfirmed_not_positive_ack(stock):
   assert startup.outcome is Outcome.SENT_UNCONFIRMED
   assert startup.disable_response == "suppressed_reply_sent_unconfirmed"
   assert final.openpilotLongitudinalControl
-  assert len(sent) == 1
+  assert [data[1:4] for _, data, _ in sent] == [b"\x10\x03\x00", b"\x28\x83\x01"]
   assert startup.keeper.started
   assert not startup.before_control(configured=False, sources_current=True, control_current=True)
   assert startup.before_control(configured=True, sources_current=True, control_current=True)

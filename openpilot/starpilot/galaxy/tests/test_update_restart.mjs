@@ -1,8 +1,24 @@
 import assert from "node:assert/strict"
-import { UpdateRestart, UPDATE_RESTART_KEY } from "../web/js/update-restart.js"
+import { readFileSync } from "node:fs"
+import { UpdateRestart, UPDATE_RESTART_KEY, UPDATE_RESTART_PREPARED_KEY } from "../web/js/update-restart.js"
 import { SoftwareStatusFeed } from "../web/js/software-status.js"
 
 const baseline = { commit: 'a'.repeat(40), branch: 'Dom', target: 'Dom', action: 'fast' }
+// Vue evaluates template callbacks against component data, not module scope.
+const app = readFileSync(new URL('../web/js/app.js', import.meta.url), 'utf8')
+const dataFields = app.match(/data: \(\) => \(\{([^\n]+)\}\),/)?.[1]
+assert.ok(dataFields)
+const calls = []
+const updateRestart = { prepare: value => calls.push(['prepare', value]), start: value => calls.push(['start', value]) }
+const deviceRestart = { instance: 'current-instance' }
+const context = new Function('state', 'authState', 'authForm', 'route', 'NAV', 'updateRestart', 'deviceRestart', 'UPDATE_RESTART_MESSAGE',
+  `return ({${dataFields}})` )({}, {}, {}, {}, [], updateRestart, deviceRestart, '')
+for (const [prop, action] of [['preparing', 'prepare'], ['restarting', 'start']]) {
+  const expression = app.match(new RegExp(`:${prop}="([^"]+)"`))?.[1]
+  assert.ok(expression)
+  new Function('context', 'baseline', `with (context) { return (${expression})(baseline) }`)(context, baseline)
+  assert.deepEqual(calls.at(-1), [action, { ...baseline, instance: 'current-instance' }])
+}
 const status = (commit = baseline.commit, request = null) => ({ schemaVersion: 1,
   installed: { commit, branch: 'Dom' }, updater: { state: 'idle' }, operations: { request } })
 const pending = { action: 'fast', state: 'pending' }
@@ -22,8 +38,12 @@ function fixture(saved = null) {
 const normal = fixture()
 assert.deepEqual(normal.states, [false])
 assert.equal(normal.requests.length, 0)
+normal.recovery.prepare(baseline)
+assert.deepEqual(normal.states, [false], 'preparing must leave the update request page mounted')
+assert.equal(normal.values.has(UPDATE_RESTART_PREPARED_KEY), true)
 normal.recovery.start(baseline)
 assert.deepEqual(normal.states, [false, true])
+assert.equal(normal.values.has(UPDATE_RESTART_PREPARED_KEY), false)
 normal.recovery.start(baseline)
 assert.equal(normal.requests.length, 1)
 normal.requests[0].resolve(status(baseline.commit, pending))
@@ -49,6 +69,33 @@ installing.recovery.start(baseline)
 installing.requests[0].resolve(status('b'.repeat(40), { state: 'complete', outcome: 'restarting' }))
 await flush()
 assert.equal(installing.reloads, 0)
+const completedAfterReboot = fixture({ ...baseline, instance: 'one' })
+completedAfterReboot.requests[0].resolve({ ...status('b'.repeat(40), { state: 'complete', outcome: 'restarting' }), instance: 'two' })
+await flush()
+assert.equal(completedAfterReboot.reloads, 1)
+
+const canceled = fixture()
+canceled.recovery.prepare(baseline)
+canceled.recovery.cancelPreparation()
+assert.equal(canceled.values.has(UPDATE_RESTART_PREPARED_KEY), false)
+const abandoned = fixture()
+abandoned.recovery.prepare(baseline)
+abandoned.recovery.start(abandoned.recovery.prepared, { provisional: true })
+assert.equal(abandoned.values.has(UPDATE_RESTART_PREPARED_KEY), true)
+abandoned.recovery.now = () => Date.now() + 31000
+abandoned.requests[0].resolve(status())
+await flush()
+assert.equal(abandoned.reloads, 1)
+assert.equal(abandoned.values.has(UPDATE_RESTART_PREPARED_KEY), false)
+const recoveryAfterPageError = fixture()
+recoveryAfterPageError.recovery.prepare(baseline)
+const preparedValues = recoveryAfterPageError.values
+const preparedStorage = { getItem: key => preparedValues.get(key), setItem: (key, value) => preparedValues.set(key, value), removeItem: key => preparedValues.delete(key) }
+const resumedStates = []
+const resumedScreen = new UpdateRestart({ storage: preparedStorage, publish: value => resumedStates.push(value),
+  request: () => new Promise(() => {}), later: () => 1 })
+assert.equal(resumedScreen.baseline?.commit, baseline.commit)
+assert.equal(resumedStates.at(-1), true)
 
 // A same-revision return is ambiguous; keep waiting for explicit completion or a changed build.
 const resumed = fixture(baseline)
@@ -81,19 +128,15 @@ kept.recovery.start({ ...baseline, instance: 'one' })
 kept.recovery.start({ ...baseline, instance: 'two' })
 assert.equal(JSON.parse(kept.values.get(UPDATE_RESTART_KEY)).instance, 'one')
 
-// Only update-related restarts/disconnects trigger the full-screen handoff.
+// Keep update progress visible until Galaxy actually loses the device connection.
 const restarts = []
 const feed = new SoftwareStatusFeed({ publish() {}, restarting: value => restarts.push(value) })
-feed.data = status(baseline.commit, pending)
-feed.error = 'Connection lost'
-feed.emit('ready')
-assert.equal(restarts.length, 0)
 feed.installBaseline = baseline
-feed.error = 'Server rejected request'
+feed.data = status(baseline.commit, { action: 'update', state: 'pending' })
+feed.emit('ready')
+feed.error = 'Updater status is unavailable'
 feed.emit('ready')
 assert.equal(restarts.length, 0)
-feed.data.operations.request = null
-feed.error = 'Connection lost'
 feed.connectionLost = true
 feed.emit('ready')
-assert.equal(restarts.length, 1)
+assert.deepEqual(restarts, [baseline])

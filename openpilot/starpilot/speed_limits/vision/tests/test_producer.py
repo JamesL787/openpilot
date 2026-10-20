@@ -12,6 +12,8 @@ from openpilot.cereal.visionipc import VisionStreamType
 from openpilot.starpilot.speed_limits.vision import producer
 from openpilot.starpilot.speed_limits.vision.model import Detection, VisionModelCore
 
+place_inference = producer._place_inference
+
 
 class EndProducer(BaseException):
   pass
@@ -28,9 +30,16 @@ class TestVisionProducer(unittest.TestCase):
     self.sm.logMonoTime = {'drivingModelData': 0}
     self.sm.__getitem__ = Mock(return_value=self.model)
     for patcher in (patch.object(messaging, 'SubMaster', return_value=self.sm),
-                    patch.object(producer, '_configure_process')):
+                    patch.object(producer, '_configure_process'), patch.object(producer, '_place_inference')):
       patcher.start()
       self.addCleanup(patcher.stop)
+
+  def test_vision_avoids_vasm_core_when_both_enabled(self):
+    with patch.object(producer, 'vasm_enabled', side_effect=[True, False]), \
+         patch('openpilot.common.realtime.set_core_affinity') as affinity:
+      place_inference(object())
+      place_inference(object())
+    self.assertEqual([call.args[0] for call in affinity.call_args_list], [[0, 1], [0, 1, 2]])
 
   def clock_pairs(self, clocks, states=None):
     pairs = iter(clocks)

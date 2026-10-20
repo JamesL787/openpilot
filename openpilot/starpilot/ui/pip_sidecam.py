@@ -142,11 +142,11 @@ def selected_sides(mask: Mask | None, signals: Signals, *, started: bool, enable
   if not (started and enabled and signals.car_state_fresh and mask is not None):
     return ()
   sides: list[str] = []
-  for vehicle_side, blinker, blindspot in (
-    ("right", signals.right_blinker, signals.right_blindspot),
-    ("left", signals.left_blinker, signals.left_blindspot),
+  for vehicle_side, blinker, blindspot, visual_warning in (
+    ("right", signals.right_blinker, signals.right_blindspot, signals.vasm_right),
+    ("left", signals.left_blinker, signals.left_blindspot, signals.vasm_left),
   ):
-    if mask.crop(vehicle_side) is not None and ((on_blinker and blinker) or (on_bsm and blindspot)):
+    if mask.crop(vehicle_side) is not None and ((on_blinker and blinker) or (on_bsm and (blindspot or visual_warning))):
       sides.append(vehicle_side)
   return tuple(sides)
 

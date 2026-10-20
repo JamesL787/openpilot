@@ -14,7 +14,7 @@ from openpilot.starpilot.ui.onroad import axis_status_color, clock_text, driving
 from openpilot.starpilot.ui.onroad_customization import MODE_WIDGET
 from openpilot.starpilot.ui.onroad_compact_widgets import CompactHudRenderer
 from openpilot.starpilot.ui.onroad_large_widgets import UnifiedSpeedWidget
-from openpilot.starpilot.ui.onroad_state import OnroadInput
+from openpilot.starpilot.ui.onroad_state import AlertSize, OnroadAlert, OnroadInput
 from openpilot.starpilot.ui.onroad_torque import TorqueBarWidget
 from openpilot.starpilot.ui.presentation import Profile
 from openpilot.starpilot.ui.preview_shell import reference_onroad
@@ -74,6 +74,8 @@ class TestOnroadAxes(unittest.TestCase):
     self.ui.sm['selfdriveState'].state = 'overriding'
     state = self.state(True, False)
     self.assertTrue(state.longitudinal_overridden)
+    self.assertTrue(state.driver_override_active)
+    self.assertTrue(self.state(False, False).driver_override_active)
     self.assertTrue(state.cruise_active)
     self.assertTrue(state.lateral_active)
     self.assertEqual(rgba(axis_status_color(state)), (145, 155, 149, 255))
@@ -85,6 +87,41 @@ class TestOnroadAxes(unittest.TestCase):
     self.ui.sm['selfdriveState'].enabled = True
     self.ui.sm.logMonoTime['selfdriveState'] = NOW - 300_000_000
     self.assertFalse(self.state(True, False).longitudinal_overridden)
+
+  def test_driver_inputs_gray_active_axes_and_clear_on_release(self):
+    car = self.ui.sm['carState']
+    for lateral, longitudinal in ((False, False), (True, False), (False, True), (True, True)):
+      self.ui.sm['selfdriveState'].enabled = longitudinal
+      for gas, steering in ((True, False), (False, True), (True, True)):
+        with self.subTest(lateral=lateral, longitudinal=longitudinal, gas=gas, steering=steering):
+          car.gasPressed, car.steeringPressed = gas, steering
+          state = self.state(lateral, longitudinal)
+          self.assertEqual(state.driver_override_active, lateral or longitudinal)
+          self.assertEqual((state.lateral_active, state.longitudinal_active), (lateral, longitudinal))
+          self.assertFalse(state.longitudinal_overridden)
+          self.assertEqual(state.cruise_active, longitudinal)
+          self.assertEqual(rgba(axis_status_color(state)), (145, 155, 149, 255) if state.engaged else (18, 40, 57, 255))
+          car.gasPressed = car.steeringPressed = False
+          released = self.state(lateral, longitudinal)
+          self.assertFalse(released.driver_override_active)
+          self.assertNotEqual(rgba(axis_status_color(released)), (145, 155, 149, 255))
+
+  def test_driver_override_requires_valid_current_sources(self):
+    car = self.ui.sm['carState']
+    self.ui.sm['selfdriveState'].enabled = False
+    for field in ('gasPressed', 'steeringPressed'):
+      with self.subTest(field=field):
+        setattr(car, field, True)
+        self.assertTrue(self.state(True, False).driver_override_active)
+        for service in ('carState', 'carControl'):
+          self.ui.sm.logMonoTime[service] = NOW - 300_000_000
+          self.assertFalse(self.state(True, False).driver_override_active)
+          self.ui.sm.logMonoTime[service] = NOW
+        for valid, timeout in ((False, False), (True, True)):
+          car.canValid, car.canTimeout = valid, timeout
+          self.assertFalse(self.state(True, False).driver_override_active)
+        car.canValid, car.canTimeout = True, False
+        setattr(car, field, False)
 
   def test_traffic_returns_after_conditional_stop_without_changing_intent(self):
     from openpilot.starpilot.conditional_mode.policy import ModeChoice
@@ -112,12 +149,21 @@ class TestOnroadAxes(unittest.TestCase):
     self.assertTrue(engaged_fixture.lateral_active and engaged_fixture.longitudinal_active)
     disengaged_fixture = reference_onroad("onroad_disengaged_no_camera")
     self.assertFalse(disengaged_fixture.lateral_active or disengaged_fixture.longitudinal_active)
-    for lateral, longitudinal in ((False, False), (True, False), (False, True), (True, True)):
-      state = self.state(lateral, longitudinal)
+    gray, blue = (145, 155, 149, 255), (18, 40, 57, 255)
+    cases = [(False, False, False, OnroadAlert(), blue),
+             (True, False, False, OnroadAlert(), (10, 186, 181, 255)),
+             (False, True, False, OnroadAlert(), (255, 105, 180, 255)),
+             (True, True, False, OnroadAlert(), (22, 127, 64, 255)),
+             (True, False, False, OnroadAlert(size=AlertSize.SMALL), blue)]
+    cases += [(True, longitudinal, True, alert, color) for longitudinal in (False, True) for alert, color in (
+      (OnroadAlert(), gray), (OnroadAlert(size=AlertSize.SMALL), gray), (OnroadAlert(size=AlertSize.MID), gray),
+      (OnroadAlert(size=AlertSize.FULL), blue), (OnroadAlert(size=AlertSize.SMALL, critical=True), blue))]
+    for lateral, longitudinal, override, alert, compact_color in cases:
+      state = replace(self.state(lateral, longitudinal), driver_override_active=override, alert=alert)
       for layout in state.customization['layouts'].values():
         layout[MODE_WIDGET]['enabled'] = True
       for profile in (Profile.LARGE, Profile.COMPACT):
-        with self.subTest(profile=profile, lateral=lateral, longitudinal=longitudinal):
+        with self.subTest(profile=profile, lateral=lateral, longitudinal=longitudinal, override=override, alert=alert):
           view = onroad.OnroadView.__new__(onroad.OnroadView)
           object.__setattr__(view, "fonts", NS(profile=profile, draw=Mock(), measure=Mock(return_value=NS(width=100, height=30)),
                                               vertical_ink=Mock(return_value=(0, 20)), horizontal_ink=Mock(return_value=(0, 100))))
@@ -143,8 +189,10 @@ class TestOnroadAxes(unittest.TestCase):
                patch.object(onroad, "render_corner_hint"), patch.object(view, "_prepare_compact_fade"), \
                patch.object(view, "_slc_actions"):
             view.render(state)
-          self.assertEqual(rgba(border.call_args.args[-1]), rgba(axis_status_color(state)))
-          self.assertIn(driving_mode_description(state), [call.args[0] for call in view.fonts.draw.call_args_list])
+          expected = compact_color if profile == Profile.COMPACT else rgba(axis_status_color(state))
+          self.assertEqual(rgba(border.call_args.args[-1]), expected)
+          if alert.size == AlertSize.NONE:
+            self.assertIn(driving_mode_description(state), [call.args[0] for call in view.fonts.draw.call_args_list])
 
   def test_driving_mode_text_uses_active_axes_and_effective_mode(self):
     from openpilot.starpilot.conditional_mode.policy import ModeChoice

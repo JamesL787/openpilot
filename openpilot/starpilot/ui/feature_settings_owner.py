@@ -85,7 +85,7 @@ BOOL_DEFAULTS = {
   LEAD_TAKEOFF_KEY: False,
   CURVE_MASTER_KEY: False, CURVE_NO_LEAD_KEY: False,
   "ShowCSCStatus": False,
-  "ForceAutoTuneOff": False, "AlwaysOnLateral": False, "NostalgiaMode": False,
+  "ForceAutoTuneOff": False, "AlwaysOnLateral": True, "NostalgiaMode": False,
 }
 FLOAT_SPECS = {
   "ForceStopDistanceOffset": (-20, 20, 1, "ft"),

@@ -4,9 +4,10 @@ from collections.abc import Callable
 
 import pyray as rl
 
+from openpilot.selfdrive.ui.layouts.settings.initial_cruise_speed import InitialCruiseSpeedControl
 from openpilot.starpilot.ui.clip import placed_at
 from openpilot.starpilot.ui.feature_settings import FeatureSettingsView
-from openpilot.starpilot.ui.feature_settings_state import FeatureInput, FeatureRow, FeatureSettingsState, feature_scroll
+from openpilot.starpilot.ui.feature_settings_state import FeatureInput, FeatureRow, FeatureSettingsState, feature_scroll, value_editor_state, value_request
 from openpilot.system.ui.lib.application import gui_app, MouseEvent, MousePos
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.wifi_manager import SecurityType, normalize_ssid
@@ -24,6 +25,7 @@ class StarPilotSettingsAdapterLarge(Widget):
     self.input = FeatureInput(self._emit)
     self.view.pressed_action = lambda state: self.input.pressed_action(state) if self.active and self.enabled else None
     self.scroll = 0
+    self.edit_key: str | None = None
     self.active = False
     self.sidebar_expanded = True
     self.origin = (0, 0)
@@ -32,6 +34,7 @@ class StarPilotSettingsAdapterLarge(Widget):
 
   def show_event(self):
     self.scroll = 0
+    self.edit_key = None
     self.active = True
     self.input.cancel()
     self.view.reset()
@@ -39,6 +42,7 @@ class StarPilotSettingsAdapterLarge(Widget):
 
   def hide_event(self):
     self.active = False
+    self.edit_key = None
     self.input.cancel()
     self.view.reset()
     self.panel.hide_event()
@@ -125,6 +129,9 @@ class StarPilotSettingsAdapterLarge(Widget):
       elif isinstance(action, MultipleButtonAction):
         choices = tuple(_resolve_value(text) for text in action.buttons)
         value = choices[action.selected_button]
+      elif isinstance(action, InitialCruiseSpeedControl):
+        choices, index = action.display_options()
+        value = choices[index]
       elif self.title == "Developer" and isinstance(action, SshKeyAction):
         value = action._username or ""
         buttons = ((tr(action._state.value), action._state != SshKeyActionState.LOADING),)
@@ -135,8 +142,9 @@ class StarPilotSettingsAdapterLarge(Widget):
 
   def _state(self, page, rows):
     self.scroll = feature_scroll(self.scroll, 0, len(rows))
-    return FeatureSettingsState(page=page, title=self.title, parent_title="Settings", rows=tuple(rows), scroll=self.scroll,
-                                sidebar_expanded=self.sidebar_expanded)
+    state = FeatureSettingsState(page=page, title=self.title, parent_title="Settings", rows=tuple(rows), scroll=self.scroll,
+                                 sidebar_expanded=self.sidebar_expanded)
+    return value_editor_state(state, self.edit_key)
 
   def _render(self, rect):
     with placed_at(rl.Rectangle(*self.origin, 2160, 1080)):
@@ -172,17 +180,26 @@ class StarPilotSettingsAdapterLarge(Widget):
     if not self.active:
       return
     state = self.snapshot()
-    if request.kind == "scroll":
+    if request.kind == "scroll" and not state.editor:
       self.scroll = feature_scroll(self.scroll, request.direction, len(state.rows))
       return
     if request.kind == "back":
-      if isinstance(self.panel, NetworkUI) and self.panel._current_panel == PanelType.ADVANCED:
+      if self.edit_key is not None:
+        self.edit_key = None
+        self.input.cancel()
+        self.view.reset()
+      elif isinstance(self.panel, NetworkUI) and self.panel._current_panel == PanelType.ADVANCED:
         self._cycle_network()
       else:
         self.on_back()
       return
     row = request.row
     if row is None or row not in state.rows:
+      return
+    if request.kind == "open" and row.available and row.presets and not state.editor:
+      self.edit_key = row.key
+      self.input.cancel()
+      self.view.reset()
       return
     if row.key == "network:nav" and request.kind == "action":
       self._cycle_network()
@@ -199,6 +216,28 @@ class StarPilotSettingsAdapterLarge(Widget):
     if item is None:
       return
     action = item.action_item
+    if isinstance(action, InitialCruiseSpeedControl) and request.kind in ("change", "action"):
+      change = value_request(state, request) if state.editor else None
+      self.panel._update_toggles()
+      if item.is_visible and item.enabled:
+        if change is not None:
+          choices, index = action.display_options()
+          if row.value == choices[index] and change.value in choices:
+            action.select_speed(choices.index(change.value))
+        elif not row.presets and request.kind == "change":
+          action.adjust_speed(request.direction)
+      return
+    if isinstance(action, MultipleButtonAction) and row.presets and request.kind in ("change", "action"):
+      change = value_request(state, request) if state.editor else None
+      if change is not None:
+        index = row.choices.index(change.value)
+        if self.title == "Toggles":
+          self.panel.request_personality(index)
+        else:
+          action.set_selected_button(index)
+          if action.callback is not None:
+            action.callback(index)
+      return
     if self.title == "Toggles" and request.kind == "change":
       if isinstance(action, MultipleButtonAction):
         self.panel.request_personality((action.selected_button + request.direction) % len(action.buttons))
@@ -237,5 +276,6 @@ class StarPilotSettingsAdapterLarge(Widget):
   def _cycle_network(self):
     self.panel._cycle_panel()
     self.scroll = 0
+    self.edit_key = None
     self.input.cancel()
     self.view.reset()

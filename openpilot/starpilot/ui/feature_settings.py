@@ -316,7 +316,9 @@ class FeatureSettingsView:
     value = value_text(row)
     self._center("Saved level" if row.unit == "%" else "Saved value", DETAIL_SIZE, rl.Rectangle(editor.x, editor.y, editor.width, 52),
                  TEXT_SECONDARY, role=FontRole.NORMAL)
-    self._center(value, 140, rl.Rectangle(editor.x + 232, buttons[0][1][1], editor.width - 464, buttons[0][1][3]),
+    value_width = editor.width - 464
+    value_size = min(140, 140 * value_width / max(value_width, self.fonts.measure(value, FontRole.SEMI_BOLD, 140).width))
+    self._center(value, value_size, rl.Rectangle(editor.x + 232, buttons[0][1][1], value_width, buttons[0][1][3]),
                  ACCENT if row.available else TEXT_MUTED, role=FontRole.SEMI_BOLD)
     self._center(state.save_hint if row.available else "Editing unavailable", 32,
                  rl.Rectangle(editor.x, editor.y + 580, editor.width, 44), TEXT_SECONDARY, role=FontRole.NORMAL)
@@ -331,7 +333,8 @@ class FeatureSettingsView:
       border = VALUE_SELECTED_BORDER if selected and row.available else CONTROL_BORDER
       draw_rounded_fill(button, CONTROL_PRESSED_BG if active else background, radius_px=32)
       draw_rounded_stroke(button, ACCENT if active else border, radius_px=32)
-      self._center(text, 64 if step else 44, button,
+      size = 64 if step else min(44, 44 * (button.width - 24) / max(button.width - 24, self.fonts.measure(text, FontRole.MEDIUM, 44).width))
+      self._center(text, size, button,
                    TEXT_PRIMARY if row.available and (enabled or selected) else TEXT_MUTED)
 
   def _center(self, text: str, size: float, rect: rl.Rectangle, color: rl.Color = TEXT_PRIMARY, *, role: FontRole = FontRole.MEDIUM) -> None:

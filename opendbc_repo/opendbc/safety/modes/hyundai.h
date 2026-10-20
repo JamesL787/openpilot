@@ -299,7 +299,7 @@ static void hyundai_rx_hook(const CANPacket_t *msg) {
         }
         cruise_button_prev = cruise_button;
       } else {
-        hyundai_common_cruise_buttons_check(cruise_button, main_button);
+        hyundai_common_cruise_buttons_check(cruise_button, main_button, false, hyundai_long_main_policy);
       }
     }
 
@@ -638,6 +638,7 @@ static safety_config hyundai_init(uint16_t param) {
   };
 
   hyundai_common_init(param);
+  hyundai_long_main_policy = ((param == 0x800EU) && (alternative_experience == 0U)) ? HYUNDAI_MAIN_TRACK : HYUNDAI_MAIN_NONE;
   classic_non_scc_aol_configure(param, false);
   blended_aol_configure(param);
   hyundai_blended_alpha = false;

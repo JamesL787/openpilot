@@ -246,8 +246,8 @@ class TestStateMigration(unittest.TestCase):
     self.assertEqual(list((self.storage / 'snapshots').iterdir()), [])
     self.assertEqual(list((self.storage / 'profiles').iterdir()), [])
 
-  def test_fresh_default_is_off_and_saved_true_false_survive_native_defaults(self):
-    self.assertFalse(self.params.get_default_value('AlwaysOnLateral'))
+  def test_global_default_is_on_and_saved_true_false_survive_native_defaults(self):
+    self.assertTrue(self.params.get_default_value('AlwaysOnLateral'))
     for value in (None, False, True):
       with self.subTest(value=value):
         if value is None:
@@ -258,7 +258,7 @@ class TestStateMigration(unittest.TestCase):
         self.params.clear_all(ParamKeyFlag.CLEAR_ON_MANAGER_START)
         if self.params.get('AlwaysOnLateral') is None:
           self.params.put('AlwaysOnLateral', self.params.get_default_value('AlwaysOnLateral'), block=True)
-        self.assertEqual(self.params.get_bool('AlwaysOnLateral'), value is True)
+        self.assertEqual(self.params.get_bool('AlwaysOnLateral'), value is not False)
 
   def test_unknown_key_archived_before_cleanup_can_run(self):
     self.raw('UnportedFeature', b'19')
@@ -412,7 +412,7 @@ class TestStateMigration(unittest.TestCase):
          patch.object(manager, 'register', return_value='fixture'), \
          patch.object(manager.cloudlog, 'bind_global'):
       manager.manager_init()
-      self.assertFalse(self.params.get_bool('AlwaysOnLateral'))
+      self.assertTrue(self.params.get_bool('AlwaysOnLateral'))
       self.assertFalse(self.params.get_bool('OpenpilotEnabledToggle'))
       self.params.put_bool('AlwaysOnLateral', True, block=True)
       corrupt = {'SLCFallback': b'broken', 'Offset3': b'',

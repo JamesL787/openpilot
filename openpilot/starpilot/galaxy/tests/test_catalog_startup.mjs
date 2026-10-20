@@ -49,9 +49,14 @@ const state = { tools: [], loading: true, error: "", monitorMode: "sample" }
 const authState = { status: "checking" }
 let fail = true, checks = 0
 const tracked = []
-const initialize = new Function("loadCatalog", "state", "authState", "auth", "document", "deviceRestart", `${initializer}; return initialize`)(
+let screenMode = "opening"
+const showBootScreen = mode => { screenMode = mode }
+const bootScreenMode = () => screenMode
+const dismissBootScreen = () => { screenMode = "hidden" }
+const initialize = new Function("loadCatalog", "state", "authState", "auth", "document", "deviceRestart", "showBootScreen", "bootScreenMode", "dismissBootScreen", `${initializer}; return initialize`)(
   async () => { if (fail) throw new Error("offline"); return loaded }, state, authState,
   { async check() { checks++; authState.status = "authenticated" } }, { hidden: false }, { track: instance => tracked.push(instance) },
+  showBootScreen, bootScreenMode, dismissBootScreen,
 )
 await initialize()
 assert.match(state.error, /could not connect/)
@@ -65,8 +70,9 @@ assert.equal(authState.status, "authenticated")
 assert.deepEqual(tracked, [loaded.instance])
 
 const queued = []
-const raced = new Function("loadCatalog", "state", "authState", "auth", "document", "deviceRestart", `${initializer}; return initialize`)(
+const raced = new Function("loadCatalog", "state", "authState", "auth", "document", "deviceRestart", "showBootScreen", "bootScreenMode", "dismissBootScreen", `${initializer}; return initialize`)(
   () => new Promise(resolve => queued.push(resolve)), state, authState, { async check() {} }, { hidden: false }, { track() {} },
+  showBootScreen, bootScreenMode, dismissBootScreen,
 )
 const old = raced(), current = raced()
 queued[0]({ tools: [], mode: "sample" })
@@ -94,11 +100,11 @@ const sessionAuth = new LocalAuth({
   },
 })
 const unmountBody = app.match(/  beforeUnmount\(\) \{([\s\S]*?)\n  \},/)[1]
-const harness = new Function("loadCatalog", "state", "authState", "auth", "document", "setTimeout", "clearTimeout", "deviceRestart", "window",
+const harness = new Function("loadCatalog", "state", "authState", "auth", "document", "setTimeout", "clearTimeout", "deviceRestart", "window", "showBootScreen", "bootScreenMode", "dismissBootScreen",
   `${initializer}; return { expire() { ${expiryBody} }, initialize, stop() { ${unmountBody} } }`)(
     async () => loaded, transientState, transientAuth, sessionAuth, visibility,
     (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay }); return id }, id => timers.delete(id),
-    { track() {}, stop() {} }, { removeEventListener() {} },
+    { track() {}, stop() {} }, { removeEventListener() {} }, showBootScreen, bootScreenMode, dismissBootScreen,
   )
 const expiredFeed = new SnapshotFeed({ publish: () => {}, unauthorized: () => harness.expire(),
   fetcher: async () => ({ ok: false, status: 401 }) })

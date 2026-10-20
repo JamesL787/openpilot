@@ -58,13 +58,27 @@ assert.doesNotMatch(FlmPage.template, /v-html|Analyze selected|GM Trial|Choose F
 assert.match(FlmPage.template, /Currently applied/)
 assert.match(FlmPage.template, /PID unsupported/)
 const app = readFileSync(new URL("../web/js/app.js", import.meta.url), "utf8")
-assert(app.includes("['/tuning', '/tuning/plots'].includes(route.path)"))
+assert(app.includes("['/tuning', '/tuning/plots', '/tuning/flm'].includes(route.path)"))
+const analysis = app.match(/<div v-else-if="\['\/tuning', '\/tuning\/plots', '\/tuning\/flm'\]\.includes\(route.path\)"[\s\S]*?<\/div>/)?.[0]
+assert(analysis, 'Existing analysis route and old bookmarks share one page')
+assert.match(analysis, /<PlotsPage /)
+assert.match(analysis, /<FlmPage embedded /)
+assert.doesNotMatch(app, /<FlmPage v-else-if/)
+compile(analysis.replace("v-else-if", "v-if"), { onError: error => { throw error }, decodeEntities: value => value.replaceAll("&amp;", "&") })
 assert.doesNotMatch(app, /Recorded-drive analysis/)
 const settings = readFileSync(new URL("../web/js/settings.js", import.meta.url), "utf8")
 assert.doesNotMatch(settings, /FLMTrainingResults|View FLM training results/)
 const catalog = JSON.parse(readFileSync(new URL("../web/data/catalog.json", import.meta.url), "utf8"))
 assert(catalog.tools.some(tool => tool.path === "/tuning/plots"))
-assert(catalog.tools.some(tool => tool.path === "/tuning/flm"))
+assert(!catalog.tools.some(tool => tool.path === "/tuning/flm"))
+assert.equal(catalog.tools.filter(tool => tool.path.startsWith('/tuning')).length, 1)
+const plots = readFileSync(new URL('../web/js/plots.js', import.meta.url), 'utf8')
+assert.doesNotMatch(plots, /href="#\/tuning\/flm"/)
+const driving = readFileSync(new URL('../web/js/driving.js', import.meta.url), 'utf8')
+assert.match(driving, /go\('\/tuning\/plots'\)/)
+assert.doesNotMatch(driving, /\/tuning\/flm/)
+assert.match(FlmPage.template, /<section v-if="!embedded"[^>]*><div class="gx-actions"><h3>Live steering response/)
+assert.doesNotMatch(FlmPage.template, /href="#\/tuning\/plots"/)
 const route = readFileSync(new URL("../web/js/route-workspace.js", import.meta.url), "utf8")
 assert.doesNotMatch(route, /Analyze driving logs/)
 
@@ -77,7 +91,17 @@ function instance() {
 }
 const originalFetch = globalThis.fetch, originalDocument = globalThis.document
 try {
-  globalThis.document = { hidden: false, removeEventListener() {} }
+  globalThis.document = { hidden: false, addEventListener() {}, removeEventListener() {} }
+  for (const embedded of [true, false]) {
+    const page = { ...FlmPage.data(), embedded, mode: 'local', unauthorized() {}, load() {} }
+    let plotStarts = 0
+    FlmPage.created.call(page)
+    page.feed.start = () => { plotStarts++ }
+    page.feed.stop = () => {}
+    FlmPage.mounted.call(page)
+    assert.equal(plotStarts, embedded ? 0 : 1, 'Embedded results reuse the existing live plots')
+    FlmPage.beforeUnmount.call(page)
+  }
   const calls = []
   globalThis.fetch = async (url, options) => { calls.push({ url, options }); return { ok: true, json: async () => value } }
   const vm = instance(); await vm.load()

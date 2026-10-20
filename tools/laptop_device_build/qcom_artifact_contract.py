@@ -47,13 +47,34 @@ def _sha(path: Path) -> str:
   return digest.hexdigest()
 
 
+def compiler_tree(root: Path) -> Path:
+  """The build provenance describes the compiler, independently of the global runtime."""
+  legacy = root / 'tinygrad_model_runtime/legacy9d'
+  if not legacy.exists():
+    return root / 'tinygrad_repo'
+  from openpilot.starpilot.models.runtime_bridge.bootstrap import _inventory, _digest_file
+  manifest = legacy / 'runtime-manifest.json'
+  expected_manifest = '20ca9e77010c1ab788f2adb824103db3d595b0da8c4069d6e32b1266f7977b1f'
+  if manifest.is_symlink() or _sha(manifest) != expected_manifest:
+    raise ValueError('Unqualified model compiler library')
+  data = json.loads(manifest.read_bytes())
+  if data.get('compiler_revision') != '9d0446a4ba8a532c8b674fb6ad795af015cd9dcf':
+    raise ValueError('Unexpected legacy compiler revision')
+  if _inventory(legacy) != set(data['files']) | {'runtime-manifest.json'}:
+    raise ValueError('Legacy compiler source inventory changed')
+  for path, digest in data['files'].items():
+    if _digest_file(legacy / path) != digest:
+      raise ValueError('Legacy compiler source changed: ' + path)
+  return legacy / 'tinygrad_repo'
+
+
 def commands(root: Path) -> dict[str, str]:
   sys.path.insert(0, str(root))
   from openpilot.common.transformations.camera import _ar_ox_fisheye, _os_fisheye
   from openpilot.common.transformations.model import MEDMODEL_INPUT_SIZE, DM_INPUT_SIZE
   from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 
-  compiler = root / "tinygrad_repo/examples/openpilot"
+  compiler = compiler_tree(root) / "examples/openpilot"
   commands = {}
   for source, target in (("dmonitoring_model.onnx", "dmonitoring_model_tinygrad.pkl"),):
     commands[target] = " ".join((f'{FLAGS} taskset -c 0-7 python3 "{compiler}/compile_onnx.py"',
@@ -78,13 +99,20 @@ def commands(root: Path) -> dict[str, str]:
 def _sources(root: Path) -> dict[str, str]:
   paths = [root / source for source in STATIC_SOURCES]
   for directory in TINYGRAD_SOURCE_ROOTS:
-    paths.extend(path for path in (root / "tinygrad_repo" / directory).rglob("*")
+    paths.extend(path for path in (compiler_tree(root) / directory).rglob("*")
                  if path.is_file() and path.suffix in SOURCE_SUFFIXES and "__pycache__" not in path.parts)
-  return {path.relative_to(root).as_posix(): _sha(path) for path in sorted(paths)}
+  compiler = compiler_tree(root)
+  def source_name(path):
+    # Logical compiler paths retain the original package provenance after relocation.
+    return ('tinygrad_repo/' + path.relative_to(compiler).as_posix() if path.is_relative_to(compiler)
+            else path.relative_to(root).as_posix())
+  return {source_name(path): _sha(path) for path in sorted(paths)}
 
 
 def _tokens(command: str, root: Path) -> list[str]:
-  return [token.replace(str(root), "<ROOT>") for token in shlex.split(command)]
+  compiler = compiler_tree(root)
+  return [token.replace(str(compiler), '<ROOT>/tinygrad_repo').replace(str(root), '<ROOT>')
+          for token in shlex.split(command)]
 
 
 def source_inventory(root: Path) -> dict:
@@ -267,7 +295,8 @@ def _verify_runtime_compatibility(package: Path, manifest_path: Path, manifest: 
 def verify(package: Path, root: Path, target_name: str, actual_command: str) -> tuple[Path, str]:
   expected = commands(root.resolve())
   from tools.laptop_device_build.validate_artifacts import require_qcom_pickle
-  if target_name not in expected or _tokens(actual_command, root.resolve()) != _tokens(expected[target_name], root.resolve()):
+  # Authenticate the physical compiler command before normalizing historical paths.
+  if target_name not in expected or shlex.split(actual_command) != shlex.split(expected[target_name]):
     raise ValueError(f"QCOM command recipe changed: {target_name}")
   manifest_path = package / "manifest.json"
   manifest = json.loads(manifest_path.read_text(), object_pairs_hook=_unique_pairs)

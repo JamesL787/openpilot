@@ -252,7 +252,8 @@ def configure_controller(CI, params):
       cloudlog.exception('Optional GV70 lead input transport unavailable')
 
   from opendbc.car.hyundai.ev9_longitudinal import qualified as ev9_long_qualified
-  if controller is not None and ev9_long_qualified(cp):
+  from opendbc.car.hyundai.ioniq5pe_long_profile import qualified as pe_long_qualified
+  if controller is not None and (ev9_long_qualified(cp) or pe_long_qualified(cp)):
     from openpilot.starpilot.longitudinal.canfd_lead import CANFDLeadInputs
     try:
       controller.ev9_lead_inputs = CANFDLeadInputs()

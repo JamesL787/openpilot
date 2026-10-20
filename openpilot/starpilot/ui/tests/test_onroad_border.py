@@ -9,6 +9,8 @@ from openpilot.starpilot.ui.onroad_border import half_colors, render_compact_hal
 from openpilot.starpilot.ui.onroad_state import AlertSize, BorderSignals, OnroadAlert
 from openpilot.starpilot.ui.preview_shell import reference_onroad
 from openpilot.starpilot.ui.runtime_snapshot import RuntimeSnapshotAdapter
+from openpilot.starpilot.ui.runtime_app import visual_border_state
+from openpilot.starpilot.ui.pip_sidecam import Signals
 from openpilot.starpilot.ui.shell import ShellMode
 from openpilot.starpilot.ui.tests.test_runtime_snapshot import NOW, ui_fake
 
@@ -21,6 +23,13 @@ def state(signals: BorderSignals | None, *, signal_enabled: bool = True, blindsp
 
 
 class TestOnroadBorder(unittest.TestCase):
+  def test_visual_warning_joins_oem_border_without_requiring_oem_bsm(self):
+    current = state(BorderSignals(False, True, False, False))
+    visual = visual_border_state(current, Signals(True, False, False, False, False, True, False))
+    self.assertEqual(visual.border_signals, BorderSignals(False, True, True, False))
+    self.assertEqual(half_colors(visual, 0.1)[0], onroad_border.BLINDSPOT_RED)
+    self.assertIs(visual_border_state(current, Signals(True, False, False, False, False)), current)
+
   def test_red_blindspot_wins_over_same_side_amber_blinker(self):
     current = state(BorderSignals(True, True, True, False))
     left, right = half_colors(current, 0.3)

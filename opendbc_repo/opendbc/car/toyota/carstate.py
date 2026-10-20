@@ -173,6 +173,7 @@ class CarState(CarStateBase):
         ret.accFaulted = ret.accFaulted or cp.vl["PCM_CRUISE_2"]["LOW_SPEED_LOCKOUT"] == 2
 
     pcm_acc_status = cp.vl["PCM_CRUISE"]["CRUISE_STATE"]
+    previous_pcm_acc_status = self.pcm_acc_status
     self.pcm_acc_status = pcm_acc_status
     ret.cruiseState.standstill = pcm_acc_status == 7
     ret.cruiseState.enabled = bool(cp.vl["PCM_CRUISE"]["CRUISE_ACTIVE"])
@@ -191,7 +192,11 @@ class CarState(CarStateBase):
     if not (self.CP.flags & ToyotaFlags.UNSUPPORTED_DSU):
       self.pcm_follow_distance = cp.vl["PCM_CRUISE_2"]["PCM_FOLLOW_DISTANCE"]
 
-    buttonEvents = []
+    # PCM exposes the actual +/- stalk state even when it owns selected speed.
+    # Keep these edges independent of SET_SPEED: the update can arrive on release.
+    buttonEvents = create_button_events(int(pcm_acc_status) if pcm_acc_status in (9, 10) else 0,
+                                       int(previous_pcm_acc_status) if previous_pcm_acc_status in (9, 10) else 0,
+                                       {9: ButtonType.accelCruise, 10: ButtonType.decelCruise})
     if self.CP.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) or self.CP.carFingerprint == CAR.TOYOTA_PRIUS_RETROFIT:
       # lkas button is wired to the camera
       prev_lkas_button = self.lkas_button

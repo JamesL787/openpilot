@@ -12,6 +12,7 @@ from openpilot.starpilot.system.jetlink.process import JetlinkProcess
 from openpilot.starpilot.sentry_mode.preferences import enabled as sentry_enabled
 from openpilot.starpilot.galaxy.camera_request import requested as camera_requested
 from openpilot.starpilot.spot_monitor.preferences import enabled as vasm_enabled
+from openpilot.starpilot.spot_monitor.inference import DEFAULT_MODEL_PATH
 
 WEBCAM = os.getenv("USE_WEBCAM") is not None
 
@@ -88,6 +89,9 @@ def jetlink_enabled(started: bool, params: Params, CP: car.CarParams) -> bool:
   from openpilot.starpilot.system.jetlink.lifecycle import enabled
   return enabled(params)
 
+def navigation(started: bool, params: Params, CP: car.CarParams) -> bool:
+  return started and params.get_bool("NavigationEnabled")
+
 def only_offroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return not started
 
@@ -95,9 +99,9 @@ def sentry_motion(started: bool, params: Params, CP: car.CarParams) -> bool:
   return not started and sentry_enabled(params)
 
 def vasm_monitor(started: bool, params: Params, CP: car.CarParams) -> bool:
-  model_path = os.getenv("STARPILOT_VASM_MODEL_PATH", "")
-  return (started and bool(model_path) and os.path.isabs(model_path) and
-          vasm_enabled(params, development=os.getenv("STARPILOT_VASM_DEVELOPMENT") == "1"))
+  model_path = os.getenv("STARPILOT_VASM_MODEL_PATH", str(DEFAULT_MODEL_PATH))
+  return (started and bool(model_path) and os.path.isabs(model_path) and os.path.isfile(model_path) and
+          vasm_enabled(params, development=True))
 
 def sensord_run(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started or sentry_motion(started, params, CP)
@@ -133,6 +137,8 @@ procs = [
   ModeldProcess("modeld", "openpilot.selfdrive.modeld.modeld", only_onroad),
   PythonProcess("reprojectd", "openpilot.selfdrive.modeld.reprojectd", reproject, enabled=COMMA_HARDWARE),
   PythonProcess("reprojectcalibd", "openpilot.selfdrive.modeld.reprojectcalibd", reproject, enabled=COMMA_HARDWARE),
+  PythonProcess("navd", "openpilot.selfdrive.navigation.navd", navigation),
+  PythonProcess("mapsd", "openpilot.selfdrive.navigation.mapsd", navigation),
   PythonProcess("vision_slc", "openpilot.starpilot.speed_limits.vision.producer", vision_slc_development),
   PythonProcess("dmonitoringmodeld", "openpilot.selfdrive.modeld.dmonitoringmodeld", driverview, enabled=(WEBCAM or not PC)),
 

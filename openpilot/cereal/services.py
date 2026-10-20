@@ -78,6 +78,8 @@ _services: dict[str, tuple] = {
   "gpsLocationExternal": (True, 10., 10),
   "starpilotCarState": (True, 0., 1),
   "gpsLocation": (True, 1., 1),
+  "navInstruction": (True, 1., 10),
+  "navRoute": (True, 0.),
   "ubloxGnss": (True, 10.),
   "qcomGnss": (True, 2.),
   "clocks": (True, 0.1, 1),

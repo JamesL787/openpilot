@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import os
 import base64
+from openpilot.starpilot.models.runtime_bridge.runtime import prepare as prepare_model_runtime
+prepare_model_runtime('monitoring')
 from openpilot.selfdrive.modeld.helpers import MODELS_DIR, load_oob
 from tinygrad.tensor import Tensor
 import time
@@ -44,8 +46,13 @@ class ModelState:
     self._blob_cache : dict[int, Tensor] = {}
     self.model_run = jits['run']
     self.outputs = {name: Tensor(np.zeros(shape, dtype=dtype), device=device).realize() for name, (shape, dtype, device) in jits['output_specs'].items()}
-    with open(MODELS_DIR / f'dm_warp_{cam_w}x{cam_h}_tinygrad.pkl', "rb") as f:
-      self.image_warp = pickle.load(f)['run']
+    warp_path = MODELS_DIR / f'dm_warp_{cam_w}x{cam_h}_tinygrad.pkl'
+    from openpilot.starpilot.models.runtime_bridge.runtime import selected_legacy, load_warp
+    if selected_legacy():
+      self.image_warp = load_warp(warp_path)
+    else:
+      with warp_path.open('rb') as f:
+        self.image_warp = pickle.load(f)['run']
 
   def run(self, buf: VisionBuf, calib: np.ndarray, transform: np.ndarray) -> tuple[np.ndarray, float]:
     self.numpy_inputs['calib'][0,:] = calib

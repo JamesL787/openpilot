@@ -7,10 +7,14 @@
 
 static void cleanup_test_queue() {
 #ifdef __APPLE__
-  remove("/tmp/msgq_test_queue");
+  std::string file = "/tmp/msgq_";
 #else
-  remove("/dev/shm/msgq_test_queue");
+  std::string file = "/dev/shm/msgq_";
 #endif
+  const char *prefix = std::getenv("OPENPILOT_PREFIX");
+  if (prefix != nullptr) file += std::string(prefix) + "/";
+  file += "test_queue";
+  std::remove(file.c_str());
 }
 
 TEST_CASE("ALIGN")

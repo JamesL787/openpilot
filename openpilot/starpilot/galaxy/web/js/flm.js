@@ -8,10 +8,11 @@ import { validTrainingResults, trainingSummary, readable, detailText, surfaceRow
 export const FlmPage = {
   name: "FlmPage",
   components: { GxState, GxNotice, PlotGraph },
-  props: { mode: { type: String, required: true }, unauthorized: { type: Function, required: true } },
+  props: { mode: { type: String, required: true }, unauthorized: { type: Function, required: true }, embedded: { type: Boolean, default: false } },
   data: () => ({ report: null, error: "", loading: false, request: null, receivedAt: 0, now: 0,
     status: "idle", data: null, history: [], plotError: "", showPlots: true }),
   created() {
+    if (this.embedded) this.showPlots = false
     this.feed = new PlotsFeed({ publish: update => {
       const { error, ...values } = update
       Object.assign(this.$data, values, { plotError: error })
@@ -26,7 +27,7 @@ export const FlmPage = {
       else { this.load(); if (this.showPlots && this.mode === "local") this.feed.start() }
     }
     document.addEventListener("visibilitychange", this.visibility)
-    if (this.mode === "local") { this.poller.start(); this.load(); if (!document.hidden) this.feed.start() }
+    if (this.mode === "local") { this.poller.start(); this.load(); if (this.showPlots && !document.hidden) this.feed.start() }
   },
   beforeUnmount() {
     this.activePage = false; clearTimeout(this.freshnessTimer); this.poller?.stop(); this.request?.abort(); this.request = null; this.feed.stop()
@@ -79,9 +80,9 @@ export const FlmPage = {
     },
   },
   template: `<div class="gx-view gx-flm gx-stack">
-    <header class="gx-settings__header gx-page-header"><div><h2>StarPilot Auto Learn</h2>
+    <header class="gx-settings__header gx-page-header"><div><h3 v-if="embedded">StarPilot Auto Learn</h3><h2 v-else>StarPilot Auto Learn</h2>
       <p>Learned steering corrections, collection progress and current application.</p></div>
-      <a class="gx-btn gx-btn--tonal" href="#/tuning/plots">Live plots</a></header>
+      </header>
     <GxState v-if="mode !== 'local'">Auto Learn results require authenticated local Galaxy access.</GxState>
     <template v-else>
       <section class="gx-card gx-flm__panel"><h3 role="status">{{ summary }}</h3>
@@ -118,10 +119,10 @@ export const FlmPage = {
         <section class="gx-card gx-flm__panel"><h3>Latest fit comparison</h3>
           <dl v-if="losses"><dt>Baseline loss</dt><dd>{{ losses.baseline.toPrecision(5) }}</dd><dt>Learned proposal loss</dt><dd>{{ losses.learned.toPrecision(5) }}</dd></dl>
           <p v-else>No fit comparison has been reported yet.</p>
-          <p class="gx-note">These are fitter-reported losses for the latest proposal. Live tracking below is a separate observation and does not measure a before/after learning benefit.</p>
+          <p class="gx-note">These are fitter-reported losses for the latest proposal. The live control plots are a separate observation and does not measure a before/after learning benefit.</p>
         </section>
       </div>
-      <section class="gx-card gx-flm__panel"><div class="gx-actions"><h3>Live steering response</h3>
+      <section v-if="!embedded" class="gx-card gx-flm__panel"><div class="gx-actions"><h3>Live steering response</h3>
         <button type="button" class="gx-btn gx-btn--tonal" :aria-expanded="showPlots" @click="togglePlots">{{ showPlots ? 'Pause live plots' : 'Show live plots' }}</button></div>
         <template v-if="showPlots"><p role="status">{{ status === 'current' ? 'Live' : status === 'stale' ? 'Last received window — reconnecting' : 'Waiting for steering telemetry' }}</p>
           <p v-if="plotError" class="gx-note">{{ plotError }}</p>

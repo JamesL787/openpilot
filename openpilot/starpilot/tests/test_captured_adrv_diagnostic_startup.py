@@ -105,8 +105,8 @@ class _DiagnosticQuery:
   def __init__(self, send, recv, bus, addresses, requests, responses, **kwargs):
     assert bus == self.bus and addresses == [(0x730, None)]
     command = requests[0]
-    assert command in (b'\x10\x03', b'\x28\x83\x01', b'\x28\x00\x01')
-    assert responses == [{b'\x10\x03': b'\x50\x03', b'\x28\x83\x01': b'', b'\x28\x00\x01': b'\x68\x00'}[command]]
+    assert command in (b'\x10\x03', b'\x28\x83\x01', b'\x28\x00\x01', b'\x10\x01')
+    assert responses == [{b'\x10\x03': b'\x50\x03', b'\x28\x83\x01': b'', b'\x28\x00\x01': b'\x68\x00', b'\x10\x01': b'\x50\x01'}[command]]
     self.calls.append((bus, addresses, requests, responses))
     self.send, self.command = send, command
 

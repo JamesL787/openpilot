@@ -11,6 +11,8 @@ import numpy as np
 
 from openpilot.starpilot.speed_limits.vision.model import VisionModelCore, cv2
 from openpilot.starpilot.speed_limits.vision.observation import MODEL_ID, MAX_FRAME_AGE_NS, MAX_PAIR_SKEW_NS, clock_pair_ns
+from openpilot.starpilot.spot_monitor.preferences import enabled as vasm_enabled
+from openpilot.starpilot.vision_cpu import LITTLE_CORES, VISION_WITH_VASM
 
 UNAVAILABLE_RETRY_SECONDS = 1.0
 INFERENCE_INTERVAL_NS = 166_666_667
@@ -23,7 +25,7 @@ def _configure_process() -> None:
 
   if PC:
     return
-  for configure in (drop_realtime, lambda: set_core_affinity([0, 1, 2])):
+  for configure in (drop_realtime, lambda: set_core_affinity(list(LITTLE_CORES))):
     try:
       configure()
     except OSError:
@@ -31,6 +33,14 @@ def _configure_process() -> None:
   try:
     os.nice(max(0, 10 - os.getpriority(os.PRIO_PROCESS, 0)))
   except (AttributeError, OSError):
+    pass
+
+
+def _place_inference(params) -> None:
+  from openpilot.common.realtime import set_core_affinity
+  try:
+    set_core_affinity(list(VISION_WITH_VASM if vasm_enabled(params, development=True) else LITTLE_CORES))
+  except OSError:
     pass
 
 
@@ -108,6 +118,7 @@ def main() -> None:
   from openpilot.common.swaglog import cloudlog
 
   _configure_process()
+  params = Params()
   pm = messaging.PubMaster(['slcVisionObservation'])
   sm = messaging.SubMaster(['drivingModelData'])
   session = uuid.uuid4().hex
@@ -118,14 +129,19 @@ def main() -> None:
   try:
     if cv2 is not None:
       cv2.setNumThreads(1)
-    core = VisionModelCore(is_metric=Params().get_bool('IsMetric'))
+    core = VisionModelCore(is_metric=params.get_bool('IsMetric'))
   except Exception as error:
     cloudlog.error('vision SLC model unavailable: %s', error)
   last_inference_ns = 0
   inference_interval_ns = INFERENCE_INTERVAL_NS
+  last_placement_check = -2.0
   last_clock_offset_ns = None
   model_paused = False
   while True:
+    now = time.monotonic()
+    if now - last_placement_check >= 2.0:
+      _place_inference(params)
+      last_placement_check = now
     if core is None:
       now = time.monotonic()
       if now - last_unavailable >= UNAVAILABLE_RETRY_SECONDS:

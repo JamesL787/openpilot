@@ -123,6 +123,9 @@ class UIState:
         "starpilotNavigation",
         "longitudinalPlan",
         "gpsLocationExternal",
+        "gpsLocation",
+        "navInstruction",
+        "navRoute",
         "carOutput",
         "carControl",
         "slcState",
@@ -147,9 +150,12 @@ class UIState:
 
     # Core state variables
     self.is_metric: bool = self.params.get_bool("IsMetric")
+    self.initial_cruise_speed: int = self.params.get("InitialCruiseSpeedKph", return_default=True)
     self.is_release = self.params.get_bool("IsReleaseBranch")
     self.always_on_dm: bool = self.params.get_bool("AlwaysOnDM")
     self.experimental_mode: bool = self.params.get_bool("ExperimentalMode")
+    self.navigation_enabled = self.params.get_bool("NavigationEnabled")
+    self.nav_destination_set = self.params.get("NavDestination") is not None
     self.chestnut_present: bool = False
     self._gpu_artifacts = None if self.replay_clock is not None else ModelManager()
     self._gpu_artifacts_at: float | None = None
@@ -430,8 +436,11 @@ class UIState:
 
     self.recording_audio = self.params.get_bool("RecordAudio") and self.started
     self.is_metric = self.params.get_bool("IsMetric")
+    self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
     self.always_on_dm = self.params.get_bool("AlwaysOnDM")
     self.experimental_mode = self.params.get_bool("ExperimentalMode")
+    self.navigation_enabled = self.params.get_bool("NavigationEnabled")
+    self.nav_destination_set = self.params.get("NavDestination") is not None
     raw_chestnut = self.params.get("ChestnutActive")
     self.chestnut_active = raw_chestnut if type(raw_chestnut) is bool else (
       True if raw_chestnut in (b"1", "1") else False if raw_chestnut in (b"0", "0") else None)

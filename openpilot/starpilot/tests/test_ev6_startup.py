@@ -64,7 +64,7 @@ class TestEV6Startup(unittest.TestCase):
       command = commands[0]
       self.assertEqual(bus, 1)
       self.assertEqual(addresses, [(0x730, None)])
-      self.assertEqual(responses, [{b'\x10\x03': b'\x50\x03', b'\x28\x83\x01': b'', b'\x28\x00\x01': b'\x68\x00'}[command]])
+      self.assertEqual(responses, [{b'\x10\x03': b'\x50\x03', b'\x28\x83\x01': b'', b'\x28\x00\x01': b'\x68\x00', b'\x10\x01': b'\x50\x01'}[command]])
       requests.append(command)
       class Query:
         def get_data(self, timeout):

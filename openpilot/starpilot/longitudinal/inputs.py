@@ -1,3 +1,4 @@
+from opendbc.car.hyundai.ioniq5pe_long_profile import qualified as pe_long_qualified
 """Qualified longitudinal evidence and transport outside the upstream control loop."""
 from dataclasses import replace
 import os
@@ -69,7 +70,7 @@ class LongitudinalInputs:
     self.takeoff_boot_offset_ns = None
     self.takeoff_source_floor_ns = 0
     self.faster_takeoffs = False
-    self.ev9_long_enabled = ev9_long_qualified(cp)
+    self.ev9_long_enabled = ev9_long_qualified(cp) or pe_long_qualified(cp)
     if self.ev9_long_enabled:
       self.ev9_boot_offset_ns = None
       self.ev9_source_floor_ns = 0

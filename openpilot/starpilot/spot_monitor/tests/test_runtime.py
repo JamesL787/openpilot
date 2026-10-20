@@ -1,6 +1,7 @@
 """Synthetic serialized cabin planes and fail-closed observation lifecycle."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 from openpilot.common.params import Params
 from openpilot.starpilot.spot_monitor.inference import VASMInference
@@ -115,7 +116,21 @@ def test_cpu_budget_frozen_target_smoothing_and_invalid_conservative():
   assert budget.update([True], now_mono_ns=14_000_000_000) == 4.0
 
 
-def test_default_off_fresh_drive_new_frames_and_stale_reset(tmp_path, monkeypatch):
+def test_vasm_uses_its_own_core_with_vision_and_restores_solo_cores(tmp_path):
+  params = Params(str(tmp_path / "params"))
+  clock = [1_000_000_000]
+  runtime = VASMRuntime(params, Messages(clock), Client, lambda _event: None)
+  with patch('openpilot.starpilot.spot_monitor.runtime.feature_requested', side_effect=[True, False]), \
+       patch('openpilot.starpilot.spot_monitor.runtime.set_core_affinity') as affinity:
+    runtime._refresh_settings(clock[0])
+    assert runtime.inference_cores == (2,)
+    clock[0] += 2_000_000_000
+    runtime._refresh_settings(clock[0])
+    assert runtime.inference_cores == (0, 1, 2)
+  assert [call.args[0] for call in affinity.call_args_list] == [[2], [0, 1, 2]]
+
+
+def test_enabled_fresh_drive_new_frames_and_stale_reset(tmp_path):
   from opendbc.car.structs import car
 
   annotation = decode_annotation(b'{"version":1,"width":32,"height":32,"poly_left":[[0,0],[32,0],[32,32],[0,32]],"poly_right":[]}')
@@ -130,10 +145,6 @@ def test_default_off_fresh_drive_new_frames_and_stale_reset(tmp_path, monkeypatc
   runtime = VASMRuntime(params, messages, lambda: client, events.append, model_path=Path("/external/model.onnx"),
                         mono_clock=lambda: clock[0], pair_clock=lambda: (clock[0], clock[0] + 1_000_000_000),
                         model_factory=lambda _: Model())
-  assert runtime.tick() is None
-  assert not any(event.status == "valid" for event in events)
-  monkeypatch.setenv("STARPILOT_VASM_DEVELOPMENT", "1")
-  client.add(2_000_000_001, 0)
   event = runtime.tick()
   assert event is not None and event.status == "valid" and event.frame_id == 0
   assert event.display_right and not event.display_left
@@ -163,7 +174,7 @@ def test_default_off_fresh_drive_new_frames_and_stale_reset(tmp_path, monkeypatc
   assert not events[-1].display_right
 
 
-def test_alternating_sides_do_not_renew_other_source_and_resume_resets(tmp_path, monkeypatch):
+def test_alternating_sides_do_not_renew_other_source_and_resume_resets(tmp_path):
   annotation = decode_annotation(b'{"version":1,"width":32,"height":32,"poly_left":[[0,0],[32,0],[32,32],[0,32]],"poly_right":[[0,0],[32,0],[32,32],[0,32]]}')
   params = Params(str(tmp_path / "params"))
   path = Path(params.get_param_path("VASMPreferences"))
@@ -174,7 +185,6 @@ def test_alternating_sides_do_not_renew_other_source_and_resume_resets(tmp_path,
   client = Client()
   client.add(2_000_000_000, 0)
   events = []
-  monkeypatch.setenv("STARPILOT_VASM_DEVELOPMENT", "1")
   runtime = VASMRuntime(params, messages, lambda: client, events.append, model_path=Path("/external/model.onnx"),
                         mono_clock=lambda: clock[0], pair_clock=lambda: (clock[0], clock[0] + offset[0]),
                         model_factory=lambda _: Model())
@@ -201,7 +211,7 @@ def test_alternating_sides_do_not_renew_other_source_and_resume_resets(tmp_path,
   assert events[-1].status == "stale" and not events[-1].display_left and not events[-1].display_right
 
 
-def test_authority_or_saved_doc_change_during_inference_denies_output(tmp_path, monkeypatch):
+def test_authority_or_saved_doc_change_during_inference_denies_output(tmp_path):
   from opendbc.car.structs import car
 
   annotation = decode_annotation(b'{"version":1,"width":32,"height":32,"poly_left":[[0,0],[32,0],[32,32],[0,32]],"poly_right":[]}')
@@ -213,7 +223,6 @@ def test_authority_or_saved_doc_change_during_inference_denies_output(tmp_path, 
   client = Client()
   client.add(2_000_000_000, 0)
   events = []
-  monkeypatch.setenv("STARPILOT_VASM_DEVELOPMENT", "1")
 
   class ChangingModel(Model):
     def infer_nv12(self, frame, **kwargs):
@@ -239,7 +248,7 @@ def test_authority_or_saved_doc_change_during_inference_denies_output(tmp_path, 
   assert all(event.status != "valid" for event in events)
 
 
-def test_reconnect_rejects_queued_preconnection_frame(tmp_path, monkeypatch):
+def test_reconnect_rejects_queued_preconnection_frame(tmp_path):
   annotation = decode_annotation(b'{"version":1,"width":32,"height":32,"poly_left":[[0,0],[32,0],[32,32],[0,32]],"poly_right":[]}')
   params = Params(str(tmp_path / "params"))
   path = Path(params.get_param_path("VASMPreferences"))
@@ -249,7 +258,6 @@ def test_reconnect_rejects_queued_preconnection_frame(tmp_path, monkeypatch):
   client = Client()
   client.add(2_000_000_000, 0)
   events = []
-  monkeypatch.setenv("STARPILOT_VASM_DEVELOPMENT", "1")
   runtime = VASMRuntime(params, messages, lambda: client, events.append, model_path=Path("/external/model.onnx"),
                         mono_clock=lambda: clock[0], pair_clock=lambda: (clock[0], clock[0] + 1_000_000_000),
                         model_factory=lambda _: Model())
@@ -265,7 +273,7 @@ def test_reconnect_rejects_queued_preconnection_frame(tmp_path, monkeypatch):
   assert all(event.sequence <= 1 for event in events)
 
 
-def test_model_load_failure_retries_only_after_bounded_backoff(tmp_path, monkeypatch):
+def test_model_load_failure_retries_only_after_bounded_backoff(tmp_path):
   annotation = decode_annotation(b'{"version":1,"width":32,"height":32,"poly_left":[[0,0],[32,0],[32,32],[0,32]],"poly_right":[]}')
   params = Params(str(tmp_path / "params"))
   path = Path(params.get_param_path("VASMPreferences"))
@@ -273,7 +281,6 @@ def test_model_load_failure_retries_only_after_bounded_backoff(tmp_path, monkeyp
   clock = [1_000_000_000]
   messages = Messages(clock)
   attempts = []
-  monkeypatch.setenv("STARPILOT_VASM_DEVELOPMENT", "1")
 
   class BadModel(Model):
     def load(self):
@@ -294,7 +301,7 @@ def test_model_load_failure_retries_only_after_bounded_backoff(tmp_path, monkeyp
   assert attempts == [1_000_000_000, 6_000_000_000]
 
 
-def test_source_timestamp_advancing_during_post_inference_update_is_checked_with_final_clock(tmp_path, monkeypatch):
+def test_source_timestamp_advancing_during_post_inference_update_is_checked_with_final_clock(tmp_path):
   annotation = decode_annotation(b'{"version":1,"width":32,"height":32,"poly_left":[[0,0],[32,0],[32,32],[0,32]],"poly_right":[]}')
   params = Params(str(tmp_path / "params"))
   path = Path(params.get_param_path("VASMPreferences"))
@@ -314,7 +321,6 @@ def test_source_timestamp_advancing_during_post_inference_update_is_checked_with
   messages = UpdatingMessages(clock)
   client = Client()
   client.add(2_000_000_000, 0)
-  monkeypatch.setenv("STARPILOT_VASM_DEVELOPMENT", "1")
   runtime = VASMRuntime(params, messages, lambda: client, lambda event: None,
                         model_path=Path("/external/model.onnx"), mono_clock=lambda: clock[0],
                         pair_clock=lambda: (clock[0], clock[0] + 1_000_000_000), model_factory=lambda _: Model())

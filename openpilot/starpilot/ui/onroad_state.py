@@ -185,6 +185,7 @@ class OnroadState:
   lateral_active: bool = False
   longitudinal_active: bool = False
   longitudinal_overridden: bool = False
+  driver_override_active: bool = False
   stock_cruise_active: bool = False
   slc_system_long_available: bool = False
   curve: CurveObservation | None = None

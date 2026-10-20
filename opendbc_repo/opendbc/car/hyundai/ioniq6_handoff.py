@@ -41,6 +41,7 @@ class HandoffResult:
   source_period: float | None = None
   disable_acknowledged: bool = False
   restore_acknowledged: bool = False
+  vehicle_ready: bool | None = None
 
 
 def build_ioniq6_hda2_long_candidate(stock_cp, fingerprint):
@@ -130,7 +131,8 @@ def _valid_canfd_crc(msg: CanData) -> bool:
   return len(msg.dat) >= 2 and int.from_bytes(msg.dat[:2], "little") == hkg_can_fd_checksum(msg.address, None, bytearray(msg.dat))
 
 
-def _read_window(can_recv: CanRecvCallable, clock: Clock, duration: float, *, wait_for_one: bool = True) -> tuple[list[tuple[float, int, float]], set[int], set[int], int, bool, set[int]]:
+def _read_window(can_recv: CanRecvCallable, clock: Clock, duration: float, *, wait_for_one: bool = True,
+                 ready_samples=None) -> tuple[list[tuple[float, int, float]], set[int], set[int], int, bool, set[int]]:
   """Collect both stock ECU TX sources and required E-CAN input health."""
   source_samples: list[tuple[float, int, float]] = []
   healthy: set[int] = set()
@@ -165,9 +167,15 @@ def _read_window(can_recv: CanRecvCallable, clock: Clock, duration: float, *, wa
           source_seen.add(msg.address)
           if len(msg.dat) == IONIQ6_STOCK_BSM[msg.address] and _valid_canfd_crc(msg):
             status_valid.add(msg.address)
+        elif msg.address == 0x35 and len(msg.dat) != 32 and ready_samples is not None:
+          ready_samples.append((producer_ns, received_at, None, None, False, _ioniq6_boot_ns()))
         elif msg.address in IONIQ6_REQUIRED_RX and len(msg.dat) == IONIQ6_REQUIRED_RX[msg.address]:
           if msg.address == 0x1CF or _valid_canfd_crc(msg):
             healthy.add(msg.address)
+          if msg.address == 0x35 and ready_samples is not None:
+            # Preserve invalid observations: they must revoke earlier False/True.
+            ready_samples.append((producer_ns, received_at, msg.dat[2], bool(msg.dat[3] & 0x40),
+                                  _valid_canfd_crc(msg), _ioniq6_boot_ns()))
   return source_samples, healthy, source_seen, heartbeat_valid, heartbeat_seen, status_valid
 
 
@@ -187,6 +195,40 @@ def _measured_period(source_samples: list[tuple[float, int, float]]) -> float | 
   return period
 
 
+def _ioniq6_boot_ns():
+  try:
+    return time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+  except (AttributeError, OSError):
+    return 0
+
+
+def _qualified_ioniq6_ready(samples, now):
+  """Same receive window, no actuation: unknown cannot masquerade as not Ready.
+
+  BOOTTIME bounds producer age; separate MONOTONIC receipt deltas establish
+  ordered current sampling without subtracting clocks from different domains.
+  """
+  if len(samples) < 4 or any(not sample[4] or sample[0] <= 0 or
+                             not 0 <= sample[5] - sample[0] <= 50_000_000 or sample[5] <= 0 for sample in samples):
+    return None
+  if samples[-1][1] - samples[0][1] < .1 or not 0 <= now - samples[-1][1] <= .05:
+    return None
+  values = {sample[3] for sample in samples}
+  if len(values) != 1:
+    return None
+  for previous, current in zip(samples, samples[1:], strict=False):
+    producer_delta = (current[0] - previous[0]) * 1e-9
+    receipt_delta = current[1] - previous[1]
+    if not 0 < producer_delta <= .05 or not 0 <= receipt_delta <= .05 or (current[2] - previous[2]) % 256 != 1:
+      return None
+  # Reject queued producer bursts even when their historical cadence is valid.
+  producer_span = (samples[-1][0] - samples[0][0]) * 1e-9
+  receipt_span = samples[-1][1] - samples[0][1]
+  if abs(producer_span - receipt_span) > .05:
+    return None
+  return samples[-1][3]
+
+
 def inspect_ioniq6_long_sources(can_recv: CanRecvCallable, clock: Clock = time.monotonic) -> HandoffResult:
   """Receive-only prerequisite check before selecting a longitudinal profile."""
   # Each attempt stands alone: never combine health or cadence across windows.
@@ -194,8 +236,9 @@ def inspect_ioniq6_long_sources(can_recv: CanRecvCallable, clock: Clock = time.m
   # Post-disable windows deliberately do not drain: any stock source matters.
   for _ in range(3):
     can_recv(wait_for_one=False)
+    ready_samples = []
     pre_times, pre_health, pre_sources, pre_heartbeat_valid, _, pre_status_valid = _read_window(
-      can_recv, clock, 0.25, wait_for_one=False)
+      can_recv, clock, 0.25, wait_for_one=False, ready_samples=ready_samples)
     period = _measured_period(pre_times)
     missing = []
     if period is None:
@@ -209,7 +252,8 @@ def inspect_ioniq6_long_sources(can_recv: CanRecvCallable, clock: Clock = time.m
     if pre_status_valid != IONIQ6_STOCK_BSM.keys():
       missing.append('bsm_status')
     if not missing:
-      return HandoffResult(HandoffOutcome.NOT_READY, 'preflight_ready', period)
+      return HandoffResult(HandoffOutcome.NOT_READY, 'preflight_ready', period,
+                           vehicle_ready=_qualified_ioniq6_ready(ready_samples, clock()))
   return HandoffResult(HandoffOutcome.NOT_READY, 'preflight_' + ','.join(missing))
 
 

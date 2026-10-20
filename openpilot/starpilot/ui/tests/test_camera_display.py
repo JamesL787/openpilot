@@ -251,6 +251,8 @@ class CameraDisplayTests(unittest.TestCase):
     camera._stream_type = native_camera.NARROW_ROAD_CAM
     camera.client = object()
     camera._engaged_val = [0]
+    camera._color_strength_val = [0.0]
+    camera._color_strength_loc = 3
     camera._enhance_driver_val = [0]
     camera._engaged_loc = 1
     camera._enhance_driver_loc = 2

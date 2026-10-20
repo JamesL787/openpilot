@@ -60,7 +60,8 @@ def get_coast_accel(pitch):
 
 def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, allow_throttle,
                      profile: AppliedProfile | None = None, cruise_brake_floor: float | None = None,
-                     base_brake_floor: float = A_CRUISE_MIN, selected_acceleration_max: float | None = None, faster_takeoffs: bool = False):
+                     base_brake_floor: float = A_CRUISE_MIN, selected_acceleration_max: float | None = None, faster_takeoffs: bool = False,
+                     *, a_target_prev: float | None = None):
   max_accel = ACCEL_MAX if e2e else get_max_accel(v_ego)
   if selected_acceleration_max is not None and not e2e:
     max_accel = selected_acceleration_max
@@ -85,7 +86,8 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
     cruise_min = max(cruise_min, cruise_brake_floor)
   target_accel = np.clip(v_cruise - v_ego, cruise_min, max_accel)
   j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)
-  target_accel = float(np.clip(target_accel, a_cruise_prev - j_cruise * dt, a_cruise_prev + j_cruise * dt))
+  decel_start = a_cruise_prev if a_target_prev is None else min(a_cruise_prev, a_target_prev)
+  target_accel = float(np.clip(target_accel, decel_start - j_cruise * dt, a_cruise_prev + j_cruise * dt))
 
   return target_accel
 
@@ -203,7 +205,10 @@ class LongitudinalPlanner:
     # No change cost when user is controlling the speed, or when standstill
     prev_accel_constraint = not (reset_state or sm['carState'].standstill)
 
-    self.mpc.set_cur_state(self.v_desired_filter.x, self.output_a_target)
+    if self.CP.openpilotLongitudinalControl:
+      self.mpc.set_cur_state(self.v_desired_filter.x, self.output_a_target)
+    else:
+      self.mpc.set_cur_state(v_ego, sm['carState'].aEgo)
     base_follow = self.last_profile.follow_seconds if self.last_profile is not None else get_T_FOLLOW(sm['selfdriveState'].personality)
     approach_follow = self.lead_approach.step(
       lead_approach_key, project_approach(sm, self.CP, sample_now_ns, lead_approach_key) if lead_approach_key is not None else None,
@@ -374,7 +379,8 @@ class LongitudinalPlanner:
     self.a_cruise = get_cruise_accel(sm['selfdriveState'].experimentalMode, v_cruise, v_ego,
                                      self.a_cruise, steer_angle_without_offset, self.CP, self.dt,
                                      accel_coast, self.allow_throttle, cruise_profile, slc_floor,
-                                     base_brake_floor=global_floor, selected_acceleration_max=selected_acceleration, faster_takeoffs=faster_takeoffs)
+                                     base_brake_floor=global_floor, selected_acceleration_max=selected_acceleration, faster_takeoffs=faster_takeoffs,
+                                     a_target_prev=self.output_a_target)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
     output_a_target_e2e = self.accel_boost.update(sm, output_a_target_e2e, output_a_target_mpc, self.a_cruise)

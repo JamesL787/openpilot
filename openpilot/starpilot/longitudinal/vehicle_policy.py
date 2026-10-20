@@ -58,7 +58,8 @@ def stopping_decel_rate(cp, policy):
 def stopping_policy_for(cp, dt):
   from opendbc.car.hyundai.blended_stopping import policy_for as blended_stopping_policy_for
   from opendbc.car.hyundai.ev9_stopping import policy_for as ev9_stopping_policy_for
-  return ev9_stopping_policy_for(cp, dt) or blended_stopping_policy_for(cp, dt)
+  from opendbc.car.hyundai.ioniq5pe_stopping import policy_for as pe_stopping_policy_for
+  return pe_stopping_policy_for(cp, dt) or ev9_stopping_policy_for(cp, dt) or blended_stopping_policy_for(cp, dt)
 
 
 def forecast_should_stop(cp, speeds, time_indices, action_t, fallback):

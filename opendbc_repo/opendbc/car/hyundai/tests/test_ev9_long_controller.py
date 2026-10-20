@@ -8,7 +8,8 @@ from opendbc.car.hyundai.tests.test_ioniq5pe_stock import params
 from opendbc.car.hyundai.values import CAR, DBC
 
 
-def packets(packer, tick, *, fault=0, moving=True, gear=5, cruise=True, advance_counter=False, cruise_button=0):
+def packets(packer, tick, *, fault=0, moving=True, gear=5, cruise=True, advance_counter=False, cruise_button=0,
+            adaptive_main=False):
   values = {
     'ACCELERATOR': (100, {'GEAR': gear, 'ACCELERATOR_PEDAL': 0}),
     'TCS': (50, {'ACCEnable': 0, 'ACC_REQ': int(cruise), 'DriverBraking': 0}),
@@ -17,7 +18,7 @@ def packets(packer, tick, *, fault=0, moving=True, gear=5, cruise=True, advance_
     'STEERING_SENSORS': (100, {}),
     'DOORS_SEATBELTS': (10, {'DRIVER_SEATBELT': 1}),
     'BLINKERS': (10, {}),
-    'CRUISE_BUTTONS': (50, {'CRUISE_BUTTONS': cruise_button}),
+    'CRUISE_BUTTONS': (50, {'CRUISE_BUTTONS': cruise_button, 'ADAPTIVE_CRUISE_MAIN_BTN': int(adaptive_main)}),
   }
   frames = [packer.make_can_msg(name, 1, {**fields, **(
               {"COUNTER": tick // (100 // hz)} if advance_counter and name not in ("DOORS_SEATBELTS", "BLINKERS") else {})})
@@ -184,7 +185,7 @@ class TestEV9LongController(unittest.TestCase):
       subscribed = ci.can_parsers[Bus.pt].addresses
       self.assertEqual(0x1a0 in subscribed, not selected)
       for tick in range(1, 101):
-        frames = packets(packer, tick)
+        frames = packets(packer, tick, adaptive_main=tick == 8)
         self.assertNotIn(0x1a0, [address for address, _, _ in frames])
         ci.update([(tick * 10_000_000, frames)])
       self.assertEqual(ci.CS.out.canValid, selected)

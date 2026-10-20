@@ -106,6 +106,23 @@ def baseline():
   return card, feedback, native
 
 
+@pytest.mark.parametrize('health_allowed', [False, True])
+def test_native_long_withdrawal_before_parser_keeps_existing_card_intent(health_allowed):
+  with OpenpilotPrefix():
+    card, feedback, prior = baseline()
+    now = NOW + 10_000_000
+    cs = parse(card, now, counter=1)
+    native = replace(prior, observedMonoTime=now, validUntilMonoTime=now + 200_000_000,
+      longitudinalAllowed=False, pandaInventory=(replace(prior.pandaInventory[0], controlsAllowed=health_allowed),))
+    sm, _ = peers(card.CP, card.slc_producer_session, now, controls=health_allowed, native=native, sequence=2)
+    # The host's last full-axis result precedes the native paddle/brake edge.
+    reset = feedback.observe(sm, card.CP, cs, now, latched=True,
+                             intent_producer_session=card.slc_producer_session)
+    card.aol_card_intent.update(cs, fault_active=reset, now_ns=now)
+    assert not reset and not feedback.failed and card.aol_card_intent.allowed_latch
+    assert not native.longitudinalAllowed
+
+
 @pytest.mark.parametrize('gesture', ['brake', 'paddle', 'cancel'])
 def test_real_physical_withdrawal_retains_latch_with_held_long_wire(gesture):
   with OpenpilotPrefix():

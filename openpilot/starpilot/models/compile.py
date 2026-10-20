@@ -10,6 +10,10 @@ import time
 from collections import namedtuple
 from functools import partial
 
+if __name__ == '__main__':
+  from openpilot.starpilot.models.runtime_bridge.runtime import prepare_compiler
+  prepare_compiler()
+
 import numpy as np
 from tinygrad import Device, TinyJit, Context, Tensor
 from tinygrad.dtype import _to_np_dtype, dtypes
@@ -445,10 +449,16 @@ def make_stateful_input_queues(metadata, device):
   queues['packed_npy_inputs'] = Tensor(packed, device='NPY').realize()
   if metadata.get('mapped_image_input', False):
     image_shape = tuple(metadata['input_shapes']['new_img'])
-    # tinygrad 02e698160e: Buffer sizes are bytes and from_buffer takes the dtype
-    buffer = Buffer(device, math.prod(image_shape) * dtypes.uint8.itemsize,
-                    options=BufferSpec(cpu_access=True), preallocate=True)
-    queues['mapped_gpu_image'] = Tensor(UOp.from_buffer(buffer, dtypes.uint8)).reshape(image_shape)
+    from openpilot.starpilot.models.runtime_bridge.runtime import selected_legacy
+    if selected_legacy():
+      buffer = Buffer(device, math.prod(image_shape), dtypes.uint8,
+                      options=BufferSpec(cpu_access=True), preallocate=True)
+      view = UOp.from_buffer(buffer)
+    else:
+      buffer = Buffer(device, math.prod(image_shape) * dtypes.uint8.itemsize,
+                      options=BufferSpec(cpu_access=True), preallocate=True)
+      view = UOp.from_buffer(buffer, dtypes.uint8)
+    queues['mapped_gpu_image'] = Tensor(view).reshape(image_shape)
   for name in metadata['state_pairs']:
     queues[name] = Tensor(np.zeros(metadata['input_shapes'][name], dtype=metadata['input_dtypes'][name]),
                           device=device).contiguous().realize()
@@ -549,9 +559,8 @@ def validate_metadata(metadata):
 
 
 def main():
-  from tinygrad.nn.onnx import OnnxRunner
-
-  from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
+  from openpilot.starpilot.models.runtime_bridge.runtime import require_compiler
+  require_compiler()
 
   parser = argparse.ArgumentParser()
   parser.add_argument("--model-type", choices=MODEL_TYPES, required=True)
@@ -575,6 +584,9 @@ def main():
   args = parser.parse_args()
   if args.frame_skip is not None and args.frame_skip < 1:
     parser.error("--frame-skip must be positive")
+
+  from tinygrad.nn.onnx import OnnxRunner
+  from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 
   output = {
     "format_version": ARTIFACT_FORMAT_VERSION,

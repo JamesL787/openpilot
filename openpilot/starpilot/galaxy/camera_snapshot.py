@@ -39,7 +39,7 @@ class CameraSnapshot:
       from openpilot.starpilot.galaxy.camera_request import request, boot_ns
       request()
       frame_after = boot_ns()
-      deadline = self.clock() + 12
+      deadline = self.clock() + (24 if camera == "cabin" else 12)
       process = self.spawn([sys.executable, '-m', 'openpilot.starpilot.galaxy.camera_snapshot_worker', camera],
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, close_fds=True)
       while self.clock() < deadline:

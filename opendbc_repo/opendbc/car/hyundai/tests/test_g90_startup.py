@@ -30,7 +30,7 @@ class Replies:
 
   def query(self, send, recv, bus, addresses, requests, responses, **kwargs):
     request = requests[0]
-    expected = {b'\x10\x03': b'\x50\x03', b'\x28\x83\x01': b'', b'\x28\x00\x01': b'\x68\x00'}
+    expected = {b'\x10\x03': b'\x50\x03', b'\x28\x83\x01': b'', b'\x28\x00\x01': b'\x68\x00', b'\x10\x01': b'\x50\x01'}
     assert responses == [expected[request]], (request, responses)
     self.requests.append(request)
     owner = self
@@ -44,6 +44,8 @@ class Replies:
           if owner.mode != 'sent':
             raise OSError('Explicit simulated failure after communication request send')
           return {}
+        if request == b'\x10\x01':
+          return {(0x7d0, None): b''} if owner.mode in ('untouched', 'restored') else {}
         if request == b'\x28\x00\x01':
           return {(0x7d0, None): b''} if owner.mode == 'restored' else {}
         raise AssertionError(request)
@@ -120,7 +122,7 @@ class TestG90Startup(unittest.TestCase):
     self.assertEqual(ci.CP.safetyConfigs[0].safetyParam, original.safetyConfigs[0].safetyParam)
 
   def test_actual_failed_prepublication_restores_then_publishes_stock(self):
-    for mode, outcome in (('untouched', Outcome.STOCK_UNTOUCHED), ('restored', Outcome.STOCK_RESTORED)):
+    for mode, outcome in (('untouched', Outcome.STOCK_RESTORED), ('restored', Outcome.STOCK_RESTORED)):
       ci, holder, replies, original = self.run_prepublication(mode)
       self.assertIs(holder.owner.outcome, outcome)
       self.assertFalse(ci.CP.openpilotLongitudinalControl)
@@ -210,7 +212,7 @@ class TestG90Startup(unittest.TestCase):
   def test_exact_aol_finalization_preserves_transaction_outcome_and_ud_s_contract(self):
     from opendbc.car.hyundai.classic_long_aol import qualified as long_qualified
     from opendbc.car.hyundai.classic_scc_aol import qualified as stock_qualified
-    for mode, outcome in (('sent', Outcome.SENT_UNCONFIRMED), ('untouched', Outcome.STOCK_UNTOUCHED), ('restored', Outcome.STOCK_RESTORED)):
+    for mode, outcome in (('sent', Outcome.SENT_UNCONFIRMED), ('untouched', Outcome.STOCK_RESTORED), ('restored', Outcome.STOCK_RESTORED)):
       for lda in (False, True):
         with self.subTest(mode=mode, lda=lda):
           ci, holder, replies, original = self.run_prepublication(mode, aol=True, lda=lda)
@@ -313,7 +315,7 @@ def test_actual_card_owner_publication_and_controls(mode, aol, lda, monkeypatch)
       assert holder.owner.published and holder.owner.ready
       assert holder.owner.prepared_for(card.CP)
       assert holder.owner.outcome is {'sent': Outcome.SENT_UNCONFIRMED,
-                                     'untouched': Outcome.STOCK_UNTOUCHED,
+                                     'untouched': Outcome.STOCK_RESTORED,
                                      'restored': Outcome.STOCK_RESTORED}[mode]
       assert card.CP.openpilotLongitudinalControl == (mode == 'sent')
       assert card.CP.pcmCruise == (mode != 'sent')

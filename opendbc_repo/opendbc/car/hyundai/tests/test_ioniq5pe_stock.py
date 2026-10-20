@@ -41,7 +41,7 @@ class TestIoniq5PEStock(unittest.TestCase):
         self.assertTrue(qualified(cp))
         self.assertEqual(cp.safetyConfigs[0].safetyParam, 0x5491)
         self.assertFalse(cp.openpilotLongitudinalControl)
-        self.assertFalse(cp.alphaLongitudinalAvailable)
+        self.assertEqual(cp.alphaLongitudinalAvailable, not release)
         self.assertTrue(cp.pcmCruise)
         self.assertEqual(cp.alternativeExperience, 0)
         self.assertAlmostEqual(cp.wheelbase, 2.97)

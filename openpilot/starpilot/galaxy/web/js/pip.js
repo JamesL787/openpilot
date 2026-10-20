@@ -173,7 +173,7 @@ export const PipPage = {
     <section class="gx-settings gx-pip" aria-label="Blind Spot Camera and Preview saved settings" :inert="busy" :aria-busy="busy || undefined">
       <header class="gx-settings__header gx-page-header"><div><h2>Blind Spot Camera and Preview</h2>
         <p>Shows a close-up of the cabin window as you drive. Whether it appears on your turn signal or when a car is in your blind spot depends on your settings. Choose which window each side covers and how much to zoom in.</p></div>
-        <div class="gx-actions"><button type="button" class="gx-icon-btn" :disabled="state.cameraWarming" aria-label="Take a new cabin snapshot" title="New snapshot" @click="liveCamera.refresh()"><i class="bi bi-camera"></i></button><button type="button" class="gx-icon-btn" aria-label="Position side cameras" title="Position side cameras" @click="go('/theme_maker')"><i class="bi bi-layout-wtf" aria-hidden="true"></i></button></div></header>
+        <div class="gx-actions"><button type="button" class="gx-btn gx-btn--tonal" :disabled="state.cameraWarming" @click="liveCamera.refresh()"><i class="bi bi-camera" aria-hidden="true"></i> Take new snapshot</button><button type="button" class="gx-icon-btn" aria-label="Position side cameras" title="Position side cameras" @click="go('/theme_maker')"><i class="bi bi-layout-wtf" aria-hidden="true"></i></button></div></header>
       <GxState v-if="mode !== 'local'">Local saved settings are unavailable in preview.</GxState>
       <template v-else>
         <GxNotice v-if="state.data && !state.data.parked" tone="warn">Turn the vehicle off to change these settings.</GxNotice>
@@ -186,7 +186,7 @@ export const PipPage = {
           <section class="gx-card gx-vasm__editor" aria-label="Blind Spot Camera crop editor">
             <h3>Camera Crop</h3>
             <p class="gx-note">Drag a circle onto the cabin window you want to watch. Both crops share one size.</p>
-            <p class="gx-note gx-camera-status" role="status">{{ state.cameraWarming ? "Warming up the camera · 5 seconds…" : state.imageName ? "Snapshot ready" : "Turn off the vehicle to take a snapshot." }}</p>
+            <p class="gx-note gx-camera-status" role="status">{{ state.cameraWarming ? "Warming up the camera · about 10 seconds…" : state.imageName ? "Snapshot ready" : "Take a cabin snapshot while parked." }}</p>
             <div class="gx-actions">
               <button v-for="side in SIDES" :key="side.key" type="button" class="gx-btn gx-btn--tonal" :disabled="!editable" :aria-pressed="state.activeSide === side.key" :aria-label="side.label" @click="choose(side.key)">{{ side.key === "centerRight" ? "Left" : "Right" }}</button>
               <button type="button" class="gx-icon-btn" :disabled="!editable || !state[state.activeSide]" aria-label="Clear selected camera crop" title="Clear selected crop" @click="clear(state.activeSide)"><i class="bi bi-eraser"></i></button>
@@ -204,7 +204,7 @@ export const PipPage = {
               @review="(index, direction) => feed.preview(index, direction)" @reset-default="index => feed.resetDefault(index)" />
           </section>
         </div>
-        <GxDialog v-if="state.pending" labelledby="gx-pip-confirm-title" @close="feed.cancel()"><h3 id="gx-pip-confirm-title">Confirm Saved Preference</h3><p>{{ state.pending.question }}</p>
+        <GxDialog v-if="state.pending" labelledby="gx-pip-confirm-title" @close="feed.cancel()"><h3 id="gx-pip-confirm-title">Save changes?</h3><p>{{ state.pending.question }}</p>
             <div class="gx-settings__controls gx-actions"><button type="button" class="gx-btn gx-btn--tonal" @click="feed.cancel()">Cancel</button>
               <button type="button" class="gx-btn" @click="feed.confirm()">Save</button></div></GxDialog>
       </template>

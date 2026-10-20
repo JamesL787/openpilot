@@ -43,14 +43,17 @@ def test_big_and_projected_editor_share_one_graphic_cem_without_legacy_caption(v
   view._corner_cache=Mock()
   with ExitStack() as stack:
     ordered_draw = stack.enter_context(patch.object(view,'_ordered_widgets',wraps=view._ordered_widgets))
-    for name in ('draw_rectangle_rec','draw_rectangle_gradient_v','draw_rectangle_lines_ex','draw_rectangle_rounded_lines_ex'):
+    for name in ('draw_rectangle_rec','draw_rectangle_gradient_v','draw_rectangle_lines_ex','draw_rectangle_rounded_lines_ex',
+                 'rl_push_matrix','rl_translatef','rl_pop_matrix'):
       stack.enter_context(patch.object(rl,name))
     stack.enter_context(patch.object(onroad.clip,'begin_scissor_mode'))
     stack.enter_context(patch.object(onroad.clip,'end_scissor_mode'))
-    for name in ('render_glow','render_corner_hint','render_large_half_borders'):
+    for name in ('render_glow','render_corner_hint'):
       stack.enter_context(patch.object(onroad,name))
+    border = stack.enter_context(patch.object(onroad,'render_large_half_borders'))
     view._large(state)
   assert ordered_draw.call_count == int(ordered)
+  border.assert_called_once()
   view.cem_gauge.render.assert_called_once_with(state)
   assert not any(str(call.args[0]).startswith(('CEM ','CCM ')) for call in view.fonts.draw.call_args_list)
 

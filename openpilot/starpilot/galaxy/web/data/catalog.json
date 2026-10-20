@@ -75,14 +75,7 @@
       "name": "Plots & Analysis",
       "path": "/tuning/plots",
       "icon": "bi-sign-turn-right",
-      "description": "Live steering and acceleration plots",
-      "availability": "local-only"
-    },
-    {
-      "name": "Auto Learn Results",
-      "path": "/tuning/flm",
-      "icon": "bi-sliders",
-      "description": "StarPilot learned steering corrections and fitting progress",
+      "description": "Live control plots and StarPilot Auto Learn results",
       "availability": "local-only"
     },
     {
@@ -96,7 +89,7 @@
       "name": "Android Auto",
       "path": "/android-auto",
       "icon": "bi-phone",
-      "description": "Show StarPilot on your car’s screen",
+      "description": "Show StarPilot on your car\u2019s screen",
       "availability": "local-only",
       "visibility": "authenticated"
     }

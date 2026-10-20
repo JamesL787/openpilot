@@ -166,6 +166,7 @@ class TestResumeInitialization(OpenpilotTestCase):
         owner.sm = {'carControl': SimpleNamespace(enabled=False)}
         owner.CC_prev = SimpleNamespace(enabled=False)
         owner.experimental_mode = False
+        owner.initial_cruise_speed = V_CRUISE_INITIAL
         owner.is_metric = False
         owner.vehicle_startup = SimpleNamespace(consume_cruise_resume=lambda value=explicit: value)
         release = car.CarState(cruiseState={'available': True}, buttonEvents=[
@@ -200,3 +201,28 @@ class TestResumeInitialization(OpenpilotTestCase):
         helper.update_v_cruise(state, False, False)
         helper.initialize_v_cruise(car.CarState(), False)
       self.assertEqual(helper.v_cruise_kph, V_CRUISE_INITIAL)
+
+
+class TestConfiguredInitialCruiseSpeed(OpenpilotTestCase):
+  def test_initial_speed_floor(self):
+    for experimental_mode in (True, False):
+      for initial_speed in (40, 65, 100, 145):
+        for v_ego in (0.0, 15.0, 40.0, 60.0):
+          self.v_cruise_helper = VCruiseHelper(car.CarParams(pcmCruise=False))
+          self.v_cruise_helper.initialize_v_cruise(car.CarState(vEgo=v_ego), experimental_mode,
+                                                 resume=False, initial_speed=initial_speed)
+          expected = round(np.clip(max(v_ego * CV.MS_TO_KPH, initial_speed), V_CRUISE_INITIAL, V_CRUISE_MAX))
+          assert self.v_cruise_helper.v_cruise_kph == expected
+
+  def test_configured_floor_does_not_override_resume(self):
+    self.v_cruise_helper = VCruiseHelper(car.CarParams(pcmCruise=False))
+    self.v_cruise_helper.initialize_v_cruise(car.CarState(vEgo=70 * CV.KPH_TO_MS), False)
+    self.v_cruise_helper.v_cruise_kph_last = 70
+    self.v_cruise_helper.initialize_v_cruise(car.CarState(vEgo=0), False, resume=True, initial_speed=100)
+    assert self.v_cruise_helper.v_cruise_kph == 70
+
+  def test_invalid_initial_speed_preserves_safe_floor(self):
+    for invalid in (None, True, False, "80", 80.0, 0, 39, 146):
+      helper = VCruiseHelper(car.CarParams(pcmCruise=False))
+      helper.initialize_v_cruise(car.CarState(vEgo=0), False, resume=False, initial_speed=invalid)
+      assert helper.v_cruise_kph == V_CRUISE_INITIAL

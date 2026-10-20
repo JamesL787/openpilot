@@ -222,8 +222,11 @@ class Runtime:
     self.ledger = resolved.state
     if resolved.errors:
       return None
+    # Card serializes the event's m/s as Float32, while carState carries kph.
+    # The guard above already binds them within transport precision. Classify
+    # in the exact current selected-speed coordinate used by the reducer.
     classified = arb.step(self.ledger, arb.CruiseChange(self.session_id, self.ledger.last_effect_id + 1, action_id,
-                                                         event.previous_mps, event.selected_mps), now_ns=now_ns)
+                                                         event.previous_mps, float(sm['carState'].vCruise) / 3.6), now_ns=now_ns)
     self.ledger = classified.state
     completed = arb.step(self.ledger, arb.CompleteAction(self.session_id, action_id), now_ns=now_ns)
     self.ledger = completed.state

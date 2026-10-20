@@ -335,7 +335,9 @@ class SoundsSettingsTests(unittest.TestCase):
               elif control == "sidebar":
                 x, y = 240, 345
               elif key == "SoundPack":
-                x, y = 2010, feature_row_top(editor) + 77
+                _, (x, y, width, height), _ = next(button for button in value_buttons(editor, editor.rows[0], feature_row_top(editor))
+                                                 if button[0] == "Stock Sounds")
+                x, y = x + width / 2, y + height / 2
               else:
                 _, (x, y, width, height), _ = next(button for button in value_buttons(editor, editor.rows[0], feature_row_top(editor))
                                                  if button[0] == "25")
@@ -349,6 +351,8 @@ class SoundsSettingsTests(unittest.TestCase):
                 session.sounds_request.assert_called_once()
                 if key != "SoundPack":
                   self.assertEqual(self.params.get(key), 25)
+                else:
+                  self.assertEqual(self.params.get(key), "stock")
               else:
                 session.sounds_request.assert_not_called()
                 if control == "done":

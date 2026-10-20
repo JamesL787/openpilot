@@ -160,6 +160,9 @@ class CarInterface(CarInterfaceBase):
       ret.flags |= int(ToyotaFlags.HYBRID | ToyotaFlags.LONG_FILTER)
       ret.safetyConfigs[0].safetyParam = 4169
       ret.openpilotLongitudinalControl = True
+    # Toyota EPS accepts lateral commands down to zero. Keep the existing
+    # native/axis/fault gates; a stock cruise stop does not withdraw steering.
+    ret.steerAtStandstill = ret.minSteerSpeed <= 0.
     ret.autoResumeSng = ret.openpilotLongitudinalControl and not ret.flags & ToyotaFlags.LONG_FILTER
 
     if not ret.openpilotLongitudinalControl:

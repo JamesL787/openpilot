@@ -75,9 +75,11 @@ class TestHyundaiAngleHybridsThree(unittest.TestCase):
 
   def mode(self, cp):
     safety = libsafety_py.libsafety
+    safety.set_alternative_experience(cp.alternativeExperience)
     self.assertEqual(safety.set_safety_hooks(structs.CarParams.SafetyModel.hyundaiCanfd,
                                               cp.safetyConfigs[-1].safetyParam), 0)
     safety.init_tests()
+    safety.set_alternative_experience(cp.alternativeExperience)
     safety.set_timer(1_000_000)
     return safety
 

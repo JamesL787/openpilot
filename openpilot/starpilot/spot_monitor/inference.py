@@ -13,9 +13,10 @@ from openpilot.starpilot.spot_monitor.policy import (
 
 
 # Frozen tri-class artifact. Embedded metadata names class 1 as 1_car and
-# states AGPL-3.0/Ultralytics; weights remain external and are not bundled.
+# states AGPL-3.0/Ultralytics; the bundled bytes must match this identity.
 MODEL_SIZE_BYTES = 6_166_229
 MODEL_SHA256 = "5d20cdbb457ba18db51a537ee2e305bbe442264b1613956068d473e35d15900d"
+DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[3] / "starpilot/assets/vision_models/v_asm_model.onnx"
 
 
 def _verified_model_bytes(path: Path) -> bytes:

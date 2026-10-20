@@ -227,3 +227,5 @@ class PiPRenderer:
       radius = rect.width / 2
       rl.draw_ring(rl.Vector2(rect.x + radius, rect.y + radius), max(0, radius - 3), radius,
                    0, 360, 64, rl.Color(255, 60, 60, 255) if warning else rl.Color(94, 229, 238, 255))
+    elif warning:
+      rl.draw_rectangle_rounded_lines_ex(target, 0.44, 16, 4, rl.Color(255, 60, 60, 255))

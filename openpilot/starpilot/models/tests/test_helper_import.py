@@ -96,13 +96,12 @@ with Context(DEV=""), patch.object(type(Device), "_select_device", property(unex
     runner = SimpleNamespace(graph_inputs={name: SimpleNamespace(shape=shape) for name, shape in shapes.items()})
     get_device = type(Device).__getitem__
 
-    def disk_only(device, name):
-      # tinygrad 02e698160e reads DISK tensors through the host CPU device; a GPU must still never be opened
+    def host_storage_only(device, name):
       self.assertIn(name.split(":", 1)[0], ("DISK", "CPU"))
       return get_device(device, name)
 
     with tempfile.TemporaryDirectory() as temporary, Context(DEV="CPU:LLVM"), \
-         patch.object(type(Device), "__getitem__", disk_only):
+         patch.object(type(Device), "__getitem__", host_storage_only):
       path = Path(temporary) / "metadata.onnx"
       path.write_bytes(stateful_onnx())
       metadata = make_metadata_dict(path, runner)

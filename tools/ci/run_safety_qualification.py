@@ -26,7 +26,7 @@ SAFETY_SOURCE_ROOTS = (SAFETY_TESTS.parent, ROOT / "opendbc_repo/opendbc/bluepil
 MAX_MUTATION_ARTIFACT_BYTES = 256 * 1024 * 1024
 SOURCE_PREFIXES = (
   "opendbc_repo/", "panda/", "openpilot/", "msgq_repo/", "rednose_repo/",
-  "teleoprtc_repo/", "tinygrad_repo/", "jetlink_repo/", "tools/", "scripts/",
+  "teleoprtc_repo/", "tinygrad_repo/", "tinygrad_model_runtime/", "jetlink_repo/", "tools/", "scripts/",
 )
 SOURCE_EXACT = {".github/workflows/safety.yaml", "pyproject.toml", "uv.lock", "SConstruct",
                 "panda/SConscript", "panda/SConstruct", "opendbc_repo/SConscript", "opendbc_repo/pyproject.toml",

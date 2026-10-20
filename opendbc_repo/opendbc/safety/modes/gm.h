@@ -236,7 +236,9 @@ static bool gm_cruise_status_owner_ready(void) {
     ready = gm_cruise_status_main && gm_cruise_status_drive && gm_cruise_status_eps &&
             gm_pedal_sensor_current();
   }
-  return ready && !brake_pressed && !gas_pressed && !regen_braking;
+  // Bolt's 0x3D1 replacement is dashboard status only. Accelerator override
+  // still withdraws pedal/paddle actuation in their independent TX gates.
+  return ready && !brake_pressed && (!gas_pressed || gm_cruise_status_bolt) && !regen_braking;
 }
 
 static void gm_rx_hook(const CANPacket_t *msg) {

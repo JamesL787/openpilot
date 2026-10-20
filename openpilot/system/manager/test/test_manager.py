@@ -50,6 +50,7 @@ class TestManager(OpenpilotTestCase):
         assert params.get(k, return_default=True) == 0
       elif default_value is not None:
         assert params.get(k) == default_value
+    assert params.get("AlwaysOnLateral") is True
     assert params.get("OpenpilotEnabledToggle")
     assert params.get("RouteCount") == 0
 

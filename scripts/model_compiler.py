@@ -99,6 +99,28 @@ def parse_args(argv=None):
   return args
 
 
+def bank_compiler_revision() -> str:
+  # The global runtime can advance while the compiled bank keeps its own ABI.
+  old_path = sys.path[:]
+  try:
+    sys.path.insert(0, str(REPO_ROOT))
+    from openpilot.starpilot.models import catalog
+    from openpilot.starpilot.models.runtime_bridge import bootstrap, runtime
+    for module, relative in ((catalog, "catalog.py"), (bootstrap, "runtime_bridge/bootstrap.py"),
+                             (runtime, "runtime_bridge/runtime.py")):
+      if Path(module.__file__).resolve() != (REPO_ROOT / "openpilot/starpilot/models" / relative).resolve():
+        raise ValueError("Model compiler identity came from a different checkout")
+    revision = catalog.COMPILER_REVISION
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+      raise ValueError("Invalid bank compiler revision")
+    # personal branch: the bank is compiled with the vendored tinygrad (catalog.COMPILER_REVISION), not the legacy runtime
+    if not runtime.PERSONAL_VENDORED_RUNTIME and (revision != bootstrap.LEGACY_REVISION or revision != runtime.LEGACY_REVISION):
+      raise ValueError("Bank compiler revision does not match the selected compiler runtime")
+    return revision
+  finally:
+    sys.path[:] = old_path
+
+
 def main(argv=None):
   args = parse_args(argv)
   model_type, source_args = driving_compile_args(source_files(args.input_dir, args.model), args.input_format)
@@ -125,8 +147,7 @@ def main(argv=None):
     subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)
     if {path.name: sha256_file(path) for path in sources} != before:
       raise ValueError("ONNX source changed during compilation")
-    revision = next(item["commit"] for item in json.loads((REPO_ROOT / "upstream-sync.json").read_text())["dependencies"]
-                    if item["path"] == "tinygrad_repo")
+    revision = bank_compiler_revision()
     receipt = {"model_id": args.model, "behavior_version": args.version, "model_type": model_type,
                "artifact_abi": "tinygrad_single_v1_arena", "compiler_revision": revision,
                "source_sha256": before, "artifact_sha256": sha256_file(staged), "artifact_size": staged.stat().st_size,

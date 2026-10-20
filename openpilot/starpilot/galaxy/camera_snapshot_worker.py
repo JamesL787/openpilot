@@ -14,6 +14,7 @@ from openpilot.system.camerad.snapshot import extract_image
 
 STREAMS = {"cabin": VisionStreamType.VISION_STREAM_CABIN, "wide": VisionStreamType.VISION_STREAM_WIDE_ROAD,
            "narrow": VisionStreamType.VISION_STREAM_NARROW_ROAD}
+CABIN_SETTLE_NS = 10_000_000_000
 
 
 def boot_ns():
@@ -27,9 +28,12 @@ def capture(camera, *, client_factory=VisionIpcClient, clock=boot_ns):
     if clock() - started > 9_000_000_000:
       return None
     time.sleep(.1)
-  while clock() - started < 10_000_000_000:
+  connected = clock()
+  while clock() - started < (22_000_000_000 if camera == "cabin" else 10_000_000_000):
     frame = client.recv(timeout_ms=100)
     now = clock()
+    if camera == "cabin" and now - connected < CABIN_SETTLE_NS:
+      continue
     # Native camerad does not populate VIPC extra.valid; use capture freshness.
     if frame is None or not started < client.timestamp_sof <= client.timestamp_eof <= now:
       continue
