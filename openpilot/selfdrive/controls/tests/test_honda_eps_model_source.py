@@ -1,6 +1,7 @@
 """The Honda EPS command delay follows where the model's steering comes from (ns-bosch 023b532e26, ported to 7.0).
 
-On 7.0 modeld publishes it on modelLateralSource (selfdrive/modeld/lateral_source.py), derived from 7.0's runners.
+On 7.0 modeld writes it to the ModelLateralSource param when it changes (selfdrive/modeld/lateral_source.py), derived
+from 7.0's runners; controlsd reads it once a second.
 """
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,24 +9,16 @@ from types import SimpleNamespace
 import pytest
 
 from opendbc.car.structs import car
-from openpilot.cereal import custom, log
+from openpilot.cereal import log
 import openpilot.selfdrive.controls.lib.latcontrol_honda_eps as honda_eps
 from openpilot.selfdrive.controls.tests.test_honda_eps_firmware_ff import _controller
 from openpilot.selfdrive.modeld import lateral_source as ls
-from openpilot.starpilot.models.jetlink_adapter import JetlinkModel
 from openpilot.starpilot.models.runner import CatalogModelState
 
 
 def _catalog(version):
   model = CatalogModelState.__new__(CatalogModelState)
   model.behavior_version = version
-  return model
-
-
-def _jetlink(chestnut, version="v12"):
-  model = JetlinkModel.__new__(JetlinkModel)
-  model.chestnut = chestnut
-  model.small = SimpleNamespace(behavior_version=version)
   return model
 
 
@@ -37,24 +30,29 @@ def test_catalog_models_by_version(version, expected):
   assert ls.lateral_source(_catalog(version), {"plan": 1}) == expected
 
 
-def test_jetlink_small_follows_its_catalog_model_and_the_chestnut_runner_its_output():
-  assert ls.lateral_source(_jetlink(False, "v12"), {}) == "plan"
-  assert ls.lateral_source(_jetlink(False, "v16"), {}) == "actionHead"
-  # the Chestnut runners go through get_action_from_model: an action head, or a plan read through the 0.3 s floor
-  assert ls.lateral_source(_jetlink(True), {"action": 1}) == "actionHead"
-  assert ls.lateral_source(_jetlink(True), {"plan": 1}) == "unknown"
+def test_the_big_model_runners_follow_their_output():
+  # the bundled Chestnut runner and Jetlink's JetlinkModelState (always the big-model role; a joining Jetlink model
+  # drives as the small model itself) go through get_action_from_model: an action head, or a plan read through the
+  # 0.3 s floor
+  big = SimpleNamespace(chestnut=True)
+  assert ls.lateral_source(big, {"action": 1}) == "actionHead"
+  assert ls.lateral_source(big, {"plan": 1}) == "unknown"
   assert ls.lateral_source(SimpleNamespace(), {"plan": 1}) == "unknown"
 
 
-def test_the_published_names_are_the_schema_enums():
-  names = set(custom.ModelLateralSource.Source.schema.enumerants)
-  assert {ls.UNKNOWN, ls.PLAN, ls.ACTION_HEAD, ls.CURVATURE_HEAD} == names
-  assert custom.ModelLateralSource.new_message().source == "unknown"
+def test_every_source_the_controller_knows():
+  assert set(ls.SOURCES) == {"unknown", "plan", "actionHead", "curvatureHead"}
+  assert set(honda_eps.CMD_DELAY_SCALE_BY_SOURCE) <= set(ls.SOURCES)
 
 
-def test_modeld_publishes_the_source_and_tells_the_model_the_schedule():
+def test_modeld_writes_the_source_on_change_and_tells_the_model_the_schedule():
   source = (Path(__file__).parents[2] / "modeld" / "modeld.py").read_text()
-  assert "source_send.modelLateralSource.source = lateral_source(model, model_output)" in source
+  assert "source = lateral_source(model, model_output)" in source
+  assert "if source != last_lateral_source:" in source
+  assert 'params.put("ModelLateralSource", source)' in source
+  assert 'cloudlog.event("modelLateralSource"' in source
+  controls = (Path(__file__).parents[1] / "controlsd.py").read_text()
+  assert 'self.LaC.update_lateral_source(self.params.get("ModelLateralSource") or "unknown")' in controls
   assert "scheduled_lateral_delay(lat_delay_schedule, v_ego)" in source
 
 

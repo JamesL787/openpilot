@@ -1,6 +1,7 @@
 """Where a frame's steering curvature comes from (Night Star port of ns-bosch's lateral_source.py, for 7.0's runners).
 
-modeld publishes it every frame on modelLateralSource for the Honda EPS controller, which sizes its command delay from
+modeld writes it to the ModelLateralSource param whenever it changes (and logs a modelLateralSource event), for the
+Honda EPS controller, which sizes its command delay from
 it: a plan read at the told delay exactly needs none, an action head follows the told delay only in part.
 
   actionHead     v14, v15, v16 catalog models, and any runner whose output carries "action": the model's own action.
@@ -15,6 +16,7 @@ UNKNOWN = "unknown"
 PLAN = "plan"
 ACTION_HEAD = "actionHead"
 CURVATURE_HEAD = "curvatureHead"
+SOURCES = (UNKNOWN, PLAN, ACTION_HEAD, CURVATURE_HEAD)
 
 ACTION_HEAD_VERSIONS = ("v14", "v15", "v16")
 
@@ -29,12 +31,11 @@ def source_for_version(version: str | None) -> str:
 
 def lateral_source(model, model_output) -> str:
   """The source modeld's action for this frame was taken from (mirrors how each 7.0 runner builds its action)."""
-  from openpilot.starpilot.models.jetlink_adapter import JetlinkModel
   from openpilot.starpilot.models.runner import CatalogModelState
+  # A joining Jetlink model drives as the small model itself until its big model is ready, so that is a catalog model
+  # or the bundled runner here; Jetlink's JetlinkModelState is always the big-model role.
   if isinstance(model, CatalogModelState):
     return source_for_version(model.behavior_version)
-  if isinstance(model, JetlinkModel) and not model.chestnut:
-    return source_for_version(model.small.behavior_version)
   # the bundled Chestnut runner and Jetlink's big model: get_action_from_model
   if model_output is not None and 'action' in model_output:
     return ACTION_HEAD

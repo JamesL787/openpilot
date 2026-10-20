@@ -61,11 +61,26 @@ def test_modified_eps_hondas_select_the_modified_eps_pid_path(candidate):
   assert use_honda_modified_pid(cp)
 
 
-@pytest.mark.parametrize("candidate", [CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR])
-def test_factory_gives_an_uncalibrated_modified_eps_honda_the_modified_eps_pid(candidate):
-  # No EPS firmware calibration exists for the TJB rack, so the factory falls through to the modified-EPS PID
-  lac = create_lateral_controller(_params(candidate, MODIFIED_FW[candidate]), STUB_CI, 0.01, mode=None)
+def _with_eps_fw(cp, fw):
+  # get_params reads the firmware but does not keep it; the calibration lookup reads CP.carFw
+  cp.carFw = [CarParams.CarFw(ecu=CarParams.Ecu.eps, fwVersion=fw, address=0x18DA30F1, subAddress=0)]
+  return cp
+
+
+def test_factory_gives_an_uncalibrated_modified_eps_honda_the_modified_eps_pid():
+  # the Accord's TVA-A150 PTM has no calibration, so the modified-EPS PID
+  fw = b'39990-TVA,A150\x00\x00'
+  lac = create_lateral_controller(_with_eps_fw(_params(CAR.HONDA_ACCORD, fw), fw), STUB_CI, 0.01, mode=None)
   assert type(lac) is LatControlHondaModifiedPID
+
+
+@pytest.mark.parametrize("candidate", [CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR])
+def test_factory_gives_both_rdx_3g_platforms_the_honda_eps_controller(candidate):
+  # the TJB-A220 PTM runs on every 3G RDX (2019-2026): one image, one rack, one calibration
+  from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps
+  fw = MODIFIED_FW[candidate]
+  lac = create_lateral_controller(_with_eps_fw(_params(candidate, fw), fw), STUB_CI, 0.01, mode=None)
+  assert type(lac) is LatControlHondaEps
 
 
 @pytest.mark.parametrize("candidate", MODIFIED_EPS_CARS)
@@ -98,8 +113,9 @@ def test_the_modified_eps_pid_steers_on_the_exact_firmware_vgr_table(candidate, 
 
 
 @pytest.mark.parametrize("candidate", [CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR])
-def test_an_image_without_a_table_keeps_paramsds_ratio(candidate):
-  assert _controller(candidate).vgr_inverse is None
+def test_both_rdx_3g_platforms_get_the_road_measured_tjb_map(candidate):
+  # the TJB-A220 PTM runs on every 3G RDX (2019-2026, the 2022+ MMR included): one rack, one road-measured map
+  assert _controller(candidate).vgr_inverse is not None
 
 
 def test_modified_eps_runtime_scales_match_defaults():

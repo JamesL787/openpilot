@@ -4,12 +4,12 @@ import contextlib
 import ast
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
+from jetlink.openpilot.testing import FakeJoinedModel
 from openpilot.starpilot.models.status import ModelVariant
-from openpilot.starpilot.models.jetlink_adapter import JetlinkModel, attach as attach_jetlink
 
 
 MODEL_SOURCE = Path(__file__).resolve().parents[3] / "selfdrive/modeld/modeld.py"
@@ -31,6 +31,18 @@ def test_realtime_starts_after_model_load_and_receipt():
   assert max(line("load_small") + line("loader.join")) < startup_receipt.lineno < line("config_realtime_process")[0] < line("PubMaster")[0]
 
 
+def test_jetlink_gets_the_frames_delay_before_every_run():
+  # a model that joins starts on the current delay; check_seam holds the frame_drop_ratio write
+  loop = [node for node in main_body() if isinstance(node, ast.While)][-1]  # the frame loop
+  statements = [node for node in ast.walk(loop) if isinstance(node, (ast.Assign, ast.Try))]
+  def line(source):
+    return next(node.lineno for node in statements if isinstance(node, ast.Assign) and ast.unparse(node) == source)
+  run = next(node.lineno for node in statements if isinstance(node, ast.Try) and
+             any(isinstance(child, ast.Call) and ast.unparse(child.func) == "model.run" for child in ast.walk(node)))
+  # Night Star port: the told delay is the Honda EPS calibration's schedule when it has one, else lagd's
+  assert line("lat_delay = lateral_delay + LAT_SMOOTH_SECONDS") < line("model.lat_delay = lat_delay") < run
+
+
 @pytest.mark.parametrize("runner_chestnut,stored_active", [(True, False), (True, True), (False, True), (False, False)])
 def test_inference_failure_uses_runner_identity(runner_chestnut, stored_active):
   # Run the production try/except statement with deliberately stale status Params.
@@ -47,7 +59,7 @@ def test_inference_failure_uses_runner_identity(runner_chestnut, stored_active):
   env: dict = {"model": failed_model, "small_model": small_model, "params": params, "receipt_owner": receipt,
              "chestnut_state": chestnut_state, "run_count": 1, "ModelConstants": SimpleNamespace(MODEL_RUN_FREQ=20),
              "SERVICE_LIST": {"chestnutGpuState": SimpleNamespace(frequency=1)}, "bufs": {}, "transforms": {}, "inputs": {},
-             "small_prepared": object(), "ModelVariant": ModelVariant, "JetlinkModel": JetlinkModel, "drop_chestnut": Mock(), "cloudlog": Mock()}
+             "small_prepared": object(), "ModelVariant": ModelVariant, "jetlink_model": None, "drop_chestnut": Mock(), "cloudlog": Mock()}
   code = compile(ast.fix_missing_locations(ast.Module(body=[fallback], type_ignores=[])), str(MODEL_SOURCE), "exec")
   if runner_chestnut:
     exec(code, env)
@@ -72,14 +84,14 @@ def test_remote_inference_failure_does_not_change_chestnut_status():
   fallback = next(node for statement in main_body() for node in ast.walk(statement)
                   if isinstance(node, ast.Try) and any(isinstance(child, ast.Call) and ast.unparse(child.func) == "model.run"
                                                        for child in ast.walk(node)))
-  failed_model = object.__new__(JetlinkModel)
-  failed_model.joined = SimpleNamespace(chestnut=True, run=Mock(side_effect=RuntimeError("remote inference failed")))
+  failed_model = FakeJoinedModel(chestnut=True)
+  failed_model.run = Mock(side_effect=RuntimeError("remote inference failed"))
   failed_model.close = Mock()
   small_model = SimpleNamespace(chestnut=False, model_id="fallback-small")
   params, receipt = Mock(), Mock()
   env = {"model": failed_model, "small_model": small_model, "params": params, "receipt_owner": receipt,
          "chestnut_state": None, "run_count": 1, "bufs": {}, "transforms": {}, "inputs": {},
-         "small_prepared": object(), "ModelVariant": ModelVariant, "JetlinkModel": JetlinkModel, "drop_chestnut": Mock(), "cloudlog": Mock()}
+         "small_prepared": object(), "ModelVariant": ModelVariant, "jetlink_model": failed_model, "drop_chestnut": Mock(), "cloudlog": Mock()}
   execute([fallback], env)
   failed_model.close.assert_called_once_with()
   env["drop_chestnut"].assert_not_called()
@@ -97,20 +109,24 @@ def execute(statements, env):
   exec(compile(ast.fix_missing_locations(ast.Module(body=statements, type_ignores=[])), str(MODEL_SOURCE), "exec"), env)
 
 
-@pytest.mark.parametrize("present,cable,allow_big,big_path,compiled,expected", [
-  (True, False, True, "verified-big", False, True),
-  (False, True, True, "verified-big", False, True),
-  (False, True, True, None, True, False),
-  (False, False, False, None, True, False),
-  (True, False, False, "verified-big", True, False),
-  (False, True, True, None, False, False),
+@pytest.mark.parametrize("present,cable,allow_big,big_path,compiled,expected,link", [
+  (True, False, True, "verified-big", False, True, False),
+  (False, True, True, "verified-big", False, True, False),
+  (False, True, True, None, True, False, False),
+  (False, False, False, None, True, False, False),
+  (True, False, False, "verified-big", True, False, False),
+  (False, True, True, None, False, False, False),
+  # with Jetlink on, the cable is its host: no chestnut wait, no Big Model Failed, the link joins
+  (False, True, True, "verified-big", False, False, True),
+  (True, True, True, "verified-big", False, True, True),
 ])
-def test_observed_availability_and_big_eligibility(monkeypatch, present, cable, allow_big, big_path, compiled, expected):
+def test_observed_availability_and_big_eligibility(monkeypatch, present, cable, allow_big, big_path, compiled, expected, link):
   from types import ModuleType
   import sys
 
   manager = ModuleType("openpilot.starpilot.models.manager")
-  manager.resolve_runtime = Mock(return_value=SimpleNamespace(allow_big=allow_big, big_path=big_path))
+  manager.resolve_runtime = Mock(side_effect=lambda chestnut_available, randomize:
+                                 SimpleNamespace(allow_big=allow_big and chestnut_available, big_path=big_path))
   manager.requested_runtime_id = Mock(return_value="selected")
   amd = ModuleType("tinygrad.runtime.ops_amd")
   amd.AMDDevice = type("FakeAMDDevice", (), {"wait_timeout_ms": 123})
@@ -121,9 +137,10 @@ def test_observed_availability_and_big_eligibility(monkeypatch, present, cable, 
   end = next(i for i, node in enumerate(body) if ast.unparse(node) == "gc.disable()")
   params = Mock()
   env: dict = {"chestnut_present": Mock(return_value=present), "cable_connected": Mock(return_value=cable),
-         "chestnut_compiled": Mock(return_value=compiled), "Params": lambda: params}
+         "chestnut_compiled": Mock(return_value=compiled), "Params": lambda: params,
+         "jetlink_adapter": SimpleNamespace(link_on=lambda: link)}
   execute(body[start:end], env)
-  available = present or cable
+  available = present or (cable and not link)
   manager.resolve_runtime.assert_called_once_with(chestnut_available=available, randomize=True)
   manager.requested_runtime_id.assert_called_once_with(available)
   env["chestnut_present"].assert_called_once_with()
@@ -173,6 +190,10 @@ def test_big_worker_waits_before_load_and_timeout_preserves_small_fallback(custo
     return state(width, height, chestnut), "prepared-" + model_id
 
   params, receipt = Mock(), Mock()
+  from jetlink.openpilot.hooks import Hooks
+  from openpilot.starpilot.models.jetlink_adapter import API
+  bind = Mock(side_effect=AssertionError("a chestnut drive must not start jetlink"))
+  hooks = Hooks(API, bind)
   selection = SimpleNamespace(big_path="selected-big" if custom else None, small_path="selected-small" if custom else None,
                               small_version=1, small_id="small", small_sha256="small-hash",
                               big_version=1, big_id="big", big_sha256="hash")
@@ -184,17 +205,18 @@ def test_big_worker_waits_before_load_and_timeout_preserves_small_fallback(custo
          "receipt_owner": receipt, "threading": SimpleNamespace(Thread=Thread), "BIG_MODEL_TIMEOUT": 30,
          "params": params, "requested_model_id": "big", "ModelVariant": ModelVariant,
          "CP": SimpleNamespace(brand="mock"), "demo": False,
-         "wait_for_chestnut_power": lambda CP, timeout: events.append("power"), "attach_jetlink": attach_jetlink,
-         "drop_chestnut": Mock(), "release_compile_pool": Mock(), "gc": Mock(),
+         "wait_for_chestnut_power": lambda CP, timeout: events.append("power"),
+         "jetlink_adapter": SimpleNamespace(hooks=lambda: hooks), "drop_chestnut": Mock(),
+         "release_compile_pool": Mock(), "gc": Mock(),
          # personal branch: GFXCLK pin after a big load, one onroad-cycle retry after a failed one
          "pin_chestnut_gfxclk": Mock(), "request_big_model_retry": Mock(), "recovery_small_only": False,
          "contextlib": contextlib, "os": SimpleNamespace(remove=Mock()), "CHESTNUT_RETRY_MARKER": "/dev/shm/retry"}
   wrapper = ast.parse("def startup():\n  pass").body[0]
   wrapper.body = body[start:end] + [ast.Return(value=ast.Call(func=ast.Name(id="locals", ctx=ast.Load()), args=[], keywords=[]))]
   execute([wrapper], env)
-  with patch("openpilot.starpilot.models.jetlink_adapter.get_jetlink") as get_link:
-    env.update(env["startup"]())
-    get_link.assert_not_called()
+  env.update(env["startup"]())
+  bind.assert_not_called()
+  assert env["jetlink_model"] is None
   assert events[0] == ("small" if custom else "wait")
   assert events.count("small") == 1
   assert ("big" in events) is not timeout

@@ -150,6 +150,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"StarButtonControl", {PERSISTENT, INT, "0"}},
     {"LongStarButtonControl", {PERSISTENT, INT, "0"}},
     {"VeryLongStarButtonControl", {PERSISTENT, INT, "0"}},
+    {"CancelButtonControlsMigrated", {PERSISTENT, BOOL, "0"}},
+    {"RemapCancelToDistance", {PERSISTENT, BOOL, "0"}},
     {"CancelButtonControl", {PERSISTENT, INT, "0"}},
     {"LongCancelButtonControl", {PERSISTENT, INT, "0"}},
     {"VeryLongCancelButtonControl", {PERSISTENT, INT, "0"}},
@@ -257,6 +259,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"Offroad_ConnectivityNeeded", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ConnectivityNeededPrompt", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ExcessiveActuation", {PERSISTENT, JSON}},
+    {"Offroad_JetlinkUnavailable", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_NoFirmware", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
     {"Offroad_Pairing", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_Recalibration", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
@@ -346,15 +349,13 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ChestnutActive", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | CLEAR_ON_IGNITION_ON, BOOL}},
     {"ChestnutLoading", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | CLEAR_ON_IGNITION_ON, BOOL}},
     {"ReprojectRotation", {PERSISTENT, JSON}},  // fitted 3X narrow->wide camera rotation (reprojectcalibd)
+    {"ModelLateralSource", {CLEAR_ON_MANAGER_START | DONT_LOG, STRING}},  // Night Star: modeld's lateral source, see selfdrive/modeld/lateral_source.py
     {"ReprojectSessionActive", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION | CLEAR_ON_OFFROAD_TRANSITION | DONT_LOG, BOOL}},
     {"JetlinkMode", {PERSISTENT, INT, "0"}},
     {"JetlinkChargePhone", {PERSISTENT, BOOL, "0"}},
-    {"JetlinkBigModel", {PERSISTENT | DONT_LOG, JSON}},
-    {"JetlinkCatalog", {PERSISTENT | DONT_LOG, JSON}},
     {"JetlinkSpec", {PERSISTENT | DONT_LOG, JSON}},
     {"JetlinkPointers", {PERSISTENT | DONT_LOG, JSON}},
     {"JetlinkProgress", {CLEAR_ON_MANAGER_START | DONT_LOG, JSON}},
-    {"JetlinkRuntime", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | DONT_LOG, JSON}},
     {"Version", {PERSISTENT, STRING}},
 
     // Honda modified-EPS controller (selfdrive/controls/lib/latcontrol_honda_eps.py)

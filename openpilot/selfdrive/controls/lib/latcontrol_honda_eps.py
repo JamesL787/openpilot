@@ -7,8 +7,8 @@ wheel along the desired path rather than one it has to be dragged into by error.
 the car's own image (eps_firmware_ff.EpsFirmwareCalibration), picked by the EPS part number in carFw.
 
 Which cars get it: every PTM image with a calibration (Clarity TRW-A020, Civic A030/TEG/C020/C120/TGG-A120, Insight
-TXM-A040, CR-V A040/A220), with no setting to turn it off; some of those calibrations carry parts over from a related
-car until a drive measures them. A car with no calibration (TGG-A020, Accord TVA-A150, RDX TJB-A220), whose torque map
+TXM-A040, CR-V A040/A220, RDX 3G TJB-A220), with no setting to turn it off; some of those calibrations carry parts over
+from a related car until a drive measures them. A car with no calibration (TGG-A020, Accord TVA-A150), whose torque map
 is not the linear [0, E4 cap] the calibration expects, or with no firmware A table for its rack map, keeps the
 modified-EPS PID (LatControlHondaModifiedPID).
 Per vehicle, from its calibration: the command delay (cmd_delay_s) and the model-delay schedule (lat_delay_schedule),
@@ -185,7 +185,7 @@ class LatControlHondaEps(LatControl):
     self.core.override_fade_up_s = _get_param_float(self.params, "HondaOverrideFadeUpSecs", OVERRIDE_FADE_UP_S_DEFAULT, 0.0, 10.0)
 
   def update_lateral_source(self, source: str) -> None:
-    """controlsd: where the model's steering comes from (starpilotModelV2.lateralSource)."""
+    """controlsd: where the model's steering comes from (modeld's ModelLateralSource param)."""
     self.lateral_source = str(source)
 
   def _command_delay(self, v_ego: float) -> float:

@@ -147,7 +147,8 @@ procs = [
                 enabled=platform.system() == "Linux", restart_on_exit=True),
   PythonProcess("galaxy_hotspot", "openpilot.starpilot.galaxy.hotspot_daemon", galaxy_local,
                 enabled=COMMA_HARDWARE and not os.environ.get('OPENPILOT_PREFIX'), restart_on_exit=True),
-  JetlinkProcess("jetlinkd", "openpilot.starpilot.system.jetlink.daemon", jetlink_enabled, enabled=COMMA_HARDWARE),
+  JetlinkProcess("jetlinkd", "openpilot.starpilot.models.jetlink_adapter", jetlink_enabled, enabled=COMMA_HARDWARE,
+                 restart_on_exit=True),
   PythonProcess("android_autod", "openpilot.starpilot.system.android_auto.daemon", android_auto_enabled, enabled=COMMA_HARDWARE,
                 restart_on_exit=True),  # boot can race bluetoothd (NoSuchUnit)
   # Boot can race the audio device; selfdrived blocks engagement while soundd is down.

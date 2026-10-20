@@ -139,6 +139,9 @@ class HondaFlags(IntFlag):
   VGR_CIVIC_TBA_C120 = 524288
   # some Nidec hybrids (Clarity) report brake hold on BRAKE_HOLD_HYBRID_ALT (0x223) instead of VSA_STATUS
   HYBRID_ALT_BRAKEHOLD = 1048576
+  # measured on the road: the RDX's TJB-A220 image has no angle table (see steer_ratio.py); vfn uses 1048576, which
+  # 7.0 gives HYBRID_ALT_BRAKEHOLD
+  VGR_RDX_TJB_A220 = 2097152
 
 
 # Car button codes

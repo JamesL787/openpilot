@@ -129,7 +129,6 @@ class TestCalibrationd(OpenpilotTestCase):
 def test_late_reproject_session_discards_native_camera_samples_until_fit(monkeypatch):
   # From vfn: a 3X that switches to the virtual comma 4 pair mid-session drops samples taken on the native 3X geometry
   # and holds calibration until reprojectd serves the fitted camera pair.
-  from types import SimpleNamespace
   from openpilot.selfdrive.locationd import calibrationd
 
   class MemoryParams:
@@ -142,15 +141,6 @@ def test_late_reproject_session_discards_native_camera_samples_until_fit(monkeyp
     def get(self, _key):
       return None
 
-  class FakeSubMaster:
-    def __init__(self):
-      self.seen = {"reprojectState": False}
-      self.state = SimpleNamespace(fitted=False)
-
-    def __getitem__(self, key):
-      assert key == "reprojectState"
-      return self.state
-
   params = MemoryParams()
   monkeypatch.setattr(calibrationd, "Params", lambda: params)
   monkeypatch.setattr(calibrationd, "get_cache", lambda _params, _key: None)
@@ -158,20 +148,17 @@ def test_late_reproject_session_discards_native_camera_samples_until_fit(monkeyp
   monkeypatch.setattr("openpilot.selfdrive.modeld.reproject_c4.rotation.read_rotation", dict)
 
   calibrator = Calibrator(param_put=False)
-  sm = FakeSubMaster()
-  assert calibrator.reproject_ready(sm)
+  assert calibrator.reproject_ready()
 
   process_messages(calibrator, [0.0, 0.0, 0.0], BLOCK_SIZE + 1)
   assert calibrator.block_idx > 0 or calibrator.idx > 0
 
   params.values["ReprojectSessionActive"] = True
-  assert not calibrator.reproject_ready(sm)
+  assert not calibrator.reproject_ready()
   assert calibrator.valid_blocks == 0
   assert calibrator.block_idx == 0
   assert calibrator.idx == 0
   assert calibrator.cal_status == log.ExtrinsicsCalibration.Status.uncalibrated
 
-  sm.seen["reprojectState"] = True
-  assert not calibrator.reproject_ready(sm)
-  sm.state.fitted = True
-  assert calibrator.reproject_ready(sm)
+  # reprojectd is parked and its fitted state left the schema: a reproject session holds calibration
+  assert not calibrator.reproject_ready()

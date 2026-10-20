@@ -183,8 +183,11 @@ class Calibrator:
   def handle_v_ego(self, v_ego: float) -> None:
     self.v_ego = v_ego
 
-  def reproject_ready(self, sm: messaging.SubMaster) -> bool:
-    """Hold road calibration until reprojectd is serving the fitted camera-pair geometry (from vfn)."""
+  def reproject_ready(self) -> bool:
+    """Hold road calibration until reprojectd is serving the fitted camera-pair geometry (from vfn).
+
+    reprojectd is parked (reproject_config.REPROJECT_ENABLED) and its fitted state left the schema with it, so a
+    reproject session holds calibration until that state is re-homed (on params) with reprojectd."""
     required = reproject_expected(self.params)
     if required and not self._reproject_session_observed:
       # The virtual comma 4 path can be selected after calibrationd started. Samples gathered against the native
@@ -198,7 +201,7 @@ class Calibrator:
     self._reproject_session_observed = required
     if not required:
       return True
-    return sm.seen["reprojectState"] and sm["reprojectState"].fitted
+    return False
 
   def get_smooth_rpy(self) -> np.ndarray:
     if self.old_rpy_weight > 0:
@@ -290,10 +293,7 @@ def main() -> NoReturn:
   config_realtime_process([0, 1, 2, 3], 5)
 
   pm = messaging.PubMaster(['extrinsicsCalibration'])
-  reproject_services = ['reprojectState', 'reprojectFit']
-  sm = messaging.SubMaster(['cameraOdometry', 'carState'] + reproject_services, poll='cameraOdometry',
-                           ignore_alive=reproject_services, ignore_avg_freq=reproject_services,
-                           ignore_valid=reproject_services)
+  sm = messaging.SubMaster(['cameraOdometry', 'carState'], poll='cameraOdometry')
 
   params_reader = Params()
   CP = messaging.log_from_bytes(params_reader.get("CarParams", block=True), car.CarParams)
@@ -305,7 +305,7 @@ def main() -> NoReturn:
     timeout = 0 if sm.frame == -1 else 100
     sm.update(timeout)
 
-    if sm.updated['cameraOdometry'] and calibrator.reproject_ready(sm):
+    if sm.updated['cameraOdometry'] and calibrator.reproject_ready():
       calibrator.handle_v_ego(sm['carState'].vEgo)
       new_rpy = calibrator.handle_cam_odom(sm['cameraOdometry'].trans,
                                            sm['cameraOdometry'].rot,

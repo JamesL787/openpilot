@@ -69,6 +69,17 @@ CIVIC_TEG_A010_RACK = RackMapTable(
   slip_factor=-0.00067,
 )
 
+# Acura RDX 3G (TJB-A220 PTM), through its road-measured linear map (steer_ratio HONDA_VGR_RDX_TJB_A220: the rack is
+# variable and the image has no table). Fitted the same way on its VSA yaw (0x94 bus 1, 0.248 deg/s per count - 0.15
+# clockwise, opendbc honda/yaw_rate.py) over routes 412ed2539bfc2c42/000000c6 and 000000c7 (392 s moving at >= 3 deg),
+# 4.8-126 deg; past that the tan shape of its R0 (17.29, honda_eps_spec_plant.r0_of_table) carries it to 400 deg,
+# matched to the last fitted knot. Held out route by route it predicts the measured curvature within 1.5-3.7 %.
+RDX_TJB_A220_RACK = RackMapTable(
+  ratio_bp=(4.8, 15.1, 29.1, 49.3, 84.5, 126.2, 200.0, 300.0, 400.0),
+  ratio_v=(18.81, 17.51, 17.30, 17.30, 17.16, 16.98, 16.75, 16.27, 15.57),
+  slip_factor=-0.00104,
+)
+
 
 class HondaEpsRackMap:
   """Physical wheel angle (deg, left-positive) <-> curvature (1/m, openpilot's right-positive) for one RackMapTable."""

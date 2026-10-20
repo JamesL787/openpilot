@@ -5,12 +5,12 @@ The law these feed is in honda_eps_firmware_ff; this file is data. Adding an ima
 """
 from opendbc.car.honda.steer_ratio import (
   HONDA_VGR_CIVIC_TBA_C020, HONDA_VGR_CIVIC_TBA_C120, HONDA_VGR_CLARITY_TRW_A020, HONDA_VGR_CRV_TLA_A040,
-  HONDA_VGR_INSIGHT_TXM_A040, HONDA_VGR_INVERSE_BY_PROFILE,
+  HONDA_VGR_INSIGHT_TXM_A040, HONDA_VGR_INVERSE_BY_PROFILE, HONDA_VGR_RDX_TJB_A220,
 )
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import CLARITY_TRW_A020_LAT_DELAY_SCHEDULE, ColumnLoadModel, \
   EpsFirmwareCalibration, R6_GAIN_BP, computed_r6
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CIVIC_TEG_A010_RACK, CLARITY_TRW_A020_RACK, \
-  INSIGHT_TXM_A040_RACK
+  INSIGHT_TXM_A040_RACK, RDX_TJB_A220_RACK
 from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, CIVIC_HATCH_SPORT_SPEC, CRV_2017_SPEC, \
   CRV_2020_SPEC, spec_rack_table
 
@@ -321,6 +321,48 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
   rack=CRV_TLA_A220_SPEC_RACK,
 )
 
+# Acura RDX 3G 39990-TJB-A220, the Route-A PTM, Trk1641 build with the runtime ROM CRC fix (RDX-PTM-101526-RomCRC.rwd,
+# RWD sha256 3dd8b91b = KB TJB_A220_PTM_ROUTE_A_20261014/BUILD_Trk1641). Not the Clarity's controller family: TJB runs
+# THR (Odyssey) code shifted +0x9C, with its own units, and the build ports the Clarity's tables into them (Route A).
+# In the Clarity's units the law is the one honda_eps_firmware_ff inverts:
+# - key: TJB takes a = E4/4 (|a| <= 1024, E4 4096); the Clarity's key is q = trunc(E4 * 56756/32768 / 4) = 1.732 a, so
+#   every TJB a-axis below is x 56756/32768 and command_key() reads it unchanged (to integer rounding).
+# - target map row 0 (0x57BAE/0x57BC0), = rows 1-3: 0, 3968, ..., 27776, 30000 at a = 0..1024 by 128, the Clarity's
+#   row 0 at the same E4 within 1 % (each segment capped at TJB's Q26 slope limit, 31 per a).
+# - P: TJB's Kp is >> 6, the Clarity's / 1024, so x 16: 7..17 -> 112..272 at a = 0,58,..,1024 (0x57C70/0x57C82),
+#   within -4.3..+3.2 % of the Clarity's P117..265 at each knot. D 46 x 16 = 736 (the Clarity's 737); clamps P 7373,
+#   D 1774, output 8868 (the Clarity's 9000: the motor sum caps at 8868 on both); FF45 in a code cave at the P+D sum,
+#   as the Clarity's. A280 (G/H) flat. Speed envelope flat at a 1024 (0x57B3C). Emulator-exact (1500/1500 per stage).
+# - R6: TJB's feedback ref has no NORM; the build scales it x 15768/32768 (= 1650/3429, the Clarity's NORM ratio) at
+#   its load. Its 0x18F STEER_ANGLE_RATE word, pinion-side and unscaled, reads -7.2 per published deg/s at centre;
+#   on the Clarity R6 is 32 x that word (32 x -3.7..-3.8 = -118..-122, the firmware-derived -122). So, if TJB's ref
+#   is 32 x its word (THR's open item), R6 here = 0.4812 x 32 x -7.2 = -110.9 per published deg/s at centre:
+#   0.91 of the Clarity's. Its angle shape is the rate word's (the linear map's slope, as computed_r6). The drives
+#   cannot pin it more closely: fitting the load through the law (tools/lateral/fit_column_load.py --source e4) at
+#   0.5-2x this R6 gives R^2 0.815-0.825 throughout, since R6 trades off against the viscous term, which stays
+#   negative (as on every measured car) only up to ~1.1x. So the word-derived value stands.
+# - Helper A and the override fade (driver torque) stay stock, as the PTM rule keeps them: they back off harder than
+#   the Clarity's once a hand pushes, but on the owner's drives they keep 0.95-0.99 of LKAS on average, as the
+#   Clarity's tables would (1.00-1.015x); scale_q8 256 is the hands-off value as everywhere.
+_, _, RDX_TJB_A220_R6_GAIN = computed_r6(HONDA_VGR_RDX_TJB_A220)
+RDX_TJB_A220_R6_CENTRE = -110.9
+_RDX_A = 56756 / 32768  # TJB a -> the Clarity's key q
+# Load: fitted through this law on the sent 0xE4 (the car drove LatControlPID, so there is no telemetry), routes
+# 412ed2539bfc2c42/000000c6 and 000000c7, 12.8 min of engaged, unpressed frames; R^2 0.819, held out by route 0.638 /
+# 0.800 (the CR-V's load: 0.516 / 0.712).
+RDX_TJB_A220_LOAD = ColumnLoadModel(k0=-10.01, k1=-0.1533, c=-2.136, friction=-233.2, bias=90.99, kroll=-4.198)
+ACURA_RDX_TJB_A220 = EpsFirmwareCalibration(
+  name="rdx_tjb_a220", e4_per_output=4096.0,
+  r5_key_bp=tuple(round(a * _RDX_A) for a in (0, 128, 256, 384, 512, 640, 768, 896, 1024)),
+  r5_v=(0, 3968, 7936, 11904, 15872, 19840, 23808, 27776, 30000), key_clamp=round(1024 * _RDX_A),
+  envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
+  kp_key_bp=tuple(round(a * _RDX_A) for a in (0, 58, 109, 243, 320, 448, 640, 896, 1024)),
+  kp_v=tuple(16 * k for k in (7, 8, 9, 11, 13, 15, 16, 17, 17)),
+  r6_per_deg_s=RDX_TJB_A220_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=RDX_TJB_A220_R6_GAIN,
+  load=RDX_TJB_A220_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,  # untrimmed
+  rack=RDX_TJB_A220_RACK,
+)
+
 # normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). TGG-A020 is a separate application from the A120 (its RWD updates only A010/A020)
 # and has no PTM build, so it is absent on purpose.
 EPS_FIRMWARE_CALIBRATIONS = {
@@ -333,6 +375,9 @@ EPS_FIRMWARE_CALIBRATIONS = {
   "39990-TXM-A040": ("HONDA_INSIGHT", INSIGHT_TXM_A040),
   "39990-TLA-A040": ("HONDA_CRV_5G", CRV_TLA_A040),
   "39990-TLA-A220": ("HONDA_CRV_5G", CRV_TLA_A220),
+  # Stock A220 accepts every RDX 3G image as a source, so the 2019-21 and 2022+ (MMR) cars run the same PTM image on
+  # the same rack; the vehicle side was measured on a 2019.
+  "39990-TJB-A220": (("ACURA_RDX_3G", "ACURA_RDX_3G_MMR"), ACURA_RDX_TJB_A220),
 }
 
 
@@ -427,6 +472,16 @@ CALIBRATION_PROVENANCE = {
     "model_delay": "default: the Clarity's schedule",
     "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
   },
+  "rdx_tjb_a220": {
+    "row": "firmware: rows 0-3 carry the same Route-A target, P and D (0x57BAE + 0x300*row), so the variant row does not matter",
+    "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
+    "r6": "inferred: 0.4812 x 32 x its 0x18F rate word (the Clarity's R6 relation); its drives allow 0.7-1.1x",
+    "load": "measured: the owner's routes 000000c6 / 000000c7 (a 2019), rebuilt through the law from the sent 0xE4; the MMR takes it",
+    "trims": "default: untrimmed",
+    "cmd_delay": "default (its LatControlPID drives ran 0.10-0.24 s early at 7-12 m/s: re-check on this controller)",
+    "model_delay": "default: the Clarity's schedule",
+    "rack": "measured: VSA yaw (GPS-checked scale), routes 000000c6 / 000000c7 (a 2019; the MMR takes it), through its road-measured linear map",
+  },
   "crv_tla_a220": {
     "row": "firmware: rows 0-5 all Clarity-equivalent in the corrected build, so the untraced variant row does not matter",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
@@ -450,6 +505,7 @@ REQUIRED_PTM_RWD = {
   "insight_txm_a040": "7ba37432",
   "crv_tla_a040": "2e6a8802",
   "crv_tla_a220": "2c992997",
+  "rdx_tjb_a220": "3dd8b91b",
 }
 
 
@@ -468,6 +524,6 @@ def provenance_summary(cal: EpsFirmwareCalibration) -> str:
 def select_eps_firmware_calibration(fingerprint: str, eps_fw: str) -> EpsFirmwareCalibration | None:
   """The profile for this car's EPS image, or None when there is no PTM build for it (or it is on another car)."""
   entry = EPS_FIRMWARE_CALIBRATIONS.get(eps_fw)
-  if entry is None or entry[0] != fingerprint:
+  if entry is None or fingerprint not in (entry[0] if isinstance(entry[0], tuple) else (entry[0],)):
     return None
   return entry[1]

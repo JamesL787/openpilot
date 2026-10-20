@@ -255,37 +255,11 @@ def below_steer_speed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.S
     Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 0.4)
 
 
-def reproject_fit_progress(sm: messaging.SubMaster, metric: bool) -> tuple[str, str] | None:
-  """While a 3X fits its camera pair for the virtual comma 4 path, calibration shows that progress instead (from vfn)."""
-  if "reprojectState" not in sm.seen or "reprojectFit" not in sm.seen:
-    return None
-  if not sm.seen["reprojectState"] or sm["reprojectState"].fitted:
-    return None
-  from openpilot.cereal import custom
-  fit = sm["reprojectFit"] if sm.seen["reprojectFit"] else None
-  if fit is not None and fit.status == custom.ReprojectFit.Status.building:
-    return "Aligning Cameras: 100%", "Finishing Up"
-  why = fit.why if fit is not None else custom.ReprojectFit.Why.none
-  action = {
-    custom.ReprojectFit.Why.cameras: "Waiting for Cameras",
-    custom.ReprojectFit.Why.model: "Loading Model",
-    custom.ReprojectFit.Why.speed: f"Drive Above {get_display_speed(MIN_SPEED_FILTER, metric)}",
-    custom.ReprojectFit.Why.straight: "Drive Straight",
-    custom.ReprojectFit.Why.pair: "Matching Cameras",
-    custom.ReprojectFit.Why.features: "Low Detail",
-  }.get(why, f"Drive Above {get_display_speed(MIN_SPEED_FILTER, metric)}")
-  return f"Aligning Cameras: {fit.pct if fit is not None else 0}%", action
-
-
 def calibration_incomplete_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
   first_word = 'Recalibrating' if sm['extrinsicsCalibration'].calStatus == log.ExtrinsicsCalibration.Status.recalibrating else 'Calibrating'
-  title, action = reproject_fit_progress(sm, metric) or (
+  return Alert(
     f"{first_word}: {sm['extrinsicsCalibration'].calPerc:.0f}%",
     f"Drive Above {get_display_speed(MIN_SPEED_FILTER, metric)}",
-  )
-  return Alert(
-    title,
-    action,
     AlertStatus.normal, AlertSize.mid,
     Priority.LOWEST, VisualAlert.none, AudibleAlert.none, .2)
 

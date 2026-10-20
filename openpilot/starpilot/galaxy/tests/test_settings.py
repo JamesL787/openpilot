@@ -13,6 +13,8 @@ import unittest
 from unittest import mock
 
 from opendbc.car.structs import car
+from opendbc.car.toyota.interface import CarInterface as ToyotaInterface
+from opendbc.car.toyota.values import CAR as ToyotaCar
 from openpilot.common.params import Params
 from openpilot.starpilot.galaxy.settings import (
   AuthorityContext, LiveContextSource, SettingsChanged, SettingsGateway,
@@ -38,9 +40,11 @@ class SettingsGatewayTest(unittest.TestCase):
     temporary = tempfile.TemporaryDirectory()
     self.addCleanup(temporary.cleanup)
     self.params = Params(temporary.name)
+    native = ToyotaInterface.get_non_essential_params(ToyotaCar.TOYOTA_COROLLA_TSS2)
     cp = SimpleNamespace(carFingerprint="TOYOTA_COROLLA_TSS2", openpilotLongitudinalControl=True,
                          pcmCruise=False, notCar=False, dashcamOnly=False, passive=False,
-                         brand="toyota", steerControlType="torque", carVin="",
+                         brand="toyota", steerControlType=native.steerControlType, carVin="",
+                         lateralTuning=native.lateralTuning, minSteerSpeed=native.minSteerSpeed, safetyConfigs=native.safetyConfigs,
                          transmissionType=car.CarParams.TransmissionType.automatic)
     self.context = MutableContext(cp)
     self.gateway = SettingsGateway(self.params, self.context, clock=lambda: 100.0)
@@ -210,7 +214,7 @@ class SettingsGatewayTest(unittest.TestCase):
     self.params.put("SLCOffsetSchedule", od.to_value(od.adopt_legacy(False, (0.0,) * 7)), block=True)
     page = self.page("slc")
     index = next(i for i, row in enumerate(page["rows"]) if row["label"].endswith("offset"))
-    self.assertEqual((page["rows"][index]["minimum"], page["rows"][index]["maximum"]), (-99, 99))
+    self.assertEqual((page["rows"][index]["minimum"], page["rows"][index]["maximum"]), (-25, 99))
     intent = self.gateway.preview(page["view"], index, 0, self.session, self.generation, value=5)
     self.assertTrue(self.gateway.confirm(intent["intent"], self.session, self.generation))
     self.assertAlmostEqual(self.params.get("SLCOffsetSchedule")["offsets_mps"][0], 5 * od.MPH_TO_MPS)
@@ -432,7 +436,7 @@ class SettingsGatewayTest(unittest.TestCase):
 
     vehicle = HondaInterface.get_params(HondaCAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), [], True, False, False)
     self.assertTrue(vehicle.openpilotLongitudinalControl and not vehicle.pcmCruise)
-    self.assertFalse(diagnostic_choice_enabled({}, vehicle))
+    self.assertTrue(diagnostic_choice_enabled({}, vehicle))
     self.context.value = AuthorityContext(True, vehicle, vehicle.to_bytes())
     self.params.put('SLCPriority1', 'Dashboard', block=True)
     self.params.put('SLCPriority2', 'Dashboard', block=True)
@@ -444,19 +448,56 @@ class SettingsGatewayTest(unittest.TestCase):
         rows = self.page("slc")["rows"]
         primary = next(row for row in rows if row["label"] == "Primary source")
         secondary = next(row for row in rows if row["label"] == "Secondary source")
-        self.assertEqual("Vision" in primary["choices"], available)
-        self.assertEqual("Vision" in secondary["choices"], available)
-        if available:
-          self.assertIn("require your confirmation", primary["reason"])
+        self.assertIn("Vision", primary["choices"])
+        self.assertIn("Vision", secondary["choices"])
+        self.assertNotIn("require your confirmation", primary["reason"])
+        confirmation = next(row for row in rows if row["label"] == "Require confirmation")
+        self.assertEqual(confirmation["value"], "Off")
+        self.assertIn("first speed limit", confirmation["reason"])
+        self.assertIn("any source", confirmation["reason"])
 
-    with mock.patch.dict(os.environ, {"SLC_REPLAY_RUNTIME": "1", "SLC_VISION_DEVELOPMENT": "1"}):
+    with mock.patch.dict(os.environ, {"SLC_REPLAY_RUNTIME": "0", "SLC_VISION_DEVELOPMENT": "0"}):
+      # A normal finalized car offers Vision without development/replay flags.
       page = self.page("slc")
       index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Primary source")
       intent = self.gateway.preview(page["view"], index, 1, self.session, self.generation)
       self.assertEqual(intent["proposed"], "Vision")
-      with mock.patch.dict(os.environ, {"SLC_VISION_DEVELOPMENT": "0"}):
-        self.assertFalse(self.gateway.confirm(intent["intent"], self.session, self.generation))
-      self.assertEqual(read_saved(self.params, "SLCPriority1", 128)[0], b"Dashboard")
+      self.assertTrue(self.gateway.confirm(intent["intent"], self.session, self.generation))
+      self.assertEqual(read_saved(self.params, "SLCPriority1", 128)[0], b"Vision")
+      self.params.put('SLCPriority1', 'Dashboard', block=True)
+      original_context = self.context.value
+      for withdrawal in ('passive', 'unavailable'):
+        with self.subTest(withdrawal=withdrawal):
+          self.context.value = original_context
+          page = self.page("slc")
+          index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Primary source")
+          intent = self.gateway.preview(page["view"], index, 1, self.session, self.generation)
+          self.assertEqual(intent["proposed"], "Vision")
+          if withdrawal == 'passive':
+            withdrawn = vehicle.as_reader().as_builder()
+            withdrawn.passive = True
+            self.context.value = AuthorityContext(True, withdrawn, withdrawn.to_bytes())
+          else:
+            self.context.value = AuthorityContext(True, None, None)
+          with self.assertRaises(SettingsChanged):
+            self.gateway.confirm(intent["intent"], self.session, self.generation)
+          self.assertEqual(read_saved(self.params, "SLCPriority1", 128)[0], b"Dashboard")
+
+      # Source choice is display access on a native stock-ACC car, never a
+      # grant of longitudinal control from a remembered controller switch.
+      from openpilot.starpilot.feature_runtime import slc_runtime_settings, vision_control_enabled
+      stock = HondaInterface.get_params(HondaCAR.HONDA_CIVIC_BOSCH, gen_empty_fingerprint(), [], False, False, False)
+      self.assertFalse(stock.openpilotLongitudinalControl)
+      self.context.value = AuthorityContext(True, stock, stock.to_bytes())
+      self.params.put_bool('SpeedLimitController', True, block=True)
+      page = self.page("slc")
+      index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Primary source")
+      intent = self.gateway.preview(page["view"], index, 1, self.session, self.generation)
+      self.assertEqual(intent["proposed"], "Vision")
+      self.assertTrue(self.gateway.confirm(intent["intent"], self.session, self.generation))
+      settings = slc_runtime_settings(self.params, stock, {})
+      self.assertTrue(settings.display and settings.acceptance.display_only)
+      self.assertFalse(settings.enabled or vision_control_enabled(self.params, stock))
 
   def test_pip_saved_choices_no_vehicle_cp_and_one_use_confirmation(self):
     from openpilot.starpilot.ui.pip_preferences import BLINKER, MASK, read_pip
@@ -1035,6 +1076,7 @@ class SettingsGatewayTest(unittest.TestCase):
 
   def test_turn_assist_gateway_saves_next_drive_choice_onroad_with_selection_binding(self):
     unrelated = self.context.value
+    unrelated.cp.safetyConfigs = []
     cp, root = self._live_lane_context()
     self.context.value = AuthorityContext(True, cp, self.context.value.cp_raw)
     page = self.page("torque")
@@ -1105,9 +1147,13 @@ class SettingsGatewayTest(unittest.TestCase):
       self.assertFalse(any(row["available"] for row in self.page("lane")["rows"]))
     self.context.value = AuthorityContext(False, SimpleNamespace(brand="unknown", carFingerprint="OTHER", notCar=False,
                                         dashcamOnly=False, passive=False), b"other")
-    rows = self.page("lane")["rows"]
+    page = self.page("lane")
+    rows = page["rows"]
     self.assertFalse(next(row for row in rows if row["label"] == "Lane Centering Strength")["available"])
-    self.assertTrue(next(row for row in rows if row["label"] == "Enable Lane Centering")["available"])
+    index = next(i for i, row in enumerate(rows) if row["label"] == "Enable Lane Centering")
+    self.assertFalse(rows[index]["available"])
+    with self.assertRaises(SettingsChanged):
+      self.gateway.preview(page["view"], index, 1, self.session, self.generation)
 
   def test_live_lane_retains_range_session_source_and_cp_guards(self):
     tagged, root = self._live_lane_context()
@@ -1142,9 +1188,12 @@ class SettingsGatewayTest(unittest.TestCase):
       def put(self, key, value, block=True):
         (root / key).write_bytes(str(value).encode())
     self.gateway = SettingsGateway(Files(), self.context, clock=lambda: 100.0)
+    self.context.value.cp.safetyConfigs = []
     page = self.page("lane")
     index = next(i for i, row in enumerate(page["rows"]) if row["label"] == "Lane Centering Strength")
     self.assertFalse(page["rows"][index]["available"])
+    with self.assertRaises(SettingsChanged):
+      self.gateway.preview(page["view"], index, 0, self.session, self.generation, value=200)
     self.context.value = AuthorityContext(True, tagged, tagged.as_reader().as_builder().to_bytes())
     page = self.page("lane")
     self.assertTrue(page["rows"][index]["available"])
@@ -1444,9 +1493,11 @@ class SettingsHttpTest(unittest.TestCase):
     temporary = tempfile.TemporaryDirectory()
     self.addCleanup(temporary.cleanup)
     self.params = Params(temporary.name)
+    native = ToyotaInterface.get_non_essential_params(ToyotaCar.TOYOTA_COROLLA_TSS2)
     cp = SimpleNamespace(carFingerprint="TOYOTA_COROLLA_TSS2", openpilotLongitudinalControl=True,
                          pcmCruise=False, notCar=False, dashcamOnly=False, passive=False,
-                         brand="toyota", steerControlType="torque", carVin="",
+                         brand="toyota", steerControlType=native.steerControlType, carVin="",
+                         lateralTuning=native.lateralTuning, minSteerSpeed=native.minSteerSpeed, safetyConfigs=native.safetyConfigs,
                          transmissionType=car.CarParams.TransmissionType.automatic)
     self.context = MutableContext(cp)
     self.gateway = SettingsGateway(self.params, self.context)

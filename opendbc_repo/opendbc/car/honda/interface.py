@@ -218,9 +218,9 @@ class CarInterface(CarInterfaceBase):
       ret.lateralTuning.pid.kpV, ret.lateralTuning.pid.kiV = [[0.8], [0.24]]
 
     elif candidate in (CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR) and eps_modified:
-      # 39990-TJB,A220 PTM. Its target map X axis runs E4 0..4096 and Route A puts the 30000 top there, level with
-      # the Clarity's 29982 at its 3840 cap, so the Clarity's gains carry over 1:1. No EPS firmware calibration yet, so
-      # it stays on LatControlPID.
+      # 39990-TJB,A220 PTM, the same image on the same rack for 2019-21 and 2022+ (MMR). Its target map X axis runs
+      # E4 0..4096 and Route A puts the 30000 top there, level with the Clarity's 29982 at its 3840 cap, so the
+      # Clarity's gains carry over 1:1. LatControlHondaEps steers it (honda_eps_calibrations ACURA_RDX_TJB_A220).
       ret.lateralTuning.init("pid")
       _modified_eps_tune(ret)
 

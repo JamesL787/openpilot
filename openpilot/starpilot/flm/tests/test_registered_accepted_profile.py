@@ -293,7 +293,7 @@ def test_registered_controls_computed_profile_is_used_and_revoked(vehicle, mode,
     assert candidate.params.get_type('AutomaticSteeringProfiles') == ParamKeyType.BYTES
     assert candidate.params.check_key('UseVOACC')
     assert candidate.params.check_key('DeveloperSidebar')
-    assert len(candidate.params.all_keys()) == 347 + 27  # Night Star port: 25 Honda EPS keys and 2 reprojection keys (docs/night_star_port)
+    assert len(candidate.params.all_keys()) == 347 + 28  # Night Star port: 25 Honda EPS keys, 2 reprojection keys and ModelLateralSource (docs/night_star_port)
     runtime = candidate.global_learning
     assert runtime.identity and runtime.eligible
     assert candidate.sm['selfdriveState'].active and candidate.sm['selfdriveState'].enabled

@@ -76,7 +76,7 @@ class Controls:
                  'extrinsicsCalibration', 'deviceMotion', 'longitudinalPlan', 'lateralManeuverPlan', 'carState', 'carOutput',
                  'driverMonitoringState', 'onroadEvents', 'driverAssistance'] +
                 (['aolAxisState', 'aolSafetyWire'] if self.aol_replay or self.ordinary_axis_ack_required else []))
-    optional = list(dict.fromkeys(self.longitudinal_inputs.optional_services + ['deviceState', 'autoSteeringLearning', 'modelLateralSource']))
+    optional = list(dict.fromkeys(self.longitudinal_inputs.optional_services + ['deviceState', 'autoSteeringLearning']))
     if optional:
       ignore = set(optional)
       self.sm = messaging.SubMaster(services + optional, poll='selfdriveState',
@@ -381,8 +381,9 @@ class Controls:
       except Exception:
         self._discard_global_learning()
         automatic = None
-    if isinstance(self.LaC, LatControlHondaEps) and self.sm.updated['modelLateralSource']:
-      self.LaC.update_lateral_source(self.sm['modelLateralSource'].source)
+    if isinstance(self.LaC, LatControlHondaEps) and self.sm.frame % 100 == 0:
+      # modeld writes it when the driving model's source changes; once a second is enough, the delay ramps over 1 s
+      self.LaC.update_lateral_source(self.params.get("ModelLateralSource") or "unknown")
     steer, lateral_output, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
                                                      self.steer_limited_by_safety, self.desired_curvature,
                                                      curvature_limited, lat_delay)
