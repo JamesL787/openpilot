@@ -168,28 +168,22 @@ def _without_route(sm):
 
 
 def test_forced_turn_desire_below_its_speed_without_a_route(sm):
+  # as vfn's TurnDesires: below the speed, any lone blinker with lateral active and the car moving
   from openpilot.starpilot.navigation.intent import TurnIntent, current_instruction
   sm = _without_route(sm)
   assert current_instruction(sm, NOW) is None
   owner, cs = TurnIntent(), sm['carState']
-  def sample(speed=15 * CV.MPH_TO_MS, desire=log.Desire.none, supported=True):
+  def sample(speed=20 * CV.MPH_TO_MS, desire=log.Desire.none, supported=True):
     return owner.select(sm, NOW, desire, supported=supported, model_stop=False, forced_turn_speed_mps=speed)
   cs.vEgo = 12 * CV.MPH_TO_MS
   assert owner.select(sm, NOW, log.Desire.none, supported=True, model_stop=False) == log.Desire.none  # off
   assert sample() == log.Desire.turnRight and owner.forced_active
-  cs.vEgo = 17 * CV.MPH_TO_MS      # held through the turn exit, up to 3 mph over
-  assert sample() == log.Desire.turnRight
-  cs.vEgo = 18.5 * CV.MPH_TO_MS
+  cs.vEgo = 20.5 * CV.MPH_TO_MS
   assert sample() == log.Desire.none and not owner.forced_active
-  cs.vEgo = 16 * CV.MPH_TO_MS      # and doesn't pick back up until under the speed again
-  assert sample() == log.Desire.none
   cs.vEgo = 12 * CV.MPH_TO_MS
   cs.leftBlinker, cs.rightBlinker = True, False
   assert sample() == log.Desire.turnLeft
-  cs.leftBlindspot = True
-  assert sample() == log.Desire.none
-  cs.leftBlindspot = False
-  assert sample(desire=log.Desire.laneChangeLeft) == log.Desire.laneChangeLeft
+  assert sample(desire=log.Desire.laneChangeLeft) == log.Desire.turnLeft   # over a lane change, as vfn
   assert sample(supported=False) == log.Desire.none
   sm['carControl'].latActive = False
   assert sample() == log.Desire.none
@@ -198,29 +192,21 @@ def test_forced_turn_desire_below_its_speed_without_a_route(sm):
   assert sample() == log.Desire.none
 
 
-def test_forced_turn_desire_holds_on_the_approach_to_a_stop(sm):
+def test_forced_turn_desire_drops_at_a_stop_and_returns_moving_off(sm):
   from openpilot.starpilot.navigation.intent import TurnIntent
   sm = _without_route(sm)
   owner, cs = TurnIntent(), sm['carState']
   def sample(model_stop=False):
-    return owner.select(sm, NOW, log.Desire.none, supported=True, model_stop=model_stop, forced_turn_speed_mps=15 * CV.MPH_TO_MS)
+    return owner.select(sm, NOW, log.Desire.none, supported=True, model_stop=model_stop, forced_turn_speed_mps=20 * CV.MPH_TO_MS)
   cs.vEgo = 10 * CV.MPH_TO_MS
-  sm['longitudinalPlan'].shouldStop = True
-  assert sample() == log.Desire.none
-  sm['longitudinalPlan'].shouldStop = False   # still held until the car stops
-  assert sample() == log.Desire.none
+  sm['longitudinalPlan'].shouldStop = True    # slowing for a light doesn't withhold it
+  assert sample(model_stop=True) == log.Desire.turnRight
+  cs.vEgo = 0.2 * CV.MPH_TO_MS                 # creeping through without a full stop keeps it
+  assert sample() == log.Desire.turnRight
   cs.standstill, cs.vEgo = True, 0.
   assert sample() == log.Desire.none
   cs.standstill, cs.vEgo = False, 1.
-  assert sample() == log.Desire.turnRight     # the turn starts from the stop
-  assert sample(model_stop=True) == log.Desire.none
-  cs.rightBlinker = False                     # a new signal clears the hold
-  assert sample() == log.Desire.none
-  cs.rightBlinker = True
-  assert sample() == log.Desire.turnRight
-  sm.logMonoTime['longitudinalPlan'] = NOW - 200_000_000
-  sm['longitudinalPlan'].shouldStop = True    # a stale plan doesn't hold it
-  assert sample() == log.Desire.turnRight
+  assert sample() == log.Desire.turnRight     # back as the car moves off: a new pulse
 
 
 def test_route_turn_wins_over_a_forced_turn(sm):

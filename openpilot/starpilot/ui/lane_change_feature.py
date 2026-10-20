@@ -148,8 +148,7 @@ class LaneChangeFeature:
                     reason="Following time while Close lane-change gap is active. Higher values leave more space; returns to the normal gap afterward."),
             replace(common, key=TURN, label="Force turn desires", value="On" if policy.turn_desires else "Off",
                     choices=("Off", "On"), available=allowed,
-                    reason="Asks the driving model to turn when you signal below the turn desire speed, without a navigation route. " +
-                           "Held while the car is slowing to a stop, so a turn signalled at a light starts from the stop."),
+                    reason="Asks the driving model to turn when you signal below the turn desire speed, without a navigation route."),
             replace(common, key=TURN_SPEED, label="Turn desire speed", value=str(turn_speed), step=1.0,
                     minimum=math.ceil(TURN_DESIRE_MIN_SPEED_MPS * multiplier * 1000) / 1000,
                     maximum=math.floor(TURN_DESIRE_MAX_SPEED_MPS * multiplier * 1000) / 1000,
