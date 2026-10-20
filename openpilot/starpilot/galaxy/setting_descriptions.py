@@ -15,6 +15,8 @@ DESCRIPTIONS = {
   'lane_change:width': 'Sets the minimum detected width of the adjacent lane for an automatic lane change.',
   'lane_change:close_gap': 'Temporarily reduces following time during a lane change when the lane and lead gap are clear.',
   'lane_change:close_gap_seconds': 'Sets following time while Close lane-change gap is active. Higher values leave more space.',
+  'lane_change:turn_desires': 'Asks the driving model to turn when you signal below the turn desire speed, without a navigation route.',
+  'lane_change:turn_desire_speed': 'Sets the speed below which a turn signal asks the driving model to turn.',
   'lane_change:reset': 'Restores the default lane-change assistance, signal timing, pace and gap settings.',
   'LaneCentering': 'Uses detected lane lines to help keep the vehicle centered in its lane.',
   'LaneCenteringPauseOnSignal': 'Pauses lane-centering correction while a turn signal is on.',

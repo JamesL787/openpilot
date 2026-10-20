@@ -135,6 +135,20 @@ class LaneChangeFeatureTests(unittest.TestCase):
     self.assertTrue(self.owner.apply(self.request(self.row(ENABLED), -1)))
     self.assertFalse(read_saved(self.params).policy.enabled)
 
+  def test_force_turn_desires_rows_edit_the_saved_policy(self):
+    from openpilot.starpilot.ui.lane_change_feature import TURN, TURN_SPEED
+    turn, speed = self.row(TURN), self.row(TURN_SPEED)
+    self.assertEqual((turn.label, turn.value, turn.default_value), ("Force turn desires", "Off", "Off"))
+    self.assertEqual((float(speed.value), speed.unit, speed.minimum, speed.maximum), (15., "mph", 5., 30.))
+    self.assertTrue(self.owner.apply(self.request(turn)))
+    saved = read_saved(self.params)
+    self.assertTrue(saved.policy.turn_desires)
+    self.assertEqual(json.loads(saved.raw)["version"], 5)
+    self.assertTrue(self.owner.apply(self.request(self.row(TURN_SPEED), -1)))
+    self.assertAlmostEqual(read_saved(self.params).policy.turn_desire_speed_mps, 14 * 0.44704)
+    self.assertEqual(self.row(TURN).value, "On")
+    self.assertTrue(read_saved(self.params).policy.enabled)  # lane changes untouched
+
   def test_one_lane_change_speed_control_owns_the_smoothing_duration(self):
     row = self.row(PACE)
     self.assertEqual(row.label, 'Lane Change Speed')

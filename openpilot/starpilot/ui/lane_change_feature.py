@@ -10,7 +10,8 @@ import stat
 from openpilot.common.constants import CV
 from openpilot.starpilot.lateral.auto_lane_change import steering_capable
 from openpilot.starpilot.lateral.lane_change_preferences import (
-  KEY, MAX_BYTES, MAX_SPEED_MPS, MINIMUM_SPEED_MPS, effective, LaneChangePolicy, SavedLaneChange, read_saved, to_value,
+  KEY, MAX_BYTES, MAX_SPEED_MPS, MINIMUM_SPEED_MPS, TURN_DESIRE_MAX_SPEED_MPS, TURN_DESIRE_MIN_SPEED_MPS, effective,
+  LaneChangePolicy, SavedLaneChange, read_saved, to_value, valid_turn_desire_speed,
 )
 from openpilot.starpilot.saved_document import commit_exact
 from openpilot.starpilot.ui.feature_settings_state import FeatureRow, FeatureSettingsRequest
@@ -25,6 +26,9 @@ WIDTH = "lane_change:width"
 CLOSE = "lane_change:close_gap"
 GAP = "lane_change:close_gap_seconds"
 PACE = "lane_change:pace"
+TURN = "lane_change:turn_desires"
+TURN_SPEED = "lane_change:turn_desire_speed"
+SPEED_KEYS = (SPEED, TURN_SPEED)
 RESET = "lane_change:reset"
 
 
@@ -37,16 +41,18 @@ def confirm_question(request: FeatureSettingsRequest) -> str:
     return "Turn off automatic lane changes? New automatic triggers stop after the preference refresh."
   label = {ENABLED: "lane-change assistance", AUTO: "automatic lane changes", SPEED: "minimum lane-change speed",
            ONE: "one lane change per signal", PACE: "steering pace", DELAY: "signal delay",
-           WIDTH: "minimum adjacent lane width", CLOSE: "Close lane-change gap", GAP: "lane-change following time"}[request.key]
+           WIDTH: "minimum adjacent lane width", CLOSE: "Close lane-change gap", GAP: "lane-change following time",
+           TURN: "Force turn desires", TURN_SPEED: "turn desire speed"}[request.key]
   unit = request.display_unit
   if not unit:
     unit = "seconds" if request.key in (DELAY, GAP) else "feet" if request.key == WIDTH else ""
   value = f"{request.value} {unit}".rstrip()
   timing = ("Changes refresh during this drive." if request.key in (CLOSE, GAP) else
+            "Changes apply after the current signal ends." if request.key in (TURN, TURN_SPEED) else
             "Changes apply after the current signal and maneuver end.")
   checks = ' Lane and blindspot checks remain required.' if request.key == AUTO and request.value == 'On' else ''
   return f"Set {label} to {value}? {timing}{checks}"
-KEYS = frozenset((ENABLED, SPEED, ONE, AUTO, DELAY, WIDTH, CLOSE, GAP, PACE, RESET))
+KEYS = frozenset((ENABLED, SPEED, ONE, AUTO, DELAY, WIDTH, CLOSE, GAP, PACE, TURN, TURN_SPEED, RESET))
 
 
 def _unit_source(params) -> tuple[bytes | None, bool]:
@@ -108,6 +114,7 @@ class LaneChangeFeature:
     policy = effective(saved)
     long_available = self.longitudinal_available()
     speed = round(policy.minimum_speed_mps * multiplier, 3)
+    turn_speed = round(policy.turn_desire_speed_mps * multiplier, 3)
     rows = [replace(common, key=PACE, label="Lane Change Speed", value=str(round(1.0 + (8.0 - policy.duration_s) * 9.0 / 5.0, 2)),
                     step=1.0, minimum=1.0, maximum=10.0, unit="", available=allowed,
                     reason="Sets how quickly steering moves into the adjacent lane. Higher values change lanes " +
@@ -138,14 +145,26 @@ class LaneChangeFeature:
                     reason="Temporarily reduces following time during a lane change when the lane and lead gap are clear; requires StarPilot speed control"),
             replace(common, key=GAP, label="Lane-change follow gap", value=str(round(policy.close_gap_seconds, 2)),
                     step=0.05, minimum=0.75, maximum=1.0, unit="s", available=allowed and long_available,
-                    reason="Following time while Close lane-change gap is active. Higher values leave more space; returns to the normal gap afterward.")]
+                    reason="Following time while Close lane-change gap is active. Higher values leave more space; returns to the normal gap afterward."),
+            replace(common, key=TURN, label="Force turn desires", value="On" if policy.turn_desires else "Off",
+                    choices=("Off", "On"), available=allowed,
+                    reason="Asks the driving model to turn when you signal below the turn desire speed, without a navigation route. " +
+                           "Held while the car is slowing to a stop, so a turn signalled at a light starts from the stop."),
+            replace(common, key=TURN_SPEED, label="Turn desire speed", value=str(turn_speed), step=1.0,
+                    minimum=math.ceil(TURN_DESIRE_MIN_SPEED_MPS * multiplier * 1000) / 1000,
+                    maximum=math.floor(TURN_DESIRE_MAX_SPEED_MPS * multiplier * 1000) / 1000,
+                    unit=unit if unit_valid else "", available=allowed and unit_valid,
+                    reason="Forced turn desires begin below this speed. Lower values keep an early signal from turning the car in " +
+                           "before the corner." if unit_valid else "Saved speed units unavailable",
+                    dependencies=(("IsMetric", unit_raw),), display_unit=unit if unit_valid else "")]
 
     defaults = LaneChangePolicy()
     targets = {ENABLED: "On" if defaults.enabled else "Off", ONE: "On" if defaults.one_per_signal else "Off",
                AUTO: "On" if defaults.auto_lane_change else "Off", CLOSE: "On" if defaults.close_gap else "Off",
                SPEED: str(round(defaults.minimum_speed_mps * multiplier, 3)), DELAY: str(defaults.auto_delay_s),
                WIDTH: str(defaults.minimum_lane_width_m), GAP: str(defaults.close_gap_seconds),
-               PACE: str(round(1.0 + (8.0 - defaults.duration_s) * 9.0 / 5.0, 2))}
+               PACE: str(round(1.0 + (8.0 - defaults.duration_s) * 9.0 / 5.0, 2)),
+               TURN: "On" if defaults.turn_desires else "Off", TURN_SPEED: str(round(defaults.turn_desire_speed_mps * multiplier, 3))}
     return [replace(row, default_value=targets.get(row.key)) for row in rows]
 
   def _fresh(self, request: FeatureSettingsRequest) -> SavedLaneChange | None:
@@ -157,7 +176,7 @@ class LaneChangeFeature:
     saved = read_saved(self.params)
     if not saved.readable or saved.raw != request.expected:
       return None
-    if request.key == SPEED:
+    if request.key in SPEED_KEYS:
       raw, valid = _unit_source(self.params)
       if not valid or request.dependencies != (("IsMetric", raw),) or request.display_unit != ("km/h" if raw == b"1" else "mph"):
         return None
@@ -169,8 +188,8 @@ class LaneChangeFeature:
       return LaneChangePolicy() if not saved.valid and request.value == "confirm" else None
     if not saved.valid:
       return None
-    if request.key in (ENABLED, ONE, AUTO, CLOSE) and request.value in ("On", "Off"):
-      field = {ENABLED: "enabled", ONE: "one_per_signal", AUTO: "auto_lane_change", CLOSE: "close_gap"}[request.key]
+    if request.key in (ENABLED, ONE, AUTO, CLOSE, TURN) and request.value in ("On", "Off"):
+      field = {ENABLED: "enabled", ONE: "one_per_signal", AUTO: "auto_lane_change", CLOSE: "close_gap", TURN: "turn_desires"}[request.key]
       return replace(saved.policy, **{field: request.value == "On"})
     if request.key == PACE:
       try:
@@ -200,6 +219,14 @@ class LaneChangeFeature:
       mps = value / 3.6 if request.display_unit == "km/h" else value * CV.MPH_TO_MS
       if math.isfinite(mps) and MINIMUM_SPEED_MPS <= mps <= MAX_SPEED_MPS:
         return replace(saved.policy, minimum_speed_mps=mps)
+    if request.key == TURN_SPEED:
+      try:
+        value = float(request.value)
+      except ValueError:
+        return None
+      mps = value / 3.6 if request.display_unit == "km/h" else value * CV.MPH_TO_MS
+      if valid_turn_desire_speed(mps):
+        return replace(saved.policy, turn_desire_speed_mps=mps)
     return None
 
   def apply(self, request: FeatureSettingsRequest) -> bool:

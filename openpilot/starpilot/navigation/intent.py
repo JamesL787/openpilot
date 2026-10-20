@@ -97,12 +97,35 @@ def matching_turn_signal(sm, now_ns: int, *, supported: bool) -> bool:
               0 <= instruction.distanceMeters <= min(250., max(30., 15. + max(0., cs.vEgo) * 12.)))
 
 
+# Force turn desires: once on, a forced turn holds to this much above its speed so the turn exit doesn't drop it.
+FORCED_TURN_RELEASE_MPS = 3 * CV.MPH_TO_MS
+PLAN_MAX_AGE_NS = 150_000_000
+
+
+def _plan_stops(sm, now_ns: int) -> bool:
+  try:
+    stamp = sm.logMonoTime['longitudinalPlan']
+    return bool(sm.valid['longitudinalPlan'] and sm.alive['longitudinalPlan'] and stamp <= now_ns <= stamp + PLAN_MAX_AGE_NS and
+                sm['longitudinalPlan'].shouldStop)
+  except (KeyError, AttributeError, TypeError):
+    return False
+
+
 class TurnIntent:
   def __init__(self):
     self.key = None
     self.stop_hold = False
+    self.forced_hold = False
+    self.forced_active = False
 
-  def select(self, sm, now_ns: int, current_desire, *, supported: bool, model_stop: bool):
+  def select(self, sm, now_ns: int, current_desire, *, supported: bool, model_stop: bool, forced_turn_speed_mps: float | None = None):
+    desire = self._navigation(sm, now_ns, current_desire, supported=supported, model_stop=model_stop)
+    if desire != current_desire:
+      self.forced_active = False
+      return desire
+    return self._forced(sm, now_ns, current_desire, supported=supported, model_stop=model_stop, speed_mps=forced_turn_speed_mps)
+
+  def _navigation(self, sm, now_ns: int, current_desire, *, supported: bool, model_stop: bool):
     nav = current_instruction(sm, now_ns) if supported else None
     key = (nav.sessionId, nav.startedMonoTime) if nav is not None else None
     if key != self.key:
@@ -113,7 +136,7 @@ class TurnIntent:
     try:
       stamp, plan = sm.logMonoTime['longitudinalPlan'], sm['longitudinalPlan']
       plan_valid = (sm.valid['longitudinalPlan'] and sm.alive['longitudinalPlan'] and
-                    nav.startedMonoTime <= stamp <= now_ns <= stamp + 150_000_000 and
+                    nav.startedMonoTime <= stamp <= now_ns <= stamp + PLAN_MAX_AGE_NS and
                     nav.startedMonoTime <= plan.modelMonoTime <= stamp)
     except (KeyError, AttributeError, TypeError):
       plan_valid = False
@@ -124,3 +147,23 @@ class TurnIntent:
     if self.stop_hold or not plan_valid:
       return current_desire
     return turn_desire(sm, now_ns, current_desire, supported=supported)
+
+  def _forced(self, sm, now_ns: int, current_desire, *, supported: bool, model_stop: bool, speed_mps: float | None):
+    """Force turn desires (6.x TurnDesires) with no route: a lone blinker below the turn desire speed. Like the navigation
+    turn, it holds while the car slows to a stop, so a turn signalled at a light starts from the stop instead of
+    turning in on the approach."""
+    cs = sm['carState']
+    one_blinker = cs.leftBlinker != cs.rightBlinker
+    if not one_blinker or cs.standstill:
+      self.forced_hold = False
+    elif model_stop or _plan_stops(sm, now_ns):
+      self.forced_hold = True
+    left = bool(cs.leftBlinker and not cs.rightBlinker)
+    limit = None if speed_mps is None else speed_mps + (FORCED_TURN_RELEASE_MPS if self.forced_active else 0.)
+    self.forced_active = bool(
+      limit is not None and supported and one_blinker and current_desire == log.Desire.none and
+      sm['carControl'].latActive and not cs.standstill and not self.forced_hold and
+      math.isfinite(cs.vEgo) and 0 <= cs.vEgo < limit and not (cs.leftBlindspot if left else cs.rightBlindspot))
+    if not self.forced_active:
+      return current_desire
+    return log.Desire.turnLeft if left else log.Desire.turnRight
