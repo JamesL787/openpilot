@@ -229,6 +229,9 @@ CIVIC_TBA_C120 = EpsFirmwareCalibration(
 # routes the 0x18F rate word reads 4.85 per published deg/s at centre and 1.21x that to lock (displacement windows,
 # five routes), against 4.80 and 1.21x computed, so R6 = 32 x the word holds within 1 %. Both builds report
 # 39990-TGG,A120: a car on an earlier image must be reflashed.
+# Live row, measured without telemetry: fitting the load below through each row's law of the 08-07 image, row 0 fits
+# best on all five routes (held out 0.838 / 0.558 / 0.840 / 0.703 / 0.735; rows 1-5, the [0,222,333,...] axis: 0.822 /
+# 0.484 / 0.811 / 0.634 / 0.681; row 6 needs a positive viscous term), as both variant records say.
 # Rack map: yaw-fitted on the owner's car (honda_eps_rack_map.CIVIC_TGG_A120_RACK).
 # Load: fitted through the law of the build those drives ran, the 08-07 C020Pminus5 Trk4250 KFF45 image (row 0 on
 # TargetMap-D R5 0..30000, P-minus-5 on the C120's P keys, 4096 E4 per unit), not rev b's: the column is the car's,
@@ -476,7 +479,7 @@ CALIBRATION_PROVENANCE = {
     "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
   },
   "civic_tgg_a120": {
-    "row": "firmware: both variant records (TGGA5, TGGA6) select row 0",
+    "row": "measured: row 0, its drives fit row 0's law best on all five routes (no telemetry); both variant records agree",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
     "r6": "firmware: computed from its A table (the C020's); the owner's 0x18F rate word agrees within 1 %",
     "load": "measured: the owner's routes 0000000b-00000010, through the 08-07 build's law they ran",
