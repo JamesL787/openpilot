@@ -1,21 +1,33 @@
 #include "selfdrive/pandad/pandad.h"
+#include "selfdrive/pandad/preap_pedal_wire.h"
 #include "openpilot/cereal/messaging/messaging.h"
 #include "common/swaglog.h"
 
 void PandaSafety::configureSafetyMode(bool is_onroad) {
+  // A Card restart/config change or native reset withdraws before any restage.
+  if (is_onroad && safety_configured_ && preap_pedal_words_ &&
+      (read_preap_pedal_capsule(params_.getParamPath("TeslaPreAPPedalStartup")) != preap_pedal_capsule_ ||
+       params_.get("CarParams") != preap_pedal_cp_bytes_ || pandas_.size() != 1 ||
+       !pandas_[0]->matches_preap_pedal(*preap_pedal_words_))) {
+    for (auto *panda : pandas_) panda->set_safety_model(cereal::CarParams::SafetyModel::NO_OUTPUT, 0U);
+    safety_configured_ = false;
+    preap_pedal_words_.reset();
+  }
   if (is_onroad && !safety_configured_) {
     updateMultiplexingMode();
 
     auto car_params = fetchCarParams();
     if (!car_params.empty()) {
       LOGW("got %lu bytes CarParams", car_params.size());
-      setSafetyMode(car_params);
-      safety_configured_ = true;
+      safety_configured_ = setSafetyMode(car_params);
     }
   } else if (!is_onroad) {
     initialized_ = false;
     safety_configured_ = false;
     log_once_ = false;
+    preap_pedal_words_.reset();
+    preap_pedal_capsule_.clear();
+    preap_pedal_cp_bytes_.clear();
   }
 }
 
@@ -55,13 +67,26 @@ std::string PandaSafety::fetchCarParams() {
   return params_.get("CarParams");
 }
 
-void PandaSafety::setSafetyMode(const std::string &params_string) {
+bool PandaSafety::setSafetyMode(const std::string &params_string) {
   AlignedBuffer aligned_buf;
   capnp::FlatArrayMessageReader cmsg(aligned_buf.align(params_string.data(), params_string.size()));
   cereal::CarParams::Reader car_params = cmsg.getRoot<cereal::CarParams>();
 
   auto safety_configs = car_params.getSafetyConfigs();
   uint16_t alternative_experience = car_params.getAlternativeExperience();
+  const bool pedal = car_params.getBrand() == "tesla" && car_params.getCarFingerprint() == "TESLA_MODEL_S_PREAP" &&
+    car_params.getOpenpilotLongitudinalControl();
+  std::optional<PreapPedalWords> pedal_words;
+  std::string pedal_capsule;
+  if (pedal) {
+    pedal_capsule = read_preap_pedal_capsule(params_.getParamPath("TeslaPreAPPedalStartup"));
+    pedal_words = preap_pedal_words(pedal_capsule, params_string, car_params);
+    if (pandas_.size() != 1 || !pedal_words) {
+      for (auto *panda : pandas_) panda->set_safety_model(cereal::CarParams::SafetyModel::NO_OUTPUT, 0U);
+      return false;
+    }
+  }
+
 
   alternative_experience_ = alternative_experience;
   safety_config_count_ = safety_configs.size();
@@ -76,8 +101,20 @@ void PandaSafety::setSafetyMode(const std::string &params_string) {
     safety_slots_.emplace_back(model, param);
     LOGW("Panda %zu: setting safety model: %d, param: %d, alternative experience: %d", i, (int)model, param, alternative_experience);
     pandas_[i]->set_alternative_experience(alternative_experience);
+    if (pedal && !pandas_[i]->stage_preap_pedal(*pedal_words)) {
+      pandas_[i]->set_safety_model(cereal::CarParams::SafetyModel::NO_OUTPUT, 0U);
+      return false;
+    }
     pandas_[i]->set_safety_model(model, param);
+    if (pedal && !pandas_[i]->matches_preap_pedal(*pedal_words)) {
+      pandas_[i]->set_safety_model(cereal::CarParams::SafetyModel::NO_OUTPUT, 0U);
+      return false;
+    }
   }
+  preap_pedal_words_ = pedal_words;
+  preap_pedal_capsule_ = pedal ? pedal_capsule : std::string();
+  preap_pedal_cp_bytes_ = pedal ? params_string : std::string();
+  return true;
 }
 
 Panda *PandaSafety::aolOwner() {

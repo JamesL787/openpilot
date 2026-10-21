@@ -72,6 +72,6 @@ def native_accepts(cp, model, param):
 
 
 def independent_buttons_qualified(cp, *, marked_only=True):
-  return bool(cp.carFingerprint == CAR.HYUNDAI_SONATA and qualified(cp, marked_only=marked_only) and
+  return bool(cp.carFingerprint in CLASSIC_LONG_IDS and qualified(cp, marked_only=marked_only) and
               cp.alternativeExperience in ((AOL_EXPERIENCE,) if marked_only else (0, AOL_EXPERIENCE)) and
-              aol_word(cp) == 0xC04)
+              aol_word(cp) in (0xC04, 0xC05, 0xC06, 0xC44, 0xC45, 0xC46))

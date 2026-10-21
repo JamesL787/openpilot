@@ -31,7 +31,8 @@ from openpilot.starpilot.feature_runtime import enabled as feature_enabled
 from openpilot.starpilot.vehicle_preferences import VehicleStartupPreferences
 from openpilot.starpilot.lateral.pause import LateralPause, read_settings as read_lateral_pause
 from openpilot.starpilot.lateral.model_turn_assist import ModelTurnAssist, update_twitch_guard
-from openpilot.starpilot.aol.runtime import current_axis, current_native, ordinary_lateral_requested, ordinary_axis_acknowledged
+from openpilot.starpilot.aol.runtime import (current_axis, current_native, ordinary_lateral_requested, ordinary_axis_acknowledged,
+                                            refresh_expired_lateral_snapshot)
 from openpilot.starpilot.aol.vehicle import policy_for as axis_policy_for, ordinary_axis_request_allowed, allow_lateral_onset
 from openpilot.starpilot.lateral.lane_centering import (
   LaneCenteringController, LaneCenteringInput, LaneCenteringRequest, LaneCenteringResult,
@@ -57,6 +58,11 @@ ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
 
 
 class Controls:
+  # Night Star port: defaults for the Honda EPS controller's hooks, so a Controls built without __init__ (tests that set
+  # their own state) runs the stock path
+  rack_map = None
+  lat_delay_schedule = None
+
   def __init__(self) -> None:
     self.params = Params()
     cloudlog.info("controlsd is waiting for CarParams")
@@ -175,6 +181,10 @@ class Controls:
       self.LaC.__dict__.pop(name, None)
 
   def state_control(self, *, lane_centering: LaneCenteringRequest | None = None):
+    lateral_inputs_refreshed = False
+    if (self.aol_replay and os.getenv('REPLAY') != '1' and
+        getattr(self, 'aol_previous_lateral_active', False)):
+      lateral_inputs_refreshed = refresh_expired_lateral_snapshot(self.sm, now_ns=time.monotonic_ns())
     CS = self.sm['carState']
     self.flm_native_witness = None
     if self.lateral_gain_owner is not None:
@@ -242,6 +252,12 @@ class Controls:
                           ordinary_axis_acknowledged(self.sm, self.CP, now_ns=now_ns,
                             on_validated_native=lambda native: setattr(self, 'flm_native_witness', native)))
 
+    if lateral_inputs_refreshed:
+      # A newly received physical veto wins over an older admitted axis. This
+      # LAT-only refresh cannot enable ordinary LONG; its next normal cycle owns that transition.
+      CC.latActive = bool(CC.latActive and CS.canValid and not CS.canTimeout)
+      CC.longActive = False
+
     fault_latch = getattr(self, 'hyundai_lateral_fault', None)
     if fault_latch is not None:
       latched = fault_latch.update(requested=lateral_requested, temporary_fault=bool(CS.steerFaultTemporary),
@@ -305,6 +321,9 @@ class Controls:
     # accel PID loop
     publish_takeoff_state = getattr(self.LoC, 'takeoff_starting', False)
     pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, CS.vEgo, CS.vCruise * CV.KPH_TO_MS)
+    from opendbc.car.tesla.preap.pedal_profile import accel_limits as preap_pedal_limits
+    pid_accel_limits = preap_pedal_limits(self.CP, CS.vEgo,
+      getattr(self.sm['selfdriveState'].personality, 'raw', 1), pid_accel_limits)
     longitudinal_output = self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits,
                                           context=self.longitudinal_inputs.context(CC.longActive))
     actuators.accel = final_output(longitudinal_output)

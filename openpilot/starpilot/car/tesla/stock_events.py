@@ -17,6 +17,8 @@ def cp_fingerprint(cp):
 
 def publish_stock_status(pm, cp, internal, *, session, sequence, car_state_stamp, valid):
   from openpilot.cereal import messaging
+  if cp.openpilotLongitudinalControl:
+    return
   binding = cp_fingerprint(cp)
   if binding is None:
     return
@@ -36,17 +38,22 @@ def publish_stock_status(pm, cp, internal, *, session, sequence, car_state_stamp
 
 class StockCruiseConsumer:
   def __init__(self, cp):
+    from openpilot.starpilot.car.tesla.pedal_events import PedalStatusConsumer
+    self.pedal = PedalStatusConsumer(cp)
     self.binding = cp_fingerprint(cp)
     self.session = None
     self.sequence = -1
     self.previous = False
     self.pending = []
     self.socket = None
-    if self.binding is not None:
+    if self.binding is not None and not self.pedal.enabled:
       from openpilot.cereal import messaging
       self.socket = messaging.sub_sock('slcCruiseEvent', conflate=False)
 
-  def poll(self, sm, *, now_ns, session):
+  def poll(self, sm, *, now_ns, session, car_state=None, source_ns=None, source_valid=False):
+    if self.pedal.enabled:
+      return self.pedal.update(sm, now_ns=now_ns, session=session, car_state=car_state,
+                               source_ns=source_ns, source_valid=source_valid)
     from openpilot.cereal import messaging
     for _ in range(128):
       envelope = messaging.recv_one_or_none(self.socket)
@@ -55,26 +62,29 @@ class StockCruiseConsumer:
       if envelope.which() == 'slcCruiseEvent' and str(envelope.slcCruiseEvent.kind) == 'teslaStockCruise':
         self.pending.append(envelope)
     self.pending = self.pending[-16:]
-    current_stamp = sm.logMonoTime['carState']
+    current_stamp = sm.logMonoTime['carState'] if source_ns is None else source_ns
     alerts = []
     for envelope in self.pending:
       if envelope.logMonoTime == current_stamp:
-        alerts.extend(self.update(sm, envelope=envelope, now_ns=now_ns, session=session))
+        alerts.extend(self.update(sm, envelope=envelope, now_ns=now_ns, session=session,
+                                  car_state=car_state, source_ns=source_ns, source_valid=source_valid))
     self.pending = [item for item in self.pending if current_stamp < item.logMonoTime <= now_ns + 100_000_000]
 
     return alerts
 
-  def update(self, sm, *, envelope, now_ns, session):
+  def update(self, sm, *, envelope, now_ns, session, car_state=None, source_ns=None, source_valid=False):
     try:
       record = envelope.slcCruiseEvent
       stock = record.teslaStockCruise
-      cs = sm['carState']
+      cs = sm['carState'] if car_state is None else car_state
+      current_stamp = sm.logMonoTime['carState'] if source_ns is None else source_ns
+      valid = (sm.valid['carState'] and sm.alive['carState']) if car_state is None else source_valid
       stamp = envelope.logMonoTime
-      if (self.binding is None or not envelope.valid or not sm.valid['carState'] or not sm.alive['carState'] or
+      if (self.binding is None or not envelope.valid or not valid or
           not cs.canValid or cs.canTimeout or str(record.kind) != 'teslaStockCruise' or
           stock.version != 1 or stock.cpFingerprint != self.binding or not session or
           record.producerSessionId != session or
-          not 0 < stock.carStateMonoTime == record.observedMonoTime == stamp == sm.logMonoTime['carState'] <= now_ns <= stamp + 100_000_000):
+          not 0 < stock.carStateMonoTime == record.observedMonoTime == stamp == current_stamp <= now_ns <= stamp + 100_000_000):
         return []
       if self.session != session:
         self.session, self.sequence, self.previous = session, -1, False

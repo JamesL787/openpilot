@@ -169,3 +169,71 @@ def test_actual_family_belt_does_not_mask_foreign_or_hard_authority(fault):
       cp.brand = 'unsupported'
     assert not seatbelt_lateral_soft_event_allowed(cp, state, intent, native, event,
       source_ns=now, now_ns=now, axis_session_id=sd.aol_session_id)
+
+
+@pytest.mark.parametrize('unlatched', [False, True])
+def test_actual_reverse_pause_retains_intent_with_belt_overlap_and_native_withdrawal(unlatched):
+  from opendbc.car.structs import car
+  from openpilot.cereal import messaging
+  from openpilot.starpilot.aol.wire import IntentState, encode_intent
+
+  case = IoniqAvailabilityTests(methodName='runTest')
+  with OpenpilotPrefix(), ExitStack() as cleanup:
+    cleanup.callback(case.doCleanups)
+    sd, controls, drive, card, receive = case._ioniq_availability_callers(False)
+    gears = car.CarState.GearShifter
+    for tick, gear, granted in ((2, gears.neutral, True), (3, gears.reverse, False),
+                                (4, gears.reverse, False), (5, gears.drive, False), (6, gears.drive, True)):
+      state = car_state(brake=True)
+      state.seatbeltUnlatched = unlatched
+      state.gearShifter = gear
+      stamp = 10_000_000_000 + tick * 10_000_000
+      intent = messaging.new_message('aolIntentWire', 0, valid=True, logMonoTime=stamp)
+      paused = gear in (gears.neutral, gears.reverse)
+      intent.aolIntentWire = encode_intent(IntentState('authority-card', tick + 1, stamp, stamp,
+                                                      stamp + 200_000_000, not paused, False, False, True, True))
+      axis, _, command = drive(tick, observed_state=state, intent_message=intent,
+                               native_request_lat=granted, allowed=granted,
+                               native_request_long=False, long_allowed=False)
+      assert axis.faultReason == 'none'
+      assert axis.lateralActive == (gear == gears.drive and granted)
+      assert command.latActive == axis.lateralActive
+      assert not axis.longitudinalActive and not command.longActive
+      sd.sm.update_msgs(stamp / 1e9, [controls.pm.messages['carControl']])
+      # N/R suppress output eligibility while preserving the separate armed latch.
+      receive(stamp, state=state, axis=sd.pm.messages['aolAxisState'], event=sd.pm.messages['onroadEvents'])
+      assert card.aol_card_intent.allowed_latch
+      assert not sd.enabled
+
+
+@pytest.mark.parametrize('fault', ['unarmed', 'park', 'unknown', 'door', 'native_denied', 'wrong_session', 'stale_source'])
+def test_paused_belt_classification_requires_armed_known_gear_and_current_native(fault):
+  from opendbc.car.structs import car
+  case = IoniqAvailabilityTests(methodName='runTest')
+  with OpenpilotPrefix(), ExitStack() as cleanup:
+    cleanup.callback(case.doCleanups)
+    sd, _, drive, _, _ = case._ioniq_availability_callers(False)
+    state = car_state()
+    state.seatbeltUnlatched = True
+    drive(2, observed_state=state, native_request_long=False)
+    now = source = 10_020_000_000
+    intent = current_intent(sd.sm, car_state_ns=source, now_ns=now, companion=sd.aol_intent_companion)
+    native = current_native(sd.sm, now_ns=now, CP=sd.CP, axis_session_id=sd.aol_session_id)
+    assert intent is not None and native is not None
+    event = next(e for e in sd.events.to_msg() if e.name == EventName.seatbeltNotLatched)
+    state.gearShifter = car.CarState.GearShifter.reverse
+    intent = replace(intent, allowedLatch=False)
+    if fault == 'unarmed':
+      intent = replace(intent, lateralArmed=False)
+    elif fault in ('park', 'unknown'):
+      state.gearShifter = getattr(car.CarState.GearShifter, fault)
+    elif fault == 'door':
+      state.doorOpen = True
+    elif fault == 'native_denied':
+      native = replace(native, lateralAllowed=False)
+    elif fault == 'wrong_session':
+      native = replace(native, axisSessionId='other')
+    elif fault == 'stale_source':
+      now += 30_000_001
+    assert not seatbelt_lateral_soft_event_allowed(sd.CP, state, intent, native, event,
+      source_ns=source, now_ns=now, axis_session_id=sd.aol_session_id, gear_pause=True)

@@ -4,6 +4,7 @@ from typing import TypedDict, cast
 
 
 from functools import lru_cache
+import struct
 
 from capnp.lib.capnp import _DynamicStructReader
 from openpilot.cereal import custom, messaging
@@ -85,6 +86,22 @@ def _write_effect_trace(trace):
     'appliedFullProfileSha256':trace.applied_full_profile_sha256}
 
 
+# Receiver histories retain up to 60,000 frames. Share exact immutable map
+# content instead of allocating five full30 maps for every unchanged frame.
+# Source timestamps and the per-frame transition are still validated below.
+@lru_cache(maxsize=128)
+def _effect_coordinate_rows(packed):
+  from openpilot.starpilot.flm.canonical_surface_adapter import NAMES
+  return tuple(zip(NAMES, struct.unpack('!30d', packed), strict=True))
+
+
+def _shared_effect_rows(rows):
+  from openpilot.starpilot.flm.canonical_surface_adapter import NAMES
+  if tuple(name for name, _ in rows) != NAMES:
+    return rows  # Preserve the original validator's rejection of foreign names.
+  return _effect_coordinate_rows(struct.pack('!30d', *(value for _, value in rows)))
+
+
 def _read_effect_trace(row):
   from openpilot.starpilot.flm.effect_trace import FullEffectTrace
   if row.version == 0:
@@ -94,7 +111,8 @@ def _read_effect_trace(row):
   envelope=_read_full_surface(row.envelope)
   if envelope is None:
     raise ValueError('effect trace original envelope')
-  values=[tuple((str(v.name),float(v.value)) for v in getattr(row,n)) for n in ('before','target','applied')]
+  values=[_shared_effect_rows(tuple((str(v.name),float(v.value)) for v in getattr(row,n)))
+          for n in ('before','target','applied')]
   return FullEffectTrace(1,envelope,int(row.controlMonoTime),int(row.previousMonoTime),bool(row.qualified),
     *cast(tuple[tuple[tuple[str, float], ...], tuple[tuple[str, float], ...], tuple[tuple[str, float], ...]], values),
     str(row.appliedFullProfileSha256)).validate()
@@ -303,6 +321,7 @@ def _write_full_surface(profile):
 
 def _read_full_surface(row):
   from openpilot.starpilot.flm.full_surface_profile import FullSurfaceEnvelope
+  from openpilot.starpilot.flm.effect_admission_cache import validated_envelope
   try:
     if row.version not in (1, 2) or len(row.priorCoordinates) != 30 or len(row.coordinates) != 30 or not 1 <= len(row.trialNames) <= 4:
       return None
@@ -310,7 +329,7 @@ def _read_full_surface(row):
     values.update(version=int(row.version), prior_coordinates=tuple((str(point.name), float(point.value)) for point in row.priorCoordinates),
                   coordinates=tuple((str(point.name), float(point.value)) for point in row.coordinates),
                   trial_names=tuple(str(name) for name in row.trialNames))
-    return FullSurfaceEnvelope(**cast(_FullSurfaceFields, values)).validate()
+    return validated_envelope(FullSurfaceEnvelope(**cast(_FullSurfaceFields, values)))
   except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
     return None
 

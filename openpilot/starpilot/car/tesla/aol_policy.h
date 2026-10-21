@@ -3,7 +3,7 @@
 #include "selfdrive/pandad/aol_protocol.h"
 
 inline bool tesla_preap_aol_param(uint16_t param) {
-  return param == 0U;
+  return (param == 0U) || (param == 1U) || (param == 2U) || (param == 3U) || (param == 6U) || (param == 7U);
 }
 
 inline constexpr AolSafetyProfile TESLA_PREAP_AOL_PROFILE{39U, tesla_preap_aol_param, true};

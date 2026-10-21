@@ -1,10 +1,12 @@
 """EV9 source-selected communication-control startup, resolved before CarParams publication."""
+
 from copy import deepcopy
 import time
 
 from opendbc.car import Bus, make_tester_present_msg
 from opendbc.can.parser import MAX_BAD_COUNTER
 from opendbc.car.hyundai.ecu_startup import HyundaiECUStartup, Outcome
+from opendbc.car.hyundai.ecu_continuity import commit_controller_tester
 from opendbc.car.hyundai.ev9_longitudinal import qualified, copy_cp
 from opendbc.car.hyundai.ccnc_ev_stock import qualified as stock_qualified
 from opendbc.car.hyundai.values import CAR
@@ -20,9 +22,9 @@ def required(cp):
 
 class EV9Startup(HyundaiECUStartup):
   def __init__(self, cp, callbacks, *, stock_cp, clock=time.monotonic, keeper_factory=EV9Keeper):
-    super().__init__(cp, callbacks, address=0x730, bus=1, label='EV9')
+    super().__init__(cp, callbacks, address=0x730, bus=1, label="EV9")
     if stock_cp.carFingerprint != CAR.KIA_EV9 or not stock_qualified(stock_cp):
-      raise ValueError('EV9 startup requires exact original stock CP')
+      raise ValueError("EV9 startup requires exact original stock CP")
     self.clock = clock
     self.boot_clock = clock_boot_ns
     self.stock_cp = copy_cp(stock_cp)
@@ -30,7 +32,6 @@ class EV9Startup(HyundaiECUStartup):
     self.keeper = None
     self.handed_off = False
     self.disable_response = None
-
 
   def _send(self, frames):
     # Source-selected EV9 request is unsuppressed enable-RX/disable-TX.
@@ -45,23 +46,23 @@ class EV9Startup(HyundaiECUStartup):
     for _ in range(10):
       try:
         session = self._query(can_send, can_recv, self.bus, [(self.address, None)], [b"\x10\x03"], [b"\x50\x03"])
-        if not session.get_data(.1):
-          time.sleep(.1)
+        if not session.get_data(0.1):
+          time.sleep(0.1)
           continue
-        time.sleep(.05)
+        time.sleep(0.05)
         command = self._query(can_send, can_recv, self.bus, [(self.address, None)], [b"\x28\x01\x01"], [b""])
-        replies = command.get_data(.1)
+        replies = command.get_data(0.1)
         if not replies:
-          self.disable_response = 'no_reply_sent_unconfirmed'
+          self.disable_response = "no_reply_sent_unconfirmed"
           return True
         for payload in replies.values():
           if payload == b"\x68\x01":
-            self.disable_response = 'positive_communication_control'
+            self.disable_response = "positive_communication_control"
           elif len(payload) == 3 and payload[:2] == b"\x7f\x28":
-            self.disable_response = 'negative_communication_control'
+            self.disable_response = "negative_communication_control"
             return False
           else:
-            self.disable_response = 'unexpected_or_malformed_reply'
+            self.disable_response = "unexpected_or_malformed_reply"
             return False
         return True
       except Exception:
@@ -69,7 +70,7 @@ class EV9Startup(HyundaiECUStartup):
         # The shared owner restores before attempting stock publication.
         if self.disable_attempted:
           raise
-        time.sleep(.1)
+        time.sleep(0.1)
     return False
 
   def _ready(self):
@@ -78,15 +79,15 @@ class EV9Startup(HyundaiECUStartup):
     deadline = self.clock() + 0.5
     while self.clock() < deadline:
       packets = self.callbacks[0](wait_for_one=False)
-      observer.update([(int(getattr(packet, 'log_mono_time_ns', 0)), list(packet)) for packet in packets], self.boot_clock())
+      observer.update([(int(getattr(packet, "log_mono_time_ns", 0)), list(packet)) for packet in packets], self.boot_clock())
       if observer.current(self.boot_clock(), floor, 100_000_000) is True:
         return True
-      time.sleep(.005)
+      time.sleep(0.005)
     return observer.current(self.boot_clock(), floor, 100_000_000)
 
   def prepare(self, *, admission):
     if not qualified(self.cp):
-      raise ValueError('Unqualified EV9 LONG startup profile')
+      raise ValueError("Unqualified EV9 LONG startup profile")
     # A READY vehicle retains stock SCC and never receives communication control.
     skip = not admission() or self._ready() is not False
     super().prepare(admission=(lambda: False) if skip else admission)
@@ -94,8 +95,7 @@ class EV9Startup(HyundaiECUStartup):
       self.cp = copy_cp(self.stock_cp)
       self.prepared_cp = deepcopy(self.cp.to_dict())
     elif self.outcome is Outcome.SENT_UNCONFIRMED:
-      self.keeper = self.keeper_factory(
-        lambda: self.callbacks[1]([make_tester_present_msg(self.address, self.bus, suppress_response=True)]), clock=self.clock)
+      self.keeper = self.keeper_factory(lambda: self.callbacks[1]([make_tester_present_msg(self.address, self.bus, suppress_response=True)]), clock=self.clock)
       self.keeper.start()
     return self.cp
 
@@ -110,11 +110,11 @@ class EV9Startup(HyundaiECUStartup):
         except Exception:
           pass
       self.outcome = Outcome.ABORT_UNCERTAIN
-      raise RuntimeError('EV9 startup keeper aborted; session must stop')
+      raise RuntimeError("EV9 startup keeper aborted; session must stop")
 
   def sources_current(self, ci, now_ns):
     parser = ci.can_parsers[Bus.pt]
-    for name in ('MDPS', 'ACCELERATOR', 'WHEEL_SPEEDS', 'TCS'):
+    for name in ("MDPS", "ACCELERATOR", "WHEEL_SPEEDS", "TCS"):
       source = parser.message_states.get(parser.dbc.name_to_msg[name].address)
       if source is None or not source.timestamps or source.counter_fail >= MAX_BAD_COUNTER:
         return False
@@ -129,11 +129,10 @@ class EV9Startup(HyundaiECUStartup):
       return True
     if not (configured and sources_current and control_current):
       return False
-    if not self.handed_off:
-      self.keeper.stop()  # No sender lock held; join before controller handoff.
-      self.check()
-      self.handed_off = True
     return True
+
+  def sent(self, frames, *, valid):
+    commit_controller_tester(self, frames, valid=valid)
 
   def close(self):
     if self.keeper is not None:
@@ -146,17 +145,17 @@ class EV9Startup(HyundaiECUStartup):
     super().close()
 
   def _warm_stock(self, ci):
-    deadline = self.clock() + 3.
+    deadline = self.clock() + 3.0
     while self.clock() < deadline:
       packets = self.callbacks[0]()
-      stamped = [(int(getattr(packet, 'log_mono_time_ns', 0)), list(packet)) for packet in packets]
+      stamped = [(int(getattr(packet, "log_mono_time_ns", 0)), list(packet)) for packet in packets]
       if any(stamp <= 0 for stamp, _ in stamped):
-        raise RuntimeError('EV9 stock warmup requires timestamped CAN')
+        raise RuntimeError("EV9 stock warmup requires timestamped CAN")
       state = ci.update(stamped)
       now = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
       parser = ci.can_parsers[Bus.pt]
       ready = state.canValid and not state.canTimeout and parser.bus == 1
-      for name in ('SCC_CONTROL', 'MDPS', 'ACCELERATOR', 'WHEEL_SPEEDS', 'TCS'):
+      for name in ("SCC_CONTROL", "MDPS", "ACCELERATOR", "WHEEL_SPEEDS", "TCS"):
         source = parser.message_states.get(parser.dbc.name_to_msg[name].address)
         if source is None or not source.timestamps or source.counter_fail >= MAX_BAD_COUNTER:
           ready = False
@@ -167,6 +166,6 @@ class EV9Startup(HyundaiECUStartup):
       if ready:
         self.ready = True
         return
-      time.sleep(.005)
+      time.sleep(0.005)
     self.outcome = Outcome.ABORT_UNCERTAIN
-    raise RuntimeError('EV9 stock sources did not resume before publication')
+    raise RuntimeError("EV9 stock sources did not resume before publication")

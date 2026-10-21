@@ -827,15 +827,24 @@ STEER_THRESHOLD = 1.0
 DBC = CAR.create_dbc_map()
 
 
+VOLT_CC_F1_WORD = 0xC163
+
+
+def is_volt_cc_f1_profile(cp: CarParams) -> bool:
+  return is_volt_cc_profile(cp) and bool(cp.flags & GMFlags.NO_ACCELERATOR_POS_MSG)
+
+
 def is_volt_cc_profile(cp: CarParams) -> bool:
   """Exact development-only conventional-cruise owner, with either startup speed choice."""
   try:
     return (cp.brand == 'gm' and cp.carFingerprint == CAR.CHEVROLET_VOLT_CC and
             cp.networkLocation == CarParams.NetworkLocation.gateway and not cp.alphaLongitudinalAvailable and
             not cp.pcmCruise and cp.radarUnavailable and
-            not cp.passive and not cp.dashcamOnly and not cp.notCar and control_flags(cp) == int(GMFlags.CC_LONG) and
+            not cp.passive and not cp.dashcamOnly and not cp.notCar and
+            control_flags(cp) == int(GMFlags.CC_LONG | (GMFlags.NO_ACCELERATOR_POS_MSG if cp.flags & GMFlags.NO_ACCELERATOR_POS_MSG else 0)) and
             len(cp.safetyConfigs) == 1 and cp.safetyConfigs[0].safetyModel == CarParams.SafetyModel.gm and
-            int(cp.safetyConfigs[0].safetyParam) == int(GMSafetyFlags.EV | GMSafetyFlags.NO_ACC))
+            int(cp.safetyConfigs[0].safetyParam) ==
+            (VOLT_CC_F1_WORD if cp.flags & GMFlags.NO_ACCELERATOR_POS_MSG else int(GMSafetyFlags.EV | GMSafetyFlags.NO_ACC)))
   except (AttributeError, IndexError, TypeError, ValueError):
     return False
 

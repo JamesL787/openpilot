@@ -29,7 +29,7 @@ import numpy as np
 import pyray as rl
 
 from openpilot.starpilot.gps.acquisition import GpsAcquisition, acquisition_progress
-from openpilot.starpilot.gps.source import GPS_MAX_AGE_NS
+from openpilot.starpilot.gps.source import GPS_MAX_AGE_NS, PHONE_MAX_AGE_NS
 from openpilot.starpilot.navigation.road_tiles import (
   DATA_ZOOM, EXTENT, LINK, MAJOR, MINOR, MOTORWAY, STREET, RoadTile, TileFormatError, TileKey, decode_road_tile,
   encode_road_tile, meters_per_tile, world_xy,
@@ -41,7 +41,10 @@ MAX_CANVAS = 2560
 TILE_CACHE = 48
 MISSING_RETRY_S = 3.0
 DEAD_RECKON_S = 1.0
+PHONE_DEAD_RECKON_S = GPS_MAX_AGE_NS / 1e9  # cover phone measurement/transport gaps, independently of the 10 s hold
 ROUTE_STALE_OVERLAY_SECONDS = 10.0   # a route lost mid-guidance only brings back "Starting navigation" after this long
+STARTING_OVERLAY_MIN_SECONDS = 5.0   # "Starting navigation" stays up at least this long, even when the route loads sooner
+DESTINATION_MAX_CHARS = 32
 CAR_ANCHOR = 0.68            # the car sits below center so more road ahead is visible
 ZOOM_SLOW_M_PER_PX = 0.9     # parking-lot and city detail
 ZOOM_FAST_M_PER_PX = 3.4     # highway overview
@@ -70,6 +73,7 @@ ROUTE_GLOW = (150, 110, 255, 90)
 ROUTE_CORE = (178, 150, 255, 255)
 ROUTE_DONE = (118, 104, 150, 200)
 GLASS = (8, 12, 20, 132)
+SOURCE_LABELS = {"comma": "Comma GPS", "car": "Car GPS", "phone": "Phone GPS"}
 REFERENCE_M_PER_PX = 1.4
 
 
@@ -276,6 +280,8 @@ class MapInput:
   navigation_active: bool = False
   satellites: int | None = None
   gps_wait_seconds: float = 0.0
+  destination: str = ''                             # where navigation is going: "Home", "Work" or the place name
+  source: str = ''                                  # where the fix comes from: comma, car or phone
 
 
 class TileReader:
@@ -424,6 +430,7 @@ class MapOverlay:
     self._route_key: tuple | None = None
     self._route_world: np.ndarray | None = None
     self._route_last_shown: float | None = None   # clock time the route was last available this navigation session
+    self._starting_since: float | None = None     # clock time "Starting navigation" went up
     self._generation_built = -1
     # Smoothed display state.
     self._world: tuple[float, float] | None = None
@@ -439,14 +446,14 @@ class MapOverlay:
 
   def _advance(self, data: MapInput, now: float) -> None:
     self._input = data
-    self.status = "live" if data.fix is not None and 0 <= now - data.fix.monotonic <= GPS_MAX_AGE_NS / 1e9 else "waiting"
+    self.status = "live" if data.fix is not None and 0 <= now - data.fix.monotonic <= fix_hold_seconds(data.source) else "waiting"
     fix = data.fix
     dt = 0.0 if self._last_prepare is None else min(0.2, max(0.0, now - self._last_prepare))
     self._last_prepare = now
     if fix is None:
       return
     target_world = world_xy(fix.latitude, fix.longitude)
-    age = min(DEAD_RECKON_S, max(0.0, now - fix.monotonic))
+    age = min(PHONE_DEAD_RECKON_S if data.source == "phone" else DEAD_RECKON_S, max(0.0, now - fix.monotonic))
     if fix.bearing is not None and fix.speed > MIN_HEADING_SPEED:
       units = fix.speed * age / meters_per_tile(fix.latitude)
       heading = math.radians(fix.bearing)
@@ -477,11 +484,24 @@ class MapOverlay:
       self._route_last_shown = now
     elif not data.navigation_active:
       self._route_last_shown = None
+    if not data.navigation_active:
+      self._starting_since = None
+    elif self._waiting_for_route(data, now):
+      if self._starting_since is None:
+        self._starting_since = now
+    elif self._starting_since is not None and now - self._starting_since >= STARTING_OVERLAY_MIN_SECONDS:
+      self._starting_since = None
+
+  def _waiting_for_route(self, data: MapInput, now: float) -> bool:
+    """Navigation is active without a route: at once on a fresh start, after a grace period once a route was lost."""
+    return (data.navigation_active and self._route_world is None and
+            (self._route_last_shown is None or now - self._route_last_shown >= ROUTE_STALE_OVERLAY_SECONDS))
 
   def _starting_navigation(self) -> bool:
-    """Navigation is active without a route: at once on a fresh start, after a grace period once a route was lost."""
-    return (self._input.navigation_active and self._route_world is None and
-            (self._route_last_shown is None or self.clock() - self._route_last_shown >= ROUTE_STALE_OVERLAY_SECONDS))
+    """While waiting for the route, and for a short minimum so the card can be read when the route is quick."""
+    now = self.clock()
+    return self._waiting_for_route(self._input, now) or (
+      self._input.navigation_active and self._starting_since is not None and now - self._starting_since < STARTING_OVERLAY_MIN_SECONDS)
 
   # ---- canvas planning
 
@@ -706,8 +726,9 @@ class MapOverlay:
     if self.status == "waiting":
       self._draw_gps_status(rect)
       return
+    self._draw_source_chip(rect)
     if self._starting_navigation():
-      self._draw_starting_navigation(rect, opacity)
+      self._draw_starting_navigation(rect)
       return
     text = "" if self.has_roads or self._canvas_request is None else "No map data here yet"
     if text and self.fonts is not None:
@@ -716,25 +737,50 @@ class MapOverlay:
       self.fonts.draw(text, FontRole.MEDIUM, 26, rect.x + (rect.width - measured.width) / 2,
                       rect.y + rect.height * CAR_ANCHOR + 40, rl.Color(225, 228, 238, round(200 * opacity)))
 
-  def _draw_starting_navigation(self, rect: rl.Rectangle, opacity: float) -> None:
-    """Shown while navigation is starting but its route has not arrived to draw yet."""
+  def _draw_source_chip(self, rect: rl.Rectangle) -> None:
+    """Where the fix comes from, left of the compass; solid whatever the map's opacity so it always reads."""
+    label = SOURCE_LABELS.get(self._input.source)
+    if label is None or self.fonts is None:
+      return
+    from openpilot.starpilot.ui.presentation import FontRole
+    scale = max(.7, min(1.0, rect.width / 560, rect.height / 420))
+    size, pad_x, height = 17 * scale, 10 * scale, 26 * scale
+    inset = max(22.0, min(rect.width, rect.height) * 0.09)
+    measured = self.fonts.measure(label, FontRole.SEMI_BOLD, size)
+    width = measured.width + 2 * pad_x
+    chip = rl.Rectangle(rect.x + rect.width - inset - 13 - 8 * scale - width, rect.y + inset - height / 2, width, height)
+    if chip.x < rect.x + 4:
+      return
+    rl.draw_rectangle_rounded(chip, 1.0, 10, rl.Color(15, 13, 23, 255))
+    rl.draw_rectangle_rounded_lines_ex(chip, 1.0, 10, 1.5, rl.Color(150, 140, 200, 255))
+    self.fonts.draw(label, FontRole.SEMI_BOLD, size, chip.x + pad_x, chip.y + (height - measured.height) / 2, rl.Color(240, 242, 250, 255))
+
+  def _draw_starting_navigation(self, rect: rl.Rectangle) -> None:
+    """Shown while navigation is starting; solid whatever the map's opacity so it always reads."""
     if self.fonts is None:
       return
     from openpilot.starpilot.ui.presentation import FontRole
     scale = max(.7, min(1.0, rect.width / 560, rect.height / 420))
     inset, padding = 20 * scale, 14 * scale
     width = rect.width - 2 * inset
-    rows = [('Starting navigation', FontRole.SEMI_BOLD, 26), ('Finding your route…', FontRole.NORMAL, 18)]
+    destination = self._input.destination.strip()
+    if len(destination) > DESTINATION_MAX_CHARS:
+      destination = destination[:DESTINATION_MAX_CHARS - 1].rstrip() + '…'
+    rows = [('Starting navigation', FontRole.SEMI_BOLD, 26)]
+    if destination:
+      rows.append((f'to {destination}', FontRole.MEDIUM, 22))
+    if self._route_world is None:
+      rows.append(('Finding your route…', FontRole.NORMAL, 18))
     scale = min(scale, *(max(1, width - 2 * padding) / self.fonts.measure(text, role, size).width
                          for text, role, size in rows))
     height = (len(rows) * 32 + 22) * scale
     card = rl.Rectangle(rect.x + inset, rect.y + rect.height - inset - height, width, height)
-    rl.draw_rectangle_rounded(card, .2, 8, rl.Color(15, 13, 23, round(235 * opacity)))
+    rl.draw_rectangle_rounded(card, .2, 8, rl.Color(15, 13, 23, 255))
     y = card.y + 10 * scale
     for text, role, size in rows:
       measured = self.fonts.measure(text, role, size * scale)
       self.fonts.draw(text, role, size * scale, card.x + (card.width - measured.width) / 2, y,
-                      rl.Color(225, 228, 238, round(255 * opacity)))
+                      rl.Color(225, 228, 238, 255))
       y += 32 * scale
 
   def _draw_gps_status(self, rect: rl.Rectangle) -> None:
@@ -783,38 +829,46 @@ class MapOverlay:
 
 # ---------------------------------------------------------------- live input
 
+def fix_hold_seconds(source: str) -> float:
+  return (PHONE_MAX_AGE_NS if source == "phone" else GPS_MAX_AGE_NS) / 1e9
+
+
 class MapFeed:
   """The same GPS choice as navigation (either receiver, then the car's own), and the active route."""
 
   def __init__(self, sm=None, *, acquisition=None):
-    from openpilot.starpilot.gps.source import GPS_SOURCES
+    from openpilot.starpilot.gps.source import GPS_SERVICES
     if sm is None:
       from openpilot.cereal import messaging
-      sm = messaging.SubMaster(list(GPS_SOURCES))
+      sm = messaging.SubMaster(list(GPS_SERVICES))
     self.sm = sm
     self._fix: MapFix | None = None
+    self._source = ''
     self._route_stamp = None
     self._route_valid_until = 0
     self._route: tuple[tuple[float, float], ...] = ()
     self._navigation_active = False
+    self._destination = ''
     self._acquisition = acquisition if acquisition is not None else GpsAcquisition()
     self._acquisition_polled = -math.inf
 
-  def read(self, navigation_sm=None, *, navigation_requested=None) -> MapInput:
-    from openpilot.starpilot.gps.source import bearing, select_location
+  def read(self, navigation_sm=None, *, navigation_requested=None, destination=None) -> MapInput:
+    from openpilot.starpilot.gps.source import bearing, select_source
     self.sm.update(0)
     now = time.monotonic()
     now_ns = time.monotonic_ns()
-    selected = select_location(self.sm, now_ns)
+    chosen = select_source(self.sm, now_ns)
+    selected = chosen[1] if chosen is not None else None
     if selected is not None:
       stamp, gps = selected
       speed = float(getattr(gps, "speed", float("nan")))
       if math.isfinite(speed) and -85 < gps.latitude < 85:
         # The fix's own timestamp, so dead reckoning starts from when it was measured.
         self._fix = MapFix(gps.latitude, gps.longitude, bearing(gps), max(0.0, speed), stamp / 1e9)
-    if self._fix is not None and now - self._fix.monotonic > 5.0:
+        self._source = chosen[0]
+    if self._fix is not None and now - self._fix.monotonic > max(5.0, fix_hold_seconds(self._source)):
       self._fix = None
-    fresh = self._fix is not None and 0 <= now - self._fix.monotonic <= GPS_MAX_AGE_NS / 1e9
+    fresh = self._fix is not None and 0 <= now - self._fix.monotonic <= fix_hold_seconds(self._source)
     if fresh:
       self._acquisition.reset()
       self._acquisition_polled = -math.inf
@@ -836,6 +890,7 @@ class MapFeed:
           from openpilot.starpilot.navigation.wire import navigation_state
           nav = navigation_state(navigation_sm["starpilotNavigation"]) if navigation_sm.valid["starpilotNavigation"] else None
           active = bool(nav is not None and nav.enabled and nav.destinationName)
+          self._destination = nav.destinationName if active else ''
           self._route_valid_until = 0
           if (nav is not None and nav.enabled and nav.status in ("guiding", "arrived") and
               0 < nav.frameMonoTime <= now_ns <= nav.frameMonoTime + 3_000_000_000):
@@ -856,7 +911,8 @@ class MapFeed:
       acquisition_elapsed = now - acquisition_since
     return MapInput(self._fix, route, active if navigation_requested is None else navigation_requested,
                     None if fresh else self._acquisition.satellites(now),
-                    acquisition_elapsed)
+                    acquisition_elapsed, self._destination if destination is None else destination,
+                    self._source if self._fix is not None else '')
 
 
 # ---------------------------------------------------------------- parked preview

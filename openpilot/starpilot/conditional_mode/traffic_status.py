@@ -26,6 +26,7 @@ class TrafficDisplayProjector:
     self.observed_ns = 0
     self.last: tuple | None = None
     self.retired: tuple[str, ...] = ()
+    self.requested = False
 
   def reset(self) -> None:
     self.drive_id = 0
@@ -34,6 +35,7 @@ class TrafficDisplayProjector:
     self.observed_ns = 0
     self.last = None
     self.retired = ()
+    self.requested = False
 
   def project(self, state, *, now_mono_ns: int, now_boot_ns: int, drive_id: int,
               settings_fingerprint: str | None, map_fingerprint: str | None,
@@ -72,6 +74,7 @@ class TrafficDisplayProjector:
         return None
       if self.session is not None and session != self.session:
         self.retired = (*self.retired[-7:], self.session)
+        self.requested = False
         self.session, self.sequence, self.observed_ns, self.last = session, sequence, observed, identity
         return None  # One fresh-frame barrier after a planner restart.
       if session == self.session:
@@ -79,8 +82,14 @@ class TrafficDisplayProjector:
             sequence > self.sequence and observed <= self.observed_ns):
           return None
       self.session, self.sequence, self.observed_ns, self.last = session, sequence, observed, identity
+      if accepted or effective:
+        self.requested = True
+      elif reason == 'off':
+        self.requested = False
       if reason in _SOURCE_UNAVAILABLE:
-        return TrafficDisplay('unavailable_source', 'TRAFFIC UNAVAILABLE')
+        # A saved button assignment is not an accepted Traffic request. Keep
+        # source warnings for an outstanding request, including lost receipts.
+        return TrafficDisplay('unavailable_source', 'TRAFFIC UNAVAILABLE') if self.requested else None
       if controller_source:
         map_assigned = True
       if settings_fingerprint is None or (not controller_source and map_fingerprint is None):

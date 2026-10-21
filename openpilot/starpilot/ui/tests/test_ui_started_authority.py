@@ -38,6 +38,30 @@ def test_replay_messages_use_clock_sample_after_receipt():
   ui._reset_replay_state.assert_not_called()
 
 
+@pytest.mark.parametrize('enabled', [False, True])
+def test_ui_reads_same_aol_runtime_admission_as_control_owner(enabled):
+  from openpilot.starpilot.ui.tests.test_runtime_snapshot import SubMasterFake
+
+  ui: Any = object.__new__(UIState)
+  ui.params = MagicMock()
+  ui.params.get.return_value = None
+  ui.params.get_bool.return_value = False
+  ui.replay_clock = object()
+  ui.sm = SubMasterFake()
+  cp = NS(openpilotLongitudinalControl=True)
+  ui.sm.put('carParams', cp)
+  ui.started = ui.chestnut_output_seen = False
+  with patch('openpilot.selfdrive.ui.ui_state.get_cache', return_value=None), \
+       patch('openpilot.selfdrive.ui.ui_state.feature_enabled', return_value=enabled) as admission:
+    ui.update_params()
+    assert ui.aol_runtime is enabled
+    assert admission.call_args.args[:3] == (ui.params, cp, 'aol')
+    ui.sm.seen['carParams'] = False
+    ui.update_params()
+    assert not ui.aol_runtime
+    admission.assert_called_once()
+
+
 def owner():
   ui = object.__new__(UIState)
   messages = {'deviceState': NS(started=False, chestnutPresent=False),
@@ -121,6 +145,7 @@ def test_started_presentation_does_not_replace_existing_message_freshness():
 def replay_owner(sample):
   from openpilot.starpilot.ui.tests.test_runtime_snapshot import SubMasterFake
   ui: Any = object.__new__(UIState)
+  ui.aol_runtime = True
   ui.sm = SubMasterFake()
   ui.sm.sock = {name: object() for name in ('carControl', 'carState', 'selfdriveState')}
   ui.sm.static_freq_services = set(ui.sm.sock)
@@ -154,6 +179,7 @@ def test_epoch_reset_precedes_paused_primer_and_never_drains_socket():
   drain.assert_not_called()
   assert display_message(ui.sm, 'carControl', NOW, after_frame=ui.started_frame).latActive
   assert ui.sm.alive['carControl']
+  assert not ui.aol_runtime
 
 
 def test_straddled_epoch_withholds_frame_but_retains_new_paused_primer():

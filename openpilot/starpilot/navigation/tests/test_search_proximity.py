@@ -8,7 +8,7 @@ import pytest
 
 from openpilot.cereal import log, messaging
 from openpilot.starpilot.navigation.owner import NavigationOwner, ValidationError
-from openpilot.starpilot.navigation.status import GPS_SOURCES, NavigationStatusSource
+from openpilot.starpilot.navigation.status import GPS_SERVICES, GPS_SOURCES, NavigationStatusSource
 
 POI = {'mapbox_id': 'poi/id', 'name': 'Coffee', 'feature_type': 'poi'}
 
@@ -24,7 +24,7 @@ class Clock:
 class Messages:
   def __init__(self, clock):
     self.clock = clock
-    names = ['starpilotNavigation', *GPS_SOURCES, 'deviceState']
+    names = ['starpilotNavigation', *GPS_SERVICES, 'deviceState']
     self.seen = dict.fromkeys(names, True)
     self.alive = dict.fromkeys(names, True)
     self.valid = dict.fromkeys(names, True)
@@ -243,7 +243,7 @@ def test_cancel_during_optional_context_never_sends_provider_or_fallback(tmp_pat
 def test_map_position_lease_uses_oldest_envelope_or_receipt_and_expires(source):
   reader, sm, clock = source
   sm.valid['gpsLocation'] = False
-  assert reader.map_position() == {'longitude': -87.63, 'latitude': 41.88, 'validForMs': 2480.}
+  assert reader.map_position() == {'longitude': -87.63, 'latitude': 41.88, 'source': 'comma', 'validForMs': 2480.}
   sm.recv_time['gpsLocationExternal'] = (clock.mono - 500_000_000) / 1e9
   assert reader.map_position()['validForMs'] == 2000.
   clock.mono += 2_000_000_001

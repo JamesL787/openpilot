@@ -21,6 +21,20 @@ from openpilot.starpilot.ui.home_stats import DriveStatsDashboard
 from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
 
 
+BLUETOOTH_COLORS = {"off": rl.Color(255, 255, 255, 102), "on": rl.Color(255, 255, 255, 230), "connected": rl.Color(0, 130, 252, 230)}
+JETLINK_COLORS = {"plugged": rl.Color(160, 160, 160, 255), "connected": rl.Color(70, 200, 110, 255)}
+
+
+def draw_jetlink(rect: rl.Rectangle, state: str) -> None:
+  """Jetlink's home icon: a tablet outline with a link dot."""
+  color = JETLINK_COLORS.get(state)
+  if color is None:
+    return
+  body = rl.Rectangle(rect.x + rect.width * 0.18, rect.y, rect.width * 0.64, rect.height)
+  rl.draw_rectangle_rounded_lines_ex(body, 0.3, 8, max(2.0, rect.width * 0.08), color)
+  rl.draw_circle_v(rl.Vector2(body.x + body.width / 2, body.y + body.height * 0.8), max(2.0, rect.width * 0.07), color)
+
+
 def validate_home_asset(directory: Path, filename: str) -> Path:
   manifest = json.loads(Path(__file__).with_name("home-assets.json").read_text())
   entry = next((row for row in manifest["files"] if row["file"] == filename), None)
@@ -69,6 +83,17 @@ class HomeView:
   def _icon(self, filename, width, height, x, y, opacity=1.0):
     texture = self._texture(filename, width, height)
     rl.draw_texture_ex(texture, rl.Vector2(x, y), 0.0, 1.0, rl.Color(255, 255, 255, int(opacity * 255)))
+
+  def _bluetooth(self, state, x, y):
+    """Like the Wi-Fi icon: dimmed with a slash when off, white when on, blue with a device connected."""
+    texture = self._texture("icons_mici/settings/bluetooth.png", 38, 38)
+    color = BLUETOOTH_COLORS.get(state, BLUETOOTH_COLORS["off"])
+    rl.draw_texture_ex(texture, rl.Vector2(x, y), 0.0, 1.0, color)
+    if state == "off":
+      pad = 38 * 0.08
+      start, end = rl.Vector2(x + pad, y + pad), rl.Vector2(x + 38 - pad, y + 38 - pad)
+      rl.draw_line_ex(start, end, 9.0, rl.BLACK)
+      rl.draw_line_ex(start, end, 4.0, color)
 
   def _text(self, text, role, size, x, y, color=rl.WHITE):
     self.fonts.draw(text, role, size, x, y, color)
@@ -219,7 +244,7 @@ class HomeView:
       self._icon("icons_mici/settings/network/wifi_strength_slash.png", 50, 44, 76, 190.5, 0.9)
     x = 146
     if state.bluetooth:
-      self._icon("icons_mici/settings/bluetooth.png", 38, 38, x, 197, 0.9)
+      self._bluetooth(state.bluetooth, x, 197)
       x += 56
     if state.mode == HomeMode.CHILL:
       draw_moon(rl.Rectangle(x + 5, 197, 38, 38))
@@ -233,6 +258,9 @@ class HomeView:
       opacity = 0.35 + 0.65 * (0.5 - 0.5 * math.cos(rl.get_time() * 6)) if loading else 1.0
       self._icon("icons_mici/" + icon, 68 if failed else 54, 40, x, 197, opacity)
       x += 76
+    if state.jetlink in JETLINK_COLORS:
+      draw_jetlink(rl.Rectangle(x, 195, 40, 42), state.jetlink)
+      x += 58
     if state.recording_audio:
       self._icon("icons_mici/microphone.png", 32, 46, x, 193)
 

@@ -1,4 +1,4 @@
-"""Recorded camera-bypassed Volt discovery must retain distinct existing owners."""
+"""Recorded no-camera/no-ACC Volt discovery must retain distinct existing owners."""
 from contextlib import ExitStack
 from copy import deepcopy
 import json
@@ -33,20 +33,21 @@ def discover(fingerprint):
 
 @pytest.mark.parametrize('alpha', [False, True])
 @pytest.mark.parametrize('release', [False, True])
-def test_recorded_collision_reaches_existing_camera_removed_owner(alpha, release):
+def test_recorded_collision_reaches_conventional_cruise_owner(alpha, release):
   fp = recorded_fingerprint()
   with patch.object(car_helpers, 'automatic_volt_candidate', side_effect=lambda candidate, *_: candidate):
     old, _ = discover(fp)
   assert old is None  # The legacy gateway and CC pedal signatures both survive.
   selected, observed = discover(fp)
-  assert selected == CAR.CHEVROLET_VOLT_CAMERA and observed == fp
+  assert selected == CAR.CHEVROLET_VOLT_CC and observed == fp
   cp = CarInterface.get_params(selected, observed, [], alpha, release, False)
-  assert not cp.dashcamOnly and cp.networkLocation == structs.CarParams.NetworkLocation.fwdCamera
-  assert cp.flags & GMFlags.VOLT_CAMERA_REMOVED and cp.flags & GMFlags.VOLT_CAMERA_NO_ACCEL_POS
-  assert is_volt_camera_removed(cp)
-  assert cp.openpilotLongitudinalControl == (alpha and not release)
-  assert cp.pcmCruise == (not alpha or release)
-  assert cp.safetyConfigs[0].safetyParam == (0xC151 if alpha and not release else 0xC150)
+  assert cp.dashcamOnly == release and cp.networkLocation == structs.CarParams.NetworkLocation.gateway
+  assert not is_volt_camera_removed(cp)
+  assert cp.openpilotLongitudinalControl == (not release)
+  assert cp.pcmCruise == release
+  assert cp.safetyConfigs[0].safetyParam == (0 if release else 0xC163)
+  if not release:
+    assert cp.flags & GMFlags.NO_ACCELERATOR_POS_MSG
 
 
 @pytest.mark.parametrize('address,length', [(0xD3, 2), (0x130, 1), (0x17D, 6), (0x210, 4), (0x236, 5),
@@ -125,8 +126,10 @@ def test_auto_card_and_controls_use_correct_profile_but_start_with_commands_off(
 
   fp = recorded_fingerprint()
   packets = [CanData(address, bytes(size), bus) for bus, messages in fp.items() for address, size in messages.items()]
+
   def receive(wait_for_one=False):
     return [packets] if wait_for_one else []
+
   def identify(*args, **kwargs):
     return car_helpers.get_car(receive, *args[1:], **kwargs)
   with OpenpilotPrefix(), ExitStack() as cleanup:
@@ -142,11 +145,11 @@ def test_auto_card_and_controls_use_correct_profile_but_start_with_commands_off(
       card = Car()
     cleanup.callback(card.vehicle_startup.close)
     cleanup.callback(card.params._finalizer)
-    assert card.CP.carFingerprint == CAR.CHEVROLET_VOLT_CAMERA
+    assert card.CP.carFingerprint == CAR.CHEVROLET_VOLT_CC
     assert card.CP.fingerprintSource == structs.CarParams.FingerprintSource.can
     assert not card.CP.dashcamOnly and not card.CP.passive
-    assert card.CP.safetyConfigs[0].safetyParam == 0xC150
-    assert not card.CP.openpilotLongitudinalControl
+    assert card.CP.safetyConfigs[0].safetyParam == 0xC163
+    assert card.CP.openpilotLongitudinalControl
     controls = Controls()
     cleanup.callback(controls.params._finalizer)
     assert controls.CP.carFingerprint == card.CP.carFingerprint

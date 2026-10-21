@@ -1200,7 +1200,7 @@ class CarController(CarControllerBase):
       self.bolt_removed_cancel_credit_used = CS.conventional_cancel_credit.credit_ns
       can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, CruiseButtons.CANCEL))
 
-    if self.CP.networkLocation == NetworkLocation.fwdCamera and not self.bolt_cc_profile:
+    if self.CP.networkLocation == NetworkLocation.fwdCamera and not self.bolt_cc_profile and not self.volt_camera_removed:
       # Silence "Take Steering" alert sent by camera, forward PSCMStatus with HandsOffSWlDetectionStatus=1
       if self.frame % 10 == 0:
         can_sends.append(gmcan.create_pscm_status(self.packer_pt, CanBus.CAMERA, CS.pscm_status))

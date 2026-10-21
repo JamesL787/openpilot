@@ -5,6 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
+from typing import TypedDict
 
 import numpy as np
 
@@ -25,6 +26,14 @@ from openpilot.starpilot.ui.feature_settings_owner import FeatureSettingsOwner
 from openpilot.starpilot.ui.feature_settings_state import row_change
 
 
+class ObservationContext(TypedDict):
+  receipt_mono_ns: int
+  now_mono_ns: int
+  now_boot_ns: int
+  car_fingerprint: str
+  drive_session: str
+
+
 class TestVision(unittest.TestCase):
   def test_bundled_models_have_frozen_identity_and_real_synthetic_inference(self):
     if model.cv2 is None:
@@ -38,7 +47,7 @@ class TestVision(unittest.TestCase):
     self.assertIsNone(core.infer(black))
     self.assertEqual(core.last_detector_forward_count, 1)
 
-  def test_confirmation_reuses_frozen_thresholds_and_expires_support(self):
+  def test_confirmation_reuses_frozen_thresholds_and_retains_confirmed_limit(self):
     core = VisionModelCore.__new__(VisionModelCore)
     core.is_metric = False
     core.history = model.deque()
@@ -54,7 +63,30 @@ class TestVision(unittest.TestCase):
     with patch.object(core, 'infer', side_effect=lambda _frame: next(reads)):
       self.assertIsNone(core.observe(frame, now=1.0))
       self.assertEqual(core.observe(frame, now=1.2), (55, 0.76, 2, 1))
-      self.assertIsNone(core.observe(frame, now=3.21))
+      self.assertEqual(core.observe(frame, now=3.21), (55, 0.76, 2, 1))
+      self.assertEqual(core.last_published_support_at, 1.2)
+
+  def test_confirmed_sign_survives_leaving_view_and_changes_only_on_confirmation(self):
+    core = VisionModelCore.__new__(VisionModelCore)
+    core.history = model.deque()
+    core.reset()
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    reads = [Detection(55, 0.60), Detection(55, 0.76), None, Detection(65, 0.99), None]
+    with patch.object(core, 'infer', side_effect=reads):
+      self.assertIsNone(core.observe(frame, now=1.0))
+      observed = core.observe(frame, now=1.2)
+      assert observed is not None
+      self.assertEqual(observed[0], 55)
+      observed = core.observe(frame, now=60.0)
+      assert observed is not None
+      self.assertEqual(observed[0], 55)
+      self.assertEqual(core.last_published_support_at, 1.2)
+      observed = core.observe(frame, now=61.0)
+      assert observed is not None
+      self.assertEqual(observed[0], 65)
+      self.assertEqual(core.last_published_support_at, 61.0)
+      core.reset()
+      self.assertIsNone(core.observe(frame, now=62.0))
 
   def test_camera_reset_discards_pre_reconnect_consensus_and_episode(self):
     core = VisionModelCore.__new__(VisionModelCore)
@@ -101,13 +133,13 @@ class TestVision(unittest.TestCase):
   def test_actual_typed_wire_and_separate_camera_clock_freshness(self):
     msg = self._event()
     decoded = messaging.log_from_bytes(msg.to_bytes()).slcVisionObservation.vision
-    kw = {'receipt_mono_ns': 1_020_000_000, 'now_mono_ns': 1_030_000_000,
+    kw: ObservationContext = {'receipt_mono_ns': 1_020_000_000, 'now_mono_ns': 1_030_000_000,
           'now_boot_ns': 5_050_000_000, 'car_fingerprint': 'IONIQ6', 'drive_session': 'drive-a'}
     valid = vision_observation(decoded, **kw)
     self.assertIs(valid.kind, ObservationKind.VALID)
     self.assertAlmostEqual(valid.candidate.speed_mps, 24.5872, places=4)
     self.assertIs(vision_observation(decoded, receipt_mono_ns=1_020_000_000, now_mono_ns=1_030_000_000,
-                                     now_boot_ns=5_260_000_000, car_fingerprint='IONIQ6',
+                                     now_boot_ns=7_000_000_001, car_fingerprint='IONIQ6',
                                      drive_session='drive-a').kind, ObservationKind.STALE)
     self.assertIs(vision_observation(decoded, receipt_mono_ns=1_020_000_000, now_mono_ns=1_300_000_000,
                                      now_boot_ns=5_050_000_000, car_fingerprint='IONIQ6',
@@ -150,6 +182,62 @@ class TestVision(unittest.TestCase):
     self.assertIs(runtime._observations(sm, cp, 1_030_000_000, 5_260_000_000)[Source.VISION].kind,
                   ObservationKind.UNKNOWN)
     self.assertIs(runtime.vision_diagnostic.kind, ObservationKind.STALE)
+
+  def test_slow_vision_result_uses_original_frame_deadline(self):
+    message = self._event()
+    event = message.slcVisionObservation.vision
+    event.validUntilMonoTime = 3_000_000_000
+    decoded = messaging.log_from_bytes(message.to_bytes()).slcVisionObservation.vision
+    kw: ObservationContext = {'receipt_mono_ns': 1_500_000_000, 'now_mono_ns': 1_500_000_000,
+          'now_boot_ns': 5_500_000_000, 'car_fingerprint': 'IONIQ6', 'drive_session': 'drive-a'}
+    self.assertIs(vision_observation(decoded, **kw).kind, ObservationKind.VALID)
+    self.assertIs(vision_observation(decoded, receipt_mono_ns=kw['receipt_mono_ns'], now_mono_ns=3_000_000_001,
+                                     now_boot_ns=7_000_000_001, car_fingerprint=kw['car_fingerprint'],
+                                     drive_session=kw['drive_session']).kind, ObservationKind.STALE)
+
+  def test_runtime_slow_vision_supports_display_and_control(self):
+    message = self._event()
+    message.slcVisionObservation.vision.validUntilMonoTime = 3_000_000_000
+    wire = messaging.log_from_bytes(message.to_bytes()).slcVisionObservation
+
+    class SM:
+      valid = {'slcVisionObservation': True, 'carState': False}
+      alive = {'slcVisionObservation': True, 'carState': False}
+      logMonoTime = {'slcVisionObservation': 1_500_000_000, 'carState': 0}
+
+      def __getitem__(self, _name):
+        return wire
+
+    for control in (False, True):
+      with self.subTest(control=control):
+        settings = parse({'SpeedLimitController': control, 'ShowSpeedLimits': True,
+                          'SLCPriority1': 'Vision', 'SLCPriority2': 'Dashboard'})
+        runtime = Runtime(settings, session_id='drive-a', vision_enabled=True,
+                          vision_control_qualified=control, vision_display_qualified=True)
+        observations = runtime._observations(SM(), SimpleNamespace(carFingerprint='IONIQ6'),
+                                             1_500_000_000, 5_500_000_000)
+        self.assertIs(observations[Source.VISION].kind,
+                      ObservationKind.VALID)
+        selected = select_limit(observations, settings.selection)
+        self.assertEqual(selected.selected_source, Source.VISION)
+
+  def test_retained_sign_needs_current_camera_and_producer_health(self):
+    message = self._event()
+    event = message.slcVisionObservation.vision
+    # The sign was last seen at monotonic1s. This camera heartbeat is at60s.
+    event.cameraFrameEofBootTime = 64_000_000_000
+    event.validUntilMonoTime = 62_000_000_000
+    kw: ObservationContext = {'receipt_mono_ns': 60_100_000_000, 'now_mono_ns': 60_100_000_000,
+          'now_boot_ns': 64_100_000_000, 'car_fingerprint': 'IONIQ6', 'drive_session': 'drive-a'}
+    self.assertIs(vision_observation(event, **kw).kind, ObservationKind.VALID)
+    self.assertEqual(event.observedMonoTime, 1_000_000_000)
+    self.assertIs(vision_observation(event, receipt_mono_ns=59_000_000_000, now_mono_ns=kw['now_mono_ns'],
+                                     now_boot_ns=kw['now_boot_ns'], car_fingerprint=kw['car_fingerprint'],
+                                     drive_session=kw['drive_session']).kind, ObservationKind.STALE)
+    event.cameraFrameEofBootTime = 61_000_000_000
+    self.assertIs(vision_observation(event, **kw).kind, ObservationKind.STALE)
+    event.status = 'unavailable'
+    self.assertIs(vision_observation(event, **kw).kind, ObservationKind.UNKNOWN)
 
   def test_native_shared_source_choice_is_dev_and_parked_guarded(self):
     with tempfile.TemporaryDirectory() as root:

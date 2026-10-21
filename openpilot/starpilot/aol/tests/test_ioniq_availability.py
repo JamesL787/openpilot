@@ -52,7 +52,7 @@ def assert_fresh_ordinary_recovery(sd, axis, command, source):
 
 
 class IoniqAvailabilityTests(unittest.TestCase):
-  def _authority_callers(self, full_op, *, cp=None, intent_companion=None, genuine_events=False):
+  def _authority_callers(self, full_op, *, cp=None, intent_companion=None, genuine_events=False, initial_panda_config=None):
     self.enterContext(mock.patch('openpilot.selfdrive.selfdrived.selfdrived.REPLAY', False))
     from opendbc.car.gm.tests.test_bolt_volt_configurations import ordinary_params
     from opendbc.car.gm.values import CAR
@@ -154,6 +154,7 @@ class IoniqAvailabilityTests(unittest.TestCase):
     # that unseen state, then feed only the preceding actual published command.
     previous_control_message = [None]
     due = {}
+    controls_panda_due = [base]
     def feed_event_sources(stamp, companions=(), *, car_output_valid=True):
       from openpilot.cereal.services import SERVICE_LIST
       names = ['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'extrinsicsCalibration',
@@ -167,7 +168,7 @@ class IoniqAvailabilityTests(unittest.TestCase):
         # Ignored authority wires remain fresh on every 100 Hz source tick.
         period = round(1e9 / min(frequency, 100)) if frequency > 0 else 0
         if (stamp < due.get(name, 0) and name not in ('aolIntentWire', 'aolSafetyWire', 'starpilotCarState') and
-            not (name == 'pandaStates' and name in supplied and
+            not (name == 'pandaStates' and initial_panda_config is None and name in supplied and
                  any(p.safetyRxChecksInvalid or p.faults for p in supplied[name].pandaStates))):
           continue
         due[name] = stamp + period
@@ -180,8 +181,13 @@ class IoniqAvailabilityTests(unittest.TestCase):
             value.started, value.startedMonoTime, value.freeSpacePercent = True, base - 1_000_000_000, 50.
           elif name == 'pandaStates':
             for panda, config in zip(value, cp.safetyConfigs, strict=True):
-              panda.safetyModel, panda.safetyParam = config.safetyModel, config.safetyParam
-              panda.alternativeExperience, panda.controlsAllowed = cp.alternativeExperience, full_op
+              if initial_panda_config is None:
+                panda.safetyModel, panda.safetyParam = config.safetyModel, config.safetyParam
+                panda.alternativeExperience, panda.controlsAllowed = cp.alternativeExperience, full_op
+              else:
+                model, word, experience, controls_allowed, rx_invalid = initial_panda_config
+                panda.safetyModel, panda.safetyParam, panda.alternativeExperience = model, word, experience
+                panda.controlsAllowed, panda.safetyRxChecksInvalid = controls_allowed, rx_invalid
           elif name == 'extrinsicsCalibration':
             value.calStatus, value.rpyCalib = 'calibrated', [0., 0., 0.]
           elif name == 'deviceMotion':
@@ -208,7 +214,7 @@ class IoniqAvailabilityTests(unittest.TestCase):
              long_allowed=True, pause_long=False, state_stamp=None, intent_message=None, offset_ns=0,
              native_request_lat=True, native_request_long=None, native_valid=True, panda_fault=False, panda_controls_allowed=None,
              critical_event=None, calibrated=True, car_output_valid=True, relay_fault=False,
-             car_state_message=None, car_output_message=None, authority_message=None):
+             car_state_message=None, car_output_message=None, authority_message=None, panda_state_message=None, safety_message=None):
       now = base + tick * 10_000_000 + offset_ns
       clock.return_value = now
       if seconds is not None:
@@ -248,6 +254,8 @@ class IoniqAvailabilityTests(unittest.TestCase):
         panda.safetyRxChecksInvalid = panda_fault
         if relay_fault:
           panda.faults = ['relayMalfunction']
+      if panda_state_message is not None:
+        pandas = panda_state_message
       frames.append(pandas.as_reader())
       if car_output_message is not None:
         frames.append(car_output_message.as_reader())
@@ -268,6 +276,8 @@ class IoniqAvailabilityTests(unittest.TestCase):
                     cp.alternativeExperience, panda_controls_allowed, panda_fault, False,
                     1 if relay_fault else 0)
           for index, config in enumerate(cp.safetyConfigs)) if genuine_events else ()))
+      if safety_message is not None:
+        native = safety_message
       if authority_message is not None:
         frames.append(authority_message.as_reader())
       elif companion:
@@ -304,6 +314,11 @@ class IoniqAvailabilityTests(unittest.TestCase):
       if car_output_message is not None:
         control_frames = [sample for sample in control_frames if sample.which() != 'carOutput']
         control_frames.append(car_output_message.as_reader())
+      if panda_state_message is not None and 'pandaStates' in controls.sm.services:
+        control_frames = [sample for sample in control_frames if sample.which() != 'pandaStates']
+        if now >= controls_panda_due[0]:
+          control_frames.append(panda_state_message.as_reader())
+          controls_panda_due[0] = now + 100_000_000
       replaced = ('carState', 'aolSafetyWire', 'modelV2', 'aolAxisState', 'selfdriveState')
       controls.sm.update_msgs(now / 1e9, [message for message in control_frames if message.which() not in replaced] +
                              [control_state.as_reader(), native.as_reader(), model.as_reader(),

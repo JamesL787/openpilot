@@ -275,7 +275,6 @@ class VisionModelCore:
   CLASSIFIER_SHA256 = "07c6696e530eb940d2757d5849b4bc0f1d785cda704e5296e18c0a94959f30a5"
   DETECTOR_SIZE = 256
   CLASSIFIER_SIZE = 128
-  MAX_SUPPORT_AGE_SECONDS = 2.0
 
   def __init__(self, *, is_metric: bool):
     if cv2 is None:
@@ -340,7 +339,7 @@ class VisionModelCore:
     return self._publishable_detection(self._detect_sign_from_detector_classifier(frame_bgr))
 
   def observe(self, frame_bgr: np.ndarray, *, now: float) -> tuple[int, float, int, int] | None:
-    """Return a fresh confirmed mph value, confidence, support count and episode."""
+    """Return the last confirmed limit until replacement or camera-session reset."""
     if not math.isfinite(now) or now <= 0:
       raise ValueError("Invalid observation time")
     detection = self.infer(frame_bgr)
@@ -355,7 +354,7 @@ class VisionModelCore:
                            now - self.last_publish_change_at < PUBLISHED_CHANGE_COOLDOWN_SECONDS and
                            confidence < PUBLISHED_REVERT_CONFIDENCE)
         if reverting_early:
-          return None if now - self.last_published_support_at > self.MAX_SUPPORT_AGE_SECONDS else (
+          return (
             self.published_speed_limit_mph, self.published_confidence, self.published_support_count, self.episode)
         support = sum(entry.speed_limit_mph == speed for entry in self.history)
         if speed != self.published_speed_limit_mph:
@@ -369,7 +368,7 @@ class VisionModelCore:
         self.published_support_count = support
         if detection.speed_limit_mph == speed:
           self.last_published_support_at = now
-    if self.published_speed_limit_mph and now - self.last_published_support_at <= self.MAX_SUPPORT_AGE_SECONDS:
+    if self.published_speed_limit_mph:
       return self.published_speed_limit_mph, self.published_confidence, self.published_support_count, self.episode
     return None
 

@@ -420,3 +420,13 @@ bool safety_test_volvo_cma_cold_state_zeroed(void) {
   }
   return cleared;
 }
+
+// Test transport adapter only; enforces the actual board startup mode guard.
+bool tesla_preap_test_config_word(uint16_t index, uint16_t value) {
+  const bool non_car = (current_safety_mode == SAFETY_SILENT) || (current_safety_mode == SAFETY_NOOUTPUT) ||
+    (current_safety_mode == SAFETY_ELM327);
+  return tesla_preap_pedal_config_word(index, value, non_car && !controls_allowed && !heartbeat_engaged);
+}
+unsigned int tesla_preap_test_config_read(uint8_t *out) {
+  return tesla_preap_pedal_config_read(out);
+}

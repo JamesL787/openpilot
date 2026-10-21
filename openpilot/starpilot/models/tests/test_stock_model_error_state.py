@@ -25,7 +25,7 @@ def load_subject(device):
   assert {node.name for node in methods} == {'run', 'slice_outputs'}
   original = {node.name: ast.dump(node, include_attributes=False) for node in methods}
   namespace = {'np': np, 'Device': device, 'selected_legacy': runtime.selected_legacy, 'SEND_RAW_PRED': False}
-  module = ast.Module(body=methods, type_ignores=[])
+  module = ast.Module(body=list(methods), type_ignores=[])
   exec(compile(module, str(path), 'exec', flags=__future__.annotations.compiler_flag), namespace)
   # AST nodes are consumed unchanged; no rewritten expression or surrogate run.
   assert original == {node.name: ast.dump(node, include_attributes=False) for node in methods}

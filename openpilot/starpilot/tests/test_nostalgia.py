@@ -171,3 +171,75 @@ def test_latch_survives_press_and_next_frame_then_real_cancel_requires_rearm():
   assert not intent.output(neutral)[0]
   intent.update(_car(_button(ButtonType.lkas, True)))
   assert intent.output(neutral)[0]  # A new deliberate host gesture rearms steering.
+
+
+def _ioniq5_params(*, alternate=False, long=True):
+  fp = gen_empty_fingerprint()
+  fp[2].update({0x50: 16, 0x2A4: 24})
+  fp[1][0x1AA if alternate else 0x1CF] = 16 if alternate else 8
+  cp = HyundaiInterface.get_params(HyundaiCar.HYUNDAI_IONIQ_5, fp, [], long, False, False)
+  if long and not alternate:
+    from opendbc.car.hyundai.torque_ev_startup import candidate
+    cp = candidate(cp, requested=True, is_release=False)
+    assert cp is not None
+  from openpilot.starpilot.car.hyundai.aol import policy_for
+  policy = policy_for(cp)
+  cp.safetyConfigs[-1].safetyParam |= policy.safety_param_addition
+  cp.alternativeExperience |= policy.alternative_experience_addition
+  return cp
+
+
+def test_ioniq5_physical_parser_emits_paddle_edges_with_existing_long_policy():
+  from opendbc.can import CANPacker
+  from opendbc.car import Bus
+  from opendbc.car.hyundai.hyundaicanfd import CanBus
+  from opendbc.car.hyundai.tests.test_ioniq6_stock_parser import StockParserTests
+  from opendbc.car.hyundai.values import DBC
+  from openpilot.starpilot.car.hyundai.aol import policy_for
+
+  cp = _ioniq5_params()
+  assert cp.openpilotLongitudinalControl
+  assert policy_for(cp).paddle_pause and policy_for(cp).runtime_supported
+  case = StockParserTests(methodName='runTest')
+  ci = case.host(cp)
+  case.feed(ci, count=5)
+  packer = CANPacker(DBC[cp.carFingerprint][Bus.pt])
+  for counter, pressed in ((6, True), (7, False)):
+    ci.test_time_ns += 10_000_000
+    msg = packer.make_can_msg('CRUISE_BUTTONS', CanBus(cp).ECAN,
+                             {'COUNTER': counter, 'LEFT_PADDLE': int(pressed)})
+    state = ci.update([(ci.test_time_ns, [msg])])
+    events = [e for e in state.buttonEvents if e.type == ButtonType.altButton2]
+    assert len(events) == 1 and events[0].pressed == pressed
+    assert paddle_cancel(cp, state, enabled=True, saved=True) == pressed
+  for cp in (_ioniq5_params(alternate=True), _ioniq5_params(long=False)):
+    assert not policy_for(cp).paddle_pause
+    assert not paddle_cancel(cp, _car(_button(ButtonType.altButton2, True)), enabled=True, saved=True)
+
+
+def test_actual_ioniq5_paddle_withdraws_long_without_cancelling_aol():
+  from contextlib import ExitStack
+  from openpilot.common.prefix import OpenpilotPrefix
+  from openpilot.starpilot.aol.tests.test_ioniq_availability import IoniqAvailabilityTests, car_state
+
+  case = IoniqAvailabilityTests(methodName='runTest')
+  with OpenpilotPrefix(), ExitStack() as cleanup:
+    cleanup.callback(case.doCleanups)
+    params = Params()
+    params.put_bool('NostalgiaMode', True, block=True)
+    cp = _ioniq5_params()
+    sd, _, drive = case._authority_callers(True, cp=cp, genuine_events=True)
+    axis, _, command = drive(0)
+    assert command.latActive and command.longActive
+    state = car_state()
+    state.buttonEvents = [_button(ButtonType.altButton2, True)]
+    axis, _, command = drive(1, observed_state=state)
+    assert sd.nostalgia_paddle_cancel
+    assert not sd.enabled and not command.longActive and not axis.longitudinalActive
+    assert command.latActive and axis.lateralActive
+    assert EventName.buttonCancel in sd.events.names
+    axis, _, command = drive(2, native_request_long=False, long_allowed=False)
+    assert axis.lateralActive and command.latActive and not command.longActive
+    state.buttonEvents = [_button(ButtonType.cancel, True)]
+    axis, _, command = drive(3, observed_state=state, native_request_long=False, long_allowed=False)
+    assert not command.latActive and not command.longActive

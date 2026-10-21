@@ -37,13 +37,13 @@ def test_stock_lkas_owned_aol_survives_unassigned_cruise_gesture(identity, alter
   assert not owner.allowed_latch
 
 
-def test_classic_long_keeps_published_policy_until_full_join_is_qualified():
+def test_classic_long_qualified_profile_keeps_lkas_owned_cancel_intent():
   from openpilot.starpilot.aol.tests.test_classic_long_profiles import params as classic_params
   from opendbc.car.hyundai.classic_long_aol import qualified
   cp = classic_params(lda=True)
   assert qualified(cp)
   owner = create_intent(cp, AolSettings(True, 0., AOL_TOGGLE, 0, (0, 0, 0), (0, 0, 0)))
-  assert not owner.independent_cruise_buttons
+  assert owner.independent_cruise_buttons
   cs = structs.CarState(canValid=True, gearShifter='drive')
   cs.cruiseState.available = True
   owner.update(cs, now_ns=1)
@@ -54,7 +54,7 @@ def test_classic_long_keeps_published_policy_until_full_join_is_qualified():
   owner.update(cs, now_ns=3)
   cs.buttonEvents = [structs.CarState.ButtonEvent(type='cancel', pressed=True)]
   owner.update(cs, now_ns=4)
-  assert not owner.allowed_latch
+  assert owner.allowed_latch
 
 
 @pytest.mark.parametrize('identity', sorted(STOCK_EV_CARS, key=str))

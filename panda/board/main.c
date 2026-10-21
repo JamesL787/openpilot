@@ -118,6 +118,21 @@ static void tick_handler(void) {
 
     heartbeat_tick_counter += 1U;
 
+    // AOL's heartbeat also retains an armed latch while both axes are paused.
+    // Only native actuator authority refreshes its warning window. Preserve the
+    // last active interval across Park, noOutput and heartbeat/authority loss;
+    // sample at 8 Hz so a subsecond active interval is not missed at shutdown.
+    bool warning_engaged = controls_allowed || heartbeat_engaged;
+    if (aol_policy != NULL) {
+      warning_engaged = aol_get_permission_mask() != 0U;
+    }
+    if (is_car_safety_mode(current_safety_mode) && warning_engaged) {
+      controls_allowed_countdown = 5U * 8U;
+    } else if (controls_allowed_countdown > 0U) {
+      controls_allowed_countdown -= 1U;
+    } else {
+    }
+
     // start the siren early on power loss
     if ((controls_allowed_countdown > 0U) && (heartbeat_tick_counter > 2U) && (current_board->read_voltage_mV() < 6000U)) {
       siren_countdown = 3U;
@@ -182,14 +197,6 @@ static void tick_handler(void) {
 
       if (siren_countdown > 0U) {
         siren_countdown -= 1U;
-      }
-
-      if (controls_allowed || heartbeat_engaged) {
-        controls_allowed_countdown = 5U;
-      } else if (controls_allowed_countdown > 0U) {
-        controls_allowed_countdown -= 1U;
-      } else {
-
       }
 
       // exit controls allowed if unused by openpilot for a few seconds

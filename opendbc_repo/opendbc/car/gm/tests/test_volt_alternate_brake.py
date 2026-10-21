@@ -91,6 +91,13 @@ class TestVoltAlternateBrake(unittest.TestCase):
         ci = CarInterface(cp)
         packer = CANPacker(DBC[cp.carFingerprint][Bus.pt])
         for tick, expected in enumerate(baseline['tx']):
+          # Keep every frozen vehicle-side byte. Only the removed camera's
+          # obsolete PSCM replacement is intentionally absent in this topology.
+          if is_volt_camera_removed(cp):
+            self.assertIn(name, ('removed-0', 'removed-1'))
+            camera_status = [message for message in expected if message[0] == 0x184 and message[2] == 2]
+            self.assertEqual(len(camera_status), int(tick % 10 == 0))
+            expected = [message for message in expected if not (message[0] == 0x184 and message[2] == 2)]
           now = 1_000_000_000 + tick * 10_000_000
           speed = 20. if tick < 40 or tick >= 100 else 0. if tick < 80 else 6.
           active, brake, gas = tick < 60 or tick >= 90, 60 <= tick < 65, 65 <= tick < 70

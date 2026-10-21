@@ -25,8 +25,8 @@ def camera_params(alpha=True, release=False, camera_length=6, radar=False, sascm
   return CarInterface.get_params(CAR.CHEVROLET_VOLT_CAMERA, fingerprint, [], alpha, release, False)
 
 
-def feed_camera(ci, packer, now, *, counter=0, speed=20., gas=False, brake=False, regen=False, low=False, active=True):
-  _, messages = feed(ci, packer, now, counter=counter, speed=speed, gas=gas, brake=brake, regen=regen)
+def feed_camera(ci, packer, now, *, counter=0, speed=20., gas=False, brake=False, regen=False, low=False, active=True, eps_status=0):
+  _, messages = feed(ci, packer, now, counter=counter, speed=speed, gas=gas, brake=brake, regen=regen, eps_status=eps_status)
   messages = [message for message in messages if message[0] not in (0x1C4, 0x1F5)]
   messages += [packer.make_can_msg("AcceleratorPedal2", 0, {"CruiseState": 2 if active else 0, "AcceleratorPedal2": 30 if gas else 0}),
                packer.make_can_msg("ECMPRDNL2", 0, {"PRNDL2": 6 if low else 4}),

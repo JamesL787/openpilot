@@ -7,4 +7,5 @@ class ClassicSccCardIntent(ForteCardIntent):
 
   def _arm_from_full_engagement(self, CS, *, source_ns):
     if not (CS.steerFaultTemporary or CS.gasPressed or CS.brakePressed):
+      self.fault_rearm = False
       super()._arm_from_full_engagement(CS, source_ns=source_ns)

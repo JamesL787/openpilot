@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import pytest
 
-from opendbc.car import gen_empty_fingerprint
+from opendbc.car import gen_empty_fingerprint, make_tester_present_msg
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 from opendbc.car.hyundai.ecu_startup import Outcome
@@ -104,10 +104,12 @@ def test_suppressed_silence_is_sent_unconfirmed_not_positive_ack(stock):
   assert startup.keeper.started
   assert not startup.before_control(configured=False, sources_current=True, control_current=True)
   assert startup.before_control(configured=True, sources_current=True, control_current=True)
-  assert not startup.keeper.started
+  assert startup.keeper.started
   startup.configure(SimpleNamespace(CP=final))
   startup.seal_publication()
   assert startup.published
+  startup.sent([make_tester_present_msg(0x730, 1, suppress_response=True)], valid=True)
+  assert not startup.keeper.started and startup.handed_off
   startup.close()
 
 
@@ -239,7 +241,7 @@ def physical_frames(cp, packer, tick):
   sources = (
     ("ACCELERATOR", 1, {"GEAR": 5, "ACCELERATOR_PEDAL": 0}),
     ("TCS", 1, {"ACCEnable": 0, "ACC_REQ": 0, "DriverBraking": 0}),
-    ("WHEEL_SPEEDS", 1, {name: 30 for name in ("WHL_SpdFLVal", "WHL_SpdFRVal", "WHL_SpdRLVal", "WHL_SpdRRVal")}),
+    ("WHEEL_SPEEDS", 1, dict.fromkeys(("WHL_SpdFLVal", "WHL_SpdFRVal", "WHL_SpdRLVal", "WHL_SpdRRVal"), 30)),
     ("MDPS", 1, {"MDPS_StrTqSnsrVal": 0, "MDPS_OutTqVal": 0}),
     ("STEERING_SENSORS", 1, {}),
     ("DOORS_SEATBELTS", 1, {"DRIVER_SEATBELT": 1}),
@@ -372,6 +374,8 @@ def test_actual_card_publishes_only_sealed_cp_then_controls(stock, mode, aol, mo
         assert holder.owner.sources_current(ci, stamp)
         assert not holder.owner.before_control(configured=False, sources_current=True, control_current=True)
         assert holder.owner.before_control(configured=True, sources_current=holder.owner.sources_current(ci, stamp), control_current=True)
+        assert not holder.owner.handed_off
+        card.publish_sendcan([make_tester_present_msg(0x730, 1, suppress_response=True)], valid=True)
         assert holder.owner.handed_off
       with structs.CarParams.from_bytes(saved.get("CarParams")) as reader:
         assert reader.to_dict() == expected

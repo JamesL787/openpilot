@@ -28,12 +28,15 @@ def stock_lateral_role(self, CS, native, intent=None, *, allow_independent_cance
   if allow_independent_brake:
     from opendbc.car.hyundai.canfd_angle_aol import command_allowed
     from opendbc.car.hyundai.canfd_stock_aol import qualified as stock_canfd_qualified
+    from openpilot.starpilot.car.toyota.aol import qualified as toyota_qualified
 
     settings = getattr(self, 'aol_settings', None)
     previous = getattr(self, 'aol_axis_decision', None)
     brake_role = bool(settings is not None and settings.enabled and CS.brakePressed and not CS.regenBraking and
       previous is not None and previous.lateral_active and previous.native_acknowledged and not previous.longitudinal_active and
-      (CS.vEgo >= settings.pause_brake_mps and command_allowed(self.CP, CS) or
+      (toyota_qualified(self.CP, marked_only=True) and CS.standstill and not CS.cruiseState.enabled and
+       CS.gearShifter == car.CarState.GearShifter.drive and isfinite(CS.vEgoRaw) and isfinite(CS.vEgo) or
+       CS.vEgo >= settings.pause_brake_mps and command_allowed(self.CP, CS) or
        len(self.CP.safetyConfigs) == 1 and stock_canfd_qualified(self.CP, marked_only=True) and
        CS.gearShifter == car.CarState.GearShifter.drive and isfinite(CS.vEgoRaw) and isfinite(CS.vEgo) and
        (settings.pause_brake_mps <= 0 or CS.vEgo >= settings.pause_brake_mps or CS.standstill)))

@@ -1,17 +1,18 @@
 """Optional parked reporting; failures never participate in driving process health."""
 from datetime import datetime, UTC
 import math
+import signal
 import threading
 import time
 import re
 import uuid
 from typing import Any
 
-from openpilot.starpilot.gps.source import GPS_SOURCES, select_location
+from openpilot.starpilot.gps.source import GPS_SERVICES, select_location
 from openpilot.starpilot.analytics.report import ReportClient, build_payload, fetch_branch_commit
 
 SERVICES = ('deviceState', 'carParams', 'carState', 'carControl', 'selfdriveState',
-            'modelV2', 'drivingModelData', 'managerState', *GPS_SOURCES)
+            'modelV2', 'drivingModelData', 'managerState', *GPS_SERVICES)
 COUNTERS = ('drives', 'meters', 'seconds', 'current_months_meters', 'total_tracked_seconds',
             'total_lateral_seconds', 'total_longitudinal_seconds', 'total_aol_seconds')
 
@@ -247,7 +248,7 @@ class AnalyticsWorker:
       self.client.close()
 
 
-def start_optional_worker():
+def build_worker():
   from openpilot.common.hardware import COMMA_HARDWARE, HARDWARE
   if not COMMA_HARDWARE:
     return None
@@ -257,4 +258,19 @@ def start_optional_worker():
   metadata = get_build_metadata()
   return AnalyticsWorker(Params(), messaging.SubMaster(list(SERVICES)),
                          metadata={'branch': metadata.channel, 'device': HARDWARE.get_device_type(),
-                                   'metrics': {'commit': metadata.openpilot.git_commit}}).start()
+                                   'metrics': {'commit': metadata.openpilot.git_commit}})
+
+
+def main():
+  # Own process so the manager's heap stays small when it forks the onroad daemons.
+  worker = build_worker()
+  if worker is None:
+    return
+  for sig in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(sig, lambda *_: worker.stop_event.set())
+  worker.run()
+  worker.persist()
+
+
+if __name__ == "__main__":
+  main()

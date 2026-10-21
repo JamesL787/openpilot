@@ -12,10 +12,11 @@ from openpilot.starpilot.car.hyundai import aol as hyundai
 from openpilot.starpilot.car.gm import aol as gm
 from openpilot.starpilot.car.ford import aol as ford
 from openpilot.starpilot.car.mazda import aol as mazda
+from openpilot.starpilot.car.chrysler import aol as chrysler
 from openpilot.starpilot.car.tesla import aol as tesla
 from openpilot.starpilot.car.toyota import aol as toyota
 
-_PORTS = {'honda': honda, 'hyundai': hyundai, 'gm': gm, 'ford': ford, 'mazda': mazda, 'tesla': tesla, 'toyota': toyota}
+_PORTS = {'honda': honda, 'hyundai': hyundai, 'gm': gm, 'ford': ford, 'mazda': mazda, 'tesla': tesla, 'toyota': toyota, 'chrysler': chrysler}
 _POLICY_CACHE_SIZE = 8
 _POLICY_CACHE_MAX_BYTES = 64 * 1024
 
@@ -139,3 +140,20 @@ def allow_lateral_onset(CP, *, requested, normal_enabled, steering_pressed, prev
 def configuration_settings_policy(CP):
   from openpilot.starpilot.car.hyundai.settings import configuration_wheel_policy
   return configuration_wheel_policy(CP) or toyota.configuration_settings_policy(CP) or gm.configuration_settings_policy(CP)
+
+
+def native_bootstrap_supported(CP):
+  """Dispatch only the newly owned Chrysler profile; preserve existing GM admission."""
+  try:
+    if CP.brand == 'chrysler':
+      return chrysler.native_bootstrap_supported(CP)
+    from opendbc.car.gm.aol import native_bootstrap_supported as gm_bootstrap
+    return gm_bootstrap(CP)
+  except (AttributeError, IndexError, TypeError, ValueError):
+    return False
+
+
+def intent_disarming_fault(CP, events, state, **context):
+  if CP.brand == 'chrysler':
+    return chrysler.intent_disarming_fault(CP, events, state, **context)
+  return gm.intent_disarming_fault(CP, events, state, **context)

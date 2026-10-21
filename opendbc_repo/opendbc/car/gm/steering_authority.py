@@ -1,5 +1,5 @@
 from opendbc.car import structs
-from opendbc.car.gm.values import GMFlags, camera_acc_pedal_profile, is_volt_ascm_longitudinal
+from opendbc.car.gm.values import GMFlags, camera_acc_pedal_profile, is_volt_ascm_longitudinal, is_volt_sdgm_accepted_envelope
 
 # PSCMStatus is expected at 10 Hz. Three periods bound first acquisition and missing feedback.
 EPS_STATUS_TIMEOUT_NS = 300_000_000
@@ -8,7 +8,8 @@ ButtonType = structs.CarState.ButtonEvent.Type
 
 
 def monitored_profile(CP: structs.CarParams) -> bool:
-  return (is_volt_ascm_longitudinal(CP) and camera_acc_pedal_profile(CP) is None and
+  return ((is_volt_ascm_longitudinal(CP) or is_volt_sdgm_accepted_envelope(CP)) and
+          camera_acc_pedal_profile(CP) is None and
           not CP.flags & GMFlags.PEDAL_LONG)
 
 

@@ -10,7 +10,12 @@ $Go.import("pfeifer.dev/mapd/cereal/custom");
 # DO rename the structs
 # DON'T change the identifier (e.g. @0x81c2f05a394cf4af)
 
-struct CustomReserved0 @0x81c2f05a394cf4af {
+struct StarPilotCarControl @0x81c2f05a394cf4af {
+  # The first three fields are pointer slots mapd does not read.
+  hudControl @0 :AnyPointer;
+  steeringLimitInfo @1 :AnyPointer;
+  navigation @2 :AnyPointer;
+  phoneGps @3 :StarPilotCarState.Gps;  # sourceMonoTime is comma receive time minus the phone's fix age
 }
 
 struct CustomReserved1 @0xaedffd8f31e7b55d {

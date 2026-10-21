@@ -78,6 +78,14 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
   uint32_t time;
 
   switch (req->request) {
+    // Fork-local frozen Dom Pre-AP calibration. Configuration is never CAN TX.
+    case 0xb7:
+      (void)tesla_preap_pedal_config_word(req->param1, req->param2,
+        !is_car_safety_mode(current_safety_mode) && !controls_allowed && !heartbeat_engaged);
+      break;
+    case 0xb8:
+      resp_len = tesla_preap_pedal_config_read(resp);
+      break;
     // Fork-local read-only AOL capability and actual native permissions.
     // Older firmware returns no matching packet, so the host fails closed.
     case 0xd5:

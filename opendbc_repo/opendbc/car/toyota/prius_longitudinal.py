@@ -16,7 +16,7 @@ def configured(cp):
   return (cp.brand == 'toyota' and cp.carFingerprint in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT) and
           cp.pcmCruise and not cp.dashcamOnly and not cp.notCar and
           not cp.passive and cp.steerControlType == structs.CarParams.SteerControlType.torque and
-          cp.flags == int(ToyotaFlags.HYBRID | ToyotaFlags.LONG_FILTER | ToyotaFlags.RAISED_ACCEL_LIMIT) and
+          cp.flags & ~int(ToyotaFlags.ZSS) == int(ToyotaFlags.HYBRID | ToyotaFlags.LONG_FILTER | ToyotaFlags.RAISED_ACCEL_LIMIT) and
           len(cp.safetyConfigs) == 1 and cp.safetyConfigs[0].safetyModel == structs.CarParams.SafetyModel.toyota and
           cp.safetyConfigs[0].safetyParam in (4169, 4681) and
           cp.openpilotLongitudinalControl == (cp.safetyConfigs[0].safetyParam == 4169))

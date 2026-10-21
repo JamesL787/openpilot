@@ -156,7 +156,7 @@ def test_actual_params_thread_continues_after_new_reader_exception(worker):
   from openpilot.selfdrive.car import card as module
   card: Any = module.Car.__new__(module.Car)
   calls = []
-  card.params = SimpleNamespace(get_bool=lambda key: calls.append(key) or False)
+  card.params = SimpleNamespace(get_bool=lambda key: calls.append(key) or False, get=worker.reader.params.get)
   card.CP = SimpleNamespace(openpilotLongitudinalControl=True, pcmCruise=False)
   card.CI = SimpleNamespace(CP=card.CP, CC=None)
   card.aol_card_intent = None

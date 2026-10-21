@@ -1,4 +1,5 @@
 import gc
+import json
 import time
 
 import pytest
@@ -12,7 +13,7 @@ from opendbc.car.tesla.fingerprints import FINGERPRINTS
 CARS = (CAR.TESLA_MODEL_S_PREAP,)
 
 
-def exercise_startup(identity, alpha, release, aol, monkeypatch, mapping=(0, 0), probe=None):
+def exercise_startup(identity, alpha, release, aol, monkeypatch, mapping=(0, 0), probe=None, radar_mode=None, radar_offset=0.0):
   from opendbc.car import car_helpers
   from openpilot.cereal import messaging
   from openpilot.common.params import Params
@@ -39,10 +40,18 @@ def exercise_startup(identity, alpha, release, aol, monkeypatch, mapping=(0, 0),
     if probe is not None:
       saved.put("CancelButtonControl", 3, block=True)
 
+    if radar_mode is not None:
+      from openpilot.starpilot.car.tesla.radar_settings import DOCUMENT_KEY, encode
+      saved.put(DOCUMENT_KEY, json.loads(encode(radar_mode, radar_offset)), block=True)
     initial = CarInterface.get_params(identity, fingerprint, [], card_module.alpha_long_requested(saved, is_release=release), release, False)
     initial.carVin = "0" * 17
     initial.carFw = []
     assert initial.safetyConfigs[0].safetyParam == 0
+    if radar_mode is not None:
+      from openpilot.starpilot.vehicle_preferences import VehicleStartupPreferences
+      expected_preferences = VehicleStartupPreferences.read(saved, enabled=True)
+      expected_preferences.prepare(initial, fingerprints=fingerprint)
+      expected_preferences.finalize(initial)
     expected = initial.to_dict()
     explicit_owner = True
     assert not initial.openpilotLongitudinalControl and initial.pcmCruise and not initial.dashcamOnly
@@ -65,6 +74,12 @@ def exercise_startup(identity, alpha, release, aol, monkeypatch, mapping=(0, 0),
       assert policy_for(card.CP).fixed_cruise_buttons
       assert card.aol_qualified
       assert int(card.CP.safetyConfigs[0].safetyModel.raw) == 39
+      if radar_mode is not None:
+        assert card.tesla_preap_radar_context is not None
+        assert card.RI.preap.radar_offset == radar_offset
+        # Settings mutation cannot change the immutable decoder context.
+        saved.put(DOCUMENT_KEY, json.loads(encode("nosecone" if radar_mode == "front" else "front", radar_offset + 1)), block=True)
+        assert card.RI.preap.radar_offset == radar_offset
       assert card.aol_card_intent.explicit_latch is explicit_owner
       assert not card.aol_card_intent.allowed_latch
       assert card.aol_card_intent.settings.main_action == 0

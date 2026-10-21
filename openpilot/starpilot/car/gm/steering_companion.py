@@ -26,7 +26,7 @@ class SteeringCompanion:
     while len(self.samples) > MAX_COMPANIONS:
       del self.samples[min(self.samples)]
 
-  def current(self, sm, *, source_ns, now_ns):
+  def drain(self):
     if self.sock is not None:
       for _ in range(MAX_DRAIN):
         message = messaging.recv_one_or_none(self.sock)
@@ -34,8 +34,13 @@ class SteeringCompanion:
           break
         self._observe(message.logMonoTime, message.valid, message.starpilotCarState)
       else:
-        return None
-    elif sm.seen.get(SERVICE, False):
+        return False
+    return True
+
+  def current(self, sm, *, source_ns, now_ns, drain=True):
+    if drain and not self.drain():
+      return None
+    if self.sock is None and sm.seen.get(SERVICE, False):
       self._observe(sm.logMonoTime[SERVICE], sm.valid.get(SERVICE, False), sm[SERVICE])
 
     for stamp in tuple(self.samples):

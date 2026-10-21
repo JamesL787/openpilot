@@ -3,6 +3,8 @@ import { GxNotice } from "./notice.js"
 import { GxState } from "./state.js"
 import { GalaxySettingRow, switchRow } from "./galaxy-setting-row.js"
 
+const validPassword = password => typeof password === 'string' && (password === '' || /^[\x21-\x7e]{12,63}$/.test(password))
+
 export function validHotspot(value) {
   return value?.version === 1 && /^[a-f0-9]{64}$/.test(value.revision) &&
     typeof value.editable === 'boolean' && typeof value.active === 'boolean' &&
@@ -10,15 +12,18 @@ export function validHotspot(value) {
     typeof value.reason === 'string' && value.reason.length <= 256 &&
     value.url === 'http://172.31.254.1:8082/' && typeof value.config?.enabled === 'boolean' &&
     /^TheGalaxy-[a-f0-9]{4}$/.test(value.config.ssid) &&
-    typeof value.config.password === 'string' && (value.config.password === '' || /^[\x21-\x7e]{12,63}$/.test(value.config.password))
+    validPassword(value.config.password)
 }
 
 export const GalaxyHotspot = {
   components: { GxNotice, GxState, GalaxySettingRow },
   props: { mode: String, unauthorized: Function },
-  data: () => ({ snapshot: null, draft: null, revision: '', busy: false, error: '', notice: '',
+  data: () => ({ snapshot: null, draft: null, revision: '', busy: false, error: '', saveError: '', notice: '',
     showPassword: false, timer: null, controller: null, generation: 0, active: false }),
-  computed: { dirty() { return JSON.stringify(this.draft) !== JSON.stringify(this.snapshot?.config) } },
+  computed: {
+    dirty() { return JSON.stringify(this.draft) !== JSON.stringify(this.snapshot?.config) },
+    passwordValid() { return validPassword(this.draft?.password) },
+  },
   mounted() { this.start() },
   beforeUnmount() { this.stop() },
   watch: { mode() { this.stop(); this.start() } },
@@ -27,7 +32,7 @@ export const GalaxyHotspot = {
     start() { if (this.mode === 'local') { this.active = true; this.refresh() } },
     stop() {
       this.active = false; this.generation++; clearTimeout(this.timer); this.controller?.abort()
-      this.snapshot = this.draft = null; this.revision = ''; this.showPassword = false; this.busy = false
+      this.snapshot = this.draft = null; this.revision = ''; this.showPassword = false; this.busy = false; this.saveError = ''
     },
     adopt(value, reset = false) {
       if (!validHotspot(value)) throw new Error('Invalid hotspot status')
@@ -53,10 +58,10 @@ export const GalaxyHotspot = {
       }
     },
     async save() {
-      if (!this.active || this.busy || !this.snapshot?.editable) return
+      if (!this.active || this.busy || !this.snapshot?.editable || !this.passwordValid) return
       clearTimeout(this.timer); this.controller?.abort()
       const generation = ++this.generation
-      this.controller = new AbortController(); this.busy = true; this.error = ''; this.notice = ''
+      this.controller = new AbortController(); this.busy = true; this.saveError = ''; this.notice = ''
       try {
         const value = await requestJson('./api/galaxy/hotspot', { request: { signal: this.controller.signal,
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -68,7 +73,7 @@ export const GalaxyHotspot = {
       } catch (error) {
         if (!this.active || generation !== this.generation) return
         if (error.status === 401) { this.stop(); this.unauthorized(); return }
-        this.error = `${error.message} If Wi-Fi disconnected, reconnect and reload to check whether settings saved.`
+        this.saveError = `${error.message} If Wi-Fi disconnected, reconnect and reload to check whether settings saved.`
       } finally {
         if (this.active && generation === this.generation) { this.busy = false; this.timer = setTimeout(() => this.refresh(), 1000) }
       }
@@ -87,7 +92,8 @@ export const GalaxyHotspot = {
         <p class="gx-note">Fixed to TheGalaxy- plus the last four characters of your comma dongle ID. Once saved, the switch and password survive restarts.</p>
         <label class="gx-field-group">Password <input class="gx-field" :type="showPassword ? 'text' : 'password'" v-model="draft.password" :disabled="busy || !snapshot.editable" maxlength="63" autocomplete="new-password" placeholder="Blank generates a password" /></label>
         <label><input type="checkbox" v-model="showPassword" :disabled="busy || !snapshot.editable" /> Show password</label>
-        <div class="gx-settings__controls gx-actions"><button class="gx-btn" type="button" :disabled="!dirty || busy || !snapshot.editable" @click="save">{{ busy ? 'Saving…' : 'Save hotspot' }}</button></div>
+        <p v-if="!passwordValid" class="gx-note">Use a 12–63 character password without spaces, or leave it blank to generate one.</p>
+        <div class="gx-settings__controls gx-actions"><button class="gx-btn" type="button" :disabled="!dirty || busy || !snapshot.editable || !passwordValid" @click="save">{{ busy ? 'Saving…' : 'Save hotspot' }}</button></div>
       </div>
       <GxNotice v-if="!snapshot.editable">Park before changing hotspot settings.</GxNotice>
       <p>Join the network, stay connected if warned of no Internet, then open and bookmark <a :href="snapshot.url">{{ snapshot.url }}</a>.</p>
@@ -99,6 +105,6 @@ export const GalaxyHotspot = {
       <li><i class="bi bi-arrow-repeat" aria-hidden="true"></i><span>Network or channel changes may interrupt access. Changing the password or disabling the hotspot disconnects phones.</span></li>
       <li><i class="bi bi-globe" aria-hidden="true"></i><span>The public galaxy.firestar.link address still needs Internet and its tunnel.</span></li>
     </ul>
-    <GxNotice v-if="error" tone="danger">{{ error }}</GxNotice><GxNotice v-if="notice" tone="success">{{ notice }}</GxNotice>
+    <GxNotice v-if="error" tone="danger">{{ error }}</GxNotice><GxNotice v-if="saveError" tone="danger">{{ saveError }}</GxNotice><GxNotice v-if="notice" tone="success">{{ notice }}</GxNotice>
   </section>`,
 }

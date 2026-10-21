@@ -22,6 +22,9 @@ SCREEN = {'version': 1, 'width': 1280, 'height': 720, 'margin_width': 0,
 
 class Params:
   def __init__(self, root): self.root, self.enabled = root, True
+  def get(self, key):
+    assert key == 'JetlinkMode'
+    return 0
   def get_param_path(self, key): return str(self.root / key)
   def get_bool(self, key):
     assert key == 'AndroidAutoEnabled'

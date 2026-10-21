@@ -52,15 +52,26 @@ static uint8_t ford_aol_request_mask(void) {
     (safety_get_ts_elapsed(microsecond_timer_get(), aol_host_request_ts) > AOL_HOST_REQUEST_TIMEOUT_US);
   const bool token_expired = ford_aol_token && !ford_aol_token_claimed &&
     (safety_get_ts_elapsed(microsecond_timer_get(), ford_aol_token_ts) > AOL_HOST_REQUEST_TIMEOUT_US);
-  if (!aol_rx_healthy() || relay_malfunction || expired || token_expired || (ford_aol_session && !heartbeat_engaged)) {
+  const bool long_profile = (ford_aol_param & 1U) != 0U;
+  const bool lost_session = ford_aol_session && !heartbeat_engaged;
+  if (!aol_rx_healthy() || relay_malfunction || expired || lost_session) {
+    // Ordinary LONG cannot revive solely because a stale source/host recovers.
+    // A fresh real PCM cruise activation is required after this withdrawal.
+    if (long_profile) { controls_allowed = false; }
     ford_aol_clear();
-  } else if (heartbeat_engaged) {
-    ford_aol_session = true;
-    result = aol_host_axis_mask & 1U;
-    if ((result != 0U) && ford_aol_token) {
-      ford_aol_token_claimed = true;
-    }
   } else {
+    if (token_expired) {
+      // Expiry of an unclaimed lateral token must not create a LONG grant or
+      // invalidate an independent, still-current ordinary LONG activation.
+      ford_aol_clear();
+    }
+    if (heartbeat_engaged) {
+      ford_aol_session = true;
+      result = aol_host_axis_mask & (long_profile ? 3U : 1U);
+      if (ford_aol_token && (((result & 1U) != 0U) || (((result & 2U) != 0U) && controls_allowed))) {
+        ford_aol_token_claimed = true;
+      }
+    }
   }
   return result;
 }
@@ -68,13 +79,20 @@ static uint8_t ford_aol_request_mask(void) {
 static uint8_t ford_aol_permission_mask(void) {
   uint8_t result = 0U;
   if (ford_aol_eps >= 2U) {
+    controls_allowed = false;
     ford_aol_clear();
   }
   const uint16_t base = ford_aol_param & 0xFFFEU;
   const bool needs_lka = (base == 10U) || (base == 12U) || (base == 18U) || (base == 66U);
-  if ((ford_aol_request_mask() != 0U) && (controls_allowed || ford_aol_token) &&
+  const uint8_t requested = ford_aol_request_mask();
+  if (((requested & 1U) != 0U) && (controls_allowed || ford_aol_token) &&
       ford_aol_main_available && ford_aol_drive && (ford_aol_eps == 0U) && (!needs_lka || ford_aol_lka_ready)) {
     result = 1U;
+  }
+  if (((requested & 2U) != 0U) && ((ford_aol_param & 1U) != 0U) && controls_allowed &&
+      ford_aol_main_available && ford_aol_drive && (ford_aol_eps < 2U) &&
+      !brake_pressed && !gas_pressed && !gas_pressed_prev) {
+    result |= 2U;
   }
   return result;
 }
@@ -115,6 +133,7 @@ static void ford_aol_rx(const CANPacket_t *msg) {
     } else if (msg_matches(msg, 0x82U, 0U, 8U)) {
       ford_aol_eps = msg->data[1] & 3U;
       if (ford_aol_eps >= 2U) {
+        controls_allowed = false;
         ford_aol_clear();
       }
     } else if (msg_matches(msg, 0x3CCU, 0U, 8U)) {
@@ -131,6 +150,18 @@ static void ford_aol_rx(const CANPacket_t *msg) {
         ford_aol_drive = (gear == 3U) || (gear == 4U) || (gear == 5U);
       }
     }
+  }
+}
+
+// A real ordinary cruise rising edge can arm retained lateral intent without
+// requiring a historical MAIN/LKAS cycle. This never grants ordinary controls
+// or longitudinal permission; the current request/heartbeat/RX gates still own TX.
+static void ford_aol_full_engagement(bool cruise_rising) {
+  if (ford_aol_enabled && cruise_rising && controls_allowed && !brake_pressed && !gas_pressed &&
+      !relay_malfunction && aol_rx_healthy() && ford_aol_main_available && ford_aol_drive && (ford_aol_eps == 0U)) {
+    ford_aol_token = true;
+    ford_aol_token_claimed = false;
+    ford_aol_token_ts = microsecond_timer_get();
   }
 }
 

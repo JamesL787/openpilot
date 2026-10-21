@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <ctime>
 #include <functional>
 #include <list>
@@ -81,6 +82,8 @@ public:
   void enable_deepsleep();
   void send_heartbeat(bool engaged);
   bool set_aol_axis_request(uint8_t axis_mask);
+  bool stage_preap_pedal(const std::array<uint16_t, 24> &words);
+  bool matches_preap_pedal(const std::array<uint16_t, 24> &words);
   void set_can_speed_kbps(uint16_t bus, uint16_t speed);
   void set_can_fd_auto(uint16_t bus, bool enabled);
   void set_data_speed_kbps(uint16_t bus, uint16_t speed);

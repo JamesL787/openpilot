@@ -57,6 +57,7 @@ class CarInterface(CarInterfaceBase):
 
     elif candidate in (CAR.JEEP_GRAND_CHEROKEE, CAR.JEEP_GRAND_CHEROKEE_2019):
       ret.steerActuatorDelay = 0.2
+      ret.flags |= ChryslerFlags.JEEP_BRAKE_HOLD_AVAILABLE.value
 
       ret.lateralTuning.init('pid')
       ret.lateralTuning.pid.kpBP, ret.lateralTuning.pid.kiBP = [[9., 20.], [9., 20.]]

@@ -30,6 +30,9 @@ class StockCCSpoofer:
     source_current = bool(CS.out.canValid and not CS.out.canTimeout and CS.msg_stw_actn_req and
                           0 <= CS.can_now_ns - CS.physical_stw_stamp_ns <= 300_000_000)
 
+    if getattr(CS, "pedal_feedback", None) is not None:
+      source_current = source_current and safe and not CS.out.accFaulted
+
     if getattr(CS, "preap_cc_cancel_needed", False):
       self.cancel_pending = True
       self.cancel_frame = frame

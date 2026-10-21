@@ -1,3 +1,4 @@
+from openpilot.starpilot.aol.tests.classic_startup_test_helpers import prepared_classic_card
 import os
 from unittest.mock import patch
 
@@ -5,11 +6,9 @@ import pytest
 
 from opendbc.car.hyundai.classic_long_aol import independent_buttons_qualified
 from opendbc.car.hyundai.interface import CarInterface
-from opendbc.car.hyundai.radar_interface import RadarInterface
 from opendbc.car.hyundai.values import CAR
 from openpilot.common.params import Params
 from openpilot.common.prefix import OpenpilotPrefix
-from openpilot.selfdrive.car.card import Car
 from openpilot.starpilot.aol.intent import AolSettings
 from openpilot.starpilot.aol.tests.test_classic_long_profiles import params
 from openpilot.starpilot.car.hyundai.classic_long_intent import ClassicLongCardIntent
@@ -26,7 +25,8 @@ def test_actual_card_constructs_independent_buttons_before_final_marker():
     assert cp.safetyConfigs[0].safetyParam == 4 and cp.alternativeExperience == 0
     assert independent_buttons_qualified(cp, marked_only=False)
     assert not independent_buttons_qualified(cp)
-    card = Car(CI=CarInterface(cp), RI=RadarInterface(cp))
+    assert CarInterface.startup_required(cp)
+    card = prepared_classic_card(cp)
     try:
       assert card.aol_card_intent.independent_cruise_buttons
       assert card.CP.safetyConfigs[0].safetyParam == 0xC04 and card.CP.alternativeExperience == 32

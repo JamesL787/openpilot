@@ -34,6 +34,8 @@ jobs:
       contents: read
     steps:
     - uses: actions/checkout@v7
+    - name: Check shipped device runtime dependencies
+      run: python3 -m unittest tools.laptop_device_build.tests.test_runtime_dependencies -v
     - name: Validate tracked dependencies
       run: python3 tools/vendor/check.py --revision HEAD
     - run: ./tools/op.sh setup

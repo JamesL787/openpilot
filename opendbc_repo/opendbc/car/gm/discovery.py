@@ -20,4 +20,7 @@ def automatic_volt_candidate(candidate, fingerprint, candidates):
       any(pt.get(address) != size for address, size in required.items()) or
       any(address in pt for address in (0xBE, 0x201, 0x2FF, 0x320))):
     return candidate
-  return CAR.CHEVROLET_VOLT_CAMERA
+  # The recorded car has ordinary cruise, no ACC and no camera. The absent
+  # camera is not evidence of an ACC actuator owner. Read actual ECM cruise
+  # activity and retain button-only control; explicit ACC selections are above.
+  return CAR.CHEVROLET_VOLT_CC

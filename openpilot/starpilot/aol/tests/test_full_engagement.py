@@ -18,7 +18,7 @@ from openpilot.starpilot.car.tesla.stock_intent import TeslaPreapCardIntent
 from openpilot.starpilot.car.toyota.aol import ToyotaCardIntent
 
 SETTINGS = AolSettings(True, 0., AOL_TOGGLE, 0, (0, 0, 0), (0, 0, 0))
-CP = SimpleNamespace(flags=0, safetyConfigs=[SimpleNamespace(safetyParam=0)])
+CP = SimpleNamespace(carFingerprint='', flags=0, safetyConfigs=[SimpleNamespace(safetyParam=0)])
 
 
 def state():

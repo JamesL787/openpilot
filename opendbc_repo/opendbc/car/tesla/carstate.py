@@ -161,6 +161,14 @@ class CarState(CarStateBase):
 
     return ret
 
+  def update_button_enable(self, buttonEvents):
+    if self.CP.carFingerprint == CAR.TESLA_MODEL_S_PREAP and self.CP.openpilotLongitudinalControl:
+      if not self.preap.enableLongControl:
+        return False
+      if any(event.type == structs.CarState.ButtonEvent.Type.setCruise and not event.pressed for event in buttonEvents):
+        return True
+    return super().update_button_enable(buttonEvents)
+
   @staticmethod
   def get_can_parsers(CP):
     if CP.carFingerprint == CAR.TESLA_MODEL_S_PREAP:

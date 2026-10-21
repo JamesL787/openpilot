@@ -20,6 +20,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 from openpilot.starpilot.navigation.intent import cruise_ceiling as navigation_ceiling
+from openpilot.starpilot.car.tesla.preap_adaptive import startup_owner as preap_adaptive_owner
 from openpilot.starpilot.longitudinal.vehicle_policy import forecast_should_stop, planner_cost_owner, far_follow_owner
 from openpilot.starpilot.longitudinal.cruise_ceiling import CruiseCeiling, CurveCeiling, select_cruise_ceiling, select_curve_ceiling
 from openpilot.starpilot.longitudinal.profile_runtime import (AppliedProfile, ProfileSmoother, ProfileTuning, SelectedProfileTuning,
@@ -127,6 +128,7 @@ class LongitudinalPlanner:
     self.vehicle_cost_owner = planner_cost_owner(CP)
     self.lead_takeoff = LeadTakeoff()
     self.vehicle_far_follow = far_follow_owner(CP, dt)
+    self.preap_adaptive = preap_adaptive_owner(CP)
 
   def update(self, sm, *, cruise_ceiling: CruiseCeiling | None = None,
              profile_tuning: ProfileTuning | None = None, curve_ceiling: CurveCeiling | None = None,
@@ -254,6 +256,13 @@ class LongitudinalPlanner:
     acceleration_cap = self.last_profile.acceleration_max if self.last_profile is not None else None
     if selected_acceleration is not None:
       acceleration_cap = selected_acceleration
+    preap_acceleration_cap = None
+    if self.preap_adaptive is not None:
+      preap_acceleration_cap = self.preap_adaptive.sample(
+        sm, now_ns=sample_now_ns, drive_id=drive_id, upper=ACCEL_MAX if acceleration_cap is None else acceleration_cap,
+        follow_seconds=selected_follow, active=profile_eligible and not reset_state)
+      if preap_acceleration_cap is not None:
+        acceleration_cap = preap_acceleration_cap
     self.mpc.update(sm['radarState'], personality=sm['selfdriveState'].personality,
                     follow_seconds=follow if follow is not None else
                     (self.last_profile.follow_seconds if self.last_profile is not None else None),
@@ -376,6 +385,9 @@ class LongitudinalPlanner:
       global_floor = coast_plan.brake_floor
       cruise_profile = None
       slc_floor = None
+    if preap_acceleration_cap is not None:
+      selected_acceleration = (preap_acceleration_cap if selected_acceleration is None else
+                               min(selected_acceleration, preap_acceleration_cap))
     self.a_cruise = get_cruise_accel(sm['selfdriveState'].experimentalMode, v_cruise, v_ego,
                                      self.a_cruise, steer_angle_without_offset, self.CP, self.dt,
                                      accel_coast, self.allow_throttle, cruise_profile, slc_floor,
@@ -440,6 +452,8 @@ class LongitudinalPlanner:
         target=float(output_a_target), previous_target=float(a_prev), follow_seconds=float(self.mpc.params[0, 4]),
         blocked=bool(self.output_should_stop or self.fcw or self.force_stop_plan.forcing or
                      self.force_stop_plan.approach_distance_m > 0 or self.mpc.solution_status != 0))
+    if preap_acceleration_cap is not None:
+      output_a_target = min(output_a_target, preap_acceleration_cap)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0

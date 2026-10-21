@@ -17,7 +17,7 @@ public:
 private:
   void updateMultiplexingMode();
   std::string fetchCarParams();
-  void setSafetyMode(const std::string &params_string);
+  bool setSafetyMode(const std::string &params_string);
 
   bool initialized_ = false;
   bool log_once_ = false;
@@ -27,5 +27,8 @@ private:
   std::vector<std::pair<cereal::CarParams::SafetyModel, uint16_t>> safety_slots_;
   uint16_t alternative_experience_ = 0;
   size_t safety_config_count_ = 0;
+  std::optional<std::array<uint16_t, 24>> preap_pedal_words_;
+  std::string preap_pedal_capsule_;
+  std::string preap_pedal_cp_bytes_;
   Params params_;
 };

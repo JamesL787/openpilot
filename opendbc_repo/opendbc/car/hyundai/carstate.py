@@ -1,3 +1,4 @@
+from opendbc.car.hyundai.left_paddle import has_left_paddle
 from opendbc.car.hyundai.ioniq5pe_long_profile import qualified as pe_long_qualified
 from opendbc.car.hyundai.ioniq5pe_ready import PEReadySource
 from opendbc.car.hyundai.blended_stock_aol import qualified as qualified_blended_stock, qualified_alpha as qualified_blended_alpha, MixedStockLkasSources
@@ -568,7 +569,7 @@ class CarState(CarStateBase):
     self.main_buttons.extend(cp.vl_all[self.cruise_btns_msg_canfd]["ADAPTIVE_CRUISE_MAIN_BTN"])
     self.lda_button = cp.vl[self.cruise_btns_msg_canfd]["LDA_BTN"]
     prev_left_paddle = self.left_paddle
-    self.left_paddle = cp.vl["CRUISE_BUTTONS"]["LEFT_PADDLE"] if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 else 0
+    self.left_paddle = cp.vl["CRUISE_BUTTONS"]["LEFT_PADDLE"] if has_left_paddle(self.CP) else 0
     self.buttons_counter = cp.vl[self.cruise_btns_msg_canfd]["COUNTER"]
     if not self.CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and self.CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CARNIVAL_ALT_RESUME:
       self.cruise_buttons_alt_ts_ns = cp.ts_nanos["CRUISE_BUTTONS_ALT"]["COUNTER"]

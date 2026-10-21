@@ -12,6 +12,9 @@ SteerControlType = structs.CarParams.SteerControlType
 
 
 def toyota_auto_hold_supported(CP) -> bool:
+  from opendbc.car.toyota.rav4h_filter import enabled as rav4h_filter_enabled
+  if rav4h_filter_enabled(CP):
+    return True
   return bool(CP.brand == "toyota" and CP.carFingerprint in TOYOTA_AUTO_HOLD_CARS and
               CP.openpilotLongitudinalControl and not CP.flags & ToyotaFlags.SECOC and
               not CP.notCar and not CP.dashcamOnly and not CP.passive and len(CP.safetyConfigs) == 1 and
@@ -75,6 +78,8 @@ class CarInterface(CarInterfaceBase):
     smart_dsu = (candidate in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT) and 0x2FF in fingerprint[0] and
                  any(fw.ecu == Ecu.eps and bytes(fw.fwVersion) == b"8965B47070\x00\x00\x00\x00\x00\x00"
                      for fw in car_fw))
+    if candidate in (CAR.TOYOTA_PRIUS, CAR.TOYOTA_PRIUS_RETROFIT) and fingerprint.get(0, {}).get(0x23) == 8:
+      ret.flags |= int(ToyotaFlags.ZSS)
     stop_and_go = bool(ret.flags & ToyotaFlags.TSS2)
 
     # In TSS2 cars, the camera does long control
@@ -160,10 +165,20 @@ class CarInterface(CarInterfaceBase):
       ret.flags |= int(ToyotaFlags.HYBRID | ToyotaFlags.LONG_FILTER)
       ret.safetyConfigs[0].safetyParam = 4169
       ret.openpilotLongitudinalControl = True
+    from opendbc.car.toyota.rav4h_filter import hardware_supported, LONG_WORD
+    rav4h_sdsu = hardware_supported(candidate, fingerprint, car_fw)
+    if rav4h_sdsu:
+      ret.flags |= int(ToyotaFlags.HYBRID | ToyotaFlags.LONG_FILTER)
+      ret.safetyConfigs[0].safetyParam = LONG_WORD
+      ret.openpilotLongitudinalControl = True
+      ret.alphaLongitudinalAvailable = False
+      stop_and_go = True
+    elif candidate == CAR.TOYOTA_RAV4H and 0x2FF in fingerprint.get(0, {}):
+      ret.dashcamOnly = True
     # Toyota EPS accepts lateral commands down to zero. Keep the existing
     # native/axis/fault gates; a stock cruise stop does not withdraw steering.
     ret.steerAtStandstill = ret.minSteerSpeed <= 0.
-    ret.autoResumeSng = ret.openpilotLongitudinalControl and not ret.flags & ToyotaFlags.LONG_FILTER
+    ret.autoResumeSng = ret.openpilotLongitudinalControl and (rav4h_sdsu or not ret.flags & ToyotaFlags.LONG_FILTER)
 
     if not ret.openpilotLongitudinalControl:
       ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
@@ -172,13 +187,17 @@ class CarInterface(CarInterfaceBase):
     # to a negative value, so it won't matter.
     ret.minEnableSpeed = -1. if stop_and_go else MIN_ACC_SPEED
 
-    if ret.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER):
+    if ret.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) and not rav4h_sdsu:
       ret.flags |= ToyotaFlags.RAISED_ACCEL_LIMIT.value
 
       # Hybrids have much quicker longitudinal actuator response
       if ret.flags & ToyotaFlags.HYBRID.value:
         ret.longitudinalActuatorDelay = 0.05
 
+    from opendbc.car.toyota import pedal
+    if pedal.hardware_supported(candidate, fingerprint, car_fw):
+      ret.flags |= int(ToyotaFlags.GAS_INTERCEPTOR)
+      ret.safetyConfigs[0].safetyParam = pedal.LONG_WORD
     return ret
 
   @staticmethod

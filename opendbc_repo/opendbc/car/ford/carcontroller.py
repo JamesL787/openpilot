@@ -75,6 +75,9 @@ class CarController(CarControllerBase):
     self.manual_turn_inputs = None
     self.mache_lateral = MachELateralController(CP) if mache_qualified(CP) else None
     self.mache_extended_announced = False
+    self.mache_ui_active = False
+    self.hands_free_cluster_input = None
+    self.cluster_extended_announced = False
     self.generic_canfd = generic_canfd_qualified(CP)
     self.classic_lateral = GenericCanfdLateralController(CP) if self.generic_canfd else create_classic_controller(CP)
     self.new_port_curvature = create_new_port_curvature(CP)
@@ -98,6 +101,10 @@ class CarController(CarControllerBase):
 
   def update(self, CC, CS, now_nanos):
     can_sends = []
+    if self.hands_free_cluster_input is not None:
+      self.hands_free_cluster_input.update()
+    if not CC.latActive:
+      self.mache_ui_active = False
     if (self.mache_lateral is not None or self.classic_lateral is not None or self.new_port_curvature is not None) and self.manual_turn_inputs is not None:
       self.manual_turn_inputs.update()
       self.manual_turn_inputs.apply_blend_settings(self)
@@ -156,6 +163,7 @@ class CarController(CarControllerBase):
       demanded = self.mache_lateral.update(CC, CS, actuators) if self.mache_extended_announced else FordLateralResult()
       lateral = bounded_command(self.mache_lateral, demanded, previous, CS.out.vEgoRaw, previous_path_angle)
       self.mache_lateral_demand = demanded
+      self.mache_ui_active = bool(lateral.active)
       self.apply_curvature_last = lateral.curvature
       counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
       can_sends.append(mache_can.create_lat_ctl2_msg(
@@ -322,25 +330,36 @@ class CarController(CarControllerBase):
       self.accel = accel
       self.gas = gas
 
+    # Track the actual outgoing LKA announcement for every CAN-FD display owner.
+    if any(address == 0x3CA for address, _, _ in can_sends):
+      self.cluster_extended_announced = True
+
     ### ui ###
-    send_ui = (self.main_on_last != main_on) or (self.lkas_enabled_last != CC.latActive) or (self.steer_alert_last != steer_alert)
-    # send lkas ui msg at 1Hz or if ui state changes
-    if (self.frame % CarControllerParams.LKAS_UI_STEP) == 0 or send_ui:
-      can_sends.append(fordcan.create_lkas_ui_msg(self.packer, self.CAN, main_on, CC.latActive, steer_alert, hud_control, CS.lkas_status_stock_values))
+    # AOL safety forwards stock UI until an active lateral replacement owns it.
+    # Avoid competing cluster messages while stock remains the display owner.
+    aol_mache_ui = self.mache_lateral is not None and qualified_aol(self.CP, marked_only=True)
+    ui_enabled = CC.latActive and (not aol_mache_ui or self.mache_ui_active)
+    if not aol_mache_ui or ui_enabled:
+      send_ui = (self.main_on_last != main_on) or (self.lkas_enabled_last != ui_enabled) or (self.steer_alert_last != steer_alert)
+      # send lkas ui msg at 1Hz or if ui state changes
+      if (self.frame % CarControllerParams.LKAS_UI_STEP) == 0 or send_ui:
+        can_sends.append(fordcan.create_lkas_ui_msg(self.packer, self.CAN, main_on, ui_enabled, steer_alert, hud_control, CS.lkas_status_stock_values))
 
-    # send acc ui msg at 5Hz or if ui state changes
-    if hud_control.leadDistanceBars != self.lead_distance_bars_last:
-      send_ui = True
-      self.distance_bar_frame = self.frame
+      # send acc ui msg at 5Hz or if ui state changes
+      if hud_control.leadDistanceBars != self.lead_distance_bars_last:
+        send_ui = True
+        self.distance_bar_frame = self.frame
 
-    if (self.frame % CarControllerParams.ACC_UI_STEP) == 0 or send_ui:
-      show_distance_bars = self.frame - self.distance_bar_frame < 400
-      can_sends.append(fordcan.create_acc_ui_msg(self.packer, self.CAN, self.CP, main_on, CC.latActive,
-                                                 fcw_alert, CS.out.cruiseState.standstill, show_distance_bars,
-                                                 hud_control, CS.acc_tja_status_stock_values))
+      if (self.frame % CarControllerParams.ACC_UI_STEP) == 0 or send_ui:
+        show_distance_bars = self.frame - self.distance_bar_frame < 400
+        hands_free_cluster = bool(self.cluster_extended_announced and
+                                  self.hands_free_cluster_input is not None and self.hands_free_cluster_input.enabled)
+        can_sends.append(fordcan.create_acc_ui_msg(self.packer, self.CAN, self.CP, main_on, ui_enabled,
+                                                   fcw_alert, CS.out.cruiseState.standstill, show_distance_bars,
+                                                   hud_control, CS.acc_tja_status_stock_values, hands_free_cluster))
 
     self.main_on_last = main_on
-    self.lkas_enabled_last = CC.latActive
+    self.lkas_enabled_last = ui_enabled
     self.steer_alert_last = steer_alert
     self.lead_distance_bars_last = hud_control.leadDistanceBars
 

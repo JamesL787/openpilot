@@ -47,9 +47,9 @@ def parsed_packets(cp, packer, now, tick, speed, main):
   if cp.carFingerprint == CAR.CHEVROLET_SILVERADO_CC:
     packets = pt_frames(packer, cruise=False, main=main, counter=tick % 4)
   elif cp.carFingerprint in (CAR.CHEVROLET_VOLT_CAMERA, CAR.CHEVROLET_VOLT_2019):
-    _, packets = feed_camera(empty, packer, now, counter=tick % 4, speed=speed, active=False)
+    _, packets = feed_camera(empty, packer, now, counter=tick % 4, speed=speed, active=False, eps_status=1)
   else:
-    _, packets = packets_for_bolt(empty, packer, now, counter=tick % 4, speed=speed, active=False)
+    _, packets = packets_for_bolt(empty, packer, now, counter=tick % 4, speed=speed, active=False, eps_status=1)
     packets += [packer.make_can_msg('ASCMActiveCruiseControlStatus', 2, {'ACCCruiseState': 0})]
   if cp.carFingerprint != CAR.CHEVROLET_SILVERADO_CC:
     address = packer.make_can_msg('ASCMActiveCruiseControlStatus', 2, {})[0]

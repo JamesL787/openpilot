@@ -207,6 +207,21 @@ def current_axis(sm, *, now_ns: int):
   return state
 
 
+def refresh_expired_lateral_snapshot(sm, *, now_ns: int) -> bool:
+  """Receive queued AOL inputs once; an expired LAT-only proof never gains time."""
+  axis = sm['aolAxisState']
+  if (sm.seen['aolAxisState'] and sm.valid['aolAxisState'] and sm.alive['aolAxisState'] and
+      axis.qualified and axis.nativeAcknowledged and axis.sessionId and
+      axis.lateralActive and axis.desiredLateral and
+      not axis.longitudinalActive and not axis.desiredLongitudinal and
+      0 < sm.logMonoTime['aolAxisState'] <= axis.observedMonoTime <= axis.validUntilMonoTime < now_ns):
+    # All normal authority, source, physical and native gates run on the newly
+    # received snapshot. An empty receive leaves the expired proof untouched.
+    sm.update(0)
+    return True
+  return False
+
+
 def monitoring_lateral_engaged(sm, *, now_ns: int) -> bool:
   axis = current_axis(sm, now_ns=now_ns)
   if axis is None or not axis.lateralActive or not axis.nativeAcknowledged:

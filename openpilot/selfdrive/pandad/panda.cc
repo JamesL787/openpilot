@@ -192,6 +192,24 @@ void Panda::send_heartbeat(bool engaged) {
   handle->control_write(0xf3, engaged, 0);
 }
 
+bool Panda::matches_preap_pedal(const std::array<uint16_t, 24> &words) {
+  std::array<uint8_t, 48> actual{}, expected{};
+  for (size_t i = 0; i < words.size(); ++i) {
+    expected[2 * i] = words[i] & 255;
+    expected[2 * i + 1] = words[i] >> 8;
+  }
+  const int count = handle->control_read(0xb8, 0, 0, actual.data(), actual.size());
+  return count == static_cast<int>(actual.size()) && actual == expected;
+}
+
+bool Panda::stage_preap_pedal(const std::array<uint16_t, 24> &words) {
+  for (size_t i = 0; i < words.size(); ++i) {
+    if (handle->control_write(0xb7, static_cast<uint16_t>(i), words[i]) < 0) return false;
+  }
+  if (handle->control_write(0xb7, 0xffff, 0xc051) < 0) return false;
+  return matches_preap_pedal(words);
+}
+
 bool Panda::set_aol_axis_request(uint8_t axis_mask) {
   return handle->control_write(0xf5, axis_mask & 0x7U, 0) >= 0;
 }

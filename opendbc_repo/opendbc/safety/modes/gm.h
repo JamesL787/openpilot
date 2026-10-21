@@ -78,6 +78,7 @@ static bool gm_sdgm_brake_c9 = false;
 static bool gm_cc_gateway_stock = false;
 // Exact EV|NO_ACC word20 was rejected previously; it is a DEBUG-only Volt CC owner.
 static bool gm_volt_cc_long = false;
+static bool gm_volt_cc_f1 = false;
 static bool gm_ordinary_cc_long = false;
 static bool gm_malibu_cc_f1 = false;
 static bool gm_malibu_cc_stock = false;
@@ -284,7 +285,7 @@ static void gm_rx_hook(const CANPacket_t *msg) {
       } else if ((msg_matches(msg, 0xC9U, 0U)) && (GET_LEN(msg) == 8U)) {
         source = 2;
         gm_volt_cc_main = GET_BIT(msg, 29U);
-      } else if ((msg_matches(msg, gm_malibu_cc_f1 ? 0xF1U : 0xBEU, 0U)) && (GET_LEN(msg) == 6U)) {
+      } else if ((msg_matches(msg, (gm_malibu_cc_f1 || gm_volt_cc_f1) ? 0xF1U : 0xBEU, 0U)) && (GET_LEN(msg) == 6U)) {
         source = 3;
       } else if ((msg->addr == 0x1F5U) && (GET_LEN(msg) == 8U)) {
         source = 4;
@@ -357,7 +358,8 @@ static void gm_rx_hook(const CANPacket_t *msg) {
         gm_volt_removed_pcm_us = now;
         if (!gm_volt_removed_pcm) { gm_volt_removed_credit = false; }
       } else if (!gm_bolt_pedal_removed && !gm_bolt_present_cc_cancel && (msg->addr == 0x1C4U) && (GET_LEN(msg) == 8U)) {
-        gm_volt_removed_pcm = (msg->data[1] >> 5) != 0U;
+        const uint8_t cruise_state = msg->data[1] >> 5;
+        gm_volt_removed_pcm = (cruise_state != 0U) && (!gm_volt_camera_removed || (cruise_state != 3U));
         gm_volt_removed_pcm_us = now;
         if (!gm_volt_removed_pcm) { gm_volt_removed_credit = false; }
       } else {
@@ -405,9 +407,9 @@ static void gm_rx_hook(const CANPacket_t *msg) {
       cruise_button_prev = button;
     }
 
-    if (gm_malibu_cc_f1) {
+    if (gm_malibu_cc_f1 || gm_volt_cc_f1) {
       if (msg_matches(msg, 0xF1U, 0U) && (GET_LEN(msg) == 6U)) {
-        gm_malibu_f1_brake = (msg->data[1] >= 21U) || GET_BIT(msg, 1U);
+        gm_malibu_f1_brake = gm_volt_cc_f1 ? (msg->data[1] >= 6U) : ((msg->data[1] >= 21U) || GET_BIT(msg, 1U));
       }
       if (msg_matches(msg, 0xC9U, 0U) && (GET_LEN(msg) == 8U)) {
         gm_malibu_c9_brake = GET_BIT(msg, 40U);
@@ -417,7 +419,7 @@ static void gm_rx_hook(const CANPacket_t *msg) {
 
     // Reference for brake pressed signals:
     // https://github.com/commaai/openpilot/blob/master/selfdrive/car/gm/carstate.py
-    if ((msg_matches(msg, 0xBEU, 0U)) && !gm_camera_gateway && !gm_malibu_cc_f1 && (((gm_hw == GM_ASCM) && !gm_volt_gateway_alt_brake) || (gm_ascm_intercept && !gm_ascm_brake_c9) ||
+    if ((msg_matches(msg, 0xBEU, 0U)) && !gm_camera_gateway && !gm_malibu_cc_f1 && !gm_volt_cc_f1 && (((gm_hw == GM_ASCM) && !gm_volt_gateway_alt_brake) || (gm_ascm_intercept && !gm_ascm_brake_c9) ||
                                    (gm_sdgm && !gm_sdgm_brake_c9))) {
       brake_pressed = msg->data[1] >= 8U;
     }
@@ -444,7 +446,8 @@ static void gm_rx_hook(const CANPacket_t *msg) {
 
       // enter controls on rising edge of ACC, exit controls when ACC off
       if (gm_pcm_cruise && !gm_cc_gateway_stock) {
-        bool cruise_engaged = (msg->data[1] >> 5) != 0U;
+        const uint8_t cruise_state = msg->data[1] >> 5;
+        const bool cruise_engaged = (cruise_state != 0U) && (!gm_volt_camera_removed || (cruise_state != 3U));
         pcm_cruise_check(cruise_engaged);
       } else if (gm_pedal_acc) {
         cruise_engaged_prev = (msg->data[1] >> 5) != 0U;
@@ -549,6 +552,8 @@ static bool gm_ascm_adas_valid(const CANPacket_t *msg) {
 }
 
 static bool gm_tx_hook(const CANPacket_t *msg) {
+  // This topology has no camera-side receiver after harness interception.
+  if (gm_volt_camera_removed && (msg->bus == 2U)) { return false; }
   const TorqueSteeringLimits GM_STEERING_LIMITS = {
     .max_torque = 300,
     .max_rate_up = 10,
@@ -989,6 +994,11 @@ static safety_config gm_init(uint16_t safety_param) {
   gm_volt_removed_cancel_seen = false;
   gm_volt_removed_cancel_us = 0U;
 
+  gm_volt_cc_f1 = false;
+#ifdef ALLOW_DEBUG
+  gm_volt_cc_f1 = safety_param == 0xC163U;
+  if (gm_volt_cc_f1) { param = GM_PARAM_EV | GM_PARAM_NO_ACC; }
+#endif
   gm_malibu_cc_f1 = (safety_param == 0xC161U) || (safety_param == 0xC162U);
   gm_malibu_cc_stock = safety_param == 0xC162U;
   gm_malibu_f1_brake = false;
@@ -1093,14 +1103,12 @@ static safety_config gm_init(uint16_t safety_param) {
 
   static const CanMsg GM_VOLT_REMOVED_STOCK_TX_MSGS[] = {
     {0x180, 0, 4, .check_relay = false}, {0x1E1, 0, 7, .check_relay = false},
-    {0x184, 2, 8, .check_relay = false},
   };
 #ifdef ALLOW_DEBUG
   static const CanMsg GM_VOLT_REMOVED_LONG_TX_MSGS[] = {
     {0x180, 0, 4, .check_relay = false}, {0x315, 0, 5, .check_relay = false},
     {0x2CB, 0, 8, .check_relay = false}, {0x370, 0, 6, .check_relay = false},
     {0x409, 0, 7, .check_relay = false}, {0x40A, 0, 7, .check_relay = false},
-    {0x184, 2, 8, .check_relay = false},
   };
 #endif
   static RxCheck gm_volt_removed_rx_checks[] = {
@@ -1552,7 +1560,11 @@ static safety_config gm_init(uint16_t safety_param) {
       gm_ordinary_cc_rx_checks[3].msg[0].frequency = gm_malibu_cc_f1 ? 100U : 80U;
       SET_RX_CHECKS(gm_ordinary_cc_rx_checks, ret);
     }
-    else { SET_RX_CHECKS(gm_volt_cc_rx_checks, ret); }
+    else {
+      gm_volt_cc_rx_checks[3].msg[0].addr = gm_volt_cc_f1 ? 0xF1U : 0xBEU;
+      gm_volt_cc_rx_checks[3].msg[0].frequency = gm_volt_cc_f1 ? 100U : 80U;
+      SET_RX_CHECKS(gm_volt_cc_rx_checks, ret);
+    }
     SET_TX_MSGS(GM_CC_GATEWAY_STOCK_TX_MSGS, ret);
     if (gm_ordinary_cc_long && !gm_malibu_cc_stock) {
       static const CanMsg GM_ORDINARY_CC_TX_MSGS[] = {
@@ -1850,6 +1862,10 @@ static safety_config gm_init(uint16_t safety_param) {
     SET_TX_MSGS(GM_SDGM_PEDAL_STOCK_TX, ret);
     gm_pcm_cruise = false;
   }
+
+  // A removed Volt camera leaves bus 2 unacknowledged after relay interception.
+  // Forwarding vehicle traffic there fills TX queues and stalls host CAN reads.
+  if (gm_volt_camera_removed) { ret.disable_forwarding = true; }
 
   // ASCM does not forward any messages
   if ((gm_hw == GM_ASCM) && !gm_camera_gateway) {

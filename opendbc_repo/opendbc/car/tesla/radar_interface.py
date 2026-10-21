@@ -1,6 +1,7 @@
 from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.interfaces import RadarInterfaceBase
+from opendbc.car.tesla.preap.radar import PreAPRadarInterface
 from opendbc.car.tesla.radar_hw1 import HW1RadarInterface
 from opendbc.car.tesla.values import CAR, DBC
 
@@ -25,6 +26,9 @@ def get_radar_can_parser(CP):
 class RadarInterface(RadarInterfaceBase):
   def __init__(self, CP):
     super().__init__(CP)
+    if CP.carFingerprint == CAR.TESLA_MODEL_S_PREAP:
+      self.preap = PreAPRadarInterface(CP)
+      return
     if CP.carFingerprint == CAR.TESLA_MODEL_S_HW1:
       self.hw1 = HW1RadarInterface(CP)
       return
@@ -34,13 +38,22 @@ class RadarInterface(RadarInterfaceBase):
     self.radar_off_can = CP.radarUnavailable
     self.rcp = get_radar_can_parser(CP)
 
-  def update(self, can_strings):
-    if self.CP.carFingerprint == CAR.TESLA_MODEL_S_HW1:
-      return self.hw1.update(can_strings)
-    if self.radar_off_can or self.rcp is None:
-      return super().update(None)
+  def configure_preap_radar(self, context, cp_bytes):
+    if self.CP.carFingerprint != CAR.TESLA_MODEL_S_PREAP:
+      raise ValueError("Radar context is only valid for Tesla PREAP")
+    self.preap = PreAPRadarInterface(self.CP, context, cp_bytes)
+    if self.preap.radar_off_can and not self.CP.radarUnavailable:
+      raise ValueError("Invalid final Tesla radar startup context")
 
-    vls = self.rcp.update(can_strings)
+  def update(self, can_packets) -> structs.RadarDataT | None:
+    if self.CP.carFingerprint == CAR.TESLA_MODEL_S_PREAP:
+      return self.preap.update(can_packets)
+    if self.CP.carFingerprint == CAR.TESLA_MODEL_S_HW1:
+      return self.hw1.update(can_packets)
+    if self.radar_off_can or self.rcp is None:
+      return super().update([])
+
+    vls = self.rcp.update(can_packets)
     self.updated_messages.update(vls)
 
     if self.trigger_msg not in self.updated_messages:

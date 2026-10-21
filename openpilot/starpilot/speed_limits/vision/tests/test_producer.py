@@ -59,7 +59,7 @@ class TestVisionProducer(unittest.TestCase):
     return next_pair
 
   def run_frame(self, streams, *, completion_age_ns=10_000_000, model_states=None):
-    core = Mock()
+    core = Mock(last_published_support_at=1.)
     core.observe.return_value = (55, 0.9, 2, 1)
     client = Mock()
     client.is_connected.return_value = True
@@ -111,14 +111,24 @@ class TestVisionProducer(unittest.TestCase):
     self.assertEqual(str(messages[0].status), 'unavailable')
     self.assertEqual(str(messages[0].stream), 'unknown')
 
-  def test_slow_inference_remains_stale_after_camera_api_fix(self):
+  def test_inference_beyond_result_budget_remains_stale(self):
     _, core, messages = self.run_frame({VisionStreamType.VISION_STREAM_NARROW_ROAD},
-                                     completion_age_ns=270_000_000)
+                                     completion_age_ns=2_000_000_001)
     core.observe.assert_called_once()
     self.assertEqual(len(messages), 1)
     self.assertEqual(str(messages[0].status), 'stale')
     self.assertEqual(messages[0].validUntilMonoTime, 0)
     self.assertEqual(messages[0].speedMps, 0)
+
+  def test_bounded_slow_inference_preserves_original_frame_time(self):
+    _, core, messages = self.run_frame({VisionStreamType.VISION_STREAM_NARROW_ROAD},
+                                      completion_age_ns=500_000_000)
+    core.observe.assert_called_once()
+    self.assertEqual(str(messages[0].status), 'valid')
+    self.assertEqual(messages[0].observedMonoTime, 1_000_000_000)
+    self.assertEqual(messages[0].validUntilMonoTime, 3_000_000_000)
+    self.assertEqual(messages[0].cameraFrameEofBootTime, 5_000_000_000)
+    self.assertEqual(core.observe.call_args.kwargs['now'], 1.)
 
   def test_unhealthy_driving_model_skips_inference_and_does_not_publish_speed(self):
     road = {VisionStreamType.VISION_STREAM_NARROW_ROAD}
@@ -168,7 +178,7 @@ class TestVisionProducer(unittest.TestCase):
       return Buffer(frame_id)
 
     client.recv.side_effect = receive
-    core = Mock()
+    core = Mock(last_published_support_at=1.)
 
     def observe(_frame, *, now):
       self.assertEqual(released, [12] if core.observe.call_count == 1 else [12, 13, 14, 15, 16, 17])
@@ -210,7 +220,7 @@ class TestVisionProducer(unittest.TestCase):
     self.assertEqual(messages[2].producerSessionId, messages[3].producerSessionId)
 
   def test_throttled_and_already_stale_frames_do_not_convert(self):
-    core = Mock()
+    core = Mock(last_published_support_at=1.)
     core.observe.return_value = None
     client = Mock()
     client.is_connected.return_value = True
@@ -245,20 +255,20 @@ class TestVisionProducer(unittest.TestCase):
     self.assertEqual([message.frameId for message in messages], [12, 14])
 
   def test_expired_inference_cools_down_without_accepting_old_result(self):
-    core = Mock()
+    core = Mock(last_published_support_at=1.)
     core.observe.return_value = None
     client = Mock()
     client.is_connected.return_value = True
     camera = Mock(return_value=client)
     road = {VisionStreamType.VISION_STREAM_NARROW_ROAD}
     camera.available_streams.side_effect = [road, road, road, EndProducer()]
-    buffers = [(object(), 5_000_000_000, 12), (object(), 5_300_000_000, 13),
-               (object(), 5_700_000_000, 14)]
+    buffers = [(object(), 5_000_000_000, 12), (object(), 7_100_000_000, 13),
+               (object(), 8_600_000_000, 14)]
     frames = [(np.zeros((2, 2, 3)), item[1], item[2]) for item in (buffers[0], buffers[2])]
     clocks = [(1_000_000_000, 5_000_000_000), (1_000_000_000, 5_000_000_000),
-              (1_270_000_000, 5_270_000_000), (1_300_000_000, 5_300_000_000),
-              (1_700_000_000, 5_700_000_000), (1_700_000_000, 5_700_000_000),
-              (1_710_000_000, 5_710_000_000)]
+              (3_010_000_000, 7_010_000_000), (3_100_000_000, 7_100_000_000),
+              (4_600_000_000, 8_600_000_000), (4_600_000_000, 8_600_000_000),
+              (4_610_000_000, 8_610_000_000)]
     messages = []
 
     def send(service, event):

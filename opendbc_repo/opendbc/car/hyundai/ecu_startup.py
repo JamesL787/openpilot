@@ -6,7 +6,6 @@ from copy import deepcopy
 import time
 
 from opendbc.car import structs
-from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.hyundai.values import HyundaiSafetyFlags
 from opendbc.car.hyundai.canfd_owner import config_index
 from opendbc.car.isotp_parallel_query import IsoTpParallelQuery
@@ -55,8 +54,35 @@ class HyundaiECUStartup:
     self.ready = False
     self.prepared_cp = None
 
-  def _disable(self, *args, **kwargs):
-    return disable_ecu(*args, **kwargs)
+  def _disable(self, can_recv, can_send, *, bus, addr, com_cont_req):
+    self.disable_response = None
+    for _ in range(10):
+      try:
+        session = self._query(can_send, can_recv, bus, [(addr, None)], [b"\x10\x03"], [b"\x50\x03"])
+        if not session.get_data(.1):
+          time.sleep(.1)
+          continue
+        time.sleep(.05)
+        command = self._query(can_send, can_recv, bus, [(addr, None)], [com_cont_req], [b""])
+        replies = command.get_data(.1)
+        if not replies:
+          self.disable_response = 'suppressed_reply_sent_unconfirmed'
+          return True
+        for payload in replies.values():
+          if payload == b"\x68\x03":
+            self.disable_response = 'positive_communication_control'
+          elif len(payload) == 3 and payload[:2] == b"\x7f\x28":
+            self.disable_response = 'negative_communication_control'
+            return False
+          else:
+            self.disable_response = 'unexpected_or_malformed_reply'
+            return False
+        return True
+      except Exception:
+        if self.disable_attempted:
+          return False
+        time.sleep(.1)
+    return False
 
   def _query(self, *args, **kwargs):
     return IsoTpParallelQuery(*args, **kwargs)
@@ -84,6 +110,7 @@ class HyundaiECUStartup:
       session_payload = session.get_data(.1).get((self.address, None))
       if session_payload is None or len(session_payload) not in (0, 4):
         return False
+      time.sleep(.05)
       restore = self._query(send, recv, self.bus, [(self.address, None)], [b'\x28\x00\x01'], [b'\x68\x00'])
       if restore.get_data(.1).get((self.address, None)) != b'':
         return False

@@ -17,7 +17,8 @@ from opendbc.car.gm.conventional_pedal import CancelCredit
 from opendbc.car.gm.values import (DBC, AccState, CruiseButtons, STEER_THRESHOLD, SDGM_CAR, ALT_ACCS,
                                    ASCM_INTERCEPT_CAR, ORDINARY_ASCM_CAR, ORDINARY_SDGM_CAR, GMFlags, GMSafetyFlags, NO_ACC_BOLT_CAR,
                                    CC_GATEWAY_STOCK_CAR, requires_camera_state_sources, is_conventional_cc_pedal_profile, is_silverado_cc_pedal_profile,
-                                   is_volt_cc_profile, is_silverado_cc_stock_profile, is_ordinary_cc_profile, is_malibu_cc_f1_profile, VOLT_BSM_CAR, CAR,
+                                   is_volt_cc_profile, is_volt_cc_f1_profile, is_silverado_cc_stock_profile, is_ordinary_cc_profile,
+                                   is_malibu_cc_f1_profile, VOLT_BSM_CAR, CAR,
                                    is_volt_gateway_profile, is_volt_gateway_alternate_brake, is_bolt_cc_profile, BOLT_CC_WORDS,
                                    is_bolt_pedal_profile, is_bolt_pedal_removed_profile, is_bolt_present_no_acc_pedal_profile, is_volt_camera_removed,
                                    is_ordinary_camera_profile, is_ordinary_camera_removed)
@@ -268,7 +269,7 @@ class CarState(CarStateBase):
         pt_cp.ts_nanos["ECMCruiseControl"]["CruiseActive"],
          pt_cp.ts_nanos["ASCMSteeringButton"]["RollingCounter"],
          pt_cp.ts_nanos["ECMEngineStatus"]["CruiseMainOn"],
-         (pt_cp.ts_nanos["EBCMBrakePedalPosition"]["BrakePedalPosition"] if is_malibu_cc_f1_profile(self.CP) else
+         (pt_cp.ts_nanos["EBCMBrakePedalPosition"]["BrakePedalPosition"] if is_malibu_cc_f1_profile(self.CP) or is_volt_cc_f1_profile(self.CP) else
           pt_cp.ts_nanos["ECMAcceleratorPos"]["BrakePedalPos"]),
          pt_cp.ts_nanos["ECMPRDNL2"]["PRNDL2"],
          pt_cp.ts_nanos["AcceleratorPedal2"]["AcceleratorPedal2"])
@@ -405,7 +406,10 @@ class CarState(CarStateBase):
     source_be_brake = (gm_control_word(self.CP) &
                        (GMSafetyFlags.ASCM_INTERCEPT | GMSafetyFlags.SDGM).value and
                        not gm_control_word(self.CP) & GMSafetyFlags.BRAKE_C9.value)
-    if is_malibu_cc_f1_profile(self.CP):
+    if is_volt_cc_f1_profile(self.CP):
+      ret.brakePressed = (pt_cp.vl["EBCMBrakePedalPosition"]["BrakePedalPosition"] >= 6 or
+                          pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0)
+    elif is_malibu_cc_f1_profile(self.CP):
       ret.brakePressed = (pt_cp.vl["EBCMBrakePedalPosition"]["BrakePedalPosition"] >= 21 or
                           pt_cp.vl["EBCMBrakePedalPosition"]["BrakePressed"] != 0 or
                           pt_cp.vl["ECMEngineStatus"]["BrakePressed"] != 0)
@@ -510,6 +514,9 @@ class CarState(CarStateBase):
                       pt_cp.vl["EBCMFrictionBrakeStatus"]["FrictionBrakeUnavailable"] == 1)
 
     ret.cruiseState.enabled = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] != AccState.OFF
+    if is_volt_camera_removed(self.CP):
+      # A missing camera can leave the ECU faulted; that is not engaged cruise.
+      ret.cruiseState.enabled &= pt_cp.vl["AcceleratorPedal2"]["CruiseState"] != AccState.FAULTED
     ret.cruiseState.standstill = pt_cp.vl["AcceleratorPedal2"]["CruiseState"] == AccState.STANDSTILL
     if (self.CP.carFingerprint in CC_GATEWAY_STOCK_CAR or self.CP.carFingerprint == CAR.CHEVROLET_VOLT_CC):
       # AcceleratorPedal2 CruiseState is an ACC state, not a conventional-cruise fault source.
@@ -761,6 +768,9 @@ class CarState(CarStateBase):
 
     if CP.carFingerprint == CAR.CHEVROLET_VOLT_CC:
       pt_messages.append(("EBCMRegenPaddle", 50))
+      if is_volt_cc_f1_profile(CP):
+        pt_messages = [(name, frequency) for name, frequency in pt_messages if name != "ECMAcceleratorPos"]
+        pt_messages.append(("EBCMBrakePedalPosition", 100))
 
     if is_bolt_cc_profile(CP):
       pt_messages += [("PSCMStatus", 10), ("ECMCruiseControl", 10), ("ASCMSteeringButton", 33),

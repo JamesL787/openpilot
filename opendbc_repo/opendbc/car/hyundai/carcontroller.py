@@ -23,6 +23,7 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.ray_pedal import create_ray_pedal_command, ray_pedal_gas, ray_pedal_enabled
 from opendbc.car.hyundai.ioniq6_longitudinal import Ioniq6LongitudinalPolicy
 from opendbc.car.hyundai.canfd_dash_icons import CanFDDashIcons
+from opendbc.car.hyundai.classic_scc_aol import qualified as qualified_classic_stock_aol
 from opendbc.car.hyundai.canfd_stock_aol import qualified as qualified_canfd_stock_aol
 from opendbc.car.hyundai.ev6_aol import qualified as qualified_ev6_aol
 from opendbc.car.hyundai.g90_longitudinal import G90LongitudinalPolicy
@@ -144,6 +145,8 @@ class CarController(CarControllerBase):
     self.ioniq6_bsm_enabled = ioniq6_status
     self.ev6_aol_status = CP.carFingerprint == CAR.KIA_EV6 and (qualified_canfd_stock_aol(CP) or qualified_ev6_aol(CP))
     self.canfd_dash_icons = CanFDDashIcons() if ioniq6_status or self.torque_ev_scc_enabled or self.ev6_aol_status else None
+    self.classic_dash_icons = CanFDDashIcons() if qualified_classic_stock_aol(CP, marked_only=True) and CP.carFingerprint != CAR.KIA_RAY_EV else None
+    self.classic_lfa_icon = None
     self.ioniq6_bsm_counter = 0
     self.ioniq6_bsm_last_can_ns = 0
     self._ray_pedal = ray_pedal_enabled(CP)
@@ -168,6 +171,8 @@ class CarController(CarControllerBase):
     if self.CP.carFingerprint == CAR.KIA_EV6_2025 and self.CP.dashcamOnly:
       return actuators.as_builder(), []
     hud_control = CC.hudControl
+    if self.classic_dash_icons is not None:
+      self.classic_lfa_icon = self.classic_dash_icons.update(self.frame, CC.enabled, CC.latActive)
     if self.CP.carFingerprint == CAR.KIA_RAY_EV:
       if CC.latActive:
         self._ray_disengage_frame = None
@@ -316,7 +321,8 @@ class CarController(CarControllerBase):
                                               torque_fault, CS.lkas11, sys_warning, sys_state, hud_enabled,
                                               hud_control.leftLaneVisible, hud_control.rightLaneVisible,
                                               left_lane_warning, right_lane_warning,
-                                              ray_lka_icon=(self._ray_lfa_icon or 1) if self.CP.carFingerprint == CAR.KIA_RAY_EV else None))
+                                              ray_lka_icon=(self._ray_lfa_icon or 1) if self.CP.carFingerprint == CAR.KIA_RAY_EV else None,
+                                              aol_lka_icon=(self.classic_lfa_icon or 1) if self.classic_lfa_icon is not None else None))
     if _projection is not None and can_sends:
       if not is_blended(self.CP) and (self.CP.carFingerprint != CAR.KIA_RAY_EV or self._ray_lkas11_active):
         _projection.emit('hyundai.LKAS11', apply_torque, apply_steer_req, can_sends[-1])
@@ -365,7 +371,7 @@ class CarController(CarControllerBase):
         lfa_icon = 2 if CC.enabled or CC.latActive else 3 if disengaging else 0
         can_sends.append(hyundaican.create_blended_lfahda(self.packer, self.CAN, self.frame, lfa_icon))
       else:
-        can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled))
+        can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled, lfa_icon=self.classic_lfa_icon))
 
     # 5 Hz ACC options
     if self.frame % 20 == 0 and self.CP.openpilotLongitudinalControl and not self._ray_pedal and self.blended_longitudinal is None:

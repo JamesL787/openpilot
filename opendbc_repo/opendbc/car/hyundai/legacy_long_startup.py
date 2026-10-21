@@ -5,7 +5,8 @@ import time
 from opendbc.car import Bus
 from opendbc.can.parser import MAX_BAD_COUNTER
 from opendbc.car.hyundai.values import HyundaiFlags
-from opendbc.car.hyundai.ecu_startup import HyundaiECUStartup, Outcome
+from opendbc.car.hyundai.ecu_startup import Outcome
+from opendbc.car.hyundai.ecu_continuity import ContinuousECUStartup
 from opendbc.car.hyundai.g90_startup import G90Startup
 from opendbc.car.hyundai.legacy_long_aol import candidate, qualified, CARS, ordinary_word, aol_word
 from opendbc.car.hyundai.classic_scc_aol import qualified as stock_qualified, stock_word, aol_word as stock_aol_word
@@ -20,8 +21,11 @@ class LegacyLongStartup(G90Startup):
     expected = candidate(stock_cp, requested=True)
     if expected is None or expected.to_dict() != cp.to_dict():
       raise ValueError('Legacy LONG candidate differs from exact stock configuration')
-    HyundaiECUStartup.__init__(self, cp, callbacks, address=0x7d0, bus=0, label='Legacy LONG')
+    ContinuousECUStartup.__init__(self, cp, callbacks, address=0x7d0, bus=0, label='Legacy LONG')
     self.stock_cp = stock_cp.as_reader().as_builder()
+
+  def continuity_required(self):
+    return required(self.cp)
 
   def prepare(self, *, admission):
     super().prepare(admission=admission)

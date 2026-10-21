@@ -103,11 +103,14 @@ class TestBluetoothLarge(unittest.TestCase):
     tree = ast.parse(path.read_text())
     tree.body = [node for node in tree.body if not isinstance(node, (ast.Import, ast.ImportFrom))]
     self.app = App()
+    self.forgotten: list[str] = []
     scope: dict[str, Any] = {'Callable': object, 'Future': Future, 'ThreadPoolExecutor': Executor, 're': re, 'time': time, 'uuid': uuid,
                  'Widget': Widget, 'Scroller': Scroller, 'BluetoothOwner': Owner, 'BluetoothRejected': ValueError,
                  'BluetoothUnavailable': RuntimeError, 'gui_app': self.app, 'button_item': lambda *a, **kw: Row((a, kw)),
                  'text_item': lambda *a, **kw: Row((a, kw)), 'ConfirmDialog': Dialog, 'alert_dialog': Dialog,
-                 'DialogResult': type('Result', (), {'CONFIRM': 1}), 'Keyboard': Dialog}
+                 'DialogResult': type('Result', (), {'CONFIRM': 1}), 'Keyboard': Dialog,
+                 'setup_status': lambda: 'Ready to pair', 'large_phone_rows': lambda allowed: [],
+                 'forget_phone_keys': lambda allowed, address: self.forgotten.append(address)}
     tree.body.insert(0, ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0))
     exec(compile(ast.fix_missing_locations(tree), str(path), 'exec'), scope)
     self.panel_type = scope['BluetoothLarge']
@@ -178,6 +181,30 @@ class TestBluetoothLarge(unittest.TestCase):
     rows = self.panel._scroller.rows
     self.assertIn(('Headphones', 'Disconnect'), [row[0] for row in rows])
     self.assertIn(('Forget Headphones', 'Forget'), [row[0] for row in rows])
+
+  def test_forgetting_a_device_also_forgets_its_app_key(self):
+    self.panel.show_event()
+    self.panel.status = {'available': True, 'powered': True, 'parked': True}
+    self.panel._signature = repr((False, True, True, True, None, None, None, ()))
+    self.panel._forget('AA:BB')
+    self.assertEqual(self.forgotten, [])
+    self.assertIsNotNone(self.panel.queued)
+    self.panel.pending.set_result(self.panel.status)
+    self.panel._tick()
+    self.assertEqual(self.forgotten, [])
+    self.panel.pending.set_result(self.panel.status)
+    self.panel._tick()
+    self.assertEqual(self.forgotten, ['AA:BB'])
+
+  def test_failed_forget_keeps_its_app_key(self):
+    self.panel.show_event()
+    self.panel.status = {'available': True, 'powered': True, 'parked': True}
+    self.panel._forget('AA:BB')
+    self.panel.pending.set_result(self.panel.status)
+    self.panel._tick()
+    self.panel.pending.set_exception(ValueError('Bluetooth forget failed'))
+    self.panel._tick()
+    self.assertEqual(self.forgotten, [])
 
   def test_request_waits_for_snapshot_then_submits_async(self):
     self.panel.show_event()

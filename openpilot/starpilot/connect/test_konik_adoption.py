@@ -27,19 +27,20 @@ class ParamsFiles:
 
 
 def setup(tmp_path, *, konik=True, key=True):
-  params = ParamsFiles(tmp_path / 'params')
+  # not named params: these are vfn's raw files, not registered 7.0 keys (the params-registry audit keys on that name)
+  files = ParamsFiles(tmp_path / 'files')
   persist = tmp_path / 'persist'
   (persist / 'comma').mkdir(parents=True)
   (persist / 'comma' / 'dongle_id').write_text(COMMA + '\n')
   if key:
     (persist / 'comma' / 'id_rsa').write_text('FACTORY PRIVATE')
     (persist / 'comma' / 'id_rsa.pub').write_text('FACTORY PUBLIC')
-  params.put('DongleId', KONIK if konik else COMMA)   # vfn kept DongleId on the active server's id
+  files.put('DongleId', KONIK if konik else COMMA)   # vfn kept DongleId on the active server's id
   if konik:
-    params.put('KonikDongleId', KONIK)
-    params.put('StockDongleId', COMMA)
-  params.put('PrimeType', '0')
-  return params, tmp_path / 'cloud', persist
+    files.put('KonikDongleId', KONIK)
+    files.put('StockDongleId', COMMA)
+  files.put('PrimeType', '0')
+  return files, tmp_path / 'cloud', persist
 
 
 def test_a_vfn_konik_device_keeps_its_konik_identity(tmp_path):

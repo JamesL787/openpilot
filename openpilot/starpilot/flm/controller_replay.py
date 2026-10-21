@@ -1513,22 +1513,36 @@ def pack_primitive_snapshot(value):
   import pickle
   import zlib
 
-  def primitive(item):
-    if item is None or type(item) in (bool, int, float, str, bytes):
-      if type(item) is float and not math.isfinite(item):
+  # Pickle preserves shared primitive containers. Validate each actual
+  # container once rather than expanding a shared source graph repeatedly.
+  # This memo is local to this call; it never caches evidence or permissions.
+  checked = set()
+  active = set()
+
+  def primitive(item, recurse):
+    kind = type(item)
+    if item is None or kind in (bool, int, float, str, bytes):
+      if kind is float and not math.isfinite(item):
         raise ValueError('nonfinite job primitive')
       return
-    if type(item) in (tuple, list):
-      for child in item:
-        primitive(child)
+    if kind not in (tuple, list, dict):
+      raise ValueError('fit job requires primitives')
+    identity = id(item)
+    if identity in active:
+      raise ValueError('cyclic fit job primitive')
+    if identity in checked:
       return
-    if type(item) is dict and all(type(key) is str for key in item):
-      for child in item.values():
-        primitive(child)
-      return
-    raise ValueError('fit job requires primitives')
+    if kind is dict and any(type(key) is not str for key in item):
+      raise ValueError('fit job requires primitives')
+    active.add(identity)
+    try:
+      for child in (item.values() if kind is dict else item):
+        recurse(child, recurse)
+    finally:
+      active.remove(identity)
+    checked.add(identity)
 
-  primitive(value)
+  primitive(value, primitive)
   raw = pickle.dumps(value, protocol=5)
   if len(raw) > MAX_FIT_RAW_BYTES:
     raise ValueError('fit job raw byte bound')

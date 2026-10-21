@@ -18,6 +18,25 @@ SCREEN = {'version': 1, 'width': 1280, 'height': 720, 'margin_width': 0,
 
 
 class TestProjectionLayout(unittest.TestCase):
+  def test_jetlink_widget_migrates_and_preserves_placement_and_order(self):
+    document = default_layout(SCREEN)
+    expected = document['widgets'].pop('jetlink_status')
+    self.assertFalse(expected['enabled'])
+    document['widgetOrder'] = [key for key in layout_metadata(SCREEN)['widgetOrder'] if key != 'jetlink_status']
+    document['widgets']['current_speed']['x'] += 20
+    before = copy.deepcopy(document)
+    migrated = validate_layout(document, SCREEN)
+    self.assertEqual(document, before)
+    self.assertEqual(migrated['widgets']['jetlink_status'], expected)
+    self.assertEqual(migrated['widgetOrder'], [*before['widgetOrder'][:-1], 'jetlink_status', CAR_EXIT])
+    migrated['widgets']['jetlink_status'].update(enabled=True, x=700, y=500)
+    decoded = decode_layout(json.dumps(migrated).encode(), SCREEN)
+    base = default_document()
+    converted = projection_customization(decoded, base)
+    self.assertEqual(converted['layouts']['large']['jetlink_status'], migrated['widgets']['jetlink_status'])
+    self.assertNotIn('jetlink_status', base['layouts']['large'])
+    self.assertNotIn('jetlink_status', converted['layouts']['compact'])
+
   def test_exit_defaults_and_monitor_scaling_preserve_saved_appearance(self):
     document = default_layout(SCREEN)
     metadata = layout_metadata(SCREEN)
@@ -379,3 +398,43 @@ class TestProjectionLayout(unittest.TestCase):
       self.assertGreaterEqual(overlay['y'], card['y'] + 195)
       self.assertLessEqual(overlay['y'] + overlay['height'], document['canvas']['height'] - 30)
     self.assertLess(small['widgets'][NAV_MAP]['width'], wide['widgets'][NAV_MAP]['width'])
+
+
+class TestNowPlayingWidget(unittest.TestCase):
+  def test_default_card_is_on_with_a_background_opacity(self):
+    placement = default_layout(SCREEN)['widgets']['now_playing']
+    self.assertTrue(placement['enabled'])
+    self.assertEqual(placement['opacity'], 85)
+    self.assertFalse(placement['collapse'])
+    self.assertEqual(set(placement), {'x', 'y', 'enabled', 'opacity', 'collapse'})
+
+  def test_opacity_is_validated_and_old_layouts_gain_the_card(self):
+    document = default_layout(SCREEN)
+    self.assertEqual(validate_layout(copy.deepcopy(document), SCREEN)['widgets']['now_playing']['opacity'], 85)
+    for bad in (101, -1, 50.5, '50'):
+      broken = copy.deepcopy(document)
+      broken['widgets']['now_playing']['opacity'] = bad
+      with self.assertRaises(ValueError):
+        validate_layout(broken, SCREEN)
+    old = copy.deepcopy(document)
+    del old['widgets']['now_playing']
+    self.assertEqual(validate_layout(old, SCREEN)['widgets']['now_playing'], document['widgets']['now_playing'])
+
+  def test_collapse_on_pause_is_a_validated_option_older_layouts_default_off(self):
+    document = default_layout(SCREEN)
+    document['widgets']['now_playing']['collapse'] = True
+    self.assertTrue(validate_layout(copy.deepcopy(document), SCREEN)['widgets']['now_playing']['collapse'])
+    self.assertTrue(layout_metadata(SCREEN)['widgets']['now_playing']['collapseToggle'])
+    for bad in (1, 'on', None):
+      broken = copy.deepcopy(document)
+      broken['widgets']['now_playing']['collapse'] = bad
+      with self.assertRaises(ValueError):
+        validate_layout(broken, SCREEN)
+    old = copy.deepcopy(document)
+    del old['widgets']['now_playing']['collapse']
+    self.assertFalse(validate_layout(old, SCREEN)['widgets']['now_playing']['collapse'])
+
+  def test_card_stays_below_the_exit_control(self):
+    order = layout_metadata(SCREEN)['widgetOrder']
+    self.assertIn('now_playing', order)
+    self.assertEqual(order[-1], CAR_EXIT)

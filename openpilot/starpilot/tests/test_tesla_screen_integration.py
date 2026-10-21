@@ -48,6 +48,9 @@ def selfdrive_step(sd, published, native, previous_command, cp, safety, now):
   for service in sd.sm.data:
     if service in ('alertDebug', 'lateralManeuverPlan', 'laneChangeAssistWire'):
       continue
+    if service == 'pandaStates' and service in published:
+      peers.append(published[service])
+      continue
     if service == 'aolIntentWire':
       peers.append(published[service])
       continue

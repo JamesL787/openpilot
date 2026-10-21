@@ -1,3 +1,4 @@
+from openpilot.starpilot.aol.tests.classic_startup_test_helpers import prepared_classic_card
 
 
 
@@ -11,7 +12,6 @@ from unittest.mock import patch
 from opendbc.can import CANPacker
 from opendbc.car import structs
 from opendbc.car.hyundai.interface import CarInterface
-from opendbc.car.hyundai.radar_interface import RadarInterface
 from opendbc.car.hyundai.values import CAR
 from opendbc.car.hyundai.classic_long_aol import qualified as qualified_classic
 from opendbc.safety.tests.libsafety import libsafety_py
@@ -109,8 +109,8 @@ def _exercise_classic_join(withdrawal, monkeypatch, *, expect_retention):
       saved.put_bool('IsReleaseBranch', False, block=True)
       cp = classic_params(CAR.HYUNDAI_SONATA, lda=True)
       assert qualified_classic(cp) and not cp.pcmCruise and cp.openpilotLongitudinalControl
-      assert cp.lateralTuning.which() == 'torque' and not CarInterface.startup_required(cp)
-      card = card_module.Car(CI=CarInterface(cp), RI=RadarInterface(cp))
+      assert cp.lateralTuning.which() == 'torque' and CarInterface.startup_required(cp)
+      card = prepared_classic_card(cp)
       assert qualified_classic(card.CP, marked_only=True)
       assert card.CP.safetyConfigs[0].safetyParam == 0xC04 and card.CP.alternativeExperience == 32
       assert isinstance(card.aol_card_intent, ClassicLongCardIntent)
@@ -285,7 +285,8 @@ def _exercise_classic_join(withdrawal, monkeypatch, *, expect_retention):
 
 
         edge = card.aol_card_intent._last_latch_edge_ns
-        assert diagnostic_requests == [b'\x10\x03', b'\x28\x83\x01']
+        assert diagnostic_requests == []
+        assert card._classic_startup_requests == (b'\x10\x03', b'\x28\x83\x01')
         assert card.ci_initialized and saved.get_bool('ControlsReady')
         if not expect_retention:
           for _ in range(2):

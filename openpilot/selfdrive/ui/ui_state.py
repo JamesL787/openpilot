@@ -12,6 +12,7 @@ from opendbc.car.structs import car
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
 from openpilot.starpilot.schema_cache import get_cache, prewarm_cache_contracts
+from openpilot.starpilot.feature_runtime import enabled as feature_enabled
 from openpilot.starpilot.ui.display_preferences import AUTO, DisplayPreferences, read_preferences
 from openpilot.common.realtime import drop_realtime
 from openpilot.common.swaglog import cloudlog
@@ -128,6 +129,7 @@ class UIState:
         "navRoute",
         "carOutput",
         "carControl",
+        "aolAxisState",
         "slcState",
         "vehicleParameters",
         "testJoystick",
@@ -135,8 +137,9 @@ class UIState:
         *(["customReserved6", "cabinCameraState", "narrowRoadEncodeIdx", "wideRoadEncodeIdx", "cabinEncodeIdx"]
           if self.replay_clock is not None else []),
       ],
-      ignore_alive=["starpilotSelfdriveState", "starpilotLateralState"], ignore_valid=["starpilotSelfdriveState", "starpilotLateralState"],
-      ignore_avg_freq=["starpilotSelfdriveState", "starpilotLateralState"],
+      ignore_alive=["starpilotSelfdriveState", "starpilotLateralState", "aolAxisState"],
+      ignore_valid=["starpilotSelfdriveState", "starpilotLateralState", "aolAxisState"],
+      ignore_avg_freq=["starpilotSelfdriveState", "starpilotLateralState", "aolAxisState"],
     )
 
     self.prime_state = ProjectionPrimeState(self.params) if self.replay_clock is not None or isinstance(self.params, ProjectionParams) else PrimeState()
@@ -176,6 +179,7 @@ class UIState:
     self.panda_type: log.PandaState.PandaType = log.PandaState.PandaType.unknown
     self.personality: log.LongitudinalPersonality = log.LongitudinalPersonality.standard
     self.has_longitudinal_control: bool = False
+    self.aol_runtime: bool = False
     self.is_body: bool | None = False
     self.CP: car.CarParams | None = None
     self.light_sensor: float = -1.0
@@ -302,6 +306,7 @@ class UIState:
     self.started_frame = max(0, self.sm.frame - 1)
     self.CP = None
     self.has_longitudinal_control = False
+    self.aol_runtime = False
     self.ignition = False
     self.light_sensor = -1.0
     self._projection_params_at = None
@@ -434,6 +439,7 @@ class UIState:
       self.CP = None
       self.has_longitudinal_control = False
 
+    self.aol_runtime = bool(self.CP is not None and feature_enabled(self.params, self.CP, "aol", os.environ))
     self.recording_audio = self.params.get_bool("RecordAudio") and self.started
     self.is_metric = self.params.get_bool("IsMetric")
     self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)

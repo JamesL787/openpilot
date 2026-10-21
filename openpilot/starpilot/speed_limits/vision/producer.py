@@ -10,13 +10,14 @@ import uuid
 import numpy as np
 
 from openpilot.starpilot.speed_limits.vision.model import VisionModelCore, cv2
-from openpilot.starpilot.speed_limits.vision.observation import MODEL_ID, MAX_FRAME_AGE_NS, MAX_PAIR_SKEW_NS, clock_pair_ns
+from openpilot.starpilot.speed_limits.vision.observation import MODEL_ID, MAX_FRAME_AGE_NS, MAX_RESULT_AGE_NS, MAX_PAIR_SKEW_NS, clock_pair_ns
 from openpilot.starpilot.spot_monitor.preferences import enabled as vasm_enabled
 from openpilot.starpilot.vision_cpu import LITTLE_CORES, VISION_WITH_VASM
 
 UNAVAILABLE_RETRY_SECONDS = 1.0
 INFERENCE_INTERVAL_NS = 166_666_667
-BUSY_INFERENCE_INTERVAL_NS = 1_500_000_000
+# Retain a cooldown even when processing reaches the result-age budget.
+BUSY_INFERENCE_INTERVAL_NS = MAX_RESULT_AGE_NS * 3 // 2
 
 
 def _configure_process() -> None:
@@ -88,7 +89,8 @@ def _camera_frame(client) -> tuple[np.ndarray, int, int] | None:
 
 
 def _send(pm, *, session: str, status: str, stream: str, observed_ns: int = 0,
-          eof_boot_ns: int = 0, frame_id: int = 0, result: tuple[int, float, int, int] | None = None) -> None:
+          eof_boot_ns: int = 0, frame_id: int = 0, result: tuple[int, float, int, int] | None = None,
+          valid_until_ns: int | None = None) -> None:
   from openpilot.cereal import messaging
 
   msg = messaging.new_message('slcVisionObservation', valid=True)
@@ -106,7 +108,7 @@ def _send(pm, *, session: str, status: str, stream: str, observed_ns: int = 0,
     event.confidence = confidence
     event.supportCount = support
     event.episode = episode
-    event.validUntilMonoTime = observed_ns + MAX_FRAME_AGE_NS
+    event.validUntilMonoTime = observed_ns + MAX_RESULT_AGE_NS if valid_until_ns is None else valid_until_ns
   pm.send('slcVisionObservation', msg)
 
 
@@ -235,7 +237,10 @@ def main() -> None:
         continue
       last_inference_ns = pair[0]
       try:
-        result = core.observe(frame, now=pair[0] / 1e9)
+        # The observation belongs to the original camera frame, not the end of
+        # CPU inference. Completion never restamps an older camera observation.
+        source_observed_ns = eof_boot_ns - offset_ns
+        result = core.observe(frame, now=source_observed_ns / 1e9)
       except Exception as error:
         cloudlog.error('vision SLC inference unavailable: %s', error)
         _send(pm, session=session, status='unavailable', stream=stream)
@@ -253,7 +258,7 @@ def main() -> None:
                                       min(BUSY_INFERENCE_INTERVAL_NS, processing_ns * 5 // 2))
       if (observed_pair is None or
           abs((observed_pair[1] - observed_pair[0]) - offset_ns) > MAX_PAIR_SKEW_NS or
-          not 0 <= observed_pair[1] - eof_boot_ns <= MAX_FRAME_AGE_NS):
+          not 0 <= observed_pair[1] - eof_boot_ns <= MAX_RESULT_AGE_NS):
         core.reset()
         session = uuid.uuid4().hex
         last_clock_offset_ns = None
@@ -266,8 +271,12 @@ def main() -> None:
         last_unavailable = observed_pair[0] / 1e9
         _send(pm, session=session, status='unavailable', stream=stream)
         continue
+      # A confirmed sign remains the known road limit after it leaves view.
+      # Keep its actual support time separate from this fresh camera heartbeat.
+      sign_observed_ns = int(core.last_published_support_at * 1e9) if result is not None else source_observed_ns
       _send(pm, session=session, status='valid' if result is not None else 'unknown', stream=stream,
-            observed_ns=observed_pair[0], eof_boot_ns=eof_boot_ns, frame_id=frame_id, result=result)
+            observed_ns=sign_observed_ns, eof_boot_ns=eof_boot_ns, frame_id=frame_id, result=result,
+            valid_until_ns=source_observed_ns + MAX_RESULT_AGE_NS)
     except Exception as error:
       cloudlog.error('vision SLC camera unavailable: %s', error)
       _send(pm, session=session, status='unavailable', stream=stream)

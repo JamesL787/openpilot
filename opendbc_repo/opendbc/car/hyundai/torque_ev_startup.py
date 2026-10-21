@@ -10,6 +10,7 @@ import time
 from opendbc.car import Bus, make_tester_present_msg
 from opendbc.car.hyundai.canfd_stock_aol import qualified as stock_qualified
 from opendbc.car.hyundai.ecu_startup import HyundaiECUStartup, Outcome
+from opendbc.car.hyundai.ecu_continuity import commit_controller_tester
 from opendbc.car.hyundai.ev9_keeper import EV9Keeper as StartupKeeper
 from opendbc.car.hyundai.values import CAR, HyundaiFlags, HyundaiSafetyFlags
 from opendbc.car.hyundai.hyundaicanfd import CanBus
@@ -179,11 +180,10 @@ class TorqueEVStartup(HyundaiECUStartup):
       return True
     if not (configured and sources_current and control_current):
       return False
-    if not self.handed_off:
-      self.keeper.stop()  # Never join while holding sender callback lock.
-      self.check()
-      self.handed_off = True
     return True
+
+  def sent(self, frames, *, valid):
+    commit_controller_tester(self, frames, valid=valid)
 
   def _warm_stock(self, ci):
     deadline = self.clock() + 3.0

@@ -89,3 +89,38 @@ def test_unbuckled_fresh_pull_arms_without_stock_engagement():
   assert intent.allowed_latch
   intent.update(state(), now_ns=4)
   assert intent.allowed_latch and not source.cruiseState.enabled
+
+
+
+def test_known_reverse_neutral_pause_and_explicit_cancel_keep_the_physical_contract():
+  intent = owner()
+  intent.update(state(), now_ns=1)
+  pull(intent, 2)
+  assert intent.allowed_latch
+  for tick, gear in enumerate((structs.CarState.GearShifter.neutral, structs.CarState.GearShifter.reverse,
+                                structs.CarState.GearShifter.neutral), 3):
+    paused = state(gearShifter=gear)
+    intent.update(paused, now_ns=tick)
+    assert intent.allowed_latch and not intent.output(paused)[0]
+  intent.update(state(), now_ns=6)
+  assert intent.allowed_latch and intent.output(state())[0]
+  paused = state(button=structs.CarState.ButtonEvent.Type.cancel, pressed=True,
+                 gearShifter=structs.CarState.GearShifter.reverse)
+  intent.update(paused, now_ns=7)
+  intent.update(state(), now_ns=8)
+  assert not intent.allowed_latch
+
+
+def test_reverse_pull_does_not_acquire_a_new_arm_and_park_still_disarms():
+  intent = owner()
+  intent.update(state(), now_ns=1)
+  paused = state(button=structs.CarState.ButtonEvent.Type.setCruise, pressed=True,
+                 gearShifter=structs.CarState.GearShifter.reverse)
+  intent.update(paused, now_ns=2)
+  assert not intent.allowed_latch
+  intent.update(state(button=structs.CarState.ButtonEvent.Type.setCruise), now_ns=3)
+  pull(intent, 4)
+  assert intent.allowed_latch
+  intent.update(state(gearShifter=structs.CarState.GearShifter.park), now_ns=5)
+  intent.update(state(), now_ns=6)
+  assert not intent.allowed_latch

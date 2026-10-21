@@ -170,6 +170,50 @@ def test_lost_gps_marks_previous_position_stale(tmp_path):
     overlay.close()
 
 
+def test_phone_map_keeps_moving_between_delayed_fixes(tmp_path):
+  overlay = MapOverlay(tmp_path)
+  try:
+    data = MapInput(MapFix(*CENTER, 90., 20., 100.), source='phone')
+    positions = []
+    for frame in range(101):
+      overlay._advance(data, 100. + frame / 50)
+      assert overlay._world is not None
+      positions.append(overlay._world[0])
+    assert all(b > a for a, b in zip(positions, positions[1:], strict=False)), 'no one-second freeze between phone fixes'
+    assert overlay.status == 'live'
+  finally:
+    overlay.close()
+
+
+@pytest.mark.parametrize('speed, bearing', [(0., 90.), (20., None)])
+def test_phone_map_hold_does_not_invent_stationary_or_unknown_heading_movement(tmp_path, speed, bearing):
+  overlay = MapOverlay(tmp_path)
+  try:
+    data = MapInput(MapFix(*CENTER, bearing, speed, 100.), source='phone')
+    overlay._advance(data, 100.)
+    initial = overlay._world
+    for frame in range(1, 501):
+      overlay._advance(data, 100. + frame / 50)
+      assert overlay._world == initial
+      assert overlay.status == 'live'
+    overlay._advance(data, 110.001)
+    assert overlay.status == 'waiting'
+  finally:
+    overlay.close()
+
+
+@pytest.mark.parametrize('source, limit', [('phone', 2.5), ('comma', 1.), ('car', 1.)])
+def test_map_prediction_is_bounded_separately_from_fix_hold(tmp_path, source, limit):
+  from openpilot.starpilot.navigation.road_tiles import meters_per_tile
+  overlay = MapOverlay(tmp_path)
+  try:
+    overlay._advance(MapInput(MapFix(*CENTER, 90., 20., 100.), source=source), 109.)
+    x, y = world_xy(*CENTER)
+    assert overlay._world == pytest.approx((x + 20. * limit / meters_per_tile(CENTER[0]), y))
+  finally:
+    overlay.close()
+
+
 # ---------------------------------------------------------------- GL
 
 def render_overlay(rl, tmp_path, bearing, width=560, height=420, opacity=1.0, route=True, steps=40):
@@ -329,6 +373,8 @@ def test_map_feed_waiting_tracks_satellites_and_keeps_navigation_requested(monke
   clock[0] += 75
   data = feed.read(navigation_sm)
   assert (data.navigation_active, data.satellites, data.gps_wait_seconds) == (True, 3, 75)
+  assert data.destination == 'Home'
+  assert feed.read(navigation_sm, destination='Work').destination == 'Work'
   assert feed.read(navigation_sm, navigation_requested=False).navigation_active is False
   sm.put('starpilotCarState', int(clock[0] * 1e9))
   data = feed.read(navigation_sm)
@@ -373,6 +419,30 @@ def test_gps_status_card_is_inside_bottom_of_map(tmp_path, active, satellites, s
     overlay.close()
 
 
+def test_gps_source_chip_is_solid_and_inside_the_widget(tmp_path):
+  import pyray as rl
+  fonts = Mock()
+  fonts.measure.side_effect = lambda text, _role, size: NS(width=len(text) * size * .65, height=size * 1.25)
+  overlay = MapOverlay(tmp_path, fonts=fonts)
+  try:
+    rect = rl.Rectangle(100, 200, 560, 420)
+    for source, label in (("comma", "Comma GPS"), ("car", "Car GPS"), ("phone", "Phone GPS")):
+      overlay._input = MapInput(MapFix(*CENTER, 0, 0, 100), source=source)
+      fonts.draw.reset_mock()
+      with patch('pyray.draw_rectangle_rounded') as chip, patch('pyray.draw_rectangle_rounded_lines_ex'):
+        overlay._draw_source_chip(rect)
+      assert [call.args[0] for call in fonts.draw.call_args_list] == [label]
+      assert chip.call_args.args[3].a == 255 and fonts.draw.call_args.args[5].a == 255
+      box = chip.call_args.args[0]
+      assert rect.x < box.x and box.x + box.width < rect.x + rect.width and box.y >= rect.y
+    fonts.draw.reset_mock()
+    overlay._input = MapInput(MapFix(*CENTER, 0, 0, 100))
+    overlay._draw_source_chip(rect)
+    assert not fonts.draw.called
+  finally:
+    overlay.close()
+
+
 def test_starting_navigation_overlay_until_route_is_drawn(tmp_path):
   import pyray as rl
   fonts = Mock()
@@ -381,9 +451,22 @@ def test_starting_navigation_overlay_until_route_is_drawn(tmp_path):
   try:
     rect = rl.Rectangle(100, 200, 560, 420)
     overlay._input = MapInput(MapFix(*CENTER, 0, 0, 100), navigation_active=True)
-    with patch('pyray.draw_rectangle_rounded'):
-      overlay._draw_starting_navigation(rect, 1.0)
+    with patch('pyray.draw_rectangle_rounded') as card:
+      overlay._draw_starting_navigation(rect)
     assert [call.args[0] for call in fonts.draw.call_args_list] == ['Starting navigation', 'Finding your route…']
+    assert card.call_args.args[3].a == 255, 'solid whatever the map opacity'
+    assert all(call.args[5].a == 255 for call in fonts.draw.call_args_list)
+    fonts.draw.reset_mock()
+    overlay._input = MapInput(MapFix(*CENTER, 0, 0, 100), navigation_active=True, destination='Work')
+    with patch('pyray.draw_rectangle_rounded'):
+      overlay._draw_starting_navigation(rect)
+    assert [call.args[0] for call in fonts.draw.call_args_list] == ['Starting navigation', 'to Work', 'Finding your route…']
+    fonts.draw.reset_mock()
+    overlay._input = MapInput(MapFix(*CENTER, 0, 0, 100), navigation_active=True, destination='A' * 40)
+    overlay._route_world = np.zeros((2, 2))
+    with patch('pyray.draw_rectangle_rounded'):
+      overlay._draw_starting_navigation(rect)
+    assert [call.args[0] for call in fonts.draw.call_args_list] == ['Starting navigation', 'to ' + 'A' * 31 + '…']
   finally:
     overlay.close()
 
@@ -400,11 +483,38 @@ def test_lost_route_only_restores_starting_overlay_after_ten_seconds(tmp_path):
       overlay._track_route(data, clock[0])
       return overlay._starting_navigation()
     assert step(MapInput(fix, (), True))            # never had a route: show immediately
+    clock[0] += 5
     assert not step(MapInput(fix, route, True))
     clock[0] += 5
     assert not step(MapInput(fix, (), True))        # brief gap: no flash
     clock[0] += 6
     assert step(MapInput(fix, (), True))
+  finally:
+    overlay.close()
+
+
+def test_starting_overlay_stays_up_briefly_when_the_route_loads_fast(tmp_path):
+  clock = [100.0]
+  overlay = MapOverlay(tmp_path, clock=lambda: clock[0])
+  try:
+    route = tuple((CENTER[0] + i * 1e-4, CENTER[1]) for i in range(4))
+    fix = MapFix(*CENTER, 0, 0, 100)
+    def step(data):
+      overlay._input = data
+      overlay._route(data.route)
+      overlay._track_route(data, clock[0])
+      return overlay._starting_navigation()
+    assert step(MapInput(fix, (), True))
+    clock[0] += .5
+    assert step(MapInput(fix, route, True)), 'route already loaded, still readable'
+    clock[0] += 4.4
+    assert step(MapInput(fix, route, True))
+    clock[0] += .2
+    assert not step(MapInput(fix, route, True))
+    assert not step(MapInput(fix, (), False))
+    clock[0] += 1
+    assert step(MapInput(fix, (), True)), 'a new navigation starts the card again'
+    assert not step(MapInput(fix, (), False)), 'ending navigation drops it at once'
   finally:
     overlay.close()
 
@@ -583,3 +693,28 @@ def test_culled_guidance_draws_the_same_inside_the_canvas():
   assert len(core) < len(full) / 3, "most of the route is off this canvas"
   inside = (full[:, 1] > 0) & (full[:, 1] < 1024)
   assert np.isin(full[inside].view(np.complex64), core.view(np.complex64)).all(), "the on-canvas strip is unchanged"
+
+
+def test_map_feed_subscribes_to_registered_gps_carriers(monkeypatch):
+  import sys
+  from openpilot.cereal.services import SERVICE_LIST
+  from openpilot.starpilot.ui.onroad_map import MapFeed
+
+  subscriptions = []
+
+  def submaster(services):
+    assert len(services) == len(set(services))
+    assert set(services) <= SERVICE_LIST.keys()
+    assert {"gpsLocationExternal", "gpsLocation", "starpilotCarState"} <= set(services)
+    assert "phoneGps" not in services
+    assert services.count("starpilotNavigation") == 1
+    subscriptions.extend(services)
+    return NS()
+
+  messaging = NS(SubMaster=submaster)
+  from openpilot import cereal
+  monkeypatch.setattr(cereal, "messaging", messaging, raising=False)
+  monkeypatch.setitem(sys.modules, "openpilot.cereal.messaging", messaging)
+  feed = MapFeed(acquisition=NS())
+  assert feed.sm is not None
+  assert subscriptions

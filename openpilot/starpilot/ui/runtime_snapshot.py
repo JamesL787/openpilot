@@ -21,6 +21,7 @@ from openpilot.starpilot.curve_speed.status import observation as curve_observat
 from openpilot.starpilot.conditional_mode.policy import ModeChoice
 from openpilot.starpilot.conditional_mode.manual import TRAFFIC_MODE_ACTION, read_button_map
 from openpilot.starpilot.feature_capabilities import lateral_supported, longitudinal_supported
+from openpilot.starpilot.aol.runtime import current_axis
 from openpilot.starpilot.conditional_mode.projection import paired_clocks_ns
 from openpilot.starpilot.conditional_mode.runtime_settings import ConditionalSettingsOwner
 from openpilot.starpilot.conditional_mode.status import settings_fingerprint
@@ -39,6 +40,7 @@ from openpilot.tools.replay.display_clock import BOOT_TIME_SERVICES
 from opendbc.car.structs import car as car_schema
 from openpilot.starpilot.ui.device_state import DeviceRequest, DeviceState
 from openpilot.starpilot.ui.home_state import HomeMode, HomeState
+from openpilot.starpilot.models.jetlink_status import JetlinkStatusFeed
 from openpilot.starpilot.ui.onroad_state import conditional_lead_from_message
 from openpilot.starpilot.ui.onroad_state import (AlertSize, BorderSignals, ObservationKind, OnroadAlert,
                                                 OnroadState, SpeedLimitObservation, is_personality_notice, speed_limit_from_message)
@@ -290,7 +292,7 @@ class RuntimeSnapshotAdapter:
   """Build one coherent display snapshot after each UIState.update()."""
 
   def __init__(self, ui_state: Any, galaxy_access: GalaxyAccessOwner | None = None,
-               bluetooth_powered: Callable[[], bool] | None = None,
+               bluetooth_powered: Callable[[], str | bool] | None = None,
                *, mono_clock: Callable[[], int] = time.monotonic_ns,
                boot_clock: Callable[[], int] = _boot_time_ns):
     self.ui_state = ui_state
@@ -302,6 +304,7 @@ class RuntimeSnapshotAdapter:
     # A second screen (Android Auto) swaps in its own display choices before anything uses them.
     self.appearance_override: Callable[[OnroadAppearance], OnroadAppearance] | None = None
     self._last_mode: ShellMode | None = None
+    self._jetlink = JetlinkStatusFeed()
     self._onroad_ancillary: tuple[int, tuple[bool, int, bool], ShellSnapshot] | None = None
     self._onroad_view_ancillary: tuple[int, tuple[bool, int, bool], ShellSnapshot] | None = None
     self._conditional = ConditionalDisplayProjector()
@@ -631,9 +634,12 @@ class RuntimeSnapshotAdapter:
     )
     display_lat_active = bool(display_control.latActive) if display_control is not None else False
     display_long_active = bool(display_control.longActive) if display_control is not None else False
+    long_engaged = bool(display_selfdrive is not None and getattr(display_selfdrive, 'enabled', False))
+    if getattr(ui, 'aol_runtime', False):
+      axis = current_axis(sm, now_ns=now_ns) if started and sm.recv_frame.get('aolAxisState', 0) > after else None
+      long_engaged = long_engaged and bool(axis is not None and axis.nativeAcknowledged and axis.desiredLongitudinal)
     longitudinal_overridden = bool(
-      display_car_valid and getattr(display_car, 'gasPressed', False) and
-      display_selfdrive is not None and getattr(display_selfdrive, 'enabled', False) and
+      display_car_valid and getattr(display_car, 'gasPressed', False) and long_engaged and
       str(getattr(display_selfdrive, 'state', '')) == 'overriding' and
       cp is not None and cp.openpilotLongitudinalControl)
     developer_metrics = self._developer_metrics.observe(
@@ -661,9 +667,9 @@ class RuntimeSnapshotAdapter:
                          wheel_acceleration=observe_wheel_acceleration(display_car),
                          lateral_active=display_lat_active, longitudinal_active=display_long_active,
                          longitudinal_overridden=longitudinal_overridden,
-                         driver_override_active=bool(display_car_valid and
-                           (display_lat_active or display_long_active or longitudinal_overridden) and
-                           (getattr(display_car, 'gasPressed', False) or getattr(display_car, 'steeringPressed', False))),
+                         driver_override_active=bool(display_car_valid and (
+                           display_lat_active and getattr(display_car, 'steeringPressed', False) or
+                           (display_long_active or longitudinal_overridden) and getattr(display_car, 'gasPressed', False))),
                          stock_cruise_active=stock_cruise,
                          slc_system_long_available=system_long,
                          curve=curve, show_curve_status=_flag(params, "ShowCSCStatus"),
@@ -698,9 +704,13 @@ class RuntimeSnapshotAdapter:
       ping = int(device.lastAthenaPingTime)
       connection = "ONLINE" if 0 < ping <= now_ns and now_ns - ping < 80_000_000_000 else "OFFLINE"
     try:
-      bluetooth = self.bluetooth_powered() is True if mode == ShellMode.HOME and self.bluetooth_powered is not None else False
+      value = self.bluetooth_powered() if mode == ShellMode.HOME and self.bluetooth_powered is not None else ""
+      bluetooth = value if value in ("off", "on", "connected") else "on" if value is True else "off" if value is False else ""
     except (OSError, RuntimeError, ValueError):
-      bluetooth = False
+      bluetooth = ""
+    self._jetlink.set_enabled(mode == ShellMode.HOME)
+    jetlink_port = self._jetlink.snapshot().port
+    jetlink = "connected" if jetlink_port == "connected" else "plugged" if jetlink_port == "device" else "off"
     gpu_present = bool(device is not None and getattr(device, "chestnutPresent", False) and
                        not getattr(ui, "usb_unknown", False))
     gpu_active = bool(gpu_present and getattr(getattr(ui, "chestnut_state", None), "value", None) == "active")
@@ -718,7 +728,8 @@ class RuntimeSnapshotAdapter:
                      vehicle_online=panda_connected, connection=connection,
                      recording_audio=bool(ui.recording_audio), bluetooth=bluetooth,
                      gpu_present=gpu_present, gpu_active=gpu_active, branch=_text(params, "GitBranch"),
-                     gpu_state=getattr(getattr(ui, "chestnut_state", None), "value", "disconnected"))
+                     gpu_state=getattr(getattr(ui, "chestnut_state", None), "value", "disconnected"),
+                     jetlink=jetlink)
 
     settings_pages = (Destination.STAR, Destination.DEVICE, Destination.NETWORK, Destination.SOFTWARE, Destination.TOGGLES,
                       Destination.DRIVING_CONTROLS, Destination.SOUNDS, Destination.APPEARANCE,

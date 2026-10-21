@@ -169,6 +169,7 @@ static bool gm_aol_profile_word(uint16_t word) {
     case 0x1003U: case 0x1403U:
     case 0x203U: case 0x603U: case 0xA03U: case 0xE03U:
     case 0xC170U: case 0xC173U:
+    case 0xC163U:
     case 7U: case 20U:
     case 0x4207U: case 0x4607U: case 0x4A07U: case 0x4E07U:
     case 0x4007U:

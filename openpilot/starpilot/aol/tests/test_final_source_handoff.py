@@ -54,6 +54,10 @@ def test_final_handoff_full_owner(mode, condition):
       assert command.longActive == (mode == 'ordinary')
       deadline = original.validUntilMonoTime
       now = [BASE + 29_900_000]
+      def empty_control_receive(timeout):
+        assert timeout == 0
+        actual_update_msgs(now[0] / 1e9, [])
+      cleanup.enter_context(mock.patch.object(controls.sm, 'update', side_effect=empty_control_receive))
       queued, wires = deque(), deque()
       decisions, samples, states, deferred_proofs = [], [], [], []
       original_receive = messaging.recv_one_or_none

@@ -16,7 +16,7 @@ from opendbc.car.gm.values import (volt_cc_pedal_profile, CAR, CarControllerPara
                                    ORDINARY_CC_CAR, ORDINARY_CC_WORD, SILVERADO_CC_PEDAL_WORDS,
                                    is_silverado_cc_pedal_profile, is_conventional_cc_pedal_profile,
                                    CAMERA_STOCK_CAR, ORDINARY_CAMERA_CAR, ORDINARY_CAMERA_ALPHA_CAR, camera_acc_pedal_profile,
-                                       VOLT_BSM_CAR, BOLT_CC_WORDS, is_bolt_cc_profile, BOLT_PEDAL_REMOVED_WORDS,
+                                       VOLT_BSM_CAR, VOLT_CC_F1_WORD, BOLT_CC_WORDS, is_bolt_cc_profile, BOLT_PEDAL_REMOVED_WORDS,
                                    is_bolt_pedal_removed_profile, is_bolt_present_no_acc_pedal_profile)
 from opendbc.car.gm.values import (malibu_hybrid_profile, MALIBU_HYBRID_SOURCES,
                                    is_volt_sdgm_accepted_envelope, volt_sdgm_accepted_accel_max)
@@ -229,14 +229,23 @@ class CarInterface(CarInterfaceBase):
 
     if candidate == CAR.CHEVROLET_VOLT_CC:
       # Require the complete source layout for either automatic or manual identity.
-      required = {0xbe: 6, 0x3d1: 8, 0xc9: 8, 0x1e1: 7, 0x1f5: 8, 0x34a: 5, 0x1c4: 8, 0xbd: 7}
-      admitted = not is_release and all(fingerprint[CanBus.POWERTRAIN].get(addr) == size for addr, size in required.items())
+      pt = fingerprint[CanBus.POWERTRAIN]
+      f1 = 0xBE not in pt and pt.get(0xF1) == 6
+      required = {0xF1 if f1 else 0xBE: 6, 0x3d1: 8, 0xc9: 8, 0x1e1: 7, 0x1f5: 8, 0x34a: 5, 0x1c4: 8, 0xbd: 7}
+      if f1:
+        # Admit the recorded no-ACC source graph, never a broken pedal/camera graph.
+        required.update({0x184: 8, 0xD3: 2, 0x130: 1, 0x17D: 6, 0x210: 4, 0x236: 5})
+      f1_layout = (not any(address in pt for address in (0x201, 0x2FF, 0x320)) and
+                   not any(address in fingerprint[CanBus.CAMERA] for address in (0x180, 0x320, 0x370)) and
+                   not fingerprint[CanBus.OBSTACLE])
+      admitted = (not is_release and (not f1 or f1_layout) and
+                  all(fingerprint[CanBus.POWERTRAIN].get(addr) == size for addr, size in required.items()))
       ret.networkLocation = NetworkLocation.gateway
       ret.radarUnavailable = True
       ret.alphaLongitudinalAvailable = False
       ret.openpilotLongitudinalControl = admitted
       ret.pcmCruise = not admitted
-      ret.flags = GMFlags.CC_LONG.value if admitted else 0
+      ret.flags = int(GMFlags.CC_LONG | (GMFlags.NO_ACCELERATOR_POS_MSG if f1 else 0)) if admitted else 0
       ret.minEnableSpeed = 24 * CV.MPH_TO_MS
       ret.minSteerSpeed = 7 * CV.MPH_TO_MS
       ret.longitudinalActuatorDelay = 1.0
@@ -245,7 +254,7 @@ class CarInterface(CarInterfaceBase):
       if not admitted:
         ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.noOutput)]
       else:
-        ret.safetyConfigs[0].safetyParam = int(GMSafetyFlags.EV | GMSafetyFlags.NO_ACC)
+        ret.safetyConfigs[0].safetyParam = VOLT_CC_F1_WORD if f1 else int(GMSafetyFlags.EV | GMSafetyFlags.NO_ACC)
 
     elif candidate in CC_GATEWAY_STOCK_CAR:
       # Start with stock PCM ownership; qualified button-control owners override below.

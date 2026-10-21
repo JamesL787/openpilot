@@ -115,16 +115,21 @@ def paired_clocks_ns() -> tuple[int, int, int] | None:
   boot_clock = getattr(time, 'CLOCK_BOOTTIME', None)
   if boot_clock is None:
     return None
-  try:
-    before = time.monotonic_ns()
-    boot = time.clock_gettime_ns(boot_clock)
-    after = time.monotonic_ns()
-  except OSError:
-    return None
-  skew = after - before
-  if not 0 <= skew <= CLOCK_PAIR_MAX_SKEW_NS:
-    return None
-  return (before + after) // 2, boot, skew
+  for _ in range(2):
+    try:
+      before = time.monotonic_ns()
+      boot = time.clock_gettime_ns(boot_clock)
+      after = time.monotonic_ns()
+    except OSError:
+      return None
+    skew = after - before
+    if skew < 0:
+      return None
+    if skew <= CLOCK_PAIR_MAX_SKEW_NS:
+      return (before + after) // 2, boot, skew
+    # Scheduling can interrupt the sampler itself. Discard that measurement
+    # and take one new pair; never widen the error bound or reuse a prior pair.
+  return None
 
 
 def _number(value: object, *, low: float = 0.0, high: float = 500.0) -> float | None:

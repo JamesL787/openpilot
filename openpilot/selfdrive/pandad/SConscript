@@ -31,3 +31,6 @@ if arch != "Darwin":
       '-Wl,--wrap=_ZN9PubMaster4sendEPKcR14MessageBuilder',
     ])
     power_test.Program('tests/test_peripheral_state', ['tests/test_peripheral_state.cc', power_test.Object('tests/peripheral_panda_safety.o', 'panda_safety.cc')], LIBS=[panda] + libs)
+
+  if GetOption('extras') or any(target.startswith('openpilot/selfdrive/pandad/tests/test_preap_pedal_startup') for target in COMMAND_LINE_TARGETS):
+    env.Program('tests/test_preap_pedal_startup', ['tests/test_preap_pedal_startup.cc', env.Object('tests/preap_panda_safety.o', 'panda_safety.cc')], LIBS=[panda] + libs + ['dl'])

@@ -13,6 +13,7 @@ from openpilot.common.params import Params
 from openpilot.system.ubloxd.ubx import Ubx
 from openpilot.system.ubloxd.gps import Gps
 from openpilot.system.ubloxd.glonass import Glonass
+from openpilot.starpilot.gps.car_external import CarGpsExternal
 
 
 SECS_IN_MIN = 60
@@ -514,9 +515,19 @@ def main():
   sock = messaging.sub_sock('ubloxRaw', timeout=100, conflate=False)
   params = Params()
   last_position_save = float('-inf')
+  car_gps = messaging.SubMaster(['starpilotCarState'])
+  car_external = CarGpsExternal()
 
   while True:
     msg = messaging.recv_one(sock)
+    car_gps.update(0)
+    fallback = car_external.select(car_gps, time.monotonic_ns())
+    if fallback is not None:
+      payload = fallback.to_bytes()
+      pm.send('gpsLocationExternal', payload)
+      if time.monotonic() - last_position_save > 60:
+        params.put('LastGPSPosition', payload)
+        last_position_save = time.monotonic()
     if msg is None:
       continue
 
@@ -531,6 +542,10 @@ def main():
       if not res:
         continue
       service, dat = res
+      if service == 'gpsLocationExternal':
+        dat = car_external.select(car_gps, time.monotonic_ns(), dat)
+        if dat is None:
+          continue
       pm.send(service, dat)
 
       if service == 'gpsLocationExternal' and dat.gpsLocationExternal.hasFix and time.monotonic() - last_position_save > 60:

@@ -9,7 +9,7 @@ hyundai_checksum = mk_crc8_fun(CRC8J1850, init_crc=0xFD, xor_out=0xDF)
 def create_lkas11(packer, frame, CP, apply_torque, steer_req,
                   torque_fault, lkas11, sys_warning, sys_state, enabled,
                   left_lane, right_lane,
-                  left_lane_depart, right_lane_depart, ray_lka_icon=None):
+                  left_lane_depart, right_lane_depart, ray_lka_icon=None, aol_lka_icon=None):
   values = {s: lkas11[s] for s in [
     "CF_Lkas_LdwsActivemode",
     "CF_Lkas_LdwsSysState",
@@ -55,6 +55,8 @@ def create_lkas11(packer, frame, CP, apply_torque, steer_req,
     values["CF_Lkas_FcwOpt_USM"] = 2 if enabled else 1
     if CP.carFingerprint == CAR.KIA_RAY_EV and ray_lka_icon is not None:
       values["CF_Lkas_FcwOpt_USM"] = ray_lka_icon
+    if aol_lka_icon is not None:
+      values["CF_Lkas_FcwOpt_USM"] = aol_lka_icon
 
     # SysWarning 4 = keep hands on wheel
     # SysWarning 5 = keep hands on wheel (red)
@@ -123,9 +125,9 @@ def create_clu11(packer, frame, clu11, button, CP):
   return packer.make_can_msg("CLU11", bus, values)
 
 
-def create_lfahda_mfc(packer, enabled):
+def create_lfahda_mfc(packer, enabled, *, lfa_icon=None):
   values = {
-    "LFA_Icon_State": 2 if enabled else 0,
+    "LFA_Icon_State": (2 if enabled else 0) if lfa_icon is None else lfa_icon,
   }
   return packer.make_can_msg("LFAHDA_MFC", 0, values)
 

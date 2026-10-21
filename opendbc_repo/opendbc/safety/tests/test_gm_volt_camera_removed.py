@@ -109,7 +109,7 @@ class TestGmVoltCameraRemoved(unittest.TestCase):
       self.assertEqual(self.safety.safety_fwd_hook(0, 0x184), -1)
       self.assertEqual(self.safety.safety_fwd_hook(2, 0x180), -1)
       for address in (0x315, 0x2CB, 0x370, 0x2CD):
-        self.assertEqual(self.safety.safety_fwd_hook(2, address), -1 if word == 0xC151 else 0)
+        self.assertEqual(self.safety.safety_fwd_hook(2, address), -1)
     self.mode(0xC150)
     self.physical()
     for middle in (5, 0x4007, 0x1005, 4):

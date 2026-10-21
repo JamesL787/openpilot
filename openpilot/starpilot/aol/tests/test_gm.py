@@ -151,6 +151,8 @@ def _configurations():
 
 
 def configurations():
+  from opendbc.car.gm.tests.test_volt_cc_f1 import params as f1_params
+  yield f1_params()
   yield silverado_stock_params()
   for cp in _configurations():
     yield cp

@@ -105,7 +105,8 @@ class RouteInventoryTest(unittest.TestCase):
   def test_long_selected_route_and_unrelated_inventory_limits(self):
     for number in range(65):
       self.segment(number)
-    self.assertTrue(DriveHistory(self.root).snapshot()['scanIncomplete'])
+    history = DriveHistory(self.root, max_segments_per_route=64, max_segments=64)
+    self.assertTrue(history.snapshot()['scanIncomplete'])
     self.assertEqual(self.catalog.detail(ROUTE)['segmentCount'], 65)
     with self.catalog.lease(ROUTE) as lease:
       self.assertTrue(lease.current())

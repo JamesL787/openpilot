@@ -38,6 +38,8 @@ class TestEffectiveStatus(unittest.TestCase):
     daemon.events = Events()
     daemon.events_prev = []
     daemon.AM = AlertManager()
+    from openpilot.starpilot.aol.runtime import AxisDecision
+    daemon.aol_axis_decision = AxisDecision()
     daemon.aol_replay = False
     daemon.conditional_replay = True
     daemon.conditional_ack_session = SESSION

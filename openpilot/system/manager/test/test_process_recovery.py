@@ -119,6 +119,32 @@ class TestProcessRecovery(unittest.TestCase):
     self.assertIsNot(p.proc, old)
     self.assertTrue(old.joined)
 
+  def test_learner_recovers_with_backoff_only_while_onroad(self):
+    from openpilot.system.manager.process_config import managed_processes
+    configured = managed_processes["steerlearnerd"]
+    self.assertTrue(configured.restart_on_exit)
+    p = process.PythonProcess(configured.name, configured.module, configured.should_run,
+                              restart_on_exit=configured.restart_on_exit)
+    self.step(p)
+    old = p.proc
+    self.assertIsNotNone(old)
+    assert isinstance(old, Child)
+    old.exitcode = 1
+    self.step(p)
+    self.assertIs(p.proc, old)
+    self.now += 1.01
+    self.step(p)
+    self.assertIsNot(p.proc, old)
+    self.assertTrue(old.joined)
+    assert isinstance(p.proc, Child)
+    p.proc.exitcode = 1
+    self.step(p)
+    self.step(p, started=False)
+    self.now += 60
+    self.step(p, started=False)
+    self.assertIsNone(p.proc)
+    self.assertEqual(p.restart_at, 0)
+
   def test_boot_racing_processes_restart(self):
     from openpilot.system.manager.process_config import procs
     restarting = {p.name for p in procs if getattr(p, "restart_on_exit", False)}

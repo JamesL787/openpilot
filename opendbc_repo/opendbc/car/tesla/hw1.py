@@ -16,7 +16,7 @@ def get_hw1_params(ret, fingerprint, alpha_long):
   ret.steerActuatorDelay = .1
   ret.steerAtStandstill = True
   ret.steerControlType = structs.CarParams.SteerControlType.angle
-  ret.radarUnavailable = 0x301 not in fingerprint.get(1, {})
+  ret.radarUnavailable = fingerprint.get(1, {}).get(0x301) != 8
   ret.alphaLongitudinalAvailable = True
   ret.openpilotLongitudinalControl = alpha_long
   ret.pcmCruise = not alpha_long

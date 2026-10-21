@@ -46,9 +46,9 @@ def fixture(identity, removed=False, metric=False, alpha=False, present=False):
   return cp, ci, CANPacker(DBC[identity][Bus.pt])
 
 
-def feed(ci, packer, now, counter=0, gas=False, active=True, speed=20, stock=15, brake=False, regen=False, camera=True):
+def feed(ci, packer, now, counter=0, gas=False, active=True, speed=20, stock=15, brake=False, regen=False, camera=True, eps_status=0):
   vals = {
-    'PSCMStatus': {},
+    'PSCMStatus': {'LKATorqueDeliveredStatus': eps_status},
     'ECMCruiseControl': {'CruiseActive': int(active), 'CruiseSetSpeed': stock * 3.6},
     'ECMEngineStatus': {'CruiseMainOn': 1, 'BrakePressed': int(brake)},
     'AcceleratorPedal2': {'AcceleratorPedal2': 30 if gas else 0},

@@ -1,5 +1,5 @@
-"""Compatibility policy for qualified Bosch Honda AOL, the Nidec interceptor Clarity (Night Star port) and two recorded
-GM configurations; native authority stays separate.
+"""Compatibility policy for recorded diagnostic configurations, including the Nidec interceptor Clarity (Night Star
+port); native authority stays separate.
 
 Register divergence remains a protected-register diagnostic, not a benign-fault
 claim. Raw fault reports are retained. Every unlisted configuration/bit blocks.
@@ -25,6 +25,16 @@ def _diagnostic_mask(cp):
       # requires a marked, supported, single-panda Bosch AOL configuration.
       # Other interrupt rates and mixed faults remain blocking.
       return (1 << 3) if int(cp.flags) & int(HondaFlags.BOSCH) and qualified(cp, marked_only=True) else 0
+    if cp.brand == 'hyundai':
+      from opendbc.car.hyundai.values import CAR, HyundaiFlags
+      if cp.carFingerprint != CAR.HYUNDAI_SONATA_HYBRID:
+        return 0
+      from opendbc.car.hyundai.classic_scc_aol import qualified
+      recorded_flags = (HyundaiFlags.HYBRID | HyundaiFlags.SEND_LFA | HyundaiFlags.USE_FCA |
+                        HyundaiFlags.MANDO_RADAR | HyundaiFlags.CHECKSUM_CRC8 | HyundaiFlags.HAS_LDA_BUTTON)
+      return (1 << 3) if (int(cp.flags) == int(recorded_flags) and
+                         len(cp.safetyConfigs) == 1 and int(cp.safetyConfigs[0].safetyParam) == 0xC02 and cp.alternativeExperience == 32 and
+                         qualified(cp, marked_only=True)) else 0
     from opendbc.car.gm.aol import qualified_gm
     from opendbc.car.gm.values import CAR, is_volt_sdgm_profile, is_bolt_present_no_acc_pedal_profile
     if cp.brand != 'gm' or len(cp.safetyConfigs) != 1:

@@ -204,7 +204,7 @@ class TestFastAdapter(unittest.TestCase):
       source = Mock()
       source.allowed.return_value = True
       source.effective.return_value = False
-      source.status.side_effect = lambda source=source: {'allowed': source.allowed(), 'reason': None}
+      source.status.side_effect = lambda *, updating_offroad=False, source=source: {'allowed': source.allowed(), 'reason': None}
       source.update_status.side_effect = lambda manager_offroad, source=source: PhysicalSource.update_status(source, manager_offroad)
       source.update_ready.side_effect = lambda manager_offroad, source=source: PhysicalSource.update_ready(source, manager_offroad)
       physical = ModuleType('openpilot.starpilot.drive_state.evidence')
@@ -225,6 +225,7 @@ class TestFastAdapter(unittest.TestCase):
         self.assertEqual(updater.fast_update('SecretGoodStarPilot', 'b' * 40), 'reboot-requested')
       source.close.assert_called_once()
       source.update_ready.assert_called_once_with(True)
+      source.status.assert_called_once_with(updating_offroad=True)
       self.assertEqual(updater.params.get_bool.call_args_list, [mock.call('IsOffroad')])
       updater.params.put_bool.assert_called_once_with('UpdateAvailable', False, block=True)
 
@@ -243,7 +244,7 @@ class TestFastAdapter(unittest.TestCase):
         source = Mock()
         source.allowed.return_value = allowed
         source.effective.return_value = effective
-        source.status.side_effect = lambda source=source: {'allowed': source.allowed(), 'reason': None}
+        source.status.side_effect = lambda *, updating_offroad=False, source=source: {'allowed': source.allowed(), 'reason': None}
         source.update_status.side_effect = lambda manager_offroad, source=source: PhysicalSource.update_status(source, manager_offroad)
         source.update_ready.side_effect = lambda manager_offroad, source=source: PhysicalSource.update_ready(source, manager_offroad)
         physical = ModuleType('openpilot.starpilot.drive_state.evidence')
@@ -261,7 +262,7 @@ class TestFastAdapter(unittest.TestCase):
         if not offroad:
           source.status.assert_not_called()
         else:
-          source.status.assert_called_once()
+          source.status.assert_called_once_with(updating_offroad=True)
 
 
 if __name__ == '__main__':

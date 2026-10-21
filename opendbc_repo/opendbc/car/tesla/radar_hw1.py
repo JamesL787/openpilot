@@ -27,6 +27,7 @@ class HW1RadarInterface(RadarInterfaceBase):
       for i in range(_BOSCH_RADAR_POINTS):
         messages.append((_BOSCH_RADAR_POINT_A_BASE + (i * _BOSCH_RADAR_POINT_STRIDE), 8))
         messages.append((_BOSCH_RADAR_POINT_B_BASE + (i * _BOSCH_RADAR_POINT_STRIDE), 8))
+      self.radar_message_addresses = frozenset(address for address, _ in messages)
       self.rcp = CANParser(DBC[CP.carFingerprint][Bus.radar], messages, CANBUS.vehicle)
 
     self.trigger_msg = _BOSCH_TRIGGER_MSG
@@ -35,7 +36,12 @@ class HW1RadarInterface(RadarInterfaceBase):
     if self.radar_off_can or self.rcp is None:
       return super().update(None)
 
-    vls = self.rcp.update(can_strings)
+    # The Bosch receiver uses eight-byte frames. Do not let truncated radar
+    # payloads refresh cached signals; unrelated CAN traffic is left untouched.
+    radar_packets = [(stamp, [(address, data, bus) for address, data, bus in frames
+                             if bus != CANBUS.vehicle or address not in self.radar_message_addresses or len(data) == 8])
+                     for stamp, frames in can_strings]
+    vls = self.rcp.update(radar_packets)
     self.updated_messages.update(vls)
 
     if self.trigger_msg not in self.updated_messages:
@@ -53,6 +59,11 @@ class HW1RadarInterface(RadarInterfaceBase):
     for i in range(_BOSCH_RADAR_POINTS):
       msg_a_id = _BOSCH_RADAR_POINT_A_BASE + (i * _BOSCH_RADAR_POINT_STRIDE)
       msg_b_id = _BOSCH_RADAR_POINT_B_BASE + (i * _BOSCH_RADAR_POINT_STRIDE)
+
+      # Both halves must have arrived since the previous cycle trigger.
+      # Matching one-bit indices alone can also match a cached, older point.
+      if msg_a_id not in self.updated_messages or msg_b_id not in self.updated_messages:
+        continue
 
       msg_a = self.rcp.vl[msg_a_id]
       msg_b = self.rcp.vl[msg_b_id]

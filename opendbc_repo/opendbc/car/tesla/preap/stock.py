@@ -41,6 +41,9 @@ class PreAPStockCarState(CarStateBase):
     self.pedal_speed_kph = 0.0
     self.di_cruise_state = "OFF"
     self.pccEvent = None
+    self.pedal_feedback = None
+    self.pedal_personality = 1
+    self.preap_accel_max = .3
     self.preap_lateral_authorized = False
     self.das_control = {}
     self.can_now_ns = self.physical_stw_stamp_ns = 0
@@ -88,18 +91,26 @@ def update_stock(cs, can_parsers):
   if speed_units is not None:
     cs.speed_units = speed_units
 
-  use_pedal = False
-  pedal_long_allowed = False
-  long_control_allowed = True
+  from opendbc.car.tesla.preap.pedal_profile import qualified as pedal_qualified, accel_max
+  use_pedal = pedal_qualified(cs.CP)
+  feedback = cs.pedal_feedback
+  feedback_ready = use_pedal and feedback is not None and feedback.ready(cp_chassis._last_update_nanos)
+  if use_pedal:
+    ret.gasPressed = bool(feedback is not None and feedback.gas_pressed())
+    if feedback is not None:
+      feedback.torque_level = float(cp_pt.vl['DI_torque1']['DI_torqueMotor'])
+    cs.preap_accel_max = accel_max(ret.vEgo, cs.pedal_personality)
+  pedal_long_allowed = feedback_ready
+  long_control_allowed = pedal_long_allowed if use_pedal else True
 
-  ret.cruiseState.available = cruise_state in ("STANDBY", "ENABLED", "STANDSTILL", "OVERRIDE", "PRE_FAULT", "PRE_CANCEL")
+  ret.cruiseState.available = use_pedal or cruise_state in ("STANDBY", "ENABLED", "STANDSTILL", "OVERRIDE", "PRE_FAULT", "PRE_CANCEL")
   if speed_units == "KPH":
     ret.cruiseState.speed = max(cp_chassis.vl["DI_state"]["DI_digitalSpeed"] * CV.KPH_TO_MS, 1e-3)
   elif speed_units == "MPH":
     ret.cruiseState.speed = max(cp_chassis.vl["DI_state"]["DI_digitalSpeed"] * CV.MPH_TO_MS, 1e-3)
   ret.cruiseState.standstill = False
   ret.standstill = ret.vEgoRaw < 0.1
-  ret.accFaulted = cruise_state == "FAULT"
+  ret.accFaulted = cruise_state == "FAULT" or (use_pedal and not feedback_ready)
 
   ret.gearShifter = GEAR_MAP[cs.can_define.dv["DI_torque2"]["DI_gear"].get(int(cp_chassis.vl["DI_torque2"]["DI_gear"]), "DI_GEAR_INVALID")]
   ret.doorOpen = any(int(cp_chassis.vl["GTW_carState"][door]) != 0 for door in _DOORS)
@@ -140,7 +151,13 @@ def update_stock(cs, can_parsers):
   )
 
   can_engage = cs.engagement.check_can_engage(ret.doorOpen, ret.gearShifter, ret.seatbeltUnlatched)
-  ret.cruiseState.enabled = can_engage and cruise_state in ("ENABLED", "STANDSTILL", "OVERRIDE", "PRE_FAULT", "PRE_CANCEL")
+  if use_pedal and not feedback_ready:
+    cs.engagement.cruiseEnabled = cs.engagement.enableLongControl = cs.engagement.enableJustCC = False
+    cs.engagement.pending_enable = False
+  ret.cruiseState.enabled = can_engage and (cs.engagement.cruiseEnabled if use_pedal else
+    cruise_state in ("ENABLED", "STANDSTILL", "OVERRIDE", "PRE_FAULT", "PRE_CANCEL"))
+  if use_pedal and cs.engagement.enableLongControl:
+    ret.cruiseState.speed = cs.engagement.pedal_speed_kph * CV.KPH_TO_MS
 
   cs.cruiseEnabled = cs.engagement.cruiseEnabled
   cs.enableLongControl = cs.engagement.enableLongControl
@@ -167,6 +184,7 @@ class PreAPStockCarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
     self.admitted = qualified(CP)
+    self.pedal_control = None
     self.codec = TeslaCANPreAP(CANPacker(dbc_names[Bus.party]))
     self.stock_cc = StockCCSpoofer()
     self.apply_angle_last = 0.0
@@ -180,7 +198,9 @@ class PreAPStockCarController(CarControllerBase):
       self.frame += 1
       return actuators, sends
     lat_active = CC.latActive and CS.hands_on_level < 3 and CS.preap_lateral_authorized
-    if CC.cruiseControl.cancel and CS.cruiseEnabled:
+    # Pedal ownership requires cancelling OEM cruise on every active cycle.
+    # Its physical cancel edge is handled by PreAPEngagement instead.
+    if self.pedal_control is None and CC.cruiseControl.cancel and CS.cruiseEnabled:
       CS.cruiseEnabled = CS.enableLongControl = CS.enableJustCC = False
       CS.pedal_speed_kph = 0.0
       CS.preap_cc_cancel_needed = True
@@ -194,6 +214,8 @@ class PreAPStockCarController(CarControllerBase):
       sends.append(self.codec.create_steering_control((self.frame // 2) % 16, self.apply_angle_last, lat_active))
       sends.append(self.codec.create_epas_control((self.frame // 2) % 16, 1))
     CS.pccEvent = None
+    if self.pedal_control is not None:
+      sends.extend(self.pedal_control.update(CC, CS, self.frame, now_nanos))
     sends.extend(self.stock_cc.update(CS, self.frame, self.codec, 0))
     if self.stock_cc.pcc_event:
       CS.pccEvent = self.stock_cc.pcc_event

@@ -20,6 +20,7 @@ the local branch `night-star7-history`. To take a newer 7.0, apply `git diff <cu
 | 10-18 | `dc266eea96` | sync commit, same method (1 commit: simpler replay route selection and playback UI; 3 StarPilot UI files, no binaries, applied cleanly) |
 | 10-19 | `f0c0e79611` | sync commit, same method (80 commits: FLM evidence/lifecycle, SLC fixes, Jetlink shared integration, GM/Toyota SecOC/Subaru/Volvo/Palisade, model lead trajectories, radar scheduling, global feature availability, process health). Source conflicts: `modeld.py` (upstream's `model.get_action_from_model`, our #39091 seed kept ahead of it), `feature_settings_owner.py` (both registrations), the Galaxy key inventory (set merge). `lateral_source` drops the removed `JetlinkModel` (Jetlink's `JetlinkModelState` is always the big-model role). Binaries took upstream's, then cereal, params, pandad/camerad/loggerd/encoderd/bootlog/replay, libpanda and the panda app firmware were rebuilt from this tree on the 19.8.1 sysroot (bootstub/body kept upstream's) |
 | 10-20 | `d2cc8e282e` | sync commit, same method (97 commits, comma upstream merged in: 0.11.3, tinygrad and msgq/panda bumps, nav alpha, set-speed and ratekeeper changes, #39091; HKG/Ioniq 5 PE/Toyota/Bolt/Volt AOL and qualification work; Honda: longitudinal kept through temporary EPS faults, the CAN2 interrupt-rate fault exempted on qualified Bosch AOL). Conflicts: `process_config.py` (both process lists: our parked reprojectd/reprojectcalibd and upstream's navd/mapsd); `panda_faults.py` (our Nidec-interceptor Clarity exemption, word 544, checked before upstream's Bosch Honda branch, which returns for every Honda; ours falls through when it does not qualify); `stock_aol.py` (upstream precomputes the allowed-flag mask, `_DETECTED`, so our geometry-only VGR bits and HYBRID_ALT_BRAKEHOLD join it there, now with the RDX's VGR bit too). modeld merged cleanly but carried #39091 twice: our hand-port is dropped for upstream's (where comma put it, before `prev_action` feeds the model). Binaries took upstream's, then cereal, params, the daemons, libpanda and the panda app firmware were rebuilt from this tree (bootstub/body kept upstream's) |
+| 10-21 | `db73e3bdbb` | sync commit, same method (81 commits: HKG / Ioniq 5 PE / Hyundai startup and takeover work, Toyota RAV4 and Corolla TSS2 pedal pairing and smartDSU, Volt / Bolt / GM lateral intent and startup, Ford CAN-FD, Mach-E, Jeep brake hold, Tesla Pre-AP pedal and radar startup, Android Auto widgets, Bluetooth / Spotify, companion-phone uplink and GPS, vision speed limits, big-model cold-start timeout 60 to 120 s). Conflicts: `card.py` (our carState fix-ups, `RI.v_ego` and the seatbelt check, kept ahead of upstream's `f1_conventional_lateral_owner` import, which the next statement uses); `feature_settings_owner.py` (our Night Star import beside upstream's Ford cluster and Pre-AP radar imports; both features register); `panda_faults.py` (docstring only; our interceptor-Clarity check stays ahead of upstream's Honda branch, now beside its new Hyundai one). Binaries took upstream's where upstream rebuilt something we do not (mapd, pulseaudio, libcar/libpose), and cereal, params, the daemons, libpanda and the panda app firmware were rebuilt from this tree (bootstub/body kept upstream's) |
 
 7.0 shares no git history with our branches, so this is a re-port by subsystem, not a rebase. [LEDGER.md](LEDGER.md) lists
 every file `origin/vfn` and `origin/ns-bosch-radar-testing` changed since our last 6.x merge base (`249b03a3f5`), where it
@@ -57,6 +58,19 @@ alive) in their harness, marked "Night Star port".
 
 Known environment failure, not ours: `openpilot/common/tests/test_params_fork_lock.py` (6 tests) needs 7.0's native
 regression target built.
+
+**Cover every test directory, not only the two halves.** Halves A and B left out about 25 directories (starpilot
+`lateral`, `longitudinal`, `aol`, `navigation`, `controllers`, `speed_limits`, `conditional_mode`..., the GM / Hyundai /
+Ford / Toyota / Tesla / Subaru / Volvo car tests, `openpilot/common`, `openpilot/system`, `tools/ci`), which hid a
+controlsd regression until the 10-21 sync (a test that builds `Controls` without `__init__` lacked our `rack_map`).
+Run a third half with those, on ours and on pristine, with `--import-mode=importlib` (upstream now has two test files
+named `test_radar_pipeline.py`) and without `openpilot/system/{loggerd,camerad,ui,hardware}` (they abort the container:
+no camera or audio devices).
+
+**Known differences on night-star7 (Konik-only), not on night-star7-clean:** `openpilot/system/athena/tests`
+(`test_athenad`, `test_registration`) and `openpilot/system/tests/test_logmessaged.py` expect the comma provider. Slice 7
+makes Konik the only provider, and 7.0 keys logs, recordings and registration to the active provider; the child process
+`logmessaged` cannot be patched from a test. They pass on the clean branch, whose provider is comma.
 
 Baseline (honda car + safety tests, controls, selfdrived, car interfaces, params, state migration, starpilot honda, FLM):
 **36 fail, and all 36 also fail on pristine 7.0** (the 30 below plus 6 FLM `test_operation_owner` environment failures) (27 `stock_intent` `standard_active`, `test_stock_aol`, `test_adjacent_radar_schema` schema-policy

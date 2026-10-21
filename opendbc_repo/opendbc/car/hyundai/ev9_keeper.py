@@ -43,11 +43,19 @@ class EV9Keeper:
       raise RuntimeError('EV9 keeper already started')
     self.started = self.clock()
     self.next_send = self.started
+
     def loop():
       while self.tick():
         self.event.wait(TESTER_PERIOD_S)
     self.thread = self.thread_factory(target=loop, name='ev9-startup-tester', daemon=True)
-    self.thread.start()
+    try:
+      self.thread.start()
+    except Exception:
+      self.event.set()
+      if self.thread.ident is not None:
+        self.thread.join()
+      self.thread = None
+      raise
 
   def stop(self):
     self.event.set()

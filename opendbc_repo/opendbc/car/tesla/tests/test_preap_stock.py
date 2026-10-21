@@ -1,6 +1,7 @@
 import pytest
 
 from opendbc.car import gen_empty_fingerprint, structs
+from opendbc.car.can_definitions import CanData
 from opendbc.car.tesla.interface import CarInterface
 from opendbc.car.tesla.values import CAR
 from opendbc.car.tesla.preap.aol import qualified
@@ -23,8 +24,9 @@ def test_stock_factory_and_serialized_profile(alpha, release):
     assert qualified(decoded)
 
 
-@pytest.mark.parametrize("key", ("NAPPedalEnabled", "NAPRadarEnabled", "NAPRadarBehindNosecone"))
-@pytest.mark.parametrize("raw", (b"1", b"invalid", b""))
+@pytest.mark.parametrize("key,raw", (("NAPPedalEnabled", b"1"), ("NAPPedalEnabled", b"invalid"), ("NAPPedalEnabled", b""),
+  ("NAPRadarEnabled", b"invalid"), ("NAPRadarEnabled", b""),
+  ("NAPRadarBehindNosecone", b"1"), ("NAPRadarBehindNosecone", b"invalid"), ("NAPRadarBehindNosecone", b"")))
 def test_unsupported_hardware_configuration_never_falls_back_to_stock(key, raw, tmp_path):
   from openpilot.starpilot.car.tesla.preap_preferences import stock_configuration, prepare_stock
 
@@ -120,7 +122,7 @@ def test_controller_attempted_cancel_echo_requires_fresh_native_reconciliation()
   assert emitted[0] & 63 == 1
   previous_physical_stamp = ci.CS.preap.physical_stw_stamp_ns
   now += 10_000_000
-  frames = [(address, emitted if address == 0x45 else data, bus)
+  frames = [CanData(address, emitted if address == 0x45 else data, bus)
             for address, data, bus in stream.frames(tick + 1)]
   cs = ci.update([(now, frames)])
   assert ci.CS.preap.cancel_echo_stamp_ns == now

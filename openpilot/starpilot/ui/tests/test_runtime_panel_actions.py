@@ -957,6 +957,6 @@ def test_compact_developer_fps_is_live_onroad_but_physical_controls_keep_native_
     assert page._joystick_toggle.set_enabled.call_args.args[0]() is False
     assert page._alpha_long_toggle.set_enabled.call_args.args[0]() is False
     page._debug_mode_toggle.set_enabled.assert_not_called()
-    debug.call_args.kwargs['toggle_callback'](True)
+    next(c for c in debug.call_args_list if c.args[0] == "ui debug mode").kwargs['toggle_callback'](True)
     touches.assert_called_once_with(True)
     fps.assert_called_once_with(True)

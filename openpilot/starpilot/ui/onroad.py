@@ -119,6 +119,11 @@ class OnroadView:
     self.alert = AlertRenderer(fonts)
     self.navigation = NavigationCard(fonts, clock=self.wall_clock)
     self.navigation_favorites = NavigationFavorites(fonts)
+    if projection_viewport is not None:
+      from openpilot.starpilot.ui.onroad_now_playing import NowPlayingWidget
+      self.now_playing = NowPlayingWidget(fonts)
+      from openpilot.starpilot.ui.onroad_jetlink import JetlinkStatusWidget
+      self.jetlink_status = JetlinkStatusWidget(fonts)
     self.torque_bar = TorqueBarWidget()
     if fonts.profile == Profile.LARGE:
       self.unified_speed = UnifiedSpeedWidget(fonts)
@@ -293,6 +298,12 @@ class OnroadView:
       for key in ("nav_home", "nav_work", "bookmark"):
         if key in state.customization["layouts"]["large"]:
           submit(key, lambda key=key: self.navigation_favorites.render(key, state))
+      if "now_playing" in state.customization["layouts"]["large"]:
+        if now_playing := getattr(self, "now_playing", None):
+          submit("now_playing", lambda: now_playing.render(state))
+      if "jetlink_status" in state.customization["layouts"]["large"]:
+        if jetlink := getattr(self, "jetlink_status", None):
+          submit("jetlink_status", lambda: jetlink.render(state))
       if "car_exit" in state.customization["layouts"]["large"]:
         if exit_layer := getattr(self, "projection_exit_layer", None):
           submit("car_exit", lambda: exit_layer(state))
@@ -400,6 +411,10 @@ class OnroadView:
       if not ordered:
         for key in ("nav_home", "nav_work", "bookmark"):
           self.navigation_favorites.render(key, state)
+        if now_playing := getattr(self, "now_playing", None):
+          now_playing.render(state)
+        if jetlink := getattr(self, "jetlink_status", None):
+          jetlink.render(state)
         self._driving_mode(state, right_shift / 2)
         self._clock(state, right_shift / 2)
         if exit_layer := getattr(self, "projection_exit_layer", None):

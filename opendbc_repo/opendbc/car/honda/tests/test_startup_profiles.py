@@ -34,7 +34,7 @@ STARTUP_CASES = (
 )
 
 
-def exercise_final_cp_publication_and_disabled_startup(identity, monkeypatch, firmware=()):
+def exercise_final_cp_publication_and_disabled_startup(identity, monkeypatch, firmware=(), *, automatic_firmware=False):
   from opendbc.car import car_helpers
   from openpilot.cereal import messaging
   from openpilot.common.params import Params
@@ -60,7 +60,9 @@ def exercise_final_cp_publication_and_disabled_startup(identity, monkeypatch, fi
   initial = CarInterface.get_params(identity, fingerprint, list(firmware), False, False, False)
   initial.carVin = "0" * 17
   initial.carFw = list(firmware)
-  if firmware:
+  if automatic_firmware:
+    initial.fingerprintSource = structs.CarParams.FingerprintSource.fw
+  if firmware and not automatic_firmware:
     assert initial.flags & HondaFlags.EPS_MODIFIED
     assert not initial.dashcamOnly
   expected = initial.to_dict()
@@ -73,8 +75,18 @@ def exercise_final_cp_publication_and_disabled_startup(identity, monkeypatch, fi
     try:
       observed = (identity, fingerprint, initial.carVin, list(firmware), initial.fingerprintSource, True)
       with monkeypatch.context() as discovery:
-        discovery.setattr(car_helpers, "fingerprint", lambda *args: observed)
-        discovery.setattr(card_module, "can_comm_callbacks", lambda *args: (lambda *args: [], lambda frames: None))
+        if automatic_firmware:
+          discovery.setenv("FINGERPRINT", "")
+          discovery.setenv("SKIP_FW_QUERY", "")
+          discovery.setenv("DISABLE_FW_CACHE", "1")
+          discovery.setattr(car_helpers, "get_vin", lambda *args: (-1, -1, initial.carVin))
+          discovery.setattr(car_helpers, "get_present_ecus", lambda *args: set())
+          discovery.setattr(car_helpers, "can_fingerprint", lambda *args: (None, fingerprint))
+          discovery.setattr(car_helpers, "get_fw_versions_ordered", lambda *args: list(firmware))
+          discovery.setattr(card_module, "obd_callback", lambda *args: lambda enabled: None)
+        else:
+          discovery.setattr(car_helpers, "fingerprint", lambda *args: observed)
+        discovery.setattr(card_module, "can_comm_callbacks", lambda *args: (lambda *args, **kwargs: [], lambda frames: None))
         initial_can = messaging.new_message("can", 1)
         discovery.setattr(card_module.messaging, "recv_one_retry", lambda socket: initial_can)
         card = Car()
@@ -98,7 +110,22 @@ def exercise_final_cp_publication_and_disabled_startup(identity, monkeypatch, fi
       command, lateral_log = controls.state_control()
       assert not command.enabled and not command.latActive and not command.longActive
       controls.publish(command, lateral_log)
-      ci.apply(command.as_reader(), 1_000_000_000)
+      _, outgoing = ci.apply(command.as_reader(), 1_000_000_000)
+      if automatic_firmware:
+        from opendbc.safety.tests.libsafety import libsafety_py
+        safety = libsafety_py.libsafety
+        safety.init_tests()
+        safety.set_alternative_experience(card.CP.alternativeExperience)
+        try:
+          assert safety.set_safety_hooks(card.CP.safetyConfigs[0].safetyModel.raw,
+                                         card.CP.safetyConfigs[0].safetyParam) == 0
+          assert not safety.get_controls_allowed()
+          steering = ci.CC.packer.dbc.name_to_msg["STEERING_CONTROL"].address
+          assert any(address == steering and bus == ci.CC.CAN.lkas for address, _, bus in outgoing)
+          for address, data, bus in outgoing:
+            assert safety.safety_tx_hook(libsafety_py.make_CANPacket(address, bus, data))
+        finally:
+          safety.set_alternative_experience(0)
     finally:
       del controls, card, ci, subscriber
       gc.collect()
@@ -121,3 +148,18 @@ def test_known_modified_eps_final_cp_publication_and_disabled_startup(identity, 
   firmware = (structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.eps, address=0x18DA30F1,
                                      subAddress=0, fwVersion=version, brand="honda"),)
   exercise_final_cp_publication_and_disabled_startup(identity, monkeypatch, firmware)
+
+
+@pytest.mark.parametrize("identity", (CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CIVIC_2022, CAR.HONDA_CIVIC))
+def test_automatic_fw_final_cp_and_disabled_native_handoff(identity, monkeypatch):
+  """Acquisition is controlled; real FW matching, Card factory and native TX run."""
+  from opendbc.car.fw_versions import match_fw_to_car
+  from opendbc.car.honda.fingerprints import FW_VERSIONS
+
+  firmware = [structs.CarParams.CarFw(ecu=ecu, address=address, subAddress=sub or 0,
+                                         fwVersion=versions[0], brand="honda")
+              for (ecu, address, sub), versions in FW_VERSIONS[identity].items()]
+  exact, matches = match_fw_to_car(firmware, "0" * 17, log=False)
+  assert exact and matches == {identity}
+  exercise_final_cp_publication_and_disabled_startup(identity, monkeypatch, firmware,
+                                                    automatic_firmware=True)

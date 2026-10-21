@@ -57,6 +57,8 @@ class ToyotaSafetyFlags(IntFlag):
   LTA = (4 << 8)
   SECOC = (8 << 8)
   LONG_FILTER = (16 << 8)
+  GAS_INTERCEPTOR = (32 << 8)
+  RAV4H_FILTER_PROFILE = (128 << 8)  # Exact smartDSU owner; bit14 remains reserved for ALT_CRUISE
 
 
 class ToyotaFlags(IntFlag):
@@ -79,6 +81,8 @@ class ToyotaFlags(IntFlag):
   RAISED_ACCEL_LIMIT = 1024
   SECOC = 2048
   AUTO_BRAKE_HOLD = 4096
+  GAS_INTERCEPTOR = 1 << 17  # Exact paired pedal owner
+  ZSS = 1 << 16  # Detected Prius secondary steering sensor; host-only, no safetyParam allocation
 
   # deprecated flags
   # these cars are speculated to allow stop and go when the DSU is unplugged

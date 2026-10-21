@@ -10,7 +10,8 @@ from openpilot.starpilot.speed_limits import selection as sel
 
 MAX_RECEIPT_AGE_NS = 1_000_000_000
 MAX_FRAME_AGE_NS = 250_000_000
-MAX_OBSERVATION_AGE_NS = 1_000_000_000
+# Bound sign-processing latency independently of raw camera admission.
+MAX_RESULT_AGE_NS = 2_000_000_000
 MAX_PAIR_SKEW_NS = 5_000_000
 MODEL_ID = "82408b68c79c269296f0af942130c5383cace4ee06c78e2a4690e8488720116a:07c6696e530eb940d2757d5849b4bc0f1d785cda704e5296e18c0a94959f30a5"
 
@@ -45,8 +46,8 @@ def vision_observation(event, *, receipt_mono_ns: int, now_mono_ns: int, now_boo
   eof_boot_ns = int(event.cameraFrameEofBootTime)
   observed_ns = int(event.observedMonoTime)
   expiry_ns = int(event.validUntilMonoTime)
-  if (eof_boot_ns <= 0 or not 0 <= now_boot_ns - eof_boot_ns <= MAX_FRAME_AGE_NS or
-      observed_ns <= 0 or not 0 <= now_mono_ns - observed_ns <= MAX_OBSERVATION_AGE_NS or
+  if (eof_boot_ns <= 0 or not 0 <= now_boot_ns - eof_boot_ns <= MAX_RESULT_AGE_NS or
+      observed_ns <= 0 or observed_ns > now_mono_ns or
       expiry_ns <= observed_ns or now_mono_ns > expiry_ns):
     return stale
   speed, confidence = float(event.speedMps), float(event.confidence)

@@ -88,19 +88,21 @@ class TestOnroadAxes(unittest.TestCase):
     self.ui.sm.logMonoTime['selfdriveState'] = NOW - 300_000_000
     self.assertFalse(self.state(True, False).longitudinal_overridden)
 
-  def test_driver_inputs_gray_active_axes_and_clear_on_release(self):
+  def test_driver_inputs_only_gray_their_active_axis_and_clear_on_release(self):
     car = self.ui.sm['carState']
-    for lateral, longitudinal in ((False, False), (True, False), (False, True), (True, True)):
+    gray, blue, cyan, pink = (145, 155, 149, 255), (18, 40, 57, 255), (10, 186, 181, 255), (255, 105, 180, 255)
+    for lateral, longitudinal, colors in ((False, False, (blue, blue, blue)), (True, False, (cyan, gray, gray)),
+                                           (False, True, (gray, pink, gray)), (True, True, (gray, gray, gray))):
       self.ui.sm['selfdriveState'].enabled = longitudinal
-      for gas, steering in ((True, False), (False, True), (True, True)):
+      for (gas, steering), color in zip(((True, False), (False, True), (True, True)), colors, strict=True):
         with self.subTest(lateral=lateral, longitudinal=longitudinal, gas=gas, steering=steering):
           car.gasPressed, car.steeringPressed = gas, steering
           state = self.state(lateral, longitudinal)
-          self.assertEqual(state.driver_override_active, lateral or longitudinal)
+          self.assertEqual(state.driver_override_active, color == gray)
           self.assertEqual((state.lateral_active, state.longitudinal_active), (lateral, longitudinal))
           self.assertFalse(state.longitudinal_overridden)
           self.assertEqual(state.cruise_active, longitudinal)
-          self.assertEqual(rgba(axis_status_color(state)), (145, 155, 149, 255) if state.engaged else (18, 40, 57, 255))
+          self.assertEqual(rgba(axis_status_color(state)), color)
           car.gasPressed = car.steeringPressed = False
           released = self.state(lateral, longitudinal)
           self.assertFalse(released.driver_override_active)
@@ -111,17 +113,70 @@ class TestOnroadAxes(unittest.TestCase):
     self.ui.sm['selfdriveState'].enabled = False
     for field in ('gasPressed', 'steeringPressed'):
       with self.subTest(field=field):
+        longitudinal = field == 'gasPressed'
         setattr(car, field, True)
-        self.assertTrue(self.state(True, False).driver_override_active)
+        self.assertTrue(self.state(True, longitudinal).driver_override_active)
         for service in ('carState', 'carControl'):
           self.ui.sm.logMonoTime[service] = NOW - 300_000_000
-          self.assertFalse(self.state(True, False).driver_override_active)
+          self.assertFalse(self.state(True, longitudinal).driver_override_active)
           self.ui.sm.logMonoTime[service] = NOW
         for valid, timeout in ((False, False), (True, True)):
           car.canValid, car.canTimeout = valid, timeout
-          self.assertFalse(self.state(True, False).driver_override_active)
+          self.assertFalse(self.state(True, longitudinal).driver_override_active)
         car.canValid, car.canTimeout = True, False
         setattr(car, field, False)
+
+  def test_independent_long_request_distinguishes_pause_from_pedal_override(self):
+    self.ui.aol_runtime = True
+    self.ui.sm['selfdriveState'].state = 'overriding'
+    axis = NS(qualified=True, sessionId='ui-axis', observedMonoTime=NOW, validUntilMonoTime=NOW + 30_000_000,
+              nativeAcknowledged=True, desiredLongitudinal=False)
+    self.ui.sm.put('aolAxisState', axis)
+    car = self.ui.sm['carState']
+    for requested, gas, steering, gray, pedal in (
+        (False, False, False, False, False), (False, True, False, False, False),
+        (False, False, True, True, False), (False, True, True, True, False),
+        (True, False, False, False, False), (True, True, False, True, True),
+        (True, False, True, True, False), (True, True, True, True, True)):
+      with self.subTest(requested=requested, gas=gas, steering=steering):
+        axis.desiredLongitudinal = requested
+        car.gasPressed, car.steeringPressed = gas, steering
+        state = self.state(True, False)
+        self.assertEqual(state.longitudinal_overridden, pedal)
+        self.assertEqual(state.driver_override_active, gray)
+        self.assertEqual(state.cruise_active, pedal)
+        self.assertEqual(driving_mode_description(state), 'ACC - Override' if pedal else 'Always On Lateral')
+        self.assertEqual(rgba(axis_status_color(state)), (145, 155, 149, 255) if gray else (10, 186, 181, 255))
+
+  def test_independent_pedal_override_requires_current_axis_request(self):
+    self.ui.aol_runtime = True
+    self.ui.sm['selfdriveState'].state = 'overriding'
+    self.ui.sm['carState'].gasPressed = True
+    self.assertFalse(self.state(True, False).longitudinal_overridden)
+    axis = NS(qualified=True, sessionId='ui-axis', observedMonoTime=NOW, validUntilMonoTime=NOW + 30_000_000,
+              nativeAcknowledged=True, desiredLongitudinal=True)
+    self.ui.sm.put('aolAxisState', axis)
+    self.assertTrue(self.state(True, False).longitudinal_overridden)
+    for field, value in (('qualified', False), ('sessionId', ''), ('observedMonoTime', NOW + 1),
+                         ('validUntilMonoTime', NOW - 1), ('nativeAcknowledged', False)):
+      with self.subTest(field=field):
+        original = getattr(axis, field)
+        setattr(axis, field, value)
+        state = self.state(True, False)
+        self.assertFalse(state.longitudinal_overridden or state.driver_override_active or state.cruise_active)
+        setattr(axis, field, original)
+    for stamp in (NOW + 1, NOW - 31_000_000):
+      self.ui.sm.logMonoTime['aolAxisState'] = stamp
+      self.assertFalse(self.state(True, False).longitudinal_overridden)
+    self.ui.sm.logMonoTime['aolAxisState'] = NOW
+    self.ui.sm.recv_frame['aolAxisState'] = self.ui.started_frame
+    self.assertFalse(self.state(True, False).longitudinal_overridden)
+    self.ui.sm.recv_frame['aolAxisState'] = self.ui.started_frame + 1
+    for flags in (self.ui.sm.valid, self.ui.sm.alive, self.ui.sm.seen):
+      flags['aolAxisState'] = False
+      self.assertFalse(self.state(True, False).longitudinal_overridden)
+      flags['aolAxisState'] = True
+    self.assertTrue(self.state(True, False).longitudinal_overridden)
 
   def test_traffic_returns_after_conditional_stop_without_changing_intent(self):
     from openpilot.starpilot.conditional_mode.policy import ModeChoice

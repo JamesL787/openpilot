@@ -32,10 +32,11 @@ def create_lka_msg(packer, CAN: CanBus, active=False, apply_angle=0., direction=
   if transit:
     values = {"LaRefAng_No_Req": 0., "LaCurvature_No_Calc": 0., "LdwActvIntns_D_Req": 3}
   if active:
+    # 5.8 degrees rounds outside native raw 24..4072 at 0.05 mrad/count.
     values = {
       "LkaDrvOvrrd_D_Rq": 0,
       "LkaActvStats_D2_Req": direction,
-      "LaRefAng_No_Req": math.radians(max(-5.8, min(5.8, apply_angle))) * 1000.,
+      "LaRefAng_No_Req": max(-101.2, min(101.2, math.radians(max(-5.8, min(5.8, apply_angle))) * 1000.)),
       "LaRampType_B_Req": int(abs(apply_angle) >= 5.),
       "LaCurvature_No_Calc": max(-0.01023, min(0.01023, curvature)),
       "LdwActvStats_D_Req": 0,
@@ -145,7 +146,7 @@ def create_acc_msg(packer, CAN: CanBus, long_active: bool, gas: float, accel: fl
 
 
 def create_acc_ui_msg(packer, CAN: CanBus, CP, main_on: bool, enabled: bool, fcw_alert: bool, standstill: bool,
-                      show_distance_bars: bool, hud_control, stock_values: dict):
+                      show_distance_bars: bool, hud_control, stock_values: dict, hands_free_cluster: bool = False):
   """
   Creates a CAN message for the Ford IPC adaptive cruise, forward collision warning and traffic jam
   assist status.
@@ -161,6 +162,8 @@ def create_acc_ui_msg(packer, CAN: CanBus, CP, main_on: bool, enabled: bool, fcw
       status = 3  # ActiveInterventionLeft
     elif hud_control.rightLaneDepart:
       status = 4  # ActiveInterventionRight
+    elif hands_free_cluster:
+      status = 7  # Hands-free assistance display
     else:
       status = 2  # Active
   elif main_on:

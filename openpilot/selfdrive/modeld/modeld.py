@@ -64,7 +64,7 @@ SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 LAT_SMOOTH_SECONDS = 0.0
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
-BIG_MODEL_TIMEOUT = 60
+BIG_MODEL_TIMEOUT = 120
 
 
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
@@ -432,7 +432,7 @@ def main(demo=False):
       try:
         wait_for_chestnut()
         if not demo:
-          wait_for_chestnut_power(CP, timeout=BIG_MODEL_TIMEOUT / 2)
+          wait_for_chestnut_power(CP, timeout=min(30., BIG_MODEL_TIMEOUT / 2))
         if selection.big_path is not None:
           m, prepared = load_verified_model(vipc_client_main.width, vipc_client_main.height,
                                             big_path, selection.big_version, True, selection.big_id, selection.big_sha256)
@@ -480,6 +480,9 @@ def main(demo=False):
     # the joining model drives as small_model until the big model is ready
     model = HOOKS.attach(model, small_model, vipc_client_main.width, vipc_client_main.height)
     jetlink_model = model if model is not small_model else None
+    if jetlink_model is not None:
+      from openpilot.starpilot.models.jetlink_status import start_latency_writer
+      start_latency_writer(jetlink_model)
   params.put_bool("ChestnutLoading", False)
   cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, modeld starting")
   release_compile_pool()

@@ -1,9 +1,12 @@
 #pragma once
 
 static bool toyota_aol_enabled = false;
+static bool toyota_pedal = false;
 
 static bool toyota_aol_secoc = false;
 static bool toyota_aol_stock = false;
+static bool toyota_aol_rav4h_filter = false;
+static bool toyota_sdsu_control = false;
 static bool toyota_aol_main = false;
 static bool toyota_aol_drive = false;
 static bool toyota_aol_doors_closed = false;
@@ -13,6 +16,7 @@ static bool toyota_aol_seen[4] = {false, false, false, false};
 static uint32_t toyota_aol_ts[4] = {0U, 0U, 0U, 0U};
 
 static void toyota_aol_reset(void) {
+  toyota_sdsu_control = false;
   toyota_aol_main = false;
   toyota_aol_drive = false;
   toyota_aol_doors_closed = false;
@@ -44,7 +48,8 @@ static uint8_t toyota_aol_permission(void) {
   uint8_t permission = 0U;
   if (fresh && toyota_aol_main && toyota_aol_drive && toyota_aol_doors_closed && toyota_aol_eps) {
     permission = request & 1U;
-    if (!toyota_aol_stock && controls_allowed && toyota_aol_belt && !gas_pressed && !brake_pressed) {
+    if (!toyota_aol_stock && controls_allowed && toyota_aol_belt && !gas_pressed && !brake_pressed &&
+        (!toyota_aol_rav4h_filter || toyota_sdsu_control)) {
       permission |= request & 2U;
     }
   }
@@ -53,7 +58,8 @@ static uint8_t toyota_aol_permission(void) {
 
 static void toyota_aol_observe(const CANPacket_t *msg) {
   const uint32_t gear_addr = toyota_aol_secoc ? 0x127U : 0x3BCU;
-  if (toyota_aol_enabled && (msg->bus == 0U) && (GET_LEN(msg) != 8U)) {
+  const unsigned int expected_len = (toyota_aol_rav4h_filter && (msg->addr == 0x262U)) ? 5U : 8U;
+  if (toyota_aol_enabled && (msg->bus == 0U) && (GET_LEN(msg) != expected_len)) {
     unsigned int index = 4U;
     if (msg->addr == 0x1D3U) {
       index = 0U;
@@ -68,7 +74,7 @@ static void toyota_aol_observe(const CANPacket_t *msg) {
     if (index < 4U) {
       toyota_aol_seen[index] = false;
     }
-  } else if (toyota_aol_enabled && (msg->bus == 0U) && (GET_LEN(msg) == 8U)) {
+  } else if (toyota_aol_enabled && (msg->bus == 0U) && (GET_LEN(msg) == expected_len)) {
     unsigned int index = 4U;
     if (msg->addr == 0x1D3U) {
       index = 0U;
@@ -103,7 +109,9 @@ static void toyota_aol_observe(const CANPacket_t *msg) {
 
 static void toyota_aol_configure(uint16_t param) {
   toyota_aol_reset();
-  toyota_aol_stock = (param == 585U) || (param == 4681U);
+  toyota_pedal = (param == 0x2049U) || (param == 0x2249U);
+  toyota_aol_rav4h_filter = (param == 0x9049U) || (param == 0x9249U);
+  toyota_aol_stock = (param == 585U) || (param == 4681U) || (param == 0x9249U) || (param == 0x2249U);
 #ifdef ALLOW_DEBUG
   toyota_aol_secoc = (param == 2121U);
 #else
@@ -113,6 +121,8 @@ static void toyota_aol_configure(uint16_t param) {
 #ifdef ALLOW_DEBUG
                        (toyota_aol_secoc && (alternative_experience == 32)) ||
 #endif
+                       ((param == 0x9049U) && ((alternative_experience == 32) || (alternative_experience == 160))) ||
+                       ((param == 0x2049U) && (alternative_experience == 32)) ||
                        ((param == 4169U) && (alternative_experience == 32)) ||
                        ((param == 73U) && ((alternative_experience == 32) || (alternative_experience == 160) || (alternative_experience == 288)));
   if (toyota_aol_enabled) {

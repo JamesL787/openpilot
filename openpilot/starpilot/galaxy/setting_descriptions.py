@@ -28,7 +28,7 @@ DESCRIPTIONS = {
   'LateralResumeDelay': 'Waits before resuming steering after signaling ends, if speed fell below half the steering-pause threshold.',
   'AlwaysOnLateral': 'Keeps steering assistance available independently of cruise control on supported vehicles.',
   'AolBrakePauseSpeedMps': 'Pauses Always On Lateral during braking below this speed. Zero disables this brake-speed pause.',
-  'NostalgiaMode': 'Lets the Ioniq 6 left paddle pause acceleration and braking while Always On Lateral keeps steering.',
+  'NostalgiaMode': 'Lets the Ioniq 5 or Ioniq 6 left paddle pause acceleration and braking while Always On Lateral keeps steering.',
   'TurnAssist': 'Uses steering-angle feedback to assist rolling low-speed turns above the vehicle minimum steering speed.',
   'LateralControllerSelection': 'Chooses the stock steering controller or the vehicle-specific StarPilot controller.',
   'ForceAutoTuneOff': 'StarPilot’s FLM tuning will attempt to automatically correct torque profiles as you drive.',

@@ -191,11 +191,11 @@ class TestTeslaPreapStock(unittest.TestCase):
     self.assertFalse(self.safety.safety_tx_hook(make_msg(0, 0x488, dat=bytes([64, 0, 64, 0]))))
     self.assertFalse(self.safety.safety_tx_hook(make_msg(1, 0x488, dat=bytes([64, 0, 64, 12]))))
 
-  def test_all_16bit_parameters_reject_every_nonzero_profile(self):
+  def test_all_16bit_parameters_accept_only_stock_and_radar_profiles(self):
     command = self.steering(control_type=0)
     for parameter in range(65536):
       self.safety.set_safety_hooks(39, parameter)
-      self.assertEqual(bool(self.safety.safety_tx_hook(command)), parameter == 0, parameter)
+      self.assertEqual(bool(self.safety.safety_tx_hook(command)), parameter in (0, 2, 6), parameter)
 
   def test_required_sources_loss_wrong_bus_length_and_fresh_rearm(self):
     for address in (0x370, 0x108, 0x118, 0x20A, 0x368, 0x318, 0x45, 0x155, 0x201):
@@ -251,6 +251,51 @@ class TestTeslaPreapStock(unittest.TestCase):
         with self.subTest(bus=bus, address=address):
           self.assertEqual(self.safety.safety_fwd_hook(bus, address), -1)
           self.assertTrue(self.safety.safety_test_selected_fwd(bus, address))
+
+  def test_reverse_neutral_pause_retains_only_existing_physical_arm(self):
+    for gear in (2, 3):
+      with self.subTest(gear=gear):
+        self.setUp()
+        self.arm()
+        self.feed(gear=gear)
+        self.assertFalse(self.safety.get_controls_allowed())
+        self.safety.aol_set_host_request(0)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+        self.safety.aol_set_host_request(1)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+        self.assertFalse(self.safety.safety_tx_hook(self.stalk(16, (self.counter + 1) % 16)))
+        self.feed()
+        self.safety.aol_set_host_request(1)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+        self.assertFalse(self.safety.get_controls_allowed())
+        self.feed(gear=gear, lever=1)
+        self.feed()
+        self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+
+  def test_reverse_does_not_relax_expiry_fault_or_cold_arm_rules(self):
+    for gear in (0, 1, 7):
+      self.setUp()
+      self.arm()
+      self.feed(gear=gear)
+      self.feed()
+      self.safety.aol_set_host_request(1)
+      self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.setUp()
+    for _ in range(10):
+      self.feed(gear=2)
+    self.feed(gear=2, lever=2)
+    self.safety.set_aol_test_heartbeat(True)
+    self.safety.aol_set_host_request(1)
+    self.feed()
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.arm()
+    self.feed(gear=2)
+    self.time += 1_100_000
+    self.safety.set_timer(self.time)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.feed()
+    self.safety.aol_set_host_request(1)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
 
 
 class TestTeslaPreapIgnition(unittest.TestCase):

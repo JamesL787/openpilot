@@ -319,6 +319,15 @@ class LateralFeatureSettingsTests(unittest.TestCase):
     self.assertFalse(any(row.key == "wheel:LKASButtonControl" for row in self.owner.snapshot(
       "wheel", parked=True, system_long=True, lateral_context=True, metric=False).rows))
 
+  def test_ioniq5_left_paddle_setting_uses_existing_long_configuration(self):
+    from openpilot.starpilot.tests.test_nostalgia import _ioniq5_params
+    self.cp = _ioniq5_params()
+    row = self.row("vehicle", "NostalgiaMode")
+    self.assertTrue(row.available)
+    self.assertEqual(row.label, "Left Paddle Longitudinal Pause")
+    self.assertTrue(self.owner.apply(required_change(row)))
+    self.assertTrue(self.params.get_bool("NostalgiaMode"))
+
   def test_ioniq6_nostalgia_is_independent_of_aol_master_and_exact_source(self):
     fp = gen_empty_fingerprint()
     fp[2].update({0x50: 16, 0x2A4: 24})

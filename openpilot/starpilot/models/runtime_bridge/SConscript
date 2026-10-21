@@ -37,6 +37,25 @@ if arch == 'comma_arm64':
     SHCCFLAGS=['$CCFLAGS', '-fPIC'], SHCFLAGS=['$CFLAGS'],
     SHLINKFLAGS=['$LINKFLAGS', '-shared'],
   )
-  guard_env.SharedLibrary('bounded_wait', ['bounded_wait.c'])
-  guard_env.SharedLibrary('usb_guards', ['usb_guards.c'])
+  # guard-policy.json pins both libraries by SHA-256 and the tree ships them built. A device build that recompiles
+  # them writes different bytes over the tracked files, and the guard then stops modeld, dmonitoringmodeld and
+  # controlsd at import ("Model submission guard source/artifact changed"). Keep the shipped libraries while they
+  # match the policy; rebuild only when they do not, which the guard then refuses at runtime.
+  import hashlib
+  import json
+  import os
+  here = Dir('.').srcnode().abspath
+  with open(os.path.join(here, 'guard-policy.json'), 'rb') as policy_file:
+    pinned = json.load(policy_file)['files']
+
+  def shipped(name):
+    path = os.path.join(here, name)
+    if os.path.islink(path) or not os.path.isfile(path):
+      return False
+    with open(path, 'rb') as library:
+      return hashlib.sha256(library.read()).hexdigest() == pinned.get(name)
+
+  if not (shipped('libbounded_wait.so') and shipped('libusb_guards.so')):
+    guard_env.SharedLibrary('bounded_wait', ['bounded_wait.c'])
+    guard_env.SharedLibrary('usb_guards', ['usb_guards.c'])
   Return('guard_env')

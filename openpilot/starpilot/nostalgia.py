@@ -1,4 +1,4 @@
-"""Ioniq 6 saved left-paddle longitudinal cancel, separate from ordinary Cancel."""
+"""Saved Ioniq left-paddle longitudinal pause, separate from ordinary Cancel."""
 
 from opendbc.car.structs import car
 
@@ -18,8 +18,15 @@ def saved_enabled(params) -> bool:
     return False
 
 
+def _ioniq5_long_eligible(cp) -> bool:
+  from opendbc.car.hyundai.left_paddle import IONIQ_5_CARS, has_left_paddle
+  from openpilot.starpilot.car.hyundai.aol import policy_for
+  return bool(has_left_paddle(cp) and cp.carFingerprint in IONIQ_5_CARS and
+              cp.openpilotLongitudinalControl and policy_for(cp).paddle_pause)
+
+
 def paddle_cancel(cp, cs, *, enabled: bool, saved: bool) -> bool:
-  return bool(saved and enabled and ioniq6_long_eligible(cp) and cs.canValid and not cs.canTimeout and
+  return bool(saved and enabled and (ioniq6_long_eligible(cp) or _ioniq5_long_eligible(cp)) and cs.canValid and not cs.canTimeout and
               any(event.type == ButtonType.altButton2 and event.pressed for event in cs.buttonEvents))
 
 

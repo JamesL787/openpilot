@@ -83,7 +83,7 @@ def load_identity(directory: Path | None = None, now: datetime | None = None) ->
                   expires.isoformat() if expires is not None else "unknown", days_left)
 
 
-CONFIG_VERSION = 5
+CONFIG_VERSION = 6
 # Before config versions, every save wrote these defaults, which pinned projection
 # at 12 fps / 4000 kbps. Unversioned files holding exactly them get today's defaults.
 LEGACY_DEFAULTS = {"fps": 12, "bitrate_kbps": 4000}
@@ -93,6 +93,10 @@ PIPELINE_RESET = ("gpu_nv12", "async_readback")
 # Before version 5 every save wrote verify_head_unit on, and some cars send certificates the root cannot parse.
 # Older files get today's default (off).
 VERIFY_RESET = ("verify_head_unit",)
+# Before version 6 every save wrote the old default (off) for staying on home Wi-Fi.
+DEDICATED_WIFI_RESET = ("dedicated_wifi_interface",)
+
+CONNECTIONS = ("wireless", "wired", "headunitpad", "openheadunit")
 
 DEFAULT_CONFIG = {
   "config_version": CONFIG_VERSION,
@@ -102,7 +106,10 @@ DEFAULT_CONFIG = {
   "companion_name": "",
   "rfcomm_channel": 0,         # 0 = discover through SDP (normal); set only to work around a broken SDP record
   "verify_head_unit": False,   # verify the car's certificate against root-cert.pem when present
-  "connection": "wireless",    # "wireless": Bluetooth + the car's Wi-Fi; "wired": USB cable from the car to the comma's USB-C port
+  "connection": "wireless",    # "wireless": Bluetooth + the car's Wi-Fi; "wired": USB cable from the car to the comma's USB-C port;
+                               # "headunitpad": an iPad running HeadunitPad on the Galaxy hotspot or same LAN connects to the comma
+                               # "openheadunit": an Android tablet running Open Headunit does the same
+  "headunitpad_port": 5277,    # HeadunitPad's "Headunit Server" port
   "usb_mode": "auto",          # wired: "auto" waits for the car's accessory handshake, then presents as an accessory itself;
                                # "handshake" waits for it only; "direct" presents as an accessory at once
   "view": "car",               # Separate StarPilot road view; legacy mirror has no source
@@ -118,6 +125,7 @@ DEFAULT_CONFIG = {
   "render_profile": True,      # car view: always-on sampling profile in logs/render_profile.txt (and .1.txt)
   "render_profile_kb": 256,    # size cap per render_profile file
   "wifi_interface": "wlan0",
+  "dedicated_wifi_interface": True,   # join the car on its own aa0 station so wlan0 stays on home Wi-Fi
   "device_name": "StarPilot",
   "version_status": 0,         # WifiVersionResponse status (0 = success) for receivers that negotiate a version
   "phone_class": True,         # while pairing/connecting, present as a phone: HFP gateway + smartphone Class of Device
@@ -139,6 +147,8 @@ def load_config(path: Path | None = None) -> dict:
         stored = {key: value for key, value in stored.items() if key not in PIPELINE_RESET}
       if not isinstance(version, int) or version < 5:
         stored = {key: value for key, value in stored.items() if key not in VERIFY_RESET}
+      if not isinstance(version, int) or version < 6:
+        stored = {key: value for key, value in stored.items() if key not in DEDICATED_WIFI_RESET}
       config.update({key: value for key, value in stored.items() if key in DEFAULT_CONFIG and isinstance(value, type(DEFAULT_CONFIG[key]))})
   except (OSError, ValueError):
     pass
@@ -146,8 +156,10 @@ def load_config(path: Path | None = None) -> dict:
   config["fps"] = 0 if int(config["fps"]) <= 0 else max(5, min(30, int(config["fps"])))
   if config["view"] not in ("car", "mirror"):
     config["view"] = "car"
-  if config["connection"] not in ("wireless", "wired"):
+  if config["connection"] not in CONNECTIONS:
     config["connection"] = "wireless"
+  if not 1024 <= int(config["headunitpad_port"]) <= 65535:
+    config["headunitpad_port"] = DEFAULT_CONFIG["headunitpad_port"]
   if config["usb_mode"] not in ("auto", "handshake", "direct"):
     config["usb_mode"] = "auto"
   config["bitrate_kbps"] = max(1000, min(12000, int(config["bitrate_kbps"])))

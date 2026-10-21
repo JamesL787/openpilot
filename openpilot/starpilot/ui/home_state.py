@@ -70,7 +70,7 @@ class HomeState:
   temperature_c: float | None = None
   vehicle_online: bool = True
   connection: str = "OFFLINE"
-  bluetooth: bool = False
+  bluetooth: str = ""
   gpu_present: bool = False
   gpu_active: bool = False
   recording_audio: bool = False
@@ -78,6 +78,7 @@ class HomeState:
   gpu_state: str = "disconnected"
   metric: bool = False
   temperature_high: bool = False
+  jetlink: str = "off"
 
 
 @dataclass(frozen=True)

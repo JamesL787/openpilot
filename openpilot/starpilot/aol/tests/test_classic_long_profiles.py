@@ -94,12 +94,11 @@ CARD_CASES += [(identity, True, False, True, True) for identity in CARD_IDENTITI
 @pytest.mark.parametrize('identity,alpha,disable,aol,release', CARD_CASES)
 def test_actual_card_published_cp_controls_and_disabled_loop(identity, alpha, disable, aol, release, monkeypatch):
   from opendbc.car.hyundai.classic_scc_aol import qualified as stock_qualified, aol_word as stock_word
-  from opendbc.car.hyundai.radar_interface import RadarInterface
   from opendbc.car.hyundai.values import HyundaiSafetyFlags
   from openpilot.cereal import messaging
   from openpilot.common.params import Params
   from openpilot.common.prefix import OpenpilotPrefix
-  from openpilot.selfdrive.car.card import Car
+  from openpilot.starpilot.aol.tests.classic_startup_test_helpers import prepared_classic_card
   from openpilot.selfdrive.controls.controlsd import Controls
   from openpilot.starpilot.lateral.tests.test_lane_runtime import feed
 
@@ -124,14 +123,15 @@ def test_actual_card_published_cp_controls_and_disabled_loop(identity, alpha, di
     cp = CarInterface.get_params(identity, fingerprint, [], requested, release, False)
     assert cp.openpilotLongitudinalControl == requested
     assert cp.pcmCruise != requested
-    assert not CarInterface.startup_required(cp)
+    assert CarInterface.startup_required(cp) == requested
     assert qualified(cp) if requested else stock_qualified(cp)
     before = cp.to_dict()
     subscriber = messaging.sub_sock('carParams', timeout=100, conflate=True)
     ci = card = controls = None
     try:
       ci = CarInterface(cp)
-      card = Car(CI=ci, RI=RadarInterface(cp))
+      card = prepared_classic_card(cp)
+      ci = card.CI
       expected = dict(before)
       if aol:
         expected['safetyConfigs'] = [{**before['safetyConfigs'][0], 'safetyParam': aol_word(card.CP) if requested else stock_word(card.CP)}]
@@ -139,7 +139,7 @@ def test_actual_card_published_cp_controls_and_disabled_loop(identity, alpha, di
       assert card.CP.to_dict() == expected
       assert bool(card.CP.safetyConfigs[0].safetyParam & HyundaiSafetyFlags.LONG) == requested
       assert card.aol_qualified == aol
-      assert card.vehicle_startup.owner is None
+      assert (card.vehicle_startup.owner is not None) == requested
       with structs.CarParams.from_bytes(saved.get('CarParams')) as published:
         assert published.to_dict() == card.CP.to_dict()
       parsed = ci.update([])
@@ -160,6 +160,8 @@ def test_actual_card_published_cp_controls_and_disabled_loop(identity, alpha, di
       assert not command.enabled and not command.latActive and not command.longActive
       controls.publish(command, lateral_log)
     finally:
+      if card is not None:
+        card.vehicle_startup.close()
       del controls, card, ci, subscriber
       gc.collect()
 

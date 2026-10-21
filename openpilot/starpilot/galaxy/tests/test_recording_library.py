@@ -77,6 +77,8 @@ class RecordingLibraryTest(unittest.TestCase):
     self.assertFalse(self.segment.exists())
 
   def test_selected_route_inventory_and_archive_are_complete_beyond_list_limit(self):
+    self.history = DriveHistory(self.root, max_segments_per_route=64, max_segments=64)
+    self.library = RecordingLibrary(self.history)
     for number in range(1, 70):
       folder = self.root / f'{ROUTE}--{number}'
       folder.mkdir()

@@ -4,6 +4,8 @@ import re
 import time
 import uuid
 
+from openpilot.starpilot.galaxy_bluetooth.bootstrap import setup_status
+from openpilot.starpilot.galaxy_bluetooth.phone_ui import forget_phone_keys, large_phone_rows
 from openpilot.starpilot.bluetooth.owner import BluetoothOwner, BluetoothRejected, BluetoothUnavailable
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import DialogResult, Widget
@@ -23,6 +25,7 @@ class BluetoothLarge(Widget):
 
   def __init__(self, connectivity_allowed: Callable[[], bool]):
     super().__init__()
+    self.phone_pairing_allowed = connectivity_allowed
     self.session = None
     self.active = False
     self.owner = BluetoothOwner(connectivity_allowed, session_valid=lambda identity: self.active and identity == self.session)
@@ -132,13 +135,18 @@ class BluetoothLarge(Widget):
     else:
       self.pending = self.executor.submit(self.owner.request, operation, address=address, enabled=enabled)
     self.operation = operation
+    self.pending_address = address
     self.pending_session = getattr(self, "session", None)
     self.return_to_root = return_to_root
     self._rebuild()
 
+  def _forget(self, address: str) -> None:
+    self._request("forget", address=address)
+
   def _tick(self):
     if self.pending is not None and self.pending.done():
       future, operation = self.pending, self.operation
+      address = getattr(self, "pending_address", None)
       self.pending = None
       self.operation = ""
       stale = getattr(self, "pending_session", None) != getattr(self, "session", None)
@@ -156,6 +164,8 @@ class BluetoothLarge(Widget):
         if not stale:
           gui_app.push_widget(alert_dialog("Adapter is unavailable. Try again later."))
       else:
+        if operation == "forget" and address:
+          forget_phone_keys(self.phone_pairing_allowed, address)
         if operation != "close" and not stale:
           self.status = result
           if operation == "power":
@@ -232,7 +242,8 @@ class BluetoothLarge(Widget):
     devices = tuple((item.get("address"), item.get("name"), item.get("paired"), item.get("connected"))
                     for item in status.get("devices", ()))
     signature = repr((self.status is None, status.get("available"), status.get("powered"), status.get("parked"),
-                      status.get("discovering"), status.get("errorCode"), status.get("pairing"), devices))
+                      status.get("discovering"), status.get("errorCode"), status.get("pairing"), devices,
+                      setup_status()))
     if hasattr(self, "_scroller") and (self._touch_held or gui_app.mouse_events):
       return
     if signature == self._signature:
@@ -277,8 +288,9 @@ class BluetoothLarge(Widget):
           callback=lambda a=address, op=operation: self._request(op, address=a), enabled=lambda: self.active and self._ready()))
         if device.get("paired"):
           rows.append(button_item("Forget " + device_label(device), "Forget", callback=lambda a=address:
-            self._confirm("Forget this Bluetooth device?", lambda: self._request("forget", address=a)),
+            self._confirm("Forget this Bluetooth device?", lambda: self._forget(a)),
             enabled=lambda: self.active and self._ready()))
+    rows.extend(large_phone_rows(self.phone_pairing_allowed))
     previous = getattr(self, "_scroller", None)
     self._scroller = Scroller(rows, spacing=0, line_separator=True)
     if previous is not None:

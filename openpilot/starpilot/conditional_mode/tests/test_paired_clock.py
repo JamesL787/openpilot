@@ -116,3 +116,18 @@ class TestPairedClock(unittest.TestCase):
     self.assertFalse(self.sample(event, now + 1, drive_id=self.fixture.drive_id + 1).accepted)
     self.assertEqual(self.fixture.consumer.rejection, 'discontinuity')
     self.assertEqual(self.fixture.consumer.barrier_ns, now + 1)
+
+  def test_preempted_sample_retries_once_using_only_the_new_measurement(self):
+    with patch.object(projection.time, 'CLOCK_BOOTTIME', 7, create=True), \
+         patch.object(projection.time, 'monotonic_ns', side_effect=(MONO, MONO + 2_000_000,
+                     MONO + 2_100_000, MONO + 2_102_000)), \
+         patch.object(projection.time, 'clock_gettime_ns', side_effect=(BOOT, BOOT + 2_101_000)):
+      self.assertEqual(projection.paired_clocks_ns(), (MONO + 2_101_000, BOOT + 2_101_000, 2000))
+
+  def test_two_preemptions_or_rollback_still_fail_without_reusing_a_pair(self):
+    for stamps in ((MONO, MONO + 2_000_000, MONO + 3_000_000, MONO + 5_000_000), (MONO, MONO - 1)):
+      with self.subTest(stamps=stamps), \
+           patch.object(projection.time, 'CLOCK_BOOTTIME', 7, create=True), \
+           patch.object(projection.time, 'monotonic_ns', side_effect=stamps), \
+           patch.object(projection.time, 'clock_gettime_ns', return_value=BOOT):
+        self.assertIsNone(projection.paired_clocks_ns())

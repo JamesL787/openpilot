@@ -3,11 +3,11 @@ from copy import deepcopy
 import time
 
 from opendbc.car import Bus
-from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 from opendbc.car.isotp_parallel_query import IsoTpParallelQuery
 from opendbc.can.parser import MAX_BAD_COUNTER
-from opendbc.car.hyundai.ecu_startup import HyundaiECUStartup, Outcome, stock_copy as stock_copy
+from opendbc.car.hyundai.ecu_continuity import ContinuousECUStartup, StartupKeeper
+from opendbc.car.hyundai.ecu_startup import Outcome, stock_copy as stock_copy
 
 
 def required(cp):
@@ -16,12 +16,12 @@ def required(cp):
           not cp.flags & (HyundaiFlags.CANFD | HyundaiFlags.CAMERA_SCC | HyundaiFlags.CANFD_CAMERA_SCC))
 
 
-class G90Startup(HyundaiECUStartup):
-  def __init__(self, cp, callbacks):
-    super().__init__(cp, callbacks, address=0x7d0, bus=0, label='G90')
+class G90Startup(ContinuousECUStartup):
+  def __init__(self, cp, callbacks, *, clock=time.monotonic, keeper_factory=StartupKeeper):
+    super().__init__(cp, callbacks, address=0x7d0, bus=0, label='G90', clock=clock, keeper_factory=keeper_factory)
 
-  def _disable(self, *args, **kwargs):
-    return disable_ecu(*args, **kwargs)
+  def continuity_required(self):
+    return required(self.cp)
 
   def _query(self, *args, **kwargs):
     return IsoTpParallelQuery(*args, **kwargs)
@@ -50,6 +50,21 @@ class G90Startup(HyundaiECUStartup):
     if ci.CP.to_dict() != expected:
       raise RuntimeError('G90 AOL finalization changed unrelated CarParams')
     self.prepared_cp = expected
+
+  def sources_current(self, ci, now_ns):
+    if self.outcome is not Outcome.SENT_UNCONFIRMED:
+      return True
+    if not ci.CS.out.canValid or ci.CS.out.canTimeout:
+      return False
+    parser = ci.can_parsers[Bus.pt]
+    if parser.bus != 0:
+      return False
+    for name in ('EMS16', 'WHL_SPD11', 'TCS13', 'MDPS12', 'CLU11'):
+      source = parser.message_states.get(parser.dbc.name_to_msg[name].address)
+      if (source is None or not source.timestamps or source.counter_fail >= MAX_BAD_COUNTER or
+          not self.floor_ns < int(source.timestamps[-1]) <= now_ns or now_ns - int(source.timestamps[-1]) > source.timeout_threshold):
+        return False
+    return True
 
   def _warm_stock(self, ci):
     deadline = time.monotonic() + 3.

@@ -3,9 +3,10 @@ import time
 
 from opendbc.car import Bus
 from opendbc.can.parser import MAX_BAD_COUNTER
-from opendbc.car.hyundai.ecu_startup import HyundaiECUStartup, Outcome
+from opendbc.car.hyundai.ecu_startup import Outcome
+from opendbc.car.hyundai.ecu_continuity import ContinuousECUStartup
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags
+from opendbc.car.hyundai.values import CAR, HyundaiFlags
 from opendbc.car.hyundai.canfd_owner import topology_index
 
 
@@ -24,7 +25,7 @@ def first_generation(cp):
           not cp.passive and not cp.dashcamOnly and not cp.notCar)
 
 
-class CapturedADRVStartup(HyundaiECUStartup):
+class CapturedADRVStartup(ContinuousECUStartup):
   def __init__(self, cp, callbacks, *, label, template_type):
     buses = CanBus(cp)
     super().__init__(cp, callbacks, address=0x730, bus=buses.ECAN, label=label)
@@ -32,6 +33,10 @@ class CapturedADRVStartup(HyundaiECUStartup):
     self.camera_bus = buses.CAM
     self.template_type = template_type
     self.template = None
+
+  def continuity_required(self):
+    return (self.cp.carFingerprint in (CAR.KIA_EV6, CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN) and
+            self.cp.openpilotLongitudinalControl and first_generation(self.cp))
 
   def _capture(self):
     floor = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
@@ -90,6 +95,9 @@ class CapturedADRVStartup(HyundaiECUStartup):
         if not floor < stamp <= now or now - stamp > source.timeout_threshold:
           return False
     return True
+
+  def sources_current(self, ci, now_ns):
+    return self.outcome is not Outcome.SENT_UNCONFIRMED or self._sources(ci, now_ns, floor=self.floor_ns)
 
   def _warm_stock(self, ci):
     deadline = time.monotonic() + 3.

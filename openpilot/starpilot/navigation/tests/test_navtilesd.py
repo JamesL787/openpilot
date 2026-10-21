@@ -322,3 +322,32 @@ def test_status_reports_sizes_and_failure(tmp_path):
   assert status["failure"] == "key" and status["hasKey"] and status["network"] == "wifi"
   assert set(status["bytes"]) == {"saved", "driven", "cache"}
   assert navtilesd.FAILURE_KEY == "key"
+
+
+def test_main_subscribes_to_registered_gps_carriers(monkeypatch):
+  import sys
+  from types import SimpleNamespace
+  from openpilot.cereal.services import SERVICE_LIST
+  from openpilot.starpilot.navigation import navtilesd, owner
+
+  class SubscriptionsChecked(Exception):
+    pass
+
+  def submaster(services):
+    assert len(services) == len(set(services))
+    assert set(services) <= SERVICE_LIST.keys()
+    assert {"gpsLocationExternal", "gpsLocation", "starpilotCarState"} <= set(services)
+    assert "phoneGps" not in services
+    assert services.count("starpilotNavigation") == 1
+    assert "deviceState" in services
+    raise SubscriptionsChecked
+
+  messaging = SimpleNamespace(SubMaster=submaster)
+  from openpilot import cereal
+  monkeypatch.setattr(cereal, "messaging", messaging, raising=False)
+  monkeypatch.setitem(sys.modules, "openpilot.cereal.messaging", messaging)
+  monkeypatch.setattr(navtilesd, "TileDaemon", lambda: None)
+  monkeypatch.setattr(owner, "NavigationOwner", lambda: None)
+  monkeypatch.setattr(navtilesd.os, "nice", lambda _: None)
+  with pytest.raises(SubscriptionsChecked):
+    navtilesd.main()

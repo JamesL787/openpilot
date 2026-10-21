@@ -69,7 +69,7 @@ class TestVoltSdgmControl(unittest.TestCase):
         setup(cp)
         for tick in range(16):
           now = 1_000_000_000 + tick * 40_000_000
-          out, sources = feed_camera(ci, packer, now, counter=tick % 4, gas=tick >= 8, low=tick % 2 == 0)
+          out, sources = feed_camera(ci, packer, now, counter=tick % 4, gas=tick >= 8, low=tick % 2 == 0, eps_status=1)
           self.assertTrue(out.canValid)
           for source in sources:
             native("rx", source, now // 1000)

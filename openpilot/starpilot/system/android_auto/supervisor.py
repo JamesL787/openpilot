@@ -16,6 +16,7 @@ on Stop. Nothing here runs as root or touches vehicle control.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import os
@@ -34,6 +35,7 @@ from openpilot.common.hardware import COMMA_HARDWARE
 from openpilot.starpilot.system.android_auto import identity as identity_store
 from openpilot.starpilot.system.android_auto.auto_connect import AutoConnectPolicy
 from openpilot.starpilot.system.android_auto.bootstrap import NAMES, BootstrapError, WirelessBootstrap
+from openpilot.starpilot.system.android_auto.bugsink_report import PairingAttempt
 from openpilot.starpilot.system.android_auto.frame_source import (DEFAULT_PATH as DEFAULT_FRAME_PATH, FLAG_ASYNC_READBACK, FLAG_NV12,
                                                                   FORMAT_NV12, FrameRequest)
 from openpilot.starpilot.system.android_auto.projection_control import DEFAULT_CONTROL_SOCKET, NATIVE_FOCUS
@@ -43,6 +45,8 @@ from openpilot.starpilot.system.android_auto.session import AuthenticationReject
 
 BACKOFF_SECONDS = (2.0, 4.0, 8.0, 15.0, 30.0)
 STABLE_SESSION_SECONDS = 30.0
+WIFI_RECOVER_RETRY_S = 30.0
+DEDICATED_STRIKES = 2         # sessions where aa0 failed but wlan0 joined, before a car stays on wlan0
 PEER_STOP_RETRY_SECONDS = 10.0
 FRAME_MAX_AGE = 0.5          # never send a UI frame older than this
 SOFTWARE_FPS = 15            # libx264 cadence; the hardware encoder runs at 30
@@ -60,6 +64,9 @@ USB_CONFIGURE_WAIT = 15.0    # slower receivers need time to enumerate after the
 LINK_CHECK_INTERVAL = 1.0    # how often the link watcher asks whether the car's Wi-Fi is still up
 LINK_CHECK_SLOW = 1.0        # a link check slower than this is logged (NetworkManager answers over D-Bus)
 STREAM_STALL_LOG = 1.0       # a streaming loop pass slower than this is logged
+REPORTED_SETTINGS = ("connection", "usb_mode", "view", "encoder", "fps", "bitrate_kbps", "rate_control", "gpu_nv12",
+                     "async_readback", "wifi_interface", "dedicated_wifi_interface", "verify_head_unit", "version_status",
+                     "rfcomm_channel", "phone_class", "auto_connect")
 
 
 def encoder_preference(configured: str) -> str:
@@ -72,6 +79,7 @@ STATE_LABELS = {
   "negotiating": "negotiating video", "streaming": "projecting", "suspended": "car showing its own screen",
   "backoff": "retrying", "stopping": "stopping", "error": "error",
   "waiting_for_usb": "plug into the car's usb", "usb_accessory": "starting usb",
+  "waiting_for_ipad": "open headunitpad on the ipad", "waiting_for_tablet": "open open headunit on the tablet",
 }
 
 
@@ -176,7 +184,7 @@ class LinkWatch:
     wireless = not isinstance(self.lease, (NoLease, UsbLease))
     while not self._stop.is_set():
       if wireless:
-        self.wifi_dbm = _wifi_dbm()
+        self.wifi_dbm = _wifi_dbm(getattr(self.lease, "interface", "wlan0"))
       if check is not None:
         started = time.monotonic()
         try:
@@ -263,7 +271,7 @@ class EventLog:
     return json.dumps(record, default=str) + "\n"
 
   def __call__(self, name: str, **values) -> None:
-    record = {"t": datetime.now(UTC).isoformat(timespec="milliseconds"), "event": name, **values}
+    record = {"t": datetime.now(UTC).isoformat(timespec="milliseconds"), "event": name, "mono_s": time.monotonic(), **values}
     with self.lock:
       self.recent.append(record)
       if self._writer is None:
@@ -292,6 +300,8 @@ class Supervisor:
     self._source_session = source_session
     self._projection_enabled = projection_enabled
     self._lease_factory = lease_factory
+    self._dedicated_strikes: dict[str, int] = {}
+    self._wifi_recover_at = 0.0
     self._bt_client = bluetooth_client
     self._frame_path = frame_path
     self._lock = threading.RLock()
@@ -302,6 +312,8 @@ class Supervisor:
     self._bluez: Any = None
     self._pairing_until = 0.0
     self._pairing_known: set[str] | None = None  # Android Auto cars already paired when the pairing window opened
+    self._pairing_attempt: PairingAttempt | None = None
+    self._pairing_seen: tuple = ()
     self._car_seen_at = -CAR_LINK_HOLD
     self._hfp_link = threading.Event()  # set when the chosen car opens the hands-free link
     self.auto = AutoConnectPolicy()
@@ -340,6 +352,7 @@ class Supervisor:
     status["wired_blocked"] = wired_blocker()
     status["pairing_ready"] = self._pairing_active()
     status["auto_connect"] = bool(self.config["auto_connect"])
+    status["dedicated_wifi_interface"] = bool(self.config["dedicated_wifi_interface"])
     status["auto_paused"] = self.auto.suppressed
     status["recent"] = list(self.log.recent)[-8:]
     return status
@@ -361,6 +374,13 @@ class Supervisor:
       identity_store.save_config(self.config)
     self.log("auto_connect_selected", enabled=bool(enabled))
 
+  def set_dedicated_wifi(self, enabled: bool) -> None:
+    """Join the car on aa0 so wlan0 keeps its network; used from the next session."""
+    with self._lock:
+      self.config["dedicated_wifi_interface"] = bool(enabled)
+      identity_store.save_config(self.config)
+    self.log("dedicated_wifi_selected", enabled=bool(enabled))
+
   def start(self, trigger: str = "manual") -> None:
     with self._lock:
       if not self._projection_enabled():
@@ -371,7 +391,7 @@ class Supervisor:
         if self._stop.is_set():
           raise RuntimeError("Android Auto is still stopping; try again in a moment")
         return
-      if self.config["connection"] != "wired" and not self.config["receiver_address"]:
+      if self.config["connection"] == "wireless" and not self.config["receiver_address"]:
         raise RuntimeError("Choose your car first")
       identity = identity_store.load_identity()  # fail fast with a clear message
       self._stop.clear()
@@ -455,8 +475,8 @@ class Supervisor:
     self.log("view_selected", view=view)
 
   def set_connection(self, connection: str) -> None:
-    """Choose wireless (Bluetooth + car Wi-Fi) or wired (USB) projection."""
-    if connection not in ("wireless", "wired"):
+    """Choose wireless (Bluetooth + car Wi-Fi), wired (USB), or HeadunitPad or Open Headunit (on the Galaxy hotspot) projection."""
+    if connection not in identity_store.CONNECTIONS:
       raise RuntimeError(f"Unknown connection {connection!r}")
     if connection == "wired" and (reason := wired_blocker()):
       raise RuntimeError(reason)
@@ -481,20 +501,39 @@ class Supervisor:
       bluez.acquire_pairing()
     elif self.config.get('phone_class', True):
       bluez.acquire()
+    self._end_pairing("reopened")
     with self._lock:
       self._pairing_known = known
       self._pairing_until = time.monotonic() + seconds
+      self._pairing_attempt, self._pairing_seen = PairingAttempt(seconds), ()
     self.log("pairing_window", seconds=seconds)
 
   def pair_device(self, address: str) -> None:
     if self._source_session is None or self._shared_bluetooth_owner is None or not self._pairing_active():
       raise RuntimeError('Current Galaxy pairing authorization required')
+    self._pairing_step("pair_requested")
     self._shared_bluetooth_owner.pair_device(self._source_session, address)
 
   def pairing_status(self) -> dict:
     if self._source_session is None or self._shared_bluetooth_owner is None:
       return {'active': False, 'receiver': None, 'prompt': None, 'approved': False}
-    return self._shared_bluetooth_owner.incoming_status(self._source_session)
+    status = self._shared_bluetooth_owner.incoming_status(self._source_session)
+    seen = (status.get('state'), bool(status.get('prompt')), bool(status.get('approved')), status.get('error') or '')
+    if seen != getattr(self, '_pairing_seen', ()):
+      self._pairing_seen = seen
+      self._pairing_step("status", state=seen[0], prompt=seen[1], approved=seen[2], **({'error': seen[3]} if seen[3] else {}))
+    return status
+
+  def _pairing_step(self, name: str, **values) -> None:
+    attempt = getattr(self, '_pairing_attempt', None)
+    if attempt is not None:
+      attempt.step(name, **values)
+
+  def _end_pairing(self, result: str, **values) -> None:
+    with self._lock:
+      attempt, self._pairing_attempt = getattr(self, '_pairing_attempt', None), None
+    if attempt is not None:
+      attempt.finish(result, **values)
 
   def pairing_response(self, prompt_id: str, accepted: bool, value: str = '') -> None:
     if not isinstance(prompt_id, str) or len(prompt_id) != 32 or type(accepted) is not bool or not isinstance(value, str):
@@ -502,8 +541,10 @@ class Supervisor:
     if self._source_session is None or self._shared_bluetooth_owner is None or not self._pairing_active() or \
        not self._shared_bluetooth_owner.incoming_response(self._source_session, prompt_id, accepted, value):
       raise RuntimeError('Pairing prompt expired or changed')
+    self._pairing_step("prompt_answered", accepted=accepted)
 
   def cancel_pairing(self) -> None:
+    self._end_pairing("cancelled")
     with self._lock:
       self._pairing_until, self._pairing_known = 0.0, None
       phone = self._bluez if not self._session_alive() else None
@@ -541,6 +582,7 @@ class Supervisor:
   def maintain(self, now: float | None = None) -> None:
     """Periodic housekeeping from the daemon thread: pairing window, auto-connect."""
     now = time.monotonic() if now is None else now
+    self.recover_wifi(now)
     owner = self._shared_bluetooth_owner
     if not self._projection_enabled():
       self._set(error='Android Auto was disabled')
@@ -566,6 +608,7 @@ class Supervisor:
           self.stop(timeout=0.0, graceful=0.0)
         else:
           self._pairing_until, self._pairing_known = 0.0, None
+          self._end_pairing("interrupted", reason="Bluetooth lease released")
         self._bluez.close()
         self._bluez = None
         return
@@ -577,6 +620,7 @@ class Supervisor:
             self._bluez = None
           self._source_session = None
           self._pairing_until, self._pairing_known = 0.0, None
+        self._end_pairing("interrupted", reason="Galaxy session ended")
         if old_phone is not None:
           old_phone.close()
     if self._pairing_until:
@@ -585,6 +629,7 @@ class Supervisor:
       else:
         with self._lock:
           self._pairing_until, self._pairing_known = 0.0, None
+        self._end_pairing("expired")
         if not self._session_alive():
           self._release_phone()
     self._auto_connect(now)
@@ -671,12 +716,18 @@ class Supervisor:
               self._shared_bluetooth_owner.phone_lease.receiver == device["address"])]
       if not new:
         return
+    with self._lock:
+      attempt, self._pairing_attempt = getattr(self, '_pairing_attempt', None), None
     try:
       self.cancel_pairing()
       self.select_receiver(new[0]["address"], new[0]["name"])
       self.log("car_selected_after_pairing", car=new[0]["name"])
+      if attempt is not None:
+        attempt.finish("paired")
     except (RuntimeError, ValueError) as error:
       self.log("car_select_failed", error=str(error))
+      if attempt is not None:
+        attempt.finish("select_failed", error=str(error))
 
   def close(self) -> None:
     self.stop()
@@ -722,6 +773,10 @@ class Supervisor:
                    lease.incoming.approved_address == address.upper()))
     return bool(receiver) and (address.upper() == receiver.upper() or
       self._shared_bluetooth_owner is not None and self._shared_bluetooth_owner.companion_accepts(address))
+
+  def phone_window(self, operation: str, session: tuple, **arguments):
+    owner = self._shared_bluetooth_owner
+    return None if owner is None else owner.phone_window(operation, session, **arguments)
 
   def companion_bluetooth_action(self, operation: str, address: str, session: tuple):
     owner = self._shared_bluetooth_owner
@@ -799,10 +854,27 @@ class Supervisor:
       identity_store.save_config(self.config)
 
   def _lease(self):
-    if self._lease_factory is None:
+    factory = self._lease_factory
+    if factory is None:
       from openpilot.starpilot.system.android_auto.network import NetworkLease
-      return NetworkLease(self.log, self.config["wifi_interface"])
-    return self._lease_factory(self.log, self.config["wifi_interface"])
+      factory = NetworkLease
+    if self.config["dedicated_wifi_interface"]:
+      from openpilot.starpilot.system.android_auto.car_interface import DedicatedLease
+      strikes = self._dedicated_strikes.get(self.config["receiver_address"], 0)
+      if strikes >= DEDICATED_STRIKES:
+        self.log("wifi_dedicated_skipped", strikes=strikes)
+      lease = DedicatedLease(self.log, self.config["wifi_interface"], factory, enabled=strikes < DEDICATED_STRIKES)
+      lease.prepare()
+      return lease
+    return factory(self.log, self.config["wifi_interface"])
+
+  def _count_dedicated(self, lease) -> None:
+    """A car whose network keeps failing on aa0 but joining on wlan0 stays on wlan0 until the daemon restarts."""
+    address = self.config["receiver_address"]
+    if getattr(lease, "aa0_joined", False):
+      self._dedicated_strikes.pop(address, None)
+    elif getattr(lease, "aa0_failed", False):
+      self._dedicated_strikes[address] = self._dedicated_strikes.get(address, 0) + 1
 
   def _unselect_car_audio(self, address: str) -> None:
     if self._bt_client is None:
@@ -867,14 +939,21 @@ class Supervisor:
 
   def _run(self, generation: int, trigger: str = "manual") -> None:
     self.log.open()
-    wired = self.config["connection"] == "wired"
-    self.log("session_start", receiver="usb" if wired else self.config["receiver_name"], generation=generation, trigger=trigger)
-    lease = NoLease() if wired else self._lease()
+    connection = self.config["connection"]
+    wireless = connection == "wireless"
+    receiver = {"wired": "usb", "headunitpad": "headunitpad", "openheadunit": "openheadunit"}.get(connection, self.config["receiver_name"])
+    from openpilot.starpilot.system.android_auto.bugsink_transport import device_metadata
+    software = device_metadata()
+    self.log("session_start", receiver=receiver, generation=generation, trigger=trigger,
+             software={key: software.get(key, "unknown") for key in ("commit", "branch")},
+             settings={key: self.config.get(key) for key in REPORTED_SETTINGS})
+    lease = self._lease() if wireless else NoLease()
     attempt = 0
     try:
       while not self._stop.is_set():
         started = time.monotonic()
         peer_stopped = False
+        self.log("attempt_start")
         try:
           self._attempt(lease)
           self.log("session_ended")
@@ -905,7 +984,7 @@ class Supervisor:
           delay = max(delay, PEER_STOP_RETRY_SECONDS)  # the car ended projection itself; do not bounce straight back
         self._set(state="backoff", attempt=attempt, retry_in=delay, mode=None)
         try:
-          self._wait_backoff(delay, car_can_wake=not wired and not peer_stopped)
+          self._wait_backoff(delay, car_can_wake=wireless and not peer_stopped)
         except Cancelled:
           break
     finally:
@@ -914,6 +993,8 @@ class Supervisor:
         lease.release(restore=True)
       except Exception as error:
         self.log("wifi_release_failed", error=str(error))
+      self._count_dedicated(lease)
+      self._wifi_recover_at = 0.0  # if the restore above failed, housekeeping retries it
       try:
         self._release_phone()
       except Exception as error:
@@ -934,6 +1015,9 @@ class Supervisor:
   def _attempt(self, lease) -> None:
     if self.config["connection"] == "wired":
       self._attempt_usb()
+      return
+    if self.config["connection"] in ("headunitpad", "openheadunit"):
+      self._attempt_headunitpad()
       return
     config = self.config
     address = config["receiver_address"]
@@ -1038,6 +1122,41 @@ class Supervisor:
     finally:
       self._release_usb(gadget, bridge, listener, failed)
 
+  def _attempt_headunitpad(self) -> None:
+    """HeadunitPad or Open Headunit: the tablet, on the Galaxy hotspot or the same LAN, finds this port and connects like a head unit."""
+    ident = identity_store.load_identity()
+    headunitpad = self.config["connection"] == "headunitpad"
+    port = int(self.config["headunitpad_port"])
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    self._track(listener)
+    try:
+      listener.bind(("", port))
+    except OSError as error:
+      raise RuntimeError(f"Cannot listen on port {port} ({error})") from error
+    listener.listen(1)
+    listener.settimeout(1.0)
+    self._stage("waiting_for_ipad" if headunitpad else "waiting_for_tablet", f"port {port}")
+    sock = self._accept_headunitpad(listener)
+    listener.close()
+    self._project(None, NoLease(), ident, connect=lambda: sock, fragment_acks=headunitpad)
+
+  def _accept_headunitpad(self, listener: socket.socket) -> socket.socket:
+    while True:
+      self._check_cancel()
+      try:
+        sock, (address, _) = listener.accept()
+      except TimeoutError:
+        continue
+      if not ipaddress.ip_address(address).is_private:
+        self.log("headunitpad_rejected", address=address)
+        sock.close()
+        continue
+      sock.settimeout(None)
+      sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+      self.log("headunitpad_connected", address=address)
+      return self._track(sock)
+
   def _release_usb(self, gadget, bridge, listener, failed: bool) -> None:
     """Undo a wired attempt, running every step even when one fails.
 
@@ -1059,6 +1178,19 @@ class Supervisor:
         self.log("usb_cleanup_failed", step=name, error=str(error))
     if errors and not failed:
       raise errors[0]
+
+  def recover_wifi(self, now: float | None = None) -> None:
+    """Turn wlan0 autoconnect back on if a session paused it and crashed. Retried while idle until it works."""
+    now = time.monotonic() if now is None else now
+    if now < self._wifi_recover_at or self._session_alive():
+      return
+    from openpilot.starpilot.system.android_auto.network import recover_autoconnect
+    try:
+      done = recover_autoconnect(self.log)
+    except Exception as error:
+      self.log("wifi_autoconnect_recover_failed", error=str(error))
+      done = False
+    self._wifi_recover_at = float("inf") if done else now + WIFI_RECOVER_RETRY_S
 
   def recover_usb(self) -> None:
     """At startup: undo a wired session a crash interrupted, so the car stops seeing a dead accessory
@@ -1139,11 +1271,12 @@ class Supervisor:
         self._wait(1.0 + attempt * 0.5)
     raise RuntimeError(f"Car did not accept the projection connection: {last_error}")
 
-  def _project(self, result, lease, ident, connect=None) -> None:
+  def _project(self, result, lease, ident, connect=None, fragment_acks: bool = False) -> None:
     config = self.config
     sock = connect() if connect is not None else self._connect_tcp(result, lease)
     ca = ident.root if config.get("verify_head_unit", False) else None
     session = ProjectionSession(sock, ident.cert, ident.key, self.log, ca)
+    session.fragment_acks = fragment_acks
     self._stage("authenticating")
     session.authenticate()
     self._stage("negotiating")
@@ -1170,7 +1303,8 @@ class Supervisor:
     flags = (FLAG_NV12 if config["gpu_nv12"] and getattr(encoder, "supports_nv12", False) else 0) | \
             (FLAG_ASYNC_READBACK if config["async_readback"] else 0)
     request = FrameRequest(mode.width, mode.height, mode.margin_width, mode.margin_height, int(interval * 1e6), flags)
-    self.log("frame_pipeline", nv12=bool(flags & FLAG_NV12), async_readback=bool(flags & FLAG_ASYNC_READBACK))
+    self.log("frame_pipeline", nv12=bool(flags & FLAG_NV12), async_readback=bool(flags & FLAG_ASYNC_READBACK),
+             target_fps=fps, encoder=getattr(encoder, "backend", "libx264"))
     view = config["view"]
     if view == "car" and not self._synthetic and self._renderer_command is None and not renderer_available():
       view = "unavailable"
@@ -1181,8 +1315,26 @@ class Supervisor:
     self._set(view=source.label, encoder=getattr(encoder, "backend", "libx264"), target_fps=fps)
     watch = LinkWatch(lease, self.log).start()
     try:
+      from openpilot.starpilot.system.android_auto.media_audio import MediaAudio, music_control
+      from openpilot.starpilot.system.android_auto.media_status import MediaStatus
+      session.media_control = music_control
+      session.audio = MediaAudio.create(session, self.log)
+      if session.audio is not None:
+        session.audio.track_info = MediaStatus.create(session, self.log)
+    except Exception as error:  # music is optional; projection must never depend on it
+      self.log("media_audio_unavailable", error=str(error))
+    try:
+      from openpilot.starpilot.system.android_auto.nav_status import NavStatus
+      session.nav = NavStatus.create(session, self.log)
+    except Exception as error:  # turn-by-turn is optional; projection must never depend on it
+      self.log("nav_status_unavailable", error=str(error))
+    try:
       self._stream(session, encoder, source, watch, interval)
     finally:
+      if session.audio is not None:
+        session.audio.close()
+      if getattr(session, "nav", None) is not None:
+        session.nav.close()
       watch.stop()
       source.close()
       encoder.close()
@@ -1206,6 +1358,8 @@ class Supervisor:
     recoveries: list[float] = []  # when the hardware encoder was reopened, this session
     encode_peak = 0.0
     wait_for_frame = False
+    audio = getattr(session, "audio", None)
+    nav = getattr(session, "nav", None)
     self._stage("streaming")
     while not self._stop.is_set():
       pass_started = time.monotonic()
@@ -1221,6 +1375,24 @@ class Supervisor:
           break
         handled = session.pump(0.0)
       session.check_progress()
+      if audio is not None:
+        try:
+          audio.service()  # non-blocking: drains the Spotify pipe and sends within the car's audio credit
+        except (OSError, TimeoutError):
+          raise  # the link itself failed; video would fail the same way
+        except Exception as error:
+          self.log("media_audio_failed", error=f"{type(error).__name__}: {error}")
+          audio.close()
+          audio = session.audio = None
+      if nav is not None:
+        try:
+          nav.service()  # non-blocking: compares the route's next turn and sends at most a few small messages
+        except (OSError, TimeoutError):
+          raise
+        except Exception as error:
+          self.log("nav_status_failed", error=f"{type(error).__name__}: {error}")
+          nav.close()
+          nav = session.nav = None
       now = time.monotonic()
       wait_for_frame = True
       if session.focused:
@@ -1274,7 +1446,8 @@ class Supervisor:
           self._set(view=source.label)
         window = [t for t in sent_times if now - t <= 5.0]
         ordered = sorted(ages)
-        stats = {**session.stats(), "fps": round(len(window) / 5.0, 1), "encode_ms": round(encoder.last_encode_ms, 1),
+        audio_stats = {"media_audio": audio.status()} if audio is not None else {}
+        stats = {**session.stats(), **audio_stats, "fps": round(len(window) / 5.0, 1), "encode_ms": round(encoder.last_encode_ms, 1),
                  "encode_peak_ms": round(encode_peak, 1), "encoder_recoveries": len(recoveries),
                  "frame_age_p95_ms": round(ordered[int(len(ordered) * 0.95) - 1] * 1000) if ordered else None,
                  "uptime_s": round(now - started), "frames_from_view": source.frames, "wifi_dbm": watch.wifi_dbm}

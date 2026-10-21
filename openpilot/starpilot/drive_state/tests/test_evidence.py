@@ -140,3 +140,44 @@ def test_park_disengaged_does_not_confuse_native_permission_with_active_controls
   f.sm.values['selfdriveState'].active = False
   f.sm.values['carState'].gearShifter = 'drive'
   assert not f.source.allowed()
+
+
+def offroad_device(f):
+  f.sm.values['deviceState'] = NS(started=False)
+  for table, value in ((f.sm.seen, True), (f.sm.alive, True), (f.sm.valid, True),
+                       (f.sm.logMonoTime, 2_000_000_000), (f.sm.recv_time, 2.0)):
+    table['deviceState'] = value
+
+
+def test_update_forced_offroad_does_not_require_stopped_driving_publishers(fixture):
+  f = fixture
+  offroad_device(f)
+  f.sm.values['pandaStates'][0].ignitionLine = True
+  f.sm.values.pop('carState')
+  f.sm.values.pop('selfdriveState')
+  assert not f.source.allowed()
+  assert f.source.update_ready(True)
+  assert not f.source.update_ready(False)
+  f.sm.values['deviceState'].started = True
+  assert not f.source.update_ready(True)
+
+
+@pytest.mark.parametrize('field,value', [('controlsAllowed', True), ('safetyModel', 'hyundaiCanfd'),
+                                         ('pandaType', 'unknown')])
+def test_forced_offroad_update_requires_native_no_output(fixture, field, value):
+  f = fixture
+  offroad_device(f)
+  f.sm.values['pandaStates'][0].ignitionLine = True
+  f.sm.values.pop('carState')
+  setattr(f.sm.values['pandaStates'][0], field, value)
+  assert not f.source.update_ready(True)
+
+
+@pytest.mark.parametrize('service', ['pandaStates', 'deviceState'])
+def test_forced_offroad_update_rechecks_freshness(fixture, service):
+  f = fixture
+  offroad_device(f)
+  f.sm.values['pandaStates'][0].ignitionLine = True
+  assert f.source.update_ready(True)
+  f.sm.logMonoTime[service] = 1
+  assert not f.source.update_ready(True)

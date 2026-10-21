@@ -25,6 +25,7 @@ from opendbc.car.hyundai.canfd_stock_aol import (
 )
 from opendbc.car.hyundai.non_scc_aol import qualified as qualified_non_scc, aol_word, AOL_MARKER, AOL_EXPERIENCE, AOL_WORDS
 from opendbc.car.hyundai.kona_aol import allow_lateral_onset as kona_lateral_onset
+from opendbc.car.hyundai.left_paddle import IONIQ_5_CARS, has_left_paddle
 from opendbc.car.structs import car
 from opendbc.car.hyundai.values import CAR as HyundaiCAR, HyundaiFlags
 from opendbc.car.hyundai.ccnc_ev_stock import qualified as qualified_ccnc_ev_stock, request_allowed, STOCK_SAFETY_PARAMS
@@ -184,6 +185,9 @@ def aol_safety_config(CP):
 
 def policy_for(CP) -> AolVehiclePolicy:
   policy = _policy_for(CP)
+  if (CP.carFingerprint in IONIQ_5_CARS and has_left_paddle(CP) and
+      CP.openpilotLongitudinalControl and policy.runtime_supported):
+    policy = replace(policy, paddle_pause=True)
   marked = (
     qualified_blended_alpha(CP, marked_only=True) or qualified_blended_stock(CP, marked_only=True)
     or qualified_angle_aol(CP, marked_only=True) or qualified_classic_long(CP, marked_only=True)

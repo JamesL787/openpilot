@@ -1,7 +1,12 @@
+import os
+import time
+
 from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL
 from opendbc.car.lateral import apply_meas_steer_torque_limits
 from opendbc.car.chrysler import chryslercan
+from opendbc.car.chrysler.aol_contract import qualified as aol_qualified
+from opendbc.car.chrysler.brake_hold import brake_hold_supported, create_das_3_command
 from opendbc.car.chrysler.values import CUSW_CARS, RAM_CARS, RAM_DT, CarControllerParams, ChryslerFlags
 from opendbc.car.structs import CarState
 from opendbc.car.interfaces import CarControllerBase
@@ -16,6 +21,11 @@ class CarController(CarControllerBase):
     self.last_lkas_falling_edge = 0
     self.lkas_control_bit_prev = False
     self.last_button_frame = 0
+    self.jeep_hold_replay = "REPLAY" in os.environ
+    self.jeep_decel = -2.0
+    self.last_das_3_counter = -1
+    self.jeep_hold_cancelled = False
+    self.jeep_cruise_was_active = False
 
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.params = CarControllerParams(CP)
@@ -33,12 +43,17 @@ class CarController(CarControllerBase):
       das_bus = 2 if self.CP.carFingerprint in RAM_CARS else 0
 
       # ACC cancellation
-      if CC.cruiseControl.cancel:
+      pause_stock_acc = bool(aol_qualified(self.CP, marked_only=True) and
+        CS.aol_pause_longitudinal and 0 < CS.aol_pause_longitudinal_stamp_ns <= now_nanos and
+        now_nanos - CS.aol_pause_longitudinal_stamp_ns <= 30_000_000 and
+        CS.out.canValid and not CS.out.canTimeout)
+      if CC.cruiseControl.cancel or (pause_stock_acc and CS.out.cruiseState.enabled):
         self.last_button_frame = self.frame
         can_sends.append(chryslercan.create_cruise_buttons(self.packer, CS.button_counter + 1, das_bus, cancel=True))
 
       # ACC resume from standstill
-      elif CC.cruiseControl.resume:
+      elif (CC.cruiseControl.resume and not pause_stock_acc and
+            (not aol_qualified(self.CP, marked_only=True) or CS.out.cruiseState.enabled)):
         self.last_button_frame = self.frame
         can_sends.append(chryslercan.create_cruise_buttons(self.packer, CS.button_counter + 1, das_bus, resume=True))
 
@@ -94,6 +109,14 @@ class CarController(CarControllerBase):
       if _projection is not None:
         _projection.emit('chrysler.LKAS_COMMAND', apply_torque, lkas_control_bit, can_sends[-1])
 
+    if brake_hold_supported(self.CP) and self.CP.safetyConfigs[0].safetyParam == 4:
+      withdraw = bool(aol_qualified(self.CP, marked_only=True) and CS.aol_pause_longitudinal and
+                      0 < CS.aol_pause_longitudinal_stamp_ns <= now_nanos and
+                      now_nanos - CS.aol_pause_longitudinal_stamp_ns <= 30_000_000)
+      self.update_jeep_brake_hold(CC, CS, now_nanos, can_sends, withdraw=withdraw)
+    else:
+      CS.brake_hold = False
+
     self.frame += 1
 
     new_actuators = CC.actuators.as_builder()
@@ -103,3 +126,43 @@ class CarController(CarControllerBase):
     if _projection is not None:
       _projection.finish(new_actuators.torque)
     return new_actuators, can_sends
+
+  def update_jeep_brake_hold(self, CC, CS, now_nanos, can_sends, *, withdraw=False):
+    # CAN Event/parser timestamps are BOOTTIME. Card passes MONOTONIC for
+    # ordinary live Chrysler controllers, and original CAN time during replay.
+    # Select the established replay contract explicitly; never infer an offset
+    # or renew the parser's original source timestamp at command time.
+    now_boot_ns = now_nanos if self.jeep_hold_replay else time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+    if (not CS.das_3 or not CS.out.canValid or CS.out.canTimeout or
+        not 0 <= now_boot_ns - CS.das_3_timestamp <= 100_000_000):
+      CS.brake_hold = False
+      return
+    counter = int(CS.das_3["COUNTER"])
+    changed = counter != self.last_das_3_counter
+    self.last_das_3_counter = counter
+    active = CS.out.cruiseState.enabled
+    if active and not self.jeep_cruise_was_active:
+      self.jeep_hold_cancelled = False
+    self.jeep_cruise_was_active = active
+    if CC.cruiseControl.cancel or CS.jeep_driver_cancel or withdraw:
+      self.jeep_hold_cancelled = True
+    if self.jeep_hold_cancelled:
+      CS.brake_hold = False
+      return
+    decel = float(CS.das_3["ACC_DECEL"])
+    if not CS.brake_hold and CS.out.cruiseState.enabled and decel < -0.5 and CS.out.standstill:
+      CS.brake_hold = True
+      self.jeep_decel = -2.0
+    if (CC.cruiseControl.cancel or CS.jeep_driver_cancel or withdraw or CS.out.gasPressed or CS.out.brakePressed or
+        CS.out.gearShifter != CarState.GearShifter.drive or not CS.out.standstill or
+        not CS.out.cruiseState.available or CS.out.accFaulted):
+      CS.brake_hold = False
+      return
+    if not CS.brake_hold:
+      return
+    if CS.out.cruiseState.enabled:
+      self.jeep_decel = max(-3.0, min(-0.5, min(self.jeep_decel, decel)))
+      return
+    can_sends.append(create_das_3_command(self.packer, 2 if changed else 3, self.jeep_decel, CS.das_3))
+    if self.frame % 10 == 0:
+      can_sends.append(chryslercan.create_cruise_buttons(self.packer, CS.button_counter + 1, 0, resume=True))

@@ -33,7 +33,7 @@ def prepare(role):
       raise RuntimeError('A model child cannot change its execution role')
     return _selection
   _verify_policy()
-  cache = Path('/tmp/starpilot-model-runtime')
+  cache = Path('/data/starpilot-model-runtime')
   _selection = activate(BUNDLE, MANIFEST_SHA256, LEGACY_REVISION, role, cache)
   return _selection
 
