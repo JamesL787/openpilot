@@ -139,7 +139,7 @@ class LaneChangeFeatureTests(unittest.TestCase):
     from openpilot.starpilot.ui.lane_change_feature import TURN, TURN_SPEED
     turn, speed = self.row(TURN), self.row(TURN_SPEED)
     self.assertEqual((turn.label, turn.value, turn.default_value), ("Force turn desires", "Off", "Off"))
-    self.assertEqual((float(speed.value), speed.unit, speed.minimum, speed.maximum), (15., "mph", 0., 100.))
+    self.assertEqual((float(speed.value), speed.unit, speed.minimum, speed.maximum), (15., "mph", 5., 20.))
     self.assertTrue(self.owner.apply(self.request(turn)))
     saved = read_saved(self.params)
     self.assertTrue(saved.policy.turn_desires)

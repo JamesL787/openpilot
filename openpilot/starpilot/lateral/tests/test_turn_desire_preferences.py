@@ -21,7 +21,7 @@ def test_turn_desires_roundtrip_and_older_documents_keep_them_off():
 
 def test_turn_desire_document_rejects_bad_values():
   good = to_value(replace(LaneChangePolicy(), turn_desires=True))
-  for field, value in (("turnDesires", 1), ("turnDesireSpeedMps", -1 * CV.MPH_TO_MS), ("turnDesireSpeedMps", 101 * CV.MPH_TO_MS),
+  for field, value in (("turnDesires", 1), ("turnDesireSpeedMps", 4 * CV.MPH_TO_MS), ("turnDesireSpeedMps", 21 * CV.MPH_TO_MS),
                        ("turnDesireSpeedMps", "15")):
     assert decode(json.dumps(good | {field: value}).encode()) is None
   missing = dict(good)
@@ -37,7 +37,7 @@ def test_lane_change_wire_carries_the_turn_desire_and_old_frames_read_none():
   assert decode(encode(old)).turn_direction == Direction.NONE
 
 
-def test_turn_desire_speed_takes_vfns_whole_range():
-  for mph in (0, 1, 20, 55, 100):
+def test_turn_desire_speed_takes_sunnypilots_range():
+  for mph in (5, 12, 15, 20):
     raw = json.dumps(to_value(replace(LaneChangePolicy(), turn_desires=True, turn_desire_speed_mps=mph * CV.MPH_TO_MS))).encode()
     assert decode(raw).turn_desire_speed_mps == mph * CV.MPH_TO_MS

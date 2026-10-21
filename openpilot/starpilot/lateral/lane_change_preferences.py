@@ -16,10 +16,11 @@ MAX_SPEED_MPS = 100 * CV.MPH_TO_MS
 MINIMUM_SPEED_MPS = 5 * CV.MPH_TO_MS
 DEFAULT_SPEED_MPS = MINIMUM_SPEED_MPS
 # Force turn desires (6.x "TurnDesires"): a lone blinker below this speed asks the model to turn, with no navigation
-# route. The gate keeps a blinker given well before the corner from turning the car in early. Its range is vfn's:
-# the slider of the minimum lane-change speed, 0-100 mph, that gated vfn's turn desires.
-TURN_DESIRE_MIN_SPEED_MPS = 0.0
-TURN_DESIRE_MAX_SPEED_MPS = 100 * CV.MPH_TO_MS
+# route. The gate keeps a blinker given well before the corner from turning the car in early. Its range is sunnypilot's
+# Lane Turn Speed: 5-20 mph, where 20 mph is the speed lane changes start, so a turn desire never overlaps one at the
+# default minimum lane-change speed (vfn's slider ran 0-100 mph, tied to the lane-change minimum).
+TURN_DESIRE_MIN_SPEED_MPS = 5 * CV.MPH_TO_MS
+TURN_DESIRE_MAX_SPEED_MPS = 20 * CV.MPH_TO_MS
 DEFAULT_TURN_DESIRE_SPEED_MPS = 15 * CV.MPH_TO_MS
 
 
