@@ -1086,10 +1086,12 @@ class SelfdriveD:
       replacement = copy(alert)
       replacement.alert_text_1, replacement.alert_text_2 = wording
       alerts[index] = replacement
-    # "Turning Left/Right" while modeld is giving the model a turn desire (6.x's turning banner)
+    # "Turning Left/Right" while modeld is giving the model a turn desire (6.x's turning banner). It follows the status's
+    # own lateral-active flag, not the ordinary warning types: those are off while the car steers lateral-only (AOL), where
+    # most turns are taken, so gating on them hid it for 7 of 9 turns on route aa72d9572459015c/0000001a.
     turning = None
     try:
-      if (ET.WARNING in self.state_machine.current_alert_types and self.sm.seen['laneChangeAssistWire'] and
+      if (self.sm.seen['laneChangeAssistWire'] and
           self.sm.alive['laneChangeAssistWire'] and self.sm.valid['laneChangeAssistWire'] and self.sm.valid['modelV2']):
         turning = turn_alert_direction(decode_lane_status(self.sm['laneChangeAssistWire']), self.sm['modelV2'],
                                        time.monotonic_ns(), int(self.sm.recv_time['laneChangeAssistWire'] * 1e9),

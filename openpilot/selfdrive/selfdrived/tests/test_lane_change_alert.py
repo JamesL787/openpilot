@@ -41,13 +41,13 @@ class FakeAlerts:
 
 
 class TestLaneChangeAlert(unittest.TestCase):
-  def _run_alert(self, raw=None, *, frame_id=77, every=False):
+  def _run_alert(self, raw=None, *, frame_id=77, every=False, alert_types=(ET.WARNING,)):
     model = SimpleNamespace(frameId=frame_id, timestampEof=10_000_000_000,
                             meta=SimpleNamespace(laneChangeDirection="left"))
     drive = SelfdriveD.__new__(SelfdriveD)
     drive.events = Events()
     drive.events.add(EventName.preLaneChangeLeft)
-    self.enterContext(patch.object(drive, "state_machine", SimpleNamespace(current_alert_types=[ET.WARNING], soft_disable_timer=0), create=True))
+    self.enterContext(patch.object(drive, "state_machine", SimpleNamespace(current_alert_types=list(alert_types), soft_disable_timer=0), create=True))
     drive.CP = object()
     drive.personality = next(iter(log.LongitudinalPersonality.schema.enumerants.values()))
     drive.is_metric = False
@@ -76,6 +76,9 @@ class TestLaneChangeAlert(unittest.TestCase):
     self.assertFalse([t for t in texts(status(Direction.RIGHT), frame_id=78) if t.startswith("Turning")])  # stale frame
     self.assertFalse([t for t in texts(status(Direction.RIGHT, engaged=False)) if t.startswith("Turning")])
     self.assertFalse([t for t in texts(None) if t.startswith("Turning")])
+    # lateral-only (AOL): no ordinary warning types, and the banner still shows while the model gets the desire
+    aol = [a.alert_text_1 for a in self._run_alert(status(Direction.LEFT), every=True, alert_types=())]
+    self.assertIn("Turning Left", aol)
 
   def test_missing_or_mismatched_status_is_neutral(self):
     self.assertEqual((self._run_alert().alert_text_1, self._run_alert().alert_text_2),
