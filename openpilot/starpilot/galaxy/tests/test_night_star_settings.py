@@ -66,12 +66,13 @@ class TestNightStarSettings(unittest.TestCase):
     self.assertTrue(self.set('Steering Angle Rate Limit', direction=1))   # the Clarity saved 219, off the 10 grid
     self.assertEqual(self.params.get('HondaEpsAngleRateLimit'), 229)
 
-  def test_rate_limit_values_need_the_limiter(self):
-    rows = {row['label']: row for row in self.page()['rows']}
-    self.assertFalse(rows['Rate Limit Up']['available'])
-    self.assertTrue(self.set('Steer Rate Limiter', 'On'))
-    rows = {row['label']: row for row in self.page()['rows']}
-    self.assertTrue(rows['Rate Limit Up']['available'])
+  def test_the_steer_rate_limiter_has_no_rows(self):
+    labels = self.labels()
+    self.assertFalse([label for label in labels if 'Rate Limiter' in label or label.startswith('Rate Limit ')])
+    # the page's save path refuses the limiter's keys too, so nothing can turn it on from here
+    from openpilot.starpilot.ui.night_star_feature import KEYS
+    for key in ('HondaSteerDeltaLimiter', 'HondaSteerDeltaUp', 'HondaSteerDeltaDown'):
+      self.assertNotIn(key, KEYS)
 
   def test_every_calibrated_image_gets_the_rate_limit_and_no_controller_choice(self):
     self.use(vehicle(CAR.HONDA_CIVIC_BOSCH, b'39990-TBA,C020\x00\x00'), parked=True)

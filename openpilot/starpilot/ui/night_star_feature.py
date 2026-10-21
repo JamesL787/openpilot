@@ -11,13 +11,11 @@ from openpilot.starpilot.saved_source import read_saved
 from openpilot.starpilot.ui.feature_settings_state import FeatureRow
 
 SEATBELT_KEY = "DisableSeatbeltCheck"
-LIMITER_KEY = "HondaSteerDeltaLimiter"
 
 # key -> (label, reason)
 BOOL_ROWS = {
   "HondaDriverAssistDuringOverride": ("Assist During Override",
                                       "Keep steering assist active while you override the wheel."),
-  LIMITER_KEY: ("Steer Rate Limiter", "Limit how fast the steering command may change, like the stock EPS."),
   SEATBELT_KEY: ("Disable Seatbelt Check", "Allow engaging and staying engaged with the driver's seatbelt unlatched."),
 }
 # key -> (label, reason, minimum, maximum, step, unit, integer)
@@ -30,11 +28,8 @@ NUMBER_ROWS = {
   "HondaMinSteerSpeed": ("Minimum Steer Speed", "No steering torque below this speed.", 0.0, 25.0, 1.0, "mph", True),
   "HondaOverrideTorqueScale": ("Torque During Override", "Share of the steering command kept while you override.",
                                0.0, 100.0, 5.0, "%", True),
-  "HondaSteerDeltaUp": ("Rate Limit Up", "Full-authority commands per second while the command grows.", 0.5, 10.0, 0.5, "/s", False),
-  "HondaSteerDeltaDown": ("Rate Limit Down", "Full-authority commands per second while the command shrinks.", 0.5, 10.0, 0.5, "/s", False),
 }
-EPS_KEYS = ("HondaDriverOverrideThreshold", "HondaMinSteerSpeed", "HondaOverrideTorqueScale", "HondaDriverAssistDuringOverride",
-            LIMITER_KEY, "HondaSteerDeltaUp", "HondaSteerDeltaDown")
+EPS_KEYS = ("HondaDriverOverrideThreshold", "HondaMinSteerSpeed", "HondaOverrideTorqueScale", "HondaDriverAssistDuringOverride")
 KEYS = frozenset((*BOOL_ROWS, *NUMBER_ROWS))
 
 
@@ -101,8 +96,6 @@ class NightStarFeature:
       valid = readable and math.isfinite(number) and low <= number <= high
     except (ValueError, UnicodeDecodeError):
       number, valid = 0.0, False
-    if key in ("HondaSteerDeltaUp", "HondaSteerDeltaDown") and self._saved_bool(LIMITER_KEY) is not True:
-      allowed, reason = False, "Turn on Steer Rate Limiter first."
     return FeatureRow(key, label, _format(number, integer) if valid else "Invalid saved value", source=raw,
                       step=step if valid else 0.0, minimum=low, maximum=high, unit=unit,
                       default_value=self._default(key) or None, available=allowed and valid,
@@ -134,8 +127,6 @@ class NightStarFeature:
       except ValueError:
         return False
       if not math.isfinite(number) or not low <= number <= high:   # off-grid is fine: the Clarity saved 219 deg/s
-        return False
-      if key in ("HondaSteerDeltaUp", "HondaSteerDeltaDown") and self._saved_bool(LIMITER_KEY) is not True:
         return False
       raw = _format(number, integer).encode()
 
