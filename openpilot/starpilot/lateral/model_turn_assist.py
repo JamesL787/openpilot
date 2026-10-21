@@ -138,9 +138,22 @@ TURN_LEAD_STOP_MARGIN = 1.5
 TURN_LEAD_DECEL_GATE = -0.5
 
 
+# vfn's turn shaping (route 00000355), for controllers that track the target closely (LatControlHondaEps). The hold and
+# the turn lead enter the command as steps: the plan ratchet below the plan-source speed jumps a model frame at a time,
+# opposite-release and handoff drop the floor in one frame, and at a stop the every-frame done reset re-arms the pre-wind
+# the frame after opposite-release clears it, so the target flips between hold and model at the frame rate. With the
+# blinker on below 15 mph the target carried 2-6x the model action's 1.5-8 Hz content. With shaping on, the hold/lead
+# floor reaches the command through this low-pass and a release glides onto the model at the same rate (a
+# driver-confirmed capture still snaps, since the wheel is already there), and an opposite-release during a stop holds
+# for the rest of that stop.
+TURN_SHAPING_TAU = 0.25  # s
+TURN_SHAPING_ALPHA = DT_CTRL / (TURN_SHAPING_TAU + DT_CTRL)
+
+
 class ModelTurnAssist:
 
-  def __init__(self):
+  def __init__(self, shaping: bool = False):
+    self.turn_shaping = shaping
     self.reset()
 
   def reset(self):
@@ -152,11 +165,50 @@ class ModelTurnAssist:
     self.twitch_guard_remaining = 0.0
     self.curvature = 0.0
     self.turn_hold_done = False
+    self.turn_hold_opposed_at_stop = False
+    self.turn_floor = 0.0
+    self.turn_release = 0.0
+    self.turn_override_out = 0.0
+
+  def _shape(self, CC, model_curvature: float, held_curvature: float, snap: bool) -> float:
+    # While the hold or the lead is flooring the command, the floor level is low-passed and still max-magnitude blended
+    # with the model, so arming and ratchet steps become ramps and the model's own wobble under the floor stays hidden.
+    # When they let go, the command glides from where it is onto the model, including onto an opposing model, and never
+    # climbs on its own on the way.
+    if not CC.latActive:
+      self.turn_floor = self.turn_release = 0.0
+      self.turn_override_out = model_curvature
+      return model_curvature
+    floor = held_curvature if held_curvature != model_curvature else self.turn_hold_curvature
+    if floor != 0.0:
+      if self.turn_floor == 0.0 and self.turn_release != 0.0:
+        self.turn_floor = self.turn_override_out  # re-armed mid-glide: continue from the command
+      self.turn_release = 0.0
+      self.turn_floor = floor if snap else self.turn_floor + (floor - self.turn_floor) * TURN_SHAPING_ALPHA
+      d = math.copysign(1.0, self.turn_floor)
+      out = self.turn_floor if model_curvature * d < abs(self.turn_floor) else model_curvature
+    else:
+      if self.turn_floor != 0.0:
+        self.turn_release = self.turn_override_out - model_curvature
+        self.turn_floor = 0.0
+      self.turn_release *= 1.0 - TURN_SHAPING_ALPHA
+      if abs(self.turn_release) < 1e-6:
+        self.turn_release = 0.0
+      out = model_curvature + self.turn_release
+      if self.turn_release != 0.0:
+        d = math.copysign(1.0, self.turn_release)
+        cap = max(model_curvature * d, self.turn_override_out * d)
+        if out * d > cap:
+          out = cap * d
+    self.turn_override_out = out
+    return out
 
   def update(self, CS, model_v2, CC, new_desired_curvature):
     blinker_dir = float(CS.rightBlinker) - float(CS.leftBlinker)
     if CC.latActive and self.twitch_guard_remaining > 0.0 and (blinker_dir == 0.0) and (self.turn_hold_curvature == 0.0):
       new_desired_curvature = limit_curvature_to_plan(model_v2, new_desired_curvature, CS.vEgo)
+    model_curvature = new_desired_curvature
+    hold_snap = False
     if blinker_dir == 0.0:
       self.turn_blinker_swept = 0.0
     else:
@@ -167,6 +219,7 @@ class ModelTurnAssist:
       self.turn_hold_swept = 0.0
       self.turn_hold_handoff_t = 0.0
       self.turn_hold_done = False
+      self.turn_hold_opposed_at_stop = False
     else:
       if self.turn_hold_curvature == 0.0:
         self.turn_hold_swept = 0.0
@@ -184,13 +237,18 @@ class ModelTurnAssist:
         self.turn_hold_standstill_t += DT_CTRL
         if self.turn_hold_standstill_t > CURVATURE_HOLD_STANDSTILL_TIMEOUT:
           self.turn_hold_curvature = 0.0
-        self.turn_hold_done = False
+        # a stop resets the turn cycle, but not after an opposite-release in this same stop when shaping: re-arming the
+        # frame after it cleared the hold is the hold/model flip-flop in TURN_SHAPING_TAU
+        if not (self.turn_shaping and self.turn_hold_opposed_at_stop):
+          self.turn_hold_done = False
       else:
         self.turn_hold_standstill_t = 0.0
+        self.turn_hold_opposed_at_stop = False
       if CC.latActive and self.turn_hold_curvature != 0.0 and (
           new_desired_curvature * math.copysign(1.0, self.turn_hold_curvature) < -CURVATURE_HOLD_OPPOSITE_RELEASE):
         self.turn_hold_curvature = 0.0
         self.turn_hold_done = True
+        self.turn_hold_opposed_at_stop = CS.vEgo < 0.5
       if CC.latActive and self.turn_hold_curvature != 0.0 and (
           new_desired_curvature * math.copysign(1.0, self.turn_hold_curvature) >= CURVATURE_HOLD_HANDOFF_FRAC * abs(self.turn_hold_curvature)):
         self.turn_hold_handoff_t += DT_CTRL
@@ -201,6 +259,7 @@ class ModelTurnAssist:
         self.turn_hold_handoff_t = 0.0
       if blinker_dir == 0.0:
         self.turn_hold_done = False
+        self.turn_hold_opposed_at_stop = False
       elif (CC.latActive and CS.steeringPressed and (CS.steeringTorque * blinker_dir < 0.0) and
             (self.curvature * blinker_dir > CURVATURE_HOLD_CONFIRM_MIN) and (self.turn_blinker_swept < CURVATURE_HOLD_CONFIRM_SWEPT)):
         self.turn_hold_done = False
@@ -227,6 +286,7 @@ class ModelTurnAssist:
           if CS.vEgo > CURVATURE_HOLD_PLAN_SOURCE_SPEED and (not driver_confirmed):
             new_mag = min(new_mag, abs(self.turn_hold_curvature) + CURVATURE_HOLD_RATCHET_RATE * DT_CTRL)
           self.turn_hold_curvature = math.copysign(new_mag, turn_candidate)
+          hold_snap = driver_confirmed
         elif self.turn_hold_curvature * blinker_dir < 0.0:
           self.turn_hold_curvature = 0.0
       if CC.latActive and self.turn_hold_curvature != 0.0:
@@ -249,6 +309,8 @@ class ModelTurnAssist:
           if CS.vEgo < CURVATURE_HOLD_RELEASE_SPEED and (not self.turn_hold_done) and (lead_curvature * blinker_dir > abs(self.turn_hold_curvature)):
             held_mag = min(lead_curvature * blinker_dir, abs(self.turn_hold_curvature) + CURVATURE_HOLD_RATCHET_RATE * DT_CTRL)
             self.turn_hold_curvature = math.copysign(held_mag, lead_curvature)
+    if self.turn_shaping:
+      new_desired_curvature = self._shape(CC, model_curvature, new_desired_curvature, hold_snap)
     return new_desired_curvature
 
 

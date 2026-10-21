@@ -134,6 +134,11 @@ class Controls:
     # and keeps vfn's model-curvature smoothing: the 0.1 s low-pass's delay here, and the action ramped across each frame
     self.lat_smooth_seconds = lateral_smooth_seconds(self.CP, LAT_SMOOTH_SECONDS)
     self.model_action_ramp = ModelActionRamp() if honda_eps else None
+    # ... and runs vfn's low-speed turn hold and turn lead every frame, as vfn did, with its turn shaping: the standstill
+    # pre-wind needs it running through the stop (the rolling-only gate below is the Ioniq 6 port's)
+    self.honda_turn_hold = honda_eps
+    if honda_eps:
+      self.model_turn_assist = ModelTurnAssist(shaping=True)
 
     from openpilot.starpilot.lateral.controller_selection import model_turn_assist_supported
     assist_enabled = self.vehicle_startup_preferences.turn_assist and model_turn_assist_supported(self.CP)
@@ -317,7 +322,11 @@ class Controls:
         new_desired_curvature = self.model_action_ramp.update(new_desired_curvature, self.sm.updated['modelV2'], CC.latActive)
     assist = self.turn_assist_enabled()
     rolling = math.isfinite(CS.vEgo) and CS.vEgo > max(.1 * CV.MPH_TO_MS, self.CP.minSteerSpeed)
-    if (assist and rolling and self.sm.all_checks(['modelV2']) and CC.latActive and not CS.standstill and not CS.steerFaultTemporary and
+    if getattr(self, 'honda_turn_hold', False):
+      self.model_turn_assist.curvature = self.curvature
+      self.model_turn_assist.twitch_guard_remaining = update_twitch_guard(self.model_turn_assist.twitch_guard_remaining, CS.vEgo, CS.standstill)
+      new_desired_curvature = self.model_turn_assist.update(CS, model_v2, CC, new_desired_curvature)
+    elif (assist and rolling and self.sm.all_checks(['modelV2']) and CC.latActive and not CS.standstill and not CS.steerFaultTemporary and
         not CS.steerFaultPermanent and CS.gearShifter in (car.CarState.GearShifter.drive, car.CarState.GearShifter.low)):
       self.model_turn_assist.curvature = self.curvature
       self.model_turn_assist.twitch_guard_remaining = update_twitch_guard(self.model_turn_assist.twitch_guard_remaining, CS.vEgo, CS.standstill)
