@@ -1,0 +1,80 @@
+{
+  "source_commit": "92428ab490b3085ea523f79cc6a32d392a057b56",
+  "donor": "civic_tgg_a120",
+  "load": {
+    "k0": -15.67,
+    "k1": -0.157,
+    "c": -5.449,
+    "friction": -388.8,
+    "bias": 75.77,
+    "kroll": -0.6084
+  },
+  "rack": {
+    "ratio_bp": [
+      4.9,
+      14.1,
+      28.3,
+      57.2,
+      83.4,
+      123.4,
+      176.5,
+      220.5,
+      299.3,
+      383.4
+    ],
+    "ratio_v": [
+      15.09,
+      15.09,
+      15.1,
+      15.1,
+      14.88,
+      14.85,
+      14.72,
+      14.59,
+      14.33,
+      13.94
+    ],
+    "slip_factor": -0.00079
+  },
+  "source_routes": "83ccc6a9a4e14d0b/0000000b-00000010",
+  "source_fit_notes": {
+    "engaged_unpressed_minutes": 73,
+    "in_route_r_squared": 0.794,
+    "held_out_r_squared": [
+      0.838,
+      0.558,
+      0.84,
+      0.703,
+      0.735
+    ]
+  },
+  "raw_firmware_A_B_tables_equal": {
+    "A_Y": true,
+    "A_X": true,
+    "B_Y": true,
+    "B_X": true
+  },
+  "tgg_stock_image_sha256": "d22ffb469105e781e724cfad75b32a1e4b69e6ef6b3fe2ae35d9d05f4bea7cdb",
+  "h020_stock_image_sha256": "f169e2cd8af9d2bc055eb7f44686530c54cb466fbebc03b62a671c423dedc547",
+  "transferred_fields": [
+    "column_load (including donor bias/roll)",
+    "rack_table",
+    "Civic Bosch base PID schedule",
+    "TGG residual P/I trims"
+  ],
+  "retained_h020_fields": [
+    "command_map",
+    "P_axis",
+    "key_clamp",
+    "speed_envelope",
+    "Table A geometry",
+    "computed R6",
+    "supported H020 PTM build hashes"
+  ],
+  "not_transferred": [
+    "TGG firmware command/P maps",
+    "TGG pipeline timing schedules",
+    "TGG yaw-sensor calibration"
+  ],
+  "classification": "measured on TGG-A120; transferred/inferred on H020 per user instruction"
+}

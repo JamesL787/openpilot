@@ -29,7 +29,11 @@ def configure_h020(cp, candidate, car_fw, config=None):
     return False
   cp.lateralTuning.init("pid")
   cp.lateralParams.torqueBP, cp.lateralParams.torqueV = [[0, 3840], [0, 3840]]
-  cp.lateralTuning.pid.kpBP, cp.lateralTuning.pid.kpV = [[0.0], [0.03]]
-  cp.lateralTuning.pid.kiBP, cp.lateralTuning.pid.kiV = [[0.0], [0.01]]
+  # Exact Civic Bosch/TGG base schedule from ns-bosch-radar-testing 92428ab490.
+  # Calibration p_scale/i_scale are applied by HondaEpsLateralCore as on the donor.
+  mph = 0.44704
+  bp = [0.0, 25.0 * mph - 1e-3, 25.0 * mph, 50.0 * mph]
+  cp.lateralTuning.pid.kpBP, cp.lateralTuning.pid.kpV = [bp, [0.018, 0.024, 0.048, 0.060]]
+  cp.lateralTuning.pid.kiBP, cp.lateralTuning.pid.kiV = [bp, [0.006, 0.008, 0.016, 0.020]]
   cp.lateralTuning.pid.kf = 0.0  # the firmware-inversion core supplies its own feedforward
   return True

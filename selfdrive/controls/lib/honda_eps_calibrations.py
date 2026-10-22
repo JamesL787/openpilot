@@ -4,11 +4,12 @@ Do not label the Civic sibling's load, rack or timing as measured on the H020.
 """
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import ColumnLoadModel, EpsFirmwareCalibration, computed_r6
 from openpilot.selfdrive.controls.lib.honda_eps_h020_geometry import PROFILE
-from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK
+from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TGG_A120_RACK
 
 R6_CENTRE, R6_BP, R6_GAIN = computed_r6(PROFILE)
-# Provisional sibling load only. Replace with the H020's held-out route fit.
-H020_LOAD = ColumnLoadModel(k0=-5.574, k1=-0.1831, c=-4.540, friction=-326.5, bias=-83.6, kroll=-3.185)
+# TGG-A120 donor: measured on its owner's routes 0000000b-00000010 (73 min).
+# Transferred in firmware-output units; inferred on H020, including donor bias/roll terms.
+H020_LOAD = ColumnLoadModel(k0=-15.67, k1=-0.157, c=-5.449, friction=-388.8, bias=75.77, kroll=-0.6084)
 H020 = EpsFirmwareCalibration(
   name="civic_tea_h020",
   e4_per_output=3840.0,
@@ -17,7 +18,7 @@ H020 = EpsFirmwareCalibration(
   kp_key_bp=(3, 173, 441, 665, 887, 1104, 1317, 1610, 1774), kp_v=(117, 148, 184, 220, 245, 257, 263, 265, 265),
   r6_per_deg_s=R6_CENTRE, r6_angle_bp=R6_BP, r6_angle_gain=R6_GAIN,
   load=H020_LOAD, p_scale=(1.15, 1.25, 1.15), i_scale=(0.75, 0.95, 1.0),
-  rack=CIVIC_TBA_C020_RACK,  # inferred sibling, NOT an H020 road measurement
+  rack=CIVIC_TGG_A120_RACK,  # TGG yaw-fitted donor; inferred on H020
   cmd_delay_s=0.0, cmd_delay_highway_s=0.0, default_on=False,
 )
 
@@ -26,9 +27,9 @@ CALIBRATION_PROVENANCE = {
   "firmware_tables": "H020 PTM image, row 0, X 0x13794, R5 0x13812, P X/Y 0x13AE2/0x13B60",
   "live_row": "firmware: all five searched variant records at 0x4B418 + n*0x59 have selector byte +0x0F == 0",
   "r6": "firmware-derived from H020 Table A and NORM1650; not measured on H020",
-  "column_load": "inferred: Civic TBA-C020 sibling, pending H020 routes",
-  "rack": "inferred: Civic TBA-C020 sibling; Table A equality does not prove equal mechanical gearing",
-  "residual_pid": "inferred: source controller Civic trims on 0.03/0.01 base gains",
+  "column_load": "transferred: TGG-A120 owner routes 83ccc6a9a4e14d0b/0000000b-00000010; measured on TGG, inferred on H020",
+  "rack": "transferred: TGG-A120 yaw-fitted rack; A/B tables match H020 byte-for-byte; mechanical gearing remains a donor assumption",
+  "residual_pid": "transferred: TGG-A120/Civic Bosch four-point base PID plus its P/I trims; not measured on H020",
   "command_delay": "none added: res plan/model pipeline unchanged, pending H020 timing measurement",
   "model_delay": "existing res model pipeline unchanged",
   "validation": "offline only; no H020 route or vehicle validation available",

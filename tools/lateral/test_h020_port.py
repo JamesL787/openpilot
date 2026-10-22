@@ -72,8 +72,8 @@ def test_h020_linear_map_and_selection():
   c = cp();assert gate.configure_h020(c, c.carFingerprint, c.carFw, CFG)
   assert list(c.lateralParams.torqueBP) == [0, 3840]
   assert list(c.lateralParams.torqueV) == [0, 3840]
-  assert c.lateralTuning.pid.kpV[0] == pytest.approx(0.03)
-  assert c.lateralTuning.pid.kiV[0] == pytest.approx(0.01)
+  assert list(c.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
+  assert list(c.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
   assert c.lateralTuning.pid.kf == 0.0
   assert use_honda_eps_controller(c, CFG)
   c.lateralParams.torqueV = [0, 3000]
@@ -175,3 +175,29 @@ def test_invalid_inputs_produce_zero_and_reset(monkeypatch, tmp_path, bad_field)
   output, angle, state = ctrl.update(True, cs, None, lp, False, k, None, False)
   assert output == 0 and angle == 0 and not state.active
   assert ctrl.core.output == 0 and ctrl.core.pid.i == 0
+
+
+@pytest.mark.parametrize("v,p,i", [(0., 0.018, 0.006), (10., 0.02337, 0.00779),
+                                  (11.176, 0.048, 0.016), (22.352, 0.060, 0.020), (35., 0.060, 0.020)])
+def test_transferred_tgg_pid_schedule(v, p, i):
+  c = cp();gate.configure_h020(c, c.carFingerprint, c.carFw, CFG)
+  core = ff.HondaEpsLateralCore(list(c.lateralTuning.pid.kpBP), list(c.lateralTuning.pid.kpV),
+                              list(c.lateralTuning.pid.kiBP), list(c.lateralTuning.pid.kiV),
+                              0.01, ff.HondaEpsFirmwareFeedforward(0.01, H020))
+  core.pid.speed = v
+  assert core.pid.k_p == pytest.approx(p, abs=2e-5)
+  assert core.pid.k_i == pytest.approx(i, abs=2e-5)
+
+
+def test_tgg_vehicle_donor_with_h020_firmware_inverse():
+  from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TGG_A120_RACK
+  assert H020.rack == CIVIC_TGG_A120_RACK
+  assert H020.rack.ratio_v[0] == 15.09
+  load = ff.column_load(10., 0., 5., 0., H020.load)
+  assert load == pytest.approx(-120.18)
+  r5 = ff.r5_for_motion(load, 0., H020, angle_deg=10.)
+  assert ff.firmware_output(r5, 0., H020, 10.) == pytest.approx(load, abs=1e-8)
+  # Donor transfer must not replace H020's command/P axes or its speed envelope.
+  assert H020.r5_key_bp[1:3] == (226, 311)
+  assert H020.kp_key_bp[0] == 3
+  assert H020.key_ceiling(200 / 3.6) == 1108

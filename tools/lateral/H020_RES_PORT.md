@@ -1,6 +1,6 @@
 # H020 Honda EPS controller port for LiMing's C3XL `res`
 
-Status: **local, opt-in prototype; firmware calibration prepared, vehicle calibration incomplete.**
+Status: **local, opt-in prototype; H020 firmware calibration with a transferred TGG-A120 vehicle baseline.**
 No device installation, firmware flash, GitHub publication or message to LiMing was performed.
 
 ## Verified inputs
@@ -19,7 +19,7 @@ The numerical `HondaEpsFirmwareFeedforward` / `HondaEpsLateralCore` is copied fr
 
 A res-specific `LatControlHondaEps(CP, CP_SP, CI)` adapter uses the existing PID log schema and update signature. It needs no StarPilot capnp schema, new Honda flags, new Params keys or compiled changes. The adapter preserves res's inactive reset and steering-pressed decisions. It uses the source default 300 deg/s desired-angle slew, initialized at the measured wheel angle on engagement, and rejects nonfinite inputs with zero output/reset. This wrapper is an adaptation: it does not port the source branch's StarPilot telemetry, command-delay head selection, short-dropout state retention, or its separate override detector/fade. Those require additional integration if desired.
 
-H020 PTM stock/modified EPS strings are added only to Civic Bosch fingerprints, consistent with LiMing's reported fingerprint. The interface supplies a **linear `[0, 3840] -> [0, 3840]`** map after res's older nonlinear modified-EPS block, but only when the new controller is explicitly enabled for exact `39990-TEA,H020` firmware. PID base gains are 0.03 / 0.01; the core supplies feedforward, so the legacy kf is zero in this mode.
+H020 PTM stock/modified EPS strings are added only to Civic Bosch fingerprints, consistent with LiMing's reported fingerprint. The interface supplies a **linear `[0, 3840] -> [0, 3840]`** map after res's older nonlinear modified-EPS block, but only when the new controller is explicitly enabled for exact `39990-TEA,H020` firmware. PID uses the donor Civic Bosch/TGG four-point base schedule (P 0.018/0.024/0.048/0.060, I 0.006/0.008/0.016/0.020, at 0/25-mph-minus-0.001/25-mph/50-mph), with the donor's P/I speed-band trims. The core supplies feedforward, so the legacy kf is zero in this mode.
 
 The existing Panda, safety code, AGNOS manifests, launchers, manager, camera code, model assets and global PID are unchanged. Existing non-H020 cars and disabled configurations retain the original res tune. Safety and driver-fault gating remain res's responsibility and are not bypassed.
 
@@ -45,9 +45,15 @@ The two PTM binaries differ only at tracker-1 `0x1378E/F` and their checksum wor
 
 The EPS version string cannot distinguish these builds. `ptm_build` is the owner's declaration of the installed image, not a cryptographic ECU readback.
 
-## Remaining vehicle calibration
+## TGG-A120 vehicle baseline and remaining checks
 
-`honda_eps_calibrations.py` marks the H020 column load, residual trims and rack table as **inferred from Civic TBA-C020**. Identical Table A does not establish equal mechanical rack gearing. No H020 road route was supplied, so none of those values is claimed as measured on this car.
+Per the user's instruction, the vehicle baseline now comes from **Civic TGG-A120**, replacing the initial C020 donor. The source calibration records a column-load fit on routes `83ccc6a9a4e14d0b/0000000b-00000010` (73 minutes engaged/unpressed, R² 0.794, held-out R² 0.558–0.840) and a GPS/yaw-fitted rack map on those routes. Those results belong to the donor car; this change reuses the pinned fitted parameters and does not claim a fresh replay of its raw logs.
+
+The H020 and TGG stock images in the original firmware evidence have byte-identical **A and B X/Y arrays** (four 60-byte comparisons at 0x1306C/0x130A8/0x130E4/0x13120). The earlier H020 work also traced matching controller functions. This supports choosing TGG as the donor; it does not establish that every mechanical or alignment parameter is identical.
+
+Transferred: TGG column-load coefficients (including its bias and roll term), yaw-fitted rack table, and the effective Civic Bosch/TGG residual PID schedule/trims. Retained: H020's command/P axes, R5 values, clamp, speed envelope, firmware geometry, R6 derivation and supported image hashes. The donor's bias and roll terms remain explicit assumptions on H020, as do the rack and load. Details and exact values are in `h020_tgg_donor.json`.
+
+The TGG donor itself inherits timing and P/I trims from C020. Its command/model timing is not an independently measured H020 result. We retain res's model pipeline without adding TGG's 0.15-second command delay or its model schedule. No new H020 measurements are claimed. The absence of H020 logs does not prevent preparing this donor-based starting calibration; it limits what can be concluded about its actual behavior on H020.
 
 No extra command delay or new model-delay schedule is injected. The old res plan timing differs from the source branch, so its schedules cannot simply be transplanted.
 
@@ -59,7 +65,7 @@ Calibration workflow, adapted from the source `tools/lateral` scripts:
 4. Fit the rack map on the GPS-checked yaw scale. Require at least 300 seconds of turning across angle/speed bands, both directions, then check held-out drives. The tool retains an inherited Clarity wheel-to-yaw lag assumption; measure it on H020 before treating the fit as final.
 5. Fit column load from reconstructed firmware output (`--source e4`), since the H020 PTM has no dedicated EPS telemetry. The H020 adaptation uses d(Table-A angle)/dt rather than treating the Table-B published rate as that derivative. Compare held-out routes and sensitivity to driver-torque gating. Reconstructed output remains a model-based target, not direct motor-current ground truth.
 6. Check plan timing with the measured yaw scale/right correction. H020 VSA latency defaults to zero in the timing tool; report that assumption or supply a measured `--vsa-latency`. Separate model perception/plan errors from controller under-delivery. Do not tune delay from a single steady curve.
-7. Validate tracking, command spectrum, saturation, overrides and low-speed noise; update the provenance with route IDs, fit/holdout results and assumptions. A sibling-model simulation alone cannot validate this car.
+7. Validate tracking, command spectrum, saturation, overrides and low-speed noise; compare the donor assumptions and update the provenance with route IDs, fit/holdout results and assumptions. A sibling-model simulation alone cannot validate this car.
 
 Run tools from the checkout root, with its own matching environment and schemas:
 
@@ -77,7 +83,7 @@ python3 tools/lateral/plan_timing.py --bus 1 --scale "$H020_YAW_SCALE" \
   --right "$H020_RIGHT_CORRECTION" '/path/to/route1/rlog*'
 ```
 
-The tools print fit results; they do not silently deploy calibration changes. Calibration needs the H020's real logs. The prepared example is disabled until explicitly configured for a reviewed test.
+The tools print fit results; they do not silently deploy calibration changes. The TGG-based starting calibration is prepared without requiring H020 logs; those logs would validate and refine the transfer. The prepared example is disabled until explicitly configured for a reviewed test.
 
 ## Activation and rollback mechanism
 
@@ -89,7 +95,7 @@ Rollback means disable/remove this explicit config and restore the original bran
 
 ## Verification and handoff limits
 
-**31 tests passed** on the Mac using Python 3.12. All four fitting/timing CLIs also passed import/`--help` smoke checks. The original numerical core was verified byte-for-byte apart from the two import substitutions; the private PID copy is exact and res's global PID is unchanged.
+**37 tests passed** on the Mac using Python 3.12. All four fitting/timing CLIs also passed import/`--help` smoke checks. The original numerical core was verified byte-for-byte apart from the two import substitutions; the private PID copy is exact and res's global PID is unchanged.
 
 Tests run against the port checkout's **actual res CarParams/PID-log capnp schemas**, not the ns-bosch-radar-testing mirror. They cover configuration gating, unchanged unrelated vehicles, exact H020 map selection, firmware inversion and R6 rail, geometry round trips, numerical bounds, override/inactive behavior, invalid inputs and integration wiring. The copied numerical core retains the source implementation, and its PID API is isolated.
 
