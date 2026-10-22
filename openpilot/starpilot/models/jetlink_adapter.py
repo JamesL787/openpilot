@@ -80,6 +80,30 @@ def _adapter_class():
                             () if axes is None else [getattr(axes, axis) for axis in AOL_AXES],
                             waiting=time.monotonic() - self._aol_since < AOL_GRACE_S)
 
+    def in_control(self) -> bool:
+      # Stock treats stale carControl/selfdriveState as in control, which holds the swap window shut for the
+      # rest of the drive after a jetlink hand-back even when the link has reconnected and the host is ready.
+      from jetlink.openpilot.stock import RETRY_S
+      try:
+        if self._sm is None:
+          if time.monotonic() < self._sm_after:
+            return True
+          self._sm_after = time.monotonic() + RETRY_S
+          from openpilot.cereal import messaging
+          self._sm = messaging.SubMaster(list(self.IN_CONTROL_SERVICES))
+        services = self.IN_CONTROL_SERVICES
+        self._sm.update(0)
+        return self.engaged(self._sm)
+      except Exception as e:
+        if self._in_control_error != (text := f"{type(e).__name__}: {e}"):
+          self._in_control_error = text
+          try:
+            self.log.error("jetlink: in_control() failed: %s", text)
+          except Exception:
+            pass
+        return True
+      self._in_control_error = None
+
     def small_reset(self, small):
       # CatalogModelState's history zeroed in place: GPU queues, numpy inputs (prev_feat, packed inputs) and
       # the desire edge. Never _reset_state(), which makes tensors the run JIT was not captured with

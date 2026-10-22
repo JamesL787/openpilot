@@ -130,7 +130,7 @@ class JoiningModelState:
   """
 
   def __init__(self, small, connect, build, prepare=None, reset_small=None, *, progress, log, in_control=None,
-               name=None):
+               name=None, link=None):
     self._small = small
     self._active = small
     self._connect = connect
@@ -198,6 +198,7 @@ class JoiningModelState:
     # on no information
     self._in_control = True
     self._ask_in_control = in_control
+    self._link = link
     self._stop = threading.Event()
 
     # whether the large model has produced a frame; a first inference that
@@ -438,18 +439,29 @@ class JoiningModelState:
     self._record.set()
 
   def _close_retired(self, retired, why: str) -> None:
-    """Say goodbye over the retired large model's link, then close it if it
-    is dead. A live one stays, on `Link`, for the next attempt, which is a
-    hello and a model request over it and not a reconnect: a model that fell
-    behind, or failed on the comma's side, leaves one. `retired` is the model
-    state, or the bare client of a build that failed."""
+    """Say goodbye over the retired large model's link, then close it when the
+    session should not be reused. A lag demote or a bad output often leaves a
+    client that still answers hellos but cannot keep up; closing forces the
+    join loop through connect_patiently again. `retired` is the model state,
+    or the bare client of a build that failed."""
     self._leave(retired, LEAVING.get(why, why))
-    if not getattr(getattr(retired, 'client', retired), 'dead', True):
+    client = getattr(retired, 'client', retired)
+    must_close = why in (LOST, BEHIND, BAD_OUTPUT, NOT_UP)
+    if not must_close and not getattr(client, 'dead', True):
       return
     try:
-      retired.close()
+      close = getattr(retired, 'close', None)
+      if callable(close):
+        close()
+      elif client is not retired:
+        client.close()
     except Exception:
       self._log.exception('jetlink: closing the retired link')
+    if must_close and self._link is not None:
+      try:
+        self._link.close()
+      except Exception:
+        self._log.exception('jetlink: closing the modeld link holder')
 
   def _leave(self, model, reason: str) -> None:
     """Tell the server why the large model `model` stops using its link, with
@@ -583,6 +595,8 @@ class JoiningModelState:
           return
         self._available = True
         self._joined = (client, spec)
+      self._failures = 0
+      self._replugged = False
       self._log.warning("jetlink: link ready, waiting for a window to swap")
       self._report('connect', READY, 'ready_waiting_window')
       self._keep_alive()
@@ -777,4 +791,4 @@ def join(parts, cam_w: int, cam_h: int, small) -> JoiningModelState:
 
   return JoiningModelState(small, connect, build, prepare, reset_small=lambda: ready['reset_small'](),
                            progress=parts.progress, log=parts.log, in_control=op.in_control,
-                           name=parts.models.name_for)
+                           name=parts.models.name_for, link=link)
