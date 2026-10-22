@@ -164,7 +164,7 @@ class TestRuntimeSnapshot(unittest.TestCase):
     ui.sm['carControl'].longActive = True
     state = adapter.build(ShellMode.ONROAD, now_ns=NOW).onroad
     presentation = resolve_unified_speed(state)
-    self.assertEqual((presentation.active_side, presentation.status), ('slc', 'Using speed limit'))
+    self.assertEqual((presentation.active_side, presentation.status), ('max', 'Using set speed'))
     from openpilot.starpilot.ui.onroad_state import slc_controls
     from openpilot.starpilot.ui.presentation import Profile
     self.assertEqual(slc_controls(Profile.LARGE, state), ())
@@ -176,7 +176,7 @@ class TestRuntimeSnapshot(unittest.TestCase):
     self.assertEqual((presentation.active_side, presentation.status), ('max', 'Set-speed override'))
     ui.sm['carState'].gasPressed = True
     presentation = resolve_unified_speed(adapter.build(ShellMode.ONROAD, now_ns=NOW).onroad)
-    self.assertEqual((presentation.active_side, presentation.status), ('none', 'Using accelerator'))
+    self.assertEqual((presentation.active_side, presentation.status), ('max', 'Set-speed override'))
     ui.sm['carState'].gasPressed = False
     legacy.slcOverriddenSpeed = 0.0
     ui.sm['carControl'].longActive = False
@@ -413,7 +413,7 @@ class TestRuntimeSnapshot(unittest.TestCase):
     reads.clear()
     ui.params.values['UpdaterState'] = 'downloading'
     same_second = adapter.build(ShellMode.ONROAD, now_ns=NOW + 10_000_000)
-    self.assertEqual(len(reads), 2)
+    self.assertEqual(len(reads), 3)
     self.assertEqual(same_second.software, first.software)
     refreshed = adapter.build(ShellMode.ONROAD, now_ns=NOW + 1_000_000_000)
     self.assertNotEqual(refreshed.software, first.software)
@@ -814,7 +814,7 @@ class TestRuntimeSnapshot(unittest.TestCase):
         began = hud._set_speed_changed_ns
       self.assertEqual(hud._set_speed_changed_ns, began)
       if frame > 100:
-        self.assertLess(opacity, .001)
+        self.assertGreater(opacity, .99)
     ui.started = False
     ended = adapter.build(ShellMode.HOME, now_ns=now).onroad
     self.assertFalse(ended.camera_available or ended.engaged)

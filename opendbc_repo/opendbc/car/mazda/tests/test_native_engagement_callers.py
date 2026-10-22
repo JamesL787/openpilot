@@ -12,6 +12,15 @@ from opendbc.car.mazda.tests.test_stock_startup import complete_frames, exercise
 
 @pytest.mark.parametrize('identity', (CAR.MAZDA_CX5_2022, CAR.MAZDA_CX9_2021))
 def test_ordinary_engagement_brake_actual_family_callers(identity, monkeypatch):
+  _exercise_actual_family_callers(identity, monkeypatch)
+
+
+@pytest.mark.parametrize('identity', (CAR.MAZDA_CX5_2022, CAR.MAZDA_CX9_2021))
+def test_unassigned_cancel_retains_lateral_main_off_revokes_actual_callers(identity, monkeypatch):
+  _exercise_actual_family_callers(identity, monkeypatch, scenario='cancel', cancel_action=0)
+
+
+def _exercise_actual_family_callers(identity, monkeypatch, *, scenario='brake', cancel_action=3):
   from openpilot.cereal import messaging
   from openpilot.selfdrive.car import card as card_module
   from openpilot.starpilot.aol.wire import SafetyState, encode_safety
@@ -30,6 +39,11 @@ def test_ordinary_engagement_brake_actual_family_callers(identity, monkeypatch):
     first_engagement_ns = None
     try:
       sd, controls, drive = case._authority_callers(False, cp=card.CP.as_reader().as_builder(), genuine_events=True)
+      if scenario == 'cancel':
+        from openpilot.starpilot.aol.intent import read_settings
+        sd.aol_settings = read_settings(saved)
+        assert sd.aol_settings.cancel_actions == (0, 0, 0)
+        assert card.aol_card_intent.settings == sd.aol_settings
       assert sd.CP.to_dict() == card.CP.to_dict() == ci.CP.to_dict() == controls.CP.to_dict()
       safety.init_tests()
       safety.set_alternative_experience(32)
@@ -54,11 +68,11 @@ def test_ordinary_engagement_brake_actual_family_callers(identity, monkeypatch):
       local_patch.setattr(card.pm, 'send', capture)
       packer = CANPacker(DBC[identity][Bus.pt])
 
-      def step(*, engaged=False, brake=False):
+      def step(*, engaged=False, brake=False, cancel=False, main=True):
         nonlocal tick, first_engagement_ns
         tick += 1
         now[0] = 10_000_000_000 + tick * 10_000_000
-        frames = complete_frames(packer, card.CP, tick, main=True, engaged=engaged, brake=brake)
+        frames = complete_frames(packer, card.CP, tick, main=main, engaged=engaged, brake=brake, cancel=cancel)
         frames.append(packer.make_can_msg('STEER', 0, {'STEER_ANGLE': 1.0}))
         safety.set_timer(now[0] // 1000)
         prior_state = previous_sd.get('selfdriveState')
@@ -147,6 +161,23 @@ def test_ordinary_engagement_brake_actual_family_callers(identity, monkeypatch):
         state, axis, host_state, command = step(engaged=True)
       assert state.canValid and host_state.enabled and command.latActive
       assert card.aol_card_intent.allowed_latch
+      if scenario == 'cancel':
+        for _ in range(5):
+          state, axis, host_state, command = step(cancel=True)
+          assert state.cruiseState.available and not state.cruiseState.enabled
+          assert card.aol_card_intent.allowed_latch
+          assert axis.lateralActive and command.latActive, 'Unassigned stock Cancel withdrew Mazda lateral'
+          assert not axis.longitudinalActive and not command.longActive
+          assert safety.aol_get_permission_mask() == 1
+        for _ in range(30):
+          state, axis, host_state, command = step()
+          assert card.aol_card_intent.allowed_latch and axis.lateralActive and command.latActive
+        for _ in range(5):
+          state, axis, host_state, command = step(main=False)
+          assert not card.aol_card_intent.allowed_latch
+          assert not axis.lateralActive and not command.latActive and not command.longActive
+          assert safety.aol_get_permission_mask() == 0
+        return
       nonzero = False
       for _ in range(30):
         state, axis, host_state, command = step(brake=True)
@@ -172,4 +203,4 @@ def test_ordinary_engagement_brake_actual_family_callers(identity, monkeypatch):
       patch_scope.__exit__(None, None, None)
       case.doCleanups()
 
-  exercise_startup(identity, False, False, True, monkeypatch, probe=probe)
+  exercise_startup(identity, False, False, True, monkeypatch, probe=probe, cancel_action=cancel_action)

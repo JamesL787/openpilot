@@ -35,6 +35,7 @@ class CarState(CarStateBase):
     self.lc_button = 0
     self.cancel_button = False
     self.cancel_resume_button = FordStockCruiseButton()
+    self.cruise_buttons = {ButtonType.accelCruise: False, ButtonType.decelCruise: False}
     self.steering_angle_offset_deg = 0.0
     self.lkas_available = False
     self.lkas_available_ts_nanos = 0
@@ -169,6 +170,13 @@ class CarState(CarStateBase):
 
     if self.CP.openpilotLongitudinalControl:
       button_events += create_button_events(self.cancel_button, prev_cancel_button, {1: ButtonType.cancel})
+      for button, signals in (
+        (ButtonType.accelCruise, ('CcAslButtnSetIncPress', 'CcAslButtnResIncPress', 'CcAslButtnIndxIncPress')),
+        (ButtonType.decelCruise, ('CcAslButtnSetDecPress', 'CcAslButtnResDecPress', 'CcAslButtnIndxDecPress')),
+      ):
+        pressed = any(self.buttons_stock_values[signal] for signal in signals)
+        button_events += create_button_events(pressed, self.cruise_buttons[button], {1: button})
+        self.cruise_buttons[button] = pressed
 
     ret.buttonEvents = button_events
 

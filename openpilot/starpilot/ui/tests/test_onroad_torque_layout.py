@@ -79,7 +79,7 @@ class TestTorqueLayout(unittest.TestCase):
     for key in ('max_speed', 'driver_monitor', 'steering_wheel'):
       with self.subTest(key=key):
         invalid = default_document()
-        invalid['layouts']['compact'][key].update(x=174, y=19 if key == 'max_speed' else 179)
+        invalid['layouts']['compact'][key].update(x=174, y=19 if key == 'max_speed' else 130)
         with self.assertRaises(ValueError):
           validate_document(invalid)
 

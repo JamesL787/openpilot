@@ -12,7 +12,7 @@ from opendbc.car.mazda.values import CAR, DBC
 CARS = (CAR.MAZDA_CX5_2022, CAR.MAZDA_CX9_2021)
 
 
-def exercise_startup(identity, alpha, release, aol, monkeypatch, mapping=(0, 0), probe=None):
+def exercise_startup(identity, alpha, release, aol, monkeypatch, mapping=(0, 0), probe=None, cancel_action=3):
   from opendbc.car import car_helpers
   from openpilot.cereal import messaging
   from openpilot.common.params import Params
@@ -36,7 +36,7 @@ def exercise_startup(identity, alpha, release, aol, monkeypatch, mapping=(0, 0),
     saved.put("MainCruiseButtonControl", mapping[0], block=True)
     saved.put("LKASButtonControl", mapping[1], block=True)
     if probe is not None:
-      saved.put("CancelButtonControl", 3, block=True)
+      saved.put("CancelButtonControl", cancel_action, block=True)
 
     initial = CarInterface.get_params(identity, fingerprint, [], card_module.alpha_long_requested(saved, is_release=release), release, False)
     initial.carVin = "0" * 17

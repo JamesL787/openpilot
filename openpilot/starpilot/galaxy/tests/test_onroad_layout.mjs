@@ -52,7 +52,7 @@ export function snapshot() {
   metadata.roadColorFields = [{ id: 'path', label: 'Path', default: '#30FF9CFF' },
     { id: 'pathEdge', label: 'Path edges', default: '#00FF40FF' }, { id: 'laneLines', label: 'Lane lines', default: '#FFFFFFFF' }]
   metadata.profiles.compact.widgets.speed_limit_actions.visualInsetTop = 32
-  const document = { version: 7, roadColors: { large: {}, compact: {} }, widgetColors: { large: {}, compact: {} }, palette: Object.fromEntries(metadata.paletteFields.map((field) => [field.id, field.default])),
+  const document = { version: 8, roadColors: { large: {}, compact: {} }, widgetColors: { large: {}, compact: {} }, palette: Object.fromEntries(metadata.paletteFields.map((field) => [field.id, field.default])),
     layouts: Object.fromEntries(Object.entries(metadata.profiles).map(([id, profile]) => [id,
       Object.fromEntries(Object.entries(profile.widgets).map(([key, definition]) => [key,
         { ...definition.default, ...(definition.resizable ? { size: definition.resizable.default } : {}) }]))])) }
@@ -498,7 +498,8 @@ vm.state.scene = "slc_display"
 vm.selectProfile("compact")
 assert.equal(vm.state.scene, "general")
 const smallScenes = vm.sceneGroups.flatMap(group => group.scenes.map(scene => scene.id))
-for (const id of ["slc_pedal", "slc_retained", "slc_display"]) assert.ok(!smallScenes.includes(id), id)
+for (const id of ["slc_pedal", "slc_display"]) assert.ok(!smallScenes.includes(id), id)
+assert.ok(smallScenes.includes('slc_retained'))  // The override X is visible on the Small screen too.
 assert.ok(smallScenes.includes("slc_unavailable") && smallScenes.includes("slc_disengaged"))
 vm.selectProfile("large")
 assert.equal(vm.sceneGroups.flatMap(group => group.scenes).length, vm.scenes.length)
@@ -527,12 +528,8 @@ vm.state.selected = "current_speed"
 vm.setSpeedSources("speedSources", true)
 assert.notEqual(vm.state.draft.speedSources, true) // Only from the cruise widget's own panel.
 vm.state.selected = "cruise_limits"
-vm.setSpeedAlign("center")
-assert.equal(vm.state.draft.speedAlign, "center")
-vm.setSpeedAlign("justify")
-assert.equal(vm.state.draft.speedAlign, "center") // Only left, center or right.
-vm.undo()
-assert.equal(vm.state.draft.speedAlign ?? "left", "left")
+assert.doesNotMatch(OnroadLayoutPage.template, /speedAlign|Text alignment/)
+assert.equal(OnroadLayoutPage.methods.setSpeedAlign, undefined)
 vm.setSpeedSources("palette", true)
 assert.equal(vm.state.draft.palette === true, false) // Only the two sources settings.
 // Moving or removing widgets keeps the same backdrop; scene and size changes replace it.
@@ -714,7 +711,9 @@ function feedFixture() {
 const normal = feedFixture()
 normal.feed.start()
 assert.equal(normal.requests[0].url, "./api/ui/layout")
-await normal.reply(0)
+const legacyAlignment = snapshot()
+legacyAlignment.document.speedAlign = "right"
+await normal.reply(0, legacyAlignment)
 const draft = copy(normal.feed.data.document); draft.layouts.compact.max_speed.x = 80
 normal.feed.save(draft)
 normal.feed.load(); normal.feed.save(draft)
@@ -723,6 +722,7 @@ assert.deepEqual(JSON.parse(normal.requests[1].options.body), { revision: "saved
 assert.equal(normal.requests[1].options.credentials, "same-origin")
 await normal.reply(1, { ...snapshot(), document: draft, revision: "new-revision" })
 assert.equal(normal.updates.at(-1).draft.layouts.compact.max_speed.x, 80)
+assert.equal(normal.updates.at(-1).draft.speedAlign, "right") // Unrelated edits preserve legacy layout fields.
 assert.equal(normal.feed.data.revision, "new-revision")
 
 for (const status of [409, 503, 400]) {

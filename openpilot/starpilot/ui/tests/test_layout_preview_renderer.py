@@ -62,7 +62,7 @@ class LayoutPreviewRendererTests(unittest.TestCase):
     from openpilot.starpilot.ui.layout_preview_transport import SCENES
     from openpilot.starpilot.ui.onroad_customization import STOPPED_TIMER_WIDGET
     native = default_document()
-    native['layouts']['compact'][STOPPED_TIMER_WIDGET]['enabled'] = True
+    native['layouts']['compact'][STOPPED_TIMER_WIDGET].update(enabled=True, y=2)
     projection = default_layout_for_viewport((2880, 1080))
     projection['widgets'][STOPPED_TIMER_WIDGET].update(enabled=True, x=450, y=600)
     payloads = [('compact', native), ('projection', {'base': default_document(), 'layout': projection})]
@@ -110,7 +110,7 @@ class LayoutPreviewRendererTests(unittest.TestCase):
     pending = sample_state("slc_pending", document)
     for profile in (Profile.LARGE, Profile.COMPACT):
       self.assertEqual([item.label for item in slc_controls(profile, pending)],
-                       ["Apply 54", "Keep 49"])
+                       ["Accept", "Decline"])
       # The engaged sample already uses its accepted limit, so there is no redundant adopt action.
       self.assertEqual(slc_controls(profile, sample_state("engaged", document)), ())
     manual = sample_state("experimental", document)

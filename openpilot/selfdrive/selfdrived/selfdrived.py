@@ -1623,6 +1623,7 @@ class SelfdriveD:
   def _decide_aol_axes(self, CS, intent, native, *, now_ns=0, ordinary_lag=False):
     from openpilot.starpilot.car.gm.aol import physical_cancel_lateral_allowed, stock_ascm_independent_lateral, cc_independent_lateral_below_engage
     from openpilot.starpilot.car.hyundai.aol import physical_cancel_lateral_allowed as hkg_cancel_lateral_allowed
+    from openpilot.starpilot.car.mazda.aol import physical_cancel_lateral_allowed as mazda_cancel_lateral_allowed
     from openpilot.starpilot.aol.dm import lateral_event_context
     retained_dm_lateral, lateral_events = lateral_event_context(self, CS, intent, native, now_ns, ordinary_lag)
     reverse_pause = known_reverse_pause(CS, getattr(self, 'car_state_samples', ()))
@@ -1640,6 +1641,10 @@ class SelfdriveD:
                              physical_cancel_lateral_allowed(self.CP, CS, intent, native,
                                source_ns=getattr(self, 'aol_car_state_log_ns', 0), now_ns=now_ns) or
                              hkg_cancel_lateral_allowed(self.CP, CS, intent, native,
+                               settings=self.aol_settings, previous=getattr(self, 'aol_axis_decision', None),
+                               source_ns=getattr(self, 'aol_car_state_log_ns', 0), now_ns=now_ns,
+                               axis_session_id=getattr(self, 'aol_session_id', '')) or
+                             mazda_cancel_lateral_allowed(self.CP, CS, intent, native,
                                settings=self.aol_settings, previous=getattr(self, 'aol_axis_decision', None),
                                source_ns=getattr(self, 'aol_car_state_log_ns', 0), now_ns=now_ns,
                                axis_session_id=getattr(self, 'aol_session_id', '')),

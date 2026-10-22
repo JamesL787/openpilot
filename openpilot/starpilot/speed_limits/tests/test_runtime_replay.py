@@ -5,6 +5,7 @@ import json
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from collections import deque
 from contextlib import ExitStack
 from itertools import product
@@ -268,7 +269,7 @@ class RuntimeReplayTests(unittest.TestCase):
       self.assertGreater(sm.logMonoTime['carState'], sm.logMonoTime['modelV2'])
       self.assertEqual(sm.logMonoTime['carState'] - sm.logMonoTime['slcDashboardObservation'], 10_000_000)
       self.assertTrue(physical_actions.pending_confirmation(
-        sm, now_ns, long_active=True, pcm_cruise=False))
+        sm, now_ns, long_active=True))
       runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='ipc-drive')
       self.assertEqual(runtime._observations(sm, self.cp, now_ns)[Source.DASHBOARD].kind, ObservationKind.VALID)
 
@@ -312,7 +313,7 @@ class RuntimeReplayTests(unittest.TestCase):
           snapshot.sourceValidUntilMonoTime = local.valid_until_ns
           pm.send('slcState', cadence_state)
         sm.update(0)
-        pending = physical_actions.pending_confirmation(sm, time.monotonic_ns(), long_active=True, pcm_cruise=False)
+        pending = physical_actions.pending_confirmation(sm, time.monotonic_ns(), long_active=True)
         qualified += pending is not None
         time.sleep(0.01)
       self.assertGreaterEqual(qualified, 12)
@@ -389,40 +390,40 @@ class RuntimeReplayTests(unittest.TestCase):
     self.assertIsNotNone(current)
     self.assertTrue(physical_actions.command_applicable(command, current, observation, 'card-producer',
                                                         2_100_000_000, 60.0 / 3.6,
-                                                        long_active=True, pcm_cruise=False, button_event=False))
+                                                        long_active=True, button_event=False))
     self.assertFalse(physical_actions.command_applicable(command, current, observation, 'card-producer',
                                                          2_100_000_000, 65.0 / 3.6,
-                                                         long_active=True, pcm_cruise=False, button_event=False))
+                                                         long_active=True, button_event=False))
     self.assertFalse(physical_actions.command_applicable(command, current, observation, 'card-producer',
                                                          2_100_000_000, 60.0 / 3.6,
-                                                         long_active=True, pcm_cruise=False, button_event=True))
+                                                         long_active=True, button_event=True))
     self.assertFalse(physical_actions.command_applicable(command, current, observation, 'card-producer',
                                                          2_100_000_000, 60.0 / 3.6,
-                                                         long_active=True, pcm_cruise=True, button_event=False))
+                                                         long_active=False, button_event=False))
     command.commandId += 1
     self.assertFalse(physical_actions.command_applicable(command, current, observation, 'card-producer',
                                                          2_100_000_000, 60.0 / 3.6,
-                                                         long_active=True, pcm_cruise=False, button_event=False))
+                                                         long_active=True, button_event=False))
     command.commandId -= 1
     command.presentationId += 1
     self.assertFalse(physical_actions.command_applicable(command, current, observation, 'card-producer',
                                                          2_100_000_000, 60.0 / 3.6,
-                                                         long_active=True, pcm_cruise=False, button_event=False))
+                                                         long_active=True, button_event=False))
     command.presentationId -= 1
     command.sourceEpisode = 99
     self.assertFalse(physical_actions.command_applicable(command, current, observation, 'card-producer',
                                                          2_100_000_000, 60.0 / 3.6,
-                                                         long_active=True, pcm_cruise=False, button_event=False))
+                                                         long_active=True, button_event=False))
     command.sourceEpisode = 2
     command.expiresMonoTime = 2_099_000_000
     self.assertFalse(physical_actions.command_applicable(command, current, observation, 'card-producer',
                                                          2_100_000_000, 60.0 / 3.6,
-                                                         long_active=True, pcm_cruise=False, button_event=False))
+                                                         long_active=True, button_event=False))
     command.expiresMonoTime = 2_200_000_000
     command.targetMps = math.nan
     self.assertFalse(physical_actions.command_applicable(command, current, observation, 'card-producer',
                                                          2_100_000_000, 60.0 / 3.6,
-                                                         long_active=True, pcm_cruise=False, button_event=False))
+                                                         long_active=True, button_event=False))
     command.targetMps = 30.0
     self.assertIsNone(physical_actions.state_current(card_sm, observation, 'card-producer', 2_210_000_000))
     # The latest conflated CarState can already contain a newer driver choice
@@ -472,7 +473,7 @@ class RuntimeReplayTests(unittest.TestCase):
                                   valid_until_ns=9_000_000_000, episode=1)
     self.assertTrue(physical_actions.command_applicable(
       accepted.command.slcCruiseCommand, card_sm['slcState'], observation, 'card-producer',
-      2_050_000_000, 60.0 / 3.6, long_active=True, pcm_cruise=False, button_event=False))
+      2_050_000_000, 60.0 / 3.6, long_active=True, button_event=False))
 
   def test_late_bounded_card_receipt_supersedes_clock_expiry(self):
     settings = parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard', 'SLCConfirmation': True, 'SLCConfirmationHigher': True})
@@ -526,7 +527,7 @@ class RuntimeReplayTests(unittest.TestCase):
     self.assertEqual(runtime.ledger.transactions, ())
 
   def test_identified_ui_adopt_uses_same_card_owned_command_path(self):
-    runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='ui-adopt-drive')
+    runtime = self.accepted_runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='ui-adopt-drive')
     self.sm['carState'].vCruise = 60.0
     self.sm['carState'].vCruiseCluster = 60.0
     shown = runtime.step(self.sm, self.cp, now_ns=2_000_000_000).message.slcState
@@ -544,7 +545,7 @@ class RuntimeReplayTests(unittest.TestCase):
                                   valid_until_ns=9_000_000_000, episode=1)
     self.assertTrue(physical_actions.command_applicable(
       adopted.command.slcCruiseCommand, card_sm['slcState'], observation, 'card-producer',
-      2_050_000_000, 60.0 / 3.6, long_active=True, pcm_cruise=False, button_event=False))
+      2_050_000_000, 60.0 / 3.6, long_active=True, button_event=False))
 
   def test_native_card_applies_one_shot_command_only_with_current_state(self):
     from openpilot.cereal import messaging
@@ -571,7 +572,8 @@ class RuntimeReplayTests(unittest.TestCase):
     state.slcState.sourceValidUntilMonoTime = observation.valid_until_ns
     command = messaging.new_message('slcCruiseCommand')
     command.valid = True
-    command.slcCruiseCommand.kind = 'adoptAcceptedHigherLimit'
+    command.slcCruiseCommand.kind = 'adoptAcceptedLimit'
+    command.slcCruiseCommand.source = 'dashboard'
     command.slcCruiseCommand.sessionId = 'card-drive'
     command.slcCruiseCommand.commandId = 1
     command.slcCruiseCommand.actionId = 1
@@ -1074,7 +1076,8 @@ class RuntimeReplayTests(unittest.TestCase):
     self.assertIn('slcState', services)
     self.assertIn('longitudinalPlan', services)
     state = next(message.slcState for service, message in publisher.sent if service == 'slcState')
-    self.assertTrue(state.hasCeiling)
+    self.assertFalse(state.hasCeiling)
+    self.assertTrue(state.automaticAdoptionPending)
     self.assertEqual(state.observationKind, 'valid')
     self.assertEqual(state.frameMonoTime, 2_010_000_000)
 
@@ -1119,6 +1122,13 @@ class RuntimeReplayTests(unittest.TestCase):
       self.assertEqual(restored.selection.slots[1], Source.DASHBOARD)
       self.assertFalse(restored.errors)
 
+  def accepted_runtime(self, settings, *, session_id):
+    runtime = Runtime(settings, session_id=session_id)
+    candidate = runtime._observations(self.sm, self.cp, 2_000_000_000)[Source.DASHBOARD].candidate
+    accepted = acc.AcceptedLimit(candidate, session_id, 0)
+    runtime.state = replace(runtime.state, acceptance=replace(acc.new_session(session_id, accepted), received_speed_mps=candidate.speed_mps))
+    return runtime
+
   def setUp(self):
     self.cp = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
     self.assertTrue(self.cp.openpilotLongitudinalControl)
@@ -1142,14 +1152,14 @@ class RuntimeReplayTests(unittest.TestCase):
 
   def test_saved_choice_and_native_planner_replay(self):
     settings = parse({'SpeedLimitController': True, 'SLCFallback': 2, 'SLCPriority1': 'Dashboard'})
-    runtime = Runtime(settings, session_id='replay-drive')
+    runtime = self.accepted_runtime(settings, session_id='replay-drive')
     planner = LongitudinalPlanner(self.cp, init_v=20.0)
     first = runtime.step(self.sm, self.cp, now_ns=2_000_000_000)
     self.assertEqual(first.message.slcState.observationKind, 'valid')
-    self.assertTrue(first.message.slcState.hasCeiling)
-    self.assertLess(first.result.ceiling.speed_mps, 100 / 3.6)
+    self.assertFalse(first.message.slcState.hasCeiling)
+    self.assertIsNone(first.result.ceiling)
     planner.update(self.sm, cruise_ceiling=first.result.ceiling)
-    self.assertEqual(planner.last_cruise_ceiling_status, 'applied')
+    self.assertEqual(planner.last_cruise_ceiling_status, 'absent')
 
     self.sm['carState'].vCruise = 105.0
     self.sm['carState'].vCruiseCluster = 105.0
@@ -1165,12 +1175,12 @@ class RuntimeReplayTests(unittest.TestCase):
     stale = runtime.step(self.sm, self.cp, now_ns=9_100_000_000)
     self.assertEqual(runtime._observations(self.sm, self.cp, 9_100_000_000)[Source.DASHBOARD].kind, ObservationKind.STALE)
     self.assertEqual(stale.message.slcState.observationKind, 'stale')  # both configured slots use the expired dashboard
-    self.assertTrue(stale.message.slcState.hasCeiling)
+    self.assertFalse(stale.message.slcState.hasCeiling)
     self.assertEqual(stale.result.acceptance.basis, 'previous_accepted')
     self.assertEqual(stale.result.override.contribution_mps, 105 / 3.6)
     planner.update(self.sm, cruise_ceiling=stale.result.ceiling)
-    self.assertEqual(planner.last_cruise_ceiling_status, 'applied')
-    self.assertAlmostEqual(stale.result.ceiling.speed_mps, 105 / 3.6)
+    self.assertEqual(planner.last_cruise_ceiling_status, 'absent')
+    self.assertIsNone(stale.result.ceiling)
     for sequence, kind, previous, selected in ((2, 'accel', 105, 110), (3, 'decel', 110, 100)):
       now = 9_100_000_000 + sequence * 50_000_000
       self.sm['carState'].vCruise = self.sm['carState'].vCruiseCluster = float(selected)
@@ -1188,7 +1198,7 @@ class RuntimeReplayTests(unittest.TestCase):
     mph_to_mps = 0.44704
     self.sm['slcDashboardObservation'].speedMps = 45 * mph_to_mps
     self.sm['carState'].vCruise = self.sm['carState'].vCruiseCluster = 70 * mph_to_mps * 3.6
-    runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='decrease-drive')
+    runtime = self.accepted_runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='decrease-drive')
     runtime.step(self.sm, self.cp, now_ns=2_000_000_000)
     previous_mps = self.sm['carState'].vCruise / 3.6
     self.sm['carState'].vCruise = self.sm['carState'].vCruiseCluster = 69 * mph_to_mps * 3.6
@@ -1198,17 +1208,17 @@ class RuntimeReplayTests(unittest.TestCase):
                                'replay-card', 2_020_000_000))
     self.assertFalse(result.result.errors)
     self.assertTrue(result.result.override.event_receipt.consumed)
-    self.assertIsNone(result.result.override.state.persistent_selected_mps)
-    self.assertFalse(result.message.slcState.driverOverrideActive)
-    self.assertEqual(result.result.ceiling.speed_mps, self.sm['slcDashboardObservation'].speedMps)
+    self.assertAlmostEqual(result.result.override.state.persistent_selected_mps, self.sm['carState'].vCruise / 3.6)
+    self.assertTrue(result.message.slcState.driverOverrideActive)
+    self.assertIsNone(result.result.ceiling)
     planner = LongitudinalPlanner(self.cp, init_v=45 * mph_to_mps)
     planner.update(self.sm, cruise_ceiling=result.result.ceiling)
-    self.assertEqual(planner.last_cruise_ceiling_status, 'applied')
+    self.assertEqual(planner.last_cruise_ceiling_status, 'absent')
 
   def _runtime_with_set_speed_override(self, lateral):
     self.setUp()
     self.sm['carControl'].latActive = lateral
-    runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='pedal-drive')
+    runtime = self.accepted_runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='pedal-drive')
     runtime.step(self.sm, self.cp, now_ns=2_000_000_000)
     self.sm['carState'].vCruise = self.sm['carState'].vCruiseCluster = 105.0
     self.sm.advance(2_050_000_000)
@@ -1230,11 +1240,12 @@ class RuntimeReplayTests(unittest.TestCase):
           held = runtime.step(self.sm, self.cp, now_ns=now)
           self.assertFalse(held.result.errors)
           self.assertIsNone(held.result.ceiling)
-          self.assertIsNone(held.result.override.contribution_mps)
-          self.assertIsNone(held.result.override.context)
+          self.assertEqual(held.result.override.contribution_mps, 105 / 3.6)
+          self.assertIsNotNone(held.result.override.context)
           self.assertEqual(held.result.state.override.persistent_selected_mps, 105 / 3.6)
           self.assertTrue(held.message.slcState.retainedOverride)
-          self.assertFalse(held.result.acceptance.authority.can_control)
+          self.assertTrue(held.result.acceptance.authority.accelerator_override)
+          self.assertFalse(held.result.acceptance.authority.longitudinal_active)
         self.sm['carState'].gasPressed = False
         if delayed_resume:
           self.sm.advance(5_200_000_000)
@@ -1247,9 +1258,9 @@ class RuntimeReplayTests(unittest.TestCase):
         resumed = runtime.step(self.sm, self.cp, now_ns=5_300_000_000)
         self.assertFalse(resumed.result.errors)
         self.assertEqual(resumed.result.override.basis, 'persistent')
-        self.assertEqual(resumed.result.ceiling.speed_mps, 105 / 3.6)
+        self.assertIsNone(resumed.result.ceiling)
 
-  def test_disengagement_clears_saved_override_even_with_accelerator_held(self):
+  def test_disengagement_preserves_manual_set_speed_without_an_slc_ceiling(self):
     for lateral, pressed, disabled_service in product((False, True), (False, True), ('selfdriveState', 'carControl')):
       with self.subTest(lateral=lateral, pressed=pressed, disabled_service=disabled_service):
         runtime = self._runtime_with_set_speed_override(lateral)
@@ -1260,17 +1271,17 @@ class RuntimeReplayTests(unittest.TestCase):
         self.sm.advance(2_100_000_000)
         disengaged = runtime.step(self.sm, self.cp, now_ns=2_100_000_000)
         self.assertIsNone(disengaged.result.ceiling)
-        self.assertIsNone(disengaged.result.state.override.persistent_selected_mps)
+        self.assertEqual(disengaged.result.state.override.persistent_selected_mps, 105 / 3.6)
         self.sm[disabled_service].enabled = True
         self.sm['carState'].gasPressed = False
         self.sm['carControl'].longActive = True
         self.sm['controlsState'].longControlState = 'pid'
         self.sm.advance(2_200_000_000)
         resumed = runtime.step(self.sm, self.cp, now_ns=2_200_000_000)
-        self.assertIsNone(resumed.result.override.contribution_mps)
-        self.assertEqual(resumed.result.ceiling.speed_mps, 25.0)
+        self.assertEqual(resumed.result.override.contribution_mps, 105 / 3.6)
+        self.assertIsNone(resumed.result.ceiling)
 
-  def test_stale_engagement_evidence_cannot_preserve_accelerator_override(self):
+  def test_stale_engagement_suppresses_commands_and_keeps_the_manual_choice(self):
     for lateral, service in product((False, True), ('carState', 'carControl', 'controlsState', 'selfdriveState')):
       with self.subTest(lateral=lateral, service=service):
         runtime = self._runtime_with_set_speed_override(lateral)
@@ -1281,7 +1292,7 @@ class RuntimeReplayTests(unittest.TestCase):
         self.sm.valid[service] = False
         stale = runtime.step(self.sm, self.cp, now_ns=2_100_000_000)
         self.assertIsNone(stale.result.ceiling)
-        self.assertIsNone(stale.result.state.override.persistent_selected_mps)
+        self.assertEqual(stale.result.state.override.persistent_selected_mps, 105 / 3.6)
 
   def test_pending_action_receipt_and_stock_gate(self):
     settings = parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard', 'SLCConfirmation': True, 'SLCConfirmationLower': True})
@@ -1320,23 +1331,23 @@ class RuntimeReplayTests(unittest.TestCase):
     source.carStateLogMonoTime = 2_000_000_000
     matched = runtime.step(self.sm, self.cp, now_ns=2_000_000_000)
     first_identity = matched.result.selection.observation.candidate.observation_identity.value
-    self.assertTrue(matched.message.slcState.hasCeiling)
+    self.assertTrue(matched.message.slcState.hasPending)
     self.sm.logMonoTime['carState'] = 2_010_000_000  # independent sockets deliver the next card tick first
     lagged = runtime.step(self.sm, self.cp, now_ns=2_010_000_000)
-    self.assertTrue(lagged.message.slcState.hasCeiling)
+    self.assertTrue(lagged.message.slcState.hasPending)
     source.producerSessionId = 'restarted-card'
     restarted = runtime.step(self.sm, self.cp, now_ns=2_010_000_000)
     second_identity = restarted.result.selection.observation.candidate.observation_identity.value
     self.assertNotEqual(first_identity, second_identity)
 
   def test_lateral_authority_uses_car_control_axis(self):
-    runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='axis-drive')
+    runtime = self.accepted_runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='axis-drive')
     self.sm['selfdriveState'].active = True
     long_only = runtime.step(self.sm, self.cp, now_ns=2_000_000_000)
-    self.assertEqual(long_only.result.ceiling.authority.mode.value, 'longitudinal_only')
+    self.assertEqual(long_only.result.acceptance.authority.mode.value, 'longitudinal_only')
     self.sm['carControl'].latActive = True
     combined = runtime.step(self.sm, self.cp, now_ns=2_000_000_000)
-    self.assertEqual(combined.result.ceiling.authority.mode.value, 'combined')
+    self.assertEqual(combined.result.acceptance.authority.mode.value, 'combined')
 
   def test_rejected_and_malformed_ui_requests_do_not_fill_action_ledger(self):
     runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='many-actions')

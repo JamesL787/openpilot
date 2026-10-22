@@ -1,11 +1,10 @@
 """Adapted large StarPilot onroad widgets with supplied observations.
 
-Geometry and drawing order follow the frozen SetSpeedWidget, SpeedLimitWidget,
-HudRenderer and ExpButton. See the adjacent UI LICENSE for retained source.
+The speed group uses the reviewed device geometry; the current speed and wheel
+retain their native anchors. See the adjacent UI LICENSE for retained source.
 """
 
 from pathlib import Path
-from typing import cast
 import hashlib
 import json
 
@@ -14,9 +13,10 @@ import pyray as rl
 from openpilot.starpilot.ui.onroad_customization import offset, rgba, widget_size
 from openpilot.starpilot.ui.onroad_state import OnroadState
 from openpilot.starpilot.ui.onroad_widget_style import draw_control_card
-from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole
+from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
 from openpilot.starpilot.ui.wheel_feedback import WheelFeedbackFade
 from openpilot.starpilot.ui.unified_speed_presentation import resolve_unified_speed
+from openpilot.starpilot.ui.speed_limit_widget import SpeedLimitWidget, draw_caption, draw_ink, draw_text
 
 
 ENGAGED = rl.Color(128, 216, 166, 255)
@@ -30,20 +30,22 @@ def _center(fonts: BitmapFonts, text: str, role: FontRole, size: int, rect: rl.R
 
 
 class UnifiedSpeedWidget:
-  """One vertical MAX SET/sign card; actions remain decision-bound by the host."""
+  """The set speed with the latest limit beside it."""
 
   def __init__(self, fonts: BitmapFonts):
     self.fonts = fonts
+    self.sign = SpeedLimitWidget(fonts, Profile.LARGE)
 
   def _draw_sources(self, rect, state):
-    """Each enabled source as a small label over its reading; the accepted source is highlighted."""
+    """Each enabled source as a small label over its reading; the selected source is highlighted."""
     from openpilot.starpilot.ui.large_speed_geometry import PADDING
     rows = [row for row in state.speed_limit.source_readings if row.enabled]
     if not rows:
       text = 'No sources enabled' if state.speed_limit.source_readings else 'No speed limit'
-      _center(self.fonts, text, FontRole.NORMAL, 26, rect, rect.y + 22)
+      width = self.fonts.measure(text, FontRole.NORMAL, 26).width
+      draw_text(self.fonts, text, FontRole.NORMAL, 26, rect.x + (rect.width - width) / 2, rect.y + 22, rl.WHITE)
       return
-    active = state.speed_limit.accepted_source
+    active = state.speed_limit.source if str(state.speed_limit.kind) == 'valid' else state.speed_limit.accepted_source
     labels = {'dashboard': 'Dash', 'map': 'Map', 'vision': 'Vision', 'online': 'Online'}
     cell = (rect.width - 2 * PADDING) / len(rows)
     for index, row in enumerate(rows):
@@ -53,11 +55,13 @@ class UnifiedSpeedWidget:
       size = 22
       while size > 12 and self.fonts.measure(labels[row.source], FontRole.NORMAL, size).width > cell - 4:
         size -= 1
-      _center(self.fonts, labels[row.source], FontRole.NORMAL, size, box, rect.y + 10, color)
-      _center(self.fonts, value, FontRole.MEDIUM if row.source == active else FontRole.NORMAL, 30, box, rect.y + 36, color)
+      for text, role, font_size, y in ((labels[row.source], FontRole.NORMAL, size, rect.y + 10),
+                                     (value, FontRole.MEDIUM if row.source == active else FontRole.NORMAL, 30, rect.y + 36)):
+        width = self.fonts.measure(text, role, font_size).width
+        draw_text(self.fonts, text, role, font_size, box.x + (box.width - width) / 2, y, color)
 
   def render(self, content: rl.Rectangle, state: OnroadState) -> None:
-    from openpilot.starpilot.ui.large_speed_geometry import GAP, WIDTH, MAX_ROW_HEIGHT, LIMIT_ROW_HEIGHT, PADDING, SOURCE_ROW_HEIGHT, card_height
+    from openpilot.starpilot.ui.large_speed_geometry import GAP, WIDTH, PADDING, SOURCE_ROW_HEIGHT, card_height
     from openpilot.starpilot.ui.onroad_customization import placement
     shown = resolve_unified_speed(state)
     if shown.mode == 'hidden':
@@ -65,152 +69,19 @@ class UnifiedSpeedWidget:
     saved = placement(state.customization, 'large', 'cruise_limits')
     height = card_height(shown.mode)
     rect = rl.Rectangle(saved['x'], saved['y'], WIDTH, height)
-    # Sources follow the Galaxy layout setting: a row in this card, or a small card of its own right below.
-    # Kept up whenever enabled so the card does not pop in and out as limits come and go.
     sources = state.customization.get('speedSources') is True
     separate = state.customization.get('speedSourcesCard') is True
-    if sources and not separate:
-      rect.height += SOURCE_ROW_HEIGHT
     fill = rl.Color(*rgba(state.customization, 'cardFill', 'large', 'cruise_limits'))
     border = rl.Color(*rgba(state.customization, 'cardBorder', 'large', 'cruise_limits'))
     text = rl.Color(*rgba(state.customization, 'text', 'large', 'cruise_limits'))
-    muted, accent = rl.Color(172, 190, 203, 255), rl.Color(197, 163, 255, 255)
-    draw_control_card(rect, fill=fill, border=border, border_width=1, roundness=.09)
-
-    align = state.customization.get('speedAlign', 'left')
-
-    def start(ink_left, ink_right):
-      # Align visible glyphs so the digits' side bearings do not offset them from the labels.
-      if align == 'right':
-        return rect.x + WIDTH - PADDING - ink_right
-      if align != 'center':
-        return rect.x + PADDING - ink_left
-      return rect.x + WIDTH / 2 - (ink_left + ink_right) / 2
-
-    def label(value, y, size=32, color=muted, role=FontRole.MEDIUM):
-      while size > 20 and self.fonts.measure(value, role, size).width > WIDTH - 2 * PADDING:
-        size -= 1
-      ink_top, _ = self.fonts.vertical_ink(value, role, size)
-      self.fonts.draw(value, role, size, start(*self.fonts.horizontal_ink(value, role, size)), y - ink_top, color)
-
-    def row(title, value, top, footer, status='', active=False, footer_color=muted, footer_y=174, height=MAX_ROW_HEIGHT):
-      has_value = value != '–'
-      size, unit_size = 112, 28
-
-      def fit_size(val, role, max_size, min_size=20):
-        sz = max_size
-        while sz > min_size and self.fonts.measure(val, role, sz).width > WIDTH - 2 * PADDING:
-          sz -= 1
-        return sz
-
-      title_size = fit_size(title, FontRole.MEDIUM, 32)
-      title_ink = self.fonts.horizontal_ink(title, FontRole.MEDIUM, title_size)
-      title_v = self.fonts.vertical_ink(title, FontRole.MEDIUM, title_size)
-      title_h = title_v[1] - title_v[0]
-
-      number_ink = self.fonts.horizontal_ink(value, FontRole.SPEED, size)
-      unit_ink = self.fonts.horizontal_ink(shown.unit, FontRole.NORMAL, unit_size) if has_value else (0, 0)
-      extra = unit_ink[1] - unit_ink[0] + 14 if has_value and align != 'center' else 0
-      while size > 72 and number_ink[1] - number_ink[0] + extra > WIDTH - PADDING * 2:
-        size -= 1
-        number_ink = self.fonts.horizontal_ink(value, FontRole.SPEED, size)
-      number_v = self.fonts.vertical_ink(value, FontRole.SPEED, size)
-      number_h = number_v[1] - number_v[0]
-
-      if not has_value:
-        digit_v = self.fonts.vertical_ink('0', FontRole.SPEED, size)
-        dash_offset = ((digit_v[1] - digit_v[0]) - number_h) / 2
-        effective_number_h = digit_v[1] - digit_v[0]
-      else:
-        dash_offset = 0
-        effective_number_h = number_h
-
-      if has_value:
-        unit_v = self.fonts.vertical_ink(shown.unit, FontRole.NORMAL, unit_size)
-        unit_h = unit_v[1] - unit_v[0]
-      else:
-        unit_v, unit_h = None, 0
-
-      status_size = fit_size(status, FontRole.NORMAL, 30) if status else 30
-      status_ink = self.fonts.horizontal_ink(status, FontRole.NORMAL, status_size) if status else None
-      status_v = self.fonts.vertical_ink(status, FontRole.NORMAL, status_size) if status else None
-      status_h = (cast(tuple[float, float], status_v)[1] - cast(tuple[float, float], status_v)[0]) if status else 0
-
-      footer_size = fit_size(footer, FontRole.NORMAL, 30) if footer else 30
-      footer_ink = self.fonts.horizontal_ink(footer, FontRole.NORMAL, footer_size) if footer else None
-      footer_v = self.fonts.vertical_ink(footer, FontRole.NORMAL, footer_size) if footer else None
-      footer_h = (cast(tuple[float, float], footer_v)[1] - cast(tuple[float, float], footer_v)[0]) if footer else 0
-
-      if align == 'center':
-        # Every line shares the card's horizontal center, and the entire stack is visually vertically centered.
-        segments = []
-        segments.append((
-          title_v[0], title_h,
-          lambda y: self.fonts.draw(title, FontRole.MEDIUM, title_size, start(*title_ink), y - title_v[0], accent if active else muted)
-        ))
-        segments.append((
-          number_v[0], effective_number_h,
-          lambda y: self.fonts.draw(value, FontRole.SPEED, size, start(*number_ink), y - number_v[0] + dash_offset, text)
-        ))
-        if has_value:
-          unit_v = cast(tuple[float, float], unit_v)
-          segments.append((
-            unit_v[0], unit_h,
-            lambda y: self.fonts.draw(shown.unit, FontRole.NORMAL, unit_size, start(*unit_ink), y - unit_v[0], muted)
-          ))
-        if status:
-          status_ink = cast(tuple[float, float], status_ink)
-          status_v = cast(tuple[float, float], status_v)
-          segments.append((
-            status_v[0], status_h,
-            lambda y: self.fonts.draw(status, FontRole.NORMAL, status_size, start(*status_ink), y - status_v[0], accent if active else muted)
-          ))
-        if footer:
-          footer_ink = cast(tuple[float, float], footer_ink)
-          footer_v = cast(tuple[float, float], footer_v)
-          segments.append((
-            footer_v[0], footer_h,
-            lambda y: self.fonts.draw(footer, FontRole.NORMAL, footer_size, start(*footer_ink), y - footer_v[0], footer_color)
-          ))
-
-        num_items = len(segments)
-        gap = 8 if num_items >= 5 else 10 if num_items == 4 and height > 210 else 8 if num_items == 4 else 14
-        total_ink_height = sum(seg[1] for seg in segments)
-        total_content_height = total_ink_height + (num_items - 1) * gap
-        margin = max(PADDING / 2, (height - total_content_height) / 2)
-
-        curr_y = top + margin
-        for _, seg_h, draw_fn in segments:
-          draw_fn(curr_y)
-          curr_y += seg_h + gap
-      else:
-        # Left and right alignments anchor against card padding; number and unit are inline on the baseline.
-        label(title, top + 24, color=accent if active else muted)
-        number_y = top + 72 - number_v[0] + dash_offset
-        left = start(*number_ink)
-        self.fonts.draw(value, FontRole.SPEED, size, left, number_y, text)
-        if has_value:
-          unit_v = cast(tuple[float, float], unit_v)
-          unit_x = left + number_ink[0] - 14 - unit_ink[1] if align == 'right' else left + number_ink[1] + 14 - unit_ink[0]
-          unit_y = number_y + number_v[1] - unit_v[1]
-          self.fonts.draw(shown.unit, FontRole.NORMAL, unit_size, unit_x, unit_y, muted)
-        if status:
-          label(status, top + 174, size=30, role=FontRole.NORMAL, color=accent if active else muted)
-        label(footer, top + footer_y, size=30, role=FontRole.NORMAL, color=footer_color)
-
     if shown.mode != 'limit_only':
-      max_active = shown.active_side in ('max', 'shared') and shown.max_text != '–'
-      row('MAX SET', shown.max_text, rect.y, shown.max_status,
-          active=max_active, footer_color=accent if max_active else muted, height=MAX_ROW_HEIGHT)
-    if shown.mode != 'max_only':
-      top = rect.y + (MAX_ROW_HEIGHT if shown.mode == 'split' else 0)
-      if shown.mode == 'split':
-        rl.draw_line_ex(rl.Vector2(rect.x + 1, top), rl.Vector2(rect.x + WIDTH - 1, top), 1, border)
-      road_limit = f'Road limit {shown.posted_text}'
-      if shown.offset_text:
-        road_limit += f' {shown.offset_text}'
-      row('SLC LIMIT', shown.limit_text, top, road_limit, shown.limit_status,
-          active=shown.active_side in ('slc', 'shared'), footer_y=224, height=LIMIT_ROW_HEIGHT)
+      x = rect.x + PADDING
+      draw_caption(self.fonts, 'SET', x, rect.y + 19, unit=shown.unit)
+      size = 104
+      while size > 72 and self.fonts.measure(shown.max_text, FontRole.SET_SPEED, size).width > 126:
+        size -= 1
+      draw_ink(self.fonts, shown.max_text, FontRole.SET_SPEED, size, x, rect.y + 51, text)
+    self.sign.render(state)
     if sources:
       row = rl.Rectangle(rect.x, rect.y + height + (GAP if separate else 0), WIDTH, SOURCE_ROW_HEIGHT)
       if separate:

@@ -112,16 +112,16 @@ class CompactVisualsSlcTests(unittest.TestCase):
         def controls():
           return [item.label for item in page.items if item.label in appearance_compact.SLC_VISUAL_LABELS.values()]
 
-        self.assertEqual(controls(), ["show speed limits", "confirm new speed limits"])
+        self.assertEqual(controls(), ["show speed limits", "automatic adoption"])
         next(item for item in page.items if item.label == "show speed limits").click()
         self.assertTrue(params.get_bool("ShowSpeedLimits"))
         self.assertFalse(params.get_bool("SpeedLimitController"))
-        next(item for item in page.items if item.label == "confirm new speed limits").click()
+        next(item for item in page.items if item.label == "automatic adoption").click()
         self.assertEqual(controls(), list(appearance_compact.SLC_VISUAL_LABELS.values()))
         self.assertTrue(params.get_bool("SLCConfirmation"))
         self.assertFalse(any(item.label in ('confirm lower limits', 'confirm higher limits') for item in page.items))
-        next(item for item in page.items if item.label == "confirm new speed limits").click()
-        self.assertEqual(controls(), ["show speed limits", "confirm new speed limits"])
+        next(item for item in page.items if item.label == "automatic adoption").click()
+        self.assertEqual(controls(), ["show speed limits", "automatic adoption"])
         self.assertFalse(params.get_bool("SLCConfirmation"))
 
 

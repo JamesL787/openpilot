@@ -10,10 +10,12 @@ from opendbc.car.honda.values import CAR
 
 import openpilot.cereal.messaging as messaging
 from openpilot.starpilot.longitudinal.tests.test_cruise_ceiling import messages
+from openpilot.starpilot.speed_limits import acceptance as acc
 from openpilot.starpilot.speed_limits.runtime import Action, Runtime
 from openpilot.starpilot.speed_limits.runtime_settings import parse
 from openpilot.starpilot.speed_limits.tests.test_runtime_replay import ReplaySM
-from openpilot.starpilot.ui.onroad_state import OnroadInput, OnroadState, SlcActionKind, SlcUiRequest, slc_controls, speed_limit_from_message
+from openpilot.starpilot.ui.onroad_state import (OnroadInput, OnroadState, SlcActionKind, SlcUiRequest, slc_controls,
+                                                speed_limit_from_message, speed_limit_bounds)
 from openpilot.starpilot.ui.presentation import Profile
 from openpilot.starpilot.ui.slc_action_dispatch import SlcActionDispatcher
 
@@ -43,7 +45,7 @@ def replay_inputs() -> tuple[ReplaySM, object]:
   return sm, cp
 
 
-def ui_request(message, *, profile: Profile, x: int, y: int) -> SlcUiRequest:
+def ui_request(message, *, profile: Profile, kind: SlcActionKind) -> SlcUiRequest:
   observation = speed_limit_from_message(message.slcState)
   view_state = OnroadState(True, False, 20.0, 60.0, observation,
                            longitudinal_active=True, slc_system_long_available=True)
@@ -55,6 +57,14 @@ def ui_request(message, *, profile: Profile, x: int, y: int) -> SlcUiRequest:
     emitted.append(request)
 
   touch = OnroadInput(emit, profile)
+  if observation.pending_speed_limit_mps is not None:
+    left, top, right, bottom = speed_limit_bounds(profile, view_state)
+    x, y = (left + right) / 2, (top + bottom) / 2
+    touch.press(x, y, view_state)
+    touch.release(x, y, view_state)
+  control = next(item for item in slc_controls(profile, touch.present(view_state)) if item.request.kind == kind)
+  left, top, right, bottom = control.bounds
+  x, y = (left + right) / 2, (top + bottom) / 2
   touch.press(x, y, view_state)
   touch.release(x, y, view_state)
   if len(emitted) != 1:
@@ -76,6 +86,14 @@ def publish_request(state, request: SlcUiRequest, now_ns: int):
                 int(action.presentationId), str(action.kind))
 
 
+def accepted_runtime(sm, cp, settings, *, session_id):
+  runtime = Runtime(settings, session_id=session_id)
+  candidate = next(obs.candidate for obs in runtime._observations(sm, cp, START).values() if obs.candidate is not None)
+  accepted = acc.AcceptedLimit(candidate, session_id, 0)
+  runtime.state = replace(runtime.state, acceptance=replace(acc.new_session(session_id, accepted), received_speed_mps=candidate.speed_mps))
+  return runtime
+
+
 class TestSlcUiRuntime(unittest.TestCase):
   def test_card_accept_produces_planner_receipt_and_bounded_command(self):
     sm, cp = replay_inputs()
@@ -83,7 +101,7 @@ class TestSlcUiRuntime(unittest.TestCase):
                              "SLCConfirmationHigher": True, "SLCPriority1": "Dashboard"}), session_id="ui-accept")
     pending = runtime.step(sm, cp, now_ns=START).message
     self.assertTrue(pending.slcState.hasPending)
-    request = ui_request(pending, profile=Profile.LARGE, x=120, y=630)
+    request = ui_request(pending, profile=Profile.LARGE, kind=SlcActionKind.ACCEPT)
     self.assertEqual(request.kind, SlcActionKind.ACCEPT)
     action = publish_request(pending.slcState, request, START)
     sm.advance(START + 50_000_000)
@@ -98,7 +116,7 @@ class TestSlcUiRuntime(unittest.TestCase):
     runtime = Runtime(parse({"SpeedLimitController": True, "SLCConfirmation": True,
                              "SLCConfirmationHigher": True, "SLCPriority1": "Dashboard"}), session_id="ui-reject")
     pending = runtime.step(sm, cp, now_ns=START).message
-    reject = ui_request(pending, profile=Profile.COMPACT, x=380, y=205)
+    reject = ui_request(pending, profile=Profile.COMPACT, kind=SlcActionKind.REJECT)
     self.assertEqual(reject.kind, SlcActionKind.REJECT)
     action = publish_request(pending.slcState, reject, START)
     sm.advance(START + 50_000_000)
@@ -110,7 +128,7 @@ class TestSlcUiRuntime(unittest.TestCase):
     view_state = OnroadState(True, False, 20.0, 60.0, observation,
                              longitudinal_active=True, slc_system_long_available=True)
     self.assertEqual(slc_controls(Profile.COMPACT, view_state), ())
-    adopt = ui_request(rejected.message, profile=Profile.LARGE, x=150, y=590)
+    adopt = ui_request(rejected.message, profile=Profile.LARGE, kind=SlcActionKind.ADOPT)
     self.assertEqual(adopt.kind, SlcActionKind.ADOPT)
     restore = publish_request(rejected.message.slcState, adopt, START + 50_000_000)
     sm.advance(START + 100_000_000)
@@ -120,11 +138,11 @@ class TestSlcUiRuntime(unittest.TestCase):
 
   def test_same_accepted_limit_can_be_used_with_lower_selected_cruise(self):
     sm, cp = replay_inputs()
-    runtime = Runtime(parse({"SpeedLimitController": True, "SLCPriority1": "Dashboard"}), session_id="ui-readopt")
+    runtime = accepted_runtime(sm, cp, parse({"SpeedLimitController": True, "SLCPriority1": "Dashboard"}), session_id="ui-readopt")
     shown = runtime.step(sm, cp, now_ns=START).message
     self.assertTrue(shown.slcState.hasAccepted)
     self.assertAlmostEqual(shown.slcState.acceptedSpeedLimit, shown.slcState.speedLimit)
-    request = ui_request(shown, profile=Profile.LARGE, x=150, y=590)
+    request = ui_request(shown, profile=Profile.LARGE, kind=SlcActionKind.ADOPT)
     self.assertEqual(request.kind, SlcActionKind.ADOPT)
     action = publish_request(shown.slcState, request, START)
     sm.advance(START + 50_000_000)
@@ -140,7 +158,7 @@ class TestSlcUiRuntime(unittest.TestCase):
       with self.subTest(metric=metric):
         sm, cp = replay_inputs()
         sm['slcDashboardObservation'].speedMps = limit
-        runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='aa-adopt')
+        runtime = accepted_runtime(sm, cp, parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='aa-adopt')
         shown = runtime.step(sm, cp, now_ns=START).message
         state = OnroadState(True, False, 20.0, 60.0, speed_limit_from_message(shown.slcState),
                             metric=metric, longitudinal_active=True, slc_system_long_available=True)
@@ -176,7 +194,7 @@ class TestSlcUiRuntime(unittest.TestCase):
     runtime = Runtime(parse({"SpeedLimitController": True, "SLCConfirmation": True,
                              "SLCConfirmationHigher": True, "SLCPriority1": "Dashboard"}), session_id="ui-stale")
     pending = runtime.step(sm, cp, now_ns=START).message
-    old_touch = ui_request(pending, profile=Profile.LARGE, x=120, y=630)
+    old_touch = ui_request(pending, profile=Profile.LARGE, kind=SlcActionKind.ACCEPT)
     publisher = Mock()
     stale = SlcActionDispatcher(publisher, lambda _: pending.slcState, lambda: START + 200_000_000)
     self.assertFalse(stale.dispatch(old_touch))

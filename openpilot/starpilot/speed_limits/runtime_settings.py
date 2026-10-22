@@ -25,13 +25,12 @@ class Settings:
   selection: sel.SelectionPolicy
   acceptance: acc.Policy
   offsets: sd.OffsetSchedule
-  manual_override: bool
-  set_speed_override: bool
   lead_policy: lr.Policy
   errors: tuple[str, ...] = ()
   # Preserve the validated saved choice for same-drive advisory consumers.
-  # Append after errors so existing positional Settings construction is stable.
   fallback_choice: int = 2
+  # Saved intent must still retire pending work when vehicle capabilities disable control.
+  requested: bool = False
 
 
 def _bool(values: Mapping[str, object], key: str, default: bool = False) -> bool:
@@ -51,7 +50,7 @@ def _number(values: Mapping[str, object], key: str, default: float = 0.0) -> flo
 def _disabled(reason: str) -> Settings:
   selection = sel.SelectionPolicy(sel.SelectionMode.ORDERED, (sel.Source.DASHBOARD, sel.Source.MAP), False)
   return Settings(False, False, selection, acc.Policy(display_only=True),
-                  sd.OffsetSchedule((sd.OffsetBand(0.0, None, 0.0),)), False, False,
+                  sd.OffsetSchedule((sd.OffsetBand(0.0, None, 0.0),)),
                   lr.Policy(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, (0.0, 1.0), (1.0, 1.0)), (reason,))
 
 
@@ -88,9 +87,9 @@ def parse(values: Mapping[str, object]) -> Settings:
     lead_policy = lr.Policy(20 * MPH_TO_MPS, 30.0, 1.2, 0.35, 0.25, 0.001, 0.05,
                             tuple(v * MPH_TO_MPS for v in (0.0, 5.0, 10.0, 15.0)),
                             (0.7, 0.9, 1.15, 1.35))
-    # SLCOverride was display-only; both pedal and selected-speed overrides remain active.
+    # SLCOverride remains a validated legacy preference; only set-speed changes override SLC.
     return Settings(control, display, sel.SelectionPolicy(mode, slots, False), policy, offsets,
-                    control, control, lead_policy, fallback_choice=fallback)
+                    lead_policy, fallback_choice=fallback, requested=control)
   except (ValueError, OverflowError) as error:
     return _disabled(str(error))
 

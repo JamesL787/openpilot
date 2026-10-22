@@ -2,7 +2,8 @@ import math
 
 import pytest
 
-from openpilot.selfdrive.car.cruise import VCruiseHelper, IMPERIAL_INCREMENT
+from openpilot.selfdrive.car.cruise import VCruiseHelper
+from openpilot.common.constants import CV
 from openpilot.starpilot.controllers.cruise_action import CruiseActionPublisher, CruiseActionConsumer
 from openpilot.starpilot.controllers.tests.test_cruise_action import State, Publisher, cp
 from opendbc.car.structs import car
@@ -20,7 +21,8 @@ def test_real_absolute_request_changes_software_speed_without_physical_button(me
   assert sender.dispatch(True, sm, params, publisher, now_ns=now, target_mps=target)
   assert str(publisher.message.slcAction.kind) == 'cruiseSet'
   assert consumer.apply(publisher.message, params, state, sm, helper, now_ns=now, is_metric=metric, enabled=True)
-  assert helper.v_cruise_kph == pytest.approx(value if metric else value * IMPERIAL_INCREMENT)
+  assert helper.v_cruise_kph == pytest.approx(value if metric else round(value * CV.MPH_TO_KPH, 1))
+  assert round(helper.v_cruise_kph * (1 if metric else CV.KPH_TO_MPH)) == value
   assert not list(state.buttonEvents)
   assert not consumer.apply(publisher.message, params, state, sm, helper, now_ns=now + 100_000_000,
                             is_metric=metric, enabled=True)

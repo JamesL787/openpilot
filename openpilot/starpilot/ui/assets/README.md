@@ -1,5 +1,10 @@
 # Retained presentation assets
 
+The speed group uses the existing font atlas with a thin contour and short shadow
+in `speed_limit_widget.py`; it owns no background texture. The large camera header
+gradient and compact `icons_mici/onroad/onroad_fade.png` remain unchanged. The
+compact fade stays pinned in `onroad-assets.json` with the retained wheel artwork.
+
 `fonts` contains the unchanged four Inter bitmap pairs and one Unifont bitmap
 pair used by the presentation reference, plus the supplied Sora wordmark font
 and its weight-800 bitmap pair. `font-sources.json` records the retained files'

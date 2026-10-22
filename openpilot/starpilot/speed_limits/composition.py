@@ -1,4 +1,4 @@
-"""Pure composition of source, acceptance, offset, override and lead SLC decisions."""
+"""Pure source, adoption, offset and driver-intent decisions for card's set speed."""
 
 import math
 from collections.abc import Mapping
@@ -141,16 +141,16 @@ def step(state: State, frame: Frame) -> Result:
   selected_initialized = host.driver_v_cruise_kph > 0 and host.driver_v_cruise_kph != 255.0
   host_long = host.system_long_available and host.long_control_active and host.selfdrive_enabled
   system_mode = frame.authority.mode in (acc.Mode.LONGITUDINAL_ONLY, acc.Mode.COMBINED) and frame.authority.owner is acc.LongitudinalOwner.SYSTEM
-  if system_mode and frame.authority.longitudinal_active != host_long:
+  if (system_mode and frame.authority.longitudinal_active != host_long or
+      frame.authority.accelerator_override and not (host.system_long_available and host.selfdrive_enabled and frame.pedal_pressed is True)):
     return Result(replace(state, lead_prior=None, last_now_ns=frame.now_ns, reset_required=True),
                   status="host_authority_disagreement", errors=("host and system-long authority disagree",))
-  active_path = (frame.authority.can_control and host_long and selected_initialized and
+  active_path = (frame.authority.can_control and (host_long or frame.authority.accelerator_override) and selected_initialized and
                  not host.force_decel and not host.force_stop_active and not frame.acceptance_policy.display_only)
   mode_changed = state.previous_mode is not None and (state.previous_mode != frame.authority.mode or
                                                        state.previous_owner != frame.authority.owner)
   generation = state.control_generation + int(active_path and (not state.was_active_path or mode_changed))
   prior = state.lead_prior if active_path and state.was_active_path and not mode_changed else None
-  elapsed_s = 0.0 if state.last_now_ns is None else (frame.now_ns - state.last_now_ns) / 1e9
   base = replace(state, control_generation=generation, lead_prior=prior, last_now_ns=frame.now_ns,
                  previous_mode=frame.authority.mode, previous_owner=frame.authority.owner, was_active_path=active_path)
 
@@ -207,14 +207,6 @@ def step(state: State, frame: Frame) -> Result:
   if coordinate.cap_mps is None:
     return Result(replace(base, lead_prior=None, reset_required=True), selected, acceptance, domain, override, coordinate,
                   status="invalid_coordinate", errors=("planner coordinate unavailable",))
-  source = lr.SourceEvidence(acceptance.state.observation.kind, True)
-  relaxation = lr.step(coordinate.cap_mps, source=source, lead=frame.lead, prior=prior,
-                       session_id=state.session_id, continuity_id=f"control:{generation}", ego_mps=context.ego_raw_mps,
-                       override_active=override.contribution_mps is not None, active_path=True,
-                       elapsed_s=elapsed_s, policy=frame.lead_policy)
-  base = replace(base, lead_prior=relaxation.next_prior)
-  if relaxation.errors or relaxation.cap_mps is None:
-    return Result(base, selected, acceptance, domain, override, coordinate, relaxation,
-                  status="invalid_relaxation" if relaxation.errors else "no_cap", errors=relaxation.errors)
-  return Result(base, selected, acceptance, domain, override, coordinate, relaxation,
-                CruiseCeiling(relaxation.cap_mps, frame.authority), "ceiling")
+  # Adoption changes card's set speed; SLC never supplies a second planner ceiling.
+  return Result(replace(base, lead_prior=None), selected, acceptance, domain, override, coordinate,
+                status=acceptance.basis)

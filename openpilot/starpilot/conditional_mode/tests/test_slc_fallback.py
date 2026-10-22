@@ -8,6 +8,8 @@ from opendbc.car.honda.values import CAR
 from openpilot.cereal import messaging
 from openpilot.starpilot.conditional_mode.slc_fallback import Reason, evaluate, evaluate_runtime
 from openpilot.starpilot.longitudinal.tests.test_cruise_ceiling import messages
+from openpilot.starpilot.speed_limits import acceptance as acc
+from openpilot.starpilot.speed_limits.selection import Source
 from openpilot.starpilot.speed_limits.runtime import Output, Runtime
 from openpilot.starpilot.speed_limits.runtime_settings import parse
 
@@ -47,7 +49,13 @@ class SlcFallbackTests(unittest.TestCase):
 
   def step(self, settings=None, *, serialize=True):
     settings = settings or self.settings
-    output = Runtime(settings, session_id='fallback-drive').step(self.sm, self.cp, now_ns=NOW)
+    runtime = Runtime(settings, session_id='fallback-drive')
+    candidate = runtime._observations(self.sm, self.cp, NOW)[Source.DASHBOARD].candidate
+    if candidate is not None and not settings.acceptance.confirm_higher:
+      accepted = acc.AcceptedLimit(candidate, runtime.session_id, 0)
+      runtime.state = replace(runtime.state, acceptance=replace(acc.new_session(runtime.session_id, accepted),
+                                                               received_speed_mps=candidate.speed_mps))
+    output = runtime.step(self.sm, self.cp, now_ns=NOW)
     # Exercise the actual serialized SLC receipt without opening an IPC service.
     decoded = messaging.log_from_bytes(output.message.to_bytes()) if serialize else output.message
     self.assertEqual(decoded.slcState.sessionId, 'fallback-drive')
@@ -82,7 +90,10 @@ class SlcFallbackTests(unittest.TestCase):
     source.status = 'absent'
     runtime = Runtime(self.settings, session_id='fallback-drive')
     source.status = 'valid'
-    accepted = runtime.step(self.sm, self.cp, now_ns=NOW)
+    pending = runtime.step(self.sm, self.cp, now_ns=NOW)
+    from openpilot.starpilot.speed_limits.runtime import Action
+    accepted = runtime.step(self.sm, self.cp, now_ns=NOW, request=Action(runtime.session_id, 1,
+      pending.message.slcState.decisionId, pending.message.slcState.presentationId, 'adopt'))
     self.assertTrue(accepted.message.slcState.hasAccepted)
     source.status = 'absent'
     self.sm.logMonoTime = dict.fromkeys(self.sm.data, NOW + 50_000_000)

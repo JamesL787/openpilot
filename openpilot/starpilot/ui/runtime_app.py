@@ -1365,6 +1365,8 @@ class StarShellSession:
         self._snapshot_cache = None
     snapshot = self.snapshot(mode)
     self._mode = mode
+    if mode == ShellMode.ONROAD:
+      snapshot = replace(snapshot, onroad=self.input.onroad.present(snapshot.onroad))
     if mode == ShellMode.ONROAD and self.slc_actions is not None:
       observation = snapshot.onroad.speed_limit
       snapshot = replace(snapshot, onroad=replace(snapshot.onroad, speed_limit=replace(

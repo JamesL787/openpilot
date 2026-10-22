@@ -156,7 +156,7 @@ class ShellInput:
     self._settings_emitted = True
     self.emit(ShellRequest("settings", action))
 
-  def cancel(self) -> None:
+  def cancel(self, *, close_prompt: bool = True) -> None:
     self.home.cancel()
     self.settings.cancel()
     self.device.cancel()
@@ -167,7 +167,7 @@ class ShellInput:
     self.appearance.cancel()
     self.display.cancel()
     self.models.cancel()
-    self.onroad.cancel()
+    self.onroad.cancel(close_prompt=close_prompt)
     self._pane = None
 
   def _sync(self, snapshot: ShellSnapshot) -> None:
@@ -271,4 +271,4 @@ class ShellInput:
           self.display.release(x, y, snapshot.display, now)
         elif self.profile == Profile.LARGE and snapshot.selected == Destination.DRIVING_MODEL:
           self.models.release(x, y, snapshot.models, now)
-    self.cancel()
+    self.cancel(close_prompt=snapshot.mode != ShellMode.ONROAD)

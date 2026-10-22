@@ -10,6 +10,7 @@ from openpilot.starpilot.ui.onroad_customization import (CEM_GAUGE_WIDGET, CLOCK
                                                          CEM_GAUGE_FRAME, CEM_GAUGE_INSET, SPEED_ALIGNMENTS, customization_metadata, validate_widget_order)
 from openpilot.starpilot.ui.onroad_stopped_timer import timer_size
 from openpilot.starpilot.ui.onroad_torque_geometry import maximum_footprint
+from openpilot.starpilot.ui.onroad_customization import SPEED_LAYOUT_V7, migrate_speed_layout
 
 MAX_BYTES = 16384
 DOCUMENT_KEY = 'projection'
@@ -185,7 +186,7 @@ def default_layout(screen, display=None):
 def default_layout_for_viewport(viewport, display=None):
   metadata = layout_metadata_for_viewport(viewport)
   display = {**DISPLAY_DEFAULTS, **{key: value for key, value in (display or {}).items() if key in DISPLAY_DEFAULTS}}
-  return {'version': 3, 'clock24Hour': False, 'largeUiGammaTrial': False, **display, 'canvas': {key: metadata[key] for key in ('width', 'height')},
+  return {'version': 4, 'clock24Hour': False, 'largeUiGammaTrial': False, **display, 'canvas': {key: metadata[key] for key in ('width', 'height')},
           'widgets': {key: {**widget['default'], **({'size': 192} if key == 'steering_wheel' else {})}
                       for key, widget in metadata['widgets'].items()}}
 
@@ -210,19 +211,15 @@ def validate_layout_for_viewport(value, viewport, *, _legacy_geometry=False):
   if type(value) is dict and type(value.get('version')) is int and value['version'] == 1 and not _legacy_geometry:
     result = validate_layout_for_viewport(value, viewport, _legacy_geometry=True)
     card, actions = result['widgets']['cruise_limits'], result['widgets']['speed_limit_actions']
-    if actions['x'] == card['x'] and actions['y'] - card['y'] in (372, 425):
-      actions['y'] = card['y'] + 492
-    for key in ('cruise_limits', 'speed_limit_actions'):
-      widget, saved = metadata['widgets'][key], result['widgets'][key]
-      for axis, extent in (('x', 'width'), ('y', 'height')):
-        saved[axis] = min(saved[axis], metadata['bounds'][axis] + metadata['bounds'][extent] - widget[extent])
+    gap = actions['y'] - card['y']
+    migrate_speed_layout(result['widgets'], 'large', metadata['bounds'], gap if gap in (372, 425) else 232)
     result['version'] = 2
     return validate_layout_for_viewport(result, viewport)
   fields = {'version', 'canvas', 'widgets'}
   if type(value) is dict:
     fields |= {field for field in ('widgetOrder', 'clock24Hour', 'largeUiGammaTrial', *DISPLAY_DEFAULTS) if field in value}
   if (type(value) is not dict or set(value) != fields or
-      type(value['version']) is not int or value['version'] not in (1, 2, 3) or
+      type(value['version']) is not int or value['version'] not in (1, 2, 3, 4) or
       value['canvas'] != {key: metadata[key] for key in ('width', 'height')} or
       type(value['widgets']) is not dict or not set(value['widgets']) <= set(metadata['widgets']) or
       not set(metadata['widgets']) - set(value['widgets']) <= {CEM_GAUGE_WIDGET, MODE_WIDGET, CLOCK_WIDGET, *PROJECTION_WIDGETS}):
@@ -304,6 +301,8 @@ def validate_layout_for_viewport(value, viewport, *, _legacy_geometry=False):
           type(placement['opacity']) is not int or not opacity['min'] <= placement['opacity'] <= opacity['max']):
         raise ValueError('Invalid map overlay size or opacity')
     dimensions = placement_size(key, widget, placement)
+    if value['version'] < 4 and key in SPEED_LAYOUT_V7['large']:
+      dimensions = SPEED_LAYOUT_V7['large'][key][:2]
     # Version 2 and older saved the CEM gauge's full drawing frame; check that, then move to the inset box.
     old_gauge = key == CEM_GAUGE_WIDGET and value['version'] < 3 and key in value['widgets']
     if old_gauge:
@@ -323,7 +322,11 @@ def validate_layout_for_viewport(value, viewport, *, _legacy_geometry=False):
     if old_gauge and not _legacy_geometry:
       placement.update(x=placement['x'] + CEM_GAUGE_INSET[0], y=placement['y'] + CEM_GAUGE_INSET[1])
   if not _legacy_geometry:
-    result['version'] = 3
+    if value['version'] < 4:
+      card, actions = result['widgets']['cruise_limits'], result['widgets']['speed_limit_actions']
+      gap = actions['y'] - card['y']
+      migrate_speed_layout(result['widgets'], 'large', bounds, gap if gap in (232, 492) else 232)
+    result['version'] = 4
   if len(json.dumps(result, separators=(',', ':'), allow_nan=False).encode()) > MAX_BYTES:
     raise ValueError('Projection layout too large')
   return result

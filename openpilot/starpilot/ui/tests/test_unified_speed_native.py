@@ -1,218 +1,188 @@
-"""Real planner decisions through native SlcState and the unified onroad card."""
-from unittest.mock import Mock
-from openpilot.starpilot.ui.presentation import BitmapFonts
-
-
+"""One set speed and a shared, latest-limit sign in the large and compact UIs."""
 from dataclasses import replace
-import unittest
+from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
-from unittest.mock import patch
+from unittest.mock import Mock
+
 import pyray as rl
+import pytest
+
+from openpilot.starpilot.ui.onroad_compact_widgets import CompactHudRenderer
 from openpilot.starpilot.ui.onroad_large_widgets import UnifiedSpeedWidget
-
-from openpilot.starpilot.speed_limits.runtime import Runtime
-from openpilot.starpilot.speed_limits.runtime_settings import parse
-from openpilot.starpilot.ui.tests.test_slc_ui_runtime import START, replay_inputs, publish_request
-from openpilot.starpilot.ui.onroad_state import ObservationKind, OnroadState, OnroadInput, SpeedLimitObservation, speed_limit_from_message
-from openpilot.starpilot.ui.presentation import FontRole, Profile
-from openpilot.starpilot.ui.unified_speed_presentation import resolve_unified_speed
+from openpilot.starpilot.ui.onroad import OnroadView
+from openpilot.starpilot.ui.onroad_state import ObservationKind, OnroadState, SpeedLimitObservation, slc_controls
+from openpilot.starpilot.ui.presentation import Profile
+from openpilot.starpilot.ui.speed_limit_widget import INK, MUTED, SpeedLimitWidget, draw_text
+from openpilot.starpilot.ui.unified_speed_presentation import displayed_limit_mps, resolve_unified_speed
 
 
-class UnifiedNativeTest(unittest.TestCase):
-  def test_unset_max_and_state_changes_keep_units_and_details_consistent(self):
-    observation = SpeedLimitObservation(ObservationKind.VALID, 'dashboard', 30 / 3.6,
-                                       accepted_speed_limit_mps=30 / 3.6, accepted_adjusted_limit_mps=35 / 3.6,
-                                       effective_cluster_target_mps=35 / 3.6, action_enabled=True)
-    detail_y = []
-    for cruise, active, pedal, status in ((None, False, False, 'Cruise off'),
-                                        (35, False, False, 'Cruise off'),
-                                        (35, True, True, 'Using accelerator'),
-                                        (34.99, True, False, 'Matches set speed')):
-      with self.subTest(cruise=cruise, pedal=pedal):
-        state = OnroadState(active, False, 20, cruise, observation, metric=True,
-                            longitudinal_active=active, longitudinal_overridden=pedal)
-        fonts = SimpleNamespace(draw=Mock(), measure=lambda *args: SimpleNamespace(width=100, height=20),
-                                vertical_ink=lambda text, role, size: (0, 20 if text == '–' else 80),
-                                horizontal_ink=lambda text, role, size: (0, 100))
-        with patch('openpilot.starpilot.ui.onroad_large_widgets.draw_control_card'), patch.object(rl, 'draw_line_ex'):
-          UnifiedSpeedWidget(cast(BitmapFonts, fonts)).render(rl.Rectangle(30, 30, 1800, 1020), state)
-        draws = {call.args[0]: call.args for call in fonts.draw.call_args_list}
-        detail_y.append(draws['Road limit 30 +5'][4])
-        self.assertEqual(draws[status][1:3], (FontRole.NORMAL, 30))
-        if status == 'Matches set speed':
-          color = draws[status][-1]
-          self.assertEqual((color.r, color.g, color.b, color.a), (172, 190, 203, 255))
-          self.assertIn('Using set speed', draws)
-          self.assertNotIn('Above set speed', draws)
-          self.assertNotIn('Matches speed limit', draws)
-        if cruise is None:
-          self.assertIn('Not set', draws)
-          self.assertNotIn('Your ceiling', draws)
-          self.assertEqual(sum(call.args[0] == 'km/h' for call in fonts.draw.call_args_list), 1)
-          self.assertEqual(draws['–'][4], 75 + 72 + (80 - 20) / 2)
-    self.assertEqual(len(set(detail_y)), 1)
-
-  def test_screenshot_set_override_highlights_max_but_pedal_override_does_not(self):
-    factor = 2.2369362921
-    for basis, status, max_color in (('persistent', 'Overridden', (197, 163, 255, 255)),
-                                    ('pedal', 'Using accelerator', (172, 190, 203, 255))):
-      with self.subTest(basis=basis):
-        observation = SpeedLimitObservation(ObservationKind.VALID, 'dashboard', 35 / factor,
-                                           accepted_speed_limit_mps=35 / factor, accepted_adjusted_limit_mps=40 / factor,
-                                           effective_cluster_target_mps=40 / factor, action_enabled=True,
-                                           driver_override_active=True, override_basis=basis)
-        state = OnroadState(True, False, 20, 40 / factor * 3.6, observation, metric=False, longitudinal_active=True)
-        fonts = SimpleNamespace(draw=Mock(), measure=lambda *args: SimpleNamespace(width=100, height=20),
-                                vertical_ink=lambda text, role, size: (0, size * .7),
-                                horizontal_ink=lambda text, role, size: (0, 100))
-        with patch('openpilot.starpilot.ui.onroad_large_widgets.draw_control_card'), patch.object(rl, 'draw_line_ex'):
-          UnifiedSpeedWidget(cast(BitmapFonts, fonts)).render(rl.Rectangle(30, 30, 1800, 1020), state)
-        draws = {call.args[0]: call.args for call in fonts.draw.call_args_list}
-        color = draws['MAX SET'][-1]
-        self.assertEqual((color.r, color.g, color.b, color.a), max_color)
-        self.assertEqual('Using set speed' in draws, basis == 'persistent')
-        self.assertIn(status, draws)
-        self.assertNotIn('Above set speed', draws)
-        self.assertNotIn('Matches speed limit', draws)
-        self.assertEqual(sum(call.args[0] == '40' for call in fonts.draw.call_args_list), 2)
-        self.assertIn('Road limit 35 +5', draws)
-        color = draws['SLC LIMIT'][-1]
-        self.assertEqual((color.r, color.g, color.b, color.a), (172, 190, 203, 255))
-
-  def test_set_speed_cap_feedback_belongs_to_max_row(self):
-    factor = 2.2369362921
-    observation = SpeedLimitObservation(ObservationKind.VALID, 'dashboard', 40 / factor,
-                                       accepted_speed_limit_mps=40 / factor, accepted_adjusted_limit_mps=45 / factor,
-                                       effective_cluster_target_mps=45 / factor, action_enabled=True)
-    state = OnroadState(True, False, 20, 40 / factor * 3.6, observation, metric=False, longitudinal_active=True)
-    fonts = SimpleNamespace(draw=Mock(), measure=lambda *args: SimpleNamespace(width=100, height=20),
-                            vertical_ink=lambda text, role, size: (0, size * .7),
-                            horizontal_ink=lambda text, role, size: (0, 100))
-    widget = UnifiedSpeedWidget(cast(BitmapFonts, fonts))
-    with patch('openpilot.starpilot.ui.onroad_large_widgets.draw_control_card'), patch.object(rl, 'draw_line_ex'):
-      widget.render(rl.Rectangle(30, 30, 1800, 1020), state)
-    draws = {call.args[0]: call.args for call in fonts.draw.call_args_list}
-    for label in ('MAX SET', 'Using set speed'):
-      color = draws[label][-1]
-      self.assertEqual((color.r, color.g, color.b, color.a), (197, 163, 255, 255))
-    for label in ('SLC LIMIT',):
-      color = draws[label][-1]
-      self.assertEqual((color.r, color.g, color.b, color.a), (172, 190, 203, 255))
-    self.assertLess(draws['Using set speed'][4], draws['SLC LIMIT'][4])
-    self.assertIn('40', draws)
-    self.assertIn('45', draws)
-    self.assertIn('Road limit 40 +5', draws)
-    self.assertIn('Above set speed', draws)
-    self.assertEqual(draws['Above set speed'][1:3], (FontRole.NORMAL, 30))
-    color = draws['Above set speed'][-1]
-    self.assertEqual((color.r, color.g, color.b, color.a), (172, 190, 203, 255))
-
-  def test_shared_limit_highlights_both_roles_and_preserves_both_numbers(self):
-    observation = SpeedLimitObservation(ObservationKind.VALID, 'dashboard', 20,
-                                       accepted_speed_limit_mps=20, accepted_adjusted_limit_mps=22,
-                                       effective_cluster_target_mps=22, action_enabled=True)
-    state = OnroadState(True, False, 20, 79.2, observation, metric=True, longitudinal_active=True)
-    fonts = SimpleNamespace(draw=Mock(), measure=lambda *args: SimpleNamespace(width=100, height=20),
-                            vertical_ink=lambda text, role, size: (0, size * .7),
-                            horizontal_ink=lambda text, role, size: (0, 100))
-    widget = UnifiedSpeedWidget(cast(BitmapFonts, fonts))
-    with patch('openpilot.starpilot.ui.onroad_large_widgets.draw_control_card'), patch.object(rl, 'draw_line_ex'):
-      widget.render(rl.Rectangle(30, 30, 1800, 1020), state)
-    draws = fonts.draw.call_args_list
-    for label in ('MAX SET', 'SLC LIMIT', 'Matches speed limit', 'Matches set speed'):
-      color = next(call.args[-1] for call in draws if call.args[0] == label)
-      self.assertEqual((color.r, color.g, color.b, color.a), (197, 163, 255, 255))
-    self.assertEqual(sum(call.args[0] == '79' for call in draws), 2)
-    self.assertEqual(sum(call.args[0] == 'Matches speed limit' for call in draws), 1)
-    self.assertEqual(sum(call.args[0] == 'Matches set speed' for call in draws), 1)
-    self.assertTrue(any(call.args[0] == 'Road limit 72 +7' for call in draws))
-
-  def test_real_pending_and_accept_source_survive_native_roundtrip(self):
-    sm, cp = replay_inputs()
-    runtime = Runtime(
-      parse({'SpeedLimitController': True, 'SLCConfirmation': True, 'SLCConfirmationHigher': True, 'SLCPriority1': 'Dashboard'}), session_id='unified-native'
-    )
-    self.assertTrue(cp.openpilotLongitudinalControl)
-    pending = runtime.step(sm, cp, now_ns=START).message
-    self.assertEqual(pending.slcState.pendingSource, 'dashboard')
-    obs = speed_limit_from_message(pending.slcState)
-    state = OnroadState(True, False, 20, 60, obs, metric=True, longitudinal_active=True, slc_system_long_available=bool(cp.openpilotLongitudinalControl))
-    self.assertEqual((resolve_unified_speed(state).posted_text, resolve_unified_speed(state).source), ('90', 'dashboard'))
-    # Hidden MAX moves the sign tap to its actual visible top row.
-    hidden = replace(state, customization={**state.customization, "showMaxSpeed": False})
-    emitted = []
-    touch = OnroadInput(emitted.append, Profile.LARGE)
-    touch.press(120, 630, hidden)
-    touch.release(120, 630, hidden)
-    self.assertEqual(len(emitted), 1)
-    action = publish_request(pending.slcState, emitted[0], START)
-    sm.advance(START + 50_000_000)
-    accepted = runtime.step(sm, cp, now_ns=START + 50_000_000, request=action).message
-    self.assertEqual(accepted.slcState.acceptedSource, 'dashboard')
-    self.assertFalse(accepted.slcState.hasPending)
-    self.assertEqual(accepted.slcState.pendingSource, '')
-    # A pending press cannot complete on the now-accepted decision.
-    touch.press(120, 630, hidden)
-    touch.release(120, 630, replace(hidden, speed_limit=speed_limit_from_message(accepted.slcState)))
-    self.assertEqual(len(emitted), 1)
-
-  def test_actual_lower_limit_publishes_cluster_target_and_limiting_evidence(self):
-    sm, cp = replay_inputs()
-    sm['slcDashboardObservation'].speedMps = 12
-    runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='unified-cap')
-    outcome = runtime.step(sm, cp, now_ns=START)
-    message = outcome.message.slcState
-    self.assertTrue(message.hasCeiling)
-    self.assertTrue(message.hasEffectiveClusterTarget)
-    self.assertTrue(message.isLimitingMaxSet)
-    self.assertFalse(message.driverOverrideActive)
-    self.assertAlmostEqual(message.effectiveClusterTarget, 12)
-    state = OnroadState(True, False, 20, 60, speed_limit_from_message(message), metric=True, longitudinal_active=True)
-    self.assertEqual(resolve_unified_speed(state).active_side, 'slc')
-    self.assertEqual(resolve_unified_speed(state).source, 'dashboard')
-
-  def test_pedal_flag_means_applied_override_not_merely_pressed_pedal(self):
-    for limit, expected in ((25, False), (12, True)):
-      with self.subTest(limit=limit):
-        sm, cp = replay_inputs()
-        sm['carState'].vEgo = 20
-        sm['carState'].vEgoCluster = 20
-        sm['carState'].gasPressed = True
-        sm['slcDashboardObservation'].speedMps = limit
-        runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='unified-pedal')
-        message = runtime.step(sm, cp, now_ns=START).message.slcState
-        self.assertEqual(message.driverOverrideActive, expected)
-        self.assertEqual(message.acceptedSource, 'dashboard')
-        shown = OnroadState(True, False, 20, 60, speed_limit_from_message(message), metric=True, longitudinal_active=True)
-        if expected:
-          self.assertEqual(resolve_unified_speed(shown).active_side, 'none')
-
-  def test_malformed_auxiliary_numeric_values_do_not_crash_large_renderer(self):
-    sm, cp = replay_inputs()
-    sm['slcDashboardObservation'].speedMps = 12
-    runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='unified-malformed')
-    message = runtime.step(sm, cp, now_ns=START).message.slcState
-    fonts = SimpleNamespace(
-      draw=Mock(), measure=lambda *args: SimpleNamespace(width=10, height=10), vertical_ink=lambda text, role, size: (size * 0.2, size * 0.8),
-      horizontal_ink=lambda text, role, size: (0, 10)
-    )
-    widget = UnifiedSpeedWidget(Mock(spec=BitmapFonts, **vars(fonts)))
-    for accepted, pending in ((-1, -2), (float('nan'), 12), (12, float('inf'))):
-      with self.subTest(accepted=accepted, pending=pending):
-        message.hasAccepted = True
-        message.acceptedSpeedLimit = accepted
-        message.hasPending = True
-        message.pendingSpeedLimit = pending
-        observation = speed_limit_from_message(message)
-        shown = OnroadState(True, False, 20, 60, observation, metric=True, longitudinal_active=True)
-        with patch('openpilot.starpilot.ui.onroad_large_widgets.draw_control_card'), patch.object(rl, 'draw_line_ex'):
-          widget.render(rl.Rectangle(30, 30, 1800, 1020), shown)
-        if accepted == -1:
-          self.assertEqual(resolve_unified_speed(shown).posted_text, '43')
-        else:
-          self.assertEqual(resolve_unified_speed(shown).mode, 'max_only')
+@pytest.fixture(autouse=True)
+def drawing(monkeypatch):
+  calls = {}
+  for name in ('draw_rectangle_rounded_lines_ex', 'draw_rectangle_rounded', 'draw_line_ex', 'draw_circle', 'draw_ring'):
+    calls[name] = Mock()
+    monkeypatch.setattr(rl, name, calls[name])
+  monkeypatch.setattr('openpilot.starpilot.ui.onroad_large_widgets.draw_control_card', Mock())
+  return calls
 
 
-if __name__ == '__main__':
-  unittest.main()
+def state(**changes):
+  observation = SpeedLimitObservation(ObservationKind.VALID, 'map', 50 / 3.6,
+    accepted_speed_limit_mps=40 / 3.6, accepted_adjusted_limit_mps=45 / 3.6,
+    pending_speed_limit_mps=50 / 3.6, pending_adjusted_limit_mps=55 / 3.6,
+    presentation_adjusted_limit_mps=55 / 3.6, accepted_source='dashboard', action_enabled=True,
+    session_id='drive', presentation_id=2, decision_id=1, pending_since_ns=10_000_000_000)
+  return replace(OnroadState(True, False, 45 / 3.6, 100., observation, metric=True, longitudinal_active=True,
+                              observed_ns=10_000_000_000), **changes)
+
+
+def fonts(profile=Profile.LARGE):
+  return SimpleNamespace(profile=profile, draw=Mock(), vertical_ink=lambda text, role, size: (0, size * .75),
+                         measure=lambda text, role, size: SimpleNamespace(width=len(text) * size * .5, height=size))
+
+
+def foreground_calls(draw):
+  return [call for call in draw.call_args_list if (call.args[-1].r, call.args[-1].g, call.args[-1].b) not in ((6, 14, 10), (7, 16, 12))]
+
+
+def test_latest_limit_and_offset_replace_accepted_sign_while_waiting():
+  shown = resolve_unified_speed(state())
+  assert (shown.max_text, shown.posted_text, shown.offset_text, shown.source) == ('100', '50', '+5', 'map')
+  assert displayed_limit_mps(state().speed_limit) == 50 / 3.6
+
+
+@pytest.mark.parametrize('profile', list(Profile))
+def test_both_renderers_show_small_latest_sign_and_offset(profile):
+  font = fonts(profile)
+  current = state()
+  if profile == Profile.LARGE:
+    UnifiedSpeedWidget(font).render(rl.Rectangle(30, 30, 1800, 1020), current)
+    texts = [call.args[0] for call in foreground_calls(font.draw)]
+    assert texts.count('100') == 1
+    assert 'SET' in texts
+    assert 'SLC LIMIT' not in texts
+  else:
+    CompactHudRenderer(font, Mock())._speed_limit_sign(current)
+  texts = [call.args[0] for call in foreground_calls(font.draw)]
+  assert '50' in texts and '+5' in texts and '40' not in texts
+
+
+@pytest.mark.parametrize('profile', list(Profile))
+def test_pending_sign_hops_and_arrow_follows_vehicle_speed(profile, drawing):
+  font = fonts(profile)
+  sign = SpeedLimitWidget(font, profile)
+  current = state()
+  sign.render(current)
+  before = {call.args[0]: call.args for call in foreground_calls(font.draw)}
+  arrow = foreground_calls(drawing['draw_line_ex'])[0].args
+  assert arrow[1].y < arrow[0].y
+  sign.render(replace(current, observed_ns=10_750_000_000, speed_mps=60 / 3.6))
+  after = {call.args[0]: call.args for call in foreground_calls(font.draw)}
+  assert after['LIMIT'][4] == before['LIMIT'][4]
+  assert after['50'][4] == before['50'][4] - 6
+  assert after['+5'][4] == before['+5'][4] - 6
+  arrow = foreground_calls(drawing['draw_line_ex'])[-3].args
+  assert arrow[1].y > arrow[0].y
+
+
+@pytest.mark.parametrize('profile', list(Profile))
+def test_only_set_speed_override_draws_cross(profile, drawing):
+  sign = SpeedLimitWidget(fonts(profile), profile)
+  current = state()
+  current = replace(current, speed_limit=replace(current.speed_limit, pending_speed_limit_mps=None))
+  sign.render(replace(current, longitudinal_overridden=True))
+  assert drawing['draw_line_ex'].call_count == 0
+  sign.render(replace(current, speed_limit=replace(current.speed_limit, driver_override_active=True)))
+  assert len(foreground_calls(drawing['draw_line_ex'])) == 2
+
+
+def test_compact_set_speed_stays_visible_while_cruise_is_active():
+  renderer = CompactHudRenderer(fonts(), Mock())
+  current = state(drive_frame=1)
+  for now in range(10_000_000_000, 20_000_000_000, 100_000_000):
+    alpha = renderer._set_speed_opacity(current, now)
+  assert alpha > .99
+  assert renderer._set_speed_opacity(replace(current, longitudinal_active=False), 20_000_000_000) == 0
+
+
+@pytest.mark.parametrize('profile', list(Profile))
+def test_limit_keeps_a_unit_when_set_speed_is_hidden(profile):
+  current = state()
+  current.customization['showMaxSpeed'] = False
+  current.customization['layouts']['compact']['max_speed']['enabled'] = False
+  font = fonts(profile)
+  SpeedLimitWidget(font, profile).render(current)
+  assert [call.args[0] for call in foreground_calls(font.draw)].count('km/h') == 1
+
+
+@pytest.mark.parametrize('profile', list(Profile))
+def test_actions_have_only_fixed_size_words_divider_and_pressed_underline(profile, drawing):
+  from openpilot.starpilot.ui.large_speed_geometry import ACTION_TEXT
+  view = OnroadView.__new__(OnroadView)
+  view.fonts = fonts(profile)
+  current = state(slc_prompt_open=True)
+  view._slc_actions(current)
+  assert [(call.args[0], call.args[2]) for call in foreground_calls(view.fonts.draw)] == [
+    ('Accept', ACTION_TEXT[profile][0]), ('Decline', ACTION_TEXT[profile][0])]
+  assert len(foreground_calls(drawing['draw_line_ex'])) == 1
+  view.pressed_action = lambda: slc_controls(profile, current)[0].request
+  drawing['draw_line_ex'].reset_mock()
+  view._slc_actions(current)
+  assert len(foreground_calls(drawing['draw_line_ex'])) == 2
+  drawing['draw_rectangle_rounded'].assert_not_called()
+  drawing['draw_rectangle_rounded_lines_ex'].assert_not_called()
+
+
+@pytest.mark.parametrize('profile', list(Profile))
+@pytest.mark.parametrize('alpha', [96, 255])
+def test_text_contour_is_bounded_and_preserves_foreground_opacity(profile, alpha):
+  from openpilot.starpilot.ui.presentation import FontRole
+  font = fonts(profile)
+  color = rl.Color(188, 132, 255, alpha)
+  draw_text(font, '65 +5', FontRole.MEDIUM, 36, 100, 50, color)
+  calls = [call.args for call in font.draw.call_args_list]
+  assert len(calls) == 6
+  assert all(call[:3] == ('65 +5', FontRole.MEDIUM, 36) for call in calls)
+  assert calls[-1][3:5] == (100, 50) and calls[-1][-1] is color
+  radius = 1.15 if profile == Profile.LARGE else 1.
+  assert {(round(call[3]-100, 2), round(call[4]-50, 2)) for call in calls[:4]} == {
+    (-radius, 0), (radius, 0), (0, -radius), (0, radius)}
+  assert all(call[-1].a == round(alpha*.90) for call in calls[:4])
+  assert calls[-2][3:5] == (100, 50+(1.5 if profile == Profile.LARGE else 1.2))
+  assert calls[-2][-1].a == round(alpha*.32)
+
+
+def test_full_coverage_contour_protects_base_muted_and_peak_purple_on_white():
+  from openpilot.starpilot.ui.presentation import FontRole
+  def luminance(channels):
+    linear = [((x/255+.055)/1.055)**2.4 if x/255 > .04045 else x/255/12.92 for x in channels]
+    return sum(x*weight for x, weight in zip(linear, (.2126, .7152, .0722), strict=True))
+  for color in (INK, MUTED, rl.Color(188, 132, 255, 255)):
+    font = fonts()
+    draw_text(font, '65', FontRole.BOLD, 70, 100, 50, color)
+    contour = font.draw.call_args_list[0].args[-1]
+    background = [value*contour.a/255+255-contour.a for value in (contour.r, contour.g, contour.b)]
+    assert (luminance((color.r, color.g, color.b))+.05)/(luminance(background)+.05) >= 4.5
+
+
+def test_contour_accepts_raylib_standard_color_tuples():
+  from openpilot.starpilot.ui.presentation import FontRole
+  font = fonts()
+  draw_text(font, 'Dash', FontRole.NORMAL, 22, 100, 50, rl.WHITE)
+  color = font.draw.call_args.args[-1]
+  assert (color.r, color.g, color.b, color.a) == (255, 255, 255, 255)
+
+
+def test_retained_compact_fade_still_validates_before_decoding(tmp_path, monkeypatch):
+  from openpilot.starpilot.ui.onroad import _load_fade
+  directory = Path(__file__).parents[3] / 'selfdrive/assets'
+  path = directory / 'icons_mici/onroad/onroad_fade.png'
+  decoder = Mock(return_value=SimpleNamespace(id=1))
+  monkeypatch.setattr(rl, 'load_texture', decoder)
+  assert _load_fade(path) is decoder.return_value
+  decoder.reset_mock()
+  invalid = tmp_path / path.name
+  invalid.write_bytes(b'invalid PNG')
+  with pytest.raises(ValueError, match='Unreviewed'):
+    _load_fade(invalid)
+  decoder.assert_not_called()

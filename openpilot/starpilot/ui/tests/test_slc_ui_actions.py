@@ -5,12 +5,12 @@ from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import Mock
 
-from openpilot.starpilot.ui.onroad_state import (ObservationKind, OnroadInput, OnroadRequest, OnroadState,
-                                                 SlcActionKind, SlcUiRequest, SpeedLimitObservation, slc_controls)
+from openpilot.starpilot.ui.onroad_state import (ObservationKind, OnroadInput, OnroadState,
+                                                 SlcActionKind, SlcUiRequest, SpeedLimitObservation, slc_controls, speed_limit_bounds)
 from openpilot.starpilot.ui.presentation import Profile
 from openpilot.starpilot.ui.preview_home import reference_state
 from openpilot.starpilot.ui.preview_settings import reference_settings_state
-from openpilot.starpilot.ui.shell import ShellInput, ShellMode, ShellRequest, ShellSnapshot
+from openpilot.starpilot.ui.shell import ShellInput, ShellMode, ShellSnapshot
 from openpilot.starpilot.ui.slc_action_dispatch import SlcActionDispatcher
 
 
@@ -34,74 +34,138 @@ def native_state(*, pending: bool = True, session: str = "drive-session", decisi
             actionSequenceId=0)
 
 
-class TestSlcTouch(unittest.TestCase):
-  def test_both_profiles_name_the_adjusted_apply_and_keep_targets(self):
-    for metric, factor in ((False, .44704), (True, 1 / 3.6)):
-      current = state()
-      current = replace(current, metric=metric, speed_limit=replace(current.speed_limit,
-        pending_speed_limit_mps=45 * factor, pending_adjusted_limit_mps=50 * factor,
-        accepted_speed_limit_mps=35 * factor, accepted_adjusted_limit_mps=40 * factor))
-      for profile in Profile:
-        controls = slc_controls(profile, current)
-        self.assertEqual([control.label for control in controls], ['Apply 50', 'Keep 40'])
-        self.assertEqual(controls[0].request.candidate_speed_mps, 45 * factor)
+def tap_sign(touch, current):
+  current = touch.present(current)
+  left, top, right, bottom = speed_limit_bounds(touch.profile, current)
+  x, y = (left + right) / 2, (top + bottom) / 2
+  touch.press(x, y, current)
+  touch.release(x, y, current)
 
-  def test_shell_routes_visible_card_action_as_typed_slc_request(self):
-    emitted: list[ShellRequest] = []
+
+def tap_control(touch, current, kind):
+  control = next(item for item in slc_controls(touch.profile, touch.present(current)) if item.request.kind == kind)
+  left, top, right, bottom = control.bounds
+  x, y = (left + right) / 2, (top + bottom) / 2
+  touch.press(x, y, current)
+  touch.release(x, y, current)
+
+
+class TestSlcTouch(unittest.TestCase):
+  def test_padding_tolerates_drift_but_cancels_on_leaving_the_original_target(self):
+    for profile in Profile:
+      emitted, current = [], state()
+      touch = OnroadInput(emitted.append, profile)
+      left, top, right, bottom = speed_limit_bounds(profile, current)
+      x, y = (left + right) / 2, (top + bottom) / 2
+      touch.press(x, y, current)
+      touch.release(x + 12, y + 12, current)
+      self.assertTrue(touch.present(current).slc_prompt_open)
+      controls = slc_controls(profile, touch.present(current))
+      for control in controls:
+        left, top, right, bottom = control.bounds
+        x, y = (left + right) / 2, (top + bottom) / 2
+        for drift in (0, 6, 12):
+          tap_sign(touch, current)
+          touch.press(x, y, current)
+          self.assertEqual(touch.pressed_action, control.request)
+          touch.release(x + drift, y + drift, current)
+          self.assertEqual(emitted.pop(), control.request)
+        tap_sign(touch, current)
+        touch.press(x, y, current)
+        touch.move(right + 1, y, current)
+        touch.release(x, y, current)
+        self.assertFalse(emitted)
+        self.assertIsNone(touch.pressed_action)
+      tap_sign(touch, current)
+      x = (controls[0].bounds[2] + controls[1].bounds[0]) / 2
+      touch.press(x, y, current)
+      touch.release(x, y, current)
+      self.assertFalse(emitted)
+
+  def test_both_profiles_offer_accept_and_decline_only_after_tapping_the_sign(self):
+    for profile in Profile:
+      current, emitted = state(), []
+      touch = OnroadInput(emitted.append, profile)
+      self.assertEqual(slc_controls(profile, current), ())
+      tap_sign(touch, current)
+      self.assertFalse(emitted)
+      controls = slc_controls(profile, touch.present(current))
+      self.assertEqual([control.label for control in controls], ['Accept', 'Decline'])
+      self.assertEqual(controls[0].request.candidate_speed_mps, 22.)
+      tap_control(touch, current, SlcActionKind.ACCEPT)
+      self.assertEqual(emitted[-1].kind, SlcActionKind.ACCEPT)
+      tap_sign(touch, current)
+      tap_control(touch, current, SlcActionKind.REJECT)
+      self.assertEqual(emitted[-1].kind, SlcActionKind.REJECT)
+
+  def test_shell_routes_the_open_prompt_as_a_typed_request(self):
+    emitted = []
     shell = ShellInput(Profile.LARGE, emitted.append)
     snapshot = ShellSnapshot(ShellMode.ONROAD, reference_state(), reference_settings_state(), state())
-    shell.press(120, 630, 0.0, snapshot)
-    shell.release(120, 630, 0.1, snapshot)
-    self.assertEqual(emitted[0].source, "slc")
+    left, top, right, bottom = speed_limit_bounds(Profile.LARGE, snapshot.onroad)
+    x, y = (left + right) / 2, (top + bottom) / 2
+    shell.press(x, y, 0., snapshot)
+    shell.release(x, y, .1, snapshot)
+    control = slc_controls(Profile.LARGE, shell.onroad.present(snapshot.onroad))[0]
+    left, top, right, bottom = control.bounds
+    x, y = (left + right) / 2, (top + bottom) / 2
+    shell.press(x, y, .2, snapshot)
+    shell.release(x, y, .3, snapshot)
+    self.assertEqual(emitted[0].source, 'slc')
     self.assertIsInstance(emitted[0].action, SlcUiRequest)
 
-  def test_pending_card_accept_and_visible_reject_in_both_profiles(self):
-    emitted: list[OnroadRequest | SlcUiRequest] = []
-    large = OnroadInput(emitted.append, Profile.LARGE)
-    large.press(120, 630, state())  # explicit Apply button
-    large.release(120, 630, state())
-    self.assertEqual(emitted[-1].kind, SlcActionKind.ACCEPT)
-    large.press(400, 630, state())
-    large.release(400, 630, state())
-    self.assertEqual(emitted[-1].kind, SlcActionKind.REJECT)
-    compact = OnroadInput(emitted.append, Profile.COMPACT)
-    compact.press(240, 205, state())
-    compact.release(240, 205, state())
-    self.assertEqual(emitted[-1].kind, SlcActionKind.ACCEPT)
-    self.assertEqual(len(slc_controls(Profile.COMPACT, state())), 2)
+  def test_open_prompt_expires_with_its_decision_and_old_presses_cannot_act(self):
+    for profile in Profile:
+      for changed in (state(decision=8), state(presentation=10), state(pending=False)):
+        emitted = []
+        touch = OnroadInput(emitted.append, profile)
+        current = state()
+        tap_sign(touch, current)
+        control = slc_controls(profile, touch.present(current))[0]
+        left, top, right, bottom = control.bounds
+        x, y = (left + right) / 2, (top + bottom) / 2
+        touch.press(x, y, current)
+        touch.release(x, y, changed)
+        self.assertFalse(emitted)
+        self.assertFalse(touch.present(changed).slc_prompt_open)
 
-  def test_old_press_cannot_act_on_new_decision_or_presentation(self):
-    emitted: list[OnroadRequest | SlcUiRequest] = []
-    touch = OnroadInput(emitted.append, Profile.LARGE)
-    touch.press(120, 630, state())
-    touch.release(120, 630, state(decision=8))
-    touch.press(400, 630, state())
-    touch.release(400, 630, state(presentation=10))
-    self.assertEqual(emitted, [])
+  def test_moving_a_target_during_a_press_cancels_the_action(self):
+    import copy
+    for profile in Profile:
+      emitted, current = [], state()
+      touch = OnroadInput(emitted.append, profile)
+      tap_sign(touch, current)
+      control = slc_controls(profile, touch.present(current))[0]
+      left, top, right, bottom = control.bounds
+      x, y = (left + right) / 2, (top + bottom) / 2
+      touch.press(x, y, current)
+      document = copy.deepcopy(current.customization)
+      document['layouts'][str(profile)]['speed_limit_actions']['x'] += 1
+      touch.release(x, y, replace(current, customization=document))
+      self.assertFalse(emitted)
+
+  def test_automatic_countdown_has_no_touch_confirmation(self):
+    current = state()
+    current = replace(current, speed_limit=replace(current.speed_limit, automatic_adoption_pending=True))
+    for profile in Profile:
+      touch = OnroadInput(Mock(), profile)
+      tap_sign(touch, current)
+      self.assertFalse(touch.present(current).slc_prompt_open)
+      self.assertFalse(slc_controls(profile, replace(current, slc_prompt_open=True)))
 
   def test_adopt_hidden_once_limit_is_in_use(self):
     adoptable = state(pending=False)
     in_use = replace(adoptable, speed_limit=replace(adoptable.speed_limit, speed_limit_mps=18.0))
     self.assertEqual(slc_controls(Profile.LARGE, in_use), ())
-    # Still offered when it would clear an override or raise a lower set speed.
     overridden = replace(in_use, speed_limit=replace(in_use.speed_limit, driver_override_active=True))
-    self.assertEqual(slc_controls(Profile.LARGE, overridden)[0].label, "USE LIMIT")
-    self.assertEqual(slc_controls(Profile.LARGE, replace(in_use, cruise_kph=50.0))[0].label, "USE LIMIT")
-    self.assertEqual(slc_controls(Profile.LARGE, replace(in_use, cruise_kph=50.0, longitudinal_active=False)), ())
+    self.assertEqual(slc_controls(Profile.LARGE, overridden)[0].label, 'USE LIMIT')
 
-  def test_adopt_new_limit_and_rejected_limit_remain_visible(self):
-    emitted: list[OnroadRequest | SlcUiRequest] = []
-    adoptable = state(pending=False)
-    for profile, xy in ((Profile.LARGE, (150, 590)),):
-      touch = OnroadInput(emitted.append, profile)
-      touch.press(*xy, adoptable)
-      touch.release(*xy, adoptable)
-      self.assertEqual(emitted[-1].kind, SlcActionKind.ADOPT)
-    self.assertEqual(slc_controls(Profile.COMPACT, adoptable), ())
-    previously_rejected = replace(adoptable, speed_limit=replace(adoptable.speed_limit, accepted_speed_limit_mps=None))
-    self.assertEqual(slc_controls(Profile.LARGE, previously_rejected)[0].label, "USE LIMIT")
-    # Use-limit is offered without longitudinal control; it is recorded without commanding a speed.
-    self.assertEqual(slc_controls(Profile.LARGE, replace(adoptable, longitudinal_active=False))[0].label, "USE LIMIT")
+  def test_rejected_limit_remains_explicitly_adoptable_in_large_layout(self):
+    emitted, current = [], state(pending=False)
+    touch = OnroadInput(emitted.append, Profile.LARGE)
+    tap_control(touch, current, SlcActionKind.ADOPT)
+    self.assertEqual(emitted[-1].kind, SlcActionKind.ADOPT)
+    self.assertEqual(slc_controls(Profile.COMPACT, current), ())
 
 
 class TestSlcDispatcher(unittest.TestCase):

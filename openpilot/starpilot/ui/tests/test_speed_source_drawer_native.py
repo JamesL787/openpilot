@@ -6,6 +6,7 @@ from openpilot.starpilot.ui.presentation import BitmapFonts
 from dataclasses import replace
 from types import SimpleNamespace
 import unittest
+import pytest
 from unittest.mock import patch
 import pyray as rl
 from openpilot.cereal import log, messaging
@@ -141,6 +142,7 @@ class DrawerNativeTest(unittest.TestCase):
 
   def test_accepted_source_is_highlighted_instead_of_selected_equal_value_source(self):
     from openpilot.starpilot.ui.onroad_state import SourceReading
+    from openpilot.starpilot.ui.tests.test_unified_speed_native import foreground_calls
 
     obs = SpeedLimitObservation(
       ObservationKind.VALID,
@@ -150,10 +152,16 @@ class DrawerNativeTest(unittest.TestCase):
       source_readings=(SourceReading('dashboard', True, 'valid', 25), SourceReading('vision', True, 'valid', 25)),
     )
     state = OnroadState(False, False, 20, 100, obs)
-    drawn = []
-    fonts = SimpleNamespace(measure=lambda *args: SimpleNamespace(width=20, height=20), draw=lambda text, role, *args: drawn.append((text, role)))
+    fonts = SimpleNamespace(profile=Profile.LARGE, measure=lambda *args: SimpleNamespace(width=20, height=20), draw=Mock())
     widget = UnifiedSpeedWidget(Mock(spec=BitmapFonts, **vars(fonts)))
     widget._draw_sources(rl.Rectangle(88, 545, 320, 76), state)
+    drawn = [(call.args[0], call.args[1]) for call in foreground_calls(fonts.draw)]
     self.assertEqual([text for text, _ in drawn], ['Dash', '56', 'Vision', '56'])
     self.assertIn(('56', FontRole.MEDIUM), drawn)  # The accepted source's reading is emphasized.
     self.assertIn(('56', FontRole.NORMAL), drawn)
+
+
+@pytest.fixture(autouse=True)
+def mock_sign_graphics(monkeypatch):
+  for name in ('draw_rectangle_rounded_lines_ex', 'draw_circle', 'draw_ring'):
+    monkeypatch.setattr('openpilot.starpilot.ui.speed_limit_widget.rl.' + name, Mock())

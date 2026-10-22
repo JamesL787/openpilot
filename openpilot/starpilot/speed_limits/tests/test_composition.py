@@ -49,7 +49,9 @@ def frame(now: int, *, speed: float | None = 15.0, source_kind: acc.ObservationK
 
 class CompositionTests(unittest.TestCase):
   def setUp(self):
-    self.state = comp.new_session(SESSION)
+    accepted = acc.AcceptedLimit(observations()[sel.Source.DASHBOARD].candidate, SESSION, 0)
+    self.state = comp.new_session(SESSION, accepted)
+    self.state = replace(self.state, acceptance=replace(self.state.acceptance, received_speed_mps=15.))
 
   def run_frame(self, current: comp.Frame) -> comp.Result:
     result = comp.step(self.state, current)
@@ -63,21 +65,20 @@ class CompositionTests(unittest.TestCase):
     self.assertEqual(result.acceptance.control_target_mps, 15.0)
     self.assertEqual(result.domain.context.offset_mps, 2.0)
     self.assertEqual(result.coordinate.cap_mps, 16.0)
-    self.assertEqual(result.relaxation.cap_mps, 16.0)
-    self.assertEqual(result.ceiling.speed_mps, 16.0)
-    self.assertEqual(result.ceiling.authority, ACTIVE)
+    self.assertIsNone(result.relaxation)
+    self.assertIsNone(result.ceiling)
     self.assertEqual(result.state.control_generation, 1)
 
   def test_all_source_gaps_use_only_qualified_previous_limit(self):
     self.run_frame(frame(0))
     absent = self.run_frame(frame(1, source_kind=acc.ObservationKind.ABSENT))
     self.assertEqual(absent.acceptance.basis, "previous_accepted")
-    self.assertEqual(absent.relaxation.status, "fallback_source")
-    self.assertEqual(absent.ceiling.speed_mps, 17.0)
+    self.assertIsNone(absent.ceiling)
+    self.assertEqual(absent.domain.context.effective_cluster_mps, 17.0)
     for now, kind in ((2, acc.ObservationKind.UNKNOWN), (3, acc.ObservationKind.STALE)):
       result = self.run_frame(frame(now, source_kind=kind))
-      self.assertEqual(result.ceiling.speed_mps, 17.0)
-      self.assertEqual(result.relaxation.status, 'fallback_source')
+      self.assertEqual(result.domain.context.effective_cluster_mps, 17.0)
+      self.assertIsNone(result.ceiling)
       self.assertEqual(result.acceptance.state.observation.kind, kind)
       disabled = self.run_frame(frame(now + 1, source_kind=kind, policy=replace(POLICY, fallback_previous=False)))
       self.assertIsNone(disabled.ceiling)
@@ -92,7 +93,7 @@ class CompositionTests(unittest.TestCase):
     self.assertIsNone(missing.ceiling)
     self.assertIsNone(missing.state.lead_prior)
     resumed = self.run_frame(frame(2))
-    self.assertEqual(resumed.ceiling.speed_mps, 17.0)
+    self.assertEqual(resumed.domain.context.effective_cluster_mps, 17.0)
 
   def test_four_modes_stock_and_host_loss(self):
     cases = (
@@ -107,7 +108,7 @@ class CompositionTests(unittest.TestCase):
         self.state = comp.new_session(SESSION)
         host = HOST if authority.can_control else replace(HOST, system_long_available=False, long_control_active=False)
         result = self.run_frame(frame(0, authority=authority, host=host))
-        self.assertEqual(result.ceiling is not None, authority.can_control)
+        self.assertIsNone(result.ceiling)
     self.state = comp.new_session(SESSION)
     self.run_frame(frame(0))
     lost = self.run_frame(frame(1, authority=replace(ACTIVE, longitudinal_active=False),
@@ -146,7 +147,9 @@ class CompositionTests(unittest.TestCase):
   def test_rejected_lower_limit_survives_absent_fallback_and_reconnect(self):
     confirmation = replace(POLICY, confirm_lower=True)
     initial = self.run_frame(frame(0, speed=25.0, policy=confirmation))
-    self.assertEqual(initial.ceiling.speed_mps, 27.0)
+    self.assertIsNone(initial.ceiling)
+    initial_accepted = acc.AcceptedLimit(observations(25.)[sel.Source.DASHBOARD].candidate, SESSION, 0)
+    self.state = replace(self.state, acceptance=replace(self.state.acceptance, accepted=initial_accepted, pending=None, timer_running=False))
     pending = self.run_frame(frame(1, speed=15.0, policy=confirmation))
     assert pending.acceptance.state.pending is not None
     reject = acc.DriverAction(SESSION, 1, pending.acceptance.state.pending.decision_id, acc.ActionKind.REJECT)
@@ -160,11 +163,11 @@ class CompositionTests(unittest.TestCase):
       self.assertFalse(result.errors)
       self.assertEqual(result.acceptance.state.accepted.candidate.speed_mps, 25.0)
       self.assertEqual(result.domain.context.accepted_raw_mps, 25.0)
-      self.assertEqual(result.ceiling.speed_mps, 27.0)
+      self.assertIsNone(result.ceiling)
 
   def test_reversed_monotonic_clock_latches_without_ceiling(self):
     first = self.run_frame(frame(10))
-    self.assertIsNotNone(first.ceiling)
+    self.assertIsNone(first.ceiling)
     prior_acceptance = self.state.acceptance
     reversed_time = self.run_frame(frame(9))
     self.assertEqual(reversed_time.status, "invalid_frame")
@@ -194,7 +197,7 @@ class CompositionTests(unittest.TestCase):
     third = self.run_frame(frame(2, host=replace(HOST, driver_v_cruise_kph=105.0, selected_cluster_kph=106.0)))
     assert third.override.state.persistent_selected_mps is not None
     self.assertAlmostEqual(third.override.state.persistent_selected_mps, 110.0 / 3.6)
-    self.assertGreater(third.ceiling.speed_mps, 110.0 / 3.6)  # retained raw intent plus current cluster delta
+    self.assertIsNone(third.ceiling)
 
   def test_old_ledger_result_does_not_become_a_current_speed_action(self):
     first = self.run_frame(frame(0))
@@ -210,20 +213,14 @@ class CompositionTests(unittest.TestCase):
     self.assertIsNone(rejected.ceiling)
     self.assertEqual(rejected.state.acceptance.last_timestamp_ns, 0)
 
-  def test_lower_accepted_cap_eases_then_force_stop_clears_continuity(self):
-    lead = lr.LeadEvidence(lr.LeadKind.VALID, True, True, 80.0, 23.0, 0.0)
-    self.run_frame(frame(0, speed=25.0, ego_raw=27.0, ego_cluster=27.0, lead=lead))
-    lower = self.run_frame(frame(50_000_000, speed=20.0, ego_raw=27.0, ego_cluster=27.0, lead=lead))
-    self.assertEqual(lower.relaxation.status, "eased")
-    assert lower.ceiling is not None and lower.coordinate is not None and lower.coordinate.cap_mps is not None
-    self.assertGreater(lower.ceiling.speed_mps, lower.coordinate.cap_mps)
-    stopped = self.run_frame(frame(100_000_000, speed=20.0, ego_raw=27.0, ego_cluster=27.0,
-                                   host=replace(HOST, force_stop_active=True), lead=lead))
-    self.assertIsNone(stopped.ceiling)
-    self.assertIsNone(stopped.state.lead_prior)
-    resumed = self.run_frame(frame(150_000_000, speed=20.0, ego_raw=27.0, ego_cluster=27.0, lead=lead))
-    self.assertEqual(resumed.ceiling.speed_mps, 22.0)
-    self.assertEqual(resumed.state.control_generation, 2)
+  def test_new_limit_never_creates_a_hidden_planner_target(self):
+    pending = self.run_frame(frame(0, speed=20.))
+    self.assertEqual(pending.acceptance.basis, 'automatic_pending')
+    self.assertIsNone(pending.ceiling)
+    accepted = self.run_frame(frame(acc.AUTOMATIC_ADOPTION_NS, speed=20.))
+    self.assertEqual(accepted.domain.context.effective_cluster_mps, 22.)
+    self.assertIsNone(accepted.ceiling)
+    self.assertIsNone(accepted.state.lead_prior)
 
   def test_actual_native_planner_default_and_optional_cap_transitions(self):
     from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
@@ -277,8 +274,8 @@ class CompositionTests(unittest.TestCase):
           self.assertEqual(deviations, [])
           self.assertEqual(last[2], "absent")
         else:
-          self.assertTrue(deviations)
-          self.assertEqual(last[2], "applied")
+          self.assertEqual(deviations, [])
+          self.assertEqual(last[2], "absent")
           if scenario == "lead":
             self.assertEqual(last[1][2], "1")
           elif scenario == "e2e":

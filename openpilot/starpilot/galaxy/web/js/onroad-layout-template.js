@@ -229,20 +229,11 @@ export const ONROAD_LAYOUT_TEMPLATE = `
                 <p v-if="selectedWidget.defaultAnchor === 'driver_side'" class="gx-note">The default position follows the driver’s side. A moved position stays where you place it.</p>
                 <p v-if="selectedWidget.note" class="gx-note">{{ selectedWidget.note }}</p>
                 <label v-if="selectedWidget.kind === 'clock'" class="gx-layout__clock-format"><input type="checkbox" :checked="!!state.draft.clock24Hour" :disabled="!editAvailable || !!state.drag || !!state.layerDrag" @change="setClock24Hour"> Use 24-hour time</label>
-                <div v-if="selectedWidget.kind === 'cruise_limits'" class="gx-layout__favorite-display">
-                  <span>Text alignment</span>
-                  <div class="gx-segment" role="group" aria-label="Cruise and speed limit text alignment">
-                    <button v-for="align in ['left', 'center', 'right']" :key="align" class="gx-btn" type="button"
-                      :class="(state.draft.speedAlign || 'left') === align ? 'gx-btn--primary' : 'gx-btn--tonal'"
-                      :aria-pressed="(state.draft.speedAlign || 'left') === align" :disabled="!editAvailable || !!state.drag || !!state.layerDrag"
-                      @click="setSpeedAlign(align)">{{ align === 'left' ? 'Left' : align === 'center' ? 'Center' : 'Right' }}</button>
-                  </div>
-                </div>
                 <GalaxySettingRow v-if="selectedWidget.kind === 'cruise_limits'" :row="switchRow('Show Speed-Limit Sources', state.draft.speedSources === true)" :index="0"
                   :disabled="!editAvailable || !!state.drag || !!state.layerDrag" :save-value="(index, value) => setSpeedSources('speedSources', value === 'On')" />
                 <GalaxySettingRow v-if="selectedWidget.kind === 'cruise_limits' && state.draft.speedSources === true" :row="switchRow('Show as Separate Card', state.draft.speedSourcesCard === true)" :index="1"
                   :disabled="!editAvailable || !!state.drag || !!state.layerDrag" :save-value="(index, value) => setSpeedSources('speedSourcesCard', value === 'On')" />
-                <label v-if="!projection && selectedWidget.kind === 'cruise_limits'" class="gx-layout__clock-format"><input type="checkbox" :checked="state.draft.showMaxSpeed !== false" :disabled="!editAvailable || !!state.drag || !!state.layerDrag" @change="setShowMaxSpeed"> Show MAX speed</label>
+                <label v-if="!projection && selectedWidget.kind === 'cruise_limits'" class="gx-layout__clock-format"><input type="checkbox" :checked="state.draft.showMaxSpeed !== false" :disabled="!editAvailable || !!state.drag || !!state.layerDrag" @change="setShowMaxSpeed"> Show set speed</label>
                 <GalaxySettingRow v-if="projection && selectedWidget.kind === 'steering_wheel'" :row="switchRow('Brake and Acceleration Colors', state.draft.wheelPedalFeedback === true)" :index="0"
                   :disabled="!editAvailable || !!state.drag || !!state.layerDrag" :save-value="(index, value) => setProjectionDisplay('wheelPedalFeedback', value)" />
                 <GalaxySettingRow v-if="!projection && selectedWidget.kind === 'steering_wheel' && displayRow('ShowBrakeStatus')" :row="switchRow('Brake and Acceleration Colors', displayValue('ShowBrakeStatus') === 'On')" :index="0"

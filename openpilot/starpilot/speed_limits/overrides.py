@@ -54,6 +54,7 @@ class State:
   last_timestamp_ns: int | None = None
   reset_required: bool = False
   effective_target_mps: float | None = None
+  applied_selected_mps: float | None = None
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,8 @@ def _ego_speed(value: object) -> bool:
 def _state_valid(state: object) -> bool:
   if not isinstance(state, State) or not _token(state.session_id):
     return False
-  if any(v is not None and not _speed(v) for v in (state.persistent_selected_mps, state.accepted_mps, state.effective_target_mps)):
+  if any(v is not None and not _speed(v) for v in (state.persistent_selected_mps, state.accepted_mps,
+                                                 state.effective_target_mps, state.applied_selected_mps)):
     return False
   if (not _integer(state.next_context_id, 1) or type(state.active) is not bool or
       not _integer(state.last_effect_id, -1) or not _integer(state.last_adoption_sequence, -1) or
@@ -227,8 +229,8 @@ def step(state: State, acceptance: acc.Decision, authority: acc.Authority, polic
   accepted_speed = accepted.candidate.speed_mps if accepted is not None else None
   domain_unavailable = False
   selected_delta = 0.0
-  ego_delta = 0.0
-  effective_target = acceptance.control_target_mps
+  effective_target = (old.effective_target_mps if acceptance.control_target_mps is None and accepted_speed == old.accepted_mps
+                      else acceptance.control_target_mps)
   if domain is not None:
     if domain.status is sd.DomainStatus.INVALID:
       failed = replace(state, persistent_selected_mps=None, active=False, context=None, suspension_started_ns=None,
@@ -251,15 +253,13 @@ def step(state: State, acceptance: acc.Decision, authority: acc.Authority, polic
                          reset_required=True)
         return Decision(failed, basis="session_reset_required", event_receipt=receipt, errors=("speed domain mismatch",))
       selected_delta = c.selected_delta_mps
-      ego_delta = c.ego_delta_mps
       effective_target = c.effective_cluster_mps
   mode_changed = old.mode is not None and (old.mode != authority.mode or old.owner != authority.owner)
-  if mode_changed:
-    state = replace(state, persistent_selected_mps=None, suspension_started_ns=None)
-  if old.accepted_mps is not None and accepted_speed is not None and accepted_speed < old.accepted_mps:
-    state = replace(state, persistent_selected_mps=None)
+  if acceptance.history_write is not None:
+    state = replace(state, persistent_selected_mps=None, applied_selected_mps=None)
+  comparison_target = state.applied_selected_mps + selected_delta if state.applied_selected_mps is not None else effective_target
   if (not domain_unavailable and state.persistent_selected_mps is not None and effective_target is not None and
-      effective_target >= state.persistent_selected_mps + selected_delta):
+      selected.speed_mps is not None and math.isclose(comparison_target, selected.speed_mps + selected_delta, abs_tol=0.001, rel_tol=0)):
     state = replace(state, persistent_selected_mps=None)
   state = replace(state, accepted_mps=accepted_speed, effective_target_mps=effective_target,
                   mode=authority.mode, owner=authority.owner)
@@ -272,28 +272,15 @@ def step(state: State, acceptance: acc.Decision, authority: acc.Authority, polic
       state = replace(state, persistent_selected_mps=None, last_adoption_sequence=adoption.action_sequence_id)
       adopted_now = True
 
-  eligible = (authority.can_control and not policy.display_only and acceptance.control_target_mps is not None and
-              selected.kind is EvidenceKind.VALID and pedal.kind is EvidenceKind.VALID and not domain_unavailable)
+  eligible = (authority.can_control and not policy.display_only and accepted_speed is not None and effective_target is not None and
+              selected.kind is EvidenceKind.VALID and pedal.kind is EvidenceKind.VALID and
+              (not domain_unavailable or acceptance.control_target_mps is None))
   if not eligible:
-    # Only temporary inactivity under the same selected mode and owner gets a grace period.
-    temporary_inactivity = (not mode_changed and not authority.longitudinal_active and
-                            authority.mode in (acc.Mode.LONGITUDINAL_ONLY, acc.Mode.COMBINED) and
-                            authority.owner is acc.LongitudinalOwner.SYSTEM)
-    if temporary_inactivity:
-      # A held accelerator pauses output; start recovery grace from its latest sample.
-      started = now_ns if pedal.pressed or old.suspension_started_ns is None else old.suspension_started_ns
-      state = replace(state, suspension_started_ns=started)
-      if now_ns - started >= SUSPENSION_NS:
-        state = replace(state, persistent_selected_mps=None)
-    else:
-      state = replace(state, suspension_started_ns=None)
-    state = replace(state, active=False, context=None)
+    state = replace(state, active=False, context=None, suspension_started_ns=None)
     return Decision(state, basis="display_only" if policy.display_only else "inactive_or_missing_evidence", event_receipt=receipt)
 
-  target = acceptance.control_target_mps
+  target = accepted_speed
   assert target is not None and _speed(target) and selected.speed_mps is not None and pedal.pressed is not None
-  if state.suspension_started_ns is not None and now_ns - state.suspension_started_ns >= SUSPENSION_NS:
-    state = replace(state, persistent_selected_mps=None)
   state = replace(state, suspension_started_ns=None)
   rotate = (not old.active or old.context is None or old.context.accepted_target_mps != target or
             old.effective_target_mps != effective_target or
@@ -312,16 +299,12 @@ def step(state: State, acceptance: acc.Decision, authority: acc.Authority, polic
           old.active and old.context is not None and not rotate and change.context_id == old.context.context_id and
           change.started_at_ns is not None and old.context.issued_at_ns <= change.started_at_ns <= now_ns and
           change.selected_mps == selected.speed_mps):
-      if (change.selected_mps > change.previous_mps or
-          state.persistent_selected_mps is not None and change.selected_mps < state.persistent_selected_mps):
-        state = replace(state, persistent_selected_mps=(change.selected_mps if
-                        effective_target is not None and change.selected_mps + selected_delta > effective_target else None))
+      state = replace(state, persistent_selected_mps=(change.selected_mps if comparison_target is not None and
+                      not math.isclose(change.selected_mps + selected_delta, comparison_target, abs_tol=0.001, rel_tol=0) else None))
       receipt = replace(receipt, consumed=True, status="driver_intent")
     else:
       receipt = replace(receipt, status="unqualified_effect")
 
-  if pedal.pressed and pedal.ego_mps is not None and effective_target is not None and pedal.ego_mps + ego_delta > effective_target:
-    return Decision(state, pedal.ego_mps, "pedal", state.context, receipt)
   if state.persistent_selected_mps is not None:
     return Decision(state, state.persistent_selected_mps, "persistent", state.context, receipt)
   return Decision(state, basis="adoption_clear" if adopted_now else "none", context=state.context, event_receipt=receipt)

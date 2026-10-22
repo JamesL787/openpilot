@@ -219,7 +219,11 @@ def _qualified_ioniq6_ready(samples, now):
   for previous, current in zip(samples, samples[1:], strict=False):
     producer_delta = (current[0] - previous[0]) * 1e-9
     receipt_delta = current[1] - previous[1]
-    if not 0 < producer_delta <= .05 or not 0 <= receipt_delta <= .05 or (current[2] - previous[2]) % 256 != 1:
+    # Producer time belongs to the CAN packet. Consecutive frames in one
+    # packet share both producer and receipt time; this is not a stale burst.
+    same_packet = producer_delta == 0 and receipt_delta == 0
+    if (not (same_packet or 0 < producer_delta <= .05) or not 0 <= receipt_delta <= .05 or
+        (current[2] - previous[2]) % 256 != 1):
       return None
   # Reject queued producer bursts even when their historical cadence is valid.
   producer_span = (samples[-1][0] - samples[0][0]) * 1e-9

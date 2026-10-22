@@ -59,7 +59,8 @@ class SlcActionDispatcher:
           decision_id != request.decision_id or presentation_id != request.presentation_id):
         return False
       if request.kind in (SlcActionKind.ACCEPT, SlcActionKind.REJECT):
-        if (not bool(state.hasPending) or decision_id <= 0 or not _positive_number(state.pendingSpeedLimit) or
+        if (not bool(state.hasPending) or bool(getattr(state, 'automaticAdoptionPending', False)) or
+            decision_id <= 0 or not _positive_number(state.pendingSpeedLimit) or
             not math.isclose(float(state.pendingSpeedLimit), request.candidate_speed_mps, abs_tol=0.001)):
           return False
       elif request.kind == SlcActionKind.ADOPT:
@@ -124,5 +125,5 @@ class SlcActionDispatcher:
     if observation.command_action_sequence_id == self._feedback_sequence:
       return {'issued': 'Applying…', 'applied': 'Applied', 'rejected': 'Setpoint not applied',
               'expired': 'Setpoint not applied'}.get(observation.command_status, 'Not confirmed')
-    return {'accept': 'Limit accepted', 'reject': 'Current limit kept', 'adopt': 'Limit adopted'}.get(
+    return {'accept': 'Limit accepted', 'reject': 'Set speed kept', 'adopt': 'Limit adopted'}.get(
       observation.action_status, 'Not applied')

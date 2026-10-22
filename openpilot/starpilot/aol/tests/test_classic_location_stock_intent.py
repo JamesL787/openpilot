@@ -190,7 +190,7 @@ def assert_classic_location_independent_refusals(sd, card, state, now_ns):
 def host_heartbeat_bridge(tmp_path_factory):
   import hashlib
   import re
-  import shlex
+  import capnproto
   import subprocess
   import struct
   from pathlib import Path
@@ -273,7 +273,7 @@ int main() {
   source.write_text(code)
   library = tmp / 'host-peer'
   generated = [root / ('openpilot/cereal/gen/cpp/' + name + '.capnp.c++') for name in ('log', 'car', 'custom', 'deprecated')]
-  capnp_flags = shlex.split(subprocess.check_output(['pkg-config', '--cflags', '--libs', 'capnp'], text=True, timeout=5))
+  capnp_flags = ['-I', capnproto.INCLUDE_DIR, '-L', capnproto.LIB_DIR, '-lcapnp', '-lkj']
   subprocess.run(['c++', '-std=c++17', '-O1', '-Wall', '-Werror',
                   '-I', str(root), '-I', str(root / 'openpilot'), '-I', str(root / 'opendbc_repo'), '-I', str(root / 'openpilot/cereal/gen/cpp'),
                   str(source), *map(str, generated), *capnp_flags, '-o', str(library)], check=True, timeout=35)

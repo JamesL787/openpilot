@@ -191,22 +191,18 @@ export const LayoutWidgetPreview = {
           style="filter: drop-shadow(2px 2px 1px #000000aa)">{{ clock24Hour ? '18:00' : '12:00 PM' }}</text>
       </template>
       <template v-else-if="widget.kind === 'speed_limit'">
-        <rect x="10" y="8" width="100" height="116" rx="14" fill="none" stroke="white" stroke-width="2" />
-        <text x="60" y="18" dominant-baseline="text-before-edge" text-anchor="middle" font-size="20" font-weight="600" fill="white">SPEED</text>
-        <text x="60" y="36" dominant-baseline="text-before-edge" text-anchor="middle" font-size="20" font-weight="600" fill="white">LIMIT</text>
-        <text x="60" y="66" dominant-baseline="text-before-edge" text-anchor="middle" font-size="50" font-weight="700" fill="white">45</text>
+        <text x="0" y="10" font-size="24" font-weight="500">LIMIT</text>
+        <path v-if="pending(scene)" d="M90 12 V-8 M84 -2 L90 -8 L96 -2" fill="none" :stroke="palette.text || '#ffffff'" stroke-width="2" />
+        <text x="0" y="66" font-size="58" font-weight="700">45<tspan dx="10" font-size="36" font-weight="500">+5</tspan></text>
       </template>
       <template v-else-if="widget.kind === 'speed_limit_actions'">
-        <text v-if="profile === 'compact' && pending(scene)" x="6" :y="widget.visualHeaderY ?? -32" dominant-baseline="text-before-edge" font-size="20" font-weight="600" fill="white">NEW LIMIT 49</text>
-        <text v-if="profile === 'large' && pending(scene)" x="0" y="28" font-size="37" fill="white">New road limit 49</text>
-        <template v-if="pending(scene)"><g v-for="(label, index) in (profile === 'large' ? ['Apply 54', 'Keep 49'] : ['ACCEPT', 'REJECT'])" :key="label" :transform="'translate(' + index * (widget.width / 2 + 4) + ' ' + (profile === 'large' ? 44 : 0) + ')'">
-          <rect :width="widget.width / 2 - 4" :height="profile === 'large' ? widget.height - 44 : widget.height" rx="12" :fill="palette.cardFill" :stroke="palette.cardBorder" stroke-width="2" />
-          <text :x="widget.width / 4 - 2" :y="(profile === 'large' ? widget.height - 44 : widget.height) / 2 + 7" text-anchor="middle" :font-size="profile === 'large' ? 40 : 20" :font-weight="profile === 'large' ? 500 : 600" :fill="palette.text">{{ label }}</text>
-        </g></template>
-        <g v-else-if="profile === 'large'">
-          <rect :width="widget.width" :height="widget.height - 44" rx="12" :fill="palette.cardFill" :stroke="palette.cardBorder" stroke-width="2" />
-          <text :x="widget.width / 2" :y="(widget.height - 44) / 2 + 7" text-anchor="middle" font-size="40" :fill="palette.text">Use limit 49</text>
-        </g>
+        <template v-if="pending(scene)">
+          <line :x1="widget.width / 2" :x2="widget.width / 2" :y1="profile === 'large' ? 46 : 6" :y2="profile === 'large' ? 98 : 42" stroke="#9bb2adaa" />
+          <text v-for="(label, index) in ['Accept', 'Decline']" :key="label" :x="widget.width * (index ? .75 : .25)"
+            :y="profile === 'large' ? 72 : 24" text-anchor="middle" dominant-baseline="middle"
+            :font-size="profile === 'large' ? 64 : 50" font-weight="500">{{ label }}</text>
+        </template>
+        <text v-else-if="profile === 'large'" :x="widget.width / 2" y="72" text-anchor="middle" dominant-baseline="middle" font-size="64">Use limit 49</text>
       </template>
       <g v-else-if="widget.kind === 'torque_bar'" fill="none" stroke="white" stroke-linecap="round">
         <path :d="'M 12 ' + widget.height * .8 + ' Q ' + widget.width / 2 + ' ' + widget.height * .55 + ' ' + (widget.width - 12) + ' ' + widget.height * .8" :stroke-width="widget.height * .18" opacity=".3" />
@@ -852,14 +848,6 @@ export const OnroadLayoutPage = {
         const limits = placementLimits(this.profile, id, this.layout)
         this.layout[id].y = Math.max(limits.minY, Math.min(this.layout[id].y, limits.maxY))
       }
-      this.recordChange(before)
-      this.state.notice = ""
-    },
-    setSpeedAlign(align) {
-      if (!this.editable || this.state.drag || this.state.layerDrag || this.selectedWidget?.kind !== "cruise_limits" ||
-        !["left", "center", "right"].includes(align)) return
-      const before = clone(this.state.draft)
-      this.state.draft.speedAlign = align
       this.recordChange(before)
       this.state.notice = ""
     },

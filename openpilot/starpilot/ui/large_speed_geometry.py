@@ -1,16 +1,23 @@
-"""Large speed stack dimensions shared by rendering, input and layout metadata."""
+"""Speed group geometry shared by rendering, input and layout metadata."""
 
-WIDTH = 320
-MAX_ROW_HEIGHT = 210
-LIMIT_ROW_HEIGHT = 260
-CARD_HEIGHT = MAX_ROW_HEIGHT + LIMIT_ROW_HEIGHT
-ACTION_HEIGHT = 108
-ACTION_X = 88
-ACTION_Y = 75 + CARD_HEIGHT + 22
-ACTION_HEADER_HEIGHT = 44
+WIDTH = 488
+MAX_ROW_HEIGHT = 132
+LIMIT_ROW_HEIGHT = MAX_ROW_HEIGHT
+CARD_HEIGHT = MAX_ROW_HEIGHT
+ACTION_WIDTH = 576
+ACTION_HEIGHT = 160
+ACTION_X = 100
+ACTION_Y = 248
 GAP = 8
 SOURCE_ROW_HEIGHT = 76
 PADDING = 24
+
+LIMIT_RECTS = {'large': (272, 94, 292, 124), 'compact': (158, 10, 264, 82)}
+ACTION_BOUNDS = {
+  'large': ((100, 248, 372, 408), (404, 248, 676, 408)),
+  'compact': ((16, 118, 224, 222), (248, 118, 456, 222)),
+}
+ACTION_TEXT = {'large': (64, 320), 'compact': (50, 146)}
 
 
 def card_height(mode):

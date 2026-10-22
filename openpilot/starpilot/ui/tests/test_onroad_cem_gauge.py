@@ -289,7 +289,7 @@ def test_gauge_box_shrinks_to_its_content_and_saved_positions_keep_the_drawing_i
   old['version'] = 6
   old['layouts']['large'][CEM_GAUGE_WIDGET].update(x=436, y=75, enabled=True)
   migrated = validate_document(old)
-  assert migrated['layouts']['large'][CEM_GAUGE_WIDGET] == {'x': 480, 'y': 99, 'enabled': True}
+  assert migrated['layouts']['large'][CEM_GAUGE_WIDGET] == {'x': 56, 'y': 452, 'enabled': True}
   assert validate_document(migrated) == migrated
   # An old gauge flush with the bottom edge is still valid and lands flush with it again.
   old['layouts']['large'][CEM_GAUGE_WIDGET].update(x=1486, y=750)
@@ -297,13 +297,31 @@ def test_gauge_box_shrinks_to_its_content_and_saved_positions_keep_the_drawing_i
   gauge = AetherGauge(Mock())
   with patch.object(gauge, '_render_unified_road') as draw:
     gauge.render(state('cem_stop', customization=migrated))
-  assert draw.call_args.args[1:3] == (436. + 172, 75. + 85)  # Same spot the version 6 layout drew at.
+  assert draw.call_args.args[1:3] == (184., 513.)
   # Android Auto version 2 layouts move the same way.
   viewport = (2880, 1080)
   aa = default_layout_for_viewport(viewport)
-  assert aa['version'] == 3
+  assert aa['version'] == 4
   aa['version'] = 2
   aa['widgets'][CEM_GAUGE_WIDGET].update(x=900, y=200)
   moved = validate_layout_for_viewport(aa, viewport)
-  assert moved['version'] == 3 and (moved['widgets'][CEM_GAUGE_WIDGET]['x'], moved['widgets'][CEM_GAUGE_WIDGET]['y']) == (944, 224)
+  assert moved['version'] == 4 and (moved['widgets'][CEM_GAUGE_WIDGET]['x'], moved['widgets'][CEM_GAUGE_WIDGET]['y']) == (944, 224)
   assert validate_layout_for_viewport(moved, viewport) == moved
+
+
+@pytest.mark.parametrize('projection', [False, True])
+def test_default_cem_gauge_is_in_left_column_centered_above_driver_monitor(projection):
+  from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport, layout_metadata_for_viewport
+  from openpilot.starpilot.ui.onroad_customization import customization_metadata
+
+  if projection:
+    viewport = (2880, 1080)
+    widgets = layout_metadata_for_viewport(viewport)['widgets']
+    layout = default_layout_for_viewport(viewport)['widgets']
+  else:
+    widgets = customization_metadata()['profiles']['large']['widgets']
+    layout = default_document()['layouts']['large']
+  gauge, monitor, actions = (layout[key] for key in (CEM_GAUGE_WIDGET, 'driver_monitor', 'speed_limit_actions'))
+  assert gauge['x'] + widgets[CEM_GAUGE_WIDGET]['width'] / 2 == monitor['x'] + monitor['size'] / 2 == 184
+  assert actions['y'] + widgets['speed_limit_actions']['height'] < gauge['y']
+  assert gauge['y'] + widgets[CEM_GAUGE_WIDGET]['height'] < monitor['y']

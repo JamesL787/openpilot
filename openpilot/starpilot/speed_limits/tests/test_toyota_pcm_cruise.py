@@ -13,7 +13,6 @@ from openpilot.selfdrive.car.cruise import VCruiseHelper
 from openpilot.selfdrive.car.card import Car
 from openpilot.cereal import messaging
 from openpilot.selfdrive.controls.plannerd import queue_cruise_event, current_cruise_event
-from openpilot.starpilot.speed_limits.runtime import Runtime
 from openpilot.starpilot.speed_limits.runtime_settings import parse
 from openpilot.starpilot.speed_limits.tests import test_runtime_replay as replay_fixture
 
@@ -108,7 +107,8 @@ def test_pcm_resume_edge_and_release_frame_set_speed_feed_override():
   fixture.setUp()
   sm = fixture.sm
   sm['carState'].vCruise = sm['carState'].vCruiseCluster = 90.
-  runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='pcm-drive')
+  fixture.cp = parsed.cp
+  runtime = fixture.accepted_runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='pcm-drive')
   first = runtime.step(sm, parsed.cp, now_ns=2_000_000_000)
   assert first.result.override.context is not None
   receipt, published = publish_change(parsed, state)

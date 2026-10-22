@@ -969,7 +969,9 @@ class FeatureSettingsOwner:
       rows.append(replace(control_row, reason=control_reason) if control_row.choices else control_row)
       rows.append(self._bool_row("ShowSpeedLimits", "Show speed limit signs", self.authority("preferences"),
                                  reason="Display signs independently of Speed Limit Controller; does not change cruise speed"))
-      rows.append(self._bool_row("SLCConfirmation", "Require confirmation", allowed))
+      confirmation = self._bool_row("SLCConfirmation", "Automatic adoption", allowed,
+        reason="On flashes new limits for 3 seconds, then sets cruise speed; Off asks for confirmation within 10 seconds")
+      rows.append(replace(confirmation, value={"On": "Off", "Off": "On"}.get(confirmation.value, confirmation.value), default_value="On"))
       source_capability = self._source_capability()
       vision_dev, maps_available = source_capability
       source_allowed = configurable and self.authority("preferences")
@@ -1434,7 +1436,7 @@ class FeatureSettingsOwner:
           return False
         if key == "SpeedLimitController" and request.value == "On" and not self.slc_offsets.ready_to_enable():
           return False
-        encoded = "1" if request.value == "On" else "0"
+        encoded = ("0" if request.value == "On" else "1") if key == "SLCConfirmation" else ("1" if request.value == "On" else "0")
       elif key in FLOAT_SPECS:
         current, _, valid = self._value(key)
         low, high, _, _ = FLOAT_SPECS[key]

@@ -17,10 +17,13 @@ class PEReadySource:
 
   def update(self, packets, now_boot_ns):
     for stamp, frames in packets:
+      # One CAN event can contain consecutive frames with the same producer
+      # time. Qualify its timestamp once; replaying that event still fails.
+      packet_current = type(stamp) is int and self.last_stamp < stamp <= now_boot_ns
       for address, data, bus in frames:
         if address != 0x35 or bus != 1:
           continue
-        if type(stamp) is not int or not self.last_stamp < stamp <= now_boot_ns or len(data) != 32:
+        if not packet_current or len(data) != 32:
           self.observation = None
           continue
         self.last_stamp = stamp

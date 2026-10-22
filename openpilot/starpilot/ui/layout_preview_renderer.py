@@ -73,7 +73,8 @@ def sample_state(scene: str, document: dict) -> OnroadState:
   state = OnroadState(engaged=lateral or longitudinal, camera_available=False,
                      speed_mps=0.0 if scene in ("cem_lead", "stopped") else 22.0, cruise_kph=88.0,
                      stopped_duration_s=PREVIEW_DURATION_S if scene == "stopped" else None,
-                     speed_limit=SpeedLimitObservation(kind=ObservationKind.VALID, source="dashboard", speed_limit_mps=20.0,
+                     speed_limit=SpeedLimitObservation(kind=ObservationKind.VALID, source="dashboard",
+                                                       speed_limit_mps=22.0 if scene == 'slc_pending' else 20.0,
                                                        accepted_speed_limit_mps=20.0, accepted_source='dashboard',
                                                        accepted_adjusted_limit_mps=22.0, effective_cluster_target_mps=22.0,
                                                        offset_mps=2.0, limiting_max_set=True,
@@ -81,7 +82,7 @@ def sample_state(scene: str, document: dict) -> OnroadState:
                                                        presentation_adjusted_limit_mps=24.0 if scene == 'slc_pending' else 22.0,
                                                        pending_speed_limit_mps=22.0 if scene == "slc_pending" else None,
                                                        session_id="preview",
-                                                       source_readings=(SourceReading('dashboard', True, 'valid', 20),
+                                                       source_readings=(SourceReading('dashboard', True, 'valid', 22 if scene == 'slc_pending' else 20),
                                                                         SourceReading('map', True, 'valid', 20),
                                                                         SourceReading('vision', True, 'unknown')),
                                                        decision_id=1, presentation_id=1, action_enabled=longitudinal),
@@ -93,6 +94,7 @@ def sample_state(scene: str, document: dict) -> OnroadState:
                      longitudinal_active=longitudinal, stock_cruise_active=False,
                      slc_system_long_available=longitudinal, torque_utilization=0.78 if lateral else 0.0,
                      customization=document,
+                     slc_prompt_open=scene == 'slc_pending',
                      visual_preview=OnroadVisualPreview(cem_reason=CEM_SCENE_REASONS[scene], layout_sample=True) if scene in CEM_SCENE_REASONS else None)
 
   if scene == 'cem_lead':
@@ -106,12 +108,13 @@ def sample_state(scene: str, document: dict) -> OnroadState:
     observation = replace(observation, limiting_max_set=False)
   elif scene == 'slc_equal':
     state = replace(state, cruise_kph=79.2)
-  elif scene in ('slc_pedal', 'slc_retained'):
+  elif scene == 'slc_pedal':
+    state = replace(state, longitudinal_overridden=True)
+  elif scene == 'slc_retained':
     observation = replace(observation, driver_override_active=True,
-                          override_basis='pedal' if scene == 'slc_pedal' else 'persistent',
-                          retained_override=scene == 'slc_retained')
+                          override_basis='persistent', retained_override=True)
   elif scene == 'slc_unavailable':
-    observation = SpeedLimitObservation(kind=ObservationKind.STALE)
+    observation = SpeedLimitObservation(kind=ObservationKind.STALE, status='display_hold')
   elif scene == 'slc_disengaged':
     observation = replace(observation, action_enabled=True, effective_cluster_target_mps=None)
   elif scene == 'slc_display':
@@ -330,17 +333,10 @@ class _Canvas:
     for key in RUNTIME_PREVIEW_WIDGETS[str(self.profile)]:
       logical_width, logical_height = widget_size(state.customization, self.profile, key)
       position = positions[key]
-      crop_x, crop_y = math.floor(position['x']), math.floor(position['y'])
+      widget = PROFILES[str(self.profile)]['widgets'][key]
+      crop_x = max(0, math.floor(position['x'] - widget.get('visualInsetLeft', 0)))
+      crop_y = max(0, math.floor(position['y'] - widget.get('visualInsetTop', 0)))
       offset_x, offset_y = crop_x - position['x'], crop_y - position['y']
-      if key == 'speed_limit_actions' and self.profile == Profile.COMPACT:
-        # The native pending-limit heading sits above the buttons, or below them
-        # when they are placed at the top edge. Include it in the exported sprite.
-        inset = PROFILES['compact']['widgets'][key]['visualInsetTop']
-        if position['y'] >= inset:
-          crop_y -= inset
-          offset_y -= inset
-        else:
-          logical_height += inset
       width, height = math.ceil(logical_width - offset_x), math.ceil(logical_height - offset_y)
       if x + width > 1024:
         x, y, row_height = 0, y + row_height, 0

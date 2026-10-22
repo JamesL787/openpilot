@@ -1,4 +1,6 @@
 """Original switch context, state event and reached controller regressions."""
+import pytest
+
 from opendbc.can import CANPacker
 from opendbc.car import Bus, structs, gen_empty_fingerprint
 from opendbc.car.ford.interface import CarInterface
@@ -37,6 +39,27 @@ def test_actual_parser_cancel_edges_are_op_long_only_and_contextual():
       out = state.update(parsers)
       cancel = [event.pressed for event in out.buttonEvents if event.type == structs.CarState.ButtonEvent.Type.cancel]
       assert cancel == (expected if op_long else [])
+
+
+@pytest.mark.parametrize('vehicle', [CAR.FORD_ESCAPE_MK4, CAR.FORD_MUSTANG_MACH_E_MK1])
+@pytest.mark.parametrize('op_long', [False, True])
+@pytest.mark.parametrize('signal,button', [
+  ('CcAslButtnSetIncPress', 'accelCruise'), ('CcAslButtnResIncPress', 'accelCruise'),
+  ('CcAslButtnIndxIncPress', 'accelCruise'), ('CcAslButtnSetDecPress', 'decelCruise'),
+  ('CcAslButtnResDecPress', 'decelCruise'), ('CcAslButtnIndxDecPress', 'decelCruise'),
+])
+def test_directional_cruise_edges_reach_software_cruise_only_with_op_long(vehicle, op_long, signal, button):
+  cp = params(vehicle, alpha=op_long)
+  state = CarState(cp)
+  parsers = state.get_can_parsers(cp)
+  packer = CANPacker(DBC[cp.carFingerprint][Bus.pt])
+  for i, (pressed, expected) in enumerate(((0, []), (1, [True]), (1, []), (0, [False]))):
+    parsers[Bus.pt].update([(1_000_000_000 + i * 10_000_000, [
+      packer.make_can_msg('Steering_Data_FD1', parsers[Bus.pt].bus, {signal: pressed}),
+    ])])
+    out = state.update(parsers)
+    edges = [event.pressed for event in out.buttonEvents if event.type == getattr(structs.CarState.ButtonEvent.Type, button)]
+    assert edges == (expected if op_long else [])
 
 
 def test_reached_controller_preserves_precedence_cadence_and_stock_bits():

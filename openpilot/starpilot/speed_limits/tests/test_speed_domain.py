@@ -22,7 +22,8 @@ def candidate(speed: float) -> acc.Candidate:
 
 class SpeedDomainTests(unittest.TestCase):
   def setUp(self):
-    self.accepted = acc.step(acc.new_session(SESSION), acc.Observation(acc.ObservationKind.VALID, candidate(20.0)),
+    state = replace(acc.new_session(SESSION, acc.AcceptedLimit(candidate(20.0), SESSION, 0)), received_speed_mps=20.)
+    self.accepted = acc.step(state, acc.Observation(acc.ObservationKind.VALID, candidate(20.0)),
                              ACTIVE, POLICY, now_ns=0)
     self.state = ov.new_session(SESSION)
 
@@ -57,8 +58,8 @@ class SpeedDomainTests(unittest.TestCase):
     self.assertEqual(base.cap_mps, 21.0)
     self.decision(1)
     _, pedal = self.frame(1, selected_raw=30.0, selected_cluster=31.0, ego_raw=25.0, ego_cluster=26.0, pedal=True)
-    self.assertEqual(pedal.cap_mps, 25.0)
-    self.assertEqual(pedal.cluster_target_mps, 26.0)
+    self.assertEqual(pedal.cap_mps, 21.0)
+    self.assertEqual(pedal.cluster_target_mps, 22.0)
 
   def test_unsafe_negative_offsets_keep_the_unadjusted_ceiling(self):
     for offset, delta in ((-20.0, 0.0), (-30.0, 0.0), (-19.0, 2.0)):
@@ -75,15 +76,15 @@ class SpeedDomainTests(unittest.TestCase):
     effect = self.intent(1, 20.0, 22.0, first.context)
     armed, _ = self.frame(1, selected_raw=22.0, ego_raw=22.0, change=effect, schedule=offset_three)
     self.assertTrue(armed.event_receipt.consumed)
-    self.assertIsNone(armed.state.persistent_selected_mps)  # 22 is below the effective 23 target.
+    self.assertEqual(armed.state.persistent_selected_mps, 22.)
     self.decision(2)
     raw_below, _ = self.frame(2, selected_raw=22.0, ego_raw=21.0, ego_cluster=21.5, pedal=True, schedule=offset_three)
-    self.assertIsNone(raw_below.contribution_mps)
+    self.assertEqual(raw_below.contribution_mps, 22.)
     self.decision(3)
     cluster_above, result = self.frame(3, selected_raw=22.0, ego_raw=21.0, ego_cluster=24.0,
                                        pedal=True, schedule=offset_three)
-    self.assertEqual(cluster_above.contribution_mps, 21.0)
-    self.assertEqual(result.cap_mps, 21.0)
+    self.assertEqual(cluster_above.contribution_mps, 22.)
+    self.assertEqual(result.cap_mps, 20.0)
 
   def test_selected_kph_conversion_and_offset_change_rotates_without_rearming(self):
     pair = sd.selected_pair_from_kph(20.0, 75.6, session_id=SESSION, timestamp_ns=0)
@@ -118,9 +119,9 @@ class SpeedDomainTests(unittest.TestCase):
         self.decision(1)
         effect = self.intent(1, 30.0, 29.0, first.context)
         result, after = self.frame(1, selected_raw=29.0, selected_cluster=30.0, ego_cluster=20.5, schedule=schedule, change=effect)
-        self.assertIsNone(result.contribution_mps)
-        self.assertIsNone(result.state.persistent_selected_mps)
-        self.assertEqual(after.cap_mps, before.cap_mps)
+        self.assertEqual(result.contribution_mps, 29.)
+        self.assertEqual(result.state.persistent_selected_mps, 29.)
+        self.assertEqual(after.cap_mps, 29.5)
 
   def test_cluster_delta_jitter_does_not_rotate_causal_context(self):
     first, _ = self.frame(0, selected_raw=20.0, selected_cluster=20.5)
@@ -239,7 +240,8 @@ class SpeedDomainTests(unittest.TestCase):
     armed, _ = self.frame(1, selected_raw=24.0, change=effect)
     self.assertEqual(armed.state.persistent_selected_mps, 24.0)
     self.decision(2, speed=23.0)
-    caught, coordinate = self.frame(2, selected_raw=24.0)
+    self.decision(3_000_000_002, speed=23.0)
+    caught, coordinate = self.frame(3_000_000_002, selected_raw=24.0)
     self.assertIsNone(caught.state.persistent_selected_mps)
     self.assertNotEqual(caught.context.context_id, first.context.context_id)
     self.assertEqual(coordinate.cap_mps, 25.0)
@@ -250,12 +252,12 @@ class SpeedDomainTests(unittest.TestCase):
     self.frame(1, selected_raw=24.0, change=self.intent(1, 20.0, 24.0, first.context))
     self.decision(2)
     caught, _ = self.frame(2, selected_raw=24.0, schedule=sd.OffsetSchedule((sd.OffsetBand(0.0, None, 5.0),)))
-    self.assertIsNone(caught.state.persistent_selected_mps)
+    self.assertEqual(caught.state.persistent_selected_mps, 24.)
     self.decision(3)
     reduced, coordinate = self.frame(3, selected_raw=24.0, schedule=sd.OffsetSchedule((sd.OffsetBand(0.0, None, 1.0),)))
-    self.assertIsNone(reduced.contribution_mps)
-    self.assertIsNone(reduced.state.persistent_selected_mps)
-    self.assertEqual(coordinate.cap_mps, 21.0)
+    self.assertEqual(reduced.contribution_mps, 24.)
+    self.assertEqual(reduced.state.persistent_selected_mps, 24.)
+    self.assertEqual(coordinate.cap_mps, 24.)
 
   def test_absent_fallback_and_unavailable_pair(self):
     self.frame(0)
@@ -280,7 +282,8 @@ class SpeedDomainTests(unittest.TestCase):
     )
     for authority in authorities:
       with self.subTest(authority=authority):
-        accepted = acc.step(acc.new_session(SESSION), acc.Observation(acc.ObservationKind.VALID, candidate(20.0)),
+        state = replace(acc.new_session(SESSION, acc.AcceptedLimit(candidate(20.0), SESSION, 0)), received_speed_mps=20.)
+        accepted = acc.step(state, acc.Observation(acc.ObservationKind.VALID, candidate(20.0)),
                             authority, POLICY, now_ns=0)
         domain = sd.resolve(accepted, SCHEDULE, sd.SpeedPair(sd.DomainStatus.VALID, 25.0, 26.0, SESSION, 0),
                             sd.SpeedPair(sd.DomainStatus.VALID, 20.0, 21.0, SESSION, 0))
@@ -297,7 +300,8 @@ class SpeedDomainTests(unittest.TestCase):
     from opendbc.car.honda.interface import CarInterface
     from opendbc.car.honda.values import CAR
 
-    self.accepted = acc.step(acc.new_session(SESSION), acc.Observation(acc.ObservationKind.VALID, candidate(15.0)),
+    state = replace(acc.new_session(SESSION, acc.AcceptedLimit(candidate(15.0), SESSION, 0)), received_speed_mps=15.)
+    self.accepted = acc.step(state, acc.Observation(acc.ObservationKind.VALID, candidate(15.0)),
                              ACTIVE, POLICY, now_ns=0)
     _, coordinate = self.frame(0, selected_raw=25.0, selected_cluster=26.0, ego_raw=20.0, ego_cluster=21.0)
     self.assertEqual(coordinate.cap_mps, 16.0)  # accepted 15 + offset 2 - ego delta 1

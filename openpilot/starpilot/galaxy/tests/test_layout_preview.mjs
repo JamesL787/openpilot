@@ -1,8 +1,15 @@
 import assert from "node:assert/strict"
-import { LayoutPreviewFeed, PREVIEW_SCENES } from "../web/js/layout-preview.js"
+import { LayoutPreviewFeed, PREVIEW_SCENES, sceneHidesWidget } from "../web/js/layout-preview.js"
 
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve() }
 const document = { version: 1, palette: { text: "#FFFFFFFF" }, layouts: { large: {}, compact: {} } }
+
+const signLayout = { speed_limit: { x: 160, y: 80, enabled: true }, speed_limit_actions: { x: 16, y: 20, enabled: true } }
+const signWidgets = { speed_limit: { width: 264, height: 82, visualInsetTop: 12 }, speed_limit_actions: { width: 440, height: 52 } }
+assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', signLayout, signWidgets), true, 'The caption overlaps even when the original rectangle does not')
+assert.equal(sceneHidesWidget('engaged', 'compact', 'speed_limit', signLayout, signWidgets), false)
+assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', signLayout,
+  { ...signWidgets, speed_limit: { ...signWidgets.speed_limit, visualInsetTop: 0 } }), false)
 
 function fixture() {
   const requests = [], updates = [], timers = new Map(), revoked = []

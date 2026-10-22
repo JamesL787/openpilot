@@ -27,9 +27,10 @@ def sm():
 @pytest.mark.parametrize('source', tuple(Source))
 def test_confirm_any_source_without_dashboard_evidence(sm, source):
   sm['slcState'].source = source.value
-  assert physical_actions.pending_confirmation(sm, NOW, long_active=True, pcm_cruise=False) == SlcPendingConfirmation('drive', 1, 2)
+  assert physical_actions.pending_confirmation(sm, NOW, long_active=True) == SlcPendingConfirmation('drive', 1, 2)
   # A pending choice alone must never qualify a selected-speed command.
-  assert physical_actions.state_current(sm, None, 'card', NOW) is None
+  current = physical_actions.state_current(sm, None, 'card', NOW)
+  assert (current is not None) == (source is not Source.DASHBOARD)
 
 
 @pytest.mark.parametrize('field,value', [
@@ -41,7 +42,7 @@ def test_confirm_any_source_without_dashboard_evidence(sm, source):
 ])
 def test_reject_invalid_or_unavailable_pending_decision(sm, field, value):
   setattr(sm['slcState'], field, value)
-  assert physical_actions.pending_confirmation(sm, NOW, long_active=True, pcm_cruise=False) is None
+  assert physical_actions.pending_confirmation(sm, NOW, long_active=True) is None
 
 
 @pytest.mark.parametrize('valid,alive,stamp', [
@@ -50,13 +51,13 @@ def test_reject_invalid_or_unavailable_pending_decision(sm, field, value):
 ])
 def test_reject_invalid_or_stale_transport(sm, valid, alive, stamp):
   sm.valid['slcState'], sm.alive['slcState'], sm.logMonoTime['slcState'] = valid, alive, stamp
-  assert physical_actions.pending_confirmation(sm, NOW, long_active=True, pcm_cruise=False) is None
+  assert physical_actions.pending_confirmation(sm, NOW, long_active=True) is None
 
 
-@pytest.mark.parametrize('long_active,pcm_cruise,after_ns', [(False, False, 0), (True, True, 0), (True, False, NOW)])
-def test_preserve_authority_and_configuration_barriers(sm, long_active, pcm_cruise, after_ns):
-  assert physical_actions.pending_confirmation(sm, NOW, long_active=long_active, pcm_cruise=pcm_cruise, after_ns=after_ns) is None
+@pytest.mark.parametrize('long_active,after_ns', [(False, 0), (True, NOW)])
+def test_preserve_authority_and_configuration_barriers(sm, long_active, after_ns):
+  assert physical_actions.pending_confirmation(sm, NOW, long_active=long_active, after_ns=after_ns) is None
 
 
 def test_fresh_post_configuration_decision_qualifies(sm):
-  assert physical_actions.pending_confirmation(sm, NOW, long_active=True, pcm_cruise=False, after_ns=NOW - 1) is not None
+  assert physical_actions.pending_confirmation(sm, NOW, long_active=True, after_ns=NOW - 1) is not None

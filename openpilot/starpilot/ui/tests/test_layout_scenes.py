@@ -46,8 +46,8 @@ def test_every_scene_matches_native_border_mode_and_widget_visibility(target):
   for move in (False, True):
     if move and profile == Profile.COMPACT:
       layout['driver_monitor'].update(x=200, y=100)
-      layout['speed_limit'].update(x=330, y=100)
-      layout['speed_limit_actions'].update(x=174, y=0)
+      layout['speed_limit'].update(x=200, y=100)
+      layout['speed_limit_actions'].update(x=16, y=0)
     result = subprocess.run([node, '--input-type=module', '-e', script], input=json.dumps({
       'profile': str(profile), 'layout': layout, 'widgets': PROFILES[str(profile)]['widgets'], 'ids': sorted(ids),
     }), text=True, capture_output=True, check=True)
@@ -76,7 +76,7 @@ def test_every_scene_matches_native_border_mode_and_widget_visibility(target):
 
 
 def test_speed_limit_scenes_change_the_presentation_without_disengaging_driving():
-  expected = {'slc_max': 'Using set speed', 'slc_equal': 'Matches set speed', 'slc_pedal': 'Using accelerator',
+  expected = {'slc_max': 'Using set speed', 'slc_equal': 'Using set speed', 'slc_pedal': 'Using accelerator',
               'slc_retained': 'Set-speed override', 'slc_disengaged': 'Cruise off',
               'slc_unavailable': 'Unavailable', 'slc_display': 'Display only'}
   for scene, status in expected.items():

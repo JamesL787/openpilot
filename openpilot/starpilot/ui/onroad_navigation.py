@@ -11,12 +11,9 @@ from openpilot.starpilot.ui.presentation import FontRole, Profile
 
 
 def _overlaps_slc_actions(rect, profile, state) -> bool:
-  from openpilot.starpilot.ui.large_speed_geometry import ACTION_HEADER_HEIGHT
   from openpilot.starpilot.ui.onroad_state import slc_controls
   for control in slc_controls(profile, state):
-    # Include the decision header drawn above the buttons.
     left, top, right, bottom = control.bounds
-    top -= ACTION_HEADER_HEIGHT
     if left < rect.x + rect.width and rect.x < right and top < rect.y + rect.height and rect.y < bottom:
       return True
   return False

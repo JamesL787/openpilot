@@ -1,4 +1,4 @@
-"""Stable large speed roles over publisher-qualified SLC evidence."""
+"""The selected set speed and latest received limit, shared by both layouts."""
 
 from dataclasses import dataclass
 import math
@@ -20,21 +20,10 @@ class UnifiedSpeedPresentation:
 
   @property
   def max_status(self) -> str:
-    if self.max_text == '–':
-      return 'Not set'
-    return {'max': 'Using set speed', 'shared': 'Matches speed limit'}.get(self.active_side, 'Your ceiling')
+    return 'Not set' if self.max_text == '–' else 'Set speed'
 
   @property
   def limit_status(self) -> str:
-    if self.status == 'Set-speed override':
-      return 'Overridden'
-    if self.mode == 'split' and self.active_side == 'max' and self.status == 'Using set speed':
-      # Describe the displayed relationship without changing source selection.
-      if self.max_text != '–' and self.limit_text != '–':
-        if int(self.limit_text) > int(self.max_text):
-          return 'Above set speed'
-        if self.limit_text == self.max_text:
-          return 'Matches set speed'
     return self.status
 
 
@@ -43,30 +32,34 @@ def positive(value):
 
 
 def retaining_limit(observation):
-  """A fresh publisher can qualify retained control while its source is unavailable."""
-  return (str(observation.kind) != 'valid' and observation.action_enabled and
-          bool(getattr(observation, 'session_id', None)) and positive(observation.accepted_speed_limit_mps) and
-          positive(getattr(observation, 'effective_cap_mps', None)) and positive(observation.effective_cluster_target_mps))
+  return (str(observation.kind) != 'valid' and bool(getattr(observation, 'session_id', None)) and
+          (positive(observation.last_received_speed_limit_mps) or observation.action_enabled and
+           positive(observation.accepted_speed_limit_mps) and positive(observation.effective_cluster_target_mps)))
 
 
 def displayed_limit_mps(observation):
-  """A proposal never replaces the accepted sign."""
-  if str(observation.kind) != 'valid' and not retaining_limit(observation):
-    return None
-  for value in (observation.accepted_speed_limit_mps, observation.speed_limit_mps):
-    if positive(value):
-      return value
-  return None
+  if str(observation.kind) == 'valid':
+    return observation.speed_limit_mps
+  if positive(observation.last_received_speed_limit_mps):
+    return observation.last_received_speed_limit_mps
+  return observation.accepted_speed_limit_mps if retaining_limit(observation) else None
 
 
 def displayed_adjusted_limit_mps(observation):
-  """The informational SLC number, independent of current control authority."""
-  if str(observation.kind) != 'valid' and not retaining_limit(observation):
+  posted = displayed_limit_mps(observation)
+  if not positive(posted):
     return None
-  candidates = (getattr(observation, 'accepted_adjusted_limit_mps', None), observation.effective_cluster_target_mps)
-  if not positive(observation.accepted_speed_limit_mps) and not positive(observation.pending_speed_limit_mps):
-    candidates += (getattr(observation, 'presentation_adjusted_limit_mps', None),)
-  return next((value for value in candidates if positive(value)), None)
+  if str(observation.kind) != 'valid' and positive(observation.last_received_adjusted_limit_mps):
+    return observation.last_received_adjusted_limit_mps
+  if str(observation.kind) == 'valid':
+    for value in (getattr(observation, 'presentation_adjusted_limit_mps', None), getattr(observation, 'pending_adjusted_limit_mps', None)):
+      if positive(value):
+        return value
+  if observation.accepted_speed_limit_mps == posted:
+    for value in (getattr(observation, 'accepted_adjusted_limit_mps', None), observation.effective_cluster_target_mps):
+      if positive(value):
+        return value
+  return posted + (observation.offset_mps or 0)
 
 
 def resolve_unified_speed(state) -> UnifiedSpeedPresentation:
@@ -74,55 +67,34 @@ def resolve_unified_speed(state) -> UnifiedSpeedPresentation:
   factor = 3.6 if state.metric else 2.2369362921
   def speed(value):
     return str(round(value * factor)) if positive(value) else '–'
-  valid = str(obs.kind) == 'valid'
-  retained = retaining_limit(obs)
-  pending = valid and positive(obs.pending_speed_limit_mps)
-  accepted = (valid or retained) and positive(obs.accepted_speed_limit_mps)
   posted = displayed_limit_mps(obs)
-  source = (obs.accepted_source if accepted else obs.source) if valid or retained else 'none'
-  if source in ('', 'none'):
-    source = 'unknown' if positive(posted) else 'none'
-  show_max = state.customization.get('showMaxSpeed', True)
-  has_slc = valid or retained or str(obs.kind) == 'stale'
-  mode = 'split' if show_max and has_slc else 'limit_only' if has_slc else 'max_only' if show_max else 'hidden'
   target = displayed_adjusted_limit_mps(obs)
+  pending = str(obs.kind) == 'valid' and positive(obs.pending_speed_limit_mps)
+  show_max = state.customization.get('showMaxSpeed', True)
+  has_slc = positive(posted) or str(obs.kind) == 'stale'
+  mode = 'split' if show_max and has_slc else 'limit_only' if has_slc else 'max_only' if show_max else 'hidden'
   offset = None
   if state.show_slc_offset and positive(target) and positive(posted):
-    adjustment = round((target - posted) * factor)
+    adjustment = round(target * factor) - round(posted * factor)
     if adjustment:
       offset = f'{adjustment:+d}'
-  active = 'none'
-  status = 'Unavailable'
-  if valid or retained:
-    status = 'Override saved' if getattr(obs, 'retained_override', False) else 'Cruise off'
-    if getattr(obs, 'status', '') == 'display_hold':
-      status = 'Unavailable'
-    elif not obs.action_enabled:
-      status = 'Display only'
-    elif state.longitudinal_overridden:
-      status = 'Using accelerator'
-    elif obs.driver_override_active:
-      status = {'pedal': 'Using accelerator', 'persistent': 'Set-speed override'}.get(getattr(obs, 'override_basis', ''), 'Override')
-      if (getattr(obs, 'override_basis', '') == 'persistent' and state.cruise_active and
-          positive(state.cruise_kph) and positive(obs.effective_cluster_target_mps)):
-        # A qualified set-speed override selects MAX; pedal control does not.
-        active = 'max'
-    elif state.cruise_active and positive(obs.effective_cluster_target_mps):
-      active = 'slc' if obs.limiting_max_set else 'max'
-      if target is not None and positive(target) and positive(state.cruise_kph):
-        max_mps = state.cruise_kph / 3.6
-        # Compare cluster ceilings before display rounding. 1 mm/s allows for
-        # Float32 transport noise without treating visibly rounded ties as shared.
-        if math.isclose(target, max_mps, rel_tol=0, abs_tol=0.001):
-          active = 'shared'
-        else:
-          active = 'slc' if target < max_mps else 'max'
-      status = {'slc': 'Using speed limit', 'max': 'Using set speed', 'shared': 'Matches set speed'}[active]
-      if retained and active == 'slc':
-        status = 'Using previous limit'
-    elif state.cruise_active:
-      status = 'Unavailable'
-  max_text = str(round(state.cruise_kph * (1 if state.metric else .621371))) if positive(state.cruise_kph) else '–'
+  status = 'Cruise off'
+  if getattr(obs, 'status', '') == 'display_hold' or str(obs.kind) != 'valid' and positive(obs.last_received_speed_limit_mps):
+    status = 'Unavailable'
+  elif not obs.action_enabled:
+    status = 'Display only'
+  elif obs.driver_override_active:
+    status = 'Set-speed override'
+  elif pending:
+    status = 'Adopting limit' if getattr(obs, 'automatic_adoption_pending', False) else 'Confirm speed limit'
+  elif state.longitudinal_overridden:
+    status = 'Using accelerator'
+  elif state.cruise_active:
+    status = 'Using set speed'
+  max_text = speed(state.cruise_kph / 3.6) if positive(state.cruise_kph) else '–'
+  source = obs.source if str(obs.kind) == 'valid' else (
+    obs.last_received_source if positive(obs.last_received_speed_limit_mps) else obs.accepted_source)
   return UnifiedSpeedPresentation(mode, max_text, speed(posted), offset, 'km/h' if state.metric else 'mph',
-                                  source, pending, active, speed(target), status,
-                                  speed(obs.pending_speed_limit_mps) if pending else '–')
+                                  source, pending,
+                                  'max' if state.cruise_active else 'none', speed(target), status,
+                                  speed(getattr(obs, 'pending_adjusted_limit_mps', None) or obs.pending_speed_limit_mps) if pending else '–')

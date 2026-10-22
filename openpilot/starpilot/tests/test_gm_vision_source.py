@@ -117,39 +117,44 @@ class TestGmVisionSource(unittest.TestCase):
             runtime = Runtime(slc_runtime_settings(params, cp, {}), session_id='drive', vision_enabled=True,
                               vision_control_qualified=vision_control_enabled(params, cp))
             first = runtime.step(sm, cp, now_ns=2_000_000_000, now_boot_ns=6_000_000_000)
-            self.assertEqual(first.message.slcState.hasPending, confirmation)
-            self.assertEqual(first.message.slcState.hasCeiling, not confirmation)
-            accepted = first
-            if confirmation:
-              sm.advance(2_020_000_000)
-              accepted = runtime.step(sm, cp, now_ns=2_020_000_000, now_boot_ns=6_020_000_000,
-                                      request=Action('drive', 1, first.message.slcState.decisionId,
-                                                     first.message.slcState.presentationId, 'accept'))
-            self.assertTrue(accepted.message.slcState.hasCeiling)
+            self.assertTrue(first.message.slcState.hasPending)
+            self.assertEqual(first.message.slcState.automaticAdoptionPending, not confirmation)
+            self.assertFalse(first.message.slcState.hasCeiling)
+            evidence = sm.data['slcVisionObservation'].vision
+            evidence.observedMonoTime = 4_980_000_000
+            evidence.validUntilMonoTime = 5_200_000_000
+            evidence.cameraFrameEofBootTime = 8_950_000_000
+            evidence.frameId += 1
+            sm.advance(5_000_000_000)
+            request = (Action('drive', 1, first.message.slcState.decisionId, first.message.slcState.presentationId, 'accept')
+                       if confirmation else None)
+            accepted = runtime.step(sm, cp, now_ns=5_000_000_000, now_boot_ns=9_000_000_000, request=request)
+            self.assertTrue(accepted.message.slcState.hasAccepted)
+            self.assertFalse(accepted.message.slcState.hasCeiling)
             approved = accepted.result.state.acceptance.accepted
             evidence = sm.data['slcVisionObservation'].vision
             evidence.episode += 1
             evidence.frameId += 1
-            sm.advance(2_040_000_000)
-            repeated = runtime.step(sm, cp, now_ns=2_040_000_000, now_boot_ns=6_040_000_000)
+            sm.advance(5_040_000_000)
+            repeated = runtime.step(sm, cp, now_ns=5_040_000_000, now_boot_ns=9_040_000_000)
             self.assertFalse(repeated.message.slcState.hasPending)
-            self.assertTrue(repeated.message.slcState.hasCeiling)
+            self.assertFalse(repeated.message.slcState.hasCeiling)
             if confirmation:
               self.assertEqual(repeated.result.state.acceptance.accepted, approved)
               self.assertIsNone(repeated.result.acceptance.history_write)
             evidence.speedMps = next_mph * .44704
             evidence.episode += 1
             evidence.frameId += 1
-            sm.advance(2_060_000_000)
-            changed = runtime.step(sm, cp, now_ns=2_060_000_000, now_boot_ns=6_060_000_000)
-            self.assertEqual(changed.message.slcState.hasPending, confirmation)
-            self.assertTrue(changed.message.slcState.hasCeiling)
+            sm.advance(5_060_000_000)
+            changed = runtime.step(sm, cp, now_ns=5_060_000_000, now_boot_ns=9_060_000_000)
+            self.assertTrue(changed.message.slcState.hasPending)
+            self.assertFalse(changed.message.slcState.hasCeiling)
             self.assertAlmostEqual(changed.message.slcState.acceptedSpeedLimit,
-                                   55 * .44704 if confirmation else next_mph * .44704, places=4)
+                                   55 * .44704, places=4)
             self.assertEqual(changed.result.acceptance.policy, runtime.settings.acceptance)
             sm.data['carControl'].longActive = False
-            sm.advance(2_080_000_000)
-            inactive = runtime.step(sm, cp, now_ns=2_080_000_000, now_boot_ns=6_080_000_000)
+            sm.advance(5_080_000_000)
+            inactive = runtime.step(sm, cp, now_ns=5_080_000_000, now_boot_ns=9_080_000_000)
             self.assertFalse(inactive.message.slcState.hasCeiling)
             self.assertIsNone(inactive.command)
 

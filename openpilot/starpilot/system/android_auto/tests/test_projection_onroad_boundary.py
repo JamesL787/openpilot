@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 import importlib.util
 from pathlib import Path
+from openpilot.starpilot.ui.onroad_state import OnroadState, SpeedLimitObservation
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -151,13 +152,9 @@ class TestProjectionOnroad(unittest.TestCase):
       def render(self, *_): events.append('road_render')
       def close(self): events.append('view_closed')
 
-    @dataclass(frozen=True)
-    class State:
-      viewport_width: float = 2160.0
-
     class Adapter:
       def __init__(self, *_): events.append('adapter')
-      def build(self, *_args, **_kwargs): return SimpleNamespace(onroad=State())
+      def build(self, *_args, **_kwargs): return SimpleNamespace(onroad=OnroadState(False, False, None, None, SpeedLimitObservation()))
 
     native = SimpleNamespace(rl=FakeGraphics, ui_state=ui, camera=Camera, onroad=View,
                              monitor=lambda *_: SimpleNamespace(render=lambda *_a, **_k: None),
@@ -373,14 +370,10 @@ class TestProjectionOnroad(unittest.TestCase):
       text1: str = ''
       alert_type: str = ''
 
-    @dataclass(frozen=True)
-    class State:
-      alert: Alert = Alert()
-      viewport_width: float = 2160.0
-
     real = {'alert': Alert()}
     native.alert, native.alert_size = Alert, SimpleNamespace(NONE='none', SMALL='small')
-    native.adapter = lambda *_: SimpleNamespace(build=lambda *_a, **_k: SimpleNamespace(onroad=State(real['alert'])))
+    native.adapter = lambda *_: SimpleNamespace(build=lambda *_a, **_k: SimpleNamespace(
+      onroad=OnroadState(False, False, None, None, SpeedLimitObservation(), alert=real['alert'])))
     view = projection.ProjectionOnroad(dependencies=native, certificate_days=3)
     shown = []
     view.onroad.render = lambda state: shown.append(state.alert.text1)

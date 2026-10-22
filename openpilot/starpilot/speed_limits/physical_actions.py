@@ -3,7 +3,7 @@
 import math
 
 from openpilot.cereal.services import SERVICE_LIST
-from openpilot.selfdrive.car.cruise import SlcPendingConfirmation
+from openpilot.selfdrive.car.cruise import SlcPendingConfirmation, V_CRUISE_MIN, V_CRUISE_MAX
 from openpilot.starpilot.speed_limits.selection import Source
 
 
@@ -46,16 +46,20 @@ def _current_state(sm, now_ns: int):
 
 def state_current(sm, observation, producer_session: str, now_ns: int):
   state = _current_state(sm, now_ns)
-  return state if state is not None and source_matches(state, observation, producer_session, now_ns) else None
-
-
-def pending_confirmation(sm, now_ns: int, *, long_active: bool, pcm_cruise: bool,
-                         after_ns: int = 0) -> SlcPendingConfirmation | None:
-  if not long_active or pcm_cruise:
+  if state is None:
     return None
-  # The planner owns pending choices for every source; only cruise commands need local Dashboard evidence.
+  if str(state.source) == 'dashboard' and (observation is None or not source_matches(state, observation, producer_session, now_ns)):
+    return None
+  return state
+
+
+def pending_confirmation(sm, now_ns: int, *, long_active: bool,
+                         after_ns: int = 0) -> SlcPendingConfirmation | None:
+  if not long_active:
+    return None
+  # The planner owns pending choices for every source; Dashboard commands also bind local OEM evidence.
   state = _current_state(sm, now_ns)
-  if (state is None or int(state.frameMonoTime) <= after_ns or not state.hasPending or
+  if (state is None or int(state.frameMonoTime) <= after_ns or not state.hasPending or state.automaticAdoptionPending or
       int(state.decisionId) <= 0 or int(state.presentationId) <= 0):
     return None
   if not finite_speed(state.pendingSpeedLimit) or abs(float(state.pendingSpeedLimit) - float(state.speedLimit)) > 0.02:
@@ -64,25 +68,28 @@ def pending_confirmation(sm, now_ns: int, *, long_active: bool, pcm_cruise: bool
 
 
 def command_applicable(command, state, observation, producer_session: str, now_ns: int,
-                       selected_mps: float, *, long_active: bool, pcm_cruise: bool, button_event: bool) -> bool:
-  if state is None or button_event or pcm_cruise or not long_active or not state.hasAccepted:
+                       selected_mps: float, *, long_active: bool, button_event: bool) -> bool:
+  if state is None or button_event or not long_active or not state.hasAccepted:
     return False
-  if (str(command.kind) != 'adoptAcceptedHigherLimit' or not str(command.sessionId) or
+  if (str(command.kind) != 'adoptAcceptedLimit' or not str(command.sessionId) or
       str(command.sessionId) != str(state.sessionId) or int(command.commandId) <= 0 or
       int(command.actionId) < 0 or int(command.presentationId) <= 0 or
       int(command.commandId) != int(state.commandId) or
       int(command.presentationId) != int(state.presentationId) or
       int(command.sourceEpisode) != int(state.sourceEpisode) or
-      str(command.sourceProducerSessionId) != producer_session or
+      str(command.source) != str(state.source) or
+      str(command.sourceProducerSessionId) != str(state.sourceProducerSessionId) or
       int(command.sourceObservedMonoTime) != int(state.sourceObservedMonoTime) or
       int(command.sourceValidUntilMonoTime) != int(state.sourceValidUntilMonoTime) or
-      not source_matches(state, observation, producer_session, now_ns)):
+      (str(state.source) == 'dashboard' and (observation is None or not source_matches(state, observation, producer_session, now_ns)))):
     return False
   issued, expires = int(command.issuedMonoTime), int(command.expiresMonoTime)
   if not (0 < issued <= now_ns <= expires and expires - issued <= COMMAND_MAX_AGE_NS):
     return False
   expected, target = float(command.expectedSelectedMps), float(command.targetMps)
+  # Float32 transport can round a legal boundary just outside its double-precision value.
   return (finite_speed(expected) and finite_speed(target) and finite_speed(selected_mps) and
-          abs(expected - selected_mps) <= 0.1 and target > selected_mps + 0.1 and
+          abs(expected - selected_mps) <= 0.1 and
+          abs(float(state.acceptedSpeedLimit) - float(state.speedLimit)) <= 0.02 and
           abs(target - (float(state.acceptedSpeedLimit) + float(state.offset))) <= 0.1 and
-          target <= 145.0 / 3.6)
+          V_CRUISE_MIN / 3.6 - 1e-5 <= target <= V_CRUISE_MAX / 3.6 + 1e-5)

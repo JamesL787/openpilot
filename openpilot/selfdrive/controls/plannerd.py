@@ -440,7 +440,6 @@ def starpilot_main():
           collect_resume(force_stop_owner.resume, stop_resume_sock, messaging.recv_one_or_none,
                          now_ns=now_ns, drive_id=current_start_ns,
                          receive_clock=time.monotonic_ns if 'REPLAY' not in os.environ else None)
-        slc_ceiling = None
         planner_status = None
         slc_output = None
         drive_changed = current_start_ns > 0 and drive_start_ns > 0 and current_start_ns != drive_start_ns
@@ -499,7 +498,6 @@ def starpilot_main():
                      pending_slc_actions[0][0] <= now_ns else None)
           output = slc_runtime.step(sm, CP, now_ns=now_ns, request=request, cruise_event=cruise_event)
           slc_output = output
-          slc_ceiling = output.result.ceiling
           planner_status = output.message
           if output.command is not None:
             pm.send('slcCruiseCommand', output.command)
@@ -583,7 +581,7 @@ def starpilot_main():
                                               drive_id=current_start_ns, follow_seconds=follow_seconds,
                                               traffic_mode=traffic_mode, takeoff_enabled=faster_lead_takeoff)
         curve_result = update_curve_frame(longitudinal_planner, sm, CP, now_ns, host=curve_host,
-                                          cruise_ceiling=slc_ceiling, profile_tuning=profile_tuning,
+                                          profile_tuning=profile_tuning,
                                           traffic_mode=traffic_mode, lane_change_policy=lane_change_policy,
                                           global_braking_response=global_braking_response, selected_profiles=selected_profiles,
                                           conditional_handoff=conditional_handoff,

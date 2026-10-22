@@ -19,9 +19,16 @@ from openpilot.starpilot.ui.onroad_large_widgets import CurrentSpeedHud, Unified
 from openpilot.starpilot.ui.onroad_state import (
   AlertSize, ObservationKind, OnroadAlert, OnroadInput, OnroadRequest, OnroadState, SpeedLimitObservation, slc_controls)
 from openpilot.starpilot.ui.presentation import Profile
+from openpilot.starpilot.ui.tests.test_unified_speed_native import foreground_calls
+
+
+@pytest.fixture(autouse=True)
+def drawing_guard(monkeypatch):
+  monkeypatch.setattr(rl, 'draw_line_ex', Mock())
 
 
 def road(document=None, **changes):
+  changes.setdefault('slc_prompt_open', True)
   return replace(OnroadState(True, True, 15.0, 80.0, SpeedLimitObservation(),
                             appearance=OnroadAppearance(show_developer_sidebar=True), viewport_width=1860),
                  customization=document or default_document(), **changes)
@@ -37,6 +44,38 @@ def test_defaults_and_metadata_are_independent_and_valid():
       assert offset(document, profile, key) == (0, 0)
   document["layouts"]["large"]["current_speed"]["x"] = 50
   assert default_document()["layouts"]["large"]["current_speed"]["x"] == 640
+
+
+def test_v7_speed_layout_migration_is_bounded_non_mutating_and_idempotent():
+  import copy
+  from openpilot.starpilot.ui.onroad_customization import SPEED_LAYOUT_V7
+  document = default_document()
+  document['version'] = 7
+  for profile, widgets in SPEED_LAYOUT_V7.items():
+    for key, (_, _, x, y) in widgets.items():
+      document['layouts'][profile][key].update(x=x, y=y)
+  document['layouts']['large']['cem_gauge'].update(x=480, y=99)
+  document['layouts']['large']['cruise_limits']['x'] = 1510
+  document['layouts']['large']['speed_limit_actions'].update(x=1510, y=900)
+  document['layouts']['compact']['max_speed']['y'] = 60
+  document['layouts']['compact']['speed_limit'].update(x=330, y=20)
+  document['layouts']['large']['current_speed'].update(x=700, y=100, enabled=False)
+  document['widgetColors']['large']['current_speed'] = {'text': '#12345678'}
+  document['speedSources'] = True
+  original = copy.deepcopy(document)
+  migrated = validate_document(document)
+  assert document == original
+  assert migrated['version'] == 8 and validate_document(migrated) == migrated
+  assert migrated['layouts']['large']['cruise_limits']['x'] == 1342
+  assert migrated['layouts']['large']['speed_limit_actions'] == {'x': 1254, 'y': 890, 'enabled': True}
+  assert migrated['layouts']['large']['current_speed'] == original['layouts']['large']['current_speed']
+  assert migrated['layouts']['large']['cem_gauge'] == {'x': 56, 'y': 452, 'enabled': True}
+  assert migrated['layouts']['compact']['speed_limit']['x'] == 212
+  assert migrated['layouts']['compact']['max_speed']['y'] == 8
+  assert migrated['widgetColors'] == original['widgetColors'] and migrated['speedSources']
+  document['layouts']['large']['cruise_limits']['x'] = 2000
+  with pytest.raises(ValueError, match='outside'):
+    validate_document(document)
 
 
 def test_clock_is_an_opt_in_widget_and_migrates_saved_layout_and_layer_order():
@@ -76,7 +115,7 @@ def test_protected_compact_actions_reject_actual_overlap(widget, x, y):
     validate_document(document)
 
 
-@pytest.mark.parametrize("widget,x,y", [("speed_limit", 330, 48), ("max_speed", 174, 18), ("steering_wheel", 124, 180)])
+@pytest.mark.parametrize("widget,x,y", [("speed_limit", 200, 48), ("max_speed", 174, 0), ("steering_wheel", 124, 174)])
 def test_protected_zone_edge_touch_is_valid(widget, x, y):
   document = default_document()
   document["layouts"]["compact"][widget].update(x=x, y=y)
@@ -116,7 +155,7 @@ def test_mode_widget_defaults_off_without_resetting_saved_layouts():
   key = 'driving_mode_descriptions'
   document = default_document()
   document['layouts']['large']['current_speed'].update(x=700, y=100, enabled=False)
-  document['layouts']['compact']['speed_limit_actions']['y'] = 45
+  document['layouts']['compact']['speed_limit_actions']['y'] = 114
   for layout in document['layouts'].values():
     assert layout.pop(key)['enabled'] is False
   migrated = validate_document(document)
@@ -127,6 +166,7 @@ def test_mode_widget_defaults_off_without_resetting_saved_layouts():
   migrated['layouts']['large'][key].update(enabled=True, x=300, y=600)
   assert validate_document(migrated) == migrated
   migrated['layouts']['compact'][key]['enabled'] = True
+  migrated['layouts']['compact'][key]['y'] = 90
   with pytest.raises(ValueError, match='protected speed limit actions'):
     validate_document(migrated)
 
@@ -134,7 +174,7 @@ def test_mode_widget_defaults_off_without_resetting_saved_layouts():
 def test_saved_valid_layouts_survive_independently():
   document = default_document()
   document["layouts"]["large"]["current_speed"].update(x=100, y=120)
-  document["layouts"]["compact"]["max_speed"].update(x=180, y=10)
+  document["layouts"]["compact"]["max_speed"].update(x=180, y=0)
   with patch("openpilot.starpilot.ui.onroad_customization.read_saved", return_value=(json.dumps(document).encode(), True)):
     assert read_customization(Mock()) == document
 
@@ -149,10 +189,10 @@ def test_v3_layout_migrates_wheel_size_without_changing_saved_placement_or_color
   for profile in ("large", "compact"):
     del document["layouts"][profile]["steering_wheel"]["size"]
   migrated = validate_document(document)
-  assert migrated["version"] == 7
+  assert migrated["version"] == 8
   assert migrated["palette"] == document["palette"]
   assert migrated["layouts"]["large"]["steering_wheel"] == {"x": 1300, "y": 100, "enabled": False, "size": 192}
-  assert migrated["layouts"]["compact"]["steering_wheel"] == {"x": 90, "y": 150, "enabled": True, "size": 50}
+  assert migrated["layouts"]["compact"]["steering_wheel"] == {"x": 90, "y": 174, "enabled": True, "size": 50}
 
 
 @pytest.mark.parametrize("removed", [("driver_monitor", "torque_bar"), ("torque_bar",), ()])
@@ -165,7 +205,7 @@ def test_pre_action_saved_layout_migrates_without_losing_positions_or_palette(re
   document["palette"]["cardFill"] = "#12345678"
   document["layouts"]["large"]["current_speed"].update(x=700, y=120, enabled=False)
   document["layouts"]["large"]["cruise_limits"].update(x=288, y=175, enabled=False)
-  document["layouts"]["compact"]["speed_limit"].update(x=300, y=20)
+  document["layouts"]["compact"]["speed_limit"].update(x=200, y=20)
   for key in ("model_confidence", "conditional_mode", "following_distance"):
     del document["layouts"]["compact"][key]
   for layout in document["layouts"].values():
@@ -180,7 +220,7 @@ def test_pre_action_saved_layout_migrates_without_losing_positions_or_palette(re
       assert migrated["layouts"][profile][key] == {
         **position, **({"size": customization_metadata()["profiles"][profile]["widgets"][key]["width"]}
                      if key == "steering_wheel" else {})}
-  assert migrated["layouts"]["large"]["speed_limit_actions"] == {"x": 288, "y": 667, "enabled": False}
+  assert migrated["layouts"]["large"]["speed_limit_actions"] == {"x": 300, "y": 348, "enabled": False}
   assert migrated["layouts"]["compact"]["speed_limit_actions"] == default_document()["layouts"]["compact"]["speed_limit_actions"]
 
 
@@ -198,7 +238,7 @@ def test_malformed_pre_action_cruise_placement_is_rejected():
 def test_duplicate_key_cannot_apply_otherwise_valid_placement():
   document = default_document()
   document["layouts"]["large"]["current_speed"]["x"] = 100
-  raw = json.dumps(document).replace('"version": 7', '"version": 7, "version": 7').encode()
+  raw = json.dumps(document).replace('"version": 8', '"version": 8, "version": 8').encode()
   with patch("openpilot.starpilot.ui.onroad_customization.read_saved", return_value=(raw, True)):
     assert read_customization(Mock()) == default_document()
 
@@ -243,10 +283,10 @@ def test_resized_wheel_draw_and_touch_share_large_bounds():
 
 def test_compact_resize_rejects_protected_overlap_and_other_widget_sizes():
   document = default_document()
-  document["layouts"]["compact"]["steering_wheel"].update(size=70, y=160)
+  document["layouts"]["compact"]["steering_wheel"].update(size=70, y=52)
   assert validate_document(document) == document
   assert widget_size(document, "compact", "steering_wheel") == (70, 70)
-  document["layouts"]["compact"]["steering_wheel"].update(x=150, y=170)
+  document["layouts"]["compact"]["steering_wheel"].update(x=150, y=150)
   with pytest.raises(ValueError, match="protected"):
     validate_document(document)
   document = default_document()
@@ -290,13 +330,13 @@ def test_large_draw_origins_and_wheel_input_move_together():
   document["layouts"]["large"]["current_speed"].update(x=680, y=70)
   document["layouts"]["large"]["steering_wheel"].update(x=1300, y=100)
   state = road(document, experimental_available=True)
-  fonts = NS(measure=lambda *a, **k: NS(width=10, height=20), vertical_ink=lambda text, role, size: (0., size * .7),
+  fonts = NS(profile=Profile.LARGE, measure=lambda *a, **k: NS(width=10, height=20), vertical_ink=lambda text, role, size: (0., size * .7),
              horizontal_ink=lambda text, role, size: (0., 10.), draw=Mock())
   content = rl.Rectangle(30, 30, 1800, 1020)
   with patch("openpilot.starpilot.ui.onroad_large_widgets.draw_control_card") as card, patch.object(rl, "draw_line_ex"):
     UnifiedSpeedWidget(Mock(spec=BitmapFonts, **vars(fonts))).render(content, state)
-    rect = card.call_args.args[0]
-    assert (rect.x, rect.y, rect.width, rect.height) == (188, 95, 320, 210)
+    card.assert_not_called()
+    assert foreground_calls(fonts.draw)[0].args[3:5] == (212, 114)
   CurrentSpeedHud(Mock(spec=BitmapFonts, **vars(fonts))).render(content, state)
   assert fonts.draw.call_args_list[-2].args[3:5] == (965, 112)
   wheel = SteeringWheelWidget(Path('/unused'))
@@ -329,10 +369,12 @@ def test_speed_limit_actions_move_independently_of_cruise_card_and_keep_touch_pr
                                      presentation_id=2, action_enabled=True)
   state = road(document, speed_limit=observation, longitudinal_active=True, slc_system_long_available=True)
   controls = slc_controls(Profile.LARGE, state)
-  assert controls[0].bounds == (388, 644, 542, 708)
-  assert slc_controls(Profile.COMPACT, state)[0].bounds == (174, 180, 310, 234)
+  assert controls[0].bounds == (388, 600, 660, 760)
+  assert slc_controls(Profile.COMPACT, state)[0].bounds == (16, 118, 224, 222)
   emit = Mock()
   inputs = OnroadInput(emit)
+  from openpilot.starpilot.ui.tests.test_slc_ui_actions import tap_sign
+  tap_sign(inputs, state)
   for x, y in ((400, 650), (300, 400)):
     inputs.press(x, y, state)
     inputs.release(x, y, state)
@@ -350,39 +392,41 @@ def test_speed_limit_actions_move_independently_of_cruise_card_and_keep_touch_pr
 
 def test_moved_compact_actions_relocate_hitboxes_without_weakening_state_gate():
   document = default_document()
-  document["layouts"]["compact"]["speed_limit_actions"].update(x=174, y=100)
+  document["layouts"]["compact"]["speed_limit_actions"].update(x=30, y=114)
   document["layouts"]["compact"]["speed_limit"]["enabled"] = False
   assert validate_document(document) == document
-  document["layouts"]["compact"]["speed_limit_actions"].update(x=100, y=180)
+  document["layouts"]["compact"]["speed_limit_actions"].update(x=36, y=114)
   document = validate_document(document)
   observation = SpeedLimitObservation(kind=ObservationKind.VALID, speed_limit_mps=20,
                                      pending_speed_limit_mps=15, session_id="drive", decision_id=1,
                                      presentation_id=2, action_enabled=True)
   state = road(document, speed_limit=observation, longitudinal_active=True, slc_system_long_available=True)
-  assert slc_controls(Profile.COMPACT, state)[0].bounds == (100, 180, 236, 234)
+  assert slc_controls(Profile.COMPACT, state)[0].bounds == (36, 110, 244, 214)
   emit = Mock()
   inputs = OnroadInput(emit, Profile.COMPACT)
+  from openpilot.starpilot.ui.tests.test_slc_ui_actions import tap_sign
+  document["layouts"]["compact"]["speed_limit"]["enabled"] = True
+  tap_sign(inputs, state)
+  document["layouts"]["compact"]["speed_limit"]["enabled"] = False
   inputs.press(110, 200, state)
   inputs.release(110, 200, state)
   assert emit.call_count == 1
-  inputs.press(400, 200, state)
-  inputs.release(400, 200, state)
+  inputs.press(480, 200, state)
+  inputs.release(480, 200, state)
   assert emit.call_count == 1
   assert not slc_controls(Profile.COMPACT, replace(state, alert=OnroadAlert(size=AlertSize.FULL)))
 
 
 def test_frozen_default_draw_geometry_and_neutral_colors():
   state = road()
-  fonts = NS(measure=lambda *a, **k: NS(width=10, height=20), vertical_ink=lambda text, role, size: (0., size * .7),
+  fonts = NS(profile=Profile.LARGE, measure=lambda *a, **k: NS(width=10, height=20), vertical_ink=lambda text, role, size: (0., size * .7),
              horizontal_ink=lambda text, role, size: (0., 10.), draw=Mock())
   content = rl.Rectangle(30, 30, 1800, 1020)
   with patch("openpilot.starpilot.ui.onroad_large_widgets.draw_control_card") as card, patch.object(rl, "draw_line_ex"):
     UnifiedSpeedWidget(Mock(spec=BitmapFonts, **vars(fonts))).render(content, state)
-    rect = card.call_args.args[0]
-    assert (rect.x, rect.y, rect.width, rect.height) == (88, 75, 320, 210)
-    fill, border = card.call_args.kwargs["fill"], card.call_args.kwargs["border"]
-    assert (fill.r, fill.g, fill.b, fill.a) == (16, 25, 31, 255)
-    assert (border.r, border.g, border.b, border.a) == (53, 67, 77, 255)
+    card.assert_not_called()
+    assert fonts.draw.call_args_list[0].args[0] == 'SET'
+    assert foreground_calls(fonts.draw)[0].args[3:5] == (112, 94)
   CurrentSpeedHud(Mock(spec=BitmapFonts, **vars(fonts))).render(content, state)
   assert fonts.draw.call_args_list[-2].args[3:5] == (925, 72)
   assert fonts.draw.call_args_list[-1].args[3:5] == pytest.approx((925, 215.2))
@@ -393,33 +437,30 @@ def test_frozen_default_draw_geometry_and_neutral_colors():
     assert circle.call_args.args[:3] == (1684, 171, 96)
 
 
-@pytest.mark.parametrize("speed,size", [(65, 50), (105, 42)])
+@pytest.mark.parametrize("speed,size", [(65, 58), (105, 58)])
 def test_compact_us_sign_keeps_camera_visible_at_saved_position(speed, size):
   document = default_document()
-  document["layouts"]["compact"]["speed_limit"].update(x=300, y=30)
+  document["layouts"]["compact"]["speed_limit"].update(x=200, y=30)
   state = road(document, metric=True, speed_limit=SpeedLimitObservation(
     kind=ObservationKind.VALID, speed_limit_mps=speed / 3.6))
   state = replace(state, appearance=replace(state.appearance, show_speed_limit_sign=True))
-  fonts = NS(measure=lambda *a, **k: NS(width=10, height=20), vertical_ink=lambda text, role, size: (0., size * .7),
+  fonts = NS(profile=Profile.COMPACT, measure=lambda *a, **k: NS(width=10, height=20), vertical_ink=lambda text, role, size: (0., size * .7),
              horizontal_ink=lambda text, role, size: (0., 10.), draw=Mock())
   hud = CompactHudRenderer(Mock(spec=BitmapFonts, **vars(fonts)), Mock())
   with patch.object(rl, "draw_rectangle_rounded") as fill, \
        patch.object(rl, "draw_rectangle_rounded_lines_ex") as outline:
     hud._speed_limit_sign(state)
   fill.assert_not_called()
-  rect = outline.call_args.args[0]
-  assert (rect.x, rect.y, rect.width, rect.height) == (310, 38, 100, 116)
-  assert outline.call_args.args[3] == 2
-  assert [(call.args[0], call.args[2]) for call in fonts.draw.call_args_list] == [("SPEED", 20), ("LIMIT", 20), (str(speed), size)]
-  for color in [outline.call_args.args[-1], *(call.args[-1] for call in fonts.draw.call_args_list)]:
-    assert tuple(getattr(color, channel) for channel in ("r", "g", "b", "a")) == rl.WHITE
+  outline.assert_not_called()
+  assert [(call.args[0], call.args[2]) for call in foreground_calls(fonts.draw)] == [("LIMIT", 24), ('km/h', 20), (str(speed), size)]
+  assert foreground_calls(fonts.draw)[0].args[3:5] == (200, 22)
 
 
 def test_compact_drag_keeps_animation_state_and_separate_origins():
   document = default_document()
   document["layouts"]["compact"]["max_speed"].update(x=100, y=10)
   document["layouts"]["compact"]["steering_wheel"].update(x=90, y=150)
-  fonts = NS(draw=Mock(), measure=lambda text, _role, size: NS(
+  fonts = NS(profile=Profile.COMPACT, draw=Mock(), vertical_ink=lambda text, role, size: (0, size * .7), measure=lambda text, _role, size: NS(
     width=len(text) * size * .5, height=size * Profile.COMPACT.font_scale))
   hud = CompactHudRenderer(Mock(spec=BitmapFonts, **vars(fonts)), Mock())
   hud._wheel = Mock()
@@ -427,7 +468,7 @@ def test_compact_drag_keeps_animation_state_and_separate_origins():
   with patch.object(hud, "_speed_limit_sign"), patch.object(rl, "draw_circle_gradient"), patch.object(rl, "draw_texture_pro") as wheel:
     hud.render(state)
     hud.render(state)
-    assert fonts.draw.call_args_list[-2].args[3:5] == (117, 6)
+    assert foreground_calls(fonts.draw)[-1].args[3:5] == (117, 44)
     rect = wheel.call_args.args[2]
     assert (rect.x, rect.y) == (115, 175)
     alpha = hud._set_speed_alpha.x
@@ -445,7 +486,7 @@ def test_saved_six_widget_layout_adds_only_default_rail_positions():
   document = default_document()
   for key in ("model_confidence", "conditional_mode", "following_distance"):
     del document["layouts"]["compact"][key]
-  document["layouts"]["compact"]["speed_limit_actions"].update(x=100, enabled=False)
+  document["layouts"]["compact"]["speed_limit_actions"].update(x=30, enabled=False)
   document["palette"]["text"] = "#ABCD1234"
   migrated = validate_document(document)
   assert migrated["palette"] == document["palette"]
@@ -459,15 +500,15 @@ def test_saved_six_widget_layout_adds_only_default_rail_positions():
 def test_movable_rail_keeps_limits_and_does_not_cover_active_alerts():
   from openpilot.starpilot.ui.onroad_compact_widgets import MiciSidebarWidgets
   document = default_document()
-  document["layouts"]["compact"]["model_confidence"].update(x=200, y=50, enabled=False)
-  document["layouts"]["compact"]["conditional_mode"].update(x=260, y=90)
+  document["layouts"]["compact"]["model_confidence"].update(x=200, y=20, enabled=False)
+  document["layouts"]["compact"]["conditional_mode"].update(x=260, y=25)
   assert validate_document(document) == document
   widget = MiciSidebarWidgets(Mock())
   widget._confidence_ball, widget._conditional, widget._personality = Mock(), Mock(), Mock()
   with patch.object(rl, "draw_rectangle"):
     widget.render(rl.Rectangle(0, 0, 536, 240), road(document))
     widget._confidence_ball.assert_not_called()
-    assert tuple(getattr(widget._conditional.call_args.args[0], name) for name in ("x", "y", "width", "height")) == (260, 90, 60, 80)
+    assert tuple(getattr(widget._conditional.call_args.args[0], name) for name in ("x", "y", "width", "height")) == (260, 25, 60, 80)
     assert tuple(getattr(widget._personality.call_args.args[0], name) for name in ("x", "y", "width", "height")) == (476, 160, 60, 80)
     widget._conditional.reset_mock()
     widget.render(rl.Rectangle(0, 0, 536, 240), road(document, alert=OnroadAlert(size=AlertSize.FULL)))
@@ -490,13 +531,13 @@ def test_v1_palette_positions_and_visibility_migrate_without_mutating_source():
   del old['roadColors']
   old['palette'].update(cardFill='#12345678', text='#AABBCCDD')
   old['layouts']['large']['current_speed'].update(x=600.5, y=100.25, enabled=False)
-  old['layouts']['compact']['following_distance'].update(x=400, y=80)
+  old['layouts']['compact']['following_distance'].update(x=400, y=20)
   for layout in old['layouts'].values():
     del layout['steering_wheel']['size']
   original = copy.deepcopy(old)
   result = decode_document(json.dumps(old).encode())
   assert old == original
-  assert result['version'] == 7
+  assert result['version'] == 8
   assert result['palette'] == old['palette']
   for profile, layout in old['layouts'].items():
     for key, position in layout.items():
@@ -594,8 +635,7 @@ def test_colored_slc_controls_retain_requests_and_touch_bounds(monkeypatch):
   monkeypatch.setattr(view, 'fonts', fonts, raising=False)
   with patch.object(rl, 'draw_rectangle_rounded') as fill, patch.object(rl, 'draw_rectangle_rounded_lines_ex'):
     view._slc_actions(state)
-  color = fill.call_args.args[-1]
-  assert (color.r, color.g, color.b, color.a) == (18, 52, 86, 120)
+  fill.assert_not_called()
   color = fonts.draw.call_args.args[-1]
   assert (color.r, color.g, color.b, color.a) == (254, 220, 186, 255)
 
@@ -642,9 +682,9 @@ def test_intentional_small_sign_action_overlap_roundtrips_and_large_is_independe
   from openpilot.starpilot.ui.onroad_state import compact_sign_obscured_by_actions
   document = default_document()
   large = json.loads(json.dumps(document["layouts"]["large"]))
-  document["layouts"]["compact"]["speed_limit"].update(x=330, y=108, enabled=enabled)
+  document["layouts"]["compact"]["speed_limit"].update(x=200, y=108, enabled=enabled)
   assert decode_document(json.dumps(validate_document(document))) == document
-  document["layouts"]["compact"]["speed_limit_actions"].update(x=174, y=100)
+  document["layouts"]["compact"]["speed_limit_actions"].update(x=16, y=114)
   assert validate_document(document) == document
   assert document["layouts"]["large"] == large
   observation = SpeedLimitObservation(kind=ObservationKind.VALID, speed_limit_mps=20,
@@ -660,10 +700,12 @@ def test_intentional_small_sign_action_overlap_roundtrips_and_large_is_independe
     assert not compact_sign_obscured_by_actions(replace(state, **change))
 
 
-def test_saved_small_actions_near_top_preserve_anchor_and_header_stays_visible(monkeypatch):
+def test_saved_small_actions_near_top_have_no_heading_and_keep_labels_visible(monkeypatch):
   from openpilot.starpilot.ui.onroad import OnroadView
   document = default_document()
-  document["layouts"]["compact"]["speed_limit_actions"].update(x=174, y=0)
+  document["layouts"]["compact"]["speed_limit_actions"].update(x=16, y=4)
+  document["layouts"]["compact"]["max_speed"].update(y=100)
+  document["layouts"]["compact"]["driver_monitor"].update(y=60)
   assert decode_document(json.dumps(document)) == document
   observation = SpeedLimitObservation(kind=ObservationKind.VALID, speed_limit_mps=20,
                                      pending_speed_limit_mps=15, session_id="drive", decision_id=1,
@@ -676,8 +718,9 @@ def test_saved_small_actions_near_top_preserve_anchor_and_header_stays_visible(m
   monkeypatch.setattr(view, 'fonts', fonts, raising=False)
   with patch.object(rl, "draw_rectangle_rounded"), patch.object(rl, "draw_rectangle_rounded_lines_ex"):
     view._slc_actions(state)
-  assert view.fonts.draw.call_args_list[0].args[4] == 62
-  assert slc_controls(Profile.COMPACT, state)[0].bounds == (174, 0, 310, 54)
+  assert [call.args[0] for call in foreground_calls(view.fonts.draw)] == ['Accept', 'Decline']
+  assert foreground_calls(view.fonts.draw)[0].args[4] >= 0
+  assert slc_controls(Profile.COMPACT, state)[0].bounds == (16, 0, 224, 104)
 
 
 def test_overlapping_small_sign_restores_after_pending_and_actions_keep_exact_input():
@@ -688,11 +731,11 @@ def test_overlapping_small_sign_restores_after_pending_and_actions_keep_exact_in
                                      pending_speed_limit_mps=15, session_id="drive", decision_id=1,
                                      presentation_id=2, action_enabled=True)
   state = road(document, speed_limit=observation, longitudinal_active=True, slc_system_long_available=True)
-  fonts = NS(measure=lambda *a, **k: NS(width=10, height=20), vertical_ink=lambda text, role, size: (0., size * .7),
+  fonts = NS(profile=Profile.COMPACT, measure=lambda *a, **k: NS(width=10, height=20), vertical_ink=lambda text, role, size: (0., size * .7),
              horizontal_ink=lambda text, role, size: (0., 10.), draw=Mock())
   hud = CompactHudRenderer(Mock(spec=BitmapFonts, **vars(fonts)), Mock())
   state = replace(state, appearance=replace(state.appearance, show_speed_limit_sign=True))
-  hud._speed_limit_sign(state)
+  hud._speed_limit_sign(replace(state, slc_prompt_open=True))
   fonts.draw.assert_not_called()
   with patch.object(rl, "draw_rectangle_rounded"), patch.object(rl, "draw_rectangle_rounded_lines_ex"):
     hud._speed_limit_sign(replace(state, speed_limit=replace(observation, pending_speed_limit_mps=None)))
@@ -701,6 +744,8 @@ def test_overlapping_small_sign_restores_after_pending_and_actions_keep_exact_in
   inputs = OnroadInput(emit, Profile.COMPACT)
   for x, kind in ((200, SlcActionKind.ACCEPT), (350, SlcActionKind.REJECT)):
     emit.reset_mock()
+    from openpilot.starpilot.ui.tests.test_slc_ui_actions import tap_sign
+    tap_sign(inputs, state)
     inputs.press(x, 200, state)
     inputs.release(x, 200, state)
     inputs.release(x, 200, state)

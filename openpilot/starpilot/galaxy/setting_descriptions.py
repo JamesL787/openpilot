@@ -54,7 +54,7 @@ DESCRIPTIONS = {
   'curve_reset': 'Deletes saved cornering learning so Curve Speed Controller can learn your preferences again.',
   'SpeedLimitController': 'Adjusts the set speed to accepted speed limits using your source priority and offsets.',
   'ShowSpeedLimits': 'Shows recognized speed-limit signs on the driving screen.',
-  'SLCConfirmation': 'Asks you to approve the first speed limit and every higher or lower limit from any source, including while cruise is off.',
+  'SLCConfirmation': 'Auto adopts after a 3-second flash. With Automatic adoption off, + accepts and − declines within 10 seconds.',
   'SLCPriority1': 'Chooses the first source checked for a fresh speed limit.',
   'SLCPriority2': 'Chooses the source used when the primary source has no fresh speed limit.',
   'SLCFallback': 'Keeps the previously accepted speed limit when sources are unavailable, until another limit is accepted.',

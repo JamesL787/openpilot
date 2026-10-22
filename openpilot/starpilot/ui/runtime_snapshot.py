@@ -587,7 +587,8 @@ class RuntimeSnapshotAdapter:
       if positive(shown_mps):
         # Keep only what the sign shows: a proposal or action identity is never retained.
         sign = replace(observation, speed_limit_mps=shown_mps, pending_speed_limit_mps=None, pending_source='none',
-                       decision_id=None, pending_adjusted_limit_mps=None, action_enabled=False)
+                       decision_id=None, pending_adjusted_limit_mps=None, action_enabled=False,
+                       automatic_adoption_pending=False, pending_since_ns=0)
         self._slc_sign_cache = (int(sm.logMonoTime['slcState']), drive_key, observation.session_id or '', sign)
       else:
         self._slc_sign_cache = None
@@ -598,7 +599,7 @@ class RuntimeSnapshotAdapter:
           not getattr(slc, 'decisionId', 0)):
         # Bridge a brief source gap without retaining a control target, acceptance,
         # action identity, or an obsolete limit for the rest of the drive.
-        source = previous.accepted_source if positive(previous.accepted_speed_limit_mps) else previous.source
+        source = previous.source
         observation = SpeedLimitObservation(kind=ObservationKind.VALID, source=source,
                                             speed_limit_mps=displayed_limit_mps(previous),
                                             offset_mps=previous.offset_mps, status='display_hold',

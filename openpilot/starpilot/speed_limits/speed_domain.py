@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass
 from enum import Enum
 
+from openpilot.selfdrive.car.cruise import V_CRUISE_MIN, V_CRUISE_MAX
 from openpilot.starpilot.speed_limits import acceptance as acc
 
 
@@ -109,7 +110,7 @@ def context_is_valid(context: object) -> bool:
   return (type(context.session_id) is str and bool(context.session_id) and type(context.timestamp_ns) is int and
           context.timestamp_ns >= 0 and _number(context.accepted_raw_mps, positive=True) and
           _signed_number(context.offset_mps) and _number(context.effective_cluster_mps, positive=True) and
-          context.effective_cluster_mps == context.accepted_raw_mps + context.offset_mps and
+          math.isclose(context.effective_cluster_mps, context.accepted_raw_mps + context.offset_mps, rel_tol=0, abs_tol=1e-9) and
           _number(context.selected_raw_mps, positive=True) and _number(context.selected_delta_mps) and
           _number(context.ego_raw_mps) and _number(context.ego_delta_mps))
 
@@ -139,14 +140,14 @@ def offset_for_limit(speed_mps: float, schedule: OffsetSchedule) -> float | None
 
 
 def adjusted_limit(speed_mps: float, schedule: OffsetSchedule, *, minimum_target_mps: float = 0.0) -> float | None:
-  """Cluster target; ignore a reduction that would remove the planner ceiling."""
+  """Apply the offset within the ordinary cruise-speed bounds."""
   offset = offset_for_limit(speed_mps, schedule)
   if offset is None or not _number(minimum_target_mps):
     return None
   value = speed_mps + offset
   if offset < 0 and value <= minimum_target_mps:
-    return speed_mps
-  return value if _number(value, positive=True) else None
+    value = speed_mps
+  return min(max(value, V_CRUISE_MIN / 3.6), V_CRUISE_MAX / 3.6) if _number(value, positive=True) else None
 
 
 def resolve(decision: acc.Decision, schedule: OffsetSchedule, selected: SpeedPair, ego: SpeedPair) -> DomainResolution:
@@ -193,8 +194,7 @@ def resolve(decision: acc.Decision, schedule: OffsetSchedule, selected: SpeedPai
   effective = adjusted_limit(target, schedule, minimum_target_mps=ego_delta)
   if effective is None:
     return DomainResolution(DomainStatus.INVALID, reason="nonpositive effective target")
-  if effective == target:
-    offset = 0.0
+  offset = effective - target
   return DomainResolution(DomainStatus.VALID, DomainContext(
     decision.state.session_id, decision.state.last_timestamp_ns, target, offset, effective,
     selected.raw_mps, max(0.0, selected.cluster_mps - selected.raw_mps),

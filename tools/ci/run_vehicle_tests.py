@@ -33,6 +33,7 @@ DEBUG_SAFETY_CLASS_TARGETS = {
 
 
 RELEASE_TARGETS = (
+  "opendbc_repo/opendbc/car/hyundai/tests/test_batched_ready_observations.py",
   "openpilot/starpilot/aol/tests/test_canfd_location_native_recovery.py",
   "openpilot/starpilot/aol/tests/test_classic_location_stock_intent.py",
   "openpilot/starpilot/aol/tests/test_stock_location_family_intent.py",

@@ -12,14 +12,13 @@ import pyray as rl
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.starpilot.conditional_mode.policy import ModeChoice
 from openpilot.starpilot.ui.onroad_customization import offset as widget_offset, placement, rgba, widget_size
-from openpilot.starpilot.ui.onroad_state import AlertSize, ObservationKind, OnroadState, compact_sign_obscured_by_actions, is_lane_change_notice
+from openpilot.starpilot.ui.onroad_state import AlertSize, ObservationKind, OnroadState, is_lane_change_notice
 from openpilot.starpilot.ui.onroad_curve import controlling as curve_controlling
 from openpilot.starpilot.ui.onroad_conditional import reason as conditional_reason, status as conditional_status, stop_active
-from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole
+from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
 from openpilot.starpilot.ui.onroad_widget_style import draw_widget_frame
 from openpilot.starpilot.ui.wheel_feedback import WheelFeedbackFade
-from openpilot.starpilot.ui.speed_limit_pulse import SpeedLimitPulse
-from openpilot.starpilot.ui.unified_speed_presentation import displayed_limit_mps
+from openpilot.starpilot.ui.speed_limit_widget import MUTED, SpeedLimitWidget, draw_caption, draw_ink
 from openpilot.starpilot.ui.moon import draw_moon
 
 
@@ -90,14 +89,14 @@ def draw_lead_icon(rect: rl.Rectangle) -> None:
 
 
 class CompactHudRenderer:
-  """Frozen compact MAX and torque placement with caller-supplied speed."""
+  """Compact speed group and the native steering-wheel placement."""
 
   def __init__(self, fonts: BitmapFonts, asset_directory: Path):
     self.fonts = fonts
     self.asset_directory = asset_directory
     self._wheel: rl.Texture | None = None
     self._feedback = WheelFeedbackFade()
-    self._speed_limit_pulse = SpeedLimitPulse()
+    self._speed_limit_widget = SpeedLimitWidget(fonts, Profile.COMPACT)
     self._set_speed_alpha = FirstOrderFilter(0.0, 0.1, 1 / 60)
     self._wheel_alpha = FirstOrderFilter(0.0, 0.05, 1 / 60)
     self._wheel_y = FirstOrderFilter(0.0, 0.1, 1 / 60)
@@ -138,18 +137,15 @@ class CompactHudRenderer:
     cruise = "–" if state.cruise_kph is None else str(round(state.cruise_kph if state.metric else state.cruise_kph * 0.621371))
     mx, my = widget_offset(state.customization, "compact", "max_speed")
     if set_speed_alpha > 0.01 and placement(state.customization, "compact", "max_speed")["enabled"]:
-      shadow = rl.Color(0, 0, 0, int(255 / 2 * set_speed_alpha))
-      try:
-        rl.draw_circle_gradient(rl.Vector2(81 + mx, 81 + my), 81, shadow, rl.BLANK)
-      except (RuntimeError, TypeError):
-        rl.draw_circle_gradient(int(81 + mx), int(81 + my), 81, shadow, rl.BLANK)
       red, green, blue, alpha = rgba(state.customization, "text", "compact", "max_speed")
-      color = rl.Color(red, green, blue, int(alpha * 0.9 * set_speed_alpha))
-      speed_size = 112
-      while speed_size > 72 and self.fonts.measure(cruise, FontRole.SET_SPEED, speed_size).width > 128:
+      color = rl.Color(red, green, blue, int(alpha * set_speed_alpha))
+      muted = rl.Color(MUTED.r, MUTED.g, MUTED.b, int(255 * set_speed_alpha))
+      speed_size = 108
+      while speed_size > 72 and self.fonts.measure(cruise, FontRole.SET_SPEED, speed_size).width > 124:
         speed_size -= 1
-      self.fonts.draw(cruise, FontRole.SET_SPEED, speed_size, 17 + mx, -4 + my, color)
-      self.fonts.draw("MAX", FontRole.SEMI_BOLD, 36, 25 + mx, 109 + my, color)
+      draw_caption(self.fonts, 'SET', 23 + mx, 10 + my, muted, unit='km/h' if state.metric else 'mph')
+      draw_ink(self.fonts, cruise, FontRole.SET_SPEED, speed_size, 17 + mx, 34 + my, color)
+
   def render_steering_wheel(self, state: OnroadState) -> None:
     color = self._feedback.update(state.wheel_acceleration, state.appearance.wheel_pedal_feedback, state.observed_ns, state.drive_frame)
     if state.lateral_active:
@@ -190,8 +186,7 @@ class CompactHudRenderer:
       self._was_cruise_active = True
       self._last_cruise_display = display
       self._last_cruise_ns = now_ns
-      elapsed = now_ns - self._set_speed_changed_ns if self._set_speed_changed_ns is not None else 0
-      return self._set_speed_alpha.update(float(0 < elapsed < 2_500_000_000))
+      return self._set_speed_alpha.update(1.0)
     if (self._last_cruise_ns is None or now_ns < self._last_cruise_ns or
         now_ns - self._last_cruise_ns > 150_000_000):
       self._set_speed_alpha.x = 0.0
@@ -202,34 +197,7 @@ class CompactHudRenderer:
     return 0.0
 
   def _speed_limit_sign(self, state: OnroadState) -> None:
-    observation = state.speed_limit
-    visible = placement(state.customization, "compact", "speed_limit")["enabled"] and state.appearance.show_speed_limit_sign
-    visible = visible and not compact_sign_obscured_by_actions(state)
-    now = state.observed_ns / 1e9 if state.observed_ns else time.monotonic()
-    self._speed_limit_pulse.update(state, now, visible=visible)
-    limit = displayed_limit_mps(observation)
-    if not visible or limit is None:
-      return
-    value = str(round(limit * (3.6 if state.metric else 2.2369362921)))
-    dx, dy = widget_offset(state.customization, "compact", "speed_limit")
-    black = self._speed_limit_pulse.color(rl.BLACK, now)
-    white = self._speed_limit_pulse.color(rl.WHITE, now)
-    if state.appearance.use_vienna_sign:
-      cx, cy = 389 + dx, 87 + dy
-      rl.draw_circle(int(cx), int(cy), 59, rl.WHITE)
-      rl.draw_ring(rl.Vector2(cx, cy), 47, 59, 0, 360, 64, self._speed_limit_pulse.color(rl.Color(201, 34, 49, 255), now))
-      size = 58 if len(value) <= 2 else 48
-      measured = self.fonts.measure(value, FontRole.BOLD, size)
-      self.fonts.draw(value, FontRole.BOLD, size, cx - measured.width / 2, cy - measured.height / 2, black)
-      return
-    rect = rl.Rectangle(332 + dx, 20 + dy, 116, 132)
-    rl.draw_rectangle_rounded_lines_ex(rl.Rectangle(rect.x + 8, rect.y + 8, rect.width - 16, rect.height - 16),
-                                       0.14, 16, 2, white)
-    for label, size, top, role in (("SPEED", 20, 18, FontRole.SEMI_BOLD),
-                                   ("LIMIT", 20, 36, FontRole.SEMI_BOLD),
-                                   (value, 50 if len(value) <= 2 else 42, 66, FontRole.BOLD)):
-      measured = self.fonts.measure(label, role, size)
-      self.fonts.draw(label, role, size, rect.x + (rect.width - measured.width) / 2, rect.y + top, white)
+    self._speed_limit_widget.render(state)
 
 
 class MiciSidebarWidgets:

@@ -302,6 +302,12 @@ struct SlcState @0xa1680744031fdb2d {
   overrideBasis @48 :Text; # none/pedal/persistent; qualified contribution only
   retainedOverride @49 :Bool;
   commandActionSequenceId @50 :UInt64; # UI sequence that issued this command
+  automaticAdoptionPending @51 :Bool;
+  pendingSinceMonoTime @52 :UInt64;
+  # Presentation only; zero means no limit received in this session.
+  lastReceivedSpeedLimit @53 :Float32;
+  lastReceivedSource @54 :Text;
+  lastReceivedAdjustedLimit @55 :Float32;
   struct SourceReading {
     source @0 :Text;
     enabled @1 :Bool;
@@ -837,10 +843,12 @@ struct SlcCruiseCommand @0xbd443b539493bc68 {
   expiresMonoTime @11 :UInt64;
   expectedSelectedMps @12 :Float32;
   targetMps @13 :Float32;
+  source @14 :Text;
 
   enum Kind {
     unknown @0;
     adoptAcceptedHigherLimit @1;
+    adoptAcceptedLimit @2;
   }
 }
 

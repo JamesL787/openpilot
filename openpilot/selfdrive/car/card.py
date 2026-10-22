@@ -549,11 +549,12 @@ class Car:
       self.sm['carControl'].enabled)
     host_control_enabled = bool(self.CP.openpilotLongitudinalControl and not self.CP.pcmCruise and host_enabled)
     host_long_active = host_control_enabled and self.sm['carControl'].longActive
-    slc_long_active = getattr(self, 'slc_control_enabled', self.slc_replay) and host_long_active
+    slc_long_active = bool(getattr(self, 'slc_control_enabled', self.slc_replay) and self.CP.openpilotLongitudinalControl and
+                           host_enabled and (self.sm['carControl'].longActive or CS.gasPressed))
     pending = None
     if self.slc_replay:
       pending = slc_physical.pending_confirmation(
-        self.sm, now_ns, long_active=slc_long_active, pcm_cruise=bool(self.CP.pcmCruise), after_ns=floor_ns)
+        self.sm, now_ns, long_active=slc_long_active, after_ns=floor_ns)
     self.update_cruise_speed(CS, pending)
     if self.controller_cruise_sock is not None:
       for _ in range(8):
@@ -734,8 +735,7 @@ class Car:
           if now_ns <= int(command.expiresMonoTime):
             self.slc_commands.append(command_message)
           continue
-        state = (slc_physical.state_current(self.sm, observation, self.slc_producer_session, now_ns)
-                 if observation is not None else None)
+        state = slc_physical.state_current(self.sm, observation, self.slc_producer_session, now_ns)
         if (state is None or int(self.sm.logMonoTime['slcState']) < int(command.issuedMonoTime)) and now_ns < int(command.expiresMonoTime):
           self.slc_commands.append(command_message)
           continue
@@ -757,7 +757,7 @@ class Car:
                                   for button, timer in self.v_cruise_helper.button_timers.items()))
         applicable = slc_physical.command_applicable(
           command, state, observation, self.slc_producer_session, now_ns, previous_mps,
-          long_active=slc_long_active, pcm_cruise=bool(self.CP.pcmCruise),
+          long_active=slc_long_active,
           button_event=intervening_button)
         if applicable:
           self.v_cruise_helper.apply_slc_target(float(command.targetMps), self.is_metric)
@@ -779,7 +779,8 @@ class Car:
     return CS, RD
 
   def update_cruise_speed(self, CS, pending=None):
-    self.v_cruise_helper.update_v_cruise(CS, self.sm['carControl'].enabled, self.is_metric, pending)
+    self.v_cruise_helper.update_v_cruise(CS, self.sm['carControl'].enabled, self.is_metric, pending,
+                                       slc_enabled=getattr(self, 'slc_control_enabled', getattr(self, 'slc_replay', False)))
     if self.sm['carControl'].enabled and not self.CC_prev.enabled:
       # Initialization owns this edge; evaluate commands against its final speed.
       self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.experimental_mode,

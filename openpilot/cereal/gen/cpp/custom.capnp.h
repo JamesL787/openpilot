@@ -259,6 +259,7 @@ CAPNP_DECLARE_SCHEMA(94d51b83b2a8ea50);
 enum class Kind_94d51b83b2a8ea50: uint16_t {
   UNKNOWN,
   ADOPT_ACCEPTED_HIGHER_LIMIT,
+  ADOPT_ACCEPTED_LIMIT,
 };
 CAPNP_DECLARE_ENUM(Kind, 94d51b83b2a8ea50);
 CAPNP_DECLARE_SCHEMA(fc6241ed8877b611);
@@ -686,7 +687,7 @@ struct SlcState {
   struct ConditionalModeState;
 
   struct _capnpPrivate {
-    CAPNP_DECLARE_STRUCT_HEADER(a1680744031fdb2d, 15, 20)
+    CAPNP_DECLARE_STRUCT_HEADER(a1680744031fdb2d, 17, 21)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -1186,7 +1187,7 @@ struct SlcCruiseCommand {
 
 
   struct _capnpPrivate {
-    CAPNP_DECLARE_STRUCT_HEADER(bd443b539493bc68, 10, 2)
+    CAPNP_DECLARE_STRUCT_HEADER(bd443b539493bc68, 10, 3)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -3842,6 +3843,17 @@ public:
 
   inline  ::uint64_t getCommandActionSequenceId() const;
 
+  inline bool getAutomaticAdoptionPending() const;
+
+  inline  ::uint64_t getPendingSinceMonoTime() const;
+
+  inline float getLastReceivedSpeedLimit() const;
+
+  inline bool hasLastReceivedSource() const;
+  inline  ::capnp::Text::Reader getLastReceivedSource() const;
+
+  inline float getLastReceivedAdjustedLimit() const;
+
 private:
   ::capnp::_::StructReader _reader;
   template <typename, ::capnp::Kind>
@@ -4102,6 +4114,25 @@ public:
 
   inline  ::uint64_t getCommandActionSequenceId();
   inline void setCommandActionSequenceId( ::uint64_t value);
+
+  inline bool getAutomaticAdoptionPending();
+  inline void setAutomaticAdoptionPending(bool value);
+
+  inline  ::uint64_t getPendingSinceMonoTime();
+  inline void setPendingSinceMonoTime( ::uint64_t value);
+
+  inline float getLastReceivedSpeedLimit();
+  inline void setLastReceivedSpeedLimit(float value);
+
+  inline bool hasLastReceivedSource();
+  inline  ::capnp::Text::Builder getLastReceivedSource();
+  inline void setLastReceivedSource( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initLastReceivedSource(unsigned int size);
+  inline void adoptLastReceivedSource(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownLastReceivedSource();
+
+  inline float getLastReceivedAdjustedLimit();
+  inline void setLastReceivedAdjustedLimit(float value);
 
 private:
   ::capnp::_::StructBuilder _builder;
@@ -8177,6 +8208,9 @@ public:
 
   inline float getTargetMps() const;
 
+  inline bool hasSource() const;
+  inline  ::capnp::Text::Reader getSource() const;
+
 private:
   ::capnp::_::StructReader _reader;
   template <typename, ::capnp::Kind>
@@ -8254,6 +8288,13 @@ public:
 
   inline float getTargetMps();
   inline void setTargetMps(float value);
+
+  inline bool hasSource();
+  inline  ::capnp::Text::Builder getSource();
+  inline void setSource( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initSource(unsigned int size);
+  inline void adoptSource(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownSource();
 
 private:
   ::capnp::_::StructBuilder _builder;
@@ -17009,6 +17050,96 @@ inline void SlcState::Builder::setCommandActionSequenceId( ::uint64_t value) {
       ::capnp::bounded<14>() * ::capnp::ELEMENTS, value);
 }
 
+inline bool SlcState::Reader::getAutomaticAdoptionPending() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<140>() * ::capnp::ELEMENTS);
+}
+
+inline bool SlcState::Builder::getAutomaticAdoptionPending() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<140>() * ::capnp::ELEMENTS);
+}
+inline void SlcState::Builder::setAutomaticAdoptionPending(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<140>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t SlcState::Reader::getPendingSinceMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<15>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t SlcState::Builder::getPendingSinceMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<15>() * ::capnp::ELEMENTS);
+}
+inline void SlcState::Builder::setPendingSinceMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<15>() * ::capnp::ELEMENTS, value);
+}
+
+inline float SlcState::Reader::getLastReceivedSpeedLimit() const {
+  return _reader.getDataField<float>(
+      ::capnp::bounded<27>() * ::capnp::ELEMENTS);
+}
+
+inline float SlcState::Builder::getLastReceivedSpeedLimit() {
+  return _builder.getDataField<float>(
+      ::capnp::bounded<27>() * ::capnp::ELEMENTS);
+}
+inline void SlcState::Builder::setLastReceivedSpeedLimit(float value) {
+  _builder.setDataField<float>(
+      ::capnp::bounded<27>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool SlcState::Reader::hasLastReceivedSource() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS).isNull();
+}
+inline bool SlcState::Builder::hasLastReceivedSource() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader SlcState::Reader::getLastReceivedSource() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder SlcState::Builder::getLastReceivedSource() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS));
+}
+inline void SlcState::Builder::setLastReceivedSource( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder SlcState::Builder::initLastReceivedSource(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS), size);
+}
+inline void SlcState::Builder::adoptLastReceivedSource(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> SlcState::Builder::disownLastReceivedSource() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS));
+}
+
+inline float SlcState::Reader::getLastReceivedAdjustedLimit() const {
+  return _reader.getDataField<float>(
+      ::capnp::bounded<32>() * ::capnp::ELEMENTS);
+}
+
+inline float SlcState::Builder::getLastReceivedAdjustedLimit() {
+  return _builder.getDataField<float>(
+      ::capnp::bounded<32>() * ::capnp::ELEMENTS);
+}
+inline void SlcState::Builder::setLastReceivedAdjustedLimit(float value) {
+  _builder.setDataField<float>(
+      ::capnp::bounded<32>() * ::capnp::ELEMENTS, value);
+}
+
 inline bool SlcState::SourceReading::Reader::hasSource() const {
   return !_reader.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
@@ -23145,6 +23276,40 @@ inline float SlcCruiseCommand::Builder::getTargetMps() {
 inline void SlcCruiseCommand::Builder::setTargetMps(float value) {
   _builder.setDataField<float>(
       ::capnp::bounded<19>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool SlcCruiseCommand::Reader::hasSource() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline bool SlcCruiseCommand::Builder::hasSource() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader SlcCruiseCommand::Reader::getSource() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder SlcCruiseCommand::Builder::getSource() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline void SlcCruiseCommand::Builder::setSource( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder SlcCruiseCommand::Builder::initSource(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), size);
+}
+inline void SlcCruiseCommand::Builder::adoptSource(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> SlcCruiseCommand::Builder::disownSource() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
 }
 
 inline bool AolAxisState::Reader::hasSessionId() const {

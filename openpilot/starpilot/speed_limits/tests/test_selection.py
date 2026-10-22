@@ -2,9 +2,11 @@ from itertools import permutations, product
 import math
 from typing import Any, cast
 import unittest
+from dataclasses import replace
 
 from openpilot.starpilot.speed_limits.acceptance import Candidate, IdentityKind, Observation, ObservationIdentity, ObservationKind
-from openpilot.starpilot.speed_limits.acceptance import ActionKind, AdoptRequest, Authority, DriverAction, LongitudinalOwner, Mode, Policy, new_session, step
+from openpilot.starpilot.speed_limits.acceptance import (AcceptedLimit, ActionKind, AdoptRequest, Authority, DriverAction,
+                                                        LongitudinalOwner, Mode, Policy, new_session, step)
 from openpilot.starpilot.speed_limits.selection import SelectionMode, SelectionPolicy, Source, select_limit
 
 
@@ -154,7 +156,8 @@ class TestSourceSelection(unittest.TestCase):
         authority = Authority(mode, LongitudinalOwner.SYSTEM, mode == Mode.COMBINED, True, False, False)
         acceptance_policy = Policy(confirm_lower=True, confirm_higher=False, fallback_previous=True)
         source_policy = policy(slots=(Source.DASHBOARD, None), online=False)
-        state = new_session("selection-regression")
+        candidate = observations(dashboard=29.0576)[Source.DASHBOARD].candidate
+        state = replace(new_session("selection-regression", AcceptedLimit(candidate, "selection-regression", 0)), received_speed_mps=29.0576)
         # Values and sequence reproduce the observed accepted65 / reject45 / lost-source case.
         for index, (speed, reject) in enumerate(((29.0576, False), (20.1168, False), (20.1168, True), (None, False))):
           chosen = select_limit(observations(dashboard=speed) if speed is not None else observations(), source_policy)
@@ -178,7 +181,9 @@ class TestSourceSelection(unittest.TestCase):
     system = Authority(Mode.LONGITUDINAL_ONLY, LongitudinalOwner.SYSTEM, False, True, False, False)
     acceptance_policy = Policy(confirm_higher=False, fallback_previous=True)
     source_policy = policy(slots=(Source.MAP, None), online=False)
-    accepted = step(new_session("uncertainty"), select_limit(observations(map=20), source_policy).observation,
+    history = AcceptedLimit(observations(map=20)[Source.MAP].candidate, "uncertainty", 0)
+    state = replace(new_session("uncertainty", history), received_speed_mps=20)
+    accepted = step(state, select_limit(observations(map=20), source_policy).observation,
                     system, acceptance_policy, now_ns=0)
     for kind in (ObservationKind.UNKNOWN, ObservationKind.STALE):
       supplied = observations()
@@ -223,7 +228,8 @@ class TestSourceSelection(unittest.TestCase):
     authority = Authority(Mode.LONGITUDINAL_ONLY, LongitudinalOwner.SYSTEM, False, True, False, False)
     acceptance_policy = Policy(confirm_higher=False, fallback_previous=True)
     selection_policy = policy(slots=(Source.DASHBOARD, None), online=False)
-    state = new_session("drive")
+    candidate = Candidate("dashboard", ObservationIdentity(IdentityKind.SESSION_VALUE, session_id="drive"), 29.0576)
+    state = replace(new_session("drive", AcceptedLimit(candidate, "drive", 0)), received_speed_mps=29.0576)
     for index, speed in enumerate((29.0576, 20.1168, 20.1168, None, 20.1168)):
       supplied = observations()
       if speed is not None:
