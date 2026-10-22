@@ -62,7 +62,8 @@ class CarInterface(CarInterfaceBase):
         cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
       ret.safetyConfigs = cfgs
 
-      ret.radarUnavailable = docs or candidate not in (CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CRV_5G)
+      from opendbc.car.honda.bosch_a_radar import bosch_a_radar_platform
+      ret.radarUnavailable = docs or not bosch_a_radar_platform(candidate)
       # Disable the radar and let openpilot control longitudinal
       # WARNING: THIS DISABLES AEB!
       # If Bosch radarless, this blocks ACC messages from the camera
@@ -115,7 +116,9 @@ class CarInterface(CarInterfaceBase):
       ret.longitudinalTuning.kiBP = [0., 5., 35.]
       ret.longitudinalTuning.kiV = [1.2, 0.8, 0.5]
 
-    eps_observations = [fw for fw in car_fw if fw.ecu == "eps"]
+    # logging-only queries (e.g. the EPS serial number) are not firmware images; counting them made every
+    # allow-listed modified EPS look unknown and forced dashcam (seen on 39990-TBA,C020, 2026-10-21)
+    eps_observations = [fw for fw in car_fw if fw.ecu == "eps" and not fw.logging]
     modified_eps = any(b"," in fw.fwVersion for fw in eps_observations)
     eps_modified = bool(modified_eps) and all(
       fw.address == 0x18DA30F1 and fw.subAddress == 0 and

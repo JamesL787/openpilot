@@ -97,7 +97,7 @@ def test_wrong_bus_cannot_create_radar_points(identity):
   assert not ri.bosch_a.pts
 
 
-@pytest.mark.parametrize("identity", (CAR.HONDA_ACCORD, CAR.HONDA_CIVIC_BOSCH_DIESEL, CAR.HONDA_CIVIC_2022, CAR.HONDA_ACCORD_11G))
+@pytest.mark.parametrize("identity", (CAR.HONDA_CIVIC_2022, CAR.HONDA_ACCORD_11G, CAR.HONDA_HRV_3G, CAR.ACURA_RDX_3G_MMR))
 def test_unverified_bosch_factory_has_no_radar_decoder(identity):
   cp = CarInterface.get_params(identity, gen_empty_fingerprint(), [], False, False, False)
   assert cp.radarUnavailable

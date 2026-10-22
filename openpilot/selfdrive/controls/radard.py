@@ -416,8 +416,8 @@ def main() -> None:
   adjacent_enabled = feature_enabled(params, CP, 'conditional', os.environ) and 'REPLAY' not in os.environ
   pm = messaging.PubMaster(['radarState', 'starpilotRadarState'] if adjacent_enabled else ['radarState'])
 
-  from opendbc.car.honda.bosch_a_radar import VERIFIED_BOSCH_A_CARS
-  honda_bosch_a = CP.brand == "honda" and CP.carFingerprint in VERIFIED_BOSCH_A_CARS and not CP.radarUnavailable
+  from opendbc.car.honda.bosch_a_radar import bosch_a_radar_platform
+  honda_bosch_a = CP.brand == "honda" and bosch_a_radar_platform(CP.carFingerprint) and not CP.radarUnavailable
   RD = RadarD(CP.radarDelay, adjacent_enabled=adjacent_enabled, radar_available=not CP.radarUnavailable,
               honda_bosch_a_radar=honda_bosch_a, use_voacc=voacc_selected(params, CP))
   set_core_affinity([3, 5])

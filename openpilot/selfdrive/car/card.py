@@ -1610,6 +1610,25 @@ class Car:
     self.initialized_prev = initialized
     self.CS_prev = CS
 
+  def _refresh_aol_card_intent(self):
+    if not self.aol_replay or self.CP.passive:
+      return
+    aol_policy = aol_policy_for(self.CP)
+    settings = read_settings(self.params)
+    include_aux = aol_policy.intent_supported and not aol_policy.explicit_latch
+    qualified = bool(settings is not None and aol_policy.intent_supported and
+                     (aol_policy.full_axis_runtime_required or aol_policy.physical_stalk_owner or
+                      independent_axis_requested(settings, include_auxiliary=include_aux)))
+    self.aol_qualified = qualified
+    if not qualified:
+      return
+    if self.aol_card_intent is None:
+      self.aol_card_intent = create_aol_intent(self.CP, settings, aol_policy)
+      if aol_policy.distance_personality and self.distance_personality_tracker is None:
+        self.distance_personality_tracker = ButtonTracker()
+    else:
+      self.aol_card_intent.settings = settings
+
   def configure_conditional_settings_worker(self):
     self.conditional_settings_worker = None
     if not REPLAY and (getattr(self, 'manual_settings_owner', None) is not None or
@@ -1630,8 +1649,7 @@ class Car:
       self.is_metric = self.params.get_bool("IsMetric")
       self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
       self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
-      if self.aol_card_intent is not None:
-        self.aol_card_intent.settings = read_settings(self.params)
+      self._refresh_aol_card_intent()
       now = time.monotonic()
       if now >= next_cruise_read:
         self.slc_requested_configuration = self.read_slc_configuration()

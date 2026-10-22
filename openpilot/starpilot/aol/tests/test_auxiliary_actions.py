@@ -2,7 +2,7 @@ import unittest
 
 from opendbc.car.structs import car
 from opendbc.car.hyundai.ioniq6_media import MediaObservation, MediaSample
-from openpilot.starpilot.aol.intent import AolCardIntent, AolSettings, independent_axis_requested
+from openpilot.starpilot.aol.intent import AolCardIntent, AolSettings, AOL_TOGGLE, independent_axis_requested
 
 
 def state(events=(), valid=True):
@@ -11,6 +11,22 @@ def state(events=(), valid=True):
 
 
 class TestAuxiliaryActions(unittest.TestCase):
+  def test_wheel_toggle_aol_admits_runtime_without_master(self):
+    settings = AolSettings(False, 0., AOL_TOGGLE, 0, (0, 0, 0), (0, 0, 0))
+    self.assertTrue(independent_axis_requested(settings))
+    settings = AolSettings(False, 0., 0, 0, (AOL_TOGGLE, 0, 0), (0, 0, 0))
+    self.assertTrue(independent_axis_requested(settings))
+    settings = AolSettings(False, 0., 0, 0, (0, 0, 0), (AOL_TOGGLE, 0, 0))
+    self.assertTrue(independent_axis_requested(settings))
+
+  def test_explicit_latch_configured_toggle_on_distance(self):
+    owner = AolCardIntent(AolSettings(True, 0., 0, 0, (AOL_TOGGLE, 0, 0), (0, 0, 0)), explicit_latch=True)
+    owner.allowed_latch = True
+    owner._perform(AOL_TOGGLE)
+    self.assertFalse(owner.allowed_latch)
+    owner._perform(AOL_TOGGLE)
+    self.assertTrue(owner.allowed_latch)
+
   def test_auxiliary_pause_is_not_unqualified_startup_demand(self):
     for action in (3, 4):
       settings = AolSettings(False, 0., 0, 0, (0, 0, 0), (action, 0, 0), (action, 0, 0))

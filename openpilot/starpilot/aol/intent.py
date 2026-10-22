@@ -69,10 +69,12 @@ def read_settings(params) -> AolSettings:
 
 def independent_axis_requested(settings: AolSettings, *, include_auxiliary: bool = False) -> bool:
   pause = (PAUSE_LATERAL, PAUSE_LONGITUDINAL)
-  actions = (settings.lkas_action, settings.main_action, *settings.distance_actions)
+  actions = [settings.lkas_action, settings.main_action, *settings.distance_actions]
   if include_auxiliary:
-    actions += (*settings.cancel_actions, *settings.mode_actions, *settings.custom_actions)
-  return settings.enabled or any(action in pause for action in actions)
+    actions += [*settings.cancel_actions, *settings.mode_actions, *settings.custom_actions]
+  else:
+    actions += [action for action in settings.cancel_actions if action == AOL_TOGGLE]
+  return settings.enabled or any(action in pause or action == AOL_TOGGLE for action in actions)
 
 
 PROCESS_FAULT_MAX_AGE_NS = 1_500_000_000
@@ -188,6 +190,11 @@ class AolCardIntent:
       self.allowed_latch = not self.allowed_latch
       if not self.allowed_latch:
         self._withdraw_full_engagement()
+      if self.allowed_latch:
+        self.pause_lateral = False
+    elif action == AOL_TOGGLE and self.settings.enabled and self.explicit_latch:
+      self._record_latch_clear('configured_toggle')
+      self.allowed_latch = not self.allowed_latch
       if self.allowed_latch:
         self.pause_lateral = False
     elif action == PAUSE_LATERAL:

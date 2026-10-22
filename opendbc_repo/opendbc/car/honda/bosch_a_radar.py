@@ -681,11 +681,22 @@ def _create_bosch_a_can_parser(CP):
 VERIFIED_BOSCH_A_CARS = frozenset((CAR.HONDA_CIVIC_BOSCH, CAR.HONDA_CRV_5G))
 
 
+def bosch_a_radar_platform(car_fingerprint: str) -> bool:
+  """Plain Bosch-A harness cars wired to the hand-written honda_bosch_a_radar DBC."""
+  if car_fingerprint not in CAR:
+    return False
+  if DBC.get(car_fingerprint, {}).get(Bus.radar) != BOSCH_A_DBC_NAME:
+    return False
+  flags = int(CAR[car_fingerprint].config.flags)
+  unsupported = int(HondaFlags.BOSCH_RADARLESS | HondaFlags.BOSCH_CANFD | HondaFlags.BOSCH_ALT_RADAR)
+  return bool(flags & HondaFlags.BOSCH) and not bool(flags & unsupported)
+
+
 class BoschARadar(RadarInterfaceBase):
   def __init__(self, CP):
     super().__init__(CP)
-    if CP.carFingerprint not in VERIFIED_BOSCH_A_CARS or CP.flags & (HondaFlags.BOSCH_RADARLESS | HondaFlags.BOSCH_CANFD | HondaFlags.BOSCH_ALT_RADAR):
-      raise ValueError("Honda radar requires its verified classic Bosch-A profile")
+    if not bosch_a_radar_platform(CP.carFingerprint):
+      raise ValueError("Honda radar requires a classic Bosch-A platform with honda_bosch_a_radar wired")
     self.rcp = _create_bosch_a_can_parser(CP)
     self.trigger_msg = BOSCH_A_TRIGGER_MSG
     # Ego speed, set by card before each update (the reversing-coast bound). None until then.

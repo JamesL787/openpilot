@@ -54,7 +54,13 @@ class VehicleStartupPreferences:
     preap_stock = stock_configuration(params, radar, pedal)
     try:
       raw_radar, radar_readable = read_saved(params, "HondaBoschARadar", 8)
-      honda_radar = radar_readable and raw_radar in (None, b"1")
+      if radar_readable and raw_radar in (None, b"1"):
+        honda_radar = True
+      elif radar_readable and raw_radar == b"0":
+        honda_radar = False
+      else:
+        legacy, legacy_readable = read_saved(params, "BoschARadar", 8)
+        honda_radar = legacy_readable and legacy in (None, b"1")
     except (OSError, TypeError, ValueError):
       honda_radar = False
     try:
@@ -112,10 +118,8 @@ class VehicleStartupPreferences:
   def _prepare_honda_radar(self, cp) -> None:
     if cp.brand != "honda":
       return
-    from opendbc.car.honda.bosch_a_radar import VERIFIED_BOSCH_A_CARS
-    from opendbc.car.honda.values import HondaFlags
-    if (cp.brand == "honda" and cp.carFingerprint in VERIFIED_BOSCH_A_CARS and cp.flags & HondaFlags.BOSCH and
-        not cp.flags & (HondaFlags.BOSCH_RADARLESS | HondaFlags.BOSCH_CANFD | HondaFlags.BOSCH_ALT_RADAR)):
+    from opendbc.car.honda.bosch_a_radar import bosch_a_radar_platform
+    if cp.brand == "honda" and bosch_a_radar_platform(cp.carFingerprint):
       cp.radarUnavailable = not self.honda_bosch_a_radar
 
   def _prepare_bolt(self, cp, fingerprints=None) -> None:
