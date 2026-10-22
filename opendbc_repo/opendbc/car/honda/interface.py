@@ -288,6 +288,10 @@ class CarInterface(CarInterfaceBase):
         stock_cp.lateralParams.torqueBP, stock_cp.lateralParams.torqueV = [[0, 2560], [0, 2560]]
         stock_cp.lateralTuning.pid.kpV, stock_cp.lateralTuning.pid.kiV = [[0.8], [0.24]]
 
+    # Keep the H020 linear map after the legacy res modified-EPS branches above.
+    from opendbc.sunnypilot.car.honda.h020_ptm import configure_h020
+    configure_h020(stock_cp, candidate, car_fw)
+
     if candidate in HONDA_BOSCH:
       pass
     else:
