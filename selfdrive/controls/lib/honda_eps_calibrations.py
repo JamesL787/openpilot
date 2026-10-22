@@ -33,6 +33,8 @@ CALIBRATION_PROVENANCE = {
   "command_delay": "none added: res plan/model pipeline unchanged, pending H020 timing measurement",
   "model_delay": "existing res model pipeline unchanged",
   "validation": "offline only; no H020 route or vehicle validation available",
+  "pre_table_shaping": "unity assumed by the forward model; H020 blend inputs/gate flags remain unverified",
+  "command_map": "original H020 PTM row retained; R5/key slope 35.435 on key 226-311 versus 18.04 linear reference; residual PID gain not validated",
 }
 
 REQUIRED_PTM_BUILDS = {'20261011-trk4250': {'rwd_sha256': '9fcd18697938a741771aada9f6a1274b7eada6ae3dc3fb1d7d3771c61f97e537', 'image_sha256': '53427cbcd80e315c237d34f4e41bb7ef62ddedd6166d670e6352acb1d45587a1', 'tracker': 4250, 'file': '39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk4250-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd'}, '20261011-trk3200': {'rwd_sha256': '56191940003ee614fe1bd18e0a1a67b946c40db5bf69a08109806eca408ade55', 'image_sha256': '5b3ba3061d9259abfa622beca1c460aad03b0e8af9422c3199b72a58749bc080', 'tracker': 3200, 'file': '39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk3200-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd'}}

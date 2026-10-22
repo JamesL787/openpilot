@@ -17,6 +17,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, use_honda_eps_controller
+from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import load_activation
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
@@ -37,7 +38,9 @@ class Controls(ControlsExt, ModelStateBase):
   def __init__(self) -> None:
     self.params = Params()
     cloudlog.info("controlsd is waiting for CarParams")
-    self.CP = messaging.log_from_bytes(self.params.get("CarParams", block=True), car.CarParams)
+    cp_bytes = self.params.get("CarParams", block=True)
+    self.CP = messaging.log_from_bytes(cp_bytes, car.CarParams)
+    h020_activation = load_activation(self.CP, cp_bytes)
     cloudlog.info("controlsd got CarParams")
 
     # Initialize sunnypilot controlsd extension and base model state
@@ -65,7 +68,8 @@ class Controls(ControlsExt, ModelStateBase):
     if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
       self.LaC = LatControlAngle(self.CP, self.CP_SP, self.CI)
     elif self.CP.lateralTuning.which() == 'pid':
-      self.LaC = (LatControlHondaEps(self.CP, self.CP_SP, self.CI) if use_honda_eps_controller(self.CP)
+      self.LaC = (LatControlHondaEps(self.CP, self.CP_SP, self.CI, activation=h020_activation)
+                  if use_honda_eps_controller(self.CP, h020_activation)
                   else LatControlPID(self.CP, self.CP_SP, self.CI))
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CP_SP, self.CI)
