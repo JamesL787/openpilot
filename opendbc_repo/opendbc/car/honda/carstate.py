@@ -125,6 +125,10 @@ class CarState(CarStateBase):
       # FIXME: the stock camera stops steering on NO_TORQUE_ALERT_1
       ret.steerFaultTemporary = steer_status not in ("NORMAL", "LOW_SPEED_LOCKOUT", "NO_TORQUE_ALERT_2")
 
+    if (self.CP.carFingerprint in (CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR)) and (steer_status == "NO_TORQUE_ALERT_1"):
+      # TJB-A220 EPS reports NO_TORQUE_ALERT_1 during normal LKAS; torque stays available.
+      ret.steerFaultTemporary = False
+
     if (self.CP.carFingerprint == CAR.ACURA_MDX_4G) and (steer_status == "TJA_LOW_SPEED_LOCKOUT"):
       ret.steerFaultPermanent = False
       ret.steerFaultTemporary = False
