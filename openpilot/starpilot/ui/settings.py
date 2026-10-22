@@ -105,6 +105,9 @@ class SettingsView:
         font_size = 40 if destination == Destination.FORCE_DRIVE else 42 if destination == Destination.DRIVING_MODEL else (
           48 if destination in (Destination.GALAXY, Destination.PAIR) else 64)
         measured = self.fonts.measure(text, FontRole.BOLD, font_size)
+        while font_size > 30 and measured.width > 402 - 80:  # one line inside the card padding
+          font_size -= 2
+          measured = self.fonts.measure(text, FontRole.BOLD, font_size)
         self.fonts.draw(text, FontRole.BOLD, font_size, x + 40, top + 180 - 23 - measured.height,
                         rl.Color(255, 255, 255, 229))
         if filename is not None:

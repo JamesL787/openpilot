@@ -115,7 +115,9 @@ class CarInterface(CarInterfaceBase):
       ret.longitudinalTuning.kiBP = [0., 5., 35.]
       ret.longitudinalTuning.kiV = [1.2, 0.8, 0.5]
 
-    eps_observations = [fw for fw in car_fw if fw.ecu == "eps"]
+    # logging-only queries (e.g. the EPS serial number) are not firmware images; counting them made every
+    # allow-listed modified EPS look unknown and forced dashcam (seen on 39990-TBA,C020, 2026-10-21)
+    eps_observations = [fw for fw in car_fw if fw.ecu == "eps" and not fw.logging]
     modified_eps = any(b"," in fw.fwVersion for fw in eps_observations)
     eps_modified = bool(modified_eps) and all(
       fw.address == 0x18DA30F1 and fw.subAddress == 0 and
