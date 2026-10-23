@@ -6,6 +6,8 @@ def get_eps_modified_steering_pressed(raw_pressed, steering_torque, torque_cmd, 
   if not raw_pressed:
     return 0.0, False
   torque_product = float(steering_torque) * float(torque_cmd)
+  # res maps u -> E4 with sign -1 and raw torque sensor -> CS.steeringTorque with DBC factor -1.
+  # Equal raw sensor/E4 signs therefore mean a positive normalized product; no extra sign flip here.
   torque_cmd_abs = abs(float(torque_cmd))
   if previous_pressed or torque_cmd_abs < 0.10 or torque_product < 0.0:
     return 1.0, True

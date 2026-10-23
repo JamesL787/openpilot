@@ -13,23 +13,23 @@ from openpilot.selfdrive.controls.lib.honda_eps_calibrations import H020
 from openpilot.selfdrive.controls.lib.honda_eps_h020_geometry import H020_VGR_INVERSE
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 from opendbc.sunnypilot.car.honda.h020_ptm import is_h020_ptm
-from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import load_activation, expected_tune
+from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import expected_tune
 from openpilot.selfdrive.controls.lib.honda_eps_h020_override import get_eps_modified_steering_pressed
 
 RIDE_THROUGH_S = 0.1
 
 
-def use_honda_eps_controller(CP, config=None):
-  cfg = load_activation(CP) if config is None else config
+def use_honda_eps_controller(CP, config):
+  cfg = config
   if not cfg.get("enabled") or str(CP.carFingerprint) != "HONDA_CIVIC_BOSCH" or not is_h020_ptm(CP.carFw):
     return False
   return expected_tune(CP)
 
 
 class LatControlHondaEps(LatControl):
-  def __init__(self, CP, CP_SP, CI, activation=None):
+  def __init__(self, CP, CP_SP, CI, *, activation):
     super().__init__(CP, CP_SP, CI)
-    config = load_activation(CP) if activation is None else activation
+    config = activation
     if not use_honda_eps_controller(CP, config):
       raise ValueError("H020 controller needs an explicit config, exact PTM firmware and a linear 3840 map")
     self.dt = DT_CTRL

@@ -127,7 +127,7 @@ def test_tuned_params_never_silently_fall_back_on_bad_record(tmp_path, kind):
 
 def test_untuned_baseline_needs_no_activation_record(tmp_path):
   cp, _ = real_params({'enabled': False})
-  assert activation.load_activation(cp, path=tmp_path / 'missing') == {'enabled': False}
+  assert activation.load_activation(cp, cp.to_bytes(), path=tmp_path / 'missing') == {'enabled': False}
 
 
 @pytest.mark.parametrize('tune', ['old-prototype', 'overwritten-torque'])
@@ -138,7 +138,7 @@ def test_stale_port_map_cannot_fall_back_without_record(tmp_path, tune):
   else:
     CarInterface.configure_torque_tune(cp.carFingerprint, cp.lateralTuning)
   with pytest.raises(activation.H020ActivationError):
-    activation.load_activation(cp, path=tmp_path / 'missing')
+    activation.load_activation(cp, cp.to_bytes(), path=tmp_path / 'missing')
 
 
 @pytest.mark.parametrize('record_ok', [True, False])
@@ -323,10 +323,11 @@ def test_actual_controlsd_initializer_selects_from_one_startup_snapshot(tmp_path
 
   env = dict(
     Params=lambda: NS(get=lambda *a, **k: raw),
-    cloudlog=NS(info=lambda *a: None),
+    cloudlog=NS(info=lambda *a: None, error=lambda *a: None),
     messaging=NS(log_from_bytes=lambda *a: cp, SubMaster=lambda *a, **k: None, PubMaster=lambda *a: None),
     car=car,
     load_activation=load,
+    H020RuntimeGuard=lambda *args: activation.H020RuntimeGuard(*args),
     ControlsExt=ControlsExt,
     ModelStateBase=ModelStateBase,
     interfaces={cp.carFingerprint: lambda *a: None},
@@ -376,3 +377,403 @@ def test_stock_h020_is_not_newly_added_to_bosch_fingerprints():
   versions = FW_VERSIONS_EXT[CAR.HONDA_CIVIC_BOSCH][(car.CarParams.Ecu.eps, 0x18DA30F1, None)]
   assert b'39990-TEA-H020\0\0' not in versions
   assert b'39990-TEA,H020\0\0' in versions
+
+
+# A-E regression harness: execute the real initializer and state_control bodies.
+# Only native host I/O, firmware-query transport, and unrelated longitudinal/services are substituted.
+def execute_method(path, cls_name, method, env):
+  tree = ast.parse((ROOT / path).read_text())
+  cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == cls_name)
+  fn = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == method)
+  exec(compile(ast.Module(body=[fn], type_ignores=[]), str(ROOT / path), 'exec'), env)
+  return env[method]
+
+
+@pytest.fixture
+def live_startup(setup_runtime, monkeypatch, tmp_path):
+  from opendbc.car.vehicle_model import VehicleModel
+  from openpilot.selfdrive.car.helpers import convert_to_capnp
+  from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature
+  from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import use_honda_eps_controller
+  from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
+  import math
+  from numbers import Number
+
+  MemoryParams, store, events, setup = setup_runtime
+  operator = tmp_path / 'operator.json'
+  record = tmp_path / 'activation.json'
+  monkeypatch.setattr(gate, 'CONFIG_PATH', operator)
+  monkeypatch.setattr(activation, 'ACTIVATION_PATH', record)
+  errors = []
+  # Match production's carlog error path while keeping an exact assertion log.
+  from opendbc.car.carlog import carlog
+
+  monkeypatch.setattr(carlog, 'error', lambda msg, *a, **k: errors.append(str(msg)))
+  now = [100.0]
+
+  def card_start(config=CFG, version=b'39990-TEA,H020\0\0', candidate=CAR.HONDA_CIVIC_BOSCH, mutate=None):
+    if config is None:
+      operator.unlink(missing_ok=True)
+    else:
+      operator.write_text(json.dumps(config))
+
+    def get_car(*args):
+      fw = [car.CarParams.CarFw.new_message(ecu='eps', address=0x18DA30F1, fwVersion=version, brand='honda')]
+      fp = {0: {}, 1: {}, 2: {}}
+      cp = CarInterface.get_params(candidate, fp, fw, False, False, False)
+      sp = CarInterface.get_params_sp(cp, candidate, fp, fw, False, False, False)
+      cp.carFw = fw
+      cp.fingerprintSource = 'fw'
+      if mutate is not None:
+        mutate(cp)
+      return NS(CP=cp, CP_SP=sp, CC=CarController(DBC[candidate], cp, sp), CS=NS(), configure_torque_tune=CarInterface.configure_torque_tune)
+
+    messaging = NS(
+      sub_sock=lambda *a, **k: None,
+      SubMaster=lambda *a, **k: NS(sock={'pandaStates': None}),
+      PubMaster=lambda *a, **k: NS(sock={'sendcan': None}),
+      recv_one_retry=lambda *a: NS(can=[None], pandaStates=[None]),
+    )
+    env = dict(
+      os=NS(environ={}),
+      messaging=messaging,
+      car=car,
+      custom=custom,
+      Params=MemoryParams,
+      can_comm_callbacks=lambda *a: (None, None),
+      obd_callback=lambda *a: None,
+      read_h020_config=gate.read_config,
+      startup_config=gate.startup_config,
+      get_car=get_car,
+      sunnypilot_interfaces=setup,
+      interfaces={candidate: NS(RadarInterface=lambda *a: None)},
+      set_alternative_experience=lambda *a: None,
+      set_car_specific_params=lambda *a: None,
+      structs=structs,
+      validate_final_params=activation.validate_final_params,
+      publish_activation=activation.publish_activation,
+      convert_to_capnp=convert_to_capnp,
+      MockCarState=lambda: NS(),
+      VCruiseHelper=lambda *a: NS(),
+      Ratekeeper=lambda *a, **k: NS(),
+    )
+    instance = NS()
+    execute_method('selfdrive/car/card.py', 'Car', '__init__', env)(instance)
+    return instance
+
+  def controls_start(card):
+    class ControlsExt:
+      def __init__(self, *args):
+        self.CP_SP = card.CP_SP
+        self.sm_services_ext = []
+        self.pm_services_ext = []
+
+    class ModelStateBase:
+      def __init__(self):
+        pass
+
+    raw = store['CarParams']
+    # Keep a real reader alive, just as cereal.messaging.log_from_bytes does.
+    reader_context = car.CarParams.from_bytes(raw)
+    cp = reader_context.__enter__()
+    env = dict(
+      Params=MemoryParams,
+      cloudlog=NS(info=lambda *a: None, error=lambda msg: errors.append(msg)),
+      messaging=NS(log_from_bytes=lambda *a: cp, SubMaster=lambda *a, **k: None, PubMaster=lambda *a: None),
+      car=car,
+      load_activation=activation.load_activation,
+      H020RuntimeGuard=(lambda *a: activation.H020RuntimeGuard(*a, clock=lambda: now[0])),
+      ControlsExt=ControlsExt,
+      ModelStateBase=ModelStateBase,
+      interfaces={
+        cp.carFingerprint: lambda *a: NS(
+          get_pid_accel_limits=CarInterface.get_pid_accel_limits, get_steer_feedforward_function=lambda: CarInterface.get_steer_feedforward_default
+        )
+      },
+      PoseCalibrator=lambda: None,
+      LongControl=lambda *a: None,
+      VehicleModel=VehicleModel,
+      LatControlHondaEps=LatControlHondaEps,
+      use_honda_eps_controller=use_honda_eps_controller,
+      LatControlPID=LatControlPID,
+    )
+    controls = NS()
+    execute_method('selfdrive/controls/controlsd.py', 'Controls', '__init__', env)(controls)
+    controls._reader_context = reader_context
+    lp = NS(stiffnessFactor=1.0, steerRatio=cp.steerRatio, roll=0.0, angleOffsetDeg=0.0)
+    cs = car.CarState.new_message(vEgo=15.0, steeringAngleDeg=20.0)
+    curvature = controls.LaC.rack.curvature_from_angle(20.0, 15.0, 0.0) if isinstance(controls.LaC, LatControlHondaEps) else 0.0
+    controls.sm = {
+      'carState': cs,
+      'liveParameters': lp,
+      'longitudinalPlan': NS(aTarget=0.0, shouldStop=False),
+      'modelV2': NS(meta=NS(laneChangeState=0), action=NS(desiredCurvature=curvature)),
+      'selfdriveState': NS(enabled=True),
+      'onroadEvents': [],
+    }
+    controls.get_lat_active = lambda *a: True
+    controls.LoC = NS(long_control_state='off', reset=lambda: None, update=lambda *a: 0.0)
+    env.update(
+      math=math,
+      CV=NS(KPH_TO_MS=1 / 3.6),
+      LaneChangeState=NS(off=0),
+      clip_curvature=clip_curvature,
+      ACTUATOR_FIELDS=tuple(car.CarControl.Actuators.schema.fields),
+      Number=Number,
+    )
+    state_control = execute_method('selfdrive/controls/controlsd.py', 'Controls', 'state_control', env)
+    return controls, lambda: state_control(controls)
+
+  return NS(card=card_start, controls=controls_start, store=store, errors=errors, now=now, record=record, Params=MemoryParams)
+
+
+@pytest.mark.parametrize(
+  'version,candidate',
+  [(b'39990-TEA-H020\0\0', CAR.HONDA_CIVIC_BOSCH), (b'39990-TBA,C020\0\0', CAR.HONDA_CIVIC_BOSCH), (b'39990-TEA-H020\0\0', CAR.HONDA_CIVIC)],
+)
+def test_A_enabled_on_other_eps_uses_original_res_startup(live_startup, version, candidate):
+  from openpilot.tools.lateral.inspect_h020 import build_report
+
+  h = live_startup
+  baseline = h.card({'enabled': False}, version, candidate)
+  expected_cp = baseline.CP.to_dict()
+  expected_sp = vars(baseline.CP_SP)
+  h.errors.clear()
+  card = h.card(CFG, version, candidate)
+  assert card.CP.to_dict() == expected_cp and vars(card.CP_SP) == expected_sp
+  assert any('ignoring' in message.lower() and 'H020' in message for message in h.errors)
+  controls, _ = h.controls(card)
+  assert not isinstance(controls.LaC, LatControlHondaEps)
+  report = build_report(card.CP, h.store['CarParams'], h.Params(), CFG, h.record)
+  assert report['ignored_config_reason'] and not report['blockers'] and not report['controller_selected']
+
+
+@pytest.mark.parametrize('config', [None, {'enabled': False}])
+def test_A_disabled_or_missing_is_ordinary_res(live_startup, config):
+  h = live_startup
+  card = h.card(config)
+  assert not h.errors
+  assert list(card.CP.lateralParams.torqueBP) == [0, 2564, 8000]
+  controls, _ = h.controls(card)
+  assert not isinstance(controls.LaC, LatControlHondaEps)
+
+
+@pytest.mark.parametrize('restart_config', [{'enabled': False}, {**CFG, 'ptm_build': '20261011-trk3200'}])
+def test_B_card_alone_restart_latches_zero_through_real_can(live_startup, restart_config):
+  h = live_startup
+  first_card = h.card()
+  controls, step = h.controls(first_card)
+  for _ in range(250):
+    before, _ = step()
+  assert before.latActive and abs(before.actuators.torque) > 0.1
+  original_raw = h.store['CarParams']
+  new_card = h.card(restart_config)
+  if not restart_config['enabled']:
+    assert new_card.CI.CC.params.STEER_MAX == 8000
+    assert h.store['CarParams'] != original_raw
+  else:
+    assert h.store['CarParams'] == original_raw  # record-only mismatch must also be caught
+  h.now[0] += 1.01
+  for _ in range(20):
+    command, state = step()
+    assert not command.latActive and command.actuators.torque == 0.0 and not state.active
+    cc = new_card.CI.CC
+    cc.frame = 1
+    _, messages = cc.update(command.as_reader(), structs.CarControlSP(), NS(out=car.CarState.new_message(), v_cruise_factor=1.0), 0)
+    e4 = next(dat for addr, dat, bus in messages if addr == 0xE4)
+    assert int.from_bytes(e4[:2], 'big', signed=True) == 0 and not e4[2] & 0x80
+  assert any('restart controlsd' in message for message in h.errors)
+  # Restoring a matching record never unlatches a running controller.
+  activation.publish_activation(original_raw, CFG, h.record)
+  h.store['CarParams'] = original_raw
+  h.now[0] += 6.0
+  assert not step()[0].latActive
+  assert sum('restart controlsd' in message for message in h.errors) >= 2
+
+
+def test_B_runtime_guard_checks_disk_at_most_once_per_second(live_startup, monkeypatch):
+  h = live_startup
+  controls, step = h.controls(h.card())
+  reads = []
+  original = h.Params.get
+
+  def get(self, key, *a, **kw):
+    reads.append(key)
+    return original(self, key, *a, **kw)
+
+  monkeypatch.setattr(h.Params, 'get', get)
+  file_reads = []
+  original_read = Path.read_text
+
+  def read_text(path, *args, **kwargs):
+    if path == h.record:
+      file_reads.append(path)
+    return original_read(path, *args, **kwargs)
+
+  monkeypatch.setattr(Path, 'read_text', read_text)
+  for frame in range(100):
+    h.now[0] = 100.0 + frame * 0.01
+    step()
+  assert reads.count('CarParams') == 1
+  assert len(file_reads) == 1
+
+
+def test_C_exact_gate_lists_ecu_results_in_card_and_inspector(live_startup):
+  from openpilot.tools.lateral.inspect_h020 import build_report
+
+  h = live_startup
+  captured = []
+
+  def incomplete(cp):
+    cp.carFw = [*[fw.to_dict() for fw in cp.carFw], {'ecu': 'vsa', 'address': 0x18DA28F1, 'brand': 'honda', 'fwVersion': b'UNKNOWN-VSA'}]
+    cp.fingerprintSource = 'can'
+    cp.fuzzyFingerprint = True
+    captured.append(cp)
+
+  with pytest.raises(activation.H020ActivationError) as error:
+    h.card(mutate=incomplete)
+  message = str(error.value)
+  assert 'eps@0x18da30f1=matched' in message and 'vsa@0x18da28f1=mismatch' in message
+  assert 'fwdRadar@0x18dab0f1=missing' in message
+  cp = captured[0]
+  raw = cp.to_bytes()
+  report = build_report(cp, raw, h.Params(), CFG, h.record)
+  assert any(message == blocker for blocker in report['blockers'])
+  states = {(row['ecu'], row['address']): row['status'] for row in report['firmware_match']['ecus']}
+  assert states[('eps', '0x18da30f1')] == 'matched'
+  assert states[('vsa', '0x18da28f1')] == 'mismatch'
+  assert states[('fwdRadar', '0x18dab0f1')] == 'missing'
+
+
+@pytest.mark.parametrize('command', [-0.5, 0.5])
+def test_D_real_honda_sign_chain_and_press_detector(command):
+  from opendbc.car import Bus
+  from opendbc.car.honda.carstate import CarState
+  from opendbc.can import CANPacker
+  from openpilot.selfdrive.controls.lib.honda_eps_h020_override import get_eps_modified_steering_pressed
+
+  cp, sp = real_params()
+  cc = CarController(DBC[CAR.HONDA_CIVIC_BOSCH], cp, sp)
+  request = car.CarControl.new_message(enabled=True, latActive=True)
+  request.actuators.torque = command
+  cc.frame = 1
+  cc.last_torque = command
+  _, messages = cc.update(request.as_reader(), structs.CarControlSP(), NS(out=car.CarState.new_message(), v_cruise_factor=1.0), 0)
+  e4 = next(data for addr, data, bus in messages if addr == 0xE4)
+  wire_command = int.from_bytes(e4[:2], 'big', signed=True)
+  assert wire_command == -command * 3840
+  cs = CarState(cp, sp)
+  parsers = cs.get_can_parsers(cp, sp)
+  cs.update(parsers)  # res lazily registers the signals it consumes
+  packer = CANPacker(DBC[cp.carFingerprint][Bus.pt])
+  # "Same direction" means raw sensor and raw E4 signs agree. This is a sign convention,
+  # not a claim that a physical H020's command-induced reaction torque was measured.
+  # Both DBC sensor factor -1 and output -> E4 sign -1 normalize that to CS.torque * u > 0.
+  for same_direction in [True, False]:
+    raw_sensor = wire_command if same_direction else -wire_command
+    sensor = packer.make_can_msg('STEER_STATUS', parsers[Bus.pt].bus, {'STEER_TORQUE_SENSOR': -raw_sensor})
+    assert int.from_bytes(sensor[1][:2], 'big', signed=True) == raw_sensor
+    parsers[Bus.pt].update([(10000000, [sensor])])
+    state, _ = cs.update(parsers)
+    assert state.steeringTorque == -raw_sensor and state.steeringPressed
+    elapsed, pressed = get_eps_modified_steering_pressed(state.steeringPressed, state.steeringTorque, command, 0.0, False)
+    assert pressed is (not same_direction)
+    assert elapsed == (0.01 if same_direction else 1.0)
+
+
+@pytest.mark.parametrize('kind', ['builder', 'reader'])
+def test_E_load_activation_requires_original_bytes_without_serializing(tmp_path, kind):
+  import warnings
+
+  cp, _ = real_params()
+  raw = cp.to_bytes()
+  record = tmp_path / 'record.json'
+  activation.publish_activation(raw, CFG, record)
+  with car.CarParams.from_bytes(raw) as reader, warnings.catch_warnings(record=True) as emitted:
+    warnings.simplefilter('always')
+    obj = cp if kind == 'builder' else reader
+    with pytest.raises(TypeError, match='cp_bytes'):
+      activation.load_activation(obj, path=record)
+    assert activation.load_activation(obj, raw, record) == CFG
+    assert activation.load_activation(obj, raw, record) == CFG
+    assert not emitted
+
+
+def test_C_report_agrees_with_real_exact_matcher_optional_and_logging_rules():
+  from opendbc.car.fw_versions import build_fw_dict, match_fw_to_car_exact
+  from opendbc.car.honda.fingerprints import FW_VERSIONS
+  from opendbc.car.fw_query_definitions import ECU_NAME
+  from openpilot.selfdrive.controls.lib.honda_eps_h020_fingerprint import firmware_match_report
+
+  cp, _ = real_params()
+  cp.carFw = [
+    {
+      'ecu': ECU_NAME[ecu],
+      'address': address,
+      'subAddress': subaddress or 0,
+      'brand': 'honda',
+      'fwVersion': b'39990-TEA,H020\0\0' if ECU_NAME[ecu] == 'eps' else versions[0],
+    }
+    for (ecu, address, subaddress), versions in FW_VERSIONS[CAR.HONDA_CIVIC_BOSCH].items()
+    if ECU_NAME[ecu] != 'vsa'
+  ]
+  report = firmware_match_report(cp)
+  vsa = next(row for row in report['ecus'] if row['ecu'] == 'vsa')
+  assert vsa['status'] == 'missing' and not vsa['required_when_missing']
+  assert CAR.HONDA_CIVIC_BOSCH in match_fw_to_car_exact(build_fw_dict(cp.carFw, 'honda'), match_brand='honda', log=False)
+  cp.carFw = [*[fw.to_dict() for fw in cp.carFw], {'ecu': 'vsa', 'address': 0x18DA28F1, 'brand': 'honda', 'fwVersion': b'BAD', 'logging': True}]
+  assert next(row for row in firmware_match_report(cp)['ecus'] if row['ecu'] == 'vsa')['status'] == 'missing'
+  cp.carFw[-1].logging = False
+  assert next(row for row in firmware_match_report(cp)['ecus'] if row['ecu'] == 'vsa')['status'] == 'mismatch'
+  assert CAR.HONDA_CIVIC_BOSCH not in match_fw_to_car_exact(build_fw_dict(cp.carFw, 'honda'), match_brand='honda', log=False)
+
+
+def test_A_stock_reflash_with_stale_enabled_config_and_running_controls(live_startup):
+  h = live_startup
+  controls, step = h.controls(h.card())
+  for _ in range(250):
+    before, _ = step()
+  assert before.latActive
+  stock = h.card(CFG, b'39990-TEA-H020\0\0')
+  assert list(stock.CP.lateralParams.torqueBP) == [0, 4096]
+  assert any('ignoring' in message for message in h.errors)
+  h.now[0] += 1.01
+  assert not step()[0].latActive
+  fresh, _ = h.controls(stock)
+  assert not isinstance(fresh.LaC, LatControlHondaEps)
+
+
+def test_A_conflicting_h020_eps_is_not_an_ordinary_fallback(live_startup):
+  def conflicting(cp):
+    cp.carFw = [*[fw.to_dict() for fw in cp.carFw], {'ecu': 'eps', 'address': 0x18DA30F2, 'fwVersion': b'39990-TEA-H020\0\0', 'brand': 'honda'}]
+
+  with pytest.raises(activation.H020ActivationError, match='conflicting EPS'):
+    live_startup.card(mutate=conflicting)
+
+
+@pytest.mark.parametrize('failure', ['missing-record', 'corrupt-record', 'missing-carparams'])
+def test_B_missing_or_corrupt_runtime_state_latches(live_startup, failure):
+  h = live_startup
+  controls, step = h.controls(h.card())
+  assert step()[0].latActive
+  if failure == 'missing-record':
+    h.record.unlink()
+  elif failure == 'corrupt-record':
+    h.record.write_text('bad-json')
+  else:
+    h.store.pop('CarParams')
+  h.now[0] += 1.01
+  command, state = step()
+  assert not command.latActive and command.actuators.torque == 0.0 and not state.active
+  assert h.errors
+
+
+def test_B_identical_card_restart_preserves_matching_controller(live_startup):
+  h = live_startup
+  controls, step = h.controls(h.card())
+  before = h.store['CarParams']
+  assert step()[0].latActive
+  h.card()
+  assert h.store['CarParams'] == before
+  h.now[0] += 1.01
+  assert step()[0].latActive and not h.errors

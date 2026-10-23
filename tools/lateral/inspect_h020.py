@@ -1,32 +1,50 @@
 #!/usr/bin/env python3
 """Read-only H020 startup report. Exit 2 on an activation mismatch/blocker."""
+
 import json
-from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import load_activation, validate_final_params, H020ActivationError
+from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import load_activation, validate_final_params, H020ActivationError, has_h020_response
 from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import use_honda_eps_controller
 from openpilot.selfdrive.controls.lib.honda_eps_calibrations import CALIBRATION_PROVENANCE
+from openpilot.selfdrive.controls.lib.honda_eps_h020_fingerprint import firmware_match_report
 
 
 def build_report(cp, raw, params, requested, activation_path=None):
   blockers = []
   snapshot = {"enabled": False}
+  ignored = bool(requested.get("enabled") and not has_h020_response(cp))
   try:
+    # Diagnose the requested gate even if card refused before publishing an activation record.
+    if requested.get("enabled") and not ignored:
+      validate_final_params(cp, requested, params)
     snapshot = load_activation(cp, raw, activation_path)
-    validate_final_params(cp, snapshot, params)
+    snapshot = validate_final_params(cp, snapshot, params)
   except H020ActivationError as e:
     blockers.append(str(e))
-  if requested.get("enabled") and not snapshot.get("enabled"):
+  if requested.get("enabled") and not snapshot.get("enabled") and not ignored and not blockers:
     blockers.append("Enabled config has no matching activated CarParams; restart card/controlsd together offroad")
   selected = not blockers and use_honda_eps_controller(cp, snapshot)
-  return {"fingerprint": str(cp.carFingerprint), "fingerprintSource": str(cp.fingerprintSource),
-          "fuzzyFingerprint": cp.fuzzyFingerprint, "dashcamOnly": cp.dashcamOnly,
-          "lateralTuning": cp.lateralTuning.which(), "torqueBP": list(cp.lateralParams.torqueBP),
-          "torqueV": list(cp.lateralParams.torqueV), "requested_config": requested, "startup_config": snapshot,
-          "restart_required": snapshot != requested, "controller_selected": bool(selected), "blockers": blockers,
-          "firmware": [{"ecu": str(f.ecu), "address": hex(f.address),
-                        "version": bytes(f.fwVersion).decode("ascii", errors="replace")} for f in cp.carFw],
-          "provenance": CALIBRATION_PROVENANCE,
-          "limits": ["PTM build is an owner declaration, not an ECU image/hash readback",
-                     "No H020 route validation; TGG donor baseline; firmware shaping gates unresolved"]}
+  return {
+    "fingerprint": str(cp.carFingerprint),
+    "fingerprintSource": str(cp.fingerprintSource),
+    "fuzzyFingerprint": cp.fuzzyFingerprint,
+    "dashcamOnly": cp.dashcamOnly,
+    "lateralTuning": cp.lateralTuning.which(),
+    "torqueBP": list(cp.lateralParams.torqueBP),
+    "torqueV": list(cp.lateralParams.torqueV),
+    "requested_config": requested,
+    "startup_config": snapshot,
+    "restart_required": not ignored and snapshot != requested,
+    "ignored_config_reason": "Exact H020 PTM EPS absent; original res path" if ignored else None,
+    "firmware_match": firmware_match_report(cp) if has_h020_response(cp) else None,
+    "controller_selected": bool(selected),
+    "blockers": blockers,
+    "firmware": [{"ecu": str(f.ecu), "address": hex(f.address), "version": bytes(f.fwVersion).decode("ascii", errors="replace")} for f in cp.carFw],
+    "provenance": CALIBRATION_PROVENANCE,
+    "limits": [
+      "PTM build is an owner declaration, not an ECU image/hash readback",
+      "No H020 route validation; TGG donor baseline; firmware shaping gates unresolved",
+    ],
+  }
 
 
 def main():
@@ -34,6 +52,7 @@ def main():
   import cereal.messaging as messaging
   from openpilot.common.params import Params
   from opendbc.sunnypilot.car.honda.h020_ptm import read_config
+
   params = Params()
   raw = params.get("CarParams")
   if not raw:

@@ -175,7 +175,7 @@ class Car:
       self.params.put("CarParamsPrevRoute", prev_cp)
 
     # Validate AFTER setup_interfaces and every later initialization step, before exposing CarParams.
-    validate_final_params(self.CP, h020_config, self.params)
+    h020_config = validate_final_params(self.CP, h020_config, self.params)
     # Write CarParams for controls and radard. Bind the snapshot before waking waiting consumers.
     cp_bytes = self.CP.to_bytes()
     if h020_config.get("enabled"):
