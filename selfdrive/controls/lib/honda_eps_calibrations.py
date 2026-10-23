@@ -2,6 +2,8 @@
 
 Do not label the Civic sibling's load, rack or timing as measured on the H020.
 """
+from dataclasses import replace
+from opendbc.sunnypilot.car.honda.h020_builds import PTM_BUILDS
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import ColumnLoadModel, EpsFirmwareCalibration, computed_r6
 from openpilot.selfdrive.controls.lib.honda_eps_h020_geometry import PROFILE
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TGG_A120_RACK
@@ -37,6 +39,35 @@ CALIBRATION_PROVENANCE = {
   "command_map": "original H020 PTM row retained; R5/key slope 35.435 on key 226-311 versus 18.04 linear reference; residual PID gain not validated",
 }
 
-REQUIRED_PTM_BUILDS = {'20261011-trk4250': {'rwd_sha256': '9fcd18697938a741771aada9f6a1274b7eada6ae3dc3fb1d7d3771c61f97e537', 'image_sha256': '53427cbcd80e315c237d34f4e41bb7ef62ddedd6166d670e6352acb1d45587a1', 'tracker': 4250, 'file': '39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk4250-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd'}, '20261011-trk3200': {'rwd_sha256': '56191940003ee614fe1bd18e0a1a67b946c40db5bf69a08109806eca408ade55', 'image_sha256': '5b3ba3061d9259abfa622beca1c460aad03b0e8af9422c3199b72a58749bc080', 'tracker': 3200, 'file': '39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk3200-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd'}}
+# Rev-b maps are extracted from the verified generated image, not borrowed blindly from the TGG axes.
+H020_REVB = replace(
+  H020, name="civic_tea_h02b_tgg_claritylimits",
+  r5_key_bp=(0, 226, 311, 495, 656, 887, 1108, 1552, 1774),
+  r5_v=(0, 3818, 5258, 8378, 11099, 15003, 18747, 26253, 30002),
+  kp_key_bp=(0, 237, 473, 709, 946, 1182, 1419, 1655, 1892),
+  kp_v=(117, 148, 184, 220, 245, 257, 263, 265, 265),
+  envelope_bp=(0, 50, 100, 150, 200, 260, 300, 350, 400),
+  envelope_v=(1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330, 1330),
+)
 
-EPS_FIRMWARE_CALIBRATIONS = {"39990-TEA-H020": (("HONDA_CIVIC_BOSCH",), H020)}
+REQUIRED_PTM_BUILDS = PTM_BUILDS
+
+
+def calibration_for_build(build_id):
+  profile = PTM_BUILDS[build_id]["profile"]
+  return {"legacy": H020, "revb-tgg-claritylimits": H020_REVB}[profile]
+
+
+def provenance_for_build(build_id):
+  profile = calibration_for_build(build_id)
+  return {**CALIBRATION_PROVENANCE, "profile": profile.name, "build": PTM_BUILDS[build_id],
+          "command_map": (CALIBRATION_PROVENANCE["command_map"] if profile is H020 else
+                          "rev-b: corrected TGG response resampled on native H020 knots; Clarity envelope and limits; offline ROM execution checked"),
+          "firmware_tables": (CALIBRATION_PROVENANCE["firmware_tables"] if profile is H020 else
+                              "H02B generated image: command X/Y 0x13794/0x13812, P X/Y 0x13AE2/0x13B60; Clarity envelope at 0x135E4/0x13662")}
+
+
+EPS_FIRMWARE_CALIBRATIONS = {
+  "39990-TEA-H020": (("HONDA_CIVIC_BOSCH",), H020),
+  "39990-TEA-H02B": (("HONDA_CIVIC_BOSCH",), H020_REVB),
+}

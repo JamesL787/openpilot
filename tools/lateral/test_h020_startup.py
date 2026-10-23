@@ -777,3 +777,123 @@ def test_B_identical_card_restart_preserves_matching_controller(live_startup):
   assert h.store['CarParams'] == before
   h.now[0] += 1.01
   assert step()[0].latActive and not h.errors
+
+
+REVB_CFG = {**CFG, 'ptm_build': '20261022b-tgg-claritylimits-trk4250'}
+REVB_FW = b'39990-TEA,H02B\0\0'
+
+
+@pytest.mark.parametrize('tracker', [3200, 4250])
+def test_revb_real_startup_selects_matching_profile_and_can(live_startup, tracker):
+  from openpilot.selfdrive.controls.lib.honda_eps_calibrations import H020_REVB
+  from openpilot.tools.lateral.inspect_h020 import build_report
+
+  h = live_startup
+  config = {**REVB_CFG, 'ptm_build': f'20261022b-tgg-claritylimits-trk{tracker}'}
+  card = h.card(config, REVB_FW)
+  assert card.CI.CC.params.STEER_MAX == 3840 and not card.CP.dashcamOnly
+  controls, step = h.controls(card)
+  assert controls.LaC.calibration is H020_REVB
+  assert controls.LaC.core.ff.cal is H020_REVB
+  for _ in range(250):
+    command, state = step()
+  assert command.latActive and state.active and abs(command.actuators.torque) > 0.1
+  cc = card.CI.CC
+  cc.frame = 1
+  cc.last_torque = command.actuators.torque
+  _, messages = cc.update(command.as_reader(), structs.CarControlSP(), NS(out=car.CarState.new_message(), v_cruise_factor=1.0), 0)
+  e4 = next(data for addr, data, bus in messages if addr == 0xE4)
+  assert int.from_bytes(e4[:2], 'big', signed=True) == int(-command.actuators.torque * 3840)
+  report = build_report(card.CP, h.store['CarParams'], h.Params(), config, h.record)
+  assert report['controller_selected'] and report['provenance']['profile'] == H020_REVB.name
+  assert report['provenance']['build']['tracker'] == tracker
+
+
+@pytest.mark.parametrize('config,version', [(CFG, REVB_FW), (REVB_CFG, b'39990-TEA,H020\0\0')])
+def test_revb_wrong_firmware_family_cannot_activate(live_startup, config, version):
+  with pytest.raises(activation.H020ActivationError, match='build does not match'):
+    live_startup.card(config, version)
+  assert 'CarParams' not in live_startup.store
+
+
+@pytest.mark.parametrize('config', [None, {'enabled': False}, {**REVB_CFG, 'ptm_build': 'unknown'}])
+def test_revb_unconfigured_image_is_passive(live_startup, config):
+  h = live_startup
+  card = h.card(config, REVB_FW)
+  assert card.CP.dashcamOnly  # unique new image must never run the legacy H020 map/controller
+  controls, _ = h.controls(card)
+  assert not isinstance(controls.LaC, LatControlHondaEps)
+
+
+@pytest.mark.parametrize('config,version,wrong_config', [(REVB_CFG, REVB_FW, CFG), (CFG, b'39990-TEA,H020\0\0', REVB_CFG)])
+def test_revb_matching_cp_bytes_do_not_excuse_wrong_profile_record(tmp_path, config, version, wrong_config):
+  cp, _ = real_params(config, version)
+  raw = cp.to_bytes()
+  record = tmp_path / 'activation.json'
+  activation.publish_activation(raw, wrong_config, record)
+  with pytest.raises(activation.H020ActivationError, match='build does not match'):
+    activation.load_activation(cp, raw, record)
+
+
+@pytest.mark.parametrize('new_config,new_version', [
+  ({**REVB_CFG, 'ptm_build': '20261022b-tgg-claritylimits-trk3200'}, REVB_FW),
+  (CFG, b'39990-TEA,H020\0\0'),
+  ({'enabled': False}, REVB_FW),
+])
+def test_revb_card_restart_latches_zero_and_requires_controlsd_restart(live_startup, new_config, new_version):
+  h = live_startup
+  controls, step = h.controls(h.card(REVB_CFG, REVB_FW))
+  for _ in range(250):
+    command, _ = step()
+  assert command.latActive and abs(command.actuators.torque) > 0.1
+  card = h.card(new_config, new_version)
+  h.now[0] += 1.01
+  for _ in range(20):
+    command, state = step()
+    assert not command.latActive and command.actuators.torque == 0 and not state.active
+    cc = card.CI.CC
+    cc.frame = 1
+    _, messages = cc.update(command.as_reader(), structs.CarControlSP(), NS(out=car.CarState.new_message(), v_cruise_factor=1.0), 0)
+    e4 = next(data for addr, data, bus in messages if addr == 0xE4)
+    assert int.from_bytes(e4[:2], 'big', signed=True) == 0 and not e4[2] & 0x80
+  assert any('restart controlsd' in message for message in h.errors)
+
+
+def test_revb_conflicting_new_and_old_eps_responses_are_refused(live_startup):
+  def conflict(cp):
+    cp.carFw = [*[fw.to_dict() for fw in cp.carFw], {'ecu': 'eps', 'address': 0x18DA30F2, 'fwVersion': b'39990-TEA,H020\0\0', 'brand': 'honda'}]
+
+  with pytest.raises(activation.H020ActivationError, match='conflicting EPS'):
+    live_startup.card(REVB_CFG, REVB_FW, mutate=conflict)
+
+
+def test_revb_modified_id_only_and_full_exact_match_still_required(live_startup):
+  from opendbc.sunnypilot.car.honda.fingerprints_ext import FW_VERSIONS_EXT
+
+  versions = FW_VERSIONS_EXT[CAR.HONDA_CIVIC_BOSCH][(car.CarParams.Ecu.eps, 0x18DA30F1, None)]
+  assert REVB_FW in versions and b'39990-TEA-H02B\0\0' not in versions
+  with pytest.raises(activation.H020ActivationError, match='fresh, exact.*fwdRadar.*missing'):
+    live_startup.card(REVB_CFG, REVB_FW, mutate=lambda cp: setattr(cp, 'fuzzyFingerprint', True))
+
+
+@pytest.mark.parametrize('missing_radar', [False, True])
+def test_revb_uses_real_exact_firmware_matcher_without_relaxing_ecus(missing_radar):
+  from opendbc.car.fw_versions import build_fw_dict, match_fw_to_car_exact
+  from opendbc.car.honda.fingerprints import FW_VERSIONS
+  from opendbc.car.fw_query_definitions import ECU_NAME
+  from openpilot.selfdrive.controls.lib.honda_eps_h020_fingerprint import firmware_match_report
+
+  cp, _ = real_params(REVB_CFG, REVB_FW)
+  cp.carFw = [
+    {'ecu': ECU_NAME[ecu], 'address': address, 'subAddress': subaddress or 0, 'brand': 'honda',
+     'fwVersion': REVB_FW if ECU_NAME[ecu] == 'eps' else versions[0]}
+    for (ecu, address, subaddress), versions in FW_VERSIONS[CAR.HONDA_CIVIC_BOSCH].items()
+    if not (missing_radar and ECU_NAME[ecu] == 'fwdRadar')
+  ]
+  matches = match_fw_to_car_exact(build_fw_dict(cp.carFw, 'honda'), match_brand='honda', log=False)
+  assert (CAR.HONDA_CIVIC_BOSCH in matches) is (not missing_radar)
+  report = firmware_match_report(cp)
+  assert next(row for row in report['ecus'] if row['ecu'] == 'eps')['status'] == 'matched'
+  if missing_radar:
+    radar = next(row for row in report['ecus'] if row['ecu'] == 'fwdRadar')
+    assert radar['status'] == 'missing' and radar['required_when_missing']

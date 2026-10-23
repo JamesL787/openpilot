@@ -4,7 +4,7 @@
 import json
 from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import load_activation, validate_final_params, H020ActivationError, has_h020_response
 from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import use_honda_eps_controller
-from openpilot.selfdrive.controls.lib.honda_eps_calibrations import CALIBRATION_PROVENANCE
+from openpilot.selfdrive.controls.lib.honda_eps_calibrations import CALIBRATION_PROVENANCE, REQUIRED_PTM_BUILDS, provenance_for_build
 from openpilot.selfdrive.controls.lib.honda_eps_h020_fingerprint import firmware_match_report
 
 
@@ -39,9 +39,9 @@ def build_report(cp, raw, params, requested, activation_path=None):
     "controller_selected": bool(selected),
     "blockers": blockers,
     "firmware": [{"ecu": str(f.ecu), "address": hex(f.address), "version": bytes(f.fwVersion).decode("ascii", errors="replace")} for f in cp.carFw],
-    "provenance": CALIBRATION_PROVENANCE,
+    "provenance": provenance_for_build(snapshot["ptm_build"]) if snapshot.get("ptm_build") in REQUIRED_PTM_BUILDS else CALIBRATION_PROVENANCE,
     "limits": [
-      "PTM build is an owner declaration, not an ECU image/hash readback",
+      "Queried H020/H02B identifies the declared image family; tracker/build selection is an owner declaration, not a full ECU image/hash readback",
       "No H020 route validation; TGG donor baseline; firmware shaping gates unresolved",
     ],
   }

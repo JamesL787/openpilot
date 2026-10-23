@@ -1,0 +1,36 @@
+{
+  "inputs": {
+    "stock.bin": {
+      "source": "/Users/jameslichtenstiger/chatgpt/rwd-xray-2026chatgpt/H020_PTM_20261011/analysis/h020_stock.bin",
+      "sha256": "f169e2cd8af9d2bc055eb7f44686530c54cb466fbebc03b62a671c423dedc547"
+    },
+    "tgg-revb.bin": {
+      "source": "/Users/jameslichtenstiger/chatgpt/rwd-xray-2026chatgpt/PTM_FIX_FAMILY_20261016/verify_TGG_20261019/fixed.full.bin",
+      "sha256": "d8052b44772aacd8cd895d59ccaf89749fe67bfc05a8a8cd55212a3a0e1a13fa"
+    },
+    "parent-4250.bin": {
+      "source": "/Users/jameslichtenstiger/chatgpt/rwd-xray-2026chatgpt/H020_PTM_20261011/PTM/39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk4250-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.full0x80000.bin",
+      "sha256": "53427cbcd80e315c237d34f4e41bb7ef62ddedd6166d670e6352acb1d45587a1"
+    },
+    "parent-4250.rwd": {
+      "source": "/Users/jameslichtenstiger/chatgpt/rwd-xray-2026chatgpt/H020_PTM_20261011/PTM/39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk4250-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd",
+      "sha256": "9fcd18697938a741771aada9f6a1274b7eada6ae3dc3fb1d7d3771c61f97e537"
+    },
+    "parent-3200.bin": {
+      "source": "/Users/jameslichtenstiger/chatgpt/rwd-xray-2026chatgpt/H020_PTM_TRK3200_20261011/PTM/39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk3200-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.full0x80000.bin",
+      "sha256": "5b3ba3061d9259abfa622beca1c460aad03b0e8af9422c3199b72a58749bc080"
+    },
+    "parent-3200.rwd": {
+      "source": "/Users/jameslichtenstiger/chatgpt/rwd-xray-2026chatgpt/H020_PTM_TRK3200_20261011/PTM/39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk3200-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd",
+      "sha256": "56191940003ee614fe1bd18e0a1a67b946c40db5bf69a08109806eca408ade55"
+    },
+    "clarity.bin": {
+      "source": "/Users/jameslichtenstiger/chatgpt/rwd-xray-2026chatgpt/CLARITY_PMINUS5_A280_STUTTER_FIX_20260928/A280_FLAT/Clarity_Pminus5_P117to265_D737_KFF45_NoR6L2_Tracker3200_Norm1650_A280Row0Flat_NoSHLL2_CCP728_Telem6A3_TXFIX_OLD3X_COMPAT.bin",
+      "sha256": "906dcd14422450803487475a621fddd9d359ac2e0ea58498772d3c0dbb82d572"
+    }
+  },
+  "emulator_source": "/Users/jameslichtenstiger/chatgpt/rwd-xray-2026chatgpt/PTM_FIX_FAMILY_20261016/proof/sh2a_emu.py",
+  "emulator_source_sha256": "f407a4d79dac85245e87f7827afc9fb7aa668819daa3528f84c4cb96080881c3",
+  "codec_permutation_sha256": "20e0c8dbb846467ee1b3186a2a005931615d175ceec17b99ba8ba36cebf2fb99",
+  "source_controller_pin": "92428ab490b3085ea523f79cc6a32d392a057b56"
+}

@@ -9,10 +9,10 @@ from cereal import log
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import HondaEpsFirmwareFeedforward, HondaEpsLateralCore
-from openpilot.selfdrive.controls.lib.honda_eps_calibrations import H020
+from openpilot.selfdrive.controls.lib.honda_eps_calibrations import calibration_for_build
 from openpilot.selfdrive.controls.lib.honda_eps_h020_geometry import H020_VGR_INVERSE
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
-from opendbc.sunnypilot.car.honda.h020_ptm import is_h020_ptm
+from opendbc.sunnypilot.car.honda.h020_ptm import build_matches_firmware
 from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import expected_tune
 from openpilot.selfdrive.controls.lib.honda_eps_h020_override import get_eps_modified_steering_pressed
 
@@ -21,7 +21,7 @@ RIDE_THROUGH_S = 0.1
 
 def use_honda_eps_controller(CP, config):
   cfg = config
-  if not cfg.get("enabled") or str(CP.carFingerprint) != "HONDA_CIVIC_BOSCH" or not is_h020_ptm(CP.carFw):
+  if not cfg.get("enabled") or str(CP.carFingerprint) != "HONDA_CIVIC_BOSCH" or not build_matches_firmware(CP.carFw, cfg):
     return False
   return expected_tune(CP)
 
@@ -33,15 +33,15 @@ class LatControlHondaEps(LatControl):
     if not use_honda_eps_controller(CP, config):
       raise ValueError("H020 controller needs an explicit config, exact PTM firmware and a linear 3840 map")
     self.dt = DT_CTRL
-    self.calibration = H020
+    self.calibration = calibration_for_build(config["ptm_build"])
     pid = CP.lateralTuning.pid
     self.core = HondaEpsLateralCore(list(pid.kpBP), list(pid.kpV), list(pid.kiBP), list(pid.kiV), DT_CTRL,
-                                  HondaEpsFirmwareFeedforward(DT_CTRL, H020))
+                                  HondaEpsFirmwareFeedforward(DT_CTRL, self.calibration))
     # res does not have the source branch's override fade; do not assume it does.
     self.core.override_fade_up_s = 0.0
     # Match the source wrapper default, rather than the numerical core's different defaults.
     self.core.output_lpf_tau = (0.1, 0.1, 0.1)
-    self.rack = HondaEpsRackMap(CP.wheelbase, H020_VGR_INVERSE, H020.rack)
+    self.rack = HondaEpsRackMap(CP.wheelbase, H020_VGR_INVERSE, self.calibration.rack)
     self.previous_desired = None
     self.inactive_frames = math.inf
     self.ride_through_frames = int(round(RIDE_THROUGH_S / DT_CTRL))

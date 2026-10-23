@@ -24,6 +24,7 @@ FW_VERSIONS_EXT = {
   CAR.HONDA_CIVIC_BOSCH: {
     (Ecu.eps, 0x18da30f1, None): [
       b'39990-TEA,H020\x00\x00',  # H020 PTM; exact match only
+      b'39990-TEA,H02B\x00\x00',  # H020 rev-b, matching build/profile required
       b'39990-TGG,A020\x00\x00',
       b'39990-TGG,A120\x00\x00',
     ],

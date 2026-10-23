@@ -12,7 +12,7 @@ import tempfile
 import time
 
 from opendbc.car.carlog import carlog
-from opendbc.sunnypilot.car.honda.h020_ptm import SUPPORTED_BUILDS, is_h020_ptm
+from opendbc.sunnypilot.car.honda.h020_ptm import PTM_VERSIONS, SUPPORTED_BUILDS, build_matches_firmware, is_h020_ptm
 
 ACTIVATION_PATH = Path("/data/honda_eps_h020_activation.json")
 
@@ -26,7 +26,7 @@ def is_h020(cp):
 
 
 def has_h020_response(cp):
-  return any(f.ecu == "eps" and bytes(f.fwVersion).split(b"\0", 1)[0] == b"39990-TEA,H020" for f in cp.carFw)
+  return any(f.ecu == "eps" and bytes(f.fwVersion).split(b"\0", 1)[0] in PTM_VERSIONS for f in cp.carFw)
 
 
 def requires_activation(cp):
@@ -62,6 +62,8 @@ def validate_final_params(cp, config, params):
       raise H020ActivationError("H020 activation blocked: conflicting EPS responses include H020 PTM; cannot use an ordinary fallback")
     carlog.error("H020 config enabled but exact H020 PTM EPS is absent; ignoring H020 config and using the original res path")
     return {"enabled": False}
+  if not build_matches_firmware(cp.carFw, config):
+    raise H020ActivationError("H020 activation blocked: declared PTM build does not match the queried EPS firmware family (H020 versus H02B)")
   if params.get_bool("EnforceTorqueControl") or params.get_bool("NeuralNetworkLateralControl"):
     raise H020ActivationError("H020 activation blocked: turn off EnforceTorqueControl and NeuralNetworkLateralControl; restart offroad")
   if str(cp.carFingerprint) != "HONDA_CIVIC_BOSCH" or cp.dashcamOnly or cp.fuzzyFingerprint or str(cp.fingerprintSource) != "fw":
@@ -106,6 +108,8 @@ def load_activation(cp, cp_bytes, path=None):
       config.get("enabled") is not True or config.get("ptm_build") not in SUPPORTED_BUILDS or config.get("calibration_stage") != "provisional"
     ):
       raise ValueError("unrecognized enabled config snapshot")
+    if config.get("enabled") and not build_matches_firmware(cp.carFw, config):
+      raise H020ActivationError("H020 activation record build does not match the queried EPS firmware family")
     if config.get("enabled") and not expected_tune(cp):
       raise H020ActivationError("H020 activation record matches CarParams but its final tune is incompatible")
     if requires_activation(cp) and not config.get("enabled"):

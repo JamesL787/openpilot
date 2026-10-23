@@ -4,10 +4,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 
+from opendbc.sunnypilot.car.honda.h020_builds import PTM_BUILDS
+
 CONFIG_PATH = Path("/data/honda_eps_h020.json")
 _STARTUP_CONFIG = ContextVar("h020_startup_config", default=None)
 
-SUPPORTED_BUILDS = {"20261011-trk4250", "20261011-trk3200"}
+SUPPORTED_BUILDS = set(PTM_BUILDS)
+PTM_VERSIONS = {build["fw_version"].encode() for build in PTM_BUILDS.values()}
 
 
 def read_config(path=None):
@@ -36,15 +39,27 @@ def requested_config():
   return read_config() if snapshot is None else snapshot
 
 
+def h020_version(car_fw):
+  versions = {bytes(f.fwVersion).split(b"\0", 1)[0] for f in car_fw if f.ecu == "eps"}
+  return next(iter(versions)) if len(versions) == 1 and versions <= PTM_VERSIONS else None
+
+
 def is_h020_ptm(car_fw):
-  versions = [bytes(f.fwVersion).split(b"\0", 1)[0] for f in car_fw if f.ecu == "eps"]
-  return bool(versions) and all(v == b"39990-TEA,H020" for v in versions)
+  return h020_version(car_fw) is not None
+
+
+def build_matches_firmware(car_fw, config):
+  build = PTM_BUILDS.get(config.get("ptm_build"))
+  return build is not None and h020_version(car_fw) == build["fw_version"].encode()
 
 
 def configure_h020(cp, candidate, car_fw, config=None):
   """Called after res's legacy modified-EPS tune. Other vehicles/stock firmware keep the original behavior."""
   cfg = requested_config() if config is None else config
-  if not cfg.get("enabled") or str(candidate) != "HONDA_CIVIC_BOSCH" or not is_h020_ptm(car_fw):
+  if not cfg.get("enabled") or str(candidate) != "HONDA_CIVIC_BOSCH" or not build_matches_firmware(car_fw, cfg):
+    # New firmware requires its matching controller profile. Legacy/stock/unrelated behavior is untouched.
+    if h020_version(car_fw) == b"39990-TEA,H02B":
+      cp.dashcamOnly = True
     return False
   cp.lateralTuning.init("pid")
   cp.lateralParams.torqueBP, cp.lateralParams.torqueV = [[0, 3840], [0, 3840]]

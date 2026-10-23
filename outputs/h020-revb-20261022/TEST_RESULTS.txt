@@ -1,0 +1,17 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [ 60%]
+................................................                         [100%]
+============================= slowest 10 durations =============================
+9.30s call     tools/lateral/test_h020_revb.py::test_revb_actual_rom_map_pd_wrapper_and_target_response
+0.11s call     tools/lateral/test_h020_revb.py::test_revb_exact_bytes_limits_calibration_and_provenance[3200]
+0.09s setup    tools/lateral/test_h020_revb.py::test_revb_actual_loader_accepts_range_and_decrypts_all_bytes[4250]
+0.09s call     tools/lateral/test_h020_revb.py::test_revb_exact_bytes_limits_calibration_and_provenance[4250]
+0.09s setup    tools/lateral/test_h020_revb.py::test_revb_exact_bytes_limits_calibration_and_provenance[4250]
+0.09s setup    tools/lateral/test_h020_revb.py::test_revb_trackers_differ_only_in_tracker_and_checksums
+0.08s setup    tools/lateral/test_h020_revb.py::test_revb_actual_loader_accepts_range_and_decrypts_all_bytes[3200]
+0.08s setup    tools/lateral/test_h020_revb.py::test_revb_exact_bytes_limits_calibration_and_provenance[3200]
+0.07s call     tools/lateral/test_h020_port.py::test_core_stays_bounded_and_freezes_on_driver_press
+0.05s call     tools/lateral/test_h020_startup.py::test_B_card_alone_restart_latches_zero_through_real_can[restart_config1]
+120 passed in 10.94s

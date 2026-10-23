@@ -1,0 +1,269 @@
+diff --git a/opendbc_repo/opendbc/sunnypilot/car/honda/fingerprints_ext.py b/opendbc_repo/opendbc/sunnypilot/car/honda/fingerprints_ext.py
+index 0bc2c8f25..678725803 100644
+--- a/opendbc_repo/opendbc/sunnypilot/car/honda/fingerprints_ext.py
++++ b/opendbc_repo/opendbc/sunnypilot/car/honda/fingerprints_ext.py
+@@ -24,6 +24,7 @@ FW_VERSIONS_EXT = {
+   CAR.HONDA_CIVIC_BOSCH: {
+     (Ecu.eps, 0x18da30f1, None): [
+       b'39990-TEA,H020\x00\x00',  # H020 PTM; exact match only
++      b'39990-TEA,H02B\x00\x00',  # H020 rev-b, matching build/profile required
+       b'39990-TGG,A020\x00\x00',
+       b'39990-TGG,A120\x00\x00',
+     ],
+diff --git a/opendbc_repo/opendbc/sunnypilot/car/honda/h020_builds.py b/opendbc_repo/opendbc/sunnypilot/car/honda/h020_builds.py
+new file mode 100644
+index 000000000..aa1483fc5
+--- /dev/null
++++ b/opendbc_repo/opendbc/sunnypilot/car/honda/h020_builds.py
+@@ -0,0 +1,40 @@
++"""Exact H020 image identities. Generated firmware hashes are not an ECU image readback.
++
++Legacy builds retain their original profile. Rev-b has a distinct queried EPS ID,
++so selecting an old profile on new firmware (or vice versa) cannot silently activate.
++"""
++
++PTM_BUILDS = {
++  "20261011-trk4250": {
++    "rwd_sha256": "9fcd18697938a741771aada9f6a1274b7eada6ae3dc3fb1d7d3771c61f97e537",
++    "image_sha256": "53427cbcd80e315c237d34f4e41bb7ef62ddedd6166d670e6352acb1d45587a1",
++    "tracker": 4250,
++    "file": "39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk4250-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd",
++    "fw_version": "39990-TEA,H020",
++    "profile": "legacy",
++  },
++  "20261011-trk3200": {
++    "rwd_sha256": "56191940003ee614fe1bd18e0a1a67b946c40db5bf69a08109806eca408ade55",
++    "image_sha256": "5b3ba3061d9259abfa622beca1c460aad03b0e8af9422c3199b72a58749bc080",
++    "tracker": 3200,
++    "file": "39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk3200-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd",
++    "fw_version": "39990-TEA,H020",
++    "profile": "legacy",
++  },
++  "20261022b-tgg-claritylimits-trk4250": {
++    "rwd_sha256": "e1ad753e11986b9392fc9a1baca8f46605d25bb538b00ed7bf2bec57f2264261",
++    "image_sha256": "a5e87ece9039c820993f0beb3f8f7f9597c09e94ec6518d827be3855cbcb755d",
++    "tracker": 4250,
++    "file": "39990-TEA,H02B-20261022b-TggResponse-ClarityLimits-Trk4250.rwd",
++    "fw_version": "39990-TEA,H02B",
++    "profile": "revb-tgg-claritylimits",
++  },
++  "20261022b-tgg-claritylimits-trk3200": {
++    "rwd_sha256": "0289f9178016effd707de92e5d4923254587d771bbca02e203b1ab9aadb2877b",
++    "image_sha256": "b330ef7150fbf819bc9764c7795cd63d571e14f964b6f8ed7bbec0c851b40ce3",
++    "tracker": 3200,
++    "file": "39990-TEA,H02B-20261022b-TggResponse-ClarityLimits-Trk3200.rwd",
++    "fw_version": "39990-TEA,H02B",
++    "profile": "revb-tgg-claritylimits",
++  },
++}
+diff --git a/opendbc_repo/opendbc/sunnypilot/car/honda/h020_ptm.py b/opendbc_repo/opendbc/sunnypilot/car/honda/h020_ptm.py
+index 6df9ab63b..8465b885f 100644
+--- a/opendbc_repo/opendbc/sunnypilot/car/honda/h020_ptm.py
++++ b/opendbc_repo/opendbc/sunnypilot/car/honda/h020_ptm.py
+@@ -4,10 +4,13 @@ from contextlib import contextmanager
+ from contextvars import ContextVar
+ from pathlib import Path
+
++from opendbc.sunnypilot.car.honda.h020_builds import PTM_BUILDS
++
+ CONFIG_PATH = Path("/data/honda_eps_h020.json")
+ _STARTUP_CONFIG = ContextVar("h020_startup_config", default=None)
+
+-SUPPORTED_BUILDS = {"20261011-trk4250", "20261011-trk3200"}
++SUPPORTED_BUILDS = set(PTM_BUILDS)
++PTM_VERSIONS = {build["fw_version"].encode() for build in PTM_BUILDS.values()}
+
+
+ def read_config(path=None):
+@@ -36,15 +39,27 @@ def requested_config():
+   return read_config() if snapshot is None else snapshot
+
+
++def h020_version(car_fw):
++  versions = {bytes(f.fwVersion).split(b"\0", 1)[0] for f in car_fw if f.ecu == "eps"}
++  return next(iter(versions)) if len(versions) == 1 and versions <= PTM_VERSIONS else None
++
++
+ def is_h020_ptm(car_fw):
+-  versions = [bytes(f.fwVersion).split(b"\0", 1)[0] for f in car_fw if f.ecu == "eps"]
+-  return bool(versions) and all(v == b"39990-TEA,H020" for v in versions)
++  return h020_version(car_fw) is not None
++
++
++def build_matches_firmware(car_fw, config):
++  build = PTM_BUILDS.get(config.get("ptm_build"))
++  return build is not None and h020_version(car_fw) == build["fw_version"].encode()
+
+
+ def configure_h020(cp, candidate, car_fw, config=None):
+   """Called after res's legacy modified-EPS tune. Other vehicles/stock firmware keep the original behavior."""
+   cfg = requested_config() if config is None else config
+-  if not cfg.get("enabled") or str(candidate) != "HONDA_CIVIC_BOSCH" or not is_h020_ptm(car_fw):
++  if not cfg.get("enabled") or str(candidate) != "HONDA_CIVIC_BOSCH" or not build_matches_firmware(car_fw, cfg):
++    # New firmware requires its matching controller profile. Legacy/stock/unrelated behavior is untouched.
++    if h020_version(car_fw) == b"39990-TEA,H02B":
++      cp.dashcamOnly = True
+     return False
+   cp.lateralTuning.init("pid")
+   cp.lateralParams.torqueBP, cp.lateralParams.torqueV = [[0, 3840], [0, 3840]]
+diff --git a/selfdrive/controls/lib/honda_eps_calibrations.py b/selfdrive/controls/lib/honda_eps_calibrations.py
+index dba620a80..628bf6110 100644
+--- a/selfdrive/controls/lib/honda_eps_calibrations.py
++++ b/selfdrive/controls/lib/honda_eps_calibrations.py
+@@ -2,6 +2,8 @@
+
+ Do not label the Civic sibling's load, rack or timing as measured on the H020.
+ """
++from dataclasses import replace
++from opendbc.sunnypilot.car.honda.h020_builds import PTM_BUILDS
+ from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import ColumnLoadModel, EpsFirmwareCalibration, computed_r6
+ from openpilot.selfdrive.controls.lib.honda_eps_h020_geometry import PROFILE
+ from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TGG_A120_RACK
+@@ -37,6 +39,35 @@ CALIBRATION_PROVENANCE = {
+   "command_map": "original H020 PTM row retained; R5/key slope 35.435 on key 226-311 versus 18.04 linear reference; residual PID gain not validated",
+ }
+
+-REQUIRED_PTM_BUILDS = {'20261011-trk4250': {'rwd_sha256': '9fcd18697938a741771aada9f6a1274b7eada6ae3dc3fb1d7d3771c61f97e537', 'image_sha256': '53427cbcd80e315c237d34f4e41bb7ef62ddedd6166d670e6352acb1d45587a1', 'tracker': 4250, 'file': '39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk4250-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd'}, '20261011-trk3200': {'rwd_sha256': '56191940003ee614fe1bd18e0a1a67b946c40db5bf69a08109806eca408ade55', 'image_sha256': '5b3ba3061d9259abfa622beca1c460aad03b0e8af9422c3199b72a58749bc080', 'tracker': 3200, 'file': '39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk3200-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd'}}
++# Rev-b maps are extracted from the verified generated image, not borrowed blindly from the TGG axes.
++H020_REVB = replace(
++  H020, name="civic_tea_h02b_tgg_claritylimits",
++  r5_key_bp=(0, 226, 311, 495, 656, 887, 1108, 1552, 1774),
++  r5_v=(0, 3818, 5258, 8378, 11099, 15003, 18747, 26253, 30002),
++  kp_key_bp=(0, 237, 473, 709, 946, 1182, 1419, 1655, 1892),
++  kp_v=(117, 148, 184, 220, 245, 257, 263, 265, 265),
++  envelope_bp=(0, 50, 100, 150, 200, 260, 300, 350, 400),
++  envelope_v=(1774, 1774, 1774, 1774, 1774, 1330, 1330, 1330, 1330),
++)
++
++REQUIRED_PTM_BUILDS = PTM_BUILDS
++
++
++def calibration_for_build(build_id):
++  profile = PTM_BUILDS[build_id]["profile"]
++  return {"legacy": H020, "revb-tgg-claritylimits": H020_REVB}[profile]
+
+-EPS_FIRMWARE_CALIBRATIONS = {"39990-TEA-H020": (("HONDA_CIVIC_BOSCH",), H020)}
++
++def provenance_for_build(build_id):
++  profile = calibration_for_build(build_id)
++  return {**CALIBRATION_PROVENANCE, "profile": profile.name, "build": PTM_BUILDS[build_id],
++          "command_map": (CALIBRATION_PROVENANCE["command_map"] if profile is H020 else
++                          "rev-b: corrected TGG response resampled on native H020 knots; Clarity envelope and limits; offline ROM execution checked"),
++          "firmware_tables": (CALIBRATION_PROVENANCE["firmware_tables"] if profile is H020 else
++                              "H02B generated image: command X/Y 0x13794/0x13812, P X/Y 0x13AE2/0x13B60; Clarity envelope at 0x135E4/0x13662")}
++
++
++EPS_FIRMWARE_CALIBRATIONS = {
++  "39990-TEA-H020": (("HONDA_CIVIC_BOSCH",), H020),
++  "39990-TEA-H02B": (("HONDA_CIVIC_BOSCH",), H020_REVB),
++}
+diff --git a/selfdrive/controls/lib/honda_eps_h020_activation.py b/selfdrive/controls/lib/honda_eps_h020_activation.py
+index c788271ce..b7daa5f31 100644
+--- a/selfdrive/controls/lib/honda_eps_h020_activation.py
++++ b/selfdrive/controls/lib/honda_eps_h020_activation.py
+@@ -12,7 +12,7 @@ import tempfile
+ import time
+
+ from opendbc.car.carlog import carlog
+-from opendbc.sunnypilot.car.honda.h020_ptm import SUPPORTED_BUILDS, is_h020_ptm
++from opendbc.sunnypilot.car.honda.h020_ptm import PTM_VERSIONS, SUPPORTED_BUILDS, build_matches_firmware, is_h020_ptm
+
+ ACTIVATION_PATH = Path("/data/honda_eps_h020_activation.json")
+
+@@ -26,7 +26,7 @@ def is_h020(cp):
+
+
+ def has_h020_response(cp):
+-  return any(f.ecu == "eps" and bytes(f.fwVersion).split(b"\0", 1)[0] == b"39990-TEA,H020" for f in cp.carFw)
++  return any(f.ecu == "eps" and bytes(f.fwVersion).split(b"\0", 1)[0] in PTM_VERSIONS for f in cp.carFw)
+
+
+ def requires_activation(cp):
+@@ -62,6 +62,8 @@ def validate_final_params(cp, config, params):
+       raise H020ActivationError("H020 activation blocked: conflicting EPS responses include H020 PTM; cannot use an ordinary fallback")
+     carlog.error("H020 config enabled but exact H020 PTM EPS is absent; ignoring H020 config and using the original res path")
+     return {"enabled": False}
++  if not build_matches_firmware(cp.carFw, config):
++    raise H020ActivationError("H020 activation blocked: declared PTM build does not match the queried EPS firmware family (H020 versus H02B)")
+   if params.get_bool("EnforceTorqueControl") or params.get_bool("NeuralNetworkLateralControl"):
+     raise H020ActivationError("H020 activation blocked: turn off EnforceTorqueControl and NeuralNetworkLateralControl; restart offroad")
+   if str(cp.carFingerprint) != "HONDA_CIVIC_BOSCH" or cp.dashcamOnly or cp.fuzzyFingerprint or str(cp.fingerprintSource) != "fw":
+@@ -106,6 +108,8 @@ def load_activation(cp, cp_bytes, path=None):
+       config.get("enabled") is not True or config.get("ptm_build") not in SUPPORTED_BUILDS or config.get("calibration_stage") != "provisional"
+     ):
+       raise ValueError("unrecognized enabled config snapshot")
++    if config.get("enabled") and not build_matches_firmware(cp.carFw, config):
++      raise H020ActivationError("H020 activation record build does not match the queried EPS firmware family")
+     if config.get("enabled") and not expected_tune(cp):
+       raise H020ActivationError("H020 activation record matches CarParams but its final tune is incompatible")
+     if requires_activation(cp) and not config.get("enabled"):
+diff --git a/selfdrive/controls/lib/latcontrol_honda_eps.py b/selfdrive/controls/lib/latcontrol_honda_eps.py
+index aa8b97113..d0665d35f 100644
+--- a/selfdrive/controls/lib/latcontrol_honda_eps.py
++++ b/selfdrive/controls/lib/latcontrol_honda_eps.py
+@@ -9,10 +9,10 @@ from cereal import log
+ from openpilot.common.realtime import DT_CTRL
+ from openpilot.selfdrive.controls.lib.latcontrol import LatControl
+ from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import HondaEpsFirmwareFeedforward, HondaEpsLateralCore
+-from openpilot.selfdrive.controls.lib.honda_eps_calibrations import H020
++from openpilot.selfdrive.controls.lib.honda_eps_calibrations import calibration_for_build
+ from openpilot.selfdrive.controls.lib.honda_eps_h020_geometry import H020_VGR_INVERSE
+ from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
+-from opendbc.sunnypilot.car.honda.h020_ptm import is_h020_ptm
++from opendbc.sunnypilot.car.honda.h020_ptm import build_matches_firmware
+ from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import expected_tune
+ from openpilot.selfdrive.controls.lib.honda_eps_h020_override import get_eps_modified_steering_pressed
+
+@@ -21,7 +21,7 @@ RIDE_THROUGH_S = 0.1
+
+ def use_honda_eps_controller(CP, config):
+   cfg = config
+-  if not cfg.get("enabled") or str(CP.carFingerprint) != "HONDA_CIVIC_BOSCH" or not is_h020_ptm(CP.carFw):
++  if not cfg.get("enabled") or str(CP.carFingerprint) != "HONDA_CIVIC_BOSCH" or not build_matches_firmware(CP.carFw, cfg):
+     return False
+   return expected_tune(CP)
+
+@@ -33,15 +33,15 @@ class LatControlHondaEps(LatControl):
+     if not use_honda_eps_controller(CP, config):
+       raise ValueError("H020 controller needs an explicit config, exact PTM firmware and a linear 3840 map")
+     self.dt = DT_CTRL
+-    self.calibration = H020
++    self.calibration = calibration_for_build(config["ptm_build"])
+     pid = CP.lateralTuning.pid
+     self.core = HondaEpsLateralCore(list(pid.kpBP), list(pid.kpV), list(pid.kiBP), list(pid.kiV), DT_CTRL,
+-                                  HondaEpsFirmwareFeedforward(DT_CTRL, H020))
++                                  HondaEpsFirmwareFeedforward(DT_CTRL, self.calibration))
+     # res does not have the source branch's override fade; do not assume it does.
+     self.core.override_fade_up_s = 0.0
+     # Match the source wrapper default, rather than the numerical core's different defaults.
+     self.core.output_lpf_tau = (0.1, 0.1, 0.1)
+-    self.rack = HondaEpsRackMap(CP.wheelbase, H020_VGR_INVERSE, H020.rack)
++    self.rack = HondaEpsRackMap(CP.wheelbase, H020_VGR_INVERSE, self.calibration.rack)
+     self.previous_desired = None
+     self.inactive_frames = math.inf
+     self.ride_through_frames = int(round(RIDE_THROUGH_S / DT_CTRL))
+diff --git a/tools/lateral/inspect_h020.py b/tools/lateral/inspect_h020.py
+index ebed8425f..ee9f6de96 100644
+--- a/tools/lateral/inspect_h020.py
++++ b/tools/lateral/inspect_h020.py
+@@ -4,7 +4,7 @@
+ import json
+ from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import load_activation, validate_final_params, H020ActivationError, has_h020_response
+ from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import use_honda_eps_controller
+-from openpilot.selfdrive.controls.lib.honda_eps_calibrations import CALIBRATION_PROVENANCE
++from openpilot.selfdrive.controls.lib.honda_eps_calibrations import CALIBRATION_PROVENANCE, REQUIRED_PTM_BUILDS, provenance_for_build
+ from openpilot.selfdrive.controls.lib.honda_eps_h020_fingerprint import firmware_match_report
+
+
+@@ -39,9 +39,9 @@ def build_report(cp, raw, params, requested, activation_path=None):
+     "controller_selected": bool(selected),
+     "blockers": blockers,
+     "firmware": [{"ecu": str(f.ecu), "address": hex(f.address), "version": bytes(f.fwVersion).decode("ascii", errors="replace")} for f in cp.carFw],
+-    "provenance": CALIBRATION_PROVENANCE,
++    "provenance": provenance_for_build(snapshot["ptm_build"]) if snapshot.get("ptm_build") in REQUIRED_PTM_BUILDS else CALIBRATION_PROVENANCE,
+     "limits": [
+-      "PTM build is an owner declaration, not an ECU image/hash readback",
++      "Queried H020/H02B identifies the declared image family; tracker/build selection is an owner declaration, not a full ECU image/hash readback",
+       "No H020 route validation; TGG donor baseline; firmware shaping gates unresolved",
+     ],
+   }
