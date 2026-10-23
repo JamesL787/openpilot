@@ -85,7 +85,7 @@ export const CamerasPage = {
         <MenuTile icon="bi-shield" title="Sentry" description="View motion events, configure saved motion settings, and manage notifications." :disabled="mode !== 'local'" @select="go('/cameras/events')" />
         <MenuTile icon="bi-eye" title="V-ASM" description="Preview the cabin camera, draw window regions, and adjust visual spot-monitoring choices." :disabled="mode !== 'local'" @select="go('/cameras/vasm')" />
       </div>
-      <section class="gx-card gx-panel gx-stack"><h2>Camera Snapshot</h2>
+      <section class="gx-card gx-panel gx-stack"><div class="gx-section__header"><i class="bi bi-camera" aria-hidden="true"></i><span class="gx-section__title">Camera Snapshot</span></div>
         <p>Turn off the vehicle, choose a camera, then take a snapshot.</p>
         <template v-if="mode === 'local'">
           <label>Camera

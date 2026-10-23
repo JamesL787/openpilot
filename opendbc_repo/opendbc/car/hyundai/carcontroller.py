@@ -11,6 +11,8 @@ from opendbc.car.hyundai.ev9_longitudinal import (
   BlindspotWarningOutput,
 )
 from opendbc.car.hyundai import ev9_long_sender
+from opendbc.car.hyundai.ev9_long_aol import qualified as ev9_long_aol_qualified
+from opendbc.car.hyundai.pe_long_aol import qualified as pe_long_aol_qualified
 from opendbc.car.common.filter_simple import FirstOrderFilter
 from opendbc.car.lateral import get_max_angle_vm, get_max_angle_delta_vm
 import numpy as np
@@ -99,6 +101,8 @@ def process_hud_alert(enabled, fingerprint, hud_control):
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
+    from opendbc.car.hyundai.gv60_startup import qualified as gv60_long_qualified
+    self.gv60_longitudinal = gv60_long_qualified(CP)
     self.CAN = CanBus(CP)
     self.params = CarControllerParams(CP)
     self.packer = CANPacker(dbc_names[Bus.pt])
@@ -160,9 +164,10 @@ class CarController(CarControllerBase):
     self._ray_disengage_frame = None
 
   def update(self, CC, CS, now_nanos):
-    if self.pe_longitudinal is not None and (self.pe_startup is None or not self.pe_startup.can_emit(self)):
+    pending_startup_required = self.pe_longitudinal is not None or self.ev9_longitudinal is not None
+    if pending_startup_required and (self.pe_startup is None or not self.pe_startup.can_emit(self)):
       return structs.CarControl.Actuators.new_message(), []
-    if self.pe_longitudinal is not None and not self.pe_startup.handed_off:
+    if pending_startup_required and not self.pe_startup.handed_off:
       CC = structs.CarControl.new_message().as_reader()
     _projection = self.learning_projection_observer
     if _projection is not None:
@@ -171,6 +176,9 @@ class CarController(CarControllerBase):
     if self.CP.carFingerprint == CAR.KIA_EV6_2025 and self.CP.dashcamOnly:
       return actuators.as_builder(), []
     hud_control = CC.hudControl
+    # Card finalizes the AOL safety marker after CarInterface constructs us.
+    if self.classic_dash_icons is None and self.CP.carFingerprint != CAR.KIA_RAY_EV and qualified_classic_stock_aol(self.CP, marked_only=True):
+      self.classic_dash_icons = CanFDDashIcons()
     if self.classic_dash_icons is not None:
       self.classic_lfa_icon = self.classic_dash_icons.update(self.frame, CC.enabled, CC.latActive)
     if self.CP.carFingerprint == CAR.KIA_RAY_EV:
@@ -416,7 +424,9 @@ class CarController(CarControllerBase):
       safety_speed = max(CS.out.vEgoRaw - 1.0, 1.0)
       bound = min(get_max_angle_vm(safety_speed, self.ev9_legacy_envelope, self.params),
                   get_max_angle_vm(safety_speed, self.angle_vm, self.params))
-      ev9_lateral_allowed = lateral_request_allowed(CC, CS.out, CS.angle_steering_fault)
+      ev9_lateral_allowed = lateral_request_allowed(CC, CS.out, CS.angle_steering_fault,
+                                                   independent=(ev9_long_aol_qualified(self.CP, marked_only=True) or
+                                                                pe_long_aol_qualified(self.CP, marked_only=True)))
       active = bool(ev9_lateral_allowed and CC.latActive and abs(measured) <= bound and abs(self.apply_angle_last) <= bound)
       self.ev9_angle_filter.update_alpha(float(np.interp(CS.out.vEgo, [5.0, 10.0, 20.0], [0.2, 0.1, 0.0])))
       desired = self.ev9_angle_filter.update(float(np.clip(CC.actuators.steeringAngleDeg,
@@ -551,6 +561,8 @@ class CarController(CarControllerBase):
           self.packer, self.CAN, self.frame, template=self.adrv_template,
           drive_gear=CS.out.gearShifter == structs.CarState.GearShifter.drive,
           speed=CS.out.vEgoRaw if self.CP.carFingerprint == CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN else None))
+        if self.gv60_longitudinal and self.frame % 4 == 0:
+          can_sends.append(hyundaicanfd.create_gv60_radar_heartbeat(self.frame // 4, CS.out.brakePressed, CS.out.gasPressed))
         if self.ioniq6_longitudinal is not None and self.frame % 4 == 0:
           can_sends.append(hyundaicanfd.create_ioniq6_radar_heartbeat(self.frame // 4, CS.out.brakePressed, CS.out.gasPressed))
         if self.ioniq6_bsm_enabled and self.frame % 5 == 0:

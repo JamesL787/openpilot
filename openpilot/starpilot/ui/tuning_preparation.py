@@ -79,15 +79,19 @@ def transition(params, vehicle, sources, desired, journal_raw, enabled, authoriz
       if journal['vehicle'] != vehicle:
         return False
       for key, current in sources.items():
-        if current not in (journal['prior'][key], journal['prepared'][key]):
+        if enabled and current not in (journal['prior'][key], journal['prepared'][key]):
           return False
       target = journal['prepared'] if enabled else journal['prior']
       for key, value in target.items():
         if not authorized():
           return False
         current, readable = read_saved(params, key, LIMIT)
-        if not readable or current not in (journal['prior'][key], journal['prepared'][key]):
+        if not readable or current != sources[key]:
           return False
+        if current not in (journal['prior'][key], journal['prepared'][key]):
+          if enabled:
+            return False
+          continue
         if current != value:
           replace_saved(params, key, value)
       if not authorized():

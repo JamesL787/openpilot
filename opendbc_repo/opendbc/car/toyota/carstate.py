@@ -3,6 +3,7 @@ import math
 
 from opendbc.can import CANDefine, CANParser
 from opendbc.car.toyota import pedal
+from opendbc.car.toyota.lexus_is import LexusIsCANParser
 from opendbc.car import Bus, DT_CTRL, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.common.filter_simple import FirstOrderFilter
@@ -153,12 +154,18 @@ class CarState(CarStateBase):
     if self.CP.flags & ToyotaFlags.UNSUPPORTED_DSU:
       # TODO: find the bit likely in DSU_CRUISE that describes an ACC fault. one may also exist in CLUTCH
       ret.cruiseState.available = cp.vl["DSU_CRUISE"]["MAIN_ON"] != 0
+      if self.CP.carFingerprint == CAR.LEXUS_IS:
+        stamp = cp.ts_nanos["DSU_CRUISE"]["MAIN_ON"]
+        ret.cruiseState.available &= bool(cp.main_valid and stamp > 0 and 0 <= cp._last_update_nanos - stamp <= 303_031_000)
       ret.cruiseState.speed = cp.vl["DSU_CRUISE"]["SET_SPEED"] * CV.KPH_TO_MS
       cluster_set_speed = cp.vl["PCM_CRUISE_ALT"]["UI_SET_SPEED"]
     else:
       ret.accFaulted = cp.vl["PCM_CRUISE_2"]["ACC_FAULTED"] != 0
       ret.carFaultedNonCritical = cp.vl["PCM_CRUISE_SM"]["TEMP_ACC_FAULTED"] != 0
       ret.cruiseState.available = cp.vl["PCM_CRUISE_2"]["MAIN_ON"] != 0
+      if pedal.configured(self.CP):
+        stamp = cp.ts_nanos["PCM_CRUISE_2"]["MAIN_ON"]
+        ret.cruiseState.available &= bool(cp.main_valid and stamp > 0 and 0 <= cp._last_update_nanos - stamp <= 303_031_000)
       ret.cruiseState.speed = cp.vl["PCM_CRUISE_2"]["SET_SPEED"] * CV.KPH_TO_MS
       cluster_set_speed = cp.vl["PCM_CRUISE_SM"]["UI_SET_SPEED"]
 
@@ -169,7 +176,10 @@ class CarState(CarStateBase):
       ret.cruiseState.speedCluster = cluster_set_speed * conversion_factor
 
     if self.CP.flags & ToyotaFlags.TSS2 and not self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
-      self.acc_type = cp_acc.vl["ACC_CONTROL"]["ACC_TYPE"]
+      # The radar filter intercepts this message. Preserve stock PCS/AEB
+      # observations without making intercepted ACC_CONTROL a required input.
+      if not self.CP.flags & ToyotaFlags.RADAR_CAN_FILTER and not rav4h_filter_configured(self.CP):
+        self.acc_type = cp_acc.vl["ACC_CONTROL"]["ACC_TYPE"]
       ret.stockFcw = bool(cp_acc.vl["PCS_HUD"]["FCW"])
 
     # some TSS2 cars have low speed lockout permanently set, so ignore on those cars
@@ -216,7 +226,7 @@ class CarState(CarStateBase):
         buttonEvents.extend(create_button_events(1, 0, {1: ButtonType.lkas}) +
                             create_button_events(0, 1, {1: ButtonType.lkas}))
 
-      if self.CP.flags & ToyotaFlags.TSS2 and not (self.CP.flags & (ToyotaFlags.RADAR_ACC | ToyotaFlags.SECOC)):
+      if self.CP.flags & ToyotaFlags.TSS2 and not (self.CP.flags & (ToyotaFlags.RADAR_ACC | ToyotaFlags.SECOC | ToyotaFlags.LONG_FILTER)):
         # distance button is wired to the ACC module (camera or radar)
         prev_distance_button = self.distance_button
         self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
@@ -288,6 +298,8 @@ class CarState(CarStateBase):
 
     if CP.carFingerprint == CAR.TOYOTA_SIENNA_4TH_GEN:
       pt_messages.append(("PCM_CRUISE_4", 1))
+    if CP.carFingerprint == CAR.LEXUS_IS:
+      pt_messages.append(("DSU_CRUISE", 10))
 
     if CP.flags & ToyotaFlags.LONG_FILTER:
       pt_messages.append(("SDSU", 50))
@@ -296,7 +308,8 @@ class CarState(CarStateBase):
 
     if pedal.configured(CP):
       pt_messages.append(("GAS_SENSOR", 50))
-    pt_parser = pedal.PedalCANParser if pedal.configured(CP) else Rav4hCANParser if rav4h_filter_configured(CP) else CANParser
+    pt_parser = (LexusIsCANParser if CP.carFingerprint == CAR.LEXUS_IS else pedal.PedalCANParser if pedal.configured(CP) else
+                 Rav4hCANParser if rav4h_filter_configured(CP) else CANParser)
     return {
       Bus.pt: pt_parser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
       Bus.cam: CANParser(dbc_name, cam_messages, 2),

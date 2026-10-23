@@ -18,7 +18,8 @@ ACTIONS = {
 KEYS = ("LKASButtonControl", "MainCruiseButtonControl", "DistanceButtonControl", "LongDistanceButtonControl",
         "VeryLongDistanceButtonControl", "CancelButtonControl", "LongCancelButtonControl", "VeryLongCancelButtonControl",
         "ModeButtonControl", "LongModeButtonControl", "VeryLongModeButtonControl", "StarButtonControl",
-        "LongStarButtonControl", "VeryLongStarButtonControl")
+        "LongStarButtonControl", "VeryLongStarButtonControl", "LeftPaddleButtonControl")
+PADDLE_KEY = "LeftPaddleButtonControl"
 LIFETIME_NS = 250_000_000
 SESSION = re.compile(r"[0-9a-f]{32}\Z")
 DELIVERED_ACTIONS = frozenset((1, 2, 5, 6, 7, 8, 10, 11, 12, 13, 14))
@@ -37,6 +38,9 @@ def eligible(cp):
 
 def button_reported(cp, key):
   """Expose only button events the current vehicle parser actually emits."""
+  if key == PADDLE_KEY:
+    from opendbc.car.hyundai.left_paddle import has_left_paddle
+    return has_left_paddle(cp)
   brand = cp.brand
   if key not in KEYS[:8]:
     return True  # Physical media rows have their separate receiver contract.
@@ -76,6 +80,14 @@ def button_reported(cp, key):
       from opendbc.car.mazda.aol import qualified
       return qualified(cp, marked_only=True)
   return True
+
+
+def paddle_bookmark_available(params, cp):
+  # An invalid pause setting never authorizes a second paddle action.
+  if not button_reported(cp, PADDLE_KEY):
+    return False
+  raw, readable = read_saved(params, "NostalgiaMode", 8)
+  return bool(readable and raw in (None, b"0"))
 
 
 def cp_fingerprint(cp):
@@ -119,6 +131,8 @@ class WheelPublisher:
     self.cancel_tracker = ButtonTracker()
     self.main_tracker = ButtonTracker()
     self.mapping = None
+    self.paddle_held = False
+    self.paddle_armed = False
     self.last_heartbeat = 0
     self.checked_ns = 0
     self.media_sample_state = None
@@ -168,6 +182,7 @@ class WheelPublisher:
       self.cancel_tracker = ButtonTracker()
       self.main_tracker = ButtonTracker()
       self.mapping = None
+      self.paddle_held = self.paddle_armed = False
       return ()
     if not self.initial_axis_read:
       self.axis_keys = {key for key, action in mapping.items() if action in (3, 4, 9)}
@@ -176,6 +191,7 @@ class WheelPublisher:
       self.tracker = ButtonTracker()
       self.cancel_tracker = ButtonTracker()
       self.main_tracker = ButtonTracker()
+      self.paddle_held = self.paddle_armed = False
       self.drive, self.mapping = drive_id, mapping
     gestures = [(key_for(gesture), gesture) for gesture in self.tracker.observe(
       state, media if ioniq6_media_eligible(cp) else None)]
@@ -196,9 +212,27 @@ class WheelPublisher:
         index = (Press.SHORT, Press.LONG, Press.VERY_LONG).index(gesture.press)
         if index < len(keys):
           gestures.append((keys[index], gesture))
+    paddle_commands = []
+    paddle_edge = any(event.type == structs.CarState.ButtonEvent.Type.altButton2 for event in state.buttonEvents)
+    paddle_allowed = ((self.paddle_held or paddle_edge) and mapping[PADDLE_KEY] == 8 and PADDLE_KEY not in blocked_keys and
+                      paddle_bookmark_available(params, cp) and read_saved(params, PADDLE_KEY, 8) == (b"8", True))
+    # Audit every held sample, so enabling pause even briefly cancels this press.
+    self.paddle_armed &= paddle_allowed
+    for event in state.buttonEvents:
+      if event.type != structs.CarState.ButtonEvent.Type.altButton2:
+        continue
+      if event.pressed:
+        if not self.paddle_held:
+          self.paddle_armed = paddle_allowed
+        self.paddle_held = True
+      else:
+        if self.paddle_held and self.paddle_armed:
+          paddle_commands.append((PADDLE_KEY, 8))
+        self.paddle_held = self.paddle_armed = False
     commands = [(key, mapping[key]) for key, _ in gestures if key is not None and key not in blocked_keys and
                 key not in self.axis_keys and button_reported(cp, key) and mapping[key] in DELIVERED_ACTIONS and
                 (key != "MainCruiseButtonControl" or mapping[key] == 10)]
+    commands.extend(paddle_commands)
     if commands and not audit:
       current = capture(params)
       self.checked_ns = now_ns
@@ -275,6 +309,8 @@ class WheelConsumer:
         if key:
           return None
       elif key not in KEYS or action not in DELIVERED_ACTIONS or not button_reported(cp, key):
+        return None
+      elif key == PADDLE_KEY and (action != 8 or not paddle_bookmark_available(params, cp)):
         return None
       else:
         mapping = capture(params)

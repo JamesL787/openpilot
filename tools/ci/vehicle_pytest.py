@@ -11,7 +11,7 @@ def split_targets(root, targets):
     tree = ast.parse(path.read_text(), filename=str(path))
     requires_pytest = any(
       isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_") or
-      isinstance(node, ast.ClassDef) and node.name.startswith("Test") and not node.bases
+      isinstance(node, ast.ClassDef) and node.name.startswith("Test") and (not node.bases or node.decorator_list)
       for node in tree.body)
     (pytest_targets if requires_pytest else unittest_targets).append(target)
   return unittest_targets, pytest_targets

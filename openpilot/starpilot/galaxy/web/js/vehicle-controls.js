@@ -166,11 +166,12 @@ export const VehicleControlsPage = {
   components: { ToyotaToolsPage, GxDialog, GxState, GxNotice, SettingsPage, GalaxySelect },
   props: { mode: { type: String, required: true }, unauthorized: { type: Function, required: true } },
   setup(props) {
-    const state = reactive({ status: "idle", data: null, pending: null, busy: false, error: "", query: "", make: "" })
+    const state = reactive({ status: "idle", data: null, pending: null, busy: false, error: "", query: "", make: "", manualSelectionOpen: false })
     const feed = new VehicleSelectionFeed({ publish: (update) => Object.assign(state, update), unauthorized: props.unauthorized })
     return { state, feed }
   },
   computed: {
+    autoDetection() { return this.state.data?.valid && this.state.data.selected === null && !this.state.manualSelectionOpen },
     makes() { return [...new Set((this.state.data?.choices || []).map((item) => item.make))] },
     models() {
       if (!this.state.make) return []
@@ -181,17 +182,25 @@ export const VehicleControlsPage = {
   },
   mounted() { if (this.mode === "local") this.feed.start() },
   beforeUnmount() { this.feed.stop() },
-  methods: { choose(platform) { this.feed.preview(platform) } },
+  methods: {
+    choose(platform) { this.feed.preview(platform) },
+    changeAutoDetection(event) {
+      event.target.checked = this.autoDetection
+      if (this.autoDetection) this.state.manualSelectionOpen = true
+      else if (this.state.data.selected === null) this.state.manualSelectionOpen = false
+      else { this.state.manualSelectionOpen = false; this.choose(null) }
+    },
+  },
   template: `
     <section class="gx-vehicle" aria-label="Vehicle Controls" :inert="state.busy" :aria-busy="state.busy || undefined">
       <header class="gx-settings__header gx-page-header"><div><h2>Vehicle Selection</h2>
-        <p>Auto detects your car. A manual choice is saved for the next start; it does not change the car reported now.</p></div></header>
+        <p>Choose Auto Detection or save a vehicle for the next start.</p></div></header>
       <GxState v-if="mode !== 'local'">Local vehicle selection is unavailable in preview.</GxState>
       <template v-else>
         <GxNotice tone="danger" v-if="state.error">{{ state.error }}
           </GxNotice>
         <GxState v-if="state.status === 'loading'" loading>Loading vehicle selection…</GxState>
-        <article v-if="state.data" class="gx-card gx-vehicle__body">
+        <article v-if="state.data" class="gx-card"><div class="gx-section__header"><i class="bi bi-car-front" aria-hidden="true"></i><span class="gx-section__title">Selection &amp; status</span></div><div class="gx-panel gx-stack">
           <div class="gx-vehicle__summary"><div><small>Configured selection mode</small>
               <strong>{{ state.data.valid ? (state.data.selected === null ? 'Auto Detection' : 'Manually Selected') : state.data.selectedLabel }}</strong>
               <p v-if="state.data.selected !== null">{{ state.data.selectedLabel }}</p>
@@ -201,20 +210,20 @@ export const VehicleControlsPage = {
               <p v-if="state.data.reported?.origin === 'manual'">This runtime used a manual selection, not automatic detection.</p>
               <p>This is the last runtime report, not current physical vehicle confirmation.</p></div></div>
           <p v-if="!state.data.parked" class="gx-note">Changes require fresh parked vehicle evidence.</p>
-          <div class="gx-vehicle__actions gx-actions">
-            <button type="button" class="gx-btn" :disabled="!state.data.parked || !state.data.readable" @click="choose(null)">Switch to Auto Detection</button></div>
+          <div class="gx-row"><div class="gx-row__info"><span class="gx-row__label">Auto Detection</span></div>
+            <label class="gx-switch"><input type="checkbox" role="switch" aria-label="Auto Detection" :checked="autoDetection"
+              :disabled="!state.data.parked || !state.data.readable" @change="changeAutoDetection"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
           <template v-if="state.data.valid">
             <h3>Choose a Vehicle</h3>
-            <div class="gx-vehicle__filters gx-actions"><GalaxySelect v-model="state.make" class="gx-field gx-field--full" aria-label="Vehicle make">
+            <div class="gx-vehicle__filters gx-actions"><GalaxySelect v-model="state.make" class="gx-field gx-field--full" aria-label="Vehicle make" :disabled="autoDetection || !state.data.parked || !state.data.readable">
                 <option value="" disabled>Choose a make</option><option v-for="make in makes" :key="make" :value="make">{{ make }}</option></GalaxySelect>
-              <input v-if="state.make" v-model="state.query" class="gx-field" type="search" aria-label="Search vehicle models" placeholder="Search models"></div>
-            <p v-if="!state.make" class="gx-note">Choose a make to see its models.</p>
-            <p v-else-if="!models.length" class="gx-note">No models match this search.</p>
-            <div v-else class="gx-vehicle__models"><button v-for="item in models" :key="item.platform" type="button" class="gx-btn gx-btn--tonal"
-                :aria-pressed="state.data.selected === item.platform" :disabled="!state.data.parked || !state.data.readable" @click="choose(item.platform)">
-                <strong>{{ item.label }}</strong><small>{{ item.make }}</small></button></div>
+              <input v-if="state.make" v-model="state.query" class="gx-field" type="search" aria-label="Search vehicle models" placeholder="Search models" :disabled="autoDetection || !state.data.parked || !state.data.readable"></div>
+            <p v-if="state.make && !models.length" class="gx-note">No models match this search.</p>
+            <div v-if="state.make && models.length" class="gx-vehicle__models"><button v-for="item in models" :key="item.platform" type="button" class="gx-btn gx-btn--tonal"
+                :aria-pressed="state.data.selected === item.platform" :disabled="autoDetection || !state.data.parked || !state.data.readable" @click="choose(item.platform)">
+                <strong>{{ item.label }}</strong></button></div>
           </template>
-        </article>
+        </div></article>
         <ToyotaToolsPage :mode="mode" :unauthorized="unauthorized" />
         <SettingsPage :mode="mode" :unauthorized="unauthorized" initial-page="vehicle" title="Vehicle settings" />
         <GxDialog v-if="state.pending" labelledby="gx-vehicle-controls-confirm-title" @close="feed.cancel()"><h3 id="gx-vehicle-controls-confirm-title">Confirm Vehicle Selection</h3><p>{{ state.pending.question }}</p>

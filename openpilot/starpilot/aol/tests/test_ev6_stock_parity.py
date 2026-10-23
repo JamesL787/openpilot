@@ -12,6 +12,7 @@ from openpilot.cereal import messaging
 from openpilot.common.params import Params
 from openpilot.common.prefix import OpenpilotPrefix
 from openpilot.selfdrive.car import card as card_module
+from openpilot.starpilot.vehicle_startup import VehicleStartupOwner
 from openpilot.starpilot.aol.intent import AOL_TOGGLE
 from openpilot.starpilot.aol.tests import test_canfd_stock_profiles as stock
 from openpilot.starpilot.tests import test_ev6_startup as startup
@@ -78,27 +79,37 @@ def test_actual_card_stock_lkas_then_main_respects_saved_binding(main_action):
 
 @pytest.mark.parametrize('alpha', [False, True])
 def test_actual_controller_dash_follows_aol_without_changing_actuation(alpha):
+  holder = None
   if alpha:
-    ci, _, _ = startup.TestEV6Startup().exercise(mode='sent_restore')
+    with patch.object(VehicleStartupOwner, 'seal_publication'):
+      ci, holder, _ = startup.TestEV6Startup().exercise(mode='sent_restore', boot_ns=9_000_000_000)
     ci.CP.alternativeExperience = 32
+    ci.CP.safetyConfigs[-1].safetyParam |= 0x800
+    holder.finalize_aol_configuration(ci)
+    holder.seal_publication()
+    assert ci.CP.openpilotLongitudinalControl and holder.owner.ready
   else:
     ci = CarInterface(stock.params(CAR.KIA_EV6))
-  ci.CP.safetyConfigs[-1].safetyParam |= 0x800
-  parser = CANParser(DBC[CAR.KIA_EV6][Bus.pt], [('LKAS', 0)], ci.CC.CAN.ACAN)
-  for tick in range(120):
-    now = 10_000_000_000 + tick * 10_000_000
-    ci.update([(now, packets(ci, tick))])
-    command = structs.CarControl(enabled=40 <= tick < 80, latActive=20 <= tick < 60)
-    _, frames = ci.apply(command.as_reader(), now)
-    steering = [frame for frame in frames if frame[0] == 0x50 and frame[2] == ci.CC.CAN.ACAN]
-    assert len(steering) == 1
-    parser.update([(now, steering)])
-    values = parser.vl['LKAS']
-    assert values['LKA_SysIndReq'] == (2 if command.enabled or command.latActive else 1)
-    assert values['ActToiSta'] == command.latActive
-    assert values['StrTqReqVal'] == 0
-    cluster = [frame for frame in frames if frame[0] == 0x1E0]
-    assert len(cluster) == int(alpha and tick % 5 == 0)
+    ci.CP.safetyConfigs[-1].safetyParam |= 0x800
+  try:
+    parser = CANParser(DBC[CAR.KIA_EV6][Bus.pt], [('LKAS', 0)], ci.CC.CAN.ACAN)
+    for tick in range(120):
+      now = 10_000_000_000 + tick * 10_000_000
+      ci.update([(now, packets(ci, tick))])
+      command = structs.CarControl(enabled=40 <= tick < 80, latActive=20 <= tick < 60)
+      _, frames = ci.apply(command.as_reader(), now)
+      steering = [frame for frame in frames if frame[0] == 0x50 and frame[2] == ci.CC.CAN.ACAN]
+      assert len(steering) == 1
+      parser.update([(now, steering)])
+      values = parser.vl['LKAS']
+      assert values['LKA_SysIndReq'] == (2 if command.enabled or command.latActive else 1)
+      assert values['ActToiSta'] == command.latActive
+      assert values['StrTqReqVal'] == 0
+      cluster = [frame for frame in frames if frame[0] == 0x1E0]
+      assert len(cluster) == int(alpha and tick % 5 == 0)
+  finally:
+    if holder is not None:
+      holder.close()
 
 
 @pytest.mark.parametrize('variation', ['normal', 'aol_off', 'active', 'stale', 'native_mismatch', 'native_fault', 'invalid_can', 'changed_cp'])
@@ -112,7 +123,7 @@ def test_actual_card_replaces_disabled_adrv_during_selfdrive_initialization(vari
     saved.put_bool('AlwaysOnLateral', variation != 'aol_off', block=True)
     # The fixture normally seals for its own assertions; Card owns the real seal here.
     with patch.object(VehicleStartupOwner, 'seal_publication'):
-      ci, holder, _ = startup.TestEV6Startup().exercise(mode='sent_restore')
+      ci, holder, _ = startup.TestEV6Startup().exercise(mode='sent_restore', boot_ns=9_000_000_000)
     card = card_module.Car(CI=ci, RI=RadarInterface(ci.CP), startup_owner=holder.owner)
     assert card.ev6_startup_keepalive()
     holder.owner.published = False

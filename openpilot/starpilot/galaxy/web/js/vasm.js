@@ -176,7 +176,7 @@ export const VasmPage = {
         <div v-if="state.data" class="gx-settings__body">
 
           <section class="gx-card gx-vasm__editor" aria-label="Camera window region editor">
-            <h3>Camera Window Regions</h3>
+            <div class="gx-section__header"><i class="bi bi-bounding-box" aria-hidden="true"></i><span class="gx-section__title">Camera Window Regions</span></div>
             <p>The display is mirrored: vehicle left is camera right; vehicle right is camera left. Trace visible side glass, leaving pillars and interior out.</p>
             <p class="gx-note gx-camera-status" role="status">{{ state.cameraWarming ? "Warming up the camera · about 10 seconds…" : state.imageName ? "Snapshot ready" : "Take a cabin snapshot while parked." }}</p>
             <div class="gx-actions">

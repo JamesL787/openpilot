@@ -4,12 +4,16 @@ from dataclasses import replace
 import ctypes
 import hashlib
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from tinygrad.device import Buffer, HCQ_RUNTIME_DEV
 from tinygrad.dtype import AddrSpace, dtypes
 from tinygrad.engine.realize import lower_and_compile
 from tinygrad.uop.ops import AxisType, Ops, UOp
 from tinygrad.runtime.support.hcq2 import HCQInfo
+
+if TYPE_CHECKING:
+  from openpilot.starpilot.models.runtime_bridge.legacy_types import LegacyBufferFactory, LegacyCall, LegacyUOpFactory
 
 
 def byte_inventory(root):
@@ -25,7 +29,7 @@ class Protection:
     self.function.restype = ctypes.c_uint64
     address = ctypes.cast(self.function, ctypes.c_void_p).value
     assert address is not None
-    self.pointer = Buffer(HCQ_RUNTIME_DEV.value, 1, dtypes.uint64,
+    self.pointer = cast("LegacyBufferFactory", Buffer)(cast(str, HCQ_RUNTIME_DEV.value), 1, dtypes.uint64,
                           initial_value=address.to_bytes(8, 'little'))
     self.records = []
 
@@ -45,7 +49,7 @@ class Protection:
     params = {u: u.replace(arg=replace(u.arg, slot=u.arg.slot + 1)) for u in sink.toposort()
               if u.op is Ops.PARAM and u.arg.addrspace is AddrSpace.ALU}
     sink = sink.substitute(params, enter_calls=True)
-    pointer = UOp.param(info.nargs, dtypes.uint64, 1, HCQ_RUNTIME_DEV.value, name='bounded_wait_pointer')
+    pointer = UOp.param(info.nargs, dtypes.uint64, 1, cast(str, HCQ_RUNTIME_DEV.value), name='bounded_wait_pointer')
     callee = UOp.custom_function('starpilot_bounded_wait', pointer.index(0).load())
     replacements, seen_loops = {}, set()
     for end in sink.toposort():
@@ -70,7 +74,7 @@ class Protection:
       if loop in target.toposort():
         raise ValueError('Fence target depends on its polling loop')
       signal_index = index.substitute({loop: UOp(Ops.NOOP)}, enter_calls=True)
-      replacements[end] = callee.call(signal_index, target, ret_dtype=dtypes.uint64)
+      replacements[end] = cast("LegacyCall", callee).call(signal_index, target, ret_dtype=dtypes.uint64)
       seen_loops.add(loop)
     weak = {u for u in sink.toposort() if u.op is Ops.RANGE and u.src and u.src[0].op is Ops.NOOP}
     if len(replacements) != 1 or weak != seen_loops:
@@ -83,9 +87,9 @@ class Protection:
     if any(u.op is Ops.CALL and u.body.op in (Ops.SINK, Ops.PROGRAM) for u in rewritten.toposort()):
       raise ValueError('Nested compilation request in host source')
     # The only compilation request is this CPU SINK.
-    new_call = call.replace(src=(rewritten, *call.src[1:], UOp.from_buffer(self.pointer)),
+    new_call = call.replace(src=(rewritten, *call.src[1:], cast("LegacyUOpFactory", UOp).from_buffer(self.pointer)),
                             arg=replace(call.arg, aux=replace(info, nargs=info.nargs + 1)))
-    if new_call.device != HCQ_RUNTIME_DEV.value or HCQ_RUNTIME_DEV.value.split(':')[0] != 'CPU':
+    if new_call.device != cast(str, HCQ_RUNTIME_DEV.value) or cast(str, HCQ_RUNTIME_DEV.value).split(':')[0] != 'CPU':
       raise ValueError('Refusing any non-CPU host compilation')
     compiled = lower_and_compile(UOp(Ops.LINEAR, src=(new_call,))).src[0]
     if compiled.body.arg.target.device != 'CPU' or byte_inventory(compiled.body.src[0]) != before:

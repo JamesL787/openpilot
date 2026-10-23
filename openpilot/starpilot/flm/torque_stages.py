@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import math
 from openpilot.starpilot.flm.selected_effects import (
   apply_selected_stage,
+  bounded_profile_on_limited_frame,
   apply_selected_friction as apply_selected_friction,
   apply_selected_deadzone as apply_selected_deadzone,
   apply_selected_output as apply_selected_output,
@@ -28,6 +29,7 @@ class StageFrame:
   active: bool
   driver_override: bool
   limited: bool
+  curvature_limited: bool = False
 
   def valid(self):
     return (
@@ -37,21 +39,32 @@ class StageFrame:
     )
 
 
-def apply_stages(parent, cs, setpoint, jerk, ff, threshold, *, active, limited):
+def apply_stages(parent, cs, setpoint, jerk, ff, threshold, *, active, limited, curvature_limited=False):
   """One selected-policy call after baseline FF/threshold, before friction.
 
   Missing source and inactive/manual/off source emit exact unchanged baseline.
   Source methods are owned by core and may only return admitted residuals.
   """
   source = getattr(parent, 'automatic_flm_stages', None)
-  frame = StageFrame(float(cs.vEgo), float(setpoint), float(jerk), float(ff), float(threshold), bool(active), bool(cs.steeringPressed), bool(limited))
+  frame = StageFrame(
+    float(cs.vEgo), float(setpoint), float(jerk), float(ff), float(threshold), bool(active), bool(cs.steeringPressed), bool(limited), bool(curvature_limited)
+  )
   observer = getattr(parent, 'automatic_flm_observation', None)
   if observer is not None and frame.valid():
     observer.observe_stage(frame, ff, (0.0, 0.0))
   if source is None:
     return ff, threshold
-  if not frame.valid() or not frame.active or frame.driver_override or frame.limited:
+  if not frame.valid() or not frame.active or frame.driver_override:
     return ff, threshold
+  if frame.limited:
+    # Preserve the limiter flag and PID freeze. Only an admitted bounded full
+    # profile may shape its request before the unchanged native actuator limit.
+    if curvature_limited or not bounded_profile_on_limited_frame(parent):
+      return ff, threshold
+    candidate_ff, candidate_threshold = apply_selected_stage(parent, frame)
+    if observer is not None:
+      observer.observe_stage(frame, candidate_ff, tuple(parent.automatic_flm_effects.applied_coordinates), candidate_threshold)
+    return candidate_ff, candidate_threshold
   try:
     # Core owns monotonic tick, identity/manual/TTL/policy validation and slew.
     # delta is relative to this selected controller's fully shaped baseline.
@@ -67,8 +80,7 @@ def apply_stages(parent, cs, setpoint, jerk, ff, threshold, *, active, limited):
       # Only one admitted profile exists; legacy stage residual is neutral for V2.
       candidate_ff, candidate_threshold = apply_selected_stage(parent, frame)
     if observer is not None:
-      observer.observe_stage(frame, candidate_ff,
-                             tuple(effect.applied_coordinates if effect is not None else source.applied_coordinates), candidate_threshold)
+      observer.observe_stage(frame, candidate_ff, tuple(effect.applied_coordinates if effect is not None else source.applied_coordinates), candidate_threshold)
     return candidate_ff, candidate_threshold
   except (AttributeError, TypeError, ValueError, OverflowError):
     return ff, threshold

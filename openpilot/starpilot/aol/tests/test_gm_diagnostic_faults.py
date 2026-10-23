@@ -216,6 +216,7 @@ def test_interceptor_clarity_admits_only_interrupt_rate_faults():
   cp = CarInterface.get_params(CAR.HONDA_CLARITY, fp, [], False, False, False)
   assert blocking_fault_mask(1 << 3, cp)  # plain interceptor word: no AOL, no admission
   cp.safetyConfigs[0].safetyParam = 544
+  cp.alternativeExperience = 32  # SGSP's native pedal AOL word is scoped by it
   for bits in (0, 1 << 2, 1 << 3, (1 << 2) | (1 << 3)):
     assert not blocking_fault_mask(bits, cp)
   for bits in (1 << 0, 1 << 18, (1 << 3) | (1 << 0)):

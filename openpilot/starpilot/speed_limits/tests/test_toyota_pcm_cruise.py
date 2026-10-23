@@ -2,17 +2,21 @@
 from unittest import mock
 from types import SimpleNamespace
 from collections import deque
+from typing import cast
 
 import pytest
 
 from opendbc.can import CANPacker
 from opendbc.car import Bus, structs
+from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.values import CAR, DBC
 from openpilot.selfdrive.car.cruise import VCruiseHelper
 from openpilot.selfdrive.car.card import Car
 from openpilot.cereal import messaging
+from openpilot.common.realtime import Ratekeeper
 from openpilot.selfdrive.controls.plannerd import queue_cruise_event, current_cruise_event
+from openpilot.starpilot.speed_limits.runtime import Action, Runtime
 from openpilot.starpilot.speed_limits.runtime_settings import parse
 from openpilot.starpilot.speed_limits.tests import test_runtime_replay as replay_fixture
 
@@ -61,9 +65,9 @@ def publish_change(parsed, state):
   host = Car.__new__(Car)
   host.CP = parsed.cp
   host.car_params_published = True
-  host.sm = SimpleNamespace(frame=1, all_checks=lambda services: True)
+  host.sm = cast(messaging.SubMaster, SimpleNamespace(frame=1, all_checks=lambda services: True))
   host.last_actuators_output = structs.CarControl.Actuators()
-  host.rk = SimpleNamespace(remaining=0.)
+  host.rk = cast(Ratekeeper, SimpleNamespace(remaining=0.))
   host.can_rcv_cum_timeout_counter = 0
   host.aol_replay = host.curve_replay = False
   host.slc_replay = True
@@ -73,7 +77,7 @@ def publish_change(parsed, state):
   host.slc_receipts = []
   host.pm = mock.Mock()
   host.car_gps_publisher = mock.Mock()
-  host.CI = SimpleNamespace(CS=SimpleNamespace())
+  host.CI = cast(CarInterfaceBase, SimpleNamespace(CS=SimpleNamespace()))
   host.radar_publish = mock.Mock()
   # This is the same selected-speed copy normally made by Card.state_update.
   state.vCruise = parsed.helper.v_cruise_kph
@@ -107,9 +111,15 @@ def test_pcm_resume_edge_and_release_frame_set_speed_feed_override():
   fixture.setUp()
   sm = fixture.sm
   sm['carState'].vCruise = sm['carState'].vCruiseCluster = 90.
-  fixture.cp = parsed.cp
-  runtime = fixture.accepted_runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard'}), session_id='pcm-drive')
-  first = runtime.step(sm, parsed.cp, now_ns=2_000_000_000)
+  runtime = Runtime(parse({'SpeedLimitController': True, 'SLCPriority1': 'Dashboard', 'SLCConfirmation': True}),
+                    session_id='pcm-drive')
+  pending = runtime.step(sm, parsed.cp, now_ns=2_000_000_000)
+  assert pending.message.slcState.hasPending
+  sm.advance(2_010_000_000)
+  first = runtime.step(sm, parsed.cp, now_ns=2_010_000_000,
+                       request=Action(runtime.session_id, 1, pending.message.slcState.decisionId,
+                                      pending.message.slcState.presentationId, 'accept'))
+  assert first.result.acceptance is not None and first.result.acceptance.basis == 'driver_accept'
   assert first.result.override.context is not None
   receipt, published = publish_change(parsed, state)
   sm.advance(parsed.now)

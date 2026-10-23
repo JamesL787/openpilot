@@ -1,4 +1,4 @@
-from contextlib import ExitStack, redirect_stdout
+from contextlib import ExitStack, chdir, redirect_stdout
 import io
 import json
 from pathlib import Path
@@ -16,6 +16,83 @@ from tools.ci.record_firmware import compile_commands
 
 
 class TestVehicleCollection(unittest.TestCase):
+  def test_pe_combined_native_callers_and_refusals_keep_debug_release_separate(self):
+    for target in (
+      'opendbc_repo/opendbc/safety/tests/test_pe_combined_callers.py',
+      'opendbc_repo/opendbc/safety/tests/test_pe_set_release_callers.py',
+      'openpilot/starpilot/aol/tests/test_pe_combined_profile_contract.py',
+    ):
+      self.assertIn(target, targets_for('aol-lifecycle'))
+    for target in (
+      'opendbc_repo/opendbc/safety/tests/test_pe_combined_aol.py::TestPECombinedReleaseDenied',
+      'openpilot/starpilot/aol/tests/test_pe_combined_profile_contract.py',
+    ):
+      self.assertIn(target, targets_for('safety-release'))
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_pe_combined_aol.py::TestPECombinedDebug', targets_for('safety-debug'))
+    self.assertNotIn('opendbc_repo/opendbc/safety/tests/test_pe_combined_aol.py::TestPECombinedDebug', targets_for('safety-release'))
+
+  def test_palisade_status_ownership_runs_in_debug_release_and_lifecycle(self):
+    target = 'opendbc_repo/opendbc/safety/tests/test_palisade_stock_aol_status.py'
+    for suite in ('safety-debug', 'safety-release', 'aol-lifecycle'):
+      self.assertIn(target, targets_for(suite))
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_hyundai_blended_alpha.py::TestHyundaiBlendedAlphaAol',
+                  targets_for('safety-release'))
+
+  def test_ev9_joined_main_cancel_off_and_vetoes_run_in_lifecycle_ci(self):
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_ev9_set_release_callers.py', targets_for('safety-debug'))
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_ev9_set_release_callers.py', targets_for('aol-lifecycle'))
+    self.assertLessEqual({
+      'opendbc_repo/opendbc/safety/tests/test_ev9_combined_callers.py',
+      'openpilot/starpilot/aol/tests/test_ev9_main_withdrawal_guards.py',
+      'openpilot/starpilot/aol/tests/test_native_inventory_control_cadence.py',
+    }, set(targets_for('aol-lifecycle')))
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_ev9_combined_callers.py', targets_for('safety-debug'))
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_ev9_combined_aol.py::TestEV9CombinedReleaseDenied', targets_for('safety-release'))
+    self.assertIn('openpilot/starpilot/aol/tests/test_ev9_main_withdrawal_guards.py', targets_for('safety-release'))
+
+
+  def test_classic_initialization_preserves_debug_acceptance_and_release_denial(self):
+    path = 'openpilot/starpilot/aol/tests/test_classic_startup_neutral_replacement.py'
+    release = 'tools/ci/test_classic_startup_release.py'
+    self.assertIn(path, targets_for('safety-debug'))
+    self.assertIn(release, targets_for('safety-release'))
+    self.assertIn(path + '::test_classic_initializing_never_bypasses_current_health', targets_for('safety-release'))
+    self.assertNotIn(path, targets_for('safety-release'))
+    self.assertNotIn(release, targets_for('safety-debug'))
+
+  def test_independent_lateral_soft_takeover_runs_in_release_ci(self):
+    self.assertIn('openpilot/starpilot/aol/tests/test_independent_lateral_soft_takeover.py', targets_for('safety-release'))
+
+  def test_expired_axis_gaps_keep_real_cpp_and_vetoes_in_release_ci(self):
+    expected = {
+      'openpilot/starpilot/aol/tests/test_sonata_temporary_withdrawals.py',
+      'openpilot/starpilot/aol/tests/test_expired_axis_zero_request.py',
+    }
+    self.assertLessEqual(expected, set(targets_for('safety-release')))
+
+  def test_ev6_source_deadline_refusals_run_in_lifecycle_and_release_ci(self):
+    target = 'openpilot/starpilot/aol/tests/test_ev6_source_deadline.py'
+    self.assertIn(target, targets_for('aol-lifecycle'))
+    self.assertIn(target, targets_for('safety-release'))
+
+  def test_ev6_release_ci_exercises_real_alpha_startup_and_physical_owner(self):
+    expected = {
+      'openpilot/starpilot/tests/test_ev6_startup.py',
+      'openpilot/starpilot/aol/tests/test_ev6_stock_parity.py',
+      'openpilot/starpilot/aol/tests/test_ev6_physical_authorization.py',
+    }
+    self.assertLessEqual(expected, set(targets_for('safety-release')))
+
+  def test_classic_mapped_buttons_and_late_dash_run_in_release_ci(self):
+    expected = {
+      'openpilot/starpilot/aol/tests/test_classic_scc_mapped_buttons.py',
+      'openpilot/starpilot/aol/tests/test_sonata_mapped_button_callers.py',
+      'opendbc_repo/opendbc/safety/tests/test_classic_scc_main_ingress.py',
+      'opendbc_repo/opendbc/car/hyundai/tests/test_classic_dash_late_configuration.py',
+    }
+    self.assertLessEqual(expected, set(targets_for('safety-release')))
+    self.assertIn('opendbc_repo/opendbc/safety/tests/test_classic_scc_main_ingress.py', targets_for('safety-debug'))
+
   def test_source_snapshot_catches_uncommitted_and_untracked_edits(self):
     with tempfile.TemporaryDirectory() as directory, patch.object(run_vehicle_tests, 'ROOT', Path(directory)):
       root = Path(directory)
@@ -137,7 +214,8 @@ class TestVehicleCollection(unittest.TestCase):
 
   def test_native_safety_targets_are_top_level_and_complete(self):
     root = Path(__file__).resolve().parents[3] / "opendbc_repo/opendbc/safety/tests"
-    self.assertEqual({Path(target.split("::", 1)[0]).name for target in targets_for("safety-debug")}, {path.name for path in root.glob("test_*.py")})
+    expected = {path.name for path in root.glob("test_*.py")} | {"test_classic_startup_neutral_replacement.py"}
+    self.assertEqual({Path(target.split("::", 1)[0]).name for target in targets_for("safety-debug")}, expected)
     self.assertTrue(all(Path(target.split("::", 1)[0]).parent.name == "tests" for target in targets_for("safety-debug")))
 
   def test_pe_native_variants_select_healthy_acceptance_and_denial_classes_separately(self):
@@ -148,6 +226,36 @@ class TestVehicleCollection(unittest.TestCase):
     self.assertIn(path + "::TestPELongReleaseDenied", release)
     self.assertNotIn(path + "::TestPELongDebug", release)
     self.assertNotIn(path, debug)
+
+  def test_mixed_native_variants_have_explicit_nonoverlapping_selection(self):
+    import ast
+    root = Path(__file__).resolve().parents[3]
+    directory = root / "opendbc_repo/opendbc/safety/tests"
+    debug, release = targets_for("safety-debug"), targets_for("safety-release")
+    mixed = []
+    for path in sorted(directory.glob("test_*.py")):
+      classes = [node.name for node in ast.parse(path.read_text()).body
+                 if isinstance(node, ast.ClassDef) and node.name.startswith("Test")]
+      if not (any("Debug" in name for name in classes) and any("Release" in name for name in classes)):
+        continue
+      relative = str(path.relative_to(root))
+      mixed.append(relative)
+      self.assertIn(relative, run_vehicle_tests.DEBUG_SAFETY_CLASS_TARGETS)
+      self.assertNotIn(relative, debug)
+      self.assertNotIn(relative, release)
+      for name in classes:
+        target = relative + "::" + name
+        if "Release" in name:
+          self.assertNotIn(target, debug)
+          self.assertIn(target, release)
+        elif "Debug" in name:
+          self.assertIn(target, debug)
+          self.assertNotIn(target, release)
+        else:
+          self.assertIn(target, debug)
+          self.assertIn(target, release)
+    self.assertIn("opendbc_repo/opendbc/safety/tests/test_hyundai_ev9_long.py", mixed)
+    self.assertIn("opendbc_repo/opendbc/safety/tests/test_ford_mach_e_extended.py", mixed)
 
   def test_interfaces_do_not_mislabel_historical_route_test_base(self):
     root = Path(__file__).resolve().parents[3]
@@ -174,6 +282,49 @@ class TestVehicleCollection(unittest.TestCase):
     self.assertEqual(errors, [])
     self.assertEqual(modules[0]["collected_count"], 2)
     self.assertEqual(modules[0]["uncollected_test_methods"], [])
+
+  def test_module_audit_checks_every_real_parameterized_class_and_method(self):
+    from tools.ci import vehicle_pytest
+
+    with tempfile.TemporaryDirectory() as directory, patch.object(run_vehicle_tests, "ROOT", Path(directory)):
+      path = Path(directory) / "test_parameterized_audit_fixture.py"
+      path.write_text("""import unittest
+from opendbc.testing import parameterized_class
+@parameterized_class('variant', [('A',), ('B',)])
+class TestCar(unittest.TestCase):
+  def test_first(self): pass
+  def test_second(self): pass
+""")
+      try:
+        with chdir(directory), redirect_stdout(io.StringIO()):
+          nodeids, collection_errors = vehicle_pytest.collect([path.name])
+        self.assertEqual(collection_errors, [])
+        ids = [vehicle_pytest.test_id(nodeid).split("test_parameterized_audit_fixture.", 1)[1] for nodeid in nodeids]
+        ids = ["test_parameterized_audit_fixture." + identity for identity in ids]
+        self.assertEqual(len(ids), 4)
+        # A similar name is not evidence that a class came from this template.
+        imported = sys.modules[path.stem]
+        imported.TestCar_Unrelated = type("TestCar_Unrelated", (unittest.TestCase,),
+                                         {"__module__": imported.__name__, "__test__": True})
+        _, errors = audit_interface_modules([path.name], ids)
+        self.assertEqual(errors, [])
+        missing = "test_parameterized_audit_fixture.TestCar_B.test_second"
+        modules, errors = audit_interface_modules([path.name], [identity for identity in ids if identity != missing])
+        self.assertEqual(modules[0]["uncollected_test_methods"], ["TestCar_B.test_second"])
+        self.assertTrue(errors)
+        modules, errors = audit_interface_modules([path.name], [identity for identity in ids if ".TestCar_B." not in identity])
+        self.assertEqual(modules[0]["uncollected_test_methods"], ["TestCar_B.test_first", "TestCar_B.test_second"])
+        self.assertTrue(errors)
+      finally:
+        sys.modules.pop(path.stem, None)
+
+  def test_module_audit_rejects_unrelated_class_prefix(self):
+    with tempfile.TemporaryDirectory() as directory, patch.object(run_vehicle_tests, "ROOT", Path(directory)):
+      path = Path(directory) / "test_fixture.py"
+      path.write_text("class TestCar:\n  def test_method(self): pass\n")
+      modules, errors = audit_interface_modules([path.name], ["test_fixture.TestCar_A.test_method"])
+      self.assertEqual(modules[0]["uncollected_test_methods"], ["TestCar.test_method"])
+      self.assertTrue(errors)
 
   def test_module_audit_rejects_uncollected_pytest_functions_and_methods(self):
     with tempfile.TemporaryDirectory() as directory, patch.object(run_vehicle_tests, "ROOT", Path(directory)):

@@ -6,9 +6,17 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from typing import TypedDict
 import unittest
 
 from openpilot.starpilot.models.runtime_bridge import bootstrap
+
+
+class RuntimeManifest(TypedDict):
+  compiler_revision: str
+  adapter: str
+  roles: dict[str, list[str]]
+  files: dict[str, str]
 
 
 class ProcessCustody(unittest.TestCase):
@@ -80,7 +88,7 @@ class BootstrapFixture(ProcessCustody):
 
   def seal(self):
     files = {name: hashlib.sha256((self.bundle / name).read_bytes()).hexdigest() for name in self.sources}
-    self.manifest = {
+    self.manifest: RuntimeManifest = {
       'compiler_revision': bootstrap.LEGACY_REVISION, 'adapter': 'bounded-host-v2',
       'roles': {'driving': ['QCOM', 'USB+AMD:LLVM'], 'monitoring': ['QCOM']}, 'files': files,
     }

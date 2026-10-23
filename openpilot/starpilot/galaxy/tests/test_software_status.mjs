@@ -55,7 +55,7 @@ statusOnly.feed.stop()
 const unavailable = fixture()
 unavailable.feed.start()
 assert.equal(unavailable.states.at(-1).status, "loading")
-await unavailable.reply(0, { error: "Updater status is unavailable" }, 503)
+await unavailable.reply(0, { error: "Software status is unavailable" }, 503)
 assert.equal(unavailable.states.at(-1).status, "loading")
 assert.equal(unavailable.states.at(-1).error, "")
 unavailable.fire(5000)
@@ -88,12 +88,25 @@ assert.equal(preparedUpdates.length, 1, "update intent is saved before the reque
 await restartingUpdate.reply(1, snapshot({ operations: { ...operations, canFastUpdate: true, request: request("update", "pending", "Dom") } }))
 assert.deepEqual(restartScreens, [], "accepted updates keep their progress page visible")
 restartingUpdate.fire(1000)
-await restartingUpdate.reply(2, { error: "Updater status is unavailable" }, 503)
-assert.deepEqual(restartScreens, [], "an updater status error does not mean the device restarted")
-restartingUpdate.fire(2000)
-await restartingUpdate.fail(3)
-assert.equal(restartScreens.at(-1).target, "Dom", "connection loss starts the reconnect screen")
+await restartingUpdate.reply(2, snapshot({ updater: { ...updater, state: "updating..." },
+  operations: { ...operations, updaterAvailable: false, progress: { stage: "unavailable", detail: "Waiting for the device updater service…", percent: null },
+    request: request("update", "pending", "Dom") } }))
+assert.equal(restartScreens.at(-1).target, "Dom", "loss of the updater service during an update starts reconnecting immediately")
 restartingUpdate.feed.stop()
+
+const delayedRestarts = []
+const delayedRestart = fixture(true, baseline => delayedRestarts.push(baseline))
+delayedRestart.feed.start()
+await delayedRestart.reply(0, snapshot({ operations: { ...operations, canFastUpdate: true } }))
+delayedRestart.feed.action("update", "Dom")
+await delayedRestart.reply(1, snapshot({ operations: { ...operations, canFastUpdate: true, request: request("update", "pending", "Dom") } }))
+delayedRestart.fire(1000)
+await delayedRestart.reply(2, { error: "Updater status is unavailable" }, 503)
+assert.deepEqual(delayedRestarts, [], "an updater status error does not mean the device restarted")
+delayedRestart.fire(2000)
+await delayedRestart.fail(3)
+assert.equal(delayedRestarts.at(-1).target, "Dom", "connection loss starts the reconnect screen")
+delayedRestart.feed.stop()
 
 let canceledPreparation = 0
 const rejectedUpdate = fixture(true, () => {}, () => {}, () => canceledPreparation++)
@@ -595,3 +608,92 @@ automatic.fire(1000)
 await automatic.reply(2, snapshot({ operations: { ...operations, request: { ...request("update", "complete", installed.branch), outcome: "up_to_date" } } }))
 assert.equal(automatic.feed.installBaseline, null)
 automatic.feed.stop()
+
+// A remote tunnel can answer while the comma itself is restarting.
+for (const [code, body] of [[502, null], [504, { message: 'Device unreachable' }],
+                          [503, { message: 'Your comma cannot be reached' }],
+                          [503, { error: 'Device offline' }], [200, null]]) {
+  const restarts = []
+  const f = fixture(true, value => restarts.push(value))
+  f.feed.start()
+  await f.reply(0, snapshot({ operations: { ...operations, canFastUpdate: true } }))
+  f.feed.action('update', 'Dom')
+  await f.reply(1, body, code)
+  assert.ok(restarts.length > 0, `update disconnect ${code} must show restart recovery`)
+  assert.equal(restarts.at(-1).action, 'update')
+  assert.equal(f.feed.uncertain, true)
+  f.feed.stop()
+  const ordinary = fixture(true, () => { throw new Error('ordinary disconnect is not an update') })
+  ordinary.feed.start()
+  await ordinary.reply(0, body, code)
+  ordinary.feed.stop()
+}
+for (const [state, outcome] of [['failed', undefined], ['complete', 'up_to_date']]) {
+  let canceled = 0
+  const f = fixture(true, () => { throw new Error('finished update must not imply restart') }, () => {}, () => canceled++)
+  f.feed.start()
+  await f.reply(0, snapshot({ operations: { ...operations, canFastUpdate: true } }))
+  f.feed.action('update', 'Dom')
+  await f.reply(1, snapshot({ operations: { ...operations, request: request('update', 'pending', 'Dom') } }))
+  f.feed.load()
+  await f.reply(2, snapshot({ operations: { ...operations, request: { ...request('update', state, 'Dom'), outcome } } }))
+  assert.equal(f.feed.installBaseline, null)
+  assert.equal(canceled, 1)
+  f.feed.stop()
+}
+
+// Gateway error envelopes are not software snapshots, even when the tunnel uses HTTP 200.
+const unreachableMessage = 'Your comma cannot be reached. Check your connection and try again'
+for (const action of ['update', 'fast', 'rollback', 'install', 'version']) {
+  for (const status of [200, 400, 500, 503]) {
+    for (const field of ['error', 'message']) {
+      for (const duringPoll of [false, true]) {
+        const restarts = []
+        const f = fixture(true, baseline => restarts.push(baseline))
+        f.feed.start()
+        await f.reply(0, snapshot({ operations: { ...operations, canFastUpdate: true, canRollback: true, canInstall: true,
+          history: { installed: [], downloaded: [], currentReleaseNotes: null, downloadedReleaseNotes: null,
+            recent: { branch: 'Dom', head: installed.commit, entries: [{ hash: 'b'.repeat(40), date: '', subject: '' }] } } } }))
+        f.feed.action(action, 'Dom', { expectedCommit: installed.commit, selectedCommit: 'b'.repeat(40) })
+        assert.equal(f.requests.length, 2)
+        if (duringPoll) {
+          await f.reply(1, snapshot({ operations: { ...operations, request: request(action, 'pending', 'Dom') } }))
+          f.fire(1000)
+        }
+        await f.reply(duringPoll ? 2 : 1, { [field]: unreachableMessage }, status)
+        assert.ok(restarts.length, `${action} ${status} ${field} ${duringPoll ? 'poll' : 'POST'} must reconnect`)
+        assert.equal(restarts.at(-1).action, action)
+        assert.equal(f.feed.installBaseline.action, action)
+        if (!duringPoll) assert.equal(f.feed.uncertain, true)
+        f.feed.stop()
+      }
+    }
+  }
+}
+// The same envelope outside a user-started update must remain an ordinary error.
+for (const status of [200, 400, 500]) {
+  const f = fixture(true, () => assert.fail('ordinary status failure must not show update recovery'))
+  f.feed.start()
+  await f.reply(0, { message: unreachableMessage }, status)
+  assert.equal(f.states.at(-1).error, unreachableMessage)
+  f.feed.stop()
+}
+// Structured service and authorization errors keep their existing behavior.
+for (const [status, payload, unauthorized] of [
+  [401, { message: unreachableMessage }, true],
+  [503, { code: 'access_unavailable', message: unreachableMessage }, true],
+  [503, { code: 'setup_required', message: unreachableMessage }, true],
+  [500, { code: 'update_failed', error: 'Failed to apply update' }, false],
+  [503, { error: 'Updater status is unavailable' }, false],
+  [409, { error: 'Update rejected' }, false],
+]) {
+  const f = fixture(true, () => assert.fail('structured/auth error must not show update recovery'))
+  f.feed.start()
+  await f.reply(0, snapshot({ operations: { ...operations, canFastUpdate: true } }))
+  f.feed.action('update', 'Dom')
+  await f.reply(1, payload, status)
+  assert.equal(f.unauthorized, Number(unauthorized))
+  if (!unauthorized) assert.equal(f.states.at(-1).error, payload.error)
+  f.feed.stop()
+}
+console.log('Software status and tunnel-envelope regressions passed')

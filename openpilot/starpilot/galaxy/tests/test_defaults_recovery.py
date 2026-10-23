@@ -81,7 +81,7 @@ class TestCanonicalRecovery(TestCase):
     recovery = self.recovery()
     view = recovery.snapshot(self.session, self.generation)
     selected = [row['id'] for row in view['rows'] if row['label'] in
-                ('Require confirmation', 'Confirm lower limits', 'Confirm higher limits')]
+                ('Automatic adoption', 'Confirm lower limits', 'Confirm higher limits')]
     self.assertEqual(len(selected), 1)
     pending = recovery.preview(view['view'], selected, self.session, self.generation)
     self.assertTrue(recovery.confirm(pending['intent'], self.session, self.generation)['saved'])
@@ -96,7 +96,7 @@ class TestCanonicalRecovery(TestCase):
     self.context.value = replace(self.context.value, cp=None, cp_raw=None)
     recovery = self.recovery()
     view = recovery.snapshot(self.session, self.generation)
-    unsupported = next(row for row in view['rows'] if row['label'] == 'Require confirmation')
+    unsupported = next(row for row in view['rows'] if row['label'] == 'Automatic adoption')
     self.assertFalse(unsupported['resetAvailable'])
     with self.assertRaises(SettingsChanged):
       recovery.preview(view['view'], [unsupported['id']], self.session, self.generation)

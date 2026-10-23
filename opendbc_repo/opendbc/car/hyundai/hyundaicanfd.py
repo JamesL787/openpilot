@@ -257,6 +257,16 @@ def create_ioniq6_radar_heartbeat(counter: int, brake_pressed: bool, gas_pressed
   return CanData(0x100, bytes(data), 0)
 
 
+def create_gv60_radar_heartbeat(counter: int, brake_pressed: bool, gas_pressed: bool) -> CanData:
+  """Frozen GV60 24-byte A-CAN heartbeat; CRC, counter and current pedals vary."""
+  data = bytearray.fromhex("000000020000fcff000000000020000055ff000068000000")
+  data[2] = counter & 0xff
+  data[4] = int(brake_pressed)
+  data[22] = int(gas_pressed)
+  data[:2] = hkg_can_fd_checksum(0x100, None, data).to_bytes(2, 'little')
+  return CanData(0x100, bytes(data), 0)
+
+
 def create_ioniq6_blindspot_status(counter: int, status: BlindspotStatus) -> list[CanData]:
   """Paired HDA-II dashboard status from the frozen Ioniq 6 indicator layout."""
   frames = []

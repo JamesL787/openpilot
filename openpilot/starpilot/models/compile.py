@@ -9,6 +9,7 @@ import tempfile
 import time
 from collections import namedtuple
 from functools import partial
+from typing import TYPE_CHECKING, cast
 
 if __name__ == '__main__':
   from openpilot.starpilot.models.runtime_bridge.runtime import prepare_compiler
@@ -20,6 +21,8 @@ from tinygrad.dtype import _to_np_dtype, dtypes
 from tinygrad.device import Buffer, BufferSpec
 from tinygrad.uop.ops import UOp
 from tinygrad_repo.examples.openpilot.helpers import dump_pickle, load_pickle
+if TYPE_CHECKING:
+  from openpilot.starpilot.models.runtime_bridge.legacy_types import LegacyBufferFactory, LegacyUOpFactory
 
 from openpilot.starpilot.models.catalog import COMPILER_REVISION  # personal branch: the vendored tinygrad (02e698160e)
 ARTIFACT_ABI = "tinygrad_single_v1_arena"
@@ -451,9 +454,9 @@ def make_stateful_input_queues(metadata, device):
     image_shape = tuple(metadata['input_shapes']['new_img'])
     from openpilot.starpilot.models.runtime_bridge.runtime import selected_legacy
     if selected_legacy():
-      buffer = Buffer(device, math.prod(image_shape), dtypes.uint8,
-                      options=BufferSpec(cpu_access=True), preallocate=True)
-      view = UOp.from_buffer(buffer)
+      buffer = cast("LegacyBufferFactory", Buffer)(device, math.prod(image_shape), dtypes.uint8,
+                                                   options=BufferSpec(cpu_access=True), preallocate=True)
+      view = cast("LegacyUOpFactory", UOp).from_buffer(buffer)
     else:
       buffer = Buffer(device, math.prod(image_shape) * dtypes.uint8.itemsize,
                       options=BufferSpec(cpu_access=True), preallocate=True)

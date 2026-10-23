@@ -1,4 +1,6 @@
 """Immutable acceptance decisions with explicit authority and no runtime I/O."""
+from typing import cast
+
 
 import math
 from dataclasses import dataclass, replace
@@ -201,7 +203,7 @@ def _identity_valid(identity: object) -> bool:
 
 def _speed_valid(value: object) -> bool:
   try:
-    return type(value) in (int, float) and math.isfinite(value) and value > 0
+    return type(value) in (int, float) and math.isfinite(cast(float, value)) and cast(float, value) > 0
   except OverflowError:
     return False
 

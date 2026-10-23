@@ -50,7 +50,7 @@ class ToyotaTorqueFamilyTests(unittest.TestCase):
     self.assertEqual(registry - TOYOTA_VEHICLES, {'TOYOTA_PRIUS_RETROFIT', 'TOYOTA_MATRIX_RETROFIT'})
     self.assertTrue(TOYOTA_VEHICLES <= registry)
     for identity in registry - TOYOTA_VEHICLES:
-      self.assertFalse(supported_cp(params_for(identity)))
+      self.assertTrue(supported_cp(params_for(identity)))
     self.assertFalse(supported_cp(params_for('TOYOTA_RAV4_TSS2_2023')))
     self.assertFalse(supported_cp(params_for('CHEVROLET_BOLT_EUV')))
     with mock.patch.dict(os.environ, {'TORQUE_REPLAY_RUNTIME': '1'}):

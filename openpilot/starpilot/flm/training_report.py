@@ -10,6 +10,7 @@ from pathlib import Path
 from collections import Counter, deque
 
 from openpilot.starpilot.flm.application_wire import read_application
+from openpilot.starpilot.flm.live_tracking_report import tracking_objects
 
 READ_MAX_BYTES = 32_768
 READ_MAX_AGE_NS = 2_000_000_000
@@ -77,7 +78,8 @@ def _report_current(value, age_ns):
           'status': value['status'], 'reason': value['reason'],
           'progress': {key: progress[key] for key in ('samples', 'blocks', 'requiredBlocks')},
           'fit': None if fit is None else {key: fit[key] for key in ('status', 'reason', 'trainWindows', 'heldoutWindows')},
-          'application': application, 'details': details}
+          'application': application, 'details': details,
+          **tracking_objects(value, fresh=fresh)}
 
 
 def read_report(path, *, now_ns):
@@ -210,6 +212,46 @@ class TrainingReporter:
           coordinates = list(outcome.actual_coordinates) if matched else []
           applied_sequence = outcome.profile_sequence if matched else 0
           actual_full = trace if matched and trace is not None else None
+    actual_live = None
+    live = getattr(collector, 'live_tracking', None) if collector is not None else None
+    live_offer = None if live is None else live.latest_offer
+    restoring = live_offer is None and live is not None and getattr(live, 'latest_restore_offer', None) is not None
+    if restoring:
+      live_offer = live.latest_restore_offer
+    if self.control is not None and live_offer is not None and native_current and source is not None:
+      event, evidence = self.control
+      try:
+        from openpilot.starpilot.flm.live_trial_wire import read_application as read_tracking_application, read_restore_application
+        from openpilot.starpilot.flm.live_tracking_response import validate_response_witness
+        validate_response_witness(live_offer.response_witness, live_offer.binding, now_ns)
+        reader = read_restore_application if restoring else read_tracking_application
+        ack = reader(event.starpilotLateralState, now_ns=now_ns, offer=live_offer)
+        matched = bool(ack is not None and ack.status == ('restored' if restoring else 'applied') and
+          event.which() == 'starpilotLateralState' and evidence.live_applied_coordinates and
+          tuple(value for _, value in ack.applied) == evidence.live_applied_coordinates and
+          ack.control_ns == evidence.effect_prepare_ns and
+          0 <= evidence.control_ns-ack.control_ns <= 30_000_000 and
+          0 < evidence.control_ns <= now_ns <= evidence.control_ns+100_000_000 and
+          evidence.identity == live_offer.binding.identity and evidence.source_epoch == source.source_epoch and
+          source.source_epoch == live_offer.binding.source_epoch and source.enabled and not source.manual and
+          (source.cp_sha256, source.reset, source.calibration_generation) ==
+            (live_offer.binding.cp_sha256, live_offer.binding.reset_generation, live_offer.binding.calibration_generation) and
+          (evidence.controller_revision, evidence.baseline_revision) ==
+            (live_offer.binding.controller_revision, live_offer.binding.baseline_revision) and
+          source.observed_ns <= now_ns <= source.expires_ns and
+          live_offer.observed_ns <= now_ns <= live_offer.expires_ns and
+          evidence.active and evidence.enabled and evidence.valid and not evidence.manual and not evidence.fault and
+          0 < evidence.source_receipt_ns <= evidence.control_ns <= now_ns <= evidence.source_receipt_ns+500_000_000 and
+          (not evidence.native_required or evidence.native_allowed and
+            evidence.native_observed_ns <= evidence.control_ns <= now_ns <= evidence.native_expires_ns))
+        if matched:
+          actual_live = ack
+          application = {'applied': any(value for _, value in ack.applied), 'reason': ack.reason}
+          applied_sequence = ack.sequence
+          coordinates = list(evidence.live_applied_coordinates)
+      except (AttributeError, TypeError, ValueError, OverflowError):
+        # Telemetry never grants application or substitutes an offered target.
+        pass
     details = {
       'Vehicle': self.vehicle, 'Collection session': '' if collector is None else collector.session,
       'Current objective': str(objective)[:128],
@@ -230,6 +272,25 @@ class TrainingReporter:
       'Collection duration seconds': (now_ns - self.started) / 1e9,
     }
     if collector is not None and getattr(collector.adapter, 'event_collection', False):
+      if getattr(collector.adapter, 'source_plant_protocol', None) is not None:
+        capture = getattr(collector, 'original_source_capture', None)
+        replay = collector.adapter.replay
+        receipts = getattr(collector.adapter, 'original_context_receipts', None)
+        details['GLOBAL original source capture'] = {
+          'poses': 0 if capture is None else len(capture.rows),
+          'epoch': None if capture is None else capture.epoch,
+          'epochStartNs': None if capture is None else capture.epoch_start_ns,
+          'epochCutoffNs': None if capture is None else capture.epoch_cutoff_ns,
+          'sealed': False if capture is None else capture.sealed,
+          'reason': None if capture is None else capture.reason,
+          'rejected': 0 if capture is None else capture.rejected,
+          'frames': len(replay.records), 'checkpoints': len(replay.checkpoints),
+          'emissions': len(replay.emissions.events),
+          'controls': 0 if receipts is None else len(receipts.controls),
+          'readyPairs': len(collector.ready),
+        }
+        details['GLOBAL response bootstrap readiness'] = dict(getattr(collector, '_live_bootstrap_readiness',
+          {'reason': 'response_snapshot_not_attempted'}))
       readiness_reader = getattr(collector, 'snapshot_readiness_report', None)
       readiness: dict[str, object] = readiness_reader() if callable(readiness_reader) else {'reason': 'snapshot_not_attempted'}
       stamp = cast(int | None, readiness.pop('observedMonoTime', None))
@@ -241,6 +302,12 @@ class TrainingReporter:
         'Last unsuccessful fit': list(self.last_fit_rejection) if self.last_fit_rejection else [],
         'Parent fit profile retained': bool(collector.fit_result is not None and collector.fit_result.profile is not None),
         'Collector admission result retained': bool(collector.result is not None and collector.result.profile is not None)})
+    if actual_live is not None:
+      details.update({'Actual full surface coordinates': [[name, value] for name, value in actual_live.applied],
+        'Actual full profile hash': actual_live.applied_sha256,
+        'Actual live trial ID': actual_live.trial_id,
+        'Actual live target sequence': actual_live.target_sequence,
+        'Actual live control timestamp': actual_live.control_ns})
     if actual_full is not None:
       details.update({'Actual full surface coordinates': [[n,v] for n,v in actual_full.applied],
         'Actual full profile hash': actual_full.applied_full_profile_sha256,
@@ -272,6 +339,9 @@ class TrainingReporter:
         reason = 'capturing_steering_evidence'
     current = {'enabled': None if source is None else bool(source.enabled), 'status': status, 'reason': reason,
                'progress': progress, 'fit': fit, 'application': application, 'details': details}
+    live = getattr(collector, 'live_tracking', None) if collector is not None else None
+    if live is not None:
+      current.update(tracking_objects(live.report(now_ns), fresh=True))
     state = (status, reason, application['applied'], None if fit is None else (fit['status'], fit['reason']))
     if state != self.last_state:
       self.history.append({'time': f'{(now_ns - self.started) / 1e9:.1f} s', 'status': status,

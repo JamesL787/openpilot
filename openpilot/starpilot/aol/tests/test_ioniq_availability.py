@@ -112,8 +112,11 @@ class IoniqAvailabilityTests(unittest.TestCase):
     sd.CS_prev = car_state()
     sd.car_state_sock = object()
     original_optional_receive = messaging.recv_one_or_none
+    steering_receipts = []
 
     def optional_receive(sock):
+      if getattr(sd, 'steering_companion', None) is not None and sock is sd.steering_companion.sock:
+        return steering_receipts.pop(0) if steering_receipts else None
       return None if sock is sd.car_state_sock else original_optional_receive(sock)
 
     self.enterContext(mock.patch('openpilot.selfdrive.selfdrived.selfdrived.messaging.recv_one_or_none', side_effect=optional_receive))
@@ -286,6 +289,10 @@ class IoniqAvailabilityTests(unittest.TestCase):
         authority.starpilotCarState.sourceCarStateMonoTime = now - 1 if companion == 'wrong_source' else now
         authority.starpilotCarState.lateralAuthorityUnavailable = authority_unavailable
         frames.append(authority.as_reader())
+        # Mirror this producer envelope on the real nonconflating receipt,
+        # as Card does. The conflating SubMaster view alone proves no receipt.
+        if getattr(sd, 'steering_companion', None) is not None:
+          steering_receipts.append(authority.as_reader())
       if genuine_events:
         feed_event_sources(now, frames + [intent.as_reader(), native.as_reader()], car_output_valid=car_output_valid)
       else:

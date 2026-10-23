@@ -146,18 +146,31 @@ def test_enable_release_without_main_matches_original_profile_scope(name):
                                    else log.SelfdriveState.OpenpilotState.disabled)
 
 
-@pytest.mark.parametrize('name', ['pe', 'ev9', 'elantra'])
-@pytest.mark.parametrize('field,value', [('passive', True), ('notCar', True), ('dashcamOnly', True),
+@pytest.mark.parametrize('name,experience', [('pe', 0), ('pe', 32), ('elantra', 0), ('ev9', 0), ('ev9', 32)])
+@pytest.mark.parametrize('field,value', [('brand', 'other'), ('carFingerprint', 'foreign'),
+                                       ('passive', True), ('notCar', True), ('dashcamOnly', True),
                                        ('openpilotLongitudinalControl', False), ('pcmCruise', True),
-                                       ('alphaLongitudinalAvailable', False), ('alternativeExperience', 32)])
-def test_main_state_helper_rejects_changed_authority_contract(name, field, value):
+                                       ('alphaLongitudinalAvailable', False)])
+def test_main_state_helper_rejects_changed_authority_contract(name, experience, field, value):
   cp = profile(name)
+  cp.alternativeExperience = experience
+  assert qualified(cp)
   setattr(cp, field, value)
   assert not qualified(cp)
 
 
-@pytest.mark.parametrize('name', ['pe', 'ev9', 'elantra'])
-def test_main_state_helper_rejects_neighbor_native_word(name):
+@pytest.mark.parametrize('name,experience', [('pe', 0), ('pe', 32), ('elantra', 0), ('ev9', 0), ('ev9', 32)])
+def test_main_state_helper_rejects_neighbor_native_word(name, experience):
   cp = profile(name)
+  cp.alternativeExperience = experience
+  assert qualified(cp)
   cp.safetyConfigs[0].safetyParam ^= 1
   assert not qualified(cp)
+
+
+@pytest.mark.parametrize('name', ['pe', 'ev9', 'elantra'])
+@pytest.mark.parametrize('experience', [0, 1, 32, 33, 64])
+def test_main_state_helper_requires_exact_profile_experience(name, experience):
+  cp = profile(name)
+  cp.alternativeExperience = experience
+  assert qualified(cp) == (experience == 0 or (name in ('pe', 'ev9') and experience == 32))

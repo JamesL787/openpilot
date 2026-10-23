@@ -2,7 +2,7 @@
 
 from openpilot.starpilot.galaxy.crash_reports import CrashChanged, CrashMissing, CrashUnavailable
 from openpilot.starpilot.galaxy.settings import SettingsChanged, SettingsUnavailable
-from openpilot.starpilot.galaxy.sentry_events import SentryEventsUnavailable
+from openpilot.starpilot.galaxy.sentry_events import ID as SENTRY_EVENT_ID, SentryEventsUnavailable
 from openpilot.starpilot.sentry_mode.notifications import NotificationUnavailable
 from openpilot.starpilot.ui.layout_preview_transport import (PreviewBusy, PreviewDenied, PreviewInvalid, PreviewUnavailable,
                                                             PROFILES as PREVIEW_PROFILES, SCENES as PREVIEW_SCENES, request_preview,
@@ -23,6 +23,8 @@ def delete_records(self, path, payload, sentry_events_lock, crash_reports_lock, 
       selected = None
     elif set(payload) == {key} and type(payload[key]) is str and payload[key]:
       selected = payload[key]
+      if sentry and SENTRY_EVENT_ID.fullmatch(selected) is None:
+        raise ValueError('Invalid event ID')
     else:
       raise ValueError('Confirm deleting all stored records')
 
@@ -109,13 +111,10 @@ def change_drive_state(self, payload, effect_lock, drive_owner):
       len(payload['revision']) != 32):
     self.json(400, {'error': 'Invalid drive state request'})
     return
-  if payload['mode'] == 'offroad':
-    self.json(403, {'error': 'Use the in-car Force Off-road control'})
-    return
   from openpilot.starpilot.drive_state.owner import Rejected
   try:
     with effect_lock:
-      drive_owner().change(payload['mode'], payload['revision'], lambda: self.settings_session() == identity)
+      drive_owner().change_galaxy(payload['mode'], payload['revision'], lambda: self.settings_session() == identity)
     result = drive_owner().snapshot()
   except Rejected as error:
     self.json(409, {'error': str(error)})

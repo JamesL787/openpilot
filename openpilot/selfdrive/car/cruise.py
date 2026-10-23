@@ -76,7 +76,9 @@ class VCruiseHelper:
 
   def update_v_cruise(self, CS, enabled, is_metric, slc_pending: SlcPendingConfirmation | None = None, *, slc_enabled: bool = False):
     self.slc_pcm = bool(slc_enabled and self.CP.pcmCruise and self.CP.openpilotLongitudinalControl)
-    software_cruise = not self.CP.pcmCruise or self.slc_pcm
+    from opendbc.car.subaru.software_cruise import selected as subaru_software_selected
+    subaru_software = subaru_software_selected(self.CP)
+    software_cruise = not self.CP.pcmCruise or self.slc_pcm or subaru_software
     self.slc_cruise_change = None
     self.slc_consumed_button = None
     self.slc_released_suppressed = False
@@ -98,7 +100,7 @@ class VCruiseHelper:
 
     if CS.cruiseState.available:
       if software_cruise:
-        if self.slc_pcm and (not enabled or not self.v_cruise_initialized):
+        if (self.slc_pcm or subaru_software) and (not enabled or not self.v_cruise_initialized):
           # PCM still owns engagement; SLC owns the software set speed while system long is selected.
           stock_kph = CS.cruiseState.speed * CV.MS_TO_KPH
           self.v_cruise_kph = stock_kph if 0 < stock_kph < V_CRUISE_UNSET else V_CRUISE_UNSET
@@ -217,7 +219,9 @@ class VCruiseHelper:
 
   def adjust_v_cruise(self, button_type, CS, is_metric: bool, *, long_press: bool = False) -> bool:
     """Apply the normal software cruise step without synthesizing button events."""
-    if ((self.CP.pcmCruise and not self.slc_pcm) or button_type not in (ButtonType.accelCruise, ButtonType.decelCruise) or
+    from opendbc.car.subaru.software_cruise import selected as subaru_software_selected
+    subaru_software = subaru_software_selected(self.CP)
+    if ((self.CP.pcmCruise and not self.slc_pcm and not subaru_software) or button_type not in (ButtonType.accelCruise, ButtonType.decelCruise) or
         not 0 < self.v_cruise_kph < V_CRUISE_UNSET or
         (button_type == ButtonType.accelCruise and CS.cruiseState.standstill)):
       return False

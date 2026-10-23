@@ -23,6 +23,34 @@ class TestVehiclePytest(unittest.TestCase):
       self.assertEqual(unit, ["test_class.py"])
       self.assertEqual(functions, ["test_function.py", "test_mixed.py", "test_plain.py"])
 
+  def test_unittest_class_with_pytest_fixture_uses_fixture_runner(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      path = root / 'test_fixture_vehicle.py'
+      path.write_text(textwrap.dedent("""\
+        import unittest, pytest
+        @pytest.fixture
+        def ready(request):
+          request.cls.ready = True
+        @pytest.mark.usefixtures('ready')
+        class TestVehicle(unittest.TestCase):
+          def test_receipt(self):
+            assert self.ready
+      """))
+      units, fixtures = split_targets(root, [path.name])
+      self.assertEqual(units, [])
+      self.assertEqual(fixtures, [path.name])
+      previous = Path.cwd()
+      try:
+        os.chdir(root)
+        nodeids, errors = collect([path.name])
+        self.assertFalse(errors)
+        records, errors = run(nodeids)
+        self.assertFalse(errors)
+        self.assertEqual([row['status'] for row in records], ['passed'])
+      finally:
+        os.chdir(previous)
+
   def test_parameterized_id_retains_case_identity(self):
     self.assertEqual(normalize_test_id("opendbc_repo/opendbc/car/honda/tests/test_stock.py::test_cp[HONDA-A]"),
                      "opendbc_repo.opendbc.car.honda.tests.test_stock.test_cp[HONDA-A]")

@@ -723,7 +723,7 @@ static safety_config hyundai_init(uint16_t param) {
       {0x50, 0, 16, .check_relay = true, .disable_static_blocking = true},
       {0x4F1, 1, 4, .check_relay = false},
       {0x2A4, 0, 24, .check_relay = true, .disable_static_blocking = true},
-      {0x485, 1, 8, .check_relay = true, .disable_static_blocking = true},
+      {0x485, 1, 8, .check_relay = false, .disable_static_blocking = true},
     };
     static const CanMsg blended_aol_tx_msgs[] = {
       {0x340, 0, 8, .check_relay = true, .disable_static_blocking = true},

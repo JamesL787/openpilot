@@ -20,7 +20,7 @@ class ForceHttpTest(helpers.NavigationHttpTest):
     self.drive = DriveStateOwner(self.params, Path(temporary.name) / 'drive', alive=lambda _: True)
     self.drive.initialize(pid=1, birth=2, boot=BOOT)
     self.allowed = True
-    self.physical = NS(allowed=lambda: self.allowed)
+    self.physical = NS(allowed=lambda: self.allowed, status=lambda **kwargs: {"allowed": self.allowed, "reason": None})
     self.control = DriveStateControl(self.drive, self.physical, effective=lambda: False)
     original = helpers.make_server
     with patch.object(helpers, 'make_server', side_effect=lambda **kwargs: original(**kwargs, drive_state=self.control)):
@@ -41,17 +41,17 @@ class ForceHttpTest(helpers.NavigationHttpTest):
     self.assertEqual((result[1]['mode'], result[1]['effective']), ('onroad', 'offroad'))
     status = self.request('/api/drive-state/status', remote=True, cookie=self.remote_cookie)
     self.assertEqual(status[1]['revision'], result[1]['revision'])
-    self.assertEqual(self.drive_action('offroad', remote=True)[0], 403)
+    self.assertEqual(self.drive_action('offroad', remote=True)[0], 200)
     self.control.change('offroad', self.drive.snapshot().revision, lambda: True)
     self.assertEqual(self.drive_action('auto', revision=result[1]['revision'])[0], 409)
 
-  def test_galaxy_blocks_offroad_but_onroad_and_auto_remain_recoverable(self):
-    self.assertEqual(self.drive_action('offroad')[0], 403)
+  def test_galaxy_requires_park_but_onroad_and_auto_remain_recoverable(self):
+    self.assertEqual(self.drive_action('offroad')[0], 200)
     self.control.change('offroad', self.drive.snapshot().revision, lambda: True)
     self.allowed = False
     self.assertEqual(self.drive_action('onroad')[0], 200)
     self.assertEqual(self.drive.snapshot().mode, Mode.ONROAD)
-    self.assertEqual(self.drive_action('offroad')[0], 403)
+    self.assertEqual(self.drive_action('offroad')[0], 409)
     self.assertEqual(self.drive.snapshot().mode, Mode.ONROAD)
     self.assertEqual(self.drive_action('auto', remote=True)[0], 200)
     self.assertEqual(self.drive.snapshot().mode, Mode.AUTO)
@@ -62,7 +62,7 @@ class ForceHttpTest(helpers.NavigationHttpTest):
     self.assertEqual(self.drive_action('onroad', origin='https://unrelated.invalid')[0], 403)
     self.assertEqual(self.drive_action('badmode')[0], 409)
     self.assertEqual(self.params.writes, before)
-    original_change = self.control.change
+    original_change = self.control.change_galaxy
 
     def revoke_remote(mode, revision, authorized):
       self.assertEqual(mode, 'onroad')
@@ -71,7 +71,7 @@ class ForceHttpTest(helpers.NavigationHttpTest):
       self.assertFalse(authorized())
       return original_change(mode, revision, authorized)
 
-    with patch.object(self.control, 'change', side_effect=revoke_remote):
+    with patch.object(self.control, 'change_galaxy', side_effect=revoke_remote):
       self.assertEqual(self.drive_action('onroad', remote=True)[0], 409)
     self.assertEqual(self.params.writes, before)
 
@@ -82,14 +82,15 @@ class ForceHttpTest(helpers.NavigationHttpTest):
     self.control.change('offroad', self.drive.snapshot().revision, lambda: True)
     self.assertEqual(self.drive.snapshot().mode, Mode.OFFROAD)
 
-  def test_galaxy_force_offroad_never_reaches_owner_for_local_or_remote_sessions(self):
+  def test_galaxy_offroad_rechecks_park_for_local_and_remote_sessions(self):
     for remote in (False, True):
-      for allowed in (False, True):
-        self.allowed = allowed
-        before = list(self.params.writes)
-        with patch.object(self.control, 'change', side_effect=AssertionError('Galaxy must reject before dispatch')):
-          self.assertEqual(self.drive_action('offroad', remote=remote)[0], 403)
-        self.assertEqual(self.params.writes, before)
+      self.allowed = False
+      before = list(self.params.writes)
+      self.assertEqual(self.drive_action('offroad', remote=remote)[0], 409)
+      self.assertEqual(self.params.writes, before)
+      self.allowed = True
+      self.assertEqual(self.drive_action('offroad', remote=remote)[0], 200)
+      self.assertEqual(self.drive_action('auto', remote=remote)[0], 200)
 
   def test_authenticated_force_offroad_from_live_onroad_state(self):
     self._force_offroad_from_live_onroad_state(True)
@@ -117,7 +118,7 @@ class ForceHttpTest(helpers.NavigationHttpTest):
     self.assertEqual(status[1]['effective'], 'onroad')
     self.assertEqual(status[1]['overrideAllowed'], can_valid)
     result = self.drive_action('offroad', remote=True)
-    self.assertEqual(result[0], 403)
+    self.assertEqual(result[0], 200 if can_valid else 409)
     self.control.change('offroad', self.drive.snapshot().revision, lambda: True)
     self.assertEqual(self.drive.snapshot().mode, Mode.OFFROAD)
     # hardwared consumes this same owner request through the actual resolver.

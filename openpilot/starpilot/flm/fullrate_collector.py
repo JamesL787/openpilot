@@ -9,6 +9,7 @@ from typing import TypeGuard, cast
 
 from collections import Counter, OrderedDict, deque
 from openpilot.starpilot.flm.torque_eligibility import asynchronous_hint, bounded_context_output, exact_unclipped_pair, consumed_sources_current
+from openpilot.starpilot.flm.native_refinement_wire import valid_inputs
 
 from dataclasses import dataclass, replace
 import math
@@ -96,6 +97,8 @@ class ControlEvidence:
   applied_profile_expires_ns: int = 0
   effect_trace: object | None = None
   effect_prepare_ns: int = 0
+  vehicle_model_anchor: tuple[float, ...] = ()
+  live_applied_coordinates: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -162,6 +165,9 @@ class RawBlock:
 class FullrateCollector:
   def __init__(self, adapter):
     self.adapter = adapter
+    self.live_tracking = None
+    self.live_response_pair = None
+    self._last_live_ingest_ns = 0
     self.session = uuid.uuid4().hex
     self.sequence = self.block_sequence = 0
     self.controls = OrderedDict()
@@ -169,6 +175,9 @@ class FullrateCollector:
     self.recent_controls = OrderedDict()
     self.recent_applied = OrderedDict()
     self.ready = deque(maxlen=MAX_PENDING)
+    # Historical NUMERICAL inputs only. Pending/live joins keep MAX_PENDING;
+    # the actor still enforces original2s age, source/native identity and expiry.
+    self.probe_ready = deque(maxlen=256)
     self.last_carrier_frame = 0
     self.blocks = deque(maxlen=MAX_BLOCKS)
     self.points = []
@@ -190,7 +199,65 @@ class FullrateCollector:
     self.model_block_sequence = self.model_points = 0
     self.model_sealed = False
 
+  def enable_original_source_capture(self, *, clock_contract=None):
+    """Explicit private experiment; never called by the production parent."""
+    from openpilot.starpilot.flm.original_source_capture import OriginalSourceCapture, OriginalSourceClockContract
+    if getattr(self, 'original_source_capture', None) is not None:
+      raise ValueError('original source capture already enabled')
+    if clock_contract is None:
+      from openpilot.starpilot.flm.producer_clock_equivalence import pinned_default_contract
+      clock_contract = pinned_default_contract()
+    if not isinstance(clock_contract, OriginalSourceClockContract):
+      raise ValueError('independently pinned original producer-clock contract required')
+    clock_contract.validate()
+    enable_context = getattr(self.adapter, 'enable_original_context_capture', None)
+    if enable_context is None:
+      raise ValueError('actual original context-only archive required')
+    enable_context()
+    self.original_source_clock_contract = clock_contract
+    self.original_source_capture = OriginalSourceCapture()
+
+  def begin_original_source_experiment(self, receipt):
+    capture = getattr(self, 'original_source_capture', None)
+    if capture is None:
+      raise ValueError('original source capture not enabled')
+    capture.begin_epoch(receipt)
+
+  def reset_original_source_capture(self, reason, *, hard=False):
+    capture = getattr(self, 'original_source_capture', None)
+    if capture is None:
+      return
+    pending = getattr(self, '_original_source_pose_queue', ())
+    if hard:
+      # Revoke every previously seen/pending source publication. Clearing seen
+      # alone would recapture the same old KF publication after OFF/ON.
+      floor = max((getattr(self, '_original_source_revoked_before_ns', 0),
+        getattr(self, '_original_source_seen_pose', 0),
+        *(row.mono_ns for row in pending), *(row.mono_ns for row in capture.rows[-1:])))
+      self._original_source_revoked_before_ns = floor
+      for name in ('_original_source_pose_context', '_original_source_clock',
+          '_original_source_calibrator', '_original_source_vm_anchor', '_original_source_equivalence'):
+        self.__dict__.pop(name, None)
+      self._original_source_seen_pose = 0
+      self._original_source_clock_generation = getattr(self, '_original_source_clock_generation', 0) + 1
+    self._original_source_pose_queue = ()
+    capture.reset(reason, hard=hard)
+
+  def original_source_pose(self, value, now_ns):
+    capture = getattr(self, 'original_source_capture', None)
+    if capture is None:
+      return False
+    # The 5120 raw-row cap includes legacy retained rows and the <=4 original
+    # pending poses. No second 5120-row allowance is created by this opt-in.
+    retained = len(self.raw_points) + sum(len(block.samples) for block in self.blocks)
+    pending = len(getattr(self, '_original_source_pose_queue', ()))
+    return capture.add(value, now_ns, retained_raw_rows=retained + pending)
+
   def split(self, reason, *, reset=False):
+    self.reset_original_source_capture(reason, hard=reset)
+    if self.live_tracking is not None:
+      self.live_tracking.interrupt(reason, context_changed=reset)
+    self.live_response_pair = None
     if reason in self.training_interruptions or len(self.training_interruptions) < 24:
       self.training_interruptions[reason] += 1
     self.controls.clear()
@@ -198,6 +265,7 @@ class FullrateCollector:
     self.recent_controls.clear()
     self.recent_applied.clear()
     self.ready.clear()
+    self.probe_ready.clear()
     self.last_carrier_frame = 0
     self.points.clear()
     self.raw_points.clear()
@@ -215,6 +283,13 @@ class FullrateCollector:
       self.physical_context = None
       self.fit_block_sequence = 0
 
+  def _retain_original_pair(self, command, output):
+    # Called only AFTER existing source/receiver/native admission above.
+    # Keep the exact same objects and clocks; this supplies no new proof.
+    pair=(command,output)
+    self.ready.append(pair)
+    self.probe_ready.append(pair)
+
   def overrun(self):
     self.dropped += 1
     self.split('fullrate_overrun')
@@ -224,6 +299,8 @@ class FullrateCollector:
     return False
 
   def control(self, value, now_ns):
+    if isinstance(value, ControlEvidence) and (value.manual or not value.enabled):
+      self.reset_original_source_capture('original_source_disabled_or_manual', hard=True)
     if isinstance(value, ControlEvidence) and value.effect_trace is not None:
       try:
         from openpilot.starpilot.flm.effect_trace import FullEffectTrace
@@ -268,7 +345,7 @@ class FullrateCollector:
       or not value.policy
       or not value.controller_revision
       or not replay_values(value.replay_snapshot, 1024)
-      or not replay_values(value.replay_inputs, 32)
+      or not valid_inputs(value.replay_inputs)
       or type(value.snapshot_sequence) is not int
       or value.snapshot_sequence < 0
       or type(value.turn_assist) is not bool
@@ -343,6 +420,10 @@ class FullrateCollector:
     if self.controls and value.control_ns <= next(reversed(self.controls)):
       self.split('reordered_control')
       return False
+    self._last_live_ingest_ns = now_ns
+    if self.live_tracking is not None:
+      self.live_tracking.observe_source_control(value, now_ns=now_ns,
+        current_native=getattr(self, '_learning_current_native_allowed', False))
     self.controls[value.control_ns] = value
     self.recent_controls[value.control_ns] = value
     while len(self.recent_controls) > MAX_PENDING:
@@ -353,6 +434,9 @@ class FullrateCollector:
     return True
 
   def output(self, value, now_ns):
+    context_only = getattr(self.adapter, 'observe_original_applied', None)
+    if context_only is not None:
+      context_only(value)  # Original owner receipt, never ready/plant permission.
     if (
       not isinstance(value, AppliedEvidence)
       or not finite(value.applied)
@@ -394,6 +478,7 @@ class FullrateCollector:
         self.split('changed_duplicate_output', reset=True)
         return False
       return True
+    self._last_live_ingest_ns = now_ns
     self.applied[key] = value
     self.recent_applied[key] = value
     while len(self.recent_applied) > MAX_PENDING:
@@ -457,7 +542,14 @@ class FullrateCollector:
       if record is None or not record(command, output):
         self.split('actual_emission_recorder_unavailable', reset=True)
         return
-    self.ready.append((command, output))
+    self._retain_original_pair(command, output)
+    if self.live_tracking is not None:
+      try:
+        profile = self.live_tracking.profile(command)
+        self.live_tracking.observe_control(command, output, profile_sha256=profile,
+          now_ns=self._last_live_ingest_ns, current_native=getattr(self, '_learning_current_native_allowed', False))
+      except (AttributeError, KeyError, TypeError, ValueError):
+        self.live_tracking.interrupt('actual_tracking_native_pair_unqualified')
 
   def physical(self, value, now_ns):
     if (

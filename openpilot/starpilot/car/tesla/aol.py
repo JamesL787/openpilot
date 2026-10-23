@@ -1,4 +1,5 @@
-from opendbc.car.tesla.preap.aol import qualified, temporary_restriction
+from opendbc.car import structs
+from opendbc.car.tesla.preap.aol import qualified, temporary_restriction as preap_temporary_restriction
 from openpilot.starpilot.aol.policy import AolVehiclePolicy
 from openpilot.starpilot.car.tesla.stock_intent import TeslaPreapCardIntent
 from opendbc.car.tesla.screen_button import screen_tap_supported, screen_qualified, SCREEN_WORDS
@@ -43,7 +44,11 @@ def ordinary_axis_request_allowed(cp, state):
 
 
 def retain_on_native_denial(cp, native, state):
-  return temporary_restriction(cp, state)
+  return preap_temporary_restriction(cp, state) or bool(
+    screen_qualified(cp, marked_only=True) and state is not None and state.canValid and not state.canTimeout and
+    not state.steerFaultPermanent and not state.steeringDisengage and not state.doorOpen and not state.accFaulted and
+    (state.gearShifter in (structs.CarState.GearShifter.reverse, structs.CarState.GearShifter.neutral) or
+     state.gearShifter == structs.CarState.GearShifter.drive and state.steerFaultTemporary))
 
 
 def create_intent(cp, settings):

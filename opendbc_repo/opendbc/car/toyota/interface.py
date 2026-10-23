@@ -13,7 +13,7 @@ SteerControlType = structs.CarParams.SteerControlType
 
 def toyota_auto_hold_supported(CP) -> bool:
   from opendbc.car.toyota.rav4h_filter import enabled as rav4h_filter_enabled
-  if rav4h_filter_enabled(CP):
+  if CP.carFingerprint == CAR.TOYOTA_RAV4H and rav4h_filter_enabled(CP):
     return True
   return bool(CP.brand == "toyota" and CP.carFingerprint in TOYOTA_AUTO_HOLD_CARS and
               CP.openpilotLongitudinalControl and not CP.flags & ToyotaFlags.SECOC and
@@ -52,6 +52,8 @@ class CarInterface(CarInterfaceBase):
     ret.brand = "toyota"
     ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.toyota)]
     ret.safetyConfigs[0].safetyParam = EPS_SCALE[candidate]
+    if candidate == CAR.LEXUS_IS:
+      ret.safetyConfigs[0].safetyParam |= int(ToyotaSafetyFlags.ALT_CRUISE)
 
     # BRAKE_MODULE is on a different address for these cars
     if DBC[candidate][Bus.pt] == "toyota_new_mc_pt_generated":
@@ -123,12 +125,21 @@ class CarInterface(CarInterfaceBase):
       ret.flags |= ToyotaFlags.HAS_BSM.value
 
     ret.radarUnavailable = Bus.radar not in DBC[candidate]
+    if candidate == CAR.TOYOTA_CAMRY:
+      ret.radarUnavailable = False
+      ret.deprecated.radarTimeStep = 0.1
+
+    from opendbc.car.toyota.radar_filter import hardware_supported as radar_filter_supported
+    radar_filter = radar_filter_supported(candidate, fingerprint)
+    if radar_filter:
+      ret.flags |= int(ToyotaFlags.RADAR_CAN_FILTER)
+      ret.safetyConfigs[0].safetyParam |= int(ToyotaSafetyFlags.LONG_FILTER)
 
     # since we don't yet parse radar on TSS2 radar-based ACC cars, gate longitudinal behind alpha toggle
-    if ret.flags & ToyotaFlags.RADAR_ACC:
+    if ret.flags & ToyotaFlags.RADAR_ACC or radar_filter:
       ret.alphaLongitudinalAvailable = True
 
-      if alpha_long:
+      if alpha_long and not radar_filter:
         ret.flags |= ToyotaFlags.DISABLE_RADAR.value
 
     # openpilot longitudinal enabled by default:
@@ -137,7 +148,7 @@ class CarInterface(CarInterfaceBase):
     #  - TSS2 radar ACC cars (disables radar)
 
     ret.openpilotLongitudinalControl = ((bool(ret.flags & ToyotaFlags.TSS2) and not (ret.flags & ToyotaFlags.RADAR_ACC)) or
-                                        bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value))
+                                        bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value) or (radar_filter and alpha_long))
 
     if candidate in (CAR.TOYOTA_MATRIX_RETROFIT, CAR.TOYOTA_PRIUS_RETROFIT):
       # These manually selected retrofits currently own stock PCM longitudinal.
@@ -168,17 +179,29 @@ class CarInterface(CarInterfaceBase):
     from opendbc.car.toyota.rav4h_filter import hardware_supported, LONG_WORD
     rav4h_sdsu = hardware_supported(candidate, fingerprint, car_fw)
     if rav4h_sdsu:
-      ret.flags |= int(ToyotaFlags.HYBRID | ToyotaFlags.LONG_FILTER)
+      ret.flags |= int(ToyotaFlags.LONG_FILTER)
+      if candidate == CAR.TOYOTA_RAV4H:
+        ret.flags |= int(ToyotaFlags.HYBRID)
       ret.safetyConfigs[0].safetyParam = LONG_WORD
       ret.openpilotLongitudinalControl = True
       ret.alphaLongitudinalAvailable = False
-      stop_and_go = True
+      if candidate == CAR.TOYOTA_RAV4H:
+        stop_and_go = True
     elif candidate == CAR.TOYOTA_RAV4H and 0x2FF in fingerprint.get(0, {}):
       ret.dashcamOnly = True
+    from opendbc.car.toyota import eps8_sdsu
+    eps8_filter = eps8_sdsu.hardware_supported(candidate, fingerprint, car_fw)
+    if eps8_filter:
+      eps8_sdsu.apply(ret, alpha_long)
     # Toyota EPS accepts lateral commands down to zero. Keep the existing
     # native/axis/fault gates; a stock cruise stop does not withdraw steering.
     ret.steerAtStandstill = ret.minSteerSpeed <= 0.
-    ret.autoResumeSng = ret.openpilotLongitudinalControl and (rav4h_sdsu or not ret.flags & ToyotaFlags.LONG_FILTER)
+    ret.autoResumeSng = ret.openpilotLongitudinalControl and (
+      (rav4h_sdsu and candidate in (CAR.TOYOTA_RAV4H, CAR.TOYOTA_HIGHLANDER, CAR.TOYOTA_SIENNA)) or
+      (eps8_filter and bool(ret.flags & ToyotaFlags.TSS2)) or not ret.flags & ToyotaFlags.LONG_FILTER)
+
+    if radar_filter and not ret.flags & ToyotaFlags.TSS2:
+      ret.autoResumeSng = False  # Preserve the pre-TSS2 stock stop timer.
 
     if not ret.openpilotLongitudinalControl:
       ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
@@ -187,7 +210,7 @@ class CarInterface(CarInterfaceBase):
     # to a negative value, so it won't matter.
     ret.minEnableSpeed = -1. if stop_and_go else MIN_ACC_SPEED
 
-    if ret.flags & (ToyotaFlags.TSS2 | ToyotaFlags.LONG_FILTER) and not rav4h_sdsu:
+    if ret.flags & ToyotaFlags.TSS2 or ret.flags & ToyotaFlags.LONG_FILTER and not (rav4h_sdsu or eps8_filter):
       ret.flags |= ToyotaFlags.RAISED_ACCEL_LIMIT.value
 
       # Hybrids have much quicker longitudinal actuator response

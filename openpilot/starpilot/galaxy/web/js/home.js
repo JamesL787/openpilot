@@ -201,7 +201,7 @@ export const Home = {
             <section class="gx-card"><h2>This Week</h2><strong>{{ driving.week.distance }}</strong><span>{{ counted(driving.week.drives, "drive") }} · {{ driving.week.duration }}</span></section>
           </div>
           <div class="gx-home__pair">
-            <section class="gx-card gx-home__week"><h2>This Week</h2>
+            <section class="gx-card gx-home__week"><div class="gx-section__header"><i class="bi bi-calendar-week"></i><h2 class="gx-section__title">This Week</h2></div>
               <div class="gx-home__week-top"><div class="gx-home__donut" :style="{ '--gx-home-progress': driving.week.progress + '%' }">
                 <strong>{{ driving.week.engaged }}</strong><span>engaged</span></div>
                 <div><strong>{{ driving.week.distance }}</strong><span>across {{ counted(driving.week.drives, "drive") }}</span></div></div>
@@ -209,12 +209,12 @@ export const Home = {
               <div class="gx-home__bars"><div v-for="day in driving.week.days" :key="day.date" :aria-label="day.date + ': ' + day.distance" :title="day.date + ': ' + day.distance">
                 <div class="gx-home__bar-track"><span :style="{ height: day.height + '%' }"></span></div><small>{{ day.label }}</small><small>{{ day.distance }}</small></div></div>
             </section>
-            <section class="gx-card gx-home__records"><h2>Personal Records</h2>
+            <section class="gx-card gx-home__records"><div class="gx-section__header"><i class="bi bi-trophy"></i><h2 class="gx-section__title">Personal Records</h2></div>
               <p v-if="!driving.records.length" class="gx-home__subtle">Records will appear as drives are saved.</p>
               <div v-for="record in driving.records" :key="record.id" class="gx-home__record"><span class="gx-home__record-art" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path v-for="(path, index) in recordArt(record.id)" :key="index" :d="path" /></svg></span><span class="gx-home__record-label">{{ record.label }}</span><strong>{{ record.display }}</strong></div>
             </section>
           </div>
-          <section class="gx-card gx-home__recent"><h2>Recent Drives</h2>
+          <section class="gx-card gx-home__recent"><div class="gx-section__header"><i class="bi bi-clock-history"></i><h2 class="gx-section__title">Recent Drives</h2></div>
             <p v-if="!driving.recent.length" class="gx-home__subtle">No saved drives yet.</p>
             <div v-for="drive in driving.recent" :key="drive.routeId" class="gx-home__drive" :class="{ 'is-ignored': drive.ignored }">
               <div><strong>{{ drive.date }}</strong><small>{{ drive.model }}</small></div>
@@ -225,7 +225,7 @@ export const Home = {
             </div>
             <GxNotice tone="danger" v-if="drives.error">{{ drives.error }}</GxNotice>
           </section>
-          <section class="gx-card gx-home__models"><h2>Recorded Models</h2>
+          <section class="gx-card gx-home__models"><div class="gx-section__header"><i class="bi bi-cpu"></i><h2 class="gx-section__title">Recorded Models</h2></div>
             <p v-if="!driving.models.length" class="gx-home__subtle">Recorded models will appear as drives are saved.</p>
             <div v-else class="gx-home__model-layout"><div class="gx-home__model-donut" :style="driving.modelStyle"></div>
               <div><div v-for="model in driving.models" :key="model.name" class="gx-home__model-row">
@@ -237,7 +237,7 @@ export const Home = {
         <LocalAccess ref="localAccess" :mode="mode" :on-unauthorized="unauthorized" />
         <div class="gx-home__grid">
           <section class="gx-card gx-home__card">
-            <h2><i class="bi bi-activity"></i> System</h2>
+            <div class="gx-section__header"><i class="bi bi-activity"></i><h2 class="gx-section__title">System</h2></div>
             <p v-if="!summary.system.available" role="status">Live system status unavailable.</p>
             <template v-else><div class="gx-home__metrics"><div><strong>{{ summary.system.cpu }}</strong><span>CPU</span></div>
               <div><strong>{{ summary.system.memory }}</strong><span>Memory</span></div></div>
@@ -245,7 +245,7 @@ export const Home = {
             <button type="button" class="gx-home__link" @click="go('/logs/monitor')">Open System Monitor <i class="bi bi-arrow-right"></i></button>
           </section>
           <section class="gx-card gx-home__card">
-            <h2><i class="bi bi-cpu"></i> Driving model</h2>
+            <div class="gx-section__header"><i class="bi bi-cpu"></i><h2 class="gx-section__title">Driving model</h2></div>
             <p v-if="!summary.model.available" role="status">Model identity unavailable.</p>
             <template v-else><p>Reported health: <strong>{{ summary.model.health }}</strong></p>
               <p>Loaded variant: <strong>{{ summary.model.variant }}</strong></p>
@@ -253,7 +253,7 @@ export const Home = {
             <button type="button" class="gx-home__link" @click="go('/manage_models')">Open Driving Model <i class="bi bi-arrow-right"></i></button>
           </section>
           <section class="gx-card gx-home__card">
-            <h2><i class="bi bi-arrow-repeat"></i> Software</h2>
+            <div class="gx-section__header"><i class="bi bi-arrow-repeat"></i><h2 class="gx-section__title">Software</h2></div>
             <p v-if="!summary.software.available" role="status">Installed software report unavailable.</p>
             <template v-else><p>Installed: <strong>{{ summary.software.version }}</strong></p>
               <p>Branch: <strong>{{ summary.software.branch }}</strong></p>

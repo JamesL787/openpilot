@@ -847,3 +847,93 @@ def test_rebuckled_belt_retention_requires_prior_paired_lat_only_proof(fault):
       assert decision.lateral_active and not decision.desired_longitudinal and not decision.longitudinal_active
     else:
       assert reset and feedback.failed and not card.aol_card_intent.allowed_latch
+
+
+def _sdgm_pedal_state(card, stamp, tick, gesture=None, manual=False):
+  from opendbc.car.gm.tests.test_volt_camera_control import feed_camera
+
+  packer = CANPacker(DBC[card.CP.carFingerprint][Bus.pt])
+  empty = SimpleNamespace(update=lambda _: None)
+  _, frames = feed_camera(empty, packer, stamp, counter=tick % 4, speed=16.0, brake=gesture == 'brake', regen=gesture == 'paddle', active=True, eps_status=1)
+  # Same recorded forward manual-mode report during Mary paddle withdrawal.
+  frames = [f for f in frames if f[0] not in (0x1F5, 0xBE, 0xC9)]
+  frames += [
+    packer.make_can_msg('ECMAcceleratorPos', 0, {'BrakePedalPos': 8 if gesture == 'brake' else 0}),
+    packer.make_can_msg('ECMEngineStatus', 0, {'CruiseMainOn': 1, 'BrakePressed': int(gesture == 'brake')}),
+  ]
+  frames.append(packer.make_can_msg('ECMPRDNL2', 0, {'PRNDL2': 4, 'ManualMode': int(manual)}))
+  if tick == 0:
+    card.CI.update([(stamp - 1_000_000, frames)])
+  cs = card.CI.update([(stamp, frames)])
+  assert cs.canValid and not cs.canTimeout
+  assert cs.regenBraking == (gesture == 'paddle')
+  assert cs.brakePressed == (gesture == 'brake')
+  assert str(cs.gearShifter) == ('manumatic' if manual else 'drive')
+  return cs
+
+
+@pytest.mark.parametrize('c9', (False, True))
+@pytest.mark.parametrize('gesture', ('brake', 'paddle'))
+@pytest.mark.parametrize('event_first', (False, True))
+@pytest.mark.parametrize('health_allowed', (False, True))
+def test_sdgm_alpha_pedal_does_not_erase_armed_lateral(c9, gesture, event_first, health_allowed):
+  from opendbc.car.gm.tests.test_volt_sdgm_control import sdgm_params
+  from openpilot.starpilot.aol.tests.test_gm import TestGmAol as GmFixture
+  from openpilot.starpilot.aol.wire import IntentState
+
+  with OpenpilotPrefix():
+    saved = Params()
+    saved.put_bool('AlwaysOnLateral', True, block=True)
+    card = GmFixture.card(sdgm_params(alpha=True, brake_c9=c9), saved)
+    try:
+      cp = card.CP
+      feedback = TransportPauseFeedback(cp)
+      cs = _sdgm_pedal_state(card, NOW, 0)
+      card.aol_card_intent.update(cs, fault_active=False, now_ns=NOW)
+      assert card.aol_card_intent.allowed_latch
+      sm, prior = peers(cp, card.slc_producer_session, NOW)
+      assert not feedback.observe(sm, cp, cs, NOW, latched=True, intent_producer_session=card.slc_producer_session)
+      now = NOW + 10_000_000
+      cs = _sdgm_pedal_state(card, now, 1, gesture, True)
+      native = replace(
+        prior,
+        observedMonoTime=now,
+        validUntilMonoTime=now + 200_000_000,
+        longitudinalAllowed=False,
+        pandaInventory=(replace(prior.pandaInventory[0], controlsAllowed=health_allowed),),
+      )
+      sm, _ = peers(cp, card.slc_producer_session, now, controls=health_allowed, native=native, sequence=2, long_active=False)
+      a = sm.messages['aolAxisState'].as_builder()
+      a.aolAxisState.faultEventMonoTime = NOW if event_first else now
+      # Event first: the last full desired request may precede the ordinary disengagement result.
+      a.aolAxisState.desiredLongitudinal = event_first
+      e = sm.messages['onroadEvents'].as_builder()
+      e.onroadEvents = [{'name': 'pedalPressed', 'userDisable': True, 'noEntry': True}]
+      sm = Peers([sm.messages['aolSafetyWire'], sm.messages['pandaStates'], a.as_reader(), e.as_reader()])
+      fault = feedback.observe(sm, cp, cs, now, latched=True, intent_producer_session=card.slc_producer_session)
+      card.aol_card_intent.update(cs, fault_active=fault, now_ns=now)
+      assert not fault and card.aol_card_intent.allowed_latch, (gesture, event_first, health_allowed, feedback.__dict__)
+      intent = IntentState(card.slc_producer_session, 2, now, now, now + 200_000_000, True, False, False, True, True)
+      d = decide_axes(
+        standard_lateral=False,
+        standard_longitudinal=False,
+        intent=intent,
+        native=native,
+        car_state=cs,
+        initialized=True,
+        model_ready=True,
+        no_entry=False,
+        immediate_disable=False,
+        dm_lockout=False,
+        pause_brake_mps=0.0,
+      )
+      assert d.lateral_active and not d.longitudinal_active
+      # Fresh independent LAT native acknowledgment after release; LONG stays disabled.
+      later = now + 10_000_000
+      cs = _sdgm_pedal_state(card, later, 2)
+      native = replace(native, observedMonoTime=later, validUntilMonoTime=later + 200_000_000, requestedLongitudinal=False)
+      sm, _ = peers(cp, card.slc_producer_session, later, controls=False, native=native, sequence=3, long_active=False)
+      assert not feedback.observe(sm, cp, cs, later, latched=True, intent_producer_session=card.slc_producer_session)
+      assert card.aol_card_intent.allowed_latch and not native.longitudinalAllowed
+    finally:
+      card.vehicle_startup.close()

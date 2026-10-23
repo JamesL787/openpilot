@@ -66,7 +66,7 @@ def retain_physical_pause_intent(feedback, sm, cp, cs, axis, now_ns, *, latched,
       or producer != feedback.availability_producer
       or str(axis.intentProducerSessionId) != producer
       or int(axis.intentIntegrityEpoch) != feedback.availability_epoch
-      or not feedback.availability_epoch
+      or feedback.availability_epoch is None
       or not feedback.healthy_inventory
       or not 0 < feedback.healthy_feedback_ns <= now_ns
       or now_ns - feedback.healthy_feedback_ns > AXIS_MAX_AGE_NS

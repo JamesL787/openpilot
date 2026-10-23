@@ -1,6 +1,7 @@
 """The map overlay is created only when the AA layout enables it, prepared outside the frame, drawn at its placement."""
 import copy
 import unittest
+from unittest.mock import patch
 
 from openpilot.starpilot.system.android_auto import projection_onroad as projection
 from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport
@@ -33,7 +34,24 @@ class FakeFeed:
     return "map input"
 
 
+class FakeLease:
+  def __init__(self):
+    self.touches, self.releases = 0, 0
+
+  def touch(self):
+    self.touches += 1
+
+  def release(self):
+    self.releases += 1
+
+
 class TestProjectionMap(unittest.TestCase):
+  def setUp(self):
+    self.lease = FakeLease()
+    patcher = patch.object(projection, 'MapLeaseWriter', return_value=self.lease)
+    patcher.start()
+    self.addCleanup(patcher.stop)
+
   def native(self):
     native, events = boundary.TestProjectionOnroad().dependencies()
     native.map_overlay, native.map_feed = FakeMap, FakeFeed
@@ -90,3 +108,24 @@ class TestProjectionMap(unittest.TestCase):
     view.prepare()
     view.close()
     self.assertEqual(layout, before)
+
+  def test_turning_the_map_off_frees_it_and_the_lease_until_it_returns(self):
+    native, _ = self.native()
+    layout = self.layout(enabled=True)
+    view = projection.ProjectionOnroad(dependencies=native, viewport=(2880, 1080), customization=layout)
+    native.ui_state.started = True
+    view.prepare()
+    self.assertEqual(self.lease.touches, 1)
+    overlay = view.map
+    off = copy.deepcopy(layout)
+    off["widgets"]["nav_map"]["enabled"] = False
+    view.apply_layout(off)
+    view.prepare()
+    self.assertTrue(overlay.closed)
+    self.assertIsNone(view.map)
+    self.assertIsNone(view.onroad.map_layer)
+    self.assertGreaterEqual(self.lease.releases, 1)
+    view.apply_layout(layout)
+    self.assertIsInstance(view.map, FakeMap)
+    self.assertIsNot(view.map, overlay)
+    view.close()

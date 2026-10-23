@@ -1,6 +1,7 @@
 """Compatibility regressions the reserved-event policy must catch in CI."""
 
 import copy
+import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -81,6 +82,28 @@ class SchemaPolicyTest(unittest.TestCase):
         schemas['openpilot/cereal/log.capnp'] = schemas['openpilot/cereal/log.capnp'].replace(old, new)
         self.assertTrue(validate(schemas, self.policy, self.sync))
 
+  def test_tracking_carrier_retains_reserved_identity_and_field_prefix(self):
+    path = 'openpilot/cereal/custom.capnp'
+    self.assertNotIn(5, self.policy['historical_empty_slots'])
+    self.assertIn(b'struct StarPilotSteeringTracking @0xa5cd762cd951a455 {', self.schemas[path])
+    for before, after in (
+      (b'StarPilotSteeringTracking @0xa5cd762cd951a455', b'OtherTracking @0xa5cd762cd951a455'),
+      (b'sourceReceipt @1 :AutomaticLearningSourceReceipt;', b'sourceReceipt @1 :Text;'),
+      (b'trial @2 :LiveTrackingTrial;', b'trial @2 :Text;'),
+      (b'restore @3 :LiveTrackingRestore;', b'restore @4 :LiveTrackingRestore;'),
+    ):
+      with self.subTest(after=after):
+        schemas = self.schemas.copy()
+        self.assertIn(before, schemas[path])
+        schemas[path] = schemas[path].replace(before, after, 1)
+        self.assertTrue(validate(schemas, self.policy, self.sync))
+    log_path = 'openpilot/cereal/log.capnp'
+    before = b'starpilotSteeringTracking @112 :Custom.StarPilotSteeringTracking;'
+    self.assertIn(before, self.schemas[log_path])
+    schemas = self.schemas.copy()
+    schemas[log_path] = schemas[log_path].replace(before, b'starpilotSteeringTracking @113 :Custom.StarPilotSteeringTracking;')
+    self.assertTrue(validate(schemas, self.policy, self.sync))
+
   def test_historical_slot_rename_and_field_are_rejected(self):
     path = 'openpilot/cereal/custom.capnp'
     reserved_by_name = {slot['struct']: slot for slot in self.policy['reserved']}
@@ -94,6 +117,15 @@ class SchemaPolicyTest(unittest.TestCase):
           schemas = self.schemas.copy()
           schemas[path] = schemas[path].replace(original, replacement)
           self.assertTrue(any(f'historical slot {index}' in error for error in validate(schemas, self.policy, self.sync)))
+
+    # Occupied historical carriers still retain their reviewed names and prefixes.
+    for restored in self.policy['historical_prefixes'].values():
+      original = f"struct {restored['name']} @{restored['type_id']} {{".encode()
+      with self.subTest(occupied=restored['name']):
+        schemas = self.schemas.copy()
+        self.assertIn(original, schemas[path])
+        schemas[path] = schemas[path].replace(original, original.replace(restored['name'].encode(), b'DifferentHistoricalCarrier'), 1)
+        self.assertTrue(any('historical occupied prefix' in error for error in validate(schemas, self.policy, self.sync)))
 
   def test_upstream_plan_and_event_enums_cannot_be_extended_or_remapped(self):
     path = 'openpilot/cereal/log.capnp'
@@ -118,7 +150,7 @@ class SchemaPolicyTest(unittest.TestCase):
   def test_historical_slot_comments_do_not_count_as_fields(self):
     path = 'openpilot/cereal/custom.capnp'
     schemas = self.schemas.copy()
-    original = b'struct CustomReserved5 @0xa5cd762cd951a455 {'
+    original = b'struct StarPilotSteeringTracking @0xa5cd762cd951a455 {'
     self.assertIn(original, schemas[path])
     schemas[path] = schemas[path].replace(
       original, original + b'\n  # Past wire use is reserved.\n')
@@ -302,6 +334,12 @@ class SchemaPolicyTest(unittest.TestCase):
       'FordLearningEvent': '0xb276dede9e6b2cc4',
       'CentreApplicationWitness': '0xab0b33cac682523e',
       'LearningTorqueProjection': '0xf078f562cbce49ad',
+      'LiveTrackingBinding': '0x9f853f7eb4110c72',
+      'LiveTrackingTrial': '0xe6f67224bc0ee1a3',
+      'LiveTrackingApplication': '0xdb85b982067f1bc1',
+      'LiveTrackingRestore': '0xef6257bed9318012',
+      'LiveTrackingResponseCertificate': '0xbbb8f17940692312',
+      'LiveTrackingResponseWitness': '0xdaa1a9f0d8968e31',
     }
     self.assertEqual({name: child['type_id'] for name, child in self.policy['reviewed_payload_children'].items()}, expected)
     path = 'openpilot/cereal/custom.capnp'
@@ -309,7 +347,7 @@ class SchemaPolicyTest(unittest.TestCase):
       declaration = f'struct {name} @{type_id} {{'.encode()
       original = self.policy['reviewed_payload_children'][name]['body'].encode()
       for body in (original.replace(b'@0', b'@99', 1), original + b'\n  futureChild @99 :Text;',
-                   original.replace(b'UInt16', b'UInt32', 1) if b'UInt16' in original else original.replace(b'UInt64', b'UInt32', 1)):
+                   re.sub(rb'(:\s*)[A-Za-z_]\w*', rb'\1Void', original, count=1)):
         with self.subTest(name=name, body=body[:60]):
           changed = self.schemas.copy()
           changed[path] = changed[path].replace(declaration + original, declaration + body, 1)
@@ -331,6 +369,8 @@ class SchemaPolicyTest(unittest.TestCase):
       (b'struct NamedValue {', b'struct OtherNamedValue {'),
       (b'effectPrepareMonoTime @45 :UInt64;', b''),
       (b'effectPrepareMonoTime @45 :UInt64;', b'unrelatedTime @45 :UInt64;'),
+      (b'vehicleModelAnchor @46 :List(Float64);', b'vehicleModelAnchor @46 :List(Float32);'),
+      (b'liveAppliedCoordinates @47 :List(Float64);', b''),
     ):
       with self.subTest(after=after):
         self.assertIn(before, self.schemas[path])

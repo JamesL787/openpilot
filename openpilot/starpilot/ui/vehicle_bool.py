@@ -1,6 +1,7 @@
 """Confirmation text for parked vehicle preferences."""
 
-VEHICLE_BOOL_KEYS = frozenset(("GMPedalLongitudinal", "DisableOpenpilotLongitudinal", "LongPitch", "VoltSNG", "GMAutoHold", "VoltOnePedalMode",
+VEHICLE_BOOL_KEYS = frozenset(("SubaruAvhStartup", "SubaruStopStartOff", "SubaruSNG", "SubaruRedneckCruise",
+                              "GMPedalLongitudinal", "DisableOpenpilotLongitudinal", "LongPitch", "VoltSNG", "GMAutoHold", "VoltOnePedalMode",
                               "TeslaAOLScreenTap", "TeslaAOLDisengageOnBrake",
                               "RemoteStartBootsComma", "HKGRemoteStartBootsComma", "IgnoreIgnitionLine", "TeslaWakeOnCAN"))
 
@@ -18,6 +19,14 @@ def confirmation_question(request):
   if request.key == "DisableOpenpilotLongitudinal":
     verb = "Turn off" if request.value == "On" else "Turn on"
     return f"{verb} StarPilot speed control after the next startup? Steering stays unchanged."
+  if request.key == "SubaruAvhStartup":
+    return f"{verb} AVH ON at the next startup? A bounded request runs once in Park with the engine running."
+  if request.key == "SubaruStopStartOff":
+    return f"{verb} Stop/Start OFF at the next startup? A bounded request runs once while stationary in Park or Neutral."
+  if request.key == "SubaruSNG":
+    return f"{verb} Subaru stop-and-go assistance after the next startup? Factory ACC retains speed control."
+  if request.key == "SubaruRedneckCruise":
+    return f"{verb} software cruise after the next startup? Stock ACC keeps pedal control."
   if request.key == "VoltSNG":
     return f"{verb} Volt stop-and-go assistance after the next startup?"
   if request.key == "GMAutoHold":

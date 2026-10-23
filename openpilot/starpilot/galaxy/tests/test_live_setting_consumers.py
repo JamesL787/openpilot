@@ -165,7 +165,7 @@ def test_actual_card_worker_publishes_grade_without_controller_params_reads(tmp_
   cc.long_pitch_input = GradeCompensationPreference(saved)
   worker = card.Car.__new__(card.Car)
   worker.CP, worker.CI = cp, cast(CarInterfaceBase, SimpleNamespace(CC=cc))
-  worker.params = cast(Params, SimpleNamespace(get_bool=lambda key: False))
+  worker.params = cast(Params, SimpleNamespace(get_bool=lambda key: False, get=lambda key, **kwargs: None))
   worker.aol_card_intent = None
   worker.v_cruise_helper = cast(VCruiseHelper, SimpleNamespace(intervals=None))
   event = threading.Event()

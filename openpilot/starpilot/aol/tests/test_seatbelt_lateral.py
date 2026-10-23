@@ -40,7 +40,9 @@ def test_actual_ioniq_belt_long_lock_preserves_armed_lateral(full_op):
 
 
 @pytest.mark.parametrize('fault', [None, 'native_denied', 'wrong_session', 'stale_source', 'unarmed',
-                                   'belt_mismatch', 'mixed_user', 'no_entry_missing', 'door', 'permanent'])
+                                   'belt_mismatch', 'mixed_user', 'no_entry_missing', 'door', 'permanent',
+                                   'eps_off', 'eps_long', 'eps_lat_request', 'eps_lat_permission', 'eps_permanent', 'eps_unarmed', 'eps_unarmed_pending',
+                                   'eps_immediate', 'eps_stale', 'eps_wrong_inventory', 'eps_no_physical', 'eps_user'])
 def test_shared_belt_classification_keeps_actual_native_and_source_guards(fault):
   case = IoniqAvailabilityTests(methodName='runTest')
   with OpenpilotPrefix(), ExitStack() as cleanup:
@@ -73,8 +75,31 @@ def test_shared_belt_classification_keeps_actual_native_and_source_guards(fault)
       state.doorOpen = True
     elif fault == 'permanent':
       state.steerFaultPermanent = True
+    if fault is not None and fault.startswith('eps_'):
+      state.steerFaultTemporary = fault != 'eps_no_physical'
+      native = replace(native, requestedLateral=False, lateralAllowed=False,
+                       requestedLongitudinal=False, longitudinalAllowed=False)
+      if fault == 'eps_long':
+        native = replace(native, requestedLongitudinal=True)
+      elif fault == 'eps_lat_request':
+        native = replace(native, requestedLateral=True)
+      elif fault == 'eps_lat_permission':
+        native = replace(native, requestedLateral=True, lateralAllowed=True)
+      elif fault == 'eps_permanent':
+        state.steerFaultPermanent = True
+      elif fault in ('eps_unarmed', 'eps_unarmed_pending'):
+        intent = replace(intent, allowedLatch=False, lateralArmed=False)
+      elif fault == 'eps_immediate':
+        event.immediateDisable = True
+      elif fault == 'eps_stale':
+        now += 30_000_001
+      elif fault == 'eps_wrong_inventory':
+        native = replace(native, pandaInventory=(replace(native.pandaInventory[0], safetyParam=0),))
+      elif fault == 'eps_user':
+        event.userDisable = True
     assert seatbelt_lateral_soft_event_allowed(sd.CP, state, intent, native, event,
-      source_ns=source, now_ns=now, axis_session_id=sd.aol_session_id) == (fault is None)
+      source_ns=source, now_ns=now, axis_session_id=sd.aol_session_id,
+      pending_lateral_request=fault == 'eps_unarmed_pending') == (fault in (None, 'eps_off', 'eps_lat_request'))
 
 
 @pytest.mark.parametrize('family', ['gm', 'toyota'])

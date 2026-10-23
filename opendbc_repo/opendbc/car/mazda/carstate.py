@@ -2,10 +2,28 @@ from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarStateBase
-from opendbc.car.mazda.values import DBC, LKAS_LIMITS
+from opendbc.car.mazda.values import CAR, DBC, LKAS_LIMITS, MazdaFlags
 from opendbc.car.mazda.stock_aol import qualified
 
 ButtonType = structs.CarState.ButtonEvent.Type
+
+DASHBOARD_CARS = frozenset(CAR)
+
+
+class DashboardCameraParser(CANParser):
+  def __init__(self, dbc_name):
+    super().__init__(dbc_name, [], 2)
+    self.dashboard_parser = CANParser(dbc_name, [("CAM_TRAFFIC_SIGNS", float('nan'))], 2)
+
+  def update(self, strings, sendcan=False):
+    packets = strings
+    if packets and not isinstance(packets[0], list | tuple):
+      packets = [packets]
+    result = super().update(packets, sendcan)
+    admitted = [(stamp, [(address, data, bus) for address, data, bus in frames
+                         if address == 0x35F and bus == 2 and len(data) == 8]) for stamp, frames in packets]
+    self.dashboard_parser.update(admitted, sendcan)
+    return result
 
 
 class CarState(CarStateBase):
@@ -23,6 +41,7 @@ class CarState(CarStateBase):
     self.accel_button = 0
     self.decel_button = 0
     self.cancel_button = 0
+    self.dashboard_stop_sign = None
 
   def update(self, can_parsers) -> structs.CarState:
     cp = can_parsers[Bus.pt]
@@ -128,11 +147,21 @@ class CarState(CarStateBase):
       *create_button_events(self.decel_button, prev_decel_button, {1: ButtonType.decelCruise}),
     ]
 
+    self.dashboard_stop_sign = None
+    if isinstance(cp_cam, DashboardCameraParser):
+      dashboard = cp_cam.dashboard_parser
+      stamp = dashboard.ts_nanos["CAM_TRAFFIC_SIGNS"]["STOP_SIGN"]
+      if stamp > 0:
+        self.dashboard_stop_sign = (dashboard.vl["CAM_TRAFFIC_SIGNS"]["STOP_SIGN"] == 9, stamp)
+
     return ret
 
   @staticmethod
   def get_can_parsers(CP):
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 0),
-      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2),
+      Bus.cam: (DashboardCameraParser(DBC[CP.carFingerprint][Bus.pt])
+                if CP.brand == 'mazda' and CP.carFingerprint in DASHBOARD_CARS and
+                int(CP.flags) == int(MazdaFlags.GEN1) and not CP.notCar
+                else CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2)),
     }

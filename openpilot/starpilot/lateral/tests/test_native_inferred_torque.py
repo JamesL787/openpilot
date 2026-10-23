@@ -61,12 +61,12 @@ class TestNativeInferredTorque(unittest.TestCase):
       host.settings = read_settings(params, stock, allow_learning=False)
       self.assertEqual(host._select(None, 1), stock)
       self.assertFalse(manual_overrides_present(cp, params))
-  def test_production_scope_does_not_offer_unconsumed_toyota_overrides(self):
+  def test_production_scope_admits_toyota_without_changing_default_startup(self):
     from unittest.mock import patch
     with OpenpilotPrefix(), patch.dict('os.environ', {'TORQUE_REPLAY_RUNTIME': '0'}):
       params = Params()
       cp = interfaces['TOYOTA_COROLLA_TSS2'].get_non_essential_params('TOYOTA_COROLLA_TSS2')
-      self.assertFalse(production_supported_cp(cp))
+      self.assertTrue(production_supported_cp(cp))
       self.assertFalse(runtime_enabled(cp, params))
 
   def test_default_numeric_snapshot_preserves_both_controller_startups_and_learning_policy(self):

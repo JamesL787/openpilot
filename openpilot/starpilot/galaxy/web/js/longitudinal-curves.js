@@ -75,8 +75,8 @@ export const LongitudinalCurvesPage = {
         <GxNotice tone="danger" v-if="state.error">{{ state.error }}
           </GxNotice>
         <article v-if="state.data" class="gx-card gx-long-curves__body">
-          <div class="gx-long-curves__heading"><div><h3>{{ state.data.title }}</h3><p>Enable saved profiles and this personality in All profile settings to use its curve.</p></div>
-            </div>
+          <div class="gx-section__header"><i class="bi bi-graph-up" aria-hidden="true"></i><span class="gx-section__title">{{ state.data.title }}</span></div>
+          <p>Enable saved profiles and this personality in All profile settings to use its curve.</p>
           <p v-if="!state.data.parked" class="gx-note">Editing requires fresh parked vehicle evidence.</p>
           <GalaxySettingRow v-if="preset" :key="state.data.page + ':preset'" :row="preset" :index="0"
             :busy="state.status !== 'ready' || !!state.pending" :disabled="!state.data.parked || !!state.error"

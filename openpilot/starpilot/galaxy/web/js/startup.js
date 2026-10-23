@@ -38,7 +38,7 @@ export async function loadCatalog(options) {
   if (runtime?.schemaVersion !== 1 || !["sample", "local"].includes(runtime.monitor)) throw new Error("Invalid Galaxy runtime")
   if (catalog?.mode !== "offline-preview" || !Array.isArray(catalog.tools) || catalog.tools.some(tool =>
     typeof tool?.path !== "string" || !tool.path.startsWith("/") || typeof tool.name !== "string" ||
-    !["partial-preview", "local-only", "unavailable"].includes(tool.availability) ||
+    !["always", "partial-preview", "local-only", "unavailable"].includes(tool.availability) ||
     typeof tool.icon !== "string" || typeof tool.description !== "string" ||
     (tool.visibility !== undefined && tool.visibility !== "authenticated"))) {
     throw new Error("Invalid Galaxy catalog")

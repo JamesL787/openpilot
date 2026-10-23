@@ -15,6 +15,9 @@ class CarInterface(CarInterfaceBase):
 
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate: CAR, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
+    CAN = CanBus(fingerprint=fingerprint)
+    if CAN.pt == 4:
+      fingerprint = {bus: fingerprint.get(CAN.pt + bus, {}) for bus in range(4)}
     ret.brand = "volkswagen"
     ret.radarUnavailable = Bus.radar not in DBC[candidate]
 
@@ -142,7 +145,6 @@ class CarInterface(CarInterfaceBase):
     ret.stopAccel = -0.55
     ret.autoResumeSng = ret.minEnableSpeed == -1
 
-    CAN = CanBus(fingerprint=fingerprint)
     if CAN.pt >= 4:
       safety_configs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
     ret.safetyConfigs = safety_configs

@@ -2,6 +2,7 @@ import math
 
 from openpilot.cereal import log
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
+from openpilot.starpilot.car.subaru.angle_tune import _ascent_angle_tracking_target, _ascent_low_speed_angle_target
 
 # TODO This is speed dependent
 STEER_ANGLE_SATURATION_THRESHOLD = 2.5  # Degrees
@@ -10,6 +11,8 @@ STEER_ANGLE_SATURATION_THRESHOLD = 2.5  # Degrees
 class LatControlAngle(LatControl):
   def __init__(self, CP, CI, dt):
     super().__init__(CP, CI, dt)
+    self.is_ascent = CP.brand == 'subaru' and CP.carFingerprint == 'SUBARU_ASCENT_2023'
+    self.ascent_angle_target = None
     self.sat_check_min_speed = 5.
     self.use_steer_limited_by_safety = CP.brand in ("tesla", "hyundai")
 
@@ -19,10 +22,18 @@ class LatControlAngle(LatControl):
     if not active:
       angle_log.active = False
       angle_steers_des = float(CS.steeringAngleDeg)
+      self.ascent_angle_target = angle_steers_des
     else:
       angle_log.active = True
       angle_steers_des = math.degrees(VM.get_steer_from_curvature(-desired_curvature, CS.vEgo, params.roll))
       angle_steers_des += params.angleOffsetDeg
+      if self.is_ascent:
+        if self.ascent_angle_target is None:
+          self.ascent_angle_target = float(CS.steeringAngleDeg)
+        self.ascent_angle_target = _ascent_low_speed_angle_target(
+          angle_steers_des, self.ascent_angle_target, CS.vEgo, bool(CS.steeringPressed), self.dt)
+        angle_steers_des = _ascent_angle_tracking_target(
+          self.ascent_angle_target, CS.steeringAngleDeg, CS.vEgo, bool(CS.steeringPressed))
 
     if self.use_steer_limited_by_safety:
       # these cars' carcontrollers calculate max lateral accel and jerk, so we can rely on carOutput for saturation

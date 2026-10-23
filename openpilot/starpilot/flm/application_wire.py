@@ -7,6 +7,11 @@ MAX_AGE_NS = 500_000_000
 
 
 def write_application(envelope, outcome):
+  from openpilot.starpilot.flm.live_trial_owner import LiveTrialApplication
+  if type(outcome) is LiveTrialApplication:
+    from openpilot.starpilot.flm.live_trial_wire import write_application as write_live_application
+    write_live_application(envelope, outcome)
+    return
   if not isinstance(outcome, ApplicationOutcome):
     return
   envelope.learningApplication = {

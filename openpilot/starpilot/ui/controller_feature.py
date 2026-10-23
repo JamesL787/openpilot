@@ -141,12 +141,12 @@ class ControllerFeature:
       any(raw not in (journal['prior'][key], journal['prepared'][key]) for key, raw in (sources or {}).items()))
     return FeatureRow(SETUP_ACTION, 'Prep My Vehicle for Tuning', 'On' if active else 'Off',
                       journal_raw, choices=('Off', 'On'), default_value='Off',
-                      available=valid and readable and journal is not False and not conflict and
+                      available=(active or valid and not conflict) and sources is not None and readable and journal is not False and
                                 self.authority('parked_preferences') and self.authority('preferences'),
                       reason=('Enable before recording a route for a tuning request on the StarPilot Discord. ' +
                               'Turn off to restore your previous tune.' if not conflict and (not active or complete) else
                               'Preparation was interrupted. Turn off to restore your previous tune.' if not conflict else
-                              'Settings changed during preparation; your saved tune has been kept.'),
+                              'Turn off to restore previous settings while keeping changes made after preparation.'),
                       capability=capability, dependencies=tuple((key, raw) for key, raw in (sources or {}).items()))
 
   def apply_setup(self, request: FeatureSettingsRequest) -> bool:
@@ -159,7 +159,7 @@ class ControllerFeature:
     CP = self.vehicle_params()
     sources = dict(row.dependencies)
     try:
-      desired = self._setup_values(CP, sources)
+      desired = self._setup_values(CP, sources) if request.value == 'On' else {}
     except (ValueError, TypeError, UnicodeError, OverflowError):
       return False
     capability = row.capability

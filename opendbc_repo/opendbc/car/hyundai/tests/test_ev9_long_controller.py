@@ -1,5 +1,6 @@
 """EV9 optional LONG actual parser/controller and reached-cadence boundaries."""
 import unittest
+from types import SimpleNamespace
 from opendbc.can import CANPacker
 from opendbc.car import Bus, structs
 from opendbc.car.hyundai.ev9_longitudinal import candidate, qualified, EV9LongitudinalPolicy, LongCtrlState
@@ -41,6 +42,9 @@ class TestEV9LongController(unittest.TestCase):
     cp = candidate(params(candidate=CAR.KIA_EV9), enabled=True, is_release=False)
     self.assertTrue(qualified(cp))
     ci = CarInterface(cp)
+    # This fixture isolates controller calibration after a controlled owner
+    # acknowledgment. Pending-owner/first-native-output tests use the real owner.
+    ci.CC.pe_startup = SimpleNamespace(handed_off=True, can_emit=lambda controller: True)
     packer = CANPacker(DBC[cp.carFingerprint][Bus.pt])
     ci.update([])
     for tick in range(1, 13):

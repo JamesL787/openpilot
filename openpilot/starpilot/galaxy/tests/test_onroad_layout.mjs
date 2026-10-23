@@ -48,11 +48,16 @@ export function snapshot() {
   for (const [profile, data] of Object.entries(metadata.profiles))
     for (const [id, widget] of Object.entries(data.widgets)) widget.colors = { ...colors[profile][id] }
   metadata.profiles.large.widgets.steering_wheel.resizable = { min: 144, default: 192, max: 240 }
+  // As the server sends them: anchors for the sidebar-hidden road, and positions that may use its extra width.
+  const shifts = { steering_wheel: 1, current_speed: .5, torque_bar: .5 }
+  for (const [id, shift] of Object.entries(shifts)) metadata.profiles.large.widgets[id].anchorShift = shift
+  for (const id of Object.keys(metadata.profiles.large.widgets))
+    Object.assign(metadata.profiles.large.widgets[id], { expandable: true, bounds: { x: 30 - 300 * (shifts[id] || 0), y: 30, width: 2100, height: 1020 } })
   metadata.profiles.compact.widgets.steering_wheel.resizable = { min: 40, default: 50, max: 70 }
   metadata.roadColorFields = [{ id: 'path', label: 'Path', default: '#30FF9CFF' },
     { id: 'pathEdge', label: 'Path edges', default: '#00FF40FF' }, { id: 'laneLines', label: 'Lane lines', default: '#FFFFFFFF' }]
   metadata.profiles.compact.widgets.speed_limit_actions.visualInsetTop = 32
-  const document = { version: 8, roadColors: { large: {}, compact: {} }, widgetColors: { large: {}, compact: {} }, palette: Object.fromEntries(metadata.paletteFields.map((field) => [field.id, field.default])),
+  const document = { version: 9, roadColors: { large: {}, compact: {} }, widgetColors: { large: {}, compact: {} }, palette: Object.fromEntries(metadata.paletteFields.map((field) => [field.id, field.default])),
     layouts: Object.fromEntries(Object.entries(metadata.profiles).map(([id, profile]) => [id,
       Object.fromEntries(Object.entries(profile.widgets).map(([key, definition]) => [key,
         { ...definition.default, ...(definition.resizable ? { size: definition.resizable.default } : {}) }]))])) }
@@ -64,6 +69,17 @@ for (const name of ["layoutDocument", "previewDocument", "withDisplay", "ordered
   assert.equal(layoutModule[name], documentHelpers[name], name)
 
 const data = snapshot()
+const restoredCompact = copy(data)
+for (const [id, width, height, x, y] of [["max_speed", 162, 162, 0, 0], ["speed_limit", 118, 132, 330, 20], ["speed_limit_actions", 348, 54, 128, 186]]) {
+  Object.assign(restoredCompact.metadata.profiles.compact.widgets[id], { width, height, default: {x, y, enabled:true} })
+  restoredCompact.document.layouts.compact[id] = {x, y, enabled:true}
+}
+delete restoredCompact.metadata.profiles.compact.widgets.speed_limit_actions.visualInsetTop
+restoredCompact.defaults = copy(restoredCompact.document)
+assert.equal(validSnapshot(restoredCompact), true, "Restored small-UI defaults are editable")
+assert.equal(clampPlacement(restoredCompact.metadata.profiles.compact, "max_speed", 174, 25, restoredCompact.document.layouts.compact), null)
+assert.deepEqual(clampPlacement(restoredCompact.metadata.profiles.compact, "speed_limit", 330, 20, restoredCompact.document.layouts.compact), {x:330, y:20})
+assert.deepEqual(restoredCompact.document.layouts.large, data.document.layouts.large)
 const withMode = copy(data)
 const modeId = "driving_mode_descriptions"
 withMode.metadata.profiles.compact.widgets[modeId] = {
@@ -120,7 +136,9 @@ resizedWheel.layouts.compact.steering_wheel.y = 160
 assert.equal(validDocument(resizedWheel, data.metadata), true)
 assert.equal(clampPlacement(data.metadata.profiles.compact, "steering_wheel", 150, 170, resizedWheel.layouts.compact), null)
 assert.deepEqual(clampPlacement(data.metadata.profiles.compact, "steering_wheel", 21, 176, resizedWheel.layouts.compact), { x: 21, y: 170 })
-assert.deepEqual(clampPlacement(data.metadata.profiles.large, "current_speed", -99, -99), { x: 30, y: 30 })
+assert.deepEqual(clampPlacement(data.metadata.profiles.large, "current_speed", -999, -99), { x: -120, y: 30 }, "the sidebar-hidden screen is reachable")
+assert.deepEqual(clampPlacement(data.metadata.profiles.large, "cruise_limits", 9999, 30), { x: 2130 - 480, y: 30 })
+assert.deepEqual(clampPlacement(data.metadata.profiles.large, "torque_bar", -999, 759), { x: -120, y: 759 }, "the torque bar reaches the sidebar-hidden screen")
 assert.equal(clampPlacement(data.metadata.profiles.large, "fake", 30, 30), null)
 assert.equal(clampPlacement(data.metadata.profiles.large, "current_speed", NaN, 30), null)
 assert.deepEqual(previewPoint({ clientX: 316, clientY: 200 }, { left: 100, top: 92, width: 432, height: 216 }, data.metadata.profiles.large), { x: 1080, y: 540 })
@@ -251,7 +269,7 @@ traySnap.cancelDrag()
 assert.equal(traySnap.layout.current_speed.enabled, false)
 
 const clampedSnap = editor().vm
-clampedSnap.profile.widgets.driver_monitor.bounds = { x: 30, y: 30, width: 300, height: 1020 }
+Object.assign(clampedSnap.profile.widgets.driver_monitor, { expandable: false, bounds: { x: 30, y: 30, width: 300, height: 1020 } })
 clampedSnap.layout.current_speed.x = 184
 clampedSnap.startDrag("driver_monitor", largePoint(88, 808))
 clampedSnap.moveDrag(largePoint(187, 400)) // Current speed at 184 is beyond the mover's own bounds.
@@ -1051,12 +1069,49 @@ display.vm.moveDrag(wheelPoint(1920))
 assert.equal(display.vm.layout.steering_wheel.x, 1608, "dragging saves the movement without adding the runtime anchor offset")
 display.vm.endDrag(wheelPoint(1920))
 display.vm.undo()
+const wide = editor()
+wide.vm.state.data = merged; wide.vm.state.draft = copy(merged.document)
+wide.vm.setDisplay("DeveloperSidebar", "Off")
+// With the sidebar hidden every widget reaches the whole screen; with it showing, only the road beside it.
+wide.vm.changePosition("cruise_limits", 5000, 100)
+assert.equal(wide.vm.layout.cruise_limits.x, 2130 - 480)
+assert.equal(wide.vm.previewX("cruise_limits"), 2130 - 480)
+wide.vm.changePosition("steering_wheel", -999, 75)
+assert.equal(wide.vm.layout.steering_wheel.x, -270)
+assert.equal(wide.vm.previewX("steering_wheel"), 30, "a right-anchored widget reaches the left edge")
+assert.equal(validDocument(wide.vm.state.draft, wide.vm.state.data.metadata), true)
+wide.vm.setDisplay("DeveloperSidebar", "On")
+assert.equal(wide.vm.limitProfile.widgets.steering_wheel.bounds, undefined)
+assert.equal(wide.vm.previewX("cruise_limits"), 1830 - 480, "a position from the wider screen is shown inside the road")
+assert.equal(wide.vm.previewX("steering_wheel"), 30)
+wide.vm.changePosition("cruise_limits", 5000, 100)
+assert.equal(wide.vm.layout.cruise_limits.x, 1830 - 480)
 assert.equal(display.vm.previewX("steering_wheel"), 1888)
 display.vm.undo()
 assert.equal(display.vm.displayValue("DeveloperSidebar"), "On")
 assert.equal(display.vm.roadBounds.width, 1800)
 assert.equal(display.vm.previewX("steering_wheel"), 1588)
 assert.equal(previewDocument(display.vm.state.draft).developerSidebar, true)
+for (const sidebar of ["Off", "On"]) {
+  const allWidgets = editor().vm
+  allWidgets.state.data = copy(merged); allWidgets.state.draft = copy(merged.document)
+  for (const id of ["pip_left", "pip_right"]) {
+    allWidgets.profile.widgets[id] = { ...widget(id, "pip_camera", 600, 600, 54, 426), layer: "underlay", colors: {},
+      expandable: true, bounds: { x: 30, y: 30, width: 2100, height: 1020 } }
+    allWidgets.layout[id] = { x: 54, y: 426, enabled: true }
+  }
+  allWidgets.setDisplay("DeveloperSidebar", sidebar)
+  for (const [id, widget] of Object.entries(allWidgets.profile.widgets)) {
+    const [width, height] = documentHelpers.widgetSize(widget, allWidgets.layout[id])
+    for (const [x, y] of [[-9999, -9999], [-9999, 9999], [9999, -9999], [9999, 9999]]) {
+      allWidgets.changePosition(id, x, y)
+      assert.equal(allWidgets.previewX(id), x < 0 ? 30 : (sidebar === "Off" ? 2130 : 1830) - width, id)
+      assert.equal(allWidgets.layout[id].y, y < 0 ? 30 : 1050 - height, id)
+      assert.equal(validDocument(allWidgets.state.draft, allWidgets.state.data.metadata), true, id)
+    }
+  }
+}
+
 const shiftedTray = editor(), shifted = shiftedTray.vm
 shifted.state.data = { ...merged, supportedProfiles: ["large", "compact"] }; shifted.state.draft = copy(merged.document)
 shifted.setDisplay("DeveloperSidebar", "Off")

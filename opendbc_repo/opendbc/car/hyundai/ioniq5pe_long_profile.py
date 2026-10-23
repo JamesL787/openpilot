@@ -34,7 +34,7 @@ def candidate(stock, *, enabled, is_release):
 
 def qualified(cp):
   if (not required(cp) or cp.pcmCruise or not cp.alphaLongitudinalAvailable or
-      cp.alternativeExperience != 0 or len(cp.safetyConfigs) != 1 or
+      cp.alternativeExperience not in (0, 32) or len(cp.safetyConfigs) != 1 or
       cp.safetyConfigs[0].safetyParam != LONG_PARAM or
       cp.steerControlType != structs.CarParams.SteerControlType.angle or not cp.deprecated.startingState or
       not all(isfinite(value) for value in (cp.deprecated.startAccel, cp.deprecated.vEgoStarting, cp.deprecated.vEgoStopping,
@@ -44,6 +44,7 @@ def qualified(cp):
       abs(cp.longitudinalActuatorDelay - .35) > 1e-6):
     return False
   stock = copy_cp(cp)
+  stock.alternativeExperience = 0
   stock.openpilotLongitudinalControl = False
   stock.pcmCruise = True
   stock.alphaLongitudinalAvailable = False

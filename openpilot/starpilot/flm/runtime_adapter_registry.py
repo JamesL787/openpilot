@@ -46,6 +46,8 @@ def implementation_revision(controller_type, interface_type):
       raise ValueError('implementation source bound')
     result.update(path.name.encode('utf-8'))
     result.update(hashlib.sha256(data).digest())
+  from openpilot.starpilot.flm.native_primitives import native_identity
+  result.update(native_identity().encode('utf-8'))
   return REVISION + ':' + result.hexdigest()
 
 
@@ -473,6 +475,20 @@ def vm_regime(values, anchor=None):
     return None
 
 
+def control_vm_regime(command, anchor=None):
+  """Use genuine Controls anchor when delivered; preserve legacy empty shape."""
+  from openpilot.starpilot.flm.fullrate_collector import ControlEvidence
+  supplied = command.vehicle_model_anchor if type(command) is ControlEvidence else ()
+  if type(supplied) is not tuple or len(supplied) not in (0, 3):
+    return None
+  if supplied:
+    if any(type(value) is not float or not math.isfinite(value) or value == 0. for value in supplied):
+      return None
+    current = vm_regime(dict(command.replay_inputs), supplied)
+    return supplied if current == supplied else None
+  return vm_regime(dict(command.replay_inputs), anchor)
+
+
 def physical_observer(sm, cp, collector, now_ns, *, distinguish_pending=False):
   """Convert independently measured BOOT pose source into the evidence MONO clock."""
   from openpilot.starpilot.flm.fullrate_collector import PhysicalEvidence
@@ -544,7 +560,7 @@ def physical_observer(sm, cp, collector, now_ns, *, distinguish_pending=False):
     if ready and getattr(getattr(collector, 'adapter', None), 'command_domain', None) != 'ford_path_angle':
       command = ready[-1][0]
       anchor = getattr(collector, '_physical_vm_anchor', None)
-      regime = vm_regime(dict(command.replay_inputs), anchor)
+      regime = control_vm_regime(command, anchor)
       if regime is None:
         collector.split('vehicle_model_unavailable', reset=True)
         collector._physical_vm_anchor = None
@@ -632,6 +648,251 @@ def physical_observer(sm, cp, collector, now_ns, *, distinguish_pending=False):
       # their original independent 30 ms actuation and 100 ms response limits.
       collector._physical_pose_queue = queue[index + 1:]
       return replace(evidence, speed_mps=speed, steering_angle_deg=steering_angle)
+    if distinguish_pending:
+      from openpilot.starpilot.flm.physical_observation import PendingPhysical
+      # Healthy but no independently bracketed new pose. Retain original
+      # clocks; this is NEVER a new physical sample or a current-fit grant.
+      waiting = queue[0] if queue else None
+      return PendingPhysical(pose_ns if waiting is None else waiting.mono_ns,
+        int(sm.recv_time['deviceMotion'] * 1e9) if waiting is None else waiting.received_ns, context_changed)
+    return None
+  except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+    return reject()
+
+
+def original_source_pose_observer(sm, cp, collector, now_ns, *, distinguish_pending=False):
+  """Capture original KF source with explicit producer clock provenance."""
+  if getattr(collector, "original_source_capture", None) is None:
+    return None
+  from openpilot.starpilot.flm.original_source_capture import OriginalSourcePose, OriginalSourceClockContract
+  contract = getattr(collector, 'original_source_clock_contract', None)
+  if not isinstance(contract, OriginalSourceClockContract):
+    return None
+  from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
+
+  def reject():
+    collector._original_source_pose_queue = ()
+    collector.reset_original_source_capture('original_source_unavailable')
+    return None
+
+  services = ('deviceMotion', 'extrinsicsCalibration', 'carState', 'driverMonitoringState')
+  if not sm.all_checks(list(services)):
+    return reject()
+  try:
+    contract.validate()
+    equivalence = None
+    if contract.source_domain == 'mono_boot_equivalent_interval_v1':
+      from openpilot.starpilot.flm.producer_clock_equivalence import sample_equivalence, source_interval
+      try:
+        equivalence = sample_equivalence()
+      except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+        collector.reset_original_source_capture('original_clock_equivalence_discontinuity', hard=True)
+        return reject()
+      # This is a fresh receipt witness, never a cached/restamped old proof.
+      collector._original_source_equivalence = equivalence
+      boot_mono_offset = (equivalence.offset_lower_ns + equivalence.offset_upper_ns) // 2
+      clock_offset = 0
+      uncertainty = equivalence.uncertainty_ns
+      mono_before, _, mono_after = equivalence.samples[-1]
+    else:
+      mono_before = time.monotonic_ns()
+      boot = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+      mono_after = time.monotonic_ns()
+      offset = boot - (mono_before + mono_after) // 2
+      cache = getattr(collector, '_original_source_clock', None)
+      if cache is None:
+        collector._original_source_clock = offset
+      elif abs(offset - cache) > 1_000_000 + (mono_after - mono_before) // 2:
+        collector.reset_original_source_capture('physical_clock_discontinuity', hard=True)
+        return reject()
+      boot_mono_offset = collector._original_source_clock
+      if contract.source_domain == 'unknown-equivalent-at-receipt' and abs(boot_mono_offset) > (mono_after - mono_before) // 2:
+        return reject()
+      clock_offset = boot_mono_offset if contract.source_domain == 'boottime' else 0
+      uncertainty = (mono_after - mono_before) // 2
+    dm, calibration, cs = sm['deviceMotion'], sm['extrinsicsCalibration'], sm['carState']
+    pose_ns = int(dm.timestamp) - clock_offset
+    if (
+      not max(0, getattr(collector, '_original_source_revoked_before_ns', 0)) < pose_ns <= now_ns
+      or now_ns - pose_ns > 100_000_000
+      or not dm.inputsOK
+      or not dm.sensorsOK
+      or not dm.posenetOK
+      or not dm.angularVelocityDevice.valid
+      or not dm.orientationNED.valid
+      or str(calibration.calStatus) != 'calibrated'
+    ):
+      return reject()
+    if equivalence is not None:
+      source_lower, source_upper = source_interval(int(dm.timestamp), int(sm.recv_time['deviceMotion'] * 1e9), now_ns, equivalence)
+    else:
+      source_lower = source_upper = pose_ns
+    state_ns = int(sm.logMonoTime['carState'])
+    if not 0 < state_ns <= now_ns or now_ns - state_ns > 100_000_000:
+      return reject()
+    from openpilot.starpilot.flm.calibration_lifecycle import calibrated_basis
+    generation = digest(tuple(float(v) for v in calibration.rpyCalib))
+    estimate = generation
+    lifecycle = getattr(collector, '_calibration_generation', '')
+    if lifecycle:
+      if calibrated_basis(calibration) is None:
+        return reject()
+      generation = digest(('live_vehicle_frame_v2', lifecycle))
+    cache = getattr(collector, '_original_source_calibrator', None)
+    if cache is None or cache[0] != estimate:
+      calibrator = PoseCalibrator()
+      calibrator.feed_extrinsics_calibration(calibration)
+      collector._original_source_calibrator = (estimate, calibrator)
+    calibrator = collector._original_source_calibrator[1]
+    if not calibrator.calib_valid:
+      return reject()
+    pose = calibrator.build_calibrated_pose(Pose.from_device_motion(dm))
+    ready = getattr(collector, 'ready', ())
+    history = {}
+    if ready and getattr(getattr(collector, 'adapter', None), 'command_domain', None) != 'ford_path_angle':
+      command = ready[-1][0]
+      anchor = getattr(collector, '_original_source_vm_anchor', None)
+      regime = control_vm_regime(command, anchor)
+      if regime is None:
+        collector.reset_original_source_capture('vehicle_model_unavailable')
+        collector._original_source_vm_anchor = None
+        return reject()
+      if anchor is not None and regime != anchor:
+        collector.reset_original_source_capture('vehicle_model_material_change', hard=True)
+        collector._original_source_vm_anchor = regime
+        return reject()
+      collector._original_source_vm_anchor = regime
+      native_epoch = command.native_identity
+      native_required = getattr(command, 'native_required', bool(native_epoch))
+      if type(native_required) is not bool:
+        return reject()
+      if native_required and (
+          type(native_epoch) is not str or len(native_epoch) != 64 or any(c not in '0123456789abcdef' for c in native_epoch) or
+          not getattr(command, 'native_allowed', False) or
+          not 0 < getattr(command, 'native_observed_ns', 0) <= getattr(command, 'control_ns', 0) <=
+          ready[-1][1].apply_ns <= getattr(command, 'native_expires_ns', 0) or
+          command.native_expires_ns-command.native_observed_ns > 200_000_000):
+        return reject()
+      ordinary_safety = ()
+      ordinary_allowed = True
+      if not native_required:
+        # Ordinary supported controllers have no axis ACK/lease/identity.
+        # Reuse actual legacy Panda/CP/current permission guards unchanged.
+        if native_epoch != '' or getattr(command, 'native_observed_ns', 0) != 0 or getattr(command, 'native_expires_ns', 0) != 0:
+          return reject()
+        ordinary_allowed, _, _ = current_authority(sm, cp, now_ns=now_ns, required=False)
+        cp_sha = getattr(collector.adapter, 'cp_sha256', '')
+        if not ordinary_allowed or type(cp_sha) is not str or len(cp_sha) != 64 or any(c not in '0123456789abcdef' for c in cp_sha):
+          return reject()
+        configuration = (
+          int(cp.alternativeExperience),
+          tuple((str(config.safetyModel), int(config.safetyParam)) for config in cp.safetyConfigs),
+          tuple((index, str(panda.safetyModel), int(panda.safetyParam), int(panda.alternativeExperience),
+            bool(panda.controlsAllowed), bool(panda.safetyRxChecksInvalid), bool(panda.heartbeatLost),
+            tuple(str(fault) for fault in panda.faults)) for index, panda in enumerate(sm['pandaStates'])),
+        )
+        ordinary_safety = ('ordinary-panda-current-v1', cp_sha, int(sm.recv_time['pandaStates'] * 1e9),
+          int(sm.logMonoTime['pandaStates']), configuration)
+      native = bool(
+        ordinary_allowed and
+        getattr(collector, '_learning_current_native_allowed', False) and ready[-1][1].native_allowed and 0 <= now_ns - ready[-1][1].apply_ns <= 100_000_000
+      )
+      current_identity = (command.identity, command.generation, command.source_epoch, command.baseline_revision,
+        command.controller_revision, command.native_identity)
+      for command, _ in ready:
+        if (command.identity, command.generation, command.source_epoch, command.baseline_revision,
+            command.controller_revision, command.native_identity) != current_identity:
+          continue  # State brackets cannot bridge a command/native epoch.
+        values = dict(command.replay_inputs)
+        if 'vEgo' in values and 'steeringAngleDeg' in values:
+          history[command.state_ns] = (float(values['vEgo']), float(values['steeringAngleDeg']))
+    else:
+      return reject()
+    if not native:
+      return reject()
+    override = bool(
+      cs.steeringPressed
+      or cs.brakePressed
+      or cs.regenBraking
+      or any(str(button.type) == 'cancel' for button in cs.buttonEvents)
+      or sm['driverMonitoringState'].noResponseForceDecel
+    )
+    fault = bool(cs.canTimeout or not cs.canValid or cs.steerFaultTemporary or cs.steerFaultPermanent or cs.accFaulted)
+    if override or fault:
+      return reject()
+    # Freeze converted primitives at their original pose receipt. A following
+    # CarState may provide the right interpolation bracket, but may not provide
+    # a replacement pose timestamp, transform, authority or source identity.
+    command = ready[-1][0]
+    def observation_context():
+      return (
+      getattr(collector, 'session', ''),
+      command.identity, command.generation, command.source_epoch,
+      command.baseline_revision, command.controller_revision,
+      generation, ('original_source_clock_generation', getattr(collector, '_original_source_clock_generation', 0)),
+      (contract.source_domain, contract.producer_revision, contract.proof_sha256, contract.scope), native_epoch, regime,
+      float(cp.steerRatio), float(cp.wheelbase), float(cp.centerToFront), float(cp.mass),
+    )
+    context = observation_context()
+    queue = getattr(collector, '_original_source_pose_queue', ())
+    old_context = getattr(collector, '_original_source_pose_context', None)
+    context_changed = old_context is not None and old_context != context
+    if old_context != context:
+      queue = ()
+      if old_context is not None:
+        collector.reset_original_source_capture('original_source_context_changed', hard=True)
+        # Hard reset advances the clock generation. Bind the NEW epoch now;
+        # saving the pre-reset context would reset again on every healthy poll.
+        context = observation_context()
+    collector._original_source_pose_context = context
+    queue = tuple(value for value in queue if 0 <= now_ns - value.mono_ns <= 100_000_000)
+    if pose_ns <= getattr(collector, '_original_source_revoked_before_ns', 0):
+      return reject()
+    seen = getattr(collector, '_original_source_seen_pose', 0)
+    if pose_ns < seen:
+      return reject()
+    if pose_ns > seen:
+      collector._original_source_seen_pose = pose_ns
+      evidence = OriginalSourcePose(
+        mono_ns=pose_ns, received_ns=int(sm.recv_time['deviceMotion'] * 1e9), observed_ns=now_ns,
+        source_boot_ns=int(dm.timestamp) if contract.source_domain == 'boottime' else 0, clock_offset_ns=clock_offset,
+        source_timestamp_ns=int(dm.timestamp), source_clock_domain=contract.source_domain,
+        source_clock_contract=(contract.source_domain, contract.producer_revision, contract.proof_sha256, contract.scope),
+        boot_mono_offset_ns=boot_mono_offset,
+        clock_uncertainty_ns=uncertainty,
+        clock_equivalence=() if equivalence is None else equivalence.primitive(),
+        clock_generation=getattr(collector, '_original_source_clock_generation', 0),
+        source_lower_ns=source_lower, source_upper_ns=source_upper,
+        calibration=generation, calibration_estimate=estimate, context=context,
+        yaw_rate=float(pose.angular_velocity.xyz[2]), roll_rad=float(pose.orientation.xyz[0]),
+        native_identity=native_epoch, native_allowed=True, valid=True,
+        native_required=native_required, native_control_ns=getattr(command, 'control_ns', 0),
+        native_observed_ns=getattr(command, 'native_observed_ns', 0),
+        native_expires_ns=getattr(command, 'native_expires_ns', 0), ordinary_safety=ordinary_safety,
+        source_epoch=command.source_epoch, identity=command.identity,
+        baseline_revision=command.baseline_revision, controller_revision=command.controller_revision,
+        source_state_ns=state_ns, native_apply_ns=ready[-1][1].apply_ns,
+        angular_velocity_device=tuple(float(v) for v in (dm.angularVelocityDevice.x, dm.angularVelocityDevice.y, dm.angularVelocityDevice.z)),
+        orientation_ned=tuple(float(v) for v in (dm.orientationNED.x, dm.orientationNED.y, dm.orientationNED.z)),
+        calibration_rpy=tuple(float(v) for v in calibration.rpyCalib),
+      )
+      queue = (*queue, evidence)[-4:]
+    collector._original_source_pose_queue = queue
+    for index, evidence in enumerate(queue):
+      before = [stamp for stamp in history if stamp <= (evidence.source_lower_ns or evidence.mono_ns)]
+      after = [stamp for stamp in history if stamp >= (evidence.source_upper_ns or evidence.mono_ns)]
+      if not before or not after:
+        continue
+      left, right = max(before), min(after)
+      if (evidence.source_upper_ns or evidence.mono_ns) - left > 100_000_000 or right - (evidence.source_lower_ns or evidence.mono_ns) > 100_000_000:
+        continue
+      weight = 0.0 if left == right else (evidence.mono_ns - left) / (right - left)
+      speed, steering_angle = tuple(a + (b - a) * weight for a, b in zip(history[left], history[right], strict=True))
+      # Consume once, in source order; downstream command/response joins keep
+      # their original independent 30 ms actuation and 100 ms response limits.
+      collector._original_source_pose_queue = queue[index + 1:]
+      return replace(evidence, speed_mps=speed, steering_angle_deg=steering_angle, completed_ns=now_ns,
+        left_state_ns=left, right_state_ns=right, left_state=history[left], right_state=history[right])
     if distinguish_pending:
       from openpilot.starpilot.flm.physical_observation import PendingPhysical
       # Healthy but no independently bracketed new pose. Retain original

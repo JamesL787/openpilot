@@ -331,7 +331,7 @@ export const MapOperationsPanel = {
               <dt>Coverage</dt><dd>{{ formatBounds(operation.selectedSnapshot.bounds) }}</dd></dl>
             <p v-if="operation.selectedForNextShadowStart" class="gx-note">Download complete and saved on this comma. The map database is selected for the next Maps service start.</p>
             <p v-if="operation.selectedGeneration && !operation.selectedForNextShadowStart" class="gx-note">An offline map database is saved and selected for the next Maps service start.</p>
-            <p v-if="operation.errorCode" class="gx-note">{{ errorLabel(operation.errorCode) }}.</p>
+            <GxNotice v-if="operation.errorCode" tone="danger">{{ errorLabel(operation.errorCode) }}.</GxNotice>
             <button v-if="running" type="button" class="gx-btn gx-btn--tonal" @click="client.cancel()">Cancel operation</button>
           </template>
           <div class="gx-map-manager__picker"><label for="map-region-search">Search regions</label>

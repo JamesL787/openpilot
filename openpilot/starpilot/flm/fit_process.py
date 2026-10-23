@@ -14,6 +14,10 @@ INTERVAL_NS = 60_000_000_000
 
 
 class FitProcess:
+  worker_module = 'openpilot.starpilot.flm.fit_worker'
+  wall_ns = WALL_NS
+  interval_ns = INTERVAL_NS
+
   def __init__(self):
     self.child = None
     self.pending = b''
@@ -25,7 +29,7 @@ class FitProcess:
     self.reason = 'idle'
 
   def submit(self, snapshot, *, token, now_ns):
-    if self.child is not None or self.last_start_ns and now_ns - self.last_start_ns < INTERVAL_NS:
+    if self.child is not None or self.last_start_ns and now_ns - self.last_start_ns < self.interval_ns:
       return False
     try:
       payload = json.dumps(snapshot, separators=(',', ':'), allow_nan=False).encode()
@@ -33,7 +37,13 @@ class FitProcess:
       self.reason = 'fit_snapshot_invalid'
       self.last_start_ns = now_ns
       return False
-    if len(payload) > MAX_INPUT:
+    return self.submit_bytes(payload, token=token, now_ns=now_ns)
+
+  def submit_bytes(self, payload, *, token, now_ns):
+    """Bounded prepared IPC; the owned worker still validates its full input."""
+    if self.child is not None or self.last_start_ns and now_ns - self.last_start_ns < self.interval_ns:
+      return False
+    if type(payload) is not bytes or not 0 < len(payload) <= MAX_INPUT:
       self.reason = 'fit_snapshot_bound'
       self.last_start_ns = now_ns
       return False
@@ -44,7 +54,7 @@ class FitProcess:
     environment['STARPILOT_FLM_PARENT_PID'] = str(os.getpid())
     try:
       self.child = subprocess.Popen(
-        [sys.executable, '-B', '-m', 'openpilot.starpilot.flm.fit_worker'],
+        [sys.executable, '-B', '-m', self.worker_module],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -94,7 +104,7 @@ class FitProcess:
     child = self.child
     if child is None:
       return None
-    if token != self.token or now_ns - self.started_ns > WALL_NS:
+    if token != self.token or now_ns - self.started_ns > self.wall_ns:
       self.cancel('fit_context_changed' if token != self.token else 'fit_wall_limit')
     if self.reaping:
       if child.poll() is not None:

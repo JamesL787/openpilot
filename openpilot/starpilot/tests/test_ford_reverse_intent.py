@@ -267,7 +267,7 @@ def test_reverse_join_never_bypasses_current_fault_source_identity_or_long_veto(
   elif fault == 'native-incompatible':
     native = native_change(sm, native, compatible=False)
   elif fault == 'native-param':
-    native = native_change(sm, native, safetyParam=8)
+    native = native_change(sm, native, safetyParam=cp.safetyConfigs[0].safetyParam ^ 8)
   elif fault in ('native-inventory-fault', 'native-heartbeat-lost', 'native-controls'):
     field = {'native-inventory-fault': 'safetyRxChecksInvalid', 'native-heartbeat-lost': 'heartbeatLost', 'native-controls': 'controlsAllowed'}[fault]
     native = native_change(sm, native, pandaInventory=(replace(native.pandaInventory[0], **{field: True}),))
@@ -282,7 +282,7 @@ def test_reverse_join_never_bypasses_current_fault_source_identity_or_long_veto(
     native = native_change(sm, native, pandaInventory=(), sourcePandaStatesMonoTime=0)
   elif fault in ('panda-config', 'panda-rx-invalid', 'panda-heartbeat', 'panda-controls'):
     field, value = {
-      'panda-config': ('safetyParam', 8),
+      'panda-config': ('safetyParam', cp.safetyConfigs[0].safetyParam ^ 8),
       'panda-rx-invalid': ('safetyRxChecksInvalid', True),
       'panda-heartbeat': ('heartbeatLost', True),
       'panda-controls': ('controlsAllowed', True),
@@ -336,3 +336,7 @@ def test_newer_active_proof_cannot_extend_original_healthy_source_lease():
   newer, _ = sample(cp, NOW + 30_000_000, NOW + 40_000_000, 3, allowed=False)
   assert f.observe(newer, cp, cs, NOW + 40_000_000, latched=True, intent_producer_session=PRODUCER)
   assert f.failed and f.healthy_native_ns == NOW and f.lateral_source_ns == NOW
+
+
+def test_reverse_qualification_keeps_malformed_configuration_fail_closed():
+  assert not retain_reverse_intent(None, None, None, None, None, NOW, latched=True, producer=PRODUCER)

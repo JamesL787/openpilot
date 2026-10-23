@@ -77,6 +77,37 @@ class TestLateralSetup(unittest.TestCase):
     lane = LaneChangePolicy(False, 1.0, True, True, 3.0, 3.0, True, 0.9)
     self.params.put(LANE_KEY, to_value(lane), block=True)
 
+  def test_active_prep_can_turn_off_after_user_edits_without_overwriting_them(self):
+    self.seed()
+    prior = {key: Path(self.params.get_param_path(key)).read_bytes()
+             if Path(self.params.get_param_path(key)).exists() else None for key in controller_keys()}
+    self.assertTrue(self.owner.apply(self.request()))
+    changed = {'LaneCenterOffset': b'0.37', LANE_KEY: b'broken'}
+    for key, value in changed.items():
+      Path(self.params.get_param_path(key)).write_bytes(value)
+    self.assertEqual(self.row().value, 'On')
+    self.assertTrue(self.row().available)
+    self.assertTrue(self.owner.apply(self.request('Off')))
+    self.assertIsNone(self.params.get(preparation.KEY))
+    for key, value in prior.items():
+      path = Path(self.params.get_param_path(key))
+      self.assertEqual(path.read_bytes() if path.exists() else None, changed.get(key, value))
+
+  def test_galaxy_active_prep_can_turn_off_after_new_lane_preference(self):
+    self.seed()
+    self.assertTrue(self.owner.apply(self.request()))
+    self.params.put('LaneCenterOffset', 0.37, block=True)
+    current = SimpleNamespace(parked=True, cp=self.cp, raw=b'current-cp')
+    gateway = SettingsGateway(self.params, Mock(spec=ContextSource, sample=lambda: AuthorityContext(current.parked, current.cp, current.raw)),
+                              clock=lambda: 10)
+    page = gateway.page('torque', 'session', b'generation')
+    index = next(i for i, row in enumerate(page['rows']) if row['label'] == 'Prep My Vehicle for Tuning')
+    intent = gateway.preview(page['view'], index, 0, 'session', b'generation')
+    self.assertEqual(intent['proposed'], 'Off')
+    self.assertTrue(gateway.confirm(intent['intent'], 'session', b'generation'))
+    self.assertEqual(Path(self.params.get_param_path('LaneCenterOffset')).read_bytes(), b'0.37')
+    self.assertIsNone(self.params.get(preparation.KEY))
+
   def test_preparation_journals_scoped_choice_and_restores_other_vehicles_exactly(self):
     self.seed()
     other = cp_for(TOYOTA.TOYOTA_COROLLA_TSS2)

@@ -23,6 +23,7 @@ class CarState(CarStateBase):
     self.shifter_values = can_define.dv["GEARBOX"]["GEAR_SHIFTER"]
 
     self.distance_button = 0
+    self.lkas_setting = None
 
   def update(self, can_parsers) -> structs.CarState:
     cp = can_parsers[Bus.pt]
@@ -130,8 +131,17 @@ class CarState(CarStateBase):
       self.lkas_hud_msg = copy.copy(cp_adas.vl["PROPILOT_HUD"])
       self.lkas_hud_info_msg = copy.copy(cp_adas.vl["PROPILOT_HUD_INFO_MSG"])
 
-    ret.buttonEvents = create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
+    button_events = create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
 
+    # LKAS setting transitions are Dom's wheel input, not a separate physical switch.
+    # Seed only a received value; startup/absent defaults cannot synthesize a press.
+    source = cp if self.CP.carFingerprint == CAR.NISSAN_ALTIMA else cp_adas
+    if source.ts_nanos["LKAS_SETTINGS"]["LKAS_ENABLED"] > 0:
+      if self.lkas_setting is not None:
+        button_events += create_button_events(ret.invalidLkasSetting, self.lkas_setting, {1: ButtonType.lkas})
+      self.lkas_setting = ret.invalidLkasSetting
+
+    ret.buttonEvents = button_events
     return ret
 
   @staticmethod

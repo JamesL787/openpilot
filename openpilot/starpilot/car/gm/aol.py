@@ -43,6 +43,26 @@ def f1_conventional_lateral_owner(cp) -> bool:
               int(cp.safetyConfigs[0].safetyParam) == VOLT_CC_F1_WORD)
 
 
+def sdgm_alpha_lateral_owner(cp) -> bool:
+  from opendbc.car.gm.values import is_volt_sdgm_accepted_envelope
+  return bool(qualified_gm(cp) and aol_enabled(cp) and is_volt_sdgm_accepted_envelope(cp))
+
+
+def sdgm_alpha_pedal_withdrawal(cp, cs) -> bool:
+  """Physical LONG withdrawal for the 2019 SASCM Alpha configuration."""
+  from opendbc.car.gm.values import is_volt_sdgm_accepted_envelope
+  from opendbc.car.structs import car
+  return bool(qualified_gm(cp) and aol_enabled(cp) and
+              is_volt_sdgm_accepted_envelope(cp) and
+              cs.canValid and not cs.canTimeout and cs.cruiseState.available and
+              not cs.steerFaultTemporary and not cs.steerFaultPermanent and not cs.accFaulted and
+              not cs.doorOpen and not cs.steeringDisengage and
+              cs.gearShifter in (car.CarState.GearShifter.drive, car.CarState.GearShifter.low,
+                                car.CarState.GearShifter.sport, car.CarState.GearShifter.brake,
+                                car.CarState.GearShifter.manumatic) and
+              (cs.brakePressed or cs.regenBraking))
+
+
 def stock_ascm_independent_lateral(cp) -> bool:
   """Stock cruise's engagement speed does not cancel independent lateral intent."""
   return bool(qualified_gm(cp) and cp.carFingerprint == CAR.CHEVROLET_VOLT_ASCM and
@@ -206,7 +226,7 @@ def prior_main_off_intent_current(feedback, sm, cp, cs, axis, now_ns, *, latched
       cs.gearShifter not in (car.CarState.GearShifter.drive, car.CarState.GearShifter.low,
                             car.CarState.GearShifter.sport, car.CarState.GearShifter.brake) or
       any(event.type == car.CarState.ButtonEvent.Type.cancel for event in cs.buttonEvents) or
-      str(axis.faultReason) != 'none' or axis.nativeAcknowledged or
+      str(axis.faultReason) != 'none' or axis.nativeAcknowledged and not sdgm_alpha_lateral_owner(cp) or
       axis.desiredLateral or axis.desiredLongitudinal or axis.lateralActive or axis.longitudinalActive or
       not 0 < axis.sourceCarStateMonoTime <= axis.observedMonoTime or axis.sourceCarStateMonoTime >= main_arm_ns or
       now_ns - axis.sourceCarStateMonoTime > AXIS_MAX_AGE_NS or

@@ -164,7 +164,7 @@ class TestBlendedLifecycle(unittest.TestCase):
     import openpilot.selfdrive.car.card as card
     calls = []
 
-    class PartialCar:
+    class PartialCar(card.Car):
       def __init__(self):
         self.vehicle_startup = SimpleNamespace(close=lambda: calls.append('closed'))
         raise RuntimeError('Constructor failed after owner registration')

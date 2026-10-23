@@ -19,6 +19,9 @@ static bool ford_aol_owned = false;
 static uint32_t ford_aol_accepted_ts = 0U;
 
 static void ford_aol_clear(void) {
+  // A revoked session stays revoked, but must not repeatedly erase neutral
+  // physical input history needed for the next real driver activation.
+  ford_aol_session = false;
   ford_aol_token = false;
   ford_aol_token_claimed = false;
   ford_aol_token_ts = 0U;
@@ -40,6 +43,17 @@ static void ford_aol_reset(void) {
   ford_aol_eps = 0U;
   ford_aol_lka_ready = false;
   ford_aol_accepted_ts = 0U;
+}
+
+// Fresh physical MAIN/LKAS or ordinary cruise activation begins a new session.
+// pandad reads status before writing its request and engagement heartbeat; the
+// old session's disengaged heartbeat is not a loss of this unclaimed token.
+// Original token expiry and current heartbeat/request/RX guards remain in force.
+static void ford_aol_arm(void) {
+  ford_aol_token = true;
+  ford_aol_token_claimed = false;
+  ford_aol_token_ts = microsecond_timer_get();
+  ford_aol_session = false;
 }
 
 static void ford_aol_host_request(uint8_t mask) {
@@ -107,9 +121,7 @@ static void ford_aol_rx(const CANPacket_t *msg) {
         ford_aol_clear();
         ford_aol_main_neutral = true;
       } else if (ford_aol_main_neutral && !ford_aol_main_previous && (aol_host_axis_mask == 0U)) {
-        ford_aol_token = true;
-        ford_aol_token_claimed = false;
-        ford_aol_token_ts = microsecond_timer_get();
+        ford_aol_arm();
       } else {
       }
       ford_aol_main_previous = main_available;
@@ -121,9 +133,7 @@ static void ford_aol_rx(const CANPacket_t *msg) {
       if (!button) {
         ford_aol_button_neutral = true;
       } else if (ford_aol_button_neutral && !ford_aol_button_previous && (aol_host_axis_mask == 0U)) {
-        ford_aol_token = true;
-        ford_aol_token_claimed = false;
-        ford_aol_token_ts = microsecond_timer_get();
+        ford_aol_arm();
       } else {
       }
       ford_aol_button_previous = button;
@@ -156,12 +166,12 @@ static void ford_aol_rx(const CANPacket_t *msg) {
 // A real ordinary cruise rising edge can arm retained lateral intent without
 // requiring a historical MAIN/LKAS cycle. This never grants ordinary controls
 // or longitudinal permission; the current request/heartbeat/RX gates still own TX.
+// Accelerator override does not erase this lateral intent. The independent
+// longitudinal permission mask continues to require released accelerator/brake.
 static void ford_aol_full_engagement(bool cruise_rising) {
-  if (ford_aol_enabled && cruise_rising && controls_allowed && !brake_pressed && !gas_pressed &&
+  if (ford_aol_enabled && cruise_rising && controls_allowed && !brake_pressed &&
       !relay_malfunction && aol_rx_healthy() && ford_aol_main_available && ford_aol_drive && (ford_aol_eps == 0U)) {
-    ford_aol_token = true;
-    ford_aol_token_claimed = false;
-    ford_aol_token_ts = microsecond_timer_get();
+    ford_aol_arm();
   }
 }
 

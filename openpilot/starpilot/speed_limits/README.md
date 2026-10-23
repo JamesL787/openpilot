@@ -16,8 +16,12 @@ a source gap or same-value provider change; a later different limit starts a new
 window, including when an earlier numeric limit returns.
 
 With Automatic adoption on, the widget slowly flashes for three seconds before
-adoption. With it off, the widget gently hops and shows an arrow relative to vehicle
-speed. Steering-wheel + accepts and − declines. Tapping the sign opens the same
+adoption. With it off, the stationary widget pulses purple twice slowly (700 ms
+each), rests for one second, pulses twice quickly (300 ms each), and rests for one
+second before repeating. Each pair has a 200 ms gap. The arrow remains relative
+to vehicle speed; Vienna numerals stay black while their ring pulses.
+Large UI uses the same US or Vienna sign at 1.25× scale beside SET speed.
+Steering-wheel + accepts and − declines. Tapping the sign opens the same
 Accept / Decline choices on either native screen. A pending manual choice expires
 after ten monotonic seconds, including time without active longitudinal control.
 Decline and timeout leave set speed unchanged. An action at the exact deadline

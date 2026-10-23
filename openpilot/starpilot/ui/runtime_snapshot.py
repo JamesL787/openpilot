@@ -380,7 +380,7 @@ class RuntimeSnapshotAdapter:
   def build(self, mode: ShellMode, selected: Destination = Destination.STAR, *, compact_y: float = 0,
             compact_scroll_x: float = 0, sidebar_expanded: bool = True, now_ns: int | None = None,
             menu_only: bool = False, stopped_timer_enabled: bool | None = None,
-            onroad_view_only: bool = False) -> ShellSnapshot:
+            onroad_view_only: bool = False, stopped_timer_profile: str = "compact") -> ShellSnapshot:
     replay = getattr(self.ui_state, "replay_sample", None)
     if getattr(self.ui_state, "replay_clock", None) is not None:
       if replay is not None and replay.epoch != self._replay_epoch:
@@ -492,7 +492,7 @@ class RuntimeSnapshotAdapter:
         self._replay_stopped_history = False
       elif not timer_standstill or timer_reverse:
         self._replay_stopped_history = True
-    timer_enabled = (placement(self._customization_value, "compact", STOPPED_TIMER_WIDGET)["enabled"]
+    timer_enabled = (placement(self._customization_value, stopped_timer_profile, STOPPED_TIMER_WIDGET)["enabled"]
                      if stopped_timer_enabled is None else stopped_timer_enabled)
     stopped_duration = self._stopped_timer.step(
       now_ns=now_ns,

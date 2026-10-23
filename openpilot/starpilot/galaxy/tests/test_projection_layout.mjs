@@ -7,6 +7,8 @@ import { OnroadLayoutFeed, OnroadLayoutPage, validSnapshot, validDocument } from
 const copy = (v) => JSON.parse(JSON.stringify(v))
 const native = snapshot()
 const metadata = copy(native.metadata.profiles.large)
+// The Android Auto metadata has its own canvas, so the Big screen's widened bounds and anchors do not apply.
+for (const widget of Object.values(metadata.widgets)) for (const field of ["bounds", "anchorShift", "expandable"]) delete widget[field]
 metadata.width = 2880
 metadata.bounds.width = 2820
 metadata.widgets.current_speed.default.x += 510

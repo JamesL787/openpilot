@@ -22,13 +22,15 @@ class TestFordAolIntent(unittest.TestCase):
     intent = self.intent()
     self.frame(intent, main=False)
     self.frame(intent, main=True, now=2)
-    self.assertTrue(intent.allowed_latch)
+    self.assertFalse(intent.allowed_latch)  # Prior MAIN-off feedback still owns this frame.
     self.frame(intent, main=True, now=3)
+    self.assertTrue(intent.allowed_latch)
+    self.frame(intent, main=True, now=4)
     self.assertFalse(intent._main_held)
-    self.frame(intent, main=True, button=True, now=4)
+    self.frame(intent, main=True, button=True, now=5)
     self.assertFalse(intent.allowed_latch)
-    self.frame(intent, main=True, button=False, now=5)
-    self.frame(intent, main=True, button=True, now=6)
+    self.frame(intent, main=True, button=False, now=6)
+    self.frame(intent, main=True, button=True, now=7)
     self.assertTrue(intent.allowed_latch)
 
   def test_lkas_managed_with_main_already_on(self):

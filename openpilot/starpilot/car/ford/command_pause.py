@@ -21,7 +21,7 @@ def retain_command_pause_intent(feedback, sm, cp, cs, axis, now_ns, *, latched, 
     previous = feedback.signature
     stamp = int(sm.logMonoTime['aolAxisState'])
     if (previous is None or not producer or producer != feedback.availability_producer or
-        not feedback.availability_epoch or not feedback.session or
+        feedback.availability_epoch is None or not feedback.session or
         previous[0] != feedback.session or previous[7] != feedback.session or previous[5] != 'none' or
         not previous[9] or previous[10] or not previous[11] or previous[12] or not previous[13] or
         previous[14] != producer or previous[15] != feedback.availability_epoch or

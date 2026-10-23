@@ -27,7 +27,8 @@ class TeslaScreenCardIntent(AolCardIntent):
       self.pause_lateral = False
     cancel = any(event.type == ButtonType.cancel and event.pressed for event in CS.buttonEvents)
     fault = bool(not CS.canValid or CS.canTimeout or kwargs.get('fault_active') or CS.accFaulted or CS.steerFaultPermanent or
-                 CS.steeringDisengage or CS.doorOpen or CS.gearShifter != structs.CarState.GearShifter.drive)
+                 CS.steeringDisengage or CS.doorOpen or CS.gearShifter not in
+                 (structs.CarState.GearShifter.drive, structs.CarState.GearShifter.reverse, structs.CarState.GearShifter.neutral))
     rejection = kwargs.get('native_rejection_ns', 0)
     if rejection and self._last_latch_edge_ns < rejection <= kwargs.get('now_ns', 0):
       self.screen_override = False
@@ -41,7 +42,8 @@ class TeslaScreenCardIntent(AolCardIntent):
         continue
       fresh_press = bool(event.pressed and not self.screen_held)
       self.screen_held = bool(event.pressed)
-      if (fresh_press and not fault and not cancel and self.settings.enabled and
+      if (fresh_press and CS.gearShifter == structs.CarState.GearShifter.drive and not CS.steerFaultTemporary and
+          not fault and not cancel and self.settings.enabled and
           not (self.brake_disengage and CS.brakePressed)):
         current = (available if self.screen_override is None else self.screen_override)
         current = not self.pause_lateral and bool(current or kwargs.get('standard_enabled'))

@@ -12,19 +12,24 @@ def _diagnostic_mask(cp):
   try:
     # The interceptor Clarity's panda intermittently latches the CAN interrupt-rate diagnostic (interruptRateCan2) at
     # startup, with normal engagement unaffected (seen before and after its AOL word); it is admitted as the Bolt CC's is.
-    # Checked ahead of upstream's Bosch Honda exemption below, which returns for every Honda; anything this does not
-    # qualify falls through to it.
+    # Upstream's Nidec pedal AOL leaves Nidec at mask 0, so this is ours. Checked ahead of upstream's Bosch Honda
+    # exemption below, which returns for every Honda; anything this does not qualify falls through to it.
     if cp.brand == 'honda' and len(cp.safetyConfigs) == 1 and int(cp.safetyConfigs[0].safetyParam) == 544:
-      from openpilot.starpilot.car.honda.aol import qualified_nidec_interceptor
-      if qualified_nidec_interceptor(cp):
+      from opendbc.car.honda.stock_aol import qualified
+      from opendbc.car.honda.values import CAR, HondaFlags
+      if (cp.carFingerprint == CAR.HONDA_CLARITY and int(cp.flags) & int(HondaFlags.GAS_INTERCEPTOR) and
+          qualified(cp, marked_only=True)):
         return (1 << 2) | (1 << 3)
     if cp.brand == 'honda':
-      from opendbc.car.honda.stock_aol import qualified
+      from opendbc.car.honda.stock_aol import qualified, CLASSIC_BOSCH, RADARLESS
+      if (cp.carFingerprint in CLASSIC_BOSCH and cp.openpilotLongitudinalControl) or str(cp.fingerprintSource) == 'fixed':
+        return 0  # New alpha owner and explicit selection cannot borrow the recorded exception.
       from opendbc.car.honda.values import HondaFlags
       # Only the reported CAN2 interrupt-rate diagnostic is exempt. Qualification
       # requires a marked, supported, single-panda Bosch AOL configuration.
       # Other interrupt rates and mixed faults remain blocking.
-      return (1 << 3) if int(cp.flags) & int(HondaFlags.BOSCH) and qualified(cp, marked_only=True) else 0
+      return (1 << 3) if ((cp.carFingerprint in CLASSIC_BOSCH or cp.carFingerprint in RADARLESS) and
+                         int(cp.flags) & int(HondaFlags.BOSCH) and qualified(cp, marked_only=True)) else 0
     if cp.brand == 'hyundai':
       from opendbc.car.hyundai.values import CAR, HyundaiFlags
       if cp.carFingerprint != CAR.HYUNDAI_SONATA_HYBRID:

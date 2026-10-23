@@ -48,7 +48,7 @@ class EventCollectionAdapter(TorqueCollectionAdapter):
     if replay_version != 3 and self.clipping_quality != RECORDED_DEBT:
       raise ValueError('state-aligned quality requires explicit event version3')
     from openpilot.starpilot.flm.clipping_quality import restore_quality
-    if type(restore_version) is not int or restore_version not in (2, 4, 5, 6) or (restore_version in (4, 5, 6) and
+    if type(restore_version) is not int or restore_version not in (2, 4, 5, 6, 8) or (restore_version in (4, 5, 6, 8) and
         (replay_version != 3 or self.clipping_quality != restore_quality(restore_version))):
       raise ValueError('explicit whole-map restore producer contract')
     self.restore_version = restore_version
@@ -70,8 +70,14 @@ class EventCollectionAdapter(TorqueCollectionAdapter):
     self.model_speed_bounds = None
     self.target_changed = False
     self.actual_target_sha256 = None
+    self.original_context_receipts = None
     if source is not None:
       self.bind_source(source)
+
+  def original_source_packet(self, collector, windows, now_ns):
+    """Separate explicit export; never a fit_job_snapshot or live grant."""
+    from openpilot.starpilot.flm.original_source_capture import export_packet
+    return export_packet(self, collector, windows, now_ns)
 
   def select_objective(self, key):
     if not getattr(self, '_event_initialized', False):
@@ -136,6 +142,26 @@ class EventCollectionAdapter(TorqueCollectionAdapter):
       return self.objective.required_cohorts
     return () if self.event_objective is None else self.event_objective.required_cohorts
 
+  def enable_original_context_capture(self):
+    if self.original_context_receipts is None:
+      from openpilot.starpilot.flm.original_context_receipts import OriginalContextReceipts
+      self.original_context_receipts = OriginalContextReceipts()
+
+  def observe_original_applied(self, output):
+    if self.original_context_receipts is not None:
+      self.original_context_receipts.record_output(output)
+      if self.original_context_receipts.failed:
+        return
+      # Replay needs every original Card carrier, including outputs received
+      # too late to become fitting samples. This records history only; the
+      # collector's current freshness/eligibility checks still run unchanged.
+      self.record_actual_carrier(output)
+      control = self.original_context_receipts.controls.get(output.control_ns)
+      if control is not None:
+        # Keep the existing exact source, native lease and CAN checks. Missing
+        # or invalid emissions remain absent and make replay fail closed.
+        self.record_actual_emission(control, output)
+
   def prepare_control(self, evidence):
     trace = getattr(evidence, 'effect_trace', None)
     target = None if trace is None else trace.envelope
@@ -156,7 +182,10 @@ class EventCollectionAdapter(TorqueCollectionAdapter):
           prior_full_profile_sha256=target.full_profile_sha256).for_trial(GROUPS[self.key[1]])
         self.event_objective = EffectObjective(self.key[1], self.envelope.trial_names,
           self.envelope.trial_anchor, self.source_epoch)
-    return super().prepare_control(evidence)
+    prepared = super().prepare_control(evidence)
+    if prepared is not None and self.original_context_receipts is not None:
+      self.original_context_receipts.record_control(evidence)
+    return prepared
 
   def physical_observable(self, value):
     # Raw storage is shared by all scheduled groups, including crawl FF.
@@ -236,7 +265,7 @@ class EventCollectionAdapter(TorqueCollectionAdapter):
          if self.replay_version == 3 and operation == 'trial' else {}),
       **({'event_clipping_quality': self.clipping_quality, 'event_identification_policy': FIXED_MAP_IDENTIFICATION,
           'event_restore_policy': restore_policy(self.restore_version)}
-         if operation == 'restore' and self.restore_version in (4, 5, 6) else {}),
+         if operation == 'restore' and self.restore_version in (4, 5, 6, 8) else {}),
       'event_objective': asdict(self.event_objective),
       'effect_envelope': asdict(envelope), 'objective': asdict(self.objective),
       'now_ns': now_ns, 'sequence': sequence, 'prior': tuple(dict(envelope.prior_coordinates)[name] for name in self.event_objective.names),
@@ -252,6 +281,13 @@ class EventCollectionAdapter(TorqueCollectionAdapter):
     from openpilot.starpilot.flm.full_surface_profile import FullSurfaceEnvelope
     from openpilot.starpilot.flm.event_activation import activation_from_dict, activation_matches_model, activation_model_from_dict
     try:
+      plant_mode = getattr(self,'source_plant_protocol',None) is not None
+      if plant_mode or 'plant_protocol' in report:
+        from openpilot.starpilot.flm.source_plant_runtime import install as install_source_plant
+        offered_context = tuple(report.get('physical_context',()))
+        if not plant_mode or not install_source_plant(self,report,offered_context,commit=False):
+          return False
+        physical_context = offered_context
       envelope = result.profile.effect_envelope
       if (not isinstance(envelope, FullSurfaceEnvelope) or self.envelope is None or
           envelope.source_binding() != self.envelope.source_binding() or
@@ -271,11 +307,13 @@ class EventCollectionAdapter(TorqueCollectionAdapter):
           return False
       model = activation_model_from_dict(report['model'])
       report_version = report.get('event_version', 2)
-      if type(report_version) is not int or report_version == 3 and 'restore_activation_plan' in report:
+      if type(report_version) is not int or report_version in (3,7) and 'restore_activation_plan' in report:
         return False
       if envelope.operation == 'restore' and report_version != self.restore_version:
         return False
-      if report_version == 3:
+      if report_version in (3,7):
+        if report_version == 7 and (not plant_mode or report.get('plant_protocol') != 'chronological-source-feedback-mean-fit-v1'):
+          return False
         plan = activation_from_dict(report['activation_plan'])
         if (self.replay_version != 3 or envelope.operation != 'trial' or
             plan.identity != self.identity or plan.baseline_revision != self.baseline_revision or
@@ -284,13 +322,18 @@ class EventCollectionAdapter(TorqueCollectionAdapter):
             not set(result.profile.train_ids + result.profile.heldout_ids).issubset(plan.stage_blocks) or
             not activation_matches_model(plan, model)):
           return False
-      elif report_version in (4, 5, 6):
+      elif report_version in (4, 5, 6, 8):
         from openpilot.starpilot.flm.restore_activation import restore_plan_from_dict, restore_plan_matches
         from openpilot.starpilot.flm.clipping_quality import restore_policy
         plan = restore_plan_from_dict(report['restore_activation_plan'])
         expected_policy = restore_policy(report_version)
+        if report_version == 8:
+          from openpilot.starpilot.flm.clipping_quality import RESTORE_FEEDBACK_STATISTICS
+          if (not plant_mode or report.get('plant_protocol') != 'chronological-source-feedback-mean-fit-v1' or
+              report.get('event_restore_statistics') != RESTORE_FEEDBACK_STATISTICS or 'event_mean_basis' in report):
+            return False
         if (self.restore_version != report_version or plan.version != expected_policy or
-            report_version == 6 and plan.clipping_quality != self.clipping_quality or
+            report_version in (6, 8) and plan.clipping_quality != self.clipping_quality or
             envelope.operation != 'restore' or 'activation_plan' in report or
             plan.identity != self.identity or plan.baseline_revision != self.baseline_revision or
             plan.source_epoch != self.source_epoch or plan.cutoff_ns != report['model_cutoff_ns'] or
@@ -309,12 +352,14 @@ class EventCollectionAdapter(TorqueCollectionAdapter):
           physical_model_revision(model) != validation.physical_model_revision or validation.baseline_revision != self.baseline_revision):
         return False
       self.event_objective = EffectObjective(self.key[1], envelope.trial_names, envelope.trial_anchor, self.source_epoch)
-      if report_version in (3, 4, 5, 6) and self.model != model:
+      if report_version in (3, 4, 5, 6, 7, 8) and self.model != model:
         self.current_physical_valid = False
         self.last_physical_ns = 0
       self.model, self.model_cutoff_ns = model, report['model_cutoff_ns']
       self.model_speed_bounds = bounds
       self.fit_profile = result.profile
+      if plant_mode:
+        install_source_plant(self,report,physical_context,commit=True)
       return True
     except (AttributeError, KeyError, TypeError, ValueError):
       return False

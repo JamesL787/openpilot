@@ -1,3 +1,4 @@
+from openpilot.starpilot.flm.normalized_trace_archive import archive_of
 """Actual child path: whole events -> measured plant -> tiny canonical effect trial."""
 from openpilot.starpilot.flm.clipping_quality import event_clipping_quality
 from dataclasses import asdict
@@ -55,7 +56,7 @@ def original_event_evidence(payload, engine, objective):
     if packet['identity'] != engine.identity or not 40 <= len(packet['samples']) <= 240:
       raise ValueError('event packet provenance/bound')
     for point in packet['samples']:
-      command, output = control_from_dict(point['control']), output_from_dict(point['output'])
+      command, output = control_from_dict(point['control'],trace_archive=archive_of(engine)), output_from_dict(point['output'])
       key = point['control_ns'], point['apply_ns'], point['mono_ns']
       if (key in seen or point['mono_ns'] <= previous or command.identity != engine.identity or
           command.baseline_revision != engine.baseline_revision or not command.enabled or command.manual or
@@ -107,43 +108,71 @@ def _control_frame_index(records):
   return frames
 
 
-def fit_event_torque(payload, engine, objective):
+def fit_event_torque(payload, engine, objective, *, source_plant=None):
   frames = _control_frame_index(engine.records)
-  envelope, context, lag, packets, events = original_event_evidence(payload, engine, objective)
-  if len(events) < 16:
-    return _unavailable('whole_physical_event_support', storagePackets=len(packets), wholeBlocks=len(events), requiredWholeBlocks=16)
-  if payload.get('event_version') == 3:
-    from openpilot.starpilot.flm.event_activation import bind_activation_model, build_activation_plan
-    prepared = prepare_fixed_event_calibration(payload, engine, objective)
-    if type(prepared) is dict:
-      return prepared
-    original_model, cutoff, events, declared_stage = prepared
-    plan = build_activation_plan(engine, model=original_model, cutoff_ns=cutoff, stage_events=declared_stage, physical_context=context,
-      quality_contract=event_clipping_quality(payload))
-    if engine.activation_plan != plan:
-      raise ValueError('event candidate changed frozen activation experiment')
-    model, split = bind_activation_model(original_model, plan), 8
+  if source_plant is not None:
+    from openpilot.starpilot.flm.source_plant_fit import PROTOCOL, PreparedPlant
+    from openpilot.starpilot.flm.full_surface_profile import envelope_from_dict
+    from openpilot.starpilot.flm.event_activation import bind_activation_model
+    plant, events = source_plant
+    declared_protocol = PROTOCOL
+    if payload.get('event_version') == 7:
+      from openpilot.starpilot.flm.feedback_replay import PROTOCOL as FEEDBACK_PROTOCOL
+      declared_protocol = FEEDBACK_PROTOCOL
+    if (not isinstance(plant, PreparedPlant) or payload.get('plant_protocol') != declared_protocol or
+        tuple(payload['physical_context']) != plant.context or engine.activation_plan is None or
+        payload.get('event_version') not in (3,7) or payload.get('event_operation') != 'trial'):
+      raise ValueError('explicit child-owned independent source plant')
+    envelope = envelope_from_dict(payload['effect_envelope'])
+    context, lag, packets = plant.model.context, plant.model.lag_ns, events
+    cutoff, split = plant.identification.cutoff_ns, 0
+    model = bind_activation_model(plant.model, engine.activation_plan)
   else:
-    # Chronologically earlier measured episodes calibrate the response. At least
-    # eight later whole-event bundles remain for disjoint stage train/heldout.
-    model = None
-    rows = []
-    cutoff = split = 0
-    for index, event in enumerate(events[:-8]):
-      for point in event['samples']:
-        output = output_from_dict(point['output'])
-        command = -delivered(output)
-        rows.append(PhysicalRow(event['block_id'], output.apply_ns, point['mono_ns'], command,
-                                point['physical']['lateral_accel'], context,
-                                'left' if command > 0 else 'right', True, False, False))
-      if index >= 7:
-        model = fit_event_physical(engine.identity, context, tuple(rows), lag_ns=lag, now_ns=event['samples'][-1]['mono_ns'])
-        if model is not None:
-          cutoff = max(row.response_ns for row in rows)
-          split = index + 1
-          break
-    if model is None:
-      return _unavailable('event_independent_physical_model', wholeBlocks=len(events), modelPoints=len(rows))
+    if payload.get('event_version') == 7:
+      raise ValueError('new event mean requires explicit original feedback source plant')
+    envelope, context, lag, packets, events = original_event_evidence(payload, engine, objective)
+    if len(events) < 16:
+      return _unavailable('whole_physical_event_support', storagePackets=len(packets), wholeBlocks=len(events), requiredWholeBlocks=16)
+    if payload.get('event_version') == 3:
+      from openpilot.starpilot.flm.event_activation import bind_activation_model, build_activation_plan
+      prepared = prepare_fixed_event_calibration(payload, engine, objective)
+      if type(prepared) is dict:
+        return prepared
+      original_model, cutoff, events, declared_stage = prepared
+      plan = build_activation_plan(engine, model=original_model, cutoff_ns=cutoff, stage_events=declared_stage, physical_context=context,
+        quality_contract=event_clipping_quality(payload))
+      if engine.activation_plan != plan:
+        raise ValueError('event candidate changed frozen activation experiment')
+      model, split = bind_activation_model(original_model, plan), 8
+    else:
+      # Chronologically earlier measured episodes calibrate the response. At least
+      # eight later whole-event bundles remain for disjoint stage train/heldout.
+      model = None
+      rows = []
+      cutoff = split = 0
+      for index, event in enumerate(events[:-8]):
+        for point in event['samples']:
+          output = output_from_dict(point['output'])
+          command = -delivered(output)
+          rows.append(PhysicalRow(event['block_id'], output.apply_ns, point['mono_ns'], command,
+                                  point['physical']['lateral_accel'], context,
+                                  'left' if command > 0 else 'right', True, False, False))
+        if index >= 7:
+          model = fit_event_physical(engine.identity, context, tuple(rows), lag_ns=lag, now_ns=event['samples'][-1]['mono_ns'])
+          if model is not None:
+            cutoff = max(row.response_ns for row in rows)
+            split = index + 1
+            break
+      if model is None:
+        return _unavailable('event_independent_physical_model', wholeBlocks=len(events), modelPoints=len(rows))
+  if payload.get('event_version') == 7:
+    from openpilot.starpilot.flm.event_mean_evidence import VERSION
+    from openpilot.starpilot.flm.feedback_replay import require_feedback_engine
+    if payload.get('event_mean_version') != VERSION:
+      raise ValueError('explicit new event mean version')
+    require_feedback_engine(engine)
+  elif 'event_mean_version' in payload:
+    raise ValueError('legacy event cannot adopt a new mean-evidence policy')
   engine.ensure_causal_features()
   blocks, stage_events = [], []
   unexcited_stage_blocks = 0
@@ -156,7 +185,7 @@ def fit_event_torque(payload, engine, objective):
       continue
     samples = []
     for point in event['samples']:
-      command, output = control_from_dict(point['control']), output_from_dict(point['output'])
+      command, output = control_from_dict(point['control'],trace_archive=archive_of(engine)), output_from_dict(point['output'])
       if point['mono_ns'] <= previous:
         raise ValueError('event stage chronology')
       previous = point['mono_ns']
@@ -175,6 +204,11 @@ def fit_event_torque(payload, engine, objective):
     stage_events.append(event)
   if len(blocks) < 8:
     return _unavailable('event_disjoint_stage_support', wholeBlocks=len(events), stageBlocks=len(blocks), unexcitedStageBlocks=unexcited_stage_blocks)
+  event_mean_model = None
+  if payload.get('event_version') == 7:
+    from openpilot.starpilot.flm.event_mean_evidence import build_model
+    event_mean_model = build_model(engine,tuple(stage_events),tuple(blocks))
+    engine.event_mean_model = event_mean_model
   episodes = tracking_episodes(engine, tuple(stage_events), model, objective)
   prior = None if payload.get('prior') is None else tuple(payload['prior'])
   from openpilot.starpilot.flm.event_activation import ZERO_REFERENCE_ACTIVATION_VERSION
@@ -183,18 +217,25 @@ def fit_event_torque(payload, engine, objective):
   result = evaluate_event(engine.identity, objective.parameters, tuple(blocks), episodes=episodes,
                           now_ns=payload['now_ns'], required_cohorts=objective.required_cohorts,
                           response_revision='event-independent-physical-v2', sequence=payload['sequence'], prior=prior,
-                          effect_envelope=envelope, native_feasible=native_feasible)
+                          effect_envelope=envelope, native_feasible=native_feasible,
+                          **({'event_mean_model':event_mean_model} if event_mean_model is not None else {}))
+  mean_basis = {}
+  if event_mean_model is not None:
+    from openpilot.starpilot.flm.event_mean_evidence import report_basis
+    mean_basis = {'event_mean_basis':report_basis(event_mean_model)}
   validation = None
   if result.profile is not None:
-    current, applied = control_from_dict(payload['control']), output_from_dict(payload['output'])
+    current, applied = control_from_dict(payload['control'],trace_archive=archive_of(engine)), output_from_dict(payload['output'])
     validation = engine.validate(result.profile, current, applied, tuple(payload['physical_context']), tuple(blocks), model)
     if validation is None or validation.physical_model_revision != physical_model_revision(model):
-      return {'status': 'rejected', 'reason': 'event_actual_controller_replay', 'profile': None, 'validation': None}
+      return {'status':'rejected','reason':'event_actual_controller_replay','profile':None,'validation':None,
+        **mean_basis}
   return {'status': result.status, 'reason': result.reason,
+          **mean_basis,
           'profile': None if result.profile is None else asdict(result.profile),
           'validation': None if validation is None else asdict(validation), 'model': asdict(model),
           'model_cutoff_ns': cutoff, 'objective_key': payload.get('objective_key'),
-          **({'event_version': 3, 'activation_plan': asdict(engine.activation_plan)} if payload.get('event_version') == 3 else {}),
+          **({'event_version': payload['event_version'], 'activation_plan': asdict(engine.activation_plan)} if payload.get('event_version') in (3,7) else {}),
           'event_counts': {'large': sum(event['kind'] == 'large' for event in episodes),
                            'subtle': sum(event['kind'] == 'subtle' for event in episodes)},
           'whole_blocks': len(events), 'stage_blocks': len(blocks), 'unexcited_stage_blocks': unexcited_stage_blocks,

@@ -360,7 +360,7 @@ class TestHyundaiIoniq6Long(unittest.TestCase):
       raw = 0x8000 | low
       self.mode(raw)
       allowed = self.safety.safety_tx_hook(TESTER_PRESENT)
-      self.assertEqual(allowed, not self.release and raw in (*RAW_LONG.values(), *RAW_AOL.values()), f"raw={raw:#06x}")
+      self.assertEqual(allowed, not self.release and raw in (*RAW_LONG.values(), *RAW_AOL.values(), 0x9015, 0x9095), f"raw={raw:#06x}")
 
   def test_stock_profiles_and_untagged_siblings_keep_their_prior_tx(self):
     for topology, raw in (("lkas", 17), ("lkas_alt", 145)):

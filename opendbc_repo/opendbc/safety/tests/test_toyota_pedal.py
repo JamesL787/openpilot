@@ -193,6 +193,30 @@ class TestPairedPedal(unittest.TestCase):
     self.assertFalse(self.tx(0.1))
     self.assertTrue(self.tx(0))
 
+  def test_main_source_lease_checksum_and_length(self):
+    from opendbc.car.toyota.carstate import CarState
+    from opendbc.car import CanData
+
+    state = CarState(self.cp)
+    parsers = state.get_can_parsers(self.cp)
+    parser = parsers[Bus.pt]
+    state.update(parsers)
+    frame = self.packer.make_can_msg('PCM_CRUISE_2', 0, {'MAIN_ON': 1})
+    parser.update([(1_000_000_000, [frame])])
+    self.assertTrue(state.update(parsers).cruiseState.available)
+    parser.update([(1_303_031_000, [])])
+    self.assertTrue(state.update(parsers).cruiseState.available)
+    parser.update([(1_303_031_001, [])])
+    self.assertFalse(state.update(parsers).cruiseState.available)
+    a, d, b = frame
+    for bad in (CanData(a, d[:-1], b), CanData(a, d[:-1] + bytes([d[-1] ^ 1]), b)):
+      parser.update([(1_400_000_000, [frame])])
+      self.assertTrue(state.update(parsers).cruiseState.available)
+      stamp = parser.ts_nanos['PCM_CRUISE_2']['MAIN_ON']
+      parser.update([(1_410_000_000, [bad])])
+      self.assertFalse(state.update(parsers).cruiseState.available)
+      self.assertEqual(parser.ts_nanos['PCM_CRUISE_2']['MAIN_ON'], stamp)
+
 
 class TestRav4CameraPairedPedal(TestPairedPedal):
   candidate = CAR.TOYOTA_RAV4_TSS2

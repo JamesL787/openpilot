@@ -38,16 +38,15 @@ static bool honda_mvl_stock = false;
 static uint8_t honda_mvl_buttons_fresh = 0U;
 static bool honda_rdx_high_gas = false;
 static bool aol_honda_bosch_long = false;
-// Nidec with a gas interceptor (openpilot longitudinal, no PCM cruise), opted in with param 32 | 512
-static bool aol_honda_nidec_interceptor = false;
-static uint32_t aol_honda_main_ts = 0U;
+// Legacy and source-bound Honda owners are mutually exclusive. Both require
+// the same physical MAIN timestamp, so retain a single storage location.
+#define aol_honda_main_ts honda_stock_aol_main_ts
 #define AOL_HONDA_MAIN_TIMEOUT_US 300000U
 typedef enum {HONDA_NIDEC, HONDA_BOSCH} HondaHw;
 static HondaHw honda_hw = HONDA_NIDEC;
 
 static void aol_honda_reset(void) {
   aol_honda_bosch_long = false;
-  aol_honda_nidec_interceptor = false;
   aol_honda_main_ts = 0U;
 }
 
@@ -70,14 +69,6 @@ static uint8_t aol_honda_permission_mask(void) {
   }
   return permission;
 }
-
-static const AolSafetyPolicy aol_honda_policy = {
-  .reset = aol_honda_reset,
-  .host_request = NULL,
-  .request_mask = aol_honda_request_mask,
-  .permission_mask = aol_honda_permission_mask,
-  .rx_invalid = NULL,
-};
 
 static unsigned int honda_get_pt_bus(void) {
   return ((honda_hw == HONDA_BOSCH) && !honda_bosch_radarless && !honda_bosch_canfd) ? 1U : 0U;
@@ -121,8 +112,6 @@ static int honda_nidec_brake(const CANPacket_t *msg) {
 
 static void honda_rx_hook(const CANPacket_t *msg) {
   const bool pcm_cruise = ((honda_hw == HONDA_BOSCH) && !honda_bosch_long) || ((honda_hw == HONDA_NIDEC) && !honda_interceptor);
-  // AOL reads main and buttons only from their exact powertrain-bus frames
-  const bool aol_honda_strict = aol_honda_bosch_long || aol_honda_nidec_interceptor;
   unsigned int pt_bus = honda_get_pt_bus();
   bool normal_engagement = false;
 
@@ -133,10 +122,10 @@ static void honda_rx_hook(const CANPacket_t *msg) {
 
   // check ACC main state
   // 0x326 for all Bosch and some Nidec, 0x1A6 for some Nidec
-  if ((!aol_honda_strict && ((msg->addr == 0x326U) || (msg->addr == 0x1A6U))) ||
-      (aol_honda_strict && msg_matches(msg, 0x326U, pt_bus, 8U))) {
+  if ((!aol_honda_bosch_long && ((msg->addr == 0x326U) || (msg->addr == 0x1A6U))) ||
+      (aol_honda_bosch_long && msg_matches(msg, 0x326U, pt_bus, 8U))) {
     acc_main_on = GET_BIT(msg, ((msg->addr == 0x326U) ? 28U : 47U));
-    if (aol_honda_strict && (msg->addr == 0x326U)) {
+    if (aol_honda_bosch_long && (msg->addr == 0x326U)) {
       aol_honda_main_ts = microsecond_timer_get();
     }
     if (!acc_main_on) {
@@ -164,8 +153,8 @@ static void honda_rx_hook(const CANPacket_t *msg) {
 
   // state machine to enter and exit controls for button enabling
   // 0x1A6 for the ILX, 0x296 for the Civic Touring
-  if ((!aol_honda_strict && (msg_matches(msg, 0x1A6U, pt_bus) || msg_matches(msg, 0x296U, pt_bus))) ||
-      (aol_honda_strict && msg_matches(msg, 0x296U, pt_bus, 4U))) {
+  if ((!aol_honda_bosch_long && (msg_matches(msg, 0x1A6U, pt_bus) || msg_matches(msg, 0x296U, pt_bus))) ||
+      (aol_honda_bosch_long && msg_matches(msg, 0x296U, pt_bus, 4U))) {
     if (honda_mvl_stock && msg_matches(msg, 0x296U, pt_bus, 4U) && (honda_mvl_buttons_fresh > 0U)) {
       honda_mvl_buttons_fresh--;
     }
@@ -391,11 +380,8 @@ static safety_config honda_nidec_init(uint16_t param) {
     .msg = {{0x201, 0, 6, 50U, .ignore_checksum = true,
              .ignore_counter = true, .ignore_quality_flag = true}, {0}, {0}},
   };
-  // AOL only for the exact interceptor word with SCM_FEEDBACK main (not NIDEC_ALT): GAS_INTERCEPTOR | AOL_NIDEC_INTERCEPTOR
-  aol_honda_bosch_long = false;
-  aol_honda_main_ts = 0U;
-  aol_honda_nidec_interceptor = (param == 544U);
-  honda_interceptor_reset((param == 32U) || (param == 36U) || aol_honda_nidec_interceptor);
+  honda_interceptor_reset((param == 32U) || (param == 36U) ||
+    ((alternative_experience == 32) && ((param == 544U) || (param == 548U) || (param == 804U))));
   const uint16_t HONDA_PARAM_NIDEC_ALT = 4;
 
   honda_hw = HONDA_NIDEC;
@@ -439,19 +425,13 @@ static safety_config honda_nidec_init(uint16_t param) {
   } else {
     SET_TX_MSGS(HONDA_N_TX_MSGS, ret);
   }
-  if (aol_honda_nidec_interceptor && honda_interceptor) {
-    aol_policy = &aol_honda_policy;
-  }
   ret = honda_stock_aol_configure(param, true, enable_nidec_alt, 0U, ret);
 
   return ret;
 }
 
 static safety_config honda_bosch_init(uint16_t param) {
-  honda_mvl_stock = ((param == 80U) || (param == 81U)) && (alternative_experience == 0);
-  aol_honda_nidec_interceptor = false;
-  aol_honda_bosch_long = false;
-  aol_honda_main_ts = 0U;
+  honda_mvl_stock = ((param == 80U) || (param == 81U)) && ((alternative_experience == 0) || (alternative_experience == 32));
   honda_mvl_buttons_fresh = 0U;
   honda_interceptor_reset(false);
   // Bosch
@@ -544,10 +524,17 @@ static safety_config honda_bosch_init(uint16_t param) {
 #ifdef ALLOW_DEBUG
   const uint16_t HONDA_PARAM_BOSCH_LONG = 2;
   honda_bosch_long = GET_FLAG(param, HONDA_PARAM_BOSCH_LONG);
-  honda_rdx_high_gas = (param == 131U) || (param == 163U);
+  honda_rdx_high_gas = (param == 131U) || (param == 163U) || (param == 2211U);
   aol_honda_bosch_long = honda_bosch_long && ((param == 34U) || (param == 35U) || (param == 163U));
 #endif
   if (aol_honda_bosch_long) {
+    static const AolSafetyPolicy aol_honda_policy = {
+      .reset = aol_honda_reset,
+      .host_request = NULL,
+      .request_mask = aol_honda_request_mask,
+      .permission_mask = aol_honda_permission_mask,
+      .rx_invalid = NULL,
+    };
     aol_policy = &aol_honda_policy;
   }
 

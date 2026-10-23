@@ -9,9 +9,9 @@ from openpilot.starpilot.flm.fullrate_collector import ControlEvidence, AppliedE
 from openpilot.starpilot.flm.runtime_adapter_registry import canonical_physical_context, physical_model_revision
 
 
-def control_from_dict(value):
+def control_from_dict(value, *, trace_archive=None):
   value = dict(value)
-  for key in ('features', 'applied_coordinates', 'applied_parameter_names', 'baseline_values'):
+  for key in ('features', 'applied_coordinates', 'applied_parameter_names', 'baseline_values', 'vehicle_model_anchor', 'live_applied_coordinates'):
     if key in value:
       value[key] = tuple(value[key])
   for key in ('stage_values', 'replay_inputs', 'replay_snapshot'):
@@ -19,8 +19,26 @@ def control_from_dict(value):
       value[key] = tuple(tuple(row) for row in value[key])
   if value.get('effect_trace') is not None:
     from openpilot.starpilot.flm.effect_trace import trace_from_dict
-    value['effect_trace'] = trace_from_dict(value['effect_trace'])
-  return ControlEvidence(**value)
+    if trace_archive is None:
+      value['effect_trace'] = trace_from_dict(value['effect_trace'])
+    else:
+      from openpilot.starpilot.flm.normalized_trace_archive import read_ref
+      value['effect_trace'] = read_ref(value['effect_trace'],trace_archive)
+  control = ControlEvidence(**value)
+  import math
+  from openpilot.starpilot.flm.canonical_surface_adapter import NAMES, coordinate_bounds
+  if (type(control.vehicle_model_anchor) is not tuple or len(control.vehicle_model_anchor) not in (0, 3) or
+      any(type(v) is not float or not math.isfinite(v) or v == 0. for v in control.vehicle_model_anchor) or
+      type(control.live_applied_coordinates) is not tuple or len(control.live_applied_coordinates) not in (0, 30)):
+    raise ValueError('explicit actual live source metadata shape')
+  if control.live_applied_coordinates:
+    if control.effect_trace is not None:
+      raise ValueError('distinct live and replay effect sources')
+    for name, coordinate in zip(NAMES, control.live_applied_coordinates, strict=True):
+      low, high = coordinate_bounds(name)
+      if type(coordinate) not in (int, float) or not math.isfinite(coordinate) or not low <= coordinate <= high:
+        raise ValueError('actual live coordinate domain')
+  return control
 
 
 def output_from_dict(value):

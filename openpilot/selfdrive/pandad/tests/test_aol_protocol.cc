@@ -1,8 +1,11 @@
 #include "openpilot/starpilot/car/ford/aol_policy.h"
+#include "openpilot/starpilot/car/nissan/aol_policy.h"
 #include "selfdrive/pandad/aol_protocol.h"
 #include "openpilot/starpilot/car/honda/aol_policy.h"
 #include "openpilot/starpilot/car/mazda/aol_policy.h"
+#include "openpilot/starpilot/car/volkswagen/aol_policy.h"
 #include "openpilot/starpilot/car/chrysler/aol_policy.h"
+#include "openpilot/starpilot/car/subaru/aol_policy.h"
 #include "openpilot/starpilot/car/toyota/aol_policy.h"
 #include "openpilot/starpilot/car/tesla/aol_policy.h"
 #include "openpilot/starpilot/car/hyundai/aol_policy.h"
@@ -25,7 +28,7 @@ constexpr AolSafetyProfile TEST_PROFILES[] = {
   {TEST_MODE, test_param, false}, {TEST_ALT_MODE, test_alt_param, false},
 };
 const AolProfileRegistry TEST_REGISTRY{TEST_PROFILES, std::size(TEST_PROFILES)};
-constexpr AolSafetyProfile VEHICLE_PROFILES[] = {HONDA_AOL_PROFILE, HONDA_STOCK_AOL_PROFILE, HONDA_NIDEC_AOL_PROFILE, HYUNDAI_AOL_PROFILE, HYUNDAI_CLASSIC_AOL_PROFILE, HYUNDAI_LEGACY_AOL_PROFILE, GM_AOL_PROFILE, FORD_AOL_PROFILE, MAZDA_AOL_PROFILE, CHRYSLER_AOL_PROFILE, TESLA_PREAP_AOL_PROFILE, TESLA_SCREEN_AOL_PROFILE, TOYOTA_AOL_PROFILE};
+constexpr AolSafetyProfile VEHICLE_PROFILES[] = {HONDA_AOL_PROFILE, HONDA_STOCK_AOL_PROFILE, HONDA_NIDEC_AOL_PROFILE, HYUNDAI_AOL_PROFILE, HYUNDAI_CLASSIC_AOL_PROFILE, HYUNDAI_LEGACY_AOL_PROFILE, GM_AOL_PROFILE, FORD_AOL_PROFILE, MAZDA_AOL_PROFILE, CHRYSLER_AOL_PROFILE, TESLA_PREAP_AOL_PROFILE, TESLA_SCREEN_AOL_PROFILE, TOYOTA_AOL_PROFILE, NISSAN_AOL_PROFILE, VOLKSWAGEN_STOCK_AOL_PROFILE, VOLKSWAGEN_LONG_AOL_PROFILE, SUBARU_AOL_PROFILE};
 const AolProfileRegistry VEHICLE_REGISTRY{VEHICLE_PROFILES, std::size(VEHICLE_PROFILES)};
 
 aol_safety_health_t status(uint8_t request = 0U, uint8_t permission = 0U) {
@@ -86,6 +89,73 @@ void queue(FakeTransport &transport, const aol_safety_health_t &before,
 }  // namespace
 
 int main() {
+  for (uint32_t word = 0U; word <= 65535U; word++) {
+    auto subaru = status();
+    subaru.safety_mode = 11U;
+    subaru.safety_param = static_cast<uint16_t>(word);
+    subaru.capability_flags = 1U;
+    const bool expected = (word == 0U) || (word == 1U) || (word == 17U) ||
+                          (word == 145U) || (word == 1169U) || (word == 1425U) || (word == 401U) || (word == 177U) || (word == 8U) || (word == 520U) || (word == 512U) || (word == 2225U);
+    assert(aol_capable(subaru, 11U, VEHICLE_REGISTRY) == expected);
+    subaru.capability_flags = 0U;
+    assert(!aol_capable(subaru, 11U, VEHICLE_REGISTRY));
+  }
+
+  for (uint32_t word = 0U; word <= 65535U; ++word) {
+    const bool stock = (word == 8U) || (word == 24U);
+    const bool longitudinal = (word == 9U) || (word == 25U);
+    const bool expected = stock || longitudinal;
+    auto vw = status();
+    vw.safety_mode = 15U;
+    vw.safety_param = static_cast<uint16_t>(word);
+    assert(volkswagen_stock_aol_param(static_cast<uint16_t>(word)) == stock);
+    assert(volkswagen_long_aol_param(static_cast<uint16_t>(word)) == longitudinal);
+    assert(aol_capable(vw, 15U, VEHICLE_REGISTRY) == expected);
+    assert(aol_runtime_enabled(false, vw, VEHICLE_REGISTRY) == expected);
+    assert(!aol_capable(vw, 25U, VEHICLE_REGISTRY));
+  }
+  for (const uint16_t word : {8U, 24U}) {
+    AolAxisNegotiator negotiator(VEHICLE_REGISTRY);
+    FakeTransport transport;
+    auto vw = status();
+    vw.safety_mode = 15U;
+    vw.safety_param = word;
+    queue(transport, vw, vw);
+    auto neutral = run(negotiator, transport, axis("vw-current", false, false), NOW, 15U);
+    assert(neutral.plan.capable && neutral.plan.request_mask == 0U && neutral.outcome.compatible);
+    auto accepted = vw;
+    accepted.request_mask = accepted.permission_mask = 1U;
+    queue(transport, vw, accepted);
+    auto active = run(negotiator, transport, axis("vw-current"), NOW, 15U);
+    assert(active.plan.request_mask == 1U && active.outcome.compatible);
+    assert(active.outcome.status && active.outcome.status->permission_mask == 1U);
+    queue(transport, accepted, vw);
+    auto expired = run(negotiator, transport, axis("vw-current"), NOW + 200000000ULL, 15U);
+    assert(expired.plan.request_mask == 0U);
+    queue(transport, vw, vw);
+    auto replaced = run(negotiator, transport, axis("new-vw-session"), NOW, 15U);
+    assert(replaced.plan.request_mask == 0U);
+    transport.write_ok = false;
+    transport.replies.push_back(bytes(vw));
+    auto failed = run(negotiator, transport, axis("new-vw-session"), NOW, 15U);
+    assert(!failed.outcome.compatible);
+  }
+
+  // Nissan admits only stock ICE, Altima and the distinct stock Leaf word.
+  // Dom's disabled Leaf longitudinal bit and every unknown word stay denied.
+  for (uint32_t word = 0U; word <= 65535U; ++word) {
+    auto nissan = status();
+    nissan.safety_mode = 14U;
+    nissan.safety_param = static_cast<uint16_t>(word);
+    const bool supported = word == 0U || word == 1U || word == 4U;
+    assert(aol_capable(nissan, 14U, VEHICLE_REGISTRY) == supported);
+    assert(aol_runtime_enabled(false, nissan, VEHICLE_REGISTRY) == supported);
+    assert(!aol_capable(nissan, 2U, VEHICLE_REGISTRY));
+    nissan.capability_flags = 0U;
+    assert(!aol_capable(nissan, 14U, VEHICLE_REGISTRY));
+    assert(!aol_runtime_enabled(false, nissan, VEHICLE_REGISTRY));
+  }
+
   // Exact stock and guarded Hybrid Chrysler words, with every other word denied.
   for (uint32_t word = 0U; word <= 65535U; ++word) {
     auto chrysler = status();
@@ -97,7 +167,7 @@ int main() {
   }
 
   for (uint32_t word = 0U; word <= 65535U; ++word) {
-    const bool expected = (word == 73U) || (word == 585U) || (word == 4169U) || (word == 4681U) || (word == 2121U) || (word == 0x9049U) || (word == 0x9249U) || (word == 0x2049U) || (word == 0x2249U);
+    const bool expected = (word == 73U) || (word == 585U) || (word == 4169U) || (word == 4681U) || (word == 2121U) || (word == 0x9049U) || (word == 0x9249U) || (word == 0x2049U) || (word == 0x2249U) || (word == 0x424DU) || (word == 0x449U) || (word == 0x649U) || (word == 0x1449U) || (word == 0x1649U) || (word == 0x8049U) || (word == 0x8249U) || (word == 0x8449U) || (word == 0x8649U);
     auto toyota = status();
     toyota.safety_mode = 2U;
     toyota.safety_param = static_cast<uint16_t>(word);
@@ -362,24 +432,35 @@ int main() {
     assert(!aol_capable(absent, GM_AOL_PROFILE.mode, VEHICLE_REGISTRY));
   }
 
-  // One mode28 registry entry admits the ordinary PE transport as well as
-  // the unchanged Ioniq6 profiles; this is not an independent AOL grant.
+  // Ordinary PE transport and the separately qualified LONG/AOL profile
+  // both require the native capability; adjacent unqualified words stay denied.
   auto pe = status();
   pe.safety_mode = HYUNDAI_AOL_PROFILE.mode;
-  pe.safety_param = 0x5491U;
-  assert(aol_capable(pe, HYUNDAI_AOL_PROFILE.mode, VEHICLE_REGISTRY));
-  assert(aol_runtime_enabled(false, pe, VEHICLE_REGISTRY));
-  for (uint16_t denied : {0x5490U, 0x5493U, 0x5495U, 0x5411U, 0x54B1U, 0x5691U}) {
+  for (uint16_t admitted : {0x5491U, 0x5495U}) {
+    pe.safety_param = admitted;
+    assert(aol_capable(pe, HYUNDAI_AOL_PROFILE.mode, VEHICLE_REGISTRY));
+    assert(aol_runtime_enabled(false, pe, VEHICLE_REGISTRY));
+    pe.capability_flags = 0U;
+    assert(!aol_capable(pe, HYUNDAI_AOL_PROFILE.mode, VEHICLE_REGISTRY));
+    pe.capability_flags = 1U;
+  }
+  for (uint16_t denied : {0x5490U, 0x5493U, 0x5497U, 0x5411U, 0x54B1U, 0x5691U}) {
     pe.safety_param = denied;
     assert(!aol_capable(pe, HYUNDAI_AOL_PROFILE.mode, VEHICLE_REGISTRY));
   }
 
   auto ev9 = status();
   ev9.safety_mode = HYUNDAI_AOL_PROFILE.mode;
-  ev9.safety_param = 0x5C91U;
-  assert(aol_capable(ev9, HYUNDAI_AOL_PROFILE.mode, VEHICLE_REGISTRY));
-  assert(aol_runtime_enabled(false, ev9, VEHICLE_REGISTRY));
-  for (uint16_t denied : {0x5C90U, 0x5C93U, 0x5C95U, 0x5C11U, 0x5CB1U, 0x5E91U}) {
+  // Stock and the separately qualified paired LONG profile are both published.
+  for (uint16_t admitted : {0x5C91U, 0x5C95U}) {
+    ev9.safety_param = admitted;
+    assert(aol_capable(ev9, HYUNDAI_AOL_PROFILE.mode, VEHICLE_REGISTRY));
+    assert(aol_runtime_enabled(false, ev9, VEHICLE_REGISTRY));
+    ev9.capability_flags = 0U;
+    assert(!aol_capable(ev9, HYUNDAI_AOL_PROFILE.mode, VEHICLE_REGISTRY));
+    ev9.capability_flags = 1U;
+  }
+  for (uint16_t denied : {0x5C90U, 0x5C93U, 0x5C97U, 0x5C11U, 0x5CB1U, 0x5E91U}) {
     ev9.safety_param = denied;
     assert(!aol_capable(ev9, HYUNDAI_AOL_PROFILE.mode, VEHICLE_REGISTRY));
   }
@@ -405,7 +486,7 @@ int main() {
     0x7090U, 0x7092U, 0x7208U, 0x720AU, 0x7228U, 0x722AU, 0x7809U, 0x7829U,
   };
   for (uint32_t word = 0U; word <= 0xFFFFU; ++word) {
-    bool expected = word == 0x0815U || word == 0x0895U || word == 0x8815U || word == 0x8895U || word == 0x5491U || word == 0x5C91U;
+    bool expected = word == 0x0815U || word == 0x0895U || word == 0x8815U || word == 0x8895U || word == 0x5491U || word == 0x5C91U || word == 0x5C95U || word == 0x5495U;
     for (uint16_t stock_word : stock_canfd_words) {
       expected = expected || word == stock_word;
     }
@@ -450,22 +531,31 @@ int main() {
   unsupported.safety_param ^= 0x1U;
   assert(!aol_capable(unsupported, TEST_MODE, TEST_REGISTRY));
 
-  for (uint16_t word = 0U; word < 1024U; ++word) {
+  for (uint16_t word = 0U; word < 4096U; ++word) {
     auto stock_honda = status();
     stock_honda.safety_mode = 20U;
     stock_honda.safety_param = word;
     const bool classic = word == 34U || word == 35U || word == 163U;
-    const bool stock = word == 0U || word == 1U || word == 8U || word == 9U || word == 10U || word == 11U;
+    const bool stock = word == 0U || word == 1U || word == 8U || word == 9U || word == 10U || word == 11U || word == 16U || word == 17U || word == 80U || word == 81U || word == 512U || word == 513U || word == 1058U || word == 1059U || word == 1570U || word == 1571U || word == 2082U || word == 2083U || word == 2211U;
     assert(aol_capable(stock_honda, 20U, VEHICLE_REGISTRY) == (classic || stock));
     assert(aol_runtime_enabled(false, stock_honda, VEHICLE_REGISTRY) == stock);
     stock_honda.safety_mode = 1U;
-    const bool nidec = word == 0U || word == 4U || word == 260U || word == 544U;
+    const bool nidec = word == 0U || word == 4U || word == 260U || word == 544U || word == 548U || word == 804U;
     assert(aol_capable(stock_honda, 1U, VEHICLE_REGISTRY) == nidec);
     assert(aol_runtime_enabled(false, stock_honda, VEHICLE_REGISTRY) == nidec);
     stock_honda.capability_flags = 0U;
     assert(!aol_capable(stock_honda, 1U, VEHICLE_REGISTRY));
   }
 
+  for (const uint16_t word : {1058U, 1059U, 1570U, 1571U, 2082U, 2083U, 2211U}) {
+    auto marked_alt_honda = status();
+    marked_alt_honda.safety_mode = 20U;
+    marked_alt_honda.safety_param = word;
+    assert(aol_capable(marked_alt_honda, 20U, VEHICLE_REGISTRY));
+    assert(aol_runtime_enabled(false, marked_alt_honda, VEHICLE_REGISTRY));
+    marked_alt_honda.capability_flags = 0U;
+    assert(!aol_capable(marked_alt_honda, 20U, VEHICLE_REGISTRY));
+  }
   auto honda = status();
   honda.safety_mode = HONDA_AOL_PROFILE.mode;
   honda.safety_param = 0x22U;

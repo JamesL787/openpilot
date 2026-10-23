@@ -120,6 +120,33 @@ class ProjectionLayoutOwner:
       raise LayoutChanged('Projection layout could not be saved; reload while parked')
     return self.snapshot()
 
+  def disable_map(self, *, session_valid):
+    """Turn the Android Auto map off when the Big screen has taken it; True when it was on."""
+    raw, readable = read_saved(self.source, DOCUMENT_KEY, MAX_BYTES)
+    if not readable or raw is None:
+      return False
+    try:
+      document = json.loads(raw)
+      placed = document['widgets']['nav_map']
+    except (ValueError, KeyError, TypeError):
+      return False
+    if type(placed) is not dict or placed.get('enabled') is not True:
+      return False
+    placed['enabled'] = False
+    screen_raw, screen_readable, _ = self._screen()
+
+    def authorized():
+      if not session_valid() or not self.parked():
+        return False
+      current, current_readable, _ = self._screen()
+      return current_readable and current == screen_raw
+
+    self.source.prepare()
+    result = commit_exact(self.source, key=DOCUMENT_KEY, max_bytes=MAX_BYTES,
+                          raw=json.dumps(document, separators=(',', ':'), allow_nan=False).encode(), expected=raw,
+                          authorized=authorized, temp_prefix='.projection-layout-')
+    return bool(result.committed and result.verified)
+
 
 # ./dev galaxy has no car and no writable /data: give it a private screen and edit it with Android Auto off.
 HOST_SCREEN = {'width': 1920, 'height': 1080, 'margin_width': 0, 'margin_height': 0, 'fps': 60, 'config_index': 0}

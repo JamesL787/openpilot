@@ -70,7 +70,7 @@ class CarState(CarStateBase):
     self.long_buttons = (LongCruiseButtons(track_main=CP.carFingerprint != CAR.HYUNDAI_IONIQ_5_PE)
                          if long_buttons_qualified(CP) else None)
     self.pe_long = pe_long_qualified(CP)
-    self.pe_ready = PEReadySource() if self.pe_long else None
+    self.pe_ready = PEReadySource() if self.pe_long or ev9_long_qualified(CP) else None
     self.ev9_long = ev9_long_qualified(CP) or self.pe_long
     self.ev9_camera_lead = (CANFDCameraLead(CP, CanBus(CP).ECAN) if self.pe_long else
                             EV9CameraLead(CP) if self.ev9_long else None)
@@ -542,7 +542,9 @@ class CarState(CarStateBase):
     self.ev6_aol_samples = ()
     self.ev6_aol_source_healthy = False
     from opendbc.car.hyundai.canfd_stock_aol import LONG_EV_CARS, qualified_long
-    if ev6_aol_qualified(self.CP) or (
+    from opendbc.car.hyundai.ev9_long_aol import qualified as ev9_long_aol_qualified
+    from opendbc.car.hyundai.pe_long_aol import qualified as pe_long_aol_qualified
+    if ev6_aol_qualified(self.CP) or ev9_long_aol_qualified(self.CP, marked_only=True) or pe_long_aol_qualified(self.CP, marked_only=True) or (
         self.CP.carFingerprint in LONG_EV_CARS and qualified_long(self.CP, marked_only=True)):
       from opendbc.can.parser import MAX_BAD_COUNTER
       source = cp.message_states.get(cp.dbc.name_to_msg[self.cruise_btns_msg_canfd].address)

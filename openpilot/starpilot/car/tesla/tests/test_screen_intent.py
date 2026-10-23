@@ -113,3 +113,30 @@ def test_unbuckled_screen_gesture_preserves_independent_lateral_intent():
   cs.seatbeltUnlatched = False
   owner.update(cs.as_reader(), now_ns=4)
   assert owner.allowed_latch and not cs.cruiseState.enabled
+
+
+@pytest.mark.parametrize('gear', ['reverse', 'neutral'])
+def test_screen_existing_intent_survives_known_gear_pause_without_new_arm(gear):
+  owner = intent()
+  cs = state(available=False, press=False)
+  owner.update(cs.as_reader(), now_ns=1)
+  cs.buttonEvents[0].pressed = True
+  owner.update(cs.as_reader(), now_ns=2)
+  assert owner.allowed_latch
+  cs.buttonEvents = []
+  cs.gearShifter = gear
+  owner.update(cs.as_reader(), now_ns=3, fault_active=False)
+  assert owner.allowed_latch
+  cs.gearShifter = 'drive'
+  owner.update(cs.as_reader(), now_ns=4, fault_active=False)
+  assert owner.allowed_latch
+  cs.buttonEvents = [structs.CarState.ButtonEvent(type=ButtonType.lkas, pressed=False)]
+  owner.update(cs.as_reader(), now_ns=5)
+  cs.buttonEvents[0].pressed = True
+  owner.update(cs.as_reader(), now_ns=6)
+  assert not owner.allowed_latch
+  cs.gearShifter = gear
+  owner.update(cs.as_reader(), now_ns=7, fault_active=False)
+  cs.gearShifter = 'drive'
+  owner.update(cs.as_reader(), now_ns=8, fault_active=False)
+  assert not owner.allowed_latch

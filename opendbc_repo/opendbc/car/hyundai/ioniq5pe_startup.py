@@ -40,10 +40,14 @@ class Lease:
 
 
 class PEPendingStartup:
+  @staticmethod
+  def profile_qualified(cp):
+    return qualified(cp)
+
   def __init__(self, cp, callbacks, *, stock_cp, clock=time.monotonic,
                boot_clock=clock_boot_ns,
                exchange=query_ioniq6_adas, event_factory=threading.Event, thread_factory=threading.Thread):
-    if not qualified(cp) or not stock_qualified(stock_cp):
+    if not self.profile_qualified(cp) or not stock_qualified(stock_cp) or stock_cp.carFingerprint != cp.carFingerprint:
       raise ValueError('PE startup requires exact separately prepared PE LONG and stock CP')
     self.owner = Lease(copy_cp(cp))
     self.stock_cp = copy_cp(stock_cp)
@@ -116,7 +120,7 @@ class PEPendingStartup:
 
   def finalize_aol_configuration(self, ci):
 
-    if self.owner.published or ci is not self.configured_ci:
+    if self.owner.published or ci is not self.configured_ci or self.snapshot is None:
       raise RuntimeError('PE finalization requires configured unpublished CP')
     if self.owner.phase is Phase.STOCK:
       if ci.CP.to_dict() != self.snapshot:
@@ -128,6 +132,14 @@ class PEPendingStartup:
         self.owner.cp = copy_cp(ci.CP)
         self.snapshot = expected
       return
+    if (self.pending_target and ci.CP.to_dict() != self.snapshot):
+      from opendbc.car.hyundai.pe_long_aol import qualified as pe_aol_qualified
+      expected = deepcopy(self.snapshot)
+      expected['alternativeExperience'] = 32
+      if not pe_aol_qualified(ci.CP, marked_only=True) or ci.CP.to_dict() != expected:
+        raise RuntimeError('PE LONG finalization changed outside its exact AOL marker')
+      self.owner.cp = copy_cp(ci.CP)
+      self.snapshot = expected
     if ci is not self.configured_ci or not self.prepared_for(ci.CP):
       raise RuntimeError('PE LONG finalization changed the frozen prepared configuration')
 
@@ -182,7 +194,7 @@ class PEPendingStartup:
             0 < receipt <= now and now - receipt <= 300_000_000 and
             panda.safetyModel == self.owner.cp.safetyConfigs[0].safetyModel and
             panda.safetyParam == self.owner.cp.safetyConfigs[0].safetyParam and
-            panda.alternativeExperience == 0 and (panda.ignitionLine or panda.ignitionCan))
+            panda.alternativeExperience == self.owner.cp.alternativeExperience and (panda.ignitionLine or panda.ignitionCan))
 
   def _restore(self):
     if not (self.session_attempted or self.takeover_attempted) or self.restored:
@@ -299,7 +311,7 @@ class PEPendingStartup:
       panda = pandas[0]
       cfg = self.owner.cp.safetyConfigs[0]
       matched = (panda.safetyModel == cfg.safetyModel and panda.safetyParam == cfg.safetyParam and
-                 panda.alternativeExperience == 0 and not panda.faults and not panda.safetyRxChecksInvalid and
+                 panda.alternativeExperience == self.owner.cp.alternativeExperience and not panda.faults and not panda.safetyRxChecksInvalid and
                  (panda.ignitionLine or panda.ignitionCan) and
                  self.source_floor_ns < panda_log_ns <= now_ns and now_ns - panda_log_ns <= 300_000_000 and
                  self.source_floor_ns < panda_recv_ns <= now_ns and now_ns - panda_recv_ns <= 300_000_000)

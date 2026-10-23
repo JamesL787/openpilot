@@ -96,6 +96,7 @@ createApp({
     deviceSettingsPage() { return devicePage(route.path) },
     pageName() {
       if (this.currentTool) return this.currentTool.name
+      if (route.path === "/device-preferences") return "Force Drive State"
       return NAV.find((item) => item.path === route.path)?.name || "This page"
     },
     isLight() { return state.theme === "light" },
@@ -214,7 +215,7 @@ createApp({
         <template v-if="state.loading && !state.error"></template>
         <GxNotice v-else-if="state.error" tone="danger">{{ state.error }}</GxNotice>
         <section v-else-if="state.monitorMode === 'local' && authState.status !== 'authenticated'" class="gx-card gx-auth" aria-label="Galaxy sign in">
-          <h2>Galaxy access</h2>
+          <div class="gx-section__header"><i class="bi bi-shield-lock"></i><h2 class="gx-section__title">Galaxy access</h2></div>
           <p v-if="authState.status === 'checking'">Checking Galaxy access…</p>
           <p v-else-if="authState.status === 'setup_required'">Remote Galaxy access is not configured.</p>
           <p v-else-if="authState.status === 'unavailable'">Galaxy access is unavailable.</p>

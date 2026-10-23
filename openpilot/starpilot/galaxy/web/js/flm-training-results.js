@@ -16,6 +16,9 @@ export function validTrainingResults(value) {
   if (row.fit !== null && (!row.fit || !text(row.fit.status, 64) || !text(row.fit.reason) ||
       ![row.fit.trainWindows, row.fit.heldoutWindows].every(count))) return false
   if (row.application !== null && (!row.application || typeof row.application.applied !== "boolean" || !text(row.application.reason))) return false
+  if (row.tracking !== undefined && row.tracking !== null && !validTrackingResults(row.tracking)) return false
+  if (row.trackingValues !== undefined && row.trackingValues !== null && !validTrackingValues(row.trackingValues)) return false
+  if (row.trackingPlot !== undefined && row.trackingPlot !== null && !validTrackingPlot(row.trackingPlot)) return false
   return row.details === undefined || row.details && typeof row.details === "object" && !Array.isArray(row.details) &&
     Object.keys(row.details).length <= 64 && Object.entries(row.details).every(([key, item]) => text(key, 80) &&
       (["Full surface coordinates", "Actual full surface coordinates"].includes(key) ?
@@ -98,8 +101,105 @@ export function surfaceRows(report, live = false) {
   const learned = fullCoordinates(details["Full surface coordinates"])
   const applied = live && report.current?.application?.applied === true ?
     fullCoordinates(details["Actual full surface coordinates"]) : null
-  return SURFACE_NAMES.map(name => ({ name, baseline: 0, learned: learned?.[name] ?? null,
+  const values = validTrackingValues(report?.current?.trackingValues) ? report.current.trackingValues : null
+  const accepted = values ? trackingCoordinates(values.accepted) : null
+  const pending = values && live && report.current?.tracking?.bindingCurrent === true ? trackingCoordinates(values.pending) : null
+  return SURFACE_NAMES.map(name => ({ name, baseline: 0, accepted: accepted?.[name] ?? null, pending: pending?.[name] ?? null, learned: learned?.[name] ?? null,
     applied: applied?.[name] ?? null, pidSupported: !PID_UNSUPPORTED.includes(name) }))
 }
 export const coordinateText = value => value === null ? "Not reported" :
   value === 0 ? "0" : Math.abs(value) < 1e-6 ? value.toExponential(3) : (value > 0 ? "+" : "") + value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")
+
+
+const TRACKING_STATES = ['calibrating', 'collecting', 'not_identifiable', 'ready', 'trial_pending', 'trial_active', 'confirmed', 'rollback', 'paused']
+const optionalMeasurement = value => value === null || typeof value === 'number' && Number.isFinite(value) && value >= 0
+const episodeCount = value => Number.isSafeInteger(value) && value >= 0 && value <= 24
+const optionalStamp = value => value === null || Number.isSafeInteger(value) && value > 0
+export function validTrackingResults(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) && value.version === 1 &&
+    TRACKING_STATES.includes(value.status) && text(value.reason) &&
+    (value.group === null || text(value.group, 80)) && Array.isArray(value.names) && value.names.length <= 4 &&
+    value.names.every(name => SURFACE_NAMES.includes(name)) && new Set(value.names).size === value.names.length &&
+    (value.trialId === null || typeof value.trialId === 'string' && /^[0-9a-f]{64}$/.test(value.trialId)) &&
+    (value.phase === null || text(value.phase, 64)) &&
+    (value.requiredEpisodes === null || Number.isSafeInteger(value.requiredEpisodes) && value.requiredEpisodes >= 3 && value.requiredEpisodes <= 24) && episodeCount(value.beforeEpisodes) && episodeCount(value.futureEpisodes) &&
+    ['valid', 'stale', 'drift', 'unavailable'].includes(value.modelStatus) &&
+    optionalMeasurement(value.lagMs) && (value.lagMs === null || value.lagMs <= 500) &&
+    [value.baselineErrorRms, value.futureErrorRms, value.baselineReversalHz, value.futureReversalHz].every(optionalMeasurement) &&
+    typeof value.applicationAcknowledged === 'boolean' && typeof value.bindingCurrent === 'boolean' &&
+    optionalStamp(value.applicationSettledMonoTime) && optionalStamp(value.lastCorrectionMonoTime)
+}
+const trackingLabels = {
+  calibrating: 'Measuring steering response', collecting: 'Collecting comparable driving examples',
+  not_identifiable: 'Waiting for identifiable steering response', ready: 'Ready to evaluate a small correction',
+  trial_pending: 'Correction offered; awaiting controller acknowledgement',
+  trial_active: 'Trial awaiting current application evidence', confirmed: 'Future checks passed',
+  rollback: 'Rollback awaiting controller acknowledgement', paused: 'Learning paused',
+}
+export function trackingView(report, live = false) {
+  const value = report?.current?.tracking
+  if (!validTrackingResults(value)) return null
+  live = live && report.current.fresh && report.current.ageSeconds <= 2
+  const expectedPhase = { trial_pending: 'trial', trial_active: 'trial', confirmed: 'confirmed', rollback: 'rollback' }[value.status]
+  const matchingPhase = expectedPhase !== undefined && value.phase === expectedPhase
+  const actual = fullCoordinates(report.current.details?.['Actual full surface coordinates'])
+  // The producer acknowledgement binds the actual owner target; a zero offer alone is never evidence.
+  const neutralRollback = value.status === 'rollback' && matchingPhase && actual !== null &&
+    Object.values(actual).every(coordinate => coordinate === 0)
+  const acknowledged = live && matchingPhase && value.status !== 'trial_pending' && value.bindingCurrent && value.applicationAcknowledged &&
+    value.applicationSettledMonoTime !== null && value.trialId !== null && actual !== null &&
+    (report.current.application?.applied === true || neutralRollback)
+  let label = trackingLabels[value.status]
+  if (value.status === 'trial_active' && acknowledged) label = 'Evaluating correction'
+  if (value.status === 'confirmed' && acknowledged) label = 'Confirmed correction acknowledged'
+  if (value.status === 'rollback' && acknowledged) label = 'Correction rollback acknowledged'
+  if (value.status !== 'paused' && (value.phase !== null && !matchingPhase || expectedPhase !== undefined && !matchingPhase)) label = 'Learning state reported; trial application unknown'
+  if (live && !value.bindingCurrent) label = 'Learning paused; steering context changed'
+  if (!live) label = 'Earlier learning report; current application unknown'
+  return { ...value, label, acknowledged, changedParameters: value.names.map(readable).join(', '),
+    measurements: [
+      { label: 'Tracking error RMS · m/s²', before: value.baselineErrorRms, future: value.futureErrorRms },
+      { label: 'Steering reversals · Hz', before: value.baselineReversalHz, future: value.futureReversalHz },
+    ] }
+}
+export const measurementText = value => value === null ? 'Not measured' :
+  value !== 0 && value < .001 ? value.toExponential(2) : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
+
+
+const sha256 = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
+export function trackingCoordinates(rows) {
+  if (!Array.isArray(rows) || rows.length !== SURFACE_NAMES.length || rows.some((row, i) =>
+    !row || typeof row !== 'object' || Array.isArray(row) || row.name !== SURFACE_NAMES[i] ||
+    typeof row.value !== 'number' || !Number.isFinite(row.value) || Math.abs(row.value) > .25)) return null
+  return Object.fromEntries(rows.map(row => [row.name, row.value]))
+}
+export function validTrackingValues(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) && value.version === 1 &&
+    trackingCoordinates(value.accepted) !== null && sha256(value.acceptedSha256) &&
+    (value.pending === null && value.pendingSha256 === null || trackingCoordinates(value.pending) !== null && sha256(value.pendingSha256))
+}
+export function validTrackingPlot(value) {
+  if (!value || value.version !== 'live-tracking-paired-plot-v1' || typeof value.bindingCurrent !== 'boolean' ||
+      typeof value.ageSeconds !== 'number' || !Number.isFinite(value.ageSeconds) || value.ageSeconds < 0 ||
+      !sha256(value.episodeId) || !sha256(value.profileSha256) || value.units !== 'm/s²' ||
+      !Number.isSafeInteger(value.lagNs) || value.lagNs < 0 || value.lagNs > 500_000_000 ||
+      !Array.isArray(value.points) || value.points.length < 2 || value.points.length > 64 ||
+      !Number.isSafeInteger(value.totalEndpoints) || value.totalEndpoints < value.points.length || value.totalEndpoints < 4 || value.totalEndpoints > 240 ||
+      value.sampled !== (value.totalEndpoints > value.points.length)) return false
+  return value.points.every((point, i) => point &&
+    ['controlMonoTime', 'applyMonoTime', 'poseMonoTime'].every(key => Number.isSafeInteger(point[key]) && point[key] > 0) &&
+    point.applyMonoTime >= point.controlMonoTime && point.poseMonoTime >= point.applyMonoTime + value.lagNs &&
+    point.poseMonoTime <= point.applyMonoTime + value.lagNs + 30_000_000 &&
+    ['desiredForceAccel', 'measuredForceAccel', 'errorForceAccel'].every(key => typeof point[key] === 'number' && Number.isFinite(point[key])) &&
+    Math.abs(point.desiredForceAccel - point.measuredForceAccel - point.errorForceAccel) <=
+      1e-9 * Math.max(1, Math.abs(point.desiredForceAccel), Math.abs(point.measuredForceAccel)) &&
+    (i === 0 || point.controlMonoTime > value.points[i - 1].controlMonoTime && point.poseMonoTime > value.points[i - 1].poseMonoTime))
+}
+export function trackingPlotView(report, elapsedMs = 0) {
+  const value = report?.current?.trackingPlot
+  if (!validTrackingPlot(value)) return null
+  const first = value.points[0].poseMonoTime
+  return { ...value, age: value.ageSeconds + report.current.ageSeconds + Math.max(0, elapsedMs) / 1000,
+    points: value.points.map(point => ({ ...point, at: (point.poseMonoTime - first) / 1e6 })) }
+}
+export const sourceSeconds = value => (value / 1e9).toFixed(6)

@@ -35,6 +35,19 @@ def state():
   return OnroadState(False, False, 10., 50., SpeedLimitObservation(), navigation=navigation_display(message(), now_ns=NOW, drive_id=DRIVE))
 
 
+def test_large_navigation_optional_widget_controls_draw_and_touch_bounds():
+  card, observed = NavigationCard(Mock(profile=Profile.LARGE)), replace(state(), viewport_width=1860)
+  placed = observed.customization['layouts']['large']['nav_card']
+  placed.update(x=900, y=650)
+  bounds = card.bounds(observed)
+  assert (bounds.x, bounds.y, bounds.width, bounds.height) == (900, 650, 560, 195)
+  assert card.bounds(replace(observed, viewport_width=2160)).x == 1200
+  assert card.press(920, 670, observed)
+  placed['enabled'] = False
+  assert card.bounds(observed) is None
+  assert not card.press(920, 670, observed)
+
+
 def test_actual_instruction_does_not_require_control_authority():
   nav = message()
   nav.controlValid = False
@@ -104,9 +117,12 @@ def test_slc_decision_keeps_its_touch_priority_only_where_it_overlaps():
   card = NavigationCard(Mock(profile=Profile.COMPACT))
   pending = SpeedLimitObservation(kind=ObservationKind.VALID, source='map', speed_limit_mps=22., pending_speed_limit_mps=22.,
                                   session_id='s', decision_id=1, presentation_id=1, action_enabled=True)
-  # Open confirmation controls cover the card's lower edge.
-  assert card.bounds(replace(state(), slc_prompt_open=True, longitudinal_active=True, speed_limit=pending)) is None
-  assert card.bounds(replace(state(), slc_prompt_open=True, longitudinal_active=False, speed_limit=pending)) is None
+  observed = replace(state(), slc_prompt_open=True, longitudinal_active=True, speed_limit=pending)
+  assert card.bounds(observed) is not None
+  observed.customization['layouts']['compact']['speed_limit_actions']['y'] = 4
+  observed.customization['layouts']['compact']['max_speed']['y'] = 58
+  assert card.bounds(observed) is None
+  assert card.bounds(replace(observed, longitudinal_active=False)) is None
   # SLC being on, with no decision on screen, leaves the directions up.
   assert card.bounds(replace(state(), longitudinal_active=True, speed_limit=SpeedLimitObservation(action_enabled=True))) is not None
   large = NavigationCard(Mock(profile=Profile.LARGE))

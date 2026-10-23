@@ -30,16 +30,32 @@ class TestPELongProfile(unittest.TestCase):
       self.assertEqual(stock.to_dict(), before)
     self.assertIsNone(candidate(params(candidate=CAR.KIA_EV9), enabled=True, is_release=False))
 
+  def test_exact_alternative_experience_survives_serialization(self):
+    for experience in (0, 1, 32, 33, 64):
+      with self.subTest(experience=experience):
+        cp = candidate(params(), enabled=True, is_release=False)
+        cp.alternativeExperience = experience
+        self.assertTrue(required(cp))
+        self.assertEqual(qualified(cp), experience in (0, 32))
+        self.assertEqual(qualified(copy_cp(cp)), experience in (0, 32))
+
   def test_malformed_active_pe_cannot_bypass_required_owner(self):
-    for field, value in (('passive', True), ('dashcamOnly', True), ('pcmCruise', True),
-                         ('alternativeExperience', 32), ('startAccel', .2), ('vEgoStarting', .5)):
-      cp = candidate(params(), enabled=True, is_release=False)
-      setattr(cp.deprecated if field in ('startAccel', 'vEgoStarting', 'vEgoStopping', 'stoppingDecelRate') else cp, field, value)
-      self.assertTrue(required(cp))
-      self.assertFalse(qualified(cp), field)
-    cp = candidate(params(), enabled=True, is_release=False)
-    cp.safetyConfigs[0].safetyParam = 0x5C95
-    self.assertFalse(qualified(cp))
+    for experience in (0, 32):
+      for field, value in (('passive', True), ('dashcamOnly', True), ('pcmCruise', True),
+                           ('startAccel', .2), ('vEgoStarting', .5)):
+        with self.subTest(experience=experience, field=field):
+          cp = candidate(params(), enabled=True, is_release=False)
+          cp.alternativeExperience = experience
+          self.assertTrue(qualified(cp))
+          setattr(cp.deprecated if field in ('startAccel', 'vEgoStarting', 'vEgoStopping', 'stoppingDecelRate') else cp, field, value)
+          self.assertTrue(required(cp))
+          self.assertFalse(qualified(cp), field)
+      with self.subTest(experience=experience, field='safetyParam'):
+        cp = candidate(params(), enabled=True, is_release=False)
+        cp.alternativeExperience = experience
+        self.assertTrue(qualified(cp))
+        cp.safetyConfigs[0].safetyParam = 0x5C95
+        self.assertFalse(qualified(cp))
 
   def test_unobserved_topologies_and_missing_physical_identity_sources_stay_stock(self):
     for topology in ('lka', 'lfa'):
@@ -48,13 +64,16 @@ class TestPELongProfile(unittest.TestCase):
       self.assertIsNone(candidate(params(missing=missing), enabled=True, is_release=False))
 
   def test_nonfinite_calibration_cannot_enter_the_sealed_long_owner(self):
-    for field in ('startAccel', 'vEgoStarting', 'vEgoStopping', 'stoppingDecelRate', 'longitudinalActuatorDelay'):
-      for value in (float('nan'), float('inf'), float('-inf')):
-        with self.subTest(field=field, value=value):
-          cp = candidate(params(), enabled=True, is_release=False)
-          setattr(cp.deprecated if field in ('startAccel', 'vEgoStarting', 'vEgoStopping', 'stoppingDecelRate') else cp, field, value)
-          self.assertTrue(required(cp))
-          self.assertFalse(qualified(cp))
+    for experience in (0, 32):
+      for field in ('startAccel', 'vEgoStarting', 'vEgoStopping', 'stoppingDecelRate', 'longitudinalActuatorDelay'):
+        for value in (float('nan'), float('inf'), float('-inf')):
+          with self.subTest(experience=experience, field=field, value=value):
+            cp = candidate(params(), enabled=True, is_release=False)
+            cp.alternativeExperience = experience
+            self.assertTrue(qualified(cp))
+            setattr(cp.deprecated if field in ('startAccel', 'vEgoStarting', 'vEgoStopping', 'stoppingDecelRate') else cp, field, value)
+            self.assertTrue(required(cp))
+            self.assertFalse(qualified(cp))
 
   def test_recorded_2027_inherits_pe_capability_and_release_stays_stock(self):
     from opendbc.car.hyundai.tests.test_ioniq5pe_2027 import params as recorded_params

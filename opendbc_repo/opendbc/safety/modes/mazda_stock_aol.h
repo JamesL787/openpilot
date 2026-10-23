@@ -1,6 +1,7 @@
 #pragma once
 
 static bool mazda_aol_enabled = false;
+static bool mazda_aol_startup_pending = true;
 static bool mazda_aol_token = false;
 static bool mazda_aol_neutral = false;
 static bool mazda_aol_buttons_neutral = false;
@@ -31,6 +32,7 @@ static void mazda_aol_clear(void) {
 static void mazda_aol_reset(void) {
   mazda_aol_clear();
   mazda_aol_enabled = false;
+  mazda_aol_startup_pending = true;
   mazda_aol_requested = false;
   mazda_aol_seen = 0U;
   mazda_aol_sources = 0U;
@@ -58,6 +60,7 @@ static void mazda_aol_request(uint8_t mask) {
 // A physical grant may arrive before pandad's engaged heartbeat. It remains
 // output-ineligible until a current host request from after this grant joins it.
 static void mazda_aol_grant(void) {
+  mazda_aol_startup_pending = false;
   mazda_aol_token = true;
   mazda_aol_pending = !heartbeat_engaged;
   mazda_aol_session = heartbeat_engaged;
@@ -74,7 +77,7 @@ static uint8_t mazda_aol_request_mask(void) {
   if (relay_malfunction || expired || pending_expired || safety_rx_checks_invalid ||
       (mazda_aol_session && !heartbeat_engaged) || !aol_rx_healthy() || !mazda_aol_current()) {
     mazda_aol_clear();
-  } else if (heartbeat_engaged && aol_rx_healthy() && mazda_aol_current()) {
+  } else if (!mazda_aol_startup_pending && heartbeat_engaged && aol_rx_healthy() && mazda_aol_current()) {
     // Equal microsecond stamps cannot prove request-after-grant ordering.
     // Wait for a strictly later request; the original grant deadline stays fixed.
     const bool pending_ack = !mazda_aol_pending || ((aol_host_axis_mask != 0U) &&
@@ -120,6 +123,7 @@ static void mazda_aol_optional_rx(const CANPacket_t *msg) {
       mazda_aol_sources = (mazda_aol_sources & 3U) | (GET_BIT(msg, 16U) ? 4U : 0U);
       if ((mazda_aol_sources & 4U) != 0U) {
         mazda_aol_clear();
+        mazda_aol_startup_pending = false;
       }
     } else {
     }
@@ -136,17 +140,30 @@ static void mazda_aol_rx(const CANPacket_t *msg) {
         mazda_aol_clear();
       } else if (!acc_main_on) {
         mazda_aol_clear();
+        mazda_aol_startup_pending = false;
         mazda_aol_neutral = true;
+      } else if (mazda_aol_startup_pending && GET_BIT(msg, 3U)) {
+        mazda_aol_startup_pending = false;
+      } else if (mazda_aol_startup_pending && vehicle_moving && (mazda_aol_sources == 1U) && !brake_pressed && !gas_pressed &&
+                 ((aol_host_axis_mask & 1U) != 0U) &&
+                 (safety_get_ts_elapsed(microsecond_timer_get(), aol_host_request_ts) <= AOL_HOST_REQUEST_TIMEOUT_US)) {
+        // Dom follows fresh MAIN at boot. Wait through physical restrictions,
+        // then require a strictly later host ACK within the original deadline.
+        mazda_aol_startup_pending = false;
+        mazda_aol_grant();
+        mazda_aol_pending = true;
+        mazda_aol_session = false;
       } else if (mazda_aol_neutral) {
         mazda_aol_grant();
         mazda_aol_neutral = false;
       } else {
       }
     } else if (msg_matches(msg, 0x9DU, 0U, 8U)) {
-      const bool press = (msg->data[0] & 0x34U) != 0U;
+      // Mapped Cancel can request LAT only after the same fresh physical edge
+      // and current host acknowledgment used by the other cruise buttons.
+      const bool press = (msg->data[0] & 0x35U) != 0U;
       if ((mazda_aol_session && !heartbeat_engaged) || !aol_rx_healthy() || !mazda_aol_current() || safety_rx_checks_invalid || ((mazda_aol_sources & 4U) != 0U)) {
         mazda_aol_clear();
-      } else if ((msg->data[0] & 1U) != 0U) {
       } else if (!press) {
         mazda_aol_buttons_neutral = true;
       } else if (mazda_aol_buttons_neutral && acc_main_on) {

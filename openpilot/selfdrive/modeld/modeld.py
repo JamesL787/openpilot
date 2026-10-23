@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from collections.abc import Callable
+from typing import TYPE_CHECKING, cast
 import base64
 import contextlib
 import ctypes
@@ -16,6 +17,8 @@ from tinygrad.engine.realize import lower_and_compile
 from tinygrad.tensor import Tensor
 from tinygrad.helpers import all_int, round_up
 from tinygrad.uop.ops import UOp
+if TYPE_CHECKING:
+  from openpilot.starpilot.models.runtime_bridge.legacy_types import LegacyBuffer, LegacyUOpFactory
 import math
 import pickle
 import threading
@@ -203,8 +206,8 @@ class FrameMeta:
 def input_view(buffer: Buffer, shape: tuple[int, ...], dtype: DType, offset: int) -> Tensor:
   from openpilot.starpilot.models.runtime_bridge.runtime import selected_legacy
   if selected_legacy():
-    view = buffer.view(math.prod(shape), dtype, offset).ensure_allocated()
-    return Tensor(UOp.from_buffer(view)).reshape(shape)
+    view = cast("LegacyBuffer", buffer).view(math.prod(shape), dtype, offset).ensure_allocated()
+    return Tensor(cast("LegacyUOpFactory", UOp).from_buffer(view)).reshape(shape)
   view = buffer.view(math.prod(shape) * dtype.itemsize, offset).ensure_allocated()
   return Tensor(UOp.from_buffer(view, dtype)).reshape(shape)
 
@@ -282,7 +285,8 @@ class ModelState:
     self.input_device.copy_from(self.input_host)
     self.input_queues['new_img'] = self.run_warp(**self.warp_inputs)
     self.run_model(output_buffers=self.outputs, **self.input_queues)
-    if self.chestnut and not selected_legacy() and (err := Device[self.outputs['outputs'].device].error_state.host.view(fmt='q')[0]):
+    if (self.chestnut and not selected_legacy() and
+        (err := Device[cast(str, self.outputs['outputs'].device)].error_state.host.view(fmt='q')[0])):
       raise RuntimeError(f"chestnut failed with {err}")
     if after_enqueue is not None:
       after_enqueue()

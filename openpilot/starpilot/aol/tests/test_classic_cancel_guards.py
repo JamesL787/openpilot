@@ -1,6 +1,5 @@
 
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
 from opendbc.car import structs
@@ -91,8 +90,10 @@ def test_sonata_cancel_source_requires_current_real_parser_batch(role):
     state.buttonEvents = [structs.CarState.ButtonEvent(type='cancel', pressed=True)]
   observed = state.as_reader().as_builder() if role == 'foreign_state' else state
   receipt = now - 30_000_001 if role == 'expired_receipt' else now
-  caller = SimpleNamespace(CI=ci, _aol_can_observation=(observed, receipt, now, now))
-  assert (Car.aol_cancel_source(caller, state, now) == now) == (role == 'marked')
+  caller = Car.__new__(Car)
+  caller.CI = ci
+  caller._aol_can_observation = (observed, receipt, now, now)
+  assert (caller.aol_cancel_source(state, now) == now) == (role == 'marked')
 
 
 @pytest.mark.parametrize('lkas,main', [(9, 0), (0, 9), (0, 0)])

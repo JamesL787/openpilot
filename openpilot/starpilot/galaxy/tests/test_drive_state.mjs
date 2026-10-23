@@ -30,16 +30,14 @@ assert.equal(denied.error,'Drive state unavailable')
 console.log('PASS: strict status; captured revision; aborted/out-of-order status; requested versus effective; unmount; unauthorized state')
 
 const onroad=panel();onroad.state={...snapshot(),effective:'onroad',overrideAllowed:false}
-globalThis.window={confirm:()=>false}
-const before=requests.length
-await onroad.change('offroad');assert.equal(requests.length,before)
-window.confirm=()=>true
-await onroad.change('offroad');assert.equal(requests.length,before)
-onroad.state.overrideAllowed=true
-await onroad.change('offroad');assert.equal(requests.length,before)
-assert.match(DriveStatePanel.template, /\['onroad', 'auto'\]/)
-assert.doesNotMatch(DriveStatePanel.template, /v-for="mode in \['offroad'/)
-
+let before=requests.length
+const forceOffroad=onroad.change('offroad')
+assert.equal(requests.length,before+1)
+assert.equal(JSON.parse(requests.at(-1).options.body).mode,'offroad')
+requests.at(-1).resolve(response({error:'Park the vehicle'},409));await flush()
+requests.at(-1).resolve(response(snapshot()));await forceOffroad;await flush()
+assert.match(DriveStatePanel.template,/role="switch"/)
+before=requests.length
 // A missing parked admission must not disable Galaxy Force Onroad.
 onroad.state.overrideAllowed=false
 const forceOnroad=onroad.change('onroad')
@@ -50,4 +48,4 @@ requests.at(-1).resolve(response(live));await flush()
 requests.at(-1).resolve(response(live));await forceOnroad;await flush()
 assert.equal(onroad.state.mode,'onroad')
 assert.equal(DriveStatePanel.computed.pending.call(onroad),false)
-console.log('PASS: Galaxy has no Offroad action; direct JS Offroad dispatch is ignored; Force Onroad works without parked admission')
+console.log('PASS: Galaxy Offroad dispatch uses server admission; Force Onroad remains available')

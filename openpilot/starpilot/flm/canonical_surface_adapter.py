@@ -61,6 +61,9 @@ GROUPS = {
   'deadband.low': ('center_deadband_crawl_deg', 'center_deadband_low_deg', 'center_deadband_mid_deg'),
   'deadband.high': ('center_deadband_fast_deg', 'center_deadband_highway_deg'),
 }
+# Numerical probe groups are separate from one-coordinate trial ownership.
+PROBE_GROUPS = dict(GROUPS, all30=NAMES)
+
 # Exact existing Dom universal raw domains, frozen without controller imports.
 # This prevents adaptive_profile -> canonical -> torque_surface -> policy ->
 # torque_stages -> selected_effects import cycles. Tests compare every row to
@@ -112,6 +115,15 @@ def canonical_names(names):
   if not 1 <= len(names) <= 4 or len(set(names)) != len(names) or any(n not in NAMES for n in names):
     raise ValueError('one to four canonical FLM knobs per trial')
   return tuple(n for n in NAMES if n in names)
+
+
+def probe_names(names):
+  """Numerical measurements only; actual trial's four-knob cap is unchanged."""
+  if (type(names) is not tuple or not 1 <= len(names) <= len(NAMES) or
+      any(type(name) is not str for name in names) or len(set(names)) != len(names) or
+      any(name not in NAMES for name in names)):
+    raise ValueError('one to thirty exact canonical numerical probe names')
+  return tuple(name for name in NAMES if name in names)
 
 
 _RAW_BY_NAME = MappingProxyType({name: (value, limits) for name, value, limits in RAW_DOMAINS})
@@ -229,9 +241,12 @@ class CanonicalSurfaceEffects:
  No Params, fitting, JSON, cloned controller or native writes belong here.
  """
 
-  def __init__(self, coordinates, source_baseline_revision, *, accumulated=None):
+  def __init__(self, coordinates, source_baseline_revision, *, accumulated=None, allow_limited_profile=False):
     from openpilot.starpilot.flm import torque_surface as surface_math
 
+    if type(allow_limited_profile) is not bool:
+      raise ValueError('explicit bounded profile policy')
+    self.allow_limited_profile = allow_limited_profile
     trial = validate_trial(coordinates)
     values = dict.fromkeys(NAMES, 0.0)
     if accumulated is not None:
@@ -293,7 +308,7 @@ class CanonicalSurfaceEffects:
     self.stage_calls += 1
     if self.stage_calls != 1:
       raise ValueError('duplicate actual FLM stage')
-    if not frame.valid() or not frame.active or frame.driver_override or frame.limited:
+    if not frame.valid() or not frame.active or frame.driver_override or (frame.limited and (frame.curvature_limited or not self.allow_limited_profile)):
       return frame.baseline_ff, frame.baseline_threshold
     m, s = self.math, self.surface
     # Exact existing Dom universal controller order; notably no invented reciprocal

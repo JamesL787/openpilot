@@ -1,3 +1,5 @@
+from openpilot.starpilot.flm.normalized_trace_archive import guarded_archive
+from openpilot.starpilot.flm.normalized_trace_archive import trace_for
 """Fresh original/CAN probe of the exact FIRST full30 application transition.
 
 Heldout whole-trajectory fitting is separate. This never manufactures future
@@ -13,6 +15,7 @@ from openpilot.starpilot.flm.selected_effects import EffectReplaySource, EffectR
 from openpilot.starpilot.flm.canonical_surface_adapter import CanonicalSurfaceEffects
 
 
+@guarded_archive()
 def current_effect_probe(engine, profile, control, output, model):
   try:
     envelope = profile.effect_envelope.validate(profile)
@@ -26,7 +29,7 @@ def current_effect_probe(engine, profile, control, output, model):
     frame=next((row for row in islice(reversed(engine.records),60) if row.control_ns==control.control_ns),None)
     if frame is None or frame.effect_prepare_ns != control.effect_prepare_ns or not 0 <= engine.last_ns-frame.control_ns <= 500_000_000:
       return False
-    trace=frame.effect_trace
+    trace=trace_for(frame,engine)
     before=dict.fromkeys(NAMES,0.) if trace is None else dict(trace.applied)
     prior=dict(envelope.prior_coordinates)
     # A proposal is based on the actual CURRENT accepted target, not a saved

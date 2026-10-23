@@ -3,6 +3,7 @@ from collections import Counter
 from dataclasses import replace
 import ctypes
 import hashlib
+from typing import TYPE_CHECKING, cast
 
 from tinygrad import Device
 from tinygrad.device import Buffer, HCQ_RUNTIME_DEV
@@ -14,6 +15,9 @@ from tinygrad.runtime.support import hcq2
 from tinygrad.runtime.support.hcq2 import HCQInfo
 from tinygrad.uop.ops import AxisType, Ops, UOp, ProgramInfo
 from openpilot.starpilot.models.runtime_bridge.qcom import Protection, byte_inventory
+
+if TYPE_CHECKING:
+  from openpilot.starpilot.models.runtime_bridge.legacy_types import LegacyBufferFactory, LegacyCall, LegacyHCQModule, LegacyUOpFactory
 
 
 class USBProtection(Protection):
@@ -33,7 +37,7 @@ class USBProtection(Protection):
     addresses = [ctypes.cast(getattr(self.usb_library, name), ctypes.c_void_p).value for name in self.names]
     if any(address is None for address in addresses):
       raise ValueError('Missing native submission guard')
-    self.usb_pointer = Buffer(HCQ_RUNTIME_DEV.value, len(addresses), dtypes.uint64,
+    self.usb_pointer = cast("LegacyBufferFactory", Buffer)(cast(str, HCQ_RUNTIME_DEV.value), len(addresses), dtypes.uint64,
                               initial_value=b''.join(address.to_bytes(8, 'little') for address in addresses))
     self.fresh_records = []
 
@@ -60,7 +64,7 @@ class USBProtection(Protection):
     params = {u: u.replace(arg=replace(u.arg, slot=u.arg.slot + 1)) for u in sink.toposort()
               if u.op is Ops.PARAM and u.arg.addrspace is AddrSpace.ALU}
     sink = sink.substitute(params, enter_calls=True)
-    pointer = UOp.param(info.nargs, dtypes.uint64, len(self.names), HCQ_RUNTIME_DEV.value, name='usb_guard_pointer')
+    pointer = UOp.param(info.nargs, dtypes.uint64, len(self.names), cast(str, HCQ_RUNTIME_DEV.value), name='usb_guard_pointer')
     def callee(name):
       return UOp.custom_function(name, pointer.index(self.names.index(name)).load())
     weak = [u for u in sink.toposort() if u.op is Ops.RANGE and u.src and u.src[0].op is Ops.NOOP]
@@ -104,11 +108,11 @@ class USBProtection(Protection):
           token = next((a for a in u.src[1:] if loop in a.ranges), None)
           if token is None:
             raise ValueError('Polling call has no original open-loop argument')
-          touches.append(callee('sp_loop_touch').call(UOp.const(slot, dtypes.uint64),
+          touches.append(cast("LegacyCall", callee('sp_loop_touch')).call(UOp.const(slot, dtypes.uint64),
                            UOp.const(timeout, dtypes.uint64), scalar64(token), ret_dtype=dtypes.uint64))
           touched.add(loop.arg)
       marker = sum(touches[1:], touches[0]) if touches else UOp.const(0, dtypes.uint64)
-      substitutions[u] = callee(self.ffi_names[u.body.arg]).call(
+      substitutions[u] = cast("LegacyCall", callee(self.ffi_names[u.body.arg])).call(
         *[scalar64(a) for a in (u.body.src[0], *u.src[1:])], marker, ret_dtype=dtypes.int32)
     if touched != set(specifications) or not substitutions:
       raise ValueError('A native polling loop has no entry guard')
@@ -116,7 +120,7 @@ class USBProtection(Protection):
     guarded_ranges = [u for u in sink.toposort() if u.op is Ops.RANGE and u.src and u.src[0].op is Ops.NOOP]
     if len(guarded_ranges) != len(weak) or {r.arg for r in guarded_ranges} != set(specifications):
       raise ValueError('Native polling ranges changed')
-    ends = {u: u.replace(src=(*u.src[:2], callee('sp_loop_check').call(
+    ends = {u: u.replace(src=(*u.src[:2], cast("LegacyCall", callee('sp_loop_check')).call(
             u.src[2].cast(dtypes.uint64), UOp.const(specifications[u.src[1].arg][0], dtypes.uint64),
             ret_dtype=dtypes.uint64).cast(dtypes.bool)))
             for u in sink.toposort() if u.op is Ops.END and len(u.src) == 3 and u.src[1].op is Ops.RANGE and u.src[1].arg in specifications}
@@ -132,12 +136,12 @@ class USBProtection(Protection):
       raise ValueError('Opaque device payload changed')
     if any(u.op is Ops.CALL and u.body.op in (Ops.SINK, Ops.PROGRAM) for u in rewritten.toposort()):
       raise ValueError('Nested device compilation in a CPU host')
-    updated = call.replace(src=(rewritten, *call.src[1:], UOp.from_buffer(self.usb_pointer)),
+    updated = call.replace(src=(rewritten, *call.src[1:], cast("LegacyUOpFactory", UOp).from_buffer(self.usb_pointer)),
                            arg=replace(call.arg, aux=replace(info, nargs=info.nargs + 1)))
-    if updated.device != HCQ_RUNTIME_DEV.value or HCQ_RUNTIME_DEV.value.split(':')[0] != 'CPU':
+    if updated.device != cast(str, HCQ_RUNTIME_DEV.value) or cast(str, HCQ_RUNTIME_DEV.value).split(':')[0] != 'CPU':
       raise ValueError('Refusing non-CPU compilation')
     compiled = lower_and_compile(UOp(Ops.LINEAR, src=(updated,))).src[0]
-    host_renderer = Device[HCQ_RUNTIME_DEV.value].renderer
+    host_renderer = Device[cast(str, HCQ_RUNTIME_DEV.value)].renderer
     if (compiled.body.arg.target.device != 'CPU' or not isinstance(host_renderer, ClangRenderer) or
         compiled.body.arg.target != host_renderer.target or byte_inventory(compiled.body.src[0]) != before):
       raise ValueError({'failure':'USB host-only compilation contract failed','target':repr(compiled.body.arg.target),
@@ -148,10 +152,11 @@ class USBProtection(Protection):
     return compiled
 
   def install_fresh_guard(self):
-    original = hcq2.lower_and_compile
+    legacy_hcq = cast("LegacyHCQModule", hcq2)
+    original = legacy_hcq.lower_and_compile
     if original is not lower_and_compile:
       raise ValueError('Host compiler was already replaced')
-    def protect(linear):
+    def protect(linear: "UOp") -> "UOp":
       replacements = {u: self.protect_call(u) for u in linear.toposort()
                       if u.op is Ops.CALL and isinstance(u.arg.aux, HCQInfo) and u.body.op is Ops.SINK}
       self.fresh_records.append(len(replacements))
@@ -161,7 +166,7 @@ class USBProtection(Protection):
               u.body.src[-1].op is Ops.BINARY)) for u in prepared.toposort()):
         raise ValueError('Refusing residual unqualified compilation during native weight loading')
       return original(prepared)
-    hcq2.lower_and_compile = protect
+    legacy_hcq.lower_and_compile = protect
 
   def artifact(self, artifact):
     if artifact.get('execution_device') != 'AMD' or artifact.get('warp_device') != 'QCOM':

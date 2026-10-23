@@ -1,4 +1,6 @@
 """Pure SLC override contribution from qualified driver intent and current pedal evidence."""
+from typing import cast
+
 
 import math
 from dataclasses import dataclass, replace
@@ -259,7 +261,7 @@ def step(state: State, acceptance: acc.Decision, authority: acc.Authority, polic
     state = replace(state, persistent_selected_mps=None, applied_selected_mps=None)
   comparison_target = state.applied_selected_mps + selected_delta if state.applied_selected_mps is not None else effective_target
   if (not domain_unavailable and state.persistent_selected_mps is not None and effective_target is not None and
-      selected.speed_mps is not None and math.isclose(comparison_target, selected.speed_mps + selected_delta, abs_tol=0.001, rel_tol=0)):
+      selected.speed_mps is not None and math.isclose(cast(float, comparison_target), selected.speed_mps + selected_delta, abs_tol=0.001, rel_tol=0)):
     state = replace(state, persistent_selected_mps=None)
   state = replace(state, accepted_mps=accepted_speed, effective_target_mps=effective_target,
                   mode=authority.mode, owner=authority.owner)

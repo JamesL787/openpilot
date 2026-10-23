@@ -81,6 +81,7 @@ class TestEv9LongDebugContract(Ev9LongFixture, unittest.TestCase):
     self.assertFalse(self.safety.safety_tx_hook(self.angle()))
 
   def test_actual_controller_target_cap_inactive_measurement_and_reentry(self):
+    from types import SimpleNamespace
     from opendbc.car import structs
     from opendbc.car.hyundai.interface import CarInterface
     from opendbc.car.hyundai.ev9_longitudinal import candidate
@@ -92,6 +93,10 @@ class TestEv9LongDebugContract(Ev9LongFixture, unittest.TestCase):
       self.setUp()
       cp = candidate(params(candidate=CAR.KIA_EV9), enabled=True, is_release=False)
       ci = CarInterface(cp)
+      # This test isolates the controller envelope after a controlled owner
+      # acknowledgment; real pending/native handoff has its own lifecycle test.
+      ci.CC.pe_startup = SimpleNamespace(handed_off=True, can_emit=lambda controller: True)
+      observed_commands = 0
       cc = structs.CarControl(enabled=True, latActive=True, longActive=True)
       cc.actuators.steeringAngleDeg = sign * 360.0
       ci.update([])
@@ -118,6 +123,7 @@ class TestEv9LongDebugContract(Ev9LongFixture, unittest.TestCase):
         angle = next((f for f in sends if f[0] == 0xcb), None)
         if angle is None or tick < 14:
           continue
+        observed_commands += 1
         for address, data, bus in sends:
           self.assertTrue(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(address, bus, data)),
                           (sign, tick, hex(address), bus))
@@ -130,6 +136,8 @@ class TestEv9LongDebugContract(Ev9LongFixture, unittest.TestCase):
         if tick == 700:
           self.assertEqual((angle[1][3] >> 4) & 0xf, 2)
           self.assertLessEqual(abs(ci.CC.ev9_angle_filter.x), 140.1)
+
+      self.assertEqual(observed_commands, 687)
 
   def test_mdps_uses_byte16_and_exact_long_fault_bit(self):
     self.ready()

@@ -51,6 +51,7 @@ _services: dict[str, tuple] = {
   "extrinsicsCalibration": (True, 4., 4),
   "lateralTorqueParameters": (True, 4., 1),
   "autoSteeringLearning": (True, 4., 1),
+  "starpilotSteeringTracking": (True, 20., 5),
   "lateralDelay": (True, 4., 1),
   "operatingSystemLog": (True, 0.),
   "carState": (True, 100., 10),

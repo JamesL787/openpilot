@@ -181,3 +181,14 @@ def test_forced_offroad_update_rechecks_freshness(fixture, service):
   assert f.source.update_ready(True)
   f.sm.logMonoTime[service] = 1
   assert not f.source.update_ready(True)
+
+
+@pytest.mark.parametrize('ignition', [False, True])
+@pytest.mark.parametrize('gear', ['park', 'drive', 'reverse', 'neutral', 'unknown'])
+def test_galaxy_requires_fresh_explicit_park_even_with_ignition_off(fixture, ignition, gear):
+  f = fixture
+  f.sm.values['pandaStates'][0].ignitionLine = ignition
+  f.sm.values['carState'].gearShifter = gear
+  assert f.source.status(require_park=True)['allowed'] == (gear == 'park')
+  f.sm.logMonoTime['carState'] = 1
+  assert not f.source.status(require_park=True)['allowed']

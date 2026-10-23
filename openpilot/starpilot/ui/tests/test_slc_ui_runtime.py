@@ -58,7 +58,9 @@ def ui_request(message, *, profile: Profile, kind: SlcActionKind) -> SlcUiReques
 
   touch = OnroadInput(emit, profile)
   if observation.pending_speed_limit_mps is not None:
-    left, top, right, bottom = speed_limit_bounds(profile, view_state)
+    bounds = speed_limit_bounds(profile, view_state)
+    assert bounds is not None
+    left, top, right, bottom = bounds
     x, y = (left + right) / 2, (top + bottom) / 2
     touch.press(x, y, view_state)
     touch.release(x, y, view_state)

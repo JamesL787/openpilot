@@ -9,6 +9,7 @@ registered representatives are source coverage, not firmware/fleet equivalence.
 from dataclasses import replace
 from types import SimpleNamespace
 import math
+from pathlib import Path
 import sys
 
 import pytest
@@ -293,7 +294,12 @@ def test_registered_controls_computed_profile_is_used_and_revoked(vehicle, mode,
     assert candidate.params.get_type('AutomaticSteeringProfiles') == ParamKeyType.BYTES
     assert candidate.params.check_key('UseVOACC')
     assert candidate.params.check_key('DeveloperSidebar')
-    assert len(candidate.params.all_keys()) == 347 + 28  # Night Star port: 25 Honda EPS keys, 2 reprojection keys and ModelLateralSource (docs/night_star_port)
+    from tools.laptop_device_build.validate_params_registry import expected_registry
+    root = Path(__file__).resolve().parents[4]
+    registry = expected_registry((root / 'openpilot/common/params_keys.h').read_text(),
+                                 (root / 'openpilot/common/params.h').read_text(),
+                                 (root / 'openpilot/cereal/log.capnp').read_text())
+    assert set(candidate.params.all_keys()) == {key.encode() for key in registry}
     runtime = candidate.global_learning
     assert runtime.identity and runtime.eligible
     assert candidate.sm['selfdriveState'].active and candidate.sm['selfdriveState'].enabled

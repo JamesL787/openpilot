@@ -210,12 +210,14 @@ class TestHyundaiBlendedStock(unittest.TestCase):
       self.assertTrue(self.safety.get_relay_malfunction())
       self.assertFalse(self.safety.safety_tx_hook(common.make_msg(0, 0x50, 16)))
 
-  def test_stock_status_ownership_does_not_change_aol_table(self):
+  def test_stock_status_ownership_preserves_both_stock_aol_experiences(self):
     for experience in (0, 32):
       self.safety.set_alternative_experience(experience)
       self.assertEqual(self.safety.set_safety_hooks(CarParams.SafetyModel.hyundai, 0x2010), 0)
       self.safety.init_tests()
       self.safety.set_alternative_experience(experience)
       self.safety.safety_rx_hook(common.make_msg(1, 0x485, dat=bytes.fromhex('5030020000000000')))
-      self.assertEqual(bool(self.safety.get_relay_malfunction()), experience == 32)
+      self.assertFalse(self.safety.get_relay_malfunction())
+      self.safety.safety_rx_hook(common.make_msg(0, 0x50, 16))
+      self.assertTrue(self.safety.get_relay_malfunction())
     self.safety.set_alternative_experience(0)

@@ -37,8 +37,13 @@ static void tesla_screen_reset(void) {
 static uint8_t tesla_screen_request(void) {
   uint8_t request = 0U;
   const bool expired = safety_get_ts_elapsed(microsecond_timer_get(), aol_host_request_ts) > AOL_HOST_REQUEST_TIMEOUT_US;
-  if (!aol_rx_healthy() || relay_malfunction || expired || (tesla_screen_session && !heartbeat_engaged)) {
+  if (!aol_rx_healthy() || relay_malfunction || expired) {
     tesla_screen_clear();
+  } else if (tesla_screen_session && !heartbeat_engaged) {
+    tesla_screen_clear();
+    // Clear the ended arm once. Subsequent healthy idle samples must establish
+    // a new neutral/press edge; an OFF heartbeat cannot erase it every cycle.
+    tesla_screen_session = false;
   } else if (heartbeat_engaged) {
     tesla_screen_session = true;
     request = aol_host_axis_mask;
@@ -84,8 +89,10 @@ static void tesla_screen_rx(const CANPacket_t *msg, bool autopark) {
   if (tesla_screen_enabled) {
     tesla_screen_autopark = autopark;
     if (msg_matches(msg, 0x118U, 0U, 8U)) {
-      tesla_screen_drive = ((msg->data[2] >> 5U) & 7U) == 4U;
-      if (!tesla_screen_drive) { tesla_screen_clear(); }
+      const unsigned int gear = (msg->data[2] >> 5U) & 7U;
+      tesla_screen_drive = gear == 4U;
+      // Known Reverse/Neutral inhibit output without creating a new arm.
+      if (!tesla_screen_drive && (gear != 2U) && (gear != 3U)) { tesla_screen_clear(); }
     }
     if (msg_matches(msg, 0x311U, 0U, 7U)) {
       tesla_screen_belt_latched = GET_BIT(msg, 13U);
@@ -95,7 +102,9 @@ static void tesla_screen_rx(const CANPacket_t *msg, bool autopark) {
     if (msg_matches(msg, 0x370U, 0U, 8U)) {
       const unsigned int status = msg->data[6] >> 5U;
       tesla_screen_eps_ready = (status == 1U) || (status == 2U);
-      if (!tesla_screen_eps_ready || steering_disengage) { tesla_screen_clear(); }
+      // Isolated EAC_INHIBITED withdraws steering until a fresh ready sample.
+      // Permanent faults and a physical steering disengage still clear intent.
+      if ((status > 2U) || steering_disengage) { tesla_screen_clear(); }
     }
     if (msg_matches(msg, 0x286U, 0U, 8U)) {
       const unsigned int state = (msg->data[1] >> 4U) & 7U;

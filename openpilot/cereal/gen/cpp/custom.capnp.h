@@ -76,6 +76,7 @@ CAPNP_DECLARE_ENUM(Family, b03bf8f7c878937a);
 CAPNP_DECLARE_SCHEMA(af3712fe799c76ce);
 CAPNP_DECLARE_SCHEMA(f35cc4560bbf6ec2);
 CAPNP_DECLARE_SCHEMA(918d19aa5875c92d);
+CAPNP_DECLARE_SCHEMA(de92e382e2400293);
 CAPNP_DECLARE_SCHEMA(da96579883444c35);
 CAPNP_DECLARE_SCHEMA(a1680744031fdb2d);
 CAPNP_DECLARE_SCHEMA(a7940385bedd1d4c);
@@ -254,6 +255,7 @@ enum class Status_f187d96cea4f09df: uint16_t {
 CAPNP_DECLARE_ENUM(Status, f187d96cea4f09df);
 CAPNP_DECLARE_SCHEMA(c2243c65e0340384);
 CAPNP_DECLARE_SCHEMA(88f71f4263677d19);
+CAPNP_DECLARE_SCHEMA(c5693d5da66b60b6);
 CAPNP_DECLARE_SCHEMA(bd443b539493bc68);
 CAPNP_DECLARE_SCHEMA(94d51b83b2a8ea50);
 enum class Kind_94d51b83b2a8ea50: uint16_t {
@@ -426,6 +428,13 @@ CAPNP_DECLARE_SCHEMA(d1dfbadb6a811fee);
 CAPNP_DECLARE_SCHEMA(b276dede9e6b2cc4);
 CAPNP_DECLARE_SCHEMA(ab0b33cac682523e);
 CAPNP_DECLARE_SCHEMA(f078f562cbce49ad);
+CAPNP_DECLARE_SCHEMA(9f853f7eb4110c72);
+CAPNP_DECLARE_SCHEMA(e6f67224bc0ee1a3);
+CAPNP_DECLARE_SCHEMA(ec37375f3ac20926);
+CAPNP_DECLARE_SCHEMA(db85b982067f1bc1);
+CAPNP_DECLARE_SCHEMA(ef6257bed9318012);
+CAPNP_DECLARE_SCHEMA(bbb8f17940692312);
+CAPNP_DECLARE_SCHEMA(daa1a9f0d8968e31);
 
 }  // namespace schemas
 }  // namespace capnp
@@ -635,9 +644,10 @@ struct StarPilotCarState {
   class Builder;
   class Pipeline;
   struct Gps;
+  struct FeedbackPublication;
 
   struct _capnpPrivate {
-    CAPNP_DECLARE_STRUCT_HEADER(f35cc4560bbf6ec2, 3, 4)
+    CAPNP_DECLARE_STRUCT_HEADER(f35cc4560bbf6ec2, 3, 5)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -653,6 +663,21 @@ struct StarPilotCarState::Gps {
 
   struct _capnpPrivate {
     CAPNP_DECLARE_STRUCT_HEADER(918d19aa5875c92d, 9, 1)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct StarPilotCarState::FeedbackPublication {
+  FeedbackPublication() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(de92e382e2400293, 8, 6)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -951,15 +976,15 @@ struct StarPilotModelDataV2::VisionObservation {
   };
 };
 
-struct CustomReserved5 {
-  CustomReserved5() = delete;
+struct StarPilotSteeringTracking {
+  StarPilotSteeringTracking() = delete;
 
   class Reader;
   class Builder;
   class Pipeline;
 
   struct _capnpPrivate {
-    CAPNP_DECLARE_STRUCT_HEADER(a5cd762cd951a455, 0, 0)
+    CAPNP_DECLARE_STRUCT_HEADER(a5cd762cd951a455, 1, 3)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -1153,9 +1178,10 @@ struct StarPilotLateralState {
   class Builder;
   class Pipeline;
   struct LaneCentering;
+  struct FeedbackConsumption;
 
   struct _capnpPrivate {
-    CAPNP_DECLARE_STRUCT_HEADER(c2243c65e0340384, 7, 4)
+    CAPNP_DECLARE_STRUCT_HEADER(c2243c65e0340384, 7, 6)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -1171,6 +1197,21 @@ struct StarPilotLateralState::LaneCentering {
 
   struct _capnpPrivate {
     CAPNP_DECLARE_STRUCT_HEADER(88f71f4263677d19, 4, 1)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct StarPilotLateralState::FeedbackConsumption {
+  FeedbackConsumption() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(c5693d5da66b60b6, 7, 3)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -1413,7 +1454,7 @@ struct LearningControlEvidence {
   struct StageValue;
 
   struct _capnpPrivate {
-    CAPNP_DECLARE_STRUCT_HEADER(f2447170bb68f358, 14, 19)
+    CAPNP_DECLARE_STRUCT_HEADER(f2447170bb68f358, 14, 21)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -1664,6 +1705,112 @@ struct LearningTorqueProjection {
 
   struct _capnpPrivate {
     CAPNP_DECLARE_STRUCT_HEADER(f078f562cbce49ad, 11, 10)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct LiveTrackingBinding {
+  LiveTrackingBinding() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(9f853f7eb4110c72, 1, 11)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct LiveTrackingTrial {
+  LiveTrackingTrial() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+  struct Coordinate;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(e6f67224bc0ee1a3, 7, 11)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct LiveTrackingTrial::Coordinate {
+  Coordinate() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(ec37375f3ac20926, 1, 1)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct LiveTrackingApplication {
+  LiveTrackingApplication() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(db85b982067f1bc1, 4, 7)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct LiveTrackingRestore {
+  LiveTrackingRestore() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(ef6257bed9318012, 4, 7)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct LiveTrackingResponseCertificate {
+  LiveTrackingResponseCertificate() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(bbb8f17940692312, 7, 9)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct LiveTrackingResponseWitness {
+  LiveTrackingResponseWitness() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(daa1a9f0d8968e31, 7, 1)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -3281,6 +3428,9 @@ public:
   inline bool hasLearningApplication() const;
   inline  ::cereal::LearningApplication::Reader getLearningApplication() const;
 
+  inline bool hasFeedbackPublication() const;
+  inline  ::cereal::StarPilotCarState::FeedbackPublication::Reader getFeedbackPublication() const;
+
 private:
   ::capnp::_::StructReader _reader;
   template <typename, ::capnp::Kind>
@@ -3436,6 +3586,13 @@ public:
   inline void adoptLearningApplication(::capnp::Orphan< ::cereal::LearningApplication>&& value);
   inline ::capnp::Orphan< ::cereal::LearningApplication> disownLearningApplication();
 
+  inline bool hasFeedbackPublication();
+  inline  ::cereal::StarPilotCarState::FeedbackPublication::Builder getFeedbackPublication();
+  inline void setFeedbackPublication( ::cereal::StarPilotCarState::FeedbackPublication::Reader value);
+  inline  ::cereal::StarPilotCarState::FeedbackPublication::Builder initFeedbackPublication();
+  inline void adoptFeedbackPublication(::capnp::Orphan< ::cereal::StarPilotCarState::FeedbackPublication>&& value);
+  inline ::capnp::Orphan< ::cereal::StarPilotCarState::FeedbackPublication> disownFeedbackPublication();
+
 private:
   ::capnp::_::StructBuilder _builder;
   template <typename, ::capnp::Kind>
@@ -3458,6 +3615,7 @@ public:
   inline  ::cereal::LearningAppliedEvidence::Pipeline getAppliedEvidence();
   inline  ::cereal::FordLearningEvidence::Pipeline getFordLearningEvidence();
   inline  ::cereal::LearningApplication::Pipeline getLearningApplication();
+  inline  ::cereal::StarPilotCarState::FeedbackPublication::Pipeline getFeedbackPublication();
 private:
   ::capnp::AnyPointer::Pipeline _typeless;
   friend class ::capnp::PipelineHook;
@@ -3595,6 +3753,192 @@ private:
 class StarPilotCarState::Gps::Pipeline {
 public:
   typedef Gps Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class StarPilotCarState::FeedbackPublication::Reader {
+public:
+  typedef FeedbackPublication Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint16_t getVersion() const;
+
+  inline bool hasCardSession() const;
+  inline  ::capnp::Data::Reader getCardSession() const;
+
+  inline  ::uint64_t getPublicationSequence() const;
+
+  inline  ::uint64_t getPublicationMonoTime() const;
+
+  inline  ::uint64_t getSourceCarStateMonoTime() const;
+
+  inline bool getOutputKnown() const;
+
+  inline  ::uint64_t getOutputControlMonoTime() const;
+
+  inline  ::uint64_t getOutputApplyMonoTime() const;
+
+  inline bool hasOutputNativeIdentity() const;
+  inline  ::capnp::Text::Reader getOutputNativeIdentity() const;
+
+  inline  ::uint64_t getOutputCarrierSequence() const;
+
+  inline float getReportedTorque() const;
+
+  inline bool getOutputValid() const;
+
+  inline bool hasCoBodySha256() const;
+  inline  ::capnp::Data::Reader getCoBodySha256() const;
+
+  inline bool hasApplyEvidenceSha256() const;
+  inline  ::capnp::Data::Reader getApplyEvidenceSha256() const;
+
+  inline bool hasSourceEpoch() const;
+  inline  ::capnp::Text::Reader getSourceEpoch() const;
+
+  inline bool hasCpSha256() const;
+  inline  ::capnp::Text::Reader getCpSha256() const;
+
+  inline  ::uint64_t getCarrierObservedMonoTime() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class StarPilotCarState::FeedbackPublication::Builder {
+public:
+  typedef FeedbackPublication Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint16_t getVersion();
+  inline void setVersion( ::uint16_t value);
+
+  inline bool hasCardSession();
+  inline  ::capnp::Data::Builder getCardSession();
+  inline void setCardSession( ::capnp::Data::Reader value);
+  inline  ::capnp::Data::Builder initCardSession(unsigned int size);
+  inline void adoptCardSession(::capnp::Orphan< ::capnp::Data>&& value);
+  inline ::capnp::Orphan< ::capnp::Data> disownCardSession();
+
+  inline  ::uint64_t getPublicationSequence();
+  inline void setPublicationSequence( ::uint64_t value);
+
+  inline  ::uint64_t getPublicationMonoTime();
+  inline void setPublicationMonoTime( ::uint64_t value);
+
+  inline  ::uint64_t getSourceCarStateMonoTime();
+  inline void setSourceCarStateMonoTime( ::uint64_t value);
+
+  inline bool getOutputKnown();
+  inline void setOutputKnown(bool value);
+
+  inline  ::uint64_t getOutputControlMonoTime();
+  inline void setOutputControlMonoTime( ::uint64_t value);
+
+  inline  ::uint64_t getOutputApplyMonoTime();
+  inline void setOutputApplyMonoTime( ::uint64_t value);
+
+  inline bool hasOutputNativeIdentity();
+  inline  ::capnp::Text::Builder getOutputNativeIdentity();
+  inline void setOutputNativeIdentity( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initOutputNativeIdentity(unsigned int size);
+  inline void adoptOutputNativeIdentity(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownOutputNativeIdentity();
+
+  inline  ::uint64_t getOutputCarrierSequence();
+  inline void setOutputCarrierSequence( ::uint64_t value);
+
+  inline float getReportedTorque();
+  inline void setReportedTorque(float value);
+
+  inline bool getOutputValid();
+  inline void setOutputValid(bool value);
+
+  inline bool hasCoBodySha256();
+  inline  ::capnp::Data::Builder getCoBodySha256();
+  inline void setCoBodySha256( ::capnp::Data::Reader value);
+  inline  ::capnp::Data::Builder initCoBodySha256(unsigned int size);
+  inline void adoptCoBodySha256(::capnp::Orphan< ::capnp::Data>&& value);
+  inline ::capnp::Orphan< ::capnp::Data> disownCoBodySha256();
+
+  inline bool hasApplyEvidenceSha256();
+  inline  ::capnp::Data::Builder getApplyEvidenceSha256();
+  inline void setApplyEvidenceSha256( ::capnp::Data::Reader value);
+  inline  ::capnp::Data::Builder initApplyEvidenceSha256(unsigned int size);
+  inline void adoptApplyEvidenceSha256(::capnp::Orphan< ::capnp::Data>&& value);
+  inline ::capnp::Orphan< ::capnp::Data> disownApplyEvidenceSha256();
+
+  inline bool hasSourceEpoch();
+  inline  ::capnp::Text::Builder getSourceEpoch();
+  inline void setSourceEpoch( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initSourceEpoch(unsigned int size);
+  inline void adoptSourceEpoch(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownSourceEpoch();
+
+  inline bool hasCpSha256();
+  inline  ::capnp::Text::Builder getCpSha256();
+  inline void setCpSha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initCpSha256(unsigned int size);
+  inline void adoptCpSha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownCpSha256();
+
+  inline  ::uint64_t getCarrierObservedMonoTime();
+  inline void setCarrierObservedMonoTime( ::uint64_t value);
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class StarPilotCarState::FeedbackPublication::Pipeline {
+public:
+  typedef FeedbackPublication Pipelines;
 
   inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
   inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
@@ -6307,9 +6651,9 @@ private:
 };
 #endif  // !CAPNP_LITE
 
-class CustomReserved5::Reader {
+class StarPilotSteeringTracking::Reader {
 public:
-  typedef CustomReserved5 Reads;
+  typedef StarPilotSteeringTracking Reads;
 
   Reader() = default;
   inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
@@ -6324,6 +6668,17 @@ public:
   }
 #endif  // !CAPNP_LITE
 
+  inline  ::uint16_t getVersion() const;
+
+  inline bool hasSourceReceipt() const;
+  inline  ::cereal::AutomaticLearningSourceReceipt::Reader getSourceReceipt() const;
+
+  inline bool hasTrial() const;
+  inline  ::cereal::LiveTrackingTrial::Reader getTrial() const;
+
+  inline bool hasRestore() const;
+  inline  ::cereal::LiveTrackingRestore::Reader getRestore() const;
+
 private:
   ::capnp::_::StructReader _reader;
   template <typename, ::capnp::Kind>
@@ -6336,9 +6691,9 @@ private:
   friend class ::capnp::Orphanage;
 };
 
-class CustomReserved5::Builder {
+class StarPilotSteeringTracking::Builder {
 public:
-  typedef CustomReserved5 Builds;
+  typedef StarPilotSteeringTracking Builds;
 
   Builder() = delete;  // Deleted to discourage incorrect usage.
                        // You can explicitly initialize to nullptr instead.
@@ -6352,6 +6707,30 @@ public:
   inline ::kj::StringTree toString() const { return asReader().toString(); }
 #endif  // !CAPNP_LITE
 
+  inline  ::uint16_t getVersion();
+  inline void setVersion( ::uint16_t value);
+
+  inline bool hasSourceReceipt();
+  inline  ::cereal::AutomaticLearningSourceReceipt::Builder getSourceReceipt();
+  inline void setSourceReceipt( ::cereal::AutomaticLearningSourceReceipt::Reader value);
+  inline  ::cereal::AutomaticLearningSourceReceipt::Builder initSourceReceipt();
+  inline void adoptSourceReceipt(::capnp::Orphan< ::cereal::AutomaticLearningSourceReceipt>&& value);
+  inline ::capnp::Orphan< ::cereal::AutomaticLearningSourceReceipt> disownSourceReceipt();
+
+  inline bool hasTrial();
+  inline  ::cereal::LiveTrackingTrial::Builder getTrial();
+  inline void setTrial( ::cereal::LiveTrackingTrial::Reader value);
+  inline  ::cereal::LiveTrackingTrial::Builder initTrial();
+  inline void adoptTrial(::capnp::Orphan< ::cereal::LiveTrackingTrial>&& value);
+  inline ::capnp::Orphan< ::cereal::LiveTrackingTrial> disownTrial();
+
+  inline bool hasRestore();
+  inline  ::cereal::LiveTrackingRestore::Builder getRestore();
+  inline void setRestore( ::cereal::LiveTrackingRestore::Reader value);
+  inline  ::cereal::LiveTrackingRestore::Builder initRestore();
+  inline void adoptRestore(::capnp::Orphan< ::cereal::LiveTrackingRestore>&& value);
+  inline ::capnp::Orphan< ::cereal::LiveTrackingRestore> disownRestore();
+
 private:
   ::capnp::_::StructBuilder _builder;
   template <typename, ::capnp::Kind>
@@ -6362,14 +6741,17 @@ private:
 };
 
 #if !CAPNP_LITE
-class CustomReserved5::Pipeline {
+class StarPilotSteeringTracking::Pipeline {
 public:
-  typedef CustomReserved5 Pipelines;
+  typedef StarPilotSteeringTracking Pipelines;
 
   inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
   inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
       : _typeless(kj::mv(typeless)) {}
 
+  inline  ::cereal::AutomaticLearningSourceReceipt::Pipeline getSourceReceipt();
+  inline  ::cereal::LiveTrackingTrial::Pipeline getTrial();
+  inline  ::cereal::LiveTrackingRestore::Pipeline getRestore();
 private:
   ::capnp::AnyPointer::Pipeline _typeless;
   friend class ::capnp::PipelineHook;
@@ -7898,6 +8280,12 @@ public:
   inline bool hasLearningApplication() const;
   inline  ::cereal::LearningApplication::Reader getLearningApplication() const;
 
+  inline bool hasFeedbackConsumption() const;
+  inline  ::cereal::StarPilotLateralState::FeedbackConsumption::Reader getFeedbackConsumption() const;
+
+  inline bool hasTrackingApplication() const;
+  inline  ::cereal::LiveTrackingApplication::Reader getTrackingApplication() const;
+
   inline bool getEpsFfActive() const;
 
   inline float getEpsFfFeedforward() const;
@@ -7990,6 +8378,20 @@ public:
   inline void adoptLearningApplication(::capnp::Orphan< ::cereal::LearningApplication>&& value);
   inline ::capnp::Orphan< ::cereal::LearningApplication> disownLearningApplication();
 
+  inline bool hasFeedbackConsumption();
+  inline  ::cereal::StarPilotLateralState::FeedbackConsumption::Builder getFeedbackConsumption();
+  inline void setFeedbackConsumption( ::cereal::StarPilotLateralState::FeedbackConsumption::Reader value);
+  inline  ::cereal::StarPilotLateralState::FeedbackConsumption::Builder initFeedbackConsumption();
+  inline void adoptFeedbackConsumption(::capnp::Orphan< ::cereal::StarPilotLateralState::FeedbackConsumption>&& value);
+  inline ::capnp::Orphan< ::cereal::StarPilotLateralState::FeedbackConsumption> disownFeedbackConsumption();
+
+  inline bool hasTrackingApplication();
+  inline  ::cereal::LiveTrackingApplication::Builder getTrackingApplication();
+  inline void setTrackingApplication( ::cereal::LiveTrackingApplication::Reader value);
+  inline  ::cereal::LiveTrackingApplication::Builder initTrackingApplication();
+  inline void adoptTrackingApplication(::capnp::Orphan< ::cereal::LiveTrackingApplication>&& value);
+  inline ::capnp::Orphan< ::cereal::LiveTrackingApplication> disownTrackingApplication();
+
   inline bool getEpsFfActive();
   inline void setEpsFfActive(bool value);
 
@@ -8042,6 +8444,8 @@ public:
   inline  ::cereal::StarPilotLateralState::LaneCentering::Pipeline getLaneCentering();
   inline  ::cereal::LearningControlEvidence::Pipeline getLearningEvidence();
   inline  ::cereal::LearningApplication::Pipeline getLearningApplication();
+  inline  ::cereal::StarPilotLateralState::FeedbackConsumption::Pipeline getFeedbackConsumption();
+  inline  ::cereal::LiveTrackingApplication::Pipeline getTrackingApplication();
 private:
   ::capnp::AnyPointer::Pipeline _typeless;
   friend class ::capnp::PipelineHook;
@@ -8148,6 +8552,172 @@ private:
 class StarPilotLateralState::LaneCentering::Pipeline {
 public:
   typedef LaneCentering Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class StarPilotLateralState::FeedbackConsumption::Reader {
+public:
+  typedef FeedbackConsumption Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint16_t getVersion() const;
+
+  inline  ::uint64_t getControlMonoTime() const;
+
+  inline  ::uint64_t getConsumedPublicationMonoTime() const;
+
+  inline  ::uint64_t getConsumedRecvFrame() const;
+
+  inline  ::uint64_t getConsumedReceiptMonoTime() const;
+
+  inline bool getConsumedSeen() const;
+
+  inline bool getConsumedValid() const;
+
+  inline bool hasCoBodySha256() const;
+  inline  ::capnp::Data::Reader getCoBodySha256() const;
+
+  inline float getReportedTorque() const;
+
+  inline float getRequestTorque() const;
+
+  inline bool getLatActive() const;
+
+  inline bool getInputSafetyLimited() const;
+
+  inline bool getPublishedSafetyLimited() const;
+
+  inline  ::uint64_t getPriorPublishControlMonoTime() const;
+
+  inline bool hasSourceEpoch() const;
+  inline  ::capnp::Text::Reader getSourceEpoch() const;
+
+  inline bool hasCpSha256() const;
+  inline  ::capnp::Text::Reader getCpSha256() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class StarPilotLateralState::FeedbackConsumption::Builder {
+public:
+  typedef FeedbackConsumption Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint16_t getVersion();
+  inline void setVersion( ::uint16_t value);
+
+  inline  ::uint64_t getControlMonoTime();
+  inline void setControlMonoTime( ::uint64_t value);
+
+  inline  ::uint64_t getConsumedPublicationMonoTime();
+  inline void setConsumedPublicationMonoTime( ::uint64_t value);
+
+  inline  ::uint64_t getConsumedRecvFrame();
+  inline void setConsumedRecvFrame( ::uint64_t value);
+
+  inline  ::uint64_t getConsumedReceiptMonoTime();
+  inline void setConsumedReceiptMonoTime( ::uint64_t value);
+
+  inline bool getConsumedSeen();
+  inline void setConsumedSeen(bool value);
+
+  inline bool getConsumedValid();
+  inline void setConsumedValid(bool value);
+
+  inline bool hasCoBodySha256();
+  inline  ::capnp::Data::Builder getCoBodySha256();
+  inline void setCoBodySha256( ::capnp::Data::Reader value);
+  inline  ::capnp::Data::Builder initCoBodySha256(unsigned int size);
+  inline void adoptCoBodySha256(::capnp::Orphan< ::capnp::Data>&& value);
+  inline ::capnp::Orphan< ::capnp::Data> disownCoBodySha256();
+
+  inline float getReportedTorque();
+  inline void setReportedTorque(float value);
+
+  inline float getRequestTorque();
+  inline void setRequestTorque(float value);
+
+  inline bool getLatActive();
+  inline void setLatActive(bool value);
+
+  inline bool getInputSafetyLimited();
+  inline void setInputSafetyLimited(bool value);
+
+  inline bool getPublishedSafetyLimited();
+  inline void setPublishedSafetyLimited(bool value);
+
+  inline  ::uint64_t getPriorPublishControlMonoTime();
+  inline void setPriorPublishControlMonoTime( ::uint64_t value);
+
+  inline bool hasSourceEpoch();
+  inline  ::capnp::Text::Builder getSourceEpoch();
+  inline void setSourceEpoch( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initSourceEpoch(unsigned int size);
+  inline void adoptSourceEpoch(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownSourceEpoch();
+
+  inline bool hasCpSha256();
+  inline  ::capnp::Text::Builder getCpSha256();
+  inline void setCpSha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initCpSha256(unsigned int size);
+  inline void adoptCpSha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownCpSha256();
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class StarPilotLateralState::FeedbackConsumption::Pipeline {
+public:
+  typedef FeedbackConsumption Pipelines;
 
   inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
   inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
@@ -10070,6 +10640,12 @@ public:
 
   inline  ::uint64_t getEffectPrepareMonoTime() const;
 
+  inline bool hasVehicleModelAnchor() const;
+  inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Reader getVehicleModelAnchor() const;
+
+  inline bool hasLiveAppliedCoordinates() const;
+  inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Reader getLiveAppliedCoordinates() const;
+
 private:
   ::capnp::_::StructReader _reader;
   template <typename, ::capnp::Kind>
@@ -10315,6 +10891,22 @@ public:
 
   inline  ::uint64_t getEffectPrepareMonoTime();
   inline void setEffectPrepareMonoTime( ::uint64_t value);
+
+  inline bool hasVehicleModelAnchor();
+  inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Builder getVehicleModelAnchor();
+  inline void setVehicleModelAnchor( ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Reader value);
+  inline void setVehicleModelAnchor(::kj::ArrayPtr<const double> value);
+  inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Builder initVehicleModelAnchor(unsigned int size);
+  inline void adoptVehicleModelAnchor(::capnp::Orphan< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>&& value);
+  inline ::capnp::Orphan< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>> disownVehicleModelAnchor();
+
+  inline bool hasLiveAppliedCoordinates();
+  inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Builder getLiveAppliedCoordinates();
+  inline void setLiveAppliedCoordinates( ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Reader value);
+  inline void setLiveAppliedCoordinates(::kj::ArrayPtr<const double> value);
+  inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Builder initLiveAppliedCoordinates(unsigned int size);
+  inline void adoptLiveAppliedCoordinates(::capnp::Orphan< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>&& value);
+  inline ::capnp::Orphan< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>> disownLiveAppliedCoordinates();
 
 private:
   ::capnp::_::StructBuilder _builder;
@@ -12911,6 +13503,1137 @@ public:
   inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
       : _typeless(kj::mv(typeless)) {}
 
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class LiveTrackingBinding::Reader {
+public:
+  typedef LiveTrackingBinding Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline bool hasIdentity() const;
+  inline  ::capnp::Text::Reader getIdentity() const;
+
+  inline bool hasCpSha256() const;
+  inline  ::capnp::Text::Reader getCpSha256() const;
+
+  inline bool hasControllerRevision() const;
+  inline  ::capnp::Text::Reader getControllerRevision() const;
+
+  inline bool hasBaselineRevision() const;
+  inline  ::capnp::Text::Reader getBaselineRevision() const;
+
+  inline bool hasSourceEpoch() const;
+  inline  ::capnp::Text::Reader getSourceEpoch() const;
+
+  inline bool hasResetGeneration() const;
+  inline  ::capnp::Text::Reader getResetGeneration() const;
+
+  inline bool hasCalibrationGeneration() const;
+  inline  ::capnp::Text::Reader getCalibrationGeneration() const;
+
+  inline bool hasVehicleModelGeneration() const;
+  inline  ::capnp::Text::Reader getVehicleModelGeneration() const;
+
+  inline bool hasNativeIdentity() const;
+  inline  ::capnp::Text::Reader getNativeIdentity() const;
+
+  inline bool hasPhysicalModelRevision() const;
+  inline  ::capnp::Text::Reader getPhysicalModelRevision() const;
+
+  inline bool hasPersistentSourceEpoch() const;
+  inline  ::capnp::Text::Reader getPersistentSourceEpoch() const;
+
+  inline bool getNativeRequired() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class LiveTrackingBinding::Builder {
+public:
+  typedef LiveTrackingBinding Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline bool hasIdentity();
+  inline  ::capnp::Text::Builder getIdentity();
+  inline void setIdentity( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initIdentity(unsigned int size);
+  inline void adoptIdentity(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownIdentity();
+
+  inline bool hasCpSha256();
+  inline  ::capnp::Text::Builder getCpSha256();
+  inline void setCpSha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initCpSha256(unsigned int size);
+  inline void adoptCpSha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownCpSha256();
+
+  inline bool hasControllerRevision();
+  inline  ::capnp::Text::Builder getControllerRevision();
+  inline void setControllerRevision( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initControllerRevision(unsigned int size);
+  inline void adoptControllerRevision(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownControllerRevision();
+
+  inline bool hasBaselineRevision();
+  inline  ::capnp::Text::Builder getBaselineRevision();
+  inline void setBaselineRevision( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initBaselineRevision(unsigned int size);
+  inline void adoptBaselineRevision(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownBaselineRevision();
+
+  inline bool hasSourceEpoch();
+  inline  ::capnp::Text::Builder getSourceEpoch();
+  inline void setSourceEpoch( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initSourceEpoch(unsigned int size);
+  inline void adoptSourceEpoch(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownSourceEpoch();
+
+  inline bool hasResetGeneration();
+  inline  ::capnp::Text::Builder getResetGeneration();
+  inline void setResetGeneration( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initResetGeneration(unsigned int size);
+  inline void adoptResetGeneration(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownResetGeneration();
+
+  inline bool hasCalibrationGeneration();
+  inline  ::capnp::Text::Builder getCalibrationGeneration();
+  inline void setCalibrationGeneration( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initCalibrationGeneration(unsigned int size);
+  inline void adoptCalibrationGeneration(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownCalibrationGeneration();
+
+  inline bool hasVehicleModelGeneration();
+  inline  ::capnp::Text::Builder getVehicleModelGeneration();
+  inline void setVehicleModelGeneration( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initVehicleModelGeneration(unsigned int size);
+  inline void adoptVehicleModelGeneration(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownVehicleModelGeneration();
+
+  inline bool hasNativeIdentity();
+  inline  ::capnp::Text::Builder getNativeIdentity();
+  inline void setNativeIdentity( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initNativeIdentity(unsigned int size);
+  inline void adoptNativeIdentity(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownNativeIdentity();
+
+  inline bool hasPhysicalModelRevision();
+  inline  ::capnp::Text::Builder getPhysicalModelRevision();
+  inline void setPhysicalModelRevision( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initPhysicalModelRevision(unsigned int size);
+  inline void adoptPhysicalModelRevision(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownPhysicalModelRevision();
+
+  inline bool hasPersistentSourceEpoch();
+  inline  ::capnp::Text::Builder getPersistentSourceEpoch();
+  inline void setPersistentSourceEpoch( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initPersistentSourceEpoch(unsigned int size);
+  inline void adoptPersistentSourceEpoch(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownPersistentSourceEpoch();
+
+  inline bool getNativeRequired();
+  inline void setNativeRequired(bool value);
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class LiveTrackingBinding::Pipeline {
+public:
+  typedef LiveTrackingBinding Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class LiveTrackingTrial::Reader {
+public:
+  typedef LiveTrackingTrial Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint16_t getVersion() const;
+
+  inline bool hasProtocol() const;
+  inline  ::capnp::Text::Reader getProtocol() const;
+
+  inline bool hasBinding() const;
+  inline  ::cereal::LiveTrackingBinding::Reader getBinding() const;
+
+  inline bool hasTrialId() const;
+  inline  ::capnp::Text::Reader getTrialId() const;
+
+  inline  ::uint64_t getSequence() const;
+
+  inline bool hasPhase() const;
+  inline  ::capnp::Text::Reader getPhase() const;
+
+  inline bool hasGroup() const;
+  inline  ::capnp::Text::Reader getGroup() const;
+
+  inline bool hasNames() const;
+  inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader getNames() const;
+
+  inline bool hasBaseline() const;
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader getBaseline() const;
+
+  inline bool hasTarget() const;
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader getTarget() const;
+
+  inline bool hasBaselineSha256() const;
+  inline  ::capnp::Text::Reader getBaselineSha256() const;
+
+  inline bool hasTargetSha256() const;
+  inline  ::capnp::Text::Reader getTargetSha256() const;
+
+  inline  ::uint64_t getStartedMonoTime() const;
+
+  inline  ::uint64_t getObservedMonoTime() const;
+
+  inline  ::uint64_t getValidUntilMonoTime() const;
+
+  inline bool hasResponseWitness() const;
+  inline  ::cereal::LiveTrackingResponseWitness::Reader getResponseWitness() const;
+
+  inline  ::uint64_t getTargetSequence() const;
+
+  inline  ::uint64_t getDeadlineMonoTime() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class LiveTrackingTrial::Builder {
+public:
+  typedef LiveTrackingTrial Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint16_t getVersion();
+  inline void setVersion( ::uint16_t value);
+
+  inline bool hasProtocol();
+  inline  ::capnp::Text::Builder getProtocol();
+  inline void setProtocol( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initProtocol(unsigned int size);
+  inline void adoptProtocol(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownProtocol();
+
+  inline bool hasBinding();
+  inline  ::cereal::LiveTrackingBinding::Builder getBinding();
+  inline void setBinding( ::cereal::LiveTrackingBinding::Reader value);
+  inline  ::cereal::LiveTrackingBinding::Builder initBinding();
+  inline void adoptBinding(::capnp::Orphan< ::cereal::LiveTrackingBinding>&& value);
+  inline ::capnp::Orphan< ::cereal::LiveTrackingBinding> disownBinding();
+
+  inline bool hasTrialId();
+  inline  ::capnp::Text::Builder getTrialId();
+  inline void setTrialId( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initTrialId(unsigned int size);
+  inline void adoptTrialId(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownTrialId();
+
+  inline  ::uint64_t getSequence();
+  inline void setSequence( ::uint64_t value);
+
+  inline bool hasPhase();
+  inline  ::capnp::Text::Builder getPhase();
+  inline void setPhase( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initPhase(unsigned int size);
+  inline void adoptPhase(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownPhase();
+
+  inline bool hasGroup();
+  inline  ::capnp::Text::Builder getGroup();
+  inline void setGroup( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initGroup(unsigned int size);
+  inline void adoptGroup(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownGroup();
+
+  inline bool hasNames();
+  inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder getNames();
+  inline void setNames( ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader value);
+  inline void setNames(::kj::ArrayPtr<const  ::capnp::Text::Reader> value);
+  inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder initNames(unsigned int size);
+  inline void adoptNames(::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>&& value);
+  inline ::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>> disownNames();
+
+  inline bool hasBaseline();
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder getBaseline();
+  inline void setBaseline( ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader value);
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder initBaseline(unsigned int size);
+  inline void adoptBaseline(::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>&& value);
+  inline ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>> disownBaseline();
+
+  inline bool hasTarget();
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder getTarget();
+  inline void setTarget( ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader value);
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder initTarget(unsigned int size);
+  inline void adoptTarget(::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>&& value);
+  inline ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>> disownTarget();
+
+  inline bool hasBaselineSha256();
+  inline  ::capnp::Text::Builder getBaselineSha256();
+  inline void setBaselineSha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initBaselineSha256(unsigned int size);
+  inline void adoptBaselineSha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownBaselineSha256();
+
+  inline bool hasTargetSha256();
+  inline  ::capnp::Text::Builder getTargetSha256();
+  inline void setTargetSha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initTargetSha256(unsigned int size);
+  inline void adoptTargetSha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownTargetSha256();
+
+  inline  ::uint64_t getStartedMonoTime();
+  inline void setStartedMonoTime( ::uint64_t value);
+
+  inline  ::uint64_t getObservedMonoTime();
+  inline void setObservedMonoTime( ::uint64_t value);
+
+  inline  ::uint64_t getValidUntilMonoTime();
+  inline void setValidUntilMonoTime( ::uint64_t value);
+
+  inline bool hasResponseWitness();
+  inline  ::cereal::LiveTrackingResponseWitness::Builder getResponseWitness();
+  inline void setResponseWitness( ::cereal::LiveTrackingResponseWitness::Reader value);
+  inline  ::cereal::LiveTrackingResponseWitness::Builder initResponseWitness();
+  inline void adoptResponseWitness(::capnp::Orphan< ::cereal::LiveTrackingResponseWitness>&& value);
+  inline ::capnp::Orphan< ::cereal::LiveTrackingResponseWitness> disownResponseWitness();
+
+  inline  ::uint64_t getTargetSequence();
+  inline void setTargetSequence( ::uint64_t value);
+
+  inline  ::uint64_t getDeadlineMonoTime();
+  inline void setDeadlineMonoTime( ::uint64_t value);
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class LiveTrackingTrial::Pipeline {
+public:
+  typedef LiveTrackingTrial Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+  inline  ::cereal::LiveTrackingBinding::Pipeline getBinding();
+  inline  ::cereal::LiveTrackingResponseWitness::Pipeline getResponseWitness();
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class LiveTrackingTrial::Coordinate::Reader {
+public:
+  typedef Coordinate Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline bool hasName() const;
+  inline  ::capnp::Text::Reader getName() const;
+
+  inline double getValue() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class LiveTrackingTrial::Coordinate::Builder {
+public:
+  typedef Coordinate Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline bool hasName();
+  inline  ::capnp::Text::Builder getName();
+  inline void setName( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initName(unsigned int size);
+  inline void adoptName(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownName();
+
+  inline double getValue();
+  inline void setValue(double value);
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class LiveTrackingTrial::Coordinate::Pipeline {
+public:
+  typedef Coordinate Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class LiveTrackingApplication::Reader {
+public:
+  typedef LiveTrackingApplication Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint16_t getVersion() const;
+
+  inline bool hasBinding() const;
+  inline  ::cereal::LiveTrackingBinding::Reader getBinding() const;
+
+  inline bool hasTrialId() const;
+  inline  ::capnp::Text::Reader getTrialId() const;
+
+  inline  ::uint64_t getSequence() const;
+
+  inline  ::uint64_t getControlMonoTime() const;
+
+  inline bool hasStatus() const;
+  inline  ::capnp::Text::Reader getStatus() const;
+
+  inline bool hasApplied() const;
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader getApplied() const;
+
+  inline bool hasAppliedSha256() const;
+  inline  ::capnp::Text::Reader getAppliedSha256() const;
+
+  inline bool hasConfirmedTargetSha256() const;
+  inline  ::capnp::Text::Reader getConfirmedTargetSha256() const;
+
+  inline bool hasReason() const;
+  inline  ::capnp::Text::Reader getReason() const;
+
+  inline  ::uint64_t getTargetSequence() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class LiveTrackingApplication::Builder {
+public:
+  typedef LiveTrackingApplication Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint16_t getVersion();
+  inline void setVersion( ::uint16_t value);
+
+  inline bool hasBinding();
+  inline  ::cereal::LiveTrackingBinding::Builder getBinding();
+  inline void setBinding( ::cereal::LiveTrackingBinding::Reader value);
+  inline  ::cereal::LiveTrackingBinding::Builder initBinding();
+  inline void adoptBinding(::capnp::Orphan< ::cereal::LiveTrackingBinding>&& value);
+  inline ::capnp::Orphan< ::cereal::LiveTrackingBinding> disownBinding();
+
+  inline bool hasTrialId();
+  inline  ::capnp::Text::Builder getTrialId();
+  inline void setTrialId( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initTrialId(unsigned int size);
+  inline void adoptTrialId(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownTrialId();
+
+  inline  ::uint64_t getSequence();
+  inline void setSequence( ::uint64_t value);
+
+  inline  ::uint64_t getControlMonoTime();
+  inline void setControlMonoTime( ::uint64_t value);
+
+  inline bool hasStatus();
+  inline  ::capnp::Text::Builder getStatus();
+  inline void setStatus( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initStatus(unsigned int size);
+  inline void adoptStatus(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownStatus();
+
+  inline bool hasApplied();
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder getApplied();
+  inline void setApplied( ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader value);
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder initApplied(unsigned int size);
+  inline void adoptApplied(::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>&& value);
+  inline ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>> disownApplied();
+
+  inline bool hasAppliedSha256();
+  inline  ::capnp::Text::Builder getAppliedSha256();
+  inline void setAppliedSha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initAppliedSha256(unsigned int size);
+  inline void adoptAppliedSha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownAppliedSha256();
+
+  inline bool hasConfirmedTargetSha256();
+  inline  ::capnp::Text::Builder getConfirmedTargetSha256();
+  inline void setConfirmedTargetSha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initConfirmedTargetSha256(unsigned int size);
+  inline void adoptConfirmedTargetSha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownConfirmedTargetSha256();
+
+  inline bool hasReason();
+  inline  ::capnp::Text::Builder getReason();
+  inline void setReason( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initReason(unsigned int size);
+  inline void adoptReason(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownReason();
+
+  inline  ::uint64_t getTargetSequence();
+  inline void setTargetSequence( ::uint64_t value);
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class LiveTrackingApplication::Pipeline {
+public:
+  typedef LiveTrackingApplication Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+  inline  ::cereal::LiveTrackingBinding::Pipeline getBinding();
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class LiveTrackingRestore::Reader {
+public:
+  typedef LiveTrackingRestore Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint16_t getVersion() const;
+
+  inline bool hasProtocol() const;
+  inline  ::capnp::Text::Reader getProtocol() const;
+
+  inline bool hasBinding() const;
+  inline  ::cereal::LiveTrackingBinding::Reader getBinding() const;
+
+  inline bool hasHistoryScope() const;
+  inline  ::capnp::Text::Reader getHistoryScope() const;
+
+  inline bool hasHistoryTrialId() const;
+  inline  ::capnp::Text::Reader getHistoryTrialId() const;
+
+  inline bool hasTarget() const;
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader getTarget() const;
+
+  inline bool hasTargetSha256() const;
+  inline  ::capnp::Text::Reader getTargetSha256() const;
+
+  inline  ::uint64_t getSequence() const;
+
+  inline  ::uint64_t getObservedMonoTime() const;
+
+  inline  ::uint64_t getValidUntilMonoTime() const;
+
+  inline bool hasResponseWitness() const;
+  inline  ::cereal::LiveTrackingResponseWitness::Reader getResponseWitness() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class LiveTrackingRestore::Builder {
+public:
+  typedef LiveTrackingRestore Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint16_t getVersion();
+  inline void setVersion( ::uint16_t value);
+
+  inline bool hasProtocol();
+  inline  ::capnp::Text::Builder getProtocol();
+  inline void setProtocol( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initProtocol(unsigned int size);
+  inline void adoptProtocol(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownProtocol();
+
+  inline bool hasBinding();
+  inline  ::cereal::LiveTrackingBinding::Builder getBinding();
+  inline void setBinding( ::cereal::LiveTrackingBinding::Reader value);
+  inline  ::cereal::LiveTrackingBinding::Builder initBinding();
+  inline void adoptBinding(::capnp::Orphan< ::cereal::LiveTrackingBinding>&& value);
+  inline ::capnp::Orphan< ::cereal::LiveTrackingBinding> disownBinding();
+
+  inline bool hasHistoryScope();
+  inline  ::capnp::Text::Builder getHistoryScope();
+  inline void setHistoryScope( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initHistoryScope(unsigned int size);
+  inline void adoptHistoryScope(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownHistoryScope();
+
+  inline bool hasHistoryTrialId();
+  inline  ::capnp::Text::Builder getHistoryTrialId();
+  inline void setHistoryTrialId( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initHistoryTrialId(unsigned int size);
+  inline void adoptHistoryTrialId(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownHistoryTrialId();
+
+  inline bool hasTarget();
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder getTarget();
+  inline void setTarget( ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader value);
+  inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder initTarget(unsigned int size);
+  inline void adoptTarget(::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>&& value);
+  inline ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>> disownTarget();
+
+  inline bool hasTargetSha256();
+  inline  ::capnp::Text::Builder getTargetSha256();
+  inline void setTargetSha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initTargetSha256(unsigned int size);
+  inline void adoptTargetSha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownTargetSha256();
+
+  inline  ::uint64_t getSequence();
+  inline void setSequence( ::uint64_t value);
+
+  inline  ::uint64_t getObservedMonoTime();
+  inline void setObservedMonoTime( ::uint64_t value);
+
+  inline  ::uint64_t getValidUntilMonoTime();
+  inline void setValidUntilMonoTime( ::uint64_t value);
+
+  inline bool hasResponseWitness();
+  inline  ::cereal::LiveTrackingResponseWitness::Builder getResponseWitness();
+  inline void setResponseWitness( ::cereal::LiveTrackingResponseWitness::Reader value);
+  inline  ::cereal::LiveTrackingResponseWitness::Builder initResponseWitness();
+  inline void adoptResponseWitness(::capnp::Orphan< ::cereal::LiveTrackingResponseWitness>&& value);
+  inline ::capnp::Orphan< ::cereal::LiveTrackingResponseWitness> disownResponseWitness();
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class LiveTrackingRestore::Pipeline {
+public:
+  typedef LiveTrackingRestore Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+  inline  ::cereal::LiveTrackingBinding::Pipeline getBinding();
+  inline  ::cereal::LiveTrackingResponseWitness::Pipeline getResponseWitness();
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class LiveTrackingResponseCertificate::Reader {
+public:
+  typedef LiveTrackingResponseCertificate Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline bool hasVersion() const;
+  inline  ::capnp::Text::Reader getVersion() const;
+
+  inline bool hasModelRevision() const;
+  inline  ::capnp::Text::Reader getModelRevision() const;
+
+  inline  ::uint64_t getLagNs() const;
+
+  inline double getSlope() const;
+
+  inline double getIntercept() const;
+
+  inline double getCommandLow() const;
+
+  inline double getCommandHigh() const;
+
+  inline double getHeldoutRmse() const;
+
+  inline bool hasTrainBlockIds() const;
+  inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader getTrainBlockIds() const;
+
+  inline bool hasHeldoutBlockIds() const;
+  inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader getHeldoutBlockIds() const;
+
+  inline bool hasSourceInventorySha256() const;
+  inline  ::capnp::Text::Reader getSourceInventorySha256() const;
+
+  inline bool hasIdentificationSha256() const;
+  inline  ::capnp::Text::Reader getIdentificationSha256() const;
+
+  inline  ::uint64_t getIdentifiedMonoTime() const;
+
+  inline bool hasProvenance() const;
+  inline  ::capnp::Text::Reader getProvenance() const;
+
+  inline bool hasParentModelRevision() const;
+  inline  ::capnp::Text::Reader getParentModelRevision() const;
+
+  inline bool hasRequalificationSha256() const;
+  inline  ::capnp::Text::Reader getRequalificationSha256() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class LiveTrackingResponseCertificate::Builder {
+public:
+  typedef LiveTrackingResponseCertificate Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline bool hasVersion();
+  inline  ::capnp::Text::Builder getVersion();
+  inline void setVersion( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initVersion(unsigned int size);
+  inline void adoptVersion(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownVersion();
+
+  inline bool hasModelRevision();
+  inline  ::capnp::Text::Builder getModelRevision();
+  inline void setModelRevision( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initModelRevision(unsigned int size);
+  inline void adoptModelRevision(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownModelRevision();
+
+  inline  ::uint64_t getLagNs();
+  inline void setLagNs( ::uint64_t value);
+
+  inline double getSlope();
+  inline void setSlope(double value);
+
+  inline double getIntercept();
+  inline void setIntercept(double value);
+
+  inline double getCommandLow();
+  inline void setCommandLow(double value);
+
+  inline double getCommandHigh();
+  inline void setCommandHigh(double value);
+
+  inline double getHeldoutRmse();
+  inline void setHeldoutRmse(double value);
+
+  inline bool hasTrainBlockIds();
+  inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder getTrainBlockIds();
+  inline void setTrainBlockIds( ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader value);
+  inline void setTrainBlockIds(::kj::ArrayPtr<const  ::capnp::Text::Reader> value);
+  inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder initTrainBlockIds(unsigned int size);
+  inline void adoptTrainBlockIds(::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>&& value);
+  inline ::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>> disownTrainBlockIds();
+
+  inline bool hasHeldoutBlockIds();
+  inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder getHeldoutBlockIds();
+  inline void setHeldoutBlockIds( ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader value);
+  inline void setHeldoutBlockIds(::kj::ArrayPtr<const  ::capnp::Text::Reader> value);
+  inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder initHeldoutBlockIds(unsigned int size);
+  inline void adoptHeldoutBlockIds(::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>&& value);
+  inline ::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>> disownHeldoutBlockIds();
+
+  inline bool hasSourceInventorySha256();
+  inline  ::capnp::Text::Builder getSourceInventorySha256();
+  inline void setSourceInventorySha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initSourceInventorySha256(unsigned int size);
+  inline void adoptSourceInventorySha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownSourceInventorySha256();
+
+  inline bool hasIdentificationSha256();
+  inline  ::capnp::Text::Builder getIdentificationSha256();
+  inline void setIdentificationSha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initIdentificationSha256(unsigned int size);
+  inline void adoptIdentificationSha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownIdentificationSha256();
+
+  inline  ::uint64_t getIdentifiedMonoTime();
+  inline void setIdentifiedMonoTime( ::uint64_t value);
+
+  inline bool hasProvenance();
+  inline  ::capnp::Text::Builder getProvenance();
+  inline void setProvenance( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initProvenance(unsigned int size);
+  inline void adoptProvenance(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownProvenance();
+
+  inline bool hasParentModelRevision();
+  inline  ::capnp::Text::Builder getParentModelRevision();
+  inline void setParentModelRevision( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initParentModelRevision(unsigned int size);
+  inline void adoptParentModelRevision(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownParentModelRevision();
+
+  inline bool hasRequalificationSha256();
+  inline  ::capnp::Text::Builder getRequalificationSha256();
+  inline void setRequalificationSha256( ::capnp::Text::Reader value);
+  inline  ::capnp::Text::Builder initRequalificationSha256(unsigned int size);
+  inline void adoptRequalificationSha256(::capnp::Orphan< ::capnp::Text>&& value);
+  inline ::capnp::Orphan< ::capnp::Text> disownRequalificationSha256();
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class LiveTrackingResponseCertificate::Pipeline {
+public:
+  typedef LiveTrackingResponseCertificate Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class LiveTrackingResponseWitness::Reader {
+public:
+  typedef LiveTrackingResponseWitness Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline bool hasCertificate() const;
+  inline  ::cereal::LiveTrackingResponseCertificate::Reader getCertificate() const;
+
+  inline  ::uint64_t getLastControlMonoTime() const;
+
+  inline  ::uint64_t getLastApplyMonoTime() const;
+
+  inline  ::uint64_t getLastPoseMonoTime() const;
+
+  inline  ::uint64_t getWindowStartMonoTime() const;
+
+  inline  ::uint16_t getIndependentPoses() const;
+
+  inline double getResidualRmse() const;
+
+  inline  ::uint64_t getValidUntilMonoTime() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class LiveTrackingResponseWitness::Builder {
+public:
+  typedef LiveTrackingResponseWitness Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline bool hasCertificate();
+  inline  ::cereal::LiveTrackingResponseCertificate::Builder getCertificate();
+  inline void setCertificate( ::cereal::LiveTrackingResponseCertificate::Reader value);
+  inline  ::cereal::LiveTrackingResponseCertificate::Builder initCertificate();
+  inline void adoptCertificate(::capnp::Orphan< ::cereal::LiveTrackingResponseCertificate>&& value);
+  inline ::capnp::Orphan< ::cereal::LiveTrackingResponseCertificate> disownCertificate();
+
+  inline  ::uint64_t getLastControlMonoTime();
+  inline void setLastControlMonoTime( ::uint64_t value);
+
+  inline  ::uint64_t getLastApplyMonoTime();
+  inline void setLastApplyMonoTime( ::uint64_t value);
+
+  inline  ::uint64_t getLastPoseMonoTime();
+  inline void setLastPoseMonoTime( ::uint64_t value);
+
+  inline  ::uint64_t getWindowStartMonoTime();
+  inline void setWindowStartMonoTime( ::uint64_t value);
+
+  inline  ::uint16_t getIndependentPoses();
+  inline void setIndependentPoses( ::uint16_t value);
+
+  inline double getResidualRmse();
+  inline void setResidualRmse(double value);
+
+  inline  ::uint64_t getValidUntilMonoTime();
+  inline void setValidUntilMonoTime( ::uint64_t value);
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class LiveTrackingResponseWitness::Pipeline {
+public:
+  typedef LiveTrackingResponseWitness Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+  inline  ::cereal::LiveTrackingResponseCertificate::Pipeline getCertificate();
 private:
   ::capnp::AnyPointer::Pipeline _typeless;
   friend class ::capnp::PipelineHook;
@@ -15640,6 +17363,45 @@ inline ::capnp::Orphan< ::cereal::LearningApplication> StarPilotCarState::Builde
       ::capnp::bounded<3>() * ::capnp::POINTERS));
 }
 
+inline bool StarPilotCarState::Reader::hasFeedbackPublication() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotCarState::Builder::hasFeedbackPublication() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::StarPilotCarState::FeedbackPublication::Reader StarPilotCarState::Reader::getFeedbackPublication() const {
+  return ::capnp::_::PointerHelpers< ::cereal::StarPilotCarState::FeedbackPublication>::get(_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline  ::cereal::StarPilotCarState::FeedbackPublication::Builder StarPilotCarState::Builder::getFeedbackPublication() {
+  return ::capnp::_::PointerHelpers< ::cereal::StarPilotCarState::FeedbackPublication>::get(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::StarPilotCarState::FeedbackPublication::Pipeline StarPilotCarState::Pipeline::getFeedbackPublication() {
+  return  ::cereal::StarPilotCarState::FeedbackPublication::Pipeline(_typeless.getPointerField(4));
+}
+#endif  // !CAPNP_LITE
+inline void StarPilotCarState::Builder::setFeedbackPublication( ::cereal::StarPilotCarState::FeedbackPublication::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::StarPilotCarState::FeedbackPublication>::set(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::StarPilotCarState::FeedbackPublication::Builder StarPilotCarState::Builder::initFeedbackPublication() {
+  return ::capnp::_::PointerHelpers< ::cereal::StarPilotCarState::FeedbackPublication>::init(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline void StarPilotCarState::Builder::adoptFeedbackPublication(
+    ::capnp::Orphan< ::cereal::StarPilotCarState::FeedbackPublication>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::StarPilotCarState::FeedbackPublication>::adopt(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::StarPilotCarState::FeedbackPublication> StarPilotCarState::Builder::disownFeedbackPublication() {
+  return ::capnp::_::PointerHelpers< ::cereal::StarPilotCarState::FeedbackPublication>::disown(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+
 inline  ::uint64_t StarPilotCarState::Gps::Reader::getSourceMonoTime() const {
   return _reader.getDataField< ::uint64_t>(
       ::capnp::bounded<0>() * ::capnp::ELEMENTS);
@@ -15844,6 +17606,364 @@ inline void StarPilotCarState::Gps::Builder::adoptVNED(
 inline ::capnp::Orphan< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>> StarPilotCarState::Gps::Builder::disownVNED() {
   return ::capnp::_::PointerHelpers< ::capnp::List<float,  ::capnp::Kind::PRIMITIVE>>::disown(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline  ::uint16_t StarPilotCarState::FeedbackPublication::Reader::getVersion() const {
+  return _reader.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint16_t StarPilotCarState::FeedbackPublication::Builder::getVersion() {
+  return _builder.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setVersion( ::uint16_t value) {
+  _builder.setDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotCarState::FeedbackPublication::Reader::hasCardSession() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotCarState::FeedbackPublication::Builder::hasCardSession() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Data::Reader StarPilotCarState::FeedbackPublication::Reader::getCardSession() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Data::Builder StarPilotCarState::FeedbackPublication::Builder::getCardSession() {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setCardSession( ::capnp::Data::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Data>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Data::Builder StarPilotCarState::FeedbackPublication::Builder::initCardSession(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), size);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::adoptCardSession(
+    ::capnp::Orphan< ::capnp::Data>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Data>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Data> StarPilotCarState::FeedbackPublication::Builder::disownCardSession() {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Reader::getPublicationSequence() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Builder::getPublicationSequence() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setPublicationSequence( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Reader::getPublicationMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Builder::getPublicationMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setPublicationMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Reader::getSourceCarStateMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Builder::getSourceCarStateMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setSourceCarStateMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotCarState::FeedbackPublication::Reader::getOutputKnown() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<16>() * ::capnp::ELEMENTS);
+}
+
+inline bool StarPilotCarState::FeedbackPublication::Builder::getOutputKnown() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<16>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setOutputKnown(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<16>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Reader::getOutputControlMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Builder::getOutputControlMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setOutputControlMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Reader::getOutputApplyMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Builder::getOutputApplyMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setOutputApplyMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotCarState::FeedbackPublication::Reader::hasOutputNativeIdentity() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotCarState::FeedbackPublication::Builder::hasOutputNativeIdentity() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader StarPilotCarState::FeedbackPublication::Reader::getOutputNativeIdentity() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder StarPilotCarState::FeedbackPublication::Builder::getOutputNativeIdentity() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setOutputNativeIdentity( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder StarPilotCarState::FeedbackPublication::Builder::initOutputNativeIdentity(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), size);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::adoptOutputNativeIdentity(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> StarPilotCarState::FeedbackPublication::Builder::disownOutputNativeIdentity() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Reader::getOutputCarrierSequence() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Builder::getOutputCarrierSequence() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setOutputCarrierSequence( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS, value);
+}
+
+inline float StarPilotCarState::FeedbackPublication::Reader::getReportedTorque() const {
+  return _reader.getDataField<float>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline float StarPilotCarState::FeedbackPublication::Builder::getReportedTorque() {
+  return _builder.getDataField<float>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setReportedTorque(float value) {
+  _builder.setDataField<float>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotCarState::FeedbackPublication::Reader::getOutputValid() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<17>() * ::capnp::ELEMENTS);
+}
+
+inline bool StarPilotCarState::FeedbackPublication::Builder::getOutputValid() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<17>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setOutputValid(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<17>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotCarState::FeedbackPublication::Reader::hasCoBodySha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotCarState::FeedbackPublication::Builder::hasCoBodySha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Data::Reader StarPilotCarState::FeedbackPublication::Reader::getCoBodySha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::get(_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Data::Builder StarPilotCarState::FeedbackPublication::Builder::getCoBodySha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::get(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setCoBodySha256( ::capnp::Data::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Data>::set(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Data::Builder StarPilotCarState::FeedbackPublication::Builder::initCoBodySha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::init(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), size);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::adoptCoBodySha256(
+    ::capnp::Orphan< ::capnp::Data>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Data>::adopt(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Data> StarPilotCarState::FeedbackPublication::Builder::disownCoBodySha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::disown(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+
+inline bool StarPilotCarState::FeedbackPublication::Reader::hasApplyEvidenceSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotCarState::FeedbackPublication::Builder::hasApplyEvidenceSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Data::Reader StarPilotCarState::FeedbackPublication::Reader::getApplyEvidenceSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::get(_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Data::Builder StarPilotCarState::FeedbackPublication::Builder::getApplyEvidenceSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::get(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setApplyEvidenceSha256( ::capnp::Data::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Data>::set(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Data::Builder StarPilotCarState::FeedbackPublication::Builder::initApplyEvidenceSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::init(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), size);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::adoptApplyEvidenceSha256(
+    ::capnp::Orphan< ::capnp::Data>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Data>::adopt(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Data> StarPilotCarState::FeedbackPublication::Builder::disownApplyEvidenceSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::disown(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+
+inline bool StarPilotCarState::FeedbackPublication::Reader::hasSourceEpoch() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotCarState::FeedbackPublication::Builder::hasSourceEpoch() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader StarPilotCarState::FeedbackPublication::Reader::getSourceEpoch() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder StarPilotCarState::FeedbackPublication::Builder::getSourceEpoch() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setSourceEpoch( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder StarPilotCarState::FeedbackPublication::Builder::initSourceEpoch(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), size);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::adoptSourceEpoch(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> StarPilotCarState::FeedbackPublication::Builder::disownSourceEpoch() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+
+inline bool StarPilotCarState::FeedbackPublication::Reader::hasCpSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotCarState::FeedbackPublication::Builder::hasCpSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader StarPilotCarState::FeedbackPublication::Reader::getCpSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder StarPilotCarState::FeedbackPublication::Builder::getCpSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setCpSha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder StarPilotCarState::FeedbackPublication::Builder::initCpSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), size);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::adoptCpSha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> StarPilotCarState::FeedbackPublication::Builder::disownCpSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Reader::getCarrierObservedMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<7>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotCarState::FeedbackPublication::Builder::getCarrierObservedMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<7>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotCarState::FeedbackPublication::Builder::setCarrierObservedMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<7>() * ::capnp::ELEMENTS, value);
 }
 
 inline  ::uint16_t StarPilotLongitudinalPlan::Reader::getVersion() const {
@@ -20434,6 +22554,137 @@ inline void StarPilotModelDataV2::VisionObservation::Builder::setStream( ::cerea
       ::capnp::bounded<22>() * ::capnp::ELEMENTS, value);
 }
 
+inline  ::uint16_t StarPilotSteeringTracking::Reader::getVersion() const {
+  return _reader.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint16_t StarPilotSteeringTracking::Builder::getVersion() {
+  return _builder.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotSteeringTracking::Builder::setVersion( ::uint16_t value) {
+  _builder.setDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotSteeringTracking::Reader::hasSourceReceipt() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotSteeringTracking::Builder::hasSourceReceipt() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::AutomaticLearningSourceReceipt::Reader StarPilotSteeringTracking::Reader::getSourceReceipt() const {
+  return ::capnp::_::PointerHelpers< ::cereal::AutomaticLearningSourceReceipt>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::cereal::AutomaticLearningSourceReceipt::Builder StarPilotSteeringTracking::Builder::getSourceReceipt() {
+  return ::capnp::_::PointerHelpers< ::cereal::AutomaticLearningSourceReceipt>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::AutomaticLearningSourceReceipt::Pipeline StarPilotSteeringTracking::Pipeline::getSourceReceipt() {
+  return  ::cereal::AutomaticLearningSourceReceipt::Pipeline(_typeless.getPointerField(0));
+}
+#endif  // !CAPNP_LITE
+inline void StarPilotSteeringTracking::Builder::setSourceReceipt( ::cereal::AutomaticLearningSourceReceipt::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::AutomaticLearningSourceReceipt>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::AutomaticLearningSourceReceipt::Builder StarPilotSteeringTracking::Builder::initSourceReceipt() {
+  return ::capnp::_::PointerHelpers< ::cereal::AutomaticLearningSourceReceipt>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void StarPilotSteeringTracking::Builder::adoptSourceReceipt(
+    ::capnp::Orphan< ::cereal::AutomaticLearningSourceReceipt>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::AutomaticLearningSourceReceipt>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::AutomaticLearningSourceReceipt> StarPilotSteeringTracking::Builder::disownSourceReceipt() {
+  return ::capnp::_::PointerHelpers< ::cereal::AutomaticLearningSourceReceipt>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline bool StarPilotSteeringTracking::Reader::hasTrial() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotSteeringTracking::Builder::hasTrial() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::LiveTrackingTrial::Reader StarPilotSteeringTracking::Reader::getTrial() const {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingTrial>::get(_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline  ::cereal::LiveTrackingTrial::Builder StarPilotSteeringTracking::Builder::getTrial() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingTrial>::get(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::LiveTrackingTrial::Pipeline StarPilotSteeringTracking::Pipeline::getTrial() {
+  return  ::cereal::LiveTrackingTrial::Pipeline(_typeless.getPointerField(1));
+}
+#endif  // !CAPNP_LITE
+inline void StarPilotSteeringTracking::Builder::setTrial( ::cereal::LiveTrackingTrial::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingTrial>::set(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::LiveTrackingTrial::Builder StarPilotSteeringTracking::Builder::initTrial() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingTrial>::init(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline void StarPilotSteeringTracking::Builder::adoptTrial(
+    ::capnp::Orphan< ::cereal::LiveTrackingTrial>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingTrial>::adopt(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::LiveTrackingTrial> StarPilotSteeringTracking::Builder::disownTrial() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingTrial>::disown(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+
+inline bool StarPilotSteeringTracking::Reader::hasRestore() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotSteeringTracking::Builder::hasRestore() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::LiveTrackingRestore::Reader StarPilotSteeringTracking::Reader::getRestore() const {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingRestore>::get(_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline  ::cereal::LiveTrackingRestore::Builder StarPilotSteeringTracking::Builder::getRestore() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingRestore>::get(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::LiveTrackingRestore::Pipeline StarPilotSteeringTracking::Pipeline::getRestore() {
+  return  ::cereal::LiveTrackingRestore::Pipeline(_typeless.getPointerField(2));
+}
+#endif  // !CAPNP_LITE
+inline void StarPilotSteeringTracking::Builder::setRestore( ::cereal::LiveTrackingRestore::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingRestore>::set(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::LiveTrackingRestore::Builder StarPilotSteeringTracking::Builder::initRestore() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingRestore>::init(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline void StarPilotSteeringTracking::Builder::adoptRestore(
+    ::capnp::Orphan< ::cereal::LiveTrackingRestore>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingRestore>::adopt(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::LiveTrackingRestore> StarPilotSteeringTracking::Builder::disownRestore() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingRestore>::disown(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+
 inline float CustomReserved6::Reader::getAccelerationJerk() const {
   return _reader.getDataField<float>(
       ::capnp::bounded<0>() * ::capnp::ELEMENTS);
@@ -22778,6 +25029,84 @@ inline ::capnp::Orphan< ::cereal::LearningApplication> StarPilotLateralState::Bu
       ::capnp::bounded<2>() * ::capnp::POINTERS));
 }
 
+inline bool StarPilotLateralState::Reader::hasFeedbackConsumption() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotLateralState::Builder::hasFeedbackConsumption() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::StarPilotLateralState::FeedbackConsumption::Reader StarPilotLateralState::Reader::getFeedbackConsumption() const {
+  return ::capnp::_::PointerHelpers< ::cereal::StarPilotLateralState::FeedbackConsumption>::get(_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline  ::cereal::StarPilotLateralState::FeedbackConsumption::Builder StarPilotLateralState::Builder::getFeedbackConsumption() {
+  return ::capnp::_::PointerHelpers< ::cereal::StarPilotLateralState::FeedbackConsumption>::get(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::StarPilotLateralState::FeedbackConsumption::Pipeline StarPilotLateralState::Pipeline::getFeedbackConsumption() {
+  return  ::cereal::StarPilotLateralState::FeedbackConsumption::Pipeline(_typeless.getPointerField(3));
+}
+#endif  // !CAPNP_LITE
+inline void StarPilotLateralState::Builder::setFeedbackConsumption( ::cereal::StarPilotLateralState::FeedbackConsumption::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::StarPilotLateralState::FeedbackConsumption>::set(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::StarPilotLateralState::FeedbackConsumption::Builder StarPilotLateralState::Builder::initFeedbackConsumption() {
+  return ::capnp::_::PointerHelpers< ::cereal::StarPilotLateralState::FeedbackConsumption>::init(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline void StarPilotLateralState::Builder::adoptFeedbackConsumption(
+    ::capnp::Orphan< ::cereal::StarPilotLateralState::FeedbackConsumption>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::StarPilotLateralState::FeedbackConsumption>::adopt(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::StarPilotLateralState::FeedbackConsumption> StarPilotLateralState::Builder::disownFeedbackConsumption() {
+  return ::capnp::_::PointerHelpers< ::cereal::StarPilotLateralState::FeedbackConsumption>::disown(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+
+inline bool StarPilotLateralState::Reader::hasTrackingApplication() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotLateralState::Builder::hasTrackingApplication() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::LiveTrackingApplication::Reader StarPilotLateralState::Reader::getTrackingApplication() const {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingApplication>::get(_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline  ::cereal::LiveTrackingApplication::Builder StarPilotLateralState::Builder::getTrackingApplication() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingApplication>::get(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::LiveTrackingApplication::Pipeline StarPilotLateralState::Pipeline::getTrackingApplication() {
+  return  ::cereal::LiveTrackingApplication::Pipeline(_typeless.getPointerField(4));
+}
+#endif  // !CAPNP_LITE
+inline void StarPilotLateralState::Builder::setTrackingApplication( ::cereal::LiveTrackingApplication::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingApplication>::set(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::LiveTrackingApplication::Builder StarPilotLateralState::Builder::initTrackingApplication() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingApplication>::init(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline void StarPilotLateralState::Builder::adoptTrackingApplication(
+    ::capnp::Orphan< ::cereal::LiveTrackingApplication>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingApplication>::adopt(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::LiveTrackingApplication> StarPilotLateralState::Builder::disownTrackingApplication() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingApplication>::disown(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+
 inline bool StarPilotLateralState::Reader::getEpsFfActive() const {
   return _reader.getDataField<bool>(
       ::capnp::bounded<2>() * ::capnp::ELEMENTS);
@@ -22864,36 +25193,36 @@ inline void StarPilotLateralState::Builder::setEpsFfWeight(float value) {
 
 inline bool StarPilotLateralState::Reader::hasEpsCalibration() const {
   return !_reader.getPointerField(
-      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
 }
 inline bool StarPilotLateralState::Builder::hasEpsCalibration() {
   return !_builder.getPointerField(
-      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
 }
 inline  ::capnp::Text::Reader StarPilotLateralState::Reader::getEpsCalibration() const {
   return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
-      ::capnp::bounded<3>() * ::capnp::POINTERS));
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
 }
 inline  ::capnp::Text::Builder StarPilotLateralState::Builder::getEpsCalibration() {
   return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
-      ::capnp::bounded<3>() * ::capnp::POINTERS));
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
 }
 inline void StarPilotLateralState::Builder::setEpsCalibration( ::capnp::Text::Reader value) {
   ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
-      ::capnp::bounded<3>() * ::capnp::POINTERS), value);
+      ::capnp::bounded<5>() * ::capnp::POINTERS), value);
 }
 inline  ::capnp::Text::Builder StarPilotLateralState::Builder::initEpsCalibration(unsigned int size) {
   return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
-      ::capnp::bounded<3>() * ::capnp::POINTERS), size);
+      ::capnp::bounded<5>() * ::capnp::POINTERS), size);
 }
 inline void StarPilotLateralState::Builder::adoptEpsCalibration(
     ::capnp::Orphan< ::capnp::Text>&& value) {
   ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
-      ::capnp::bounded<3>() * ::capnp::POINTERS), kj::mv(value));
+      ::capnp::bounded<5>() * ::capnp::POINTERS), kj::mv(value));
 }
 inline ::capnp::Orphan< ::capnp::Text> StarPilotLateralState::Builder::disownEpsCalibration() {
   return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
-      ::capnp::bounded<3>() * ::capnp::POINTERS));
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
 }
 
 inline float StarPilotLateralState::Reader::getEpsCommandDelay() const {
@@ -23040,6 +25369,290 @@ inline void StarPilotLateralState::LaneCentering::Builder::adoptReason(
 inline ::capnp::Orphan< ::capnp::Text> StarPilotLateralState::LaneCentering::Builder::disownReason() {
   return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline  ::uint16_t StarPilotLateralState::FeedbackConsumption::Reader::getVersion() const {
+  return _reader.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint16_t StarPilotLateralState::FeedbackConsumption::Builder::getVersion() {
+  return _builder.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setVersion( ::uint16_t value) {
+  _builder.setDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t StarPilotLateralState::FeedbackConsumption::Reader::getControlMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotLateralState::FeedbackConsumption::Builder::getControlMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setControlMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t StarPilotLateralState::FeedbackConsumption::Reader::getConsumedPublicationMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotLateralState::FeedbackConsumption::Builder::getConsumedPublicationMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setConsumedPublicationMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t StarPilotLateralState::FeedbackConsumption::Reader::getConsumedRecvFrame() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotLateralState::FeedbackConsumption::Builder::getConsumedRecvFrame() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setConsumedRecvFrame( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t StarPilotLateralState::FeedbackConsumption::Reader::getConsumedReceiptMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotLateralState::FeedbackConsumption::Builder::getConsumedReceiptMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setConsumedReceiptMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Reader::getConsumedSeen() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<16>() * ::capnp::ELEMENTS);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Builder::getConsumedSeen() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<16>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setConsumedSeen(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<16>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Reader::getConsumedValid() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<17>() * ::capnp::ELEMENTS);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Builder::getConsumedValid() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<17>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setConsumedValid(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<17>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Reader::hasCoBodySha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotLateralState::FeedbackConsumption::Builder::hasCoBodySha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Data::Reader StarPilotLateralState::FeedbackConsumption::Reader::getCoBodySha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Data::Builder StarPilotLateralState::FeedbackConsumption::Builder::getCoBodySha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setCoBodySha256( ::capnp::Data::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Data>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Data::Builder StarPilotLateralState::FeedbackConsumption::Builder::initCoBodySha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), size);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::adoptCoBodySha256(
+    ::capnp::Orphan< ::capnp::Data>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Data>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Data> StarPilotLateralState::FeedbackConsumption::Builder::disownCoBodySha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Data>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline float StarPilotLateralState::FeedbackConsumption::Reader::getReportedTorque() const {
+  return _reader.getDataField<float>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline float StarPilotLateralState::FeedbackConsumption::Builder::getReportedTorque() {
+  return _builder.getDataField<float>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setReportedTorque(float value) {
+  _builder.setDataField<float>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline float StarPilotLateralState::FeedbackConsumption::Reader::getRequestTorque() const {
+  return _reader.getDataField<float>(
+      ::capnp::bounded<10>() * ::capnp::ELEMENTS);
+}
+
+inline float StarPilotLateralState::FeedbackConsumption::Builder::getRequestTorque() {
+  return _builder.getDataField<float>(
+      ::capnp::bounded<10>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setRequestTorque(float value) {
+  _builder.setDataField<float>(
+      ::capnp::bounded<10>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Reader::getLatActive() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<18>() * ::capnp::ELEMENTS);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Builder::getLatActive() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<18>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setLatActive(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<18>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Reader::getInputSafetyLimited() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<19>() * ::capnp::ELEMENTS);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Builder::getInputSafetyLimited() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<19>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setInputSafetyLimited(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<19>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Reader::getPublishedSafetyLimited() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<20>() * ::capnp::ELEMENTS);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Builder::getPublishedSafetyLimited() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<20>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setPublishedSafetyLimited(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<20>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t StarPilotLateralState::FeedbackConsumption::Reader::getPriorPublishControlMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t StarPilotLateralState::FeedbackConsumption::Builder::getPriorPublishControlMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setPriorPublishControlMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Reader::hasSourceEpoch() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotLateralState::FeedbackConsumption::Builder::hasSourceEpoch() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader StarPilotLateralState::FeedbackConsumption::Reader::getSourceEpoch() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder StarPilotLateralState::FeedbackConsumption::Builder::getSourceEpoch() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setSourceEpoch( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder StarPilotLateralState::FeedbackConsumption::Builder::initSourceEpoch(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), size);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::adoptSourceEpoch(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> StarPilotLateralState::FeedbackConsumption::Builder::disownSourceEpoch() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+
+inline bool StarPilotLateralState::FeedbackConsumption::Reader::hasCpSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline bool StarPilotLateralState::FeedbackConsumption::Builder::hasCpSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader StarPilotLateralState::FeedbackConsumption::Reader::getCpSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder StarPilotLateralState::FeedbackConsumption::Builder::getCpSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::setCpSha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder StarPilotLateralState::FeedbackConsumption::Builder::initCpSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), size);
+}
+inline void StarPilotLateralState::FeedbackConsumption::Builder::adoptCpSha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> StarPilotLateralState::FeedbackConsumption::Builder::disownCpSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
 }
 
 inline  ::cereal::SlcCruiseCommand::Kind SlcCruiseCommand::Reader::getKind() const {
@@ -26655,6 +29268,82 @@ inline  ::uint64_t LearningControlEvidence::Builder::getEffectPrepareMonoTime() 
 inline void LearningControlEvidence::Builder::setEffectPrepareMonoTime( ::uint64_t value) {
   _builder.setDataField< ::uint64_t>(
       ::capnp::bounded<13>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LearningControlEvidence::Reader::hasVehicleModelAnchor() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<19>() * ::capnp::POINTERS).isNull();
+}
+inline bool LearningControlEvidence::Builder::hasVehicleModelAnchor() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<19>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Reader LearningControlEvidence::Reader::getVehicleModelAnchor() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::get(_reader.getPointerField(
+      ::capnp::bounded<19>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Builder LearningControlEvidence::Builder::getVehicleModelAnchor() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::get(_builder.getPointerField(
+      ::capnp::bounded<19>() * ::capnp::POINTERS));
+}
+inline void LearningControlEvidence::Builder::setVehicleModelAnchor( ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<19>() * ::capnp::POINTERS), value);
+}
+inline void LearningControlEvidence::Builder::setVehicleModelAnchor(::kj::ArrayPtr<const double> value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<19>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Builder LearningControlEvidence::Builder::initVehicleModelAnchor(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::init(_builder.getPointerField(
+      ::capnp::bounded<19>() * ::capnp::POINTERS), size);
+}
+inline void LearningControlEvidence::Builder::adoptVehicleModelAnchor(
+    ::capnp::Orphan< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<19>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>> LearningControlEvidence::Builder::disownVehicleModelAnchor() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::disown(_builder.getPointerField(
+      ::capnp::bounded<19>() * ::capnp::POINTERS));
+}
+
+inline bool LearningControlEvidence::Reader::hasLiveAppliedCoordinates() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS).isNull();
+}
+inline bool LearningControlEvidence::Builder::hasLiveAppliedCoordinates() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Reader LearningControlEvidence::Reader::getLiveAppliedCoordinates() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::get(_reader.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Builder LearningControlEvidence::Builder::getLiveAppliedCoordinates() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::get(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS));
+}
+inline void LearningControlEvidence::Builder::setLiveAppliedCoordinates( ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS), value);
+}
+inline void LearningControlEvidence::Builder::setLiveAppliedCoordinates(::kj::ArrayPtr<const double> value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::set(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>::Builder LearningControlEvidence::Builder::initLiveAppliedCoordinates(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::init(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS), size);
+}
+inline void LearningControlEvidence::Builder::adoptLiveAppliedCoordinates(
+    ::capnp::Orphan< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>> LearningControlEvidence::Builder::disownLiveAppliedCoordinates() {
+  return ::capnp::_::PointerHelpers< ::capnp::List<double,  ::capnp::Kind::PRIMITIVE>>::disown(_builder.getPointerField(
+      ::capnp::bounded<20>() * ::capnp::POINTERS));
 }
 
 inline  ::uint16_t LearningControlEvidence::FullEffectTrace::Reader::getVersion() const {
@@ -31288,6 +33977,2080 @@ inline bool LearningTorqueProjection::Builder::getUnlimitedRawPresent() {
 inline void LearningTorqueProjection::Builder::setUnlimitedRawPresent(bool value) {
   _builder.setDataField<bool>(
       ::capnp::bounded<17>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingBinding::Reader::hasIdentity() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasIdentity() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getIdentity() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getIdentity() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setIdentity( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initIdentity(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptIdentity(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownIdentity() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::hasCpSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasCpSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getCpSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getCpSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setCpSha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initCpSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptCpSha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownCpSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::hasControllerRevision() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasControllerRevision() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getControllerRevision() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getControllerRevision() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setControllerRevision( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initControllerRevision(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptControllerRevision(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownControllerRevision() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::hasBaselineRevision() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasBaselineRevision() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getBaselineRevision() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getBaselineRevision() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setBaselineRevision( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initBaselineRevision(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptBaselineRevision(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownBaselineRevision() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::hasSourceEpoch() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasSourceEpoch() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getSourceEpoch() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getSourceEpoch() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setSourceEpoch( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initSourceEpoch(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptSourceEpoch(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownSourceEpoch() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::hasResetGeneration() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasResetGeneration() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getResetGeneration() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getResetGeneration() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setResetGeneration( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initResetGeneration(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptResetGeneration(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownResetGeneration() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::hasCalibrationGeneration() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasCalibrationGeneration() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getCalibrationGeneration() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getCalibrationGeneration() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setCalibrationGeneration( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initCalibrationGeneration(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptCalibrationGeneration(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownCalibrationGeneration() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::hasVehicleModelGeneration() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasVehicleModelGeneration() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getVehicleModelGeneration() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getVehicleModelGeneration() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setVehicleModelGeneration( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initVehicleModelGeneration(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptVehicleModelGeneration(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownVehicleModelGeneration() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::hasNativeIdentity() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasNativeIdentity() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getNativeIdentity() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getNativeIdentity() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setNativeIdentity( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initNativeIdentity(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptNativeIdentity(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownNativeIdentity() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::hasPhysicalModelRevision() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasPhysicalModelRevision() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getPhysicalModelRevision() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getPhysicalModelRevision() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setPhysicalModelRevision( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initPhysicalModelRevision(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptPhysicalModelRevision(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownPhysicalModelRevision() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::hasPersistentSourceEpoch() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingBinding::Builder::hasPersistentSourceEpoch() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingBinding::Reader::getPersistentSourceEpoch() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::getPersistentSourceEpoch() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingBinding::Builder::setPersistentSourceEpoch( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingBinding::Builder::initPersistentSourceEpoch(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingBinding::Builder::adoptPersistentSourceEpoch(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingBinding::Builder::disownPersistentSourceEpoch() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingBinding::Reader::getNativeRequired() const {
+  return _reader.getDataField<bool>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline bool LiveTrackingBinding::Builder::getNativeRequired() {
+  return _builder.getDataField<bool>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingBinding::Builder::setNativeRequired(bool value) {
+  _builder.setDataField<bool>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint16_t LiveTrackingTrial::Reader::getVersion() const {
+  return _reader.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint16_t LiveTrackingTrial::Builder::getVersion() {
+  return _builder.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingTrial::Builder::setVersion( ::uint16_t value) {
+  _builder.setDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingTrial::Reader::hasProtocol() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasProtocol() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingTrial::Reader::getProtocol() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::getProtocol() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::setProtocol( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::initProtocol(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingTrial::Builder::adoptProtocol(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingTrial::Builder::disownProtocol() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingTrial::Reader::hasBinding() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasBinding() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::LiveTrackingBinding::Reader LiveTrackingTrial::Reader::getBinding() const {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::get(_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline  ::cereal::LiveTrackingBinding::Builder LiveTrackingTrial::Builder::getBinding() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::get(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::LiveTrackingBinding::Pipeline LiveTrackingTrial::Pipeline::getBinding() {
+  return  ::cereal::LiveTrackingBinding::Pipeline(_typeless.getPointerField(1));
+}
+#endif  // !CAPNP_LITE
+inline void LiveTrackingTrial::Builder::setBinding( ::cereal::LiveTrackingBinding::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::set(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::LiveTrackingBinding::Builder LiveTrackingTrial::Builder::initBinding() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::init(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::adoptBinding(
+    ::capnp::Orphan< ::cereal::LiveTrackingBinding>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::adopt(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::LiveTrackingBinding> LiveTrackingTrial::Builder::disownBinding() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::disown(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingTrial::Reader::hasTrialId() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasTrialId() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingTrial::Reader::getTrialId() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::getTrialId() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::setTrialId( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::initTrialId(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingTrial::Builder::adoptTrialId(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingTrial::Builder::disownTrialId() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t LiveTrackingTrial::Reader::getSequence() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingTrial::Builder::getSequence() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingTrial::Builder::setSequence( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingTrial::Reader::hasPhase() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasPhase() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingTrial::Reader::getPhase() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::getPhase() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::setPhase( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::initPhase(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingTrial::Builder::adoptPhase(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingTrial::Builder::disownPhase() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingTrial::Reader::hasGroup() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasGroup() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingTrial::Reader::getGroup() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::getGroup() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::setGroup( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::initGroup(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingTrial::Builder::adoptGroup(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingTrial::Builder::disownGroup() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingTrial::Reader::hasNames() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasNames() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader LiveTrackingTrial::Reader::getNames() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::get(_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder LiveTrackingTrial::Builder::getNames() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::get(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::setNames( ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::set(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), value);
+}
+inline void LiveTrackingTrial::Builder::setNames(::kj::ArrayPtr<const  ::capnp::Text::Reader> value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::set(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder LiveTrackingTrial::Builder::initNames(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::init(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingTrial::Builder::adoptNames(
+    ::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>> LiveTrackingTrial::Builder::disownNames() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::disown(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingTrial::Reader::hasBaseline() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasBaseline() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader LiveTrackingTrial::Reader::getBaseline() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::get(_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder LiveTrackingTrial::Builder::getBaseline() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::get(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::setBaseline( ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::set(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder LiveTrackingTrial::Builder::initBaseline(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::init(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingTrial::Builder::adoptBaseline(
+    ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>> LiveTrackingTrial::Builder::disownBaseline() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::disown(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingTrial::Reader::hasTarget() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasTarget() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader LiveTrackingTrial::Reader::getTarget() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::get(_reader.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder LiveTrackingTrial::Builder::getTarget() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::get(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::setTarget( ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::set(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder LiveTrackingTrial::Builder::initTarget(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::init(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingTrial::Builder::adoptTarget(
+    ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>> LiveTrackingTrial::Builder::disownTarget() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::disown(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingTrial::Reader::hasBaselineSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasBaselineSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingTrial::Reader::getBaselineSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::getBaselineSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::setBaselineSha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::initBaselineSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingTrial::Builder::adoptBaselineSha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingTrial::Builder::disownBaselineSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingTrial::Reader::hasTargetSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasTargetSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingTrial::Reader::getTargetSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::getTargetSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::setTargetSha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Builder::initTargetSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingTrial::Builder::adoptTargetSha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingTrial::Builder::disownTargetSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<9>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t LiveTrackingTrial::Reader::getStartedMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingTrial::Builder::getStartedMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingTrial::Builder::setStartedMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t LiveTrackingTrial::Reader::getObservedMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingTrial::Builder::getObservedMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingTrial::Builder::setObservedMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t LiveTrackingTrial::Reader::getValidUntilMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingTrial::Builder::getValidUntilMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingTrial::Builder::setValidUntilMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingTrial::Reader::hasResponseWitness() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Builder::hasResponseWitness() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::LiveTrackingResponseWitness::Reader LiveTrackingTrial::Reader::getResponseWitness() const {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::get(_reader.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS));
+}
+inline  ::cereal::LiveTrackingResponseWitness::Builder LiveTrackingTrial::Builder::getResponseWitness() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::get(_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::LiveTrackingResponseWitness::Pipeline LiveTrackingTrial::Pipeline::getResponseWitness() {
+  return  ::cereal::LiveTrackingResponseWitness::Pipeline(_typeless.getPointerField(10));
+}
+#endif  // !CAPNP_LITE
+inline void LiveTrackingTrial::Builder::setResponseWitness( ::cereal::LiveTrackingResponseWitness::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::set(_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::LiveTrackingResponseWitness::Builder LiveTrackingTrial::Builder::initResponseWitness() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::init(_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Builder::adoptResponseWitness(
+    ::capnp::Orphan< ::cereal::LiveTrackingResponseWitness>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::adopt(_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::LiveTrackingResponseWitness> LiveTrackingTrial::Builder::disownResponseWitness() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::disown(_builder.getPointerField(
+      ::capnp::bounded<10>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t LiveTrackingTrial::Reader::getTargetSequence() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingTrial::Builder::getTargetSequence() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingTrial::Builder::setTargetSequence( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t LiveTrackingTrial::Reader::getDeadlineMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingTrial::Builder::getDeadlineMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingTrial::Builder::setDeadlineMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingTrial::Coordinate::Reader::hasName() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingTrial::Coordinate::Builder::hasName() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingTrial::Coordinate::Reader::getName() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Coordinate::Builder::getName() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingTrial::Coordinate::Builder::setName( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingTrial::Coordinate::Builder::initName(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingTrial::Coordinate::Builder::adoptName(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingTrial::Coordinate::Builder::disownName() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline double LiveTrackingTrial::Coordinate::Reader::getValue() const {
+  return _reader.getDataField<double>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline double LiveTrackingTrial::Coordinate::Builder::getValue() {
+  return _builder.getDataField<double>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingTrial::Coordinate::Builder::setValue(double value) {
+  _builder.setDataField<double>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint16_t LiveTrackingApplication::Reader::getVersion() const {
+  return _reader.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint16_t LiveTrackingApplication::Builder::getVersion() {
+  return _builder.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingApplication::Builder::setVersion( ::uint16_t value) {
+  _builder.setDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingApplication::Reader::hasBinding() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingApplication::Builder::hasBinding() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::LiveTrackingBinding::Reader LiveTrackingApplication::Reader::getBinding() const {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::cereal::LiveTrackingBinding::Builder LiveTrackingApplication::Builder::getBinding() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::LiveTrackingBinding::Pipeline LiveTrackingApplication::Pipeline::getBinding() {
+  return  ::cereal::LiveTrackingBinding::Pipeline(_typeless.getPointerField(0));
+}
+#endif  // !CAPNP_LITE
+inline void LiveTrackingApplication::Builder::setBinding( ::cereal::LiveTrackingBinding::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::LiveTrackingBinding::Builder LiveTrackingApplication::Builder::initBinding() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingApplication::Builder::adoptBinding(
+    ::capnp::Orphan< ::cereal::LiveTrackingBinding>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::LiveTrackingBinding> LiveTrackingApplication::Builder::disownBinding() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingApplication::Reader::hasTrialId() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingApplication::Builder::hasTrialId() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingApplication::Reader::getTrialId() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingApplication::Builder::getTrialId() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingApplication::Builder::setTrialId( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingApplication::Builder::initTrialId(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingApplication::Builder::adoptTrialId(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingApplication::Builder::disownTrialId() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t LiveTrackingApplication::Reader::getSequence() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingApplication::Builder::getSequence() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingApplication::Builder::setSequence( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t LiveTrackingApplication::Reader::getControlMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingApplication::Builder::getControlMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingApplication::Builder::setControlMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingApplication::Reader::hasStatus() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingApplication::Builder::hasStatus() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingApplication::Reader::getStatus() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingApplication::Builder::getStatus() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingApplication::Builder::setStatus( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingApplication::Builder::initStatus(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingApplication::Builder::adoptStatus(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingApplication::Builder::disownStatus() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingApplication::Reader::hasApplied() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingApplication::Builder::hasApplied() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader LiveTrackingApplication::Reader::getApplied() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::get(_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder LiveTrackingApplication::Builder::getApplied() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::get(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingApplication::Builder::setApplied( ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::set(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder LiveTrackingApplication::Builder::initApplied(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::init(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingApplication::Builder::adoptApplied(
+    ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>> LiveTrackingApplication::Builder::disownApplied() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::disown(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingApplication::Reader::hasAppliedSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingApplication::Builder::hasAppliedSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingApplication::Reader::getAppliedSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingApplication::Builder::getAppliedSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingApplication::Builder::setAppliedSha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingApplication::Builder::initAppliedSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingApplication::Builder::adoptAppliedSha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingApplication::Builder::disownAppliedSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingApplication::Reader::hasConfirmedTargetSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingApplication::Builder::hasConfirmedTargetSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingApplication::Reader::getConfirmedTargetSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingApplication::Builder::getConfirmedTargetSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingApplication::Builder::setConfirmedTargetSha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingApplication::Builder::initConfirmedTargetSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingApplication::Builder::adoptConfirmedTargetSha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingApplication::Builder::disownConfirmedTargetSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingApplication::Reader::hasReason() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingApplication::Builder::hasReason() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingApplication::Reader::getReason() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingApplication::Builder::getReason() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingApplication::Builder::setReason( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingApplication::Builder::initReason(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingApplication::Builder::adoptReason(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingApplication::Builder::disownReason() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t LiveTrackingApplication::Reader::getTargetSequence() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingApplication::Builder::getTargetSequence() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingApplication::Builder::setTargetSequence( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint16_t LiveTrackingRestore::Reader::getVersion() const {
+  return _reader.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint16_t LiveTrackingRestore::Builder::getVersion() {
+  return _builder.getDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingRestore::Builder::setVersion( ::uint16_t value) {
+  _builder.setDataField< ::uint16_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingRestore::Reader::hasProtocol() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingRestore::Builder::hasProtocol() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingRestore::Reader::getProtocol() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingRestore::Builder::getProtocol() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingRestore::Builder::setProtocol( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingRestore::Builder::initProtocol(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingRestore::Builder::adoptProtocol(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingRestore::Builder::disownProtocol() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingRestore::Reader::hasBinding() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingRestore::Builder::hasBinding() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::LiveTrackingBinding::Reader LiveTrackingRestore::Reader::getBinding() const {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::get(_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline  ::cereal::LiveTrackingBinding::Builder LiveTrackingRestore::Builder::getBinding() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::get(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::LiveTrackingBinding::Pipeline LiveTrackingRestore::Pipeline::getBinding() {
+  return  ::cereal::LiveTrackingBinding::Pipeline(_typeless.getPointerField(1));
+}
+#endif  // !CAPNP_LITE
+inline void LiveTrackingRestore::Builder::setBinding( ::cereal::LiveTrackingBinding::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::set(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::LiveTrackingBinding::Builder LiveTrackingRestore::Builder::initBinding() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::init(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingRestore::Builder::adoptBinding(
+    ::capnp::Orphan< ::cereal::LiveTrackingBinding>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::adopt(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::LiveTrackingBinding> LiveTrackingRestore::Builder::disownBinding() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingBinding>::disown(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingRestore::Reader::hasHistoryScope() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingRestore::Builder::hasHistoryScope() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingRestore::Reader::getHistoryScope() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingRestore::Builder::getHistoryScope() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingRestore::Builder::setHistoryScope( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingRestore::Builder::initHistoryScope(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingRestore::Builder::adoptHistoryScope(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingRestore::Builder::disownHistoryScope() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingRestore::Reader::hasHistoryTrialId() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingRestore::Builder::hasHistoryTrialId() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingRestore::Reader::getHistoryTrialId() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingRestore::Builder::getHistoryTrialId() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingRestore::Builder::setHistoryTrialId( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingRestore::Builder::initHistoryTrialId(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingRestore::Builder::adoptHistoryTrialId(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingRestore::Builder::disownHistoryTrialId() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingRestore::Reader::hasTarget() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingRestore::Builder::hasTarget() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader LiveTrackingRestore::Reader::getTarget() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::get(_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder LiveTrackingRestore::Builder::getTarget() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::get(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingRestore::Builder::setTarget( ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::set(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>::Builder LiveTrackingRestore::Builder::initTarget(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::init(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingRestore::Builder::adoptTarget(
+    ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>> LiveTrackingRestore::Builder::disownTarget() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::cereal::LiveTrackingTrial::Coordinate,  ::capnp::Kind::STRUCT>>::disown(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingRestore::Reader::hasTargetSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingRestore::Builder::hasTargetSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingRestore::Reader::getTargetSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingRestore::Builder::getTargetSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingRestore::Builder::setTargetSha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingRestore::Builder::initTargetSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingRestore::Builder::adoptTargetSha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingRestore::Builder::disownTargetSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t LiveTrackingRestore::Reader::getSequence() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingRestore::Builder::getSequence() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingRestore::Builder::setSequence( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t LiveTrackingRestore::Reader::getObservedMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingRestore::Builder::getObservedMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingRestore::Builder::setObservedMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t LiveTrackingRestore::Reader::getValidUntilMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingRestore::Builder::getValidUntilMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingRestore::Builder::setValidUntilMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingRestore::Reader::hasResponseWitness() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingRestore::Builder::hasResponseWitness() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::LiveTrackingResponseWitness::Reader LiveTrackingRestore::Reader::getResponseWitness() const {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::get(_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline  ::cereal::LiveTrackingResponseWitness::Builder LiveTrackingRestore::Builder::getResponseWitness() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::get(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::LiveTrackingResponseWitness::Pipeline LiveTrackingRestore::Pipeline::getResponseWitness() {
+  return  ::cereal::LiveTrackingResponseWitness::Pipeline(_typeless.getPointerField(6));
+}
+#endif  // !CAPNP_LITE
+inline void LiveTrackingRestore::Builder::setResponseWitness( ::cereal::LiveTrackingResponseWitness::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::set(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::LiveTrackingResponseWitness::Builder LiveTrackingRestore::Builder::initResponseWitness() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::init(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingRestore::Builder::adoptResponseWitness(
+    ::capnp::Orphan< ::cereal::LiveTrackingResponseWitness>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::adopt(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::LiveTrackingResponseWitness> LiveTrackingRestore::Builder::disownResponseWitness() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseWitness>::disown(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingResponseCertificate::Reader::hasVersion() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingResponseCertificate::Builder::hasVersion() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingResponseCertificate::Reader::getVersion() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::getVersion() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingResponseCertificate::Builder::setVersion( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::initVersion(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingResponseCertificate::Builder::adoptVersion(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingResponseCertificate::Builder::disownVersion() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingResponseCertificate::Reader::hasModelRevision() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingResponseCertificate::Builder::hasModelRevision() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingResponseCertificate::Reader::getModelRevision() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::getModelRevision() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingResponseCertificate::Builder::setModelRevision( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::initModelRevision(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingResponseCertificate::Builder::adoptModelRevision(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingResponseCertificate::Builder::disownModelRevision() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<1>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t LiveTrackingResponseCertificate::Reader::getLagNs() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingResponseCertificate::Builder::getLagNs() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseCertificate::Builder::setLagNs( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline double LiveTrackingResponseCertificate::Reader::getSlope() const {
+  return _reader.getDataField<double>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline double LiveTrackingResponseCertificate::Builder::getSlope() {
+  return _builder.getDataField<double>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseCertificate::Builder::setSlope(double value) {
+  _builder.setDataField<double>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline double LiveTrackingResponseCertificate::Reader::getIntercept() const {
+  return _reader.getDataField<double>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+
+inline double LiveTrackingResponseCertificate::Builder::getIntercept() {
+  return _builder.getDataField<double>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseCertificate::Builder::setIntercept(double value) {
+  _builder.setDataField<double>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS, value);
+}
+
+inline double LiveTrackingResponseCertificate::Reader::getCommandLow() const {
+  return _reader.getDataField<double>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+
+inline double LiveTrackingResponseCertificate::Builder::getCommandLow() {
+  return _builder.getDataField<double>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseCertificate::Builder::setCommandLow(double value) {
+  _builder.setDataField<double>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS, value);
+}
+
+inline double LiveTrackingResponseCertificate::Reader::getCommandHigh() const {
+  return _reader.getDataField<double>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+
+inline double LiveTrackingResponseCertificate::Builder::getCommandHigh() {
+  return _builder.getDataField<double>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseCertificate::Builder::setCommandHigh(double value) {
+  _builder.setDataField<double>(
+      ::capnp::bounded<4>() * ::capnp::ELEMENTS, value);
+}
+
+inline double LiveTrackingResponseCertificate::Reader::getHeldoutRmse() const {
+  return _reader.getDataField<double>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+
+inline double LiveTrackingResponseCertificate::Builder::getHeldoutRmse() {
+  return _builder.getDataField<double>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseCertificate::Builder::setHeldoutRmse(double value) {
+  _builder.setDataField<double>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingResponseCertificate::Reader::hasTrainBlockIds() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingResponseCertificate::Builder::hasTrainBlockIds() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader LiveTrackingResponseCertificate::Reader::getTrainBlockIds() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::get(_reader.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder LiveTrackingResponseCertificate::Builder::getTrainBlockIds() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::get(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingResponseCertificate::Builder::setTrainBlockIds( ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::set(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), value);
+}
+inline void LiveTrackingResponseCertificate::Builder::setTrainBlockIds(::kj::ArrayPtr<const  ::capnp::Text::Reader> value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::set(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder LiveTrackingResponseCertificate::Builder::initTrainBlockIds(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::init(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingResponseCertificate::Builder::adoptTrainBlockIds(
+    ::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>> LiveTrackingResponseCertificate::Builder::disownTrainBlockIds() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::disown(_builder.getPointerField(
+      ::capnp::bounded<2>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingResponseCertificate::Reader::hasHeldoutBlockIds() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingResponseCertificate::Builder::hasHeldoutBlockIds() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader LiveTrackingResponseCertificate::Reader::getHeldoutBlockIds() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::get(_reader.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder LiveTrackingResponseCertificate::Builder::getHeldoutBlockIds() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::get(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingResponseCertificate::Builder::setHeldoutBlockIds( ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::set(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), value);
+}
+inline void LiveTrackingResponseCertificate::Builder::setHeldoutBlockIds(::kj::ArrayPtr<const  ::capnp::Text::Reader> value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::set(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>::Builder LiveTrackingResponseCertificate::Builder::initHeldoutBlockIds(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::init(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingResponseCertificate::Builder::adoptHeldoutBlockIds(
+    ::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>> LiveTrackingResponseCertificate::Builder::disownHeldoutBlockIds() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::capnp::Text,  ::capnp::Kind::BLOB>>::disown(_builder.getPointerField(
+      ::capnp::bounded<3>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingResponseCertificate::Reader::hasSourceInventorySha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingResponseCertificate::Builder::hasSourceInventorySha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingResponseCertificate::Reader::getSourceInventorySha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::getSourceInventorySha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingResponseCertificate::Builder::setSourceInventorySha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::initSourceInventorySha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingResponseCertificate::Builder::adoptSourceInventorySha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingResponseCertificate::Builder::disownSourceInventorySha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<4>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingResponseCertificate::Reader::hasIdentificationSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingResponseCertificate::Builder::hasIdentificationSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingResponseCertificate::Reader::getIdentificationSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::getIdentificationSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingResponseCertificate::Builder::setIdentificationSha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::initIdentificationSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingResponseCertificate::Builder::adoptIdentificationSha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingResponseCertificate::Builder::disownIdentificationSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<5>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t LiveTrackingResponseCertificate::Reader::getIdentifiedMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingResponseCertificate::Builder::getIdentifiedMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseCertificate::Builder::setIdentifiedMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS, value);
+}
+
+inline bool LiveTrackingResponseCertificate::Reader::hasProvenance() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingResponseCertificate::Builder::hasProvenance() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingResponseCertificate::Reader::getProvenance() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::getProvenance() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingResponseCertificate::Builder::setProvenance( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::initProvenance(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingResponseCertificate::Builder::adoptProvenance(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingResponseCertificate::Builder::disownProvenance() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<6>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingResponseCertificate::Reader::hasParentModelRevision() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingResponseCertificate::Builder::hasParentModelRevision() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingResponseCertificate::Reader::getParentModelRevision() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::getParentModelRevision() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingResponseCertificate::Builder::setParentModelRevision( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::initParentModelRevision(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingResponseCertificate::Builder::adoptParentModelRevision(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingResponseCertificate::Builder::disownParentModelRevision() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<7>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingResponseCertificate::Reader::hasRequalificationSha256() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingResponseCertificate::Builder::hasRequalificationSha256() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::Text::Reader LiveTrackingResponseCertificate::Reader::getRequalificationSha256() const {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_reader.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::getRequalificationSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::get(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingResponseCertificate::Builder::setRequalificationSha256( ::capnp::Text::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::set(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::Text::Builder LiveTrackingResponseCertificate::Builder::initRequalificationSha256(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::init(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), size);
+}
+inline void LiveTrackingResponseCertificate::Builder::adoptRequalificationSha256(
+    ::capnp::Orphan< ::capnp::Text>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::Text>::adopt(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::Text> LiveTrackingResponseCertificate::Builder::disownRequalificationSha256() {
+  return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
+      ::capnp::bounded<8>() * ::capnp::POINTERS));
+}
+
+inline bool LiveTrackingResponseWitness::Reader::hasCertificate() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool LiveTrackingResponseWitness::Builder::hasCertificate() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::cereal::LiveTrackingResponseCertificate::Reader LiveTrackingResponseWitness::Reader::getCertificate() const {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseCertificate>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::cereal::LiveTrackingResponseCertificate::Builder LiveTrackingResponseWitness::Builder::getCertificate() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseCertificate>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+#if !CAPNP_LITE
+inline  ::cereal::LiveTrackingResponseCertificate::Pipeline LiveTrackingResponseWitness::Pipeline::getCertificate() {
+  return  ::cereal::LiveTrackingResponseCertificate::Pipeline(_typeless.getPointerField(0));
+}
+#endif  // !CAPNP_LITE
+inline void LiveTrackingResponseWitness::Builder::setCertificate( ::cereal::LiveTrackingResponseCertificate::Reader value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseCertificate>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::cereal::LiveTrackingResponseCertificate::Builder LiveTrackingResponseWitness::Builder::initCertificate() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseCertificate>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void LiveTrackingResponseWitness::Builder::adoptCertificate(
+    ::capnp::Orphan< ::cereal::LiveTrackingResponseCertificate>&& value) {
+  ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseCertificate>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::cereal::LiveTrackingResponseCertificate> LiveTrackingResponseWitness::Builder::disownCertificate() {
+  return ::capnp::_::PointerHelpers< ::cereal::LiveTrackingResponseCertificate>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t LiveTrackingResponseWitness::Reader::getLastControlMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingResponseWitness::Builder::getLastControlMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseWitness::Builder::setLastControlMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t LiveTrackingResponseWitness::Reader::getLastApplyMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingResponseWitness::Builder::getLastApplyMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseWitness::Builder::setLastApplyMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t LiveTrackingResponseWitness::Reader::getLastPoseMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingResponseWitness::Builder::getLastPoseMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseWitness::Builder::setLastPoseMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<2>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t LiveTrackingResponseWitness::Reader::getWindowStartMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingResponseWitness::Builder::getWindowStartMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseWitness::Builder::setWindowStartMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<3>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint16_t LiveTrackingResponseWitness::Reader::getIndependentPoses() const {
+  return _reader.getDataField< ::uint16_t>(
+      ::capnp::bounded<16>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint16_t LiveTrackingResponseWitness::Builder::getIndependentPoses() {
+  return _builder.getDataField< ::uint16_t>(
+      ::capnp::bounded<16>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseWitness::Builder::setIndependentPoses( ::uint16_t value) {
+  _builder.setDataField< ::uint16_t>(
+      ::capnp::bounded<16>() * ::capnp::ELEMENTS, value);
+}
+
+inline double LiveTrackingResponseWitness::Reader::getResidualRmse() const {
+  return _reader.getDataField<double>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+
+inline double LiveTrackingResponseWitness::Builder::getResidualRmse() {
+  return _builder.getDataField<double>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseWitness::Builder::setResidualRmse(double value) {
+  _builder.setDataField<double>(
+      ::capnp::bounded<5>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::uint64_t LiveTrackingResponseWitness::Reader::getValidUntilMonoTime() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t LiveTrackingResponseWitness::Builder::getValidUntilMonoTime() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS);
+}
+inline void LiveTrackingResponseWitness::Builder::setValidUntilMonoTime( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<6>() * ::capnp::ELEMENTS, value);
 }
 
 }  // namespace

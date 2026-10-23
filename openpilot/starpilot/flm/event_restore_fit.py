@@ -1,3 +1,4 @@
+from openpilot.starpilot.flm.normalized_trace_archive import archive_of
 """Fresh whole-map measured/controller proof for an explicitly retained prior.
 
 Restoration does not estimate coefficients or pass a thirty-dimensional map as
@@ -39,7 +40,7 @@ def _restore_original_evidence(payload, engine, objective):
     if packet['identity'] != engine.identity or not 40 <= len(packet['samples']) <= 240:
       raise ValueError('restore endpoint packet identity')
     for point in packet['samples']:
-      command, output = control_from_dict(point['control']), output_from_dict(point['output'])
+      command, output = control_from_dict(point['control'],trace_archive=archive_of(engine)), output_from_dict(point['output'])
       key = point['control_ns'], point['apply_ns'], point['mono_ns']
       if (key in seen or point['mono_ns'] <= previous or command.identity != engine.identity or
           command.baseline_revision != engine.baseline_revision or command.source_epoch != envelope.source_epoch or
@@ -94,47 +95,70 @@ def _fixed_restore_rollout(payload, engine, coordinates, *, restore_target=False
   try:
     return engine._rollout(coordinates, restore_target=restore_target, restore_omit_group=restore_omit_group)
   except ValueError as error:
-    if payload.get('event_version') not in (4, 5, 6):
+    if payload.get('event_version') not in (4, 5, 6, 8):
       raise
     return unavailable('restore_actual_full_map_controller_replay', status='rejected', event_version=payload['event_version'],
       replay_phase='group-off' if restore_omit_group is not None else 'full-map' if restore_target else 'baseline',
       replay_reason=str(error), restore_activation_plan=asdict(engine.activation_plan))
 
 
-def fit_event_restore(payload, engine, objective):
-  envelope, context, packets, events = _restore_original_evidence(payload, engine, objective)
-  frames = _control_frame_index(engine.records)
-  if len(events) < 16:
-    return unavailable('restore_whole_physical_event_support', wholeBlocks=len(events), requiredWholeBlocks=16)
-  declared = payload.get('event_version') in (4, 5, 6)
-  if declared:
+def fit_event_restore(payload, engine, objective, *, source_plant=None):
+  feedback_restore = payload.get('event_version') == 8
+  if feedback_restore:
+    from openpilot.starpilot.flm.clipping_quality import event_clipping_quality
+    from openpilot.starpilot.flm.feedback_replay import require_feedback_engine
+    event_clipping_quality(payload)
+    if source_plant is None or getattr(engine,'event_mean_model',None) is not None:
+      raise ValueError('feedback restore requires fresh source plant and fixed conservative statistics')
+    require_feedback_engine(engine)
+  if source_plant is not None:
+    from openpilot.starpilot.flm.source_plant_fit import PROTOCOL, PreparedPlant
+    from openpilot.starpilot.flm.feedback_replay import PROTOCOL as FEEDBACK_PROTOCOL
     from openpilot.starpilot.flm.event_activation import bind_activation_model
-    from openpilot.starpilot.flm.restore_activation import build_restore_plan
-    prepared = prepare_fixed_restore_calibration(payload, engine, objective)
-    if type(prepared) is dict:
-      return prepared
-    original_model, cutoff, events, declared_stage = prepared
-    plan = build_restore_plan(engine, model=original_model, cutoff_ns=cutoff, stage_events=declared_stage,
-      physical_context=context, envelope=envelope, restore_version=payload['event_version'])
-    if engine.activation_plan != plan:
-      raise ValueError('restore changed frozen full-map activation declaration')
-    model, split = bind_activation_model(original_model, plan), 8
+    plant, events = source_plant
+    if (not isinstance(plant, PreparedPlant) or payload.get('plant_protocol') != (FEEDBACK_PROTOCOL if feedback_restore else PROTOCOL) or
+        tuple(payload['physical_context']) != plant.context or engine.activation_plan is None or
+        payload.get('event_version') not in ((8,) if feedback_restore else (4,5,6)) or payload.get('event_operation') != 'restore'):
+      raise ValueError('explicit child-owned independent restore plant')
+    envelope = envelope_from_dict(payload['effect_envelope'])
+    envelope.validate()
+    context, packets, frames = plant.model.context, events, _control_frame_index(engine.records)
+    cutoff, split, declared = plant.identification.cutoff_ns, 0, True
+    model = bind_activation_model(plant.model, engine.activation_plan)
   else:
-    model, rows, cutoff, split = None, [], 0, 0
-    for index, event in enumerate(events[:-8]):
-      for point in event['samples']:
-        output = output_from_dict(point['output'])
-        command = -delivered(output)
-        rows.append(PhysicalRow(event['block_id'], output.apply_ns, point['mono_ns'], command, point['physical']['lateral_accel'],
-                                context, 'left' if command > 0 else 'right', True, False, False))
-      if index >= 7:
-        model = fit_event_physical(engine.identity, context, tuple(rows), lag_ns=payload['physical_context'][-1],
-                                   now_ns=event['samples'][-1]['mono_ns'])
-        if model is not None:
-          cutoff, split = max(row.response_ns for row in rows), index + 1
-          break
-    if model is None:
-      return unavailable('restore_independent_physical_model', wholeBlocks=len(events), modelPoints=len(rows))
+    envelope, context, packets, events = _restore_original_evidence(payload, engine, objective)
+    frames = _control_frame_index(engine.records)
+    if len(events) < 16:
+      return unavailable('restore_whole_physical_event_support', wholeBlocks=len(events), requiredWholeBlocks=16)
+    declared = payload.get('event_version') in (4, 5, 6)
+    if declared:
+      from openpilot.starpilot.flm.event_activation import bind_activation_model
+      from openpilot.starpilot.flm.restore_activation import build_restore_plan
+      prepared = prepare_fixed_restore_calibration(payload, engine, objective)
+      if type(prepared) is dict:
+        return prepared
+      original_model, cutoff, events, declared_stage = prepared
+      plan = build_restore_plan(engine, model=original_model, cutoff_ns=cutoff, stage_events=declared_stage,
+        physical_context=context, envelope=envelope, restore_version=payload['event_version'])
+      if engine.activation_plan != plan:
+        raise ValueError('restore changed frozen full-map activation declaration')
+      model, split = bind_activation_model(original_model, plan), 8
+    else:
+      model, rows, cutoff, split = None, [], 0, 0
+      for index, event in enumerate(events[:-8]):
+        for point in event['samples']:
+          output = output_from_dict(point['output'])
+          command = -delivered(output)
+          rows.append(PhysicalRow(event['block_id'], output.apply_ns, point['mono_ns'], command, point['physical']['lateral_accel'],
+                                  context, 'left' if command > 0 else 'right', True, False, False))
+        if index >= 7:
+          model = fit_event_physical(engine.identity, context, tuple(rows), lag_ns=payload['physical_context'][-1],
+                                     now_ns=event['samples'][-1]['mono_ns'])
+          if model is not None:
+            cutoff, split = max(row.response_ns for row in rows), index + 1
+            break
+      if model is None:
+        return unavailable('restore_independent_physical_model', wholeBlocks=len(events), modelPoints=len(rows))
   stage = tuple(event for event in events[split:] if
                 all(min(point['control_ns'], point['apply_ns'], point['mono_ns']) > cutoff for point in event['samples']))
   if len(stage) < 8:
@@ -195,14 +219,14 @@ def fit_event_restore(payload, engine, objective):
     for group in effects:
       # Joint group impact must be present in this actual supported trajectory.
       # No unobservable saved low-speed/window coordinate restores on faith.
-      if payload.get('event_version') in (5, 6):
+      if payload.get('event_version') in (5, 6, 8):
         group_gains[group].append(sum(group_errors[group]) / len(samples) - after_loss)
       elif sum(value > 1e-8 for value in signals[group]) < 40:
         group_gains[group].append(None)
       else:
         group_gains[group].append(sum(group_errors[group]) / len(samples) - after_loss)
   middle = len(blocks) // 2
-  if payload.get('event_version') in (5, 6):
+  if payload.get('event_version') in (5, 6, 8):
     from openpilot.starpilot.flm.restore_support import capped_group_credits, independent_half_supported, all_event_lower
     for group, trace in effects.items():
       evidence = tuple((event['block_id'], tuple((point['control_ns'], point['apply_ns'],
@@ -217,7 +241,7 @@ def fit_event_restore(payload, engine, objective):
             support_credits=half, required_credits=80, required_effectful_events=2)
   for group, gains in group_gains.items():
     for cohort in (gains[:middle], gains[middle:]):
-      if payload.get('event_version') in (5, 6):
+      if payload.get('event_version') in (5, 6, 8):
         if all_event_lower(cohort, _lower) is None:
           return unavailable('restore_group_independent_heldout_support', group=group)
       else:
@@ -233,13 +257,14 @@ def fit_event_restore(payload, engine, objective):
                     objective.parameters, tuple(dict(envelope.coordinates)[name] for name in objective.names),
                     tuple(block.block_id for block in blocks[:middle]), tuple(block.block_id for block in blocks[middle:]),
                     baseline_loss, candidate_loss, ((objective.required_cohorts[0], lower),), RESTORE_POLICY, envelope)
-  validation = engine.validate(profile, control_from_dict(payload['control']), output_from_dict(payload['output']),
+  validation = engine.validate(profile, control_from_dict(payload['control'],trace_archive=archive_of(engine)), output_from_dict(payload['output']),
                                tuple(payload['physical_context']), tuple(blocks), model)
   if validation is None or validation.physical_model_revision != physical_model_revision(model):
     return unavailable('restore_actual_full_map_controller_replay')
   return {'status': 'qualified', 'reason': 'restored_history_fresh_whole_map_pending_current_probe',
           'profile': asdict(profile), 'validation': asdict(validation), 'model': asdict(model),
           **({'event_version': payload['event_version'], 'restore_activation_plan': asdict(engine.activation_plan)} if declared else {}),
+          **({'event_restore_statistics': payload['event_restore_statistics']} if feedback_restore else {}),
           'model_cutoff_ns': cutoff, 'whole_blocks': len(events), 'stage_blocks': len(stage),
           'restoration_qualified_groups': tuple(effects), 'objective_key': payload.get('objective_key'),
           'speed_mps_bounds': (min(dict(point['control']['stage_values'])['speed'] for event in events for point in event['samples']),

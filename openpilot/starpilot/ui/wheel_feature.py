@@ -3,7 +3,7 @@ import hashlib
 from openpilot.starpilot.aol.vehicle import policy_for
 from openpilot.starpilot.conditional_mode.manual import ioniq6_media_eligible
 from openpilot.starpilot.feature_capabilities import lateral_supported
-from openpilot.starpilot.controllers.wheel_actions import ACTIONS, DEFAULTS, KEYS, button_reported, eligible
+from openpilot.starpilot.controllers.wheel_actions import ACTIONS, DEFAULTS, KEYS, PADDLE_KEY, button_reported, eligible, paddle_bookmark_available
 from openpilot.starpilot.saved_document import commit_exact
 from openpilot.starpilot.saved_source import read_saved
 from openpilot.starpilot.ui.feature_settings_state import FeatureRow
@@ -12,7 +12,7 @@ from openpilot.starpilot.ui.feature_settings_state import FeatureRow
 PREFIX = "wheel:"
 LABELS = ("LKAS press", "Main cruise press", "Distance short press", "Distance long press", "Distance very long press",
           "Cancel short press", "Cancel long press", "Cancel very long press", "MODE press", "MODE long press",
-          "MODE very long press", "Star button", "Star long press", "Star very long press")
+          "MODE very long press", "Star button", "Star long press", "Star very long press", "Left paddle press")
 
 
 class WheelFeature:
@@ -33,6 +33,8 @@ class WheelFeature:
     cp = self.owner.vehicle_params()
     if self.capability() is None:
       return ()
+    if key == PADDLE_KEY:
+      return ("Off", "Bookmark") if paddle_bookmark_available(self.owner.params, cp) else ()
     policy = policy_for(cp)
     media = ioniq6_media_eligible(cp)
     if self.owner.configuration_vehicle():
@@ -85,7 +87,9 @@ class WheelFeature:
       rows.append(FeatureRow(PREFIX + key, label, selected or "Invalid saved action", raw, choices,
                              default_value=default if default in choices else None,
                              available=readable and self.owner.authority("preferences"),
-                             reason="Axis pause and AOL assignments apply after restarting. Other actions can apply this drive. Long actions fire while held.",
+                             reason=("Bookmark on release. Available while Left Paddle Longitudinal Pause is Off." if key == PADDLE_KEY else
+                                     "Axis pause and AOL assignments apply after restarting. Other actions can apply this drive. " +
+                                     "Long actions fire while held."),
                              capability=capability, repair_value="Off" if selected is None else ""))
     return rows
 

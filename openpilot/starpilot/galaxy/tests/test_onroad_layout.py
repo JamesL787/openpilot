@@ -43,6 +43,22 @@ class TestOnroadLayoutOwner(unittest.TestCase):
     self.assertEqual(self.params.get(PARAM_KEY), compact['document'])
     self.assertNotEqual(initial['revision'], result['revision'])
 
+  def test_disable_map_turns_only_the_big_screen_map_off_and_only_when_it_was_on(self):
+    self.assertFalse(self.owner.disable_map(lambda: True), 'nothing saved yet')
+    payload = self.changed()
+    payload['document']['layouts']['large']['nav_map']['enabled'] = True
+    payload['document']['layouts']['large']['nav_card']['x'] -= 5
+    self.owner.save(payload, session_valid=lambda: True)
+    self.assertFalse(self.owner.disable_map(lambda: False))
+    self.parked = False
+    self.assertFalse(self.owner.disable_map(lambda: True))
+    self.parked = True
+    self.assertTrue(self.owner.disable_map(lambda: True))
+    expected = copy.deepcopy(payload['document'])
+    expected['layouts']['large']['nav_map']['enabled'] = False
+    self.assertEqual(self.owner.snapshot()['document'], expected)
+    self.assertFalse(self.owner.disable_map(lambda: True))
+
   def test_v1_read_is_non_mutating_and_widget_colors_save_with_source_revision(self):
     old = default_document()
     old['version'] = 1

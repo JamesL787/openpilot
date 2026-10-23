@@ -6,7 +6,7 @@ steps and finite differences belong to the child or existing bounded4Hz probe.
 
 from typing import cast
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, asdict
 from types import SimpleNamespace
 import math
@@ -262,6 +262,29 @@ class EncoderBranch:
     return value
 
 
+  def candidate_reported_torque(self, event):
+    """Exact registered CC actuator report after this SAME native branch step.
+
+    Honda reports the shaped/rate-limited normalized INPUT; inverse CAN lookup
+    is a distinct physical coordinate. Other registered round codecs report
+    final raw torque divided by the same effective maximum, all Float32 on CO.
+    """
+    witness=event.witness
+    if (self.last_frame!=witness.frame or self.last_apply_ns!=event.apply_ns or
+        self.family!=(witness.family,witness.fingerprint,witness.flags,witness.codec_id) or
+        witness.codec_id not in CODECS or self.previous is None):
+      raise ValueError('candidate reported CO missing same native step')
+    if witness.family=='honda' and witness.mapping_kind=='honda_lookup':
+      value=float32(self.previous)
+    elif witness.family!='honda' and witness.mapping_kind=='round' and not witness.shape:
+      value=float32(float(self.previous)/witness.effective_max)
+    else:
+      raise ValueError('unproven candidate reported CO codec')
+    if not math.isfinite(value):
+      raise ValueError('nonfinite candidate reported CO')
+    return value
+
+
 class EmissionHistory:
   def __init__(self, cp, *, identity='', baseline_revision=''):
     self.cp = cp
@@ -269,6 +292,9 @@ class EmissionHistory:
     self.events = OrderedDict()
     self.by_control = {}
     self.decoder = None
+    self.decode_queue = deque()
+    self.decode_errors = OrderedDict()
+    self.decode_history_truncated = False
     self.carriers = OrderedDict()
 
   def record_carrier(self, output):
@@ -355,9 +381,14 @@ class EmissionHistory:
       if getattr(output, 'carrier_frame', witness.frame + 1) != witness.frame + 1:
         return False
       self.events[event.apply_ns] = event
+      self.decode_queue.append(event.apply_ns)
       self.by_control[event.control_ns] = event
       while len(self.events) > MAX_EMISSIONS:
         _, removed = self.events.popitem(last=False)
+        self.decode_errors.pop(removed.apply_ns, None)
+        if self.decode_queue and self.decode_queue[0] <= removed.apply_ns:
+          self.decode_queue.popleft()
+          self.decode_history_truncated = True
         if self.decoder is not None:
           self.decoder.verified.pop(removed.apply_ns, None)
         if self.by_control.get(removed.control_ns) == removed:
@@ -387,9 +418,26 @@ class EmissionHistory:
     return event
 
   def decode(self, event):
+    # CANParser has stateful counter checks. A query for an occasional clipped
+    # input must consume the intervening original emissions too, rather than
+    # presenting that sparse query stream as the actual CAN sequence.
+    if self.events.get(event.apply_ns) != event or self.decode_history_truncated:
+      raise ValueError('actual CAN decoder original history unavailable')
     if self.decoder is None:
       self.decoder = EmissionDecoder(self.cp)
-    self.decoder.check(event)
+    for _ in range(64):
+      if not self.decode_queue or self.decode_queue[0] > event.apply_ns:
+        break
+      stamp = self.decode_queue.popleft()
+      original = self.events[stamp]
+      try:
+        self.decoder.check(original)
+      except (AttributeError, KeyError, TypeError, ValueError, OverflowError) as error:
+        self.decode_errors[stamp] = str(error)
+    if event.apply_ns in self.decode_errors:
+      raise ValueError(self.decode_errors[event.apply_ns])
+    if event.apply_ns not in self.decoder.verified:
+      raise ValueError('actual CAN decoder original sequence pending')
 
   def one_apply(self, apply_ns, request):
     event = self.events.get(apply_ns)
@@ -406,9 +454,11 @@ class EmissionHistory:
     return base, features
 
   def rollout(self, requests, start_ns, end_ns, windows=(), *, quality_contract=RECORDED_DEBT,
-              identification_policy=STRICT_IDENTIFICATION):
+              identification_policy=STRICT_IDENTIFICATION, feedback_reported=None):
     """Advance on EVERY actual emission, including unscored warmup emissions."""
     branch = EncoderBranch(quality_contract=quality_contract, identification_policy=identification_policy)
+    if feedback_reported is not None and (type(feedback_reported) is not dict or feedback_reported):
+      raise ValueError('empty private candidate reported CO sink required')
     values = {}
     previous = None
     last_window = None
@@ -423,6 +473,8 @@ class EmissionHistory:
         previous = None
       self.decode(event)
       value = branch.step(event, requests[event.control_ns])
+      if feedback_reported is not None:
+        feedback_reported[event.apply_ns]=branch.candidate_reported_torque(event)
       values[event.apply_ns] = value
       last_window = window
       if previous is not None and event.apply_ns - previous > 100_000_000:

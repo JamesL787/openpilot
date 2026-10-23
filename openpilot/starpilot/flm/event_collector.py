@@ -144,6 +144,7 @@ class EventFullrateCollector(FullrateCollector):
     self.recent_controls.clear()
     self.recent_applied.clear()
     self.ready.clear()
+    self.probe_ready.clear()
     self.points.clear()
     self.raw_points.clear()
     self._pending_storage = ()
@@ -179,6 +180,9 @@ class EventFullrateCollector(FullrateCollector):
     return accepted
 
   def job_snapshot(self, now_ns):
+    if getattr(self.adapter,'source_plant_protocol',None) is not None:
+      from openpilot.starpilot.flm.source_plant_runtime import snapshot
+      return snapshot(self,now_ns)
     # Guards are cheap. Whole-event reconstruction stays at the original60s
     # cadence, including unsuccessful selections; reports only reuse its result.
     if self.snapshot_readiness_context != self._snapshot_context():
@@ -213,3 +217,9 @@ class EventFullrateCollector(FullrateCollector):
     self.snapshot_readiness_context = self._snapshot_context()
     self.snapshot_readiness.update(observedMonoTime=now_ns, objective=str(getattr(self.adapter, 'key', ''))[:128])
     return snapshot
+
+  def mark_job_submitted(self, now_ns):
+    super().mark_job_submitted(now_ns)
+    if getattr(self.adapter,'source_plant_protocol',None) is not None:
+      from openpilot.starpilot.flm.source_plant_runtime import submitted
+      submitted(self)

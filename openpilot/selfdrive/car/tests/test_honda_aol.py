@@ -316,16 +316,18 @@ class HondaNidecInterceptorAolTests(unittest.TestCase):
 
   def test_policy_word_and_native_receipt(self):
     from opendbc.car.honda.nidec_interceptor import qualified as interceptor_qualified
-    from openpilot.starpilot.car.honda.aol import native_accepts_cp, native_profile_supported, policy_for, \
-      qualified_nidec_interceptor
+    from opendbc.car.honda.stock_aol import qualified as qualified_stock
+    from openpilot.starpilot.car.honda.aol import native_accepts_cp, native_profile_supported, policy_for
     cp = self.interceptor_cp()
-    self.assertTrue(qualified_nidec_interceptor(cp))
+    self.assertTrue(qualified_stock(cp) and cp.flags & HondaFlags.GAS_INTERCEPTOR)
     self.assertEqual(cp.safetyConfigs[0].safetyParam, 32)
     policy = policy_for(cp)
     self.assertTrue(policy.intent_supported and policy.settings_supported and policy.normal_runtime_supported)
-    self.assertFalse(policy.runtime_supported)  # until card adds the AOL bit
+    self.assertTrue(policy.runtime_supported)  # SGSP's native policy; card adds the AOL bit and alt-exp 32
     self.assertEqual(policy.safety_param_addition, 512)
+    self.assertEqual(policy.alternative_experience_addition, 32)
     cp.safetyConfigs[0].safetyParam |= policy.safety_param_addition
+    cp.alternativeExperience |= policy.alternative_experience_addition
     self.assertTrue(policy_for(cp).runtime_supported)
     self.assertTrue(interceptor_qualified(cp))  # the pedal stays on with the AOL word
     self.assertIsNotNone(CarInterface(cp).CC.nidec_interceptor)
@@ -333,19 +335,14 @@ class HondaNidecInterceptorAolTests(unittest.TestCase):
     self.assertTrue(native_profile_supported(nidec, 544) and native_accepts_cp(cp, nidec, 544))
     self.assertFalse(native_accepts_cp(cp, nidec, 32))
 
-  def test_other_interceptor_cars_and_stock_clarity_are_not_offered(self):
-    from openpilot.starpilot.car.honda.aol import policy_for, qualified_nidec_interceptor
-    for candidate in (CAR.HONDA_CIVIC, CAR.ACURA_ILX, CAR.HONDA_ODYSSEY):
-      with self.subTest(candidate=candidate):
-        cp = self.interceptor_cp(candidate)
-        self.assertFalse(qualified_nidec_interceptor(cp))
-        self.assertEqual(policy_for(cp).safety_param_addition & 512, 0)
+  def test_stock_clarity_is_not_offered_the_pedal_word(self):
+    # SGSP's native Nidec pedal AOL offers the pedal word to every qualified interceptor car; a stock Clarity gets none.
+    from openpilot.starpilot.car.honda.aol import policy_for
     stock = CarInterface.get_params(CAR.HONDA_CLARITY, gen_empty_fingerprint(), [], False, False, False)
-    self.assertFalse(qualified_nidec_interceptor(stock))
     self.assertEqual(policy_for(stock).safety_param_addition & 512, 0)
     cp = self.interceptor_cp()
     cp.safetyConfigs[0].safetyParam = 36
-    self.assertFalse(qualified_nidec_interceptor(cp))
+    self.assertNotEqual(policy_for(cp).safety_param_addition, 512)
 
   def test_card_opts_in_from_saved_request_without_replay_env(self):
     test = self

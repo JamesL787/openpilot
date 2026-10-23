@@ -7,6 +7,7 @@ from openpilot.starpilot.galaxy.access import GalaxyAccessOwner
 from openpilot.starpilot.galaxy.crash_reports import CrashReports
 from openpilot.starpilot.galaxy.sentry_events import SentryEvents
 from openpilot.starpilot.galaxy.server import make_server
+from openpilot.starpilot.sentry_mode.notifications import NotificationOwner
 from openpilot.starpilot.sentry_mode.storage import EventStore
 
 
@@ -20,7 +21,8 @@ def test_record_deletion_auth_confirmation_refresh_and_idempotence(tmp_path):
   token = reports.list()['reports'][0]['id']
   access = GalaxyAccessOwner(tmp_path / 'access')
   access.configure('password123', lambda: True)
-  server = make_server(port=0, owner=access, sentry_events=SentryEvents(store), crashes=reports, parked=lambda: True)
+  server = make_server(port=0, owner=access, sentry_events=SentryEvents(store),
+                       notifications=NotificationOwner(tmp_path / 'notifications', store=store), crashes=reports, parked=lambda: True)
   worker = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .01}, daemon=True)
   worker.start()
 

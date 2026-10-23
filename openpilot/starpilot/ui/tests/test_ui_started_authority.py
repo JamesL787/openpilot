@@ -335,3 +335,30 @@ def test_replay_python_gps_timestamp_uses_mono_domain():
   ui.sm.logMonoTime['gpsLocationExternal'] = NOW + 1_000_000
   ui._update_replay_alive(sample)
   assert not ui.sm.alive['gpsLocationExternal']
+
+
+@pytest.mark.parametrize("service", ["carControl", "carOutput", "controlsState"])
+def test_sparse_replay_display_survives_sample_gap_without_extending_action_freshness(service):
+  from openpilot.tools.replay.display_clock import ClockSample
+  from openpilot.starpilot.ui.tests.test_runtime_snapshot import NOW
+  from openpilot.starpilot.ui.runtime_snapshot import display_message
+
+  sample = ClockSample(NOW, None, NOW, epoch=1, valid=True)
+  ui = replay_owner(sample)
+  ui.sm.sock[service] = object()
+  ui.sm.static_freq_services.add(service)
+  ui.sm.put(service, NS(latActive=True))
+  ui.sm.logMonoTime[service] = NOW - 150_000_000
+  ui.sm.replay_sample = sample
+  ui._update_replay_alive(sample)
+  assert ui.sm.alive[service]
+  assert display_message(ui.sm, service, NOW) is not None
+  assert current_message(ui.sm, service, NOW) is None
+
+  ui.sm.logMonoTime[service] = NOW - 201_000_000
+  ui._update_replay_alive(sample)
+  assert not ui.sm.alive[service]
+  assert display_message(ui.sm, service, NOW) is None
+  ui.sm.logMonoTime[service] = NOW + 1
+  ui._update_replay_alive(sample)
+  assert not ui.sm.alive[service]

@@ -36,7 +36,7 @@ def test_cancel_keeps_existing_native_lateral_and_handles_release(identity):
 
 
 @pytest.mark.parametrize('failure', (
-  'disabled', 'short_action', 'long_action', 'very_long_action', 'unarmed', 'paused',
+  'disabled', 'unarmed', 'paused',
   'intent_stale', 'source_mismatch', 'main_off', 'invalid_can', 'timeout', 'temporary_eps', 'permanent_eps',
   'acc_fault', 'no_cancel', 'native_missing', 'native_denied', 'native_unrequested', 'native_stale',
   'native_session', 'native_model', 'native_param', 'native_rx_fault', 'native_fault', 'no_inventory',
@@ -46,10 +46,6 @@ def test_cancel_exception_never_invents_intent_or_permission(failure):
   cp, cs, intent, native, context = proof(CAR.MAZDA_CX5_2022)
   if failure == 'disabled':
     context['settings'] = replace(context['settings'], enabled=False)
-  elif failure in ('short_action', 'long_action', 'very_long_action'):
-    actions = [0, 0, 0]
-    actions[('short_action', 'long_action', 'very_long_action').index(failure)] = 9
-    context['settings'] = replace(context['settings'], cancel_actions=tuple(actions))
   elif failure == 'unarmed':
     intent = replace(intent, allowedLatch=False, lateralArmed=False)
   elif failure == 'paused':
@@ -101,3 +97,15 @@ def test_cancel_exception_never_invents_intent_or_permission(failure):
   elif failure == 'dashcam':
     cp.dashcamOnly = True
   assert not physical_cancel_lateral_allowed(cp, cs, intent, native, **context)
+
+
+@pytest.mark.parametrize('action', (3, 4, 9))
+@pytest.mark.parametrize('slot', range(3))
+def test_mapped_cancel_uses_current_owner_intent(action, slot):
+  cp, cs, intent, native, context = proof(CAR.MAZDA_CX5_2022)
+  actions = [0, 0, 0]
+  actions[slot] = action
+  context['settings'] = replace(context['settings'], cancel_actions=tuple(actions))
+  assert physical_cancel_lateral_allowed(cp, cs, intent, native, **context)
+  assert not physical_cancel_lateral_allowed(cp, cs, replace(intent, pauseLateral=True), native, **context)
+  assert not physical_cancel_lateral_allowed(cp, cs, replace(intent, allowedLatch=False, lateralArmed=False), native, **context)

@@ -5,6 +5,7 @@ from opendbc.car.lateral import (apply_driver_steer_torque_limits, apply_std_ste
                                 apply_steer_angle_limits_vm, common_fault_avoidance)
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.subaru import subarucan
+from opendbc.car.subaru.stock_aol import qualified as subaru_aol_qualified
 from opendbc.car.subaru.values import CAR, DBC, GLOBAL_ES_ADDR, CanBus, CarControllerParams, SubaruFlags
 from opendbc.car.vehicle_model import VehicleModel
 
@@ -18,6 +19,10 @@ GEN2_ANGLE_PORTS = frozenset((CAR.SUBARU_CROSSTREK_2025, CAR.SUBARU_LEGACY_2025,
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
+    from opendbc.car.subaru.startup import selected, StopStartRequest
+    self.stop_start = StopStartRequest() if selected(CP) else None
+    from opendbc.car.subaru.avh import selected as avh_selected, AvhStartup
+    self.avh_startup = AvhStartup() if avh_selected(CP) else None
     self.apply_torque_last = 0
     self.apply_angle_last = 0.
     self.angle_was_active = False
@@ -29,6 +34,17 @@ class CarController(CarControllerBase):
     self.angle_handoff_active = False
     self.VM = VehicleModel(CP) if CP.carFingerprint in GEN2_ANGLE_PORTS else None
 
+    from opendbc.car.subaru.sng import StopAndGo
+    self.sng_owner = StopAndGo()
+    self.sng_command_ns = 0
+    self.sng_sent_sources = {}
+    self.sng_pulse_ns = 0
+    self.sng_stationary_since_ns = 0
+    self.software_cruise_command = 0
+    self.software_cruise_command_ns = 0
+    self.software_cruise_sent_source = 0
+    self.software_cruise_last_frame = -10
+    self.software_cruise_last_send_ns = 0
     self.cruise_button_prev = 0
     self.steer_rate_counter = 0
 
@@ -69,7 +85,8 @@ class CarController(CarControllerBase):
     if self.CP.carFingerprint != CAR.SUBARU_ASCENT_2023 or not self.CP.flags & SubaruFlags.ASCENT_LKAS_ALERT:
       return None
     dat = CS.es_lkas_alert_dat
-    msg = subarucan.create_ascent_lkas_alert(dat, self.angle_was_active and CC.enabled and CC.latActive, CC.hudControl.visualAlert)
+    lateral_active = self.angle_was_active and CC.latActive and (CC.enabled or subaru_aol_qualified(self.CP, marked_only=True))
+    msg = subarucan.create_ascent_lkas_alert(dat, lateral_active, CC.hudControl.visualAlert)
     if msg is None or (dat[1] & 0xf) == self.ascent_lkas_alert_counter_last:
       return None
     self.ascent_lkas_alert_counter_last = dat[1] & 0xf
@@ -84,13 +101,29 @@ class CarController(CarControllerBase):
     pcm_cancel_cmd = CC.cruiseControl.cancel
 
     can_sends = []
+    if self.stop_start is not None:
+      request = self.stop_start.update(CC, CS, now_nanos / 1e9)
+      if request is not None:
+        can_sends.append(request)
+
+    if self.avh_startup is not None:
+      now = now_nanos / 1e9
+      source = CS.avh_sources
+      safe = (CS.out.canValid and not CS.out.canTimeout and not source.blocked and source.fresh(now) and
+              CS.out.standstill and not CS.out.gasPressed and not CS.out.steerFaultPermanent and
+              not CS.out.steerFaultTemporary and not CS.out.accFaulted and
+              CS.out.gearShifter == structs.CarState.GearShifter.park)
+      can_sends.extend(self.avh_startup.update(now, source.frames, self.avh_startup.configured(now), safe,
+                                             CC.enabled or CC.latActive or CC.longActive))
 
     # *** steering ***
     if (self.frame % self.p.STEER_STEP) == 0:
       if self.CP.carFingerprint in GEN2_ANGLE_PORTS:
-        angle_available = (CC.enabled and CC.latActive and CS.out.cruiseState.available and CS.out.cruiseState.enabled and
+        independent_lateral = subaru_aol_qualified(self.CP, marked_only=True)
+        angle_available = (CC.latActive and CS.out.cruiseState.available and
+                           (independent_lateral or CC.enabled and CS.out.cruiseState.enabled and not CS.out.brakePressed) and
                            CS.out.gearShifter == structs.CarState.GearShifter.drive and
-                           not CS.out.standstill and not CS.out.brakePressed)
+                           not CS.out.standstill and not CS.out.steerFaultTemporary and not CS.out.steerFaultPermanent)
         angle_active = self.angle_active(CS, angle_available)
         if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023 and not self.ascent_angle_initialized:
           self.apply_angle_last = CS.out.steeringAngleDeg
@@ -106,8 +139,6 @@ class CarController(CarControllerBase):
           apply_angle = apply_steer_angle_limits_vm(actuators.steeringAngleDeg, self.apply_angle_last,
                                                     CS.out.vEgoRaw, CS.out.steeringAngleDeg, angle_active,
                                                     self.p, self.VM)
-        if not angle_active and self.CP.carFingerprint != CAR.SUBARU_ASCENT_2023:
-          apply_angle = CS.out.steeringAngleDeg
         self.apply_angle_last = apply_angle
         self.angle_was_active = angle_active
         angle_bus = CanBus.main if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023 else CanBus.alt
@@ -160,6 +191,11 @@ class CarController(CarControllerBase):
       cruise_rpm = CarControllerParams.RPM_MIN
       cruise_brake = CarControllerParams.BRAKE_MIN
 
+    from opendbc.car.subaru.software_cruise_sender import send as send_software_cruise
+    can_sends.extend(send_software_cruise(self, CC, CS, now_nanos))
+    from opendbc.car.subaru.sng_sender import send as send_sng
+    can_sends.extend(send_sng(self, CC, CS, now_nanos))
+
     # *** alerts and pcm cancel ***
     lkas_alert_msg = self._ascent_lkas_alert(CC, CS)
     if lkas_alert_msg is not None:
@@ -188,9 +224,11 @@ class CarController(CarControllerBase):
         can_sends.append(subarucan.create_es_dashstatus(self.packer, self.frame // 10, CS.es_dashstatus_msg, CC.enabled,
                                                         self.CP.openpilotLongitudinalControl, CC.longActive, hud_control.leadVisible))
 
-        lkas_active = self.angle_was_active if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023 else CC.enabled
+        lkas_active = self.angle_was_active if self.CP.carFingerprint in GEN2_ANGLE_PORTS else CC.enabled
         lkas_state_msg = CS.es_lkas_state_msg
-        if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023:
+        if self.CP.carFingerprint in GEN2_ANGLE_PORTS or subaru_aol_qualified(self.CP, marked_only=True):
+          if self.CP.carFingerprint not in GEN2_ANGLE_PORTS:
+            lkas_active = CC.latActive
           lkas_state_msg = dict(lkas_state_msg, LKAS_ACTIVE=int(lkas_active))
         can_sends.append(subarucan.create_es_lkas_state(self.packer, self.frame // 10, lkas_state_msg, lkas_active, hud_control.visualAlert,
                                                         hud_control.leftLaneVisible, hud_control.rightLaneVisible,

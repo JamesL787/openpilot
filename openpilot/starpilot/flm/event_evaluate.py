@@ -2,7 +2,7 @@
 from dataclasses import replace
 import math
 
-from openpilot.starpilot.flm.adaptive_profile import Result, evaluate, loss
+from openpilot.starpilot.flm.adaptive_profile import Result, evaluate_event_proposal, loss
 from openpilot.starpilot.flm.event_controller_replay import POLICY
 
 TRIAL_STEP = .005
@@ -18,7 +18,7 @@ def _lower(values):
 
 
 def evaluate_event(identity, parameters, blocks, *, episodes, now_ns, required_cohorts, response_revision,
-                   sequence=1, ridge=.01, prior=None, effect_envelope=None, native_feasible=None):
+                   sequence=1, ridge=.01, prior=None, effect_envelope=None, native_feasible=None, event_mean_model=None):
   """Actual fit boundary; caller reconstructs episodes from exact child trace.
 
   An episode crossing train/heldout boundaries is rejected, not counted twice.
@@ -60,13 +60,14 @@ def evaluate_event(identity, parameters, blocks, *, episodes, now_ns, required_c
     counts[episode['kind']] += 1
   if counts['large'] < 3 and counts['subtle'] < 9:
     return Result('collecting', 'comparable_tracking_episodes')
-  fitted = evaluate(identity, parameters, blocks, now_ns=now_ns, required_cohorts=required_cohorts,
-                    response_revision=response_revision, sequence=sequence, ridge=ridge, prior=prior)
+  fitted = evaluate_event_proposal(identity, parameters, blocks, trial_step=TRIAL_STEP, now_ns=now_ns,
+                                   required_cohorts=required_cohorts,
+                    response_revision=response_revision, sequence=sequence, ridge=ridge, prior=prior,
+                    **({'event_mean_model':event_mean_model} if event_mean_model is not None else {}))
   if fitted.profile is None:
     return fitted
   reference = (0.0,) * len(parameters) if prior is None else prior
-  proposal = tuple(min(max(target, old - TRIAL_STEP), old + TRIAL_STEP)
-                   for old, target in zip(reference, fitted.profile.coefficients, strict=True))
+  proposal = fitted.profile.coefficients
   if proposal == reference:
     return Result('collecting', 'no_identifiable_event_trial')
   if native_feasible is not None:
@@ -94,10 +95,14 @@ def evaluate_event(identity, parameters, blocks, *, episodes, now_ns, required_c
   for cohort in sorted(required_cohorts):
     selected = [block for block in heldout if block.cohort == cohort]
     # Recompute BOTH before/after and original-baseline heldout evidence for the
-    # actual tiny proposal. The unconstrained ridge proposal is never applied.
+    # actual tiny proposal. The bounded training proposal is never admitted without these checks.
     gains = [loss(block.samples, reference) - loss(block.samples, proposal) for block in selected]
     original_gains = [loss(block.samples, (0.0,) * len(parameters)) - loss(block.samples, proposal) for block in selected]
     lower = min(_lower(gains), _lower(original_gains))
+    if event_mean_model is not None:
+      from openpilot.starpilot.flm.event_mean_evidence import lower as event_lower
+      lower = min(event_lower(event_mean_model,tuple(selected),tuple(gains),cohort=cohort),
+        event_lower(event_mean_model,tuple(selected),tuple(original_gains),cohort=cohort))
     if not math.isfinite(lower) or lower <= 0:
       return Result('rejected', 'event_tiny_trial_heldout_regression_or_noise')
     improvements.append((cohort, lower))

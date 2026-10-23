@@ -1125,6 +1125,7 @@ class RuntimeReplayTests(unittest.TestCase):
   def accepted_runtime(self, settings, *, session_id):
     runtime = Runtime(settings, session_id=session_id)
     candidate = runtime._observations(self.sm, self.cp, 2_000_000_000)[Source.DASHBOARD].candidate
+    assert candidate is not None
     accepted = acc.AcceptedLimit(candidate, session_id, 0)
     runtime.state = replace(runtime.state, acceptance=replace(acc.new_session(session_id, accepted), received_speed_mps=candidate.speed_mps))
     return runtime

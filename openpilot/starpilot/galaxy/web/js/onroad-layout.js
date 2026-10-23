@@ -118,6 +118,7 @@ export class OnroadLayoutFeed {
       if (response.status === 409) throw new Error("Saved values or parked status changed. Your edits are kept here. Reload before saving again.")
       if (!response.ok) throw new Error(saving ? "Colors and layout could not be saved. Your edits are kept here. Reload before trying again." :
         "Colors and layout are unavailable. Try reloading.")
+      const mapMoved = saving && data.mapDisabledElsewhere === true
       data = this.projection ? editorSnapshot(data) : withDisplay(data)
       if (!validSnapshot(data)) throw new Error("The device returned an unsupported colors and layout document. Reload to try again.")
       const initial = !this.data
@@ -128,7 +129,7 @@ export class OnroadLayoutFeed {
         status: "ready", data, ...((saving || initial || !background) ? { draft: clone(data.document) } : {}), error: "", needsReload: false,
         notice: saving ? (this.projection ? "Android Auto layout saved." : data.failed?.length ?
           "Layout saved, but these display options did not change: " + data.failed.join(", ") + ". Reload and try again." :
-          "Colors and both layouts saved.") :
+          "Colors and both layouts saved.") + (mapMoved ? " The map overlay is now off in the " + (this.projection ? "Big screen" : "Android Auto") + " layout." : "") :
           !background && !initial ? "Reloaded the saved layout." : ""
       })
       return true
@@ -231,6 +232,14 @@ export const LayoutWidgetPreview = {
           <path d="M38 48 H78 M67 37 L78 48 L67 59" />
         </g>
       </g>
+      <g v-else-if="widget.kind === 'jetlink_status'">
+        <rect :width="widget.width" :height="widget.height" :rx="widget.height / 2" fill="#0f0d17" :fill-opacity="235 / 255 * (widget.opacity ?? 85) / 100" />
+        <circle :cx="widget.height / 2" :cy="widget.height / 2" r="9" fill="#46c86e" />
+        <text :x="widget.height - 6" y="40" font-size="28" font-weight="600" fill="#f5f2fc">Link up</text>
+        <text :x="widget.height - 6" y="68" font-size="22" fill="#b8b2c8">Jetlink • iPhone</text>
+        <text :x="widget.width - 70" y="52" text-anchor="end" font-size="34" font-weight="600" fill="#f5f2fc">24.6</text>
+        <text :x="widget.width - 30" y="52" text-anchor="end" font-size="22" fill="#b8b2c8">ms</text>
+      </g>
       <g v-else-if="widget.kind === 'nav_card'">
         <rect x="1" y="1" :width="widget.width - 2" :height="widget.height - 2" rx="39" fill="#0f0d17f5" stroke="#a07edcbe" stroke-width="2" />
         <g transform="translate(24 47) scale(1.7)" fill="none" stroke="white" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
@@ -324,7 +333,7 @@ export const OnroadLayoutPage = {
       for (const [key, value] of Object.entries(update)) {
         if (JSON.stringify(state[key]) !== JSON.stringify(value)) state[key] = value
       }
-      if (draftChanged || ["Colors and both layouts saved.", "Android Auto layout saved."].includes(update.notice)) state.history = { undo: [], redo: [], group: null }
+      if (draftChanged || ["Colors and both layouts saved.", "Android Auto layout saved."].some(saved => update.notice?.startsWith(saved))) state.history = { undo: [], redo: [], group: null }
     }
     const feed = new OnroadLayoutFeed({ projection: props.projection, unauthorized: props.unauthorized, publish: apply })
     watch(() => !!state.drag || !!state.layerDrag, (dragging) => { if (!dragging && deferred) apply({}) }, { flush: "sync" })
@@ -391,6 +400,15 @@ export const OnroadLayoutPage = {
     sceneBorder() { return previewScene(this.state.scene).border },
     expandedRoad() { return !this.projection && this.state.profile === "large" && this.displayValue("DeveloperSidebar") !== "On" },
     roadBounds() { return this.expandedRoad ? { ...this.profile.bounds, width: this.profile.bounds.width + 300 } : this.profile.bounds },
+    // Widgets reach the whole screen only while the developer sidebar is hidden; otherwise the road beside it.
+    limitProfile() {
+      if (this.expandedRoad || this.projection || !this.profile) return this.profile
+      return { ...this.profile, widgets: Object.fromEntries(Object.entries(this.profile.widgets).map(([id, widget]) => {
+        if (!widget.expandable) return [id, widget]
+        const { bounds, ...narrow } = widget
+        return [id, narrow]
+      })) }
+    },
     // The last screen for this profile stays up while the next scene renders, instead of flashing the sketch.
     nativeBackdropReady() { return !!this.state.backdrop.url && this.state.backdrop.profile === (this.projection ? "projection" : this.state.profile) },
     layout() { return this.state.draft?.layouts[this.state.profile] },
@@ -465,7 +483,7 @@ export const OnroadLayoutPage = {
       return [{ offset: 0, color: '#72ff5c', alpha: 0 }, { offset: .5, color: '#72ff5c', alpha: 89 / 255 },
       { offset: 1, color: '#0df87a', alpha: 102 / 255 }]
     },
-    limits() { return this.selectedWidget ? placementLimits(this.profile, this.state.selected, this.layout) : null },
+    limits() { return this.selectedWidget ? placementLimits(this.limitProfile, this.state.selected, this.layout) : null },
     displayGroups() {
       const groups = []
       for (const row of this.state.data?.display || []) {
@@ -491,11 +509,17 @@ export const OnroadLayoutPage = {
   },
   methods: {
     previewShift(id) {
-      return this.expandedRoad ? ({ steering_wheel: 300, current_speed: 150, torque_bar: 150, driving_mode_descriptions: 150, clock: 150 }[id] || 0) : 0
+      return this.expandedRoad ? (this.profile.widgets[id]?.anchorShift || 0) * 300 : 0
     },
-    previewX(id) { return this.layout[id].x + this.previewShift(id) },
+    // A position saved for the wider screen is shown pulled inside the road that is showing, as the device does.
+    previewX(id) {
+      const x = this.layout[id].x + this.previewShift(id), widget = this.profile.widgets[id]
+      if (!widget?.expandable) return x
+      const road = this.roadBounds
+      return Math.max(road.x, Math.min(x, road.x + road.width - widgetSize(widget, this.layout[id])[0]))
+    },
     previewSnapTargets(id) {
-      if (!this.expandedRoad) return snapTargets(this.profile, this.layout, id, key => !this.previewHidden(key))
+      if (!this.expandedRoad) return snapTargets(this.limitProfile, this.layout, id, key => !this.previewHidden(key))
       const widget = this.profile.widgets[id], bounds = widget.bounds || this.profile.bounds, shift = this.previewShift(id)
       const profile = { ...this.profile, widgets: { ...this.profile.widgets, [id]: { ...widget, bounds: { ...bounds, x: bounds.x + shift } } } }
       const layout = Object.fromEntries(Object.entries(this.layout).map(([key, at]) => [key, { ...at, x: this.previewX(key) }]))
@@ -767,7 +791,7 @@ export const OnroadLayoutPage = {
     },
     changePosition(id, x, y) {
       if (!this.editable) return
-      const position = clampPlacement(this.profile, id, x, y, this.layout)
+      const position = clampPlacement(this.limitProfile, id, x, y, this.layout)
       if (position) {
         const before = this.state.drag ? null : clone(this.state.draft)
         Object.assign(this.layout[id], position)
@@ -845,7 +869,7 @@ export const OnroadLayoutPage = {
       // Actions that sat right under the card follow its new bottom; both stay on screen.
       if (actions && actions.x === card.x && actions.y === card.y + oldHeight + 22) actions.y = card.y + height + 22
       for (const id of ["cruise_limits", "speed_limit_actions"].filter(id => this.layout[id])) {
-        const limits = placementLimits(this.profile, id, this.layout)
+        const limits = placementLimits(this.limitProfile, id, this.layout)
         this.layout[id].y = Math.max(limits.minY, Math.min(this.layout[id].y, limits.maxY))
       }
       this.recordChange(before)
@@ -890,7 +914,7 @@ export const OnroadLayoutPage = {
         const [newWidth] = widgetSize(this.selectedWidget, this.selectedPosition)
         this.selectedPosition.x += (oldWidth - newWidth) / 2
       }
-      Object.assign(this.selectedPosition, clampPlacement(this.profile, this.state.selected,
+      Object.assign(this.selectedPosition, clampPlacement(this.limitProfile, this.state.selected,
         this.selectedPosition.x, this.selectedPosition.y, this.layout))
       this.recordChange(before)
       this.state.notice = ""
@@ -910,7 +934,7 @@ export const OnroadLayoutPage = {
       }
       const before = clone(this.state.draft), position = this.selectedPosition
       position.size = size
-      const next = clampPlacement(this.profile, this.state.selected, position.x, position.y, this.layout)
+      const next = clampPlacement(this.limitProfile, this.state.selected, position.x, position.y, this.layout)
       if (next) {
         Object.assign(position, next)
         this.recordChange(before)
@@ -971,7 +995,7 @@ export const OnroadLayoutPage = {
     },
     resizeBox(id, width, height, group = null) {
       if (!this.editable) return false
-      const position = this.layout[id], next = clampBox(this.profile, id, position, width, height)
+      const position = this.layout[id], next = clampBox(this.limitProfile, id, position, width, height)
       if (!next) return false
       const before = this.state.drag ? null : clone(this.state.draft)
       Object.assign(position, next)
@@ -990,7 +1014,7 @@ export const OnroadLayoutPage = {
       if (!this.editable || this.state.drag || this.state.layerDrag || !range || !Number.isInteger(size) || size < range.min || size > range.max) return
       const before = clone(this.state.draft), position = this.selectedPosition, previous = position.size
       position.size = size
-      const next = clampPlacement(this.profile, this.state.selected, position.x, position.y, this.layout)
+      const next = clampPlacement(this.limitProfile, this.state.selected, position.x, position.y, this.layout)
       if (next) {
         Object.assign(position, next)
         this.recordChange(before, this.state.profile + ":" + this.state.selected + ":size")
@@ -1053,16 +1077,16 @@ export const OnroadLayoutPage = {
           const [width, height] = widgetSize(this.profile.widgets[drag.id], this.layout[drag.id])
           drag.targets ||= this.previewSnapTargets(drag.id)
           // Pushing past an edge parks the widget on it, so snap from where the clamp will leave it.
-          const { minX, maxX, minY, maxY } = placementLimits(this.profile, drag.id, this.layout)
+          const { minX, maxX, minY, maxY } = placementLimits(this.limitProfile, drag.id, this.layout)
           const inside = { x: Math.max(minX, Math.min(maxX, raw.x)), y: Math.max(minY, Math.min(maxY, raw.y)) }
           const snapped = snapMove({ ...inside, width, height }, drag.targets, snapThreshold(this.profile, rect, event.pointerType))
-          const clamped = clampPlacement(this.profile, drag.id, snapped.x, snapped.y, this.layout)
+          const clamped = clampPlacement(this.limitProfile, drag.id, snapped.x, snapped.y, this.layout)
           if (clamped) {
             next = snapped
             if (clamped.x === Math.round(snapped.x) && clamped.y === Math.round(snapped.y)) this.state.snapGuides = snapped.guides
           }
         }
-        if (drag.fromTray) drag.inside = clampPlacement(this.profile, drag.id, next.x, next.y, this.layout) !== null
+        if (drag.fromTray) drag.inside = clampPlacement(this.limitProfile, drag.id, next.x, next.y, this.layout) !== null
         this.changePosition(drag.id, next.x, next.y)
       }
       if (drag.fromTray) this.layout[drag.id].enabled = drag.inside

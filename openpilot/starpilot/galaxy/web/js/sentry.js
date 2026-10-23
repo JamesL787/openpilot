@@ -77,7 +77,7 @@ export const SentryEventsPage = {
           <GxNotice v-if="data.scanIncomplete" tone="warn">This scan was incomplete. More local motion events may exist.</GxNotice>
           <GxState v-if="!data.events.length">No local motion events found in this scan.</GxState>
           <section v-for="event in data.events" :key="event.eventId" class="gx-card gx-home__card">
-            <h2>{{ event.kind === 'selfie' ? 'Selfie' : event.kind === 'alarm' ? 'Alarm' : 'Warning' }}</h2>
+            <div class="gx-section__header"><i class="bi" :class="event.kind === 'selfie' ? 'bi-camera' : event.kind === 'alarm' ? 'bi-bell' : 'bi-exclamation-triangle'"></i><h2 class="gx-section__title">{{ event.kind === 'selfie' ? 'Selfie' : event.kind === 'alarm' ? 'Alarm' : 'Warning' }}</h2></div>
             <p>System time: {{ systemTime(event.systemTimeMs) }}</p>
             <small>Event ID: {{ event.eventId }}</small>
             <button type="button" class="gx-btn" :disabled="deleting" @click="feed.remove(event.eventId)">Delete</button>

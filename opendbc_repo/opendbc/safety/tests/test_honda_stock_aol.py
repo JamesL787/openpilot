@@ -7,6 +7,24 @@ from opendbc.safety.tests.libsafety import libsafety_py
 
 
 CASES = (
+  ("classic-alpha", 20, 2082, 1, "honda_civic_hatchback_ex_2017_can_generated", False, "GEARBOX_AUTO", 4),
+  ("classic-alpha-alt", 20, 2083, 1, "acura_rdx_2020_can_generated", False, "GEARBOX_AUTO", 4),
+  ("classic-alpha-rdx", 20, 2211, 1, "acura_rdx_2020_can_generated", False, "GEARBOX_AUTO", 4),
+  ("nidec-pedal", 1, 544, 0, "honda_civic_touring_2016_can_generated", False, "GEARBOX_CVT", 4),
+  ("nidec-pedal-alt", 1, 548, 0, "acura_ilx_2016_can_generated", True, "GEARBOX_AUTO", 4),
+  ("nidec-pedal-twn", 1, 804, 0, "honda_odyssey_twn_2018_generated", True, "GEARBOX_AUTO", 4),
+  ("accord-mvl-stock", 20, 80, 0, "honda_common_canfd_generated", False, "GEARBOX_AUTO", 4),
+  ("accord-mvl-stock-alt-brake", 20, 81, 0, "honda_common_canfd_generated", False, "GEARBOX_AUTO", 4),
+  ("alt-radar-alpha", 20, 1058, 1, "honda_civic_hatchback_ex_2017_can_generated", False, "GEARBOX_AUTO", 4),
+  ("alt-radar-alpha-alt-brake", 20, 1059, 1, "acura_rdx_2020_can_generated", False, "GEARBOX_AUTO", 4),
+  ("mdx-tja-alpha", 20, 1570, 1, "honda_common_canfd_generated", False, "GEARBOX_AUTO", 4),
+  ("mdx-tja-alpha-alt-brake", 20, 1571, 1, "honda_common_canfd_generated", False, "GEARBOX_AUTO", 4),
+  ("alt-radar-stock", 20, 0, 1, "honda_civic_hatchback_ex_2017_can_generated", False, "GEARBOX_AUTO", 4),
+  ("alt-radar-stock-alt-brake", 20, 1, 1, "acura_rdx_2020_can_generated", False, "GEARBOX_AUTO", 4),
+  ("mdx-tja-stock", 20, 512, 1, "honda_common_canfd_generated", False, "GEARBOX_AUTO", 4),
+  ("mdx-tja-stock-alt-brake", 20, 513, 1, "honda_common_canfd_generated", False, "GEARBOX_AUTO", 4),
+  ("canfd-stock", 20, 16, 0, "honda_common_canfd_generated", False, "GEARBOX_AUTO", 4),
+  ("canfd-stock-alt-brake", 20, 17, 0, "honda_common_canfd_generated", False, "GEARBOX_AUTO", 4),
   ("classic", 20, 0, 1, "honda_civic_hatchback_ex_2017_can_generated", False, "GEARBOX_AUTO", 4),
   ("classic-alt-brake", 20, 1, 1, "acura_rdx_2020_can_generated", False, "GEARBOX_AUTO", 4),
   ("nidec", 1, 0, 0, "honda_civic_touring_2016_can_generated", False, "GEARBOX_CVT", 4),
@@ -38,7 +56,8 @@ class TestHondaStockAol(unittest.TestCase):
     self.safety.set_aol_test_heartbeat(True)
     self.packer = CANPackerSafety(dbc)
     self.dbc = DBC(dbc)
-    self.scoped = experience == 32 and (word not in (10, 11) or self.debug)
+    self.pedal = model == 1 and word in (544, 548, 804)
+    self.scoped = experience == 32 and (word not in (10, 11, 1058, 1059, 1570, 1571, 2082, 2083, 2211) or self.debug)
 
   def packet(self, name, values, bus=None):
     expected = self.dbc.name_to_msg[name].sigs
@@ -62,6 +81,8 @@ class TestHondaStockAol(unittest.TestCase):
       frames.append(("BRAKE_COMMAND", self.packet("BRAKE_COMMAND", {}, 2)))
     elif self.case[2] & 1:
       frames.append(("BRAKE_MODULE", self.packet("BRAKE_MODULE", {"BRAKE_PRESSED": brake})))
+    if self.pedal:
+      frames.append(("GAS_SENSOR", self.packet("GAS_SENSOR", {"INTERCEPTOR_GAS": 0, "INTERCEPTOR_GAS2": 0, "STATE": 0})))
     for name, frame in frames:
       if name != omit:
         self.assertTrue(self.safety.safety_rx_hook(frame), name)
@@ -69,9 +90,11 @@ class TestHondaStockAol(unittest.TestCase):
       self.safety.aol_set_host_request(1)
 
   def normal_engage(self, *, button=3, gas=0, brake=0):
-    if self.debug and self.case[2] in (10, 11):
+    if self.pedal or (self.debug and self.case[2] in (10, 11, 1058, 1059, 1570, 1571, 2082, 2083, 2211)):
       for value in (button, 0):
         scm = {"CRUISE_BUTTONS": value, "CRUISE_SETTING": 0}
+        if self.alt:
+          scm["MAIN_ON"] = 1
         self.assertTrue(self.safety.safety_rx_hook(self.packet("SCM_BUTTONS", scm)))
     else:
       self.assertTrue(self.safety.safety_rx_hook(self.packet("POWERTRAIN_DATA", {
@@ -88,7 +111,7 @@ class TestHondaStockAol(unittest.TestCase):
 
   def test_normal_engagement_then_brake_without_main_or_lkas_gesture(self):
     for case in CASES:
-      for button in ((3, 4) if case[2] in (10, 11) else (3,)):
+      for button in ((3, 4) if case[2] in (10, 11, 544, 548, 804, 1058, 1059, 1570, 1571, 2082, 2083, 2211) else (3,)):
         for gas in (0, 1):
           with self.subTest(case=case[0], button=button, gas=gas):
             self.configure(case)
@@ -258,7 +281,7 @@ class TestHondaStockAol(unittest.TestCase):
 
   def test_ae0_remains_without_independent_permission(self):
     for case in CASES:
-      if case[2] == 260:
+      if case[2] in (260, 804):
         continue
       with self.subTest(case=case[0]):
         self.configure(case, experience=0)
@@ -268,7 +291,7 @@ class TestHondaStockAol(unittest.TestCase):
 
   def test_cold_valid_normal_grant_precedes_engaged_heartbeat(self):
     for case in CASES:
-      for button in ((3, 4) if case[2] in (10, 11) else (3,)):
+      for button in ((3, 4) if case[2] in (10, 11, 544, 548, 804, 1058, 1059, 1570, 1571, 2082, 2083, 2211) else (3,)):
         with self.subTest(case=case[0], button=button):
           self.configure(case)
           self.safety.set_aol_test_heartbeat(False)

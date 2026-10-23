@@ -172,8 +172,9 @@ export const ControllersPage = {
     },
   },
   template: `
-    <section class="gx-card gx-panel gx-stack gx-controllers" aria-label="Controller Buttons" :inert="state.busy" :aria-busy="state.busy || undefined">
-      <h3>Controller Buttons</h3>
+    <section class="gx-card gx-controllers" aria-label="Controller Buttons" :inert="state.busy" :aria-busy="state.busy || undefined">
+      <div class="gx-section__header"><i class="bi bi-controller" aria-hidden="true"></i><span class="gx-section__title">Controller Buttons</span></div>
+      <div class="gx-panel gx-stack">
       <p>Assign USB or Bluetooth controller buttons to Quick Select and driving screen actions. This does not control steering, gas, or brakes. Turn off the vehicle to edit.</p>
       <p v-if="mode !== 'local'" class="gx-note">Connect to local Galaxy to manage controller buttons.</p>
       <template v-else>
@@ -183,8 +184,9 @@ export const ControllersPage = {
         <template v-if="state.status?.available">
           <GxNotice v-if="!state.status.editable" tone="warn">Turn off the vehicle to change controller buttons.</GxNotice>
           <GxNotice v-if="changed" tone="warn">Controller settings changed. Reload before saving.</GxNotice>
+          <GxNotice v-if="dirty" tone="warn">Save these changes before learning or removing buttons.</GxNotice>
           <div class="gx-driving__actions gx-actions"><button class="gx-btn gx-btn--tonal" type="button" @click="reload">Reload</button></div>
-          <div class="gx-controllers__switch-row"><span class="gx-row__label">Enable assigned controller buttons</span>
+          <div class="gx-row gx-row--borderless"><div class="gx-row__info"><span class="gx-row__label">Enable assigned controller buttons</span></div>
             <label class="gx-switch"><input type="checkbox" role="switch" aria-label="Enable assigned controller buttons" v-model="state.draft.enabled" :disabled="!canEdit" @change="save"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
           <h4>Attached Controllers</h4>
           <p v-if="!state.status.devices.length" class="gx-note">No controller is attached.</p>
@@ -209,6 +211,6 @@ export const ControllersPage = {
             <div class="gx-row__info"><span class="gx-row__label">{{ binding.name }}</span><span class="gx-row__desc">Button {{ binding.code }} · {{ state.status.slots[binding.slot].label }}</span></div>
             <button class="gx-btn gx-btn--tonal" type="button" :disabled="!editable || dirty" @click="remove(binding)">Remove</button></div>
         </template>
-      </template>
+      </template></div>
     </section>`,
 }

@@ -1,6 +1,6 @@
 import copy
 from opendbc.can import CANDefine, CANParser
-from opendbc.car import Bus, structs
+from opendbc.car import Bus, structs, create_button_events
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.subaru.values import CAR, DBC, CanBus, SubaruFlags
@@ -10,9 +10,24 @@ from opendbc.car import CanSignalRateCalculator
 class CarState(CarStateBase):
   def __init__(self, CP):
     super().__init__(CP)
+    from opendbc.car.subaru.startup import selected, StartupSources
+    self.startup_sources = StartupSources() if selected(CP) else None
+    from opendbc.car.subaru.avh import selected as avh_selected, AvhSources
+    self.avh_sources = AvhSources() if avh_selected(CP) else None
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
     self.shifter_values = can_define.dv["Transmission"]["Gear"]
 
+    self.sng_sources = {}
+    self.sng_source_valid = {}
+    self.sng_lead_source_ns = 0
+    self.sng_lead_present = False
+    self.sng_lead_ready = False
+    self.close_distance = 0.0
+    self.software_buttons = dict.fromkeys(("Main", "Set", "Resume"), 0)
+    self.software_button_source_ns = 0
+    self.software_button_counter = None
+    self.software_button_consumed_ns = 0
+    self.software_buttons_msg = {}
     self.es_lkas_alert_dat = b""
     self.angle_rate_calulator = CanSignalRateCalculator(50)
 
@@ -136,6 +151,33 @@ class CarState(CarStateBase):
 
     if not (self.CP.flags & SubaruFlags.HYBRID):
       self.es_distance_msg = copy.copy(cp_es_distance.vl["ES_Distance"])
+
+    from opendbc.car.subaru.software_cruise import selected
+    if selected(self.CP):
+      buttons = cp.vl["Cruise_Buttons"]
+      source_ns = int(cp.ts_nanos["Cruise_Buttons"]["COUNTER"])
+      counter = int(buttons["COUNTER"])
+      if source_ns > self.software_button_source_ns and counter != self.software_button_counter:
+        self.software_button_source_ns = source_ns
+        self.software_button_counter = counter
+        self.software_buttons_msg = dict(buttons)
+      button_events = []
+      for name, kind in (("Main", structs.CarState.ButtonEvent.Type.mainCruise),
+                         ("Set", structs.CarState.ButtonEvent.Type.decelCruise),
+                         ("Resume", structs.CarState.ButtonEvent.Type.accelCruise)):
+        pressed = int(bool(buttons[name]))
+        button_events.extend(create_button_events(pressed, self.software_buttons[name], {1: kind}))
+        self.software_buttons[name] = pressed
+      ret.buttonEvents = button_events
+      ret.cruiseState.speedCluster = ret.cruiseState.speed
+
+    from opendbc.car.subaru.sng import selected as sng_selected
+    if sng_selected(self.CP):
+      cp.vl["Brake_Pedal"]
+      lead = cp_es_distance.vl["ES_Distance"]
+      self.close_distance = float(lead["Close_Distance"])
+      self.sng_lead_present = bool(lead["Car_Follow"]) and not bool(lead["Cruise_Fault"])
+      self.sng_lead_source_ns = int(cp_es_distance.ts_nanos["ES_Distance"]["COUNTER"])
 
     self.es_dashstatus_msg = copy.copy(cp_cam.vl["ES_DashStatus"])
     if self.CP.flags & SubaruFlags.ASCENT_LKAS_ALERT:

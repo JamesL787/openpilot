@@ -97,6 +97,24 @@ class OnroadLayoutOwner:
     failed = self._save_display(display, rows, session_valid)
     return {**self.snapshot(), "failed": failed}
 
+  def disable_map(self, session_valid: Callable[[], bool]) -> bool:
+    """Turn the Big-screen map off when Android Auto has taken it; True when it was on."""
+    raw, readable = read_saved(self.params, PARAM_KEY, MAX_BYTES)
+    if not readable or raw is None:
+      return False
+    try:
+      document = json.loads(raw)
+      placed = document["layouts"]["large"]["nav_map"]
+    except (ValueError, KeyError, TypeError):
+      return False
+    if type(placed) is not dict or placed.get("enabled") is not True:
+      return False
+    placed["enabled"] = False
+    result = commit_exact(self.params, key=PARAM_KEY, max_bytes=MAX_BYTES,
+                          raw=json.dumps(document, separators=(",", ":"), allow_nan=False).encode(), expected=raw,
+                          authorized=lambda: session_valid() and self.parked(), temp_prefix=".onroad-layout-")
+    return bool(result.committed and result.verified)
+
   def _save_display(self, display, rows, session_valid) -> list[str]:
     changes = [key for key, value in display.items() if value != rows[key].value]
     # Lead info can change only while the Lead indicator is shown.

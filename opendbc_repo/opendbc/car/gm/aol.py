@@ -1,6 +1,9 @@
 """Independent lateral axes for exact source-qualified Bolt and Volt owners."""
 
 import math
+from functools import lru_cache
+
+from capnp.lib.capnp import _DynamicStructBuilder, _DynamicStructReader
 from opendbc.car.gm.cancel_remap import aol_enabled, valid_alternative_experience
 
 from opendbc.car.structs import CarParams
@@ -39,7 +42,7 @@ GM_AOL_WORDS = (frozenset(range(0xE600, 0xE608)) | frozenset(range(0xE610, 0xE61
 ))
 
 
-def qualified_gm(cp) -> bool:
+def _qualified_gm_uncached(cp) -> bool:
   try:
     if (cp.brand != 'gm' or cp.notCar or cp.passive or cp.dashcamOnly or
         cp.steerControlType != CarParams.SteerControlType.torque or
@@ -92,6 +95,30 @@ def qualified_gm(cp) -> bool:
             int(cp.safetyConfigs[0].safetyParam) == int(GMSafetyFlags.HW_CAM | GMSafetyFlags.EV))
   except (AttributeError, IndexError, TypeError, ValueError):
     return False
+
+
+# Qualification depends only on the exact finalized CarParams value. Cache no
+# live vehicle state, native grant, source timestamp, or output eligibility.
+@lru_cache(maxsize=8)
+def _qualified_gm_bytes(key: bytes) -> bool:
+  with CarParams.from_bytes(key) as cp:
+    return _qualified_gm_uncached(cp)
+
+
+def qualified_gm(cp) -> bool:
+  cp_type = type(cp)
+  if cp_type is _DynamicStructBuilder or cp_type is _DynamicStructReader:
+    try:
+      if cp.schema == CarParams.schema:
+        if cp.brand != 'gm':
+          return False
+        snapshot = cp.copy() if cp_type is _DynamicStructBuilder else cp.as_builder()
+        key = snapshot.to_bytes()
+        if len(key) <= 64 * 1024:
+          return _qualified_gm_bytes(key)
+    except Exception:
+      pass
+  return _qualified_gm_uncached(cp)
 
 
 def lateral_request(cp, cc) -> bool:

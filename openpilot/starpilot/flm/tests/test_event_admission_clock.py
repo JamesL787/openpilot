@@ -46,6 +46,10 @@ class ClockedBoundaryAdapter(BoundaryAdapter, EventCollectionAdapter):
   raw_collection = False
   decisions = None
 
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.original_context_receipts = None
+
   def physical_observable(self, row=None, *, value=None):
     return super().physical_observable(row if value is None else value)
 

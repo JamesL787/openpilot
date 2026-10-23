@@ -37,13 +37,13 @@ def create_intent(cp, settings):
 
 def physical_cancel_lateral_allowed(cp, cs, intent, native, *, settings, previous,
                                     source_ns, now_ns, axis_session_id) -> bool:
-  """Unassigned stock Cancel withdraws cruise, not an already granted LAT axis."""
+  """Let the mapped intent owner apply Cancel while retaining a granted LAT axis."""
   from openpilot.starpilot.aol.intent import ButtonType
   from openpilot.starpilot.aol.runtime import (AXIS_MAX_AGE_NS, INTENT_MAX_AGE_NS, SAFETY_MAX_AGE_NS,
                                                native_inventory_matches_cp)
   try:
     return bool(qualified(cp, marked_only=True) and settings is not None and settings.enabled and
-      not any(settings.cancel_actions) and previous is not None and previous.lateral_active and previous.native_acknowledged and
+      previous is not None and previous.lateral_active and previous.native_acknowledged and
       intent is not None and intent.settingsQualified and intent.allowedLatch and intent.lateralArmed and
       not intent.pauseLateral and intent.producerSessionId and intent.carStateLogMonoTime == source_ns and
       0 < source_ns <= intent.observedMonoTime <= now_ns <= intent.validUntilMonoTime and

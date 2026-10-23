@@ -18,6 +18,8 @@ static bool classic_scc_aol_camera = false;
 static bool classic_long_aol_enabled = false;
 static bool classic_long_main_neutral = false;
 static bool classic_long_main_pressed = false;
+static bool classic_scc_main_source_seen = false;
+static uint32_t classic_scc_main_source_ts = 0U;
 
 static bool legacy_long_param(uint16_t param) {
   return (param == 0xE900U) || (param == 0xE901U) || (param == 0xE902U) || (param == 0xE903U) ||
@@ -74,6 +76,8 @@ static void classic_non_scc_aol_clear_authorization(void) {
   }
   classic_long_main_neutral = false;
   classic_long_main_pressed = false;
+  classic_scc_main_source_seen = false;
+  classic_scc_main_source_ts = 0U;
   aol_host_axis_mask = 0U;
 }
 
@@ -169,7 +173,17 @@ static void classic_non_scc_aol_rx(const CANPacket_t *msg) {
         classic_non_scc_aol_claimed = false;
       }
     }
-    if (classic_long_aol_enabled && (msg->bus == 0U) && (msg->addr == 0x4F1U) && (GET_LEN(msg) == 4U)) {
+    if ((classic_long_aol_enabled || (classic_scc_aol_enabled && classic_non_scc_aol_lda)) &&
+        (msg->bus == 0U) && (msg->addr == 0x4F1U) && (GET_LEN(msg) == 4U)) {
+      if (classic_scc_aol_enabled) {
+        if (!classic_scc_main_source_seen ||
+            (safety_get_ts_elapsed(now, classic_scc_main_source_ts) > HYUNDAI_CLASSIC_SOURCE_MAX_AGE_US)) {
+          classic_long_main_neutral = false;
+          classic_long_main_pressed = false;
+        }
+        classic_scc_main_source_seen = true;
+        classic_scc_main_source_ts = now;
+      }
       const bool main_pressed = GET_BIT(msg, 3U);
       if (!main_pressed) {
         classic_long_main_neutral = true;

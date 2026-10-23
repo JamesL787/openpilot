@@ -1,5 +1,8 @@
 from dataclasses import replace
 
+from opendbc.car.hyundai.ev9_long_aol import qualified as qualified_ev9_long_aol, WORDS as EV9_LONG_AOL_WORDS
+from opendbc.car.hyundai.pe_long_aol import qualified as qualified_pe_long_aol, WORDS as PE_LONG_AOL_WORDS
+
 from opendbc.car.hyundai.blended_stock_aol import (
   qualified as qualified_blended_stock, qualified_alpha as qualified_blended_alpha,
   WORDS as BLENDED_STOCK_WORDS, ALPHA_WORDS as BLENDED_ALPHA_WORDS,
@@ -94,7 +97,14 @@ def ioniq6_settings_capable(CP) -> bool:
   return _stock_ioniq6(CP) or (IONIQ6_LONG_PREARM_ENABLED and ioniq6_long_eligible(CP))
 
 
+def qualified_ccnc_long_aol(CP, *, marked_only=False):
+  return qualified_ev9_long_aol(CP, marked_only=marked_only) or qualified_pe_long_aol(CP, marked_only=marked_only)
+
+
 def _policy_for(CP) -> AolVehiclePolicy:
+  if qualified_ccnc_long_aol(CP):
+    return AolVehiclePolicy(cruise_main_required=False, intent_supported=True, settings_supported=True, runtime_supported=True,
+                            normal_runtime_supported=True, explicit_latch=True, alternative_experience_addition=32)
   if qualified_blended_alpha(CP):
     return AolVehiclePolicy(intent_supported=True, settings_supported=True, runtime_supported=True,
                             normal_runtime_supported=True, ordinary_axis_ack_required=qualified_blended_alpha(CP, marked_only=True),
@@ -125,6 +135,7 @@ def _policy_for(CP) -> AolVehiclePolicy:
     )
   if qualified_classic_scc(CP):
     return AolVehiclePolicy(
+      cruise_main_required=False,
       intent_supported=True,
       settings_supported=True,
       runtime_supported=True,
@@ -189,7 +200,8 @@ def policy_for(CP) -> AolVehiclePolicy:
       CP.openpilotLongitudinalControl and policy.runtime_supported):
     policy = replace(policy, paddle_pause=True)
   marked = (
-    qualified_blended_alpha(CP, marked_only=True) or qualified_blended_stock(CP, marked_only=True)
+    qualified_ccnc_long_aol(CP, marked_only=True)
+    or qualified_blended_alpha(CP, marked_only=True) or qualified_blended_stock(CP, marked_only=True)
     or qualified_angle_aol(CP, marked_only=True) or qualified_classic_long(CP, marked_only=True)
     or qualified_classic_scc(CP, marked_only=True) or qualified_canfd_long(CP, marked_only=True)
     or qualified_canfd_stock(CP, marked_only=True) or qualified_ioniq6(CP)
@@ -211,7 +223,8 @@ def native_profile_supported(model: int, param: int) -> bool:
     or classic_native_profile_supported(model, param)
     or (
       model == int(car.CarParams.SafetyModel.hyundaiCanfd)
-      and param in IONIQ6_AOL_SAFETY_PARAMS | CANFD_LONG_AOL_WORDS | ANGLE_AOL_WORDS | STOCK_AOL_WORDS | set(STOCK_SAFETY_PARAMS.values())
+      and param in (IONIQ6_AOL_SAFETY_PARAMS | CANFD_LONG_AOL_WORDS | ANGLE_AOL_WORDS | EV9_LONG_AOL_WORDS |
+                    PE_LONG_AOL_WORDS | STOCK_AOL_WORDS | set(STOCK_SAFETY_PARAMS.values()))
     )
     or (model == int(car.CarParams.SafetyModel.hyundai) and param in AOL_WORDS)
   )
@@ -222,6 +235,8 @@ def native_accepts_cp(CP, model: int, param: int) -> bool:
   # Revalidate the complete contract on every call, without caching live authority.
   if CP.carFingerprint == HyundaiCAR.HYUNDAI_IONIQ_6:
     return qualified_ioniq6(CP)
+  if qualified_ccnc_long_aol(CP, marked_only=True):
+    return model == int(car.CarParams.SafetyModel.hyundaiCanfd) and param == CP.safetyConfigs[0].safetyParam
   if qualified_blended_alpha(CP, marked_only=True) or qualified_blended_stock(CP, marked_only=True):
     return model == int(car.CarParams.SafetyModel.hyundai) and param == CP.safetyConfigs[0].safetyParam
   if qualified_angle_aol(CP, marked_only=True):
@@ -247,7 +262,7 @@ def native_latch_rejected(CP, native) -> bool:
   return (
     native.requestedLateral and not native.lateralAllowed and
     (
-      qualified_angle_aol(CP, marked_only=True)
+      qualified_angle_aol(CP, marked_only=True) or qualified_ccnc_long_aol(CP, marked_only=True)
       or qualified_blended_stock(CP, marked_only=True)
       or qualified_blended_alpha(CP, marked_only=True)
       or qualified_classic_long(CP, marked_only=True)
@@ -298,14 +313,15 @@ def allow_lateral_onset(CP, *, requested, normal_enabled, steering_pressed, prev
 
 
 def retain_on_native_denial(CP, native, state):
-  return bool(qualified_angle_aol(CP, marked_only=True) and native.requestedLateral and not native.lateralAllowed and temporary_restriction(CP, state))
+  return bool((qualified_angle_aol(CP, marked_only=True) or qualified_ccnc_long_aol(CP, marked_only=True)) and
+              native.requestedLateral and not native.lateralAllowed and temporary_restriction(CP, state))
 
 
 def independent_cruise_buttons_supported(CP, *, marked_only=False) -> bool:
   # Dedicated EV6 LONG raw-button/optional-release behavior stays unchanged.
   if CP.carFingerprint == HyundaiCAR.KIA_EV6 and CP.openpilotLongitudinalControl:
     return False
-  return bool(qualified_sonata_independent(CP) or
+  return bool(qualified_ccnc_long_aol(CP, marked_only=marked_only) or qualified_sonata_independent(CP) or
               qualified_angle_aol(CP, marked_only=marked_only) or
               qualified_canfd_stock(CP, marked_only=marked_only) or
               qualified_canfd_long(CP, marked_only=marked_only) or
@@ -351,7 +367,7 @@ def retained_shared_long_cancel_intent(CP, CS, sm, feedback, owner, *, cancel_so
   from openpilot.starpilot.aol.runtime import AXIS_MAX_AGE_NS, SAFETY_MAX_AGE_NS
   from openpilot.starpilot.aol.transport_pause import cp_identity, independent_lateral_health
   try:
-    if (not (qualified_sonata_independent(CP) or
+    if (not (qualified_sonata_independent(CP) or qualified_ccnc_long_aol(CP, marked_only=True) or
              CP.carFingerprint in LONG_EV_CARS and qualified_canfd_long(CP, marked_only=True)) or
         owner is None or not owner.explicit_latch or not owner.independent_cruise_buttons or
         not owner.allowed_latch or owner.pause_lateral or owner.pause_longitudinal or owner._fault_inhibit):

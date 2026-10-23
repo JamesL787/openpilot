@@ -32,6 +32,8 @@ def main():
     if len(raw) > MAX_INPUT:
       raise ValueError('fit input bound')
     snapshot = json.loads(raw)
+    from openpilot.starpilot.flm.native_primitives import enable_fit_worker
+    enable_fit_worker()
     from openpilot.starpilot.flm.learner_factory import fit_snapshot
 
     # One isolated, address-space/CPU-bounded job. Reference counting remains

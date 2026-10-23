@@ -1,3 +1,5 @@
+import { GxNotice } from "./notice.js"
+
 const SLUG = /^[A-Za-z0-9]{16}$/
 const unsupported = (response) => response.status === 404 || response.status === 405
 
@@ -28,6 +30,7 @@ async function namedDevices(devices) {
 
 export const DevicePicker = {
   name: "DevicePicker",
+  components: { GxNotice },
   data: () => ({ devices: [], activeSlug: "", loading: true, editing: "", draft: "", error: "", saving: false }),
   computed: { visible() { return location.hostname === "galaxy.firestar.link" && this.devices.length > 1 } },
   mounted() { if (location.hostname === "galaxy.firestar.link") this.load() },
@@ -85,7 +88,7 @@ export const DevicePicker = {
         <label for="gx-device-name">Rename comma</label>
         <input id="gx-device-name" class="gx-field" v-model="draft" maxlength="40" autocomplete="off" />
         <div class="gx-actions gx-tags"><button type="submit" class="gx-btn">Save</button><button type="button" class="gx-btn gx-btn--tonal" @click="editing=''">Cancel</button></div>
-        <p v-if="error" class="gx-note gx-note--danger">{{ error }}</p>
+        <GxNotice v-if="error" tone="danger">{{ error }}</GxNotice>
       </form>
     </div>
   `,

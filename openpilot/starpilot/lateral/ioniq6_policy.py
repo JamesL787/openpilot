@@ -826,7 +826,7 @@ class Ioniq6TorquePolicy:
     curvature_deadzone = abs(VM.calc_curvature(math.radians(effective_deadzone_deg), CS.vEgo, 0.0))
     lateral_accel_deadzone = curvature_deadzone * CS.vEgo ** 2
     lateral_accel_deadzone = auto_stages.apply_selected_deadzone(parent, CS, VM, float(lateral_accel_deadzone), desired_curvature,
-      active=active, limited=steer_limited_by_safety or curvature_limited)
+      active=active, limited=steer_limited_by_safety or curvature_limited, curvature_limited=curvature_limited)
     # Honor the measured delay instead of rounding across a whole request tick.
     delay_frames = clip_scalar(lat_delay / self.dt, 1.0, float(self.request_buffer_len))
     recent = int(delay_frames)
@@ -887,14 +887,14 @@ class Ioniq6TorquePolicy:
     friction_jerk_deadzone = center_chatter_friction_jerk_deadzone(CS.vEgo, setpoint, vehicle_jerk_deadzone)
     friction_jerk = math.copysign(max(abs(desired_lateral_jerk) - friction_jerk_deadzone, 0.0), desired_lateral_jerk)
     ff, friction_threshold = auto_stages.apply_stages(parent, CS, setpoint, desired_lateral_jerk, ff, friction_threshold,
-      active=active, limited=steer_limited_by_safety or curvature_limited)
+      active=active, limited=steer_limited_by_safety or curvature_limited, curvature_limited=curvature_limited)
     friction_error = error_with_lsf + JERK_GAIN * friction_jerk
     friction = friction_scale * parent.friction(friction_error, lateral_accel_deadzone,
                                                 friction_threshold, CS, setpoint)
     selected_friction = self.center_friction(friction, CS,
       saturated=abs(friction_error) >= friction_threshold + lateral_accel_deadzone)
     ff += auto_stages.apply_selected_friction(parent, CS, setpoint, float(selected_friction),
-      active=active, limited=steer_limited_by_safety or curvature_limited)
+      active=active, limited=steer_limited_by_safety or curvature_limited, curvature_limited=curvature_limited)
     if CS.vEgo < self.low_speed_reset_threshold:
       parent.pid.reset()
     freeze_integrator = (steer_limited_by_safety or CS.steeringPressed or

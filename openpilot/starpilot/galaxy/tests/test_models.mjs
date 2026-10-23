@@ -214,8 +214,8 @@ assert.equal(modelActionAllowed({ ...randomPayload, isOnroad: true }, 'enable-ra
 assert.equal(modelActionAllowed({ ...randomPayload, isOnroad: true }, 'favorite', small), true)
 assert.equal(modelActionAllowed(randomPayload, 'exclude', pending), true)
 assert.match(ModelsPage.template, /Model Randomizer/)
-assert.match(ModelsPage.template, /Excluded from randomizer/)
-assert.match(ModelsPage.template, /Chestnut is not detected/)
+assert.match(ModelsPage.template, /Include in Randomizer/)
+assert.match(ModelsPage.template, /An external GPU is not detected/)
 const randomManagement = managerFixture()
 randomManagement.manager.start()
 await randomManagement.reply(0, randomPayload)
@@ -235,7 +235,30 @@ console.log('Randomizer and exclusion interactions passed')
 
 assert.match(ModelsPage.template, /Park the vehicle before changing or downloading models/)
 assert.doesNotMatch(ModelsPage.template, /Onroad: switching/)
-assert.equal((ModelsPage.template.match(/gx-row gx-model-control/g) || []).length, 4)
+assert.equal((ModelsPage.template.match(/class="gx-model-control"/g) || []).length, 2)
+assert.equal(ModelsPage.data().hardwareFilter, 'both')
+const hardware = { hardwareFilter: 'both', setHardwareFilter(value) { this.hardwareFilter = value } }
+ModelsPage.methods.toggleHardware.call(hardware, 'gpu', false)
+assert.equal(hardware.hardwareFilter, 'comma')
+ModelsPage.methods.toggleHardware.call(hardware, 'comma', false)
+assert.equal(hardware.hardwareFilter, 'none')
+ModelsPage.methods.toggleHardware.call(hardware, 'gpu', true)
+assert.equal(hardware.hardwareFilter, 'gpu')
+ModelsPage.methods.toggleHardware.call(hardware, 'comma', true)
+assert.equal(hardware.hardwareFilter, 'both')
+const randomSwitch = { target: { checked: true } }
+let randomAction = ''
+ModelsPage.methods.toggleRandomizer.call({ status: { randomizer: false }, runAction(action) { randomAction = action } }, randomSwitch)
+assert.equal(randomAction, 'enable-randomizer')
+assert.equal(randomSwitch.target.checked, false)
+const chargeSwitch = { target: { checked: true } }
+let chargeChoice
+ModelsPage.methods.toggleJetlinkCharge.call({ status: { jetlink: { mode: 'ios', chargePhone: false } },
+  configureJetlink(mode, enabled) { chargeChoice = [mode, enabled] } }, chargeSwitch)
+assert.deepEqual(chargeChoice, ['ios', true])
+assert.equal(chargeSwitch.target.checked, false)
+
+
 const feedbackPage = { ...ModelsPage.data(), unauthorized() {}, canAction() { return true } }
 ModelsPage.created.call(feedbackPage)
 const publishManager = feedbackPage.manager.publish

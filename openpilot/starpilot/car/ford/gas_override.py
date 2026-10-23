@@ -51,7 +51,7 @@ def retained_gas_lateral_native(feedback, sm, cp, cs, axis, now_ns, *, latched, 
       not producer
       or producer != feedback.availability_producer
       or str(axis.intentProducerSessionId) != producer
-      or not feedback.availability_epoch
+      or feedback.availability_epoch is None
       or axis.intentIntegrityEpoch != feedback.availability_epoch
       or str(axis.sessionId) != feedback.session
       or str(axis.faultSessionId) != feedback.session

@@ -13,9 +13,10 @@ from openpilot.starpilot.aol.tests.test_runtime import car_state
 @pytest.mark.parametrize('case', ['older', 'equal', 'newer', 'legacy', 'slot_controls', 'native_long', 'native_lat',
   'request_long', 'request_lat', 'session', 'expired', 'future', 'lease', 'native_rx', 'native_heartbeat', 'native_fault',
   'native_identity', 'native_experience', 'native_invalid', 'native_lost', 'panda_rx', 'panda_heartbeat', 'panda_fault',
-  'panda_identity', 'panda_experience', 'panda_invalid', 'panda_lost', 'panda_unseen', 'axis_lat', 'axis_long',
+  'panda_identity', 'panda_experience', 'panda_invalid', 'panda_lost', 'panda_unseen', 'axis_lat',
   'axis_request_lat', 'axis_request_long', 'axis_ack', 'brake', 'gas', 'acc', 'can', 'timeout', 'steer', 'cruise'])
-def test_newer_native_retains_only_complete_current_combined_intent(case):
+@pytest.mark.parametrize('long_active', [False, True])
+def test_newer_native_retains_only_complete_current_combined_intent(case, long_active):
   cp = configured_cp()
   native = bound_state(cp)
   source = native.sourcePandaStatesMonoTime
@@ -23,7 +24,7 @@ def test_newer_native_retains_only_complete_current_combined_intent(case):
   cs = car_state()
   cs.cruiseState.enabled = True
   axis = SimpleNamespace(sessionId=native.axisSessionId, nativeAcknowledged=True,
-    desiredLateral=True, lateralActive=True, desiredLongitudinal=True, longitudinalActive=True)
+    desiredLateral=True, lateralActive=True, desiredLongitudinal=True, longitudinalActive=long_active)
   native_changes = {'native_long': {'longitudinalAllowed': False}, 'native_lat': {'lateralAllowed': False},
     'request_long': {'requestedLongitudinal': False}, 'request_lat': {'requestedLateral': False},
     'future': {'observedMonoTime': NOW + 1}, 'lease': {'validUntilMonoTime': NOW + 200_000_001}}
@@ -53,7 +54,7 @@ def test_newer_native_retains_only_complete_current_combined_intent(case):
   if case in ('native_invalid', 'native_lost'):
     getattr(sm, 'valid' if case == 'native_invalid' else 'alive')['aolSafetyWire'] = False
   axis_changes = {'session': ('sessionId', 'foreign'), 'axis_lat': ('lateralActive', False),
-    'axis_long': ('longitudinalActive', False), 'axis_request_lat': ('desiredLateral', False),
+    'axis_request_lat': ('desiredLateral', False),
     'axis_request_long': ('desiredLongitudinal', False), 'axis_ack': ('nativeAcknowledged', False)}
   if case in axis_changes:
     setattr(axis, *axis_changes[case])

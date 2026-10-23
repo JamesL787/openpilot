@@ -387,7 +387,7 @@ class SlcOffsetFeatureTests(unittest.TestCase):
     large._metric_source = None
     large._toggles = {"IsMetric": NS(action_item=NS(set_state=lambda value: setattr(large, "shown", value)))}
     large._toggle_defs = {"IsMetric": (lambda: "metric", "", "", False)}
-    large._update_toggles = lambda: None
+    self.enterContext(patch.object(large, "_update_toggles", return_value=None))
     self.assertTrue(large._toggle_callback(True, "IsMetric"))
     self.assertTrue(large.shown)
     self.assertEqual(self.raw("IsMetric"), b"1")
@@ -395,7 +395,7 @@ class SlcOffsetFeatureTests(unittest.TestCase):
 
     compact_layout = compact.TogglesLayoutMici.__new__(compact.TogglesLayoutMici)
     compact_layout._slc_offsets = self.units
-    compact_layout._update_toggles = lambda: None
+    self.enterContext(patch.object(compact_layout, "_update_toggles", return_value=None))
     compact_layout._metric_source = b"0"  # stale displayed source
     cast(Any, compact_layout)._metric_toggle = NS(set_checked=lambda value: setattr(compact_layout, "shown", value))
     with patch.object(compact, "ui_state", NS(params=self.params)):

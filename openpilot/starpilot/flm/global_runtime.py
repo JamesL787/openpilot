@@ -3,6 +3,7 @@
 import math
 from collections import OrderedDict
 from types import SimpleNamespace
+from typing import cast
 from openpilot.starpilot.flm.adaptive_profile import ApplicationOutcome, Parameter, ProfileOwner
 from openpilot.starpilot.flm.runtime_adapter_registry import (
   selected_descriptor,
@@ -30,6 +31,7 @@ def native_witness_current(native, *, now_ns, active):
 
 
 SERVICE = 'autoSteeringLearning'
+TRACKING_SERVICE = 'starpilotSteeringTracking'
 NON_TORQUE_SCHEMAS = {
   'pid': 'pid-ff-pre-pid-v1',
   'angle': 'angle-no-offset-v1',
@@ -39,11 +41,12 @@ NON_TORQUE_SCHEMAS = {
 
 
 class GlobalRuntime:
-  def __init__(self, cp, ci, controller):
+  def __init__(self, cp, ci, controller, *, confirmed_live_history=()):
     # Construct AFTER actual LaC selection, startup native/manual configuration.
     self.cp, self.ci, self.controller = cp, ci, controller
     from openpilot.starpilot.flm.calibration_lifecycle import ConsumerCalibrationLifecycle
     self._calibration_lifecycle = ConsumerCalibrationLifecycle()
+    self._calibration_pending: tuple[str, int] | None = None
     self.health_services = ('carState', 'modelV2', 'vehicleParameters', 'lateralDelay', 'driverMonitoringState', 'extrinsicsCalibration')
     try:
       self.descriptor = selected_descriptor(cp, ci, controller)
@@ -68,6 +71,11 @@ class GlobalRuntime:
     self.session = ''
     self.outer_sequence = -1
     self._runtime_admission_cache = None
+    self.live_trial_owner = None
+    self._live_trial_delivery_cache = None
+    self._confirmed_live_history = tuple(confirmed_live_history)
+    self.live_vehicle_model_generation = ''
+    self._live_vm_anchor = None
     self.last_now = 0
     self.used = False
     self.eligible = False
@@ -78,6 +86,7 @@ class GlobalRuntime:
     self.snapshot_sequence = 0
     self.frame_sequence = 0
     self.snapshot_ns = 0
+    self.last_capture_frame = 0
     self.replay_inputs = ()
     self.observation = None
     self.prior_policy_output = self.prior_policy_ff = 0.0
@@ -112,6 +121,8 @@ class GlobalRuntime:
 
   def _neutral(self, reason):
     self.controller.automatic_flm_effects = None
+    if self.live_trial_owner is not None:
+      self.live_trial_owner.neutral(reason)
     if self.effect_owner is not None:
       self.effect_owner.source = None
       self.effect_owner.trace = None
@@ -128,30 +139,75 @@ class GlobalRuntime:
   def prepare(self, sm, *, now_ns, active, healthy, controller=None, manual_current=False, native_required=False, native_witness=None):
     """Bounded current source/admission checks; invoked immediately before LaC."""
     self.used, self.stage, self.frame, self.eligible = False, None, None, False
+    self.outcome = None
     self.controller.automatic_flm_effects = None
     self.source = None
     # Capture a fresh V2 generation and calibration interruption before ANY
     # unrelated adapter/native/vehicle health gate can return.
+    receipt_service = SERVICE
+    if TRACKING_SERVICE in sm.seen and sm.seen[TRACKING_SERVICE] and int(sm[TRACKING_SERVICE].version)!=0:
+      receipt_service = TRACKING_SERVICE
+    live_delivery = receipt_service == TRACKING_SERVICE
     tracker = self._calibration_lifecycle
     early_source = None
     try:
       if (type(now_ns) is int and now_ns > 0 and self.descriptor is not None and
-          sm.seen[SERVICE] and sm.alive[SERVICE] and sm.valid[SERVICE] and sm.freq_ok[SERVICE] and
-          0 <= now_ns - int(sm.recv_time[SERVICE] * 1e9) <= SOURCE_LEASE_NS):
-        envelope = sm[SERVICE]
-        if envelope.learning.sourceReceipt.version in (2, 3):
-          early_source = read_source_receipt(SimpleNamespace(valid=True, autoSteeringLearning=envelope),
-            now_ns=now_ns, cp_sha256=self.descriptor.cp_sha256)
-          if early_source is not None and not tracker.generation:
-            tracker.capture(early_source.calibration_generation)
+          sm.seen[receipt_service] and sm.alive[receipt_service] and sm.valid[receipt_service] and sm.freq_ok[receipt_service] and
+          0 <= now_ns - int(sm.recv_time[receipt_service] * 1e9) <= SOURCE_LEASE_NS):
+        envelope = sm[receipt_service]
+        receipt = envelope.sourceReceipt if live_delivery else envelope.learning.sourceReceipt
+        if receipt.version in (2, 3):
+          if live_delivery:
+            from openpilot.starpilot.flm.live_trial_wire import read_tracking_source
+            early_source = read_tracking_source(envelope,now_ns=now_ns,cp_sha256=self.descriptor.cp_sha256)
+          else:
+            early_source = read_source_receipt(SimpleNamespace(valid=True, autoSteeringLearning=envelope),
+              now_ns=now_ns, cp_sha256=self.descriptor.cp_sha256)
       stamp = int(sm.logMonoTime['extrinsicsCalibration'])
       receipt = int(sm.recv_time['extrinsicsCalibration'] * 1e9)
       current_calibration = bool(type(now_ns) is int and now_ns > 0 and
         sm.all_checks(['extrinsicsCalibration']) and
         0 < stamp <= now_ns <= stamp + 500_000_000 and
         0 < receipt <= now_ns <= receipt + 500_000_000)
+      if not tracker.generation:
+        from openpilot.starpilot.flm.calibration_lifecycle import calibrated_basis
+        pending = self._calibration_pending
+        generation = early_source.calibration_generation if early_source is not None else None
+        if pending is not None and generation is not None and generation != pending[0]:
+          tracker.retire(pending[0])
+          pending = self._calibration_pending = None
+        calibration = calibrated_basis(sm['extrinsicsCalibration'])
+        frequency_only = bool(not current_calibration and type(now_ns) is int and now_ns > 0 and
+          sm.seen['extrinsicsCalibration'] and sm.alive['extrinsicsCalibration'] and sm.valid['extrinsicsCalibration'] and
+          not sm.freq_ok['extrinsicsCalibration'] and
+          0 < stamp <= now_ns <= stamp + 500_000_000 and 0 < receipt <= now_ns <= receipt + 500_000_000 and
+          calibration is not None)
+        defer_binding = bool(frequency_only and generation is not None and not tracker.exhausted and
+          generation not in tracker.rejected and
+          (pending is None or calibration is not None and calibration[1] >= pending[1]))
+        if defer_binding:
+          assert generation is not None and calibration is not None
+          self._calibration_pending = (generation, calibration[1])
+        else:
+          # Invalid/stale first calibration and pending regressions retain the
+          # original capture-before-observe rejection. No pending row admits.
+          if generation is None and pending is not None and not current_calibration:
+            generation = pending[0]
+          if generation is not None:
+            tracker.capture(generation)
+            if pending is not None and generation == pending[0]:
+              tracker.blocks = pending[1]
+            self._calibration_pending = None
+      if (not sm.valid['extrinsicsCalibration'] or stamp > now_ns or receipt > now_ns):
+        tracker.reject(now_ns=now_ns)
       tracker.observe(sm['extrinsicsCalibration'], current=current_calibration, now_ns=now_ns)
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+      if not tracker.generation:
+        if early_source is not None:
+          tracker.capture(early_source.calibration_generation)
+        elif self._calibration_pending is not None:
+          tracker.capture(self._calibration_pending[0])
+        self._calibration_pending = None
       tracker.reject(now_ns=now_ns)
     self.outcome = None
     self.centre_frame = None
@@ -170,6 +226,7 @@ class GlobalRuntime:
       self.native_identity_cache = (key, native_identity_digest(key))
     self.native_identity = self.native_identity_cache[1]
     self.active, self.healthy, self.now_ns = bool(active), bool(healthy), now_ns
+    self._live_sm = sm
     if self.descriptor is None or controller is not None and controller is not self.controller:
       self._neutral('actual_adapter_unavailable')
       return
@@ -214,18 +271,22 @@ class GlobalRuntime:
         receipt = int(sm.recv_time[service] * 1e9)
         if not (sm.seen[service] and 0 < stamp <= now_ns <= stamp + maximum and 0 < receipt <= now_ns <= receipt + maximum):
           if service == 'extrinsicsCalibration' and hasattr(self, '_calibration_lifecycle'):
-            self._calibration_lifecycle.reject()
+            self._calibration_lifecycle.unavailable(now_ns=now_ns)
           raise ValueError('stale_original_source')
       if self.controller.sat_time > 0:
         raise ValueError('controller_saturation')
-      if not (sm.seen[SERVICE] and sm.alive[SERVICE] and sm.valid[SERVICE] and sm.freq_ok[SERVICE]):
+      if not (sm.seen[receipt_service] and sm.alive[receipt_service] and sm.valid[receipt_service] and sm.freq_ok[receipt_service]):
         raise ValueError('source_unavailable')
-      received = int(sm.recv_time[SERVICE] * 1e9)
+      received = int(sm.recv_time[receipt_service] * 1e9)
       if not 0 <= now_ns - received <= SOURCE_LEASE_NS:
         raise ValueError('stale_receipt')
-      envelope = sm[SERVICE]
+      envelope = sm[receipt_service]
       event = SimpleNamespace(valid=True, autoSteeringLearning=envelope)
-      source = early_source if early_source is not None else read_source_receipt(event, now_ns=now_ns, cp_sha256=self.descriptor.cp_sha256)
+      if live_delivery:
+        from openpilot.starpilot.flm.live_trial_wire import read_tracking_source
+        source = early_source if early_source is not None else read_tracking_source(envelope,now_ns=now_ns,cp_sha256=self.descriptor.cp_sha256)
+      else:
+        source = early_source if early_source is not None else read_source_receipt(event, now_ns=now_ns, cp_sha256=self.descriptor.cp_sha256)
       if (
         source is None
         or source.cp_sha256 != self.descriptor.cp_sha256
@@ -248,6 +309,7 @@ class GlobalRuntime:
         self.generation += 1
         self.owner = self.torque_owner = self.centre_source = None
         self.effect_owner = self.effect_envelope = None
+        self.live_trial_owner = None
         self.effect_full_hash = ''
         self.profile = self.validation = None
         self.snapshot_ns = self.snapshot_sequence = 0
@@ -257,6 +319,18 @@ class GlobalRuntime:
       self.eligible = bool(source.enabled and not source.manual and not self.live_manual and active and healthy)
       if not source.enabled or source.manual or self.live_manual or not active:
         raise ValueError('manual_or_off_or_inactive')
+      live_offer, live_restore = self._current_live_trial(sm,envelope) if live_delivery else (None,None)
+      if live_offer is not None and live_restore is not None:
+        raise ValueError('simultaneous trial and history restore')
+      if live_offer is not None or live_restore is not None:
+        self._prepare_live_trial(live_offer or live_restore, source, now_ns=now_ns, active=active, healthy=healthy, restoring=live_restore is not None)
+        self.reason = 'qualified'
+        return
+      if live_delivery:
+        raise ValueError('live_tracking_collecting')
+      if self.effect_owner is self.live_trial_owner and self.live_trial_owner is not None:
+        self.live_trial_owner.neutral('live_offer_withdrawn')
+        self.effect_owner = None
       admission = self._current_runtime_admission(sm,event)
       if admission is None:
         raise ValueError('collecting')
@@ -332,6 +406,71 @@ class GlobalRuntime:
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
       self._neutral('unavailable')
 
+  def _current_live_trial(self, sm, envelope):
+    from capnp.lib.capnp import _DynamicStructReader
+    from openpilot.starpilot.flm.live_trial_wire import read_trial,read_restore
+    if int(envelope.version) != 1:
+      raise ValueError('unknown live tracking delivery version')
+    frame = sm.recv_frame[TRACKING_SERVICE]
+    if type(frame) is not int or not isinstance(envelope,_DynamicStructReader):
+      self._live_trial_delivery_cache = None
+      return read_trial(envelope),read_restore(envelope)
+    key = (frame,int(sm.logMonoTime[TRACKING_SERVICE]),float(sm.recv_time[TRACKING_SERVICE]))
+    cached = self._live_trial_delivery_cache
+    if cached is not None and cached[0] == key and cached[1] is envelope:
+      return cached[2]
+    value = (read_trial(envelope),read_restore(envelope))
+    self._live_trial_delivery_cache = (key,envelope,value)
+    return value
+
+  def _prepare_live_trial(self, offer, source, *, now_ns, active, healthy, restoring=False):
+    from openpilot.starpilot.flm.live_trial_owner import TrackingTrialOwner
+    from openpilot.starpilot.flm.live_trial_contract import LiveTrialBinding
+    # Live experiments always require the actual current native permission,
+    # ordinary Panda permission and typed axis grants remain distinct domains.
+    if self.native_required:
+      if not native_witness_current(self.native_witness, now_ns=now_ns, active=active):
+        raise ValueError('live_native_permission_unavailable')
+    else:
+      from openpilot.starpilot.flm.runtime_adapter_registry import current_authority
+      if not current_authority(self._live_sm,self.cp,now_ns=now_ns,required=False)[0]:
+        raise ValueError('live_ordinary_native_permission_unavailable')
+    if not self.live_vehicle_model_generation:
+      raise ValueError('live_vehicle_model_unobserved')
+    expected = LiveTrialBinding(self.identity,self.descriptor.cp_sha256,self.descriptor.controller_revision,
+      self.baseline_revision,source.source_epoch,source.reset,source.calibration_generation,
+      self.live_vehicle_model_generation,self.native_identity if self.native_required else '',offer.binding.physical_model_revision,
+      source.persistent_source_epoch,self.native_required).validate()
+    from openpilot.starpilot.flm.live_tracking_response import validate_response_witness
+    validate_response_witness(offer.response_witness,expected,now_ns)
+    if offer.binding != expected:
+      raise ValueError('live_current_source_binding_changed')
+    if self.descriptor.domain == 'torque_pid':
+      from openpilot.starpilot.flm.pid_stages import SUPPORTED, coordinates_supported
+      if (not restoring and any(name not in SUPPORTED for name in offer.names)) or not coordinates_supported(dict(offer.target)):
+        raise ValueError('PID live trial requires one of26 supported hooks')
+    owner = self.live_trial_owner
+    if owner is None or owner.binding != expected:
+      if owner is not None:
+        owner.neutral('live_binding_changed')
+      owner = TrackingTrialOwner(expected,domain=self.descriptor.domain)
+      self.live_trial_owner = owner
+    permission = bool(active and healthy and self.eligible)
+    if restoring:
+      from openpilot.starpilot.flm.live_trial_store import LiveConfirmedPrior,scope,stable_binding
+      priors = tuple(prior for prior in self._confirmed_live_history if type(prior) is LiveConfirmedPrior and
+        prior.historical_only is True and scope(prior.binding)==offer.history_scope and stable_binding(prior.binding)==stable_binding(expected))
+      if len(priors)!=1 or not owner.prepare_restore(offer,priors[0],now_ns=now_ns,permission=permission,binding=expected):
+        raise ValueError('confirmed_history_not_currently_restorable')
+    elif not owner.prepare(offer, now_ns=now_ns, permission=permission, binding=expected):
+      raise ValueError('live_current_permission_unavailable')
+    self.owner = self.torque_owner = self.centre_source = None
+    self.profile = self.validation = None
+    self.effect_envelope = None
+    self.effect_owner = owner
+    self.effect_full_hash = offer.target_sha256
+    self.controller.automatic_flm_effects = owner
+
   def _current_runtime_admission(self, sm, event):
     # SubMaster alone owns recv_frame: a new delivery ALWAYS changes this key.
     # Keep the original immutable reader alive so Python ID reuse cannot hit it.
@@ -382,7 +521,7 @@ class GlobalRuntime:
       'context_key': source.source_epoch, 'persistent_source_epoch': source.persistent_source_epoch,
       'current_full_profile_sha256': envelope.prior_full_profile_sha256 if renewing else current_hash}
     admit_context(envelope,profile=profile,**context)
-    previous = self.effect_owner
+    previous = cast(EffectOwner | None, self.effect_owner)
     if (previous is None or previous.objective != objective or
         previous.physical_model_revision != validation.physical_model_revision or not renewing):
       owner = EffectOwner(self.identity, objective, selected_baseline_revision=self.baseline_revision,
@@ -417,7 +556,8 @@ class GlobalRuntime:
       from openpilot.starpilot.flm.controller_replay import capture_snapshot, frame_input
 
       self.snapshot = ()
-      if self.identity and self.descriptor.domain != 'ford_curvature' and (not self.snapshot_ns or self.now_ns - self.snapshot_ns >= 1_000_000_000):
+      if self.identity and self.descriptor.domain != 'ford_curvature' and (not self.snapshot_ns or self.frame_sequence != self.last_capture_frame + 1 or
+          self.now_ns - self.snapshot_ns >= 1_000_000_000):
         if self.descriptor.domain in ('torque', 'torque_pid'):
           self.snapshot = capture_snapshot(self.controller, vm).values
         else:
@@ -439,6 +579,14 @@ class GlobalRuntime:
         ('model_source_ns.high', float(int(model_source_ns) >> 32)),
         ('model_source_ns.low', float(int(model_source_ns) & 0xFFFFFFFF)),
       )
+      # Original receipt metadata only. No controller update, model, new native
+      # permission or full checkpoint is produced here.
+      provenance = getattr(self.controller, 'native_learning_provenance', ())
+      if provenance:
+        from openpilot.starpilot.flm.native_refinement_wire import FIELD, encode
+        compact = encode(tuple(provenance))
+        if compact is not None:
+          self.replay_inputs += ((FIELD, compact),)
       regime = vm_regime(dict(self.replay_inputs), self.vm_anchor)
       if regime is None or self.vm_anchor is not None and regime != self.vm_anchor:
         if self.validation is not None:
@@ -446,6 +594,10 @@ class GlobalRuntime:
         self.eligible = False
         self._neutral('vehicle_model_material_change')
       self.vm_anchor = regime
+      if regime != self._live_vm_anchor:
+        from openpilot.starpilot.flm.runtime_adapter_registry import digest
+        self.live_vehicle_model_generation = '' if regime is None else digest(regime)
+        self._live_vm_anchor = regime
       if self.observation is not None:
         self.observation.begin_frame()
         policy = getattr(getattr(self.controller, 'starpilot_extension', None), 'policy', None)
@@ -571,6 +723,13 @@ class GlobalRuntime:
     trace = effect.trace if effect is not None else None
     has_effect = any(effect.applied_full.values()) if effect is not None else any(coordinates)
     applied = bool(self.used and self.stage_effect and self.reason == 'qualified' and has_effect and self.active and self.healthy)
+    if effect is self.live_trial_owner and effect is not None:
+      application = effect.application
+      if application is not None:
+        actual = bool(effect.used and effect.frame_complete(self.descriptor.domain) and
+          self.active and self.healthy and self.eligible and self.reason == 'qualified')
+        self.outcome = effect.acknowledge_frame(actual)
+      return
     self.outcome = ApplicationOutcome(
       self.identity,
       self.profile.sequence if self.profile is not None else 0,
@@ -738,6 +897,35 @@ class GlobalRuntime:
       self.centre_history[control_ns] = (key, min(self.profile.expires_ns, self.source.expires_ns), tuple(p.name for p in self.profile.parameters))
       while len(self.centre_history) > 64:
         self.centre_history.popitem(last=False)
+    # This is the actual hook-consumed map, never the offered target. The
+    # preparation stamp and publication stamp are distinct but same-frame.
+    from openpilot.starpilot.flm.live_trial_owner import LiveTrialApplication
+    live_values = ()
+    application = self.outcome
+    live_owner = self.live_trial_owner
+    current_offer = None if live_owner is None else (live_owner.restore_offer or live_owner.offer)
+    if (
+      type(application) is LiveTrialApplication
+      and live_owner is not None
+      and current_offer is not None
+      and self.effect_owner is live_owner
+      and self.controller.automatic_flm_effects is live_owner
+      and live_owner.frame_complete(self.descriptor.domain)
+      and application.status in ('applied', 'restored')
+      and application.binding == live_owner.binding
+      and application.control_ns == self.now_ns
+      and 0 <= control_ns - application.control_ns <= 30_000_000
+      and current_offer.observed_ns <= control_ns <= current_offer.expires_ns
+      and self.source.observed_ns <= control_ns <= self.source.expires_ns
+      and active and self.healthy and self.eligible and self.reason == 'qualified'
+      and self.source.enabled and not (self.source.manual or self.live_manual)
+      and (not self.native_required or native_allowed)
+    ):
+      live_values = tuple(value for _, value in application.applied)
+    if live_owner is not None and self.controller.automatic_flm_effects is live_owner and not live_values:
+      # A consumed but unqualified live map is unknown, never legacy neutral.
+      return None
+    self.last_capture_frame = self.frame_sequence
     return ControlEvidence(
       self.identity,
       self.generation,
@@ -784,4 +972,6 @@ class GlobalRuntime:
       applied_profile_expires_ns=self.profile.expires_ns if current_profile else 0,
       effect_trace=self.effect_owner.trace if self.controller.automatic_flm_effects is self.effect_owner and self.effect_owner is not None else None,
       effect_prepare_ns=self.now_ns,
+      vehicle_model_anchor=() if self.vm_anchor is None else tuple(self.vm_anchor),
+      live_applied_coordinates=live_values,
     )

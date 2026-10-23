@@ -113,7 +113,7 @@ export const PROJECTION_DISPLAY_SWITCHES = ["blindSpotBorder", "signalBorder", "
 export function validDocument(document, metadata) {
   if (!object(document)) return false
   const profiles = metadata?.projection === true ? ["large"] : PROFILES
-  if (!keysEqual(document, ["version", "palette", "layouts", "widgetColors", "roadColors", ...(Object.hasOwn(document, "widgetOrder") ? ["widgetOrder"] : []), ...(Object.hasOwn(document, "speedSources") ? ["speedSources"] : []), ...(Object.hasOwn(document, "speedSourcesCard") ? ["speedSourcesCard"] : []), ...(Object.hasOwn(document, "speedAlign") ? ["speedAlign"] : []), ...(Object.hasOwn(document, "clock24Hour") ? ["clock24Hour"] : []), ...(Object.hasOwn(document, "showMaxSpeed") ? ["showMaxSpeed"] : []), ...(metadata?.projection !== true && Object.hasOwn(document, "display") ? ["display"] : []), ...(metadata?.projection === true && Object.hasOwn(document, "largeUiGammaTrial") ? ["largeUiGammaTrial"] : []), ...(metadata?.projection === true ? PROJECTION_DISPLAY_SWITCHES.filter(key => Object.hasOwn(document, key)) : []), ...(metadata?.projection === true && Object.hasOwn(document, "leadInfo") ? ["leadInfo"] : [])]) || document.version !== 8 ||
+  if (!keysEqual(document, ["version", "palette", "layouts", "widgetColors", "roadColors", ...(Object.hasOwn(document, "widgetOrder") ? ["widgetOrder"] : []), ...(Object.hasOwn(document, "speedSources") ? ["speedSources"] : []), ...(Object.hasOwn(document, "speedSourcesCard") ? ["speedSourcesCard"] : []), ...(Object.hasOwn(document, "speedAlign") ? ["speedAlign"] : []), ...(Object.hasOwn(document, "clock24Hour") ? ["clock24Hour"] : []), ...(Object.hasOwn(document, "showMaxSpeed") ? ["showMaxSpeed"] : []), ...(metadata?.projection !== true && Object.hasOwn(document, "display") ? ["display"] : []), ...(metadata?.projection === true && Object.hasOwn(document, "largeUiGammaTrial") ? ["largeUiGammaTrial"] : []), ...(metadata?.projection === true ? PROJECTION_DISPLAY_SWITCHES.filter(key => Object.hasOwn(document, key)) : []), ...(metadata?.projection === true && Object.hasOwn(document, "leadInfo") ? ["leadInfo"] : [])]) || document.version !== (metadata?.projection === true ? 8 : 9) ||
     (Object.hasOwn(document, "speedSources") && typeof document.speedSources !== "boolean") ||
     (Object.hasOwn(document, "speedSourcesCard") && typeof document.speedSourcesCard !== "boolean") ||
     (Object.hasOwn(document, "speedAlign") && !SPEED_ALIGNMENTS.includes(document.speedAlign)) ||
@@ -201,18 +201,18 @@ export function validSnapshot(data) {
       if (widget.visualInsetTop != null && (!Number.isFinite(widget.visualInsetTop) || widget.visualInsetTop < 0 || widget.visualInsetTop > area.height)) return false
       if (!object(widget.colors) || !Object.entries(widget.colors).every(([key, value]) =>
         COLORS.includes(key) && (value === null || (typeof value === "string" && HEX.test(value))))) return false
-      if (!Number.isFinite(area.x) || !Number.isFinite(area.y) || area.x < 0 || area.y < 0 ||
+      if (!Number.isFinite(area.x) || !Number.isFinite(area.y) || area.x < (widget.expandable ? -300 : 0) || area.y < 0 ||
         !positive(area.width) || !positive(area.height) || area.x + area.width > profile.width ||
         area.y + area.height > profile.height || typeof widget.label !== "string" || typeof widget.kind !== "string" ||
         !positive(widget.width) || !positive(widget.height) || widget.width > area.width || widget.height > area.height) return false
-      if (widget.box && (data.metadata.projection !== true || widget.kind !== "nav_map" || !object(widget.opacity) ||
+      if (widget.box && (widget.kind !== "nav_map" || !object(widget.opacity) ||
         ![widget.box.minWidth, widget.box.maxWidth, widget.box.minHeight, widget.box.maxHeight].every(Number.isInteger) ||
         widget.box.minWidth < 24 || widget.box.minHeight < 24 || widget.box.minWidth > widget.box.maxWidth ||
         widget.box.minHeight > widget.box.maxHeight || widget.box.maxWidth > area.width || widget.box.maxHeight > area.height ||
         ![widget.opacity.min, widget.opacity.max, widget.opacity.default].every(Number.isInteger) ||
         widget.opacity.min < 0 || widget.opacity.max > 100 || widget.opacity.min > widget.opacity.default ||
         widget.opacity.default > widget.opacity.max)) return false
-      if (widget.opacity && (!projection || !["nav_map", "nav_home", "nav_work", "bookmark", "car_exit", "cruise_limits"].includes(widget.kind) ||
+      if (widget.opacity && (!(["nav_map", "jetlink_status"].includes(widget.kind) || projection && ["nav_home", "nav_work", "bookmark", "car_exit", "cruise_limits"].includes(widget.kind)) ||
         !object(widget.opacity) || ![widget.opacity.min, widget.opacity.max, widget.opacity.default].every(Number.isInteger) ||
         widget.opacity.min < 0 || widget.opacity.max > 100 || widget.opacity.min > widget.opacity.default ||
         widget.opacity.default > widget.opacity.max)) return false

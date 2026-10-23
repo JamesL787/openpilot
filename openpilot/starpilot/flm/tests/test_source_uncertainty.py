@@ -90,6 +90,8 @@ def exercise(recovery=None, *, publication_uncertain=False, publication_only_rec
     def prepare_control(self, value):
       return value
   sm = mock.Mock()
+  sm.updated = {'deviceMotion': False}
+  sm.logMonoTime = {'deviceMotion': 0}
   def update(timeout=None):
     if timeout == 0:
       return

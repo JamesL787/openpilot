@@ -680,7 +680,7 @@ class TestToyotaHighlanderAol(unittest.TestCase):
       self.assertEqual(self.safety.aol_get_permission_mask(), 0)
 
   def test_exact_profile_admission_and_reset(self):
-    for word, ae in ((585, 160), (585, 288), (72, 32), (329, 32), (1097, 32), (73, 33), (73, 289), (73, 416)):
+    for word, ae in ((585, 160), (585, 288), (72, 32), (329, 32), (1096, 32), (73, 33), (73, 289), (73, 416)):
       self.init(word, ae)
       self.physical()
       self.assertEqual(self.safety.aol_get_request_mask(), 0)

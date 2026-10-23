@@ -30,7 +30,7 @@ from openpilot.cereal import log
 disable_ecu_module = importlib.import_module('opendbc.car.disable_ecu')
 
 
-def classic_frames(ci, tick, *, main=0, lkas=0, button=0, engaged=False, brake=False):
+def classic_frames(ci, tick, *, main=0, main_pressed=0, lkas=0, button=0, engaged=False, brake=False):
 
   assert ci.CP.carFingerprint == CAR.HYUNDAI_SONATA_HYBRID
   packer = CANPacker('hyundai_can_generated')
@@ -53,7 +53,7 @@ def classic_frames(ci, tick, *, main=0, lkas=0, button=0, engaged=False, brake=F
     counter = tick // period
     values = {}
     if name == 'CLU11':
-      values.update(CF_Clu_AliveCnt1=counter%16, CF_Clu_CruiseSwState=button, CF_Clu_CruiseSwMain=main)
+      values.update(CF_Clu_AliveCnt1=counter%16, CF_Clu_CruiseSwState=button, CF_Clu_CruiseSwMain=main_pressed)
     elif name == 'E_EMS11':
       values.update(CR_Vcu_AccPedDep_Pos=0)
     elif name == 'WHL_SPD11':

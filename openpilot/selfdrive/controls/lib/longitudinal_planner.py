@@ -12,6 +12,7 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.accel_boost import AccelBoost
+from openpilot.starpilot.longitudinal.encouragement import Encouragement
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import (LongitudinalMpc, LongitudinalPlanSource, get_T_FOLLOW, get_jerk_factor,
                                                                                       qualified_model_leads, ModelLeadHistory)
@@ -103,6 +104,7 @@ class LongitudinalPlanner:
     self.clock_ns = clock_ns
     self.allow_throttle = True
     self.accel_boost = AccelBoost()
+    self.encouragement = Encouragement()
     self.plan_drive_id = 0
     self.throttle_gate = ModelThrottleGate()
     self.ioniq6_throttle_gate_enabled = ioniq6_long_eligible(CP)
@@ -395,7 +397,16 @@ class LongitudinalPlanner:
                                      a_target_prev=self.output_a_target)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
-    output_a_target_e2e = self.accel_boost.update(sm, output_a_target_e2e, output_a_target_mpc, self.a_cruise)
+    encouraged_model = self.encouragement.update(
+      sm, self.CP, now_ns=sample_now_ns, drive_id=drive_id, dt=self.dt, target_speed=v_cruise,
+      model_accel=output_a_target_e2e, mpc_accel=output_a_target_mpc, cruise_accel=self.a_cruise,
+      lateral_accel=(v_ego ** 2 * steer_angle_without_offset * CV.DEG_TO_RAD / (self.CP.steerRatio * self.CP.wheelbase)
+                     if self.CP.steerRatio > 0 and self.CP.wheelbase > 0 else math.inf),
+      blocked=bool(reset_state or self.fcw or not self.allow_throttle or self.force_stop_plan.forcing or
+                   output_should_stop_mpc or cruise_should_stop or self.mpc.solution_status != 0 or
+                   curve.effective_mps is not None or traffic_mode is not False))
+    manual_model = self.accel_boost.update(sm, output_a_target_e2e, output_a_target_mpc, self.a_cruise)
+    output_a_target_e2e = manual_model + (encouraged_model - output_a_target_e2e)
 
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
                   (self.a_cruise, LongitudinalPlanSource.cruise, cruise_should_stop)]

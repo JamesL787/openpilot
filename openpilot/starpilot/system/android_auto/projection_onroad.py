@@ -9,6 +9,7 @@ import time
 from openpilot.starpilot.system.android_auto.identity import EXPIRY_WARNING_DAYS
 from openpilot.starpilot.system.android_auto.projection_exit import ProjectionExit
 from openpilot.starpilot.system.android_auto.projection_geometry import FALLBACK_VIEWPORT
+from openpilot.starpilot.system.android_auto.projection_map_lease import MapLeaseWriter
 
 CERTIFICATE_NOTICE_NS = 10_000_000_000  # how long the expiry heads-up stays at the start of a drive
 BOOKMARK_NOTICE_NS = 2_000_000_000  # how long "Bookmark Saved" stays after the drive is bookmarked
@@ -207,6 +208,8 @@ class ProjectionOnroad:
         self.onroad.pip_layer = self._pip_layer
       self.map = None
       self.map_feed = None
+      self._map_lease = MapLeaseWriter()
+      self._resources.callback(self._release_map)
       self._ensure_map()
       self.adapter = native.adapter(native.ui_state)
       # Personality notices and the reverse camera are decided inside the adapter, so it needs AA's choices too.
@@ -290,9 +293,15 @@ class ProjectionOnroad:
     native = self.native
     if self.map is None and self._map_placement() is not None and getattr(native, 'map_overlay', None) is not None:
       self.map = native.map_overlay(fonts=self.fonts)
-      self._resources.callback(self.map.close)
       self.map_feed = native.map_feed()
       self.onroad.map_layer = self._map_layer
+
+  def _release_map(self):
+    if self.map is not None:
+      self.map.close()
+    self.map = self.map_feed = None
+    self.onroad.map_layer = None
+    self._map_lease.release()
 
   def apply_layout(self, customization):
     """Switch to a newly saved Android Auto layout without reconnecting."""
@@ -340,8 +349,11 @@ class ProjectionOnroad:
       self.onroad.navigation_favorites.document = self.favorites.document
       self.onroad.navigation_favorites.error = self.favorites.error
     placed = self._map_placement()
+    if self.map is not None and placed is None:
+      self._release_map()
     if self.map is None or placed is None or not self.native.ui_state.started:
       return
+    self._map_lease.touch()
     document = self.favorites.document if self.favorites is not None else None
     requested = bool(document['destination']) if document is not None else None
     from openpilot.starpilot.system.android_auto.projection_favorites import destination_label

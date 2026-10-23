@@ -135,7 +135,8 @@ class TestSubaruGen2AnglePair(unittest.TestCase):
           self.assertFalse(self.safety.safety_config_valid())
       self.arm(cp, frames)
       _, steer, _ = self.controller(car, cp, frames)
-      for flags in (SubaruSafetyFlags.LONG, 0x20, 0x100):
+      invalid_option = 0x200 if car == CAR.SUBARU_LEGACY_2025 else 0x100
+      for flags in (SubaruSafetyFlags.LONG, 0x20, invalid_option):
         with self.subTest(car=car, flags=flags):
           self.mode(cp, extra_flags=flags)
           for frame in required:

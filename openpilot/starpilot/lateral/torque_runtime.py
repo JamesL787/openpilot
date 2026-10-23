@@ -1,4 +1,4 @@
-"""Exact-platform torque source selection for native controlsd."""
+"""Current-controller torque source selection for native controlsd."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 from opendbc.car import structs
 from openpilot.cereal.services import SERVICE_LIST
 from openpilot.starpilot.lateral.torque_tuning import TorqueSource, TorqueTuning
-from openpilot.starpilot.lateral.torque_supported import BOLT_VEHICLES, GM_VEHICLES, IONIQ6_VEHICLES, TOYOTA_VEHICLES
+from openpilot.starpilot.lateral.torque_supported import BOLT_VEHICLES, GM_VEHICLES
 from openpilot.starpilot.lateral.torque_settings import (
   DOCUMENT_KEY, LEGACY_KEYS, MAX_DOCUMENT_BYTES, interpret_legacy, parse_document, resolve_document,
 )
@@ -61,12 +61,13 @@ def supported_cp(CP) -> bool:
   if fingerprint in BOLT_VEHICLES:
     from openpilot.starpilot.lateral.bolt_policy import supported_cp as bolt_supported_cp
     return bolt_supported_cp(CP)
-  if fingerprint in GM_VEHICLES:
+  if fingerprint in GM_VEHICLES or str(CP.brand) == 'gm':
     return gm_manual_supported_cp(CP)
-  platform = ((fingerprint in TOYOTA_VEHICLES and str(CP.brand) == 'toyota') or
-              (fingerprint in IONIQ6_VEHICLES and str(CP.brand) == 'hyundai'))
-  return (platform and
-          CP.steerControlType == structs.CarParams.SteerControlType.torque and not CP.dashcamOnly and
+  from opendbc.car.values import PLATFORMS
+  platform = PLATFORMS.get(fingerprint)
+  return (platform is not None and platform.__class__.__module__.split('.')[-2] == str(CP.brand) and
+          not CP.notCar and not CP.passive and not CP.dashcamOnly and
+          CP.steerControlType == structs.CarParams.SteerControlType.torque and
           CP.lateralTuning.which() == 'torque' and
           math.isfinite(float(CP.lateralTuning.torque.latAccelFactor)) and
           float(CP.lateralTuning.torque.latAccelFactor) > 0 and
@@ -76,9 +77,8 @@ def supported_cp(CP) -> bool:
 
 
 def production_supported_cp(CP) -> bool:
-  """Exact production consumer scope shared by the host and settings editor."""
-  return (supported_cp(CP) and str(CP.carFingerprint) in IONIQ6_VEHICLES | GM_VEHICLES and
-          not CP.passive and not CP.notCar)
+  """Admit the current registered torque controller, preserving exact GM policies."""
+  return supported_cp(CP) and not CP.passive and not CP.notCar
 
 
 def manual_overrides_present(CP, params) -> bool:
@@ -185,6 +185,12 @@ class TorqueHost:
     self.params = params
     # An exact controller supplies its startup decision. None preserves the
     # existing live manual preference for other optional replay-host vehicles.
+    if allow_learning is None:
+      from openpilot.starpilot.lateral.controller_selection import policy_for
+      if policy_for(CP) is None:
+        from openpilot.starpilot.lateral.learning_preferences import read_preference
+        preference = read_preference(params, CP)
+        allow_learning = preference.valid and preference.enabled
     self.allow_learning = allow_learning
     self.settings = TorqueSettings()
     self.last_refresh_ns: int | None = None

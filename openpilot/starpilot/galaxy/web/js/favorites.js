@@ -148,8 +148,10 @@ export const FavoritesPage = {
         <GxNotice v-if="state.data && !state.data.valid" tone="warn">Saved Quick Select could not be read. Empty slots are shown. Choosing a control will replace the invalid saved configuration.</GxNotice>
         <div v-if="state.data" class="gx-favorites__slots">
           <section v-for="(slot, index) in state.data.slots" :key="index" class="gx-card gx-favorites__slot">
-            <div class="gx-favorites__slot-header"><h3>Favorite {{ index + 1 }} <small>{{ ['Left', 'Middle', 'Right'][index] }}</small></h3>
-              <label class="gx-switch"><input type="checkbox" :aria-label="'Enable favorite ' + (index + 1)" :checked="slot.enabled" :disabled="disabled || !slot.key" @change="toggle(index, 'enabled', $event)"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
+            <div class="gx-section__header"><i class="bi bi-star" aria-hidden="true"></i><span class="gx-section__title">Favorite {{ index + 1 }} <small>{{ ['Left', 'Middle', 'Right'][index] }}</small></span></div>
+            <div class="gx-panel gx-stack">
+            <div class="gx-row gx-row--borderless"><div class="gx-row__info"><span class="gx-row__label">Enabled</span></div>
+              <label class="gx-switch"><input type="checkbox" role="switch" :aria-label="'Enable favorite ' + (index + 1)" :checked="slot.enabled" :disabled="disabled || !slot.key" @change="toggle(index, 'enabled', $event)"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
             <label>Control<GalaxySelect class="gx-field gx-field--full" :aria-label="'Quick Select ' + (index + 1) + ' control'" :value="slot.key || ''" :disabled="disabled" @change="select(index, $event)">
               <option value="">Not assigned</option>
               <option v-if="slot.key && !byKey.has(slot.key)" :value="slot.key">{{ slot.label || slot.key }} · Unavailable in this build</option>
@@ -157,9 +159,11 @@ export const FavoritesPage = {
             </GalaxySelect></label>
             <label v-if="slot.key === '__starpilot_controller_action__:set_speed'">Set speed (device units)<input class="gx-field" type="number" min="5" max="145" step="1" :value="slot.value ?? 30" :disabled="disabled" @change="speed(index, $event)"></label>
             <label>Label<input class="gx-field" type="text" maxlength="32" :aria-label="'Quick Select ' + (index + 1) + ' label'" :value="slot.label" :disabled="disabled || !slot.key" @change="label(index, $event)"></label>
-            <div class="gx-favorites__show"><span>Show onroad · Big and Small UI</span><label class="gx-switch"><input type="checkbox" :aria-label="'Show favorite ' + (index + 1) + ' onroad'" :checked="slot.show_onroad" :disabled="disabled || !slot.enabled || !slot.key" @change="toggle(index, 'show_onroad', $event)"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
+            <div class="gx-row"><div class="gx-row__info"><span class="gx-row__label">Show onroad · Big and Small UI</span></div>
+              <label class="gx-switch"><input type="checkbox" role="switch" :aria-label="'Show favorite ' + (index + 1) + ' onroad'" :checked="slot.show_onroad" :disabled="disabled || !slot.enabled || !slot.key" @change="toggle(index, 'show_onroad', $event)"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
             <p v-if="slot.key" class="gx-note">{{ state.data.states[index].stateLabel }}<template v-if="state.data.states[index].reason"> · {{ state.data.states[index].reason }}</template></p>
             <button class="gx-btn gx-btn--tonal" type="button" :disabled="disabled || !slot.key" @click="feed.update(index, {key:null})">Clear slot</button>
+            </div>
           </section>
         </div>
       </template>

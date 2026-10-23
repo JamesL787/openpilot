@@ -5,6 +5,7 @@ import pytest
 
 from opendbc.car import gen_empty_fingerprint, structs
 from opendbc.car.honda.interface import CarInterface
+from opendbc.car.honda.stock_aol import qualified
 from opendbc.car.honda.values import CAR, HondaFlags, DBC
 
 
@@ -65,10 +66,11 @@ def exercise_startup(identity, alpha, release, aol, base_word, monkeypatch, firm
     initial.carFw = list(firmware)
     assert initial.safetyConfigs[0].safetyParam == base_word
     expected = initial.to_dict()
-    explicit_owner = not (classic and initial.openpilotLongitudinalControl)
-    expected["alternativeExperience"] = 32 if aol and explicit_owner else 0
-    if aol and not explicit_owner:
-      expected["safetyConfigs"][0]["safetyParam"] = base_word | 32
+    classic_alpha = classic and initial.openpilotLongitudinalControl
+    expected["alternativeExperience"] = 32 if aol else 0
+    if aol and classic_alpha:
+      # Classic alpha now uses the explicit owner: CLASSIC_LONG_AOL | AOL_BOSCH_LONG.
+      expected["safetyConfigs"][0]["safetyParam"] = base_word | 2080
     if aol and identity == CAR.HONDA_ODYSSEY_TWN:
       expected["safetyConfigs"][0]["safetyParam"] = 260
     subscriber = messaging.sub_sock("carParams", timeout=100, conflate=True)
@@ -87,7 +89,11 @@ def exercise_startup(identity, alpha, release, aol, base_word, monkeypatch, firm
       assert ci.CP is card.CP and ci.CC is not None
       assert card.aol_qualified is aol
       if aol:
-        assert card.aol_card_intent.explicit_latch is explicit_owner
+        assert card.aol_card_intent.explicit_latch is True
+        if classic_alpha:
+          legacy = card.CP.as_reader().as_builder()
+          legacy.safetyConfigs[0].safetyParam = base_word | 32
+          assert not qualified(legacy, marked_only=True)
         assert not card.aol_card_intent.allowed_latch
       with structs.CarParams.from_bytes(saved.get("CarParams")) as published:
         assert published.to_dict() == expected
@@ -108,7 +114,7 @@ def exercise_startup(identity, alpha, release, aol, base_word, monkeypatch, firm
       assert intent.producerSessionId == card.slc_producer_session
       controls = Controls()
       assert controls.CP.to_dict() == expected
-      assert controls.ordinary_axis_ack_required is (aol and explicit_owner)
+      assert controls.ordinary_axis_ack_required is aol
       now = 1_000_000_000
       feed(controls, now, 0, active=False, enabled=False, can_valid=False, can_timeout=True)
       if aol:

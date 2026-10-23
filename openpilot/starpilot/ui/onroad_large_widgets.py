@@ -11,7 +11,7 @@ import json
 import pyray as rl
 
 from openpilot.starpilot.ui.onroad_customization import offset, rgba, widget_size
-from openpilot.starpilot.ui.onroad_state import OnroadState
+from openpilot.starpilot.ui.onroad_state import OnroadState, speed_limit_bounds
 from openpilot.starpilot.ui.onroad_widget_style import draw_control_card
 from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
 from openpilot.starpilot.ui.wheel_feedback import WheelFeedbackFade
@@ -35,6 +35,9 @@ class UnifiedSpeedWidget:
   def __init__(self, fonts: BitmapFonts):
     self.fonts = fonts
     self.sign = SpeedLimitWidget(fonts, Profile.LARGE)
+
+  def close(self):
+    self.sign.close()
 
   def _draw_sources(self, rect, state):
     """Each enabled source as a small label over its reading; the selected source is highlighted."""
@@ -77,11 +80,13 @@ class UnifiedSpeedWidget:
     if shown.mode != 'limit_only':
       x = rect.x + PADDING
       draw_caption(self.fonts, 'SET', x, rect.y + 19, unit=shown.unit)
-      size = 104
-      while size > 72 and self.fonts.measure(shown.max_text, FontRole.SET_SPEED, size).width > 126:
+      size = 120
+      while size > 72 and self.fonts.measure(shown.max_text, FontRole.SET_SPEED, size).width > 148:
         size -= 1
       draw_ink(self.fonts, shown.max_text, FontRole.SET_SPEED, size, x, rect.y + 51, text)
     self.sign.render(state)
+    if shown.mode == 'limit_only' and (bounds := speed_limit_bounds(Profile.LARGE, state)) is not None:
+      draw_ink(self.fonts, shown.unit, FontRole.NORMAL, 24, bounds[2], bounds[3] - 32)
     if sources:
       row = rl.Rectangle(rect.x, rect.y + height + (GAP if separate else 0), WIDTH, SOURCE_ROW_HEIGHT)
       if separate:

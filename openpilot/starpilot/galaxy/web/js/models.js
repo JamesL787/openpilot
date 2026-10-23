@@ -1,7 +1,6 @@
 import { GxDialog } from "./dialog.js"
 import { GxState } from "./state.js"
 import { GxSummary } from "./summary.js"
-import { GxIconButton } from "./icon-button.js"
 import { GxNotice } from "./notice.js"
 import { connectionError } from "./polling.js"
 import { GalaxySelect } from "./galaxy-select.js"
@@ -97,7 +96,7 @@ export class ModelStatusFeed {
 
 
 const FILTER_KEY = "galaxy.modelManager.hardwareFilter";
-const FILTERS = new Set(["both", "gpu", "comma"]);
+const FILTERS = new Set(["both", "gpu", "comma", "none"]);
 
 function readHardwareFilter() {
   try {
@@ -115,6 +114,7 @@ function saveHardwareFilter(value) {
 }
 
 function matchesHardware(model, filter) {
+  if (filter === "none") return false;
   if (filter === "gpu") return model?.requiresGpu === true;
   if (filter === "comma") return model?.requiresGpu === false;
   return true;
@@ -143,7 +143,7 @@ function fileSizeText(model) {
   }
   if (installed && declared && installed !== declared) return `${formatBytes(installed)} · size mismatch`;
   if (installed) return formatBytes(installed);
-  if (declared) return `${formatBytes(declared)} · declared`;
+  if (declared) return formatBytes(declared);
   return "Unavailable";
 }
 
@@ -318,7 +318,7 @@ export class ModelManagerFeed {
 
 export const ModelsPage = {
   name: "ModelsPage",
-  components: { GxDialog, GxState, GxSummary, GxIconButton, GalaxySelect, GxNotice },
+  components: { GxDialog, GxState, GxSummary, GalaxySelect, GxNotice },
   props: { mode: { type: String, required: true }, unauthorized: { type: Function, required: true } },
   data() {
     return { loading: true, error: "", message: "", trackingProgress: false, busy: "", selectionUncertain: true, disposed: false,
@@ -328,7 +328,16 @@ export const ModelsPage = {
       runtime: { status: "idle", data: null, error: "" }, dialog: null, pendingChoice: null }
   },
   computed: {
-    currentLabel() { return this.models.find(m => m.value === this.currentModel)?.label || this.currentModel || "none" },
+    currentLabel() { return this.models.find(m => m.value === this.currentModel)?.label || this.currentModel || "" },
+    runningModelLabel() {
+      if (!this.selectionUncertain && this.status.jetlink?.active) return "Jetlink remote model"
+      if (this.runtime.status === "unavailable" || this.runtime.status === "stale") return "Status unavailable"
+      if (this.runtime.status !== "ready" || !this.runtime.data) return "Checking…"
+      const model = this.runtime.data
+      if (model.health === "unavailable") return "No running model"
+      if (!model.loadedId) return model.health === "loading" ? "Loading…" : "Identity unverified"
+      return model.catalog.find(item => item.id === model.loadedId)?.name || model.loadedId
+    },
     installedSmallModels() { return this.models.filter(m => (m.value === this.activeSmallModel || m.installed && m.selectable) && fitsModelProfile(m, "small")) },
     installedBigModels() { return this.models.filter(m => (m.value === this.activeBigModel || m.installed && m.selectable) && fitsModelProfile(m, "big")) },
     sorted() {
@@ -381,6 +390,11 @@ export const ModelsPage = {
   methods: {
     hardwareLabel, fileSizeText,
     setHardwareFilter(value) { this.hardwareFilter = saveHardwareFilter(value) },
+    toggleHardware(kind, checked) {
+      const gpu = kind === "gpu" ? checked : ["both", "gpu"].includes(this.hardwareFilter)
+      const comma = kind === "comma" ? checked : ["both", "comma"].includes(this.hardwareFilter)
+      this.setHardwareFilter(gpu && comma ? "both" : gpu ? "gpu" : comma ? "comma" : "none")
+    },
     actionAvailable(action, model = null) { return !this.selectionUncertain && modelActionAllowed(this.status, action, model) },
     canAction(action, model = null) { return !this.busy && this.actionAvailable(action, model) },
     rowState(model) {
@@ -399,6 +413,16 @@ export const ModelsPage = {
       this.resolveDialog?.(value)
       this.resolveDialog = null
       this.dialog = null
+    },
+    toggleRandomizer(event) {
+      const enabled = event.target.checked
+      event.target.checked = this.status.randomizer === true
+      return this.runAction(enabled ? "enable-randomizer" : "disable-randomizer")
+    },
+    toggleJetlinkCharge(event) {
+      const enabled = event.target.checked
+      event.target.checked = this.status.jetlink.chargePhone === true
+      return this.configureJetlink(this.status.jetlink.mode, enabled)
     },
     async configureJetlink(mode, chargePhone = this.status.jetlink?.chargePhone === true) {
       if (!this.canAction("jetlink")) return
@@ -444,23 +468,23 @@ export const ModelsPage = {
 
       <template v-else>
         <header class="gx-settings__header gx-page-header"><div><h2>Model Manager</h2>
-          <p>Bundled model files, download state, and runtime health.</p></div></header>
+          <p>Manage models, downloads, and Jetlink connections.</p></div></header>
         <GxNotice v-if="message" class="gx-settings__save-status" tone="info">{{ message }}</GxNotice>
         <GxNotice v-if="error" tone="danger" title="Model Manager">{{ error }}</GxNotice>
         <GxNotice v-if="status.isOnroad" tone="warn">Park the vehicle before changing or downloading models.</GxNotice>
         <GxNotice v-if="status.downloading" :title="'Downloading ' + downloadTargetLabel">{{ status.progress || 'Keep the device connected until the download finishes.' }}</GxNotice>
-        <section class="gx-card">
+        <section class="gx-card gx-model-overview">
           <div class="gx-section__header">
             <i aria-hidden="true" class="bi bi-cpu"></i>
-            <span class="gx-section__title">Installed models</span>
+            <span class="gx-section__title">Models</span>
+            <span v-if="currentLabel" class="gx-section__count">Selected: {{ currentLabel }}</span>
           </div>
-          <GxSummary :items="[{label: 'Installed', value: summary.installed}, {label: 'Missing', value: summary.missing}, {label: 'Total', value: summary.total}]" />
-          <p class="gx-model-selection">Selected: <strong>{{ currentLabel }}</strong></p>
+          <GxSummary :items="[{label: 'Installed', value: summary.installed}, {label: 'Missing', value: summary.missing}, {label: 'Total', value: summary.total}, {label: 'Running model', value: runningModelLabel}]" />
         </section>
 
         <section v-if="status.jetlink" class="gx-card">
           <div class="gx-section__header"><i aria-hidden="true" class="bi bi-usb-symbol"></i><span class="gx-section__title">Jetlink</span></div>
-          <div class="gx-info-card">
+          <div class="gx-panel gx-stack">
             <div class="gx-field-group">
               <label for="gx-jetlink-mode" class="gx-row__label">Remote model connection</label>
               <GalaxySelect id="gx-jetlink-mode" class="gx-field" :value="pendingChoice?.action === 'jetlink' ? pendingChoice.value : status.jetlink.mode" :disabled="!actionAvailable('jetlink')" @change="configureJetlink($event.target.value)">
@@ -474,12 +498,12 @@ export const ModelsPage = {
             <p v-if="status.jetlink.reason" class="gx-model-reason">{{ status.jetlink.reason }}</p>
             <p v-if="status.jetlink.chestnut" class="gx-model-reason">Chestnut is connected. Jetlink stays off while Chestnut is fitted.</p>
             <p class="gx-model-reason">Prepared means the remote model is built, not active. The local Small model remains available. Small and Chestnut catalog selections are unchanged.</p>
-            <div v-if="status.jetlink.mode === 'ios'" class="gx-row">
-              <span class="gx-row__label">Charge phone over USB</span>
-              <button class="gx-btn gx-btn--tonal" type="button" :aria-pressed="status.jetlink.chargePhone" :disabled="!actionAvailable('jetlink')" @click="configureJetlink(status.jetlink.mode, !status.jetlink.chargePhone)">{{ status.jetlink.chargePhone ? 'On' : 'Off' }}</button>
+            <div v-if="status.jetlink.mode === 'ios'" class="gx-row" :class="{disabled: !actionAvailable('jetlink')}">
+              <span class="gx-row__info gx-row__label">Charge phone over USB</span>
+              <label class="gx-switch"><input type="checkbox" role="switch" aria-label="Charge phone over USB" :checked="status.jetlink.chargePhone === true" :disabled="!actionAvailable('jetlink')" @change="toggleJetlinkCharge($event)"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label>
             </div>
             <p class="gx-model-reason">Set up parked with a USB 3 data cable and separate power. Keep the computer awake; keep the iPhone app open and unlocked.</p>
-            <a href="https://github.com/firestar5683/StarPilot/blob/StarPilot/openpilot/starpilot/models/JETLINK.md" target="_blank" rel="noopener noreferrer">Jetlink setup guides</a>
+            <div class="gx-actions"><a class="gx-btn gx-btn--tonal" href="https://github.com/firestar5683/StarPilot/blob/StarPilot/openpilot/starpilot/models/JETLINK.md" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right" aria-hidden="true"></i> Open Jetlink setup guide</a></div>
           </div>
         </section>
 
@@ -496,127 +520,95 @@ export const ModelsPage = {
               <button type="button" class="gx-btn gx-btn--tonal" :disabled="!actionAvailable('refresh')" @click="runAction('refresh')"><i aria-hidden="true" v-if="busy === 'refresh:'" class="bi bi-arrow-repeat gx-spin"></i><i aria-hidden="true" v-else class="bi bi-arrow-clockwise"></i> Check model catalog</button>
             </div>
 
-            <div class="gx-row gx-row--borderless">
-              <span class="gx-row__label">Model Randomizer</span>
-              <button type="button" class="gx-btn gx-btn--tonal" :aria-pressed="status.randomizer === true" :disabled="!actionAvailable(status.randomizer ? 'disable-randomizer' : 'enable-randomizer')" @click="runAction(status.randomizer ? 'disable-randomizer' : 'enable-randomizer')">{{ status.randomizer ? 'On' : 'Off' }}</button>
+            <div class="gx-row gx-row--borderless" :class="{disabled: !actionAvailable(status.randomizer ? 'disable-randomizer' : 'enable-randomizer')}">
+              <span class="gx-row__info gx-row__label">Model Randomizer</span>
+              <label class="gx-switch"><input type="checkbox" role="switch" aria-label="Model Randomizer" :checked="status.randomizer === true" :disabled="!actionAvailable(status.randomizer ? 'disable-randomizer' : 'enable-randomizer')" @change="toggleRandomizer($event)"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label>
             </div>
-            <p v-if="status.randomizer" class="gx-model-reason">A different verified model is chosen each start. {{ status.gpuAvailable && activeBigModel ? 'Chestnut Big' : 'Small on-device' }} models are used. {{ (status.blacklistedModels || []).length }} excluded. Favorites only mark your preferred models.</p>
-            <p v-if="!status.gpuAvailable" class="gx-model-reason">Chestnut is not detected. Active Small is used; your Big selection is saved for later.</p>
+            <p v-if="status.randomizer" class="gx-model-reason">A different verified model is chosen each start. {{ status.gpuAvailable && activeBigModel ? 'Big GPU' : 'Small on-device' }} models are used. {{ (status.blacklistedModels || []).length }} excluded. Favorites only mark your preferred models.</p>
+            <p v-if="!status.gpuAvailable" class="gx-model-reason">An external GPU is not detected. Active Small is used; your Big selection is saved for later.</p>
 
-            <div class="gx-row gx-model-control gx-row--borderless">
-              <span class="gx-row__label">Active Small · On-device</span>
-              <GalaxySelect aria-label="Active Small" class="gx-field" :value="pendingChoice?.action === 'select-small' ? pendingChoice.value : activeSmallModel" :disabled="selectionUncertain || capabilities.select !== true || status.isOnroad || status.randomizer" @change="runAction('select-small', installedSmallModels.find(m => m.value === $event.target.value))">
+            <div class="gx-model-control">
+              <label class="gx-row__label" for="gx-model-small">Active Small · On-device</label>
+              <GalaxySelect id="gx-model-small" class="gx-field" :value="pendingChoice?.action === 'select-small' ? pendingChoice.value : activeSmallModel" :disabled="selectionUncertain || capabilities.select !== true || status.isOnroad || status.randomizer" @change="runAction('select-small', installedSmallModels.find(m => m.value === $event.target.value))">
                 <option v-for="m in installedSmallModels" :key="m.value" :value="m.value" :disabled="!m.installed || !m.selectable">{{ m.label || m.value }}</option>
               </GalaxySelect>
             </div>
 
-            <div class="gx-row gx-model-control gx-row--borderless">
-              <span class="gx-row__label">Active Big · Chestnut</span>
-              <GalaxySelect aria-label="Active Big" class="gx-field" :value="pendingChoice?.action === 'select-big' ? pendingChoice.value : activeBigModel" :disabled="selectionUncertain || capabilities.select !== true || status.isOnroad || status.randomizer" @change="$event.target.value ? runAction('select-big', installedBigModels.find(m => m.value === $event.target.value)) : runAction('select-big')">
+            <div class="gx-model-control">
+              <label class="gx-row__label" for="gx-model-big">Active Big · GPU</label>
+              <GalaxySelect id="gx-model-big" class="gx-field" :value="pendingChoice?.action === 'select-big' ? pendingChoice.value : activeBigModel" :disabled="selectionUncertain || capabilities.select !== true || status.isOnroad || status.randomizer" @change="$event.target.value ? runAction('select-big', installedBigModels.find(m => m.value === $event.target.value)) : runAction('select-big')">
                 <option value="">None — always use Active Small</option>
                 <option v-for="m in installedBigModels" :key="m.value" :value="m.value" :disabled="!m.installed || !m.selectable">{{ m.label || m.value }}</option>
               </GalaxySelect>
             </div>
 
-            <div class="gx-row gx-model-control gx-row--borderless">
+            <div class="gx-model-filter-bar" role="group" aria-label="Sort models">
               <span class="gx-row__label">Sort</span>
-              <GalaxySelect aria-label="Sort models" class="gx-field" :value="sortMode" @change="sortMode = $event.target.value">
-                <option value="release_date">Release Date</option>
-                <option value="alphabetical">Alphabetical</option>
-              </GalaxySelect>
+              <div class="gx-actions">
+                <button type="button" class="gx-btn gx-btn--tonal" :aria-pressed="sortMode === 'release_date'" @click="sortMode = 'release_date'">Newest</button>
+                <button type="button" class="gx-btn gx-btn--tonal" :aria-pressed="sortMode === 'alphabetical'" @click="sortMode = 'alphabetical'">Name</button>
+              </div>
             </div>
 
-            <div class="gx-row gx-model-control gx-row--borderless">
-              <label class="gx-row__label" for="gx-model-hardware">Model hardware</label>
-              <GalaxySelect id="gx-model-hardware" class="gx-field" :value="hardwareFilter" @change="setHardwareFilter($event.target.value)">
-                <option value="both">Both</option>
-                <option value="gpu">GPU models only</option>
-                <option value="comma">Comma models only</option>
-              </GalaxySelect>
+            <div class="gx-model-filter-bar" role="group" aria-label="Show models">
+              <span class="gx-row__label">Show models</span>
+              <div class="gx-actions">
+                <button type="button" class="gx-btn gx-btn--tonal" :aria-pressed="['both', 'comma'].includes(hardwareFilter)" @click="toggleHardware('comma', !['both', 'comma'].includes(hardwareFilter))">Small · On-device</button>
+                <button type="button" class="gx-btn gx-btn--tonal" :aria-pressed="['both', 'gpu'].includes(hardwareFilter)" @click="toggleHardware('gpu', !['both', 'gpu'].includes(hardwareFilter))">Big · GPU</button>
+                <button type="button" class="gx-btn gx-btn--tonal" :aria-pressed="userFilter === 'yes'" @click="userFilter = userFilter === 'yes' ? 'all' : 'yes'">Your favorites only</button>
+                <button type="button" class="gx-btn gx-btn--tonal" :aria-pressed="communityFilter === 'yes'" @click="communityFilter = communityFilter === 'yes' ? 'all' : 'yes'">Community favorites only</button>
+              </div>
             </div>
-
-            <div class="gx-actions">
-              <GalaxySelect aria-label="Your Favorite filter" class="gx-field gx-filter-field" :value="userFilter" @change="userFilter = $event.target.value">
-                <option value="all">Your Favorite: All</option>
-                <option value="yes">Your Favorite: Yes</option>
-                <option value="no">Your Favorite: No</option>
-              </GalaxySelect>
-              <GalaxySelect aria-label="Community Favorite filter" class="gx-field gx-filter-field" :value="communityFilter" @change="communityFilter = $event.target.value">
-                <option value="all">Community: All</option>
-                <option value="yes">Community: Yes</option>
-                <option value="no">Community: No</option>
-              </GalaxySelect>
-            </div>
-
           </div>
         </section>
 
         <template v-if="!sorted.length">
-          <div class="gx-card"><div class="gx-empty">No models match these filters. Try Both or clear the favorite filters.</div></div>
+          <div class="gx-card"><div class="gx-empty">No models match these filters. Select a model type or clear the favorite filters.</div></div>
         </template>
         <template v-else>
           <div class="gx-card-grid">
-            <section class="gx-card" v-for="m in sorted" :key="m.value">
-            <div class="gx-panel gx-cluster">
-              <div class="gx-grow">
-                <div class="gx-actions">
+            <section class="gx-card gx-model-card" v-for="m in sorted" :key="m.value">
+              <div class="gx-panel">
+                <div class="gx-model-card__heading">
                   <strong>{{ m.label || m.value }}</strong>
-                  <span v-if="m.userFavorite" class="gx-chip">Your Favorite</span>
-                  <span v-if="m.communityFavorite" class="gx-chip">Community Favorite</span>
-                  <span v-if="m.blacklisted" class="gx-chip">Excluded from randomizer</span>
+                  <div class="gx-model-card__actions">
+                    <button v-if="rowState(m) === 'available' && m.downloadAvailable" type="button" class="gx-icon-btn" :disabled="!actionAvailable('download', m)" :aria-label="'Download ' + m.label" :title="'Download ' + m.label" @click="runAction('download', m)"><i class="bi bi-download" aria-hidden="true"></i></button>
+                    <button type="button" class="gx-icon-btn" :disabled="!actionAvailable(m.userFavorite ? 'unfavorite' : 'favorite', m)" :aria-label="(m.userFavorite ? 'Remove from your favorites: ' : 'Add to your favorites: ') + m.label" :title="m.userFavorite ? 'Remove from your favorites' : 'Add to your favorites'" @click="runAction(m.userFavorite ? 'unfavorite' : 'favorite', m)">
+                      <i aria-hidden="true" class="bi" :class="m.userFavorite ? 'bi-star-fill' : 'bi-star'"></i>
+                    </button>
+                  </div>
                 </div>
                 <div class="gx-actions gx-tags">
+                  <span v-if="m.communityFavorite" class="gx-chip">Community Favorite</span>
+                  <span v-if="rowState(m) === 'active'" class="gx-chip gx-chip--selected">Selected</span>
                   <span class="gx-chip">{{ m.value }}</span>
                   <span v-if="m.builtin" class="gx-chip">Built-in</span>
                   <span class="gx-chip">{{ hardwareLabel(m) }}</span>
-                  <span v-if="m.version" class="gx-chip">Version {{ m.version }}</span>
-                  <span v-if="m.released" class="gx-chip">Released {{ m.released }}</span>
+                  <span v-if="m.version" class="gx-chip" :aria-label="'Version '+ m.version">{{ m.version }}</span>
+                  <span v-if="m.released" class="gx-chip" :aria-label="'Released '+ m.released">{{ m.released }}</span>
                   <span v-if="m.partial" class="gx-chip">Partial Files</span>
-                  <span class="gx-chip">File size: {{ fileSizeText(m) }}</span>
+                  <span class="gx-chip">{{ fileSizeText(m) }}</span>
                 </div>
               </div>
-              <button type="button" class="gx-icon-btn" :disabled="!actionAvailable(m.userFavorite ? 'unfavorite' : 'favorite', m)" :aria-label="(m.userFavorite ? 'Remove from your favorites: ' : 'Add to your favorites: ') + m.label" :title="m.userFavorite ? 'Remove from your favorites' : 'Add to your favorites'" @click="runAction(m.userFavorite ? 'unfavorite' : 'favorite', m)">
-                <i aria-hidden="true" class="bi" :class="m.userFavorite ? 'bi-star-fill' : 'bi-star'"></i>
-              </button>
-            </div>
-            <p v-if="m.unavailableReason" class="gx-model-reason">{{ m.unavailableReason }}</p>
-            <div class="gx-panel-footer gx-actions">
-              <button v-if="status.randomizer || m.blacklisted" type="button" class="gx-btn gx-btn--tonal" :disabled="!actionAvailable(m.blacklisted ? 'include' : 'exclude', m)" @click="runAction(m.blacklisted ? 'include' : 'exclude', m)">{{ m.blacklisted ? 'Include in Randomizer' : 'Exclude from Randomizer' }}</button>
-              <template v-if="rowState(m) === 'active'">
-                <span class="gx-chip gx-chip--selected">Selected model</span>
-              </template>
-              <template v-else-if="rowState(m) === 'busy'">
-                <span class="gx-chip"><i aria-hidden="true" class="bi bi-hourglass-split"></i> Busy</span>
-              </template>
-              <template v-else-if="rowState(m) === 'cancellable'">
-                <button type="button" class="gx-btn gx-btn--danger" :disabled="!actionAvailable('cancel', m)" @click="runAction('cancel', m)"><i aria-hidden="true" class="bi bi-x-circle"></i> Cancel</button>
-              </template>
-              <template v-else-if="rowState(m) === 'installed'">
-                <button type="button" class="gx-btn" :disabled="!actionAvailable(m.requiresGpu ? 'select-big' : 'select-small', m)" @click="runAction(m.requiresGpu ? 'select-big' : 'select-small', m)"><i aria-hidden="true" class="bi bi-play-fill"></i> Set Active {{ m.requiresGpu ? 'Big' : 'Small' }}</button>
-                <button v-if="!m.builtin" type="button" class="gx-btn gx-btn--tonal gx-text-danger" :disabled="!actionAvailable('delete', m)" @click="runAction('delete', m)"><i aria-hidden="true" class="bi bi-trash"></i> Delete</button>
-              </template>
-              <template v-else>
-                <GxIconButton :label="'Download ' + m.label" icon="bi-download" :disabled="!actionAvailable('download', m)" @click="runAction('download', m)" />
-              </template>
-            </div>
+              <p v-if="m.unavailableReason && !(rowState(m) === 'available' && m.downloadAvailable && m.unavailableReason === 'Download required')" class="gx-model-reason gx-model-card__reason">{{ m.unavailableReason }}</p>
+              <div v-if="status.randomizer || m.blacklisted || ['busy', 'cancellable', 'installed'].includes(rowState(m))" class="gx-panel-footer gx-actions">
+                <div v-if="status.randomizer || m.blacklisted" class="gx-row gx-row--borderless" :class="{disabled: !actionAvailable(m.blacklisted ? 'include' : 'exclude', m)}"><div class="gx-row__info"><span class="gx-row__label">Include in Randomizer</span></div>
+                  <label class="gx-switch"><input type="checkbox" role="switch" :aria-label="'Include ' + m.label + ' in Randomizer'" :checked="!m.blacklisted" :disabled="!actionAvailable(m.blacklisted ? 'include' : 'exclude', m)"
+                    @change="$event.target.checked=!m.blacklisted; runAction(m.blacklisted ? 'include' : 'exclude', m)"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
+                <template v-if="rowState(m) === 'busy'">
+                  <span class="gx-chip"><i aria-hidden="true" class="bi bi-hourglass-split"></i> Busy</span>
+                </template>
+                <template v-else-if="rowState(m) === 'cancellable'">
+                  <button type="button" class="gx-btn gx-btn--danger" :disabled="!actionAvailable('cancel', m)" @click="runAction('cancel', m)"><i aria-hidden="true" class="bi bi-x-circle"></i> Cancel</button>
+                </template>
+                <template v-else-if="rowState(m) === 'installed'">
+                  <button type="button" class="gx-btn" :disabled="!actionAvailable(m.requiresGpu ? 'select-big' : 'select-small', m)" @click="runAction(m.requiresGpu ? 'select-big' : 'select-small', m)"><i aria-hidden="true" class="bi bi-play-fill"></i> Set Active {{ m.requiresGpu ? 'Big' : 'Small' }}</button>
+                  <button v-if="!m.builtin" type="button" class="gx-btn gx-btn--tonal gx-text-danger" :disabled="!actionAvailable('delete', m)" @click="runAction('delete', m)"><i aria-hidden="true" class="bi bi-trash"></i> Delete</button>
+                </template>
+              </div>
             </section>
           </div>
         </template>
-        <section class="gx-card gx-model-runtime">
-          <div class="gx-section__header"><i aria-hidden="true" class="bi bi-cpu"></i><span class="gx-section__title">Running model</span></div>
-          <div v-if="!selectionUncertain && status.jetlink?.active" class="gx-model-runtime__body">
-            <p>Active · Jetlink remote model</p>
-            <p v-if="status.jetlink.activeCheckpoint">{{ status.jetlink.activeCheckpoint }}</p>
-            <p v-if="status.jetlink.activeArtifactSha256">{{ status.jetlink.activeArtifactSha256.slice(0,16) }}…</p>
-          </div>
-          <div class="gx-model-runtime__body" v-else-if="runtime.status === 'ready' && runtime.data">
-            <p>{{ runtime.data.health.replaceAll('-', ' ') }} · {{ runtime.data.loadedId ? (runtime.data.variant === 'chestnut' ? 'Chestnut big' : 'Small') : 'No verified load receipt' }}</p>
-            <p v-if="runtime.data.loadedId">{{ runtime.data.loadedId }} · {{ runtime.data.artifactSha256.slice(0,16) }}…</p>
-            <p v-if="runtime.data.pendingNextStart">A saved selection is waiting for the next start.</p>
-            <p v-if="runtime.data.fallbackReason">Fallback: {{ runtime.data.fallbackReason.replaceAll('-', ' ') }}</p>
-          </div>
-          <p v-else class="gx-panel gx-note">{{ runtime.error || 'Checking the running model…' }}</p>
-        </section>
       </template>
       <GxDialog v-if="dialog" labelledby="gx-model-dialog-title" @close="finishDialog(false)">
           <h3 id="gx-model-dialog-title">{{ dialog.title }}</h3><p>{{ dialog.message }}</p>

@@ -12,13 +12,15 @@ export function installHelp({ secure = window.isSecureContext, agent = navigator
 
 export const InstallApp = {
   name: 'InstallApp',
-  data: () => ({ prompt: null, installed: false, help: false, message: '' }),
+  props: { url: { type: String, default: '' } },
+  data: () => ({ prompt: null, installed: false, message: '' }),
+  computed: { onPublicGalaxy() { return window.location?.hostname === 'galaxy.firestar.link' } },
   mounted() {
     this.prompt = deferredPrompt
     this.displayMode = window.matchMedia('(display-mode: standalone)')
     this.updateInstalled = () => { this.installed = this.displayMode.matches || navigator.standalone === true }
-    this.onPrompt = (event) => { event.preventDefault(); deferredPrompt = event; this.prompt = event; this.help = false }
-    this.onInstalled = () => { this.installed = true; this.prompt = deferredPrompt = null; this.help = false }
+    this.onPrompt = (event) => { event.preventDefault(); deferredPrompt = event; this.prompt = event }
+    this.onInstalled = () => { this.installed = true; this.prompt = deferredPrompt = null }
     this.updateInstalled()
     window.addEventListener('beforeinstallprompt', this.onPrompt)
     window.addEventListener('appinstalled', this.onInstalled)
@@ -31,18 +33,25 @@ export const InstallApp = {
     this.prompt = null
   },
   methods: {
+    installHelp,
     async install() {
-      if (!this.prompt) { this.message = installHelp(); this.help = !this.help; return }
+      if (!this.prompt) return
       const prompt = this.prompt
       this.prompt = deferredPrompt = null
       try {
         await prompt.prompt()
         await prompt.userChoice
-      } catch { this.message = installHelp(); this.help = true }
+      } catch { this.message = installHelp() }
     },
   },
-  template: `<div v-if="!installed" class="gx-install-app">
-    <button type="button" class="gx-btn gx-btn--tonal" @click="install"><i class="bi bi-download" aria-hidden="true"></i><span>Install Galaxy</span></button>
-    <p v-if="help" class="gx-note gx-install-help">{{ message }}</p>
+  template: `<div class="gx-install-app">
+    <p v-if="installed" class="gx-note" role="status">Galaxy is installed.</p>
+    <template v-else-if="onPublicGalaxy">
+      <button v-if="prompt" type="button" class="gx-btn" @click="install"><i class="bi bi-download" aria-hidden="true"></i> Install Galaxy</button>
+      <p v-else class="gx-note">{{ installHelp() }}</p>
+      <p v-if="message" class="gx-note">{{ message }}</p>
+    </template>
+    <a v-else-if="url" class="gx-btn" :href="url" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right" aria-hidden="true"></i> Open Galaxy to install</a>
+    <p v-else class="gx-note">Pair in step 1 to get your install link.</p>
   </div>`,
 }

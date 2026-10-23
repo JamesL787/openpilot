@@ -1,5 +1,7 @@
 """CPU-only ownership and cleanup checks for the projection-only road view."""
 
+from typing import Any, cast
+
 import ast
 from dataclasses import dataclass
 import importlib.util
@@ -373,7 +375,7 @@ class TestProjectionOnroad(unittest.TestCase):
     real = {'alert': Alert()}
     native.alert, native.alert_size = Alert, SimpleNamespace(NONE='none', SMALL='small')
     native.adapter = lambda *_: SimpleNamespace(build=lambda *_a, **_k: SimpleNamespace(
-      onroad=OnroadState(False, False, None, None, SpeedLimitObservation(), alert=real['alert'])))
+      onroad=OnroadState(False, False, None, None, SpeedLimitObservation(), alert=cast(Any, real['alert']))))
     view = projection.ProjectionOnroad(dependencies=native, certificate_days=3)
     shown = []
     view.onroad.render = lambda state: shown.append(state.alert.text1)

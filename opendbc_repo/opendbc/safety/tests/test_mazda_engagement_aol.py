@@ -30,6 +30,8 @@ class TestMazdaEngagementAol(unittest.TestCase):
       self.safety.aol_set_host_request(request)
 
   def warm(self, **kwargs):
+    # These tests isolate ordinary cruise engagement; no bootstrap LAT desire.
+    kwargs.setdefault('request', 0)
     for _ in range(20):
       self.frame(**kwargs)
 

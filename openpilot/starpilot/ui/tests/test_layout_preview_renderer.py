@@ -87,6 +87,51 @@ class LayoutPreviewRendererTests(unittest.TestCase):
             self.assertIsNone(state.stopped_duration_s)
         renderer.close()
 
+  def test_big_and_projection_previews_supply_route_and_timer_samples_but_compact_does_not(self):
+    from openpilot.starpilot.system.android_auto.projection_layout import default_layout_for_viewport
+    from openpilot.starpilot.ui.onroad_customization import STOPPED_TIMER_WIDGET
+    native = default_document()
+    native['layouts']['large'][STOPPED_TIMER_WIDGET]['enabled'] = True
+    native['layouts']['large']['nav_map'].update(enabled=True)
+    payloads = [('large', native, Profile.LARGE, None),
+                ('projection', {'base': default_document(), 'layout': default_layout_for_viewport((2880, 1080))}, Profile.LARGE, (2880, 1080)),
+                ('compact', default_document(), Profile.COMPACT, None)]
+    with patch('openpilot.starpilot.ui.layout_preview_renderer.rl.is_window_ready', return_value=True), \
+         patch('openpilot.starpilot.ui.layout_preview_renderer._Canvas') as canvas_type:
+      for profile, document, expected, viewport in payloads:
+        renderer = LayoutPreviewRenderer()
+        renderer({'profile': profile, 'document': document, 'scene': 'stopped'})
+        self.assertEqual(canvas_type.call_args.args, (expected, viewport))
+        state = canvas_type.return_value.render.call_args.args[0]
+        self.assertEqual(state.navigation is not None, expected == Profile.LARGE, profile)
+        if profile == 'large':
+          self.assertEqual(state.stopped_duration_s, 134)
+          self.assertTrue(state.customization['layouts']['large']['nav_card']['enabled'])
+        renderer.close()
+
+  def test_big_preview_fits_widgets_to_the_road_that_is_showing(self):
+    from openpilot.starpilot.ui.onroad_customization import widget_size
+    document = default_document()
+    card = widget_size(document, 'large', 'cruise_limits')[0]
+    document['layouts']['large']['cruise_limits']['x'] = 2130 - card
+    document['layouts']['large']['steering_wheel']['x'] = -270
+    with patch('openpilot.starpilot.ui.layout_preview_renderer.rl.is_window_ready', return_value=True), \
+         patch('openpilot.starpilot.ui.layout_preview_renderer._Canvas') as canvas_type:
+      renderer = LayoutPreviewRenderer()
+      for sidebar, art, width, viewport in ((False, None, 2160, 2160), (True, None, 1860, 1860), (False, True, 1860, 2160)):
+        payload = {'profile': 'large', 'scene': 'engaged', 'document': {**document, 'developerSidebar': sidebar}}
+        if art:
+          payload['art'] = True
+          canvas_type.return_value.render_widget_art.return_value = b'png'
+        renderer(payload)
+        call = canvas_type.return_value.render_widget_art if art else canvas_type.return_value.render
+        state = call.call_args.args[0]
+        large = state.customization['layouts']['large']
+        self.assertEqual(state.viewport_width, viewport)
+        self.assertEqual(large['cruise_limits']['x'], 2130 - card if width == 2160 else 1830 - card)
+        self.assertEqual(large['steering_wheel']['x'], -270 if width == 2160 else 30)
+      renderer.close()
+
   def test_fixed_scenes_have_no_camera_or_live_input(self):
     document = default_document()
     expected = {
@@ -138,7 +183,7 @@ class LayoutPreviewRendererTests(unittest.TestCase):
   def test_invalid_draft_rejected_before_gl_resources(self):
     renderer = LayoutPreviewRenderer()
     document = default_document()
-    document["layouts"]["large"]["current_speed"]["x"] = -1
+    document["layouts"]["large"]["current_speed"]["x"] = -200
     with patch("openpilot.starpilot.ui.layout_preview_renderer._Canvas") as canvas:
       with self.assertRaises(ValueError):
         renderer({"document": document, "profile": "large", "scene": "engaged"})

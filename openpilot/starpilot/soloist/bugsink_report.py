@@ -80,6 +80,7 @@ def windows(lines: list[str]) -> list[dict]:
       found.append(current)
     current['end'] = when
     if kind == 'rtp':
+      assert lost is not None
       current['rtp_warnings'] += 1
       current['lost_packets'] += int(lost[1])
     elif kind == 'underrun':

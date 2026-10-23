@@ -48,7 +48,7 @@ class TestRecoveryHttp(TestCase):
     for key in ('SLCConfirmation', 'SLCConfirmationLower', 'SLCConfirmationHigher'):
       self.params.put_bool(key, True, block=True)
     cookie = self.login()
-    payload = self.selection(cookie, ['Require confirmation'])
+    payload = self.selection(cookie, ['Automatic adoption'])
     status, pending, _ = self.request('/api/settings/recovery/preview', cookie=cookie, payload=payload)
     self.assertEqual(status, 200)
     result = self.request('/api/settings/recovery/confirm', cookie=cookie,
@@ -87,7 +87,7 @@ class TestRecoveryHttp(TestCase):
     cookie = self.login()
     status, view, _ = self.request('/api/settings/non-defaults', cookie=cookie)
     self.assertEqual(status, 200)
-    unsupported = next(row for row in view['rows'] if row['label'] == 'Require confirmation')
+    unsupported = next(row for row in view['rows'] if row['label'] == 'Automatic adoption')
     self.assertFalse(unsupported['resetAvailable'])
     self.assertEqual(self.request('/api/settings/recovery/preview', cookie=cookie,
       payload={'view': view['view'], 'selected': [unsupported['id']]})[0], 409)

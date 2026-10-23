@@ -1,3 +1,4 @@
+from typing import Any
 import os
 import subprocess
 import sys
@@ -216,9 +217,9 @@ class FakeNM:
 
 
 def nm_lease(nm, dedicated=True, monkeypatch=None):
-  lease = NetworkLease(Log(), "aa0", dedicated=dedicated)
+  lease: Any = NetworkLease(Log(), "aa0", dedicated=dedicated)
   lease._call, lease._get, lease._set = nm.call, nm.get, nm.set_property
-  lease._delete_stale_profiles = lambda: None  # ty: ignore[invalid-assignment]  # test double
+  lease._delete_stale_profiles = lambda: None  # test double
   lease.router = type("R", (), {"close": lambda self: None})()
   return lease
 

@@ -191,16 +191,17 @@ export const BluetoothPage = {
         <GxNotice tone="danger" v-if="error">{{ error }}</GxNotice>
         <GxState v-if="!status && !error" loading>Checking Bluetooth…</GxState>
         <template v-else-if="status">
-          <div class="gx-card gx-driving__intro"><h3>Adapter {{ status.powered ? 'On' : 'Off' }}</h3>
-            <p v-if="status.errorCode">{{ bluetoothError(status.errorCode) }}</p>
-            <p v-else-if="!status.parked">Park to restart the Bluetooth radio.</p>
-            <div class="gx-driving__actions gx-actions"><button class="gx-btn" :disabled="!status.parked || !status.available" @click="action('power', {enabled: !status.powered})">Turn {{ status.powered ? 'Off' : 'On' }}</button>
-
-              <button class="gx-btn gx-btn--tonal" :disabled="!status.powered" @click="action(status.discovering ? 'stop_scan' : 'scan')">{{ status.discovering ? 'Stop Search' : 'Search' }}</button></div></div>
-          <div v-if="status.pairing" class="gx-card gx-driving__intro" role="status"><h3>Pairing {{ status.pairing.address }}</h3>
-            <p v-if="status.pairing.state === 'pairing'">Waiting for the device and any confirmation below.</p>
-            <p v-else>{{ status.pairing.state === 'paired' ? 'Device paired.' : status.pairing.state === 'canceled' ? 'Pairing canceled.' : 'Pairing did not complete.' }}</p>
-            <div v-if="status.pairing.prompt" class="gx-driving__intro"><p>{{ status.pairing.prompt.kind === 'confirmation' ? 'Confirm this code matches the device:' :
+          <section class="gx-card"><div class="gx-section__header"><i class="bi bi-bluetooth" aria-hidden="true"></i><span class="gx-section__title">Adapter</span></div>
+            <div class="gx-panel gx-stack">
+              <GxNotice v-if="status.errorCode" tone="danger">{{ bluetoothError(status.errorCode) }}</GxNotice>
+              <GxNotice v-else-if="!status.parked" tone="warn">Park to restart the Bluetooth radio.</GxNotice>
+              <div class="gx-row gx-row--borderless"><div class="gx-row__info"><span class="gx-row__label">Power</span></div>
+                <label class="gx-switch"><input type="checkbox" role="switch" aria-label="Bluetooth power" :checked="status.powered" :disabled="!status.parked || !status.available" @change="$event.target.checked=status.powered; action('power', {enabled: !status.powered})"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
+            </div></section>
+          <section v-if="status.pairing" class="gx-card" role="status"><div class="gx-section__header"><i class="bi bi-link-45deg" aria-hidden="true"></i><span class="gx-section__title">Pairing</span><span class="gx-chip">{{ status.pairing.address }}</span></div>
+            <div class="gx-panel gx-stack"><p v-if="status.pairing.state === 'pairing'">Waiting for the device and any confirmation below.</p>
+            <GxNotice v-else :tone="status.pairing.state === 'paired' ? 'success' : status.pairing.state === 'failed' ? 'danger' : 'info'">{{ status.pairing.state === 'paired' ? 'Device paired.' : status.pairing.state === 'canceled' ? 'Pairing canceled.' : 'Pairing did not complete.' }}</GxNotice>
+            <div v-if="status.pairing.prompt" class="gx-stack"><p>{{ status.pairing.prompt.kind === 'confirmation' ? 'Confirm this code matches the device:' :
               status.pairing.prompt.kind === 'pin' ? 'Enter the PIN shown by the device.' :
               status.pairing.prompt.kind === 'passkey' ? 'Enter the device passkey.' :
               status.pairing.prompt.kind === 'authorization' ? 'Allow this device to pair?' : 'Use this code on the device:' }}</p>
@@ -208,14 +209,17 @@ export const BluetoothPage = {
               <input v-if="['pin', 'passkey'].includes(status.pairing.prompt.kind)" v-model="pairValue" class="gx-field" type="text" maxlength="16" autocomplete="off" placeholder="PIN or passkey" />
               <div v-if="!status.pairing.prompt.displayOnly" class="gx-driving__actions gx-actions"><button class="gx-btn gx-btn--tonal" @click="respond(false)">Reject</button>
                 <button class="gx-btn" :disabled="!canAllowPair" @click="respond(true)">{{ status.pairing.prompt.kind === 'pin' ? 'Submit PIN' : status.pairing.prompt.kind === 'passkey' ? 'Submit Passkey' : 'Allow' }}</button></div></div>
-            <button v-if="status.pairing.state === 'pairing'" class="gx-btn gx-btn--tonal" @click="action('cancel_pair')">Cancel Pairing</button></div>
-          <div class="gx-card gx-driving__intro"><h3>Saved Devices</h3><p v-if="!saved.length">No saved devices found.</p>
-            <div v-for="device in saved" :key="device.address" class="gx-row"><div class="gx-row__info"><span class="gx-row__label">{{ device.name }}</span><span class="gx-row__desc">{{ device.connected ? 'Connected' : 'Disconnected' }}</span></div>
-              <div class="gx-driving__actions gx-actions"><button class="gx-btn gx-btn--tonal" :disabled="!status.powered" @click="action(device.connected ? 'disconnect' : 'connect', {address:device.address})">{{ device.connected ? 'Disconnect' : 'Connect' }}</button>
-                <button class="gx-btn gx-btn--tonal" @click="action('forget', {address:device.address})">Forget</button></div></div></div>
-          <div class="gx-card gx-driving__intro"><h3>Nearby Devices</h3><p v-if="!nearby.length">{{ status.discovering ? 'Searching…' : 'No nearby devices found.' }}</p>
-            <div v-for="device in nearby" :key="device.address" class="gx-row"><strong>{{ device.name }}</strong>
-              <button class="gx-btn" :disabled="!status.powered || status.pairing?.state === 'pairing'" @click="action('pair', {address:device.address})">Pair</button></div></div>
+            <button v-if="status.pairing.state === 'pairing'" class="gx-btn gx-btn--tonal" @click="action('cancel_pair')">Cancel Pairing</button></div></section>
+          <section class="gx-card"><div class="gx-section__header"><i class="bi bi-hdd-stack" aria-hidden="true"></i><span class="gx-section__title">Saved Devices</span></div>
+            <p v-if="!saved.length" class="gx-note gx-inset">No saved devices found.</p>
+            <div v-for="device in saved" :key="device.address" class="gx-row"><div class="gx-row__info"><span class="gx-row__label"><i class="bi bi-bluetooth gx-bluetooth__device-icon" aria-hidden="true"></i>{{ device.name || device.address }}</span><span class="gx-row__desc">{{ device.connected ? 'Connected' : 'Disconnected' }} · {{ device.address }}</span></div>
+              <div class="gx-actions"><button class="gx-btn gx-btn--tonal" :disabled="!status.powered" @click="action(device.connected ? 'disconnect' : 'connect', {address:device.address})">{{ device.connected ? 'Disconnect' : 'Connect' }}</button>
+                <button class="gx-btn gx-btn--tonal" @click="action('forget', {address:device.address})">Forget</button></div></div></section>
+          <section class="gx-card"><div class="gx-section__header"><i class="bi bi-broadcast" aria-hidden="true"></i><span class="gx-section__title">Nearby Devices</span>
+            <button class="gx-btn gx-btn--tonal" :disabled="!status.powered" @click="action(status.discovering ? 'stop_scan' : 'scan')"><i class="bi" :class="status.discovering ? 'bi-x-circle' : 'bi-search'" aria-hidden="true"></i>{{ status.discovering ? 'Stop Search' : 'Search' }}</button></div>
+            <p v-if="!nearby.length" class="gx-note gx-inset">{{ status.discovering ? 'Searching…' : 'No nearby devices found.' }}</p>
+            <div v-for="device in nearby" :key="device.address" class="gx-row"><div class="gx-row__info"><span class="gx-row__label"><i class="bi bi-bluetooth gx-bluetooth__device-icon" aria-hidden="true"></i>{{ device.name || device.address }}</span><span class="gx-row__desc">{{ device.address }}</span></div>
+              <button class="gx-btn" :disabled="!status.powered || status.pairing?.state === 'pairing'" @click="action('pair', {address:device.address})">Pair</button></div></section>
         </template>
       </template>
       <ControllersPage :mode="mode" :unauthorized="unauthorized" />

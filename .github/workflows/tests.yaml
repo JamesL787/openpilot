@@ -34,6 +34,9 @@ jobs:
       contents: read
     steps:
     - uses: actions/checkout@v7
+    - name: Validate published device build receipt
+      if: github.event_name == 'push' && github.ref == 'refs/heads/SecretGoodStarPilot'
+      run: python3 tools/ci/check_prebuilt_receipt.py --revision HEAD
     - name: Check shipped device runtime dependencies
       run: python3 -m unittest tools.laptop_device_build.tests.test_runtime_dependencies -v
     - name: Validate tracked dependencies
@@ -193,6 +196,17 @@ jobs:
       run: |
         uv pip install --python .venv/bin/python --only-binary av av==19.0.1
         .venv/bin/python -c "import av; assert 'libx264' in av.codecs_available"
+    - name: Gate shared AOL vehicle lifecycles
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      timeout-minutes: 10
+      run: python3 tools/ci/run_vehicle_tests.py --suite aol-lifecycle --output ci-results/aol-lifecycle
+    - name: Save AOL lifecycle cases and source/native evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: aol-lifecycle
+        path: ci-results/aol-lifecycle/
+        if-no-files-found: warn
     - name: Run unit tests
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       timeout-minutes: ${{ contains(runner.name, 'nsc') && 2 || 20 }}
@@ -400,6 +414,15 @@ jobs:
       with:
         name: process_replay_diff.txt
         path: openpilot/selfdrive/test/process_replay/diff.txt
+    - name: Save complete replay outputs for review
+      uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: process-replay-outputs
+        path: |
+          openpilot/selfdrive/test/process_replay/fakedata/*.zst
+          openpilot/selfdrive/test/process_replay/coverage.json
+        if-no-files-found: error
     - name: Upload diff report
       uses: actions/upload-artifact@v7
       if: always() && github.event_name == 'pull_request'

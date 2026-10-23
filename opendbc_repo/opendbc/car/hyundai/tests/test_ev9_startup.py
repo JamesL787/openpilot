@@ -11,6 +11,7 @@ from opendbc.car.can_definitions import CanData
 from opendbc.car.hyundai.ecu_startup import Outcome
 from opendbc.car.hyundai.ev9_longitudinal import candidate, qualified
 from opendbc.car.hyundai.ev9_startup import EV9Startup
+from opendbc.car.hyundai.ev9_pending_startup import EV9PendingStartup
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.ioniq6_handoff import TimestampedCanPacket
 from opendbc.car.hyundai.tests.test_ioniq5pe_stock import params
@@ -209,8 +210,8 @@ class TestEV9Startup(unittest.TestCase):
   def test_actual_factory_promotes_only_exact_stock_cp(self):
     stock = params(candidate=CAR.KIA_EV9)
     actual = CarInterface.startup_owner(stock, (lambda **kwargs: [], lambda frames: None), requested=True)
-    self.assertIsInstance(actual, EV9Startup)
-    self.assertTrue(qualified(actual.cp))
+    self.assertIsInstance(actual, EV9PendingStartup)
+    self.assertTrue(qualified(actual.owner.cp))
     self.assertEqual(actual.stock_cp.to_dict(), stock.to_dict())
     self.assertFalse(candidate(stock, enabled=False, is_release=False).openpilotLongitudinalControl)
     self.assertFalse(candidate(stock, enabled=True, is_release=True).openpilotLongitudinalControl)
@@ -258,11 +259,18 @@ class TestEV9Startup(unittest.TestCase):
         self.assertEqual(owner._disable(owner.callbacks[0], owner.callbacks[1]), expected)
 
   @patch.object(time, "CLOCK_BOOTTIME", getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC), create=True)
-  def test_actual_get_car_finalizes_long_before_interface_construction(self):
+  def test_actual_get_car_seals_pending_long_without_early_disable(self):
     from opendbc.car import car_helpers, gen_empty_fingerprint
+    from opendbc.car.hyundai.ioniq5pe_startup import Phase
     from openpilot.starpilot.vehicle_startup import VehicleStartupOwner
 
-    stock, owner, sent, requests, query = self.owner()
+    stock = params(candidate=CAR.KIA_EV9)
+    sent = []
+
+    def receive(wait_for_one: bool = False) -> list[list[CanData]]:
+      return []
+
+    callbacks = (receive, sent.extend)
     fingerprint = gen_empty_fingerprint()
     fingerprint[1].update({0x35: 32, 0x175: 24, 0xA0: 24, 0xEA: 24, 0x1CF: 8, 0x1A0: 32, 0x130: 16})
     fingerprint[2].update({0x110: 32, 0x362: 32})
@@ -270,33 +278,26 @@ class TestEV9Startup(unittest.TestCase):
     holder = VehicleStartupOwner()
 
     def hook(cp, candidate_id, fingerprints, firmware):
-      return holder.prepare(cp, CarInterface, owner.callbacks, requested=True, admission=lambda: True)
+      return holder.prepare(cp, CarInterface, callbacks, requested=True, admission=lambda: True)
 
-    with (
-      patch.object(car_helpers, "fingerprint", return_value=found),
-      patch.object(EV9Startup, "_ready", return_value=False),
-      patch.object(EV9Startup, "_query", side_effect=query),
-    ):
-      # Inject a non-thread keeper at the actual factory boundary.
-      original_factory = CarInterface.startup_owner
-
-      def factory(cp, callbacks, *, requested):
-        selected = original_factory(cp, callbacks, requested=requested)
-        selected.keeper_factory = owner.keeper_factory
-        return selected
-
-      with patch.object(CarInterface, "startup_owner", side_effect=factory):
-        ci = car_helpers.get_car(owner.callbacks[0], owner.callbacks[1], lambda *args: None, True, False, pre_create_hook=hook)
+    with patch.object(car_helpers, "fingerprint", return_value=found), \
+         patch.object(EV9PendingStartup, "_ready_probe", return_value=False):
+      ci = car_helpers.get_car(*callbacks, lambda *args: None, True, False, pre_create_hook=hook)
     holder.configure(ci)
     holder.seal_publication()
     self.assertTrue(qualified(ci.CP))
     self.assertEqual(ci.CP.safetyConfigs[0].safetyParam, 0x5C95)
-    self.assertIs(holder.owner.outcome, Outcome.SENT_UNCONFIRMED)
+    self.assertIsInstance(holder.owner, EV9PendingStartup)
+    self.assertIs(holder.owner.owner.phase, Phase.PENDING)
+    self.assertTrue(holder.owner.owner.published)
+    self.assertTrue(holder.owner.pending_target)
+    self.assertEqual(sent, [])
+    self.assertIsNone(holder.owner.thread)
 
   def test_malformed_long_cp_cannot_bypass_required_startup_owner(self):
     from openpilot.starpilot.vehicle_startup import VehicleStartupOwner
 
-    for field, value in (("brand", "other"), ("pcmCruise", True), ("alternativeExperience", 32)):
+    for field, value in (("brand", "other"), ("pcmCruise", True), ("alternativeExperience", 1)):
       stock, owner, sent, requests, query = self.owner()
       setattr(owner.cp, field, value)
       self.assertFalse(qualified(owner.cp))

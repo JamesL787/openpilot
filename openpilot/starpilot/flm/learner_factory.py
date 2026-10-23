@@ -89,6 +89,8 @@ def _frame(evidence):
     applied_parameter_names=tuple(evidence.applied_parameter_names),
     effect_trace=evidence.effect_trace,
     effect_prepare_ns=evidence.effect_prepare_ns,
+    vehicle_model_anchor=evidence.vehicle_model_anchor,
+    live_applied_coordinates=evidence.live_applied_coordinates,
   )
 
 
@@ -162,6 +164,7 @@ class TorqueCollectionAdapter:
       baseline_revision=evidence.baseline_revision,
       model_revision='raw-child-v1',
     )
+    self.replay.source_controller_revision = descriptor.controller_revision
     self.snapshot_sequence = 0
     self.model = None
     self.model_cutoff_ns = 0
@@ -459,6 +462,11 @@ def fit_snapshot(snapshot):
   payload = unpack_primitive_snapshot(base64.b64decode(snapshot['snapshot_b64'], validate=True))
   if payload.get('version') != 1 or payload.get('family') != snapshot.get('family'):
     raise ValueError('fit family')
+  if 'plant_protocol' in payload:
+    if tuple(snapshot.get('objective_key',())) != tuple(payload.get('objective_key',())):
+      raise ValueError('source experiment wrapper objective key')
+    from openpilot.starpilot.flm.source_plant_pipeline import fit_snapshot as fit_source_plant
+    return fit_source_plant(payload)
   event_version = payload.get('event_version')
   event_job = type(event_version) is int and event_version in (2, 3, 4, 5, 6)
   if 'event_version' in payload and not event_job:

@@ -79,7 +79,7 @@ export const GalaxyHotspot = {
       }
     },
   },
-  template: `<section class="gx-card gx-panel gx-stack"><h3>Galaxy Wi-Fi Hotspot</h3>
+  template: `<section class="gx-card gx-panel gx-stack"><div class="gx-section__header"><i class="bi bi-wifi" aria-hidden="true"></i><span class="gx-section__title">Galaxy Wi-Fi Hotspot</span></div>
     <p>Local Galaxy access for iPhone and Android. No Android Auto, Bluetooth browser support, or cellular connection needed.</p>
     <GxState v-if="mode !== 'local'">Connect to your comma to configure the hotspot.</GxState>
     <GxState v-else-if="!snapshot && !error" loading>Loading hotspot settings…</GxState>
@@ -91,12 +91,14 @@ export const GalaxyHotspot = {
         <p>Network name: <strong>{{ snapshot.config.ssid }}</strong></p>
         <p class="gx-note">Fixed to TheGalaxy- plus the last four characters of your comma dongle ID. Once saved, the switch and password survive restarts.</p>
         <label class="gx-field-group">Password <input class="gx-field" :type="showPassword ? 'text' : 'password'" v-model="draft.password" :disabled="busy || !snapshot.editable" maxlength="63" autocomplete="new-password" placeholder="Blank generates a password" /></label>
-        <label><input type="checkbox" v-model="showPassword" :disabled="busy || !snapshot.editable" /> Show password</label>
+        <div class="gx-row gx-row--borderless"><div class="gx-row__info"><span class="gx-row__label">Show password</span></div>
+          <label class="gx-switch"><input type="checkbox" role="switch" aria-label="Show password" v-model="showPassword" :disabled="busy || !snapshot.editable"><span class="gx-switch__track"></span><span class="gx-switch__thumb"></span></label></div>
         <p v-if="!passwordValid" class="gx-note">Use a 12–63 character password without spaces, or leave it blank to generate one.</p>
         <div class="gx-settings__controls gx-actions"><button class="gx-btn" type="button" :disabled="!dirty || busy || !snapshot.editable || !passwordValid" @click="save">{{ busy ? 'Saving…' : 'Save hotspot' }}</button></div>
       </div>
       <GxNotice v-if="!snapshot.editable">Park before changing hotspot settings.</GxNotice>
-      <p>Join the network, stay connected if warned of no Internet, then open and bookmark <a :href="snapshot.url">{{ snapshot.url }}</a>.</p>
+      <p>Join the network and stay connected if warned of no Internet. Open the address below, then bookmark it.</p>
+      <div class="gx-actions"><a class="gx-btn gx-btn--tonal" :href="snapshot.url">Open {{ snapshot.url }}</a></div>
     </template>
     <ul class="gx-install-benefits">
       <li><i class="bi bi-power" aria-hidden="true"></i><span>Starts automatically when enabled. Needs the comma on and Wi-Fi available.</span></li>

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "opendbc/safety/declarations.h"
+#include "opendbc/safety/modes/rivian_stock_aol.h"
 
 static uint8_t rivian_get_counter(const CANPacket_t *msg) {
   // Signal: ESP_Status_Counter, VDM_PropStatus_Counter
@@ -38,6 +39,14 @@ static uint32_t rivian_compute_checksum(const CANPacket_t *msg) {
   }
   if (msg->addr == 0x100U) {
     chksum = _rivian_compute_checksum(msg, 0x1D, 0x5F);
+  }
+  if (msg->addr == 0x390U) {
+    chksum = crc8_update(0U, 0x90U, 0x1DU);
+    chksum = crc8_update(chksum, 0x03U, 0x1DU);
+    const int len = GET_LEN(msg);
+    for (int i = 1; i < len; i++) {
+      chksum = crc8_update(chksum, msg->data[i], 0x1DU);
+    }
   }
   return chksum;
 }
@@ -89,6 +98,7 @@ static void rivian_rx_hook(const CANPacket_t *msg) {
     const int feature_status = msg->data[2] >> 5U;
     pcm_cruise_check(feature_status == 1);
   }
+  rivian_aol_observe(msg);
 }
 
 static bool rivian_tx_hook(const CANPacket_t *msg) {
@@ -147,33 +157,64 @@ static safety_config rivian_init(uint16_t param) {
     {0x162, 2, 8, .check_relay = true},
   };
   // 0x160 = ACM_longitudinalRequest
+#ifdef ALLOW_DEBUG
   static const CanMsg RIVIAN_LONG_TX_MSGS[] = {
     {0x120, 0, 8, .check_relay = true},
     {0x321, 2, 7, .check_relay = true},
     {0x160, 0, 5, .check_relay = true},
   };
+#endif
 
-  static RxCheck rivian_rx_checks[] = {
+  static const RxCheck rivian_rx_descriptors[] = {
     {.msg = {{0x208, 0, 8, 50U, .max_counter = 14U}, { 0 }, { 0 }}},   // ESP_Status (speed)
     {.msg = {{0x150, 0, 7, 50U, .max_counter = 14U}, { 0 }, { 0 }}},   // VDM_PropStatus (gas pedal & 2nd speed)
     {.msg = {{0x38f, 0, 6, 50U, .max_counter = 14U}, { 0 }, { 0 }}},   // iBESP2 (brakes)
     {.msg = {{0x380, 0, 5, 100U, .max_counter = 14U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // EPAS_SystemStatus (driver torque)
     {.msg = {{0x100, 2, 8, 100U, .max_counter = 14U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // ACM_Status (cruise state)
+    {.msg = {{0x390, 0, 7, 100U, .max_counter = 14U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // EPAS angle fault/status
   };
 
-  bool rivian_longitudinal = false;
+  // H7 DTCM is constrained. AXI SRAM is NOLOAD, so initialize every row from
+  // the immutable checked catalog on each mode entry, including its status.
+#if defined(STM32H7)
+  static RxCheck rivian_rx_checks[6] __attribute__((section(".axisram")));
+#else
+  static RxCheck rivian_rx_checks[6];
+#endif
+  for (unsigned int i = 0U; i < 6U; i++) {
+    rivian_rx_checks[i] = rivian_rx_descriptors[i];
+  }
 
-  SAFETY_UNUSED(param);
-  #ifdef ALLOW_DEBUG
-    const uint16_t FLAG_RIVIAN_LONG_CONTROL = 1U;
-    rivian_longitudinal = GET_FLAG(param, FLAG_RIVIAN_LONG_CONTROL);
-  #endif
-
-  // FIXME: cppcheck thinks that rivian_longitudinal is always false. This is not true
-  // if ALLOW_DEBUG is defined but cppcheck is run without ALLOW_DEBUG
-  // cppcheck-suppress knownConditionTrueFalse
-  return rivian_longitudinal ? BUILD_SAFETY_CFG(rivian_rx_checks, RIVIAN_LONG_TX_MSGS) : \
-                               BUILD_SAFETY_CFG(rivian_rx_checks, RIVIAN_TX_MSGS);
+  bool aol_param_supported = param == 0U;
+  safety_config ret = BUILD_SAFETY_CFG(rivian_rx_checks, RIVIAN_TX_MSGS);
+  rivian_aol_reset();
+#ifdef ALLOW_DEBUG
+  const bool rivian_longitudinal = GET_FLAG(param, 1U);
+  rivian_aol_longitudinal = rivian_longitudinal;
+  aol_param_supported |= param == 1U;
+  if (rivian_longitudinal) {
+    ret = BUILD_SAFETY_CFG(rivian_rx_checks, RIVIAN_LONG_TX_MSGS);
+  }
+#endif
+  rivian_aol_enabled = ((unsigned int)alternative_experience == 32U) && aol_param_supported;
+  if (rivian_aol_enabled) {
+    static const AolSafetyPolicy policy = {
+      .reset = rivian_aol_reset,
+      .host_request = rivian_aol_request,
+      .request_mask = rivian_aol_request_mask,
+      .permission_mask = rivian_aol_permission,
+      .rx_invalid = rivian_aol_clear,
+    };
+    aol_policy = &policy;
+  }
+  if (!rivian_aol_enabled) {
+    ret.rx_checks_len -= 1;  // Ordinary upstream RX catalog remains exactly five rows.
+  }
+  if (((unsigned int)alternative_experience == 32U) && !rivian_aol_enabled) {
+    ret.tx_msgs = NULL;
+    ret.tx_msgs_len = 0;
+  }
+  return ret;
 }
 
 const safety_hooks rivian_hooks = {

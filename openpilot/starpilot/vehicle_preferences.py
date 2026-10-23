@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from opendbc.car.gm.startup_preferences import prepare_disable_longitudinal
 from opendbc.car.toyota.interface import apply_toyota_auto_hold
@@ -19,14 +19,18 @@ def bolt_disable_supported(cp) -> bool:
 @dataclass(frozen=True)
 class VehicleStartupPreferences:
   toyota_auto_hold: bool = False
-  jeep_brake_hold: bool = False
+  jeep_brake_hold: bool = field(default=False, kw_only=True)
   turn_assist: bool = False
   gm_long_pitch: bool = True
   disable_bolt_long: bool = False
   honda_bosch_a_radar: bool = True
   tesla_preap_stock: bool = True
-  tesla_preap_radar: RadarSettings | None = None
-  tesla_preap_pedal: PedalSettings | None = None
+  tesla_preap_radar: RadarSettings | None = field(default=None, kw_only=True)
+  tesla_preap_pedal: PedalSettings | None = field(default=None, kw_only=True)
+  subaru_avh_startup: bool = field(default=False, kw_only=True)
+  subaru_stop_start_off: bool = field(default=False, kw_only=True)
+  subaru_sng: bool = field(default=False, kw_only=True)
+  subaru_software_cruise: bool = field(default=False, kw_only=True)
   volt_sng: bool = False
   gm_auto_hold: bool = False
   volt_one_pedal: bool = False
@@ -92,7 +96,14 @@ class VehicleStartupPreferences:
                   read_saved(params, 'AlwaysOnLateral', 8) == (b'1', True) and
                   read_saved(params, 'TeslaAOLScreenTap', 8) == (b'1', True))
     screen_brake = read_saved(params, 'TeslaAOLDisengageOnBrake', 8) == (b'1', True)
-    return cls(toyota_radar_mode=toyota_radar_mode(params, enabled=enabled),
+    return cls(subaru_avh_startup=bool(enabled and readable and safe in (None, b"0") and
+                    read_saved(params, "IsReleaseBranch", 8) in ((None, True), (b"0", True)) and
+                    read_saved(params, "SubaruAvhStartup", 8) == (b"1", True)),
+               subaru_stop_start_off=bool(enabled and readable and safe in (None, b"0") and
+                                         read_saved(params, "SubaruStopStartOff", 8) == (b"1", True)),
+               subaru_sng=bool(enabled and readable and safe in (None, b"0") and read_saved(params, "SubaruSNG", 8) == (b"1", True)),
+               subaru_software_cruise=bool(enabled and readable and safe in (None, b"0") and
+                   read_saved(params, "SubaruRedneckCruise", 8) == (b"1", True)), toyota_radar_mode=toyota_radar_mode(params, enabled=enabled),
                ford_lateral_mode=ford_mode(params, enabled=enabled), tesla_screen=screen,
                tesla_screen_brake=screen_brake, toyota_auto_hold=toyota, jeep_brake_hold=jeep_hold,
                gm_longitudinal_tune=selected_tune(params, enabled=enabled),
@@ -156,6 +167,14 @@ class VehicleStartupPreferences:
       prepare_disable_longitudinal(cp, True)
 
   def prepare(self, cp, *, fingerprints=None):
+    from opendbc.car.subaru.software_cruise import prepare
+    cp = prepare(cp, self.subaru_software_cruise)
+    from opendbc.car.subaru.sng import prepare as prepare_sng
+    cp = prepare_sng(cp, self.subaru_sng)
+    from opendbc.car.subaru.startup import prepare as prepare_startup
+    cp = prepare_startup(cp, self.subaru_stop_start_off)
+    from opendbc.car.subaru.avh import prepare as prepare_avh
+    cp = prepare_avh(cp, self.subaru_avh_startup)
     from opendbc.car.gm.values import apply_gm_auto_hold, apply_volt_one_pedal
     from openpilot.starpilot.car.tesla.preap_preferences import prepare_stock
     prepare_stock(cp, self.tesla_preap_stock, self.tesla_preap_radar, self.tesla_preap_pedal)
@@ -171,6 +190,10 @@ class VehicleStartupPreferences:
       prepare_rav4h_stock(cp)
       from opendbc.car.toyota.pedal import prepare_stock as prepare_pedal_stock
       prepare_pedal_stock(cp)
+      from opendbc.car.toyota.radar_filter import prepare_stock as prepare_radar_filter_stock
+      prepare_radar_filter_stock(cp)
+      from opendbc.car.toyota.angle_control import prepare_stock as prepare_angle_stock
+      prepare_angle_stock(cp)
     self._prepare_bolt(cp, fingerprints)
     prepare_disable_longitudinal(cp, self.disable_bolt_long)
     self._prepare_camera_pedal(cp)
@@ -204,6 +227,10 @@ class VehicleStartupPreferences:
       prepare_rav4h_stock(cp)
       from opendbc.car.toyota.pedal import prepare_stock as prepare_pedal_stock
       prepare_pedal_stock(cp)
+      from opendbc.car.toyota.radar_filter import prepare_stock as prepare_radar_filter_stock
+      prepare_radar_filter_stock(cp)
+      from opendbc.car.toyota.angle_control import prepare_stock as prepare_angle_stock
+      prepare_angle_stock(cp)
     self._prepare_bolt(cp)
     prepare_disable_longitudinal(cp, self.disable_bolt_long)
     self._prepare_camera_pedal(cp)

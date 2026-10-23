@@ -8,6 +8,7 @@ import __future__
 import ast
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 import unittest
 from unittest.mock import patch
 
@@ -24,8 +25,8 @@ def load_subject(device):
   methods = [node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name in ('run', 'slice_outputs')]
   assert {node.name for node in methods} == {'run', 'slice_outputs'}
   original = {node.name: ast.dump(node, include_attributes=False) for node in methods}
-  namespace = {'np': np, 'Device': device, 'selected_legacy': runtime.selected_legacy, 'SEND_RAW_PRED': False}
-  module = ast.Module(body=list(methods), type_ignores=[])
+  namespace = {'np': np, 'Device': device, 'selected_legacy': runtime.selected_legacy, 'SEND_RAW_PRED': False, 'cast': cast}
+  module = ast.Module(body=[*methods], type_ignores=[])
   exec(compile(module, str(path), 'exec', flags=__future__.annotations.compiler_flag), namespace)
   # AST nodes are consumed unchanged; no rewritten expression or surrogate run.
   assert original == {node.name: ast.dump(node, include_attributes=False) for node in methods}

@@ -113,7 +113,7 @@ def test_slc_hold_rejects_pending_foreign_session_and_new_drive():
 def test_compact_max_hides_during_gap_without_restarting_same_value_fade():
   renderer = CompactHudRenderer(Mock(), Path('/unused'))
   active = OnroadState(True, True, 20.0, 80.0, SpeedLimitObservation(), longitudinal_active=True)
-  assert renderer._set_speed_opacity(active, 1_000_000_000) > 0.0
+  assert renderer._set_speed_opacity(active, 1_000_000_000) == 0.0
   assert renderer._set_speed_opacity(active, 1_020_000_000) > 0.0
   before = renderer._set_speed_alpha.x
   unavailable = replace(active, cruise_kph=None)
@@ -131,9 +131,9 @@ def test_compact_max_expires_once_and_short_gap_does_not_rearm_it():
   active = OnroadState(True, True, 20.0, 80.0, SpeedLimitObservation(), longitudinal_active=True)
   for frame in range(200):
     renderer._set_speed_opacity(active, 1_000_000_000 + frame * 20_000_000)
-  assert renderer._set_speed_alpha.x > .99
+  assert renderer._set_speed_alpha.x < .01
   renderer._set_speed_opacity(replace(active, cruise_kph=None), 5_000_000_000)
-  assert renderer._set_speed_opacity(active, 5_040_000_000) > .99
+  assert renderer._set_speed_opacity(active, 5_040_000_000) < .01
   assert renderer._set_speed_changed_ns == 1_000_000_000
   renderer._set_speed_opacity(replace(active, cruise_kph=90.0), 5_060_000_000)
   assert renderer._set_speed_opacity(replace(active, cruise_kph=90.0), 5_080_000_000) > .01
@@ -145,7 +145,7 @@ def test_new_drive_rearms_max_without_an_intervening_render():
   renderer._set_speed_opacity(active, 1_000_000_000)
   renderer._set_speed_opacity(active, 1_020_000_000)
   new_drive = replace(active, drive_frame=200)
-  assert renderer._set_speed_opacity(new_drive, 9_000_000_000) > 0
+  assert renderer._set_speed_opacity(new_drive, 9_000_000_000) == 0
   assert renderer._set_speed_changed_ns == 9_000_000_000
   assert renderer._set_speed_opacity(new_drive, 9_020_000_000) > 0
 

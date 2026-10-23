@@ -74,6 +74,28 @@ class TestHondaMvlStock(unittest.TestCase):
         check_physical_pcm_camera_override_cancel_and_validated_arrival_expiry(word)
 
   def test_unqualified_mvl_words_and_independent_axis_have_no_transmit_table(self):
-    for word, experience in ((64, 0), (82, 0), (83, 0), (80, 32), (81, 32)):
+    for word, experience in ((64, 0), (82, 0), (83, 0)):
       with self.subTest(word=word, experience=experience):
         check_unqualified_mvl_words_and_independent_axis_have_no_transmit_table(word, experience)
+
+
+def test_camera_lkas_pulses_cannot_create_physical_aol_grant():
+  from opendbc.safety.tests.test_honda_stock_aol import TestHondaStockAol
+  for word in (80, 81):
+    case = TestHondaStockAol(methodName='runTest')
+    try:
+      case.configure(('mvl-aol', 20, word, 0, 'honda_common_canfd_generated', False, 'GEARBOX_AUTO', 4))
+      case.stream()
+      assert case.safety.aol_get_permission_mask() == 0
+      for _ in range(12):
+        # Host-authored camera bus output is never a physical PT-bus gesture.
+        case.safety.safety_rx_hook(case.packet('SCM_BUTTONS', {'CRUISE_BUTTONS': 0, 'CRUISE_SETTING': 1}, bus=2))
+        assert case.safety.aol_get_permission_mask() == 0
+      case.normal_engage()
+      case.press_brake()
+      assert not case.safety.get_controls_allowed()
+      assert case.safety.aol_get_permission_mask() == 1
+      # Independent LAT does not authorize camera button spam or ordinary LONG.
+      assert not case.safety.safety_tx_hook(case.packet('SCM_BUTTONS', {'CRUISE_BUTTONS': 0, 'CRUISE_SETTING': 1}, bus=2))
+    finally:
+      case.tearDown()

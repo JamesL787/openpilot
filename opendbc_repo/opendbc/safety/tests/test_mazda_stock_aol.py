@@ -172,3 +172,109 @@ class TestMazdaStockAol(unittest.TestCase):
     self.assertTrue(self.safety.safety_rx_hook(self.packet('CRZ_CTRL', {'CRZ_AVAILABLE': 1, 'CRZ_ACTIVE': 0})))
     self.assertFalse(self.safety.get_controls_allowed())
     self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+
+  def test_cancel_requires_neutral_and_current_host_ack(self):
+    self.configure()
+    self.arm()
+    self.feed(buttons=3, permanent=True)  # Consume startup eligibility; isolate fresh Cancel rearming.
+    self.safety.set_aol_test_heartbeat(False)
+    for _ in range(12):
+      self.feed(buttons=3)
+    self.safety.set_aol_test_heartbeat(True)
+    self.feed(buttons=3)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.safety.set_aol_test_heartbeat(False)
+    self.feed(buttons=0)
+    self.feed(buttons=3)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.safety.set_aol_test_heartbeat(True)
+    self.time += 1
+    self.safety.set_timer(self.time)
+    self.safety.aol_set_host_request(1)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+    self.assertFalse(self.safety.get_controls_allowed())
+    self.safety.aol_set_host_request(3)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+
+  def test_cancel_held_after_fault_and_main_off_never_rearms(self):
+    self.configure()
+    self.arm()
+    self.feed(buttons=3)
+    self.feed(buttons=3, permanent=True)
+    for _ in range(4):
+      self.feed(buttons=3)
+      self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.feed(buttons=0, main=False)
+    self.feed(buttons=3, main=False)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+
+  def test_boot_main_on_requires_strictly_later_ack_and_never_rearms_held_main(self):
+    self.configure()
+    self.safety.set_aol_test_heartbeat(False)
+    for _ in range(12):
+      self.feed()
+      self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.safety.set_aol_test_heartbeat(True)
+    self.safety.aol_set_host_request(1)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.time += 1
+    self.safety.set_timer(self.time)
+    self.safety.aol_set_host_request(1)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+    self.assertFalse(self.safety.get_controls_allowed())
+    self.assertTrue(self.safety.safety_tx_hook(self.packet('CAM_LKAS', {'LKAS_REQUEST': 10})))
+    self.assertEqual(self.safety.safety_fwd_hook(2, 0x243), -1)
+    self.safety.aol_set_host_request(3)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+    self.safety.set_aol_test_heartbeat(False)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.safety.set_aol_test_heartbeat(True)
+    for _ in range(12):
+      self.feed()
+      self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+
+  def test_boot_permanent_camera_fault_consumes_main_on_eligibility(self):
+    self.configure()
+    self.feed(permanent=True)
+    for _ in range(12):
+      self.feed()
+    self.time += 1
+    self.safety.set_timer(self.time)
+    self.safety.aol_set_host_request(1)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+
+  def test_boot_main_on_pending_ack_keeps_original_deadline(self):
+    self.configure()
+    self.safety.set_aol_test_heartbeat(False)
+    for _ in range(12):
+      self.feed()
+    for _ in range(31):
+      self.time += 10000
+      self.safety.set_timer(self.time)
+      self.feed()  # Fresh CAN and requests cannot renew the startup grant.
+      self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.safety.set_aol_test_heartbeat(True)
+    self.time += 1
+    self.safety.set_timer(self.time)
+    self.feed()
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+
+  def test_boot_main_waits_for_fresh_host_readiness_without_starting_grant_deadline(self):
+    self.configure()
+    self.safety.set_aol_test_heartbeat(False)
+    self.safety.aol_set_host_request(0)
+    for _ in range(150):
+      self.time += 10000
+      self.safety.set_timer(self.time)
+      self.feed()
+      self.safety.aol_set_host_request(0)
+      self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.safety.aol_set_host_request(1)
+    self.feed()
+    self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+    self.safety.set_aol_test_heartbeat(True)
+    self.time += 1
+    self.safety.set_timer(self.time)
+    self.safety.aol_set_host_request(1)
+    self.assertEqual(self.safety.aol_get_permission_mask(), 1)
+    self.assertFalse(self.safety.get_controls_allowed())

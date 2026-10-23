@@ -31,7 +31,7 @@ def final_cp(identity, alpha=False, release=False, *, hybrid=False):
 def test_actual_factory_admission_and_marker(identity, alpha, release, hybrid):
   cp = final_cp(identity, alpha, release, hybrid=hybrid)
   assert bool(cp.flags & HondaFlags.HYBRID) == hybrid
-  expected = not (identity in CLASSIC_BOSCH and cp.openpilotLongitudinalControl)
+  expected = True
   assert qualified(cp) == expected
   if not expected:
     return
@@ -46,7 +46,12 @@ def test_actual_factory_admission_and_marker(identity, alpha, release, hybrid):
   assert qualified(cp, marked_only=True)
   assert policy_for(cp).ordinary_axis_ack_required
   assert cp.alternativeExperience == 32
-  assert cp.safetyConfigs[0].safetyParam == (260 if identity == CAR.HONDA_ODYSSEY_TWN else before["safetyConfigs"][0]["safetyParam"])
+  expected_word = before["safetyConfigs"][0]["safetyParam"]
+  if identity == CAR.HONDA_ODYSSEY_TWN:
+    expected_word |= 256
+  if identity in CLASSIC_BOSCH and cp.openpilotLongitudinalControl:
+    expected_word |= 2080
+  assert cp.safetyConfigs[0].safetyParam == expected_word
   assert cp.openpilotLongitudinalControl == before["openpilotLongitudinalControl"]
   assert cp.pcmCruise == before["pcmCruise"]
   assert native_accepts_cp(cp, cp.safetyConfigs[0].safetyModel.raw, cp.safetyConfigs[0].safetyParam)
@@ -60,7 +65,7 @@ def test_actual_factory_admission_and_marker(identity, alpha, release, hybrid):
 def test_manual_unknown_namespace_and_extra_panda_denied(identity, hybrid):
   cp = final_cp(identity, hybrid=hybrid)
   cp.fingerprintSource = structs.CarParams.FingerprintSource.fixed
-  assert not qualified(cp)
+  assert qualified(cp)  # Explicit registered selection retains truthful metadata.
   cp = final_cp(identity, hybrid=hybrid)
   cp.transmissionType = structs.CarParams.TransmissionType.manual
   assert not qualified(cp)
@@ -196,9 +201,9 @@ def test_active_engagement_arms_without_raw_cruise_resumes_lateral_and_preserves
   snapshot = SimpleNamespace(allowedLatch=allowed, pauseLateral=pause_lat, pauseLongitudinal=pause_long)
   native = SimpleNamespace(requestedLateral=True, requestedLongitudinal=False,
                            lateralAllowed=True, longitudinalAllowed=False)
-  kwargs = dict(standard_lateral=False, standard_longitudinal=False, intent=snapshot,
-                car_state=cs.as_reader(), initialized=True, model_ready=True,
-                no_entry=False, immediate_disable=False, dm_lockout=False, pause_brake_mps=5.)
+  kwargs = {"standard_lateral": False, "standard_longitudinal": False, "intent": snapshot,
+                "car_state": cs.as_reader(), "initialized": True, "model_ready": True,
+                "no_entry": False, "immediate_disable": False, "dm_lockout": False, "pause_brake_mps": 5.}
   decision = decide_axes(native=native, **kwargs)
   assert decision.lateral_active == (not temporary)
   assert not decision.longitudinal_active
@@ -472,7 +477,7 @@ def test_actual_card_ack_loss_requires_current_requested_same_identity(changed):
   host = Car.__new__(Car)
   host.CP, host.sm, host.slc_producer_session = cp, sm, "producer"
   host.aol_transport_feedback = TransportPauseFeedback(cp)
-  kwargs = dict(latched=True, panda_ready=True, restricted=False, now_ns=now, pending_since_ns=0)
+  kwargs = {"latched": True, "panda_ready": True, "restricted": False, "now_ns": now, "pending_since_ns": 0}
   assert host.aol_honda_native_observation(native, **kwargs) == (0, False, False)
   if changed == "cold":
     host._honda_aol_acknowledgment = None

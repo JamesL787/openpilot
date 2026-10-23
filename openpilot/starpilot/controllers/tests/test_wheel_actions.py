@@ -54,7 +54,7 @@ def context(tmp_path):
 def test_exact_catalog_and_missing_vs_saved_off(context):
   params, _ = context
   assert sorted(ACTIONS.values()) == list(range(15))
-  assert len(KEYS) == 14
+  assert len(KEYS) == 15
   assert capture(params)['DistanceButtonControl'] == 1
   assert capture(params)['LongDistanceButtonControl'] == 5
   assert capture(params)['VeryLongDistanceButtonControl'] == 6

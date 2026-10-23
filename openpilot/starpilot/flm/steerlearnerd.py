@@ -16,28 +16,74 @@ from functools import partial
 from opendbc.car.structs import car
 from openpilot.cereal import messaging
 from openpilot.common.params import Params
-from openpilot.starpilot.flm.fullrate_collector import FullrateCollector, drain
+from openpilot.starpilot.flm.fullrate_collector import FullrateCollector, drain, ControlEvidence, AppliedEvidence
 from openpilot.starpilot.flm.learning_wire import read_control, read_applied, result_message, write_source_receipt
 from openpilot.starpilot.flm.runtime_adapter_registry import SOURCE_LEASE_NS
+
+
+class _SourceDelivery:
+  """Consume an actual incidental SubMaster delivery before polling again.
+
+  No SubMaster clock, updated/health flag or body is written. Final native
+  refresh remains in place; its already-received input is not skipped by the
+  next blocking poll. At most one pending latest delivery is retained.
+  """
+  def __init__(self):
+    self.pending = False
+    self.pose_header = 0
+
+  def refresh(self, sm):
+    sm.update(0)
+    self.pending = self.pending or any(sm.updated.values())
+    if sm.updated['deviceMotion']:
+      self.pose_header = int(sm.logMonoTime['deviceMotion'])
+
+  def next(self, sm):
+    if not self.pending:
+      sm.update()
+    header = self.pose_header or (int(sm.logMonoTime['deviceMotion']) if sm.updated['deviceMotion'] else 0)
+    self.pending = False
+    self.pose_header = 0
+    return header
 
 
 MAX_OBJECTIVES = 12
 MAX_CACHED_PROFILES = 14  # Six FF cells and four independently qualified centre speed bands.
 
 
-def production_adapter_for_evidence(cp, evidence, key, *, source):
+def production_adapter_for_evidence(cp, evidence, key, *, source, source_plant_clock=None, source_plant_protocol=None):
   """Adopt the qualified event contract only in the optional live producer.
 
   Legacy/reference callers retain version2. The live event producer explicitly
-  selects the separate fixed-map version6 restore declaration, never FD shadow.
+  selects fresh feedback trial7 and whole-map restore8, never FD shadow.
   """
   from openpilot.starpilot.flm.clipping_quality import ZERO_REFERENCE_QUALITY
   from openpilot.starpilot.flm.runtime_adapter_registry import SourceState, adapter_for_evidence
 
   if not isinstance(source, SourceState) or not source.enabled or source.manual:
     return None
-  return adapter_for_evidence(cp, evidence, key, source=source,
-    event_replay_version=3, event_clipping_quality=ZERO_REFERENCE_QUALITY, event_restore_version=6)
+  from openpilot.starpilot.flm.feedback_replay import PROTOCOL as FEEDBACK_PROTOCOL
+  if source_plant_protocol is None:
+    source_plant_protocol = FEEDBACK_PROTOCOL
+  adapter = adapter_for_evidence(cp, evidence, key, source=source,
+    event_replay_version=3, event_clipping_quality=ZERO_REFERENCE_QUALITY,
+    event_restore_version=8 if source_plant_protocol == FEEDBACK_PROTOCOL else 6)
+  if source_plant_clock is not None or source_plant_protocol is not None:
+    from openpilot.starpilot.flm.source_plant_runtime import enable
+    from openpilot.starpilot.flm.source_plant_fit import PROTOCOL
+    from openpilot.starpilot.flm.feedback_replay import PROTOCOL as FEEDBACK_PROTOCOL
+    if source_plant_protocol not in (None,PROTOCOL,FEEDBACK_PROTOCOL):
+      raise ValueError('unknown independent plant producer protocol')
+    if adapter is not None and getattr(adapter,'event_collection',False):
+      return enable(adapter,source_plant_clock,protocol=source_plant_protocol)
+  return adapter
+
+
+def _collect_source_control(collector, prepared, sm, cp, now_ns):
+  """An arriving record cannot inherit the previous record's health verdict."""
+  from openpilot.starpilot.flm.native_health import current_native_health
+  collector._learning_current_native_allowed = current_native_health(sm, cp, prepared, now_ns)
+  return collector.control(prepared, now_ns)
 
 
 def _source_config_binding(source):
@@ -86,6 +132,169 @@ def _pause_historical_collector(collector, reason):
     replay.cached_validation = replay.cached_key = None
 
 
+def tracking_message(source, *, now_ns, current_native, offer=None, restore=None):
+  """Serialize existing owned evidence; never renew a trial or physical lease."""
+  from openpilot.starpilot.flm.live_trial_wire import write_tracking_source, write_trial, write_restore
+  message = messaging.new_message('starpilotSteeringTracking')
+  message.valid = True
+  write_tracking_source(message, source)
+  current = bool(current_native is True and _source_config_known(source, now_ns) and source.enabled and not source.manual)
+  if current and offer is not None and offer.observed_ns <= now_ns <= offer.expires_ns:
+    write_trial(message, offer)
+  elif current and restore is not None and restore.observed_ns <= now_ns <= restore.expires_ns:
+    write_restore(message, restore)
+  return message
+
+
+class _LiveHistoryRestore:
+  """Historical target only; fresh measured response and actual owner ack gate reuse."""
+  def __init__(self, priors):
+    self.priors = tuple(priors)
+    self.response_recovery_generation = 0
+    self.blocked_seed = None
+    self.seed = self.prior = self.requalifier = self.offer = None
+    self.restored = False
+    self.last_pose_ns = self.last_publication_pose_ns = 0
+
+  def reset(self):
+    self.seed = self.prior = self.requalifier = self.offer = None
+    self.restored = False
+    self.last_pose_ns = self.last_publication_pose_ns = 0
+
+  def observe_response_recovery(self, actor):
+    generation = getattr(actor, 'response_recovery_generation', 0)
+    if type(generation) is not int or generation <= self.response_recovery_generation:
+      return False
+    self.response_recovery_generation = generation
+    # Quarantine ONLY this drive/source attempt; retain the immutable store.
+    # reset() deliberately preserves this block across collector interruptions.
+    self.blocked_seed = actor.seed if actor.seed is not None else self.seed
+    self.reset()
+    actor.hold_restore(False)
+    return True
+
+  @staticmethod
+  def _pair(collector, pose, lag_ns) -> tuple[ControlEvidence, AppliedEvidence] | None:
+    lower = tuple(pair for pair in collector.ready if pair[1].apply_ns <= pose.source_lower_ns-lag_ns)
+    upper = tuple(pair for pair in collector.ready if pair[1].apply_ns <= pose.source_upper_ns-lag_ns)
+    if not lower or not upper or lower[-1][1].apply_ns != upper[-1][1].apply_ns:
+      return None
+    return lower[-1]
+
+  def _retry_local_scope(self, actor, collector, seed):
+    """A NEW fresh local experiment; never expand an issued certificate.
+
+    Only an unfinished historical restore may retry on input-domain departure.
+    Residual failures, changed contexts/native denial and live trials retain
+    their original fail-closed/quarantine paths. No monitor rows, command,
+    lease, target acknowledgement or current permission cross this boundary.
+    """
+    from openpilot.starpilot.flm.live_tracking_requalification import RetainedResponseRequalifier, VERSION
+    if (self.restored or not actor.restore_pending or self.prior is None or self.requalifier is None or
+        actor.ingress is None or actor.certificate is None or actor.seed != seed or
+        actor.ingress.optimizer.offer_state is not None or
+        actor.ingress.monitor.reason != 'response_command_outside_identified_range' or
+        actor.certificate.provenance != VERSION or
+        actor.certificate.parent_model_revision != self.prior.certificate.model_revision):
+      return False
+    actor.interrupt('retained_local_input_scope_left', context_changed=True)
+    actor.ingress = actor.certificate = actor.application = actor.initial_basis = None
+    collector.live_tracking = None
+    self.offer = None
+    self.requalifier = RetainedResponseRequalifier(self.prior.certificate,self.prior.response_basis,seed)
+    capture = collector.original_source_capture
+    if capture is not None and capture.rows:
+      self.last_pose_ns = max(self.last_pose_ns,capture.rows[-1].mono_ns)
+    actor.hold_restore(True)
+    return True
+
+  def advance(self, actor, collector, source, *, now_ns, current_native, native_key, hardware_inventory):
+    if collector is None or source is None or not collector.ready or current_native is not True:
+      if self.requalifier is not None:
+        self.requalifier.interrupt('retained_current_source_or_native_unavailable')
+      return None
+    from openpilot.starpilot.flm.live_trial_store import LiveConfirmedPrior, stable_binding, scope
+    try:
+      seed = actor.binding_for(collector, source)
+      if self.blocked_seed is not None:
+        if seed == self.blocked_seed:
+          self.seed = seed
+          actor.hold_restore(False)
+          return None
+        self.blocked_seed = None  # Actual source binding changed, not a clock.
+      if seed != self.seed:
+        self.reset()
+        actor.hold_restore(False)
+        self.seed = seed
+        matches = tuple(prior for prior in self.priors if type(prior) is LiveConfirmedPrior and
+          prior.historical_only is True and stable_binding(prior.binding) == stable_binding(seed))
+        if len(matches) == 1:
+          self.prior = matches[0]
+          actor.hold_restore(True)
+      if self.prior is None:
+        return None
+      self._retry_local_scope(actor, collector, seed)
+      if actor.ingress is None and self.prior.response_basis is not None:
+        from openpilot.starpilot.flm.live_tracking_requalification import RetainedResponseRequalifier
+        if self.requalifier is None:
+          self.requalifier = RetainedResponseRequalifier(self.prior.certificate, self.prior.response_basis, seed)
+        capture = collector.original_source_capture
+        if capture is not None and capture.rows:
+          pose = capture.rows[-1]
+          if pose.mono_ns > self.last_pose_ns:
+            self.last_pose_ns = pose.mono_ns
+            pair = self._pair(collector, pose, self.prior.certificate.lag_ns)
+            if pair is not None:
+              accepted = self.requalifier.observe(*pair, pose, now_ns=now_ns, current_native=current_native,
+                native_key=native_key, hardware_inventory=hardware_inventory)
+              if accepted and self.requalifier.persistent_residual_failure(now_ns):
+                # No adopted ingress exists yet. This fresh physical failure
+                # quarantines ONLY the current historical restore attempt.
+                self.blocked_seed = seed
+                self.reset()
+                actor.hold_restore(False)
+                return None
+              if self.requalifier.reason == 'measured_calibration_vm_or_hardware_changed':
+                # Keep the historical store, but do not retry an incompatible
+                # basis forever or suppress genuine fresh calibration.
+                self.prior = self.requalifier = self.offer = None
+                actor.hold_restore(False)
+                return None
+            qualified = self.requalifier.qualified(now_ns)
+            if qualified is not None:
+              certificate, _ = qualified
+              # A fresh ingress collects its OWN residual window before restore
+              # publication; no retained monitor rows or permission are copied.
+              actor.adopt_response(certificate, collector)
+      if actor.ingress is None:
+        return None  # Missing/incompatible basis honestly needs fresh bootstrap.
+      witness = actor.ingress.monitor.witness(now_ns)
+      if witness is None:
+        return None
+      from openpilot.starpilot.flm.live_tracking_response import validate_response_witness
+      raw = validate_response_witness(witness, actor.certificate.binding, now_ns)
+      if raw.last_pose_ns <= self.last_publication_pose_ns:
+        return self.offer
+      self.last_publication_pose_ns = raw.last_pose_ns
+      from openpilot.starpilot.flm.live_trial_contract import LiveRestoreOffer, RESTORE_VERSION, MAX_LEASE_NS
+      actor.ingress.optimizer.publication_sequence += 1
+      self.offer = LiveRestoreOffer(RESTORE_VERSION, actor.certificate.binding, scope(self.prior.binding),
+        self.prior.trial_id, self.prior.target, self.prior.target_sha256,
+        actor.ingress.optimizer.publication_sequence, now_ns, min(now_ns+MAX_LEASE_NS, raw.valid_until_ns), witness).validate()
+      return self.offer
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError, OverflowError):
+      # An incompatible historical model never gets a fabricated current basis.
+      self.requalifier = None
+      return None
+
+  def acknowledge(self, actor, application, *, now_ns):
+    if self.offer is None or not actor.observe_restored(application, self.offer, now_ns=now_ns):
+      return False
+    self.restored = True
+    actor.hold_restore(False)
+    return True
+
+
 def run(
   CP,
   sm,
@@ -105,6 +314,9 @@ def run(
   clock=time.monotonic_ns,
   reporter=None,
   publication_source_reader: Callable[[int], SourceState | None] | None = None,
+  live_actor=None,
+  live_persistence=None,
+  confirmed_history=(),
 ):
   from openpilot.starpilot.flm.native_health import current_native_health
 
@@ -116,12 +328,19 @@ def run(
   raw_context = active_key = pending_key = pending_token = None
   cached_reports = {}
   prior_attached = {}
-  previous_publish = publication_sequence = 0
+  next_publish_ns = publication_sequence = 0
   unavailable_reason = 'no_current_controller_evidence'
   retained_event = pending_event = None
+  live_offer = None
+  previous_tracking_pose_header = 0
+  saved_live_targets = set()
+  live_history = _LiveHistoryRestore(confirmed_history)
+  import gc
+  gc_initially_enabled = gc.isenabled()
+  trial_gc_deferred = False
 
   def clear(reason):
-    nonlocal collector, raw_context, active_key, pending_key, pending_token, unavailable_reason, retained_event, pending_event
+    nonlocal collector, raw_context, active_key, pending_key, pending_token, unavailable_reason, retained_event, pending_event, live_offer
     unavailable_reason = reason
     retained_event = pending_event = None
     if collector is not None:
@@ -132,16 +351,27 @@ def run(
     cached_reports.clear()
     prior_attached.clear()
     raw_context = active_key = pending_key = pending_token = None
-    fitter.cancel(reason)
+    if fitter is not None:
+      fitter.cancel(reason)
+    if live_actor is not None:
+      live_actor.interrupt(reason, context_changed=True)
+      live_offer = None
+      live_history.reset()
 
   def uncertain(reason):
-    nonlocal unavailable_reason, retained_event, active_key, pending_key, pending_token, pending_event
+    nonlocal unavailable_reason, retained_event, active_key, pending_key, pending_token, pending_event, live_offer
     unavailable_reason, retained_event, pending_event = reason, None, None
     if collector is not None:
       _pause_historical_collector(collector, reason)
     cached_reports.clear()
     active_key = pending_key = pending_token = None
-    fitter.cancel(reason)
+    if fitter is not None:
+      fitter.cancel(reason)
+    if live_actor is not None:
+      live_actor.interrupt(reason)
+      live_offer = None
+
+  source_delivery = _SourceDelivery()
 
   def source_current(*, read=False, publication=False):
     nonlocal source, source_rejected, source_cp_sha256, last_accepted_source
@@ -150,10 +380,10 @@ def run(
       return False, now
     if read or source is None or not source.observed_ns <= now <= source.expires_ns:
       if not read:
-        sm.update(0)
+        source_delivery.refresh(sm)
         now = clock()
       if publication:
-        sm.update(0)
+        source_delivery.refresh(sm)
         now = clock()
       reader = publication_source_reader if publication else source_reader
       source = cast(Callable[[int], SourceState | None], reader)(now)
@@ -200,16 +430,41 @@ def run(
   sink = Sink()
   try:
     while True:
+      state = (live_actor.ingress.optimizer.offer_state
+               if live_actor is not None and live_actor.ingress is not None else None)
+      defer_gc = bool(gc_initially_enabled and state is not None and state['phase'] == 'trial' and
+                      not state.get('accepted', False) and clock() <= state['deadline_ns'])
+      if defer_gc and not trial_gc_deferred:
+        # This separate optional process must receive the real 100Hz tape during
+        # the existing bounded trial. Reference counting continues normally;
+        # cyclic collection resumes on rollback, completion or the same deadline.
+        gc.disable()
+        trial_gc_deferred = True
+      elif trial_gc_deferred and not defer_gc:
+        gc.enable()
+        trial_gc_deferred = False
       # Parent handles bounded primitive ingest and live receipts. Physical
-      # fitting, stage normalization and full replay run in ONE separate child.
-      sm.update()
+      # calibration and native sensitivity execute in bounded separate children.
+      delivered_pose_header = source_delivery.next(sm)
       source_rejected = False
       now = clock()
+      # This is an ORIGINAL header from the real poll or an already consumed
+      # final refresh. Never wait for another pose while this one is pending.
+      tracking_pose_header = delivered_pose_header if live_actor is not None else 0
+      if not 0 < tracking_pose_header <= now:
+        tracking_pose_header = 0
       source_valid, now = source_current(read=True)
       if source_valid and collector is None:
         unavailable_reason = 'no_current_controller_evidence'
 
-      def control(event, current, stamp):
+      if collector is not None:
+        # Geometry arrives at100Hz independently of the actual native emission
+        # cadence. This Boolean is current owner health, never a fabricated CAN.
+        previous = collector.ready[-1][0] if collector.ready else None
+        collector._learning_current_native_allowed = bool(source_valid and previous is not None and
+          current_native_health(sm, CP, previous, now))
+
+      def control(event, current, stamp, offered=live_offer):
         nonlocal collector, raw_context, active_key, unavailable_reason
         valid_source, received_now = source_current()
         if not valid_source:
@@ -261,6 +516,12 @@ def run(
           if getattr(adapter, 'event_collection', False):
             from openpilot.starpilot.flm.event_collector import EventFullrateCollector
             collector = EventFullrateCollector(adapter)
+            if getattr(adapter,'source_plant_protocol',None) is not None:
+              from openpilot.starpilot.flm.source_plant_runtime import start_original_capture
+              if not start_original_capture(collector):
+                unavailable_reason = adapter.source_plant_capture_error
+                collector = None
+                return
           else:
             collector = FullrateCollector(adapter)
         if hasattr(collector.adapter, 'bind_source'):
@@ -269,17 +530,40 @@ def run(
         collector.adapter.select_objective(active_key)
         # This records primitive actual frames/checkpoints ONLY. No selected
         # controller update, baseline probes or numerical fitting at100Hz.
+        # Feedback describes the original controller consumption, including
+        # context-only frames that cannot become fitting samples. Preserve its
+        # exact decoded wire evidence before stage eligibility can decline it.
+        if getattr(collector.adapter,'original_feedback_archive',None) is not None:
+          from openpilot.starpilot.flm.feedback_archive import record_companion
+          record_companion(collector,event,received_now,control=evidence)
         prepared = collector.adapter.prepare_control(evidence)
         if prepared is None:
           collector.split('actual_stage_capture_unqualified')
         else:
-          collector.control(prepared, received_now)
+          # Re-evaluate current native admission against THIS arriving control.
+          # The pre-drain reference can have expired while fresh controls were
+          # queued; inheriting its Boolean rejects the fresh batch as well.
+          # No old receipt or deadline is renewed by this current check.
+          _collect_source_control(collector, prepared, sm, CP, received_now)
+          if live_actor is not None and offered is not None:
+            from openpilot.starpilot.flm.live_trial_wire import read_application
+            application = read_application(event.starpilotLateralState, now_ns=received_now, offer=offered)
+            if application is not None and current_native_health(sm, CP, evidence, received_now):
+              live_actor.observe_application(application, now_ns=received_now)
+          elif live_actor is not None and live_history.offer is not None:
+            from openpilot.starpilot.flm.live_trial_wire import read_restore_application
+            application = read_restore_application(event.starpilotLateralState, now_ns=received_now, offer=live_history.offer)
+            if application is not None and current_native_health(sm, CP, evidence, received_now):
+              live_history.acknowledge(live_actor, application, now_ns=received_now)
 
       def output(event, current, stamp):
         valid_source, received_now = source_current()
         if not valid_source:
           return
         if collector is not None:
+          if getattr(collector.adapter,'original_feedback_archive',None) is not None:
+            from openpilot.starpilot.flm.feedback_archive import record_companion
+            record_companion(collector,event,received_now)
           if event.which() == 'starpilotCarState' and event.starpilotCarState.appliedEvidence.version == 0:
             collector.split('no_current_applied_evidence')
             return
@@ -292,23 +576,27 @@ def run(
       if source_valid and collector is not None and collector.ready:
         current_native = current_native_health(sm, CP, collector.ready[-1][0], now)
         collector._learning_current_native_allowed = current_native
-        physical = physical_observer(sm, CP, collector, now)
-        from openpilot.starpilot.flm.physical_observation import PendingPhysical
-        if not current_native or physical is None:
-          collector.split('physical_or_native_witness_unavailable')
-        elif type(physical) is PendingPhysical:
-          if not physical.fresh(now):
-            collector.split('physical_or_native_witness_unavailable')
-          elif physical.context_changed:
-            # Discard prior current admission on a lineage/transform boundary;
-            # waiting for new-context data must not restart its own queue.
-            collector.last_qualified_response = 0
-            collector.adapter.current_physical_valid = False
-            collector.adapter.last_physical_ns = 0
-          # Pending data is not physical evidence: no timestamp, model,
-          # last_qualified_response or current admission is renewed here.
+        if getattr(collector.adapter,'source_plant_protocol',None) is not None:
+          from openpilot.starpilot.flm.source_plant_runtime import observe
+          observe(sm,CP,collector,now,current_native)
         else:
-          collector.physical(physical, now)
+          physical = physical_observer(sm, CP, collector, now)
+          from openpilot.starpilot.flm.physical_observation import PendingPhysical
+          if not current_native or physical is None:
+            collector.split('physical_or_native_witness_unavailable')
+          elif type(physical) is PendingPhysical:
+            if not physical.fresh(now):
+              collector.split('physical_or_native_witness_unavailable')
+            elif physical.context_changed:
+              # Discard prior current admission on a lineage/transform boundary;
+              # waiting for new-context data must not restart its own queue.
+              collector.last_qualified_response = 0
+              collector.adapter.current_physical_valid = False
+              collector.adapter.last_physical_ns = 0
+            # Pending data is not physical evidence: no timestamp, model,
+            # last_qualified_response or current admission is renewed here.
+          else:
+            collector.physical(physical, now)
 
       source_valid, now = source_current()
       current_native = bool(source_valid and collector is not None and collector.ready and
@@ -316,59 +604,156 @@ def run(
       token = ((raw_context, pending_key, collector.physical_context, collector.adapter.envelope.prior_full_profile_sha256)
                if getattr(collector.adapter, 'event_collection', False) else (raw_context, pending_key, collector.physical_context)) \
               if collector is not None and collector.ready and current_native else None
-      report = fitter.poll(token=token, now_ns=now)
-      if report is not None:
-        decoded = decode_fit_result(report)
-        if source_valid and token is not None and decoded is not None and collector is not None and token == pending_token:
-          if reporter is not None:
-            reporter.fitted(decoded[0], pending_key)
-          if len(cached_reports) < MAX_CACHED_PROFILES or pending_key in cached_reports:
-            cached_reports[pending_key] = (report, decoded, token)
-            if getattr(collector.adapter, 'event_collection', False) and decoded[0].profile is not None:
-              # A completed proposal owns its fitting objective independently
-              # from the rotating capture selector. This is not live admission.
-              pending_event = (cached_reports[pending_key], pending_key)
-        pending_key = pending_token = None
-      if fitter.child is None:
-        pending_key = pending_token = None
-        if collector is not None and current_native and active_key is not None:
-          collector.adapter.select_objective(active_key)
-          if collector.context is not None:
-            scope = (collector.context[0], active_key, source.reset)
-            cached_prior = prior_attached.get(scope)
-            if cached_prior is None or cached_prior[0] != tuple(collector.adapter.parameters()):
-              persistence.attach_prior(collector, identity=collector.context[0], source_epoch=source.source_epoch, reset=source.reset)
-              prior_attached[scope] = (tuple(collector.adapter.parameters()), collector.prior_coefficients)
-            else:
-              collector.restore_prior(cached_prior[1])
-          snapshot = collector.job_snapshot(now)
-          if snapshot is not None:
-            token = ((raw_context, active_key, collector.physical_context, collector.adapter.envelope.prior_full_profile_sha256)
-                     if getattr(collector.adapter, 'event_collection', False) else (raw_context, active_key, collector.physical_context))
-            valid_source, now = source_current()
-            current_native = bool(valid_source and collector is not None and collector.ready and
-                                  current_native_health(sm, CP, collector.ready[-1][0], now))
-            if valid_source and current_native and collector is not None and fitter.submit(snapshot, token=token, now_ns=now):
-              if reporter is not None:
-                reporter.fit_attempts += 1
-              collector.mark_job_submitted(now)
-              pending_key, pending_token = active_key, token
+      if live_actor is None:
+        report = fitter.poll(token=token, now_ns=now)
+        if report is not None:
+          decoded = decode_fit_result(report)
+          if source_valid and token is not None and decoded is not None and collector is not None and token == pending_token:
+            if reporter is not None:
+              reporter.fitted(decoded[0], pending_key)
+            if len(cached_reports) < MAX_CACHED_PROFILES or pending_key in cached_reports:
+              cached_reports[pending_key] = (report, decoded, token)
+              if getattr(collector.adapter, 'event_collection', False) and decoded[0].profile is not None:
+                # A completed proposal owns its fitting objective independently
+                # from the rotating capture selector. This is not live admission.
+                pending_event = (cached_reports[pending_key], pending_key)
+          pending_key = pending_token = None
+        if fitter.child is None:
+          pending_key = pending_token = None
+          if collector is not None and current_native and active_key is not None:
+            collector.adapter.select_objective(active_key)
+            if collector.context is not None:
+              scope = (collector.context[0], active_key, source.reset)
+              cached_prior = prior_attached.get(scope)
+              if cached_prior is None or cached_prior[0] != tuple(collector.adapter.parameters()):
+                persistence.attach_prior(collector, identity=collector.context[0], source_epoch=source.source_epoch, reset=source.reset)
+                prior_attached[scope] = (tuple(collector.adapter.parameters()), collector.prior_coefficients)
+              else:
+                collector.restore_prior(cached_prior[1])
+            snapshot = collector.job_snapshot(now)
+            if snapshot is not None:
+              if getattr(collector.adapter,'source_plant_protocol',None) is not None:
+                from openpilot.starpilot.flm.source_plant_runtime import submission_key
+                submitted_key = submission_key(snapshot,collector,active_key)
+              else:
+                submitted_key = active_key
+              token = ((raw_context, submitted_key, collector.physical_context, collector.adapter.envelope.prior_full_profile_sha256)
+                       if getattr(collector.adapter, 'event_collection', False) else (raw_context, submitted_key, collector.physical_context))
+              valid_source, now = source_current()
+              current_native = bool(valid_source and collector is not None and collector.ready and
+                                    current_native_health(sm, CP, collector.ready[-1][0], now))
+              if valid_source and current_native and collector is not None and fitter.submit(snapshot, token=token, now_ns=now):
+                if reporter is not None:
+                  reporter.fit_attempts += 1
+                collector.mark_job_submitted(now)
+                pending_key, pending_token = submitted_key, token
 
       source_valid, now = source_current()
       current_native = bool(source_valid and collector is not None and collector.ready and
                             current_native_health(sm, CP, collector.ready[-1][0], now))
-      if now - previous_publish >= 250_000_000:
-        previous_publish = now
+      if live_actor is not None:
+        from openpilot.starpilot.flm.runtime_adapter_registry import current_authority, native_identity_key
+        native_key = hardware_inventory = ()
+        if current_native and collector is not None and collector.ready:
+          control_evidence = collector.ready[-1][0]
+          if control_evidence.native_required:
+            allowed, actual_native, _ = current_authority(sm, CP, now_ns=now, required=True)
+            if allowed:
+              native_key = native_identity_key(actual_native)
+          else:
+            hardware_inventory = tuple((index, str(panda.pandaType)) for index, panda in enumerate(sm['pandaStates']))
+        # Collection status carries no trial or restore authority. Send its
+        # genuine new-pose source receipt before optional snapshot work can
+        # delay delivery; its original lease is never renewed here.
+        if (source_valid and live_offer is None and live_history.offer is None and
+            tracking_pose_header > previous_tracking_pose_header):
+          pm.send('starpilotSteeringTracking', tracking_message(source, now_ns=now,
+            current_native=False, offer=None, restore=None))
+          previous_tracking_pose_header = tracking_pose_header
+        prior_restore_offer = live_history.offer
+        if live_offer is None:
+          live_history.advance(live_actor, collector, source if source_valid else None, now_ns=now,
+            current_native=current_native, native_key=native_key, hardware_inventory=hardware_inventory)
+        latest = live_actor.tick(collector, source if source_valid else None, now_ns=now,
+          current_native=current_native, native_key=native_key, hardware_inventory=hardware_inventory,
+          allow_bootstrap=live_history.requalifier is None)
+        if live_history.observe_response_recovery(live_actor):
+          # Clear cached trial/restore publication in this SAME parent tick.
+          # No old history or accepted target is silently promoted afterward.
+          live_offer = latest = None
+        if latest is not None:
+          live_offer = latest
+          live_history.offer = None
+        # Publish when a genuine qualified physical witness becomes available,
+        # including when its raw camera header arrived in an earlier loop.
+        # Both owners already gate offers on a strictly newer physical pose.
+        # Waiting for another raw header can spend an additional camera period
+        # from the original witness lease. Never restamp or renew an old offer.
+        new_raw_pose = tracking_pose_header > previous_tracking_pose_header
+        if new_raw_pose:
+          previous_tracking_pose_header = tracking_pose_header
+        # Optional work may have consumed the original witness/permission
+        # deadline. A proposal must face the actual post-work clock and native
+        # checks, never the time captured before that work started.
+        source_valid, now = source_current()
+        current_native = bool(source_valid and collector is not None and collector.ready and
+                              current_native_health(sm, CP, collector.ready[-1][0], now))
+        new_restore = live_history.offer is not None and live_history.offer is not prior_restore_offer
+        # The transport/source status has its own20Hz cadence. Waiting for a
+        # new admitted offer can starve service health and prevent fresh raw
+        # collection from recovering after a withdrawal. A cached offer keeps
+        # its ORIGINAL observed time, sequence, witness and expiry; the writer
+        # omits it when expired or current permission is absent.
+        publish_tracking = latest is not None or new_restore or new_raw_pose
+        if publish_tracking:
+          message = tracking_message(source, now_ns=now, current_native=current_native,
+            offer=live_offer, restore=live_history.offer)
+          if (live_offer is not None and int(message.starpilotSteeringTracking.trial.version) == 1 and
+              hasattr(live_actor, 'mark_publication')):
+            live_actor.mark_publication(live_offer)
+          pm.send('starpilotSteeringTracking', message)
+        if live_persistence is not None:
+          inputs = live_actor.persistence_inputs(now)
+          if inputs is not None:
+            confirmed_offer, application, certificate = inputs
+            saved_key = (confirmed_offer.binding, confirmed_offer.trial_id, confirmed_offer.target_sha256)
+            if saved_key not in saved_live_targets:
+              def save_authorized(expected_certificate=certificate):
+                valid, check_now = source_current(read=True, publication=True)
+                return bool(valid and collector is not None and collector.ready and
+                  current_native_health(sm, CP, collector.ready[-1][0], check_now) and
+                  live_actor.certificate is expected_certificate)
+              if live_persistence.save_confirmed(confirmed_offer, application, certificate,
+                  now_ns=now, current_binding=lambda: live_actor.certificate.binding if live_actor.certificate is not None else None,
+                  authorized=save_authorized, response_basis=live_actor.initial_basis):
+                saved_live_targets.add(saved_key)
+                if len(saved_live_targets) > 64:
+                  saved_live_targets.pop()
+
+      if now >= next_publish_ns:
+        if next_publish_ns == 0:
+          next_publish_ns = now
         publication_sequence += 1
         if publication_source_reader is not None:
           source_valid, now = source_current(read=True, publication=True)
-        if source_valid and collector is not None and active_key is not None and raw_context is not None:
+        if live_actor is not None:
+          message = result_message(None, 'live-tracking', publication_sequence, now)
+          value = message.autoSteeringLearning.learning
+          value.status, value.reason = 'collecting', live_actor.reason
+        elif source_valid and collector is not None and active_key is not None and raw_context is not None:
           cached = cached_reports.get(active_key)
           collector.fit_result = collector.fit_validation = None
           if getattr(collector.adapter, 'event_collection', False):
             if pending_event is not None:
               candidate, candidate_key = pending_event
-              expected = (raw_context, candidate_key, collector.physical_context,
+              token_context = collector.physical_context
+              if getattr(collector.adapter,'source_plant_protocol',None) is not None:
+                from openpilot.starpilot.flm.source_plant_runtime import installed_report_context_current
+                if installed_report_context_current(collector.adapter,candidate[0],collector.physical_context):
+                  # Keep exact original submission custody while the installed
+                  # proposal awaits a genuinely later physical/current proof.
+                  token_context = candidate[2][2]
+              expected = (raw_context, candidate_key, token_context,
                           collector.adapter.envelope.prior_full_profile_sha256)
               if candidate[2] != expected:
                 pending_event = None
@@ -432,10 +817,24 @@ def run(
         if reporter is not None:
           cached = cached_reports.get(active_key)
           reporter.publish(now_ns=now, message=message, collector=collector, source=source, objective=active_key,
-            pending=fitter.child is not None, native_current=current_native,
+            pending=live_actor.pending if live_actor is not None else fitter.child is not None, native_current=current_native,
             fit_result=None if cached is None else cached[1][0])
+        # Preserve the original phase instead of adding poll jitter each time.
+        # Work/read delays skip missed slots; one actual loop sends at most once.
+        # This clock is scheduling only: source receipts and500ms leases above
+        # keep their actual current read times, never a deadline/backdated time.
+        publication_complete_ns = max(now, clock())
+        next_publish_ns += ((publication_complete_ns-next_publish_ns)//250_000_000+1)*250_000_000
   finally:
-    fitter.close('learner_parent_exit')
+    if trial_gc_deferred:
+      gc.enable()
+    reaped = True
+    if live_actor is not None:
+      reaped = live_actor.close('learner_parent_exit') is not False
+    if fitter is not None:
+      reaped = fitter.close('learner_parent_exit') is not False and reaped
+    if not reaped:
+      raise RuntimeError('learner child shutdown reaping unproved')
 
 
 def main():
@@ -451,7 +850,9 @@ def main():
   )
   from openpilot.starpilot.flm.learner_factory import decode_fit_result
   from openpilot.starpilot.flm.persistence_module import PersistenceModule
-  from openpilot.starpilot.flm.fit_process import FitProcess
+  from openpilot.starpilot.flm.live_tracking_actor import LiveTrackingActor
+  from openpilot.starpilot.flm.live_tracking_probe_process import ProbeProcess
+  from openpilot.starpilot.flm.live_trial_store import LiveTrialPersistence, load_confirmed_history
 
   try:
     if hasattr(os, 'sched_setscheduler'):
@@ -477,10 +878,10 @@ def main():
     'onroadEvents',
     'aolSafetyWire',
   ]
-  sm = messaging.SubMaster(services, poll='deviceMotion', ignore_alive=['aolSafetyWire'], ignore_valid=['aolSafetyWire'], ignore_avg_freq=['aolSafetyWire'])
+  sm = messaging.SubMaster(services, poll='carState', ignore_alive=['aolSafetyWire'], ignore_valid=['aolSafetyWire'], ignore_avg_freq=['aolSafetyWire'])
   control_socket = messaging.sub_sock('starpilotLateralState', conflate=False)
   applied_socket = messaging.sub_sock('starpilotCarState', conflate=False)
-  pm = messaging.PubMaster(['autoSteeringLearning'])
+  pm = messaging.PubMaster(['autoSteeringLearning', 'starpilotSteeringTracking'])
   cp_sha256 = car_params_digest(CP)
   source_cache = [None]
   vehicle_session = uuid.uuid4().hex
@@ -493,6 +894,8 @@ def main():
     current = bool(sm.all_checks(['extrinsicsCalibration']) and
       0 < stamp <= now <= stamp + 500_000_000 and
       0 < receipt <= now <= receipt + 500_000_000)
+    if not sm.valid['extrinsicsCalibration'] or stamp > now or receipt > now:
+      return calibration_lifecycle.observe(None, current=False)
     return calibration_lifecycle.observe(sm['extrinsicsCalibration'], current=current)
 
   def current_source(now, frame):
@@ -533,24 +936,38 @@ def main():
     return production_adapter_for_evidence(cp, evidence, key, source=source_reader(time.monotonic_ns()))
 
   persistence = PersistenceModule(params, current_sources)
-  run(
-    CP,
-    sm,
-    control_socket,
-    applied_socket,
-    pm,
-    current_adapter,
-    partial(physical_observer, distinguish_pending=True),
-    source_reader,
-    collection_keys,
-    objective_key,
-    decode_fit_result,
-    persistence,
-    FitProcess(),
-    adapter_for_ford,
-    reporter=reporter,
-    publication_source_reader=publication_source_reader,
-  )
+  import gc
+  gc_was_enabled = gc.isenabled()
+  if gc_was_enabled:
+    # Reclaim startup cycles; temporary visitors release their own graphs.
+    gc.collect()
+    # Keep standard GC enabled; recursive temporary visitors release explicitly.
+  try:
+    run(
+      CP,
+      sm,
+      control_socket,
+      applied_socket,
+      pm,
+      current_adapter,
+      partial(physical_observer, distinguish_pending=True),
+      source_reader,
+      collection_keys,
+      objective_key,
+      decode_fit_result,
+      persistence,
+      None,
+      adapter_for_ford,
+      reporter=reporter,
+      publication_source_reader=publication_source_reader,
+      live_actor=LiveTrackingActor(probe_process=ProbeProcess(),source_tracking=True),
+      live_persistence=LiveTrialPersistence(params),
+      confirmed_history=load_confirmed_history(params),
+    )
+  finally:
+    # run() closes/reaps optional children before returning or propagating.
+    if gc_was_enabled:
+      gc.enable()
 
 
 if __name__ == '__main__':

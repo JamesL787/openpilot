@@ -69,7 +69,6 @@ def test_actual_card_rejects_unprepared_generic_hda2_long(identity, hybrid, alt)
 def test_registry_cannot_add_an_unowned_ordinary_ecu_disable_path_silently():
   # This audits advertised source paths, not physical firmware or road acceptance.
   known_contracts = {
-    (CAR.GENESIS_GV60_EV_1ST_GEN, False), (CAR.GENESIS_GV60_EV_1ST_GEN, True),
     (CAR.KIA_EV6, True), (CAR.GENESIS_GV70_ELECTRIFIED_1ST_GEN, True),
   }
   missing, observed_contracts = [], set()
@@ -92,7 +91,7 @@ def test_registry_cannot_add_an_unowned_ordinary_ecu_disable_path_silently():
         missing.append((str(identity), alt, str(error)))
         continue
       if (identity, alt) in known_contracts:
-        # GV60's receiver/heartbeat and alternate captured-ADRV recipes stay open.
+        # Alternate captured-ADRV recipes retain their distinct receiver contract.
         assert owner is None
         observed_contracts.add((identity, alt))
       elif owner is None:

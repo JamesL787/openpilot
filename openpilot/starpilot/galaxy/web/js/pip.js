@@ -184,7 +184,7 @@ export const PipPage = {
         <div v-if="state.data" class="gx-settings__body">
 
           <section class="gx-card gx-vasm__editor" aria-label="Blind Spot Camera crop editor">
-            <h3>Camera Crop</h3>
+            <div class="gx-section__header"><i class="bi bi-crop" aria-hidden="true"></i><span class="gx-section__title">Camera Crop</span></div>
             <p class="gx-note">Drag a circle onto the cabin window you want to watch. Both crops share one size.</p>
             <p class="gx-note gx-camera-status" role="status">{{ state.cameraWarming ? "Warming up the camera · about 10 seconds…" : state.imageName ? "Snapshot ready" : "Take a cabin snapshot while parked." }}</p>
             <div class="gx-actions">

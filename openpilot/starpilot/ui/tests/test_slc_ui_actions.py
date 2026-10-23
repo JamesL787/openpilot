@@ -36,7 +36,9 @@ def native_state(*, pending: bool = True, session: str = "drive-session", decisi
 
 def tap_sign(touch, current):
   current = touch.present(current)
-  left, top, right, bottom = speed_limit_bounds(touch.profile, current)
+  bounds = speed_limit_bounds(touch.profile, current)
+  assert bounds is not None
+  left, top, right, bottom = bounds
   x, y = (left + right) / 2, (top + bottom) / 2
   touch.press(x, y, current)
   touch.release(x, y, current)
@@ -55,7 +57,9 @@ class TestSlcTouch(unittest.TestCase):
     for profile in Profile:
       emitted, current = [], state()
       touch = OnroadInput(emitted.append, profile)
-      left, top, right, bottom = speed_limit_bounds(profile, current)
+      bounds = speed_limit_bounds(profile, current)
+      assert bounds is not None
+      left, top, right, bottom = bounds
       x, y = (left + right) / 2, (top + bottom) / 2
       touch.press(x, y, current)
       touch.release(x + 12, y + 12, current)
@@ -102,7 +106,9 @@ class TestSlcTouch(unittest.TestCase):
     emitted = []
     shell = ShellInput(Profile.LARGE, emitted.append)
     snapshot = ShellSnapshot(ShellMode.ONROAD, reference_state(), reference_settings_state(), state())
-    left, top, right, bottom = speed_limit_bounds(Profile.LARGE, snapshot.onroad)
+    bounds = speed_limit_bounds(Profile.LARGE, snapshot.onroad)
+    assert bounds is not None
+    left, top, right, bottom = bounds
     x, y = (left + right) / 2, (top + bottom) / 2
     shell.press(x, y, 0., snapshot)
     shell.release(x, y, .1, snapshot)

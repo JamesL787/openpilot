@@ -1,6 +1,8 @@
+from openpilot.starpilot.flm.normalized_trace_archive import guarded_archive
+from openpilot.starpilot.flm.normalized_trace_archive import trace_for,archive_key
 """Child-only canonical effect trials through complete selected controller/CAN history."""
 
-from typing import cast
+from typing import cast, NamedTuple
 from collections.abc import Mapping
 import math
 
@@ -61,8 +63,21 @@ class _LazyControllerRequests(Mapping[int, float]):
       self.finished = True
 
 
+class _EquivalentBaselineView(NamedTuple):
+  owner: object
+  cache: tuple
+  entry: tuple
+  original_key: object
+  selected_key: object
+  proof_fingerprint: bytes
+
+
 class EventControllerReplay:
-  """Reuse original source/native/encoder proofs; replace only trial coordinates."""
+  """Original source proof plus explicitly versioned candidate controller replay.
+
+  Legacy trials retain frozen feedback. Declared closed-loop candidates rebuild
+  only causal safety_limited inputs from their actual encoded native reports.
+  """
   def __init__(self, engine, objective, original_anchor, *, restore_envelope=None, activation_plan=None):
     if (engine.failed or not engine.raw_mode or not 1 <= len(objective.names) <= 4 or
         len(set(objective.names)) != len(objective.names) or len(objective.anchor_digest) != 64):
@@ -72,6 +87,7 @@ class EventControllerReplay:
     self.activation_plan = activation_plan
     self.__identification_token = object()
     self.__strict_rollouts = None
+    self.__subset_baseline_view = None
     self.__causal_features = None
     self.__prepared_car_states = None
     self.__controller_prefix = None
@@ -100,7 +116,7 @@ class EventControllerReplay:
     return getattr(self.engine, name)
 
   def _prior_matches(self, frame):
-    trace = getattr(frame, 'effect_trace', None)
+    trace = trace_for(frame,self)
     if trace is None:
       return not any(self.prior_full.values()) and not any(frame.applied_coordinates)
     try:
@@ -152,6 +168,9 @@ class EventControllerReplay:
       self.__strict_rollouts = None
       self.__controller_prefix = None
       return self._rollout_uncached(coordinates)
+    equivalent = self._equivalent_subset_baseline(coordinates, source_key)
+    if equivalent is not None:
+      return equivalent
     if self.__strict_rollouts is None or self.__strict_rollouts[0] != source_key:
       self.__strict_rollouts = source_key, {}
     slots = self.__strict_rollouts[1]
@@ -167,6 +186,8 @@ class EventControllerReplay:
       type(self.emissions) is EmissionHistory)
     build_prefix = slot == 'baseline' and prefix_scoped
     self.__pending_controller_prefix = None
+    # A cache entry may carry only the proof completed by THIS strict execution.
+    self.__candidate_feedback_proof = None
     if prefix_scoped:
       result = self._rollout_uncached(coordinates, _prefix_context=(source_key, build_prefix))
     else:
@@ -179,9 +200,18 @@ class EventControllerReplay:
       self.__controller_prefix = self.__pending_controller_prefix
       self.__pending_controller_prefix = None
     frozen = tuple(MappingProxyType(dict(part)) for part in result)
-    slots[slot] = key, frozen
+    from openpilot.starpilot.flm.candidate_feedback import uses_closed_loop, strict_reference_proof_key
+    if uses_closed_loop(self):
+      proof = self.__candidate_feedback_proof
+      proof_key = strict_reference_proof_key(proof,self,coordinates,len(frozen[0]))
+      if proof_key is not None:
+        slots[slot] = key, frozen, (proof,proof_key)
+      # No complete strict chronology: do not create a reusable result.
+    else:
+      slots[slot] = key, frozen
     return tuple(dict(part) for part in frozen)
 
+  @guarded_archive()
   def _rollout_uncached(self, coordinates, *, restore_target=False, restore_omit_group=None, _identification_token=None,
                         _prefix_context=None):
     from openpilot.starpilot.flm.selected_effects import (EffectTrial, EffectReplayTransition, EffectReplayRecordedSource,
@@ -255,6 +285,8 @@ class EventControllerReplay:
       certificate = None
     prefix_requests, prefix_saturated, prefix_states = {}, {}, {}
 
+    candidate_feedback = None
+
     def controller_frames():
       nonlocal build_prefix
       prior_ns = prior_sequence = index = 0
@@ -278,7 +310,7 @@ class EventControllerReplay:
             prior_ns and not 0 < frame.control_ns - prior_ns <= MAX_FRAME_GAP_NS or
             prior_sequence and frame.frame_sequence != prior_sequence + 1):
           raise ValueError('event source/history mismatch')
-        trace = getattr(frame, 'effect_trace', None)
+        trace = trace_for(frame,self)
         prepare_ns = getattr(frame, 'effect_prepare_ns', 0)
         activation = None if self.activation_plan is None else self.activation_plan.activation_for(*windows[index])
         if self.activation_plan is not None and activation is None:
@@ -321,6 +353,8 @@ class EventControllerReplay:
           source = trial
         else:
           raise ValueError('event exact owner transition clock unavailable')
+        trace = None
+        run_inputs = frame.inputs if candidate_feedback is None else candidate_feedback.before(frame)
         if certificate is not None and reusable_prefix and windows[index] in certificate[3]:
           # Retain every source/history/clock/prepare/recorded-source check above.
           # Later state is restored ONLY at the exact declared activation tick.
@@ -329,7 +363,7 @@ class EventControllerReplay:
         else:
           prepared = None if prepared_states is None else prepared_states.get(frame.inputs)
           kwargs = {} if prepared is None else {'_prepared_car_state': prepared}
-          output, log = _run(controller, vm, frame.inputs, self.engine.objective, (0.0, 0.0), frame.torque_values,
+          output, log = _run(controller, vm, run_inputs, self.engine.objective, (0.0, 0.0), frame.torque_values,
                              actual_stage_residual=frame.actual_stage_residual, effect_trial=source, **kwargs)
           is_saturated = bool(log.saturated)
         if (neutral or original_prefix) and (not same_final_command(output, frame.selected_command) or
@@ -340,6 +374,8 @@ class EventControllerReplay:
         if not math.isfinite(output) or abs(output) > 1.000001:
           raise ValueError('event selected command envelope')
         requests[frame.control_ns], saturated[frame.control_ns] = output, is_saturated
+        if candidate_feedback is not None:
+          candidate_feedback.after(frame.control_ns,output)
         if build_prefix and reusable_prefix:
           prefix_requests[frame.control_ns], prefix_saturated[frame.control_ns] = raw_output, is_saturated
         prior_ns, prior_sequence = frame.control_ns, frame.frame_sequence
@@ -358,10 +394,30 @@ class EventControllerReplay:
       quality = {} if self.activation_plan is None else {'quality_contract': self.activation_plan.clipping_quality}
       if shadow:
         quality['identification_policy'] = NATIVE_SHADOW_IDENTIFICATION
+      feedback = getattr(self,'verified_feedback_tape',None)
+      reported = None
+      if feedback is not None:
+        from openpilot.starpilot.flm.feedback_replay import require_feedback_engine
+        evidence = require_feedback_engine(self)
+        reported = {}
+        quality['feedback_reported'] = reported
+        from openpilot.starpilot.flm.candidate_feedback import CLOSED_POLICY,CandidateFeedbackLoop
+        if evidence.candidate_policy == CLOSED_POLICY:
+          if not supported or type(self.emissions) is not EmissionHistory:
+            raise ValueError('closed-loop candidate requires actual registered controller/native replay')
+          candidate_feedback = CandidateFeedbackLoop(self,reported,tuple(coordinates),
+            native_policy='native-shadow-identification' if shadow else 'strict',
+            original_baseline=not restore_target and tuple(coordinates) == self.reference)
       encoded = self.emissions.rollout(native_requests, windows[0][0], windows[-1][1], windows, **quality)
       # Native success is insufficient: late controller-only frames and the exact
       # original final-window/tick guard must ALSO finish before any result exists.
       lazy_requests.finish()
+      if reported is not None:
+        if candidate_feedback is not None:
+          self.__candidate_feedback_proof = candidate_feedback.finish(requests,reported)
+        else:
+          from openpilot.starpilot.flm.feedback_replay import verify_candidate_engine
+          verify_candidate_engine(self,requests,reported)
       if build_prefix and prefix_requests and prefix_states:
         self.__pending_controller_prefix = (cast(tuple[object, bool], _prefix_context)[0], MappingProxyType(prefix_requests),
           MappingProxyType(prefix_saturated), MappingProxyType(prefix_states))
@@ -401,6 +457,11 @@ class EventControllerReplay:
         self.objective, self.reference, self.prior_full, self.original_anchor,
         self.activation_plan, self.restore_envelope, tuple(self.records), tuple(self.checkpoints),
         tuple(self.replay_windows), native)
+      if archive_key(self) is not None:
+        data = (*data,archive_key(self))
+      if getattr(self,'verified_feedback_tape',None) is not None:
+        from openpilot.starpilot.flm.feedback_replay import owned_feedback_key
+        data += (owned_feedback_key(self),)
       return hashlib.sha256(pickle.dumps(data, protocol=5)).digest()
     except (AttributeError, TypeError, ValueError, OverflowError, pickle.PicklingError):
       return None  # Unsupported cache key means full replay, never readiness.
@@ -411,6 +472,10 @@ class EventControllerReplay:
     This transfers numeric columns, never a native verdict, shadow token,
     profile, validation, lease, or optimizer choice. Any unknown case rebuilds.
     """
+    from openpilot.starpilot.flm.candidate_feedback import uses_closed_loop
+    if uses_closed_loop(self) != uses_closed_loop(original):
+      return False
+
     import pickle
     import struct
     from types import MappingProxyType
@@ -524,9 +589,151 @@ class EventControllerReplay:
           all(type(value) is bool for value in prefix[2].values()) and
           all(window in self.replay_windows and type(value) is Snapshot for window, value in prefix[3].items())):
         self.__controller_prefix = (new_key, *(MappingProxyType(dict(part)) for part in prefix[1:]))
+      # Separate numerical view only. No borrowed strict proof or native verdict
+      # is installed in this selected engine's strict cache or proof fields.
+      cache = original.__dict__.get('_EventControllerReplay__strict_rollouts')
+      entry = cache[1].get('baseline') if type(cache) is tuple and len(cache) == 2 and type(cache[1]) is dict else None
+      if (epsilon == .01 and uses_closed_loop(self) and type(cache) is tuple and len(cache) == 2 and cache[0] == old_key and
+          type(entry) is tuple and len(entry) == 3 and type(entry[2]) is tuple and len(entry[2]) == 2 and
+          type(entry[2][1]) is bytes):
+        self.__subset_baseline_view = _EquivalentBaselineView(original,cache,entry,old_key,new_key,entry[2][1])
       return True
     except (AttributeError, TypeError, ValueError, KeyError, OverflowError, pickle.PicklingError):
       return False
+
+  def _equivalent_subset_baseline(self, coordinates, source_key):
+    """Only an identical baseline's numeric maps; never a new execution proof.
+
+    The full owner's strict proof stays bound to its original objective. Both
+    baselines take the neutral recorded-source branch on EVERY frame; shared
+    records/checkpoints/inputs/native state therefore give identical updates.
+    Full30 target/source checks conservatively preserve the existing trial guards.
+    Every use freshly binds both owners before and after callback-capable work.
+    """
+    import pickle
+    import struct
+    from types import MappingProxyType
+    from openpilot.starpilot.flm.candidate_feedback import uses_closed_loop,strict_reference_proof_key,CandidateFeedbackProof,_SEAL
+    from openpilot.starpilot.flm.canonical_surface_adapter import NAMES,parameters_for
+    from openpilot.starpilot.flm.controller_replay import ControllerReplay,SelectedControllerFactory
+    from openpilot.starpilot.flm.event_objective import EffectObjective
+    from openpilot.starpilot.flm.event_activation import EventActivationPlan,ZERO_REFERENCE_ACTIVATION_VERSION
+    from openpilot.starpilot.flm.feedback_replay import require_feedback_engine
+    from openpilot.starpilot.flm.pid_controller_replay import PidControllerFactory
+    from openpilot.starpilot.flm.selected_effects import EffectTrial,EffectReplayTransition
+    from openpilot.starpilot.flm.torque_emission_replay import EmissionHistory
+    from openpilot.starpilot.lateral.controller_selection import ControllerMode
+    from capnp.lib.capnp import _DynamicStructReader
+    from opendbc.car.car_helpers import interfaces
+    from abc import ABCMeta
+    from collections import OrderedDict
+
+    try:
+      view = self.__dict__.get('_EventControllerReplay__subset_baseline_view')
+      if (type(view) is not _EquivalentBaselineView or type(self) is not EventControllerReplay or
+          type(source_key) is not bytes or type(view.original_key) is not bytes or type(view.selected_key) is not bytes or
+          type(coordinates) is not tuple or any(type(value) not in (int,float) or not math.isfinite(value) for value in coordinates) or
+          type(view.cache) is not tuple or len(view.cache) != 2 or type(view.cache[0]) is not bytes or
+          type(view.cache[1]) is not dict or any(type(key) is not str for key in view.cache[1]) or
+          type(view.entry) is not tuple or len(view.entry) != 3 or type(view.proof_fingerprint) is not bytes):
+        return None
+      original = view.owner
+      if (type(original) is not EventControllerReplay or original is self or
+          type(self.engine) is not ControllerReplay or self.engine is not original.engine or
+          type(self.emissions) is not EmissionHistory or
+          self.restore_envelope is not None or original.restore_envelope is not None or
+          type(self.activation_plan) is not EventActivationPlan or self.activation_plan.version != ZERO_REFERENCE_ACTIVATION_VERSION or
+          self.failed or original.failed or not self.raw_mode or not original.raw_mode or
+          any(getattr(self,name) is not getattr(original,name) for name in
+            ('factory','records','checkpoints','replay_windows','emissions','activation_plan')) or
+          not uses_closed_loop(self) or not uses_closed_loop(original) or source_key != view.selected_key or
+          pickle.dumps(coordinates,protocol=5) != pickle.dumps(self.reference,protocol=5)):
+        return None
+      # Unknown callback-bearing factory/collection shapes retain real replay.
+      factory = self.factory
+      if type(factory) not in (SelectedControllerFactory,PidControllerFactory):
+        return None
+      interface_metaclass = type(factory.interface_class)
+      if (type(factory.cp) is not _DynamicStructReader or type(self.emissions.cp) is not _DynamicStructReader or
+          type(factory.mode) not in (str,ControllerMode) or
+          (interface_metaclass is not type and interface_metaclass is not ABCMeta) or
+          factory.interface_class is not interfaces.get(str(factory.cp.carFingerprint)) or
+          type(self.emissions.events) is not OrderedDict or type(self.emissions.carriers) is not OrderedDict or
+          type(factory) is SelectedControllerFactory and type(factory.policy) not in (str,type(None))):
+        return None
+      if (original._causal_input_key(.01) != view.original_key or
+          original.__dict__.get('_EventControllerReplay__strict_rollouts') is not view.cache or
+          view.cache[0] != view.original_key or view.cache[1].get('baseline') is not view.entry or
+          type(self.objective) is not EffectObjective or type(original.objective) is not EffectObjective or
+          not set(self.objective.names) < set(original.objective.names) or
+          self.objective.group != original.objective.group or self.objective.context_key != original.objective.context_key or
+          self.objective.parameters != parameters_for(self.objective.names) or
+          original.objective.parameters != parameters_for(original.objective.names)):
+        return None
+      old_evidence,new_evidence = require_feedback_engine(original),require_feedback_engine(self)
+      if (old_evidence.original is not new_evidence.original or old_evidence.binding != new_evidence.binding or
+          tuple((bounds,subset.digest,activation) for bounds,subset,activation in old_evidence.windows) !=
+          tuple((bounds,subset.digest,activation) for bounds,subset,activation in new_evidence.windows)):
+        return None
+      expected = self.activation_plan.version,'strict-trial',pickle.dumps(original.reference,protocol=5)
+      if (view.entry[0] != expected or type(view.entry[1]) is not tuple or len(view.entry[1]) != 3 or
+          any(type(part) is not MappingProxyType for part in view.entry[1]) or
+          type(view.entry[2]) is not tuple or len(view.entry[2]) != 2 or view.entry[2][1] != view.proof_fingerprint or
+          strict_reference_proof_key(view.entry[2][0],original,original.reference,len(view.entry[1][0])) != view.proof_fingerprint):
+        return None
+      def bits(values):
+        if type(values) is not dict or tuple(values) != NAMES or any(type(values[name]) is not float for name in NAMES):
+          raise ValueError('exact full30 baseline values')
+        return struct.pack('!30d',*(values[name] for name in NAMES))
+      left = EffectTrial(original.objective,original.reference,original.baseline_revision,original.original_anchor)
+      right = EffectTrial(self.objective,self.reference,self.baseline_revision,self.original_anchor)
+      left_transition,right_transition = EffectReplayTransition(left),EffectReplayTransition(right)
+      left_source,right_source = left.source(),right.source()
+      prior_bits = bits(original.prior_full)
+      if (bits(self.prior_full) != prior_bits or bits(left_transition.original_target) != prior_bits or
+          bits(right_transition.original_target) != prior_bits or bits(left_transition.target) != prior_bits or
+          bits(right_transition.target) != prior_bits or bits(left_source.values) != bits(right_source.values) or
+          left_source.full_profile_sha256 != right_source.full_profile_sha256 or
+          left_source.original_effect_anchor != original.objective.anchor_digest or
+          right_source.original_effect_anchor != self.objective.anchor_digest):
+        return None
+      for owner in (original,self):
+        reference = tuple(owner.prior_full[name] for name in owner.objective.names)
+        if (any(type(value) is not float for value in owner.reference) or
+            pickle.dumps(reference,protocol=5) != pickle.dumps(owner.reference,protocol=5)):
+          return None
+      old_anchor,new_anchor = dict(original.original_anchor),dict(self.original_anchor)
+      old_anchor.pop('anchor_digest')
+      new_anchor.pop('anchor_digest')
+      if pickle.dumps(old_anchor,protocol=5) != pickle.dumps(new_anchor,protocol=5):
+        return None
+      result = tuple(dict(part) for part in view.entry[1])
+      # This repeat may execute original source callbacks; both source keys are
+      # recomputed AFTER it. The final proof snapshot below is primitive-only.
+      if strict_reference_proof_key(view.entry[2][0],original,original.reference,len(result[0])) != view.proof_fingerprint:
+        return None
+      def proof_snapshot(proof):
+        if type(proof) is not CandidateFeedbackProof:
+          return None
+        owned = object.__getattribute__(proof,'__dict__')
+        if type(owned) is not dict or any(type(key) is not str for key in owned) or owned.get('_seal') is not _SEAL:
+          return None
+        values = tuple(owned.get(name) for name in ('version','source_digest','original_digest',
+          'coordinates_digest','native_policy','chronology_digest','row_count'))
+        if any(type(value) is not str for value in values[:6]) or type(values[6]) is not int:
+          return None
+        return pickle.dumps(values,protocol=5)
+      if (original._causal_input_key(.01) != view.original_key or self._causal_input_key(.01) != view.selected_key or
+          self.__dict__.get('_EventControllerReplay__subset_baseline_view') is not view or
+          original.__dict__.get('verified_feedback_tape') is not old_evidence or
+          self.__dict__.get('verified_feedback_tape') is not new_evidence or
+          original.__dict__.get('_EventControllerReplay__strict_rollouts') is not view.cache or
+          view.cache[1].get('baseline') is not view.entry or view.entry[2][1] != view.proof_fingerprint or
+          proof_snapshot(view.entry[2][0]) != view.proof_fingerprint):
+        return None
+      return result
+    except (AttributeError,TypeError,ValueError,KeyError,OverflowError,pickle.PicklingError):
+      return None
 
   def ensure_causal_features(self, *, epsilon=.01):
     """Reuse only this engine's successful original full rebuild; never IPC flags."""
@@ -539,6 +746,135 @@ class EventControllerReplay:
     self.projected = dict(self.__causal_features[1])
     return len(self.projected)
 
+  def _strict_fd_reference(self, coordinates, certificate):
+    """Reuse one proven strict baseline only for an identical shadow FD side.
+
+    Exact full input bytes are rebound on every hit. This is a native-limited
+    numerical result, never a profile/current admission or a saved shadow proof.
+    """
+    if certificate is None:
+      return None
+    import pickle
+    from types import MappingProxyType
+    from openpilot.starpilot.flm.controller_replay import ControllerReplay
+    from openpilot.starpilot.flm.torque_emission_replay import EmissionHistory
+    from openpilot.starpilot.flm.event_activation import EventActivationPlan, ZERO_REFERENCE_ACTIVATION_VERSION
+    try:
+      plan = self.__dict__.get('activation_plan')
+      if (type(self) is not EventControllerReplay or type(self.__dict__.get('engine')) is not ControllerReplay or
+          type(self.emissions) is not EmissionHistory or self.restore_envelope is not None or
+          type(plan) is not EventActivationPlan or plan.version != ZERO_REFERENCE_ACTIVATION_VERSION or
+          plan.identification_policy != NATIVE_SHADOW_IDENTIFICATION):
+        return None
+      from openpilot.starpilot.flm.candidate_feedback import uses_closed_loop, _strict_reference_fields
+      closed = uses_closed_loop(self)
+      saved, entry, reference_bits = certificate
+      current = self.__dict__.get('_EventControllerReplay__strict_rollouts')
+      if (current is not saved or type(saved) is not tuple or len(saved) != 2 or type(saved[1]) is not dict or
+          saved[1].get('baseline') is not entry or type(entry) is not tuple or len(entry) != (3 if closed else 2) or
+          entry[0] != (plan.version, 'strict-trial', reference_bits) or
+          type(entry[1]) is not tuple or len(entry[1]) != 3 or
+          any(type(part) is not MappingProxyType for part in entry[1]) or
+          pickle.dumps(tuple(coordinates), protocol=5) != reference_bits):
+        return None
+      key = self._causal_input_key(.01)  # Exact same owned-key contract as strict rollout cache.
+      if key is None or key != saved[0]:
+        return None
+      if closed:
+        retained = entry[2]
+        if type(retained) is not tuple or len(retained) != 2 or type(retained[1]) is not bytes:
+          return None
+        # The complete pre-key above has ALREADY validated this owned
+        # evidence's source digest and every subset/activation seal. Only the
+        # primitive proof projection is needed here; the complete post-key
+        # below remains mandatory after ALL callback-capable field reads.
+        evidence = object.__getattribute__(self,'__dict__').get('verified_feedback_tape')
+        fresh = _strict_reference_fields(retained[0],evidence,self.reference,len(entry[1][0]))
+        if fresh is None or fresh != retained[1]:
+          return None
+        # Proof validation itself must not open a mutable-input gap.
+        if self._causal_input_key(.01) != key:
+          return None
+      return dict(entry[1][1])  # Copy native outputs; no mutable cache alias.
+    except (AttributeError, KeyError, TypeError, ValueError, OverflowError, pickle.PicklingError):
+      return None  # Unknown/stale proof keeps the original shadow execution.
+
+  def _zero_gain_fd_reference(self, coordinates, certificate):
+    """Exact strict baseline for a provably input-neutral torque FD probe only.
+
+    Turn-in/unwind FF modifiers multiply ff_gain in the canonical torque
+    formula. With full neutral original/reference state and no effect traces,
+    changing only one such modifier leaves ALL selected controller hook outputs
+    identical at every frame, including the gradual owner transition. This
+    never covers crawl, PID, restore, candidate feasibility or failed probes.
+    """
+    from openpilot.starpilot.flm.controller_replay import ControllerReplay, SelectedControllerFactory
+    from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
+    from openpilot.starpilot.flm.selected_effects import EffectTrial, EffectReplayTransition
+    from openpilot.starpilot.flm.canonical_surface_adapter import CanonicalSurfaceEffects, NAMES
+    from openpilot.starpilot.flm import torque_surface
+    try:
+      if (type(self) is not EventControllerReplay or type(self.engine) is not ControllerReplay or
+          type(self.factory) is not SelectedControllerFactory or type(self.actual) is not LatControlTorque or
+          self.restore_envelope is not None or type(coordinates) is not tuple or
+          len(coordinates) != len(self.reference) or not 1 <= len(coordinates) <= 4 or
+          any(type(value) not in (int,float) or not math.isfinite(value) or abs(value) > .25 for value in coordinates) or
+          any(value != 0. for value in self.reference) or set(self.prior_full) != set(NAMES) or
+          any(value != 0. for value in self.prior_full.values()) or
+          any(getattr(frame,'effect_trace',None) is not None for frame in self.records)):
+        return None
+      changed = tuple(name for name,value,base in zip(self.objective.names,coordinates,self.reference,strict=True) if value != base)
+      if len(changed) != 1 or changed[0] not in (
+          'turn_in_boost_left','turn_in_boost_right','unwind_taper_left','unwind_taper_right'):
+        return None
+      trial = EffectTrial(self.objective,coordinates,self.baseline_revision,self.original_anchor)
+      transition = EffectReplayTransition(trial)  # Validate the exact original full30 target/anchor.
+      source = trial.source()
+      if (type(source) is not CanonicalSurfaceEffects or source.math is not torque_surface or
+          tuple(source.values) != NAMES or source.values['ff_gain_left'] != 0. or source.values['ff_gain_right'] != 0. or
+          any(value != 0. for value in transition.original_target.values()) or
+          any(value != 0. for name,value in transition.target.items() if name != changed[0])):
+        return None
+      # Neutral strict replay does not execute a candidate owner transition.
+      # Reproduce that candidate-only lifecycle over EVERY original frame;
+      # source equivalence cannot waive missing/regressing prepare clocks.
+      windows = tuple(self.replay_windows)
+      if not windows:
+        return None
+      index, previous_prepare = 0, 0
+      for frame in self.records:
+        while index < len(windows) and frame.control_ns > windows[index][1]:
+          index += 1
+        if index >= len(windows) or not windows[index][0] <= frame.control_ns <= windows[index][1]:
+          return None
+        if frame.control_ns == windows[index][0]:
+          transition.reset()
+          previous_prepare = 0
+        activation = self.activation_plan.activation_for(*windows[index])
+        if activation is None:
+          return None
+        original_prefix = activation[0] == 0 or frame.control_ns < activation[0]
+        activation_tick = frame.control_ns == activation[0]
+        prepare_ns = getattr(frame,'effect_prepare_ns',0)
+        if activation_tick and prepare_ns != activation[1]:
+          return None
+        if original_prefix:
+          continue
+        if not 0 < prepare_ns <= frame.control_ns or previous_prepare and prepare_ns <= previous_prepare:
+          return None  # Unknown clock patterns keep the original full probe.
+        actual_source = transition.source_for_frame(prepare_ns,None,new_owner=activation_tick).source
+        if (type(actual_source) is not CanonicalSurfaceEffects or actual_source.math is not torque_surface or
+            tuple(actual_source.values) != NAMES or
+            any(value != 0. for name,value in actual_source.values.items() if name != changed[0])):
+          return None
+        previous_prepare = prepare_ns
+      # Existing proof checks exact plan, strict successful baseline, owned
+      # factory/CP/checkpoints/frames/native packets and signed-bit input key.
+      # It returns a copy only after this source equivalence proof succeeds.
+      return self._strict_fd_reference(self.reference,certificate)
+    except (AttributeError,TypeError,ValueError,KeyError,OverflowError):
+      return None  # Unknown source/transition retains the original actual FD.
+
   def rebuild_causal_features(self, *, epsilon=.01):
     self.__causal_features = None
     if self.restore_envelope is not None:
@@ -549,6 +885,14 @@ class EventControllerReplay:
     plan = self.__dict__.get('activation_plan')
     identify = {} if plan is None or plan.identification_policy != NATIVE_SHADOW_IDENTIFICATION else {
       '_identification_token': self.__identification_token}
+    reference_certificate = None
+    if identify:
+      import pickle
+      saved = self.__dict__.get('_EventControllerReplay__strict_rollouts')
+      if type(saved) is tuple and len(saved) == 2 and type(saved[1]) is dict:
+        entry = saved[1].get('baseline')
+        if entry is not None:
+          reference_certificate = (saved, entry, pickle.dumps(self.reference, protocol=5))
     sensitivities = []
     for index, parameter in enumerate(self.objective.parameters):
       plus, minus = list(self.reference), list(self.reference)
@@ -562,11 +906,19 @@ class EventControllerReplay:
       # Legacy experiments retain their original final-quality probe gates.
       high = low = None
       try:
-        _, high, _ = self._rollout(tuple(plus), **identify)
+        high = self._strict_fd_reference(tuple(plus), reference_certificate)
+        if high is None and identify:
+          high = self._zero_gain_fd_reference(tuple(plus), reference_certificate)
+        if high is None:
+          _, high, _ = self._rollout(tuple(plus), **identify)
       except ValueError:
         pass
       try:
-        _, low, _ = self._rollout(tuple(minus), **identify)
+        low = self._strict_fd_reference(tuple(minus), reference_certificate)
+        if low is None and identify:
+          low = self._zero_gain_fd_reference(tuple(minus), reference_certificate)
+        if low is None:
+          _, low, _ = self._rollout(tuple(minus), **identify)
       except ValueError:
         pass
       if high is None and low is None:
@@ -619,6 +971,15 @@ class EventControllerReplay:
       return False
 
   def validate(self, profile, control, output, physical_context, blocks, model):
+    from openpilot.starpilot.flm.clipping_quality import RESTORE_FEEDBACK_VERSION
+    if self.activation_plan is not None and self.activation_plan.version == RESTORE_FEEDBACK_VERSION:
+      from openpilot.starpilot.flm.feedback_replay import require_feedback_engine
+      try:
+        if getattr(self,'event_mean_model',None) is not None:
+          return None
+        require_feedback_engine(self)
+      except (ValueError,TypeError,KeyError,AttributeError):
+        return None
     if (self.failed or profile.policy != (RESTORE_POLICY if self.restore_envelope is not None else POLICY) or
         self.restore_envelope is not None and profile.effect_envelope != self.restore_envelope or profile.identity != self.identity or
         profile.parameters != self.objective.parameters or len(profile.coefficients) != len(self.objective.names) or
@@ -670,6 +1031,11 @@ class EventControllerReplay:
         mean = sum(values) / len(values)
         variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
         lower = mean - 12.707 * math.sqrt(variance / len(values))
+        event_mean_model = getattr(self,'event_mean_model',None)
+        if event_mean_model is not None:
+          from openpilot.starpilot.flm.event_mean_evidence import lower as event_lower
+          cohort = next(name for name,items in improvements.items() if items is values)
+          lower = event_lower(event_mean_model,tuple(block for block in selected if block.cohort==cohort),tuple(values),cohort=cohort)
         if not math.isfinite(lower) or lower <= 0:
           return None
         lower_bounds.append(lower)

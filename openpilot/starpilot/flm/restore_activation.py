@@ -8,7 +8,7 @@ import hashlib
 import json
 
 from openpilot.starpilot.flm.clipping_quality import (
-  FIXED_MAP_IDENTIFICATION, RESTORE_ACTIVATION_VERSION, RESTORE_AGGREGATE_ACTIVATION_VERSION, RESTORE_ZERO_REFERENCE_VERSION,
+  FIXED_MAP_IDENTIFICATION, RESTORE_ACTIVATION_VERSION, RESTORE_AGGREGATE_ACTIVATION_VERSION, RESTORE_ZERO_REFERENCE_VERSION, RESTORE_FEEDBACK_VERSION,
   restore_policy, restore_quality,
 )
 from openpilot.starpilot.flm.event_activation import EventActivationPlan, EXACT_EMISSION_ACTIVATION_VERSION, build_activation_plan
@@ -40,7 +40,7 @@ class WholeMapRestorePlan(EventActivationPlan):
   restore_envelope_sha256: str
 
   def validate(self):
-    versions = (RESTORE_ACTIVATION_VERSION, RESTORE_AGGREGATE_ACTIVATION_VERSION, RESTORE_ZERO_REFERENCE_VERSION)
+    versions = (RESTORE_ACTIVATION_VERSION, RESTORE_AGGREGATE_ACTIVATION_VERSION, RESTORE_ZERO_REFERENCE_VERSION, RESTORE_FEEDBACK_VERSION)
     if (self.version not in versions or type(self.restore_envelope_sha256) is not str or
         len(self.restore_envelope_sha256) != 64 or any(c not in '0123456789abcdef' for c in self.restore_envelope_sha256)):
       raise ValueError('whole-map restore plan version/envelope')
@@ -52,7 +52,7 @@ class WholeMapRestorePlan(EventActivationPlan):
   @property
   def clipping_quality(self):
     self.validate()
-    return restore_quality(6 if self.version == RESTORE_ZERO_REFERENCE_VERSION else 4)
+    return restore_quality(8 if self.version == RESTORE_FEEDBACK_VERSION else 6 if self.version == RESTORE_ZERO_REFERENCE_VERSION else 4)
 
   @property
   def identification_policy(self):
@@ -77,7 +77,7 @@ def restore_plan_matches(plan, envelope):
 
 
 def build_restore_plan(engine, *, model, cutoff_ns, stage_events, physical_context, envelope, restore_version=4):
-  if type(restore_version) is not int or restore_version not in (4, 5, 6):
+  if type(restore_version) is not int or restore_version not in (4, 5, 6, 8):
     raise ValueError('explicit whole-map restore support version')
   policy = restore_policy(restore_version)
   digest = restore_envelope_digest(envelope)

@@ -127,4 +127,5 @@ def pid_frame(evidence):
     desired_kinematic_accel=stage['setpoint'],
     healthy=evidence.valid and not evidence.fault and not evidence.override, manual=evidence.manual, limited=evidence.limited,
     applied_parameter_names=tuple(evidence.applied_parameter_names), effect_trace=evidence.effect_trace,
-    effect_prepare_ns=evidence.effect_prepare_ns, controller_domain='torque_pid')
+    effect_prepare_ns=evidence.effect_prepare_ns, controller_domain='torque_pid',
+    vehicle_model_anchor=evidence.vehicle_model_anchor, live_applied_coordinates=evidence.live_applied_coordinates)

@@ -814,7 +814,7 @@ class TestRuntimeSnapshot(unittest.TestCase):
         began = hud._set_speed_changed_ns
       self.assertEqual(hud._set_speed_changed_ns, began)
       if frame > 100:
-        self.assertGreater(opacity, .99)
+        self.assertLess(opacity, .01)
     ui.started = False
     ended = adapter.build(ShellMode.HOME, now_ns=now).onroad
     self.assertFalse(ended.camera_available or ended.engaged)

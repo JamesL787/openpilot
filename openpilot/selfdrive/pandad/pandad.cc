@@ -1,10 +1,14 @@
 #include "openpilot/starpilot/car/ford/aol_policy.h"
+#include "openpilot/starpilot/car/nissan/aol_policy.h"
 #include "selfdrive/pandad/pandad.h"
 #include "selfdrive/pandad/aol_protocol.h"
 #include "selfdrive/pandad/aol_wire.h"
 #include "openpilot/starpilot/car/honda/aol_policy.h"
 #include "openpilot/starpilot/car/mazda/aol_policy.h"
+#include "openpilot/starpilot/car/rivian/aol_policy.h"
+#include "openpilot/starpilot/car/volkswagen/aol_policy.h"
 #include "openpilot/starpilot/car/chrysler/aol_policy.h"
+#include "openpilot/starpilot/car/subaru/aol_policy.h"
 #include "openpilot/starpilot/car/toyota/aol_policy.h"
 #include "openpilot/starpilot/car/tesla/aol_policy.h"
 #include "openpilot/starpilot/car/hyundai/aol_policy.h"
@@ -476,7 +480,7 @@ void pandad_run(std::vector<Panda *> &pandas) {
   Panda *previous_aol_owner = nullptr;
   bool engaged = false;
   bool is_onroad = false;
-  constexpr AolSafetyProfile aol_profiles[] = {HONDA_AOL_PROFILE, HONDA_STOCK_AOL_PROFILE, HONDA_NIDEC_AOL_PROFILE, HYUNDAI_AOL_PROFILE, HYUNDAI_CLASSIC_AOL_PROFILE, HYUNDAI_LEGACY_AOL_PROFILE, GM_AOL_PROFILE, FORD_AOL_PROFILE, MAZDA_AOL_PROFILE, CHRYSLER_AOL_PROFILE, TESLA_PREAP_AOL_PROFILE, TESLA_SCREEN_AOL_PROFILE, TOYOTA_AOL_PROFILE};
+  constexpr AolSafetyProfile aol_profiles[] = {HONDA_AOL_PROFILE, HONDA_STOCK_AOL_PROFILE, HONDA_NIDEC_AOL_PROFILE, HYUNDAI_AOL_PROFILE, HYUNDAI_CLASSIC_AOL_PROFILE, HYUNDAI_LEGACY_AOL_PROFILE, GM_AOL_PROFILE, FORD_AOL_PROFILE, MAZDA_AOL_PROFILE, RIVIAN_AOL_PROFILE, CHRYSLER_AOL_PROFILE, TESLA_PREAP_AOL_PROFILE, TESLA_SCREEN_AOL_PROFILE, TOYOTA_AOL_PROFILE, NISSAN_AOL_PROFILE, VOLKSWAGEN_STOCK_AOL_PROFILE, VOLKSWAGEN_LONG_AOL_PROFILE, SUBARU_AOL_PROFILE};
   const AolProfileRegistry aol_registry{aol_profiles, std::size(aol_profiles)};
   AolAxisNegotiator aol_negotiator(aol_registry);
   // Main loop: receive CAN first, then process lower priority panda and peripheral state.

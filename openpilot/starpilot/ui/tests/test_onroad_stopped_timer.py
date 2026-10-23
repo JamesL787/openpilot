@@ -17,6 +17,24 @@ SECOND = 1_000_000_000
 
 
 class StoppedTimerTests(unittest.TestCase):
+  def test_native_timer_follows_its_screen_profile(self):
+    for profile in ("large", "compact"):
+      ui = ui_fake()
+      car = ui.sm.messages['carState']
+      car.canValid, car.canTimeout, car.standstill = True, False, True
+      car.gearShifter = car_schema.CarState.GearShifter.drive
+      document = default_document()
+      document['layouts'][profile][STOPPED_TIMER_WIDGET]['enabled'] = True
+      for screen in ("large", "compact"):
+        adapter = RuntimeSnapshotAdapter(ui)
+        with patch('openpilot.starpilot.ui.runtime_snapshot.read_customization', return_value=document):
+          for second in (0, 61):
+            now = NOW + second * SECOND
+            for name in ('deviceState', 'pandaStates', 'carState'):
+              ui.sm.logMonoTime[name] = now
+            state = adapter.build(ShellMode.ONROAD, now_ns=now, stopped_timer_profile=screen).onroad
+        self.assertEqual(state.stopped_duration_s, 61 if screen == profile else None)
+
   def test_projection_timer_enablement_overrides_native_choice(self):
     for native_enabled, projection_enabled in ((False, True), (True, False)):
       with self.subTest(native_enabled=native_enabled, projection_enabled=projection_enabled):

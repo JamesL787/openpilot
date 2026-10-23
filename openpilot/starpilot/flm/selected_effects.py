@@ -289,8 +289,19 @@ class EffectReplaySource:
     if not isinstance(trial, EffectTrial):
       raise ValueError('effect trial required')
     self.source = trial.source()
+    self.source.allow_limited_profile = True
     self.original_effect_anchor = self.source.original_effect_anchor
     self.applied_coordinates = self.source.applied_coordinates
+
+  @classmethod
+  def from_coordinates(cls, coordinates, baseline_revision, *, accumulated):
+    if cls is not EffectReplaySource:
+      raise ValueError('exact numerical replay source required')
+    obj = cls.__new__(cls)
+    obj.source = CanonicalSurfaceEffects(coordinates, baseline_revision, accumulated=accumulated, allow_limited_profile=True)
+    obj.original_effect_anchor = obj.source.original_effect_anchor
+    obj.applied_coordinates = obj.source.applied_coordinates
+    return obj
 
   def begin_frame(self, control_ns):
     self.source.begin_frame(control_ns)
@@ -331,9 +342,30 @@ def manual(parent):
   return getattr(parent, 'flm_surface', None) is not None or getattr(policy, 'surface', None) is not None
 
 
+def bounded_profile_on_limited_frame(parent):
+  # This is parameter shaping, not a native grant. The live owner must already
+  # hold current source/native permission; replay uses the same bounded math.
+  # Legacy residual owners and arbitrary callback objects remain inhibited.
+  from openpilot.starpilot.flm.live_trial_owner import TrackingTrialOwner
+
+  owner = getattr(parent, 'automatic_flm_effects', None)
+  return (
+    type(owner) in (TrackingTrialOwner, EffectReplaySource, EffectReplayRecordedSource)
+    and type(owner.source) is CanonicalSurfaceEffects
+    and owner.source.allow_limited_profile
+  )
+
+
 def apply_selected_stage(parent, frame):
   source = getattr(parent, 'automatic_flm_effects', None)
-  if source is None or not frame.valid() or not frame.active or frame.driver_override or frame.limited or manual(parent):
+  if (
+    source is None
+    or not frame.valid()
+    or not frame.active
+    or frame.driver_override
+    or (frame.limited and (frame.curvature_limited or not bounded_profile_on_limited_frame(parent)))
+    or manual(parent)
+  ):
     return frame.baseline_ff, frame.baseline_threshold
   try:
     ff, threshold = source.selected_stage(frame, original_anchor=source.original_effect_anchor)
@@ -346,9 +378,16 @@ def apply_selected_stage(parent, frame):
     return frame.baseline_ff, frame.baseline_threshold
 
 
-def apply_selected_friction(parent, cs, setpoint, baseline, *, active, limited):
+def apply_selected_friction(parent, cs, setpoint, baseline, *, active, limited, curvature_limited=False):
   source = getattr(parent, 'automatic_flm_effects', None)
-  if source is None or not active or limited or cs.steeringPressed or manual(parent) or not finite(baseline):
+  if (
+    source is None
+    or not active
+    or (limited and (curvature_limited or not bounded_profile_on_limited_frame(parent)))
+    or cs.steeringPressed
+    or manual(parent)
+    or not finite(baseline)
+  ):
     return baseline
   try:
     candidate = source.selected_friction(float(baseline), original_anchor=source.original_effect_anchor)
@@ -359,9 +398,9 @@ def apply_selected_friction(parent, cs, setpoint, baseline, *, active, limited):
     return baseline
 
 
-def apply_selected_deadzone(parent, cs, vm, baseline_accel, requested_curvature, *, active, limited):
+def apply_selected_deadzone(parent, cs, vm, baseline_accel, requested_curvature, *, active, limited, curvature_limited=False):
   source = getattr(parent, 'automatic_flm_effects', None)
-  if source is None or not active or limited or cs.steeringPressed or manual(parent):
+  if source is None or not active or (limited and (curvature_limited or not bounded_profile_on_limited_frame(parent))) or cs.steeringPressed or manual(parent):
     return baseline_accel
   try:
     speed = float(cs.vEgo)
@@ -375,9 +414,16 @@ def apply_selected_deadzone(parent, cs, vm, baseline_accel, requested_curvature,
     return baseline_accel
 
 
-def apply_selected_output(parent, cs, vm, params, requested_curvature, result, *, active, limited):
+def apply_selected_output(parent, cs, vm, params, requested_curvature, result, *, active, limited, curvature_limited=False):
   source = getattr(parent, 'automatic_flm_effects', None)
-  if source is None or not active or limited or cs.steeringPressed or manual(parent) or cs.vEgo < 0.1 * 0.44704:
+  if (
+    source is None
+    or not active
+    or (limited and (curvature_limited or not bounded_profile_on_limited_frame(parent)))
+    or cs.steeringPressed
+    or manual(parent)
+    or cs.vEgo < 0.1 * 0.44704
+  ):
     return result
   command, angle, log = result
   try:
@@ -413,7 +459,7 @@ class EffectReplayRecordedSource(EffectReplaySource):
     envelope = trace.envelope
     values = dict(trace.applied)
     group = {n: values[n] for n in envelope.trial_names}
-    self.source = CanonicalSurfaceEffects(group, envelope.selected_baseline_revision, accumulated=values)
+    self.source = CanonicalSurfaceEffects(group, envelope.selected_baseline_revision, accumulated=values, allow_limited_profile=True)
     self.original_effect_anchor = self.source.original_effect_anchor
     self.applied_coordinates = self.source.applied_coordinates
 
@@ -485,10 +531,11 @@ class EffectReplayTransition:
     # Per-transition geometry only: trace validation and exact step_full above
     # still run EVERY frame. Packed doubles preserve signed zero and full30.
     import struct
+
     key = self.trial.selected_baseline_revision, self.names, struct.pack('!30d', *(self.applied[n] for n in NAMES))
     if key != self.__source_key:
       group = {n: self.applied[n] for n in self.names}
-      self.__source = CanonicalSurfaceEffects(group, self.trial.selected_baseline_revision, accumulated=self.applied)
+      self.__source = CanonicalSurfaceEffects(group, self.trial.selected_baseline_revision, accumulated=self.applied, allow_limited_profile=True)
       self.__source_key = key
     source.source = self.__source
     # The ordinary _run -> begin_frame path still resets ALL call counters and

@@ -7,6 +7,8 @@ import { LayoutWidgetPreview, OnroadLayoutPage, clampBox, clampPlacement, ordere
 const copy = (v) => JSON.parse(JSON.stringify(v))
 const native = snapshot()
 const metadata = copy(native.metadata.profiles.large)
+// The Android Auto metadata has its own canvas, so the Big screen's widened bounds and anchors do not apply.
+for (const widget of Object.values(metadata.widgets)) for (const field of ["bounds", "anchorShift", "expandable"]) delete widget[field]
 metadata.width = 2880
 metadata.bounds.width = 2820
 metadata.widgets.current_speed.default.x += 510
@@ -73,7 +75,7 @@ const offscreen = copy(good)
 Object.assign(offscreen.layouts.large.nav_map, { x: 2000, width: 900 })
 assert.equal(validDocument(offscreen, data.metadata), false, "a wide map cannot hang off the right edge")
 
-// Box metadata is Android Auto only, and only for the map.
+// Box metadata is only for the map, on either screen.
 const comma = snapshot()
 comma.metadata.profiles.large.widgets.current_speed.box = { minWidth: 100, maxWidth: 600, minHeight: 100, maxHeight: 300 }
 comma.metadata.profiles.large.widgets.current_speed.opacity = { min: 10, max: 100, default: 50 }
@@ -101,6 +103,7 @@ Object.defineProperties(vm, {
   canUndo: { get: () => vm.state.history.undo.length > 0 },
   canRedo: { get: () => vm.state.history.redo.length > 0 },
   profile: { get: () => profile },
+  limitProfile: { get: () => profile },
   layout: { get: () => vm.state.draft.layouts.large },
   selectedWidget: { get: () => profile.widgets[vm.state.selected] },
   selectedPosition: { get: () => vm.state.draft.layouts.large[vm.state.selected] },

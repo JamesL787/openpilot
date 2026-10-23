@@ -1,3 +1,4 @@
+from typing import cast
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -108,7 +109,7 @@ class TestGMPitchStartupAndSettings(unittest.TestCase):
           self.assertTrue(owner.apply(row_default(row())))
           self.assertFalse(self.saved.get_bool(key))
           controller = SimpleNamespace(volt_sng=False, gm_auto_hold=False, volt_one_pedal=False, long_pitch=True)
-          VehicleStartupPreferences(**{preference: True}).configure_controller(SimpleNamespace(CP=cp, CC=controller))
+          VehicleStartupPreferences(**cast(dict, {preference: True})).configure_controller(SimpleNamespace(CP=cp, CC=controller))
           self.assertFalse(getattr(controller, preference))
           fresh = row()
           pending = row_change(fresh)

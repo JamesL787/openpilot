@@ -235,9 +235,13 @@ class TestHyundaiFingerprint(unittest.TestCase):
     self.assertTrue(pt.can_valid)
 
   def test_ioniq6_left_paddle_is_factual_button_event(self):
-    for alpha_long in (False, True):
-      with self.subTest(alpha_long=alpha_long):
-        cp = CarInterface.get_params(CAR.HYUNDAI_IONIQ_6, gen_empty_fingerprint(), [], alpha_long, False, False)
+    for alpha_long, standard_buttons in ((False, True), (True, True), (False, False), (True, False)):
+      with self.subTest(alpha_long=alpha_long, standard_buttons=standard_buttons):
+        fingerprint = gen_empty_fingerprint()
+        if standard_buttons:
+          fingerprint[CanBus(None, fingerprint).ECAN][0x1cf] = 8
+        cp = CarInterface.get_params(CAR.HYUNDAI_IONIQ_6, fingerprint, [], alpha_long, False, False)
+        self.assertEqual(bool(cp.flags & HyundaiFlags.CANFD_ALT_BUTTONS), not standard_buttons)
         state = CarState(cp)
         parsers = state.get_can_parsers(cp)
         pt = parsers[Bus.pt]
@@ -254,9 +258,11 @@ class TestHyundaiFingerprint(unittest.TestCase):
         held = update(1, 3)
         released = update(0, 4)
         button = structs.CarState.ButtonEvent.Type.altButton2
-        self.assertEqual([(event.type, event.pressed) for event in pressed.buttonEvents if event.type == button], [(button, True)])
+        self.assertEqual([(event.type, event.pressed) for event in pressed.buttonEvents if event.type == button],
+                         [(button, True)] if standard_buttons else [])
         self.assertFalse(any(event.type == button for event in held.buttonEvents))
-        self.assertEqual([(event.type, event.pressed) for event in released.buttonEvents if event.type == button], [(button, False)])
+        self.assertEqual([(event.type, event.pressed) for event in released.buttonEvents if event.type == button],
+                         [(button, False)] if standard_buttons else [])
 
   def test_elantra_hev_2024_refresh_contract(self):
     for alpha_long in (False, True):

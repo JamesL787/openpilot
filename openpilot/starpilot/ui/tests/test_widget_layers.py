@@ -58,11 +58,11 @@ def test_projection_order_is_independent_from_native_and_survives_decode():
 def test_legacy_projection_order_adds_upstream_mode_widget():
   projection = default_layout_for_viewport((2880, 1080))
   projection['widgets'].pop(MODE_WIDGET)
-  projection['widgetOrder'] = [key for key in DEFAULT_WIDGET_ORDER['large'] if key != MODE_WIDGET]
+  projection['widgetOrder'] = [key for key in DEFAULT_WIDGET_ORDER['large'] if key not in (MODE_WIDGET, 'jetlink_status')]
   migrated = validate_layout_for_viewport(projection, (2880, 1080))
   assert migrated['widgets'][MODE_WIDGET]['enabled'] is False
-  assert migrated['widgetOrder'] == [*projection['widgetOrder'], MODE_WIDGET, 'nav_card', 'nav_map', 'nav_home', 'nav_work',
-                                     'bookmark', 'stopped_timer', 'now_playing', 'jetlink_status', CAR_EXIT]
+  assert migrated['widgetOrder'] == [*projection['widgetOrder'], MODE_WIDGET, 'nav_home', 'nav_work',
+                                     'bookmark', 'now_playing', 'jetlink_status', CAR_EXIT]
 
 
 def test_old_documents_keep_their_original_shape():
@@ -138,6 +138,8 @@ def test_renderer_dispatches_each_widget_in_saved_order(profile, viewport):
     order = [*reversed([key for key in default_order if key != CAR_EXIT]), CAR_EXIT]
     projection['widgetOrder'] = order
     document = projection_customization(projection, document)
+    view.projection_exit_layer = lambda state: seen.append(CAR_EXIT)
+  if profile == 'large':
     view.map_layer = lambda *args: seen.append('nav_map')
     view.navigation = NS(render=lambda *args: seen.append('nav_card'))
     view.navigation_favorites = NS(render=lambda key, state: seen.append(key))

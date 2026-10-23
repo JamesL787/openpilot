@@ -21,17 +21,20 @@ from openpilot.starpilot.aol.wire import PandaSlot, SafetyState, IntentState
 NOW = 10_000_000_000
 
 
+@pytest.mark.parametrize('sdgm_acknowledged', (False, True))
 @pytest.mark.parametrize('variation', [
   'delayed_idle', 'new_source', 'future_source', 'expired', 'producer', 'epoch', 'session',
   'invalid', 'native_denied', 'native_config', 'critical', 'cancel', 'settings_off',
 ])
-def test_actual_card_main_rearm_waits_only_for_older_idle_response(variation):
+def test_actual_card_main_rearm_waits_only_for_older_idle_response(variation, sdgm_acknowledged):
   with OpenpilotPrefix(), patch.dict(os.environ, {'SIMULATION': '1', 'AOL_REPLAY_RUNTIME': '0'}):
     saved = Params()
     saved.put_bool('AlwaysOnLateral', True, block=True)
-    cp = ascm_params(CAR.CHEVROLET_VOLT_ASCM, accelerator=False, radar=False, alpha=False)
+    from opendbc.car.gm.tests.test_volt_sdgm_control import sdgm_params
+    cp = sdgm_params(alpha=True) if sdgm_acknowledged else ascm_params(
+      CAR.CHEVROLET_VOLT_ASCM, accelerator=False, radar=False, alpha=False)
     card = gm_fixtures.TestGmAol.card(cp, saved)
-    assert card.CP.safetyConfigs[0].safetyParam == 0x605
+    assert card.CP.safetyConfigs[0].safetyParam == (0x5007 if sdgm_acknowledged else 0x605)
     assert card.CP.alternativeExperience == 32
     packer = CANPacker(DBC[cp.carFingerprint][Bus.pt])
     card.ci_initialized = True
@@ -91,7 +94,8 @@ def test_actual_card_main_rearm_waits_only_for_older_idle_response(variation):
       packets = parsed_packets(cp, packer, now, tick, 8., main)
       if mutate and variation == 'cancel':
         packets = [p for p in packets if p[0] != 0x1E1]
-        packets.append(packer.make_can_msg('ASCMSteeringButton', 0, {'ACCButtons': CruiseButtons.CANCEL}))
+        from opendbc.car.gm.bolt_cc import button_bytes
+        packets.append((0x1E1, button_bytes(CruiseButtons.CANCEL, tick % 4), 0))
       batch = messaging.log_from_bytes(module.can_list_to_can_capnp(packets)).as_builder()
       batch.logMonoTime = now
       with patch.object(module, 'REPLAY', False), \
@@ -102,6 +106,8 @@ def test_actual_card_main_rearm_waits_only_for_older_idle_response(variation):
         card.step()
       assert card.CS_prev.canValid and not card.CS_prev.canTimeout
       assert card.CS_prev.cruiseState.available == main
+      if mutate and variation == 'cancel':
+        assert any(str(event.type) == 'cancel' and event.pressed for event in card.CS_prev.buttonEvents)
       assert not card.last_actuators_output.torqueOutputCan
       return now
 
@@ -116,13 +122,17 @@ def test_actual_card_main_rearm_waits_only_for_older_idle_response(variation):
       assert card.aol_card_intent.allowed_latch
       edge = card.aol_card_intent.main_arm_ns
       healthy = card.aol_transport_feedback.healthy_feedback_ns
-      cycle(5, ack=False, source=off_source, mutate=True)
-      if variation != 'delayed_idle':
+      cycle(5, ack=sdgm_acknowledged, source=off_source, mutate=True)
+      if variation not in ('delayed_idle', 'new_source', 'cancel'):
         assert not card.aol_card_intent.allowed_latch
         return
       assert card.aol_card_intent.allowed_latch
       assert card.aol_card_intent.main_arm_ns == edge
-      assert card.aol_transport_feedback.healthy_feedback_ns == healthy
+      if variation == 'delayed_idle':
+        assert card.aol_transport_feedback.healthy_feedback_ns == healthy
+      else:
+        # A fresh negotiated OFF receipt may retain intent; it grants neither axis.
+        assert card.aol_transport_feedback.healthy_feedback_ns >= healthy
       # Intent retention cannot grant either axis against the unchanged idle native status.
       cs = card.CS_prev
       intent = IntentState(card.slc_producer_session, 1, NOW, NOW, NOW + 30_000_000,

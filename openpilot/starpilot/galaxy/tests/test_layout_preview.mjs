@@ -10,6 +10,12 @@ assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', signLayou
 assert.equal(sceneHidesWidget('engaged', 'compact', 'speed_limit', signLayout, signWidgets), false)
 assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', signLayout,
   { ...signWidgets, speed_limit: { ...signWidgets.speed_limit, visualInsetTop: 0 } }), false)
+const restoredLayout = { speed_limit: {x:330, y:20, enabled:true}, speed_limit_actions: {x:128, y:186, enabled:true} }
+const restoredWidgets = { speed_limit: {width:118, height:132}, speed_limit_actions: {width:348, height:54} }
+assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', restoredLayout, restoredWidgets), false)
+assert.equal(sceneHidesWidget('slc_pending', 'compact', 'speed_limit', {
+  ...restoredLayout, speed_limit: {...restoredLayout.speed_limit, y:60}
+}, restoredWidgets), true)
 
 function fixture() {
   const requests = [], updates = [], timers = new Map(), revoked = []

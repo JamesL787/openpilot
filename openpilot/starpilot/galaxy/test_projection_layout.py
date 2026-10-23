@@ -108,6 +108,26 @@ class TestProjectionLayoutOwner(unittest.TestCase):
     self.assertTrue(self.owner.snapshot()['document']['signalBorder'])
     self.assertEqual(self.owner.snapshot()['document'], saved['document'])
 
+  def test_disable_map_turns_only_the_map_off_and_only_when_it_was_on(self):
+    self.screen()
+    self.assertFalse(self.owner.disable_map(session_valid=lambda: True), 'nothing saved yet')
+    payload = self.payload()
+    payload['document']['widgets']['nav_map']['enabled'] = True
+    payload['document']['widgets']['nav_card']['x'] -= 5
+    self.owner.save(payload, session_valid=lambda: True)
+    self.assertFalse(self.owner.disable_map(session_valid=lambda: False), 'a stale session cannot change it')
+    self.assertTrue(self.owner.snapshot()['document']['widgets']['nav_map']['enabled'])
+    self.parked = False
+    self.assertFalse(self.owner.disable_map(session_valid=lambda: True), 'only while parked')
+    self.parked = True
+    self.assertTrue(self.owner.disable_map(session_valid=lambda: True))
+    saved = self.owner.snapshot()
+    self.assertTrue(saved['valid'])
+    expected = copy.deepcopy(payload['document'])
+    expected['widgets']['nav_map']['enabled'] = False
+    self.assertEqual(saved['document'], expected)
+    self.assertFalse(self.owner.disable_map(session_valid=lambda: True))
+
   def test_disabled_retains_layout_but_unavailable(self):
     self.screen()
     self.owner.save(self.payload(), session_valid=lambda: True)

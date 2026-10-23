@@ -95,6 +95,25 @@ def loss(samples, coefficients):
 
 
 def evaluate(identity, parameters, blocks, *, now_ns, required_cohorts, response_revision, sequence=1, ridge=.01, prior=None):
+  return _evaluate(identity, parameters, blocks, now_ns=now_ns, required_cohorts=required_cohorts,
+                   response_revision=response_revision, sequence=sequence, ridge=ridge, prior=prior)
+
+
+def evaluate_event_proposal(identity, parameters, blocks, *, trial_step, event_mean_model=None, **kwargs):
+  """One bounded TRAIN ridge proposal; all ordinary evidence/heldout gates remain."""
+  from openpilot.starpilot.flm.event_bounded_ridge import bounded_ridge
+  if not 1 <= len(parameters) <= 4 or not finite(trial_step) or trial_step <= 0:
+    return Result('unavailable', 'event_proposal_contract')
+  if event_mean_model is not None:
+    from openpilot.starpilot.flm.event_mean_evidence import validate_model
+    validate_model(event_mean_model,blocks)
+  return _evaluate(identity, parameters, blocks, _bounded_solver=lambda matrix, rhs, centre:
+                   bounded_ridge(matrix, rhs, parameters, centre, trial_step),
+                   **({'_event_mean_model':event_mean_model} if event_mean_model is not None else {}), **kwargs)
+
+
+def _evaluate(identity, parameters, blocks, *, now_ns, required_cohorts, response_revision,
+              sequence=1, ridge=.01, prior=None, _bounded_solver=None, _event_mean_model=None):
   """Fit a logged stage response residual; never generates exploration commands."""
   if (type(identity) is not str or len(identity) != 64 or type(now_ns) is not int or now_ns <= 0 or
       not required_cohorts or not response_revision or type(sequence) is not int or sequence <= 0 or
@@ -142,8 +161,9 @@ def evaluate(identity, parameters, blocks, *, now_ns, required_cohorts, response
       if max(abs(value) for value in inverse_column) > 100:
         raise ValueError("confounded_features")
     regularized = [[value + (ridge * len(rows) if i == j else 0) for j, value in enumerate(row)] for i, row in enumerate(gram)]
-    coefficients = solve(regularized, [sum(row.weight * row.features[i] * row.residual_target for row in rows) +
-                                       ridge * len(rows) * centre[i] for i in range(count)])
+    rhs = [sum(row.weight * row.features[i] * row.residual_target for row in rows) +
+           ridge * len(rows) * centre[i] for i in range(count)]
+    coefficients = solve(regularized, rhs) if _bounded_solver is None else _bounded_solver(regularized, rhs, centre)
   except ValueError:
     return Result('collecting', 'confounded_stage')
   if any(not p.low <= value <= p.high or abs(value) > p.max_step for p, value in zip(parameters, coefficients, strict=True)):
@@ -155,6 +175,9 @@ def evaluate(identity, parameters, blocks, *, now_ns, required_cohorts, response
     mean = sum(independent) / len(independent)
     variance = sum((x - mean) ** 2 for x in independent) / (len(independent) - 1)
     lower = mean - 12.707 * math.sqrt(variance / len(independent))
+    if _event_mean_model is not None:
+      from openpilot.starpilot.flm.event_mean_evidence import lower as event_lower
+      lower = event_lower(_event_mean_model,tuple(b for b in heldout if b.cohort==cohort),tuple(independent),cohort=cohort)
     if lower <= 0:
       return Result('rejected', 'heldout_cohort_regression_or_noise')
     improvements.append((cohort, lower))

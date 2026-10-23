@@ -12,6 +12,7 @@ class CarState(CarStateBase):
   def __init__(self, CP):
     super().__init__(CP)
     self.last_speed = V_CRUISE_MAX
+    self.cancel_request = False
     self.toi_fault = self.toi_active = self.toi_unavailable = False
 
     self.acm_lka_hba_cmd: dict | None = None
@@ -91,6 +92,21 @@ class CarState(CarStateBase):
 
     # AEB
     ret.stockAeb = cp_cam.vl["ACM_AebRequest"]["ACM_EnableRequest"] != 0
+
+    # AE32 is finalized only for the exact GEN1 owner. Availability cannot
+    # arm it; it records the actual ACM standby/ACC states, matching native.
+    if self.CP.flags == 0 and self.CP.alternativeExperience == 32:
+      feature = int(cp_cam.vl["ACM_Status"]["ACM_FeatureStatus"])
+      ret.cruiseState.available = feature in (0, 1)
+      ret.accFaulted |= feature >= 4
+      ret.steerFaultTemporary |= self.toi_fault or self.toi_unavailable
+      ret.steerFaultPermanent = cp.vl["EPAS_AdasStatus"]["EPAS_EacStatus"] == 4
+      # UP_1 is the same factual cancel request emitted by riviancan. Do not
+      # invent MAIN/LKAS or SET/RES events from availability/cruise changes.
+      cancel = cp.vl["VDM_AdasSts"]["VDM_UserAdasRequest"] == 1
+      if cancel != self.cancel_request:
+        ret.buttonEvents = [structs.CarState.ButtonEvent(type=structs.CarState.ButtonEvent.Type.cancel, pressed=cancel)]
+      self.cancel_request = cancel
 
     # Messages needed by carcontroller
     self.acm_lka_hba_cmd = copy.copy(cp_cam.vl["ACM_lkaHbaCmd"])

@@ -96,7 +96,7 @@ class TestTeslaScreenButton(unittest.TestCase):
       self.arm()
       self.feed(brake=True)
       self.assertEqual(self.permission(), 1 if word == 512 else 0)
-    for fault in ({'hands': 3}, {'gear': 2}, {'door': True}, {'eps': 3}, {'autopark': 3}):
+    for fault in ({'hands': 3}, {'gear': 0}, {'gear': 1}, {'gear': 7}, {'door': True}, {'eps': 3}, {'autopark': 3}):
       self.start(512)
       self.arm()
       self.feed(**fault)
@@ -104,6 +104,52 @@ class TestTeslaScreenButton(unittest.TestCase):
       self.feed()
       self.assertEqual(self.permission(), 0, fault)
       self.arm()
+
+  def test_known_gear_and_temporary_eps_pause_preserve_only_existing_arm(self):
+    for pause in ({'gear': 2}, {'gear': 3}, {'eps': 0}):
+      with self.subTest(pause=pause):
+        self.start(512)
+        self.arm()
+        self.touch(0)
+        self.feed(**pause)
+        self.assertEqual(self.permission(), 0)
+        self.feed()
+        self.assertEqual(self.permission(), 1)
+        self.touch(3)
+        self.assertEqual(self.permission(), 0)
+        self.feed(**pause)
+        self.feed()
+        self.assertEqual(self.permission(), 0, 'an explicit OFF must remain OFF')
+
+  def test_screen_press_during_pause_cannot_create_an_arm(self):
+    for pause in ({'gear': 2}, {'gear': 3}, {'eps': 0}):
+      with self.subTest(pause=pause):
+        self.start(512)
+        self.touch(0)
+        self.feed(**pause)
+        self.touch(3)
+        self.assertEqual(self.permission(), 0)
+        self.feed()
+        self.touch(3)
+        self.assertEqual(self.permission(), 0, 'held input cannot arm on recovery')
+        self.touch(0)
+        self.touch(3)
+        self.assertEqual(self.permission(), 1)
+
+  def test_normal_off_heartbeat_permits_only_a_fresh_neutral_then_press(self):
+    self.arm()
+    self.lib.set_aol_test_heartbeat(False)
+    self.assertEqual(self.permission(0), 0)
+    self.touch(3)
+    self.assertEqual(self.permission(0), 0)
+    self.touch(3)
+    self.assertEqual(self.permission(0), 0)
+    self.touch(0)
+    self.assertEqual(self.permission(0), 0)
+    self.touch(3)
+    self.assertEqual(self.permission(0), 0)
+    self.lib.set_aol_test_heartbeat(True)
+    self.assertEqual(self.permission(), 1)
 
   def test_unbuckled_screen_lateral_keeps_longitudinal_blocked(self):
     words = (512, 1536) if os.environ.get('TESLA_SCREEN_NATIVE_RELEASE') == '1' else (512, 1536, 513, 1537)

@@ -120,4 +120,4 @@
 .gx-navigation__empty {min-height:180px;padding:16px}
 }
 
-.gx-navigation__token-link { display: inline-block; margin-bottom: var(--sp-4); }
+.gx-navigation__token-link { margin-bottom: var(--sp-4); }

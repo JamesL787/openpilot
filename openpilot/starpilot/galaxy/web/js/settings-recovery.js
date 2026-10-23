@@ -1,7 +1,9 @@
 import { GxDialog } from "./dialog.js"
+import { GxNotice } from "./notice.js"
+import { GxState } from "./state.js"
 
 export const SettingsRecoveryPage = {
-  components: { GxDialog },
+  components: { GxDialog, GxNotice, GxState },
   props: { mode: { type: String, default: "local" }, unauthorized: Function },
   data() { return { snapshot: null, selected: [], pending: null, busy: false, error: "", result: "", timer: null } },
   mounted() { if (this.mode !== "local") return; this.refresh(); this.timer = setInterval(() => { if (!this.pending && !this.busy) this.refresh() }, 10000) },
@@ -40,23 +42,30 @@ export const SettingsRecoveryPage = {
       finally { this.busy = false }
     },
   },
-  template: `<section class="gx-settings"><h1>Show Non-Default Values</h1>
-    <p>Review saved settings that differ from this vehicle’s StarPilot defaults.</p>
-    <p v-if="snapshot && snapshot.resettableCount < snapshot.count">Some settings are unavailable for this vehicle. Their saved values remain unchanged.</p>
-    <p v-if="error" role="alert">{{ error }}</p><p v-if="result" role="status">{{ result }}</p>
-    <div class="gx-card" v-if="snapshot"><p v-if="!snapshot.rows.length">All available settings use their defaults.</p>
-      <div v-for="row in snapshot.rows" :key="row.id" class="gx-setting-row gx-setting-row--modified">
-        <label><input type="checkbox" v-model="selected" :value="row.id" :disabled="busy || !row.resetAvailable"> {{ row.label }}</label>
-        <p>Current: <strong>{{ row.current }}</strong> · Default: {{ row.default }}</p>
-        <p v-if="!row.available">{{ row.reason }}</p>
-        <button @click="review([row.id])" :disabled="busy || !row.resetAvailable">Reset to Default</button>
+  template: `<section class="gx-settings" :inert="busy" :aria-busy="busy || undefined">
+    <header class="gx-settings__header gx-page-header"><div><h2>Show Non-Default Values</h2>
+      <p>Review saved settings that differ from this vehicle’s StarPilot defaults.</p></div></header>
+    <GxState v-if="mode !== 'local'">Connect to local Galaxy to review saved settings.</GxState>
+    <template v-else>
+    <GxNotice v-if="snapshot && snapshot.resettableCount < snapshot.count" tone="warn">Some settings are unavailable for this vehicle. Their saved values remain unchanged.</GxNotice>
+    <GxNotice v-if="error" tone="danger">{{ error }}</GxNotice><GxNotice v-if="result" tone="success">{{ result }}</GxNotice>
+    <GxState v-if="!snapshot && !error" loading>Loading changed settings…</GxState>
+    <section class="gx-card" v-if="snapshot"><div class="gx-section__header"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i><span class="gx-section__title">Changed settings</span><span class="gx-chip">{{ snapshot.count }}</span></div>
+      <p v-if="!snapshot.rows.length" class="gx-note gx-inset">All available settings use their defaults.</p>
+      <div v-for="row in snapshot.rows" :key="row.id" class="gx-row gx-row--wrap">
+        <div class="gx-row__info"><label class="gx-row__label"><input type="checkbox" v-model="selected" :value="row.id" :disabled="busy || !row.resetAvailable"> {{ row.label }}</label>
+          <span class="gx-row__desc">Current: <strong>{{ row.current }}</strong> · Default: {{ row.default }}</span>
+          <span v-if="!row.available" class="gx-row__desc">{{ row.reason }}</span></div>
+        <button class="gx-btn gx-btn--tonal" @click="review([row.id])" :disabled="busy || !row.resetAvailable">Reset to Default</button>
       </div>
-      <button @click="review(selected)" :disabled="busy || !selected.length">Reset Selected</button>
-      <button @click="review(snapshot.rows.filter(row => row.resetAvailable).map(row => row.id))" :disabled="busy || !snapshot.resettableCount">Reset All Non-Default Settings</button>
-      <button @click="refresh" :disabled="busy">Refresh</button>
-    </div>
+      <div class="gx-panel gx-actions">
+        <button class="gx-btn gx-btn--tonal" @click="review(selected)" :disabled="busy || !selected.length">Reset Selected</button>
+        <button class="gx-btn" @click="review(snapshot.rows.filter(row => row.resetAvailable).map(row => row.id))" :disabled="busy || !snapshot.resettableCount">Reset All Non-Default Settings</button>
+        <button class="gx-btn gx-btn--tonal" @click="refresh" :disabled="busy">Refresh</button>
+      </div>
+    </section></template>
     <GxDialog v-if="pending" labelledby="recovery-question" @close="pending = null">
       <h2 id="recovery-question">{{ pending.question }}</h2><ul><li v-for="label in pending.labels" :key="label">{{ label }}</li></ul>
-      <button @click="pending = null" :disabled="busy">Cancel</button><button @click="confirm" :disabled="busy">Reset Settings</button>
+      <div class="gx-actions"><button class="gx-btn gx-btn--tonal" @click="pending = null" :disabled="busy">Cancel</button><button class="gx-btn" @click="confirm" :disabled="busy">Reset Settings</button></div>
     </GxDialog></section>`,
 }

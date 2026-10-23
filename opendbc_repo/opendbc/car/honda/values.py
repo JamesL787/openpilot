@@ -100,11 +100,14 @@ class HondaSafetyFlags(IntFlag):
   AOL_BOSCH_LONG = 32
   RDX_HIGH_GAS = 128
   GAS_INTERCEPTOR = 32
-  AOL_NIDEC_INTERCEPTOR = 512  # with GAS_INTERCEPTOR on a SCM_FEEDBACK Nidec: always-on lateral
   NIDEC_ALT = 4
   RADARLESS = 8
   BOSCH_CANFD = 16
   BOSCH_CANFD_MVL = 64
+  CLASSIC_LONG_AOL = 2048  # Exact marked DEBUG classic Bosch alpha owner.
+  ALT_RADAR_AOL = 1024  # Exact marked DEBUG alpha owner; physical EPS/gear token.
+  NIDEC_PEDAL_AOL = 512  # Model1 only; distinct from model20 STOCK_TJA.
+  STOCK_TJA = 512  # Marked MDX4G AOL; EPS status1 is healthy TJA lockout.
 
 
 class HondaFlags(IntFlag):

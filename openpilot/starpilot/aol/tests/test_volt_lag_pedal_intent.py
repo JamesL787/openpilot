@@ -50,6 +50,11 @@ def callers(cleanup, cp=None):
       assert cs.canValid and not cs.canTimeout
       return cs
     packets = parsed_packets(card.CP, packer, now, tick, 20., main)
+    if card.CP.pcmCruise:
+      # Factory adaptive standby; state zero reports non-adaptive cruise.
+      address = packer.make_can_msg('ASCMActiveCruiseControlStatus', 2, {})[0]
+      packets = [row for row in packets if not (row[0] == address and row[2] == 2)]
+      packets.append(packer.make_can_msg('ASCMActiveCruiseControlStatus', 2, {'ACCCruiseState': 2}))
     addresses = {packer.make_can_msg(name, 0, {})[0] for name in ('ECMAcceleratorPos', 'EBCMRegenPaddle')}
     packets = [p for p in packets if p[0] not in addresses]
     packets += [packer.make_can_msg('ECMAcceleratorPos', 0, {'BrakePedalPos': 12 if pedal == 'brake' else 0}),

@@ -40,7 +40,6 @@ def test_live_estimate_drift_does_not_change_frame_generation():
   (calibration(basis=(float('nan'), 0., 0.)), True),
   (calibration(spread=(0., math.radians(4) + 1e-9, 0.)), True),
   (calibration(spread=(0., 0., math.radians(2) + 1e-9)), True),
-  (calibration(), False),
 ])
 def test_lifecycle_interruption_rotates_and_consumer_cannot_resume_old_generation(message, current):
   owner = producer()
@@ -219,6 +218,7 @@ def test_actual_main_source_reader_reuses_lifecycle_for_cache_and_persistence():
       '__getitem__': lambda self, key: cal,
       'all_checks': lambda self, keys: True,
     })()
+    sm.valid = {'extrinsicsCalibration': True}
     sm.logMonoTime = {'extrinsicsCalibration': BASE}
     sm.recv_time = {'extrinsicsCalibration': BASE / 1e9}
     with mock.patch.object(steerlearnerd, 'Params', return_value=controls.params), \
@@ -248,6 +248,19 @@ def test_actual_main_source_reader_reuses_lifecycle_for_cache_and_persistence():
     with mock.patch.object(steerlearnerd.time, 'monotonic_ns', return_value=BASE + 270_000_000):
       assert persistence.current_sources('old-identity', first.source_epoch)[0] == ''
       assert persistence.current_sources('fresh-identity', fresh.source_epoch)[0] == 'fresh-identity'
+    for tick in range(100):
+      gap = BASE + (tick + 1) * 1_000_000_000
+      assert not source_reader(gap).enabled
+      sm.logMonoTime['extrinsicsCalibration'] = gap + 1
+      sm.recv_time['extrinsicsCalibration'] = (gap + 1) / 1e9
+      resumed = source_reader(gap + 1)
+      assert resumed.enabled and resumed.source_epoch == fresh.source_epoch
+    sm.valid['extrinsicsCalibration'] = False
+    assert not source_reader(gap + 2).enabled
+    sm.valid['extrinsicsCalibration'] = True
+    reset = source_reader(gap + 3)
+    assert reset.enabled and reset.source_epoch != fresh.source_epoch
+
 
 
 def test_oversized_calibration_vectors_are_rejected_before_iteration():
@@ -261,3 +274,36 @@ def test_oversized_calibration_vectors_are_rejected_before_iteration():
   owner = producer()
   assert owner.observe(calibration(basis=Oversized()), current=True) is None
   assert owner.observe(calibration(spread=Oversized()), current=True) is None
+
+
+def test_delivery_gaps_pause_without_exhausting_calibration_identity():
+  owner = producer()
+  consumer = ConsumerCalibrationLifecycle()
+  token = owner.observe(calibration(), current=True)[0]
+  assert admitted(consumer, calibration(), token)
+  for tick in range(100):
+    now = BASE + (tick + 1) * 1_000_000_000
+    assert owner.observe(calibration(), current=False) is None
+    assert not consumer.observe(calibration(), current=False, now_ns=now)
+    assert not consumer.admit(token, now + 1)
+    assert owner.observe(calibration(), current=True)[0] == token
+    assert consumer.observe(calibration(), current=True, now_ns=now + 1)
+    assert not consumer.admit(token, now)
+    assert consumer.admit(token, now + 1)
+  assert len(owner.issued) == 1 and not consumer.rejected and not consumer.exhausted
+  owner.observe(calibration(status='recalibrating'), current=False)
+  consumer.observe(calibration(status='recalibrating'), current=False, now_ns=now + 2)
+  assert owner.observe(calibration(), current=True)[0] != token
+  assert not admitted(consumer, calibration(), token)
+
+
+def test_noncurrent_block_regression_retires_without_admitting():
+  owner = producer()
+  consumer = ConsumerCalibrationLifecycle()
+  token = owner.observe(calibration(), current=True)[0]
+  assert admitted(consumer, calibration(), token)
+  assert owner.observe(calibration(blocks=5), current=False) is None
+  assert not consumer.observe(calibration(blocks=5), current=False, now_ns=BASE+1)
+  assert not consumer.admit(token, BASE+2)
+  assert owner.observe(calibration(blocks=5), current=True)[0] != token
+  assert not admitted(consumer, calibration(blocks=5), token)

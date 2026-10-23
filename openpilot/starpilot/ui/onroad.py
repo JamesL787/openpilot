@@ -9,6 +9,7 @@ LICENSE, while the application owns all state and action transport.
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol
 import hashlib
 import json
 
@@ -107,8 +108,13 @@ def axis_status_color(state: OnroadState) -> rl.Color:
   return rl.Color(18, 40, 57, 255)
 
 
+class JetlinkRenderLayer(Protocol):
+  def render(self, state: OnroadState) -> None: ...
+
+
 class OnroadView:
   preview_pip_layer: PipLayer | None
+  jetlink_status: JetlinkRenderLayer
 
   def __init__(self, fonts: BitmapFonts, asset_directory: Path, *, camera_layer: CameraLayer | None = None,
                extra_overlays: OverlayLayer | None = None, pip_layer: PipLayer | None = None,
@@ -136,14 +142,14 @@ class OnroadView:
     if projection_viewport is not None:
       from openpilot.starpilot.ui.onroad_now_playing import NowPlayingWidget
       self.now_playing = NowPlayingWidget(fonts)
-      from openpilot.starpilot.ui.onroad_jetlink import JetlinkStatusWidget
-      self.jetlink_status = JetlinkStatusWidget(fonts)
     self.torque_bar = TorqueBarWidget()
     if fonts.profile == Profile.LARGE:
       self.unified_speed = UnifiedSpeedWidget(fonts)
       self.current_speed = CurrentSpeedHud(fonts)
       self.cem_gauge = AetherGauge(fonts)
       self.steering_wheel = SteeringWheelWidget(asset_directory)
+      from openpilot.starpilot.ui.onroad_jetlink import JetlinkStatusWidget
+      self.jetlink_status = JetlinkStatusWidget(fonts)
     else:
       self.compact_hud = CompactHudRenderer(fonts, asset_directory)
       self.compact_sidebar = MiciSidebarWidgets(fonts)
@@ -546,6 +552,7 @@ class OnroadView:
     self._corner_cache.close()
     self.navigation.close()
     if self.fonts.profile == Profile.LARGE:
+      self.unified_speed.close()
       self.steering_wheel.close()
     else:
       self.compact_hud.close()

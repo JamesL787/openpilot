@@ -32,6 +32,7 @@ static std::map<std::string, service> services = {
   { "extrinsicsCalibration", {"extrinsicsCalibration", true, 4.000000, 4, 256000}},
   { "lateralTorqueParameters", {"lateralTorqueParameters", true, 4.000000, 1, 256000}},
   { "autoSteeringLearning", {"autoSteeringLearning", true, 4.000000, 1, 256000}},
+  { "starpilotSteeringTracking", {"starpilotSteeringTracking", true, 20.000000, 5, 256000}},
   { "lateralDelay", {"lateralDelay", true, 4.000000, 1, 256000}},
   { "operatingSystemLog", {"operatingSystemLog", true, 0.000000, -1, 256000}},
   { "carState", {"carState", true, 100.000000, 10, 256000}},

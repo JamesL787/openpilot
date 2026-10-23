@@ -180,22 +180,23 @@ def test_valid_vision_limit_has_persistent_sign_without_action_receipt():
   fonts = Mock(profile=Profile.COMPACT)
   fonts.measure.return_value = NS(width=30, height=20)
   fonts.vertical_ink.return_value = (0, 20)
+  fonts.horizontal_ink.return_value = (0, 30)
   renderer = CompactHudRenderer(fonts, Mock())
   valid = SpeedLimitObservation(kind=ObservationKind.VALID, source='vision', speed_limit_mps=24.6)
   shown = replace(road(), appearance=replace(road().appearance, show_speed_limit_sign=True), speed_limit=valid)
   with patch.object(rl, 'draw_rectangle_rounded') as fill, patch.object(rl, 'draw_rectangle_rounded_lines_ex') as outline:
     renderer._speed_limit_sign(shown)
-    fill.assert_not_called()
-    outline.assert_not_called()
-    assert [call.args[0] for call in foreground_calls(fonts.draw)] == ['LIMIT', 'mph', '55']
+    fill.assert_called_once()
+    outline.assert_called_once()
+    assert [call.args[0] for call in foreground_calls(fonts.draw)] == ['SPEED', 'LIMIT', '55']
     outline.reset_mock()
     renderer._speed_limit_sign(replace(shown, speed_limit=SpeedLimitObservation(kind=ObservationKind.STALE)))
     outline.assert_not_called()
     renderer._speed_limit_sign(replace(road(speed_limit=valid), appearance=replace(shown.appearance, show_speed_limit_sign=False)))
     outline.assert_not_called()
-  with patch.object(rl, 'draw_circle') as circle, patch.object(rl, 'draw_ring'):
+  with patch.object(renderer._speed_limit_widget.shapes, 'circle') as circle:
     renderer._speed_limit_sign(replace(shown, appearance=replace(shown.appearance, use_vienna_sign=True)))
-    circle.assert_not_called()
+    circle.assert_called_once()
 
 
 def test_pending_confirmation_omits_redundant_speed_heading():
@@ -214,7 +215,7 @@ def test_pending_confirmation_omits_redundant_speed_heading():
 
 def test_compact_pending_label_and_button_follow_saved_action_placement():
   document = default_document()
-  document['layouts']['compact']['speed_limit_actions']['x'] = 36
+  document['layouts']['compact']['speed_limit_actions']['x'] = 120
   observation = SpeedLimitObservation(kind=ObservationKind.VALID, speed_limit_mps=20,
                                       pending_speed_limit_mps=15, session_id='drive', decision_id=4,
                                       presentation_id=5, action_enabled=True)
@@ -226,7 +227,7 @@ def test_compact_pending_label_and_button_follow_saved_action_placement():
   view.fonts.vertical_ink.return_value = (0, 20)
   with patch.object(rl, 'draw_rectangle_rounded') as button, patch.object(rl, 'draw_line_ex'):
     view._slc_actions(state)
-  assert foreground_calls(view.fonts.draw)[0].args[3:5] == (115, 136)
+  assert foreground_calls(view.fonts.draw)[0].args[3:5] == (179, 203)
   button.assert_not_called()
 
 

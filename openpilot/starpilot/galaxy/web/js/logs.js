@@ -56,7 +56,7 @@ export const Logs = {
   template: `
     <div class="gx-view">
       <h2 v-if="path === '/logs'">Logs & Diagnostics</h2>
-      <p v-if="path === '/logs'" class="gx-note">Live console, driving configuration, system activity, crash reports and Android Auto logs.</p>
+      <p v-if="path === '/logs'" class="gx-note">Logs, diagnostics, drive state, and help.</p>
       <div v-if="path === '/logs'" class="gx-grid">
         <MenuTile icon="bi-cpu" title="System Monitor" :description="mode === 'sample' ? 'Inspect a synthetic activity sample' : 'Inspect local system activity'" @select="openMonitor" />
         <MenuTile icon="bi-file-text" title="Crash Reports" :description="mode === 'local' ? 'Read local reports' : ''"
@@ -65,7 +65,19 @@ export const Logs = {
           :availability="mode === 'local' ? '' : 'Unavailable in preview'" :disabled="mode !== 'local'" @select="openAndroidAuto" />
         <MenuTile icon="bi-terminal" title="tmux Live View" description="Read the launcher console tail" @select="openTmux" />
         <MenuTile icon="bi-wrench" title="Troubleshoot" description="Read device and vehicle diagnostics" @select="openTroubleshoot" />
+        <MenuTile icon="bi-car-front" title="Force Drive State" description="Select a temporary drive state for this device"
+          :availability="mode === 'local' ? '' : 'Unavailable in preview'" :disabled="mode !== 'local'" @select="go('/device-preferences')" />
+        <MenuTile icon="bi-life-preserver" title="Help & Community" description="Guides and community help" @select="go('/logs/help')" />
       </div>
+      <section v-else-if="path === '/logs/help'" class="gx-settings">
+        <header class="gx-settings__header gx-page-header"><div><h2>Help & Community</h2><p>Guides and help from the community.</p></div></header>
+        <section class="gx-card"><div class="gx-section__header"><i class="bi bi-book" aria-hidden="true"></i><span class="gx-section__title">Wiki</span></div>
+          <div class="gx-panel"><p class="gx-note">Find setup guides, feature explanations, and troubleshooting steps for StarPilot and Android Auto.</p>
+            <a class="gx-btn gx-btn--tonal" href="https://wiki.firestar.link/" target="_blank" rel="noopener noreferrer">Open the Wiki</a></div></section>
+        <section class="gx-card"><div class="gx-section__header"><i class="bi bi-discord" aria-hidden="true"></i><span class="gx-section__title">Discord</span></div>
+          <div class="gx-panel"><p class="gx-note">Ask the community for help, share what you have tried, and follow StarPilot announcements.</p>
+            <a class="gx-btn gx-btn--tonal" href="https://firestar.link/discord" target="_blank" rel="noopener noreferrer">Join Discord</a></div></section>
+      </section>
       <TroubleshootPage v-else-if="path === '/logs/troubleshoot'" :mode="mode" :unauthorized="unauthorized" @navigate="go" />
       <TmuxPage v-else-if="path === '/logs/tmux'" :mode="mode" :unauthorized="unauthorized" @navigate="go" />
       <template v-else-if="path === '/logs/monitor'"><SystemMonitor :mode="mode" :unauthorized="unauthorized" /></template>

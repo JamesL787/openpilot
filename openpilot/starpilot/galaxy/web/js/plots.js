@@ -231,18 +231,18 @@ export const PlotsPage = {
           <span role="status">{{ paused ? 'Paused' : data?.bootStabilizing ? 'Starting vehicle systems' : status === 'current' ? 'Live' : status === 'stale' ? 'Reconnecting · last received values' : status === 'unavailable' ? 'Unavailable' : 'Connecting' }}</span></div>
         <p class="gx-note gx-plots__hint" role="status">{{ !paused && error ? error : 'Missing samples leave a gap in the graph.' }}</p>
         <div class="gx-plots__grid">
-          <section class="gx-card gx-plots__panel"><h3>Lateral Acceleration</h3><p class="gx-note">Desired / actual · m/s² · {{ source(data?.values?.lateralSource) }}</p>
+          <section class="gx-card gx-plots__panel"><div class="gx-section__header"><i class="bi bi-graph-up" aria-hidden="true"></i><span class="gx-section__title">Lateral Acceleration</span></div><p class="gx-note">Desired / actual · m/s² · {{ source(data?.values?.lateralSource) }}</p>
             <plot-graph :chart="lateralChart" title="Lateral acceleration history" />
             <p>Desired: {{ label(data?.values?.desiredLateralAccel) }} · Actual: {{ label(data?.values?.actualLateralAccel) }}</p>
             <p class="gx-note">Speed source: {{ source(data?.values?.speedSource) }}</p>
             <p>30 s match: <strong>{{ !data || data?.bootStabilizing ? 'N/A' : lateralQuality.label }}</strong> · {{ data?.bootStabilizing ? 'Waiting for startup to settle' : status !== 'current' ? 'Last received window' : lateralQuality.detail }}</p></section>
-          <section class="gx-card gx-plots__panel"><h3>Longitudinal Acceleration</h3><p class="gx-note">Target / measured · m/s² · {{ source(data?.values?.longitudinalSource) }}; measured from {{ data?.values?.poseFresh ? 'device motion' : 'unavailable motion source' }}</p>
+          <section class="gx-card gx-plots__panel"><div class="gx-section__header"><i class="bi bi-graph-up-arrow" aria-hidden="true"></i><span class="gx-section__title">Longitudinal Acceleration</span></div><p class="gx-note">Target / measured · m/s² · {{ source(data?.values?.longitudinalSource) }}; measured from {{ data?.values?.poseFresh ? 'device motion' : 'unavailable motion source' }}</p>
             <plot-graph :chart="longChart" title="Longitudinal acceleration history" />
             <p>Target: {{ label(data?.values?.desiredLongitudinalAccel) }} · Measured: {{ label(data?.values?.actualLongitudinalAccel) }}</p>
             <p>30 s match: <strong>{{ !data || data?.bootStabilizing ? 'N/A' : longQuality.label }}</strong> · {{ data?.bootStabilizing ? 'Waiting for startup to settle' : status !== 'current' ? 'Last received window' : longQuality.detail }}</p></section>
-          <section v-if="advanced" class="gx-card gx-plots__panel"><h3>Lateral Controller Terms</h3><p class="gx-note">P / I / D / F · controller output units · {{ source(data?.values?.lateralTermsSource) }}</p>
+          <section v-if="advanced" class="gx-card gx-plots__panel"><div class="gx-section__header"><i class="bi bi-sliders" aria-hidden="true"></i><span class="gx-section__title">Lateral Controller Terms</span></div><p class="gx-note">P / I / D / F · controller output units · {{ source(data?.values?.lateralTermsSource) }}</p>
             <plot-graph :chart="lateralTermsChart" title="Lateral controller terms" :terms="true" /></section>
-          <section v-if="advanced" class="gx-card gx-plots__panel"><h3>Longitudinal Controller Terms</h3><p class="gx-note">P / I / F · m/s² · {{ source(data?.values?.longitudinalTermsSource) }}</p>
+          <section v-if="advanced" class="gx-card gx-plots__panel"><div class="gx-section__header"><i class="bi bi-sliders" aria-hidden="true"></i><span class="gx-section__title">Longitudinal Controller Terms</span></div><p class="gx-note">P / I / F · m/s² · {{ source(data?.values?.longitudinalTermsSource) }}</p>
             <plot-graph :chart="longTermsChart" title="Longitudinal controller terms" :terms="true" /></section>
         </div><p class="gx-note">Blue is target, orange is observed. Missing or stale sources are never plotted as zero.</p>
       </template>

@@ -1840,6 +1840,11 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         try:
           with effect_lock:
             result = projection_layout_owner().save(payload, session_valid=lambda: self.settings_session() == identity)
+            if result['document']['widgets'].get('nav_map', {}).get('enabled') is True:
+              try:
+                result['mapDisabledElsewhere'] = bool(layout_owner().disable_map(lambda: self.settings_session() == identity))
+              except (OSError, RuntimeError, ValueError, LayoutChanged):
+                result['mapDisabledElsewhere'] = False
         except LayoutChanged as error:
           self.json(409, {'error': str(error)})
         except ValueError as error:
@@ -1860,6 +1865,11 @@ def make_server(*, port=8082, host='127.0.0.1', monitor=None, owner=None, crashe
         try:
           with effect_lock:
             result = layout_owner().save(payload, session_valid=lambda: self.settings_session() == identity)
+            if result['document']['layouts']['large'].get('nav_map', {}).get('enabled') is True:
+              try:
+                result['mapDisabledElsewhere'] = bool(projection_layout_owner().disable_map(session_valid=lambda: self.settings_session() == identity))
+              except (OSError, RuntimeError, ValueError, LayoutChanged):
+                result['mapDisabledElsewhere'] = False
         except LayoutChanged as error:
           self.json(409, {'error': str(error)})
         except ValueError as error:

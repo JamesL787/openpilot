@@ -1,3 +1,4 @@
+from openpilot.starpilot.flm.normalized_trace_archive import guarded_archive
 """Exact selected torque controller replay, exclusively in the learner process.
 
 Only capture_snapshot/frame_input belong in controls. They copy bounded numeric
@@ -7,8 +8,10 @@ invalidates evidence. Conversion tables belong to the registered actual CI/polic
 """
 
 from openpilot.starpilot.flm.torque_eligibility import replay_context
+from openpilot.starpilot.flm.native_refinement_wire import valid_inputs
 
 from collections import deque, OrderedDict
+from openpilot.starpilot.flm.normalized_trace_archive import trace_for,archive_key,stored_record,TraceArchive,read_ref
 from dataclasses import dataclass
 import math
 import struct
@@ -158,7 +161,10 @@ def _decode(values, path, old=None):
     seq = [_decode(values, path + '.' + str(i)) for i in range(length)]
     return deque(seq, maxlen=int(values[path + '.maxlen']) or None) if kind == 3 else tuple(seq) if kind == 2 else seq
   value = values[path]
-  return bool(value) if isinstance(old, bool) else int(value) if isinstance(old, int) else value
+  # Constructor zeros can be ints even for continuous PID/filter state. Never
+  # truncate an original fractional checkpoint to that initial Python type.
+  # Exact integral counters retain their integer representation.
+  return bool(value) if isinstance(old, bool) else int(value) if isinstance(old, int) and value.is_integer() else value
 
 
 def restore_snapshot(controller, vm, snapshot):
@@ -496,7 +502,7 @@ def _run(controller, vm, inputs, objective, coordinates, torque_values=(), centr
   if values['active'] and not cs.steeringPressed and not values['safety_limited'] and source.calls != 1:
     raise ValueError('actual selected stage hook absent or duplicated')
   if (effect_source is not None and values['active'] and not cs.steeringPressed and
-      not values['safety_limited'] and not values['curvature_limited']):
+      not values['curvature_limited']):
     if effect_source.stage_calls != 1 or effect_source.friction_calls != 1:
       raise ValueError('actual selected effect hook absent or duplicated')
   return float(output), log
@@ -505,7 +511,7 @@ def _run(controller, vm, inputs, objective, coordinates, torque_values=(), centr
 @dataclass(frozen=True)
 class ReplayFrame:
   control_ns: int
-  inputs: tuple[tuple[str, float], ...]
+  inputs: tuple[tuple[str, float | str], ...]
   selected_command: float
   applied_coordinates: tuple[float, ...]
   block_id: str = ''
@@ -524,6 +530,8 @@ class ReplayFrame:
   effect_prepare_ns: int = 0
   controller_domain: str = 'torque'
   desired_kinematic_accel: float | None = None
+  vehicle_model_anchor: tuple[float, ...] = ()
+  live_applied_coordinates: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -674,10 +682,17 @@ class ControllerReplay:
       self.__dict__['_ControllerReplay__recorded_cp_digest_cache'] = (raw, value, car_params_digest)
     return value
 
+  @guarded_archive()
   def normalize(self, frame, *, epsilon=0.0001, _verify_only=False):
+    return self._normalize_frame(frame,epsilon=epsilon,_verify_only=_verify_only)
+
+  def _normalize_frame(self, frame, *, epsilon=0.0001, _verify_only=False):
+    # Called only by whole-archive guarded public/snapshot operations. Every
+    # consumed row still resolves freshly; no per-frame success cache exists.
     if (
       self.failed
       or not isinstance(frame, ReplayFrame)
+      or not valid_inputs(frame.inputs)
       or frame.controller_domain != ('torque_pid' if self.factory.cp.lateralTuning.which() == 'pid' else 'torque')
       or not math.isfinite(epsilon)
       or not 0 < epsilon <= 0.03
@@ -699,13 +714,15 @@ class ControllerReplay:
       before = capture_snapshot(self.actual, self.vm)
       centre = _FixedCentreSource(self.baseline_revision, frame.centre_values)
       recorded_effect = None
-      if frame.effect_trace is not None:
+      trace = trace_for(frame,self)
+      if trace is not None:
         from openpilot.starpilot.flm.selected_effects import EffectReplayRecordedSource
-        if (frame.effect_trace.control_ns != frame.effect_prepare_ns or
-            frame.effect_trace.envelope.selected_baseline_revision != self.baseline_revision or
-            frame.effect_trace.envelope.cp_sha256 != self._recorded_cp_digest()):
+        if (trace.control_ns != frame.effect_prepare_ns or
+            trace.envelope.selected_baseline_revision != self.baseline_revision or
+            trace.envelope.cp_sha256 != self._recorded_cp_digest()):
           raise ValueError('recorded full30 trace source/prepare clock mismatch')
-        recorded_effect = EffectReplayRecordedSource(frame.effect_trace)
+        recorded_effect = EffectReplayRecordedSource(trace)
+        trace = None
         _verify_only = True
       actual, _ = _run(self.actual, self.vm, frame.inputs, self.objective, frame.applied_coordinates,
         frame.torque_values, centre, frame.actual_stage_residual, effect_trial=recorded_effect)
@@ -839,7 +856,7 @@ class ControllerReplay:
       or self.last_ns
       and not 0 < frame.control_ns - self.last_ns <= MAX_FRAME_GAP_NS
       or not math.isfinite(frame.selected_command)
-      or len(frame.inputs) > MAX_FRAME_VALUES
+      or not valid_inputs(frame.inputs)
     ):
       self.failed = True
       return False
@@ -1302,6 +1319,7 @@ class ControllerReplay:
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
       return False
 
+  @guarded_archive()
   def _current_raw_state(self, control_ns):
     """At4Hz, at most100 actual steps from the latest genuine1Hz checkpoint."""
     from itertools import islice
@@ -1319,6 +1337,8 @@ class ControllerReplay:
       before = None
       previous = 0
       for frame in frames:
+        if any(frame.live_applied_coordinates):
+          return None  # New live history uses its explicit raw-evidence prefix verifier.
         if previous and frame.frame_sequence != previous + 1:
           return None
         previous = frame.frame_sequence
@@ -1328,7 +1348,7 @@ class ControllerReplay:
         recorded_effect = None
         if frame.effect_trace is not None:
           from openpilot.starpilot.flm.selected_effects import EffectReplayRecordedSource
-          recorded_effect = EffectReplayRecordedSource(frame.effect_trace)
+          recorded_effect = EffectReplayRecordedSource(trace_for(frame,self))
         actual, _ = _run(
           self.probe, self.probe_vm, frame.inputs, self.objective, frame.applied_coordinates, frame.torque_values,
           centre, frame.actual_stage_residual, effect_trial=recorded_effect
@@ -1422,10 +1442,41 @@ class ControllerReplay:
       'model_revision': self.model_revision,
       'windows': tuple(windows),
       'checkpoints': tuple((stamp, checkpoint.revision, checkpoint.values) for stamp, checkpoint in checkpoints),
-      'frames': tuple(asdict(frame) for frame in frames),
+      'frames': tuple(stored_record(frame) for frame in frames),
       'emissions': self.emissions.snapshot(windows),
     }
+    if archive_key(self) is not None:
+      data['version'] = 2
+      data['trace_archive'] = self.trace_archive.literal
+      from openpilot.starpilot.flm.primitive_source_memo import independent_primitive_graph
+      from openpilot.starpilot.flm.normalized_trace_archive import RESERVED_BYTES
+      data = independent_primitive_graph(data,reserved_bytes=RESERVED_BYTES)
     return pack_primitive_snapshot(data)
+
+  @guarded_archive()
+  def _load_snapshot_frames(self, frames, checkpoints, *, normalized):
+    # A ring may retain a partial oldest checkpoint. Discard only that prefix;
+    # missing heldout rows are detected by validate's exact sample join.
+    started = False
+    for row in frames:
+      row = dict(row)
+      for name in ('vehicle_model_anchor', 'live_applied_coordinates'):
+        if name in row:
+          row[name] = tuple(row[name])
+      if row.get('effect_trace') is not None:
+        from openpilot.starpilot.flm.effect_trace import trace_from_dict
+        row = dict(row, effect_trace=read_ref(row['effect_trace'],self.trace_archive) if normalized else trace_from_dict(row['effect_trace']))
+      frame = ReplayFrame(**row)
+      if frame.control_ns in checkpoints:
+        self.checkpoint(frame.control_ns, checkpoints[frame.control_ns])
+        started = True
+      if not started:
+        continue
+      normalize = self._normalize_frame if normalized and type(self) is ControllerReplay else self.normalize
+      if normalize(frame, epsilon=0.01, _verify_only=True) is None:
+        raise ValueError('child actual selected replay mismatch')
+    if not started or self.failed:
+      raise ValueError('child checkpoint unavailable')
 
   @classmethod
   def from_snapshot(cls, factory, objective, data, *, rebuild=True):
@@ -1435,8 +1486,12 @@ class ControllerReplay:
     if type(rebuild) is not bool:
       raise ValueError('explicit replay rebuild policy')
     values = unpack_primitive_snapshot(data)
+    if values.get('version') == 2:
+      from openpilot.starpilot.flm.primitive_source_memo import independent_primitive_graph
+      from openpilot.starpilot.flm.normalized_trace_archive import RESERVED_BYTES
+      values = independent_primitive_graph(values,reserved_bytes=RESERVED_BYTES)
     if (
-      values.get('version') != 1
+      values.get('version') not in (1,2)
       or values.get('objective') != asdict(objective)
       or values.get('mode') != str(factory.mode)
       or values.get('turn_assist') != factory.turn_assist
@@ -1446,6 +1501,10 @@ class ControllerReplay:
     ):
       raise ValueError('fit job selected controller identity')
     engine = cls(factory, objective, identity=values['identity'], baseline_revision=values['baseline_revision'], model_revision=values['model_revision'])
+    if values.get('version') == 2:
+      engine.trace_archive = TraceArchive(values['trace_archive'])
+    elif 'trace_archive' in values:
+      raise ValueError('legacy replay cannot adopt normalized traces')
     engine.emissions.load(values['emissions'], tuple(values.get('windows', ())))
     if type(values.get('raw_mode', False)) is not bool:
       raise ValueError('raw replay mode')
@@ -1454,23 +1513,7 @@ class ControllerReplay:
     frames = values['frames']
     if not frames or len(frames) > MAX_REPLAY_FRAMES or len(checkpoints) > 600:
       raise ValueError('fit job history bound')
-    # A ring may retain a partial oldest checkpoint. Discard only that prefix;
-    # missing heldout rows are detected by validate's exact sample join.
-    started = False
-    for row in frames:
-      if row.get('effect_trace') is not None:
-        from openpilot.starpilot.flm.effect_trace import trace_from_dict
-        row = dict(row, effect_trace=trace_from_dict(row['effect_trace']))
-      frame = ReplayFrame(**row)
-      if frame.control_ns in checkpoints:
-        engine.checkpoint(frame.control_ns, checkpoints[frame.control_ns])
-        started = True
-      if not started:
-        continue
-      if engine.normalize(frame, epsilon=0.01, _verify_only=True) is None:
-        raise ValueError('child actual selected replay mismatch')
-    if not started or engine.failed:
-      raise ValueError('child checkpoint unavailable')
+    engine._load_snapshot_frames(frames,checkpoints,normalized=values.get('version') == 2)
     engine.replay_windows = tuple(values.get('windows', ()))
     if rebuild:
       engine.rebuild_causal_features(epsilon=0.01)

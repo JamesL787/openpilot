@@ -8,13 +8,14 @@ import json
 import math
 from typing import cast
 
-from openpilot.starpilot.lateral.torque_supported import BOLT_VEHICLES, GAIN_VEHICLES, GM_VEHICLES, SUPPORTED_VEHICLES
+from openpilot.starpilot.lateral.torque_supported import BOLT_VEHICLES, GAIN_VEHICLES, GM_VEHICLES
 
 DOCUMENT_KEY = "TorqueOverrideDocument"
 LEGACY_KEYS = ("SteerLatAccel", "SteerFriction", "SteerLatAccelStock", "SteerFrictionStock")
 MAX_DOCUMENT_BYTES = 16_384
 
 from openpilot.starpilot.flm.torque_surface import GmFlmBinding
+from opendbc.car.values import PLATFORMS
 
 
 @dataclass(frozen=True)
@@ -163,7 +164,7 @@ def parse_document(raw: bytes) -> dict[str, PlatformProfile]:
     raise ValueError("Malformed torque document") from exc
   if not isinstance(document, dict) or set(document) != {"schemaVersion", "vehicles"} or \
      type(document["schemaVersion"]) is not int or document["schemaVersion"] not in (1, 2, 3, 4) or \
-     not isinstance(document["vehicles"], dict) or len(document["vehicles"]) > len(SUPPORTED_VEHICLES):
+     not isinstance(document["vehicles"], dict) or len(document["vehicles"]) > len(PLATFORMS):
     raise ValueError("Malformed torque document")
   profiles: dict[str, PlatformProfile] = {}
   for fingerprint, value in document["vehicles"].items():
@@ -174,7 +175,7 @@ def parse_document(raw: bytes) -> dict[str, PlatformProfile]:
       expected |= {"geometry"}
     if document["schemaVersion"] == 4 and isinstance(value, dict) and "flm" in value:
       expected |= {"flm"}
-    if fingerprint not in SUPPORTED_VEHICLES or not isinstance(value, dict) or set(value) != expected:
+    if fingerprint not in PLATFORMS or not isinstance(value, dict) or set(value) != expected:
       raise ValueError("Malformed torque profile")
     basis_obj = value["basis"]
     if not isinstance(basis_obj, dict) or set(basis_obj) != {"latAccelFactor", "latAccelOffset", "friction"}:

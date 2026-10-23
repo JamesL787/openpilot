@@ -1,4 +1,4 @@
-"""Separate AA placement document; native large/compact schemas stay fixed."""
+"""Separate AA placement document, with screen-specific geometry and actions."""
 import copy
 import json
 import math
@@ -6,18 +6,18 @@ from pathlib import Path
 
 from openpilot.starpilot.system.android_auto.identity import DATA_DIR
 from openpilot.starpilot.system.android_auto.display_profile import screen_geometry
-from openpilot.starpilot.ui.onroad_customization import (CEM_GAUGE_WIDGET, CLOCK_WIDGET, MODE_WIDGET, STOPPED_TIMER_WIDGET,
-                                                         CEM_GAUGE_FRAME, CEM_GAUGE_INSET, SPEED_ALIGNMENTS, customization_metadata, validate_widget_order)
+from openpilot.starpilot.ui.onroad_customization import (CEM_GAUGE_WIDGET, CLOCK_WIDGET, JETLINK_WIDGET, MODE_WIDGET,
+                                                         STOPPED_TIMER_WIDGET, CEM_GAUGE_FRAME, CEM_GAUGE_INSET, MAP_MIN_SIZE, NAV_CARD_SIZE,
+                                                         SPEED_ALIGNMENTS, customization_metadata, validate_map_box, validate_widget_order)
 from openpilot.starpilot.ui.onroad_stopped_timer import timer_size
 from openpilot.starpilot.ui.onroad_torque_geometry import maximum_footprint
-from openpilot.starpilot.ui.onroad_customization import SPEED_LAYOUT_V7, migrate_speed_layout
+from openpilot.starpilot.ui.onroad_customization import SPEED_LAYOUT_V7, migrate_speed_layout, migrate_large_sign_layout
 
 MAX_BYTES = 16384
 DOCUMENT_KEY = 'projection'
 DOCUMENT_PATH = DATA_DIR / 'layouts/document.json'
 
-# Android Auto only: the comma layout keeps its fixed schema. Layouts saved
-# before these (or the driving-mode widget) existed gain them with their defaults.
+# Layouts saved before these widgets existed gain them with their defaults.
 NAV_CARD, NAV_MAP = 'nav_card', 'nav_map'
 NAV_HOME, NAV_WORK = 'nav_home', 'nav_work'
 FAVORITE_WIDGETS = (NAV_HOME, NAV_WORK)
@@ -31,15 +31,11 @@ CAR_EXIT_SIZE = (96, 96)
 CAR_EXIT_MIN_OPACITY = 25
 NOW_PLAYING_WIDGET = 'now_playing'
 NOW_PLAYING_SIZE = (520, 96)
-NOW_PLAYING_OPACITY = (0, 100, 85)  # percent: min, max, default
-JETLINK_WIDGET = 'jetlink_status'
+NOW_PLAYING_OPACITY = (0, 100, 85)
 JETLINK_SIZE = (420, 84)
-JETLINK_OPACITY = (0, 100, 85)  # percent: min, max, default
-CARD_WIDGETS = {NOW_PLAYING_WIDGET: NOW_PLAYING_OPACITY, JETLINK_WIDGET: JETLINK_OPACITY}  # background opacity only
+JETLINK_OPACITY = (0, 100, 85)
+CARD_WIDGETS = {NOW_PLAYING_WIDGET: NOW_PLAYING_OPACITY, JETLINK_WIDGET: JETLINK_OPACITY}
 PROJECTION_WIDGETS = (NAV_CARD, NAV_MAP, *DISPLAY_WIDGETS, STOPPED_TIMER_WIDGET, NOW_PLAYING_WIDGET, JETLINK_WIDGET, CAR_EXIT)
-NAV_CARD_SIZE = (560, 195)
-MAP_MIN_SIZE = (280, 200)
-MAP_OPACITY = (15, 100, 50)  # percent: min, max, default
 
 
 class ProjectionLayoutSource:
@@ -71,6 +67,11 @@ def layout_metadata_for_viewport(viewport):
                  reservedZones=[], inputZones=[])
   profile.pop('inputZonePriority', None)
   widgets = profile['widgets']
+  widgets.pop(JETLINK_WIDGET)  # Big-screen only for now
+  profile['widgetOrder'] = [key for key in profile['widgetOrder'] if key != JETLINK_WIDGET]
+  for widget in widgets.values():
+    for field in ('bounds', 'anchorShift', 'expandable'):
+      widget.pop(field, None)
   widgets['current_speed']['default']['x'] += (width - 1860) / 2
   widgets[MODE_WIDGET]['default']['x'] += (width - 1860) / 2
   widgets[CLOCK_WIDGET]['default']['x'] += (width - 1860) / 2
@@ -79,28 +80,18 @@ def layout_metadata_for_viewport(viewport):
   x, y, w, h = maximum_footprint(30, 30, width - 60, height - 60, width)
   widgets['torque_bar'].update(width=w, height=h)
   widgets['torque_bar']['default'].update(x=x, y=y)
-  timer_w, timer_h = timer_size('large')
-  widgets[STOPPED_TIMER_WIDGET] = {'label': 'Stopped timer', 'kind': STOPPED_TIMER_WIDGET,
-                                  'width': timer_w, 'height': timer_h, 'colors': {},
-                                  'note': 'Counts how long you have been stopped, after the first minute of the drive',
-                                  'default': {'x': (width - timer_w) / 2, 'y': 520, 'enabled': False}}
-  # The turn card keeps the comma's large-UI spot, following the right edge.
+  timer_w, _ = timer_size('large')
+  widgets[STOPPED_TIMER_WIDGET]['default'].update(x=(width - timer_w) / 2, y=520)
   card_w, card_h = NAV_CARD_SIZE
-  widgets[NAV_CARD] = {'label': 'Turn-by-turn', 'kind': NAV_CARD, 'width': card_w, 'height': card_h, 'colors': {},
-                       'note': 'The next maneuver while a route is active, in the comma style',
-                       'default': {'x': 1230 + width - 1860, 'y': 415, 'enabled': True}}
+  card_x, card_bottom = 1230 + width - 1860, 415 + card_h + 15
+  widgets[NAV_CARD]['default'].update(x=card_x)
   # The map scales with the screen: about 30% of its width in a 4:3 frame,
   # right-aligned with the turn card and sitting just below it.
-  card_x, card_bottom = 1230 + width - 1860, 415 + card_h + 15
   map_w = max(MAP_MIN_SIZE[0], round(width * 0.3 / 10) * 10)
   map_h = max(MAP_MIN_SIZE[1], min(round(map_w * 0.75 / 10) * 10, (height - 30 - card_bottom) // 10 * 10))
-  widgets[NAV_MAP] = {'label': 'Map overlay', 'kind': NAV_MAP, 'width': map_w, 'height': map_h, 'colors': {},
-                      'note': 'Road lines and your route over the camera. Drag the corner to resize; opacity sets how much shows.',
-                      'box': {'minWidth': MAP_MIN_SIZE[0], 'maxWidth': width - 60,
-                              'minHeight': MAP_MIN_SIZE[1], 'maxHeight': height - 60},
-                      'opacity': {'min': MAP_OPACITY[0], 'max': MAP_OPACITY[1], 'default': MAP_OPACITY[2]},
-                      'default': {'x': max(30, card_x + card_w - map_w), 'y': min(card_bottom, height - 30 - map_h),
-                                  'enabled': False, 'width': map_w, 'height': map_h, 'opacity': MAP_OPACITY[2]}}
+  widgets[NAV_MAP].update(width=map_w, height=map_h,
+                          box={'minWidth': MAP_MIN_SIZE[0], 'maxWidth': width - 60, 'minHeight': MAP_MIN_SIZE[1], 'maxHeight': height - 60})
+  widgets[NAV_MAP]['default'].update(x=max(30, card_x + card_w - map_w), y=min(card_bottom, height - 30 - map_h), width=map_w, height=map_h)
   for index, key in enumerate(FAVORITE_WIDGETS):
     label = ('Home', 'Work')[index]
     widgets[key] = {'label': label, 'kind': key, 'width': FAVORITE_SIZE[0], 'height': FAVORITE_SIZE[1], 'colors': {},
@@ -137,7 +128,8 @@ def layout_metadata_for_viewport(viewport):
   # Background opacity for the cruise and speed-limit card; its text stays solid.
   widgets['cruise_limits'].update(opacity={'min': 0, 'max': 100, 'default': 100})
   widgets['cruise_limits']['default'].update(opacity=100)
-  profile["widgetOrder"] = [NAV_MAP, *profile["widgetOrder"], STOPPED_TIMER_WIDGET, NAV_CARD, *DISPLAY_WIDGETS, NOW_PLAYING_WIDGET, JETLINK_WIDGET, CAR_EXIT]
+  profile["widgetOrder"] = [NAV_MAP, *[key for key in profile["widgetOrder"] if key not in (NAV_MAP, NAV_CARD, STOPPED_TIMER_WIDGET)],
+                            STOPPED_TIMER_WIDGET, NAV_CARD, *DISPLAY_WIDGETS, NOW_PLAYING_WIDGET, JETLINK_WIDGET, CAR_EXIT]
   return profile
 
 
@@ -186,7 +178,7 @@ def default_layout(screen, display=None):
 def default_layout_for_viewport(viewport, display=None):
   metadata = layout_metadata_for_viewport(viewport)
   display = {**DISPLAY_DEFAULTS, **{key: value for key, value in (display or {}).items() if key in DISPLAY_DEFAULTS}}
-  return {'version': 4, 'clock24Hour': False, 'largeUiGammaTrial': False, **display, 'canvas': {key: metadata[key] for key in ('width', 'height')},
+  return {'version': 5, 'clock24Hour': False, 'largeUiGammaTrial': False, **display, 'canvas': {key: metadata[key] for key in ('width', 'height')},
           'widgets': {key: {**widget['default'], **({'size': 192} if key == 'steering_wheel' else {})}
                       for key, widget in metadata['widgets'].items()}}
 
@@ -212,14 +204,14 @@ def validate_layout_for_viewport(value, viewport, *, _legacy_geometry=False):
     result = validate_layout_for_viewport(value, viewport, _legacy_geometry=True)
     card, actions = result['widgets']['cruise_limits'], result['widgets']['speed_limit_actions']
     gap = actions['y'] - card['y']
-    migrate_speed_layout(result['widgets'], 'large', metadata['bounds'], gap if gap in (372, 425) else 232)
+    migrate_speed_layout(result['widgets'], 'large', metadata['bounds'], gap if gap in (372, 425) else 232, widgets=metadata['widgets'])
     result['version'] = 2
     return validate_layout_for_viewport(result, viewport)
   fields = {'version', 'canvas', 'widgets'}
   if type(value) is dict:
     fields |= {field for field in ('widgetOrder', 'clock24Hour', 'largeUiGammaTrial', *DISPLAY_DEFAULTS) if field in value}
   if (type(value) is not dict or set(value) != fields or
-      type(value['version']) is not int or value['version'] not in (1, 2, 3, 4) or
+      type(value['version']) is not int or value['version'] not in (1, 2, 3, 4, 5) or
       value['canvas'] != {key: metadata[key] for key in ('width', 'height')} or
       type(value['widgets']) is not dict or not set(value['widgets']) <= set(metadata['widgets']) or
       not set(metadata['widgets']) - set(value['widgets']) <= {CEM_GAUGE_WIDGET, MODE_WIDGET, CLOCK_WIDGET, *PROJECTION_WIDGETS}):
@@ -295,14 +287,12 @@ def validate_layout_for_viewport(value, viewport, *, _legacy_geometry=False):
       if type(size) is not int or not limits['min'] <= size <= limits['max']:
         raise ValueError('Invalid widget size')
     if key == NAV_MAP:
-      box, opacity = widget['box'], widget['opacity']
-      if (type(placement['width']) is not int or not box['minWidth'] <= placement['width'] <= box['maxWidth'] or
-          type(placement['height']) is not int or not box['minHeight'] <= placement['height'] <= box['maxHeight'] or
-          type(placement['opacity']) is not int or not opacity['min'] <= placement['opacity'] <= opacity['max']):
-        raise ValueError('Invalid map overlay size or opacity')
+      validate_map_box(placement, widget)
     dimensions = placement_size(key, widget, placement)
     if value['version'] < 4 and key in SPEED_LAYOUT_V7['large']:
       dimensions = SPEED_LAYOUT_V7['large'][key][:2]
+    elif value['version'] < 5 and key == 'cruise_limits':
+      dimensions = (widget['width'], 132)
     # Version 2 and older saved the CEM gauge's full drawing frame; check that, then move to the inset box.
     old_gauge = key == CEM_GAUGE_WIDGET and value['version'] < 3 and key in value['widgets']
     if old_gauge:
@@ -325,8 +315,10 @@ def validate_layout_for_viewport(value, viewport, *, _legacy_geometry=False):
     if value['version'] < 4:
       card, actions = result['widgets']['cruise_limits'], result['widgets']['speed_limit_actions']
       gap = actions['y'] - card['y']
-      migrate_speed_layout(result['widgets'], 'large', bounds, gap if gap in (232, 492) else 232)
-    result['version'] = 4
+      migrate_speed_layout(result['widgets'], 'large', bounds, gap if gap in (232, 492) else 232, widgets=metadata['widgets'])
+    if value['version'] < 5:
+      migrate_large_sign_layout(result['widgets'], bounds, widgets=metadata['widgets'])
+    result['version'] = 5
   if len(json.dumps(result, separators=(',', ':'), allow_nan=False).encode()) > MAX_BYTES:
     raise ValueError('Projection layout too large')
   return result
@@ -368,7 +360,8 @@ def projection_customization(document, base_customization):
   shifts = {'current_speed': ((width - 1860) / 2, 0),
             MODE_WIDGET: ((width - 1860) / 2, 0),
             CLOCK_WIDGET: ((width - 1860) / 2, 0),
-            'steering_wheel': (width - 1860, 0), 'driver_monitor': (0, height - 1080)}
+            'steering_wheel': (width - 1860, 0), 'driver_monitor': (0, height - 1080),
+            NAV_CARD: (width - 1860, 0), NAV_MAP: (width - 1860, 0)}
   native = PROFILES['large']['widgets']
   assert isinstance(native, dict)
   tx, ty, _, _ = maximum_footprint(30, 30, width - 60, height - 60, width)

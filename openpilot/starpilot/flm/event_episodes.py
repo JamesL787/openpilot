@@ -7,6 +7,23 @@ from openpilot.starpilot.flm.physical_response import kinematic_accel
 from openpilot.starpilot.flm.controller_replay import MAX_FRAME_GAP_NS
 
 
+def _episode_excited(engine, apply_ns, objective):
+  """Every original counted-episode endpoint needs selected encoded support.
+
+  This is the same per-parameter RMS floor as objective_excited, evaluated on
+  the actual cycle instead of a pooled storage bundle. No targets/loss select
+  points; zero-effect/opposite-direction cycles cannot satisfy the quota.
+  """
+  count = len(objective.parameters)
+  if any(stamp not in engine.projected for stamp in apply_ns):
+    return False  # Reject the entire cycle; never drop an unsupported endpoint.
+  rows = [engine.projected[stamp][1] for stamp in apply_ns]
+  if not rows or any(len(row) != count or any(not math.isfinite(value) for value in row) for row in rows):
+    raise ValueError('counted episode actual encoded objective basis')
+  return all(sum(row[index] ** 2 for row in rows) / len(rows) >= parameter.excitation_floor ** 2
+             for index, parameter in enumerate(objective.parameters))
+
+
 def tracking_episodes(engine, raw_blocks, model, objective):
   """Caller supplies independently verified stage endpoints after model cutoff.
 
@@ -25,7 +42,7 @@ def tracking_episodes(engine, raw_blocks, model, objective):
       frame = frames.get(stamp)
       if frame is None or frame.desired_physical_accel is None or not math.isfinite(frame.desired_physical_accel):
         raise ValueError('event exact control-frame physical target absent')
-      points[stamp] = (block['block_id'], abs(frame.desired_physical_accel - point['physical']['lateral_accel']))
+      points[stamp] = (block['block_id'], abs(frame.desired_physical_accel - point['physical']['lateral_accel']), point['apply_ns'])
   windows = tuple(engine.replay_windows)
   episodes = []
   start = last = neutral_start = 0
@@ -42,9 +59,7 @@ def tracking_episodes(engine, raw_blocks, model, objective):
     floor = max(.10, 6 * model.heldout_rmse) if kind == 'large' else max(.015, 3 * model.heldout_rmse)
     if error < floor or not 200_000_000 <= end - start <= 10_000_000_000:
       return
-    if kind == 'subtle' and objective.group.startswith(('ff.', 'turn.', 'unwind.', 'angle.')):
-      return
-    if kind == 'large' and objective.group.startswith(('center', 'deadband.')):
+    if not _episode_excited(engine, tuple(value[2] for _,value in selected), objective):
       return
     ids = tuple(dict.fromkeys(value[0] for _, value in sorted(selected)))
     digest = hashlib.sha256(repr((engine.identity, engine.baseline_revision, objective.group,

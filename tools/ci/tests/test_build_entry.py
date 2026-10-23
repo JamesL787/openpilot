@@ -2,6 +2,7 @@
 
 import os
 import hashlib
+import json
 from pathlib import Path
 import pickle
 import shutil
@@ -428,6 +429,7 @@ class ArtifactCheckTest(unittest.TestCase):
     validator = self.root / "tools/laptop_device_build/validate_artifacts.py"
     validator.parent.mkdir(parents=True)
     shutil.copy2(VALIDATOR, validator)
+    shutil.copy2(VALIDATOR.with_name("validate_flm_native.py"), validator.with_name("validate_flm_native.py"))
     chunks = self.root / "openpilot/common/file_chunker.py"
     chunks.parent.mkdir(parents=True)
     (self.root / "openpilot/__init__.py").touch()
@@ -466,12 +468,24 @@ class ArtifactCheckTest(unittest.TestCase):
                       b"644".ljust(8) + b"200".ljust(10) + b"`\n")
     archive = b"!<arch>\n" + archive_header + bytes(obj)
 
-    for name in ("openpilot/common/libparams_c.so", "openpilot/selfdrive/pandad/pandad",
+    for name in ("openpilot/starpilot/flm/_primitive_walk.so", "openpilot/common/libparams_c.so", "openpilot/selfdrive/pandad/pandad",
                  "openpilot/system/loggerd/loggerd", "openpilot/system/loggerd/encoderd",
                  "msgq_repo/msgq/ipc_pyx.so", "msgq_repo/msgq/visionipc/visionipc_pyx.so",
                  "rednose_repo/rednose/helpers/ekf_sym_pyx.so", "openpilot/tools/replay/replay",
                  "openpilot/tools/replay/libmedia_mux.so", "opendbc_repo/opendbc/can/_raw_value.so"):
       self.write(name, self.elf)
+    flm_sources = {"_primitive_walk.pyx": "openpilot/starpilot/flm/_primitive_walk.pyx",
+                   "native_primitives.py": "openpilot/starpilot/flm/native_primitives.py",
+                   "SConscript": "openpilot/starpilot/flm/SConscript", "SConstruct": "SConstruct"}
+    for name, path in flm_sources.items():
+      self.write(path, f"# synthetic artifact-validation source: {name}\n".encode())
+    self.write("openpilot/starpilot/flm/_primitive_walk.binding.json", json.dumps({
+      "schema": 1, "revision": "flm-exact-primitives-v1",
+      "sources": {name: hashlib.sha256((self.root / path).read_bytes()).hexdigest() for name, path in flm_sources.items()},
+      "artifact_sha256": hashlib.sha256(self.elf).hexdigest(),
+      "abi": {"implementation": "cpython", "cache_tag": "cpython-312", "python": [3, 12],
+              "SOABI": "cpython-312-aarch64-linux-gnu", "machine": "aarch64", "pointer_bits": 64, "platform": "linux"},
+    }).encode())
     for name in ("openpilot/cereal/libcereal.a", "openpilot/cereal/libsocketmaster.a"):
       self.write(name, archive)
     for name in ("dmonitoring_model_tinygrad.pkl",):
@@ -521,6 +535,27 @@ class ArtifactCheckTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(name, result.stderr)
         self.write(name, self.elf)
+
+  def test_flm_native_binding_required_and_valid(self):
+    names = ("_primitive_walk.binding.json", "_primitive_walk.so", "_primitive_walk.pyx", "native_primitives.py", "SConscript")
+    for name in names:
+      path = self.root / "openpilot/starpilot/flm" / name
+      original = path.read_bytes()
+      for defect in ("missing", "changed"):
+        with self.subTest(name=name, defect=defect):
+          self.assertEqual(self.verify().returncode, 0)
+          if defect == "missing":
+            path.unlink()
+          elif name.endswith(".json"):
+            receipt = json.loads(original)
+            receipt["abi"]["machine"] = "x86_64"
+            path.write_text(json.dumps(receipt))
+          else:
+            path.write_bytes(original + b"changed")
+          result = self.verify()
+          self.assertNotEqual(result.returncode, 0)
+          self.assertIn("Device artifact validation failed", result.stderr)
+          path.write_bytes(original)
 
   def test_shipped_driving_model_required_and_pinned(self):
     path = self.root / "openpilot/selfdrive/modeld/models/rdf43_driving_tinygrad.pkl"
@@ -613,3 +648,4 @@ class ArtifactCheckTest(unittest.TestCase):
 
 if __name__ == "__main__":
   unittest.main()
+

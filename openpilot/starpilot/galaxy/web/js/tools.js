@@ -8,7 +8,7 @@ export const Tools = {
   methods: {
     open(tool) { navigate(tool.path) },
     availability(tool) {
-      if (this.mode === "local") return ""
+      if (this.mode === "local" || tool.availability === "always") return ""
       return tool.availability === "partial-preview" ? "Sample available" : "Connect to your device to use this tool"
     },
   },

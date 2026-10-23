@@ -13,6 +13,8 @@ FIXED_MAP_IDENTIFICATION = 'fixed-map-no-identification-v1'
 RESTORE_ACTIVATION_VERSION = 'fixed-eight-whole-map-restore-v1'
 RESTORE_AGGREGATE_ACTIVATION_VERSION = 'fixed-eight-whole-map-restore-support-v2'
 RESTORE_ZERO_REFERENCE_VERSION = 'fixed-eight-whole-map-restore-zero-reference-v3'
+RESTORE_FEEDBACK_VERSION = 'fixed-eight-whole-map-feedback-restore-v4'
+RESTORE_FEEDBACK_STATISTICS = 'fixed-two-sided-t95-12.707-v1'
 
 
 def clipping_quality(value):
@@ -22,7 +24,23 @@ def clipping_quality(value):
 
 
 def event_clipping_quality(payload):
-  if type(payload.get('event_version')) is int and payload['event_version'] in (4, 5, 6):
+  if 'event_restore_statistics' in payload and (type(payload.get('event_version')) is not int or payload['event_version'] != 8):
+    raise ValueError('feedback restore statistics require explicit version8')
+  if type(payload.get('event_version')) is int and payload['event_version'] == 7:
+    from openpilot.starpilot.flm.feedback_replay import PROTOCOL
+    from openpilot.starpilot.flm.event_mean_evidence import VERSION
+    if (payload.get('plant_protocol') != PROTOCOL or payload.get('event_mean_version') != VERSION or
+        payload.get('event_operation') != 'trial'):
+      raise ValueError('explicit original feedback mean trial policy')
+    # Exactly the version3 quality/identification predicates, with no altered
+    # debt, clipping, native, or shadow admission policy for the new evidence.
+    return event_clipping_quality({**payload,'event_version':3})
+  if type(payload.get('event_version')) is int and payload['event_version'] == 8:
+    from openpilot.starpilot.flm.feedback_replay import PROTOCOL
+    if (payload.get('plant_protocol') != PROTOCOL or
+        payload.get('event_restore_statistics') != RESTORE_FEEDBACK_STATISTICS or 'event_mean_version' in payload):
+      raise ValueError('explicit original feedback fixed-map restore policy')
+  if type(payload.get('event_version')) is int and payload['event_version'] in (4, 5, 6, 8):
     if (payload.get('event_operation') != 'restore' or
         payload.get('event_restore_policy') != restore_policy(payload['event_version']) or
         payload.get('event_clipping_quality') != restore_quality(payload['event_version']) or
@@ -94,14 +112,14 @@ def identification_for_quality(contract):
 
 
 def restore_policy(version):
-  if type(version) is not int or version not in (4, 5, 6):
+  if type(version) is not int or version not in (4, 5, 6, 8):
     raise ValueError('explicit whole-map restore version')
-  return {4: RESTORE_ACTIVATION_VERSION, 5: RESTORE_AGGREGATE_ACTIVATION_VERSION, 6: RESTORE_ZERO_REFERENCE_VERSION}[version]
+  return {4: RESTORE_ACTIVATION_VERSION, 5: RESTORE_AGGREGATE_ACTIVATION_VERSION, 6: RESTORE_ZERO_REFERENCE_VERSION, 8: RESTORE_FEEDBACK_VERSION}[version]
 
 
 def restore_quality(version):
   restore_policy(version)
-  return ZERO_REFERENCE_QUALITY if version == 6 else QUALIFIED_EVENT_CLIPPING_QUALITY
+  return ZERO_REFERENCE_QUALITY if version in (6, 8) else QUALIFIED_EVENT_CLIPPING_QUALITY
 
 
 def zero_reference_relief_is_admitted(recorded_request, reference_request, candidate_request,

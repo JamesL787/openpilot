@@ -281,9 +281,16 @@ class UIState:
     for service in self.sm.static_freq_services:
       target = sample.boot_ns if service in BOOT_TIME_SERVICES else sample.now_ns
       stamp = self.sm.logMonoTime[service]
+      spec = SERVICE_LIST[service]
+      max_age_ns = 10e9 / spec.frequency
+      if spec.decimation:
+        # Qlogs sample high-rate messages sparsely. Keep replay transport alive
+        # through the display window; current_message still enforces its own
+        # stricter age limit for actions, independently of this UI-only flag.
+        max_age_ns = max(max_age_ns, min(1e9, 2e9 * spec.decimation / spec.frequency))
       self.sm.alive[service] = bool(sample.valid and self.sm.seen[service] and
                                     type(target) is int and type(stamp) is int and
-                                    0 < stamp <= target and target - stamp < 10e9 / SERVICE_LIST[service].frequency)
+                                    0 < stamp <= target and target - stamp < max_age_ns)
 
   def _reset_replay_state(self, retain_sample=None) -> None:
     for service in self.sm.sock:

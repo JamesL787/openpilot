@@ -4,7 +4,7 @@ from opendbc.car import structs
 from opendbc.car.honda.values import HondaSafetyFlags
 from opendbc.safety.tests.test_honda_interceptor import TestHondaInterceptor
 
-AOL_WORD = int(HondaSafetyFlags.GAS_INTERCEPTOR | HondaSafetyFlags.AOL_NIDEC_INTERCEPTOR)
+AOL_WORD = int(HondaSafetyFlags.GAS_INTERCEPTOR | HondaSafetyFlags.NIDEC_PEDAL_AOL)
 
 
 class TestHondaNidecInterceptorAol(TestHondaInterceptor):
@@ -16,6 +16,30 @@ class TestHondaNidecInterceptorAol(TestHondaInterceptor):
     for tick in range(ticks):
       self.feed(tick)
     self.tick = ticks
+    self.gesture()
+
+  def init(self, word):
+    super().init(word)
+    self.safety_word = word
+    # SGSP's native Nidec pedal AOL is scoped by alternativeExperience 32 and needs fresh EPS and gear frames.
+    self.safety.set_alternative_experience(32)
+    self.safety.set_safety_hooks(structs.CarParams.SafetyModel.hondaNidec, word)
+    self.safety.set_timer(0)
+
+  def tearDown(self):
+    self.safety.set_alternative_experience(0)
+
+  def feed(self, tick, **kw):
+    super().feed(tick, **kw)
+    self.rx("STEER_STATUS", 0, {"STEER_STATUS": 0, "STEER_TORQUE_SENSOR": 0})
+    self.rx("GEARBOX_CVT", 0, {"GEAR_SHIFTER": 4})
+    self.safety.safety_tick()
+
+  def gesture(self):
+    """The physical grant: MAIN off then on (SGSP grants lateral only after one, ours granted on MAIN alone)."""
+    if self.safety_word == AOL_WORD:
+      self.rx("SCM_FEEDBACK", 0, {"MAIN_ON": 0})
+      self.step()
 
   def step(self, **kwargs):
     self.feed(self.tick, **kwargs)
@@ -52,7 +76,7 @@ class TestHondaNidecInterceptorAol(TestHondaInterceptor):
 
     self.step(button=2)  # cancel
     self.assertEqual(self.safety.aol_get_permission_mask(), 0)
-    self.step()
+    self.gesture()  # SGSP: a cancel ends the session; lateral returns only with a new physical gesture
     self.safety.aol_set_host_request(1)
     self.assertEqual(self.safety.aol_get_permission_mask(), 1)
 
@@ -66,6 +90,7 @@ class TestHondaNidecInterceptorAol(TestHondaInterceptor):
     self.safety.set_aol_test_heartbeat(False)
     self.assertEqual(self.safety.aol_get_permission_mask(), 0)
     self.safety.set_aol_test_heartbeat(True)
+    self.gesture()  # SGSP: dropping the engaged heartbeat ends the session too
     self.safety.aol_set_host_request(1)
     self.assertEqual(self.safety.aol_get_permission_mask(), 1)
 

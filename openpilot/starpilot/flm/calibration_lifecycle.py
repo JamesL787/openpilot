@@ -35,7 +35,9 @@ class ProducerCalibrationLifecycle:
     self.issued = set()
 
   def observe(self, message, *, current):
-    value = calibrated_basis(message) if current else None
+    value = calibrated_basis(message)
+    if not current and value is not None and (self.blocks is None or value[1] >= self.blocks):
+      return None
     if value is None:
       self.token = ''
       self.blocks = None
@@ -43,6 +45,9 @@ class ProducerCalibrationLifecycle:
     basis, blocks = value
     if self.blocks is not None and blocks < self.blocks:
       self.token = ''
+    self.blocks = blocks
+    if not current:
+      return None
     if not self.token:
       if len(self.issued) >= 32:
         return None  # Bounded reset history; never recycle an old generation.
@@ -89,8 +94,16 @@ class ConsumerCalibrationLifecycle:
     self.blocks = None
     self.current = False
 
+  def unavailable(self, *, now_ns=0):
+    if type(now_ns) is int and now_ns > self.last_invalid_ns:
+      self.last_invalid_ns = now_ns
+    self.current = False
+
   def observe(self, message, *, current, now_ns=0):
-    value = calibrated_basis(message) if current else None
+    value = calibrated_basis(message)
+    if not current and value is not None and (self.blocks is None or value[1] >= self.blocks):
+      self.unavailable(now_ns=now_ns)
+      return False
     if value is None:
       self.reject(now_ns=now_ns)
       return False
@@ -98,8 +111,8 @@ class ConsumerCalibrationLifecycle:
     if self.blocks is not None and blocks < self.blocks:
       self.reject(now_ns=now_ns)
     self.blocks = blocks
-    self.current = True
-    return True
+    self.current = bool(current)
+    return self.current
 
   def admit(self, generation, observed_ns):
     if (not self.current or self.exhausted or not generation_valid(generation) or

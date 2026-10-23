@@ -74,8 +74,11 @@ def decode(raw: bytes) -> LaneChangePolicy | None:
     fields |= {"closeGap", "closeGapSeconds"}
   if version in (4, 5):
     fields |= {"durationS"}
+  # SGSP's version 5 carries turnSignalGuidance in place of our turnDesires / turnDesireSpeedMps. Read both: rejecting
+  # either would make the live policy fall back to disabled and turn lane-change assistance off.
+  sgsp_shape = version == 5 and "turnSignalGuidance" in data
   if version == 5:
-    fields |= {"turnDesires", "turnDesireSpeedMps"}
+    fields |= {"turnSignalGuidance"} if sgsp_shape else {"turnDesires", "turnDesireSpeedMps"}
   if set(data) != fields:
     return None
   enabled = data["enabled"]
@@ -115,6 +118,10 @@ def decode(raw: bytes) -> LaneChangePolicy | None:
   if type(duration) not in (int, float) or not math.isfinite(duration) or not 3.0 <= duration <= 8.0:
     return None
   if version < 5:
+    return LaneChangePolicy(enabled, finite_speed, once, auto, delay, width, close_gap, seconds, float(duration))
+  if sgsp_shape:
+    if type(data["turnSignalGuidance"]) is not bool:
+      return None
     return LaneChangePolicy(enabled, finite_speed, once, auto, delay, width, close_gap, seconds, float(duration))
   turn, turn_speed = data["turnDesires"], data["turnDesireSpeedMps"]
   if type(turn) is not bool or type(turn_speed) not in (int, float) or not valid_turn_desire_speed(turn_speed):

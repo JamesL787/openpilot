@@ -26,7 +26,7 @@ def test_factory_keeps_stock_acc_without_long_handover(alpha, release):
     assert not qualified(cp)
   cp = final_cp()
   cp.alternativeExperience = 32
-  assert not qualified(cp)
+  assert qualified(cp)
 
 
 def test_real_parser_controller_camera_button_cadence_and_override_exclusion():

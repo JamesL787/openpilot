@@ -1,5 +1,6 @@
 """Timestamped synthetic CAN/UDS through the actual prepublication caller."""
 import time
+from contextlib import nullcontext
 import unittest
 from unittest.mock import patch
 
@@ -32,7 +33,7 @@ def params(alpha=True, radar=False, car=CAR.KIA_EV6):
 class TestEV6Startup(unittest.TestCase):
   @patch.object(time, 'CLOCK_BOOTTIME', getattr(time, 'CLOCK_BOOTTIME', time.CLOCK_MONOTONIC), create=True)
   def exercise(self, mode='sent', *, capture=True, admission=lambda: True, requested=True, wrong_bus=False,
-               missing_source=None, fail_ctor=False, warm_fault=None, car=CAR.KIA_EV6):
+               missing_source=None, fail_ctor=False, warm_fault=None, car=CAR.KIA_EV6, boot_ns=None):
     original = params(car=car)
     holder = VehicleStartupOwner()
     ci_ref = []
@@ -40,9 +41,12 @@ class TestEV6Startup(unittest.TestCase):
     self.last_requests = requests
     packer = CANPacker(DBC[car][Bus.pt])
     counter = 0
+    boot_clock = [0 if boot_ns is None else boot_ns]
     def recv(wait_for_one=False):
       nonlocal counter
       counter += 1
+      if boot_ns is not None:
+        boot_clock[0] += 10_000_000
       if not ci_ref:
         if not capture:
           return []
@@ -73,15 +77,24 @@ class TestEV6Startup(unittest.TestCase):
             raise OSError('simulated partial send')
           if command == b'\x28\x00\x01' and mode not in ('restored', 'sent_restore'):
             return {}
-          return {(0x730, None): b''}
+          # Suppressed-positive communication control has no reply. An empty
+          # payload inside a reply dictionary is malformed, not silence.
+          return {} if command == b'\x28\x83\x01' else {(0x730, None): b''}
       return Query()
+    admission_results = []
+    def admit():
+      result = admission()
+      admission_results.append(result)
+      return result
     def hook(cp, candidate, fingerprints, firmware):
-      return holder.prepare(cp, CarInterface, (recv, lambda frames: None), requested=requested, admission=admission)
+      return holder.prepare(cp, CarInterface, (recv, lambda frames: None), requested=requested, admission=admit)
     fp = gen_empty_fingerprint()
     fp[2][0x50], fp[1][0x1cf] = 16, 8
     fw = [structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.adas)]
     fingerprint = (car, fp, '0'*17, fw, original.fingerprintSource, True)
-    with patch.object(car_helpers, 'fingerprint', return_value=fingerprint), \
+    clock_context = (patch.object(time, 'clock_gettime_ns', side_effect=lambda clock: boot_clock[0])
+                     if boot_ns is not None else nullcontext())
+    with clock_context, patch.object(car_helpers, 'fingerprint', return_value=fingerprint), \
          patch.object(disable_module, 'IsoTpParallelQuery', side_effect=query), \
          patch.object(ecu_startup, 'IsoTpParallelQuery', side_effect=query):
       if fail_ctor:
@@ -94,6 +107,12 @@ class TestEV6Startup(unittest.TestCase):
       ci_ref.append(ci)
       holder.configure(ci)
       holder.seal_publication()
+      self.addCleanup(holder.close)
+      if (capture and requested and mode in ('sent', 'sent_restore') and not warm_fault and not wrong_bus and
+          admission_results and admission_results[0]):
+        self.assertIs(holder.owner.outcome, Outcome.SENT_UNCONFIRMED)
+        self.assertTrue(ci.CP.openpilotLongitudinalControl)
+        self.assertEqual(ci.CP.safetyConfigs[-1].safetyParam, 0x15)
     return ci, holder, requests
 
   def test_sent_prepublication_binds_immutable_template_and_suppressed_protocol(self):
