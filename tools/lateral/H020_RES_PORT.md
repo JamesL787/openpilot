@@ -1,7 +1,7 @@
 # H020 Honda EPS controller port for LiMing's C3XL `res`
 
 Status: **offline prototype, not vehicle-tested.** Scope: port `HondaEpsLateralCore` from `ns-bosch-radar-testing` onto MR.ONE's `res`, with the
-TGG-A120 vehicle calibration as the H020 baseline. The rev-b firmware (`39990-TEA,H02B`) is built and delivered **outside this branch**.
+TGG-A120 vehicle calibration as the H020 baseline. The rev-b firmware (it reports the ordinary modified ID `39990-TEA,H020`) is built and delivered **outside this branch**.
 
 ## Inputs
 
@@ -19,17 +19,19 @@ TGG-A120 vehicle calibration as the H020 baseline. The rev-b firmware (`39990-TE
   engagement: a res adaptation), output filter 0.1 s, the source driver-press detector (feeds feedforward/integrator only), 0.1 s dropout ride-through,
   non-finite input rejection. Not ported: telemetry, command-delay head selection, model-delay schedule, override fade (res has none).
 - **Selection follows the source branch's modified-EPS rule.** The comma in the EPS string marks modified firmware. The H020 controller is used when
-  CarParams has a Civic Bosch fingerprint, the exact EPS ID `39990-TEA,H02B`, a PID tune and the linear `[0,3840]` map. `interface.py` sets that
+  CarParams has a Civic Bosch fingerprint, the modified EPS ID `39990-TEA,H020`, a PID tune and the linear `[0,3840]` map. `interface.py` sets that
   map and the Civic Bosch/TGG base PID (P .018/.024/.048/.060, I .006/.008/.016/.020, kf 0) for exactly that case, after res's legacy modified-EPS block.
   Flashing the rev-b image is the opt-in; there is no config file, sidecar or new Params key.
 - Everything else keeps res behavior: any other EPS string (stock `-H020`, the earlier modified `,H020`, other cars, other platforms) is unchanged. The only
-  fingerprint added is `39990-TEA,H02B`.
+  fingerprint added is `39990-TEA,H020`.
 - If `setup_interfaces` (EnforceTorqueControl or NeuralNetworkLateralControl) replaces the tune afterwards, `controlsd` logs an error and runs the generic
   controller, as the source branch would; it does not stop.
 
 ## Calibration (one: rev-b)
 
-`honda_eps_calibrations.H020`, keyed by `39990-TEA-H02B`.
+`honda_eps_calibrations.H020`, keyed by `39990-TEA-H020`.
+
+**The string cannot tell the images apart.** Like every other PTM rev-b, the rev-b image reports the same ID as the earlier (2026-10-11) H020 PTM images, whose command map has the TargetMap-D mismatch. The car must be on the rev-b image (and the tracker 4250/3200 is likewise unreadable); a car on an older image would run this calibration against a different map.
 
 | Field | Source |
 |---|---|
@@ -42,6 +44,7 @@ TGG-A120 vehicle calibration as the H020 baseline. The rev-b firmware (`39990-TE
 
 ## Not established
 
+- Installed image: nothing reads it back from the ECU; the ID is shared with the older images (above).
 - Bosch versus Nidec: `res` lists `TEA-T020` under the Nidec Civic and `TEA-T330/T820` under Civic Bosch and has no `H020`. H020's Table A equals the C020/TGG
   (Bosch) one, which supports Bosch-class, but a real CarParams/carFw from the car is needed.
 - The installed image and tracker (4250 or 3200): the EPS string cannot distinguish them. Nothing reads the image back from the ECU.

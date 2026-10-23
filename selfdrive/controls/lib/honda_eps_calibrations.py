@@ -1,4 +1,4 @@
-"""TEA-H020 rev-b (39990-TEA,H02B) calibration.
+"""TEA-H020 rev-b (reports 39990-TEA,H020) calibration.
 
 Firmware fields are the tables of the delivered rev-b image (see tools/lateral/h020_firmware_evidence.json); the
 vehicle fields (load, rack, residual trims) are the TGG-A120 donor's, measured on that car and INFERRED on the H020.
@@ -41,4 +41,4 @@ CALIBRATION_PROVENANCE = {
 }
 
 # keyed by the normalized EPS string ('-' for ','), as in the source branch
-EPS_FIRMWARE_CALIBRATIONS = {"39990-TEA-H02B": (("HONDA_CIVIC_BOSCH",), H020)}
+EPS_FIRMWARE_CALIBRATIONS = {"39990-TEA-H020": (("HONDA_CIVIC_BOSCH",), H020)}

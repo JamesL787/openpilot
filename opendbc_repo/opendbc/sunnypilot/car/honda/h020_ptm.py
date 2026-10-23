@@ -1,11 +1,11 @@
 """TEA-H020 rev-b PTM (modified EPS, comma in the firmware string) on the res architecture.
 
 Same rule as the source branch's EPS_MODIFIED handling: the modified firmware string selects the tune. Only the exact
-rev-b ID `39990-TEA,H02B` on a Civic Bosch gets the linear 3840 map and the H020 PID base gains; every other
+modified ID `39990-TEA,H020` (the rev-b image reports the same ID as every earlier PTM image) on a Civic Bosch gets the linear 3840 map and the H020 PID base gains; every other
 vehicle and firmware (including the stock and earlier modified H020 images) keeps res's existing behavior.
 """
 
-EPS_ID = b"39990-TEA,H02B"
+EPS_ID = b"39990-TEA,H020"
 
 
 def is_h020(car_fw):

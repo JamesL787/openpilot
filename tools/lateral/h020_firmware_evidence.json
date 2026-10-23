@@ -4,17 +4,19 @@
  "res_base": "01e22f5921d9dfd49235f5867f54d9ec0bdccbaf",
  "firmware": "TEA-H020 rev-b (TGG response + Clarity limits), delivered outside this branch",
  "builds": {
-  "20261022b-tgg-claritylimits-trk4250": {
-   "rwd_sha256": "e1ad753e11986b9392fc9a1baca8f46605d25bb538b00ed7bf2bec57f2264261",
-   "image_sha256": "a5e87ece9039c820993f0beb3f8f7f9597c09e94ec6518d827be3855cbcb755d",
-   "tracker": 4250,
-   "eps_version": "39990-TEA,H02B"
-  },
-  "20261022b-tgg-claritylimits-trk3200": {
-   "rwd_sha256": "0289f9178016effd707de92e5d4923254587d771bbca02e203b1ab9aadb2877b",
-   "image_sha256": "b330ef7150fbf819bc9764c7795cd63d571e14f964b6f8ed7bbec0c851b40ce3",
+  "revb-trk3200": {
+   "rwd_sha256": "0f1f8aaddf71c94b5f805f3cccffab9b4be56c4f951570191de2d5271d247c2c",
+   "image_sha256": "e52a5c54f6237e0bab2a6bad7c9264ec0e68df9c38e1ec6df5ff2b11cb6d19a6",
    "tracker": 3200,
-   "eps_version": "39990-TEA,H02B"
+   "eps_version": "39990-TEA,H020",
+   "file": "39990-TEA,H020-20261023-RevB-TGGResponse-ClarityLimits-A280Flat-Trk3200.rwd"
+  },
+  "revb-trk4250": {
+   "rwd_sha256": "334acfb3e12acaa5b4baf810138622814c14200c405451fad013284a9d1e7c89",
+   "image_sha256": "a43662456f9f151b68be9eff2f4ac768e71ce564d2217c6fc3e32f70e1d8dd35",
+   "tracker": 4250,
+   "eps_version": "39990-TEA,H020",
+   "file": "39990-TEA,H020-20261023-RevB-TGGResponse-ClarityLimits-A280Flat-Trk4250.rwd"
   }
  },
  "r5_key_bp": [
@@ -99,6 +101,7 @@
  "not_verified": [
   "ECU readback of the installed image/tracker",
   "pre-table shaping gates on H020",
-  "any on-vehicle behavior"
+  "any on-vehicle behavior",
+  "the EPS string is the same as the earlier (10-11) H020 PTM images, so it cannot tell them from rev-b: the car must be on the rev-b image"
  ]
 }

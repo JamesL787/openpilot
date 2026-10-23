@@ -18,7 +18,7 @@ from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
 from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, use_honda_eps_controller, warn_if_h020_tune_replaced
 
 ROOT = Path(__file__).resolve().parents[2]
-REVB = b"39990-TEA,H02B\0\0"
+PTM_ID = b"39990-TEA,H020\0\0"
 FPS = {i: {} for i in range(4)}
 
 
@@ -26,7 +26,7 @@ def fw_list(version):
   return [car.CarParams.CarFw.new_message(ecu="eps", address=0x18da30f1, fwVersion=version)]
 
 
-def real_cp(version=REVB, candidate=CAR.HONDA_CIVIC_BOSCH):
+def real_cp(version=PTM_ID, candidate=CAR.HONDA_CIVIC_BOSCH):
   """CarParams exactly as res builds them (get_params, get_params_sp, then card's carFw/carFingerprint)."""
   fw = fw_list(version)
   c = CarInterface.get_params(candidate, FPS, fw, False, False, False)
@@ -47,13 +47,13 @@ def sensors(**kw):
 
 
 def only_h020_eps_id():
-  assert gate.EPS_ID == b"39990-TEA,H02B"
+  assert gate.EPS_ID == b"39990-TEA,H020"
 
 
 def test_fingerprint_lists_only_rev_b():
   eps = FW_VERSIONS_EXT[CAR.HONDA_CIVIC_BOSCH][(car.CarParams.Ecu.eps, 0x18da30f1, None)]
-  assert b"39990-TEA,H02B\x00\x00" in eps
-  assert not any(b"H020" in v for v in eps)  # neither the stock nor the earlier modified H020 string is added
+  assert b"39990-TEA,H020\x00\x00" in eps
+  assert b"39990-TEA-H020\x00\x00" not in eps  # the stock string is not added
 
 
 def test_real_interface_applies_h020_only_to_rev_b_on_civic_bosch():
@@ -65,7 +65,7 @@ def test_real_interface_applies_h020_only_to_rev_b_on_civic_bosch():
   assert use_honda_eps_controller(c)
 
 
-@pytest.mark.parametrize("version", [b"39990-TEA-H020\0\0", b"39990-TEA,H020\0\0", b"39990-TEA-H02B\0\0", b"39990-TEA,H02B-x\0",
+@pytest.mark.parametrize("version", [b"39990-TEA-H020\0\0", b"39990-TEA,H02B\0\0", b"39990-TEA-H02B\0\0", b"39990-TEA,H020-x\0",
                                      b"39990-TGG,A120\0\0", b"39990-TBA,C020\0\0"])
 def test_other_firmware_keeps_res_tune(version):
   # same punctuation (comma = modified EPS) on an unrelated part number gives res's own tune for that case
@@ -77,13 +77,13 @@ def test_other_firmware_keeps_res_tune(version):
 
 
 def test_other_platform_with_rev_b_unchanged():
-  assert cp_dict(real_cp(REVB, CAR.HONDA_CIVIC)) == cp_dict(real_cp(b"39990-TEA,H021\0\0", CAR.HONDA_CIVIC))
+  assert cp_dict(real_cp(PTM_ID, CAR.HONDA_CIVIC)) == cp_dict(real_cp(b"39990-TEA,H021\0\0", CAR.HONDA_CIVIC))
 
 
 def test_conflicting_or_missing_eps_not_matched():
   c = real_cp()
   assert not gate.is_h020([])
-  c.carFw = fw_list(REVB) + fw_list(b"39990-TBA,C020\0\0")
+  c.carFw = fw_list(PTM_ID) + fw_list(b"39990-TBA,C020\0\0")
   assert not gate.is_h020(c.carFw) and not use_honda_eps_controller(c)
 
 
@@ -164,7 +164,7 @@ def test_calibration_matches_firmware_evidence_json():
   assert H020.kp_key_bp == tuple(e["kp_key_bp"]) and H020.kp_v == tuple(e["kp_v"])
   assert H020.envelope_bp == tuple(e["envelope_bp"]) and H020.envelope_v == tuple(e["envelope_v"])
   assert H020.key_clamp == e["key_clamp"] == 1663 and e["norm"] == 1650
-  assert set(EPS_FIRMWARE_CALIBRATIONS) == {"39990-TEA-H02B"}  # one calibration, keyed by the normalized rev-b ID
+  assert set(EPS_FIRMWARE_CALIBRATIONS) == {"39990-TEA-H020"}  # one calibration, keyed by the normalized ID
 
 
 def test_command_map_is_the_tgg_rev_b_law():
