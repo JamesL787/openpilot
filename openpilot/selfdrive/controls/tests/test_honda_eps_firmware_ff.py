@@ -351,6 +351,12 @@ def test_the_rdx_is_told_its_measured_highway_lag_from_the_frame():
     assert 0.21 - 0.03 <= honda_eps.scheduled_lateral_delay(eps_cal.RDX_TJB_A220_LAT_DELAY_SCHEDULE, v) + 0.075 <= 0.27 + 0.03, v
 
 
+def test_the_rdx_is_told_its_measured_town_lag_from_the_frame():
+  # route 412ed2539bfc2c42/0000000b segments 6-9 at 12-20 m/s on turning samples: ~0.19 s schedule (~0.26 s frame)
+  for v in (12.0, 15.0, 18.0):
+    assert 0.24 - 0.03 <= honda_eps.scheduled_lateral_delay(eps_cal.RDX_TJB_A220_LAT_DELAY_SCHEDULE, v) + 0.075 <= 0.30 + 0.03, v
+
+
 def test_lateral_delay_dips_in_town_and_rises_from_there():
   # measured: the crawl is slower than town (small targets), and from town up the delay rises with speed
   assert _clarity_lat_delay(3.5) > _clarity_lat_delay(7.0)

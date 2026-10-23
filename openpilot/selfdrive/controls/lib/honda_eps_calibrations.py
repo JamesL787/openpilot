@@ -128,11 +128,13 @@ CLARITY_TRW_A020 = EpsFirmwareCalibration(
 #   ~0.33 on the highway, so 0.28 / 0.26 s. Re-measure on a drive with this controller.
 CIVIC_TEG_A010_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.20, 0.20, 0.20, 0.20, 0.20))
 CIVIC_TBA_C020_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.28, 0.28, 0.28, 0.26, 0.26))
-# - RDX TJB-A220 (2026-10-23, highway only): 0.21-0.27 s from the frame (median 0.24) at 28-32 m/s on this controller,
+# - RDX TJB-A220 (2026-10-23, highway): 0.21-0.27 s from the frame (median 0.24) at 28-32 m/s on this controller,
 #   routes 412ed2539bfc2c42/00000003 segments 8-16 and 00000004 segments 4-9 (a plan model, no command delay). The
-#   Clarity's 0.30 s told it ~0.13 s too much, and the car ran early into a ~1 Hz highway weave. 0.17 s from 20 m/s;
-#   below that the Clarity's until a town drive measures it.
-RDX_TJB_A220_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.15, 0.08, 0.10, 0.17, 0.17))
+#   Clarity's 0.30 s told it ~0.13 s too much, and the car ran early into a ~1 Hz highway weave. 0.17 s from 20 m/s.
+# - RDX TJB-A220 (2026-10-23, town): route 0000000b segments 6-9 at 12-20 m/s on turning samples, schedule ~0.19 s
+#   (0.26 s from the frame); the Clarity's 0.08-0.10 s at 7-12 m/s ran ~65 ms short there. Crawl (3.5 m/s) still the
+#   Clarity's 0.15 s until a parking-lot drive measures it.
+RDX_TJB_A220_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.15, 0.16, 0.18, 0.17, 0.17))
 
 # Civic Bosch 39990-TBA-C020, 08-05 ClarityPminus5 P117..265 D737 KFF45 Norm1650 Trk4500 TargetMapD Telem (bin
 # sha256 6ecd587c). Measured on the owner's telemetry (routes 284/287/289): E4 = -4096 * u, key clamp 1663 (0x137F2),
@@ -485,7 +487,7 @@ CALIBRATION_PROVENANCE = {
     "load": "measured: the owner's routes 000000c6 / 000000c7 (a 2019), rebuilt through the law from the sent 0xE4; the MMR takes it",
     "trims": "default: untrimmed",
     "cmd_delay": "default (its LatControlPID drives ran 0.10-0.24 s early at 7-12 m/s: re-check on this controller)",
-    "model_delay": "measured: 20 m/s and up, routes 00000003 / 00000004 on this controller; the Clarity's below",
+    "model_delay": "measured: 12 m/s and up, routes 00000003 / 00000004 / 0000000b on this controller; the Clarity's at crawl",
     "rack": "measured: VSA yaw (GPS-checked scale), routes 000000c6 / 000000c7 (a 2019; the MMR takes it), through its road-measured linear map",
   },
   "crv_tla_a220": {
