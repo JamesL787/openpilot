@@ -326,7 +326,7 @@ def test_every_vehicle_tells_the_model_the_measured_schedule():
   # C020 have their own, and the same cars take theirs (the A030 the TEG's; the C120 and the TGG the C020's)
   own = {"civic_teg_a010": eps_cal.CIVIC_TEG_A010_LAT_DELAY_SCHEDULE, "civic_tba_a030": eps_cal.CIVIC_TEG_A010_LAT_DELAY_SCHEDULE,
          "civic_tba_c020": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE, "civic_tba_c120": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
-         "civic_tgg_a120": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE}
+         "civic_tgg_a120": eps_cal.CIVIC_TBA_C020_LAT_DELAY_SCHEDULE, "rdx_tjb_a220": eps_cal.RDX_TJB_A220_LAT_DELAY_SCHEDULE}
   for _, cal in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values():
     assert cal.lat_delay_schedule == own.get(cal.name, eps_ff.CLARITY_TRW_A020_LAT_DELAY_SCHEDULE), cal.name
   CP = _params(b'39990-TBA,C020\x00\x00', CAR.HONDA_CIVIC_BOSCH)
@@ -343,6 +343,12 @@ def test_a_civic_is_told_its_measured_lag_from_the_frame(schedule, lag):
   # modeld reads a plan model at told + 0.075 s (frame + half a step), so that is where the car's own lag must land
   for v in (3.5, 7.0, 12.0, 20.0, 30.0):
     assert lag[0] - 0.03 <= honda_eps.scheduled_lateral_delay(schedule, v) + 0.075 <= lag[1] + 0.03, v
+
+
+def test_the_rdx_is_told_its_measured_highway_lag_from_the_frame():
+  # routes 412ed2539bfc2c42/00000003 and 00000004 at 28-32 m/s: 0.21-0.27 s from the frame to the yaw curvature
+  for v in (20.0, 30.0, 35.0):
+    assert 0.21 - 0.03 <= honda_eps.scheduled_lateral_delay(eps_cal.RDX_TJB_A220_LAT_DELAY_SCHEDULE, v) + 0.075 <= 0.27 + 0.03, v
 
 
 def test_lateral_delay_dips_in_town_and_rises_from_there():
