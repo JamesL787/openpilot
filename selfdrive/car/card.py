@@ -22,9 +22,6 @@ from openpilot.selfdrive.car.cruise import VCruiseHelper
 from openpilot.selfdrive.car.car_specific import MockCarState
 from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_capnp
 
-from opendbc.sunnypilot.car.honda.h020_ptm import read_config as read_h020_config, startup_config
-from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import validate_final_params, publish_activation
-
 from openpilot.sunnypilot.mads.helpers import set_alternative_experience, set_car_specific_params
 from openpilot.sunnypilot.selfdrive.car import interfaces as sunnypilot_interfaces
 
@@ -87,7 +84,6 @@ class Car:
     self.last_actuators_output = structs.CarControl.Actuators()
 
     self.params = Params()
-    h020_config = read_h020_config()
 
     self.can_callbacks = can_comm_callbacks(self.can_sock, self.pm.sock['sendcan'])
 
@@ -106,21 +102,16 @@ class Car:
       num_pandas = len(messaging.recv_one_retry(self.sm.sock['pandaStates']).pandaStates)
 
       cached_params = None
-      cached_params_raw = None if h020_config.get("enabled") else self.params.get("CarParamsCache")
+      cached_params_raw = self.params.get("CarParamsCache")
       if cached_params_raw is not None:
         with car.CarParams.from_bytes(cached_params_raw) as _cached_params:
           cached_params = _cached_params
 
       fixed_fingerprint = (self.params.get("CarPlatformBundle") or {}).get("platform", None)
-      if h020_config.get("enabled"):
-        cached_params = None  # force fresh ECU firmware queries; never use CarParamsCache for the opt-in port
-        fixed_fingerprint = None  # require the real platform, not a forced platform bundle
-        self.params.remove("CarParams")  # controlsd must wait for this startup's coherent CP/activation pair
       init_params_list_sp = sunnypilot_interfaces.initialize_params(self.params)
 
-      with startup_config(h020_config):
-        self.CI = get_car(*self.can_callbacks, obd_callback(self.params), alpha_long_allowed, is_release, num_pandas, cached_params,
-                          fixed_fingerprint, init_params_list_sp, is_release_sp)
+      self.CI = get_car(*self.can_callbacks, obd_callback(self.params), alpha_long_allowed, is_release, num_pandas, cached_params,
+                        fixed_fingerprint, init_params_list_sp, is_release_sp)
       sunnypilot_interfaces.setup_interfaces(self.CI, self.params)
       self.RI = interfaces[self.CI.CP.carFingerprint].RadarInterface(self.CI.CP, self.CI.CP_SP)
       self.CP = self.CI.CP
@@ -174,12 +165,8 @@ class Car:
     if prev_cp is not None:
       self.params.put("CarParamsPrevRoute", prev_cp)
 
-    # Validate AFTER setup_interfaces and every later initialization step, before exposing CarParams.
-    h020_config = validate_final_params(self.CP, h020_config, self.params)
-    # Write CarParams for controls and radard. Bind the snapshot before waking waiting consumers.
+    # Write CarParams for controls and radard
     cp_bytes = self.CP.to_bytes()
-    if h020_config.get("enabled"):
-      publish_activation(cp_bytes, h020_config)
     self.params.put("CarParams", cp_bytes)
     self.params.put_nonblocking("CarParamsCache", cp_bytes)
     self.params.put_nonblocking("CarParamsPersistent", cp_bytes)

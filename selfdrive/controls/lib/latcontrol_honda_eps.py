@@ -1,7 +1,8 @@
 """ns-bosch-radar-testing Honda EPS core, adapted to res's CP_SP/update API and existing PID log schema.
 
-The H020 vehicle coefficients are provisional. Activation needs an explicit config file and an exact PTM part.
-No StarPilot schema, HondaFlags.EPS_MODIFIED, new Params keys, or global PID API are required.
+Selected like the source branch's modified-EPS controller: the modified (comma) rev-b firmware string on a Civic Bosch,
+with the linear 3840 map and a PID tune. The H020 vehicle coefficients are the TGG donor's and provisional.
+No StarPilot schema, new Params keys or global PID API are required.
 """
 import math
 import numpy as np
@@ -9,31 +10,34 @@ from cereal import log
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import HondaEpsFirmwareFeedforward, HondaEpsLateralCore
-from openpilot.selfdrive.controls.lib.honda_eps_calibrations import calibration_for_build
+from openpilot.selfdrive.controls.lib.honda_eps_calibrations import H020
 from openpilot.selfdrive.controls.lib.honda_eps_h020_geometry import H020_VGR_INVERSE
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
-from opendbc.sunnypilot.car.honda.h020_ptm import build_matches_firmware
-from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import expected_tune
+from opendbc.sunnypilot.car.honda.h020_ptm import is_h020
 from openpilot.selfdrive.controls.lib.honda_eps_h020_override import get_eps_modified_steering_pressed
 
 RIDE_THROUGH_S = 0.1
 
 
-def use_honda_eps_controller(CP, config):
-  cfg = config
-  if not cfg.get("enabled") or str(CP.carFingerprint) != "HONDA_CIVIC_BOSCH" or not build_matches_firmware(CP.carFw, cfg):
-    return False
-  return expected_tune(CP)
+def use_honda_eps_controller(CP):
+  return (str(CP.carFingerprint) == "HONDA_CIVIC_BOSCH" and is_h020(CP.carFw) and CP.lateralTuning.which() == "pid"
+          and list(CP.lateralParams.torqueBP) == [0, 3840] and list(CP.lateralParams.torqueV) == [0, 3840])
+
+
+def warn_if_h020_tune_replaced(CP, cloudlog):
+  """setup_interfaces (EnforceTorqueControl / NNLC) runs after the tune is set and can replace it with the torque tune."""
+  if str(CP.carFingerprint) == "HONDA_CIVIC_BOSCH" and is_h020(CP.carFw) and not use_honda_eps_controller(CP):
+    cloudlog.error("H020 rev-b EPS present but the H020 controller is not selected (tune replaced, e.g. EnforceTorqueControl "
+                   "or NeuralNetworkLateralControl); steering with the generic controller on the H020 map")
 
 
 class LatControlHondaEps(LatControl):
-  def __init__(self, CP, CP_SP, CI, *, activation):
+  def __init__(self, CP, CP_SP, CI):
     super().__init__(CP, CP_SP, CI)
-    config = activation
-    if not use_honda_eps_controller(CP, config):
-      raise ValueError("H020 controller needs an explicit config, exact PTM firmware and a linear 3840 map")
+    if not use_honda_eps_controller(CP):
+      raise ValueError("H020 controller needs the exact rev-b EPS, a Civic Bosch, a PID tune and a linear 3840 map")
     self.dt = DT_CTRL
-    self.calibration = calibration_for_build(config["ptm_build"])
+    self.calibration = H020
     pid = CP.lateralTuning.pid
     self.core = HondaEpsLateralCore(list(pid.kpBP), list(pid.kpV), list(pid.kiBP), list(pid.kiV), DT_CTRL,
                                   HondaEpsFirmwareFeedforward(DT_CTRL, self.calibration))

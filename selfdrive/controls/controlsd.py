@@ -16,8 +16,7 @@ from opendbc.car.vehicle_model import VehicleModel
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
-from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, use_honda_eps_controller
-from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import load_activation, H020RuntimeGuard
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, use_honda_eps_controller, warn_if_h020_tune_replaced
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
@@ -38,11 +37,7 @@ class Controls(ControlsExt, ModelStateBase):
   def __init__(self) -> None:
     self.params = Params()
     cloudlog.info("controlsd is waiting for CarParams")
-    cp_bytes = self.params.get("CarParams", block=True)
-    self.CP = messaging.log_from_bytes(cp_bytes, car.CarParams)
-    h020_activation = load_activation(self.CP, cp_bytes)
-    self.h020_runtime_guard = (H020RuntimeGuard(self.CP, cp_bytes, h020_activation, self.params, cloudlog.error)
-                               if h020_activation.get("enabled") else None)
+    self.CP = messaging.log_from_bytes(self.params.get("CarParams", block=True), car.CarParams)
     cloudlog.info("controlsd got CarParams")
 
     # Initialize sunnypilot controlsd extension and base model state
@@ -70,10 +65,11 @@ class Controls(ControlsExt, ModelStateBase):
     if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
       self.LaC = LatControlAngle(self.CP, self.CP_SP, self.CI)
     elif self.CP.lateralTuning.which() == 'pid':
-      self.LaC = (LatControlHondaEps(self.CP, self.CP_SP, self.CI, activation=h020_activation)
-                  if use_honda_eps_controller(self.CP, h020_activation)
+      warn_if_h020_tune_replaced(self.CP, cloudlog)
+      self.LaC = (LatControlHondaEps(self.CP, self.CP_SP, self.CI) if use_honda_eps_controller(self.CP)
                   else LatControlPID(self.CP, self.CP_SP, self.CI))
     elif self.CP.lateralTuning.which() == 'torque':
+      warn_if_h020_tune_replaced(self.CP, cloudlog)
       self.LaC = LatControlTorque(self.CP, self.CP_SP, self.CI)
 
   def update(self):
@@ -123,8 +119,6 @@ class Controls(ControlsExt, ModelStateBase):
 
     CC.latActive = _lat_active and not CS.steerFaultTemporary and not CS.steerFaultPermanent and \
                    (not standstill or self.CP.steerAtStandstill)
-    if self.h020_runtime_guard is not None and not self.h020_runtime_guard.check():
-      CC.latActive = False
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and \
                     (self.CP.openpilotLongitudinalControl or not self.CP_SP.pcmCruiseSpeed)
 

@@ -1,5 +1,5 @@
-"""Behavioral checks against res's actual CarParams/PID-log schemas and the port's numerical code."""
-import dataclasses
+"""Behavioral checks of the H020 rev-b port against res's real CarParams/PID-log schemas, interface and setup code."""
+import ast
 import json
 import math
 from pathlib import Path
@@ -7,93 +7,182 @@ from types import SimpleNamespace as NS
 import numpy as np
 import pytest
 from cereal import car, log
+from opendbc.car.honda.interface import CarInterface
+from opendbc.car.honda.values import CAR, CarControllerParams
 from opendbc.sunnypilot.car.honda import h020_ptm as gate
+from opendbc.sunnypilot.car.honda.fingerprints_ext import FW_VERSIONS_EXT
 from openpilot.selfdrive.controls.lib import honda_eps_firmware_ff as ff
-from openpilot.selfdrive.controls.lib.honda_eps_calibrations import H020, R6_CENTRE
+from openpilot.selfdrive.controls.lib.honda_eps_calibrations import H020, R6_CENTRE, EPS_FIRMWARE_CALIBRATIONS
 from openpilot.selfdrive.controls.lib.honda_eps_h020_geometry import H020_VGR_INVERSE, A_X, A_Y
 from openpilot.selfdrive.controls.lib.honda_eps_rack_map import HondaEpsRackMap
-from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, use_honda_eps_controller
+from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import LatControlHondaEps, use_honda_eps_controller, warn_if_h020_tune_replaced
 
 ROOT = Path(__file__).resolve().parents[2]
-CFG = {"enabled": True, "ptm_build": "20261011-trk4250", "calibration_stage": "provisional"}
+REVB = b"39990-TEA,H02B\0\0"
+FPS = {i: {} for i in range(4)}
 
 
-def cp(version=b"39990-TEA,H020\0\0", fp="HONDA_CIVIC_BOSCH"):
-  c = car.CarParams.new_message()
-  c.carFingerprint = fp
-  c.wheelbase = 2.7
-  c.steerLimitTimer = 0.8
-  c.lateralTuning.init("pid")
-  c.lateralParams.torqueBP = [0, 2564, 8000]
-  c.lateralParams.torqueV = [0, 2564, 3840]
-  c.carFw = [{"ecu": "eps", "address": 0x18da30f1, "fwVersion": version}]
+def fw_list(version):
+  return [car.CarParams.CarFw.new_message(ecu="eps", address=0x18da30f1, fwVersion=version)]
+
+
+def real_cp(version=REVB, candidate=CAR.HONDA_CIVIC_BOSCH):
+  """CarParams exactly as res builds them (get_params, get_params_sp, then card's carFw/carFingerprint)."""
+  fw = fw_list(version)
+  c = CarInterface.get_params(candidate, FPS, fw, False, False, False)
+  CarInterface.get_params_sp(c, candidate, FPS, fw, False, False, False)
+  c.carFw = fw
   return c
 
 
-@pytest.mark.parametrize("bad", [{}, {"enabled": True}, {**CFG, "enabled": "true"},
-                                 {**CFG, "ptm_build": "stock"}, {**CFG, "calibration_stage": "measured"}])
-def test_config_rejects_incomplete_or_unknown_build(tmp_path, bad):
-  p = tmp_path / "config.json";p.write_text(json.dumps(bad))
-  assert gate.read_config(p) == {"enabled": False}
+def cp_dict(c):
+  d = c.to_dict()
+  d.pop("carFw", None)
+  return d
 
 
-def test_config_failures_fall_back(tmp_path):
-  assert gate.read_config(tmp_path / "missing") == {"enabled": False}
-  p = tmp_path / "config.json";p.write_text("not-json")
-  assert gate.read_config(p) == {"enabled": False}
-  p.write_text("[]");assert gate.read_config(p) == {"enabled": False}
+def sensors(**kw):
+  base = dict(steeringAngleDeg=0., steeringRateDeg=0., steeringTorque=0., vEgo=15., steeringPressed=False)
+  return NS(**{**base, **kw})
 
 
-@pytest.mark.parametrize("variant", ["20261011-trk4250", "20261011-trk3200"])
-def test_explicit_build_config(tmp_path, variant):
-  p = tmp_path / "config.json";p.write_text(json.dumps({**CFG, "ptm_build": variant}))
-  assert gate.read_config(p)["enabled"] is True
+def only_h020_eps_id():
+  assert gate.EPS_ID == b"39990-TEA,H02B"
 
 
-@pytest.mark.parametrize("version,fp", [(b"39990-TEA-H020", "HONDA_CIVIC_BOSCH"),
-                                         (b"39990-TEA,H020-extra", "HONDA_CIVIC_BOSCH"),
-                                         (b"39990-TBA,C020", "HONDA_CIVIC_BOSCH"),
-                                         (b"39990-TEA,H020", "HONDA_CIVIC")])
-def test_other_firmware_and_platforms_unchanged(version, fp):
-  c = cp(version, fp);before = c.to_dict()
-  assert not gate.configure_h020(c, fp, c.carFw, CFG)
-  assert c.to_dict() == before
-  assert not use_honda_eps_controller(c, CFG)
+def test_fingerprint_lists_only_rev_b():
+  eps = FW_VERSIONS_EXT[CAR.HONDA_CIVIC_BOSCH][(car.CarParams.Ecu.eps, 0x18da30f1, None)]
+  assert b"39990-TEA,H02B\x00\x00" in eps
+  assert not any(b"H020" in v for v in eps)  # neither the stock nor the earlier modified H020 string is added
 
 
-def test_disabled_does_not_change_existing_tune():
-  c = cp();before = c.to_dict()
-  assert not gate.configure_h020(c, c.carFingerprint, c.carFw, {"enabled": False})
-  assert c.to_dict() == before
-
-
-def test_h020_linear_map_and_selection():
-  c = cp();assert gate.configure_h020(c, c.carFingerprint, c.carFw, CFG)
-  assert list(c.lateralParams.torqueBP) == [0, 3840]
-  assert list(c.lateralParams.torqueV) == [0, 3840]
+def test_real_interface_applies_h020_only_to_rev_b_on_civic_bosch():
+  c = real_cp()
+  assert (list(c.lateralParams.torqueBP), list(c.lateralParams.torqueV)) == ([0, 3840], [0, 3840])
+  assert c.lateralTuning.which() == "pid" and c.lateralTuning.pid.kf == 0.0
   assert list(c.lateralTuning.pid.kpV) == pytest.approx([0.018, 0.024, 0.048, 0.060])
   assert list(c.lateralTuning.pid.kiV) == pytest.approx([0.006, 0.008, 0.016, 0.020])
-  assert c.lateralTuning.pid.kf == 0.0
-  assert use_honda_eps_controller(c, CFG)
+  assert use_honda_eps_controller(c)
+
+
+@pytest.mark.parametrize("version", [b"39990-TEA-H020\0\0", b"39990-TEA,H020\0\0", b"39990-TEA-H02B\0\0", b"39990-TEA,H02B-x\0",
+                                     b"39990-TGG,A120\0\0", b"39990-TBA,C020\0\0"])
+def test_other_firmware_keeps_res_tune(version):
+  # same punctuation (comma = modified EPS) on an unrelated part number gives res's own tune for that case
+  twin = version.replace(b"H020", b"H021").replace(b"H02B", b"H021")
+  other = real_cp(version)
+  if b"TEA" in version:
+    assert cp_dict(other) == cp_dict(real_cp(twin))
+  assert not use_honda_eps_controller(other)
+
+
+def test_other_platform_with_rev_b_unchanged():
+  assert cp_dict(real_cp(REVB, CAR.HONDA_CIVIC)) == cp_dict(real_cp(b"39990-TEA,H021\0\0", CAR.HONDA_CIVIC))
+
+
+def test_conflicting_or_missing_eps_not_matched():
+  c = real_cp()
+  assert not gate.is_h020([])
+  c.carFw = fw_list(REVB) + fw_list(b"39990-TBA,C020\0\0")
+  assert not gate.is_h020(c.carFw) and not use_honda_eps_controller(c)
+
+
+def test_map_must_stay_linear():
+  c = real_cp()
   c.lateralParams.torqueV = [0, 3000]
-  assert not use_honda_eps_controller(c, CFG)
+  assert not use_honda_eps_controller(c)
 
 
-def test_no_eps_or_ambiguous_eps():
-  c = cp();c.carFw = []
-  assert not gate.is_h020_ptm(c.carFw)
-  c.carFw = [{"ecu": "eps", "fwVersion": b"39990-TEA,H020"}, {"ecu": "eps", "fwVersion": b"39990-TBA,C020"}]
-  assert not gate.is_h020_ptm(c.carFw)
+def test_torque_tune_replacement_is_selected_away_and_logged():
+  # setup_interfaces (sunnypilot/selfdrive/car/interfaces.py:_initialize_torque_lateral_control) runs after get_params_sp
+  # and, with EnforceTorqueControl or NNLC on, does exactly this call. (The module needs the native Params binding.)
+  c = real_cp()
+  CarInterface.configure_torque_tune(c.carFingerprint, c.lateralTuning)
+  assert c.lateralTuning.which() == "torque"
+  assert not use_honda_eps_controller(c)
+  logged = []
+  warn_if_h020_tune_replaced(c, NS(error=logged.append))
+  assert logged and "not selected" in logged[0]
 
 
-def test_h020_own_firmware_tables():
-  assert H020.r5_key_bp == (0, 226, 311, 495, 656, 887, 1108, 1552, 1774)
-  assert H020.kp_key_bp == (3, 173, 441, 665, 887, 1104, 1317, 1610, 1774)
-  assert H020.envelope_bp == (0, 50, 100, 150, 200, 240, 300, 321, 400)
-  assert H020.envelope_v == (1774, 1774, 1774, 1774, 1774, 1552, 1219, 1108, 1108)
+def test_warning_silent_for_unrelated_and_selected():
+  logged = []
+  warn_if_h020_tune_replaced(real_cp(), NS(error=logged.append))
+  warn_if_h020_tune_replaced(real_cp(b"39990-TEA,H021\0\0"), NS(error=logged.append))
+  assert not logged
+
+
+def _controlsd_branch(cpm):
+  """Execute controlsd's real lateral-controller selection branch with a stub self."""
+  tree = ast.parse((ROOT / "selfdrive/controls/controlsd.py").read_text())
+  init = next(n for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "Controls"
+              for n in c.body if isinstance(n, ast.FunctionDef) and n.name == "__init__")
+  branch = next(n for n in init.body if isinstance(n, ast.If) and "steerControlType" in ast.dump(n.test))
+  mod = ast.fix_missing_locations(ast.Module([branch], []))
+  made = []
+  ns = {"car": car, "LatControlAngle": lambda *a: made.append("angle"), "LatControlHondaEps": lambda *a: made.append("honda_eps"),
+        "LatControlPID": lambda *a: made.append("pid"), "LatControlTorque": lambda *a: made.append("torque"),
+        "use_honda_eps_controller": use_honda_eps_controller, "warn_if_h020_tune_replaced": warn_if_h020_tune_replaced,
+        "cloudlog": NS(error=lambda m: made.append("log"))}
+  exec(compile(mod, "controlsd", "exec"), ns, {"self": NS(CP=cpm, CP_SP=None, CI=None)})
+  return made
+
+
+def test_controlsd_selects_honda_eps_only_for_h020_rev_b():
+  assert _controlsd_branch(real_cp()) == ["honda_eps"]
+  assert _controlsd_branch(real_cp(b"39990-TEA,H021\0\0")) == ["pid"]
+  assert _controlsd_branch(real_cp(b"39990-TEA-H020\0\0")) == ["pid"]
+
+
+def test_controlsd_logs_when_h020_tune_replaced():
+  c = real_cp()
+  CarInterface.configure_torque_tune(c.carFingerprint, c.lateralTuning)
+  assert _controlsd_branch(c) == ["log", "torque"]
+
+
+def test_controlsd_logs_when_h020_map_replaced_on_pid_tune():
+  c = real_cp()
+  c.lateralParams.torqueV = [0, 3000]
+  assert _controlsd_branch(c) == ["log", "pid"]
+
+
+def test_e4_scaling_matches_the_calibration():
+  c = real_cp()
+  p = CarControllerParams(c)
+  assert p.STEER_MAX == 3840 == H020.e4_per_output
+  for u in (-1.0, -0.4, 0.0, 0.25, 1.0):
+    e4 = int(np.interp(-u * p.STEER_MAX, p.STEER_LOOKUP_BP, p.STEER_LOOKUP_V))
+    assert e4 == int(-u * 3840)
+    r5 = ff.r5_from_output(u, 15.0, H020)
+    assert (r5 == 0) if e4 == 0 else (np.sign(r5) == np.sign(e4))
+  assert ff.command_key(-3840) == -1662 and abs(ff.command_key(3840)) <= H020.key_clamp  # full output is inside the 1663 clamp
+
+
+def test_calibration_matches_firmware_evidence_json():
+  e = json.loads((ROOT / "tools/lateral/h020_firmware_evidence.json").read_text())
+  assert H020.r5_key_bp == tuple(e["r5_key_bp"]) and H020.r5_v == tuple(e["r5_v"])
+  assert H020.kp_key_bp == tuple(e["kp_key_bp"]) and H020.kp_v == tuple(e["kp_v"])
+  assert H020.envelope_bp == tuple(e["envelope_bp"]) and H020.envelope_v == tuple(e["envelope_v"])
+  assert H020.key_clamp == e["key_clamp"] == 1663 and e["norm"] == 1650
+  assert set(EPS_FIRMWARE_CALIBRATIONS) == {"39990-TEA-H02B"}  # one calibration, keyed by the normalized rev-b ID
+
+
+def test_command_map_is_the_tgg_rev_b_law():
+  # TGG-A120 rev-b image row 0 (its own native knots), read from the corrected TGG image
+  tx, ty = (0, 103, 263, 459, 660, 862, 1111, 1549, 1774), (0, 1740, 4443, 7769, 11167, 14579, 18798, 26202, 30002)
+  k = np.arange(0, 1664)
+  assert np.abs(np.interp(k, H020.r5_key_bp, H020.r5_v) - np.interp(k, tx, ty)).max() <= 2.0
+  assert H020.kp_v == (117, 148, 184, 220, 245, 257, 263, 265, 265)
+  assert H020.kp_key_bp == tuple(round(x * 4096 / 3840) for x in (0, 222, 443, 665, 887, 1108, 1330, 1552, 1774))
+  slopes = np.diff(H020.r5_v) / np.diff(H020.r5_key_bp)
+  assert slopes.max() / slopes.min() < 1.1  # no 2x gain segment (the October 11 H020 map had 8.5..35.4 R5/key)
+
+
+def test_h020_derived_tables():
   assert R6_CENTRE == pytest.approx(-153.74)
   assert H020.key_ceiling(0) == 1663
-  assert H020.key_ceiling(200 / 3.6) == 1108
+  assert H020.key_ceiling(100 / 3.6) == 1663
+  assert H020.key_ceiling(130 / 3.6) == 1330  # Clarity limits; TGG rev-b is flat
 
 
 def test_position_map_matches_firmware_equation():
@@ -133,45 +222,103 @@ def test_core_stays_bounded_and_freezes_on_driver_press():
   core.reset();assert core.output == 0 and core.pid.i == 0
 
 
-def test_actual_res_adapter_and_log_schema(monkeypatch, tmp_path):
-  p = tmp_path / "config.json";p.write_text(json.dumps(CFG));monkeypatch.setattr(gate, "CONFIG_PATH", p)
-  c = cp();assert gate.configure_h020(c, c.carFingerprint, c.carFw)
-  ctrl = LatControlHondaEps(c, None, None, activation=CFG)
-  cs = NS(steeringAngleDeg=0.0, steeringRateDeg=0.0, steeringTorque=0., vEgo=12., steeringPressed=False)
-  lp = NS(roll=0.0, angleOffsetDeg=1.0)
+
+def test_adapter_and_log_schema():
+  c = real_cp()
+  ctrl = LatControlHondaEps(c, None, None)
+  cs, lp = sensors(vEgo=12.), NS(roll=0.0, angleOffsetDeg=1.0)
   out, angle, state = ctrl.update(True, cs, None, lp, False, -0.005, None, False)
   assert math.isfinite(out) and abs(out) <= 1
   assert abs(angle - 1.) <= 3.0 + 1e-9
   assert state.active
-  controls = log.ControlsState.new_message();controls.lateralControlState.pidState = state
+  controls = log.ControlsState.new_message()
+  controls.lateralControlState.pidState = state
   assert controls.lateralControlState.which() == "pidState"
+
+
+def run(ctrl, frames, **kw):
+  cs, lp = sensors(), NS(roll=0., angleOffsetDeg=0.)
+  out = None
+  for i in range(frames):
+    out, ang, _ = ctrl.update(True, sensors(**kw), None, lp, False, -0.01 * min(i / 100, 1), None, False)
+  return out
+
+
+def hold(frames=300, pressed=None, torque_sign=1):
+  ctrl = LatControlHondaEps(real_cp(), None, None)
+  lp = NS(roll=0., angleOffsetDeg=0.)
+  ang, trace = 0., []
+  for i in range(frames):
+    pr = pressed(i) if pressed else False
+    cs = sensors(steeringAngleDeg=ang, steeringPressed=pr, steeringTorque=torque_sign * 1500 * np.sign(ctrl.core.output or 1) if pr else 0.)
+    out, a, _ = ctrl.update(True, cs, None, lp, False, -0.01 * min(i / 100, 1), None, False)
+    ang += (a - ang) * 0.1
+    trace.append((round(ctrl.core.ff_weight, 3), out))
+  return ctrl, trace
+
+
+def test_short_same_direction_press_keeps_feedforward():
+  _, trace = hold(500, pressed=lambda i: 300 <= i < 306)
+  assert min(w for w, _ in trace[300:330]) == 1.0
+
+
+def test_opposing_press_drops_feedforward_immediately():
+  _, trace = hold(500, pressed=lambda i: 300 <= i < 304, torque_sign=-1)
+  assert trace[301][0] == 0.0
+
+
+def test_sustained_same_direction_press_is_recognized():
+  _, trace = hold(500, pressed=lambda i: 300 <= i < 340)
+  assert trace[339][0] == 0.0
+
+
+def test_one_frame_dropout_rides_through_with_zero_output():
+  ctrl, _ = hold(300)
+  cs, lp = sensors(), NS(roll=0., angleOffsetDeg=0.)
+  ctrl.reset()
+  out, _, st = ctrl.update(False, cs, None, lp, False, -0.01, None, False)
+  assert out == 0.0 and not st.active and ctrl.core.ff_weight == 1.0
+  ctrl.reset()
+  out, _, st = ctrl.update(True, cs, None, lp, False, -0.01, None, False)
+  assert out != 0.0 and st.active and ctrl.core.ff_weight == 1.0
+
+
+def test_long_dropout_hard_resets():
+  ctrl, _ = hold(300)
+  cs, lp = sensors(), NS(roll=0., angleOffsetDeg=0.)
   for _ in range(12):
     ctrl.reset()
-    out, angle, state = ctrl.update(False, cs, None, lp, False, -0.005, None, False)
-    assert out == 0 and not state.active
-  assert ctrl.core.pid.i == 0
+    out, _, _ = ctrl.update(False, cs, None, lp, False, -0.01, None, False)
+    assert out == 0.0
+  assert ctrl.core.pid.i == 0 and ctrl.core.output == 0 and ctrl.core.ff_weight == 0
 
 
-@pytest.mark.parametrize("bad_field", ["steeringAngleDeg", "steeringRateDeg", "vEgo", "roll", "angleOffsetDeg", "curvature"])
-def test_invalid_inputs_produce_zero_and_reset(monkeypatch, tmp_path, bad_field):
-  p = tmp_path / "config.json";p.write_text(json.dumps(CFG));monkeypatch.setattr(gate, "CONFIG_PATH", p)
-  c = cp();gate.configure_h020(c, c.carFingerprint, c.carFw)
-  ctrl = LatControlHondaEps(c, None, None, activation=CFG)
-  cs = NS(steeringAngleDeg=0., steeringRateDeg=0., steeringTorque=0., vEgo=12., steeringPressed=False)
-  lp = NS(roll=0., angleOffsetDeg=0.)
-  k = -0.005
-  if bad_field == "curvature":k = float("nan")
-  elif hasattr(cs, bad_field):setattr(cs, bad_field, float("nan"))
-  else:setattr(lp, bad_field, float("nan"))
-  output, angle, state = ctrl.update(True, cs, None, lp, False, k, None, False)
-  assert output == 0 and angle == 0 and not state.active
+@pytest.mark.parametrize("bad_field", ["steeringAngleDeg", "steeringRateDeg", "vEgo", "steeringTorque", "roll", "angleOffsetDeg", "curvature"])
+def test_invalid_inputs_produce_zero_and_reset(bad_field):
+  ctrl = LatControlHondaEps(real_cp(), None, None)
+  cs, lp, k = sensors(), NS(roll=0., angleOffsetDeg=0.), -0.005
+  if bad_field == "curvature":
+    k = float("nan")
+  elif hasattr(cs, bad_field):
+    setattr(cs, bad_field, float("nan"))
+  else:
+    setattr(lp, bad_field, float("nan"))
+  out, angle, state = ctrl.update(True, cs, None, lp, False, k, None, False)
+  assert out == 0 and angle == 0 and not state.active
   assert ctrl.core.output == 0 and ctrl.core.pid.i == 0
+
+
+def test_engage_mid_turn_slews_from_wheel_angle():
+  ctrl = LatControlHondaEps(real_cp(), None, None)
+  cs, lp = sensors(steeringAngleDeg=60.), NS(roll=0., angleOffsetDeg=0.)
+  _, angle, _ = ctrl.update(True, cs, None, lp, False, -0.02, None, False)
+  assert abs(angle - 60.) <= 3.0 + 1e-9
 
 
 @pytest.mark.parametrize("v,p,i", [(0., 0.018, 0.006), (10., 0.02337, 0.00779),
                                   (11.176, 0.048, 0.016), (22.352, 0.060, 0.020), (35., 0.060, 0.020)])
 def test_transferred_tgg_pid_schedule(v, p, i):
-  c = cp();gate.configure_h020(c, c.carFingerprint, c.carFw, CFG)
+  c = real_cp()
   core = ff.HondaEpsLateralCore(list(c.lateralTuning.pid.kpBP), list(c.lateralTuning.pid.kpV),
                               list(c.lateralTuning.pid.kiBP), list(c.lateralTuning.pid.kiV),
                               0.01, ff.HondaEpsFirmwareFeedforward(0.01, H020))
@@ -182,13 +329,8 @@ def test_transferred_tgg_pid_schedule(v, p, i):
 
 def test_tgg_vehicle_donor_with_h020_firmware_inverse():
   from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TGG_A120_RACK
-  assert H020.rack == CIVIC_TGG_A120_RACK
-  assert H020.rack.ratio_v[0] == 15.09
+  assert H020.rack == CIVIC_TGG_A120_RACK and H020.rack.ratio_v[0] == 15.09
   load = ff.column_load(10., 0., 5., 0., H020.load)
   assert load == pytest.approx(-120.18)
   r5 = ff.r5_for_motion(load, 0., H020, angle_deg=10.)
   assert ff.firmware_output(r5, 0., H020, 10.) == pytest.approx(load, abs=1e-8)
-  # Donor transfer must not replace H020's command/P axes or its speed envelope.
-  assert H020.r5_key_bp[1:3] == (226, 311)
-  assert H020.kp_key_bp[0] == 3
-  assert H020.key_ceiling(200 / 3.6) == 1108

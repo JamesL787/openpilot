@@ -1,104 +1,104 @@
 {
-  "archive_sha256": "9e66df6605d5b0039b6c8763f485839b72d7968ebb30c42f4de9e1bccb0d3974",
-  "source_controller_commit": "92428ab490b3085ea523f79cc6a32d392a057b56",
-  "res_base": "01e22f5921d9dfd49235f5867f54d9ec0bdccbaf",
-  "builds": {
-    "20261011-trk4250": {
-      "rwd_sha256": "9fcd18697938a741771aada9f6a1274b7eada6ae3dc3fb1d7d3771c61f97e537",
-      "image_sha256": "53427cbcd80e315c237d34f4e41bb7ef62ddedd6166d670e6352acb1d45587a1",
-      "tracker": 4250,
-      "file": "39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk4250-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd"
-    },
-    "20261011-trk3200": {
-      "rwd_sha256": "56191940003ee614fe1bd18e0a1a67b946c40db5bf69a08109806eca408ade55",
-      "image_sha256": "5b3ba3061d9259abfa622beca1c460aad03b0e8af9422c3199b72a58749bc080",
-      "tracker": 3200,
-      "file": "39990-TEA,H020-20261011-PTM-FF45-Norm1650-Trk3200-P117to265-D737-Pclamp7373-Dclamp1774-Out9000-SpeedClamp0-A280Flat.rwd"
-    }
+ "archive_sha256": "9e66df6605d5b0039b6c8763f485839b72d7968ebb30c42f4de9e1bccb0d3974",
+ "source_controller_commit": "92428ab490b3085ea523f79cc6a32d392a057b56",
+ "res_base": "01e22f5921d9dfd49235f5867f54d9ec0bdccbaf",
+ "firmware": "TEA-H020 rev-b (TGG response + Clarity limits), delivered outside this branch",
+ "builds": {
+  "20261022b-tgg-claritylimits-trk4250": {
+   "rwd_sha256": "e1ad753e11986b9392fc9a1baca8f46605d25bb538b00ed7bf2bec57f2264261",
+   "image_sha256": "a5e87ece9039c820993f0beb3f8f7f9597c09e94ec6518d827be3855cbcb755d",
+   "tracker": 4250,
+   "eps_version": "39990-TEA,H02B"
   },
-  "r5_key_bp": [
-    0,
-    226,
-    311,
-    495,
-    656,
-    887,
-    1108,
-    1552,
-    1774
-  ],
-  "r5_v": [
-    0,
-    1926,
-    4938,
-    8455,
-    12036,
-    15926,
-    20138,
-    26955,
-    30000
-  ],
-  "kp_key_bp": [
-    3,
-    173,
-    441,
-    665,
-    887,
-    1104,
-    1317,
-    1610,
-    1774
-  ],
-  "kp_v": [
-    117,
-    148,
-    184,
-    220,
-    245,
-    257,
-    263,
-    265,
-    265
-  ],
-  "envelope_bp": [
-    0,
-    50,
-    100,
-    150,
-    200,
-    240,
-    300,
-    321,
-    400
-  ],
-  "envelope_v": [
-    1774,
-    1774,
-    1774,
-    1774,
-    1774,
-    1552,
-    1219,
-    1108,
-    1108
-  ],
-  "provenance": "firmware arrays read from the original H020 PTM image; road-dependent fields inferred only",
-  "verified_image_fields": [
-    "r5_key_bp",
-    "r5_v",
-    "kp_key_bp",
-    "kp_v",
-    "envelope_bp",
-    "envelope_v",
-    "NORM=1650",
-    "first-five-variant-selectors=0"
-  ],
-  "variant_byte_differences": [
-    "0x1378e",
-    "0x1378f",
-    "0x4ff80",
-    "0x4ff81",
-    "0x4fffe",
-    "0x4ffff"
-  ]
+  "20261022b-tgg-claritylimits-trk3200": {
+   "rwd_sha256": "0289f9178016effd707de92e5d4923254587d771bbca02e203b1ab9aadb2877b",
+   "image_sha256": "b330ef7150fbf819bc9764c7795cd63d571e14f964b6f8ed7bbec0c851b40ce3",
+   "tracker": 3200,
+   "eps_version": "39990-TEA,H02B"
+  }
+ },
+ "r5_key_bp": [
+  0,
+  226,
+  311,
+  495,
+  656,
+  887,
+  1108,
+  1552,
+  1774
+ ],
+ "r5_v": [
+  0,
+  3818,
+  5258,
+  8378,
+  11099,
+  15003,
+  18747,
+  26253,
+  30002
+ ],
+ "kp_key_bp": [
+  0,
+  237,
+  473,
+  709,
+  946,
+  1182,
+  1419,
+  1655,
+  1892
+ ],
+ "kp_v": [
+  117,
+  148,
+  184,
+  220,
+  245,
+  257,
+  263,
+  265,
+  265
+ ],
+ "envelope_bp": [
+  0,
+  50,
+  100,
+  150,
+  200,
+  260,
+  300,
+  350,
+  400
+ ],
+ "envelope_v": [
+  1774,
+  1774,
+  1774,
+  1774,
+  1774,
+  1330,
+  1330,
+  1330,
+  1330
+ ],
+ "key_clamp": 1663,
+ "norm": 1650,
+ "provenance": "tables read from the rev-b image row 0; compared with the TGG-A120 rev-b image (P/D/clamps/code identical, command map within 2 R5 counts, envelope differs: Clarity limits vs flat 1774)",
+ "verified_image_fields": [
+  "r5_key_bp",
+  "r5_v",
+  "kp_key_bp",
+  "kp_v",
+  "envelope_bp",
+  "envelope_v",
+  "key_clamp",
+  "variant selectors = 0"
+ ],
+ "not_verified": [
+  "ECU readback of the installed image/tracker",
+  "pre-table shaping gates on H020",
+  "any on-vehicle behavior"
+ ]
 }

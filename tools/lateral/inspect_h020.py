@@ -1,67 +1,34 @@
 #!/usr/bin/env python3
-"""Read-only H020 startup report. Exit 2 on an activation mismatch/blocker."""
-
+"""Read-only: report whether the H020 rev-b controller is selected for the CarParams card published."""
 import json
-from openpilot.selfdrive.controls.lib.honda_eps_h020_activation import load_activation, validate_final_params, H020ActivationError, has_h020_response
+
+from openpilot.selfdrive.controls.lib.honda_eps_calibrations import CALIBRATION_PROVENANCE
 from openpilot.selfdrive.controls.lib.latcontrol_honda_eps import use_honda_eps_controller
-from openpilot.selfdrive.controls.lib.honda_eps_calibrations import CALIBRATION_PROVENANCE, REQUIRED_PTM_BUILDS, provenance_for_build
-from openpilot.selfdrive.controls.lib.honda_eps_h020_fingerprint import firmware_match_report
+from opendbc.sunnypilot.car.honda.h020_ptm import is_h020
 
 
-def build_report(cp, raw, params, requested, activation_path=None):
-  blockers = []
-  snapshot = {"enabled": False}
-  ignored = bool(requested.get("enabled") and not has_h020_response(cp))
-  try:
-    # Diagnose the requested gate even if card refused before publishing an activation record.
-    if requested.get("enabled") and not ignored:
-      validate_final_params(cp, requested, params)
-    snapshot = load_activation(cp, raw, activation_path)
-    snapshot = validate_final_params(cp, snapshot, params)
-  except H020ActivationError as e:
-    blockers.append(str(e))
-  if requested.get("enabled") and not snapshot.get("enabled") and not ignored and not blockers:
-    blockers.append("Enabled config has no matching activated CarParams; restart card/controlsd together offroad")
-  selected = not blockers and use_honda_eps_controller(cp, snapshot)
-  return {
-    "fingerprint": str(cp.carFingerprint),
-    "fingerprintSource": str(cp.fingerprintSource),
-    "fuzzyFingerprint": cp.fuzzyFingerprint,
-    "dashcamOnly": cp.dashcamOnly,
-    "lateralTuning": cp.lateralTuning.which(),
-    "torqueBP": list(cp.lateralParams.torqueBP),
-    "torqueV": list(cp.lateralParams.torqueV),
-    "requested_config": requested,
-    "startup_config": snapshot,
-    "restart_required": not ignored and snapshot != requested,
-    "ignored_config_reason": "Exact H020 PTM EPS absent; original res path" if ignored else None,
-    "firmware_match": firmware_match_report(cp) if has_h020_response(cp) else None,
-    "controller_selected": bool(selected),
-    "blockers": blockers,
-    "firmware": [{"ecu": str(f.ecu), "address": hex(f.address), "version": bytes(f.fwVersion).decode("ascii", errors="replace")} for f in cp.carFw],
-    "provenance": provenance_for_build(snapshot["ptm_build"]) if snapshot.get("ptm_build") in REQUIRED_PTM_BUILDS else CALIBRATION_PROVENANCE,
-    "limits": [
-      "Queried H020/H02B identifies the declared image family; tracker/build selection is an owner declaration, not a full ECU image/hash readback",
-      "No H020 route validation; TGG donor baseline; firmware shaping gates unresolved",
-    ],
-  }
+def build_report(cp):
+  return {"fingerprint": str(cp.carFingerprint), "fingerprintSource": str(cp.fingerprintSource),
+          "fuzzyFingerprint": cp.fuzzyFingerprint, "dashcamOnly": cp.dashcamOnly,
+          "lateralTuning": cp.lateralTuning.which(), "torqueBP": list(cp.lateralParams.torqueBP),
+          "torqueV": list(cp.lateralParams.torqueV), "h020_rev_b_eps": is_h020(cp.carFw),
+          "controller_selected": use_honda_eps_controller(cp),
+          "firmware": [{"ecu": str(f.ecu), "address": hex(f.address),
+                        "version": bytes(f.fwVersion).decode("ascii", errors="replace")} for f in cp.carFw],
+          "provenance": CALIBRATION_PROVENANCE,
+          "limits": ["EPS version string cannot tell the 4250 and 3200 tracker images apart",
+                     "No H020 route validation; TGG donor baseline; firmware shaping gates unverified"]}
 
 
 def main():
   from cereal import car
   import cereal.messaging as messaging
   from openpilot.common.params import Params
-  from opendbc.sunnypilot.car.honda.h020_ptm import read_config
-
-  params = Params()
-  raw = params.get("CarParams")
+  raw = Params().get("CarParams")
   if not raw:
-    raise SystemExit("No CarParams: inspect card startup errors before continuing.")
-  cp = messaging.log_from_bytes(raw, car.CarParams)
-  report = build_report(cp, raw, params, read_config())
-  print(json.dumps(report, indent=2))
-  return 2 if report["blockers"] else 0
+    raise SystemExit("No CarParams: let the existing res software identify the vehicle first.")
+  print(json.dumps(build_report(messaging.log_from_bytes(raw, car.CarParams)), indent=2))
 
 
 if __name__ == "__main__":
-  raise SystemExit(main())
+  main()
