@@ -68,22 +68,25 @@ def decode(raw: bytes) -> LaneChangePolicy | None:
     return None
   version = data.get("version")
   fields = {"version", "enabled", "minimumSpeedMps", "onePerSignal"}
-  if version in (2, 3, 4, 5):
+  if version in (2, 3, 4, 5, 6):
     fields |= {"autoLaneChange", "autoDelayS", "minimumLaneWidthM"}
-  if version in (3, 4, 5):
+  if version in (3, 4, 5, 6):
     fields |= {"closeGap", "closeGapSeconds"}
-  if version in (4, 5):
+  if version in (4, 5, 6):
     fields |= {"durationS"}
-  # SGSP's version 5 carries turnSignalGuidance in place of our turnDesires / turnDesireSpeedMps. Read both: rejecting
-  # either would make the live policy fall back to disabled and turn lane-change assistance off.
+  # SGSP's version 5 carries turnSignalGuidance in place of our turnDesires / turnDesireSpeedMps, and night-star7's
+  # version 6 carries all three. Read them all (guidance is checked, then ignored): rejecting one would make the live
+  # policy fall back to disabled and turn lane-change assistance off. This branch only ever writes its own v4 / v5.
   sgsp_shape = version == 5 and "turnSignalGuidance" in data
   if version == 5:
     fields |= {"turnSignalGuidance"} if sgsp_shape else {"turnDesires", "turnDesireSpeedMps"}
+  if version == 6:
+    fields |= {"turnSignalGuidance", "turnDesires", "turnDesireSpeedMps"}
   if set(data) != fields:
     return None
   enabled = data["enabled"]
   speed, once = data["minimumSpeedMps"], data["onePerSignal"]
-  if (type(version) is not int or version not in (1, 2, 3, 4, 5) or type(enabled) is not bool or type(once) is not bool or
+  if (type(version) is not int or version not in (1, 2, 3, 4, 5, 6) or type(enabled) is not bool or type(once) is not bool or
       type(speed) not in (int, float)):
     return None
   try:
@@ -123,6 +126,8 @@ def decode(raw: bytes) -> LaneChangePolicy | None:
     if type(data["turnSignalGuidance"]) is not bool:
       return None
     return LaneChangePolicy(enabled, finite_speed, once, auto, delay, width, close_gap, seconds, float(duration))
+  if version == 6 and type(data["turnSignalGuidance"]) is not bool:
+    return None
   turn, turn_speed = data["turnDesires"], data["turnDesireSpeedMps"]
   if type(turn) is not bool or type(turn_speed) not in (int, float) or not valid_turn_desire_speed(turn_speed):
     return None
