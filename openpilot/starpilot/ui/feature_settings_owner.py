@@ -1149,8 +1149,9 @@ class FeatureSettingsOwner:
             "acceleration at low set speeds and near the set speed. Works with either planner. Changes apply on the next drive. " +
             "Acts only on verified Bosch-A Hondas with openpilot longitudinal."))):
         bosch_a_enabled, _, _ = self._value(bosch_a_key)
-        rows.append(self._bool_row(bosch_a_key, bosch_a_label, self.authority("preferences") and
-                                   (bosch_a_supported or bosch_a_enabled == "1"), reason=bosch_a_reason))
+        if not (bosch_a_supported or bosch_a_enabled == "1"):
+          continue  # hidden off a verified Bosch-A Honda (Clarity, Nidec, other brands); shown while On so it can be turned off
+        rows.append(self._bool_row(bosch_a_key, bosch_a_label, self.authority("preferences"), reason=bosch_a_reason))
       allowed = configurable and system_long
       if self.show_cruise_intervals or toyota_cruise_capability(self.vehicle_params()) is not None:
         rows.extend(self._cruise_rows(configurable))
