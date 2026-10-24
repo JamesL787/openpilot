@@ -78,7 +78,10 @@ CMD_DELAY_RAMP_S = 1.0  # s, from one source's command delay to the other's when
 # turn at 13 m/s, P alone pushed the other way, and the wheel unwound at 190 deg/s while the error grew past 10 deg.
 # So a dropout this short sends nothing but keeps the controller's state, tracking with the integrator held, and only
 # a longer one resets it. In the closed-loop replay of that turn: feedforward off 250 -> 0 ms, worst error 11 -> 8 deg.
+# RDX only: that fault is the RDX's, and no other car has been road-checked with the window, so every other car still
+# resets on every inactive frame exactly as before (ride_through_frames == 0).
 RIDE_THROUGH_S = 0.1
+RIDE_THROUGH_CARS = ("ACURA_RDX_3G", "ACURA_RDX_3G_MMR")  # the fingerprints of the "39990-TJB-A220" calibration
 
 
 
@@ -216,7 +219,7 @@ class LatControlHondaEps(LatControl):
     self.steering_pressed_filter_s = 0.0
     self.steering_pressed_prev = False
     self.inactive_frames = math.inf  # frames since latActive was last true; see RIDE_THROUGH_S
-    self.ride_through_frames = int(round(RIDE_THROUGH_S / dt))
+    self.ride_through_frames = int(round(RIDE_THROUGH_S / dt)) if str(CP.carFingerprint) in RIDE_THROUGH_CARS else 0
     self.starpilot_lateral_state = custom.StarPilotLateralState.new_message()
     self._read_settings()
 
@@ -241,8 +244,9 @@ class LatControlHondaEps(LatControl):
     return self.cmd_delay_scale * command_delay(self.calibration, v_ego)
 
   def reset(self):
-    # controlsd calls this on every inactive frame; update() decides whether the dropout is long enough to reset
-    if self.inactive_frames > self.ride_through_frames:
+    # controlsd calls this on every inactive frame. With no ride-through window (every car but the RDX) it is the plain
+    # reset it always was; on the RDX update() decides whether the dropout is long enough to reset
+    if self.ride_through_frames == 0 or self.inactive_frames > self.ride_through_frames:
       self._hard_reset()
 
   def _hard_reset(self):

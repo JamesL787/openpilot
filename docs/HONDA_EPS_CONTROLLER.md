@@ -109,14 +109,16 @@ them apart: `REQUIRED_PTM_RWD` names the build each calibration models, and the 
   0-3) tops out at 3841/4096 = 0.9377 (key 1663 is 3840.6 E4 counts, rounded up); a car sent its own clamp (the Clarity,
   the Civics, the Insight, the RDX) at 1.0. The residual PID is
   clamped to the same ceiling so its integrator cannot wind into 0xE4 the map ignores.
-- **Dropouts.** A one-frame STEER_STATUS fault drops latActive for a frame, and controlsd resets the controller on every
-  inactive frame. The RDX's NO_TORQUE_ALERT_1 (STEER_STATUS=2) trips when the EPS's torque signal passes 768 of its own
+- **Dropouts (RDX only).** A one-frame STEER_STATUS fault drops latActive for a frame, and controlsd resets the controller
+  on every inactive frame. The RDX's NO_TORQUE_ALERT_1 (STEER_STATUS=2) trips when the EPS's torque signal passes 768 of its own
   counts, which are half the Clarity's: 768 x 2 = 1536 in the Clarity's internal units, and the 0x18F packer scales those
   by 1000/512, so it shows as |STEER_TORQUE_SENSOR| of about 3000 on the CAN bus (flipping at about 3000 on the RDX logs;
   the Clarity's own trip is the same 3000, measured onset 3048-3064). Its rise debounce is about 3 ticks where the
   Clarity's is 50, so the status flips within one 10 ms frame of the crossing, and one hard torque spike is enough. A
   dropout shorter than `RIDE_THROUGH_S` (0.1 s) sends nothing but keeps the feedforward and tracks with the integrator
-  held; a longer one resets as before. In the closed-loop replay of the turn that prompted it (route
+  held; a longer one resets as before. Only the RDX has the window (`RIDE_THROUGH_CARS`, the fingerprints of its
+  "39990-TJB-A220" calibration, both 3G fingerprints): the fault is the RDX's and no other car has been road-checked with it,
+  so every other car resets on every inactive frame exactly as before (`ride_through_frames` is 0). In the closed-loop replay of the turn that prompted it (route
   412ed2539bfc2c42/000000cc): feedforward off 250 -> 0 ms, worst error 11 -> 8 deg.
 - **Disengage** (a dropout past the ride-through) resets the PID and the feedforward.
 

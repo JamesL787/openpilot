@@ -348,10 +348,17 @@ def _get_rack_map(fw):
   return honda_eps.get_rack_map(CP, honda_eps.eps_firmware_calibration(CP))
 
 
-def _controller(monkeypatch, values=None):
+RDX_PTM_FW = b'39990-TJB,A220\x00\x00'
+
+
+def _controller(monkeypatch, values=None, fw=CLARITY_MODIFIED_FW, candidate=CAR.HONDA_CLARITY):
   monkeypatch.setattr(honda_eps, "Params", lambda: _Params(values))
-  CP = _params(CLARITY_MODIFIED_FW)
+  CP = _params(fw, candidate)
   return honda_eps.LatControlHondaEps(CP, None, DT_CTRL), VehicleModel(CP), CP
+
+
+def _rdx_controller(monkeypatch, candidate=CAR.ACURA_RDX_3G):
+  return _controller(monkeypatch, fw=RDX_PTM_FW, candidate=candidate)
 
 
 def test_only_calibrated_modified_eps_images_get_this_controller():
@@ -442,7 +449,7 @@ def test_controller_steers_logs_and_rests(monkeypatch):
   assert state.epsFfActive and state.epsFfWeight == 1.0 and state.epsFfR5 != 0.0
   msg = log.Event.new_message(starpilotLateralState=state)   # what controlsd publishes
   assert msg.starpilotLateralState.epsFfWeight == 1.0
-  # past the ride-through a disengagement resets it
+  # off the RDX there is no ride-through: a disengagement resets it at once
   for _ in range(lac.ride_through_frames + 1):
     lac.reset()   # controlsd, every inactive frame
     out, _, pid_log = lac.update(False, car.CarState.new_message(), VM, log.VehicleParameters.new_message(), False, 0.0,
@@ -463,8 +470,8 @@ def _engaged_in_a_turn(lac, VM, frames=300, v=13.0):
 
 
 def test_a_one_frame_fault_does_not_throw_the_turn_away(monkeypatch):
-  # a single inactive frame (a one-sample STEER_STATUS fault) sends nothing but keeps the feedforward and integrator
-  lac, VM, _ = _controller(monkeypatch)
+  # a single inactive frame (a one-sample STEER_STATUS fault, the RDX's) sends nothing but keeps the feedforward and integrator
+  lac, VM, _ = _rdx_controller(monkeypatch)
   CS, params = _engaged_in_a_turn(lac, VM)
   ff, i = lac.core.ff.output, lac.core.pid.i
   assert lac.core.ff_weight == 1.0 and abs(ff) > 0.05
@@ -477,7 +484,7 @@ def test_a_one_frame_fault_does_not_throw_the_turn_away(monkeypatch):
 
 
 def test_a_long_dropout_still_resets(monkeypatch):
-  lac, VM, _ = _controller(monkeypatch)
+  lac, VM, _ = _rdx_controller(monkeypatch)
   CS, params = _engaged_in_a_turn(lac, VM)
   for k in range(lac.ride_through_frames + 1):
     assert lac.core.ff_weight == 1.0, k
@@ -508,6 +515,44 @@ CALIBRATION_CARS = [
   (CAR.HONDA_CRV_5G, b'39990-TLA,A220\x00\x00', eps_cal.CRV_TLA_A220),
 ]
 ALL_PROFILES = [p for _, _, p in CALIBRATION_CARS]
+NON_RDX_CARS = [(c, fw) for c, fw, _ in CALIBRATION_CARS]
+
+
+def test_the_ride_through_window_is_the_rdx_only(monkeypatch):
+  # the window is the "39990-TJB-A220" calibration's fingerprints and nobody else's
+  assert set(honda_eps.RIDE_THROUGH_CARS) == set(eps_cal.EPS_FIRMWARE_CALIBRATIONS["39990-TJB-A220"][0])
+  window = int(round(honda_eps.RIDE_THROUGH_S / DT_CTRL))
+  assert window > 0
+  for candidate in (CAR.ACURA_RDX_3G, CAR.ACURA_RDX_3G_MMR):   # both RDX fingerprints get it
+    lac, _, _ = _rdx_controller(monkeypatch, candidate)
+    assert lac.ride_through_frames == window, candidate
+  for candidate, fw in NON_RDX_CARS:                              # no other calibrated car does
+    lac, _, _ = _controller(monkeypatch, fw=fw, candidate=candidate)
+    assert lac.ride_through_frames == 0, candidate
+
+
+def _state(lac):
+  return (lac.core.ff_weight, lac.core.ff.output, lac.core.pid.i, lac.core.pid.p, lac.core.output,
+          lac.steering_pressed_filter_s, lac.steering_pressed_prev)
+
+
+@pytest.mark.parametrize("candidate,fw", NON_RDX_CARS, ids=[f"{c}-{fw[6:14].decode()}" for c, fw in NON_RDX_CARS])
+def test_off_the_rdx_the_first_inactive_frame_resets_in_that_frame_as_it_always_did(monkeypatch, candidate, fw):
+  # no ride-through: controlsd's reset() on the first inactive frame is the plain reset, in that frame and not one later,
+  # and the update that follows leaves exactly the state the plain reset did
+  new, VM, _ = _controller(monkeypatch, fw=fw, candidate=candidate)
+  old, _, _ = _controller(monkeypatch, fw=fw, candidate=candidate)
+  assert new.ride_through_frames == 0
+  CS, params = _engaged_in_a_turn(new, VM)
+  _engaged_in_a_turn(old, VM)
+  assert _state(new) == _state(old) and new.core.output != 0.0
+  new.reset()            # controlsd, the first inactive frame
+  old._hard_reset()      # the reset every car had before the ride-through existed
+  assert _state(new) == _state(old)
+  assert new.core.ff_weight == 0.0 and new.core.pid.i == 0.0 and new.core.output == 0.0
+  results = [lac.update(False, CS, VM, params, False, -0.004, False, 0.2, None, None, SimpleNamespace()) for lac in (new, old)]
+  assert results[0][0] == results[1][0] == 0.0 and not results[0][2].active and not results[1][2].active
+  assert _state(new) == _state(old)
 
 
 @pytest.mark.parametrize("candidate,fw,cal", CALIBRATION_CARS, ids=[p.name for _, _, p in CALIBRATION_CARS])
