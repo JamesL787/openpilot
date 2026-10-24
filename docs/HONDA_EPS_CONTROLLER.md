@@ -52,7 +52,7 @@ get a first calibration. Every other PID car keeps 7.0's stock `LatControlPID`.
 - **Firmware**, read from the image: command-map row (key axis + R5), P-row key axis, key clamp, speed envelope,
   KFF, scale word, R6. R6 is computed from the image's A table (`computed_r6`: -122 counts per deg/s at centre x
   NORM/1650 x A0/16384, shaped by the table's slope by angle) and clamped at +-32765 as the firmware clamps it, so
-  it needs no EPS telemetry.
+  it needs no EPS telemetry. (The RDX's TJB-A220 has no A table: its R6 is read from the firmware, see Geometry.)
 - **Vehicle**, measured on the road: column load, residual-PID trims, command delay, model-delay schedule, rack map.
 
 `CALIBRATION_PROVENANCE` records, for every quantity of every image, whether it is `firmware`, `measured` (with the
@@ -72,19 +72,20 @@ them apart: `REQUIRED_PTM_RWD` names the build each calibration models, and the 
   published specs (`honda_eps_spec_plant`): every measured map is the A table, a tan, and one centre ratio R0, and R0
   comes from the published lock-to-lock turns and lock ratio through the A table (held out one car at a time, 1.6%
   rms, 2.5% worst); the slip factor comes from the axle loads (within 10%). The A030 carries the TEG-A010's measured
-  map (same car, same A table). The RDX's TJB-A220 image has no A table at all: its linear map is integrated from the EPS's own
-  0x18F rate word, which quickens with the rack, and the rack map is fitted on its yaw through it. The same PTM runs on
-  every 3G RDX (2019-2026, the 2022+ MMR included), so both fingerprints take this calibration; its vehicle side was
-  measured on a 2019 over five routes: R6 is read from the firmware (reference = 32 x its 0x18F rate word x 0.4812, the word
-  measured at 7.8 per deg/s), and a closed-loop replay (`tools/lateral/eps_closed_loop.py`) sets its trims, P x0.7 above
-  50 mph and a softer friction knee at speed (`friction_width_v`), because its loop is delay-limited there. Every calibration has one, and a car whose firmware A table is unknown stays on the
+  map (same car, same A table). Every calibration has a rack map, and a car whose firmware A table is unknown stays on the
   modified PID; paramsd's steer ratio, the road-measured curves and `HondaEpsFirmwareVgr` apply to the modified PID
   only.
+- **The RDX.** Its TJB-A220 image has no A table at all: its linear map is integrated from the EPS's own 0x18F rate word,
+  which quickens with the rack, and the rack map is fitted on its yaw through it. The same PTM runs on every 3G RDX
+  (2019-2026, the 2022+ MMR included), so both fingerprints take this calibration; its vehicle side was measured on a 2019
+  over five routes. R6 is read from the firmware (reference = 32 x its 0x18F rate word x 0.4812, the word measured at 7.8
+  per deg/s), and a closed-loop replay (`openpilot/tools/lateral/eps_closed_loop.py`) sets its trims, P x0.7 above 50 mph
+  and a softer friction knee at speed (`friction_width_v`), because its loop is delay-limited there.
 - **Column load.** Measured per car, or carried over from the same platform. `spec_load_terms` predicts one from
   front-axle mass / R0^2 for an image with no sibling (holds within ~12%, turn rates ~15%, held out).
 - **Command delay.** The curvature the car executes is delayed by the calibration's `cmd_delay_s` below 10 m/s and
-  `cmd_delay_highway_s` from 15 m/s (the Civics hold theirs flat and the Clarity takes 0.10 s, since they ran as early
-  on the highway as in town; 0 on the Insight), scaled by where the steering comes from (the `ModelLateralSource` param,
+  `cmd_delay_highway_s` from 15 m/s (the Civics hold theirs flat at 0.15 s and the Clarity takes 0.10 s, since they ran as early
+  on the highway as in town; the Insight (0.15 s in town), both CR-Vs and the RDX (the 0.12 s default) have none from 15 m/s), scaled by where the steering comes from (the `ModelLateralSource` param,
   which modeld writes whenever the model actually steering changes, a Chestnut stall included; controlsd reads it once
   a second):
   - **actionHead** (v14-v16, e.g. Cinque v3): the full `cmd_delay_s`. The model moves its aim only ~0.53 of a change
@@ -126,10 +127,11 @@ The Night Star page (`openpilot/starpilot/ui/night_star_feature.py`) edits these
 |---|---|
 | `HondaEpsAngleRateLimit` | deg/s ceiling on the desired-angle slew (0 disables); shown on calibrated cars only |
 | `HondaDriverOverrideThreshold`, `HondaOverrideTorqueScale`, `HondaDriverAssistDuringOverride` | the override the carcontroller applies |
-| `HondaMinSteerSpeed`, `HondaSteerDeltaLimiter`, `HondaSteerDeltaUp` / `Down` | the carcontroller's command limits |
+| `HondaMinSteerSpeed` | no steering torque below this speed |
 
-Fixed by design, with no row: `HondaTorqueOutputLowPassFilter` / `HondaTorqueOutputLpfTau*` (the output filter) and
-`HondaOverrideFadeUpSecs` / `FadeDownSecs`. These keys survive 7.0's first-start archive
+Fixed by design, with no row: `HondaTorqueOutputLowPassFilter` / `HondaTorqueOutputLpfTau*` (the output filter),
+`HondaOverrideFadeUpSecs` / `FadeDownSecs`, and `HondaSteerDeltaLimiter` / `HondaSteerDeltaUp` / `Down` (the stock steer
+rate limit: off by default, still read by the carcontroller, off the page since 10-20). These keys survive 7.0's first-start archive
 (`openpilot/starpilot/honda_eps_settings.py`), and the manager moves values saved under older names to the current
 ones first.
 
