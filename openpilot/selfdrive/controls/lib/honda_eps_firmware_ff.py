@@ -170,8 +170,9 @@ class EpsFirmwareCalibration:
   def output_ceiling(self) -> float:
     """The largest |output| the firmware still answers: past the end of the command row or the input clamp, more 0xE4
     gives the same R5. A 4096-per-unit car whose row ends at key 1663 (CR-V A040 rows 0-1, A220 rows 0-3) tops out at
-    3840/4096 = 0.9375; a car sent its own clamp (the Clarity, the Civics) at 1.0. The speed envelope is left out: it
-    lowers the ceiling only at highway speed, on every car, and the validated cars were tuned with 1.0 there."""
+    3841/4096 = 0.9377 (key 1663 is 3840.6 E4 counts, rounded up by the ceil below); a car sent its own clamp (the Clarity,
+    the Civics) at 1.0. The speed envelope is left out: it lowers the ceiling only at highway speed, on every car, and the
+    validated cars were tuned with 1.0 there."""
     key = min(self.key_clamp, self.r5_key_bp[-1])
     return min(1.0, math.ceil(key * 4.0 * 32768.0 / 56756.0) / self.e4_per_output)
 
