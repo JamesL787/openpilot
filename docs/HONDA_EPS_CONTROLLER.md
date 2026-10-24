@@ -106,7 +106,8 @@ them apart: `REQUIRED_PTM_RWD` names the build each calibration models, and the 
   back in, the integrator bleeds toward 0 (tau 0.5 s) rather than holding its pre-press value.
 - **Output ceiling.** The output is limited to what the firmware still answers: past the end of the command row or the
   input clamp, more 0xE4 gives the same R5. A 4096-per-unit car whose row ends at key 1663 (CR-V A040 rows 0-1, A220 rows
-  0-3) tops out at 3840/4096 = 0.9375; a car sent its own clamp (the Clarity, the Civics) at 1.0. The residual PID is
+  0-3) tops out at 3841/4096 = 0.9377 (key 1663 is 3840.6 E4 counts, rounded up); a car sent its own clamp (the Clarity,
+  the Civics, the Insight, the RDX) at 1.0. The residual PID is
   clamped to the same ceiling so its integrator cannot wind into 0xE4 the map ignores.
 - **Dropouts.** A one-frame STEER_STATUS fault drops latActive for a frame, and controlsd resets the controller on every
   inactive frame. The RDX's NO_TORQUE_ALERT_1 (STEER_STATUS=2) trips when the EPS's torque signal passes 768 of its own
