@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import math
 import os
 import time
 import numpy as np
@@ -307,11 +308,18 @@ class LongitudinalMpc:
     lead_xv = self.extrapolate_lead(x_lead, v_lead, a_lead, a_lead_tau)
     return lead_xv
 
-  def update(self, radarstate, personality=log.LongitudinalPersonality.standard):
+  def update(self, radarstate, personality=log.LongitudinalPersonality.standard, *, acceleration_max=None, lead_paths=None):
     t_follow = get_T_FOLLOW(personality)
 
     lead_xv_0 = self.process_lead(radarstate.leadOne)
     lead_xv_1 = self.process_lead(radarstate.leadTwo)
+    # ---- BOSCH-A HOOK (HumanFollowing; not in upstream 521db4c8) ----
+    # lead_paths is (leadOne path, leadTwo path) from human_following.upstream_lead_paths; a None entry keeps the stock
+    # extrapolation above. Only passed when the BoschAHumanFollowing toggle is on and the car passes enabled_for.
+    if lead_paths is not None:
+      lead_xv_0 = lead_xv_0 if lead_paths[0] is None else lead_paths[0]
+      lead_xv_1 = lead_xv_1 if lead_paths[1] is None else lead_paths[1]
+    # ---- end BOSCH-A HOOK ----
 
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance
@@ -329,6 +337,9 @@ class LongitudinalMpc:
 
     self.params[:,0] = ACCEL_MIN
     self.params[:,1] = ACCEL_MAX
+    # ---- BOSCH-A HOOK (HumanAcceleration; not in upstream 521db4c8): same bound check as StarPilot's long_mpc ----
+    if acceleration_max is not None and math.isfinite(acceleration_max) and 0.0 <= acceleration_max <= ACCEL_MAX:
+      self.params[:,1] = acceleration_max
     self.params[:,2] = np.min(x_obstacles, axis=1)
     self.params[:,3] = np.copy(self.a_prev)
     self.params[:,4] = t_follow

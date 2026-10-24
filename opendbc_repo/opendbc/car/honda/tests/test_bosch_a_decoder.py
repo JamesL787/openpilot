@@ -397,7 +397,9 @@ class TestRangeAzimuth:
       rr = ri.update(sweep(0, i & 0xF, 0x7, raw, 1024, 1 + 2 * i, i * 70_000_000, with_aux=True,
                            direct_vrel_raw=BOSCH_A_DIRECT_VREL_MIN_RAW, direct_vrel_uncertainty_raw=90))
     assert len(rr.points) == 1
-    assert rr.points[0].vRel == pytest.approx(-12.0)
+    # BOSCH_A_U11_FLOOR_UNMEASURED: kept, but published unmeasured with its own range fit (-1.25 m per 70 ms), not -12.
+    assert rr.points[0].vRel == pytest.approx(-20 * BOSCH_A_RANGE_SCALE_M / 0.07)
+    assert not rr.points[0].deprecated.measured
 
   def test_range_scale_matches_firmware_q16_conversion(self):
     """The range scale is firmware-derived, not capture-fitted.
@@ -866,14 +868,22 @@ class TestVrel:
     ~25% against clean U11 (slope 0.72-0.84 over 5011 comparisons), so it cannot be trusted to
     manufacture a larger closing rate. Recovering the true value past a rail needs the range
     channel and a separate validated change.
+
+    The low rail is that change (BOSCH_A_U11_FLOOR_UNMEASURED): raw 0 publishes the D-043 range fit, unmeasured; a
+    two-sweep floor birth has no fit yet, so it publishes the floor itself as the bound, unmeasured. The ratio still
+    never sets it.
     """
     ri = make_radar_interface()
     ri.update(sweep(0, 0, 0x7, 1000, 1024, 1, 0, with_aux=True,
                     direct_vrel_raw=direct_raw, direct_vrel_uncertainty_raw=80, rawca=500))
     rr = ri.update(sweep(0, 1, 0x7, range_raw, 1024, 3, 50_000_000, with_aux=True,
                          direct_vrel_raw=direct_raw, direct_vrel_uncertainty_raw=80, rawca=rawca))
+    if expected is None:
+      assert len(rr.points) == 0
+      return
     assert len(rr.points) == 1
     assert rr.points[0].vRel == pytest.approx(expected)
+    assert rr.points[0].deprecated.measured == (direct_raw != 0)
 
   def test_first_sighting_vrel_is_zero(self):
     ri = make_radar_interface()
@@ -1757,6 +1767,15 @@ class TestRailIntervalBoundsTheCoast:
   RAIL_RAW = 0  # U11 low rail: true closing >= 12.0 m/s
   RAIL_MPS = -12.0
 
+  # These exercise the D-063 low-rail machinery with raw U11 0, which BOSCH_A_U11_FLOOR_UNMEASURED now takes off that
+  # path (the machinery still serves the raw 1728 rail). Run them on the decoder as it was before that change.
+  def setup_method(self, method=None):
+    self._floor_unmeasured = radar_interface_module.BOSCH_A_U11_FLOOR_UNMEASURED
+    radar_interface_module.BOSCH_A_U11_FLOOR_UNMEASURED = False
+
+  def teardown_method(self, method=None):
+    radar_interface_module.BOSCH_A_U11_FLOOR_UNMEASURED = self._floor_unmeasured
+
   def _drive(self, ri, i, d, u11_raw, uncertainty=0):
     return ri.update(sweep(0, i & 0xF, 0x7, round((d - BOSCH_A_RANGE_OFFSET_M) / BOSCH_A_RANGE_SCALE_M), 1024,
                            (1 + 2 * i) & 0xFFF, i * self.DT_NANOS, with_aux=True, direct_vrel_raw=u11_raw,
@@ -1935,6 +1954,15 @@ class TestRailIntervalExactOnDegradedSweeps:
   DT_NANOS = 70_000_000
   RAIL_RAW = 0
 
+  # These exercise the D-063 low-rail machinery with raw U11 0, which BOSCH_A_U11_FLOOR_UNMEASURED now takes off that
+  # path (the machinery still serves the raw 1728 rail). Run them on the decoder as it was before that change.
+  def setup_method(self, method=None):
+    self._floor_unmeasured = radar_interface_module.BOSCH_A_U11_FLOOR_UNMEASURED
+    radar_interface_module.BOSCH_A_U11_FLOOR_UNMEASURED = False
+
+  def teardown_method(self, method=None):
+    radar_interface_module.BOSCH_A_U11_FLOOR_UNMEASURED = self._floor_unmeasured
+
   def _drive(self, ri, i, d, range_sigma_raw):
     return ri.update(sweep(0, i & 0xF, 0x7, round((d - BOSCH_A_RANGE_OFFSET_M) / BOSCH_A_RANGE_SCALE_M), 1024,
                            (1 + 2 * i) & 0xFFF, i * self.DT_NANOS, with_aux=True, direct_vrel_raw=self.RAIL_RAW,
@@ -2040,6 +2068,15 @@ class TestDegradedRailAdmissionNeedsRangeCorroboration:
   sweep, closing ~16-18 m/s: admitted) against 0000025e 6:43 track 48 (a walk 47.9 -> 35.3 m, then the range sat
   still while U11 stayed on the rail: not admitted)."""
   DT_NANOS = 70_000_000
+
+  # These exercise the D-063 low-rail machinery with raw U11 0, which BOSCH_A_U11_FLOOR_UNMEASURED now takes off that
+  # path (the machinery still serves the raw 1728 rail). Run them on the decoder as it was before that change.
+  def setup_method(self, method=None):
+    self._floor_unmeasured = radar_interface_module.BOSCH_A_U11_FLOOR_UNMEASURED
+    radar_interface_module.BOSCH_A_U11_FLOOR_UNMEASURED = False
+
+  def teardown_method(self, method=None):
+    radar_interface_module.BOSCH_A_U11_FLOOR_UNMEASURED = self._floor_unmeasured
 
   def _drive(self, ri, i, d, sigma):
     return ri.update(sweep(0, i & 0xF, 0x7, round((d - BOSCH_A_RANGE_OFFSET_M) / BOSCH_A_RANGE_SCALE_M), 1024,
@@ -2182,3 +2219,110 @@ class TestNewbornLeadsToggle:
     first = next(points for points in published if points)
     assert first[0].deprecated.measured is False
     assert first[0].vRel == pytest.approx(-19.8, abs=0.5)  # the range fit (-20), bounded at -vEgo
+
+
+class TestU11FloorUnmeasured:
+  """BOSCH_A_U11_FLOOR_UNMEASURED: raw U11 0 is never a velocity measurement. Static evidence only."""
+
+  @staticmethod
+  def _sweep(ri, i, range_raw, u11):
+    return ri.update(sweep(0, i & 0xF, 0x7, range_raw, 1024, 1 + 2 * i, i * 70_000_000, with_aux=True,
+                           direct_vrel_raw=u11, direct_vrel_uncertainty_raw=90))
+
+  def test_floor_born_track_publishes_the_floor_bound_then_the_range_fit(self):
+    ri = make_radar_interface()
+    published = []
+    for i in range(7):
+      rr = self._sweep(ri, i, 1700 - 20 * i, BOSCH_A_DIRECT_VREL_MIN_RAW)
+      published.append([(p.vRel, p.deprecated.measured) for p in rr.points])
+    # Same maturity as before (a second sample); until the fit exists (4 samples over 0.25 s) the floor is the bound.
+    assert published[0] == []
+    assert published[1:4] == [[(-12.0, False)]] * 3
+    for pts in published[4:]:
+      assert len(pts) == 1
+      assert pts[0][0] == pytest.approx(-20 * BOSCH_A_RANGE_SCALE_M / 0.07)
+      assert pts[0][1] is False
+    assert ri._tracks[1].last_trusted_vrel is None
+
+  def test_floor_never_updates_the_trusted_vrel_and_keeps_the_point(self):
+    ri = make_radar_interface()
+    for i in range(4):
+      rr = self._sweep(ri, i, 1000 - 1 * i, 800)
+    assert rr.points[0].deprecated.measured
+    trusted = ri._tracks[1].last_trusted_vrel
+    trusted_nanos = ri._tracks[1].last_trusted_vrel_nanos
+    assert trusted == pytest.approx((800 - 864) / 72)
+    for i in range(4, 40):
+      rr = self._sweep(ri, i, 1000 - 1 * i, BOSCH_A_DIRECT_VREL_MIN_RAW)
+      assert len(rr.points) == 1, i
+      assert not rr.points[0].deprecated.measured
+      assert rr.points[0].vRel != pytest.approx(-12.0)
+      assert ri._tracks[1].last_trusted_vrel == trusted
+      assert ri._tracks[1].last_trusted_vrel_nanos == trusted_nanos
+    # The fit over the floor sweeps' own ranges: -1/16 m per 70 ms.
+    assert rr.points[0].vRel == pytest.approx(-BOSCH_A_RANGE_SCALE_M / 0.07)
+    # A real U11 afterwards is measured again at once; the floor never entered the accepted history.
+    assert len(ri._tracks[1].samples) == 4
+    rr = self._sweep(ri, 40, 960, 800)
+    assert rr.points[0].deprecated.measured
+    assert rr.points[0].vRel == pytest.approx((800 - 864) / 72)
+
+  def test_fit_is_bounded_at_minus_v_ego(self):
+    ri = make_radar_interface()
+    ri.v_ego = 10.0
+    for i in range(7):
+      rr = self._sweep(ri, i, 1700 - 20 * i, BOSCH_A_DIRECT_VREL_MIN_RAW)
+    assert rr.points[0].vRel == pytest.approx(-10.0)
+
+  def test_one_above_the_floor_is_still_measured(self):
+    ri = make_radar_interface()
+    for i in range(3):
+      rr = self._sweep(ri, i, 1700 - 20 * i, BOSCH_A_DIRECT_VREL_MIN_RAW + 1)
+    assert rr.points[0].deprecated.measured
+    assert rr.points[0].vRel == pytest.approx(-12.0 + 1 / 72)
+
+  def test_floor_published_point_survives_its_first_accepted_sample(self):
+    ri = make_radar_interface()
+    for i in range(3):
+      rr = self._sweep(ri, i, 1700 - 20 * i, BOSCH_A_DIRECT_VREL_MIN_RAW)
+    assert len(rr.points) == 1
+    assert len(ri._tracks[1].samples) == 0
+    rr = self._sweep(ri, 3, 1640, 0x7FE)  # inactive sentinel: no U11, no ratio -> the coast branch
+    assert len(rr.points) == 1
+    assert not rr.points[0].deprecated.measured
+    assert rr.points[0].vRel == pytest.approx(-12.0)
+    rr = self._sweep(ri, 4, 1620, 800)  # the first accepted sample: not a birth, the point stays
+    assert len(rr.points) == 1
+    assert rr.points[0].deprecated.measured
+    assert ri._tracks[1].floor_vrel is None
+
+  @pytest.mark.parametrize('floor_on', [True, False])
+  def test_range_step_rejected_floor_era_track_stays_published_unmeasured(self, floor_on):
+    """Route 00000008 track 17 (217.05-223.03 s): a floor-era identity whose range then steps away from the gate's
+    baseline. The D-054/D-057 gate is unchanged; only its drop outcome is: publish the reported geometry unmeasured."""
+    ri = make_radar_interface()
+    ri.u11_floor_unmeasured = floor_on
+    for i in range(6):
+      self._sweep(ri, i, 1600, BOSCH_A_DIRECT_VREL_MIN_RAW)
+    for i in range(6, 9):
+      rr = self._sweep(ri, i, 1600, 864)
+    assert len(rr.points) == 1 and rr.points[0].deprecated.measured
+    for i in range(9, 20):
+      rr = self._sweep(ri, i, 1760, 864)  # a 10 m step against a U11 of 0: rejected for the whole run
+      assert ri._tracks[1].rejected_run, i
+      if floor_on:
+        assert len(rr.points) == 1, i
+        assert not rr.points[0].deprecated.measured
+        if i >= 11:  # past BOSCH_A_STALE_S the reported geometry is published, not the stale one
+          assert rr.points[0].dRel == pytest.approx(1760 * BOSCH_A_RANGE_SCALE_M + BOSCH_A_RANGE_OFFSET_M)
+          assert rr.points[0].vRel == pytest.approx(0.0, abs=1e-6)  # the rejected run's own range fit
+    if not floor_on:
+      assert len(rr.points) == 0  # the shipped outcome with the switch off: unchanged
+
+  def test_switch_off_restores_the_measured_floor(self):
+    ri = make_radar_interface()
+    ri.u11_floor_unmeasured = False
+    for i in range(7):
+      rr = self._sweep(ri, i, 1700 - 20 * i, BOSCH_A_DIRECT_VREL_MIN_RAW)
+    assert rr.points[0].vRel == pytest.approx(-12.0)
+    assert rr.points[0].deprecated.measured

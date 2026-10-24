@@ -5,6 +5,7 @@ from openpilot.common.realtime import Priority, config_realtime_process
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.controls.lib.ldw import LaneDepartureWarning
 from openpilot.starpilot.longitudinal.upstream.planner import LongitudinalPlanner
+from openpilot.starpilot.longitudinal.bosch_a_toggles import read_toggles as read_bosch_a_toggles  # BOSCH-A HOOK
 import openpilot.cereal.messaging as messaging
 
 
@@ -17,7 +18,8 @@ def main():
   cloudlog.info("plannerd got CarParams: %s", CP.brand)
 
   ldw = LaneDepartureWarning()
-  longitudinal_planner = LongitudinalPlanner(CP)
+  # BOSCH-A HOOK: owner toggles (Stock Brake Feel, Human Following), read once, default Off.
+  longitudinal_planner = LongitudinalPlanner(CP, bosch_a=read_bosch_a_toggles(params))
   pm = messaging.PubMaster(['longitudinalPlan', 'driverAssistance'])
   sm = messaging.SubMaster(['carControl', 'carState', 'controlsState', 'vehicleParameters', 'radarState', 'modelV2', 'selfdriveState'],
                            poll='modelV2')

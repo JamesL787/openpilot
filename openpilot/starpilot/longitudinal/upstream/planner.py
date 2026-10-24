@@ -33,7 +33,8 @@ def get_max_accel(v_ego):
 def get_coast_accel(pitch):
   return np.sin(pitch) * -5.65 - 0.3  # fitted from data using xx/projects/allow_throttle/compute_coast_accel.py
 
-def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, allow_throttle):
+def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, accel_coast, allow_throttle,
+                     *, jerk_limit=True):  # BOSCH-A: jerk_limit=False only for the engage init (hook 3/3)
   max_accel = ACCEL_MAX if e2e else get_max_accel(v_ego)
 
   if not e2e:
@@ -47,6 +48,8 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
       max_accel = min(max_accel, coast_limit)
 
   target_accel = np.clip(v_cruise - v_ego, A_CRUISE_MIN, max_accel)
+  if not jerk_limit:
+    return float(target_accel)
   j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)
   target_accel = float(np.clip(target_accel, a_cruise_prev - j_cruise * dt, a_cruise_prev + j_cruise * dt))
 
@@ -54,9 +57,31 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
 
 
 class LongitudinalPlanner:
-  def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL):
+  def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL, *, bosch_a=None):
     self.CP = CP
     self.mpc = LongitudinalMpc(dt=dt)
+    # ---- BOSCH-A HOOK 1/3 (owner toggles; not in upstream 521db4c8) ----
+    # Same two features, same car gates and same order relative to the MPC and the final clip as StarPilot's
+    # selfdrive/controls/lib/longitudinal_planner.py. `bosch_a` is a bosch_a_toggles.BoschAToggles (None = both Off).
+    # With both toggles off both stay None, nothing below runs and the planner is upstream's. The car gates and the
+    # StarPilot imports only happen when a toggle is on.
+    self.bosch_a_model_leads = None  # HumanFollowing + HumanAcceleration
+    self.bosch_a_long = None         # Stock Brake Feel
+    if bosch_a is not None and bosch_a.human_following:
+      import time
+      from openpilot.starpilot.longitudinal import human_acceleration, human_following
+      if human_following.enabled_for(CP, True):
+        from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import ModelLeadHistory, qualified_model_leads
+        self.bosch_a_model_leads = ModelLeadHistory()
+        self.bosch_a_human = (human_following, human_acceleration, qualified_model_leads, time.monotonic_ns)
+    if bosch_a is not None and bosch_a.stock_brake_feel:
+      from openpilot.starpilot.longitudinal.honda_bosch_a_long import HondaBoschALongEnhancement
+      enhancement = HondaBoschALongEnhancement(CP, dt, stock_brake_feel=True)
+      self.bosch_a_long = enhancement if enhancement.enabled else None
+    # Bosch-A brake release smoothing + short plan read-ahead (always on for Bosch-A Hondas; bosch_a_smooth.py).
+    from openpilot.starpilot.longitudinal.bosch_a_smooth import BoschASmooth
+    self.bosch_a_smooth = BoschASmooth(CP, dt)
+    # ---- end BOSCH-A HOOK ----
     self.fcw = False
     self.dt = dt
     self.allow_throttle = True
@@ -109,7 +134,17 @@ class LongitudinalPlanner:
 
     self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality)
     self.mpc.set_cur_state(self.v_desired_filter.x, self.output_a_target)
-    self.mpc.update(sm['radarState'], personality=sm['selfdriveState'].personality)
+    # ---- BOSCH-A HOOK 2/3: HumanFollowing lead paths and the HumanAcceleration MPC cap (StarPilot planner: the
+    # mpc.update call). Empty (stock call) unless the BoschAHumanFollowing toggle is on and the car passes. ----
+    bosch_a_mpc = {}
+    if self.bosch_a_model_leads is not None:
+      human_following, human_acceleration, qualified_model_leads, clock_ns = self.bosch_a_human
+      human_accel_base = ACCEL_MAX if sm['selfdriveState'].experimentalMode else get_max_accel(v_ego)
+      model = qualified_model_leads(sm, clock_ns(), self.bosch_a_model_leads)
+      bosch_a_mpc = {'acceleration_max': human_acceleration.cap(human_accel_base, v_cruise, v_ego),
+                     'lead_paths': human_following.upstream_lead_paths(model, sm['radarState'], self.mpc.x0[1])}
+    # ---- end BOSCH-A HOOK ----
+    self.mpc.update(sm['radarState'], personality=sm['selfdriveState'].personality, **bosch_a_mpc)
 
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
     self.a_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
@@ -123,7 +158,7 @@ class LongitudinalPlanner:
     # Save starting point for next iteration
     a_prev = self.output_a_target
 
-    action_t =  self.CP.longitudinalActuatorDelay + DT_MDL
+    action_t = self.bosch_a_smooth.action_t(self.CP.longitudinalActuatorDelay)
     output_a_target_mpc = get_accel_from_plan(self.v_desired_trajectory, self.a_desired_trajectory, CONTROL_N_T_IDX,
                                               action_t=action_t)
     output_should_stop_mpc = should_stop(v_ego, output_a_target_mpc)
@@ -142,6 +177,27 @@ class LongitudinalPlanner:
 
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
+    # ---- BOSCH-A HOOK 3/3: last shapers before the final clip, in StarPilot's order (HumanAcceleration cap, then
+    # the Stock Brake Feel step). Skipped entirely when the toggles are off. ----
+    if self.bosch_a_model_leads is not None:
+      output_a_target = min(output_a_target, bosch_a_mpc['acceleration_max'])  # >= 0: braking passes through
+    if self.bosch_a_long is not None and self.bosch_a_long.stock_feel and reset_state:
+      # Engage init (Stock Brake Feel only): while long is off, a_cruise starts the first engaged frame at
+      # min(aEgo, cruise target) instead of aEgo (jerk-limited around aEgo), so it does not ramp down from a positive
+      # aEgo at j_cruise while already at/above the set speed. When target >= aEgo this is the stock value. Bounded:
+      # lowers only, never below the cruise floor (A_CRUISE_MIN); output_a_target and the MPC state are unchanged;
+      # after engage get_cruise_accel jerk-limits from here and step() still limits brake onset.
+      self.a_cruise = min(self.a_cruise, get_cruise_accel(sm['selfdriveState'].experimentalMode, v_cruise, v_ego,
+                                                          self.a_cruise, steer_angle_without_offset, self.CP,
+                                                          self.dt, accel_coast, self.allow_throttle, jerk_limit=False))
+    if self.bosch_a_long is not None:
+      output_a_target = self.bosch_a_long.step(
+        lead_one=sm['radarState'].leadOne, lead_two=sm['radarState'].leadTwo, prev=float(a_prev),
+        target=float(output_a_target), v_ego=v_ego, stopping=bool(self.output_should_stop),
+        standstill=bool(sm['carState'].standstill), reset_state=bool(reset_state))
+    output_a_target = self.bosch_a_smooth.step(float(a_prev), float(output_a_target),
+                                               reset=bool(reset_state or sm['carState'].standstill))
+    # ---- end BOSCH-A HOOK ----
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0

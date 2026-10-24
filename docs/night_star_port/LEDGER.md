@@ -1,4 +1,6 @@
 # Night Star → StarPilot 7.0 port ledger
+
+> **Closed 2026-10-18 (slice 10).** This is a one-time snapshot of the 6.x → 7.0 differences, kept for reference. The live record of everything after it (SGSP syncs, ns-bosch lateral syncs, ports from other people, decisions and reverts) is the port README (`docs/night_star_port/README.md`: base-history table and decisions log). Files added to ns-bosch or ported from others after the snapshot are not listed here.
 Generated 2026-10-16 from `git diff 249b03a3f5..{origin/vfn, origin/ns-bosch-radar-testing}` (249b03a3f5 = our last StarPilot 6.x merge base), mapped onto `starpilot/SecretGoodStarPilot` @ `89430a70da`. Each row is one file we changed. Status column is the work tracker: `todo` → `wip` → `done` / `dropped` (say why).
 
 Decisions: **PORT** = carry the change onto the 7.0 file; **RE-HOME** = the 6.x file is gone, the logic moves into a 7.0 owner module; **REWRITE** = 7.0 replaced the subsystem, re-implement ours in its design; **DROP** = 7.0 already covers it; **REBUILD** = binary, regenerate via Docker; **COPY** = standalone, copy as is; **REVIEW** = undecided.

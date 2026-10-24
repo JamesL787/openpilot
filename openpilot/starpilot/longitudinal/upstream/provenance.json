@@ -7,20 +7,20 @@
     "plannerd.py": {
       "upstream_path": "openpilot/selfdrive/controls/plannerd.py",
       "upstream_sha256": "9c1591c78522e0f89794eb7301113fc616ec6ac079e576a3c9f9ebec64bcbfde",
-      "adapted_sha256": "d337b242b0406330e51749c9b6ffb2bfa03d64142d45561e0d2451bd0dc1855c",
-      "adaptation": "Only planner/MPC import paths redirected; no arithmetic/state/publisher changes"
+      "adapted_sha256": "8cd0b8ae917fbc498d6c2ff02de0d9b0118388e55a42c354d1baf630089324c1",
+      "adaptation": "Only planner/MPC import paths redirected; no arithmetic/state/publisher changes. BOSCH-A HOOK: reads the BoschAStockBrakeFeel/BoschAHumanFollowing toggles once at start (bosch_a_toggles.read_toggles) and passes them to LongitudinalPlanner(bosch_a=...)"
     },
     "planner.py": {
       "upstream_path": "openpilot/selfdrive/controls/lib/longitudinal_planner.py",
       "upstream_sha256": "d81425700cf7152ef4f617ec1517fb4137fc5af9188047f48b31aff62dc652f4",
-      "adapted_sha256": "7f79b61e095928100cb1d1d0b5e5e6ee66676d461c2274fc5a542cec2c841e8f",
-      "adaptation": "Only planner/MPC import paths redirected; no arithmetic/state/publisher changes"
+      "adapted_sha256": "b288e6237388dc2b2076a5b6cafcdd19598d160961380b1348cfc8105bf47596",
+      "adaptation": "Only planner/MPC import paths redirected; no arithmetic/state/publisher changes when both Bosch-A toggles are off (bit-identical, test_bosch_a_toggles). BOSCH-A HOOK 1/3 (__init__): arms HumanFollowing/HumanAcceleration and the Stock Brake Feel enhancement only when the toggle is on and the car is a verified Bosch-A Honda with openpilot longitudinal (lazy imports). HOOK 2/3 (before mpc.update): HumanAcceleration cap and model lead paths passed to the MPC. HOOK 3/3 (after output_should_stop, before the final clip): min with the HumanAcceleration cap, then honda_bosch_a_long step() BOSCH-A SMOOTH: bosch_a_smooth.BoschASmooth (Bosch-A Hondas only, always on) shortens action_t to min(0.30, delay+DT_MDL) and applies a brake release limit + 2-tick dwell to output_a_target before the final clip"
     },
     "mpc.py": {
       "upstream_path": "openpilot/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py",
       "upstream_sha256": "63b03a511d8e0a955f6abc3ef010e79e8304d5ee9fe13637741f9c13e0ca92d5",
-      "adapted_sha256": "401186999585a892d7ddfdb4cc91d297621685d11f5ccc5125e016b6a6c6bb45",
-      "adaptation": "Stock tuning and planner arithmetic unchanged; apply stock slack penalties at terminal stage for the shared constrained native solver"
+      "adapted_sha256": "8505e59f7d09271100ff1f880b08f1279ab7d8147a5306ebe15485b5fb72262f",
+      "adaptation": "Stock tuning and planner arithmetic unchanged; apply stock slack penalties at terminal stage for the shared constrained native solver. BOSCH-A HOOKs (keyword-only update args, default None = stock): lead_paths replaces a lead's raw extrapolation; acceleration_max replaces ACCEL_MAX only if finite and within [0, ACCEL_MAX]"
     }
   }
 }

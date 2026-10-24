@@ -14,6 +14,18 @@ if TYPE_CHECKING:
   from openpilot.selfdrive.controls.radard import KalmanParams
 
 _LEAD_ACCEL_TAU = 0.6
+# Bosch-A lead-accel extrapolation bounds (2026-10-22). This Track is only built by BoschALeadPolicy, so both are
+# Bosch-A only; the generic radard Track is untouched. The MPC extrapolates a radar lead as
+# aLeadK * exp(-aLeadTau * t^2 / 2). A hard-braking lead decays aLeadTau toward 0 (update(0.0) below) while the KF
+# accel can run past -3 m/s^2 on a rail/rejoin vLead step, so the MPC held a large phantom decel over the whole
+# horizon. Evidence (replay only, no road validation): window (a) 206-208.2 s of the investigated route, MPC obstacle
+# distance replays with each bound applied in isolation (patch_tau, patch_akc). Neither changes dRel/vRel/vLead, the
+# KF state or which track is selected (D-048 arbitration reads dRel/vRel, not aLeadK).
+#   BOSCH_A_LEAD_ACCEL_TAU_MIN: the published aLeadTau never decays below this (s^-2 in the MPC exponent).
+#   BOSCH_A_LEAD_ACCEL_MIN: the published aLeadK is clamped below at this; the KF itself is not. Cost: a lead that
+#     really brakes harder than -3 m/s^2 is extrapolated at -3; its real slowdown still arrives through vLead/dRel.
+BOSCH_A_LEAD_ACCEL_TAU_MIN = 0.3
+BOSCH_A_LEAD_ACCEL_MIN = -3.0
 V_EGO_STATIONARY = 4.0
 RADAR_TO_CAMERA = 1.52
 HONDA_BOSCH_A_LOW_SPEED_MIN_COUNT = 3
@@ -53,7 +65,10 @@ class Track:
         self.aLeadTau.x = min(max(self.aLeadTau.x, 0.01) * 1.1, _LEAD_ACCEL_TAU)
       else:
         self.aLeadTau.update(0.0)
+      self.aLeadTau.x = max(self.aLeadTau.x, BOSCH_A_LEAD_ACCEL_TAU_MIN)
       self.cnt += 1
+    # Published value only; the KF accel state (and the tau decision above) keep the unclamped estimate.
+    self.aLeadK = max(self.aLeadK, BOSCH_A_LEAD_ACCEL_MIN)
 
   def get_RadarState(self, model_prob: float = 0.0):
     return {

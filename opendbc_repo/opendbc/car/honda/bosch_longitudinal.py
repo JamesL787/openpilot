@@ -2,7 +2,9 @@ import math
 
 import numpy as np
 
-from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, structs
+from opendbc.car import ACCELERATION_DUE_TO_GRAVITY, DT_CTRL, structs
+from opendbc.car.honda.brake_onset import BrakeOnsetCompensation
+from opendbc.car.honda.bosch_gas_learner import CivicGasLearner, LEARN_VERSION, gas_lookup_accel
 from opendbc.car.honda.values import CAR, HondaFlags
 
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -70,9 +72,19 @@ class BoschLongitudinal:
     self.gas = 0.0
     self.bosch_braking = False
     self.bosch_last_gas = 0.0
+    # Civic Bosch runs the ns live gas learner (bosch_gas_learner.py); every other car keeps the shared learner below.
+    self.civic_learner = CivicGasLearner() if cp.carFingerprint == CAR.HONDA_CIVIC_BOSCH else None
+    self.learner_version = LEARN_VERSION if self.civic_learner is not None else None
+    # Civic Bosch only: the fit in brake_onset.py is from this car. update() runs every other control frame.
+    self.brake_onset = BrakeOnsetCompensation(2 * DT_CTRL) if cp.carFingerprint == CAR.HONDA_CIVIC_BOSCH else None
     self.set_factors(1.0, 1.0)
 
   def set_factors(self, gas, wind):
+    if self.civic_learner is not None:
+      self.civic_learner.load(gas, wind)
+      self.bosch_gas_factor = self.civic_learner.raw_gasfactor
+      self.bosch_wind_factor = self.civic_learner.raw_windfactor
+      return
     self.bosch_gas_factor = float(gas) if math.isfinite(gas) and 0.01 <= gas <= 3.0 else 1.0
     self.bosch_wind_factor = float(wind) if math.isfinite(wind) and 0.1 <= wind <= 5.0 else 1.0
     self.bosch_wind_factor_before_brake = self.bosch_wind_factor
@@ -89,6 +101,12 @@ class BoschLongitudinal:
     wind_brake_mps2 = get_honda_bosch_wind_brake_mps2(CS.out.vEgo)
     min_gas = self.params.BOSCH_GAS_LOOKUP_BP[0]
     self.accel = float(np.clip(accel, self.params.BOSCH_ACCEL_MIN, self.params.BOSCH_ACCEL_MAX))
+    if self.brake_onset is not None:
+      self.accel = self.brake_onset.update(self.accel, active=bool(
+        CC.longActive and actuators.longControlState == LongCtrlState.pid and
+        not CS.out.gasPressed and not CS.out.brakePressed))
+    if self.civic_learner is not None:
+      return self._update_civic(CC, CS, hill_brake, wind_brake_mps2, min_gas)
     gas_pedal_force = self.accel + hill_brake
     if self.CP.carFingerprint not in HONDA_BOSCH_RADARLESS:
       gas_pedal_force += wind_brake_mps2 * self.bosch_wind_factor
@@ -122,6 +140,25 @@ class BoschLongitudinal:
           self.bosch_wind_factor_before_gasmax = self.bosch_wind_factor
     gas_lookup_input = gas_pedal_force * self.bosch_gas_factor
     self.gas = float(np.interp(gas_lookup_input, self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V))
+    self.gas = min(self.gas, max(60.0, self.bosch_last_gas + 60.0))
+    self.bosch_last_gas = self.gas
+    stopping = actuators.longControlState == LongCtrlState.stopping
+    self.bosch_braking = update_honda_bosch_braking(self.bosch_braking, gas_pedal_force, stopping, CC.longActive)
+    return self.accel, self.gas, gas_pedal_force, self.bosch_braking
+
+  def _update_civic(self, CC, CS, hill_brake, wind_brake_mps2, min_gas):
+    actuators = CC.actuators
+    learner = self.civic_learner
+    gas_pedal_force = self.accel + hill_brake + wind_brake_mps2 * learner.windfactor
+    learner.update(self.accel, CS.out.aEgo, gas_pedal_force, wind_brake_mps2,
+                   engaged=CC.longActive and actuators.longControlState == LongCtrlState.pid,
+                   gas_pressed=CS.out.gasPressed, brake_pressed=CS.out.brakePressed, v_ego=CS.out.vEgo,
+                   pitch=self.pitch, at_accel_max=gas_pedal_force >= self.params.BOSCH_ACCEL_MAX)
+    # Saved values are the learned factors; the applied ones trail them through the filter.
+    self.bosch_gas_factor = learner.raw_gasfactor
+    self.bosch_wind_factor = learner.raw_windfactor
+    lookup = gas_lookup_accel(gas_pedal_force, hill_brake, learner.gasfactor, min_gas)
+    self.gas = float(np.interp(lookup, self.params.BOSCH_GAS_LOOKUP_BP, self.params.BOSCH_GAS_LOOKUP_V))
     self.gas = min(self.gas, max(60.0, self.bosch_last_gas + 60.0))
     self.bosch_last_gas = self.gas
     stopping = actuators.longControlState == LongCtrlState.stopping

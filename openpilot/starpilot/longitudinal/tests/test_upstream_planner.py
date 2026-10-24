@@ -63,7 +63,7 @@ class TestUpstreamPlanner(unittest.TestCase):
     fake_params = SimpleNamespace(get=lambda key, **kwargs: b'CP')
     with patch.object(plannerd, 'config_realtime_process'), patch.object(plannerd, 'Params', return_value=fake_params), \
          patch.object(plannerd.messaging, 'log_from_bytes', return_value=cp), \
-         patch.object(plannerd, 'LongitudinalPlanner', side_effect=lambda cp: calls.append(('planner', cp))), \
+         patch.object(plannerd, 'LongitudinalPlanner', side_effect=lambda cp, **kw: calls.append(('planner', cp))), \
          patch.object(plannerd, 'LaneDepartureWarning', return_value=object()), \
          patch.object(plannerd.messaging, 'PubMaster', side_effect=lambda services: calls.append(('publish', services))), \
          patch.object(plannerd.messaging, 'SubMaster', side_effect=submaster):

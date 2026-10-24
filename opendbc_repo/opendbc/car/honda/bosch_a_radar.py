@@ -299,6 +299,28 @@ BOSCH_A_COAST_REVERSING_MARGIN_MPS = 1.0
 # Night Star port: OFF. It is safe only with radard's NEWBORN_* exemptions, which 7.0's radard does not have.
 BOSCH_A_NEWBORN_RANGE_PUBLISH = False
 
+# BOSCH_A_U11_FLOOR_UNMEASURED (2026-10-22; static + replay evidence only, no road A/B): a qualified sweep whose raw
+# U11 is 0 (the -12.0 m/s floor) is NOT a velocity measurement. Route 00000008--94686ab4ae (the "rough" drive):
+# 489 published points sat at raw 0, 377 of them measured=True, so radard's KF was updated with -12.0 on each.
+# Their own range fits mostly read -17..-37 m/s (true saturation, the rail understates closing), but whole tracks
+# read 0.00 / -0.13 / -0.54 / -0.61 / -4.76 m/s (raw 0 used where the field has nothing to say), and the leadTwo
+# track 57 at 75.6-81.1 s fit -11.6. Either way the -12.0 is not the object's speed. Such a sweep now:
+#   * is range-gated exactly as before (D-063 rail interval; `direct_vrel` keeps the rail for the gate),
+#   * keeps its point and its accepted range history (`samples`, `range_anchor`): D-041/D-042, the point is never
+#     deleted for being on the floor,
+#   * publishes measured=False with vRel = the D-043 range fit over the accepted ranges (`_bosch_a_newborn_vrel`:
+#     trailing 4-sample / 0.25 s window, rms <= BOSCH_A_REANCHOR_MAX_RMS_M, bounded at -vEgo). With no fit yet an
+#     existing point keeps coasting (`_bosch_a_coast_vrel` if a trusted vRel exists, else its last published vRel),
+#     and a track born on the floor is not published until the fit exists, because radard freezes the first vRel
+#     of an unmeasured point (see BOSCH_A_NEWBORN_RANGE_PUBLISH),
+#   * never seeds or updates `last_trusted_vrel`.
+# A high-u10 raw 0 already coasts through `high_u10_live_vrel` and is unchanged.
+# UNRESOLVED: the top rail. Same route: 66 published sweeps at raw 1728 (+12.0), 1 at 1726. Tracks 53/6/19 fit
+# +9.3/+15.3/+12.6 m/s (consistent with saturation, not with a sentinel), track 62 is 22 sweeps spread over 2 min
+# (no usable fit). Too few to decide, so raw 1728 is still decoded as a measured +12.0 rail.
+# False restores the decoder before this change (replays and tests).
+BOSCH_A_U11_FLOOR_UNMEASURED = True
+
 # Seeding the first trusted sweep's history from the newborn run (samples, range_anchor, last_trusted_vrel) is off.
 # Replay, 00000284 22:36.7 track 17: the newborn run was a 0.6 s range burst 88.7 -> 79.9 m (published fit -4.8 ->
 # -17.6 m/s); seeded into the history, the coast after four measured sweeps held last_trusted_vrel -10.47 for 1.3 s
@@ -442,6 +464,9 @@ class _BoschATrackState:
   # BOSCH_A_NEWBORN_RANGE_PUBLISH: (time, range) of high-u10 sweeps before the first accepted sample.
   newborn_run: list = field(default_factory=list)
   newborn_vrel: float | None = None  # the vRel the newborn point was last published with
+  floor_vrel: float | None = None  # BOSCH_A_U11_FLOOR_UNMEASURED: the unmeasured vRel a raw-0 sweep last published
+  floor_run: list[tuple[float, float]] = field(default_factory=list)  # raw-0 sweeps' (t, dRel), for the fit only
+  floor_seen: bool = False  # a raw-0 sweep was seen in this lifecycle (BOSCH_A_U11_FLOOR_UNMEASURED)
   # D-089: the anchor came from a re-anchor only the range-scaled sigma window allowed (RadarPoint.recovered). Cleared by
   # BOSCH_A_REANCHOR_WINDOW consecutive accepted sweeps that are non-degraded by the shipped rule, i.e. the evidence a
   # shipped D-057 re-anchor would have needed, and by a lifecycle discontinuity.
@@ -699,6 +724,7 @@ class BoschARadar(RadarInterfaceBase):
     # D-074: U11 counts per m/s (72). An attribute so replays of 1/64-era logs can set it.
     self.u11_counts_per_mps = BOSCH_A_DIRECT_VREL_COUNTS_PER_MPS
     self.newborn_range_publish = BOSCH_A_NEWBORN_RANGE_PUBLISH
+    self.u11_floor_unmeasured = BOSCH_A_U11_FLOOR_UNMEASURED
     # D-076: firmware ROM-default range offset (-2.703 m Civic, -2.664 m CR-V). Fixed per car.
     self.range_offset_m = bosch_a_range_offset_m(CP.carFingerprint)
     self.updated_messages = set()
@@ -904,6 +930,9 @@ class BoschARadar(RadarInterfaceBase):
         track.last_trusted_vrel_nanos = None
         track.newborn_run.clear()
         track.newborn_vrel = None
+        track.floor_vrel = None
+        track.floor_run.clear()
+        track.floor_seen = False
         self.pts.pop(track_id, None)
 
       v0 = self.rcp.vl[BOSCH_A_MAIN_IDS[slot][0]]
@@ -1055,6 +1084,21 @@ class BoschARadar(RadarInterfaceBase):
         point = self.pts.get(track_id)
         if accepted_fresh and point is not None:
           point.deprecated.measured = False
+        elif point is not None and self.u11_floor_unmeasured and track.floor_seen:
+          # BOSCH_A_U11_FLOOR_UNMEASURED: with the floor out of the accepted history, a floor-era identity can be left
+          # with no baseline that would ever accept its range again (route 00000008 track 17, 217.05-223.03 s: kept
+          # before only by a 3 s-old sample). The gate is unsure, so publish a bound, never delete (D-041/D-042): the
+          # reported geometry, unmeasured, at the rejected run's range fit, else the coast, else the floor's vRel.
+          run_vrel = _bosch_a_newborn_vrel([(t, d) for t, d, _, _ in track.rejected_run], self.v_ego)
+          if run_vrel is not None:
+            point.vRel = run_vrel
+          elif track.last_trusted_vrel is not None:
+            point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
+          elif track.floor_vrel is not None:
+            point.vRel = track.floor_vrel
+          point.dRel = dRel
+          point.yRel = yRel
+          point.deprecated.measured = False
         else:
           self.pts.pop(track_id, None)
         track.prev_frame_idx = idx0
@@ -1074,6 +1118,48 @@ class BoschARadar(RadarInterfaceBase):
       # 2-17 m off such a birth range. The first ACCEPTED sample below roots the anchor instead.
       if range_anchor is not None:
         track.range_anchor = (now_s, dRel)
+
+      # BOSCH_A_U11_FLOOR_UNMEASURED: raw U11 0 is not a velocity. Publish the range fit unmeasured and never let
+      # the floor become a trusted vRel. Like every coast path, the floor sweep stays out of the accepted history
+      # (`samples`, `rejoin_samples`, the consistency run): it must not become a derivative baseline. Its ranges are
+      # kept in their own run, for the fit only.
+      if (self.u11_floor_unmeasured and direct_vrel is not None and direct_vrel_raw is not None and
+          int(direct_vrel_raw) == BOSCH_A_DIRECT_VREL_MIN_RAW):
+        track.floor_seen = True
+        track.floor_run.append((now_s, dRel))
+        del track.floor_run[:-BOSCH_A_REANCHOR_WINDOW]
+        fit_history = sorted(list(track.samples) + track.floor_run)[-BOSCH_A_REANCHOR_WINDOW:]
+        fit_vrel = _bosch_a_newborn_vrel(fit_history, self.v_ego)
+        point = self.pts.get(track_id)
+        if fit_vrel is not None:
+          floor_vrel = fit_vrel
+        elif track.last_trusted_vrel is not None:
+          floor_vrel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
+        elif point is not None:
+          floor_vrel = point.vRel
+        else:
+          floor_vrel = direct_vrel  # no fit yet: the floor itself, as a bound (D-041), published unmeasured
+        # Same maturity as an accepted sweep (a second sample), so nothing published before is withheld.
+        if point is None and len(fit_history) >= 2:
+          point = self.pts[track_id] = structs.RadarData.RadarPoint()
+          point.trackId = track_id
+          point.deprecated.aRel = float('nan')
+          point.deprecated.yvRel = float('nan')
+        if point is not None:
+          point.dRel = dRel
+          point.yRel = yRel
+          point.vRel = floor_vrel
+          point.deprecated.measured = False
+          track.floor_vrel = floor_vrel
+        track.prev_frame_idx = idx0
+        track.prev_life = life
+        track.last_seen_nanos = now
+        track.wire_slot = slot
+        for old_slot, old_id in enumerate(self._slot_track_ids):
+          if old_slot != slot and old_id == track_id:
+            self._slot_track_ids[old_slot] = None
+        self._slot_track_ids[slot] = track_id
+        continue
 
       # Multi-sweep consistency: does the range actually move the way this velocity claims?
       # Fitted over the accepted range history, so it is immune to the single-sweep blindness above.
@@ -1199,6 +1285,13 @@ class BoschARadar(RadarInterfaceBase):
             point.yRel = yRel
             point.vRel = newborn_vrel
             point.deprecated.measured = False
+        elif point is not None and track.floor_vrel is not None:
+          # BOSCH_A_U11_FLOOR_UNMEASURED: a point published only by raw-0 sweeps has no trusted vRel, but it was
+          # published; keep it unmeasured at the floor's range-fit vRel rather than delete it (D-041/D-042).
+          point.dRel = dRel
+          point.yRel = yRel
+          point.vRel = track.floor_vrel
+          point.deprecated.measured = False
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to
           # coast and no way to publish a defensible vRel.
@@ -1245,6 +1338,13 @@ class BoschARadar(RadarInterfaceBase):
           point.yRel = yRel
           point.vRel = _bosch_a_coast_vrel(track, self.rail_interval, self.coast_range_bound, self.v_ego)
           point.deprecated.measured = False
+        elif point is not None and track.floor_vrel is not None:
+          # BOSCH_A_U11_FLOOR_UNMEASURED: a point published only by raw-0 sweeps has no trusted vRel, but it was
+          # published; keep it unmeasured at the floor's range-fit vRel rather than delete it (D-041/D-042).
+          point.dRel = dRel
+          point.yRel = yRel
+          point.vRel = track.floor_vrel
+          point.deprecated.measured = False
         elif point is not None:
           # No trusted velocity was ever established for this identity, so there is nothing to
           # coast and no way to publish a defensible vRel.
@@ -1280,10 +1380,25 @@ class BoschARadar(RadarInterfaceBase):
 
       # A birth observation has no range-rate yet. Keep it as history, but do not publish a RadarPoint
       # until a second coherent observation of the same CAN identity supplies a finite derivative.
-      matured = sample_count >= 2 and math.isfinite(vRel)
+      # A point the floor already published (BOSCH_A_U11_FLOOR_UNMEASURED) is not a birth: keep it on its first
+      # accepted sample rather than delete it (D-041/D-042).
+      matured = (sample_count >= 2 or (track.floor_vrel is not None and track_id in self.pts)) and vRel is not None and \
+        math.isfinite(vRel)
+      if vRel is None and track.floor_vrel is not None and track_id in self.pts:
+        # A floor-published point's first accepted range with no U11 and no ratio: still no velocity measurement,
+        # so keep the floor bound unmeasured rather than delete the point (D-041/D-042).
+        trustworthy_vrel = False
+        point = self.pts[track_id]
+        point.dRel = dRel
+        point.yRel = yRel
+        point.vRel = track.floor_vrel
+        point.deprecated.measured = False
+        matured = None
       if trustworthy_vrel:
         track.last_trusted_vrel = vRel
         track.last_trusted_vrel_nanos = now
+        track.floor_vrel = None
+        track.floor_run.clear()
       if matured and track_id not in self.pts:
         self.pts[track_id] = structs.RadarData.RadarPoint()
         self.pts[track_id].trackId = track_id
@@ -1295,7 +1410,7 @@ class BoschARadar(RadarInterfaceBase):
         self.pts[track_id].yRel = yRel
         self.pts[track_id].vRel = vRel
         self.pts[track_id].deprecated.measured = True
-      else:
+      elif matured is not None:
         self.pts.pop(track_id, None)
 
       track.prev_frame_idx = idx0
