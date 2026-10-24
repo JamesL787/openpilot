@@ -1,15 +1,7 @@
-"""Source controller's modified-EPS press detector, isolated from newer Honda/StarPilot imports."""
+"""The source branch's modified-EPS press detector (kept in opendbc, where the car controller needs it too)."""
 from openpilot.common.realtime import DT_CTRL
+from opendbc.sunnypilot.car.honda.h020_ptm import get_eps_modified_steering_pressed as _detector
 
 
 def get_eps_modified_steering_pressed(raw_pressed, steering_torque, torque_cmd, filter_s, previous_pressed):
-  if not raw_pressed:
-    return 0.0, False
-  torque_product = float(steering_torque) * float(torque_cmd)
-  # res maps u -> E4 with sign -1 and raw torque sensor -> CS.steeringTorque with DBC factor -1.
-  # Equal raw sensor/E4 signs therefore mean a positive normalized product; no extra sign flip here.
-  torque_cmd_abs = abs(float(torque_cmd))
-  if previous_pressed or torque_cmd_abs < 0.10 or torque_product < 0.0:
-    return 1.0, True
-  filter_s = min(1.0, filter_s + DT_CTRL)
-  return filter_s, filter_s >= 0.28
+  return _detector(raw_pressed, steering_torque, torque_cmd, filter_s, previous_pressed, DT_CTRL)

@@ -42,6 +42,27 @@ TGG-A120 vehicle calibration as the H020 baseline. The rev-b firmware (it report
 | R6 | firmware-derived from H020 Table A and NORM 1650: -153.74 at centre (not measured on H020) |
 | Load, rack, P/I trims, base PID | TGG-A120 donor, **inferred on H020** |
 
+## Driver-override settings (H020 only, set over SSH)
+
+His UI is the prebuilt Qt `ui` binary (no source in `res`) and `res` ships no C++ `Params` sources, so new Params keys or UI rows cannot be built. The three
+settings are plain files in the params directory, read about once a second; a missing, empty or non-numeric file means the default, and out-of-range values
+are clipped. They apply only to the H020 (Civic Bosch + `39990-TEA,H020`); every other car keeps `res` behavior.
+
+| File in `/data/params/d/` | Default | Range | Meaning |
+|---|---|---|---|
+| `HondaDriverOverrideThreshold` | 1800 | 500-5000 | `STEER_TORQUE_SENSOR` units above which the wheel counts as pressed (`res` stock for the Civic Bosch is 1200) |
+| `HondaOverrideFadeDownSecs` | 0 | 0-10 | 0 cuts the torque request the moment an override is detected |
+| `HondaOverrideFadeUpSecs` | 0.5 | 0-10 | authority returns over this long after the override ends (and after every engage) |
+
+```sh
+echo -n 1800 > /data/params/d/HondaDriverOverrideThreshold   # 1200 restores res's stock value
+echo -n 0.5 > /data/params/d/HondaOverrideFadeUpSecs
+```
+
+The override uses the source branch's detector (opposing or near-zero-command driver torque latches at once, same-direction torque after 0.28 s). While an
+override is latched LKAS is dropped (`STEER_TORQUE_REQUEST` off), so a fade-down above 0 only changes the controller's own state, not what the EPS is sent.
+The cut skips `res`'s 3/s torque delta limit, which would otherwise stretch a 0 s fade-down to 0.33 s. Outside an override that limit still applies.
+
 ## Not established
 
 - Installed image: nothing reads it back from the ECU; the ID is shared with the older images (above).

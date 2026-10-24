@@ -11,6 +11,7 @@ from opendbc.car.honda.values import CAR, DBC, STEER_THRESHOLD, HONDA_BOSCH, HON
 from opendbc.car.interfaces import CarStateBase
 
 from opendbc.sunnypilot.car.honda.carstate_ext import CarStateExt
+from opendbc.sunnypilot.car.honda.h020_ptm import H020Settings, is_h020
 
 TransmissionType = structs.CarParams.TransmissionType
 ButtonType = structs.CarState.ButtonEvent.Type
@@ -51,6 +52,9 @@ class CarState(CarStateBase, CarStateExt):
     # When available we use cp.vl["CAR_SPEED"]["ROUGH_CAR_SPEED_2"] to populate vEgoCluster
     # However, on cars without a digital speedometer this is not always present (HRV, FIT, CRV 2016, ILX and RDX)
     self.dash_speed_seen = False
+
+    # TEA-H020 rev-b: driver-override threshold from a settings file (see h020_ptm); every other car keeps STEER_THRESHOLD
+    self.h020_settings = H020Settings() if CP.carFingerprint == CAR.HONDA_CIVIC_BOSCH and is_h020(CP.carFw) else None
 
   def update(self, can_parsers) -> tuple[structs.CarState, structs.CarStateSP]:
     cp = can_parsers[Bus.pt]
@@ -153,7 +157,11 @@ class CarState(CarStateBase, CarStateExt):
     ret.gasPressed = cp.vl["POWERTRAIN_DATA"]["PEDAL_GAS"] > 1e-5
 
     ret.steeringTorque = cp.vl["STEER_STATUS"]["STEER_TORQUE_SENSOR"]
-    ret.steeringPressed = abs(ret.steeringTorque) > STEER_THRESHOLD.get(self.CP.carFingerprint, 1200)
+    steer_threshold = STEER_THRESHOLD.get(self.CP.carFingerprint, 1200)
+    if self.h020_settings is not None:
+      self.h020_settings.tick()
+      steer_threshold = self.h020_settings.override_threshold
+    ret.steeringPressed = abs(ret.steeringTorque) > steer_threshold
 
     if self.CP.carFingerprint in HONDA_BOSCH:
       # The PCM always manages its own cruise control state, but doesn't publish it

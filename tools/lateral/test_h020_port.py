@@ -6,7 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 import numpy as np
 import pytest
-from cereal import car, log
+from cereal import car, custom, log
+from collections import defaultdict
+from opendbc.car import Bus, structs
+from opendbc.car.honda import hondacan
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR, CarControllerParams
 from opendbc.sunnypilot.car.honda import h020_ptm as gate
@@ -334,3 +337,126 @@ def test_tgg_vehicle_donor_with_h020_firmware_inverse():
   assert load == pytest.approx(-120.18)
   r5 = ff.r5_for_motion(load, 0., H020, angle_deg=10.)
   assert ff.firmware_output(r5, 0., H020, 10.) == pytest.approx(load, abs=1e-8)
+
+
+# --- driver-override settings (plain files in the params directory), carstate threshold and the carcontroller ramp ---
+
+def write(params_dir, name, value):
+  (params_dir / name).write_text(str(value))
+
+
+@pytest.mark.parametrize("name,text,expected", [
+  ("HondaDriverOverrideThreshold", "2100", 2100.0), ("HondaDriverOverrideThreshold", " 1200\n", 1200.0),
+  ("HondaDriverOverrideThreshold", "100", 500.0), ("HondaDriverOverrideThreshold", "999999", 5000.0),
+  ("HondaDriverOverrideThreshold", "nan", 1800.0), ("HondaDriverOverrideThreshold", "abc", 1800.0), ("HondaDriverOverrideThreshold", "", 1800.0),
+  ("HondaOverrideFadeDownSecs", "0.3", 0.3), ("HondaOverrideFadeDownSecs", "-2", 0.0), ("HondaOverrideFadeDownSecs", "inf", 0.0),
+  ("HondaOverrideFadeUpSecs", "1.5", 1.5), ("HondaOverrideFadeUpSecs", "99", 10.0), ("HondaOverrideFadeUpSecs", "x", 0.5)])
+def test_setting_files_are_clipped_and_bad_values_fall_back(tmp_path, name, text, expected):
+  write(tmp_path, name, text)
+  assert gate.read_setting(name, tmp_path) == expected
+
+
+def test_missing_setting_files_give_the_h020_defaults(tmp_path):
+  s = gate.H020Settings(tmp_path)
+  assert (s.override_threshold, s.fade_down_s, s.fade_up_s) == (1800.0, 0.0, 0.5)
+
+
+def test_settings_are_reread_about_once_a_second(tmp_path):
+  s = gate.H020Settings(tmp_path)
+  write(tmp_path, "HondaDriverOverrideThreshold", 1200)
+  for _ in range(99):
+    s.tick()
+  assert s.override_threshold == 1800.0
+  s.tick()
+  assert s.override_threshold == 1200.0
+
+
+def make_ci(monkeypatch, tmp_path, version=PTM_ID):
+  monkeypatch.setattr(gate, "PARAMS_DIR", tmp_path)
+  fw = fw_list(version)
+  cp = CarInterface.get_params(CAR.HONDA_CIVIC_BOSCH, FPS, fw, False, False, False)
+  sp = CarInterface.get_params_sp(cp, CAR.HONDA_CIVIC_BOSCH, FPS, fw, False, False, False)
+  cp.carFw = fw
+  return CarInterface(cp, sp)
+
+
+class FakeParser:
+  def __init__(self, torque):
+    self.vl = defaultdict(lambda: defaultdict(float))
+    self.vl["STEER_STATUS"]["STEER_TORQUE_SENSOR"] = torque
+    self.vl_all = defaultdict(lambda: defaultdict(list))
+    self.ts = defaultdict(lambda: defaultdict(list))
+    self.can_valid, self.counter_fail, self.updated = True, 0, defaultdict(list)
+
+
+def pressed_at(ci, torque):
+  ret, _ = ci.CS.update({Bus.pt: FakeParser(torque), Bus.cam: FakeParser(0), Bus.body: FakeParser(0)})
+  return ret.steeringPressed
+
+
+def test_carstate_h020_threshold_default_and_file(monkeypatch, tmp_path):
+  ci = make_ci(monkeypatch, tmp_path)
+  assert not pressed_at(ci, 1500) and pressed_at(ci, 1900)  # 1800 by default
+  write(tmp_path, "HondaDriverOverrideThreshold", 1200)
+  for _ in range(100):
+    ci.CS.h020_settings.tick()
+  assert pressed_at(ci, 1500)
+
+
+def test_carstate_other_modified_eps_keeps_the_res_threshold(monkeypatch, tmp_path):
+  write(tmp_path, "HondaDriverOverrideThreshold", 3000)
+  ci = make_ci(monkeypatch, tmp_path, b"39990-TEA,H021\0\0")
+  assert ci.CS.h020_settings is None and ci.CC.h020_settings is None
+  assert pressed_at(ci, 1300) and not pressed_at(ci, 1100)  # res's 1200
+
+
+def drive(ci, monkeypatch, frames, torque, pressed, driver_torque=0.0):
+  """Run real CarController.update; return (apply_torque, lkas_active) of the last frame."""
+  sent = []
+  monkeypatch.setattr(hondacan, "create_steering_control", lambda packer, CAN, apply, active: sent.append((apply, active)) or (0, b"", 0))
+  monkeypatch.setattr(hondacan, "create_lkas_hud", lambda *a, **k: (0, b"", 0))
+  msg = car.CarControl.new_message()  # card hands the controller a reader
+  msg.latActive = True
+  msg.actuators.torque = torque
+  CC = msg.as_reader()
+  CS = ci.CS
+  CS.out = car.CarState.new_message()
+  CS.out.vEgo = 15.0
+  CS.out.steeringPressed = pressed
+  CS.out.steeringTorque = driver_torque
+  CS.lkas_hud, CS.acc_hud = {}, {}
+  for _ in range(frames):
+    ci.CC.update(CC, custom.CarControlSP.new_message().as_reader(), CS, 0)
+  return sent[-1]
+
+
+def test_carcontroller_fades_in_over_half_a_second_after_engage(monkeypatch, tmp_path):
+  ci = make_ci(monkeypatch, tmp_path)
+  assert drive(ci, monkeypatch, 1, 0.4, False)[0] == pytest.approx(-0.4 * 0.02 * 3840, abs=2)   # ramp 0.02 after one frame
+  assert drive(ci, monkeypatch, 24, 0.4, False)[0] == pytest.approx(-0.4 * 0.5 * 3840, abs=3)    # half way at 25 frames
+  assert drive(ci, monkeypatch, 30, 0.4, False)[0] == pytest.approx(-0.4 * 3840, abs=2)           # full by 0.5 s
+
+
+def test_carcontroller_override_cuts_torque_at_once_and_drops_lkas(monkeypatch, tmp_path):
+  ci = make_ci(monkeypatch, tmp_path)
+  drive(ci, monkeypatch, 80, 0.4, False)
+  apply, active = drive(ci, monkeypatch, 1, 0.4, True, driver_torque=-2500)  # opposing the command: latched immediately
+  assert apply == 0 and not active and ci.CC.last_torque == 0.0
+  apply, active = drive(ci, monkeypatch, 1, 0.4, False)  # released: authority returns over fade-up, LKAS requested again
+  assert active and 0 < abs(apply) < 0.4 * 3840 * 0.05
+  assert drive(ci, monkeypatch, 60, 0.4, False)[0] == pytest.approx(-0.4 * 3840, abs=2)
+
+
+def test_carcontroller_fade_down_file_and_same_direction_press_delay(monkeypatch, tmp_path):
+  write(tmp_path, "HondaOverrideFadeDownSecs", 0.2)
+  ci = make_ci(monkeypatch, tmp_path)
+  drive(ci, monkeypatch, 80, 0.4, False)
+  apply, active = drive(ci, monkeypatch, 1, 0.4, True, driver_torque=-2500)
+  assert active is False and abs(apply) == pytest.approx(0.4 * 0.95 * 3840, abs=40)
+
+
+def test_carcontroller_unrelated_car_is_unchanged(monkeypatch, tmp_path):
+  ci = make_ci(monkeypatch, tmp_path, b"39990-TEA,H021\0\0")
+  apply, active = drive(ci, monkeypatch, 60, 0.4, True, driver_torque=-2500)
+  prm = CarControllerParams(ci.CP)
+  assert active and apply == int(np.interp(-0.4 * prm.STEER_MAX, prm.STEER_LOOKUP_BP, prm.STEER_LOOKUP_V))  # res's own map, no override handling

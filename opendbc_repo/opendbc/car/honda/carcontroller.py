@@ -10,6 +10,7 @@ from opendbc.car.interfaces import CarControllerBase
 from opendbc.sunnypilot.car.honda.mads import MadsCarController
 from opendbc.sunnypilot.car.honda.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.honda.icbm import IntelligentCruiseButtonManagementInterface
+from opendbc.sunnypilot.car.honda.h020_ptm import H020Settings, get_eps_modified_steering_pressed, is_h020, override_ramp_step
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -115,6 +116,36 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
     self.brake = 0.0
     self.last_torque = 0.0
 
+    # TEA-H020 rev-b: the source branch's driver-override ramp (h020_ptm settings files); every other car is unchanged
+    self.h020_settings = H020Settings() if CP.carFingerprint == CAR.HONDA_CIVIC_BOSCH and is_h020(CP.carFw) else None
+    self.override_ramp = 0.0
+    self.lat_active_prev = False
+    self.steering_pressed_filter_s = 0.0
+    self.steering_pressed_prev = False
+
+  def _h020_override(self, CC, CS):
+    """(torque to send, whether LKAS stays requested, driver override detected). A detected override cuts the torque
+    request and drops LKAS; authority returns over the fade-up time once the override ends."""
+    self.h020_settings.tick()
+    torque = float(CC.actuators.torque) if CC.latActive else 0.0
+    pressed = False
+    if CC.latActive:
+      self.steering_pressed_filter_s, pressed = get_eps_modified_steering_pressed(
+        bool(CS.out.steeringPressed), float(CS.out.steeringTorque), torque, self.steering_pressed_filter_s,
+        self.steering_pressed_prev, DT_CTRL)
+      self.steering_pressed_prev = pressed
+      if not self.lat_active_prev:
+        self.override_ramp = 0.0
+      self.override_ramp = override_ramp_step(self.override_ramp, pressed, self.h020_settings.fade_down_s,
+                                              self.h020_settings.fade_up_s, DT_CTRL)
+      torque *= self.override_ramp
+    else:
+      self.override_ramp = 0.0
+      self.steering_pressed_filter_s = 0.0
+      self.steering_pressed_prev = False
+    self.lat_active_prev = CC.latActive
+    return torque, CC.latActive and not pressed, pressed
+
   def update(self, CC, CC_SP, CS, now_nanos):
     MadsCarController.update(self, self.CP, CC, CC_SP)
     actuators = CC.actuators
@@ -130,8 +161,14 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
       gas, brake = 0.0, 0.0
 
     # *** rate limit steer ***
-    limited_torque = rate_limit(actuators.torque, self.last_torque, -self.params.STEER_DELTA_DOWN * DT_CTRL,
-                                self.params.STEER_DELTA_UP * DT_CTRL)
+    lkas_active = CC.latActive
+    torque_cmd = actuators.torque
+    override_cut = False
+    if self.h020_settings is not None:
+      torque_cmd, lkas_active, override_cut = self._h020_override(CC, CS)
+    # an H020 override cut is applied at once: the delta limiter would stretch a 0 s fade-down over 0.33 s
+    limited_torque = torque_cmd if override_cut else rate_limit(torque_cmd, self.last_torque, -self.params.STEER_DELTA_DOWN * DT_CTRL,
+                                                                self.params.STEER_DELTA_UP * DT_CTRL)
     self.last_torque = limited_torque
 
     # *** apply brake hysteresis ***
@@ -159,7 +196,7 @@ class CarController(CarControllerBase, MadsCarController, GasInterceptorCarContr
         can_sends.append(make_tester_present_msg(0x18DAB0F1, 1, suppress_response=True))
 
     # Send steering command.
-    can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, CC.latActive))
+    can_sends.append(hondacan.create_steering_control(self.packer, self.CAN, apply_torque, lkas_active))
 
     # wind brake from air resistance decel at high speed
     wind_brake = np.interp(CS.out.vEgo, [0.0, 2.3, 35.0], [0.001, 0.002, 0.15])
