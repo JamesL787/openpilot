@@ -204,13 +204,19 @@ CIVIC_TBA_C120_VGR_LINEAR_BP, CIVIC_TBA_C120_VGR_ANGLE_BP, CIVIC_TBA_C120_VGR_RE
 
 # Acura RDX 3G on 39990-TJB-A220 (the PTM image). Measured, not traced: this image has no angle table. Its CAN RX
 # table (0x3D9D0) takes 0x156 STEERING_SENSORS from the steering-angle sensor, so the EPS neither computes nor
-# publishes the wheel angle; the rack itself is variable (the yaw-fitted ratio falls 19.3 -> 14.1 from centre to
-# 250-400 deg on routes 412ed2539bfc2c42/000000c6 and 000000c7). The EPS's own rate word, 0x18F STEER_ANGLE_RATE,
-# is pinion-side: per published deg/s it rises 7.2 -> 9.5 counts from centre to past 100 deg, the same quickening
-# (both routes agree within 2% from 15 deg out; centre from c7, where the yaw ratio puts it). Its ratio to the
-# centre value is d(linear)/d(published), integrated here into the same linear/physical map a traced A table gives.
+# publishes the wheel angle; the rack itself is variable. The EPS's own rate word, 0x18F STEER_ANGLE_RATE, is
+# pinion-side: per published deg/s it rises 7.8 -> 9.6 counts from centre to past 100 deg. Measured as the word's
+# integral against the published angle's change over 0.25 / 0.5 s windows (no zero crossing), by |angle| band, on
+# routes 412ed2539bfc2c42/000000b8, c7, cc and d2 (the four agree within ~3 % per band). That method gives the
+# Clarity's word as 3.82 at centre on routes 38e/3a1/3a2, where its firmware fixes it at 3.81 (R6 -122 = 32 x the
+# word); regressing the word on the angle's derivative reads 1 % low there but 8 % low here (7.2), the noise in this
+# car's angle derivative. Its ratio to the centre value is d(linear)/d(published), integrated here into the same
+# linear/physical map a traced A table gives. Check over whole maneuvers: the word integrated into the EPS's pinion
+# angle (0x1C668 builds it from the motor position change) tracks this map of the published angle with gain 1.004
+# (IQR 0.995-1.019) over 204 20 s windows on all five routes, with no bias by |angle| out to lock (band means within
+# +-0.2 deg); the rest is column twist, about -0.5 deg of pinion per 1000 steeringTorque counts.
 _RDX_TJB_A220_RATE_WORD_BP = [0, 15, 30, 45, 60, 75, 90, 105, 480]
-_RDX_TJB_A220_RATE_WORD = [7.2, 7.57, 7.70, 7.82, 8.37, 8.84, 9.40, 9.50, 9.50]
+_RDX_TJB_A220_RATE_WORD = [7.80, 7.83, 7.94, 8.24, 8.64, 9.06, 9.41, 9.60, 9.58]
 
 
 def _piecewise(x, xp, fp):

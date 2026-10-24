@@ -9,9 +9,9 @@ from opendbc.car.honda.steer_ratio import (
 )
 from openpilot.selfdrive.controls.lib.honda_eps_firmware_ff import CLARITY_TRW_A020_LAT_DELAY_SCHEDULE, ColumnLoadModel, \
   EpsFirmwareCalibration, R6_GAIN_BP, computed_r6
-from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CIVIC_TEG_A010_RACK, CLARITY_TRW_A020_RACK, \
-  INSIGHT_TXM_A040_RACK, RDX_TJB_A220_RACK
-from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, CIVIC_HATCH_SPORT_SPEC, CRV_2017_SPEC, \
+from openpilot.selfdrive.controls.lib.honda_eps_rack_map import CIVIC_TBA_C020_RACK, CIVIC_TEG_A010_RACK, CIVIC_TGG_A120_RACK, \
+  CLARITY_TRW_A020_RACK, INSIGHT_TXM_A040_RACK, RDX_TJB_A220_RACK
+from openpilot.selfdrive.controls.lib.honda_eps_spec_plant import CIVIC_2019_SEDAN_SPEC, CRV_2017_SPEC, \
   CRV_2020_SPEC, spec_rack_table
 
 # --- the images ------------------------------------------------------------------------------------------------
@@ -86,7 +86,6 @@ FLAT_ENVELOPE = ((0, 50, 100, 150, 200, 250, 300, 350, 400), (1774,) * 9)
 CIVIC_TBA_C020_ENVELOPE = ((0, 50, 100, 150, 200, 240, 300, 321, 400), (1774, 1774, 1774, 1774, 1774, 1552, 1219, 1108, 1108))
 # C020 row 1 (axis 0x13806); the TEG-A010 and the 09-12 A030 images carry the C020's axes in every row
 CIVIC_TBA_C020_ROW1_KEYS = (0, 115, 254, 449, 654, 862, 1111, 1549, 1774)
-CIVIC_TBA_C020_P_KEYS = (0, 223, 441, 665, 883, 1108, 1330, 1552, 1774)
 CIVIC_TBA_C120_P_KEYS = (3, 173, 441, 665, 887, 1104, 1317, 1610, 1774)
 # Every image's R6, computed from its own A table (see computed_r6). The TGG-A120 shares the C020's A table; the
 # TEG-A010 and A030 share the C120's (centre divisor 20972); the CR-V A220's is byte-identical to the A040's.
@@ -136,17 +135,23 @@ CIVIC_TBA_C020_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.28, 0.28, 
 #   Clarity's 0.15 s until a parking-lot drive measures it.
 RDX_TJB_A220_LAT_DELAY_SCHEDULE = ((3.5, 7.0, 12.0, 20.0, 30.0), (0.15, 0.16, 0.18, 0.17, 0.17))
 
-# Civic Bosch 39990-TBA-C020, 08-05 ClarityPminus5 P117..265 D737 KFF45 Norm1650 Trk4500 TargetMapD Telem (bin
-# sha256 6ecd587c). Measured on the owner's telemetry (routes 284/287/289): E4 = -4096 * u, key clamp 1663 (0x137F2),
-# row 1 is live (94 counts RMS vs 200 for row 0 at 11-20 m/s; the largest R5 on 284 is 28497 = row 1 at 1663), R6,
-# the column load. Not checked: the envelope above 89 km/h. Now sent 3840 per unit (opendbc HONDA_CIVIC_BOSCH): the image
-# clamps at key 1663 = E4 3840, so 4096 left the last ~6% of the output range dead. Its map was set at 4096, so per unit
-# of output it now asks 0.94x the R5 it did and reaches the clamp at full output; the inversion uses 3840.
+# Civic Bosch 39990-TBA-C020, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (RWD sha256 df67bf6f; KB
+# PTM_FIX_FAMILY_20261016/out/C020, independent_verify 48/48, brick_check 70/70), a data-only fix of nrdr's Drive
+# release (39990-TBA,C020-Trk4000-PTM, 2d8836e8). That release equals the owner's earlier 08-05 ClarityPminus5
+# TargetMapD Telem build except tracker-1 (4000 here, 4500 there: ~2 ms of R6 lag, ~3 deg at 6.2 Hz; A280 is flat in
+# rows 0-1 now, which is what stopped the stutter). Rows 0-5 carry the Clarity's R5 at key x 3840/4096 on their own
+# axes, P on the Clarity's knots x 4096/3840, row 6 back to stock. Row 1 is live (TBCA9/TBHC8; telemetry on route 294:
+# 94 counts RMS vs 200 for row 0 at 11-20 m/s). Its R6, column load and trims were measured on the 08-05 build
+# (routes 284/287/289/294); the fix touches neither the rate path nor the column, so they carry over. Key clamp 1663
+# (0x137F2). Not checked: the envelope above 89 km/h. Sent 3840 per unit here (opendbc HONDA_CIVIC_BOSCH, the image's
+# clamp), the build was made for 4096, so per unit of output it asks 0.94x the Clarity's R5 and reaches the clamp at
+# full output; the inversion uses 3840. On the 08-05 build (TargetMap-D) this map would be 7-13 % hot mid-range.
+CIVIC_TBA_C020_R5 = (0, 1943, 4291, 7599, 11065, 14579, 18798, 26202, 30002)  # rev b row 1 (0x13884)
 CIVIC_TBA_C020 = EpsFirmwareCalibration(
   name="civic_tba_c020", e4_per_output=3840.0,
-  r5_key_bp=CIVIC_TBA_C020_ROW1_KEYS, r5_v=TARGET_MAP_D_R5, key_clamp=1663,
+  r5_key_bp=CIVIC_TBA_C020_ROW1_KEYS, r5_v=CIVIC_TBA_C020_R5, key_clamp=1663,
   envelope_bp=CIVIC_TBA_C020_ENVELOPE[0], envelope_v=CIVIC_TBA_C020_ENVELOPE[1],
-  kp_key_bp=CIVIC_TBA_C020_P_KEYS, kp_v=P_ROW_PMINUS5,
+  kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
   load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15, cmd_delay_highway_s=0.15,  # measured
@@ -226,19 +231,32 @@ CIVIC_TBA_C120 = EpsFirmwareCalibration(
 # PTM_FIX_FAMILY_20261016/out/TGG), a data-only fix of the Drive TGG release (tracker-1 4250, as the 08-07 build). Row 0
 # is live: both variant records (TGGA5, TGGA6, at 0x4B500) select it. It keeps its own key axis and carries the
 # Clarity's R5 for each key at this car's 4096 E4 per unit (Clarity(key x 3840/4096)), with P on the Clarity's knots
-# x 4096/3840, and A280 is flat in it. Flat envelope. Not measured: load (R6 is computed from its A table, the C020's). Both builds report 39990-TGG,A120: a car
-# on an earlier image must be reflashed. Its rack map is predicted from the Civic hatch Sport's specs through the A table.
-CIVIC_TGG_A120_SPEC_RACK = spec_rack_table(CIVIC_HATCH_SPORT_SPEC, HONDA_VGR_INVERSE_BY_PROFILE[HONDA_VGR_CIVIC_TBA_C020])
+# x 4096/3840, and A280 is flat in it. Flat envelope. R6 is computed from its A table (the C020's); on the owner's
+# routes the 0x18F rate word reads 4.85 per published deg/s at centre and 1.21x that to lock (displacement windows,
+# five routes), against 4.80 and 1.21x computed, so R6 = 32 x the word holds within 1 %. Both builds report
+# 39990-TGG,A120: a car on an earlier image must be reflashed.
+# Live row, measured without telemetry: fitting the load below through each row's law of the 08-07 image, row 0 fits
+# best on all five routes (held out 0.838 / 0.558 / 0.840 / 0.703 / 0.735; rows 1-5, the [0,222,333,...] axis: 0.822 /
+# 0.484 / 0.811 / 0.634 / 0.681; row 6 needs a positive viscous term), as both variant records say.
+# Rack map: yaw-fitted on the owner's car (honda_eps_rack_map.CIVIC_TGG_A120_RACK).
+# Load: fitted through the law of the build those drives ran, the 08-07 C020Pminus5 Trk4250 KFF45 image (row 0 on
+# TargetMap-D R5 0..30000, P-minus-5 on the C120's P keys, 4096 E4 per unit), not rev b's: the column is the car's,
+# whichever image moves it. Routes 83ccc6a9a4e14d0b/0000000b-00000010, 73 min of engaged unpressed frames, R^2 0.794,
+# held out by route 0.838 / 0.558 / 0.840 / 0.703 / 0.735 (the C020's load it carried: 0.761 / 0.520 / 0.641 / 0.267 /
+# 0.318). Its column is 2x stiffer than the C020's at 5 m/s (k0 -15.7 vs -5.6), alike by 30 m/s: carrying the C020's
+# under-asked the hold in tight turns, the owner's "low speed sometimes doesn't turn hard enough", while the
+# highway was right.
+CIVIC_TGG_A120_LOAD = ColumnLoadModel(k0=-15.67, k1=-0.157, c=-5.449, friction=-388.8, bias=75.77, kroll=-0.6084)
 CIVIC_TGG_A120 = EpsFirmwareCalibration(
   name="civic_tgg_a120", e4_per_output=3840.0,  # built for 4096 (below), sent 3840: its key clamp is 1663
   r5_key_bp=(0, 103, 263, 459, 660, 862, 1111, 1549, 1774), r5_v=(0, 1740, 4443, 7769, 11167, 14579, 18798, 26202, 30002),
   key_clamp=1663, envelope_bp=FLAT_ENVELOPE[0], envelope_v=FLAT_ENVELOPE[1],
   kp_key_bp=tuple(round(k * 4096 / 3840) for k in CLARITY_TRW_A020_P_KEYS), kp_v=P_ROW_PMINUS5,
   r6_per_deg_s=CIVIC_TBA_C020_R6_CENTRE, r6_angle_bp=CIVIC_TBA_C020_R6_BP, r6_angle_gain=CIVIC_TBA_C020_R6_GAIN,
-  load=CIVIC_TBA_C020_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
+  load=CIVIC_TGG_A120_LOAD, p_scale=CIVIC_TBA_C020_P_SCALE, i_scale=CIVIC_TBA_C020_I_SCALE,
   cmd_delay_s=0.15, cmd_delay_highway_s=0.15,  # the C020's (same Civic Bosch chassis)
   lat_delay_schedule=CIVIC_TBA_C020_LAT_DELAY_SCHEDULE,
-  rack=CIVIC_TGG_A120_SPEC_RACK,
+  rack=CIVIC_TGG_A120_RACK,
 )
 # Insight 39990-TXM-A040, the CORRECTED Proper Torque Mod of 2026-10-16, revision b (payload sha256 089a8a72, RWD 7ba37432;
 # KB PTM_FIX_FAMILY_20261016/out/TXM, proof/), on the released PTM 39990-TXM,A040-PTM.rwd (rwd 833a41bf, the 08-08 C020Surface Trk1-4000
@@ -341,23 +359,40 @@ CRV_TLA_A220 = EpsFirmwareCalibration(
 #   D 1774, output 8868 (the Clarity's 9000: the motor sum caps at 8868 on both); FF45 in a code cave at the P+D sum,
 #   as the Clarity's. A280 (G/H) flat. Speed envelope flat at a 1024 (0x57B3C). Emulator-exact (1500/1500 per stage).
 # - R6: TJB's feedback ref has no NORM; the build scales it x 15768/32768 (= 1650/3429, the Clarity's NORM ratio) at
-#   its load. Its 0x18F STEER_ANGLE_RATE word, pinion-side and unscaled, reads -7.2 per published deg/s at centre;
-#   on the Clarity R6 is 32 x that word (32 x -3.7..-3.8 = -118..-122, the firmware-derived -122). So, if TJB's ref
-#   is 32 x its word (THR's open item), R6 here = 0.4812 x 32 x -7.2 = -110.9 per published deg/s at centre:
-#   0.91 of the Clarity's. Its angle shape is the rate word's (the linear map's slope, as computed_r6). The drives
-#   cannot pin it more closely: fitting the load through the law (tools/lateral/fit_column_load.py --source e4) at
-#   0.5-2x this R6 gives R^2 0.815-0.825 throughout, since R6 trades off against the viscous term, which stays
-#   negative (as on every measured car) only up to ~1.1x. So the word-derived value stands.
+#   its load. Ref and the 0x18F STEER_ANGLE_RATE word come from one motor-speed product, written through struct
+#   pointers (so no literal names the words): 0x1C668 takes the per-call motor position change d (wrapped to +-16384)
+#   and writes ref = (d * k) >> 7 to FFF8B4B4 and x = (d * k) >> 12 = ref / 32 to FFF8B4AA; 0x1D300 publishes
+#   FFF8B25E = two cascaded unity-gain one-poles (0x2FF26, 12946/32768) of (x + x_prev) / 2, clamped +-24000. So
+#   ref = 32 x the published word, as on the Clarity. The word is 7.8 per published deg/s at centre (steer_ratio
+#   HONDA_VGR_RDX_TJB_A220; the same method gives the Clarity's 3.82 against its firmware's 3.81), so R6 here =
+#   0.4812 x 32 x -7.8 = -120.1 per published deg/s at centre: 0.98 of the Clarity's. Its angle shape is the rate
+#   word's (the linear map's slope, as computed_r6). The drives cannot pin it by themselves: on routes c6 / c7 the
+#   load fit through the law was flat in R^2 from 0.5x to 2x R6, since R6 trades off against the viscous term.
 # - Helper A and the override fade (driver torque) stay stock, as the PTM rule keeps them: they back off harder than
 #   the Clarity's once a hand pushes, but on the owner's drives they keep 0.95-0.99 of LKAS on average, as the
 #   Clarity's tables would (1.00-1.015x); scale_q8 256 is the hands-off value as everywhere.
 _, _, RDX_TJB_A220_R6_GAIN = computed_r6(HONDA_VGR_RDX_TJB_A220)
-RDX_TJB_A220_R6_CENTRE = -110.9
+RDX_TJB_A220_R6_CENTRE = -120.1
 _RDX_A = 56756 / 32768  # TJB a -> the Clarity's key q
-# Load: fitted through this law on the sent 0xE4 (the car drove LatControlPID, so there is no telemetry), routes
-# 412ed2539bfc2c42/000000c6 and 000000c7, 12.8 min of engaged, unpressed frames; R^2 0.819, held out by route 0.638 /
-# 0.800 (the CR-V's load: 0.516 / 0.712).
-RDX_TJB_A220_LOAD = ColumnLoadModel(k0=-10.01, k1=-0.1533, c=-2.136, friction=-233.2, bias=90.99, kroll=-4.198)
+# Load: fitted through this law (at the R6 above) on the sent 0xE4, since the car has no telemetry build: routes
+# 412ed2539bfc2c42/000000c6 and c7 (LatControlPID) and cc and d2 (this controller), 34 min of engaged, unpressed
+# frames; R^2 0.822, held out by route 0.636 / 0.847 / 0.833 / 0.790 (the two-route fit it replaces: 0.606 / 0.795 /
+# 0.780 / 0.751). Route b8 is left out: which PTM build it ran is not known.
+RDX_TJB_A220_LOAD = ColumnLoadModel(k0=-11.19, k1=-0.1363, c=-2.479, friction=-241.5, bias=119.2, kroll=-3.592)
+# Trims, picked in a closed-loop replay (tools/lateral/eps_closed_loop.py) of the owner's routes cc and d2: the logged
+# targets drive HondaEpsLateralCore into this firmware law and column (no stiction), with 40 ms of angle sensing and
+# 20 ms of command transport. Driven by the logged 0xE4 alone that plant reproduces the wheel's 0.6-2.5 Hz motion at
+# gain 1.03 on the freeway on both routes (correlation 0.92-0.94; 9-20 m/s 0.98 / 1.21, so town is the looser);
+# closed, it reproduces the freeway ping-pong the owner reported, 1-2 Hz wheel/target 1.33 against 1.29 measured on
+# d2 (cc: 1.26 / 1.18). The loop is delay-limited (0.96 with no delay, 1.42 at 70 ms), so gain is what
+# rings, and the default 5 deg/s friction knee is most of it at speed: the desired rate is under 5 deg/s 95 % of the
+# time there, so the knee acts as a ~47 counts per deg/s rate gain. A 15 deg/s knee at speed and P x0.7 above 50 mph
+# take the freeway 1-2 Hz gain 1.32 -> 0.95 on d2 (cc 1.26 -> 1.10, 9-20 m/s 1.39 -> 1.19) for tracking RMS 0.35 ->
+# 0.39 deg, with 0.1-0.5 Hz tracking unchanged (1.05 -> 1.06). Rejected there: the output LPF (default taus: 1.41 on
+# the freeway, 2.13 at 9-20 m/s, its lag costs more than it smooths), a D term on the measured rate (unstable in some
+# windows at 0.002-0.006), and P alone (x0.6: 1.10, but tracking 0.40 deg).
+RDX_TJB_A220_P_SCALE = (1.0, 1.0, 0.7)
+RDX_TJB_A220_FRICTION_WIDTH_V = (20.0, 15.0)
 ACURA_RDX_TJB_A220 = EpsFirmwareCalibration(
   name="rdx_tjb_a220", e4_per_output=4096.0,
   r5_key_bp=tuple(round(a * _RDX_A) for a in (0, 128, 256, 384, 512, 640, 768, 896, 1024)),
@@ -366,9 +401,9 @@ ACURA_RDX_TJB_A220 = EpsFirmwareCalibration(
   kp_key_bp=tuple(round(a * _RDX_A) for a in (0, 58, 109, 243, 320, 448, 640, 896, 1024)),
   kp_v=tuple(16 * k for k in (7, 8, 9, 11, 13, 15, 16, 17, 17)),
   r6_per_deg_s=RDX_TJB_A220_R6_CENTRE, r6_angle_bp=R6_GAIN_BP, r6_angle_gain=RDX_TJB_A220_R6_GAIN,
-  load=RDX_TJB_A220_LOAD, p_scale=CRV_TLA_A040_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,  # untrimmed
+  load=RDX_TJB_A220_LOAD, p_scale=RDX_TJB_A220_P_SCALE, i_scale=CRV_TLA_A040_I_SCALE,
   lat_delay_schedule=RDX_TJB_A220_LAT_DELAY_SCHEDULE,
-  rack=RDX_TJB_A220_RACK,
+  rack=RDX_TJB_A220_RACK, friction_width_v=RDX_TJB_A220_FRICTION_WIDTH_V,
 )
 
 # normalize_honda_eps_fw(EPS fwVersion) -> (fingerprint, profile). TGG-A020 is a separate application from the A120 (its RWD updates only A010/A020)
@@ -451,13 +486,14 @@ CALIBRATION_PROVENANCE = {
     "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
   },
   "civic_tgg_a120": {
-    "row": "firmware: both variant records (TGGA5, TGGA6) select row 0",
+    "row": "measured: row 0, its drives fit row 0's law best on all five routes (no telemetry); both variant records agree",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
-    "r6": "firmware: computed from its A table (the C020's)",
-    "load": "inferred: the C020's",
+    "r6": "firmware: computed from its A table (the C020's); the owner's 0x18F rate word agrees within 1 %",
+    "load": "measured: the owner's routes 0000000b-00000010, through the 08-07 build's law they ran",
     "trims": "inferred: the C020 owner's",
-    "cmd_delay": "inferred: the C020's (same chassis)", "model_delay": "inferred: the C020's (same chassis)",
-    "rack": "spec: Honda lock turns and lock ratio through its A table, R0 +-2.5%",
+    "cmd_delay": "inferred: the C020's (same chassis; on time to 0.15 s early on routes 0c/0d/0f, older code)",
+    "model_delay": "inferred: the C020's (same chassis)",
+    "rack": "measured: VSA yaw (GPS-checked scale), routes 0000000b-00000010",
   },
   "insight_txm_a040": {
     "row": "firmware: row 0 in every build and variant",
@@ -483,12 +519,12 @@ CALIBRATION_PROVENANCE = {
   "rdx_tjb_a220": {
     "row": "firmware: rows 0-3 carry the same Route-A target, P and D (0x57BAE + 0x300*row), so the variant row does not matter",
     "kp_axis": "firmware", "key_clamp": "firmware", "envelope": "firmware",
-    "r6": "inferred: 0.4812 x 32 x its 0x18F rate word (the Clarity's R6 relation); its drives allow 0.7-1.1x",
-    "load": "measured: the owner's routes 000000c6 / 000000c7 (a 2019), rebuilt through the law from the sent 0xE4; the MMR takes it",
-    "trims": "default: untrimmed",
-    "cmd_delay": "default (its LatControlPID drives ran 0.10-0.24 s early at 7-12 m/s: re-check on this controller)",
+    "r6": "firmware: ref = 32 x its 0x18F rate word (0x1C668 / 0x1D300) x 0.4812 (the build); the word measured at 7.8 per deg/s on routes b8/c7/cc/d2",
+    "load": "measured: the owner's routes 000000c6 / c7 / cc / d2 (a 2019), rebuilt through the law from the sent 0xE4; the MMR takes it",
+    "trims": "measured: closed-loop replay of routes cc / d2 (P x0.7 above 50 mph, a 15 deg/s friction knee at speed)",
+    "cmd_delay": "measured: plan_timing on this controller, routes cc / d2: on time at 5-12 m/s (+0.04 / +0.03 s), so the default stands",
     "model_delay": "measured: 12 m/s and up, routes 00000003 / 00000004 / 0000000b on this controller; the Clarity's at crawl",
-    "rack": "measured: VSA yaw (GPS-checked scale), routes 000000c6 / 000000c7 (a 2019; the MMR takes it), through its road-measured linear map",
+    "rack": "measured: VSA yaw (GPS-checked scale), routes 000000b8 / c6 / c7 / cc / d2 (a 2019; the MMR takes it), through its road-measured linear map",
   },
   "crv_tla_a220": {
     "row": "firmware: rows 0-5 all Clarity-equivalent in the corrected build, so the untraced variant row does not matter",
@@ -506,6 +542,7 @@ CALIBRATION_PROVENANCE = {
 # PTM_FIX_FAMILY_20261016/out/<car>). Each earlier PTM build reports the same EPS version string, so openpilot cannot tell
 # them apart, and every calibrated image steers with LatControlHondaEps: the owner must flash this build first.
 REQUIRED_PTM_RWD = {
+  "civic_tba_c020": "df67bf6f",
   "civic_tba_a030": "55c37266",
   "civic_teg_a010": "04147917",
   "civic_tba_c120": "9261b8db",

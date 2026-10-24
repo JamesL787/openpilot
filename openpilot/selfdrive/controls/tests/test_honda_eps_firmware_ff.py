@@ -128,6 +128,29 @@ def _step_core(core, frames, pressed=False, limited=False):
     core.update(0.5, 0.0, 0.0, 9.0, 0.0, pressed, limited)
 
 
+@pytest.mark.parametrize("cal,ceiling", [(eps_cal.CLARITY_TRW_A020, 1.0), (eps_cal.CIVIC_TBA_C020, 1.0),
+                                         (eps_cal.ACURA_RDX_TJB_A220, 1.0),
+                                         (eps_cal.CRV_TLA_A040, 3841 / 4096), (eps_cal.CRV_TLA_A220, 3841 / 4096)])
+def test_output_tops_out_where_the_command_row_ends(cal, ceiling):
+  assert cal.output_ceiling() == pytest.approx(ceiling)
+  # the ceiling reaches the firmware's last answer (within one key of truncation), and 1.0 gets no more R5 than it
+  last = float(np.interp(min(cal.key_clamp, cal.r5_key_bp[-1]), cal.r5_key_bp, cal.r5_v))
+  assert abs(eps_ff.r5_from_output(cal.output_ceiling(), 10.0, cal)) == pytest.approx(last, rel=2e-3)
+  assert eps_ff.r5_from_output(1.0, 10.0, cal) == eps_ff.r5_from_output(cal.output_ceiling(), 10.0, cal)
+
+
+def test_the_core_does_not_wind_up_past_the_row_end():
+  cal = eps_cal.CRV_TLA_A040
+  core = eps_ff.HondaEpsLateralCore(KP_BP, KP_V, KP_BP, KI_V, DT_CTRL, ff=eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, cal))
+  for _ in range(3000):
+    out = core.update(5.0, 0.0, 0.0, 15.0, 0.0, False, False)  # a wheel stuck 5 deg short: the integrator runs
+  assert abs(out) == pytest.approx(cal.output_ceiling(), rel=1e-3)  # the output LPF still closing the last bit
+  assert core.pid.p + core.pid.i + core.pid.f <= cal.output_ceiling() + 1e-6  # it stopped at the ceiling, not at 1.0
+  for _ in range(10):
+    out = core.update(0.0, 0.0, 0.0, 15.0, 0.0, False, False)
+  assert abs(out) < cal.output_ceiling() - 0.1  # so it comes off the ceiling at once when the error goes
+
+
 def test_integrator_bleeds_through_the_override_fade():
   core = _wound_up_core(fade_up_s=0.5)
   _step_core(core, 50, pressed=True, limited=True)
@@ -209,6 +232,30 @@ def test_crawl_gate_holds_the_feedforward_off_near_straight(v, des, weight):
   core = _core()
   _hold(core, 80, des=des, angle=des, v=v)
   assert core.ff_weight == pytest.approx(weight)
+
+
+def test_the_tgg_steers_on_its_own_measured_column_and_rack():
+  tgg = eps_cal.CIVIC_TGG_A120
+  assert tgg.load == eps_cal.CIVIC_TGG_A120_LOAD and tgg.rack is rack.CIVIC_TGG_A120_RACK
+  assert eps_cal.provenance(tgg)["load"].startswith("measured") and eps_cal.provenance(tgg)["rack"].startswith("measured")
+  # its column holds about 2x the C020's at a crawl and alike on the highway
+  hold = lambda load, v: load.k0 + load.k1 * v * v  # noqa: E731
+  assert 1.7 < hold(tgg.load, 5.0) / hold(eps_cal.CIVIC_TBA_C020_LOAD, 5.0) < 2.2
+  assert 0.85 < hold(tgg.load, 30.0) / hold(eps_cal.CIVIC_TBA_C020_LOAD, 30.0) < 1.05
+
+
+def test_a_calibration_can_carry_its_own_friction_knee():
+  rdx = eps_cal.ACURA_RDX_TJB_A220
+  assert eps_ff.friction_width(8.0, rdx) == 20.0 and eps_ff.friction_width(30.0, rdx) == 15.0
+  assert eps_ff.friction_width(30.0, CLA) == eps_ff.friction_width(30.0) == 5.0   # everyone else: the default
+  # a slow 2 deg/s correction at speed gets a third of the default knee's friction
+  loads = []
+  for cal in (rdx, dataclasses.replace(rdx, friction_width_v=None)):
+    ff = eps_ff.HondaEpsFirmwareFeedforward(DT_CTRL, cal)
+    for k in range(100):
+      ff.update(2.0 * k * DT_CTRL, 30.0, 0.0)
+    loads.append(ff.load - eps_ff.column_load(ff.prev_angle + eps_ff.LEAD_S * ff.rate, ff.rate, 30.0, 0.0, cal.load, 1e9))
+  assert loads[0] / loads[1] == pytest.approx(math.tanh(2.0 / 15.0) / math.tanh(2.0 / 5.0), rel=0.05)
 
 
 def test_friction_knee_is_wide_in_the_city_and_sharp_at_speed():
@@ -407,9 +454,48 @@ def test_controller_steers_logs_and_rests(monkeypatch):
   assert state.epsFfActive and state.epsFfWeight == 1.0 and state.epsFfR5 != 0.0
   msg = log.Event.new_message(starpilotLateralState=state)   # what controlsd publishes
   assert msg.starpilotLateralState.epsFfWeight == 1.0
-  lac.update(False, car.CarState.new_message(), VM, log.VehicleParameters.new_message(), False, 0.0, False, 0.2,
-             None, None, SimpleNamespace())
-  assert lac.core.ff_weight == 0.0 and lac.core.output == 0.0
+  # past the ride-through a disengagement resets it
+  for _ in range(lac.ride_through_frames + 1):
+    lac.reset()   # controlsd, every inactive frame
+    out, _, pid_log = lac.update(False, car.CarState.new_message(), VM, log.VehicleParameters.new_message(), False, 0.0,
+                                 False, 0.2, None, None, SimpleNamespace())
+    assert out == 0.0 and not pid_log.active
+  assert lac.core.ff_weight == 0.0 and lac.core.output == 0.0 and lac.core.pid.i == 0.0
+
+
+def _engaged_in_a_turn(lac, VM, frames=300, v=13.0):
+  CS = car.CarState.new_message()
+  CS.vEgo = v
+  params = log.VehicleParameters.new_message()
+  params.steerRatio, params.stiffnessFactor = 16.0, 1.0
+  for k in range(frames):
+    CS.steeringAngleDeg = 18.0 + 0.5 * math.sin(k * 0.05)
+    lac.update(True, CS, VM, params, False, -0.004, False, 0.2, None, None, SimpleNamespace())
+  return CS, params
+
+
+def test_a_one_frame_fault_does_not_throw_the_turn_away(monkeypatch):
+  # a single inactive frame (a one-sample STEER_STATUS fault) sends nothing but keeps the feedforward and integrator
+  lac, VM, _ = _controller(monkeypatch)
+  CS, params = _engaged_in_a_turn(lac, VM)
+  ff, i = lac.core.ff.output, lac.core.pid.i
+  assert lac.core.ff_weight == 1.0 and abs(ff) > 0.05
+  lac.reset()
+  out, _, pid_log = lac.update(False, CS, VM, params, False, -0.004, False, 0.2, None, None, SimpleNamespace())
+  assert out == 0.0 and not pid_log.active
+  assert lac.core.ff_weight == 1.0 and lac.core.ff.output == pytest.approx(ff, rel=0.05) and lac.core.pid.i == i
+  out, _, pid_log = lac.update(True, CS, VM, params, False, -0.004, False, 0.2, None, None, SimpleNamespace())
+  assert pid_log.active and lac.core.ff_weight == 1.0 and abs(out) > 0.05
+
+
+def test_a_long_dropout_still_resets(monkeypatch):
+  lac, VM, _ = _controller(monkeypatch)
+  CS, params = _engaged_in_a_turn(lac, VM)
+  for k in range(lac.ride_through_frames + 1):
+    assert lac.core.ff_weight == 1.0, k
+    lac.reset()
+    lac.update(False, CS, VM, params, False, -0.004, False, 0.2, None, None, SimpleNamespace())
+  assert lac.core.ff_weight == 0.0 and lac.core.pid.i == 0.0
 
 
 def test_target_honours_the_angle_rate_limit(monkeypatch):
@@ -538,11 +624,12 @@ def test_every_profiles_inversion_reproduces_the_requested_load(cal, load, rate)
   assert eps_ff.firmware_output(r5, rate, cal=cal) == pytest.approx(load, abs=1e-6)
 
 
-def test_c020_full_output_lands_on_the_measured_rail():
-  # route 00000284 (sent 4096): the largest R5 the C020 ever ran was 28497, row 1 at the 1663 key clamp. At 3840 full
-  # output decodes to key 1662, the last key under the clamp, one key (13 counts) below it, and 4096 still clamps there.
-  assert abs(eps_ff.r5_from_output(1.0, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28484, abs=1)
-  assert abs(eps_ff.r5_from_output(4096 / 3840, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28497, abs=1)
+def test_c020_full_output_lands_on_the_key_clamp():
+  # route 00000284 (sent 4096, the 08-05 build) put the rail at row 1's key clamp 1663 (R5 28497 there on TargetMap-D).
+  # On rev b row 1 that key is 28127; at 3840 full output decodes to key 1662, one key (17 counts) below it, and 4096
+  # still clamps there.
+  assert abs(eps_ff.r5_from_output(1.0, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28110, abs=1)
+  assert abs(eps_ff.r5_from_output(4096 / 3840, 20.0, eps_cal.CIVIC_TBA_C020)) == pytest.approx(28127, abs=1)
   # and its envelope takes the ceiling to key 1108 from 160 km/h
   assert eps_cal.CIVIC_TBA_C020.key_ceiling(170 / 3.6) == 1108
 
@@ -902,8 +989,8 @@ def test_held_cars_model_their_corrected_ptm_row_and_ask_the_clarity_command(nam
 
 def test_every_ptm_calibration_names_its_required_corrected_build():
   names = {c.name for _, c in eps_cal.EPS_FIRMWARE_CALIBRATIONS.values()}
-  # the Clarity is the reference and the C020 is held on its owner's Trk4500 build
-  assert set(eps_cal.REQUIRED_PTM_RWD) == names - {"clarity_trw_a020", "civic_tba_c020"}
+  # the Clarity is the reference
+  assert set(eps_cal.REQUIRED_PTM_RWD) == names - {"clarity_trw_a020"}
   assert all(len(sha) == 8 and int(sha, 16) >= 0 for sha in eps_cal.REQUIRED_PTM_RWD.values())
 
 

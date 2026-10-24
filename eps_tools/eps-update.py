@@ -34,6 +34,7 @@ DECRYPT_LOOKUP = {144: 72, 218: 55, 255: 255, 164: 1, 195: 26, 99: 2, 28: 178, 2
 #   0 = sum of 16-bit BE words from 0..offset must equal value stored at offset
 #   1 = negative-sum variant (same range, negated)
 FIRMWARE_CHECKSUM_OFFSETS = {
+  0x74000: [(0, 0x73f80, "sum"), (1, 0x73ffe, "negative-sum")],  # RDX TJB (524288 byte bin, app @0xc000)
   0x6c000: [(0, 0x6bf80, "sum"), (1, 0x6bffe, "negative-sum")],  # CR-V TLA, Insight TXM (524288 byte bin)
   0x4c000: [(0, 0x4bf80, "sum"), (1, 0x4bffe, "negative-sum")],  # Civic TBA/TEA/TGG/TGN, Clarity TRW (393216 byte bin)
 }
